@@ -16,6 +16,10 @@ Writing rules:
 - Prefer one entry per scene.
 - Use at most two entries only when an immediate reply is essential.
 - Every supplied selected scene is mandatory and must contain at least one entry.
+- For each selected scene, search its upper_window first and choose the closest suitable dialogue, thought, or inner monologue above the insertion slot.
+- Use lower_window only when upper_window has no suitable entry, choosing the closest suitable entry below the slot.
+- Never cross the supplied window boundaries. Do not take a situation or line from beyond another illustration.
+- If neither bounded window contains a suitable source line, create one short context-faithful reaction from that selected scene only.
 
 Output format:
 

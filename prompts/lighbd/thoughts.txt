@@ -11,6 +11,7 @@ Any existing <img ...> block counts as an illustration already occupying that vi
 {{#when::lb-xnai.kv.off::tis::0}}3. For each Scene + Key Visual, analyze these explicitly:{{:else}}3. For each Scene, analyze these explicitly:{{/when}}
    - Time and location
    - Character visuals: Appearance, attire. Reiterate required tags. Fill in missing details creatively within settings.
+     - Start from the authoritative wardrobe continuity state and apply only wardrobe events that occur before this Scene's segment. Separately record the complete logical `outfit_state`; camera-invisible items remain worn.
    - Character actions: Emotions, pose, actions.
    - Scene composition: Camera location, framing, lighting, etc.
    - Frame: What should be in and out of the frame. Consider camera position, surrounding environment, and relative character directions.{{#when::keep::toggle::lb-xnai.compat.charPrompt}} For multiple character scenes, determine their general position as well.{{/when}}

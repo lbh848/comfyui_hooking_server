@@ -78,6 +78,7 @@ from modes.word_rules import (
     apply_char_tag_override_rules as _apply_char_tag_override_rules,
 )
 from modes import chansub_service
+from modes import illustration_chat_history
 from modes import illustration_context_pipeline
 from modes import multi_char_mask
 import importlib.util
@@ -3172,6 +3173,8 @@ async def process_illustration_context_queue_item(item) -> dict:
     early_descriptor_slots = []
     early_dispatch = False
     raw_items = []
+    history_plan = None
+    history_finalize_attempted = False
 
     def _is_multi_char_descriptor(descriptor: dict, prompt_format: str) -> bool:
         if illustration_provider_snapshot != "comfy":
@@ -3406,7 +3409,32 @@ async def process_illustration_context_queue_item(item) -> dict:
             )
         else:
             await progress(2, "context", "CHAT 컨텍스트 수신")
-            # CALL1=복장만, CALL2/2-FIX=full(시스템프롬프트+복장), CALL3=이름리스트만.
+            history_chats = payload.get("chats") or []
+            if not history_chats:
+                print(
+                    f"[ILLUST_HISTORY] CHAT이 비어 있어 히스토리 저장을 건너뜁니다: "
+                    f"session={session_id}"
+                )
+                history_plan = None
+            else:
+                history_target_index = next((
+                    index
+                    for index in range(len(history_chats) - 1, -1, -1)
+                    if history_chats[index].get("role") == "char"
+                    and str(history_chats[index].get("data") or "").strip()
+                ), -1)
+                if history_target_index < 0:
+                    print(
+                        f"[ILLUST_HISTORY] 저장 준비 실패 - 최신 CHAR 없음: "
+                        f"session={session_id}, chats={len(history_chats)}"
+                    )
+                    raise RuntimeError("채팅 히스토리에 저장할 최신 CHAR 응답이 없습니다")
+                history_plan = illustration_chat_history.prepare_history(
+                    history_chats,
+                    history_target_index,
+                    active_bot,
+                )
+            # CALL1=이름/복장 분석용 정보, CALL2/2-FIX=full 사전, CALL3=이름 목록.
             extra_reference = build_active_lb_extra(active_bot)
             extra_costume = build_lb_extra_costume(active_bot)
             extra_names = build_lb_extra_names(active_bot)
@@ -3466,11 +3494,15 @@ async def process_illustration_context_queue_item(item) -> dict:
                 extra_costume=extra_costume,
                 extra_names=extra_names,
                 backtranslate_names=backtranslate_names,
+                history_plan=history_plan,
                 enable_multi_char_layout=(
                     illustration_provider_snapshot == "comfy"
                     and str(illust_toggles.get("prompt_format") or "v3").strip().lower() == "v3"
                 ),
             )
+            if history_plan is not None:
+                history_finalize_attempted = True
+                illustration_chat_history.finalize_history(history_plan, built)
             raw_items = built.get("items") or []
             if not raw_items:
                 print(f"[ILLUST_CONTEXT] 생성할 장면이 없음: session={session_id}")
@@ -3704,6 +3736,21 @@ async def process_illustration_context_queue_item(item) -> dict:
     except Exception as e:
         print(f"[ILLUST_CONTEXT] 세션 처리 실패: session={session_id}, error={e}")
         traceback.print_exc()
+        if history_plan is not None and not history_finalize_attempted:
+            history_finalize_attempted = True
+            try:
+                illustration_chat_history.finalize_history(
+                    history_plan,
+                    None,
+                    str(e),
+                )
+            except Exception as history_error:
+                print(
+                    f"[ILLUST_HISTORY] 실패 파이프라인 원문 저장도 실패: "
+                    f"session={session_id}, history={history_plan.get('history_id')}, "
+                    f"error={history_error}"
+                )
+                traceback.print_exc()
         cleanup_reason = f"상위 파이프라인 실패 - {e}"
         for child_id, child_item in all_child_pairs:
             completion_future = getattr(child_item, "completion_future", None)
@@ -3981,6 +4028,79 @@ async def handle_api_illustration_context_toggles(request: web.Request) -> web.R
         return web.json_response({"status": "ok", "toggles": toggles})
     except Exception as e:
         print(f"[ILLUST_CONTEXT] toggle API 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def handle_api_illustration_chat_histories(request: web.Request) -> web.Response:
+    """Search stored illustration CHAT histories."""
+    try:
+        query = str(request.query.get("query") or "")[:500]
+        try:
+            limit = max(1, min(500, int(request.query.get("limit", "100"))))
+        except Exception as e:
+            print(
+                f"[ILLUST_HISTORY] 목록 limit 파싱 실패: "
+                f"value={request.query.get('limit')!r}, error={e}"
+            )
+            traceback.print_exc()
+            return web.json_response({"error": "limit must be an integer"}, status=400)
+        records = illustration_chat_history.list_histories(query=query, limit=limit)
+        return web.json_response({
+            "histories": records,
+            "count": len(records),
+            "settings": illustration_chat_history.load_settings(),
+        })
+    except Exception as e:
+        print(f"[ILLUST_HISTORY] 목록 API 실패: error={e}")
+        traceback.print_exc()
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def handle_api_illustration_chat_history_detail(request: web.Request) -> web.Response:
+    """Read or soft-delete one illustration CHAT history."""
+    history_id = str(request.match_info.get("history_id") or "")
+    try:
+        if request.method == "DELETE":
+            destination = illustration_chat_history.delete_history(history_id)
+            return web.json_response({
+                "status": "ok",
+                "history_id": history_id,
+                "recoverable": True,
+                "trash_name": os.path.basename(destination),
+            })
+        record = illustration_chat_history.get_history(history_id)
+        if record is None:
+            return web.json_response({"error": "history not found"}, status=404)
+        return web.json_response({"history": record})
+    except FileNotFoundError as e:
+        print(f"[ILLUST_HISTORY] 상세/삭제 대상 없음: history={history_id}, error={e}")
+        traceback.print_exc()
+        return web.json_response({"error": str(e)}, status=404)
+    except ValueError as e:
+        print(f"[ILLUST_HISTORY] 상세/삭제 history_id 오류: history={history_id}, error={e}")
+        traceback.print_exc()
+        return web.json_response({"error": str(e)}, status=400)
+    except Exception as e:
+        print(f"[ILLUST_HISTORY] 상세/삭제 API 실패: history={history_id}, error={e}")
+        traceback.print_exc()
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def handle_api_illustration_chat_history_settings(request: web.Request) -> web.Response:
+    """Read/save history character-count limits kept outside config.json."""
+    try:
+        if request.method == "GET":
+            return web.json_response({"settings": illustration_chat_history.load_settings()})
+        body = await request.json()
+        raw = body.get("settings") if isinstance(body, dict) else None
+        if not isinstance(raw, dict):
+            print(f"[ILLUST_HISTORY] 설정 body 형식 오류: body={body!r}")
+            return web.json_response({"error": "settings must be object"}, status=400)
+        settings = illustration_chat_history.save_settings(raw)
+        return web.json_response({"status": "ok", "settings": settings})
+    except Exception as e:
+        print(f"[ILLUST_HISTORY] 설정 API 실패: error={e}")
         traceback.print_exc()
         return web.json_response({"error": str(e)}, status=500)
 
@@ -8395,6 +8515,23 @@ app.router.add_get("/api/illustration_context/prompts", handle_api_illustration_
 app.router.add_post("/api/illustration_context/prompts", handle_api_illustration_context_prompts)
 app.router.add_get("/api/illustration_context/toggles", handle_api_illustration_context_toggles)
 app.router.add_post("/api/illustration_context/toggles", handle_api_illustration_context_toggles)
+app.router.add_get("/api/illustration_context/chat-histories", handle_api_illustration_chat_histories)
+app.router.add_get(
+    "/api/illustration_context/chat-histories/settings",
+    handle_api_illustration_chat_history_settings,
+)
+app.router.add_post(
+    "/api/illustration_context/chat-histories/settings",
+    handle_api_illustration_chat_history_settings,
+)
+app.router.add_get(
+    "/api/illustration_context/chat-histories/{history_id}",
+    handle_api_illustration_chat_history_detail,
+)
+app.router.add_delete(
+    "/api/illustration_context/chat-histories/{history_id}",
+    handle_api_illustration_chat_history_detail,
+)
 app.router.add_post("/api/llm/vertex_key", handle_api_lighbd_vertex_key)
 app.router.add_get("/api/llm/vertex_key", handle_api_lighbd_vertex_key)
 app.router.add_delete("/api/llm/vertex_key", handle_api_lighbd_vertex_key)

@@ -177,6 +177,16 @@ Prefer closer shots (focused close-up, cowboy shot, upper or lower body) around 
 
 Tags between Scenes must be consistent if narrative is continuous. If a detail appears in one scene (e.g., `open shirt`), it must be explicitly tagged in all subsequent scenes as well.
 
+The supplied AUTHORITATIVE WARDROBE CONTINUITY STATE is the starting state for each character. Carry it forward unless a CURRENT WARDROBE EVENT changes it at a numbered segment. A character merely appearing in the current context never authorizes a clothing change. Missing attire tags caused by framing or occlusion never mean that an item was removed.
+
+For every named character, also emit `outfit_state` beside `positive`, `negative`, `name`, and `position`:
+
+- `body_state`: clothed, partial, nude, topless, bottomless, underwear_only, or unknown
+- `worn`: the complete logical list of garments/accessories currently worn at that scene, including items outside the camera frame
+- `removed`: established removed or nearby garments that still matter for continuity
+
+`positive` contains only visible image tags. `outfit_state` records logical wardrobe continuity and must not be reduced merely because the camera crops an item out. For Scenes at different narrative times, apply wardrobe events in segment order. Never use a Key Visual to determine the final chronological wardrobe state.
+
 #### Slots
 
 We've prepared slots where scenes can be placed: `[Slot #]`. Pick a slot number, and the scene will be placed there.

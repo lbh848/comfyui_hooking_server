@@ -18,6 +18,10 @@ Rules:
 - A line must belong to a character visible or narratively present in that scene.
 - Emit at most two dialogue/thought entries per scene. This is a hard limit.
 - Prefer one entry: the illustrated speaker's single most relevant utterance or thought.
+- For each selected scene, search its upper_window first and choose the closest suitable dialogue or thought above the insertion slot.
+- Use lower_window only when upper_window has no suitable entry, and then choose the closest suitable entry below the slot.
+- Never cross the supplied window boundaries. Text beyond a neighboring illustration belongs to another illustration and is forbidden.
+- If neither bounded window contains a suitable source line, create one short context-faithful thought or reaction from that selected scene only.
 - Use two entries only for one immediate exchange: one utterance followed by one direct reply.
 - Never continue to a third turn, never output an A-B-A exchange, and never split one utterance across multiple entries.
 - If the source contains a longer conversation, select only the one line or single two-entry exchange that best matches the exact illustrated moment.

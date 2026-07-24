@@ -1,5 +1,6 @@
 import ast
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -863,6 +864,7 @@ def test_call3_dialogue_prompt_selects_speak_or_manga_and_scopes_emotions():
             "call3_prompt_mode": "speak",
             "speak_emotion_enabled": True,
             "speak_emotions": "joy; anger",
+            "speak_language": "한국어",
         }),
         "CHARACTER REFERENCE",
     )
@@ -877,11 +879,14 @@ def test_call3_dialogue_prompt_selects_speak_or_manga_and_scopes_emotions():
     )
 
     assert speak_mode == "speak"
-    assert speak_prompt.startswith("SPEAK PROMPT")
+    assert speak_prompt.startswith("# OUTPUT LANGUAGE — HARD REQUIREMENT")
+    assert "required output language: 한국어" in speak_prompt
+    assert "SPEAK PROMPT" in speak_prompt
     assert "Add one #emotion tag" in speak_prompt
     assert "Allowed labels: joy; anger" in speak_prompt
     assert manga_mode == "manga"
-    assert manga_prompt.startswith("MANGA PROMPT")
+    assert manga_prompt.startswith("# OUTPUT LANGUAGE — HARD REQUIREMENT")
+    assert "MANGA PROMPT" in manga_prompt
     assert "CHARACTER REFERENCE" in manga_prompt
     assert "#emotion" not in manga_prompt
 
@@ -1155,9 +1160,12 @@ scenes[2]:
         call3_attempts += 1
         if call3_attempts == 1:
             assert "result_validator" not in kwargs
+            assert "required output language: 한국어" in messages[0]["content"]
+            assert "Language: 한국어" in messages[-1]["content"]
             return '[Scene slot=0]\nHana: "첫 장면." #normal'
 
         assert "Required slots, in order: [0, 1]" in messages[-1]["content"]
+        assert "Write every dialogue and thought in 한국어" in messages[-1]["content"]
         validator = kwargs.get("result_validator")
         assert validator is not None
         corrected = """[Scene slot=0]
@@ -1189,13 +1197,16 @@ Hana: "둘째 장면." #normal"""
     )
 
     assert call3_attempts == 2
+    assert result["call3_correction_used"] is True
+    assert result["call3_initial_output"] == '[Scene slot=0]\nHana: "첫 장면." #normal'
     assert [item["speak"] for item in result["items"]] == [
         'Hana: "첫 장면." #normal',
         'Hana: "둘째 장면." #normal',
     ]
     captured = capsys.readouterr().out
     assert "missing=[1]" in captured
-    assert "선택 slot 완전성 교정 재시도" in captured
+    assert "CALL3-CORRECTION" in captured
+    assert "교정 호출 1회 실행" in captured
 
 
 @pytest.mark.asyncio
@@ -1613,3 +1624,519 @@ scenes[1]:
     assert "[Position]" not in result["enhanced_narrative"]
     assert result["items"][0]["slot"] == 0
     assert result["items"][0]["raw_positive"]
+
+
+def test_call1_structured_assignments_preserve_slot_markers():
+    current = "She enters the room.\n\nHer blue dress rustles."
+    _rendered, segments = pipeline._segment_current_context(current)
+    analysis = pipeline.parse_call1_analysis(
+        json.dumps({
+            "reference_assignments": [
+                {
+                    "segment_id": "C001",
+                    "surface": "She",
+                    "occurrence": 1,
+                    "canonical_name": "Hana",
+                    "replacement": "Hana",
+                    "confidence": 0.99,
+                },
+                {
+                    "segment_id": "C002",
+                    "surface": "Her",
+                    "occurrence": 1,
+                    "canonical_name": "Hana",
+                    "replacement": "Hana's",
+                    "confidence": 0.99,
+                },
+            ],
+            "history_characters": ["Hana"],
+            "current_characters": [{"name": "Hana", "confidence": 0.99}],
+            "wardrobe_events": [],
+            "unresolved_references": [],
+        }),
+        current,
+        segments,
+        "Hana, Bob",
+    )
+    assert analysis is not None
+    resolved, errors, variables = pipeline.apply_reference_assignments(
+        current,
+        segments,
+        analysis["reference_assignments"],
+    )
+    assert not errors
+    assert resolved == "Hana enters the room.\n\nHana's blue dress rustles."
+    assert variables == {"__REF_001__": "Hana", "__REF_002__": "Hana's"}
+
+    slotted, slotted_errors = pipeline.apply_reference_assignments_to_slotted(
+        "She enters the room.\n\n[Slot 0]\n\nHer blue dress rustles.\n\n[Slot 1]",
+        segments,
+        analysis["reference_assignments"],
+    )
+    assert not slotted_errors
+    assert "Hana enters" in slotted
+    assert "Hana's blue dress" in slotted
+    assert re.findall(r"\[Slot\s+\d+\]", slotted) == ["[Slot 0]", "[Slot 1]"]
+
+
+def test_call3_scene_selection_contains_bounded_upper_and_lower_windows():
+    slots, payload = pipeline.build_call3_scene_selection(
+        [
+            {"kind": "scene", "slot": 0, "scene": "first", "characters": []},
+            {"kind": "scene", "slot": 1, "scene": "second", "characters": []},
+        ],
+        "위쪽 첫 대사\n\n[Slot 0]\n\n두 삽화 사이 대사\n\n[Slot 1]\n\n아래쪽 마지막 대사",
+    )
+    decoded = json.loads(payload)
+    assert slots == [0, 1]
+    first, second = decoded["selected_scenes"]
+    assert first["upper_window"] == "위쪽 첫 대사"
+    assert first["lower_window"] == "두 삽화 사이 대사"
+    assert second["upper_window"] == "두 삽화 사이 대사"
+    assert second["lower_window"] == "아래쪽 마지막 대사"
+    assert "아래쪽 마지막 대사" not in first["lower_window"]
+
+
+def test_call3_scene_selection_never_crosses_an_unselected_illustration_slot():
+    slots, payload = pipeline.build_call3_scene_selection(
+        [
+            {"kind": "scene", "slot": 0, "scene": "first", "characters": []},
+            {"kind": "scene", "slot": 2, "scene": "third", "characters": []},
+        ],
+        (
+            "첫 장면 위\n\n[Slot 0]\n\n첫 장면 아래\n\n"
+            "[Slot 1]\n\n선택되지 않은 삽화 아래\n\n"
+            "[Slot 2]\n\n셋째 장면 아래"
+        ),
+    )
+    decoded = json.loads(payload)
+    assert slots == [0, 2]
+    first, third = decoded["selected_scenes"]
+    assert first["lower_window"] == "첫 장면 아래"
+    assert "선택되지 않은 삽화 아래" not in first["lower_window"]
+    assert third["upper_window"] == "선택되지 않은 삽화 아래"
+
+
+@pytest.mark.asyncio
+async def test_persistent_history_path_uses_compact_call2_and_updates_wardrobe(monkeypatch):
+    calls = []
+
+    async def fake_call(task_key, messages, **kwargs):
+        calls.append((task_key, messages))
+        if task_key == "illustration_call1":
+            return json.dumps({
+                "reference_assignments": [{
+                    "segment_id": "C001",
+                    "surface": "She",
+                    "occurrence": 1,
+                    "canonical_name": "Hana",
+                    "replacement": "Hana",
+                    "confidence": 0.99,
+                }],
+                "history_characters": ["Hana"],
+                "current_characters": [{"name": "Hana", "confidence": 0.99}],
+                "wardrobe_events": [{
+                    "segment_id": "C002",
+                    "character": "Hana",
+                    "operation": "remove",
+                    "items": ["blue dress"],
+                    "state_after": "nude",
+                    "evidence": "Hana removes the blue dress.",
+                    "confidence": 0.99,
+                }],
+                "unresolved_references": [],
+            })
+        assert task_key == "illustration_call2"
+        request_text = "\n".join(message["content"] for message in messages)
+        assert "very old fallback history" not in request_text
+        assert "### Hana" in request_text
+        assert "### Bob" not in request_text
+        assert "Hana enters the room." in request_text
+        assert "She enters the room." not in request_text
+        assert "[Slot 0]" in request_text
+        return """<lb-xnai>
+scenes[1]:
+  - camera: full body
+    characters[1]:
+      - name: Hana
+        positive: 1girl, nude
+        outfit_state:
+          body_state: nude
+          worn: []
+          removed: [blue dress]
+    scene: bedroom
+    slot: 1
+</lb-xnai>"""
+
+    monkeypatch.setattr(pipeline.llm_service, "callLLMTask", fake_call)
+    state_before = {
+        "hana": {
+            "canonical_name": "Hana",
+            "current_wardrobe": {
+                "body_state": "clothed",
+                "worn": ["blue dress"],
+                "removed": [],
+            },
+        }
+    }
+    result = await pipeline.build_from_context(
+        {
+            "session_id": "persistent_history_pipeline_test",
+            "target_slotted": (
+                "She enters the room.\n\n[Slot 0]\n\n"
+                "Hana removes the blue dress.\n\n[Slot 1]"
+            ),
+            "chats": [
+                {"role": "user", "data": "Continue."},
+                {
+                    "role": "char",
+                    "data": "She enters the room.\n\nHana removes the blue dress.",
+                },
+            ],
+        },
+        {
+            "call1_enabled": True,
+            "call3_enabled": False,
+            "speak_enabled": False,
+            "key_visual": False,
+        },
+        "World prompt\n\n### Hana\n-default_outfit\nblue dress\n\n### Bob\n-default_outfit\nblack suit",
+        extra_costume="### Hana\n-default_outfit\nblue dress",
+        extra_names="Hana, Bob",
+        backtranslate_names="Hana, Bob",
+        history_plan={
+            "history_id": "hist_test",
+            "operation": "append",
+            "current_message_id": "msg_current",
+            "current_context_hash": "current",
+            "base_context_hash": "base",
+            "state_before": state_before,
+            "call1_history": [{"role": "char", "data": "Hana previously wore a blue dress."}],
+            "call2_fallback_history": [{"role": "char", "data": "very old fallback history"}],
+            "call3_fallback_history": [],
+            "record_before": {"last_pipeline": {}},
+        },
+    )
+
+    assert [task_key for task_key, _messages in calls] == [
+        "illustration_call1",
+        "illustration_call2",
+    ]
+    assert result["balanced_fallback_used"] is False
+    assert result["enhanced_narrative"].startswith("Hana enters")
+    wardrobe = result["character_states_after"]["hana"]["current_wardrobe"]
+    assert wardrobe["body_state"] == "nude"
+    assert wardrobe["worn"] == []
+    assert "blue dress" in wardrobe["removed"]
+    assert result["last_visual_by_character"]["Hana"]["outfit_state"]["body_state"] == "nude"
+
+
+@pytest.mark.asyncio
+async def test_persistent_call2_only_uses_bounded_history_and_visual_candidate(monkeypatch):
+    calls = []
+
+    async def fake_call(task_key, messages, **kwargs):
+        calls.append((task_key, messages))
+        assert task_key == "illustration_call2"
+        request_text = "\n".join(message["content"] for message in messages)
+        assert "bounded past marker" in request_text
+        assert "### Hana" in request_text
+        assert "She waits by the door." in request_text
+        return """<lb-xnai>
+scenes[1]:
+  - camera: full body
+    characters[1]:
+      - name: Hana
+        positive: 1girl, white shirt, black skirt
+        outfit_state:
+          body_state: clothed
+          worn: [white shirt, black skirt]
+          removed: []
+    scene: hallway
+    slot: 0
+</lb-xnai>"""
+
+    monkeypatch.setattr(pipeline.llm_service, "callLLMTask", fake_call)
+    result = await pipeline.build_from_context(
+        {
+            "session_id": "persistent_call2_only_test",
+            "target_slotted": "She waits by the door.\n\n[Slot 0]",
+            "chats": [
+                {"role": "user", "data": "Wait there."},
+                {"role": "char", "data": "She waits by the door."},
+            ],
+        },
+        {
+            "call1_backtranslate_enabled": False,
+            "call1_enabled": False,
+            "call3_enabled": False,
+            "speak_enabled": False,
+            "key_visual": False,
+        },
+        "### Hana\n-default_outfit\nwhite shirt, black skirt",
+        extra_names="Hana",
+        backtranslate_names="Hana",
+        history_plan={
+            "history_id": "hist_call2_only",
+            "operation": "append",
+            "current_message_id": "msg_current",
+            "current_context_hash": "current",
+            "base_context_hash": "base",
+            "state_before": {},
+            "call1_history": [],
+            "call2_fallback_history": [{"role": "char", "data": "bounded past marker"}],
+            "call3_fallback_history": [],
+            "record_before": {"last_pipeline": {}},
+        },
+    )
+
+    assert [task_key for task_key, _messages in calls] == ["illustration_call2"]
+    assert result["balanced_fallback_used"] is True
+    assert result["enhanced_narrative"] == "She waits by the door."
+    state = result["character_states_after"]["hana"]
+    assert state["current_wardrobe"]["source"] == "call2_visual_candidate"
+    assert state["current_wardrobe"]["worn"] == ["white shirt", "black skirt"]
+
+
+@pytest.mark.asyncio
+async def test_persistent_history_recovers_missing_prior_wardrobe_with_balanced_fallback(monkeypatch):
+    calls = []
+
+    async def fake_call(task_key, messages, **kwargs):
+        calls.append((task_key, messages))
+        if task_key == "illustration_call1":
+            return json.dumps({
+                "reference_assignments": [],
+                "history_characters": ["Hana"],
+                "current_characters": [{"name": "Hana", "confidence": 0.99}],
+                "wardrobe_events": [],
+                "unresolved_references": [],
+            })
+        assert task_key == "illustration_call2"
+        request_text = "\n".join(message["content"] for message in messages)
+        assert "past wardrobe recovery marker" in request_text
+        assert "### Hana" in request_text
+        assert "### Bob" in request_text
+        return """<lb-xnai>
+scenes[1]:
+  - camera: full body
+    characters[1]:
+      - name: Hana
+        positive: 1girl, red cardigan, pleated skirt
+        outfit_state:
+          body_state: clothed
+          worn: [red cardigan, pleated skirt]
+          removed: []
+    scene: classroom
+    slot: 0
+</lb-xnai>"""
+
+    monkeypatch.setattr(pipeline.llm_service, "callLLMTask", fake_call)
+    result = await pipeline.build_from_context(
+        {
+            "session_id": "persistent_missing_state_recovery",
+            "target_slotted": "Hana looks outside.\n\n[Slot 0]",
+            "chats": [
+                {"role": "user", "data": "Continue."},
+                {"role": "char", "data": "Hana looks outside."},
+            ],
+        },
+        {
+            "call1_backtranslate_enabled": False,
+            "call1_enabled": True,
+            "call3_enabled": False,
+            "speak_enabled": False,
+            "key_visual": False,
+        },
+        (
+            "### Hana\n-default_outfit\nred cardigan, pleated skirt\n\n"
+            "### Bob\n-default_outfit\nblack suit"
+        ),
+        extra_costume="### Hana\n-default_outfit\nred cardigan, pleated skirt",
+        extra_names="Hana, Bob",
+        backtranslate_names="Hana, Bob",
+        history_plan={
+            "history_id": "hist_missing_state",
+            "operation": "new",
+            "current_message_id": "msg_current",
+            "current_context_hash": "current",
+            "base_context_hash": "base",
+            "state_before": {},
+            "call1_history": [{"role": "char", "data": "past wardrobe recovery marker: Hana arrived."}],
+            "call2_fallback_history": [{"role": "char", "data": "past wardrobe recovery marker"}],
+            "call3_fallback_history": [],
+            "record_before": {"last_pipeline": {}},
+        },
+    )
+
+    assert [task_key for task_key, _messages in calls] == [
+        "illustration_call1",
+        "illustration_call2",
+    ]
+    assert result["balanced_fallback_used"] is True
+    state = result["character_states_after"]["hana"]
+    assert state["current_wardrobe"]["source"] == "call2_visual_candidate"
+    assert state["current_wardrobe"]["worn"] == ["red cardigan", "pleated skirt"]
+
+
+@pytest.mark.asyncio
+async def test_persistent_backtranslation_off_keeps_call1_call2_call3_combination(monkeypatch):
+    calls = []
+
+    async def fake_call(task_key, messages, **kwargs):
+        calls.append((task_key, messages))
+        if task_key == "illustration_call1":
+            return json.dumps({
+                "reference_assignments": [{
+                    "segment_id": "C001",
+                    "surface": "She",
+                    "occurrence": 1,
+                    "canonical_name": "Hana",
+                    "replacement": "Hana",
+                    "confidence": 0.99,
+                }],
+                "history_characters": ["Hana"],
+                "current_characters": [{"name": "Hana", "confidence": 0.99}],
+                "wardrobe_events": [],
+                "unresolved_references": [],
+            })
+        if task_key == "illustration_call2":
+            return """<lb-xnai>
+scenes[1]:
+  - camera: medium shot
+    characters[1]:
+      - name: Hana
+        positive: 1girl, blue dress
+        outfit_state:
+          body_state: clothed
+          worn: [blue dress]
+          removed: []
+    scene: hallway
+    slot: 0
+</lb-xnai>"""
+        assert task_key == "illustration_call3"
+        request_text = "\n".join(message["content"] for message in messages)
+        assert "[Original narrative]\nHana waits by the door." in request_text
+        assert "She waits by the door." not in request_text
+        return '[Scene slot=0]\nHana: "I will wait." #normal'
+
+    monkeypatch.setattr(pipeline.llm_service, "callLLMTask", fake_call)
+    result = await pipeline.build_from_context(
+        {
+            "session_id": "persistent_no_backtranslation_all_calls",
+            "target_slotted": "She waits by the door.\n\n[Slot 0]",
+            "chats": [
+                {"role": "user", "data": "Wait there."},
+                {"role": "char", "data": "She waits by the door."},
+            ],
+        },
+        {
+            "call1_backtranslate_enabled": False,
+            "call1_enabled": True,
+            "call3_enabled": True,
+            "speak_enabled": True,
+            "key_visual": False,
+        },
+        "### Hana\n-default_outfit\nblue dress",
+        extra_names="Hana",
+        backtranslate_names="Hana",
+        history_plan={
+            "history_id": "hist_no_backtranslation",
+            "operation": "append",
+            "current_message_id": "msg_current",
+            "current_context_hash": "current",
+            "base_context_hash": "base",
+            "state_before": {
+                "hana": {
+                    "canonical_name": "Hana",
+                    "current_wardrobe": {
+                        "body_state": "clothed",
+                        "worn": ["blue dress"],
+                        "removed": [],
+                    },
+                },
+            },
+            "call1_history": [{"role": "char", "data": "Hana wore a blue dress."}],
+            "call2_fallback_history": [{"role": "char", "data": "unused call2 fallback"}],
+            "call3_fallback_history": [{"role": "char", "data": "unused call3 fallback"}],
+            "record_before": {"last_pipeline": {}},
+        },
+    )
+
+    assert [task_key for task_key, _messages in calls] == [
+        "illustration_call1",
+        "illustration_call2",
+        "illustration_call3",
+    ]
+    assert result["balanced_fallback_used"] is False
+    assert result["items"][0]["speak"] == 'Hana: "I will wait." #normal'
+
+
+@pytest.mark.asyncio
+async def test_persistent_call1_off_keeps_call2_call3_with_separate_bounded_histories(monkeypatch):
+    calls = []
+
+    async def fake_call(task_key, messages, **kwargs):
+        calls.append((task_key, messages))
+        request_text = "\n".join(message["content"] for message in messages)
+        if task_key == "illustration_call2":
+            assert "call2 bounded marker" in request_text
+            assert "call3 bounded marker" not in request_text
+            return """<lb-xnai>
+scenes[1]:
+  - camera: medium shot
+    characters[1]:
+      - name: Hana
+        positive: 1girl, blue dress
+        outfit_state:
+          body_state: clothed
+          worn: [blue dress]
+          removed: []
+    scene: hallway
+    slot: 0
+</lb-xnai>"""
+        assert task_key == "illustration_call3"
+        assert "call3 bounded marker" in request_text
+        assert "[Original narrative]\nShe waits by the door." in request_text
+        return '[Scene slot=0]\nHana: "Still here." #normal'
+
+    monkeypatch.setattr(pipeline.llm_service, "callLLMTask", fake_call)
+    result = await pipeline.build_from_context(
+        {
+            "session_id": "persistent_call1_off_call3_on",
+            "target_slotted": "She waits by the door.\n\n[Slot 0]",
+            "chats": [
+                {"role": "user", "data": "Wait there."},
+                {"role": "char", "data": "She waits by the door."},
+            ],
+        },
+        {
+            "call1_backtranslate_enabled": False,
+            "call1_enabled": False,
+            "call3_enabled": True,
+            "speak_enabled": True,
+            "key_visual": False,
+        },
+        "### Hana\n-default_outfit\nblue dress",
+        extra_names="Hana",
+        history_plan={
+            "history_id": "hist_call1_off_call3_on",
+            "operation": "append",
+            "current_message_id": "msg_current",
+            "current_context_hash": "current",
+            "base_context_hash": "base",
+            "state_before": {},
+            "call1_history": [],
+            "call2_fallback_history": [{"role": "char", "data": "call2 bounded marker"}],
+            "call3_fallback_history": [{"role": "char", "data": "call3 bounded marker"}],
+            "record_before": {"last_pipeline": {}},
+        },
+    )
+
+    assert [task_key for task_key, _messages in calls] == [
+        "illustration_call2",
+        "illustration_call3",
+    ]
+    assert result["balanced_fallback_used"] is True
+    assert result["enhanced_narrative"] == "She waits by the door."
+    assert result["items"][0]["speak"] == 'Hana: "Still here." #normal'

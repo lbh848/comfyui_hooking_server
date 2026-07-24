@@ -8,12 +8,14 @@ RisuAI는 Comfy history에 이미지가 여러 장 있어도 첫 장만 소비�
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import re
 import time
 import traceback
 import datetime
+import uuid
 from copy import deepcopy
 from urllib.parse import quote
 
@@ -999,6 +1001,562 @@ def _normalize_messages(messages: list[dict]) -> list[dict]:
     return out
 
 
+def _history_messages_text(messages: list[dict]) -> str:
+    return "\n\n".join(
+        ("[CHAR]" if item.get("role") == "char" else "[USER]")
+        + "\n"
+        + _strip_nodes(str(item.get("data") or item.get("content") or ""))
+        for item in messages
+        if str(item.get("data") or item.get("content") or "").strip()
+    ).strip()
+
+
+def _segment_current_context(text: str) -> tuple[str, dict[str, dict]]:
+    """Give CALL1 stable segment ids without hardcoding a pronoun vocabulary."""
+    source = str(text or "")
+    segments: dict[str, dict] = {}
+    rendered = []
+    cursor = 0
+    index = 1
+    for match in re.finditer(r"[^\n]+(?:\n(?!\n)[^\n]+)*", source):
+        content = match.group(0).strip()
+        if not content:
+            continue
+        segment_id = f"C{index:03d}"
+        segments[segment_id] = {
+            "id": segment_id,
+            "text": match.group(0),
+            "start": match.start(),
+            "end": match.end(),
+        }
+        rendered.append(f"[{segment_id}]\n{match.group(0)}")
+        cursor = match.end()
+        index += 1
+    if not segments and source.strip():
+        segments["C001"] = {"id": "C001", "text": source, "start": 0, "end": len(source)}
+        rendered.append(f"[C001]\n{source}")
+    return "\n\n".join(rendered), segments
+
+
+def _json_object_from_text(text: str) -> dict | None:
+    source = str(text or "").strip()
+    fenced = re.search(r"```(?:json)?\s*([\s\S]*?)```", source, re.I)
+    if fenced:
+        source = fenced.group(1).strip()
+    start = source.find("{")
+    end = source.rfind("}")
+    if start < 0 or end <= start:
+        print("[ILLUST_CONTEXT:CALL1] 구조화 JSON object를 찾지 못함")
+        return None
+    try:
+        value = json.loads(source[start:end + 1])
+        if not isinstance(value, dict):
+            print(f"[ILLUST_CONTEXT:CALL1] 구조화 결과 루트가 object가 아님: {type(value).__name__}")
+            return None
+        return value
+    except Exception as e:
+        print(f"[ILLUST_CONTEXT:CALL1] 구조화 JSON 파싱 실패: {e}; raw={source[:800]!r}")
+        traceback.print_exc()
+        return None
+
+
+def _canonical_name_map(character_names: str) -> dict[str, str]:
+    names = [name.strip() for name in str(character_names or "").split(",") if name.strip()]
+    return {name.casefold(): name for name in names}
+
+
+def _normalize_analysis_text(value: str) -> str:
+    text = str(value or "").replace("\r\n", "\n").replace("\r", "\n")
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r" *\n *", "\n", text)
+    return text.strip()
+
+
+def _contains_canonical_name(text: str, name: str) -> bool:
+    """Check a supplied canonical name as a complete token, not as inference."""
+    source = _normalize_analysis_text(text)
+    target = str(name or "").strip()
+    if not source or not target:
+        return False
+    return bool(re.search(rf"(?<!\w){re.escape(target)}(?!\w)", source, re.I))
+
+
+def parse_call1_analysis(
+    text: str,
+    current_context: str,
+    segments: dict[str, dict],
+    character_names: str,
+    history_context: str = "",
+) -> dict | None:
+    """Validate CALL1's compact entity/coreference/wardrobe analysis."""
+    raw = _json_object_from_text(text)
+    if raw is None:
+        return None
+    canonical = _canonical_name_map(character_names)
+    errors = []
+
+    def normalize_name(value) -> str:
+        name = str(value or "").strip()
+        return canonical.get(name.casefold(), name)
+
+    history_characters = []
+    for item in raw.get("history_characters") or []:
+        name = normalize_name(item.get("name") if isinstance(item, dict) else item)
+        if name and name not in history_characters:
+            history_characters.append(name)
+
+    current_characters = []
+    current_names = set()
+    for item in raw.get("current_characters") or []:
+        if isinstance(item, dict):
+            name = normalize_name(item.get("name"))
+            confidence = item.get("confidence", 1.0)
+        else:
+            name = normalize_name(item)
+            confidence = 1.0
+        try:
+            confidence = max(0.0, min(1.0, float(confidence)))
+        except Exception:
+            confidence = 0.0
+        if not name or name.casefold() in current_names:
+            continue
+        current_names.add(name.casefold())
+        current_characters.append({"name": name, "confidence": confidence})
+        if confidence < 0.70:
+            errors.append(f"현재 캐릭터 신뢰도 낮음: {name}={confidence:.2f}")
+
+    assignments = []
+    for index, item in enumerate(raw.get("reference_assignments") or [], start=1):
+        if not isinstance(item, dict):
+            errors.append(f"지칭 할당 형식 오류: index={index}")
+            continue
+        segment_id = str(item.get("segment_id") or "").strip()
+        surface = str(item.get("surface") or "")
+        name = normalize_name(item.get("canonical_name") or item.get("name"))
+        replacement = str(item.get("replacement") or name).strip()
+        try:
+            occurrence = max(1, int(item.get("occurrence") or 1))
+            confidence = max(0.0, min(1.0, float(item.get("confidence", 1.0))))
+        except Exception:
+            occurrence = 1
+            confidence = 0.0
+        if segment_id not in segments or not surface or not name:
+            errors.append(
+                f"지칭 할당 필수값 오류: index={index}, segment={segment_id!r}, "
+                f"surface={surface!r}, name={name!r}"
+            )
+            continue
+        if surface not in str(segments[segment_id].get("text") or ""):
+            errors.append(f"지칭 원문 불일치: segment={segment_id}, surface={surface!r}")
+            continue
+        if canonical and name.casefold() not in canonical:
+            errors.append(f"정식 이름 목록 밖 지칭 대상: {name}")
+        if name.casefold() not in replacement.casefold():
+            replacement = name
+        if confidence < 0.70:
+            errors.append(f"지칭 할당 신뢰도 낮음: {segment_id}/{surface}={confidence:.2f}")
+        assignments.append({
+            "ref_id": f"REF_{len(assignments) + 1:03d}",
+            "segment_id": segment_id,
+            "surface": surface,
+            "occurrence": occurrence,
+            "canonical_name": name,
+            "replacement": replacement,
+            "confidence": confidence,
+        })
+        if name.casefold() not in current_names:
+            current_names.add(name.casefold())
+            current_characters.append({"name": name, "confidence": confidence})
+
+    for folded, name in canonical.items():
+        if _contains_canonical_name(current_context, name) and folded not in current_names:
+            current_names.add(folded)
+            current_characters.append({"name": name, "confidence": 1.0})
+            errors.append(f"CALL1이 원문 정식 이름을 누락해 서버가 보완: {name}")
+
+    history_names = {name.casefold() for name in history_characters}
+    for folded, name in canonical.items():
+        if _contains_canonical_name(history_context, name) and folded not in history_names:
+            history_names.add(folded)
+            history_characters.append(name)
+            errors.append(f"CALL1이 과거 히스토리 정식 이름을 누락해 서버가 보완: {name}")
+
+    wardrobe_events = []
+    changing_operations = {
+        "wear", "add", "remove", "replace", "set", "open", "close",
+        "adjust", "nude", "topless", "bottomless", "reset_default",
+        "contextual_reset",
+    }
+    for index, item in enumerate(raw.get("wardrobe_events") or [], start=1):
+        if not isinstance(item, dict):
+            errors.append(f"복장 사건 형식 오류: index={index}")
+            continue
+        segment_id = str(item.get("segment_id") or "").strip()
+        name = normalize_name(item.get("character") or item.get("name"))
+        operation = str(item.get("operation") or "keep").strip().lower()
+        evidence = str(item.get("evidence") or "").strip()
+        items = item.get("items") or []
+        if not isinstance(items, list):
+            items = [items]
+        items = [str(value).strip() for value in items if str(value).strip()]
+        try:
+            confidence = max(0.0, min(1.0, float(item.get("confidence", 1.0))))
+        except Exception:
+            confidence = 0.0
+        if not name:
+            errors.append(f"복장 사건 캐릭터 없음: index={index}")
+            continue
+        if operation in changing_operations:
+            segment_text = str((segments.get(segment_id) or {}).get("text") or "")
+            if (
+                not segment_id
+                or not evidence
+                or _normalize_analysis_text(evidence) not in _normalize_analysis_text(segment_text)
+            ):
+                errors.append(
+                    f"복장 변경 근거 불일치: character={name}, operation={operation}, "
+                    f"segment={segment_id!r}"
+                )
+                continue
+        if confidence < 0.70:
+            errors.append(f"복장 사건 신뢰도 낮음: {name}/{operation}={confidence:.2f}")
+        wardrobe_events.append({
+            "segment_id": segment_id,
+            "character": name,
+            "operation": operation,
+            "items": items,
+            "state_after": deepcopy(item.get("state_after")),
+            "evidence": evidence,
+            "confidence": confidence,
+        })
+
+    unresolved = raw.get("unresolved_references") or []
+    if not isinstance(unresolved, list):
+        unresolved = [unresolved]
+    unresolved = [deepcopy(item) for item in unresolved if item not in (None, "", {})]
+    if unresolved:
+        errors.append(f"미해결 지칭 {len(unresolved)}건")
+    if character_names.strip() and not current_characters:
+        errors.append("현재 캐릭터 목록이 비어 있음")
+
+    return {
+        "reference_assignments": assignments,
+        "history_characters": history_characters,
+        "current_characters": current_characters,
+        "wardrobe_events": wardrobe_events,
+        "unresolved_references": unresolved,
+        "validation_errors": errors,
+        "fallback_required": bool(errors),
+    }
+
+
+def apply_reference_assignments(
+    current_context: str,
+    segments: dict[str, dict],
+    assignments: list[dict],
+) -> tuple[str, list[str], dict[str, str]]:
+    """Apply validated CALL1 assignments by exact segment span, never by keyword list."""
+    source = str(current_context or "")
+    replacements = []
+    errors = []
+    ref_values = {}
+    for item in assignments or []:
+        segment = segments.get(str(item.get("segment_id") or ""))
+        if not segment:
+            errors.append(f"지칭 치환 segment 없음: {item!r}")
+            continue
+        surface = str(item.get("surface") or "")
+        occurrence = int(item.get("occurrence") or 1)
+        segment_text = str(segment.get("text") or "")
+        cursor = 0
+        found = -1
+        for _ in range(occurrence):
+            found = segment_text.find(surface, cursor)
+            if found < 0:
+                break
+            cursor = found + len(surface)
+        if found < 0:
+            errors.append(
+                f"지칭 치환 위치 없음: segment={item.get('segment_id')}, "
+                f"surface={surface!r}, occurrence={occurrence}"
+            )
+            continue
+        start = int(segment["start"]) + found
+        end = start + len(surface)
+        replacement = str(item.get("replacement") or item.get("canonical_name") or "")
+        ref_id = str(item.get("ref_id") or f"REF_{len(ref_values) + 1:03d}")
+        ref_values[f"__{ref_id}__"] = replacement
+        replacements.append((start, end, replacement, ref_id))
+    replacements.sort(key=lambda value: value[0], reverse=True)
+    last_start = len(source) + 1
+    for start, end, replacement, ref_id in replacements:
+        if end > last_start:
+            errors.append(f"겹치는 지칭 치환 무시: ref={ref_id}, start={start}, end={end}")
+            continue
+        source = source[:start] + replacement + source[end:]
+        last_start = start
+    return source, errors, ref_values
+
+
+def apply_reference_assignments_to_slotted(
+    slotted_context: str,
+    segments: dict[str, dict],
+    assignments: list[dict],
+) -> tuple[str, list[str]]:
+    """Apply the same assignments while preserving every original Slot marker."""
+    source = str(slotted_context or "")
+    projected, source_indexes = _slotless_projection_with_source_indexes(source)
+    operations = []
+    errors = []
+    for item in assignments or []:
+        segment = segments.get(str(item.get("segment_id") or ""))
+        if not segment:
+            errors.append(f"슬롯 지칭 치환 segment 없음: {item!r}")
+            continue
+        segment_text = str(segment.get("text") or "")
+        segment_span = _find_position_span(projected, segment_text, 0)
+        if segment_span is None:
+            errors.append(
+                f"슬롯 본문 segment 위치 없음: segment={item.get('segment_id')}"
+            )
+            continue
+        segment_start, segment_end = segment_span
+        surface = str(item.get("surface") or "")
+        occurrence = int(item.get("occurrence") or 1)
+        projected_segment = projected[segment_start:segment_end]
+        cursor = 0
+        found = -1
+        for _ in range(occurrence):
+            found = projected_segment.find(surface, cursor)
+            if found < 0:
+                break
+            cursor = found + len(surface)
+        if found < 0:
+            errors.append(
+                f"슬롯 본문 지칭 위치 없음: segment={item.get('segment_id')}, "
+                f"surface={surface!r}, occurrence={occurrence}"
+            )
+            continue
+        projected_start = segment_start + found
+        projected_end = projected_start + len(surface)
+        if projected_start >= len(source_indexes) or projected_end <= 0:
+            errors.append(f"슬롯 본문 투영 범위 오류: item={item!r}")
+            continue
+        source_start = source_indexes[projected_start]
+        source_end = source_indexes[projected_end - 1] + 1
+        replacement = str(item.get("replacement") or item.get("canonical_name") or "")
+        operations.append((source_start, source_end, replacement))
+    for start, end, replacement in sorted(operations, key=lambda value: value[0], reverse=True):
+        source = source[:start] + replacement + source[end:]
+    return source, errors
+
+
+def _filter_character_reference(extra_reference: str, selected_names: list[str]) -> str:
+    selected = {str(name or "").strip().casefold() for name in selected_names if str(name or "").strip()}
+    if not selected:
+        return ""
+    source = str(extra_reference or "")
+    matches = list(re.finditer(r"(?m)^###\s+([^\r\n]+)\s*$", source))
+    blocks = []
+    for index, match in enumerate(matches):
+        name = match.group(1).strip()
+        if name.casefold() not in selected:
+            continue
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(source)
+        blocks.append(source[match.start():end].strip())
+    missing = sorted(selected - {
+        re.match(r"(?m)^###\s+([^\r\n]+)", block).group(1).strip().casefold()
+        for block in blocks
+        if re.match(r"(?m)^###\s+([^\r\n]+)", block)
+    })
+    if missing:
+        print(f"[ILLUST_CONTEXT:CALL2] 선택 캐릭터 lb.extra 누락: names={missing}")
+    return "\n\n".join(blocks)
+
+
+def _selected_character_states(states: dict, selected_names: list[str]) -> dict:
+    selected = {str(name or "").strip().casefold() for name in selected_names if str(name or "").strip()}
+    result = {}
+    for key, value in (states or {}).items():
+        if not isinstance(value, dict):
+            continue
+        name = str(value.get("canonical_name") or key).strip()
+        if not selected or name.casefold() in selected:
+            result[str(key)] = deepcopy(value)
+    return result
+
+
+def apply_wardrobe_events(
+    state_before: dict,
+    current_characters: list[dict],
+    wardrobe_events: list[dict],
+    current_message_id: str,
+    selected_reference: str = "",
+) -> dict:
+    """Apply only CALL1-declared state operations; missing tags never remove clothes."""
+    states = deepcopy(state_before or {})
+
+    def state_key(name: str) -> str:
+        for key, value in states.items():
+            if isinstance(value, dict) and str(value.get("canonical_name") or key).casefold() == name.casefold():
+                return str(key)
+        base = re.sub(r"[^a-z0-9]+", "_", name.casefold()).strip("_") or uuid.uuid4().hex[:12]
+        candidate = base
+        suffix = 2
+        while candidate in states:
+            candidate = f"{base}_{suffix}"
+            suffix += 1
+        return candidate
+
+    for item in current_characters or []:
+        name = str(item.get("name") if isinstance(item, dict) else item).strip()
+        if not name:
+            continue
+        key = state_key(name)
+        if key not in states:
+            states[key] = {
+                "canonical_name": name,
+                "default_outfit_reference": (
+                    _filter_character_reference(selected_reference, [name])
+                    or str(selected_reference or "")
+                ),
+                "current_wardrobe": {"body_state": "unknown", "worn": [], "removed": []},
+                "wardrobe_timeline": [],
+            }
+        states[key]["last_seen_message_id"] = str(current_message_id or "")
+
+    for event in wardrobe_events or []:
+        name = str(event.get("character") or "").strip()
+        if not name:
+            continue
+        key = state_key(name)
+        if key not in states:
+            states[key] = {
+                "canonical_name": name,
+                "default_outfit_reference": (
+                    _filter_character_reference(selected_reference, [name])
+                    or str(selected_reference or "")
+                ),
+                "current_wardrobe": {"body_state": "unknown", "worn": [], "removed": []},
+                "wardrobe_timeline": [],
+            }
+        wardrobe = deepcopy(states[key].get("current_wardrobe") or {})
+        worn = [str(value) for value in wardrobe.get("worn") or [] if str(value).strip()]
+        removed = [str(value) for value in wardrobe.get("removed") or [] if str(value).strip()]
+        operation = str(event.get("operation") or "keep").lower()
+        items = [str(value) for value in event.get("items") or [] if str(value).strip()]
+        state_after = event.get("state_after")
+        state_label = (
+            str(state_after.get("body_state") or "").strip().lower()
+            if isinstance(state_after, dict)
+            else str(state_after or "").strip().lower()
+        )
+        if operation in ("nude",) or state_label == "nude":
+            removed = list(dict.fromkeys(removed + worn + items))
+            worn = []
+            wardrobe["body_state"] = "nude"
+        elif operation in ("remove", "topless", "bottomless"):
+            lowered = {value.casefold() for value in items}
+            still_worn = [value for value in worn if value.casefold() not in lowered]
+            removed = list(dict.fromkeys(removed + [value for value in worn if value.casefold() in lowered] + items))
+            worn = still_worn
+            if state_label:
+                wardrobe["body_state"] = state_label
+            elif operation in ("topless", "bottomless"):
+                wardrobe["body_state"] = operation
+        elif operation in ("wear", "add"):
+            worn = list(dict.fromkeys(worn + items))
+            lowered = {value.casefold() for value in items}
+            removed = [value for value in removed if value.casefold() not in lowered]
+            wardrobe["body_state"] = state_label or "clothed"
+        elif operation in ("replace", "set"):
+            if worn:
+                removed = list(dict.fromkeys(removed + worn))
+            worn = list(dict.fromkeys(items))
+            wardrobe["body_state"] = state_label or ("clothed" if worn else "unknown")
+        elif operation in ("reset_default", "contextual_reset"):
+            worn = list(dict.fromkeys(items))
+            removed = []
+            wardrobe["body_state"] = state_label or ("clothed" if worn else "unknown")
+        elif operation in ("open", "close", "adjust"):
+            wardrobe["body_state"] = state_label or str(wardrobe.get("body_state") or "partial")
+        wardrobe["worn"] = worn
+        wardrobe["removed"] = removed
+        wardrobe["last_event"] = deepcopy(event)
+        states[key]["current_wardrobe"] = wardrobe
+        timeline = list(states[key].get("wardrobe_timeline") or [])
+        timeline.append(deepcopy(event))
+        states[key]["wardrobe_timeline"] = timeline[-50:]
+        states[key]["last_seen_message_id"] = str(current_message_id or "")
+    return states
+
+
+def _last_visual_by_character(descriptors: list[dict]) -> dict:
+    result = {}
+    ordered = sorted(
+        [item for item in descriptors if str(item.get("kind") or "") == "scene"],
+        key=lambda item: int(item.get("slot") or 0),
+    )
+    for descriptor in ordered:
+        for character in descriptor.get("characters") or []:
+            name = str(character.get("name") or "").strip()
+            if not name:
+                continue
+            outfit_state = deepcopy(character.get("outfit_state") or {})
+            if not outfit_state:
+                print(
+                    f"[ILLUST_CONTEXT:CALL2] 캐릭터 outfit_state 누락: "
+                    f"name={name}, slot={descriptor.get('slot')}"
+                )
+            result[name] = {
+                "source_slot": descriptor.get("slot"),
+                "positive_tags": str(character.get("positive") or ""),
+                "outfit_state": outfit_state,
+            }
+    return result
+
+
+def merge_last_visual_into_states(
+    states: dict,
+    last_visual: dict,
+    current_message_id: str,
+    *,
+    allow_visual_initialization: bool,
+) -> dict:
+    result = deepcopy(states or {})
+    for name, visual in (last_visual or {}).items():
+        key = next((
+            existing_key
+            for existing_key, value in result.items()
+            if isinstance(value, dict)
+            and str(value.get("canonical_name") or existing_key).casefold() == str(name).casefold()
+        ), None)
+        if key is None:
+            key = re.sub(r"[^a-z0-9]+", "_", str(name).casefold()).strip("_") or uuid.uuid4().hex[:12]
+            result[key] = {
+                "canonical_name": str(name),
+                "current_wardrobe": {"body_state": "unknown", "worn": [], "removed": []},
+                "wardrobe_timeline": [],
+            }
+        result[key]["last_visual_reference"] = deepcopy(visual)
+        result[key]["last_seen_message_id"] = str(current_message_id or "")
+        outfit_state = visual.get("outfit_state") if isinstance(visual, dict) else None
+        existing_wardrobe = result[key].get("current_wardrobe") or {}
+        existing_body_state = str(existing_wardrobe.get("body_state") or "unknown").lower()
+        if (
+            isinstance(outfit_state, dict)
+            and outfit_state
+            and (allow_visual_initialization or existing_body_state in ("", "unknown"))
+        ):
+            # CALL2-only mode has no semantic wardrobe writer. Keep the generated
+            # state explicitly marked as a visual candidate so the next call can
+            # use it without pretending it came from narrative evidence.
+            candidate = deepcopy(outfit_state)
+            candidate["source"] = "call2_visual_candidate"
+            result[key]["current_wardrobe"] = candidate
+    return result
+
+
 def _strip_nodes(text: str) -> str:
     return re.sub(r"<[^>]+>[\s\S]*?</[^>]+>|<[^>]+/?>", "", str(text or ""), flags=re.I).strip()
 
@@ -1511,6 +2069,7 @@ def _descriptor(raw: dict, kind: str, fallback_slot: int) -> dict:
             "negative": str(ch.get("negative") or "").strip(),
             "name": str(ch.get("name") or "").strip(),
             "position": str(ch.get("position") or "").strip(),
+            "outfit_state": deepcopy(ch.get("outfit_state") or {}),
         })
     slot_value = -1 if kind == "keyvis" else raw.get("slot", fallback_slot)
     try:
@@ -1733,8 +2292,34 @@ def parse_speak_output(text: str, max_entries_per_scene: int | None = None) -> d
     return {slot: "\n".join(lines).strip() for slot, lines in result.items() if lines}
 
 
-def build_call3_scene_selection(descriptors: list[dict]) -> tuple[list[int], str]:
-    """CALL2가 확정한 일반 장면만 CALL3용 payload로 직렬화한다."""
+def build_call3_scene_selection(
+    descriptors: list[dict],
+    slotted_context: str = "",
+) -> tuple[list[int], str]:
+    """Serialize selected scenes and bounded dialogue windows for CALL3."""
+    source = str(slotted_context or "")
+    marker_matches = list(re.finditer(r"\[Slot\s+(\d+)\]", source))
+    marker_by_slot = {int(match.group(1)): match for match in marker_matches}
+    marker_index_by_slot = {
+        int(match.group(1)): index
+        for index, match in enumerate(marker_matches)
+    }
+
+    def dialogue_windows(slot: int) -> tuple[str, str]:
+        marker = marker_by_slot.get(slot)
+        index = marker_index_by_slot.get(slot)
+        if marker is None or index is None:
+            return "", ""
+        previous_end = marker_matches[index - 1].end() if index > 0 else 0
+        next_start = (
+            marker_matches[index + 1].start()
+            if index + 1 < len(marker_matches)
+            else len(source)
+        )
+        upper = re.sub(r"\[Slot\s+\d+\]", "", source[previous_end:marker.start()]).strip()
+        lower = re.sub(r"\[Slot\s+\d+\]", "", source[marker.end():next_start]).strip()
+        return upper[-2_000:], lower[:2_000]
+
     selected_scenes = []
     selected_slots = []
     for descriptor in descriptors:
@@ -1764,12 +2349,16 @@ def build_call3_scene_selection(descriptors: list[dict]) -> tuple[list[int], str
             })
 
         selected_slots.append(slot)
+        upper_window, lower_window = dialogue_windows(slot)
         selected_scenes.append({
             "slot": slot,
             "scene": str(descriptor.get("scene") or "").strip(),
             "camera": str(descriptor.get("camera") or "").strip(),
             "supplement": str(descriptor.get("supplement") or "").strip(),
             "characters": characters,
+            "upper_window": upper_window,
+            "lower_window": lower_window,
+            "dialogue_priority": ["upper_window", "lower_window"],
         })
 
     return selected_slots, json.dumps(
@@ -1850,6 +2439,16 @@ def build_call3_dialogue_system_prompt(
         system_prompt = selected_prompt + "\n\nCharacter names: " + names
     else:
         system_prompt = selected_prompt
+    output_language = str(toggles.get("speak_language") or "한국어").strip() or "한국어"
+    language_instruction = (
+        "# OUTPUT LANGUAGE — HARD REQUIREMENT\n"
+        f"Write every dialogue, thought, inner monologue, and newly created reaction in {output_language}.\n"
+        "Character names, [Scene slot=N] headers, and required output tags may remain in their "
+        "prescribed form. Do not switch the spoken text to another language even when the source "
+        "narrative or examples use another language. Before answering, silently verify that every "
+        f"spoken or thought line follows the required output language: {output_language}."
+    )
+    system_prompt = language_instruction + "\n\n" + system_prompt
     system_prompt += emotion_instruction
     system_prompt += nsfw_instruction
     return prompt_mode, system_prompt
@@ -1868,6 +2467,7 @@ _CALL_TASK_KEYS = {
     "CALL2": "illustration_call2",
     "CALL2-FIX": "illustration_call2_fix",
     "CALL3": "illustration_call3",
+    "CALL3-CORRECTION": "illustration_call3",
     "MULTI-CHAR-MASK": "illustration_multi_char_mask",
 }
 
@@ -1879,6 +2479,7 @@ _CALL_QUEUE_SUBTASK_GROUPS = {
     "CALL2": ("call2", "CALL2 장면/태그 빌드"),
     "CALL2-FIX": ("call2_fix", "CALL2-FIX TOON 교정"),
     "CALL3": ("call3", "CALL3 대사 빌드"),
+    "CALL3-CORRECTION": ("call3_correction", "CALL3 슬롯/언어 교정"),
 }
 
 
@@ -2429,6 +3030,7 @@ async def build_from_context(
     extra_names: str = "",
     backtranslate_names: str = "",
     enable_multi_char_layout: bool = False,
+    history_plan: dict | None = None,
 ) -> dict:
     toggles = merged_toggles(toggles)
     prompts = load_prompt_files()
@@ -2483,10 +3085,20 @@ async def build_from_context(
     if progress:
         await progress(5, "call1", "CALL1 컨텍스트 준비")
     call1_output = ""
+    call1_result: dict = {}
+    wardrobe_events: list[dict] = []
+    reference_variables: dict[str, str] = {}
+    balanced_fallback = False
     enhanced = backtranslated_narrative or _strip_nodes(narrative)
+    resolved_current = enhanced
+    segmented_current, current_segments = _segment_current_context(enhanced)
+    persistent_history = history_plan if isinstance(history_plan, dict) else None
     if toggles.get("call1_enabled"):
-        n = int(toggles["call1_context_turns"])
-        context_slice = chats[max(0, target_index - n):target_index]
+        if persistent_history:
+            context_slice = persistent_history.get("call1_history") or []
+        else:
+            n = int(toggles["call1_context_turns"])
+            context_slice = chats[max(0, target_index - n):target_index]
         # CALL1에는 lb.extra 중 시스템 프롬프트를 빼고 캐릭터 복장 정보만 넘긴다.
         # enhance 프롬프트의 {lb_extra_costume} 자리표시자를 치환한다.
         # (자리표시자가 없으면 복장 정보를 뒤에 덧붙여 정보 유실을 막는다.)
@@ -2496,28 +3108,169 @@ async def build_from_context(
             call1_system = call1_system.replace("{lb_extra_costume}", costume)
         elif costume:
             call1_system = call1_system + "\n\n" + costume
+        call1_system = call1_system.replace("{character_names}", str(backtranslate_names or extra_names or ""))
+        call1_system = call1_system.replace(
+            "{character_state}",
+            json.dumps(
+                (persistent_history or {}).get("state_before") or {},
+                ensure_ascii=False,
+                indent=2,
+            ),
+        )
         call1_messages = [{"role": "system", "content": call1_system}]
-        call1_messages.extend({
-            "role": "assistant" if item["role"] == "char" else "user",
-            "content": _strip_nodes(item["data"]),
-        } for item in context_slice)
-        call1_messages.append({"role": "user", "content": "---\n[Current Response]\n" + enhanced})
+        if persistent_history:
+            call1_messages.append({
+                "role": "user",
+                "content": (
+                    "# PAST HISTORY\n"
+                    + (_history_messages_text(context_slice) or "(empty)")
+                    + "\n\n# CURRENT CONTEXT SEGMENTS\n"
+                    + segmented_current
+                ),
+            })
+        else:
+            call1_messages.extend({
+                "role": "assistant" if item["role"] == "char" else "user",
+                "content": _strip_nodes(item["data"]),
+            } for item in context_slice)
+            call1_messages.append({"role": "user", "content": "---\n[Current Response]\n" + enhanced})
         call1_output = await _call_pipeline_llm("CALL1", _normalize_messages(call1_messages), stream_notify)
-        enhanced = _splice_enhancements(enhanced, call1_output)
+        if persistent_history:
+            parsed_call1 = parse_call1_analysis(
+                call1_output,
+                enhanced,
+                current_segments,
+                str(backtranslate_names or extra_names or ""),
+                history_context=_history_messages_text(context_slice),
+            )
+            if parsed_call1 is None:
+                balanced_fallback = True
+                print(
+                    "[ILLUST_CONTEXT:CALL1] 구조화 분석 실패로 균형형 CALL2 폴백 사용"
+                )
+            else:
+                call1_result = parsed_call1
+                wardrobe_events = list(parsed_call1.get("wardrobe_events") or [])
+                resolved_current, assignment_errors, reference_variables = apply_reference_assignments(
+                    enhanced,
+                    current_segments,
+                    parsed_call1.get("reference_assignments") or [],
+                )
+                if assignment_errors:
+                    parsed_call1["validation_errors"].extend(assignment_errors)
+                    parsed_call1["fallback_required"] = True
+                    print(
+                        f"[ILLUST_CONTEXT:CALL1] 지칭 치환 검증 실패: errors={assignment_errors}"
+                    )
+                balanced_fallback = bool(parsed_call1.get("fallback_required"))
+                if balanced_fallback:
+                    print(
+                        f"[ILLUST_CONTEXT:CALL1] 균형형 폴백 조건 감지: "
+                        f"errors={parsed_call1.get('validation_errors') or []}"
+                    )
+                enhanced = resolved_current
+                slotted, slotted_assignment_errors = apply_reference_assignments_to_slotted(
+                    slotted,
+                    current_segments,
+                    parsed_call1.get("reference_assignments") or [],
+                )
+                if slotted_assignment_errors:
+                    parsed_call1["validation_errors"].extend(slotted_assignment_errors)
+                    parsed_call1["fallback_required"] = True
+                    balanced_fallback = True
+                    print(
+                        f"[ILLUST_CONTEXT:CALL1] 슬롯 보존 지칭 치환 실패: "
+                        f"errors={slotted_assignment_errors}"
+                    )
+        else:
+            enhanced = _splice_enhancements(enhanced, call1_output)
     else:
         print("[ILLUST_CONTEXT:CALL1] 토글로 비활성화됨")
+        balanced_fallback = bool(persistent_history)
 
     # Risu는 결과 메타데이터를 텍스트로 받을 수 없고 generateImage만 반복 호출한다.
     # 결과를 slot 번호로 회수할 수 있도록 슬롯 번호는 원문 문단을 기준으로 고정한다.
     # 모듈이 v13 규칙으로 원문 XML을 보존한 채 먼저 삽입한 슬롯 맵을 우선한다.
     # 없으면 구버전/테스트 호환을 위해 필터된 최신 narrative로 생성한다.
-    if call1_output:
+    if call1_output and not call1_result:
         # 일반 CALL1에는 슬롯을 노출하지 않는다. CALL1이 반환한 Position 범위를
         # 서버가 보관한 슬롯 본문에 투영해 [Slot N]과 [Position]을 함께 보존한다.
         slotted = _merge_call1_output_into_slotted(slotted, call1_output)
     if progress:
         await progress(30, "call2", "CALL2 장면/태그 빌드")
-    history = _build_character_history(extra_reference)
+    current_character_names = [
+        str(item.get("name") or "").strip()
+        for item in call1_result.get("current_characters") or []
+        if isinstance(item, dict) and str(item.get("name") or "").strip()
+    ]
+    call2_reference = str(extra_reference or "")
+    selected_states = {}
+    previous_visual = {}
+    if persistent_history and toggles.get("call1_enabled") and call1_result and not balanced_fallback:
+        call2_reference = _filter_character_reference(extra_reference, current_character_names)
+        state_before = persistent_history.get("state_before") or {}
+        selected_states = _selected_character_states(
+            state_before,
+            current_character_names,
+        )
+        previous_visual = {
+            name: value
+            for name, value in (
+                ((persistent_history.get("record_before") or {}).get("last_pipeline") or {})
+                .get("last_visual_by_character", {})
+            ).items()
+            if str(name).casefold() in {value.casefold() for value in current_character_names}
+        }
+        history_character_names = {
+            str(name or "").strip().casefold()
+            for name in call1_result.get("history_characters") or []
+            if str(name or "").strip()
+        }
+        selected_state_names = {
+            str((value or {}).get("canonical_name") or key).strip().casefold()
+            for key, value in selected_states.items()
+            if isinstance(value, dict)
+        }
+        missing_historical_state = sorted(
+            name
+            for name in current_character_names
+            if name.casefold() in history_character_names
+            and (
+                name.casefold() not in selected_state_names
+                or str(next((
+                    (value.get("current_wardrobe") or {}).get("body_state")
+                    for value in selected_states.values()
+                    if isinstance(value, dict)
+                    and str(value.get("canonical_name") or "").casefold() == name.casefold()
+                ), "unknown") or "unknown").strip().lower() in ("", "unknown")
+            )
+        )
+        if missing_historical_state:
+            balanced_fallback = True
+            call2_reference = str(extra_reference or "")
+            selected_states = deepcopy(state_before)
+            print(
+                "[ILLUST_CONTEXT:CALL2] 과거 등장 캐릭터의 추적 복장이 없어 "
+                f"균형형 히스토리 폴백 사용: characters={missing_historical_state}"
+            )
+        if current_character_names and not call2_reference.strip():
+            balanced_fallback = True
+            call2_reference = str(extra_reference or "")
+            selected_states = deepcopy(state_before)
+            print(
+                "[ILLUST_CONTEXT:CALL2] 선택 캐릭터 사전이 비어 균형형 전체 lb.extra 폴백 사용: "
+                f"characters={current_character_names}"
+            )
+    elif persistent_history:
+        selected_states = deepcopy(persistent_history.get("state_before") or {})
+
+    if persistent_history and balanced_fallback:
+        previous_visual = deepcopy(
+            ((persistent_history.get("record_before") or {}).get("last_pipeline") or {})
+            .get("last_visual_by_character", {})
+        )
+
+    history = _build_character_history(call2_reference)
     call2_system = render_call2_prompt(prompts.get("call2_system", ""), toggles, history)
     call2_thoughts = render_call2_prompt(prompts.get("call2_thoughts", ""), toggles, history)
     call2_messages = [{
@@ -2526,13 +3279,55 @@ async def build_from_context(
             prompts.get("call2_jailbreak", ""), prompts.get("call2_job", ""), call2_system,
         ) if x.strip()),
     }]
-    if extra_reference.strip():
-        call2_messages.append({"role": "user", "content": "# CHARACTER DICTIONARY\n\n" + extra_reference})
-    for item in chats[max(0, target_index - int(toggles["call2_context_turns"])):target_index]:
-        call2_messages.append({
-            "role": "assistant" if item["role"] == "char" else "user",
-            "content": _strip_nodes(item["data"]),
-        })
+    if call2_reference.strip():
+        call2_messages.append({"role": "user", "content": "# CHARACTER DICTIONARY\n\n" + call2_reference})
+    if persistent_history:
+        if selected_states:
+            call2_messages.append({
+                "role": "user",
+                "content": (
+                    "# AUTHORITATIVE WARDROBE CONTINUITY STATE\n"
+                    "Carry this state forward. Absence from a camera frame never means removal.\n\n"
+                    + json.dumps(selected_states, ensure_ascii=False, indent=2)
+                ),
+            })
+        if wardrobe_events:
+            call2_messages.append({
+                "role": "user",
+                "content": (
+                    "# CURRENT WARDROBE EVENT TIMELINE\n"
+                    "Apply each event only from its segment onward.\n\n"
+                    + json.dumps(wardrobe_events, ensure_ascii=False, indent=2)
+                ),
+            })
+        if previous_visual:
+            call2_messages.append({
+                "role": "user",
+                "content": (
+                    "# LAST VISUAL REFERENCE\n"
+                    "Use only appearance/attire continuity; ignore old pose, action, expression and framing.\n\n"
+                    + json.dumps(previous_visual, ensure_ascii=False, indent=2)
+                ),
+            })
+        if balanced_fallback:
+            fallback_text = _history_messages_text(
+                persistent_history.get("call2_fallback_history") or []
+            )
+            if fallback_text:
+                call2_messages.append({
+                    "role": "user",
+                    "content": "# BALANCED FALLBACK PAST HISTORY\n\n" + fallback_text,
+                })
+            print(
+                f"[ILLUST_CONTEXT:CALL2] 균형형 폴백 입력 사용: "
+                f"history_chars={len(fallback_text)}, full_reference={bool(call2_reference.strip())}"
+            )
+    else:
+        for item in chats[max(0, target_index - int(toggles["call2_context_turns"])):target_index]:
+            call2_messages.append({
+                "role": "assistant" if item["role"] == "char" else "user",
+                "content": _strip_nodes(item["data"]),
+            })
     call2_messages.append({"role": "user", "content": "[Last log entry]\n" + slotted})
     call2_messages.append({
         "role": "user",
@@ -2552,6 +3347,68 @@ async def build_from_context(
     )
     descriptors = parse_toon_plan(call2_output, toggles, "CALL2")
 
+    # Optimized CALL1 path deliberately sends only selected character details.  If
+    # CALL2 nevertheless emits another named character, retry once with the
+    # bounded history and full dictionary instead of silently accepting a likely
+    # CALL1 coverage miss.
+    if (
+        descriptors
+        and persistent_history
+        and toggles.get("call1_enabled")
+        and call1_result
+        and not balanced_fallback
+    ):
+        allowed = {name.casefold() for name in current_character_names}
+        observed = {
+            str(character.get("name") or "").strip()
+            for descriptor in descriptors
+            for character in descriptor.get("characters") or []
+            if str(character.get("name") or "").strip()
+        }
+        unexpected = sorted(name for name in observed if name.casefold() not in allowed)
+        if unexpected:
+            balanced_fallback = True
+            print(
+                f"[ILLUST_CONTEXT:CALL2] CALL1 선택 밖 캐릭터 감지, 균형형 1회 재시도: "
+                f"unexpected={unexpected}, allowed={current_character_names}"
+            )
+            retry_messages = deepcopy(call2_messages)
+            retry_messages.extend([{
+                "role": "assistant",
+                "content": call2_output,
+            }, {
+                "role": "user",
+                "content": (
+                    "Character coverage did not match CALL1. Re-evaluate the current context "
+                    "with the bounded past history and full character dictionary below. "
+                    "Preserve established wardrobe state unless a supplied wardrobe event changes it.\n\n"
+                    "# FULL CHARACTER DICTIONARY\n"
+                    + str(extra_reference or "")
+                    + "\n\n# BOUNDED PAST HISTORY\n"
+                    + (_history_messages_text(
+                        persistent_history.get("call2_fallback_history") or []
+                    ) or "(empty)")
+                    + "\n\nReturn the complete corrected <lb-xnai> block only."
+                ),
+            }])
+            retried_output = await _call_pipeline_llm(
+                "CALL2",
+                _normalize_messages(retry_messages),
+                stream_notify,
+                result_validator=lambda result: (
+                    bool(parse_toon_plan(result, toggles, "CALL2-COVERAGE-RETRY-CHECK")),
+                    "CALL2 캐릭터 커버리지 재시도 파싱 실패",
+                ),
+            )
+            retried_descriptors = parse_toon_plan(
+                retried_output,
+                toggles,
+                "CALL2-COVERAGE-RETRY",
+            )
+            if retried_descriptors:
+                call2_output = retried_output
+                descriptors = retried_descriptors
+
     # CALL2 파싱 실패 시 CALL2-FIX(repair.txt)가 TOON 블록을 교정한다.
     # CALL3는 대사 생성 전용이므로 교정은 여기서 먼저 마무리한다.
     call2_fix_output = ""
@@ -2560,7 +3417,7 @@ async def build_from_context(
             await progress(48, "call2_fix", "CALL2-FIX TOON 교정")
         fix_messages = [{
             "role": "system",
-            "content": prompts.get("call2_fix", "") + "\n\n" + extra_reference,
+            "content": prompts.get("call2_fix", "") + "\n\n" + call2_reference,
         }, {
             "role": "user",
             "content": "Repair this malformed output. Return [TOON]...[/TOON].\n\n" + call2_output,
@@ -2590,8 +3447,25 @@ async def build_from_context(
         print("[ILLUST_CONTEXT:CALL2] 슬롯 보정 후 생성할 descriptor가 없음")
         raise RuntimeError("CALL2 결과에 유효한 장면 슬롯이 없습니다")
 
+    last_visual_by_character = _last_visual_by_character(descriptors)
+    character_states_after = deepcopy((persistent_history or {}).get("state_before") or {})
+    if persistent_history:
+        character_states_after = apply_wardrobe_events(
+            character_states_after,
+            call1_result.get("current_characters") or [],
+            wardrobe_events,
+            str(persistent_history.get("current_message_id") or ""),
+            selected_reference=call2_reference,
+        )
+        character_states_after = merge_last_visual_into_states(
+            character_states_after,
+            last_visual_by_character,
+            str(persistent_history.get("current_message_id") or ""),
+            allow_visual_initialization=(not bool(call1_result) or balanced_fallback),
+        )
+
     downstream_chats = deepcopy(chats)
-    if toggles.get("call1_backtranslate_enabled"):
+    if toggles.get("call1_backtranslate_enabled") or (persistent_history and call1_result):
         downstream_chats[target_index]["data"] = enhanced
     downstream_context = context_text(downstream_chats)
     prompt_format = str(toggles.get("prompt_format") or "v3").strip().lower()
@@ -2623,6 +3497,8 @@ async def build_from_context(
     # 동시에 실행되며, CALL2가 최종 선택한 일반 scene만 넘긴다.
     # 대사 말투는 역변환/보강으로 흔들리지 않도록 최신 CHAR 원문을 사용한다.
     call3_output = ""
+    call3_initial_output = ""
+    call3_correction_used = False
     call3_descriptors = [
         descriptor
         for descriptor in descriptors
@@ -2641,34 +3517,54 @@ async def build_from_context(
             extra_names,
         )
         selected_slots, selected_scene_payload = build_call3_scene_selection(
-            call3_descriptors
+            call3_descriptors,
+            slotted if persistent_history else "",
         )
-        original_narrative = _strip_nodes(narrative)
+        original_narrative = (
+            resolved_current
+            if persistent_history and call1_result
+            else _strip_nodes(narrative)
+        )
+        speak_language = str(toggles.get("speak_language") or "한국어").strip() or "한국어"
         speak_messages = [{
             "role": "system",
             "content": call3_system_prompt,
         }]
-        for item in chats[max(0, target_index - int(toggles["call3_context_turns"])):target_index]:
-            speak_messages.append({
-                "role": "assistant" if item["role"] == "char" else "user",
-                "content": _strip_nodes(item["data"]),
-            })
+        if persistent_history:
+            if not call1_result or balanced_fallback:
+                fallback_text = _history_messages_text(
+                    persistent_history.get("call3_fallback_history") or []
+                )
+                if fallback_text:
+                    speak_messages.append({
+                        "role": "user",
+                        "content": "# FALLBACK PAST HISTORY FOR ATTRIBUTION\n\n" + fallback_text,
+                    })
+        else:
+            for item in chats[max(0, target_index - int(toggles["call3_context_turns"])):target_index]:
+                speak_messages.append({
+                    "role": "assistant" if item["role"] == "char" else "user",
+                    "content": _strip_nodes(item["data"]),
+                })
         speak_messages.append({
             "role": "user",
             "content": (
                 f"[Original narrative]\n{original_narrative}"
                 f"\n\n[Selected scenes from CALL2]\n{selected_scene_payload}"
-                f"\n\nLanguage: {toggles.get('speak_language', '한국어')}"
+                f"\n\nLanguage: {speak_language}"
             ),
         })
         call3_output = await _call_pipeline_llm("CALL3", _normalize_messages(speak_messages), stream_notify)
+        call3_initial_output = call3_output
         call3_valid, call3_failure_reason = validate_call3_slot_coverage(
             call3_output,
             selected_slots,
         )
         if not call3_valid:
+            call3_correction_used = True
             print(
-                f"[ILLUST_CONTEXT:CALL3] 선택 slot 완전성 교정 재시도: "
+                f"[ILLUST_CONTEXT:CALL3-CORRECTION] 최초 CALL3 결과의 선택 slot이 불완전해 "
+                f"교정 호출 1회 실행: "
                 f"slots={selected_slots}, reason={call3_failure_reason}"
             )
             retry_messages = deepcopy(speak_messages)
@@ -2683,11 +3579,14 @@ async def build_from_context(
                     "Rewrite the entire output. Emit exactly one [Scene slot=N] block "
                     "for every required slot and no block for any other slot. "
                     "Every block must contain at least one dialogue, thought, or inner "
-                    "monologue entry. Output only the corrected Scene blocks."
+                    "monologue entry. "
+                    f"Write every dialogue and thought in {speak_language}; this language rule is mandatory. "
+                    "Character names, Scene headers, and required tags are the only exceptions. "
+                    "Output only the corrected Scene blocks."
                 ),
             }])
             call3_output = await _call_pipeline_llm(
-                "CALL3",
+                "CALL3-CORRECTION",
                 _normalize_messages(retry_messages),
                 stream_notify,
                 result_validator=lambda result: validate_call3_slot_coverage(
@@ -2757,9 +3656,28 @@ async def build_from_context(
         "backtranslation_chunks": backtranslation_chunks,
         "enhanced_narrative": enhanced,
         "call1_output": call1_output,
+        "call1_result": call1_result,
+        "reference_variables": reference_variables,
+        "wardrobe_events": wardrobe_events,
+        "balanced_fallback_used": balanced_fallback,
         "call2_output": call2_output,
         "call2_fix_output": call2_fix_output,
         "call3_output": call3_output,
+        "call3_initial_output": call3_initial_output,
+        "call3_correction_used": call3_correction_used,
+        "character_states_after": character_states_after,
+        "last_visual_by_character": last_visual_by_character,
+        "history_input_hash": (
+            hashlib.sha256(
+                (
+                    str((persistent_history or {}).get("base_context_hash") or "")
+                    + ":"
+                    + str((persistent_history or {}).get("current_context_hash") or "")
+                ).encode("utf-8")
+            ).hexdigest()
+            if persistent_history
+            else ""
+        ),
         "prompt_format": prompt_format,
         "items": raw_items,
     }

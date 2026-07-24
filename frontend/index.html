@@ -1954,6 +1954,169 @@
             }
         }
 
+        .illust-history {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            padding: 14px 16px;
+        }
+        .illust-history-settings {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(130px, 1fr));
+            gap: 10px;
+            padding: 12px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface2);
+        }
+        .illust-history-field {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+            min-width: 0;
+            font-size: 0.72rem;
+            color: var(--text2);
+        }
+        .illust-history-field input,
+        .illust-history-search {
+            width: 100%;
+            box-sizing: border-box;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: var(--surface);
+            color: var(--text);
+            padding: 8px 10px;
+        }
+        .illust-history-toolbar {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+        .illust-history-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .illust-history-card {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            gap: 10px;
+            align-items: center;
+            padding: 11px 12px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface);
+        }
+        .illust-history-title {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            color: var(--text);
+            font-size: 0.8rem;
+            font-weight: 650;
+        }
+        .illust-history-meta {
+            margin-top: 5px;
+            color: var(--text2);
+            font-size: 0.68rem;
+            line-height: 1.45;
+        }
+        .illust-history-empty {
+            padding: 32px 12px;
+            text-align: center;
+            color: var(--text2);
+            border: 1px dashed var(--border);
+            border-radius: 8px;
+        }
+        #illust-history-detail-modal {
+            z-index: 1700;
+        }
+        .illust-history-detail-content {
+            width: min(1000px, calc(100vw - 32px));
+            max-width: 1000px;
+            max-height: min(92vh, 980px);
+        }
+        .illust-history-detail-meta {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+        .illust-history-detail-meta > div {
+            min-width: 0;
+            padding: 9px 10px;
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            background: var(--surface2);
+            font-size: 0.72rem;
+            color: var(--text2);
+            overflow-wrap: anywhere;
+        }
+        .illust-history-detail-meta strong {
+            display: block;
+            margin-top: 3px;
+            color: var(--text);
+            font-size: 0.78rem;
+        }
+        .illust-history-detail-section {
+            margin-top: 9px;
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            background: var(--surface2);
+        }
+        .illust-history-detail-section > summary {
+            padding: 10px 12px;
+            cursor: pointer;
+            color: var(--text);
+            font-size: 0.78rem;
+            font-weight: 650;
+        }
+        .illust-history-detail-section pre,
+        .illust-history-message pre {
+            margin: 0;
+            padding: 11px 12px;
+            border-top: 1px solid var(--border);
+            background: var(--surface);
+            color: var(--text);
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+            font: 0.72rem/1.55 ui-monospace, SFMono-Regular, Consolas, monospace;
+        }
+        .illust-history-message {
+            margin: 0 10px 10px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            overflow: hidden;
+            background: var(--surface);
+        }
+        .illust-history-message:first-child {
+            margin-top: 2px;
+        }
+        .illust-history-message-head {
+            padding: 7px 10px;
+            color: var(--text2);
+            font-size: 0.68rem;
+            font-weight: 650;
+        }
+        .illust-history-message.is-char .illust-history-message-head {
+            color: var(--accent);
+        }
+        .illust-history-detail-note {
+            padding: 9px 10px;
+            border-radius: 6px;
+            background: var(--surface2);
+            color: var(--text2);
+            font-size: 0.72rem;
+        }
+        @media (max-width: 800px) {
+            .illust-history-settings {
+                grid-template-columns: repeat(2, minmax(120px, 1fr));
+            }
+            .illust-history-detail-meta {
+                grid-template-columns: 1fr;
+            }
+        }
+
         /* 삽화모드 칩 스타일 */
         .illust-chip {
             display: inline-flex;
@@ -10812,7 +10975,7 @@
                         <div class="sg-card">
                             <span class="sg-tag">V3.4.1</span>
                             <h5>원본 라이트보드 백엔드</h5>
-                            <p>소개 글에서 <strong>V3.4.1 백엔드만</strong> 다운로드해주세요. 모듈은 필요하지 않습니다.</p>
+                            <p>소개 글에서 <strong>V3.4.1 백엔드만</strong> 다운로드해주세요.</p>
                             <a class="sg-link" href="https://arca.live/b/characterai/161380443" target="_blank" rel="noopener noreferrer">https://arca.live/b/characterai/161380443</a>
                         </div>
                         <div class="sg-notice">다운로드한 모듈과 플러그인을 RisuAI에 등록한 뒤, 설정에서 모두 켜져 있는지 먼저 확인해주세요.</div>
@@ -40168,6 +40331,7 @@
                     </div>
                     <div class="illust-modal-tabs" role="tablist" aria-label="삽화 프롬프트 생성 메뉴">
                         <button id="illust-tab-logs" class="illust-modal-tab is-active" type="button" role="tab" aria-selected="true" aria-controls="illust-tab-content-logs" onclick="switchIllustModalTab('logs')">생성 로그</button>
+                        <button id="illust-tab-history" class="illust-modal-tab" type="button" role="tab" aria-selected="false" aria-controls="illust-tab-content-history" onclick="switchIllustModalTab('history')">채팅 히스토리</button>
                         <button id="illust-tab-llm" class="illust-modal-tab" type="button" role="tab" aria-selected="false" aria-controls="illust-tab-content-llm" onclick="switchIllustModalTab('llm')">LLM 프롬프트</button>
                         <button id="illust-tab-toggles" class="illust-modal-tab" type="button" role="tab" aria-selected="false" aria-controls="illust-tab-content-toggles" onclick="switchIllustModalTab('toggles')">생성 설정</button>
                     </div>
@@ -40175,19 +40339,41 @@
                         <div id="illust-tab-content-logs">
                             <div style="text-align:center; padding:20px; color:var(--text2);">로딩 중...</div>
                         </div>
+                        <div id="illust-tab-content-history" class="illust-history" style="display:none;">
+                            <div class="illust-history-settings">
+                                <label class="illust-history-field">저장 히스토리 최대 글자수
+                                    <input id="illust-history-storage-max" type="number" min="1000" max="500000" step="1000">
+                                </label>
+                                <label class="illust-history-field">CALL1 히스토리 글자수
+                                    <input id="illust-history-call1" type="number" min="0" max="500000" step="1000">
+                                </label>
+                                <label class="illust-history-field">CALL2 폴백 글자수
+                                    <input id="illust-history-call2" type="number" min="0" max="500000" step="1000">
+                                </label>
+                                <label class="illust-history-field">CALL3 폴백 글자수
+                                    <input id="illust-history-call3" type="number" min="0" max="500000" step="1000">
+                                </label>
+                            </div>
+                            <div class="illust-history-toolbar">
+                                <input id="illust-history-search" class="illust-history-search" type="search" placeholder="내용, 캐릭터, 봇 또는 히스토리 ID 검색" oninput="scheduleIllustrationHistorySearch()">
+                                <button class="illust-settings-action is-secondary" type="button" onclick="loadIllustrationChatHistories()">검색</button>
+                            </div>
+                            <div id="illust-history-status" class="illust-settings-status" aria-live="polite">로드 대기 중</div>
+                            <div id="illust-history-list" class="illust-history-list"></div>
+                        </div>
                         <div id="illust-tab-content-llm" style="display:none; padding:12px 16px;">
                             <div style="margin-bottom:12px; padding:8px; background:rgba(0,0,0,0.06); border-radius:6px; font-size:0.75rem; color:var(--text2); line-height:1.5;">
-                                CHAT을 받은 서버가 CALL1 역번역 → CALL1 컨텍스트 보강 → CALL2 → (파싱 실패 시 CALL2-FIX) → CALL3 순서로 실행합니다. 삽화 프롬프트 본문은 config.json이 아니라 아래 개별 txt 파일에 저장됩니다.
+                                CHAT을 받은 서버가 히스토리 연속성/리롤 판정 → CALL1 역번역 → CALL1 인물·지칭·복장 분석 → CALL2 → (파싱 실패 시 CALL2-FIX) → CALL3 순서로 실행합니다. 삽화 프롬프트 본문은 config.json이 아니라 아래 개별 txt 파일에 저장됩니다.
                                 1. 역번역이 켜져 있으면 <strong>backtranslate.txt</strong>로 현재 응답만 영어로 병렬 번역하며, 과거 CHAT은 번역하지 않습니다.<br>
-                                2. CALL1은 <strong>enhance.txt</strong>와 최근 CHAT으로 역번역된 현재 응답의 시각 힌트를 만듭니다.<br>
-                                3. CALL2 system = <strong>jailbreak.txt</strong> + <strong>job.txt</strong> + <strong>system.txt</strong>, 이후 활성 봇 <strong>lb.extra</strong>와 CHAT·슬롯 본문을 전달합니다.<br>
+                                2. CALL1은 <strong>enhance.txt</strong>와 저장 히스토리로 인물 목록, 지칭 할당, 복장 변화 타임라인을 JSON으로 만듭니다.<br>
+                                3. CALL2 system = <strong>jailbreak.txt</strong> + <strong>job.txt</strong> + <strong>system.txt</strong>이며, CALL1이 안정적이면 현재 캐릭터 정보와 해소된 현재 context만 전달합니다. 모호하면 제한된 히스토리와 전체 사전으로 폴백합니다.<br>
                                 4. CALL2 output 지시 = <strong>thoughts.txt</strong> + <strong>format.txt</strong>, 선택적으로 <strong>prefill.txt</strong>를 사용합니다.<br>
                                 5. CALL2 파싱이 실패하면 <strong>repair.txt</strong>(CALL2-FIX)가 TOON 블록을 교정합니다. CALL3는 생성 설정에서 선택한 <strong>speak.txt</strong> 또는 <strong>manga.txt</strong>로 대사만 생성합니다.<br>
                                 <strong>preset.txt</strong>는 V3의 <code>[SETUP]/[CHAR]/[SUPPLEMENT]</code> RAW 입력 템플릿과 공통 부정 프롬프트를 담습니다. V1을 선택하면 서버가 같은 장면을 <code>[ILXL]/[UPSCALE]</code> 입력 형태로 생성합니다.
                             </div>
                             <div style="display:flex; gap:5px; margin:0 0 10px;">
                                 <button id="illust-call-tab-backtranslate" onclick="switchIllustCallTab('backtranslate')" style="padding:6px 14px; border:1px solid var(--border); border-radius:5px; background:var(--accent); color:#fff; cursor:pointer;">CALL1 역번역</button>
-                                <button id="illust-call-tab-call1" onclick="switchIllustCallTab('call1')" style="padding:6px 14px; border:1px solid var(--border); border-radius:5px; background:var(--surface2); color:var(--text); cursor:pointer;">CALL1 보강</button>
+                                <button id="illust-call-tab-call1" onclick="switchIllustCallTab('call1')" style="padding:6px 14px; border:1px solid var(--border); border-radius:5px; background:var(--surface2); color:var(--text); cursor:pointer;">CALL1 분석</button>
                                 <button id="illust-call-tab-call2" onclick="switchIllustCallTab('call2')" style="padding:6px 14px; border:1px solid var(--border); border-radius:5px; background:var(--surface2); color:var(--text); cursor:pointer;">CALL2</button>
                                 <button id="illust-call-tab-call3" onclick="switchIllustCallTab('call3')" style="padding:6px 14px; border:1px solid var(--border); border-radius:5px; background:var(--surface2); color:var(--text); cursor:pointer;">CALL3</button>
                             </div>
@@ -40200,7 +40386,7 @@
                             </div>
                             <div id="illust-call-content-call1" style="display:none;">
                                 <details open style="margin-bottom:10px; border:1px solid var(--border); border-radius:6px; padding:8px;">
-                                    <summary style="cursor:pointer; font-size:0.8rem; font-weight:600;">📝 enhance.txt (컨텍스트 보강)</summary>
+                                    <summary style="cursor:pointer; font-size:0.8rem; font-weight:600;">📝 enhance.txt (인물·지칭·복장 상태 분석)</summary>
                                     <textarea id="lighbd-prompt-call1_enhance" data-lighbd-prompt="call1_enhance" style="width:100%; height:300px; margin-top:6px; font-family:monospace; font-size:0.72rem; padding:6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); resize:vertical;"></textarea>
                                 </details>
                             </div>
@@ -40271,6 +40457,12 @@
                         <button onclick="saveLighbdPrompts()" style="background:var(--accent); color:#fff; border:none; padding:6px 16px; border-radius:4px; cursor:pointer;">💾 저장</button>
                         <button onclick="document.getElementById('illust-log-modal').classList.remove('visible')" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:6px 16px; border-radius:4px; cursor:pointer;">닫기</button>
                     </div>
+                    <div class="modal-footer illust-settings-footer" id="illust-log-footer-history" style="display:none;">
+                        <span style="flex:1; font-size:0.72rem; color:var(--text2);">삭제한 히스토리는 workflow_backup의 trash 폴더로 이동되어 복구할 수 있습니다.</span>
+                        <button class="illust-settings-action is-secondary" type="button" onclick="loadIllustrationChatHistories()">새로고침</button>
+                        <button id="illust-history-save" class="illust-settings-action is-primary" type="button" onclick="saveIllustrationHistorySettings()">글자수 설정 저장</button>
+                        <button class="illust-settings-action" type="button" onclick="document.getElementById('illust-log-modal').classList.remove('visible')">닫기</button>
+                    </div>
                     <div class="modal-footer illust-settings-footer" id="illust-log-footer-toggles" hidden>
                         <span id="illust-toggle-status" class="illust-settings-status" aria-live="polite">로드 대기 중</span>
                         <button class="illust-settings-action is-secondary" type="button" onclick="loadIllustrationContextToggles()">다시 불러오기</button>
@@ -40291,30 +40483,36 @@
 
         function switchIllustModalTab(tab) {
             const logs = document.getElementById('illust-tab-logs');
+            const history = document.getElementById('illust-tab-history');
             const llm = document.getElementById('illust-tab-llm');
             const toggles = document.getElementById('illust-tab-toggles');
             const logsBody = document.getElementById('illust-tab-content-logs');
+            const historyBody = document.getElementById('illust-tab-content-history');
             const llmBody = document.getElementById('illust-tab-content-llm');
             const togglesBody = document.getElementById('illust-tab-content-toggles');
             const logsFooter = document.getElementById('illust-log-footer-logs');
+            const historyFooter = document.getElementById('illust-log-footer-history');
             const llmFooter = document.getElementById('illust-log-footer-llm');
             const togglesFooter = document.getElementById('illust-log-footer-toggles');
-            const requiredElements = [logs, llm, toggles, logsBody, llmBody, togglesBody, logsFooter, llmFooter, togglesFooter];
+            const requiredElements = [logs, history, llm, toggles, logsBody, historyBody, llmBody, togglesBody, logsFooter, historyFooter, llmFooter, togglesFooter];
             if (requiredElements.some(element => !element)) {
                 console.error('[ILLUST_CONTEXT] 삽화 프롬프트 생성 탭 전환에 필요한 요소가 없습니다:', tab);
                 return;
             }
-            for (const [name, button] of [['logs', logs], ['llm', llm], ['toggles', toggles]]) {
+            for (const [name, button] of [['logs', logs], ['history', history], ['llm', llm], ['toggles', toggles]]) {
                 const active = name === tab;
                 button.classList.toggle('is-active', active);
                 button.setAttribute('aria-selected', String(active));
             }
             logsBody.style.display = tab === 'logs' ? '' : 'none';
+            historyBody.style.display = tab === 'history' ? '' : 'none';
             llmBody.style.display = tab === 'llm' ? '' : 'none';
             togglesBody.hidden = tab !== 'toggles';
             logsFooter.style.display = tab === 'logs' ? 'flex' : 'none';
+            historyFooter.style.display = tab === 'history' ? 'flex' : 'none';
             llmFooter.style.display = tab === 'llm' ? 'flex' : 'none';
             togglesFooter.hidden = tab !== 'toggles';
+            if (tab === 'history') loadIllustrationChatHistories();
             if (tab === 'llm') loadLighbdPrompts();
             if (tab === 'toggles') loadIllustrationContextToggles();
         }
@@ -40391,17 +40589,380 @@
             }
         }
 
+        let _illustrationHistorySearchTimer = null;
+        let _illustrationHistorySettingsLoaded = false;
+
+        function _formatIllustrationHistoryTime(value) {
+            const numeric = Number(value || 0);
+            if (!numeric) return '-';
+            try {
+                return new Date(numeric * 1000).toLocaleString();
+            } catch (e) {
+                console.error('[ILLUST_HISTORY] 날짜 표시 실패:', value, e);
+                return '-';
+            }
+        }
+
+        function closeIllustrationChatHistoryDetail() {
+            const modal = document.getElementById('illust-history-detail-modal');
+            if (modal) modal.classList.remove('visible');
+        }
+
+        function _ensureIllustrationChatHistoryDetailModal() {
+            let modal = document.getElementById('illust-history-detail-modal');
+            if (modal) return modal;
+            modal = document.createElement('div');
+            modal.id = 'illust-history-detail-modal';
+            modal.className = 'modal';
+            modal.onclick = event => {
+                if (event.target === modal) closeIllustrationChatHistoryDetail();
+            };
+            modal.innerHTML = `
+                <div class="modal-content illust-history-detail-content" role="dialog" aria-modal="true" aria-labelledby="illust-history-detail-title">
+                    <div class="modal-header">
+                        <div>
+                            <h2 id="illust-history-detail-title">채팅 히스토리 상세</h2>
+                            <div id="illust-history-detail-subtitle" style="margin-top:4px; color:var(--text2); font-size:0.7rem;"></div>
+                        </div>
+                        <button class="modal-close" type="button" onclick="closeIllustrationChatHistoryDetail()">&times;</button>
+                    </div>
+                    <div class="modal-body">
+                        <div id="illust-history-detail-status" class="illust-history-detail-note">불러오는 중...</div>
+                        <div id="illust-history-detail-content" style="display:none;">
+                            <div id="illust-history-detail-meta" class="illust-history-detail-meta"></div>
+                            <details class="illust-history-detail-section" open>
+                                <summary>원문 CHAT 메시지</summary>
+                                <div id="illust-history-detail-messages"></div>
+                            </details>
+                            <details class="illust-history-detail-section" open>
+                                <summary>캐릭터 복장 추적 상태</summary>
+                                <pre id="illust-history-detail-characters"></pre>
+                            </details>
+                            <details class="illust-history-detail-section">
+                                <summary>현재 턴·연속성·리롤 상태</summary>
+                                <pre id="illust-history-detail-active-turn"></pre>
+                            </details>
+                            <details class="illust-history-detail-section">
+                                <summary>CALL1 구조화 결과</summary>
+                                <pre id="illust-history-detail-call1"></pre>
+                            </details>
+                            <details class="illust-history-detail-section">
+                                <summary>CALL2 출력</summary>
+                                <pre id="illust-history-detail-call2"></pre>
+                            </details>
+                            <details class="illust-history-detail-section">
+                                <summary>CALL2-FIX 출력</summary>
+                                <pre id="illust-history-detail-call2-fix"></pre>
+                            </details>
+                            <details class="illust-history-detail-section">
+                                <summary>CALL3 최초 출력</summary>
+                                <pre id="illust-history-detail-call3-initial"></pre>
+                            </details>
+                            <details class="illust-history-detail-section" open>
+                                <summary>CALL3 최종 출력</summary>
+                                <pre id="illust-history-detail-call3-final"></pre>
+                            </details>
+                            <details class="illust-history-detail-section">
+                                <summary>복장 사건·마지막 시각 참조</summary>
+                                <pre id="illust-history-detail-wardrobe"></pre>
+                            </details>
+                            <details class="illust-history-detail-section">
+                                <summary>리롤 보관 기록</summary>
+                                <pre id="illust-history-detail-rerolls"></pre>
+                            </details>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <span id="illust-history-detail-call3-note" style="flex:1; color:var(--text2); font-size:0.72rem;"></span>
+                        <button class="illust-settings-action" type="button" onclick="closeIllustrationChatHistoryDetail()">닫기</button>
+                    </div>
+                </div>`;
+            document.body.appendChild(modal);
+            return modal;
+        }
+
+        function _illustrationHistoryJson(value) {
+            try {
+                return JSON.stringify(value ?? {}, null, 2);
+            } catch (e) {
+                console.error('[ILLUST_HISTORY] 상세 JSON 표시 실패:', e, value);
+                return String(value ?? '');
+            }
+        }
+
+        function _setIllustrationHistoryDetailText(id, value, jsonValue = false) {
+            const element = document.getElementById(id);
+            if (!element) {
+                console.error('[ILLUST_HISTORY] 상세 표시 요소가 없습니다:', id);
+                return;
+            }
+            const rendered = jsonValue ? _illustrationHistoryJson(value) : String(value ?? '');
+            element.textContent = rendered || '(없음)';
+        }
+
+        function _renderIllustrationChatHistoryDetail(record) {
+            const meta = document.getElementById('illust-history-detail-meta');
+            const messagesRoot = document.getElementById('illust-history-detail-messages');
+            const content = document.getElementById('illust-history-detail-content');
+            const status = document.getElementById('illust-history-detail-status');
+            if (!meta || !messagesRoot || !content || !status) {
+                console.error('[ILLUST_HISTORY] 상세 모달 내용 요소가 준비되지 않았습니다.');
+                return;
+            }
+            const source = record?.source || {};
+            const activeTurn = record?.active_turn || {};
+            const pipelineResult = record?.last_pipeline || {};
+            const metadata = [
+                ['히스토리 ID', record?.history_id || '-'],
+                ['봇', source.bot_name || '미지정'],
+                ['저장 크기', `${Number(record?.stored_chars || 0).toLocaleString()}자`],
+                ['메시지', `${Array.isArray(record?.messages) ? record.messages.length : 0}개`],
+                ['리비전', Number(record?.revision || 0)],
+                ['최근 갱신', _formatIllustrationHistoryTime(record?.updated_at)],
+                ['최근 동작', activeTurn.operation || '-'],
+                ['리롤', `${Number(activeTurn.reroll_index || 0)}회`],
+                ['파이프라인', pipelineResult.status || '-'],
+            ];
+            meta.replaceChildren();
+            for (const [label, value] of metadata) {
+                const card = document.createElement('div');
+                const labelNode = document.createElement('span');
+                const valueNode = document.createElement('strong');
+                labelNode.textContent = label;
+                valueNode.textContent = String(value);
+                card.append(labelNode, valueNode);
+                meta.appendChild(card);
+            }
+
+            messagesRoot.replaceChildren();
+            const messages = Array.isArray(record?.messages) ? record.messages : [];
+            if (!messages.length) {
+                const empty = document.createElement('div');
+                empty.className = 'illust-history-detail-note';
+                empty.style.margin = '0 10px 10px';
+                empty.textContent = '저장된 원문 메시지가 없습니다.';
+                messagesRoot.appendChild(empty);
+            }
+            messages.forEach((message, index) => {
+                const article = document.createElement('article');
+                const role = String(message?.role || 'user').toLowerCase();
+                article.className = 'illust-history-message' + (role === 'char' ? ' is-char' : '');
+                const head = document.createElement('div');
+                head.className = 'illust-history-message-head';
+                const trimmed = Number(message?.trimmed_prefix_chars || 0);
+                head.textContent = `${index + 1}. ${role === 'char' ? 'CHAR' : 'USER'}`
+                    + (trimmed ? ` · 앞 ${trimmed.toLocaleString()}자 잘림` : '')
+                    + (message?.id ? ` · ${message.id}` : '');
+                const body = document.createElement('pre');
+                body.textContent = String(message?.content || '');
+                article.append(head, body);
+                messagesRoot.appendChild(article);
+            });
+
+            _setIllustrationHistoryDetailText('illust-history-detail-characters', record?.characters || {}, true);
+            _setIllustrationHistoryDetailText('illust-history-detail-active-turn', activeTurn, true);
+            _setIllustrationHistoryDetailText('illust-history-detail-call1', pipelineResult.call1_result || {}, true);
+            _setIllustrationHistoryDetailText('illust-history-detail-call2', pipelineResult.call2_out || '');
+            _setIllustrationHistoryDetailText('illust-history-detail-call2-fix', pipelineResult.call2_fix_out || '');
+            _setIllustrationHistoryDetailText('illust-history-detail-call3-initial', pipelineResult.call3_initial_out || '');
+            _setIllustrationHistoryDetailText('illust-history-detail-call3-final', pipelineResult.call3_out || '');
+            _setIllustrationHistoryDetailText('illust-history-detail-wardrobe', {
+                wardrobe_events: pipelineResult.wardrobe_events || [],
+                last_visual_by_character: pipelineResult.last_visual_by_character || {},
+            }, true);
+            _setIllustrationHistoryDetailText('illust-history-detail-rerolls', record?.reroll_archive || [], true);
+            _setIllustrationHistoryDetailText(
+                'illust-history-detail-call3-note',
+                pipelineResult.call3_out
+                    ? (pipelineResult.call3_correction_used
+                        ? 'CALL3: 최초 생성 1회 + 슬롯 완전성 교정 1회'
+                        : 'CALL3: 최초 생성 1회 · 교정 호출 없음')
+                    : 'CALL3 출력 없음',
+            );
+            _setIllustrationHistoryDetailText('illust-history-detail-subtitle', record?.title || '');
+            status.style.display = 'none';
+            content.style.display = '';
+        }
+
+        async function openIllustrationChatHistory(historyId) {
+            if (!historyId) {
+                console.error('[ILLUST_HISTORY] 열람할 historyId가 비어 있습니다.');
+                return;
+            }
+            const modal = _ensureIllustrationChatHistoryDetailModal();
+            const status = document.getElementById('illust-history-detail-status');
+            const content = document.getElementById('illust-history-detail-content');
+            modal.dataset.historyId = historyId;
+            modal.classList.add('visible');
+            if (status) {
+                status.style.display = '';
+                status.textContent = '히스토리 상세 내용을 불러오는 중...';
+            }
+            if (content) content.style.display = 'none';
+            try {
+                const response = await fetch('/api/illustration_context/chat-histories/' + encodeURIComponent(historyId));
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.error || ('HTTP ' + response.status));
+                if (modal.dataset.historyId !== historyId) return;
+                _renderIllustrationChatHistoryDetail(data.history || {});
+            } catch (e) {
+                console.error('[ILLUST_HISTORY] 상세 로드 실패:', e);
+                if (status) status.textContent = '상세 로드 실패: ' + (e.message || e);
+            }
+        }
+
+        function renderIllustrationChatHistories(records) {
+            const list = document.getElementById('illust-history-list');
+            if (!list) {
+                console.error('[ILLUST_HISTORY] 목록 표시 요소가 없습니다.');
+                return;
+            }
+            if (!Array.isArray(records) || records.length === 0) {
+                list.innerHTML = '<div class="illust-history-empty">저장된 채팅 히스토리가 없습니다.</div>';
+                return;
+            }
+            list.innerHTML = records.map(item => {
+                const title = item.title || '(제목 없는 히스토리)';
+                const operationLabels = {
+                    new: '신규', append: '연속 갱신', reroll: '리롤 교체', duplicate: '중복 재실행',
+                };
+                const operation = operationLabels[item.last_operation] || item.last_operation || '-';
+                return `
+                    <article class="illust-history-card">
+                        <div style="min-width:0;">
+                            <div class="illust-history-title" title="${escapeHtml(title)}">${escapeHtml(title)}</div>
+                            <div class="illust-history-meta">
+                                ${escapeHtml(item.bot_name || '봇 미지정')} · ${Number(item.stored_chars || 0).toLocaleString()}자 · 메시지 ${Number(item.message_count || 0)}개 · 캐릭터 ${Number(item.character_count || 0)}명<br>
+                                ${escapeHtml(operation)} · 리롤 ${Number(item.reroll_index || 0)}회 · ${escapeHtml(item.pipeline_status || '-')} · ${escapeHtml(_formatIllustrationHistoryTime(item.updated_at))}<br>
+                                <code>${escapeHtml(item.history_id || '')}</code>
+                            </div>
+                        </div>
+                        <div style="display:flex; gap:6px; align-items:center;">
+                            <button class="illust-settings-action is-secondary" type="button" onclick="openIllustrationChatHistory('${escapeHtml(item.history_id || '')}')">보기</button>
+                            <button class="illust-settings-action" type="button" style="color:var(--danger, #e45858);" onclick="deleteIllustrationChatHistory('${escapeHtml(item.history_id || '')}')">삭제</button>
+                        </div>
+                    </article>`;
+            }).join('');
+        }
+
+        function _applyIllustrationHistorySettings(settings) {
+            const map = {
+                'illust-history-storage-max': 'storage_max_chars',
+                'illust-history-call1': 'call1_history_chars',
+                'illust-history-call2': 'call2_fallback_history_chars',
+                'illust-history-call3': 'call3_fallback_history_chars',
+            };
+            for (const [id, key] of Object.entries(map)) {
+                const input = document.getElementById(id);
+                if (!input) {
+                    console.error('[ILLUST_HISTORY] 설정 입력 요소가 없습니다:', id);
+                    continue;
+                }
+                input.value = Number(settings?.[key] ?? 0);
+            }
+            _illustrationHistorySettingsLoaded = true;
+        }
+
+        async function loadIllustrationChatHistories() {
+            const status = document.getElementById('illust-history-status');
+            const search = document.getElementById('illust-history-search');
+            if (!status || !search) {
+                console.error('[ILLUST_HISTORY] 검색 UI가 준비되지 않았습니다.');
+                return;
+            }
+            status.textContent = '히스토리 검색 중...';
+            status.classList.remove('is-error');
+            try {
+                const response = await fetch('/api/illustration_context/chat-histories?limit=200&query=' + encodeURIComponent(search.value || ''));
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.error || ('HTTP ' + response.status));
+                renderIllustrationChatHistories(data.histories || []);
+                if (!_illustrationHistorySettingsLoaded) _applyIllustrationHistorySettings(data.settings || {});
+                status.textContent = `${Number(data.count || 0)}개 히스토리 표시`;
+            } catch (e) {
+                console.error('[ILLUST_HISTORY] 목록 로드 실패:', e);
+                status.textContent = '로드 실패: ' + (e.message || e);
+                status.classList.add('is-error');
+            }
+        }
+
+        function scheduleIllustrationHistorySearch() {
+            if (_illustrationHistorySearchTimer) clearTimeout(_illustrationHistorySearchTimer);
+            _illustrationHistorySearchTimer = setTimeout(() => {
+                _illustrationHistorySearchTimer = null;
+                loadIllustrationChatHistories();
+            }, 300);
+        }
+
+        async function deleteIllustrationChatHistory(historyId) {
+            if (!historyId) {
+                console.error('[ILLUST_HISTORY] 삭제할 historyId가 비어 있습니다.');
+                return;
+            }
+            if (!confirm('이 채팅 히스토리를 삭제할까요? 삭제본은 trash 폴더로 이동됩니다.')) return;
+            try {
+                const response = await fetch('/api/illustration_context/chat-histories/' + encodeURIComponent(historyId), {method: 'DELETE'});
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.error || ('HTTP ' + response.status));
+                const detailModal = document.getElementById('illust-history-detail-modal');
+                if (detailModal?.dataset.historyId === historyId) {
+                    closeIllustrationChatHistoryDetail();
+                }
+                showToast('채팅 히스토리를 휴지통으로 이동했습니다.', 'success');
+                await loadIllustrationChatHistories();
+            } catch (e) {
+                console.error('[ILLUST_HISTORY] 삭제 실패:', e);
+                showToast('채팅 히스토리 삭제 실패: ' + (e.message || e), 'error');
+            }
+        }
+
+        async function saveIllustrationHistorySettings() {
+            const storage = Number(document.getElementById('illust-history-storage-max')?.value || 0);
+            const call1 = Number(document.getElementById('illust-history-call1')?.value || 0);
+            const call2 = Number(document.getElementById('illust-history-call2')?.value || 0);
+            const call3 = Number(document.getElementById('illust-history-call3')?.value || 0);
+            if (!Number.isFinite(storage) || storage < 1000 || [call1, call2, call3].some(value => !Number.isFinite(value) || value < 0)) {
+                showToast('히스토리 글자수 설정을 확인해주세요.', 'error');
+                return;
+            }
+            if ([call1, call2, call3].some(value => value > storage)) {
+                showToast('CALL별 히스토리 글자수는 저장 최대 글자수를 넘을 수 없습니다.', 'error');
+                return;
+            }
+            const button = document.getElementById('illust-history-save');
+            if (button) button.disabled = true;
+            try {
+                const response = await fetch('/api/illustration_context/chat-histories/settings', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({settings: {
+                        storage_max_chars: storage,
+                        call1_history_chars: call1,
+                        call2_fallback_history_chars: call2,
+                        call3_fallback_history_chars: call3,
+                    }}),
+                });
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.error || ('HTTP ' + response.status));
+                _applyIllustrationHistorySettings(data.settings || {});
+                showToast('채팅 히스토리 글자수 설정을 저장했습니다.', 'success');
+                await loadIllustrationChatHistories();
+            } catch (e) {
+                console.error('[ILLUST_HISTORY] 설정 저장 실패:', e);
+                showToast('히스토리 설정 저장 실패: ' + (e.message || e), 'error');
+            } finally {
+                if (button) button.disabled = false;
+            }
+        }
+
         const ILLUSTRATION_CONTEXT_TOGGLE_GROUPS = [
             {
                 key: 'pipeline', title: '파이프라인',
-                description: '장면을 분석하고 대사를 생성하는 LLM 호출 범위와 최종 RAW 프롬프트 출력 구조를 설정합니다.',
+                description: '인물·복장 분석과 대사 생성 단계, 최종 RAW 프롬프트 출력 구조를 설정합니다. 히스토리 글자수는 채팅 히스토리 탭에서 관리합니다.',
                 fields: [
                     {key: 'call1_backtranslate_enabled', label: 'CALL1 역번역', type: 'toggle', help: 'CALL1 컨텍스트 보강 전에 현재 응답을 영어로 역번역합니다.'},
-                    {key: 'call1_enabled', label: 'CALL1 컨텍스트 보강', type: 'toggle', help: '최근 대화에서 시각 정보를 먼저 보강합니다.'},
+                    {key: 'call1_enabled', label: 'CALL1 인물·복장 분석', type: 'toggle', help: '히스토리와 현재 context에서 캐릭터, 지칭 대상, 복장 변화 사건을 구조화합니다.'},
                     {key: 'call3_enabled', label: 'CALL3 대사 생성', type: 'toggle', help: 'CALL3 대사(speak/manga) 생성을 켭니다. CALL2 파싱 실패 시 CALL2-FIX 교정은 항상 동작합니다.'},
-                    {key: 'call1_context_turns', label: 'CALL1 최근 메시지 수', type: 'number', min: 0, max: 30, help: 'CALL1에 전달할 최근 대화 수입니다.'},
-                    {key: 'call2_context_turns', label: 'CALL2 최근 메시지 수', type: 'number', min: 0, max: 30, help: 'CALL2에 전달할 최근 대화 수입니다.'},
-                    {key: 'call3_context_turns', label: 'CALL3 최근 메시지 수', type: 'number', min: 0, max: 30, help: 'CALL3 대사 생성에 전달할 최근 대화 수입니다.'},
                     {
                         key: 'prompt_format', label: '프롬프트 입력 형식', type: 'select', stacked: true,
                         help: '후속 처리기가 해석할 RAW 프롬프트 구조를 선택합니다. 챈섭 공급자가 켜져 있으면 챈섭으로 고정됩니다.',
@@ -40564,11 +41125,11 @@
         function _renderIllustrationSettingsGroupFields(group) {
             if (group.key === 'pipeline') {
                 return `
-                    ${group.fields.slice(0, 6).map(field => _renderIllustrationContextField(field)).join('')}
+                    ${group.fields.slice(0, 3).map(field => _renderIllustrationContextField(field)).join('')}
                     <h4 class="illust-settings-subheading">프롬프트 출력</h4>
-                    ${_renderIllustrationContextField(group.fields[6])}
+                    ${_renderIllustrationContextField(group.fields[3])}
                     <div class="illust-settings-paired" aria-label="프롬프트 추가 메모">
-                        ${group.fields.slice(7).map(field => _renderIllustrationContextField(field)).join('')}
+                        ${group.fields.slice(4).map(field => _renderIllustrationContextField(field)).join('')}
                     </div>`;
             }
             if (group.key === 'dialogue') {
