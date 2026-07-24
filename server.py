@@ -1285,15 +1285,33 @@ async def save_backup(
     original_workflow_snapshot=_BACKUP_SNAPSHOT_UNSET,
     api_workflow_snapshot=_BACKUP_SNAPSHOT_UNSET,
     conversion_info_snapshot=_BACKUP_SNAPSHOT_UNSET,
+    illustration_multi_char: dict = None,
 ):
     """이미지(WebP q80 + 원본 워크플로우 메타데이터)와 원본 워크플로우를 백업한다.
     bot_name: 봇/워크플로우 컨텍스트 딱지 (bot 모드일 때 봇 이름).
     gen_method: 생성 방법 딱지 (수동 그리기 / 자동 복원 등). 일반 생성·재생성은 빈칸.
     postprocess_settings: 후처리(vn) 설정 스냅샷. dict이면 [SPEAK] 합성을 이미지에 적용.
     speak_text: 후처리에 쓸 [SPEAK] 원문 (postprocess_settings 있을 때만 의미).
-    *_snapshot: 이미지 생성과 백업이 겹칠 때 해당 이미지 생성 시점의 전역 메타데이터를 고정한다."""
+    *_snapshot: 이미지 생성과 백업이 겹칠 때 해당 이미지 생성 시점의 전역 메타데이터를 고정한다.
+    illustration_multi_char: 2~3인 재생성용 정규화 레이아웃 스냅샷."""
     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     base_name = f"{ts}_{prompt_id[:8]}"
+    try:
+        backup_multi_char = multi_char_mask.normalize_multi_char_snapshot(
+            illustration_multi_char
+        )
+        if backup_multi_char:
+            multi_char_mask.validate_multi_char_prompt_context(
+                positive,
+                backup_multi_char,
+            )
+    except Exception as e:
+        print(
+            f"[BACKUP:MULTI_CHAR] 마스크 스냅샷 검증 실패: "
+            f"prompt={prompt_id}, error={e}"
+        )
+        traceback.print_exc()
+        raise
     backup_original_workflow = (
         original_workflow_snapshot
         if original_workflow_snapshot is not _BACKUP_SNAPSHOT_UNSET
@@ -1432,6 +1450,13 @@ async def save_backup(
         info_to_save["postprocess_settings"] = postprocess_settings
     if speak_text:
         info_to_save["speak_text"] = speak_text
+    if backup_multi_char:
+        info_to_save["illustration_multi_char"] = backup_multi_char
+        print(
+            f"[BACKUP:MULTI_CHAR] 레이아웃 저장: base={base_name}, "
+            f"order={backup_multi_char['character_order']}, "
+            f"fingerprint={backup_multi_char['mask_fingerprint'][:12]}"
+        )
 
     info_path = os.path.join(WORKFLOW_BACKUP_DIR, f"{base_name}_info.json")
     with open(info_path, "w", encoding="utf-8") as f:
@@ -2449,6 +2474,7 @@ async def _finalize_deferred_illustration_prompt(prompt_id: str, speak_text: str
             original_workflow_snapshot=state.get("original_workflow"),
             api_workflow_snapshot=state.get("api_workflow"),
             conversion_info_snapshot=state.get("conversion_info"),
+            illustration_multi_char=state.get("illustration_multi_char"),
         )
 
         save_node_id = entry.get("save_node_id") or "9"
@@ -3000,6 +3026,9 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                 "original_workflow": copy.deepcopy(current_original_workflow),
                 "api_workflow": copy.deepcopy(current_api_workflow),
                 "conversion_info": copy.deepcopy(current_conversion_info),
+                "illustration_multi_char": copy.deepcopy(
+                    queued_multi_char if multi_char_requested else None
+                ),
             }
             print(
                 f"[ILLUST_CONTEXT:POSTPROCESS] 이미지 원본 보류 · 다음 생성 계속: "
@@ -3022,6 +3051,9 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
             speak_text=_speak_text,
             provider=illustration_provider,
             generation_params=_generation_params,
+            illustration_multi_char=(
+                queued_multi_char if multi_char_requested else None
+            ),
         )
 
         # 프록시 응답 설정
@@ -5852,6 +5884,75 @@ def _read_backup_generation(backup_name: str) -> tuple[str, dict]:
         return "comfy", {}
 
 
+def _read_backup_multi_char_context(backup_name: str, source_positive: str) -> dict | None:
+    """백업의 다중 캐릭터 레이아웃을 읽고 프롬프트 지문과 대조한다.
+
+    신규 백업은 _info.json 스냅샷을 사용한다. 스냅샷 도입 전 백업은
+    영속 삽화 세션의 multi_char_layout 중 동일한 SHA-256 지문만 복구한다.
+    """
+    try:
+        payload = multi_char_mask.extract_multi_char_prompt_payload(source_positive)
+        if not isinstance(payload, dict) or payload.get("enable") is not True:
+            return None
+
+        info_path = os.path.join(WORKFLOW_BACKUP_DIR, f"{backup_name}_info.json")
+        saved_context = None
+        if os.path.isfile(info_path):
+            try:
+                with open(info_path, "r", encoding="utf-8") as f:
+                    info = json.load(f)
+                if not isinstance(info, dict):
+                    raise ValueError(
+                        f"백업 info 루트가 object가 아닙니다: {type(info).__name__}"
+                    )
+                saved_context = info.get("illustration_multi_char")
+            except Exception as e:
+                print(
+                    f"[BACKUP:MULTI_CHAR] info 읽기 실패: "
+                    f"backup={backup_name}, path={info_path}, error={e}"
+                )
+                traceback.print_exc()
+                raise ValueError(f"다중 캐릭터 백업 메타데이터를 읽지 못했습니다: {e}") from e
+        else:
+            print(
+                f"[BACKUP:MULTI_CHAR] info 파일 없음, 레거시 세션 복구 시도: "
+                f"backup={backup_name}"
+            )
+
+        if saved_context is not None:
+            snapshot = multi_char_mask.validate_multi_char_prompt_context(
+                source_positive,
+                saved_context,
+            )
+            print(
+                f"[BACKUP:MULTI_CHAR] 저장 레이아웃 로드: backup={backup_name}, "
+                f"order={snapshot['character_order']}, "
+                f"fingerprint={snapshot['mask_fingerprint'][:12]}"
+            )
+            return snapshot
+
+        print(
+            f"[BACKUP:MULTI_CHAR] 저장 레이아웃 없음, 레거시 세션 복구 시도: "
+            f"backup={backup_name}, "
+            f"fingerprint={str(payload.get('mask_fingerprint') or '')[:12]}"
+        )
+        snapshot = multi_char_mask.recover_multi_char_snapshot_from_sessions(
+            illustration_context_pipeline.SESSION_DIR,
+            payload,
+        )
+        return multi_char_mask.validate_multi_char_prompt_context(
+            source_positive,
+            snapshot,
+        )
+    except Exception as e:
+        print(
+            f"[BACKUP:MULTI_CHAR] 레이아웃 복원 실패: "
+            f"backup={backup_name}, error={e}"
+        )
+        traceback.print_exc()
+        raise
+
+
 def _ensure_backup_filter_cache(backup_dir: str) -> dict:
     """필터 캐시를 반환한다. 완전히 구축된 캐시가 있으면 그것을 반환하고,
     없거나 빌드 중이면 백그라운드 빌드를 예약한 뒤 부분 캐시(또는 빈 캐시)를 즉시 반환한다.
@@ -6767,6 +6868,7 @@ async def handle_api_regenerate(request: web.Request) -> web.Response:
             return web.json_response({"error": "프롬프트 파일 없음"}, status=404)
 
         positive, negative = _extract_prompts_from_backup(prompt_path)
+        source_positive = positive
 
         # 강화 프롬프트가 있으면 원본 대신 강화 버전 사용
         enhanced_path = os.path.join(WORKFLOW_BACKUP_DIR, f"{backup_name}_enhanced.txt")
@@ -6785,6 +6887,26 @@ async def handle_api_regenerate(request: web.Request) -> web.Response:
         # 원본 백업의 후처리 설정 스냅샷 + SPEAK 원문 상속 (재생성에 동일 적용)
         src_pp_settings, src_speak_text = _read_backup_postprocess(backup_name)
         src_provider, src_generation_params = _read_backup_generation(backup_name)
+        try:
+            src_multi_char = _read_backup_multi_char_context(
+                backup_name,
+                source_positive,
+            )
+            if src_multi_char:
+                multi_char_mask.validate_multi_char_prompt_context(
+                    positive,
+                    src_multi_char,
+                )
+        except Exception as e:
+            print(
+                f"[REGEN:MULTI_CHAR] 마스크 복원/검증 실패: "
+                f"backup={backup_name}, error={e}"
+            )
+            traceback.print_exc()
+            return web.json_response(
+                {"error": f"다중 캐릭터 마스크를 안전하게 복원하지 못했습니다: {e}"},
+                status=409,
+            )
 
         print(f"[REGEN] 재생성 큐 등록: {backup_name}")
         print(f"[REGEN] 긍정: {positive}")
@@ -6801,6 +6923,7 @@ async def handle_api_regenerate(request: web.Request) -> web.Response:
                 "speak_text": src_speak_text,
                 "provider": src_provider,
                 "generation_params": src_generation_params,
+                "illustration_multi_char": src_multi_char,
             },
             priority=0,
         )
@@ -7011,28 +7134,64 @@ async def handle_api_reschedule_with_modified_prompt(request: web.Request) -> we
         if not modified_positive and not modified_negative:
             return web.json_response({"error": "At least one prompt must be modified"}, status=400)
 
+        prompt_path_json = os.path.join(WORKFLOW_BACKUP_DIR, f"{backup_name}.json")
+        prompt_path_txt = os.path.join(WORKFLOW_BACKUP_DIR, f"{backup_name}.txt")
+        prompt_path = prompt_path_json if os.path.exists(prompt_path_json) else prompt_path_txt
+        if not os.path.isfile(prompt_path):
+            print(f"[RESCHEDULE_MOD] 원본 프롬프트 파일 없음: backup={backup_name}")
+            return web.json_response({"error": "프롬프트 파일 없음"}, status=404)
+        source_positive, source_negative = _extract_prompts_from_backup(prompt_path)
+        effective_positive = modified_positive or source_positive
+        effective_negative = modified_negative or source_negative
+
         # 원본 백업의 bot_name 상속 (같은 봇 딱지)
         src_bot_name = _read_backup_bot_name(backup_name)
         # 원본 백업의 후처리 설정 스냅샷 + SPEAK 원문 상속 (재생성에 동일 적용)
         src_pp_settings, src_speak_text = _read_backup_postprocess(backup_name)
         src_provider, src_generation_params = _read_backup_generation(backup_name)
+        try:
+            src_multi_char = _read_backup_multi_char_context(
+                backup_name,
+                source_positive,
+            )
+            if src_multi_char:
+                multi_char_mask.validate_multi_char_prompt_context(
+                    effective_positive,
+                    src_multi_char,
+                )
+        except Exception as e:
+            print(
+                f"[RESCHEDULE_MOD:MULTI_CHAR] 마스크 복원/검증 실패: "
+                f"backup={backup_name}, error={e}"
+            )
+            traceback.print_exc()
+            return web.json_response(
+                {
+                    "error": (
+                        "다중 캐릭터 수정에서는 인원·순서·마스크 제어 블록을 "
+                        f"유지해야 합니다: {e}"
+                    )
+                },
+                status=409,
+            )
 
         print(f"[RESCHEDULE_MOD] 수정 재생성 큐 등록: {backup_name}")
-        print(f"[RESCHEDULE_MOD] Modified positive: {modified_positive}")
-        print(f"[RESCHEDULE_MOD] Modified negative: {modified_negative}")
+        print(f"[RESCHEDULE_MOD] Modified positive: {effective_positive}")
+        print(f"[RESCHEDULE_MOD] Modified negative: {effective_negative}")
 
         item = await queue_manager.add_item(
             "regenerate",
             f"수정재생성: {backup_name}",
             {
                 "backup_name": backup_name,
-                "positive": modified_positive,
-                "negative": modified_negative,
+                "positive": effective_positive,
+                "negative": effective_negative,
                 "bot_name": src_bot_name or "",
                 "postprocess_settings": src_pp_settings,
                 "speak_text": src_speak_text,
                 "provider": src_provider,
                 "generation_params": src_generation_params,
+                "illustration_multi_char": src_multi_char,
             },
             priority=0,
         )
@@ -7099,6 +7258,7 @@ async def handle_api_llm_edit_prompt(request: web.Request) -> web.Response:
         prefix_sets = {}
         scene_anima = ""
         scene_sdxl = ""
+        multi_char_edit_payload = None
         # V1 파이프라인 상태
         v1_parsed = {}
         v1_char = ""
@@ -7125,6 +7285,30 @@ async def handle_api_llm_edit_prompt(request: web.Request) -> web.Response:
         else:
             # V3: 블럭 파싱
             blocks = llm_prompt_edit.parse_blocks(positive)
+            try:
+                parsed_multi_char = multi_char_mask.extract_multi_char_prompt_payload(
+                    positive
+                )
+                if (
+                    isinstance(parsed_multi_char, dict)
+                    and parsed_multi_char.get("enable") is True
+                ):
+                    multi_char_edit_payload = parsed_multi_char
+                    print(
+                        f"[LLM_EDIT:MULTI_CHAR] 고정 레이아웃 편집 활성화: "
+                        f"name={backup_name}, "
+                        f"order={parsed_multi_char.get('char_name_list')}"
+                    )
+            except Exception as e:
+                print(
+                    f"[LLM_EDIT:MULTI_CHAR] 제어 블록 읽기 실패: "
+                    f"name={backup_name}, error={e}"
+                )
+                traceback.print_exc()
+                return web.json_response(
+                    {"error": f"다중 캐릭터 제어 블록을 읽지 못했습니다: {e}"},
+                    status=400,
+                )
 
             # 3) bot_name 복원({name}_info.json) → 트리거 복원
             info_path = os.path.join(WORKFLOW_BACKUP_DIR, f"{backup_name}_info.json")
@@ -7178,7 +7362,12 @@ async def handle_api_llm_edit_prompt(request: web.Request) -> web.Response:
             messages = llm_prompt_edit.build_v1_llm_messages(
                 direction, v1_char, v1_setup, v1_supplement)
         else:
-            messages = llm_prompt_edit.build_llm_messages(direction, scene_anima, scene_sdxl)
+            messages = llm_prompt_edit.build_llm_messages(
+                direction,
+                scene_anima,
+                scene_sdxl,
+                multi_char_payload=multi_char_edit_payload,
+            )
         # 우하단 LIGHBD LLM 위젯 활성화 — 다른 LLM 서비스(bot_mode 등)와 동일 패턴.
         # raw 전체를 위젯에 띄워 파싱 실패 원인을 즉시 확인 가능하게 한다.
         from modes.lighbd_service import _log_lighbd_history as _log_hist
@@ -7194,10 +7383,15 @@ async def handle_api_llm_edit_prompt(request: web.Request) -> web.Response:
 
         raw = None
         def edit_result_validator(result):
-            return (
-                bool(llm_prompt_edit.parse_llm_json(result)),
-                "삽화 편집 JSON 파싱 실패",
-            )
+            parsed_result = llm_prompt_edit.parse_llm_json(result)
+            if not parsed_result:
+                return False, "삽화 편집 JSON 파싱 실패"
+            if multi_char_edit_payload:
+                return llm_prompt_edit.validate_multi_char_edit_result(
+                    parsed_result,
+                    multi_char_edit_payload,
+                )
+            return True, ""
 
         try:
             if image_b64:

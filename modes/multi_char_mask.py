@@ -16,6 +16,7 @@ from PIL import Image, ImageDraw
 MASK_CHANNELS = ("R", "G", "B")
 DEFAULT_MASK_LOCATION = "region_mask"
 DEFAULT_MASK_SIZE = 1024
+MULTI_CHAR_SNAPSHOT_VERSION = 1
 
 
 def _normalized_name(value: object) -> str:
@@ -177,6 +178,260 @@ def layout_fingerprint(layout: dict) -> str:
         separators=(",", ":"),
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def extract_multi_char_prompt_payload(positive: object) -> dict | None:
+    """빌드 프롬프트의 구조화된 [MULTI_CHAR] JSON을 읽는다.
+
+    자연어 키워드를 판정하지 않고 프롬프트 빌더가 생성한 제어 블록만 파싱한다.
+    블록이 없으면 단일 캐릭터/구형 비다인 프롬프트로 보고 None을 반환한다.
+    """
+    if not isinstance(positive, str):
+        raise ValueError(
+            f"[MULTI_CHAR]를 읽을 positive가 문자열이 아닙니다: {type(positive).__name__}"
+        )
+    header = "[MULTI_CHAR]"
+    lines = positive.splitlines()
+    indexes = [index for index, line in enumerate(lines) if line.strip() == header]
+    if not indexes:
+        return None
+    if len(indexes) != 1:
+        raise ValueError(f"[MULTI_CHAR] 블록이 {len(indexes)}개라 안전하게 해석할 수 없습니다")
+
+    start = indexes[0] + 1
+    payload_lines = []
+    for line in lines[start:]:
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            break
+        payload_lines.append(line)
+    raw_payload = "\n".join(payload_lines).strip()
+    if not raw_payload:
+        raise ValueError("[MULTI_CHAR] JSON이 비어 있습니다")
+    try:
+        payload = json.loads(raw_payload)
+    except Exception as exc:
+        print(f"[MULTI_CHAR:BACKUP] 프롬프트 제어 블록 JSON 파싱 실패: {exc}")
+        traceback.print_exc()
+        raise ValueError(f"[MULTI_CHAR] JSON 파싱 실패: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise ValueError(
+            f"[MULTI_CHAR] JSON 루트가 object가 아닙니다: {type(payload).__name__}"
+        )
+    return payload
+
+
+def normalize_multi_char_snapshot(context: object) -> dict | None:
+    """큐 컨텍스트를 백업 가능한 최소·정규 형식으로 바꾼다."""
+    if context is None:
+        return None
+    if not isinstance(context, dict):
+        raise ValueError(
+            f"다중 캐릭터 컨텍스트가 object가 아닙니다: {type(context).__name__}"
+        )
+    if not context.get("enable"):
+        return None
+
+    expected_names = [
+        str(name or "").strip()
+        for name in (context.get("character_order") or [])
+    ]
+    if not expected_names:
+        expected_names = [
+            str(character.get("name") or "").strip()
+            for character in (context.get("characters") or [])
+            if isinstance(character, dict)
+        ]
+    normalized_layout = validate_multi_char_layout(
+        context.get("layout"),
+        expected_names,
+        require_prompt_separation=False,
+    )
+    normalized_order = list(normalized_layout["character_order"])
+    if [name.casefold() for name in expected_names] != [
+        name.casefold() for name in normalized_order
+    ]:
+        raise ValueError(
+            "다중 캐릭터 선언 순서와 정규화된 마스크 순서가 다릅니다: "
+            f"declared={expected_names}, normalized={normalized_order}"
+        )
+
+    # 재생성 스냅샷에는 고정 마스크에 필요한 기하 정보만 저장한다. 캐릭터별/배경
+    # 프롬프트는 [MULTI_CHAR] 제어 블록이 수정 재생성마다 갱신하므로 중복 저장하지 않는다.
+    mask_layout = {
+        "mask_width": int(normalized_layout.get("mask_width") or DEFAULT_MASK_SIZE),
+        "mask_height": int(normalized_layout.get("mask_height") or DEFAULT_MASK_SIZE),
+        "character_order": normalized_order,
+        "regions": [
+            {
+                "name": str(region.get("name") or ""),
+                "x": float(region.get("x")),
+                "y": float(region.get("y")),
+                "width": float(region.get("width")),
+                "height": float(region.get("height")),
+                "channel": str(region.get("channel") or ""),
+            }
+            for region in normalized_layout["regions"]
+        ],
+    }
+    fingerprint = layout_fingerprint(mask_layout)
+    declared_fingerprint = str(context.get("mask_fingerprint") or "").strip()
+    if declared_fingerprint and declared_fingerprint != fingerprint:
+        raise ValueError(
+            "저장된 마스크 지문과 레이아웃 지문이 다릅니다: "
+            f"declared={declared_fingerprint}, actual={fingerprint}"
+        )
+    return {
+        "version": MULTI_CHAR_SNAPSHOT_VERSION,
+        "enable": True,
+        "char_num": len(normalized_order),
+        "character_order": normalized_order,
+        "mask_location": str(
+            context.get("mask_location") or DEFAULT_MASK_LOCATION
+        ).strip() or DEFAULT_MASK_LOCATION,
+        "mask_fingerprint": fingerprint,
+        "layout": mask_layout,
+    }
+
+
+def validate_multi_char_prompt_context(positive: object, context: object) -> dict:
+    """프롬프트 제어 블록과 백업 마스크 스냅샷이 같은 작업인지 검증한다."""
+    snapshot = normalize_multi_char_snapshot(context)
+    if snapshot is None:
+        raise ValueError("활성화된 다중 캐릭터 마스크 스냅샷이 없습니다")
+    payload = extract_multi_char_prompt_payload(positive)
+    if not isinstance(payload, dict) or payload.get("enable") is not True:
+        raise ValueError("프롬프트의 [MULTI_CHAR] 제어 블록이 활성화되어 있지 않습니다")
+
+    prompt_names = [
+        str(name or "").strip()
+        for name in (payload.get("char_name_list") or [])
+    ]
+    snapshot_names = list(snapshot["character_order"])
+    if [name.casefold() for name in prompt_names] != [
+        name.casefold() for name in snapshot_names
+    ]:
+        raise ValueError(
+            "프롬프트 캐릭터 순서와 마스크 순서가 다릅니다: "
+            f"prompt={prompt_names}, mask={snapshot_names}"
+        )
+    prompt_char_num = payload.get("char_num")
+    if isinstance(prompt_char_num, bool) or prompt_char_num != snapshot["char_num"]:
+        raise ValueError(
+            "프롬프트 캐릭터 수와 마스크 캐릭터 수가 다릅니다: "
+            f"prompt={prompt_char_num!r}, mask={snapshot['char_num']}"
+        )
+    prompt_fingerprint = str(payload.get("mask_fingerprint") or "").strip()
+    if prompt_fingerprint != snapshot["mask_fingerprint"]:
+        raise ValueError(
+            "프롬프트 마스크 지문과 백업 레이아웃 지문이 다릅니다: "
+            f"prompt={prompt_fingerprint!r}, mask={snapshot['mask_fingerprint']!r}"
+        )
+    return snapshot
+
+
+def recover_multi_char_snapshot_from_sessions(
+    session_dir: str,
+    prompt_payload: object,
+    *,
+    mask_location: str = DEFAULT_MASK_LOCATION,
+) -> dict:
+    """구버전 백업의 지문과 일치하는 레이아웃을 영속 세션에서 복구한다."""
+    if not isinstance(prompt_payload, dict) or prompt_payload.get("enable") is not True:
+        raise ValueError("레거시 복구에 활성화된 [MULTI_CHAR] payload가 필요합니다")
+    expected_names = [
+        str(name or "").strip()
+        for name in (prompt_payload.get("char_name_list") or [])
+    ]
+    if not 2 <= len(expected_names) <= len(MASK_CHANNELS) or any(
+        not name for name in expected_names
+    ):
+        raise ValueError(f"레거시 복구 캐릭터 순서가 올바르지 않습니다: {expected_names!r}")
+    expected_fingerprint = str(prompt_payload.get("mask_fingerprint") or "").strip()
+    if len(expected_fingerprint) != 64:
+        raise ValueError(
+            f"레거시 복구 마스크 지문이 올바르지 않습니다: {expected_fingerprint!r}"
+        )
+    root = str(session_dir or "").strip()
+    if not root or not os.path.isdir(root):
+        raise ValueError(f"삽화 세션 폴더가 유효하지 않습니다: {session_dir!r}")
+
+    for entry in sorted(os.scandir(root), key=lambda item: item.name, reverse=True):
+        if not entry.is_file() or not entry.name.lower().endswith(".json"):
+            continue
+        try:
+            with open(entry.path, "r", encoding="utf-8") as fp:
+                session = json.load(fp)
+        except Exception as exc:
+            print(
+                f"[MULTI_CHAR:BACKUP] 레거시 세션 읽기 실패: "
+                f"file={entry.path}, error={exc}"
+            )
+            traceback.print_exc()
+            continue
+        if not isinstance(session, dict):
+            print(
+                f"[MULTI_CHAR:BACKUP] 레거시 세션 형식 오류로 건너뜀: "
+                f"file={entry.path}, type={type(session).__name__}"
+            )
+            continue
+        for item_index, item in enumerate(session.get("items") or []):
+            if not isinstance(item, dict):
+                print(
+                    f"[MULTI_CHAR:BACKUP] 레거시 세션 item 형식 오류로 건너뜀: "
+                    f"file={entry.path}, index={item_index}, type={type(item).__name__}"
+                )
+                continue
+            layout = item.get("multi_char_layout")
+            if not isinstance(layout, dict):
+                continue
+            declared_candidate_names = [
+                str(name or "").strip()
+                for name in (layout.get("character_order") or [])
+            ]
+            candidate_names = declared_candidate_names
+            if not candidate_names:
+                candidate_names = [
+                    str(region.get("name") or "").strip()
+                    for region in (layout.get("regions") or [])
+                    if isinstance(region, dict)
+                ]
+            candidate_keys = [name.casefold() for name in candidate_names]
+            expected_keys = [name.casefold() for name in expected_names]
+            names_match = (
+                candidate_keys == expected_keys
+                if declared_candidate_names
+                else len(candidate_keys) == len(expected_keys)
+                and set(candidate_keys) == set(expected_keys)
+            )
+            if not names_match:
+                continue
+            try:
+                snapshot = normalize_multi_char_snapshot({
+                    "enable": True,
+                    "character_order": expected_names,
+                    "layout": layout,
+                    "mask_location": mask_location,
+                })
+            except Exception as exc:
+                print(
+                    f"[MULTI_CHAR:BACKUP] 지문 후보 레이아웃 검증 실패: "
+                    f"file={entry.path}, index={item_index}, error={exc}"
+                )
+                traceback.print_exc()
+                continue
+            if snapshot and snapshot["mask_fingerprint"] == expected_fingerprint:
+                print(
+                    f"[MULTI_CHAR:BACKUP] 레거시 레이아웃 복구 완료: "
+                    f"file={entry.name}, index={item_index}, "
+                    f"order={snapshot['character_order']}, "
+                    f"fingerprint={expected_fingerprint[:12]}"
+                )
+                return snapshot
+    raise ValueError(
+        "기존 백업의 마스크 레이아웃을 삽화 세션에서 찾지 못했습니다: "
+        f"order={expected_names}, fingerprint={expected_fingerprint}"
+    )
 
 
 def resolve_mask_directory(comfy_input_dir: str, mask_location: str = DEFAULT_MASK_LOCATION) -> str:

@@ -156,6 +156,123 @@ async def test_multi_char_mask_is_prepared_at_illustration_execution_time(monkey
     assert result == {"success": True, "prompt_id": "prompt-id"}
 
 
+def _regenerate_multi_char_fixture():
+    from modes import multi_char_mask
+
+    layout = {
+        "background_prompt": "wide shot, rooftop",
+        "composition_prompt": "two distinct people standing apart",
+        "regions": [
+            {
+                "name": "Left",
+                "character_prompt": "grey hair, holding a chart",
+                "x": 0.0,
+                "y": 0.0,
+                "width": 0.55,
+                "height": 1.0,
+            },
+            {
+                "name": "Right",
+                "character_prompt": "black hair, pointing upward",
+                "x": 0.45,
+                "y": 0.0,
+                "width": 0.55,
+                "height": 1.0,
+            },
+        ],
+    }
+    snapshot = multi_char_mask.normalize_multi_char_snapshot({
+        "enable": True,
+        "character_order": ["Left", "Right"],
+        "layout": layout,
+        "mask_location": "region_mask",
+    })
+    positive = "\n".join([
+        "[MULTI_CHAR]",
+        (
+            '{"enable": true, "char_num": 2, '
+            '"char_name_list": ["Left", "Right"], '
+            f'"mask_fingerprint": "{snapshot["mask_fingerprint"]}"}}'
+        ),
+        "[HRF_ACTIVATE]",
+        "false",
+    ])
+    return snapshot, positive
+
+
+@pytest.mark.asyncio
+async def test_multi_char_mask_is_restored_before_regenerate_and_inherited_by_backup(
+    monkeypatch,
+    tmp_path,
+):
+    from modes import multi_char_mask
+
+    manager = QueueManager()
+    events = []
+    saved = {}
+    input_dir = tmp_path / "input"
+    input_dir.mkdir()
+    manager.get_config = lambda: {"comfy_input_dir": str(input_dir)}
+    snapshot, positive = _regenerate_multi_char_fixture()
+
+    def fake_prepare(comfy_input_dir, context, mask_location):
+        events.append("mask")
+        assert context["mask_fingerprint"] == snapshot["mask_fingerprint"]
+        return str(input_dir / "region_mask" / "region_mask.png")
+
+    async def fake_generate(*args, **kwargs):
+        events.append("generate")
+        return b"generated-image", None
+
+    async def fake_save(*args, **kwargs):
+        events.append("save")
+        saved.update(kwargs)
+        return "new-backup", args[0]
+
+    monkeypatch.setattr(multi_char_mask, "prepare_region_mask", fake_prepare)
+    manager.generate_image_with_prompt = fake_generate
+    manager.save_backup = fake_save
+    item = _item("regenerate", {
+        "backup_name": "old-backup",
+        "positive": positive,
+        "negative": "",
+        "provider": "comfy",
+        "illustration_multi_char": snapshot,
+    })
+
+    result = await manager._handle_regenerate(item)
+
+    assert events == ["mask", "generate", "save"]
+    assert saved["illustration_multi_char"] == snapshot
+    assert result["success"] is True
+
+
+@pytest.mark.asyncio
+async def test_multi_char_regenerate_fails_before_generation_without_mask_snapshot():
+    manager = QueueManager()
+    snapshot, positive = _regenerate_multi_char_fixture()
+    generated = False
+
+    async def fake_generate(*args, **kwargs):
+        nonlocal generated
+        generated = True
+        return b"unexpected", None
+
+    manager.generate_image_with_prompt = fake_generate
+    item = _item("regenerate", {
+        "backup_name": "missing-mask-backup",
+        "positive": positive,
+        "negative": "",
+        "provider": "comfy",
+    })
+
+    with pytest.raises(ValueError, match="마스크 스냅샷"):
+        await manager._handle_regenerate(item)
+
+    assert snapshot["enable"] is True
+    assert generated is False
+
+
 async def _run_process_loop_with_fake_pipeline(manager):
     """_process_loop를 돌리되 _run_item_pipeline을 즉시 완료 처리하는 stub로 교체.
     어떤 GPU 항목이 실제로 실행 차례가 됐는지 executed 리스트로 관찰한다."""

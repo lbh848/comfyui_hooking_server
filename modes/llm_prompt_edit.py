@@ -6,6 +6,8 @@ LLM이 편집하고, 트리거/아티스트/품질/제어 블럭은 백엔드가
 
 핵심 불변량:
 - 제어 블럭([LORA_DATA]/[SEED]/[CACHE_PATH] 등)은 1바이트도 수정하지 않는다.
+  단, 활성 [MULTI_CHAR]의 장면 조건(char/background/composition)은 고정 마스크와
+  동기화해야 하므로 인원·순서·지문을 보존한 채 구조적으로 갱신한다.
 - 트리거/아티스트/품질 토큰은 LLM에 전달하지 않고 백엔드에서 접두부로 보존한다.
 - 3개 주제 블럭은 동일 장면을 공유(supplement는 SDXL 제외) — LLM이 한 번 서술한
   scene_setup/char/supplement 를 백엔드가 3블럭에 일관 주입한다.
@@ -510,7 +512,43 @@ def _substitute_placeholders(template: str, values: dict) -> str:
     return out
 
 
-def build_llm_messages(direction: str, scene_current: str, scene_sdxl: str) -> list:
+def _multi_char_edit_contract(payload: object) -> str:
+    """고정 RGB 레이아웃을 유지하는 다인 편집 계약을 LLM 지시에 추가한다."""
+    if not isinstance(payload, dict) or payload.get("enable") is not True:
+        return ""
+    names = [str(name or "").strip() for name in (payload.get("char_name_list") or [])]
+    informs = [str(value or "").strip() for value in (payload.get("char_inform") or [])]
+    if not 2 <= len(names) <= 3 or len(informs) != len(names):
+        raise ValueError(
+            "MULTI_CHAR 편집 계약의 캐릭터 정보가 올바르지 않습니다: "
+            f"names={names}, informs={len(informs)}"
+        )
+    current_regions = "\n".join(
+        f"{index + 1}. {name}: {info}"
+        for index, (name, info) in enumerate(zip(names, informs))
+    )
+    return (
+        "\n\n## Multi-character regional edit contract (mandatory)\n"
+        "The RGB mask geometry is fixed for this edit. Do not change character count, "
+        "order, or left/right allocation.\n"
+        f"Exact regional order: {json.dumps(names, ensure_ascii=False)}\n"
+        "Current per-character regional prompts:\n"
+        f"{current_regions}\n"
+        f"Current shared background: {str(payload.get('background_prompt') or '').strip()}\n"
+        f"Current shared composition: {str(payload.get('composition_prompt') or '').strip()}\n"
+        "Return the COMPLETE edited values, not deltas. `scene_char` MUST contain exactly "
+        f"{len(names)} non-empty character blocks in the same order, separated by a single "
+        "` | `. Put only shared background/location/lighting in `scene_setup`, and put the "
+        "shared spatial composition/auxiliary description in `scene_supplement`."
+    )
+
+
+def build_llm_messages(
+    direction: str,
+    scene_current: str,
+    scene_sdxl: str,
+    multi_char_payload: dict = None,
+) -> list:
     """LLM(비전) 호출용 messages 빌드 (V3 빌드본).
 
     이미지는 callLLMVision 의 _build_vision_messages 가 마지막 user 메시지에
@@ -525,6 +563,7 @@ def build_llm_messages(direction: str, scene_current: str, scene_sdxl: str) -> l
         "scene_current": scene_current,
         "scene_sdxl": scene_sdxl,
     })
+    user += _multi_char_edit_contract(multi_char_payload)
 
     return [
         {"role": "system", "content": system},
@@ -642,6 +681,91 @@ def _join_tags(*parts) -> str:
     return ", ".join(p.strip() for p in parts if p and p.strip())
 
 
+def validate_multi_char_edit_result(parsed: object, payload: object) -> tuple[bool, str]:
+    """LLM 다인 편집 결과가 고정 R/G/B 순서로 다시 나눌 수 있는지 검사한다."""
+    if not isinstance(payload, dict) or payload.get("enable") is not True:
+        return True, ""
+    scene = _coerce_scene_fields(parsed)
+    names = [str(name or "").strip() for name in (payload.get("char_name_list") or [])]
+    blocks = _split_char_blocks(scene.get("scene_char", ""))
+    if len(blocks) != len(names):
+        reason = (
+            "다인 편집 scene_char 블록 수가 RGB 캐릭터 수와 다릅니다: "
+            f"expected={len(names)}, actual={len(blocks)}, order={names}"
+        )
+        print(f"[LLM_EDIT:MULTI_CHAR] {reason}")
+        return False, reason
+    if any(not block.strip() for block in blocks):
+        reason = f"다인 편집 scene_char에 빈 캐릭터 블록이 있습니다: order={names}"
+        print(f"[LLM_EDIT:MULTI_CHAR] {reason}")
+        return False, reason
+    return True, ""
+
+
+def _sync_multi_char_payload_for_scene(
+    positive: str,
+    blocks: dict,
+    scene: dict,
+) -> str:
+    """LLM 장면 수정 결과를 고정 마스크용 [MULTI_CHAR] 조건에 동기화한다."""
+    raw_payload = blocks.get("MULTI_CHAR", "")
+    if not raw_payload:
+        return positive
+    try:
+        payload = json.loads(raw_payload)
+    except Exception as exc:
+        print(f"[LLM_EDIT:MULTI_CHAR] 원본 제어 블록 JSON 파싱 실패: {exc}")
+        traceback.print_exc()
+        raise ValueError(f"MULTI_CHAR JSON 파싱 실패: {exc}") from exc
+    if not isinstance(payload, dict) or payload.get("enable") is not True:
+        return positive
+
+    valid, reason = validate_multi_char_edit_result(scene, payload)
+    if not valid:
+        raise ValueError(reason)
+    char_blocks = _split_char_blocks(scene.get("scene_char", ""))
+    payload["char_inform"] = char_blocks
+
+    setup = str(scene.get("scene_setup") or "").strip()
+    if setup:
+        old_background = str(payload.get("background_prompt") or "").strip()
+        payload["background_prompt"] = setup
+        shared = payload.get("shared_tag")
+        if not isinstance(shared, dict):
+            raise ValueError("MULTI_CHAR.shared_tag가 object가 아닙니다")
+        before = shared.get("before_char")
+        if not isinstance(before, list):
+            raise ValueError("MULTI_CHAR.shared_tag.before_char가 list가 아닙니다")
+        replaced = False
+        updated_before = []
+        for value in before:
+            text = str(value or "").strip()
+            if old_background and text == old_background:
+                updated_before.append(setup)
+                replaced = True
+            elif text:
+                updated_before.append(text)
+        if not replaced and setup not in updated_before:
+            updated_before.append(setup)
+        shared["before_char"] = updated_before
+
+    supplement = str(scene.get("scene_supplement") or "").strip()
+    if supplement:
+        payload["composition_prompt"] = supplement
+
+    serialized = json.dumps(payload, ensure_ascii=False)
+    pattern = re.compile(r"(^\[MULTI_CHAR\]\r?\n).*$", re.MULTILINE)
+    updated, count = pattern.subn(lambda match: match.group(1) + serialized, positive)
+    if count != 1:
+        raise ValueError(f"[MULTI_CHAR] 제어 블록 치환 수가 1이 아닙니다: {count}")
+    print(
+        f"[LLM_EDIT:MULTI_CHAR] 고정 마스크 장면 조건 동기화 완료: "
+        f"order={payload.get('char_name_list')}, "
+        f"background={bool(setup)}, composition={bool(supplement)}"
+    )
+    return updated
+
+
 def reassemble(positive: str, blocks: dict, triggers: dict, parsed: dict) -> tuple:
     """LLM 결과를 3개 주제 블럭에 주입해 positive 를 재조립.
 
@@ -709,6 +833,7 @@ def reassemble(positive: str, blocks: dict, triggers: dict, parsed: dict) -> tup
         return header_line + new_content
 
     reassembled = _SUBJECT_RE.sub(_repl, positive)
+    reassembled = _sync_multi_char_payload_for_scene(reassembled, blocks, scene)
     return reassembled, scene
 
 

@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 import sys
 
 import pytest
@@ -7,10 +8,14 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from modes.multi_char_mask import (
+    extract_multi_char_prompt_payload,
     layout_fingerprint,
+    normalize_multi_char_snapshot,
     prepare_region_mask,
+    recover_multi_char_snapshot_from_sessions,
     render_region_mask,
     resolve_mask_directory,
+    validate_multi_char_prompt_context,
     validate_multi_char_layout,
 )
 
@@ -22,6 +27,43 @@ def _layout():
             {"name": "Left", "x": 0.0, "y": 0.0, "width": 0.6, "height": 1.0},
         ]
     }
+
+
+def _separated_layout():
+    layout = _layout()
+    layout["background_prompt"] = "wide shot, rooftop, blue-hour city lights"
+    layout["composition_prompt"] = (
+        "two distinct women, one on the left holding a chart, one on the right pointing upward"
+    )
+    layout["regions"][0]["character_prompt"] = "black hair, purple eyes, pointing upward"
+    layout["regions"][1]["character_prompt"] = "grey hair, aqua eyes, holding a star chart"
+    return layout
+
+
+def _snapshot():
+    return normalize_multi_char_snapshot({
+        "enable": True,
+        "character_order": ["Left", "Right"],
+        "layout": _separated_layout(),
+        "mask_location": "region_mask",
+    })
+
+
+def _positive_for(snapshot, *, names=None, fingerprint=None):
+    payload = {
+        "enable": True,
+        "char_num": len(names or snapshot["character_order"]),
+        "char_name_list": names or snapshot["character_order"],
+        "mask_fingerprint": fingerprint or snapshot["mask_fingerprint"],
+    }
+    return "\n".join([
+        "[ANIMA_CONTENT]",
+        "scene tags",
+        "[MULTI_CHAR]",
+        json.dumps(payload, ensure_ascii=False),
+        "[HRF_ACTIVATE]",
+        "false",
+    ])
 
 
 def test_layout_is_sorted_left_to_right_and_overlap_is_preserved():
@@ -37,13 +79,7 @@ def test_layout_is_sorted_left_to_right_and_overlap_is_preserved():
 
 
 def test_layout_prompt_separation_is_required_and_preserved_when_requested():
-    separated = _layout()
-    separated["background_prompt"] = "wide shot, rooftop, blue-hour city lights"
-    separated["composition_prompt"] = (
-        "two distinct women, one on the left holding a chart, one on the right pointing upward"
-    )
-    separated["regions"][0]["character_prompt"] = "black hair, purple eyes, pointing upward"
-    separated["regions"][1]["character_prompt"] = "grey hair, aqua eyes, holding a star chart"
+    separated = _separated_layout()
 
     normalized = validate_multi_char_layout(
         separated,
@@ -124,3 +160,97 @@ def test_mask_location_cannot_escape_input_directory(tmp_path):
 
     with pytest.raises(ValueError, match="비어"):
         resolve_mask_directory("", "region_mask")
+
+
+def test_multi_char_snapshot_and_prompt_control_block_must_match():
+    snapshot = _snapshot()
+    positive = _positive_for(snapshot)
+
+    payload = extract_multi_char_prompt_payload(positive)
+    validated = validate_multi_char_prompt_context(positive, snapshot)
+
+    assert payload["char_name_list"] == ["Left", "Right"]
+    assert validated == snapshot
+    assert validated["layout"]["character_order"] == ["Left", "Right"]
+
+    with pytest.raises(ValueError, match="캐릭터 순서"):
+        validate_multi_char_prompt_context(
+            _positive_for(snapshot, names=["Right", "Left"]),
+            snapshot,
+        )
+    with pytest.raises(ValueError, match="지문"):
+        validate_multi_char_prompt_context(
+            _positive_for(snapshot, fingerprint="0" * 64),
+            snapshot,
+        )
+
+
+def test_multi_char_snapshot_rejects_changed_coordinates_with_old_fingerprint():
+    snapshot = _snapshot()
+    changed = _separated_layout()
+    changed["regions"][1]["width"] = 0.5
+
+    with pytest.raises(ValueError, match="지문"):
+        normalize_multi_char_snapshot({
+            "enable": True,
+            "character_order": ["Left", "Right"],
+            "layout": changed,
+            "mask_fingerprint": snapshot["mask_fingerprint"],
+        })
+
+
+def test_three_character_snapshot_preserves_rgb_order():
+    layout = {
+        "regions": [
+            {"name": "Center", "x": 0.3, "y": 0.0, "width": 0.4, "height": 1.0},
+            {"name": "Right", "x": 0.65, "y": 0.0, "width": 0.35, "height": 1.0},
+            {"name": "Left", "x": 0.0, "y": 0.0, "width": 0.35, "height": 1.0},
+        ]
+    }
+    snapshot = normalize_multi_char_snapshot({
+        "enable": True,
+        "character_order": ["Left", "Center", "Right"],
+        "layout": layout,
+    })
+    positive = _positive_for(snapshot)
+
+    validated = validate_multi_char_prompt_context(positive, snapshot)
+    image = render_region_mask(validated["layout"], width=12, height=3)
+
+    assert validated["character_order"] == ["Left", "Center", "Right"]
+    assert [region["channel"] for region in validated["layout"]["regions"]] == [
+        "R",
+        "G",
+        "B",
+    ]
+    assert image.getpixel((1, 1)) == (255, 0, 0)
+    assert image.getpixel((6, 1))[1] == 255
+    assert image.getpixel((10, 1)) == (0, 0, 255)
+
+
+def test_legacy_snapshot_is_recovered_only_by_matching_session_fingerprint(tmp_path):
+    snapshot = _snapshot()
+    payload = extract_multi_char_prompt_payload(_positive_for(snapshot))
+    session_dir = tmp_path / "sessions"
+    session_dir.mkdir()
+    (session_dir / "risu_test.json").write_text(
+        json.dumps({
+            "items": [
+                {"slot": 1, "multi_char_layout": _separated_layout()},
+            ]
+        }, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    recovered = recover_multi_char_snapshot_from_sessions(
+        str(session_dir),
+        payload,
+    )
+
+    assert recovered["mask_fingerprint"] == snapshot["mask_fingerprint"]
+    assert recovered["character_order"] == ["Left", "Right"]
+
+    bad_payload = dict(payload)
+    bad_payload["mask_fingerprint"] = "f" * 64
+    with pytest.raises(ValueError, match="찾지 못했습니다"):
+        recover_multi_char_snapshot_from_sessions(str(session_dir), bad_payload)

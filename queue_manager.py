@@ -794,9 +794,57 @@ class QueueManager:
         speak_text = params.get("speak_text", "") or ""
         provider = (params.get("provider", "comfy") or "comfy").strip().lower()
         generation_params = params.get("generation_params") or {}
+        multi_char_context = params.get("illustration_multi_char")
 
         if not self.generate_image_with_prompt:
             raise RuntimeError("generate_image_with_prompt 콜백이 설정되지 않았습니다")
+
+        try:
+            from modes import multi_char_mask
+
+            prompt_multi_payload = multi_char_mask.extract_multi_char_prompt_payload(
+                positive
+            )
+            prompt_multi_enabled = (
+                isinstance(prompt_multi_payload, dict)
+                and prompt_multi_payload.get("enable") is True
+            )
+            if multi_char_context is not None:
+                multi_char_context = multi_char_mask.validate_multi_char_prompt_context(
+                    positive,
+                    multi_char_context,
+                )
+            elif prompt_multi_enabled:
+                raise ValueError(
+                    "프롬프트는 다중 캐릭터인데 재생성 마스크 스냅샷이 없습니다"
+                )
+
+            if multi_char_context:
+                if provider != "comfy":
+                    raise ValueError(
+                        f"다중 캐릭터 마스크 재생성은 comfy 공급자만 지원합니다: {provider!r}"
+                    )
+                config = self.get_config() if self.get_config else {}
+                comfy_input_dir = str((config or {}).get("comfy_input_dir") or "")
+                prepared_path = multi_char_mask.prepare_region_mask(
+                    comfy_input_dir,
+                    multi_char_context,
+                    mask_location=str(
+                        multi_char_context.get("mask_location") or "region_mask"
+                    ),
+                )
+                print(
+                    f"[QUEUE:REGENERATE:MULTI_CHAR] 실행 직전 마스크 복원 완료: "
+                    f"item={item.id}, backup={backup_name}, path={prepared_path}, "
+                    f"fingerprint={multi_char_context['mask_fingerprint'][:12]}"
+                )
+        except Exception as e:
+            print(
+                f"[QUEUE:REGENERATE:MULTI_CHAR] 실행 전 마스크 검증/복원 실패: "
+                f"item={item.id}, backup={backup_name}, error={e}"
+            )
+            traceback.print_exc()
+            raise
 
         async def _on_regen_progress(value, max_value):
             await self._notify_progress(item, {
@@ -832,6 +880,7 @@ class QueueManager:
                 speak_text=speak_text,
                 provider=provider,
                 generation_params=generation_params,
+                illustration_multi_char=multi_char_context,
             )
         print(
             f"[QUEUE:regenerate] 완료: backup={backup_name} ({len(img_bytes):,}B, {elapsed_time:.1f}s)"
