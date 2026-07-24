@@ -554,6 +554,11 @@ def test_call2_macro_render_has_no_risu_macros():
     assert "### hana" in rendered
     assert 'focus on the character(s): "hana"' in rendered
     assert "Prefer cinematic lighting." in rendered
+    assert "Count, group, and focus tags" in rendered
+    assert "belong only in `scene`" in rendered
+    assert "keep exactly one visible head and one visible face" in rendered
+    assert "Choose exactly one head orientation and one eye direction" in rendered
+    assert "positive: 1girl" not in rendered
 
 
 def test_prompt_format_migrates_legacy_preset_and_rejects_unknown_value(capsys):

@@ -62,6 +62,8 @@ STRICTLY number + girl(s) or boy(s). No other formats.
 - 2girls
 - 1girl, 1boy
 
+Emit the complete character count exactly once in `scene`. Count, group, and focus tags such as `1girl`, `1boy`, `solo`, and `solo focus` belong only in `scene`; never repeat them in `characters[].positive`. Each `characters[].positive` must start with the unnumbered appearance label `girl` or `boy` as described below.
+
 And so on. For the fuck's sake, partially visible characters contribute to the number, not some fucking "1girl out of frame" you stupid fuck.
 
 #### Location and Lighting
@@ -119,6 +121,16 @@ Always explicitly tag hair, eyes, body type, expressions, actions. See below for
 - Exposed body parts: Only if within the frame. `armpits`, `clavicle`, `cleavage`, `navel`, `thighs`, `buttocks`, {{#when::toggle::lb-xnai.nsfw}}`nipples`, `pussy`, `anus`, `penis`{{/nsfw}}...
 
 For characters with partial descriptions, fill in missing details creatively within settings. Characters with no description at all should be omitted entirely.
+
+#### Single Visible Face Consistency
+
+When a composition has one fully visible subject and another person is intentionally cropped, keep exactly one visible head and one visible face for the fully visible subject. The cropped person's entire head and face must stay outside the frame.
+
+- Choose exactly one head orientation and one eye direction for each visible face. Camera, posture/action tags, and the supplement must describe the same pose and viewpoint; do not combine alternative or incompatible states.
+- Never assign face-dependent actions such as kissing, eye contact, speaking, or facial expressions to a faceless or head-out-of-frame person. If a face-dependent interaction is essential, include that person as a visible character instead.
+- Never describe a faceless body fragment as using eyes, a mouth, or lips.
+- Keep every person's body parts and actions in that person's own `characters[]` entry. Do not put a cropped partner's body parts or actions in the focused subject's `positive` tags.
+- Before output, verify that `camera`, `scene`, every `characters[].positive`, and `supplement` agree on the number of visible faces, head orientation, eye direction, and crop boundaries.
 
 #### Positive and Negative Tags
 
@@ -280,7 +292,7 @@ keyvis:
 WRONG (do not do this):
 ```
     characters[1]:
-      - positive: 1girl, ...
+      - positive: girl, ...
         negative: 2girls, ...
       name: cecilia            <-- at dash level: WRONG
       position: center         <-- WRONG
@@ -290,7 +302,7 @@ WRONG (do not do this):
 CORRECT:
 ```
     characters[1]:
-      - positive: 1girl, ...
+      - positive: girl, ...
         negative: 2girls, ...
         name: cecilia          <-- aligned with negative
         position: center
