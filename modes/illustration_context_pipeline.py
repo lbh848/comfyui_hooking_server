@@ -66,7 +66,6 @@ DEFAULT_TOGGLES = {
     "call1_backtranslate_failure_strategy": "fallback",
     "call1_enabled": True,
     "call1_parallel_enabled": True,
-    "call1_parallel_chunk_size": 3,
     "call1_parallel_max_concurrency": 3,
     "call1_parallel_slow_retry_enabled": False,
     "call1_parallel_slow_retry_remaining": 1,
@@ -317,10 +316,6 @@ def merged_toggles(value: dict | None) -> dict:
             0.1,
             min(1000.0, float(out["call1_backtranslate_slow_retry_tps_threshold"])),
         )
-        out["call1_parallel_chunk_size"] = max(
-            1,
-            min(16, int(out["call1_parallel_chunk_size"])),
-        )
         for prefix in ("call1_parallel", "call2_parallel"):
             out[f"{prefix}_max_concurrency"] = max(
                 1,
@@ -373,7 +368,6 @@ def merged_toggles(value: dict | None) -> dict:
             "call1_backtranslate_slow_retry_tps_threshold": DEFAULT_TOGGLES[
                 "call1_backtranslate_slow_retry_tps_threshold"
             ],
-            "call1_parallel_chunk_size": DEFAULT_TOGGLES["call1_parallel_chunk_size"],
             "call1_parallel_max_concurrency": DEFAULT_TOGGLES[
                 "call1_parallel_max_concurrency"
             ],
@@ -409,6 +403,9 @@ def merged_toggles(value: dict | None) -> dict:
     # 예전 UI에서 저장한 고정 배치 크기는 더 이상 사용하지 않는다. CALL2-PLAN이
     # 선택한 전체 장면 수를 최대 동시 요청 수에 맞춰 자동 분배한다.
     out.pop("call2_parallel_batch_size", None)
+    # CALL1 병렬도 segment를 최대 동시 요청 수만큼 균등 분할하므로 청크당 segment 수
+    # 설정은 더 이상 사용하지 않는다. 과거 저장값이 남아 있으면 무시.
+    out.pop("call1_parallel_chunk_size", None)
     return out
 
 
@@ -3624,8 +3621,20 @@ async def _run_parallel_call1_analysis(
     stream_notify,
 ) -> tuple[str, list[str]]:
     segment_ids = list(current_segments)
-    chunk_size = int(toggles["call1_parallel_chunk_size"])
-    chunks = [segment_ids[index:index + chunk_size] for index in range(0, len(segment_ids), chunk_size)]
+    max_concurrency = int(toggles["call1_parallel_max_concurrency"])
+    # 작업 수 = 동시 호출 LLM 수. segment를 max_concurrency개 작업에 서사 순서대로
+    # 균등 분할한다. segment가 동시 호출 수보다 적으면 그 수만큼만 만든다.
+    worker_count = min(max(1, max_concurrency), len(segment_ids))
+    base_size, larger_worker_count = divmod(len(segment_ids), worker_count)
+    chunk_sizes = [
+        base_size + (1 if index < larger_worker_count else 0)
+        for index in range(worker_count)
+    ]
+    chunks = []
+    cursor = 0
+    for chunk_size in chunk_sizes:
+        chunks.append(segment_ids[cursor:cursor + chunk_size])
+        cursor += chunk_size
     jobs = [
         {
             "assigned_segment_ids": chunk,
@@ -3634,8 +3643,9 @@ async def _run_parallel_call1_analysis(
         for chunk in chunks
     ]
     print(
-        f"[ILLUST_CONTEXT:CALL1_PARALLEL] 분석 청크 준비: "
-        f"segments={len(segment_ids)}, chunk_size={chunk_size}, jobs={len(jobs)}"
+        f"[ILLUST_CONTEXT:CALL1_PARALLEL] 분석 작업 준비: "
+        f"segments={len(segment_ids)}, max_concurrency={max_concurrency}, "
+        f"jobs={len(jobs)}, distribution={chunk_sizes}"
     )
 
     async def invoke(
@@ -4671,7 +4681,7 @@ async def build_from_context(
         parallel_merge_errors: list[str] = []
         should_parallel_call1 = (
             bool(toggles.get("call1_parallel_enabled"))
-            and len(current_segments) > int(toggles["call1_parallel_chunk_size"])
+            and len(current_segments) > 1
         )
         if should_parallel_call1:
             try:

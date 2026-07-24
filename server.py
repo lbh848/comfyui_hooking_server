@@ -196,7 +196,6 @@ DEFAULT_CONFIG = {
         "call1_backtranslate_failure_strategy": "fallback",
         "call1_enabled": True,
         "call1_parallel_enabled": True,
-        "call1_parallel_chunk_size": 3,
         "call1_parallel_max_concurrency": 3,
         "call1_parallel_slow_retry_enabled": False,
         "call1_parallel_slow_retry_remaining": 1,

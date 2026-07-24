@@ -33,7 +33,7 @@ def test_call1_and_call2_parallel_controls_include_tail_retry_and_shared_cap():
         assert f"{prefix}_slow_retry_tps_enabled" in FRONTEND
         assert f"{prefix}_slow_retry_tps_threshold" in FRONTEND
         assert f"{prefix}_slow_retry_condition_operator" in FRONTEND
-    assert "call1_parallel_chunk_size" in FRONTEND
+    assert "call1_parallel_chunk_size" not in FRONTEND
     assert "call2_parallel_batch_size" not in FRONTEND
     assert "Key Visual은 PLAN에서 생성되므로 별도 네 번째 요청이 없습니다." in FRONTEND
     assert "원본과 느린 요청 복제를 모두 합쳐 이 동시성 한도를 넘지 않습니다." in FRONTEND

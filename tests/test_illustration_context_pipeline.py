@@ -256,7 +256,6 @@ async def test_call1_segments_and_call2_details_run_in_parallel_batches(monkeypa
         },
         {
             "call1_parallel_enabled": True,
-            "call1_parallel_chunk_size": 3,
             "call1_parallel_max_concurrency": 3,
             "call2_parallel_enabled": True,
             "call2_parallel_max_concurrency": 3,
@@ -889,7 +888,7 @@ def test_call1_call2_parallel_defaults_and_clamps():
         assert defaults[f"{prefix}_slow_retry_tps_enabled"] is False
         assert defaults[f"{prefix}_slow_retry_tps_threshold"] == 5.0
         assert defaults[f"{prefix}_slow_retry_condition_operator"] == "and"
-    assert defaults["call1_parallel_chunk_size"] == 3
+    assert "call1_parallel_chunk_size" not in defaults
     assert "call2_parallel_batch_size" not in defaults
 
     clamped = pipeline.merged_toggles({
@@ -902,7 +901,7 @@ def test_call1_call2_parallel_defaults_and_clamps():
         "call2_parallel_slow_retry_tps_threshold": 0,
         "call2_parallel_slow_retry_condition_operator": "xor",
     })
-    assert clamped["call1_parallel_chunk_size"] == 1
+    assert "call1_parallel_chunk_size" not in clamped
     assert clamped["call1_parallel_max_concurrency"] == 16
     assert clamped["call1_parallel_slow_retry_remaining"] == 1
     assert "call2_parallel_batch_size" not in clamped
@@ -2419,7 +2418,7 @@ scenes[1]:
                 {"role": "char", "data": "첫 문장.\n\n둘째 문장."},
             ],
         },
-        {"call3_enabled": False, "speak_enabled": False, "key_visual": False},
+        {"call1_parallel_enabled": False, "call3_enabled": False, "speak_enabled": False, "key_visual": False},
         "### hana\n-Appearance: 1girl, black hair",
     )
 
@@ -2606,6 +2605,7 @@ scenes[1]:
         },
         {
             "call1_enabled": True,
+            "call1_parallel_enabled": False,
             "call3_enabled": False,
             "speak_enabled": False,
             "key_visual": False,

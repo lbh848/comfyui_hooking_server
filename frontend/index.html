@@ -40580,7 +40580,7 @@
                             <div style="margin-bottom:12px; padding:8px; background:rgba(0,0,0,0.06); border-radius:6px; font-size:0.75rem; color:var(--text2); line-height:1.5;">
                                 CHAT을 받은 서버가 히스토리 연속성/리롤 판정 → CALL1 역번역 → CALL1 병렬 분석·병합 → CALL2-PLAN → CALL2-DETAIL 병렬 생성·병합 → (폴백/파싱 실패 시 기존 CALL2/CALL2-FIX) → CALL3 순서로 실행합니다. 삽화 프롬프트 본문은 config.json이 아니라 아래 개별 txt 파일에 저장됩니다.
                                 1. 역번역이 켜져 있으면 <strong>backtranslate.txt</strong>로 현재 응답만 영어로 병렬 번역하며, 과거 CHAT은 번역하지 않습니다.<br>
-                                2. CALL1은 <strong>enhance.txt</strong>와 저장 히스토리로 인물 목록, 지칭 할당, 복장 변화 타임라인을 JSON으로 만듭니다. 병렬 분석을 켜면 segment 청크별 결과를 검증한 뒤 하나로 병합합니다.<br>
+                                2. CALL1은 <strong>enhance.txt</strong>와 저장 히스토리로 인물 목록, 지칭 할당, 복장 변화 타임라인을 JSON으로 만듭니다. 병렬 분석을 켜면 segment를 최대 동시 요청 수만큼 균등 분할해 동시에 분석하고 검증된 결과를 하나로 병합합니다.<br>
                                 3. CALL2-PLAN은 장면 수 설정과 전체 context를 읽어 장면 슬롯을 한 번만 선택하고 Key Visual 완성본도 함께 만듭니다. 선택한 모든 슬롯은 최대 동시 요청 수 안에서 CALL2-DETAIL 작업들에 균등 분배됩니다.<br>
                                 4. CALL2 system = <strong>jailbreak.txt</strong> + <strong>job.txt</strong> + <strong>system.txt</strong>이며, DETAIL 출력은 <strong>format.txt</strong> 구조를 사용합니다. CALL1이 모호하거나 PLAN/DETAIL이 실패하면 기존 단일 CALL2 경로로 폴백합니다.<br>
                                 5. CALL2 파싱이 실패하면 <strong>repair.txt</strong>(CALL2-FIX)가 TOON 블록을 교정합니다. CALL3는 생성 설정에서 선택한 <strong>speak.txt</strong> 또는 <strong>manga.txt</strong>로 대사만 생성합니다.<br>
@@ -41219,8 +41219,7 @@
                 description: '역번역 다음에 인물, 지칭 대상과 복장 변화 타임라인을 구조화하는 일반 CALL1 단계입니다.',
                 fields: [
                     {key: 'call1_parallel_enabled', label: 'Segment 병렬 분석', type: 'toggle', help: '현재 응답의 구조 segment를 여러 CALL1 작업으로 나눠 분석한 뒤 검증된 JSON을 합칩니다.', dependsOn: ['call1_enabled']},
-                    {key: 'call1_parallel_chunk_size', label: '청크당 Segment 수', type: 'number', min: 1, max: 16, help: 'CALL1 요청 하나가 담당할 segment 수입니다.', dependsOn: ['call1_enabled', 'call1_parallel_enabled']},
-                    {key: 'call1_parallel_max_concurrency', label: '최대 동시 요청 수', type: 'number', min: 1, max: 16, help: '원본과 느린 요청 복제를 모두 합쳐 이 동시성 한도를 넘지 않습니다.', dependsOn: ['call1_enabled', 'call1_parallel_enabled']},
+                    {key: 'call1_parallel_max_concurrency', label: '최대 동시 요청 수', type: 'number', min: 1, max: 16, help: 'segment를 이 작업 수만큼 서사 순서대로 균등 분할해 동시에 분석합니다. 원본과 느린 요청 복제를 모두 합쳐 이 동시성 한도를 넘지 않습니다.', dependsOn: ['call1_enabled', 'call1_parallel_enabled']},
                     {
                         key: 'call1_parallel_slow_retry_enabled', label: '느리다고? 다시해!', type: 'toggle',
                         help: '일부 CALL1 분석 청크만 뒤처질 때 같은 청크를 한 번 더 요청해 먼저 검증된 결과를 사용합니다.',
@@ -41437,9 +41436,9 @@
             }
             if (group.key === 'call1') {
                 return `
-                    ${group.fields.slice(0, 3).map(field => _renderIllustrationContextField(field)).join('')}
+                    ${group.fields.slice(0, 2).map(field => _renderIllustrationContextField(field)).join('')}
                     <div class="illust-settings-dependent" aria-label="CALL1 느린 분석 재요청 세부 옵션">
-                        ${group.fields.slice(3).map(field => _renderIllustrationContextField(field)).join('')}
+                        ${group.fields.slice(2).map(field => _renderIllustrationContextField(field)).join('')}
                     </div>
                     <h4 class="illust-settings-subheading">호출 정보</h4>
                     <div class="illust-call-stage-notes">
