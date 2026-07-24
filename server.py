@@ -2719,6 +2719,22 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                         ).strip()
                         if not separated_background_prompt:
                             raise ValueError("배경 분리 프롬프트가 단어 규칙 처리 후 비어 있습니다")
+                        separated_composition_raw = (
+                            f"[SUPPLEMENT]\n{str(layout.get('composition_prompt') or '').strip()}"
+                        )
+                        separated_composition_replaced = apply_raw_prompt_word_replacements(
+                            separated_composition_raw,
+                            bot_name,
+                            word_rules_snapshot,
+                        )
+                        separated_composition_sections = builder.parse_sections(
+                            separated_composition_replaced
+                        )
+                        separated_composition_prompt = str(
+                            separated_composition_sections.get("supplement") or ""
+                        ).strip()
+                        if not separated_composition_prompt:
+                            raise ValueError("구도 선행 프롬프트가 단어 규칙 처리 후 비어 있습니다")
                         char_inform = []
                         for name in ordered_names:
                             character = queued_by_name.get(name.casefold())
@@ -2755,12 +2771,14 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                             "char_name_list": list(detected),
                             "char_inform": char_inform,
                             "background_prompt": separated_background_prompt,
+                            "composition_prompt": separated_composition_prompt,
                             "mask_fingerprint": multi_char_mask.layout_fingerprint(layout),
                         }
                         print(
                             f"[MULTI_CHAR:PROMPT] 배경/캐릭터 분리 및 왼쪽→오른쪽 준비 완료: "
                             f"order={detected}, "
-                            f"background_len={len(multi_char_prompt_context['background_prompt'])}"
+                            f"background_len={len(multi_char_prompt_context['background_prompt'])}, "
+                            f"composition_len={len(multi_char_prompt_context['composition_prompt'])}"
                         )
                     except Exception as e:
                         print(
@@ -3235,12 +3253,14 @@ async def process_illustration_context_queue_item(item) -> dict:
         characters = copy.deepcopy(descriptor.get("characters") or [])
         order = list(layout.get("character_order") or [])
         background_prompt = str(layout.get("background_prompt") or "").strip()
+        composition_prompt = str(layout.get("composition_prompt") or "").strip()
         return {
             "enable": True,
             "char_num": len(characters),
             "characters": characters,
             "character_order": order,
             "background_prompt": background_prompt,
+            "composition_prompt": composition_prompt,
             "layout": copy.deepcopy(layout),
             "mask_location": "region_mask",
         }
@@ -4185,7 +4205,7 @@ async def handle_api_lighbd_enqueue(request: web.Request) -> web.Response:
 
 
 async def handle_api_lighbd_history(request: web.Request) -> web.Response:
-    """GET /api/lighbd/history - lighbd LLM 호출 히스토리(최근 20개) 반환.
+    """GET /api/lighbd/history - 일반 최근 20개와 다중 분리 최근 100개 반환.
 
     자세히 보기 모달 데이터 소스. 각 레코드: ts, prompt_id, input(messages),
     output(plan), completion_tokens, elapsed, tps, status.

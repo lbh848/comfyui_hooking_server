@@ -1710,6 +1710,7 @@ async def test_multi_char_layout_reorders_call2_characters_left_to_right(monkeyp
         calls.append((call_name, messages, json_mode))
         result = """{
           "background_prompt": "wide shot, classroom, soft light",
+          "composition_prompt": "two distinct people, one listener on the left and one speaker on the right",
           "regions": [
             {"name":"Right","character_prompt":"green hair, waving","x":0.55,"y":0.1,"width":0.4,"height":0.8},
             {"name":"Left","character_prompt":"red hair, listening","x":0.05,"y":0.1,"width":0.4,"height":0.8}
@@ -1736,6 +1737,11 @@ async def test_multi_char_layout_reorders_call2_characters_left_to_right(monkeyp
     assert descriptor["multi_char_layout"]["background_prompt"] == (
         "wide shot, classroom, soft light"
     )
+    assert descriptor["multi_char_layout"]["composition_prompt"].startswith(
+        "two distinct people"
+    )
+    assert descriptor["multi_char_layout_request"]["slot"] == 4
+    assert "composition_prompt" in descriptor["multi_char_layout_raw_response"]
     assert [
         region["character_prompt"]
         for region in descriptor["multi_char_layout"]["regions"]

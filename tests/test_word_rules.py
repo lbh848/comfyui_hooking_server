@@ -211,6 +211,7 @@ class RawPromptWordRulesTest(unittest.TestCase):
                 "char_name_list": ["Left", "Right"],
                 "char_inform": ["left tags", "right tags"],
                 "background_prompt": "clean shared background",
+                "composition_prompt": "two distinct people, one on the left and one on the right",
                 "mask_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             },
         )
@@ -238,6 +239,10 @@ class RawPromptWordRulesTest(unittest.TestCase):
             },
         )
         self.assertEqual(payload["background_prompt"], "clean shared background")
+        self.assertEqual(
+            payload["composition_prompt"],
+            "two distinct people, one on the left and one on the right",
+        )
         self.assertEqual(payload["background_trigger_list"], ["shared style trigger"])
         self.assertEqual(
             payload["mask_fingerprint"],

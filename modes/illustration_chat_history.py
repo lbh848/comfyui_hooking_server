@@ -585,6 +585,28 @@ def prepare_history(chats: list[dict], target_index: int, bot_name: str = "") ->
         }
 
 
+def _safe_multi_char_results(value: dict) -> list[dict]:
+    """분석에 필요한 다중 분리 입출력만 원본 프롬프트와 분리해 보존한다."""
+    saved = []
+    for item in value.get("items") or []:
+        if not isinstance(item, dict):
+            continue
+        request = item.get("multi_char_layout_request")
+        raw_response = str(item.get("multi_char_layout_raw_response") or "")
+        layout = item.get("multi_char_layout")
+        layout_error = str(item.get("multi_char_layout_error") or "")
+        if not request and not raw_response and not isinstance(layout, dict) and not layout_error:
+            continue
+        saved.append({
+            "slot": item.get("slot"),
+            "request": deepcopy(request) if isinstance(request, dict) else {},
+            "raw_response": raw_response[:50_000],
+            "normalized_layout": deepcopy(layout) if isinstance(layout, dict) else {},
+            "error": layout_error[:2_000],
+        })
+    return saved
+
+
 def _safe_pipeline_snapshot(result: dict | None, error: str = "") -> dict:
     value = result if isinstance(result, dict) else {}
     return {
@@ -599,6 +621,7 @@ def _safe_pipeline_snapshot(result: dict | None, error: str = "") -> dict:
         "call3_out": str(value.get("call3_output") or ""),
         "call3_correction_used": bool(value.get("call3_correction_used")),
         "last_visual_by_character": deepcopy(value.get("last_visual_by_character") or {}),
+        "multi_char_results": _safe_multi_char_results(value),
         "updated_at": time.time(),
     }
 

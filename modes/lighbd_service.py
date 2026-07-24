@@ -207,12 +207,45 @@ def _get_server_globals():
 
 
 LIGHBD_HISTORY_PATH = os.path.join(LOG_DIR, "lighbd_history.jsonl")
-LIGHBD_HISTORY_MAX = 20
+LIGHBD_GENERAL_HISTORY_MAX = 20
+LIGHBD_MULTI_CHAR_HISTORY_MAX = 100
+LIGHBD_HISTORY_MAX = LIGHBD_GENERAL_HISTORY_MAX + LIGHBD_MULTI_CHAR_HISTORY_MAX
+
+
+def _is_multi_char_history_record(record: object) -> bool:
+    return (
+        isinstance(record, dict)
+        and str(record.get("task_key") or "") == "illustration_multi_char_mask"
+    )
+
+
+def _trim_lighbd_history_lines(lines: list[str]) -> list[str]:
+    """일반 최근 20건과 분석용 다중 분리 최근 100건을 각각 보존한다."""
+    general_indices = []
+    multi_char_indices = []
+    for index, line in enumerate(lines):
+        try:
+            record = json.loads(line)
+        except Exception as e:
+            print(
+                f"[LIGHBD] history 보존 분류 중 JSON 파싱 실패, 일반 레코드로 유지: "
+                f"index={index}, error={e}, line={str(line)[:200]!r}"
+            )
+            traceback.print_exc()
+            general_indices.append(index)
+            continue
+        if _is_multi_char_history_record(record):
+            multi_char_indices.append(index)
+        else:
+            general_indices.append(index)
+    keep = set(general_indices[-LIGHBD_GENERAL_HISTORY_MAX:])
+    keep.update(multi_char_indices[-LIGHBD_MULTI_CHAR_HISTORY_MAX:])
+    return [line for index, line in enumerate(lines) if index in keep]
 
 
 def _log_lighbd_history(record: dict) -> None:
     """lighbd 전용 히스토리 파일(logs/lighbd_history.jsonl)에 append.
-    최근 LIGHBD_HISTORY_MAX(20) 개만 유지.
+    일반 호출 최근 20개와 다중 분리 호출 최근 100개를 별도로 유지한다.
 
     CLAUDE.md 규칙: write 전 백업. 요구사항/ 폴더에 .bak 보관.
     """
@@ -236,9 +269,7 @@ def _log_lighbd_history(record: dict) -> None:
 
         line = json.dumps(record, ensure_ascii=False) + "\n"
         existing_lines.append(line)
-        # 최근 N개만 유지
-        if len(existing_lines) > LIGHBD_HISTORY_MAX:
-            existing_lines = existing_lines[-LIGHBD_HISTORY_MAX:]
+        existing_lines = _trim_lighbd_history_lines(existing_lines)
 
         with open(LIGHBD_HISTORY_PATH, "w", encoding="utf-8") as f:
             f.writelines(existing_lines)
@@ -320,7 +351,7 @@ def _update_lighbd_history_records(updates_by_id: dict[str, dict]) -> int:
 
 
 def _load_lighbd_history(limit: int = LIGHBD_HISTORY_MAX) -> list:
-    """최근 limit 개(기본 20) 히스토리 반환 (오래된 → 최신 순)."""
+    """보존된 일반/다중 분리 히스토리를 오래된 → 최신 순으로 반환한다."""
     if not os.path.exists(LIGHBD_HISTORY_PATH):
         return []
     try:

@@ -51,7 +51,7 @@ def validate_multi_char_layout(
     *,
     require_prompt_separation: bool = False,
 ) -> dict:
-    """LLM 레이아웃과 선택적 프롬프트 분리를 검증하고 왼쪽→오른쪽으로 정규화한다."""
+    """LLM 레이아웃과 선택적 2-pass 프롬프트를 검증해 왼쪽→오른쪽으로 정규화한다."""
     names = [str(name or "").strip() for name in expected_names]
     if not 2 <= len(names) <= len(MASK_CHANNELS):
         raise ValueError(f"다중 캐릭터 수는 2~{len(MASK_CHANNELS)}명이어야 합니다: {len(names)}")
@@ -70,6 +70,11 @@ def validate_multi_char_layout(
     background_prompt = _prompt_text(
         layout.get("background_prompt"),
         "background_prompt",
+        required=require_prompt_separation,
+    )
+    composition_prompt = _prompt_text(
+        layout.get("composition_prompt"),
+        "composition_prompt",
         required=require_prompt_separation,
     )
     raw_regions = layout.get("regions")
@@ -144,6 +149,8 @@ def validate_multi_char_layout(
     }
     if background_prompt or require_prompt_separation:
         normalized_layout["background_prompt"] = background_prompt
+    if composition_prompt or require_prompt_separation:
+        normalized_layout["composition_prompt"] = composition_prompt
     return normalized_layout
 
 

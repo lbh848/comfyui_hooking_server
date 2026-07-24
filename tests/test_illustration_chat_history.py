@@ -182,6 +182,53 @@ def test_storage_limit_cuts_oldest_content_and_settings_clamp_call_limits(isolat
     assert saved["messages"][-1]["content"] == "B" * 800
 
 
+def test_pipeline_snapshot_preserves_multi_char_analysis_data(isolated_history):
+    chats = [
+        _chat("user", "multi character request " * 8),
+        _chat("char", "two people are visible " * 8),
+    ]
+    plan = history.prepare_history(chats, 1, "bot-a")
+    request = {
+        "slot": 3,
+        "scene": "shared scene",
+        "characters": [{"name": "Left"}, {"name": "Right"}],
+    }
+    normalized = {
+        "background_prompt": "shared background",
+        "composition_prompt": "two distinct people",
+        "character_order": ["Left", "Right"],
+        "regions": [],
+    }
+    saved = history.finalize_history(plan, {
+        "items": [{
+            "slot": 3,
+            "multi_char_layout_request": request,
+            "multi_char_layout_raw_response": '{"composition_prompt":"two distinct people"}',
+            "multi_char_layout": normalized,
+        }, {
+            "slot": 4,
+            "multi_char_layout_request": {"slot": 4},
+            "multi_char_layout_raw_response": "invalid response",
+            "multi_char_layout_error": "layout validation failed",
+        }],
+    })
+
+    results = saved["last_pipeline"]["multi_char_results"]
+    assert results == [{
+        "slot": 3,
+        "request": request,
+        "raw_response": '{"composition_prompt":"two distinct people"}',
+        "normalized_layout": normalized,
+        "error": "",
+    }, {
+        "slot": 4,
+        "request": {"slot": 4},
+        "raw_response": "invalid response",
+        "normalized_layout": {},
+        "error": "layout validation failed",
+    }]
+
+
 def test_search_and_soft_delete(isolated_history):
     chats = [
         _chat("user", "과거 질문" * 20),

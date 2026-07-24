@@ -688,6 +688,7 @@ class IllustPromptBuilder:
             "char_trigger_list": [],
             "background_trigger_list": [],
             "background_prompt": "",
+            "composition_prompt": "",
             "mask_fingerprint": "",
             "shared_tag": {"before_char": [], "after_char": []},
         }
@@ -703,6 +704,9 @@ class IllustPromptBuilder:
             background_prompt = str(
                 multi_char_context.get("background_prompt") or ""
             ).strip()
+            composition_prompt = str(
+                multi_char_context.get("composition_prompt") or ""
+            ).strip()
             mask_fingerprint = str(
                 multi_char_context.get("mask_fingerprint") or ""
             ).strip()
@@ -712,6 +716,7 @@ class IllustPromptBuilder:
                 and len(char_inform) == len(ordered_names)
                 and all(char_inform)
                 and background_prompt
+                and composition_prompt
                 and mask_fingerprint
             ):
                 shared_before = list(anima_artist_parts) + list(anima_quality_parts)
@@ -738,6 +743,7 @@ class IllustPromptBuilder:
                     ],
                     "background_trigger_list": list(anima_shared_triggers),
                     "background_prompt": background_prompt,
+                    "composition_prompt": composition_prompt,
                     "mask_fingerprint": mask_fingerprint,
                     "shared_tag": {
                         "before_char": shared_before,
@@ -750,6 +756,7 @@ class IllustPromptBuilder:
                     f"detected={detected_chars}, ordered={ordered_names}, "
                     f"char_inform={len(char_inform)}, "
                     f"background_len={len(background_prompt)}, "
+                    f"composition_len={len(composition_prompt)}, "
                     f"mask_fingerprint={bool(mask_fingerprint)}"
                 )
         positive += "\n[MULTI_CHAR]"

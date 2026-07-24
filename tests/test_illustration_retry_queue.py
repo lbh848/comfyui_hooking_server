@@ -425,6 +425,7 @@ async def test_context_queue_defers_multi_character_scene_until_layout_is_ready(
         "raw_positive": "multi final",
         "multi_char_layout": {
             "background_prompt": "shared clean background",
+            "composition_prompt": "two distinct people, one on the left and one on the right",
             "character_order": ["Left", "Right"],
             "regions": [
                 {
@@ -506,6 +507,9 @@ async def test_context_queue_defers_multi_character_scene_until_layout_is_ready(
         assert enqueue_log[1][1]["enable"] is True
         assert enqueue_log[1][1]["character_order"] == ["Left", "Right"]
         assert enqueue_log[1][1]["background_prompt"] == "shared clean background"
+        assert enqueue_log[1][1]["composition_prompt"] == (
+            "two distinct people, one on the left and one on the right"
+        )
         assert enqueue_log[1][2] is False
         assert result["count"] == 2
     finally:

@@ -39,6 +39,9 @@ def test_layout_is_sorted_left_to_right_and_overlap_is_preserved():
 def test_layout_prompt_separation_is_required_and_preserved_when_requested():
     separated = _layout()
     separated["background_prompt"] = "wide shot, rooftop, blue-hour city lights"
+    separated["composition_prompt"] = (
+        "two distinct women, one on the left holding a chart, one on the right pointing upward"
+    )
     separated["regions"][0]["character_prompt"] = "black hair, purple eyes, pointing upward"
     separated["regions"][1]["character_prompt"] = "grey hair, aqua eyes, holding a star chart"
 
@@ -49,6 +52,7 @@ def test_layout_prompt_separation_is_required_and_preserved_when_requested():
     )
 
     assert normalized["background_prompt"] == "wide shot, rooftop, blue-hour city lights"
+    assert normalized["composition_prompt"].startswith("two distinct women")
     assert [region["name"] for region in normalized["regions"]] == ["Left", "Right"]
     assert [region["character_prompt"] for region in normalized["regions"]] == [
         "grey hair, aqua eyes, holding a star chart",
@@ -58,6 +62,15 @@ def test_layout_prompt_separation_is_required_and_preserved_when_requested():
     with pytest.raises(ValueError, match="background_prompt"):
         validate_multi_char_layout(
             _layout(),
+            ["Left", "Right"],
+            require_prompt_separation=True,
+        )
+
+    background_only = _layout()
+    background_only["background_prompt"] = "wide shot, rooftop"
+    with pytest.raises(ValueError, match="composition_prompt"):
+        validate_multi_char_layout(
+            background_only,
             ["Left", "Right"],
             require_prompt_separation=True,
         )

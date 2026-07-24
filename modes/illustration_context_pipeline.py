@@ -2731,6 +2731,8 @@ async def calculate_multi_char_layouts(
         clean_positive_note = str(positive_note or "").strip()
         if clean_positive_note:
             scene_payload["positive_note"] = clean_positive_note
+        descriptor["multi_char_layout_request"] = deepcopy(scene_payload)
+        descriptor.pop("multi_char_layout_raw_response", None)
         messages = [{
             "role": "system",
             "content": system_prompt,
@@ -2771,6 +2773,7 @@ async def calculate_multi_char_layouts(
                 result_validator=validate_result,
                 json_mode=True,
             )
+            descriptor["multi_char_layout_raw_response"] = str(result or "")
             layout = _parse_multi_char_layout_response(result, expected_names)
             by_name = {
                 str(character.get("name") or "").strip().casefold(): character
