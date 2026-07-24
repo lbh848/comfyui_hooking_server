@@ -111,6 +111,74 @@ def test_call2_plan_selects_global_slots_and_builds_key_visual():
     assert plan["keyvis_descriptor"]["slot"] == -1
 
 
+def test_call2_detail_assigns_plan_ids_from_validated_slots():
+    output_without_plan_ids = re.sub(
+        r"\n\s+plan_id:\s*[^\r\n]+",
+        "",
+        _toon_for_slots([4, 9]),
+    )
+    descriptors, reason = pipeline._parse_call2_detail_output(
+        output_without_plan_ids,
+        pipeline.merged_toggles({"key_visual": False}),
+        [4, 9],
+        ["S021", "S022"],
+        "TEST-CALL2-DETAIL-SERVER-PLAN-ID",
+    )
+
+    assert reason == ""
+    assert [item["slot"] for item in descriptors] == [4, 9]
+    assert [item["plan_id"] for item in descriptors] == ["S021", "S022"]
+
+
+@pytest.mark.asyncio
+async def test_call2_parallel_failure_is_named_fallback_and_logs_reason(
+    monkeypatch,
+    capsys,
+):
+    call_names = []
+
+    async def fake_pipeline_call(call_name, messages, *args, **kwargs):
+        call_names.append(call_name)
+        if call_name == "CALL2-PLAN":
+            return "not valid plan json"
+        if call_name == "CALL2-FALLBACK":
+            return _toon_for_slots([0])
+        raise AssertionError(f"unexpected call: {call_name}")
+
+    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
+    result = await pipeline.build_from_context(
+        {
+            "session_id": "call2_fallback_reason_test",
+            "target_slotted": "Hana waits.\n\n[Slot 0]",
+            "chats": [
+                {"role": "user", "data": "Continue."},
+                {"role": "char", "data": "Hana waits."},
+            ],
+        },
+        {
+            "call1_enabled": False,
+            "call2_parallel_enabled": True,
+            "scene_min": 1,
+            "scene_max": 1,
+            "key_visual": False,
+            "call3_enabled": False,
+            "speak_enabled": False,
+        },
+        "### Hana\n-default_outfit\nschool uniform",
+        extra_costume="### Hana\n-default_outfit\nschool uniform",
+        extra_names="Hana",
+        backtranslate_names="Hana",
+    )
+
+    output = capsys.readouterr().out
+    assert call_names == ["CALL2-PLAN", "CALL2-FALLBACK"]
+    assert "[ILLUST_CONTEXT:CALL2-FALLBACK] 폴백 시작" in output
+    assert "failed_stage=CALL2-PLAN" in output
+    assert "CALL2-PLAN JSON object를 찾지 못함" in output
+    assert result["call2_fallback_stage"] == "CALL2-PLAN"
+    assert "CALL2-PLAN JSON object를 찾지 못함" in result["call2_fallback_reason"]
+
+
 @pytest.mark.asyncio
 async def test_parallel_job_tail_hedge_uses_shared_concurrency_and_duplicate_wins(monkeypatch):
     active = 0

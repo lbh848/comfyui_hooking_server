@@ -3955,7 +3955,7 @@ async def handle_api_illustration_context_bridge_health(request: web.Request) ->
         "prompt_batch": True,
         "short_slot_manifest": True,
         "lookup_key_length": 24,
-        "progress_phases": ["call1", "call2", "call2_plan", "call2_detail", "call3", "enqueue", "generating", "retrying", "regenerating", "ready", "error"],
+        "progress_phases": ["call1", "call2", "call2_plan", "call2_detail", "call2_fallback", "call3", "enqueue", "generating", "retrying", "regenerating", "ready", "error"],
     })
 
 

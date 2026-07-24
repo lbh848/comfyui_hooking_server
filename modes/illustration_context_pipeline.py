@@ -2432,13 +2432,17 @@ def _parse_call2_detail_output(
         return [], (
             f"CALL2-DETAIL slot 불일치: assigned={assigned_slots}, actual={actual_slots}"
         )
-    actual_plan_ids = [str(item.get("plan_id") or "").strip() for item in descriptors]
-    if actual_plan_ids != assigned_plan_ids:
+    if len(assigned_plan_ids) != len(assigned_slots):
         return [], (
-            f"CALL2-DETAIL plan_id 불일치: assigned={assigned_plan_ids}, "
-            f"actual={actual_plan_ids}"
+            f"CALL2-DETAIL 서버 PLAN 매핑 길이 불일치: "
+            f"slots={assigned_slots}, plan_ids={assigned_plan_ids}"
         )
+    plan_id_by_slot = dict(zip(assigned_slots, assigned_plan_ids))
     by_slot = {int(item["slot"]): item for item in descriptors}
+    for slot, item in by_slot.items():
+        # plan_id는 모델 출력 계약이 아니라 서버 내부 식별자다. 검증을 통과한
+        # 고유 slot을 신뢰하고 전역 PLAN에서 확정한 값을 항상 주입한다.
+        item["plan_id"] = plan_id_by_slot[slot]
     return [by_slot[slot] for slot in assigned_slots], ""
 
 
@@ -2526,6 +2530,7 @@ async def _run_parallel_call2_details(
                 "\n\n# Parallel CALL2-DETAIL override\n"
                 f"The global planner already selected the visual beats. Output exactly {len(plans)} "
                 f"scenes for assigned slots {assigned_slots}. Do not select, add, remove, or move a scene. "
+                "Copy every assigned slot exactly; the server will attach plan_id after slot validation. "
                 "Omit keyvis completely. This shard-specific rule overrides global scene-count and "
                 "key-visual requirements above."
             )
@@ -2535,8 +2540,8 @@ async def _run_parallel_call2_details(
                 "# ASSIGNED GLOBAL SCENE PLAN\n"
                 + json.dumps(plans, ensure_ascii=False, indent=2)
                 + "\n\nExpand each plan into complete Danbooru-style character tags, camera, scene, "
-                "outfit_state, and supplement. Copy plan_id and slot exactly into every scene object, "
-                "and preserve plan order.\n\n"
+                "outfit_state, and supplement. Copy slot exactly into every scene object and preserve "
+                "plan order. The server assigns plan_id from the validated slot.\n\n"
                 "# OUTPUT FORMAT\n"
                 + call2_format
                 + "\n\nReturn one <lb-xnai> block containing scenes only. Omit keyvis."
@@ -2938,6 +2943,7 @@ _CALL_TASK_KEYS = {
     "CALL1-BACKTRANSLATE": "illustration_call1_backtranslate",
     "CALL1": "illustration_call1",
     "CALL2": "illustration_call2",
+    "CALL2-FALLBACK": "illustration_call2",
     "CALL2-FIX": "illustration_call2_fix",
     "CALL3": "illustration_call3",
     "CALL3-CORRECTION": "illustration_call3",
@@ -2950,6 +2956,7 @@ _CALL_TASK_KEYS = {
 _CALL_QUEUE_SUBTASK_GROUPS = {
     "CALL1": ("call1", "CALL1 컨텍스트 보강"),
     "CALL2": ("call2", "CALL2 장면/태그 빌드"),
+    "CALL2-FALLBACK": ("call2", "CALL2 폴백"),
     "CALL2-FIX": ("call2_fix", "CALL2-FIX TOON 교정"),
     "CALL3": ("call3", "CALL3 대사 빌드"),
     "CALL3-CORRECTION": ("call3_correction", "CALL3 슬롯/언어 교정"),
@@ -4937,8 +4944,11 @@ async def build_from_context(
     call2_output = ""
     call2_plan_output = ""
     call2_detail_outputs: list[str] = []
+    call2_parallel_fallback_stage = ""
+    call2_parallel_fallback_reason = ""
     descriptors = []
     if toggles.get("call2_parallel_enabled"):
+        parallel_stage = "CALL2-PLAN"
         try:
             if progress:
                 await progress(31, "call2_plan", "CALL2 전역 장면·키비주얼 계획")
@@ -5037,6 +5047,7 @@ async def build_from_context(
                     "기존 단일 CALL2 결과로 수용"
                 )
             else:
+                parallel_stage = "CALL2-DETAIL"
                 if progress:
                     await progress(
                         36,
@@ -5051,13 +5062,19 @@ async def build_from_context(
                     toggles=toggles,
                     stream_notify=stream_notify,
                 )
+                parallel_stage = "CALL2-DETAIL-MERGE"
                 call2_output = descriptors_to_toon(descriptors)
         except asyncio.CancelledError:
             print("[ILLUST_CONTEXT:CALL2_PARALLEL] 상위 작업 취소로 병렬 CALL2 중단")
             raise
         except Exception as e:
+            call2_parallel_fallback_stage = parallel_stage
+            call2_parallel_fallback_reason = str(e).strip() or type(e).__name__
             print(
-                f"[ILLUST_CONTEXT:CALL2_PARALLEL] 병렬 CALL2 실패로 단일 CALL2 폴백: {e}"
+                f"[ILLUST_CONTEXT:CALL2-FALLBACK] 폴백 시작: "
+                f"failed_stage={call2_parallel_fallback_stage}, "
+                f"error_type={type(e).__name__}, "
+                f"reason={call2_parallel_fallback_reason}"
             )
             traceback.print_exc()
             call2_output = ""
@@ -5066,16 +5083,30 @@ async def build_from_context(
             descriptors = []
 
     if not descriptors:
+        is_parallel_fallback = bool(call2_parallel_fallback_reason)
+        call2_call_name = "CALL2-FALLBACK" if is_parallel_fallback else "CALL2"
+        call2_parse_source = call2_call_name
+        if is_parallel_fallback and progress:
+            await progress(
+                40,
+                "call2_fallback",
+                f"CALL2 폴백 · {call2_parallel_fallback_stage}: "
+                f"{call2_parallel_fallback_reason}",
+            )
         call2_output = await _call_pipeline_llm(
-            "CALL2",
+            call2_call_name,
             _normalize_messages(call2_messages),
             stream_notify,
             result_validator=lambda result: (
-                bool(parse_toon_plan(result, toggles, "CALL2-RETRY-CHECK")),
-                "CALL2 TOON 파싱 실패",
+                bool(parse_toon_plan(
+                    result,
+                    toggles,
+                    f"{call2_parse_source}-RETRY-CHECK",
+                )),
+                f"{call2_call_name} TOON 파싱 실패",
             ),
         )
-        descriptors = parse_toon_plan(call2_output, toggles, "CALL2")
+        descriptors = parse_toon_plan(call2_output, toggles, call2_parse_source)
 
     # Optimized CALL1 path deliberately sends only selected character details.  If
     # CALL2 nevertheless emits another named character, retry once with the
@@ -5393,6 +5424,8 @@ async def build_from_context(
         "call2_output": call2_output,
         "call2_plan_output": call2_plan_output,
         "call2_detail_outputs": call2_detail_outputs,
+        "call2_fallback_stage": call2_parallel_fallback_stage,
+        "call2_fallback_reason": call2_parallel_fallback_reason,
         "call2_fix_output": call2_fix_output,
         "call3_output": call3_output,
         "call3_initial_output": call3_initial_output,
