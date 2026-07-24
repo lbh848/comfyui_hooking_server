@@ -16163,6 +16163,22 @@
             }
         }
 
+        function getLighbdHistoryStatusMeta(status) {
+            if (status === 'error') {
+                return { label: 'ERROR', background: 'rgba(255,107,107,0.18)', color: '#ff6b6b', isError: true };
+            }
+            if (status === 'race_won') {
+                return { label: '승리', background: 'rgba(76,175,80,0.18)', color: '#5cd5a0', isError: false };
+            }
+            if (status === 'race_lost') {
+                return { label: '패배', background: 'rgba(255,159,67,0.18)', color: '#ffb36b', isError: false };
+            }
+            if (status === 'cancelled') {
+                return { label: '취소', background: 'rgba(158,158,158,0.18)', color: '#bdbdbd', isError: false };
+            }
+            return { label: 'OK', background: 'rgba(76,175,80,0.18)', color: '#5cd5a0', isError: false };
+        }
+
         function renderLighbdHistoryList(records) {
             const list = document.getElementById('lighbd-history-list');
             if (!list) return;
@@ -16174,7 +16190,8 @@
             // 최신 → 오래된 순
             _lighbdHistoryRecords = [...records].reverse();
             list.innerHTML = _lighbdHistoryRecords.map((r, i) => {
-                const isError = r.status === 'error';
+                const statusMeta = getLighbdHistoryStatusMeta(r.status);
+                const isError = statusMeta.isError;
                 const outputText = r.output || '';
                 const stats = `입력 ${r.prompt_tokens ?? 0} · 출력 ${r.completion_tokens ?? 0} · ${r.elapsed ?? 0}s · ${r.tps ?? 0} t/s` + (r.ttft ? ` · TTFT ${r.ttft}s` : '');
                 const callBadge = r.call_name
@@ -16185,7 +16202,7 @@
                         <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px; flex-wrap:wrap;">
                             <span style="font-size:0.7rem; color:var(--text2);">${escapeHtml(r.ts || '')}</span>
                             ${callBadge}
-                            <span style="font-size:0.7rem; padding:1px 6px; border-radius:3px; background:${isError ? 'rgba(255,107,107,0.18)' : 'rgba(76,175,80,0.18)'}; color:${isError ? '#ff6b6b' : '#5cd5a0'}; font-weight:600;">${isError ? 'ERROR' : 'OK'}</span>
+                            <span style="font-size:0.7rem; padding:1px 6px; border-radius:3px; background:${statusMeta.background}; color:${statusMeta.color}; font-weight:600;">${statusMeta.label}</span>
                             <span style="font-size:0.7rem; color:var(--text2);">${escapeHtml(stats)}</span>
                             <button class="lighbd-history-open" onclick="openLighbdHistoryDetail(${i})">열기</button>
                         </div>
@@ -16218,7 +16235,8 @@
             const inputText = inputMessages.length
                 ? inputMessages.map((m, i) => `[${i + 1}. ${String(m.role || '?').toUpperCase()}]\n${_formatLighbdHistoryContent(m.content)}`).join('\n\n')
                 : '-';
-            const isError = record.status === 'error';
+            const statusMeta = getLighbdHistoryStatusMeta(record.status);
+            const isError = statusMeta.isError;
             const outputText = isError ? (record.error || record.output || '-') : (record.output || '-');
             const ttft = record.ttft == null ? '-' : `${record.ttft}s`;
 
@@ -16233,7 +16251,7 @@
                             ${escapeHtml(record.call_name || record.task_key || 'LLM 요청 상세')}
                             <div class="lighbd-modal-subtitle">${escapeHtml(record.ts || '')} · ${escapeHtml(record.model || '모델 정보 없음')}</div>
                         </div>
-                        <span style="font-size:.7rem;padding:3px 8px;border-radius:6px;background:${isError ? 'rgba(255,107,107,.18)' : 'rgba(76,175,80,.18)'};color:${isError ? '#ff6b6b' : '#5cd5a0'};font-weight:700;">${isError ? 'ERROR' : 'OK'}</span>
+                        <span style="font-size:.7rem;padding:3px 8px;border-radius:6px;background:${statusMeta.background};color:${statusMeta.color};font-weight:700;">${statusMeta.label}</span>
                         <button class="lighbd-modal-close" onclick="closeLighbdHistoryDetail()" aria-label="닫기">✕</button>
                     </div>
                     <div class="lighbd-detail-stats">

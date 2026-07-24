@@ -2507,6 +2507,7 @@ async def _call_pipeline_llm(
     result_validator=None,
     json_mode: bool = False,
     stream_observer=None,
+    history_id: str = "",
 ) -> str:
     """삽화 CALL1/2/3 의 LLM 호출. 외부 API 분기(illustration_callN task_key)를 경유한다.
 
@@ -2543,6 +2544,8 @@ async def _call_pipeline_llm(
         "elapsed": 0.0,
         "tps": 0.0,
     }
+    if history_id:
+        history_record["history_id"] = str(history_id)
     history_logged = False
     terminal_notified = False
 
@@ -2610,6 +2613,21 @@ async def _call_pipeline_llm(
         lighbd_service._log_lighbd_history(history_record)
         history_logged = True
         return str(result)
+    except asyncio.CancelledError:
+        if history_id and not history_logged:
+            elapsed = time.time() - started
+            history_record.update({
+                "elapsed": round(elapsed, 3),
+                "status": "cancelled",
+                "error": "선착순 경주에서 패배해 취소됨",
+            })
+            lighbd_service._log_lighbd_history(history_record)
+            history_logged = True
+        print(
+            f"[ILLUST_CONTEXT:{call_name}] LLM 호출 취소: "
+            f"history_id={history_id or '(none)'}"
+        )
+        raise
     except Exception as e:
         if stream_notify and not terminal_notified:
             try:
@@ -2867,6 +2885,12 @@ async def backtranslate_current_context(
             "hedge_evaluated": False,
             "failure_reasons": [],
             "failure_attempts": 0,
+            "attempt_outcomes": {},
+            "race_result": None,
+            "history_ids": {
+                "primary": uuid.uuid4().hex if slow_retry_active else "",
+                "duplicate": "",
+            },
             "progress": {
                 "primary": {
                     "streaming": False,
@@ -2997,6 +3021,7 @@ async def backtranslate_current_context(
             call_kwargs = {"result_validator": _validate_translation}
             if slow_retry_active:
                 call_kwargs["stream_observer"] = observe_stream
+                call_kwargs["history_id"] = states[index]["history_ids"][attempt_kind]
             translated = await _call_pipeline_llm(
                 call_name,
                 messages,
@@ -3093,6 +3118,7 @@ async def backtranslate_current_context(
             # 같은 이벤트 루프 틱에서 둘 다 끝났다면 실제 완료 시각이 빠른 결과를 먼저 쓴다.
             for _completed_at, index, outcome in sorted(completed_results):
                 state = states[index]
+                state["attempt_outcomes"][outcome["attempt_kind"]] = outcome
                 if index in resolved:
                     print(
                         f"[ILLUST_CONTEXT:BACKTRANSLATE_HEDGE] 중복 완료 결과 폐기: "
@@ -3107,10 +3133,51 @@ async def backtranslate_current_context(
                         "attempts": outcome["validation_attempts"],
                     }
                     if state["duplicate_started"]:
+                        winner_kind = outcome["attempt_kind"]
+                        loser_kind = (
+                            "duplicate" if winner_kind == "primary" else "primary"
+                        )
+                        loser_outcome = state["attempt_outcomes"].get(loser_kind)
+                        loser_progress_state = state["progress"][loser_kind]
+                        loser_streaming = bool(loser_progress_state["streaming"])
+                        if loser_outcome is not None:
+                            loser_progress = 100.0
+                        else:
+                            reference_ratios = [
+                                len(str(result.get("text") or ""))
+                                / max(1, len(chunks[resolved_index - 1].strip()))
+                                for resolved_index, result in resolved.items()
+                                if result.get("status", {}).get("status") == "translated"
+                            ]
+                            reference_ratios.append(
+                                len(str(outcome.get("text") or ""))
+                                / max(1, len(chunks[index - 1].strip()))
+                            )
+                            average_ratio = sum(reference_ratios) / len(reference_ratios)
+                            if loser_streaming:
+                                expected_length = max(
+                                    1.0,
+                                    len(chunks[index - 1].strip()) * average_ratio,
+                                )
+                                loser_progress = min(
+                                    99.0,
+                                    int(loser_progress_state["partial_length"])
+                                    / expected_length * 100.0,
+                                )
+                            else:
+                                loser_progress = 0.0
+                        state["race_result"] = {
+                            "winner": winner_kind,
+                            "loser": loser_kind,
+                            "loser_progress": round(loser_progress, 1),
+                            "loser_streaming": loser_streaming,
+                        }
                         status.update({
                             "hedged": True,
-                            "winner": outcome["attempt_kind"],
+                            "winner": winner_kind,
                             "requests": 2,
+                            "loser_progress": round(loser_progress, 1),
+                            "loser_streaming": loser_streaming,
                         })
                     resolved[index] = {"text": outcome["text"], "status": status}
                     for sibling in list(state["tasks"]):
@@ -3193,6 +3260,7 @@ async def backtranslate_current_context(
                     )
                     if should_duplicate:
                         state["duplicate_started"] = True
+                        state["history_ids"]["duplicate"] = uuid.uuid4().hex
                         mode = "streaming" if streaming else "non_streaming"
                         print(
                             f"[ILLUST_CONTEXT:BACKTRANSLATE_HEDGE] 중복 요청 시작: "
@@ -3224,6 +3292,59 @@ async def backtranslate_current_context(
             task.cancel()
         await asyncio.gather(*pending, return_exceptions=True)
         raise
+
+    history_updates = {}
+    for index, state in states.items():
+        if not state["duplicate_started"]:
+            continue
+        base_call_name = f"CALL1-BACKTRANSLATE {index}/{len(chunks)}"
+        race_result = state.get("race_result")
+        if race_result:
+            winner_kind = race_result["winner"]
+            loser_kind = race_result["loser"]
+            loser_progress = float(race_result["loser_progress"])
+            loser_streaming = bool(race_result["loser_streaming"])
+            for attempt_kind, role_label in (
+                ("primary", "원본"),
+                ("duplicate", "느리다고? 다시해!"),
+            ):
+                attempt_history_id = state["history_ids"].get(attempt_kind, "")
+                if not attempt_history_id:
+                    continue
+                if attempt_kind == winner_kind:
+                    history_updates[attempt_history_id] = {
+                        "call_name": f"{base_call_name} [{role_label} · 승리]",
+                        "status": "race_won",
+                        "race_outcome": "winner",
+                    }
+                elif attempt_kind == loser_kind:
+                    if loser_streaming:
+                        progress_label = f"{loser_progress:g}%"
+                    else:
+                        progress_label = "0% (비스트리밍)"
+                    history_updates[attempt_history_id] = {
+                        "call_name": (
+                            f"{base_call_name} [{role_label} · 패배 · "
+                            f"진행률 {progress_label}]"
+                        ),
+                        "status": "race_lost",
+                        "race_outcome": "loser",
+                        "race_progress": loser_progress,
+                        "race_streaming": loser_streaming,
+                    }
+        else:
+            for attempt_kind, role_label in (
+                ("primary", "원본"),
+                ("duplicate", "느리다고? 다시해!"),
+            ):
+                attempt_history_id = state["history_ids"].get(attempt_kind, "")
+                if attempt_history_id:
+                    history_updates[attempt_history_id] = {
+                        "call_name": f"{base_call_name} [{role_label} · 경주 실패]",
+                        "race_outcome": "failed",
+                    }
+    if history_updates:
+        lighbd_service._update_lighbd_history_records(history_updates)
 
     strict_failures = [
         (index, result["error"])

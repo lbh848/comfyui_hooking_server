@@ -247,6 +247,78 @@ def _log_lighbd_history(record: dict) -> None:
         traceback.print_exc()
 
 
+def _update_lighbd_history_records(updates_by_id: dict[str, dict]) -> int:
+    """history_id로 최근 LLM 히스토리 레코드를 찾아 안전하게 갱신한다."""
+    if not isinstance(updates_by_id, dict) or not updates_by_id:
+        print(
+            f"[LIGHBD] history 갱신 건너뜀: updates가 비어 있거나 dict가 아님 "
+            f"value={updates_by_id!r}"
+        )
+        return 0
+    if not os.path.exists(LIGHBD_HISTORY_PATH):
+        print(
+            f"[LIGHBD] history 갱신 실패: 파일이 없음 path={LIGHBD_HISTORY_PATH}, "
+            f"ids={list(updates_by_id)}"
+        )
+        return 0
+    try:
+        with open(LIGHBD_HISTORY_PATH, "r", encoding="utf-8") as f:
+            original_lines = f.readlines()
+
+        matched_ids = set()
+        rewritten_lines = []
+        for line in original_lines:
+            stripped = line.strip()
+            if not stripped:
+                rewritten_lines.append(line)
+                continue
+            try:
+                record = json.loads(stripped)
+            except Exception as e:
+                print(
+                    f"[LIGHBD] history 갱신 중 JSON 파싱 실패, 원본 줄 유지: "
+                    f"error={type(e).__name__}: {e}, line={stripped[:200]!r}"
+                )
+                traceback.print_exc()
+                rewritten_lines.append(line)
+                continue
+            history_id = str(record.get("history_id") or "")
+            updates = updates_by_id.get(history_id)
+            if isinstance(updates, dict):
+                record.update(updates)
+                matched_ids.add(history_id)
+            rewritten_lines.append(json.dumps(record, ensure_ascii=False) + "\n")
+
+        missing_ids = sorted(set(updates_by_id) - matched_ids)
+        if missing_ids:
+            print(
+                f"[LIGHBD] history 갱신 대상 일부를 찾지 못함: "
+                f"missing={missing_ids}, matched={len(matched_ids)}"
+            )
+        if not matched_ids:
+            return 0
+
+        history_backup_dir = os.path.join(BASE_DIR, "요구사항")
+        os.makedirs(history_backup_dir, exist_ok=True)
+        backup_path = os.path.join(history_backup_dir, "lighbd_history.jsonl.bak")
+        with open(backup_path, "w", encoding="utf-8") as backup_file:
+            backup_file.writelines(original_lines)
+        with open(LIGHBD_HISTORY_PATH, "w", encoding="utf-8") as history_file:
+            history_file.writelines(rewritten_lines)
+        print(
+            f"[LIGHBD] history 레코드 갱신 완료: "
+            f"matched={len(matched_ids)}, requested={len(updates_by_id)}"
+        )
+        return len(matched_ids)
+    except Exception as e:
+        print(
+            f"[LIGHBD] history 레코드 갱신 실패: "
+            f"path={LIGHBD_HISTORY_PATH}, ids={list(updates_by_id)}, error={e}"
+        )
+        traceback.print_exc()
+        return 0
+
+
 def _load_lighbd_history(limit: int = LIGHBD_HISTORY_MAX) -> list:
     """최근 limit 개(기본 20) 히스토리 반환 (오래된 → 최신 순)."""
     if not os.path.exists(LIGHBD_HISTORY_PATH):

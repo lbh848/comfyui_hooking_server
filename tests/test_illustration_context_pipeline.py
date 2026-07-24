@@ -879,6 +879,7 @@ async def test_backtranslation_strict_strategy_aborts_after_route_retries(monkey
 async def test_backtranslation_slow_retry_duplicates_non_streaming_tail_and_uses_first_valid(monkeypatch):
     source = "빠른 문장.\n\n[Slot 0]\n\n느린 문장.\n\n[Slot 1]"
     calls = []
+    history_updates = {}
     primary_cancelled = asyncio.Event()
 
     async def fake_pipeline_call(
@@ -887,6 +888,7 @@ async def test_backtranslation_slow_retry_duplicates_non_streaming_tail_and_uses
         stream_notify=None,
         result_validator=None,
         stream_observer=None,
+        history_id="",
     ):
         calls.append(call_name)
         index = int(re.search(r"BACKTRANSLATE (\d+)/", call_name).group(1))
@@ -904,6 +906,11 @@ async def test_backtranslation_slow_retry_duplicates_non_streaming_tail_and_uses
             raise
 
     monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
+    monkeypatch.setattr(
+        pipeline.lighbd_service,
+        "_update_lighbd_history_records",
+        lambda updates: history_updates.update(updates) or len(updates),
+    )
     translated, statuses = await pipeline.backtranslate_current_context(
         source,
         "Translate. {character_names}",
@@ -923,6 +930,76 @@ async def test_backtranslation_slow_retry_duplicates_non_streaming_tail_and_uses
     assert statuses[1]["hedged"] is True
     assert statuses[1]["winner"] == "duplicate"
     assert statuses[1]["requests"] == 2
+    assert any(
+        update["call_name"]
+        == "CALL1-BACKTRANSLATE 2/2 [느리다고? 다시해! · 승리]"
+        and update["status"] == "race_won"
+        for update in history_updates.values()
+    )
+    assert any(
+        update["call_name"]
+        == "CALL1-BACKTRANSLATE 2/2 [원본 · 패배 · 진행률 0% (비스트리밍)]"
+        and update["status"] == "race_lost"
+        for update in history_updates.values()
+    )
+
+
+@pytest.mark.asyncio
+async def test_backtranslation_slow_retry_marks_primary_as_winner(monkeypatch):
+    source = "빠른 문장.\n\n[Slot 0]\n\n느린 문장.\n\n[Slot 1]"
+    history_updates = {}
+    duplicate_started = asyncio.Event()
+
+    async def fake_pipeline_call(
+        call_name,
+        messages,
+        stream_notify=None,
+        result_validator=None,
+        stream_observer=None,
+        history_id="",
+    ):
+        index = int(re.search(r"BACKTRANSLATE (\d+)/", call_name).group(1))
+        token = pipeline._PROTECTED_SLOT_TOKEN_RE.findall(
+            messages[-1]["content"]
+        )[0]
+        if index == 1:
+            return f"Fast sentence.\n\n{token}"
+        if "느리다고? 다시해!" in call_name:
+            duplicate_started.set()
+            await asyncio.Future()
+        await duplicate_started.wait()
+        return f"Primary wins.\n\n{token}"
+
+    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
+    monkeypatch.setattr(
+        pipeline.lighbd_service,
+        "_update_lighbd_history_records",
+        lambda updates: history_updates.update(updates) or len(updates),
+    )
+
+    translated, statuses = await pipeline.backtranslate_current_context(
+        source,
+        "Translate. {character_names}",
+        "Hana",
+        2,
+        slow_retry_enabled=True,
+        slow_retry_remaining=1,
+        slow_retry_progress_threshold=50,
+    )
+
+    assert "Primary wins." in translated
+    assert statuses[1]["winner"] == "primary"
+    assert any(
+        update["call_name"] == "CALL1-BACKTRANSLATE 2/2 [원본 · 승리]"
+        and update["status"] == "race_won"
+        for update in history_updates.values()
+    )
+    assert any(
+        update["call_name"]
+        == "CALL1-BACKTRANSLATE 2/2 [느리다고? 다시해! · 패배 · 진행률 0% (비스트리밍)]"
+        and update["status"] == "race_lost"
+        for update in history_updates.values()
+    )
 
 
 @pytest.mark.asyncio
@@ -936,6 +1013,7 @@ async def test_backtranslation_slow_retry_uses_completed_ratio_for_stream_progre
         stream_notify=None,
         result_validator=None,
         stream_observer=None,
+        history_id="",
     ):
         calls.append(call_name)
         index = int(re.search(r"BACKTRANSLATE (\d+)/", call_name).group(1))
@@ -978,6 +1056,7 @@ async def test_backtranslation_slow_retry_uses_completed_ratio_for_stream_progre
 async def test_backtranslation_slow_retry_duplicates_stream_below_threshold(monkeypatch):
     source = "빠른 문장.\n\n[Slot 0]\n\n느린 문장.\n\n[Slot 1]"
     calls = []
+    history_updates = {}
 
     async def fake_pipeline_call(
         call_name,
@@ -985,6 +1064,7 @@ async def test_backtranslation_slow_retry_duplicates_stream_below_threshold(monk
         stream_notify=None,
         result_validator=None,
         stream_observer=None,
+        history_id="",
     ):
         calls.append(call_name)
         index = int(re.search(r"BACKTRANSLATE (\d+)/", call_name).group(1))
@@ -1009,6 +1089,11 @@ async def test_backtranslation_slow_retry_duplicates_stream_below_threshold(monk
         await asyncio.Future()
 
     monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
+    monkeypatch.setattr(
+        pipeline.lighbd_service,
+        "_update_lighbd_history_records",
+        lambda updates: history_updates.update(updates) or len(updates),
+    )
     translated, statuses = await pipeline.backtranslate_current_context(
         source,
         "Translate. {character_names}",
@@ -1022,6 +1107,12 @@ async def test_backtranslation_slow_retry_duplicates_stream_below_threshold(monk
     assert "Hedged stream wins." in translated
     assert len(calls) == 3
     assert statuses[1]["winner"] == "duplicate"
+    assert any(
+        "[원본 · 패배 · 진행률 " in update["call_name"]
+        and "(비스트리밍)" not in update["call_name"]
+        and update["status"] == "race_lost"
+        for update in history_updates.values()
+    )
 
 
 def test_call3_dialogue_prompt_selects_speak_or_manga_and_scopes_emotions():
@@ -1739,6 +1830,75 @@ async def test_pipeline_llm_records_failure_in_lighbd_history(monkeypatch):
     assert records[0]["output"] == ""
     assert records[0]["status"] == "error"
     assert "upstream unavailable" in records[0]["error"]
+
+
+@pytest.mark.asyncio
+async def test_pipeline_llm_records_cancelled_hedge_in_lighbd_history(monkeypatch):
+    records = []
+    call_started = asyncio.Event()
+    messages = [{"role": "user", "content": "slow scene"}]
+
+    async def fake_call(task_key, actual_messages, **kwargs):
+        call_started.set()
+        await asyncio.Future()
+
+    monkeypatch.setattr(pipeline.llm_service, "callLLMTask", fake_call)
+    monkeypatch.setattr(pipeline.lighbd_service, "_log_lighbd_history", records.append)
+
+    task = asyncio.create_task(
+        pipeline._call_pipeline_llm(
+            "CALL1-BACKTRANSLATE 2/2",
+            messages,
+            history_id="hedge-loser-id",
+        )
+    )
+    await call_started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert len(records) == 1
+    assert records[0]["history_id"] == "hedge-loser-id"
+    assert records[0]["status"] == "cancelled"
+    assert "패배" in records[0]["error"]
+
+
+def test_lighbd_history_records_are_updated_by_history_id_with_backup(
+    monkeypatch,
+    tmp_path,
+):
+    history_path = tmp_path / "logs" / "lighbd_history.jsonl"
+    history_path.parent.mkdir(parents=True)
+    original_records = [
+        {"history_id": "winner-id", "call_name": "original", "status": "ok"},
+        {"history_id": "loser-id", "call_name": "retry", "status": "cancelled"},
+    ]
+    original_text = "".join(
+        json.dumps(record, ensure_ascii=False) + "\n"
+        for record in original_records
+    )
+    history_path.write_text(original_text, encoding="utf-8")
+    monkeypatch.setattr(
+        pipeline.lighbd_service,
+        "LIGHBD_HISTORY_PATH",
+        str(history_path),
+    )
+    monkeypatch.setattr(pipeline.lighbd_service, "BASE_DIR", str(tmp_path))
+
+    updated = pipeline.lighbd_service._update_lighbd_history_records({
+        "winner-id": {"call_name": "원본 · 승리", "status": "race_won"},
+        "loser-id": {"call_name": "재요청 · 패배", "status": "race_lost"},
+    })
+
+    records = [
+        json.loads(line)
+        for line in history_path.read_text(encoding="utf-8").splitlines()
+    ]
+    backup_path = tmp_path / "요구사항" / "lighbd_history.jsonl.bak"
+    assert updated == 2
+    assert records[0]["status"] == "race_won"
+    assert records[1]["status"] == "race_lost"
+    assert backup_path.read_text(encoding="utf-8") == original_text
 
 
 @pytest.mark.asyncio
