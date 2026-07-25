@@ -3691,6 +3691,17 @@ async def process_illustration_context_queue_item(item) -> dict:
         to_retry: list[tuple[int, dict]] = []  # (raw_items 인덱스, descriptor)
         failures: list[dict] = []
         success_count = 0
+        completed = 0
+
+        # 1차: 완료 순서대로 수집한다. 최종 슬롯 순서는 images[idx]에 인덱스별로 저장되므로
+        # 수집 순서와 무관하게 보존된다. 느린 멀티 캐릭터 슬롯이 다른 슬롯의 진행도를 막지 않는다.
+        async def _collect_one(idx, child_id, child_item):
+            image_bytes, fail_reason, cancelled = await _collect_final_child(
+                child_id, child_item, raw_items[idx]
+            )
+            return idx, image_bytes, fail_reason, cancelled
+
+        first_pass_tasks: list[asyncio.Task] = []
         for idx, pair in enumerate(child_pairs):
             if pair is None:
                 descriptor = raw_items[idx]
@@ -3706,7 +3717,7 @@ async def process_illustration_context_queue_item(item) -> dict:
                     "slot": descriptor.get("slot"),
                     "error": fail_reason,
                 })
-                completed = idx + 1
+                completed += 1
                 await progress(
                     72 + (completed / total) * 20,
                     "generating",
@@ -3715,31 +3726,43 @@ async def process_illustration_context_queue_item(item) -> dict:
                     total,
                 )
                 continue
-            child_id, child_item = pair
-            image_bytes, fail_reason, cancelled = await _collect_final_child(
-                child_id,
-                child_item,
-                raw_items[idx],
+            first_pass_tasks.append(
+                asyncio.create_task(_collect_one(idx, pair[0], pair[1]))
             )
-            if cancelled:
-                # 사용자가 직접 큐를 취소한 경우 - 재시도/폴백 없이 세션 전체를 취소한다.
-                raise RuntimeError(f"사용자가 큐를 취소했습니다 (slot={raw_items[idx].get('slot')}, 사유={fail_reason})")
-            if image_bytes:
-                images[idx] = image_bytes
-                success_count += 1
-            else:
-                print(
-                    f"[ILLUST_CONTEXT] 1차 실패 - 재시도 대상: slot={raw_items[idx].get('slot')}, 사유={fail_reason}"
+
+        try:
+            for finished in asyncio.as_completed(first_pass_tasks):
+                idx, image_bytes, fail_reason, cancelled = await finished
+                if cancelled:
+                    # 사용자가 직접 큐를 취소한 경우 - 재시도/폴백 없이 세션 전체를 취소한다.
+                    for task in first_pass_tasks:
+                        if not task.done():
+                            task.cancel()
+                    raise RuntimeError(
+                        f"사용자가 큐를 취소했습니다 (slot={raw_items[idx].get('slot')}, 사유={fail_reason})"
+                    )
+                if image_bytes:
+                    images[idx] = image_bytes
+                    success_count += 1
+                else:
+                    print(
+                        f"[ILLUST_CONTEXT] 1차 실패 - 재시도 대상: slot={raw_items[idx].get('slot')}, 사유={fail_reason}"
+                    )
+                    to_retry.append((idx, raw_items[idx]))
+                completed += 1
+                await progress(
+                    72 + (completed / total) * 20,
+                    "generating",
+                    f"성공 {success_count}/{total}장 · 생성/후처리 {completed}/{total}",
+                    success_count,
+                    total,
                 )
-                to_retry.append((idx, raw_items[idx]))
-            completed = idx + 1
-            await progress(
-                72 + (completed / total) * 20,
-                "generating",
-                f"성공 {success_count}/{total}장 · 생성/후처리 {completed}/{total}",
-                success_count,
-                total,
-            )
+        finally:
+            for task in first_pass_tasks:
+                if not task.done():
+                    task.cancel()
+            if first_pass_tasks:
+                await asyncio.gather(*first_pass_tasks, return_exceptions=True)
 
         # ─── 2차: 1차 실패 슬롯을 새 하위 큐 아이템으로 1회 재등록(이미지 교체 시도).
         if to_retry:
@@ -3769,34 +3792,52 @@ async def process_illustration_context_queue_item(item) -> dict:
                 )
                 retry_pairs.append((idx, descriptor, retry_id, retry_item))
 
-            for retry_number, (idx, descriptor, retry_id, retry_item) in enumerate(retry_pairs, start=1):
-                slot_label = descriptor.get("slot")
+            async def _retry_one(idx, descriptor, retry_id, retry_item):
                 image_bytes, fail_reason, cancelled = await _collect_final_child(
-                    retry_id,
-                    retry_item,
-                    descriptor,
+                    retry_id, retry_item, descriptor
                 )
-                if cancelled:
-                    # 재시도 큐마저 사용자가 취소한 경우 세션 전체를 취소한다.
-                    raise RuntimeError(f"사용자가 큐를 취소했습니다 (slot={slot_label}, 사유={fail_reason})")
-                if image_bytes:
-                    images[idx] = image_bytes
-                    success_count += 1
-                    print(f"[ILLUST_CONTEXT] 재시도 성공으로 이미지 교체: slot={slot_label}")
-                else:
-                    # 최종 실패 슬롯은 성공 결과/짧은 슬롯 manifest에서 제외한다.
-                    print(
-                        f"[ILLUST_CONTEXT] 재시도도 실패 - 결과에서 제외: "
-                        f"slot={slot_label}, 사유={fail_reason}"
+                return idx, descriptor, image_bytes, fail_reason, cancelled
+
+            retry_tasks = [
+                asyncio.create_task(_retry_one(idx, descriptor, retry_id, retry_item))
+                for idx, descriptor, retry_id, retry_item in retry_pairs
+            ]
+            retry_done = 0
+            try:
+                for finished in asyncio.as_completed(retry_tasks):
+                    idx, descriptor, image_bytes, fail_reason, cancelled = await finished
+                    slot_label = descriptor.get("slot")
+                    if cancelled:
+                        # 재시도 큐마저 사용자가 취소한 경우 세션 전체를 취소한다.
+                        for task in retry_tasks:
+                            if not task.done():
+                                task.cancel()
+                        raise RuntimeError(f"사용자가 큐를 취소했습니다 (slot={slot_label}, 사유={fail_reason})")
+                    if image_bytes:
+                        images[idx] = image_bytes
+                        success_count += 1
+                        print(f"[ILLUST_CONTEXT] 재시도 성공으로 이미지 교체: slot={slot_label}")
+                    else:
+                        # 최종 실패 슬롯은 성공 결과/짧은 슬롯 manifest에서 제외한다.
+                        print(
+                            f"[ILLUST_CONTEXT] 재시도도 실패 - 결과에서 제외: "
+                            f"slot={slot_label}, 사유={fail_reason}"
+                        )
+                        failures.append({"slot": slot_label, "error": fail_reason or "알 수 없음"})
+                    retry_done += 1
+                    await progress(
+                        92 + (retry_done / len(retry_pairs)) * 7,
+                        "retrying",
+                        f"성공 {success_count}/{total}장 · 재시도 {retry_done}/{len(retry_pairs)} 처리",
+                        success_count,
+                        total,
                     )
-                    failures.append({"slot": slot_label, "error": fail_reason or "알 수 없음"})
-                await progress(
-                    92 + (retry_number / len(retry_pairs)) * 7,
-                    "retrying",
-                    f"성공 {success_count}/{total}장 · 재시도 {retry_number}/{len(retry_pairs)} 처리",
-                    success_count,
-                    total,
-                )
+            finally:
+                for task in retry_tasks:
+                    if not task.done():
+                        task.cancel()
+                if retry_tasks:
+                    await asyncio.gather(*retry_tasks, return_exceptions=True)
 
         successful_items = []
         successful_images = []
