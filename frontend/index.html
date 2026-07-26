@@ -4631,18 +4631,19 @@
             color: var(--accent);
         }
 
-        /* ─── 에셋 생성 큐 UI ─── */
+        /* ─── 좌측 하단 작업 큐 UI ─── */
         .asset-queue-container {
             position: fixed;
-            bottom: 16px;
-            left: 16px;
+            bottom: 18px;
+            left: 18px;
             z-index: 9000;
             display: flex;
             flex-direction: column;
             align-items: flex-start;
             gap: 0;
             font-size: 0.82rem;
-            max-width: 380px;
+            width: min(400px, calc(100vw - 36px));
+            max-width: 400px;
             pointer-events: none;
             animation: queue-slide-in 0.25s ease-out;
         }
@@ -4655,19 +4656,30 @@
         .asset-queue-bar {
             display: flex;
             align-items: center;
-            gap: 8px;
-            background: var(--surface);
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            padding: 8px 12px;
+            gap: 10px;
+            width: 100%;
+            min-height: 58px;
+            box-sizing: border-box;
+            background: color-mix(in srgb, var(--surface) 94%, #111827);
+            border: 1px solid color-mix(in srgb, var(--border) 78%, var(--accent));
+            border-radius: 12px;
+            padding: 9px 11px 9px 13px;
             cursor: pointer;
-            box-shadow: 0 2px 12px rgba(0,0,0,0.4);
-            transition: box-shadow 0.2s;
-            min-width: 260px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.42), 0 1px 0 rgba(255,255,255,0.04) inset;
+            transition: border-color 0.2s, box-shadow 0.2s, transform 0.2s;
             user-select: none;
         }
-        .asset-queue-bar:hover { box-shadow: 0 4px 18px rgba(0,0,0,0.6); }
-        .asset-queue-bar .queue-spinner {
+        .asset-queue-bar:hover {
+            border-color: color-mix(in srgb, var(--accent) 65%, var(--border));
+            box-shadow: 0 12px 34px rgba(0,0,0,0.52), 0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent);
+            transform: translateY(-1px);
+        }
+        .asset-queue-bar:focus-visible,
+        .queue-panel-collapse-btn:focus-visible {
+            outline: 2px solid var(--accent);
+            outline-offset: 2px;
+        }
+        .asset-queue-container .queue-spinner {
             width: 16px; height: 16px;
             border: 2px solid var(--border);
             border-top-color: var(--accent);
@@ -4683,7 +4695,9 @@
             min-width: 0;
         }
         .asset-queue-bar .queue-current-label {
-            font-weight: 600;
+            color: var(--text);
+            font-weight: 700;
+            line-height: 1.25;
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
@@ -4693,31 +4707,42 @@
             color: var(--text2);
         }
         .asset-queue-bar .queue-waiting-badge {
-            background: var(--surface2);
-            color: var(--text2);
-            border-radius: 10px;
-            padding: 2px 8px;
-            font-size: 0.72rem;
+            background: color-mix(in srgb, var(--accent) 14%, var(--surface2));
+            color: color-mix(in srgb, var(--accent) 70%, white);
+            border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+            border-radius: 999px;
+            padding: 3px 8px;
+            font-size: 0.68rem;
+            font-weight: 700;
             white-space: nowrap;
         }
         .asset-queue-bar .queue-stop-btn {
             background: #c0392b;
             color: #fff;
             border: none;
-            border-radius: 4px;
-            padding: 4px 10px;
+            border-radius: 7px;
+            padding: 6px 10px;
             cursor: pointer;
-            font-size: 0.75rem;
+            font-size: 0.72rem;
             font-weight: 600;
             white-space: nowrap;
+            box-shadow: 0 2px 8px rgba(192,57,43,0.24);
         }
         .asset-queue-bar .queue-stop-btn:hover { opacity: 0.85; }
         .asset-queue-bar .queue-expand-icon {
             color: var(--text2);
-            font-size: 0.9rem;
-            transition: transform 0.2s;
+            display: grid;
+            place-items: center;
+            width: 26px;
+            height: 26px;
+            border-radius: 7px;
+            background: var(--surface2);
+            font-size: 1rem;
+            font-weight: 800;
+            transition: color 0.2s, background 0.2s;
+            flex-shrink: 0;
         }
-        .asset-queue-bar.expanded .queue-expand-icon { transform: rotate(180deg); }
+        .asset-queue-bar:hover .queue-expand-icon { color: var(--text); background: var(--surface3); }
         .asset-queue-bar .queue-mini-progress {
             width: 100%;
             height: 3px;
@@ -4734,24 +4759,36 @@
             border-radius: 2px;
         }
         .asset-queue-bar.all-done {
-            opacity: 0.7;
-            cursor: default;
+            opacity: 0.86;
+            cursor: pointer;
         }
         .asset-queue-bar.all-done .queue-spinner { display: none; }
         /* 확장 패널 */
         .asset-queue-panel {
-            background: var(--surface);
-            border: 1px solid var(--border);
-            border-radius: 10px;
-            width: 360px;
-            max-height: 400px;
+            position: relative;
+            background: color-mix(in srgb, var(--surface) 96%, #111827);
+            border: 1px solid color-mix(in srgb, var(--border) 78%, var(--accent));
+            border-radius: 14px;
+            width: 100%;
+            max-height: min(480px, 58vh);
+            box-sizing: border-box;
             display: flex;
             flex-direction: column;
-            box-shadow: 0 4px 24px rgba(0,0,0,0.5);
-            margin-bottom: 6px;
+            box-shadow: 0 18px 48px rgba(0,0,0,0.5), 0 1px 0 rgba(255,255,255,0.05) inset;
+            margin-bottom: 8px;
             overflow: hidden;
             transform-origin: bottom left;
-            transition: opacity 0.2s, transform 0.2s;
+            transition: opacity 0.2s ease, transform 0.2s ease;
+        }
+        .asset-queue-panel::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, var(--accent), #8b5cf6 55%, #38bdf8);
+            z-index: 1;
         }
         .asset-queue-panel.hidden {
             opacity: 0;
@@ -4768,33 +4805,88 @@
             display: flex;
             align-items: center;
             justify-content: space-between;
-            padding: 10px 14px;
+            gap: 12px;
+            min-height: 62px;
+            padding: 11px 11px 11px 14px;
             border-bottom: 1px solid var(--border);
-            font-weight: 600;
-            font-size: 0.88rem;
+            background: linear-gradient(180deg, rgba(255,255,255,0.035), transparent);
         }
         .asset-queue-panel-header .queue-panel-title {
             display: flex;
             align-items: center;
-            gap: 8px;
+            gap: 10px;
+            min-width: 0;
+        }
+        .queue-panel-heading-copy {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            min-width: 0;
+        }
+        .queue-panel-heading-copy strong {
+            color: var(--text);
+            font-size: 0.9rem;
+            line-height: 1.25;
+        }
+        .queue-panel-heading-copy span {
+            color: var(--text2);
+            font-size: 0.72rem;
+            font-weight: 500;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .queue-panel-collapse-btn {
+            display: grid;
+            place-items: center;
+            width: 34px;
+            height: 34px;
+            padding: 0;
+            flex-shrink: 0;
+            border: 1px solid var(--border);
+            border-radius: 9px;
+            background: var(--surface2);
+            color: var(--text2);
+            cursor: pointer;
+            font-size: 1.15rem;
+            font-weight: 800;
+            transition: color 0.15s, border-color 0.15s, background 0.15s;
+        }
+        .queue-panel-collapse-btn:hover {
+            color: var(--text);
+            border-color: color-mix(in srgb, var(--accent) 60%, var(--border));
+            background: var(--surface3);
         }
         .asset-queue-panel-body {
             overflow-y: auto;
             flex: 1;
-            padding: 6px 0;
+            padding: 6px;
+            scrollbar-width: thin;
+            scrollbar-color: var(--border) transparent;
         }
         /* 큐 아이템 행 */
         .asset-queue-item {
             display: flex;
             align-items: center;
             gap: 8px;
-            padding: 7px 14px;
-            transition: background 0.15s;
+            min-height: 42px;
+            padding: 7px 8px;
+            border: 1px solid transparent;
+            border-radius: 9px;
+            transition: background 0.15s, border-color 0.15s;
         }
-        .asset-queue-item:hover { background: rgba(255,255,255,0.03); }
+        .asset-queue-item + .asset-queue-item { margin-top: 3px; }
+        .asset-queue-item:hover {
+            background: rgba(255,255,255,0.035);
+            border-color: color-mix(in srgb, var(--border) 70%, transparent);
+        }
         .asset-queue-item .item-icon {
-            width: 18px;
-            text-align: center;
+            width: 26px;
+            height: 26px;
+            display: grid;
+            place-items: center;
+            border-radius: 7px;
+            background: var(--surface2);
             flex-shrink: 0;
             font-size: 0.85rem;
         }
@@ -4809,6 +4901,9 @@
             font-size: 0.72rem;
             color: var(--text2);
             white-space: nowrap;
+            max-width: 118px;
+            overflow: hidden;
+            text-overflow: ellipsis;
         }
         .asset-queue-item .item-countdown {
             font-size: 0.65rem;
@@ -4830,19 +4925,23 @@
             transition: width 0.2s ease;
         }
         .asset-queue-item .item-dismiss-btn {
-            background: rgba(255, 255, 255, 0.85);
-            border: none;
-            color: #333;
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            color: var(--text2);
             cursor: pointer;
             font-size: 0.85rem;
-            padding: 4px 8px;
-            border-radius: 4px;
+            padding: 3px 7px;
+            border-radius: 7px;
             opacity: 1;
-            transition: background 0.15s, color 0.15s;
+            transition: background 0.15s, color 0.15s, border-color 0.15s;
             min-width: 28px;
             text-align: center;
         }
-        .asset-queue-item .item-dismiss-btn:hover { background: rgba(255, 255, 255, 1); color: #e74c3c; }
+        .asset-queue-item .item-dismiss-btn:hover {
+            background: rgba(231,76,60,0.12);
+            border-color: rgba(231,76,60,0.45);
+            color: #ff7b6d;
+        }
         .asset-queue-item.item-cancelled .item-dismiss-btn {
             background: rgba(128, 128, 128, 0.4);
             color: #999;
@@ -4855,6 +4954,22 @@
         .asset-queue-item.item-error .item-icon { color: #e74c3c; }
         .asset-queue-item.item-cancelled .item-icon { color: var(--text2); }
         .asset-queue-item.item-generating .item-label { color: var(--accent); font-weight: 600; }
+        .asset-queue-item.item-processing,
+        .asset-queue-item.item-batch.processing {
+            background: color-mix(in srgb, var(--accent) 7%, transparent);
+            border-color: color-mix(in srgb, var(--accent) 23%, transparent);
+        }
+        @media (max-width: 520px) {
+            .asset-queue-container {
+                left: 10px;
+                bottom: 10px;
+                width: calc(100vw - 20px);
+                max-width: none;
+            }
+            .asset-queue-panel { max-height: 55vh; }
+            .asset-queue-bar .queue-waiting-badge { display: none !important; }
+            .asset-queue-item .item-status { max-width: 82px; }
+        }
         @keyframes spin { to { transform: rotate(360deg); } }
 
         /* ─── 공용 최상단 진행도 바 ─── */
@@ -7681,22 +7796,26 @@
         </div>
     </div>
 
-    <!-- 에셋 생성 큐 UI -->
+    <!-- 좌측 하단 작업 큐 UI -->
     <div class="asset-queue-container" id="asset-queue-container" style="display:none;">
         <!-- 확장 패널 -->
-        <div class="asset-queue-panel hidden" id="asset-queue-panel">
+        <div class="asset-queue-panel visible" id="asset-queue-panel" role="region" aria-labelledby="queue-panel-heading" aria-hidden="false">
             <div class="asset-queue-panel-header">
                 <div class="queue-panel-title">
                     <span class="queue-spinner" id="queue-panel-spinner" style="display:none;width:14px;height:14px;border-width:2px;"></span>
-                    <span id="queue-panel-title-text">생성 큐</span>
+                    <div class="queue-panel-heading-copy">
+                        <strong id="queue-panel-heading">작업 큐</strong>
+                        <span id="queue-panel-title-text">대기 중인 작업을 확인합니다</span>
+                    </div>
                 </div>
+                <button type="button" class="queue-panel-collapse-btn" id="queue-panel-collapse-btn" onclick="collapseAssetQueuePanel()" title="작업 큐 접기" aria-label="작업 큐 접기">⌄</button>
             </div>
             <div class="asset-queue-panel-body" id="asset-queue-panel-body">
                 <!-- 아이템 동적 렌더 -->
             </div>
         </div>
         <!-- 슬림 바 -->
-        <div class="asset-queue-bar" id="asset-queue-bar" onclick="toggleAssetQueuePanel()">
+        <div class="asset-queue-bar expanded" id="asset-queue-bar" role="button" tabindex="0" aria-controls="asset-queue-panel" aria-expanded="true" onclick="toggleAssetQueuePanel()" onkeydown="if(event.key === 'Enter' || event.key === ' '){ event.preventDefault(); toggleAssetQueuePanel(); }" title="작업 큐 접기">
             <div class="queue-spinner" id="queue-bar-spinner"></div>
             <div class="queue-info">
                 <div class="queue-current-label" id="queue-bar-label">-</div>
@@ -7706,8 +7825,8 @@
                 </div>
             </div>
             <div class="queue-waiting-badge" id="queue-bar-waiting" style="display:none;">0 대기</div>
-            <button class="queue-stop-btn" id="queue-bar-stop-btn" onclick="event.stopPropagation(); stopAssetQueue();">중단</button>
-            <div class="queue-expand-icon" id="queue-bar-expand-icon">&#9660;</div>
+            <button class="queue-stop-btn" id="queue-bar-stop-btn" onclick="event.stopPropagation(); stopAssetQueue();" onkeydown="event.stopPropagation();">중단</button>
+            <div class="queue-expand-icon" id="queue-bar-expand-icon" aria-hidden="true">⌄</div>
         </div>
     </div>
 
@@ -25681,7 +25800,8 @@
         let assetQueueCounter = 0;
         let assetCurrentQueueId = null;
         let assetQueueProcessing = false;
-        let assetQueueExpanded = false;
+        // 페이지(서버) 시작 및 새 큐 시작 시 확장 패널을 기본으로 보여준다.
+        let assetQueueExpanded = true;
 
         function isAssetGenerating() {
             return assetQueue.some(q => q.status === 'processing' || q.status === 'pending');
@@ -50758,7 +50878,7 @@
                     if (assetQueue.length === 0) {
                         document.getElementById('asset-queue-container').style.display = 'none';
                         hideTopProgress();
-                        assetQueueExpanded = false;
+                        assetQueueExpanded = true;
                         stopCountdownInterval();
                     }
                 }, 300);
@@ -50768,7 +50888,7 @@
                 if (assetQueue.length === 0) {
                     document.getElementById('asset-queue-container').style.display = 'none';
                     hideTopProgress();
-                    assetQueueExpanded = false;
+                    assetQueueExpanded = true;
                     stopCountdownInterval();
                 }
             }
@@ -50820,7 +50940,7 @@
                     if (assetQueue.length === 0) {
                         document.getElementById('asset-queue-container').style.display = 'none';
                         hideTopProgress();
-                        assetQueueExpanded = false;
+                        assetQueueExpanded = true;
                         stopCountdownInterval();
                     }
                     resolve();
@@ -50878,7 +50998,10 @@
             const pending = assetQueue.filter(q => q.status === 'pending');
             const hasActive = processing || pending.length > 0;
 
+            // 큐가 완전히 끝난 뒤 다음 큐가 생기면 다시 펼친 상태로 시작한다.
+            if (assetQueue.length === 0) assetQueueExpanded = true;
             container.style.display = assetQueue.length > 0 ? 'flex' : 'none';
+            setAssetQueuePanelExpanded(assetQueueExpanded);
 
             // ─── 타입별 아이콘/색상 ───
             function getTypeStyle(type) {
@@ -51095,22 +51218,51 @@
             } catch (e) { showToast(`배치 취소 실패: ${e.message || e}`, 'error'); }
         }
 
-        function toggleAssetQueuePanel() {
-            assetQueueExpanded = !assetQueueExpanded;
+        function setAssetQueuePanelExpanded(expanded) {
+            assetQueueExpanded = Boolean(expanded);
             const panel = document.getElementById('asset-queue-panel');
             const bar = document.getElementById('asset-queue-bar');
             const icon = document.getElementById('queue-bar-expand-icon');
+            const collapseBtn = document.getElementById('queue-panel-collapse-btn');
+            if (!panel || !bar || !icon || !collapseBtn) {
+                console.error('[QUEUE] setAssetQueuePanelExpanded: 큐 접기 UI 요소 누락', {
+                    panel: !!panel, bar: !!bar, icon: !!icon, collapseBtn: !!collapseBtn,
+                });
+                return;
+            }
             if (assetQueueExpanded) {
                 panel.classList.remove('hidden');
                 panel.classList.add('visible');
                 bar.classList.add('expanded');
-                icon.innerHTML = '▲';
+                panel.setAttribute('aria-hidden', 'false');
+                panel.inert = false;
+                bar.setAttribute('aria-expanded', 'true');
+                bar.title = '작업 큐 접기';
+                icon.textContent = '⌄';
             } else {
                 panel.classList.remove('visible');
                 panel.classList.add('hidden');
                 bar.classList.remove('expanded');
-                icon.innerHTML = '▼';
+                panel.setAttribute('aria-hidden', 'true');
+                panel.inert = true;
+                bar.setAttribute('aria-expanded', 'false');
+                bar.title = '작업 큐 펼치기';
+                icon.textContent = '⌃';
             }
+        }
+
+        function collapseAssetQueuePanel() {
+            const bar = document.getElementById('asset-queue-bar');
+            if (!bar) {
+                console.error('[QUEUE] collapseAssetQueuePanel: asset-queue-bar 요소 없음');
+                return;
+            }
+            bar.focus();
+            setAssetQueuePanelExpanded(false);
+        }
+
+        function toggleAssetQueuePanel() {
+            setAssetQueuePanelExpanded(!assetQueueExpanded);
         }
 
         // ─── 에셋 생성 (큐 기반) ─────────────────────────────────
