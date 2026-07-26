@@ -16,6 +16,7 @@ import traceback
 import base64
 import shutil
 import mimetypes
+from typing import Any
 
 # ─── 모듈 이중 로드 방지 ─────────────────────────────────
 # python server.py 로 실행하면 이 파일은 __main__ 으로 로드되지만,
@@ -84,6 +85,12 @@ from modes.character_maker_mode import (
     MAX_REFERENCE_BYTES,
     CharacterMakerError,
     CharacterMakerService,
+)
+from modes.character_maker_rag_data import (
+    MAX_UPLOAD_BYTES as CHARACTER_MAKER_RAG_MAX_UPLOAD_BYTES,
+    OUTPUT_FILENAME as CHARACTER_MAKER_RAG_OUTPUT_FILENAME,
+    CharacterMakerRagDataError,
+    convert_kr_danbooru_csv,
 )
 from modes.asset_mode import CHARACTER_MAKER_TEMP_DIR
 import workflow_profiles
@@ -13008,6 +13015,333 @@ async def handle_api_character_maker_rag_test(request: web.Request) -> web.Respo
         return _character_maker_error_response("RAG 연결 테스트", exc)
 
 
+def _character_maker_rag_dataset_status() -> dict[str, Any]:
+    auto_complete_dir = os.path.realpath(os.path.join(BASE_DIR, "auto_complete"))
+    canonical_path = os.path.realpath(
+        os.path.join(auto_complete_dir, "danbooru.csv")
+    )
+    preferred_name = "KR_danbooru_tags_with_description v3_modified.csv"
+    dataset_path = ""
+    candidates: list[str] = []
+    if not os.path.isdir(auto_complete_dir):
+        print(
+            "[CHARACTER_MAKER_RAG_DATA] auto_complete 폴더 없음: "
+            f"path={auto_complete_dir!r}"
+        )
+    else:
+        try:
+            for entry in os.scandir(auto_complete_dir):
+                if (
+                    entry.is_file()
+                    and entry.name.casefold().endswith(".csv")
+                    and entry.name.casefold().startswith(
+                        "kr_danbooru_tags_with_description"
+                    )
+                ):
+                    candidates.append(entry.name)
+        except OSError as exc:
+            print(
+                "[CHARACTER_MAKER_RAG_DATA] auto_complete 검색 실패: "
+                f"path={auto_complete_dir!r}, error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            raise CharacterMakerError(
+                f"auto_complete 폴더를 검색하지 못했습니다: {exc}"
+            ) from exc
+
+        candidates.sort(key=str.casefold)
+        preferred_path = os.path.realpath(
+            os.path.join(auto_complete_dir, preferred_name)
+        )
+        if os.path.isfile(preferred_path):
+            dataset_path = preferred_path
+        elif candidates:
+            dataset_path = os.path.realpath(
+                os.path.join(auto_complete_dir, candidates[0])
+            )
+            if len(candidates) > 1:
+                print(
+                    "[CHARACTER_MAKER_RAG_DATA] KR CSV 후보 여러 개: "
+                    f"selected={os.path.basename(dataset_path)!r}, "
+                    f"candidates={candidates}"
+                )
+
+    if dataset_path:
+        try:
+            if os.path.commonpath([auto_complete_dir, dataset_path]) != auto_complete_dir:
+                print(
+                    "[CHARACTER_MAKER_RAG_DATA] KR CSV 경로 이탈 거부: "
+                    f"root={auto_complete_dir!r}, path={dataset_path!r}"
+                )
+                dataset_path = ""
+        except ValueError as exc:
+            print(
+                "[CHARACTER_MAKER_RAG_DATA] KR CSV 경로 검증 실패: "
+                f"root={auto_complete_dir!r}, path={dataset_path!r}, error={exc}"
+            )
+            traceback.print_exc()
+            dataset_path = ""
+
+    dataset_available = bool(dataset_path and os.path.isfile(dataset_path))
+    canonical_available = bool(
+        os.path.isfile(canonical_path)
+        and os.path.commonpath([auto_complete_dir, canonical_path])
+        == auto_complete_dir
+    )
+    if not dataset_available:
+        print(
+            "[CHARACTER_MAKER_RAG_DATA] auto_complete KR CSV 미발견: "
+            f"path={auto_complete_dir!r}, candidates={candidates}"
+        )
+    if not canonical_available:
+        print(
+            "[CHARACTER_MAKER_RAG_DATA] auto_complete 기준표 미발견: "
+            f"path={canonical_path!r}"
+        )
+    return {
+        "directory": auto_complete_dir,
+        "dataset": {
+            "available": dataset_available,
+            "filename": os.path.basename(dataset_path) if dataset_available else "",
+            "size": os.path.getsize(dataset_path) if dataset_available else 0,
+            "path": dataset_path if dataset_available else "",
+            "candidates": candidates,
+        },
+        "canonical": {
+            "available": canonical_available,
+            "filename": "danbooru.csv" if canonical_available else "",
+            "size": os.path.getsize(canonical_path) if canonical_available else 0,
+            "path": canonical_path if canonical_available else "",
+        },
+    }
+
+
+async def handle_api_character_maker_rag_dataset_status(
+    request: web.Request,
+) -> web.Response:
+    try:
+        status = _character_maker_rag_dataset_status()
+        return web.json_response(
+            {
+                "success": True,
+                "dataset": {
+                    key: value
+                    for key, value in status["dataset"].items()
+                    if key != "path"
+                },
+                "canonical": {
+                    key: value
+                    for key, value in status["canonical"].items()
+                    if key != "path"
+                },
+            }
+        )
+    except Exception as exc:
+        return _character_maker_error_response("RAG 태그 자료 검색", exc)
+
+
+async def handle_api_character_maker_rag_convert(
+    request: web.Request,
+) -> web.StreamResponse:
+    """사용자 KR 태그 CSV를 RAG용 CSV로 변환하고 바로 다운로드한다."""
+    temp_paths: list[str] = []
+    response: web.StreamResponse | None = None
+    upload_filename = ""
+    requested_source = ""
+    try:
+        if (
+            request.content_length is not None
+            and request.content_length > CHARACTER_MAKER_RAG_MAX_UPLOAD_BYTES + 2 * 1024 * 1024
+        ):
+            print(
+                "[CHARACTER_MAKER_RAG_DATA] 업로드 요청 용량 초과: "
+                f"content_length={request.content_length}, "
+                f"limit={CHARACTER_MAKER_RAG_MAX_UPLOAD_BYTES}"
+            )
+            raise CharacterMakerError("태그 CSV는 128MB를 넘을 수 없습니다.")
+
+        reader = await request.multipart()
+        source_path = ""
+        while True:
+            part = await reader.next()
+            if part is None:
+                break
+            if part.name == "source":
+                requested_source = (await part.text()).strip()
+                continue
+            if part.name != "dataset":
+                print(
+                    "[CHARACTER_MAKER_RAG_DATA] 알 수 없는 multipart 필드 스킵: "
+                    f"name={part.name!r}, filename={part.filename!r}"
+                )
+                continue
+            if source_path:
+                print(
+                    "[CHARACTER_MAKER_RAG_DATA] 중복 데이터 파일 거부: "
+                    f"first={upload_filename!r}, duplicate={part.filename!r}"
+                )
+                raise CharacterMakerError("한 번에 CSV 파일 하나만 변환할 수 있습니다.")
+            upload_filename = re.split(r"[\\/]", str(part.filename or ""))[-1].strip()
+            if not upload_filename:
+                print(
+                    "[CHARACTER_MAKER_RAG_DATA] 업로드 파일명 없음: "
+                    f"field={part.name!r}"
+                )
+                raise CharacterMakerError("변환할 CSV 파일을 선택하세요.")
+            if not upload_filename.casefold().endswith(".csv"):
+                print(
+                    "[CHARACTER_MAKER_RAG_DATA] CSV 확장자 거부: "
+                    f"filename={upload_filename!r}"
+                )
+                raise CharacterMakerError("CSV 파일만 변환할 수 있습니다.")
+
+            import tempfile
+
+            source_file = tempfile.NamedTemporaryFile(
+                mode="wb",
+                prefix="rag_kr_source_",
+                suffix=".csv",
+                dir=character_maker.temp_root,
+                delete=False,
+            )
+            source_path = source_file.name
+            temp_paths.append(source_path)
+            uploaded_bytes = 0
+            try:
+                while True:
+                    chunk = await part.read_chunk(size=512 * 1024)
+                    if not chunk:
+                        break
+                    uploaded_bytes += len(chunk)
+                    if uploaded_bytes > CHARACTER_MAKER_RAG_MAX_UPLOAD_BYTES:
+                        print(
+                            "[CHARACTER_MAKER_RAG_DATA] 업로드 파일 용량 초과: "
+                            f"filename={upload_filename!r}, "
+                            f"bytes>{CHARACTER_MAKER_RAG_MAX_UPLOAD_BYTES}"
+                        )
+                        raise CharacterMakerError("태그 CSV는 128MB를 넘을 수 없습니다.")
+                    source_file.write(chunk)
+            finally:
+                source_file.close()
+            if uploaded_bytes == 0:
+                print(
+                    "[CHARACTER_MAKER_RAG_DATA] 빈 업로드 파일 거부: "
+                    f"filename={upload_filename!r}"
+                )
+                raise CharacterMakerError("선택한 CSV 파일이 비어 있습니다.")
+
+        if source_path and requested_source:
+            print(
+                "[CHARACTER_MAKER_RAG_DATA] 변환 입력 중복 거부: "
+                f"upload={upload_filename!r}, source={requested_source!r}"
+            )
+            raise CharacterMakerError(
+                "업로드 파일과 auto_complete 자료를 동시에 선택할 수 없습니다."
+            )
+        if not source_path and requested_source == "auto_complete":
+            local_status = _character_maker_rag_dataset_status()
+            if not local_status["dataset"]["available"]:
+                raise CharacterMakerError(
+                    "auto_complete에서 KR_danbooru_tags_with_description CSV를 찾지 못했습니다."
+                )
+            source_path = local_status["dataset"]["path"]
+            upload_filename = local_status["dataset"]["filename"]
+        elif not source_path and requested_source:
+            print(
+                "[CHARACTER_MAKER_RAG_DATA] 알 수 없는 변환 소스 거부: "
+                f"source={requested_source!r}"
+            )
+            raise CharacterMakerError("알 수 없는 태그 자료 소스입니다.")
+        elif not source_path:
+            print(
+                "[CHARACTER_MAKER_RAG_DATA] 변환 요청 파일 없음: "
+                "field='dataset', source 비어 있음"
+            )
+            raise CharacterMakerError("변환할 CSV 파일을 선택하세요.")
+
+        import tempfile
+
+        output_file = tempfile.NamedTemporaryFile(
+            mode="wb",
+            prefix="rag_converted_",
+            suffix=".csv",
+            dir=character_maker.temp_root,
+            delete=False,
+        )
+        output_path = output_file.name
+        output_file.close()
+        temp_paths.append(output_path)
+        canonical_path = os.path.join(BASE_DIR, "auto_complete", "danbooru.csv")
+        summary = await asyncio.to_thread(
+            convert_kr_danbooru_csv,
+            source_path,
+            canonical_path,
+            output_path,
+        )
+        output_size = os.path.getsize(output_path)
+        if output_size <= 0:
+            print(
+                "[CHARACTER_MAKER_RAG_DATA] 변환 출력 파일 비어 있음: "
+                f"path={output_path!r}, summary={summary}"
+            )
+            raise CharacterMakerError("변환 결과 파일이 비어 있습니다.")
+
+        headers = {
+            "Cache-Control": "no-store, max-age=0",
+            "Content-Disposition": (
+                f'attachment; filename="{CHARACTER_MAKER_RAG_OUTPUT_FILENAME}"'
+            ),
+            "X-CM-RAG-Input-Rows": str(summary["input_rows"]),
+            "X-CM-RAG-Written-Rows": str(summary["written_rows"]),
+            "X-CM-RAG-Below-Frequency": str(summary["below_frequency"]),
+            "X-CM-RAG-Unmatched": str(summary["unmatched"]),
+            "X-CM-RAG-Malformed": str(summary["malformed"]),
+            "X-CM-RAG-Duplicates": str(summary["duplicates"]),
+            "X-CM-RAG-Canonical-Rows": str(summary["canonical_rows"]),
+            "X-CM-RAG-Min-Post-Count": str(summary["min_post_count"]),
+        }
+        response = web.StreamResponse(status=200, headers=headers)
+        response.content_type = "text/csv"
+        response.charset = "utf-8"
+        response.content_length = output_size
+        await response.prepare(request)
+        with open(output_path, "rb") as output:
+            while True:
+                chunk = output.read(512 * 1024)
+                if not chunk:
+                    break
+                await response.write(chunk)
+        await response.write_eof()
+        print(
+            "[CHARACTER_MAKER_RAG_DATA] 변환 파일 전송 완료: "
+            f"source={upload_filename!r}, bytes={output_size}, summary={summary}"
+        )
+        return response
+    except CharacterMakerRagDataError as exc:
+        mapped = CharacterMakerError(str(exc))
+        return _character_maker_error_response("RAG 태그 자료 변환", mapped)
+    except Exception as exc:
+        if response is not None and response.prepared:
+            print(
+                "[CHARACTER_MAKER_RAG_DATA] 변환 파일 전송 중 실패: "
+                f"source={upload_filename!r}, error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            raise
+        return _character_maker_error_response("RAG 태그 자료 변환", exc)
+    finally:
+        for path in temp_paths:
+            try:
+                if os.path.isfile(path):
+                    os.remove(path)
+            except OSError as cleanup_exc:
+                print(
+                    "[CHARACTER_MAKER_RAG_DATA] 임시 파일 정리 실패: "
+                    f"path={path!r}, error={type(cleanup_exc).__name__}: {cleanup_exc}"
+                )
+                traceback.print_exc()
+
+
 async def handle_api_character_maker_capabilities(
     request: web.Request,
 ) -> web.Response:
@@ -13100,6 +13434,8 @@ app.router.add_post("/api/character_maker/session/{session_id}/generate", handle
 app.router.add_get("/api/character_maker/session/{session_id}/image/{revision_id}", handle_api_character_maker_image)
 app.router.add_post("/api/character_maker/session/{session_id}/confirm", handle_api_character_maker_confirm)
 app.router.add_post("/api/character_maker/rag/test", handle_api_character_maker_rag_test)
+app.router.add_get("/api/character_maker/rag/dataset", handle_api_character_maker_rag_dataset_status)
+app.router.add_post("/api/character_maker/rag/convert", handle_api_character_maker_rag_convert)
 app.router.add_get("/api/character_maker/capabilities", handle_api_character_maker_capabilities)
 app.router.add_get("/api/expression_profile/scan", handle_api_expression_profile_scan)
 app.router.add_post("/api/expression_profile/create_folders", handle_api_expression_profile_create_folders)

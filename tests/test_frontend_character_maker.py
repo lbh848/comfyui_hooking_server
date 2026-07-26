@@ -33,6 +33,22 @@ def test_character_maker_has_at_a_glance_three_rail_workflow():
     assert 'id="cm-settings-wall" class="cm-settings-wall collapsed"' in html
 
 
+def test_editor_wall_places_settings_before_fields_with_one_scroll_container():
+    html = _html()
+
+    editor_css = html[html.index(".cm-editor-wall {"):html.index(".cm-card {")]
+    field_css = html[html.index(".cm-field-list {"):html.index(".cm-field-card {")]
+    settings_css = html[html.index(".cm-settings-wall {"):html.index(".cm-settings-wall.collapsed")]
+    settings_body_css = html[html.index(".cm-settings-body {"):html.index(".cm-setting-grid {")]
+
+    assert "overflow-y: auto;" in editor_css
+    assert "order: 2;" in field_css
+    assert "overflow: visible;" in field_css
+    assert "order: 1;" in settings_css
+    assert "overflow-y: auto;" not in settings_body_css
+    assert "overflow: visible;" in settings_body_css
+
+
 def test_only_four_fields_have_free_chip_and_text_editors():
     html = _html()
 
@@ -89,6 +105,27 @@ def test_rag_settings_test_and_external_llm_routes_are_visible():
     assert "character_maker_draft" in html
     assert "character_maker_feedback" in html
     assert "캐릭터 메이커 이미지 피드백" in html
+
+
+def test_rag_settings_include_integrated_dataset_converter_and_tidy_cards():
+    html = _html()
+
+    assert 'class="cm-rag-settings-page"' in html
+    assert 'class="cm-rag-settings-grid"' in html
+    assert 'id="setting-character-maker-rag-data-drop"' in html
+    assert 'id="setting-character-maker-rag-data-input"' in html
+    assert 'id="setting-character-maker-rag-data-search-btn"' in html
+    assert 'id="setting-character-maker-rag-data-convert-btn"' in html
+    assert "auto_complete 자료 검색" in html
+    assert "직접 파일 찾기" in html
+    assert "변환 및 다운로드" in html
+    assert "/api/character_maker/rag/dataset" in html
+    assert "/api/character_maker/rag/convert" in html
+    assert "cmFindRagDataset" in html
+    assert "form.append('dataset', cmRagDatasetFile" in html
+    assert "form.append('source', 'auto_complete')" in html
+    assert "anchor.download = 'danbooru-tags.csv'" in html
+    assert "'character-maker-layout'" in html
 
 
 def test_prompt_builder_accepts_raw_character_maker_fields_and_workflow_type():
