@@ -12972,29 +12972,103 @@
 
         // ─── WebSocket 연결 ───
         let _wsReconnectTimer = null;
-        // WS 연결 상태 LED: 파란불=연결됨, 빨간불=끊김, 노란불=연결/닫기 진행 중
+        let _wsConnectionReady = false;
+        let _wsLastServerActivity = 0;
+        let _wsOpenedAt = 0;
+        let _wsHealthTimeoutMs = 50000;
+        let _wsStatusDetail = 'WS 미연결';
+        const _WS_READY_TIMEOUT_MS = 10000;
+        const _WS_REPLACED_CLOSE_CODE = 4001;
+
+        function isFrontendWsHealthy() {
+            if (!frontendWs || frontendWs.readyState !== WebSocket.OPEN || !_wsConnectionReady) {
+                return false;
+            }
+            return Date.now() - _wsLastServerActivity <= _wsHealthTimeoutMs;
+        }
+
+        function waitForFrontendWsHealthy(timeoutMs = 5000) {
+            const deadline = Date.now() + timeoutMs;
+            return new Promise(resolve => {
+                const check = () => {
+                    if (isFrontendWsHealthy()) {
+                        resolve(true);
+                        return;
+                    }
+                    if (Date.now() >= deadline) {
+                        resolve(false);
+                        return;
+                    }
+                    setTimeout(check, 100);
+                };
+                check();
+            });
+        }
+
+        function _resetWsProtocolState(detail) {
+            _wsConnectionReady = false;
+            _wsLastServerActivity = 0;
+            _wsOpenedAt = 0;
+            _wsHealthTimeoutMs = 50000;
+            _wsStatusDetail = detail || 'WS 미연결';
+        }
+
+        // WS 연결 상태 LED: 파란불=서버 승인+heartbeat 정상, 빨간불=끊김, 노란불=확인 중
         function updateWsStatusLed() {
             const led = document.getElementById('ws-status-led');
             if (!led) return;
             const st = frontendWs ? frontendWs.readyState : null;
             // 0=CONNECTING, 1=OPEN, 2=CLOSING, 3=CLOSED
-            if (st === 1) {
+            if (isFrontendWsHealthy()) {
                 led.style.background = '#1e88e5';
                 led.style.boxShadow = '0 0 4px rgba(30,136,229,0.8)';
-                led.title = 'WS 연결됨';
-            } else if (st === 0 || st === 2) {
+                led.title = _wsStatusDetail || 'WS 연결 정상';
+            } else if (st === WebSocket.CONNECTING || st === WebSocket.CLOSING || st === WebSocket.OPEN) {
                 led.style.background = '#fbc02d';
                 led.style.boxShadow = '0 0 4px rgba(251,192,45,0.8)';
-                led.title = st === 0 ? 'WS 연결 중' : 'WS 닫는 중';
+                led.title = _wsStatusDetail || 'WS 서버 응답 확인 중';
             } else {
                 led.style.background = '#e53935';
                 led.style.boxShadow = '0 0 4px rgba(229,57,53,0.7)';
-                led.title = 'WS 미연결';
+                led.title = _wsStatusDetail || 'WS 미연결';
             }
         }
-        // CONNECTING/CLOSING 등 이벤트 없이 상태가 바뀌는 구간도 잡기 위한 주기 점검
+
+        function _checkFrontendWsHealth() {
+            const socket = frontendWs;
+            if (!socket || socket.readyState !== WebSocket.OPEN) {
+                updateWsStatusLed();
+                return;
+            }
+
+            const now = Date.now();
+            if (!_wsConnectionReady && _wsOpenedAt && now - _wsOpenedAt > _WS_READY_TIMEOUT_MS) {
+                const age = now - _wsOpenedAt;
+                console.error(`[Frontend WS] 서버 연결 승인 시간 초과: ${age}ms`);
+                _wsStatusDetail = 'WS 서버 승인 시간 초과 - 재연결 중';
+                updateWsStatusLed();
+                try { socket.close(4002, 'connection_ready timeout'); }
+                catch (e) { console.error('[Frontend WS] 승인 시간 초과 소켓 종료 실패:', e); }
+                return;
+            }
+
+            if (_wsConnectionReady && now - _wsLastServerActivity > _wsHealthTimeoutMs) {
+                const age = now - _wsLastServerActivity;
+                _wsConnectionReady = false;
+                _wsStatusDetail = 'WS heartbeat 시간 초과 - 재연결 중';
+                console.error(`[Frontend WS] heartbeat 시간 초과: ${age}ms`);
+                updateWsStatusLed();
+                try { socket.close(4002, 'heartbeat timeout'); }
+                catch (e) { console.error('[Frontend WS] heartbeat 시간 초과 소켓 종료 실패:', e); }
+                return;
+            }
+
+            updateWsStatusLed();
+        }
+
+        // 네이티브 readyState와 애플리케이션 heartbeat 상태를 함께 주기 점검한다.
         if (!window._wsStatusLedTimer) {
-            window._wsStatusLedTimer = setInterval(updateWsStatusLed, 1000);
+            window._wsStatusLedTimer = setInterval(_checkFrontendWsHealth, 1000);
         }
         function _scheduleWsReconnect(delay) {
             // 이미 재연결 예약 중이면 중복 잡지 않는다(onclose/onerror 양쪽에서 호출되므로).
@@ -13009,37 +13083,104 @@
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
             const wsUrl = `${protocol}//${window.location.host}/api/frontend_ws`;
 
-            if (frontendWs) {
-                // 기존 WS 닫을 때 핸들러 해제 — 닫기 이벤트가 재연결을 트리거하지 않게.
-                try { frontendWs.onclose = null; frontendWs.onerror = null; frontendWs.close(); } catch(e) {}
+            if (_wsReconnectTimer) {
+                clearTimeout(_wsReconnectTimer);
+                _wsReconnectTimer = null;
             }
 
-            frontendWs = new WebSocket(wsUrl);
-            updateWsStatusLed();
+            if (frontendWs) {
+                // 기존 WS의 늦은 이벤트가 새 연결 상태를 덮어쓰지 않도록 모든 핸들러를 해제한다.
+                const previousSocket = frontendWs;
+                previousSocket.onopen = null;
+                previousSocket.onmessage = null;
+                previousSocket.onclose = null;
+                previousSocket.onerror = null;
+                try { previousSocket.close(); }
+                catch (e) { console.error('[Frontend WS] 기존 소켓 종료 실패:', e); }
+            }
 
-            frontendWs.onopen = function() {
-                // 연결 성공 시 대기 중 재연결 타이머 정리
-                if (_wsReconnectTimer) { clearTimeout(_wsReconnectTimer); _wsReconnectTimer = null; }
-                console.log('[Frontend WS] 연결됨');
+            _resetWsProtocolState('WS 연결 중');
+            let socket;
+            try {
+                socket = new WebSocket(wsUrl);
+            } catch (e) {
+                console.error('[Frontend WS] 소켓 생성 실패:', e);
+                frontendWs = null;
+                _wsStatusDetail = 'WS 연결 생성 실패';
                 updateWsStatusLed();
-                // 연결 시 큐 상태 동기화
-                fetch('/api/queue/status').then(r => r.json()).then(data => {
-                    handleQueueUpdated(data);
-                }).catch(e => console.error('[QUEUE] 초기 상태 로드 실패:', e));
-                // WS가 끊긴 동안 종료된 스트림을 서버 스냅샷과 대조해 유령 카드를 제거한다.
-                syncLighbdActiveStreams();
+                _scheduleWsReconnect(2000);
+                return null;
+            }
+            frontendWs = socket;
+            updateWsStatusLed();
+            let allowAutoReconnect = true;
+
+            socket.onopen = function() {
+                if (socket !== frontendWs) return;
+                _wsOpenedAt = Date.now();
+                _wsStatusDetail = 'WS 전송 연결됨 - 서버 승인 대기 중';
+                console.log('[Frontend WS] 전송 연결됨, 서버 승인 대기 중');
+                updateWsStatusLed();
             };
             
-            frontendWs.onmessage = function(event) {
+            socket.onmessage = function(event) {
+                if (socket !== frontendWs) {
+                    console.error('[Frontend WS] 현재 연결이 아닌 소켓의 메시지를 무시합니다.');
+                    return;
+                }
                 try {
                     const msg = JSON.parse(event.data);
+                    _wsLastServerActivity = Date.now();
                     if (msg.type === 'ping') {
-                        frontendWs.send(JSON.stringify({type: 'pong'}));
+                        if (socket.readyState === WebSocket.OPEN) {
+                            socket.send(JSON.stringify({type: 'pong'}));
+                        } else {
+                            console.error('[Frontend WS] ping 응답 실패: 소켓이 열려 있지 않음', socket.readyState);
+                        }
+                        updateWsStatusLed();
                         return;
                     }
                     console.log('[Frontend WS] 메시지:', msg);
 
                     switch (msg.type) {
+                        case 'connection_ready': {
+                            if (!msg.data || !msg.data.client_id) {
+                                throw new Error('connection_ready에 client_id가 없습니다.');
+                            }
+                            const heartbeatSeconds = Number(msg.data.heartbeat_interval_seconds);
+                            const staleSeconds = Number(msg.data.stale_timeout_seconds);
+                            if (Number.isFinite(heartbeatSeconds) && heartbeatSeconds > 0
+                                    && Number.isFinite(staleSeconds) && staleSeconds >= 0) {
+                                _wsHealthTimeoutMs = Math.max(
+                                    10000,
+                                    (heartbeatSeconds + staleSeconds + 5) * 1000,
+                                );
+                            } else {
+                                console.error('[Frontend WS] 서버 heartbeat 설정값 오류:', msg.data);
+                            }
+                            _wsConnectionReady = true;
+                            _wsStatusDetail = 'WS 연결 정상';
+                            updateWsStatusLed();
+                            console.log(`[Frontend WS] 서버 승인 완료 client=${msg.data.client_id.slice(0, 8)}`);
+                            // 승인된 활성 연결에서만 누락된 큐/스트림 상태를 동기화한다.
+                            fetch('/api/queue/status').then(r => r.json()).then(data => {
+                                handleQueueUpdated(data);
+                            }).catch(e => console.error('[QUEUE] 초기 상태 로드 실패:', e));
+                            syncLighbdActiveStreams();
+                            break;
+                        }
+                        case 'connection_replaced':
+                            allowAutoReconnect = false;
+                            _wsConnectionReady = false;
+                            _wsStatusDetail = '다른 화면의 WS 연결로 교체됨';
+                            console.error('[Frontend WS] 다른 화면의 새 연결이 활성화되어 현재 연결이 교체되었습니다.', msg.data);
+                            updateWsStatusLed();
+                            showToast('다른 화면에서 WS가 연결되어 현재 화면의 실시간 연결이 중지되었습니다.', 'warning');
+                            if (socket.readyState === WebSocket.OPEN) {
+                                try { socket.close(_WS_REPLACED_CLOSE_CODE, 'replaced'); }
+                                catch (e) { console.error('[Frontend WS] 교체된 소켓 종료 실패:', e); }
+                            }
+                            return;
                         case 'reschedule_changed':
                             handleRescheduleChanged(msg.data);
                             break;
@@ -13281,19 +13422,43 @@
                 }
             };
             
-            frontendWs.onclose = function() {
-                console.log('[Frontend WS] 연결 종료, 자동 재연결 예정');
+            socket.onclose = function(event) {
+                if (socket !== frontendWs) {
+                    console.log('[Frontend WS] 이전 소켓의 종료 이벤트를 무시합니다.');
+                    return;
+                }
+                const replaced = !allowAutoReconnect || event.code === _WS_REPLACED_CLOSE_CODE;
+                frontendWs = null;
+                _wsConnectionReady = false;
+                _wsLastServerActivity = 0;
+                _wsOpenedAt = 0;
+                _wsStatusDetail = replaced
+                    ? '다른 화면의 WS 연결로 교체됨 - 버튼을 눌러 다시 연결 가능'
+                    : `WS 연결 종료(code=${event.code || 1006}) - 재연결 대기 중`;
                 updateWsStatusLed();
+                if (replaced) {
+                    console.error(`[Frontend WS] 교체된 연결 종료 code=${event.code} reason=${event.reason || ''}`);
+                    return;
+                }
+                console.error(`[Frontend WS] 연결 종료 code=${event.code} reason=${event.reason || ''}, 자동 재연결 예정`);
                 _scheduleWsReconnect(2000);
             };
 
-            frontendWs.onerror = function(error) {
+            socket.onerror = function(error) {
+                if (socket !== frontendWs) {
+                    console.error('[Frontend WS] 이전 소켓의 에러 이벤트를 무시합니다:', error);
+                    return;
+                }
                 console.error('[Frontend WS] 에러:', error);
+                _wsConnectionReady = false;
+                _wsStatusDetail = 'WS 오류 - 연결 종료 중';
                 updateWsStatusLed();
                 // 일부 환경에서는 onerror만 발생하고 onclose가 오지 않아
                 // 자동 재연결이 안 걸릴 수 있어, 명시적으로 close 하여 onclose(재연결) 경로를 태운다.
-                try { frontendWs.close(); } catch(e) {}
+                try { socket.close(); }
+                catch (e) { console.error('[Frontend WS] 오류 소켓 종료 실패:', e); }
             };
+            return socket;
         }
 
         // ─── 큐 상태 폴백 폴링 (WS 누락 보완) ───
@@ -16070,8 +16235,8 @@
                 span.textContent = 'OFF';
                 showToast('자동 새로고침 비활성화', 'success');
             } else {
-                // WebSocket이 연결되어 있으면 폴링 간격을 길게 설정
-                if (frontendWs && frontendWs.readyState === WebSocket.OPEN) {
+                // 서버 승인과 heartbeat까지 정상인 경우에만 WS 실시간 갱신으로 본다.
+                if (isFrontendWsHealthy()) {
                     span.textContent = 'ON (WS+30s)';
                     showToast('WebSocket 실시간 + 30초 폴링 활성화', 'success');
                     autoRefreshTimer = setInterval(() => loadBackups(true), 30000);
@@ -16359,17 +16524,18 @@
             btn.disabled = true;
             _setWsReconnectBtnLabel('🔌 연결 중...');
             try {
-                if (frontendWs) {
-                    try { frontendWs.onclose = null; frontendWs.close(); } catch(e) {}
-                }
-                connectFrontendWs();
-                await new Promise(r => setTimeout(r, 1000));
-                if (frontendWs && frontendWs.readyState === WebSocket.OPEN) {
+                const requestedSocket = connectFrontendWs();
+                const healthy = requestedSocket
+                    ? await waitForFrontendWsHealthy(5000)
+                    : false;
+                if (healthy && frontendWs === requestedSocket) {
                     showToast('WS 연결 성공', 'success');
                 } else {
+                    console.error('[Frontend WS] 수동 재연결 후 서버 승인을 확인하지 못했습니다.');
                     showToast('WS 연결 실패 (다시 시도하세요)', 'error');
                 }
             } catch (e) {
+                console.error('[Frontend WS] 수동 재연결 오류:', e);
                 showToast(`WS 재연결 오류: ${e.message}`, 'error');
             } finally {
                 btn.disabled = false;
@@ -16534,10 +16700,17 @@
 
         async function manualRestoreDraw() {
             // WS 연결 확인 및 재연결
-            if (!frontendWs || frontendWs.readyState !== WebSocket.OPEN) {
+            if (!isFrontendWsHealthy()) {
                 console.log('[수동 그리기] WS 재연결...');
-                connectFrontendWs();
-                await new Promise(r => setTimeout(r, 500));
+                const requestedSocket = connectFrontendWs();
+                const healthy = requestedSocket
+                    ? await waitForFrontendWsHealthy(5000)
+                    : false;
+                if (!healthy || frontendWs !== requestedSocket) {
+                    console.error('[수동 그리기] WS 서버 승인을 확인하지 못해 요청을 중단합니다.');
+                    showToast('WS 연결을 확인할 수 없습니다. 재연결 후 다시 시도하세요.', 'error');
+                    return;
+                }
             }
 
             // 설정 워크플로우와 폴더 워크플로우 파일명 불일치 경고

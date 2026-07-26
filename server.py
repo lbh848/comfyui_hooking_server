@@ -35,6 +35,7 @@ import re
 import math
 import aiohttp
 from aiohttp import web
+from frontend_ws_manager import FrontendWsConnectionManager
 from io import BytesIO
 from PIL import Image
 import piexif
@@ -657,7 +658,13 @@ def get_backup_webp_lossless() -> bool:
 # ─── 상태 관리 ──────────────────────────────────────────
 prompts = {}          # prompt_id -> { status, prompt, outputs, ... }
 ws_connections = {}   # client_id -> ws
-frontend_ws_connections = {}   # frontend client_id -> {"ws": ws, "last_pong": time}
+WS_HEARTBEAT_INTERVAL = 30  # 초
+WS_STALE_TIMEOUT = 15       # 핑 후 응답 없으면 제거 (초)
+frontend_ws_manager = FrontendWsConnectionManager(
+    heartbeat_interval=WS_HEARTBEAT_INTERVAL,
+    stale_timeout=WS_STALE_TIMEOUT,
+)
+frontend_ws_connections = frontend_ws_manager.connections
 
 # ─── 프론트엔드 WebSocket 이벤트 전송 ───────────────────
 async def notify_frontend(event_type: str, data: dict = None):
@@ -686,7 +693,9 @@ async def notify_frontend(event_type: str, data: dict = None):
             try:
                 if req_info is not None:
                     peer = str(getattr(req_info, "remote", "")) or ""
-            except Exception:
+            except Exception as e:
+                print(f"[WS-NOTIFY] peer 정보 조회 실패 client={client_id[:8]} err={type(e).__name__}: {e}")
+                traceback.print_exc()
                 peer = ""
             ws_closed = ws.closed
             if not quiet_stream_delta:
@@ -710,9 +719,6 @@ async def _notify_llm_stream_event(event: dict):
 
 
 llm_service.set_stream_notify_func(_notify_llm_stream_event)
-
-WS_HEARTBEAT_INTERVAL = 30  # 초
-WS_STALE_TIMEOUT = 15       # 핑 후 응답 없으면 제거 (초)
 
 current_original_workflow = None   # 원본 워크플로우 (ComfyUI 드래그앤드롭용)
 current_api_workflow = None        # API 형식 워크플로우 (실행용)
@@ -5794,14 +5800,16 @@ async def _ws_heartbeat():
                 await entry["ws"].send_json({"type": "ping"})
             except Exception as e:
                 print(f"[HEARTBEAT] ✗ ping 실패로 제거 client={cid[:8]} err={type(e).__name__}: {e}")
+                traceback.print_exc()
                 stale.append(cid)
         for cid in stale:
             entry = frontend_ws_connections.pop(cid, None)
             if entry:
                 try:
                     await entry["ws"].close()
-                except Exception:
-                    pass
+                except Exception as e:
+                    print(f"[HEARTBEAT] ✗ STALE 연결 종료 실패 client={cid[:8]} err={type(e).__name__}: {e}")
+                    traceback.print_exc()
 
 
 async def handle_frontend_ws(request: web.Request) -> web.WebSocketResponse:
@@ -5814,30 +5822,28 @@ async def handle_frontend_ws(request: web.Request) -> web.WebSocketResponse:
     peer = ""
     try:
         peer = str(getattr(request, "remote", "")) or ""
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[FE-WS] peer 정보 조회 실패 err={type(e).__name__}: {e}")
+        traceback.print_exc()
     ua = request.headers.get("User-Agent", "")[:80]
     origin = request.headers.get("Origin", "")
     fwd_for = request.headers.get("X-Forwarded-For", "")
     print(f"[FE-WS] connect 시도 peer={peer} origin={origin} xff={fwd_for} ua={ua}")
 
-    # 기존 연결 정리 (혼자 사용하므로 최신 1개만 유지, close() 하지 않음 - 재연결 루프 방지)
-    cleared = list(frontend_ws_connections.keys())
-    if cleared:
-        print(f"[FE-WS] ⚠️ clear()로 기존 연결 {len(cleared)}개 dict에서 제거: {[c[:8] for c in cleared]}")
-    frontend_ws_connections.clear()
-
-    frontend_ws_connections[client_id] = {"ws": ws, "last_pong": time.time()}
+    registered = await frontend_ws_manager.register(client_id, ws)
+    if not registered:
+        print(f"[FE-WS] 연결 승인 실패 client={client_id[:8]}")
+        return ws
     print(f"[FE-WS] 연결됨 client={client_id[:8]} (총 {len(frontend_ws_connections)}명)")
 
-    # Send initial reschedule status
-    if reschedule_queue is not None:
-        await ws.send_json({
-            "type": "reschedule_changed",
-            "data": {"scheduled": True, "name": reschedule_queue["name"]}
-        })
-
     try:
+        # Send initial reschedule status
+        if reschedule_queue is not None:
+            await ws.send_json({
+                "type": "reschedule_changed",
+                "data": {"scheduled": True, "name": reschedule_queue["name"]}
+            })
+
         async for msg in ws:
             if msg.type == aiohttp.WSMsgType.TEXT:
                 try:
@@ -5850,6 +5856,7 @@ async def handle_frontend_ws(request: web.Request) -> web.WebSocketResponse:
                             print(f"[FE-WS] ⚠️ pong from unknown client={client_id[:8]} (dict에서 사라짐)")
                 except Exception as e:
                     print(f"[FE-WS] msg parse err client={client_id[:8]}: {e} raw={msg.data}")
+                    traceback.print_exc()
             elif msg.type == aiohttp.WSMsgType.CLOSE:
                 print(f"[FE-WS] CLOSE msg client={client_id[:8]}")
                 break
@@ -5866,8 +5873,7 @@ async def handle_frontend_ws(request: web.Request) -> web.WebSocketResponse:
         print(f"[FE-WS] 루프 예외 client={client_id[:8]} err={type(e).__name__}: {e}")
         traceback.print_exc()
     finally:
-        existed = client_id in frontend_ws_connections
-        frontend_ws_connections.pop(client_id, None)
+        existed = frontend_ws_manager.unregister(client_id, ws)
         print(f"[FE-WS] 해제됨 client={client_id[:8]} was_in_dict={existed} (남은 접속자={len(frontend_ws_connections)})")
     return ws
 
