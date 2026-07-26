@@ -11625,8 +11625,8 @@
                         </div>
                     </div>
 
-                    <!-- 완료 알림 -->
-                    <div class="setting-row">
+                    <!-- 완료 알림 (현재 미사용 — 배치 모드 제거로 트리거 없음, 일시 잠금) -->
+                    <div class="setting-row ui-locked" data-lock-reason="현재 미사용으로 일시 잠금">
                         <div class="setting-label">
                             <div class="title">완료 알림</div>
                             <div class="desc">배치 그림 완성 시 알림음 + 탭 반짝임</div>
@@ -11708,8 +11708,8 @@
                     </div>
                     <!-- ===== 잠금 영역 끝 ===== -->
 
-                    <!-- 워크플로우 복원 프롬프트 -->
-                    <div class="setting-row">
+                    <!-- 워크플로우 복원 프롬프트 (현재 미사용 — outfit 모드 완료 트리거가 잠금 클러스터와 함께 휴면, 일시 잠금) -->
+                    <div class="setting-row ui-locked" data-lock-reason="현재 미사용으로 일시 잠금">
                         <div class="setting-label">
                             <div class="title">🔄 워크플로우 복원 프롬프트</div>
                             <div class="desc">포스트 프로세스 종료 후 지정 프롬프트를 통해 베이스 워크플로우 로드</div>
@@ -11721,16 +11721,6 @@
                             </label>
                             <span id="restore-status" class="toggle-status">OFF</span>
                         </div>
-                    </div>
-
-                    <!-- 워크플로우 복원 프롬프트 파일 선택 -->
-                    <div class="form-group" style="margin-top: 8px;">
-                        <label style="font-size: 0.8rem; margin-bottom: 4px;">복원 프롬프트 파일 선택 (customprompt/)</label>
-                        <select id="setting-restore-prompt-file"
-                                style="width: 100%; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: 0.85rem;">
-                            <option value="">(선택 안함)</option>
-                        </select>
-                        <div class="hint">모드(복장 추출 등) 종료 후 원래 워크플로우를 자동 실행하여 가중치를 VRAM에 프리로드합니다</div>
                     </div>
 
                     <!-- 워크플로우 복원 프롬프트 수동 작동 버튼 -->
@@ -11746,6 +11736,16 @@
                             </label>
                             <span id="restore-manual-status" class="toggle-status">OFF</span>
                         </div>
+                    </div>
+
+                    <!-- 워크플로우 복원 프롬프트 파일 선택 -->
+                    <div class="form-group" style="margin-top: 8px;">
+                        <label style="font-size: 0.8rem; margin-bottom: 4px;">복원 프롬프트 파일 선택 (customprompt/)</label>
+                        <select id="setting-restore-prompt-file"
+                                style="width: 100%; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: 0.85rem;">
+                            <option value="">(선택 안함)</option>
+                        </select>
+                        <div class="hint">모드(복장 추출 등) 종료 후 원래 워크플로우를 자동 실행하여 가중치를 VRAM에 프리로드합니다</div>
                     </div>
                 </div>
 
@@ -14412,28 +14412,6 @@
             llmEditModalState = null;
         }
 
-        function getPromptControlBlock(positive, blockName) {
-            const escaped = blockName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            const match = String(positive || '').match(new RegExp('^\\[' + escaped + '\\]\\r?\\n(.*)$', 'm'));
-            return match ? match[1].trim() : '';
-        }
-
-        function getV3CharacterSlots(positive) {
-            const multiRaw = getPromptControlBlock(positive, 'MULTI_CHAR');
-            if (multiRaw) {
-                try {
-                    const multi = JSON.parse(multiRaw);
-                    if (multi && multi.enable === true && Array.isArray(multi.char_name_list)) {
-                        return multi.char_name_list.map(v => String(v || '').trim()).filter(Boolean);
-                    }
-                } catch (e) {
-                    console.error('[EASY_EDIT] MULTI_CHAR 파싱 실패:', e);
-                }
-            }
-            return getPromptControlBlock(positive, 'CHAR_LIST')
-                .split(',').map(v => v.trim()).filter(Boolean);
-        }
-
         function updateLlmEditCharacterSelection() {
             const state = llmEditModalState;
             if (!state || !state.identityEnabled) return true;
@@ -14550,36 +14528,59 @@
             document.getElementById('llm-edit-run-btn').disabled = false;
             document.getElementById('llm-edit-direction-modal').classList.add('visible');
 
-            if (fmt === 'v3' && provider === 'comfy') {
-                const currentNames = getV3CharacterSlots(positive);
-                if (currentNames.length === 1 || currentNames.length === 2) {
-                    charSection.style.display = 'block';
-                    charSlots.innerHTML = '<div style="grid-column:1/-1;color:var(--text-secondary);font-size:0.76rem;">활성 봇의 캐릭터 목록을 불러오는 중...</div>';
-                    scopeNote.textContent = '장면·표정·복장을 자연어로 수정하고, 선택 캐릭터에 맞춰 일반 LoRA·Face LoRA·FACE-ID·얼굴 태그를 함께 교체합니다.';
-                    try {
-                        const data = await fetchJSON('/api/restore_manual/characters');
-                        if (data.error) throw new Error(data.error);
-                        if (!Array.isArray(data.characters) || data.characters.length === 0) {
-                            throw new Error('활성 봇에 선택할 캐릭터가 없습니다.');
-                        }
-                        if (currentModalBackupName !== openingBackupName || llmEditModalState !== openingState) return;
-                        openingState.identityEnabled = true;
-                        openingState.botName = data.bot_name || '';
-                        openingState.characters = data.characters;
-                        botBadge.textContent = `활성 봇: ${openingState.botName}`;
-                        botBadge.style.display = 'block';
-                        renderLlmEditCharacterSlots(currentNames);
-                    } catch (e) {
-                        if (currentModalBackupName !== openingBackupName || llmEditModalState !== openingState) return;
-                        console.error('[EASY_EDIT] 활성 봇 캐릭터 로드 실패:', e);
+            if (fmt === 'v3') {
+                charSection.style.display = 'block';
+                charSlots.innerHTML = '<div style="grid-column:1/-1;color:var(--text-secondary);font-size:0.76rem;">백업의 캐릭터 교체 가능 여부를 확인하는 중...</div>';
+                scopeNote.textContent = '백업 원본과 고정 마스크 스냅샷을 서버에서 검증하고 있습니다.';
+                try {
+                    const capability = await fetchJSON(
+                        '/api/llm_edit_prompt/capability?name=' + encodeURIComponent(openingBackupName)
+                    );
+                    if (capability.error) throw new Error(capability.error);
+                    if (currentModalBackupName !== openingBackupName || llmEditModalState !== openingState) return;
+
+                    if (!capability.enabled) {
                         openingState.identityEnabled = false;
+                        charSection.style.display = 'none';
                         charSlots.innerHTML = '';
-                        charError.textContent = `캐릭터 목록 로드 실패: ${e.message} · 장면 수정만 사용할 수 있습니다.`;
-                        charError.style.display = 'block';
-                        document.getElementById('llm-edit-run-btn').disabled = false;
+                        scopeNote.textContent = capability.reason
+                            || '이 백업은 캐릭터 교체를 지원하지 않습니다. 장면·표정·복장 수정만 사용할 수 있습니다.';
+                        setTimeout(() => input.focus(), 50);
+                        return;
                     }
-                } else {
-                    scopeNote.textContent = `장면 수정은 가능하지만 캐릭터 교체는 1인/2인 V3 백업만 지원합니다. 현재 감지: ${currentNames.length}명`;
+
+                    const currentNames = Array.isArray(capability.character_names)
+                        ? capability.character_names.map(v => String(v || '').trim()).filter(Boolean)
+                        : [];
+                    if (currentNames.length !== 1 && currentNames.length !== 2) {
+                        throw new Error(`서버가 지원하지 않는 캐릭터 슬롯 수를 반환했습니다: ${currentNames.length}명`);
+                    }
+
+                    charSlots.innerHTML = '<div style="grid-column:1/-1;color:var(--text-secondary);font-size:0.76rem;">활성 봇의 캐릭터 목록을 불러오는 중...</div>';
+                    const data = await fetchJSON('/api/restore_manual/characters');
+                    if (data.error) throw new Error(data.error);
+                    if (!Array.isArray(data.characters) || data.characters.length === 0) {
+                        throw new Error('활성 봇에 선택할 캐릭터가 없습니다.');
+                    }
+                    if (currentModalBackupName !== openingBackupName || llmEditModalState !== openingState) return;
+                    openingState.identityEnabled = true;
+                    openingState.botName = data.bot_name || '';
+                    openingState.characters = data.characters;
+                    openingState.slotNames = currentNames;
+                    botBadge.textContent = `활성 봇: ${openingState.botName}`;
+                    botBadge.style.display = 'block';
+                    scopeNote.textContent = currentNames.length === 2
+                        ? '검증된 2인 고정 마스크를 유지하며 장면·표정·복장과 캐릭터·FACE·LoRA를 수정합니다.'
+                        : '장면·표정·복장을 자연어로 수정하고, 선택 캐릭터에 맞춰 일반 LoRA·Face LoRA·FACE-ID·얼굴 태그를 함께 교체합니다.';
+                    renderLlmEditCharacterSlots(currentNames);
+                } catch (e) {
+                    if (currentModalBackupName !== openingBackupName || llmEditModalState !== openingState) return;
+                    console.error('[EASY_EDIT] 캐릭터 교체 가능 여부/목록 확인 실패:', e);
+                    openingState.identityEnabled = false;
+                    charSection.style.display = 'none';
+                    charSlots.innerHTML = '';
+                    scopeNote.textContent = `캐릭터 교체 확인 실패: ${e.message} · 장면·표정·복장 수정만 사용할 수 있습니다.`;
+                    document.getElementById('llm-edit-run-btn').disabled = false;
                 }
             } else {
                 scopeNote.textContent = fmt === 'chansub'

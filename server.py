@@ -6146,6 +6146,136 @@ def _v3_prompt_character_names(blocks: dict, multi_payload: object = None) -> li
     return names
 
 
+def _llm_edit_identity_capability(backup_name: str) -> dict:
+    """백업 원본을 기준으로 편하게 수정의 캐릭터 교체 가능 여부를 판정한다.
+
+    1인은 V3 Comfy 백업이면 허용한다. 2인은 프롬프트의 MULTI_CHAR 제어 블록과
+    저장/복구된 고정 마스크 스냅샷이 모두 일치할 때만 허용한다.
+    """
+    result = {
+        "enabled": False,
+        "reason": "",
+        "provider": "",
+        "format": "",
+        "character_names": [],
+        "requires_multi_char_snapshot": False,
+    }
+    if (
+        not backup_name
+        or ".." in backup_name
+        or "/" in backup_name
+        or "\\" in backup_name
+    ):
+        print(f"[LLM_EDIT:CAPABILITY] 잘못된 백업 이름: {backup_name!r}")
+        raise ValueError("Invalid name")
+
+    prompt_path_json = os.path.join(WORKFLOW_BACKUP_DIR, f"{backup_name}.json")
+    prompt_path_txt = os.path.join(WORKFLOW_BACKUP_DIR, f"{backup_name}.txt")
+    prompt_path = (
+        prompt_path_json if os.path.isfile(prompt_path_json) else prompt_path_txt
+    )
+    if not os.path.isfile(prompt_path):
+        result["reason"] = "백업의 원본 프롬프트 파일이 없어 캐릭터를 교체할 수 없습니다."
+        print(
+            f"[LLM_EDIT:CAPABILITY] 원본 프롬프트 파일 없음: "
+            f"backup={backup_name}, json={prompt_path_json}, txt={prompt_path_txt}"
+        )
+        return result
+
+    try:
+        source_positive, _source_negative = _extract_prompts_from_backup(prompt_path)
+    except Exception as exc:
+        result["reason"] = "백업의 원본 프롬프트를 읽지 못해 캐릭터를 교체할 수 없습니다."
+        print(
+            f"[LLM_EDIT:CAPABILITY] 원본 프롬프트 읽기 실패: "
+            f"backup={backup_name}, path={prompt_path}, error={exc}"
+        )
+        traceback.print_exc()
+        return result
+
+    provider, _generation_params = _read_backup_generation(backup_name)
+    fmt = llm_prompt_edit.detect_format(source_positive, provider=provider) or ""
+    result["provider"] = provider
+    result["format"] = fmt
+    if provider != "comfy" or fmt != "v3":
+        result["reason"] = (
+            "캐릭터·FACE·LoRA 교체는 V3 Comfy 백업에서만 지원합니다."
+        )
+        print(
+            f"[LLM_EDIT:CAPABILITY] 캐릭터 교체 미지원 형식: "
+            f"backup={backup_name}, provider={provider}, format={fmt!r}"
+        )
+        return result
+
+    try:
+        blocks = llm_prompt_edit.parse_blocks(source_positive)
+        multi_payload = multi_char_mask.extract_multi_char_prompt_payload(
+            source_positive
+        )
+        character_names = _v3_prompt_character_names(blocks, multi_payload)
+    except Exception as exc:
+        result["reason"] = (
+            f"V3 캐릭터 슬롯을 안전하게 확인하지 못했습니다: {exc}"
+        )
+        print(
+            f"[LLM_EDIT:CAPABILITY] V3 캐릭터 슬롯 판정 실패: "
+            f"backup={backup_name}, error={exc}"
+        )
+        traceback.print_exc()
+        return result
+
+    result["character_names"] = character_names
+    if len(character_names) == 1:
+        result["enabled"] = True
+        result["reason"] = "1인 V3 Comfy 백업의 캐릭터를 교체할 수 있습니다."
+        print(
+            f"[LLM_EDIT:CAPABILITY] 1인 캐릭터 교체 허용: "
+            f"backup={backup_name}, character={character_names[0]!r}"
+        )
+        return result
+
+    result["requires_multi_char_snapshot"] = True
+    if not isinstance(multi_payload, dict) or multi_payload.get("enable") is not True:
+        result["reason"] = (
+            "이 2인 백업에는 고정 마스크 스냅샷이 없어 캐릭터를 교체할 수 없습니다. "
+            "장면·표정·복장 수정만 사용할 수 있습니다."
+        )
+        print(
+            f"[LLM_EDIT:CAPABILITY] 2인 고정 마스크 제어 블록 없음: "
+            f"backup={backup_name}, characters={character_names}"
+        )
+        return result
+
+    try:
+        snapshot = _read_backup_multi_char_context(backup_name, source_positive)
+        if snapshot is None:
+            raise ValueError("고정 마스크 스냅샷이 없습니다")
+        multi_char_mask.validate_multi_char_prompt_context(
+            source_positive,
+            snapshot,
+        )
+    except Exception as exc:
+        result["reason"] = (
+            "이 2인 백업의 고정 마스크 스냅샷을 검증하지 못해 캐릭터를 "
+            "교체할 수 없습니다. 장면·표정·복장 수정만 사용할 수 있습니다."
+        )
+        print(
+            f"[LLM_EDIT:CAPABILITY] 2인 고정 마스크 스냅샷 검증 실패: "
+            f"backup={backup_name}, characters={character_names}, error={exc}"
+        )
+        traceback.print_exc()
+        return result
+
+    result["enabled"] = True
+    result["reason"] = "검증된 2인 고정 마스크 스냅샷을 사용해 캐릭터를 교체할 수 있습니다."
+    print(
+        f"[LLM_EDIT:CAPABILITY] 2인 캐릭터 교체 허용: "
+        f"backup={backup_name}, characters={character_names}, "
+        f"fingerprint={snapshot['mask_fingerprint'][:12]}"
+    )
+    return result
+
+
 def _ensure_backup_filter_cache(backup_dir: str) -> dict:
     """필터 캐시를 반환한다. 완전히 구축된 캐시가 있으면 그것을 반환하고,
     없거나 빌드 중이면 백그라운드 빌드를 예약한 뒤 부분 캐시(또는 빈 캐시)를 즉시 반환한다.
@@ -7486,15 +7616,33 @@ async def handle_api_llm_edit_prompt(request: web.Request) -> web.Response:
             }, status=400)
 
         print(f"[LLM_EDIT] 감지된 포맷: {fmt} name={backup_name}")
-        if requested_characters is not None and (fmt != "v3" or backup_provider != "comfy"):
-            print(
-                f"[LLM_EDIT:IDENTITY] 지원하지 않는 포맷/공급자의 캐릭터 교체 요청: "
-                f"format={fmt}, provider={backup_provider}"
-            )
-            return web.json_response(
-                {"error": "캐릭터·FACE·LoRA 교체는 V3 Comfy 백업에서만 지원합니다."},
-                status=400,
-            )
+        identity_capability = None
+        if requested_characters is not None:
+            if fmt != "v3" or backup_provider != "comfy":
+                print(
+                    f"[LLM_EDIT:IDENTITY] 현재 프롬프트 형식에서 캐릭터 교체 거부: "
+                    f"backup={backup_name}, provider={backup_provider}, format={fmt}"
+                )
+                return web.json_response(
+                    {
+                        "error": (
+                            "캐릭터·FACE·LoRA 교체는 V3 Comfy 프롬프트에서만 "
+                            "지원합니다."
+                        )
+                    },
+                    status=400,
+                )
+            identity_capability = _llm_edit_identity_capability(backup_name)
+            if not identity_capability["enabled"]:
+                print(
+                    f"[LLM_EDIT:IDENTITY] 서버 판정에서 캐릭터 교체 거부: "
+                    f"backup={backup_name}, provider={backup_provider}, format={fmt}, "
+                    f"reason={identity_capability['reason']}"
+                )
+                return web.json_response(
+                    {"error": identity_capability["reason"]},
+                    status=409,
+                )
 
         # 2) 포맷별 파싱 + 장면 추출
         # V3 파이프라인 상태
@@ -7579,6 +7727,16 @@ async def handle_api_llm_edit_prompt(request: web.Request) -> web.Response:
                         blocks,
                         multi_char_edit_payload,
                     )
+                    expected_names = (
+                        identity_capability.get("character_names") or []
+                        if identity_capability
+                        else []
+                    )
+                    if expected_names and len(previous_names) != len(expected_names):
+                        raise ValueError(
+                            "현재 프롬프트의 캐릭터 슬롯 수가 백업 원본과 다릅니다. "
+                            "편하게 수정 모달을 다시 열어주세요"
+                        )
                     (
                         identity_bot_name,
                         identity_bot_root,
@@ -7952,6 +8110,30 @@ async def handle_api_llm_edit_prompt(request: web.Request) -> web.Response:
         tb = traceback.format_exc()
         print(f"[ERROR] llm_edit_prompt failed: {e}\n{tb}")
         return web.json_response({"error": str(e)}, status=500)
+
+
+async def handle_api_llm_edit_capability(request: web.Request) -> web.Response:
+    """GET /api/llm_edit_prompt/capability?name=... — 백업별 캐릭터 교체 가능 여부."""
+    backup_name = str(request.query.get("name", "") or "").strip()
+    try:
+        capability = _llm_edit_identity_capability(backup_name)
+        return web.json_response(capability)
+    except ValueError as exc:
+        print(
+            f"[LLM_EDIT:CAPABILITY] 요청 검증 실패: "
+            f"backup={backup_name!r}, error={exc}"
+        )
+        return web.json_response({"error": str(exc)}, status=400)
+    except Exception as exc:
+        print(
+            f"[LLM_EDIT:CAPABILITY] 처리 실패: "
+            f"backup={backup_name!r}, error={exc}"
+        )
+        traceback.print_exc()
+        return web.json_response(
+            {"error": f"캐릭터 교체 가능 여부 확인 실패: {exc}"},
+            status=500,
+        )
 
 
 async def handle_api_get_llm_edit_template(request: web.Request) -> web.Response:
@@ -9385,6 +9567,7 @@ app.router.add_post("/api/bot_mode/postprocess_vn", bot_mode.handle_save_postpro
 app.router.add_get("/api/bot_mode/postprocess_bubble", bot_mode.handle_get_postprocess_bubble)
 app.router.add_post("/api/bot_mode/postprocess_bubble", bot_mode.handle_save_postprocess_bubble)
 app.router.add_post("/api/llm_edit_prompt", handle_api_llm_edit_prompt)
+app.router.add_get("/api/llm_edit_prompt/capability", handle_api_llm_edit_capability)
 app.router.add_get("/api/llm_edit_prompt_template", handle_api_get_llm_edit_template)
 app.router.add_post("/api/llm_edit_prompt_template", handle_api_set_llm_edit_template)
 # 복장 추출 모드 API

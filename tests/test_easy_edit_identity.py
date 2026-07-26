@@ -95,6 +95,30 @@ def _layout(names: list[str]) -> dict:
     }
 
 
+def _write_backup(
+    root,
+    name: str,
+    positive: str,
+    *,
+    info: dict,
+    negative: str = "source negative",
+) -> None:
+    workflow = {
+        "nodes": [
+            {"title": "긍정프롬프트", "widgets_values": [positive]},
+            {"title": "부정프롬프트", "widgets_values": [negative]},
+        ]
+    }
+    (root / f"{name}.json").write_text(
+        json.dumps(workflow, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    (root / f"{name}_info.json").write_text(
+        json.dumps(info, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
 def test_single_character_identity_rebuild_updates_face_lora_cache_and_negative():
     old = _character("Old", "old_trigger")
     new = _character("New", "new_trigger")
@@ -159,6 +183,59 @@ def test_single_character_identity_rebuild_updates_face_lora_cache_and_negative(
     assert "new hair" in face_info["FACE_TAGS"]
     assert "new-negative" in negative
     assert "old-negative" not in negative
+
+
+def test_identity_capability_allows_two_character_backup_with_valid_snapshot(
+    tmp_path,
+    monkeypatch,
+):
+    names = ["Old Left", "Old Right"]
+    bot = _bot(*[
+        _character(name, name.lower().replace(" ", "_"), group=True)
+        for name in names
+    ])
+    snapshot = multi_char_mask.normalize_multi_char_snapshot({
+        "enable": True,
+        "character_order": names,
+        "layout": _layout(names),
+        "mask_location": "region_mask",
+    })
+    positive = IllustPromptBuilder().build_positive_prompt(
+        "rooftop",
+        "Old Left, standing | Old Right, sitting",
+        "two people standing apart",
+        names,
+        bot,
+        _tags(),
+        bot["illust_settings_group"],
+        bot["name"],
+        multi_char_context={
+            "enable": True,
+            "char_name_list": names,
+            "char_inform": ["Old Left, standing", "Old Right, sitting"],
+            "background_prompt": "rooftop",
+            "composition_prompt": "two people standing apart",
+            "mask_fingerprint": snapshot["mask_fingerprint"],
+        },
+    )
+    backup_name = "identity-capability-two-valid"
+    _write_backup(
+        tmp_path,
+        backup_name,
+        positive,
+        info={
+            "provider": "comfy",
+            "bot_name": bot["name"],
+            "illustration_multi_char": snapshot,
+        },
+    )
+    monkeypatch.setattr(server, "WORKFLOW_BACKUP_DIR", str(tmp_path))
+
+    capability = server._llm_edit_identity_capability(backup_name)
+
+    assert capability["enabled"] is True
+    assert capability["character_names"] == names
+    assert capability["requires_multi_char_snapshot"] is True
 
 
 def test_two_character_identity_rebuild_remaps_fixed_mask_by_slot():
@@ -382,6 +459,68 @@ class _JsonRequest:
 
     async def json(self):
         return self._payload
+
+
+class _QueryRequest:
+    def __init__(self, query):
+        self.query = query
+
+
+@pytest.mark.asyncio
+async def test_hybrid_local_two_character_backup_hides_identity_and_rejects_api_bypass(
+    tmp_path,
+    monkeypatch,
+):
+    names = ["Old Left", "Old Right"]
+    bot = _bot(*[
+        _character(name, name.lower().replace(" ", "_"), group=True)
+        for name in names
+    ])
+    positive = IllustPromptBuilder().build_positive_prompt(
+        "rooftop",
+        "Old Left, standing | Old Right, sitting",
+        "two people standing apart",
+        names,
+        bot,
+        _tags(),
+        bot["illust_settings_group"],
+        bot["name"],
+    )
+    backup_name = "hybrid-local-two-without-snapshot"
+    _write_backup(
+        tmp_path,
+        backup_name,
+        positive,
+        info={
+            "provider": "comfy",
+            "bot_name": bot["name"],
+            "illustration_workflow_type": "chansub_v3_anima",
+        },
+    )
+    monkeypatch.setattr(server, "WORKFLOW_BACKUP_DIR", str(tmp_path))
+
+    capability_response = await server.handle_api_llm_edit_capability(
+        _QueryRequest({"name": backup_name})
+    )
+    capability = json.loads(capability_response.text)
+
+    assert capability_response.status == 200
+    assert capability["enabled"] is False
+    assert capability["character_names"] == names
+    assert capability["requires_multi_char_snapshot"] is True
+    assert "고정 마스크 스냅샷이 없어" in capability["reason"]
+
+    bypass_response = await server.handle_api_llm_edit_prompt(_JsonRequest({
+        "name": backup_name,
+        "positive": positive,
+        "negative": "source negative",
+        "direction": "캐릭터를 바꿔줘",
+        "characters": names,
+    }))
+    bypass_payload = json.loads(bypass_response.text)
+
+    assert bypass_response.status == 409
+    assert "고정 마스크 스냅샷이 없어" in bypass_payload["error"]
 
 
 @pytest.mark.asyncio
