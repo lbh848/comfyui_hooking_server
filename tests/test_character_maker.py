@@ -134,6 +134,52 @@ def test_session_is_memory_scoped_and_not_restored_by_new_service(tmp_path):
         restarted.public_session(session["id"])
 
 
+def test_session_settings_accept_lora_and_do_not_expose_generation_ipadapter(tmp_path):
+    service, _ = _service(tmp_path)
+    session = service.create_session()
+
+    updated = service.update_session(
+        session["id"],
+        {
+            "settings": {
+                "lora_enabled": True,
+                "lora_list": [
+                    {
+                        "name": "Hero",
+                        "character": "Test",
+                        "lora_path": "hero/session/model.safetensors",
+                        "strength": 0.65,
+                        "preview_url": "/preview.webp",
+                        "trigger": "hero trigger",
+                        "BASE": "ilxl",
+                        "source": "asset",
+                    }
+                ],
+            }
+        },
+    )
+
+    assert updated["settings"]["lora_enabled"] is True
+    assert updated["settings"]["lora_list"][0]["BASE"] == "sdxl"
+    assert updated["settings"]["lora_list"][0]["strength"] == 0.65
+    assert "use_references_for_generation" not in updated["settings"]
+
+    with pytest.raises(CharacterMakerError, match="상대 모델 경로"):
+        service.update_session(
+            session["id"],
+            {
+                "settings": {
+                    "lora_list": [
+                        {
+                            "lora_path": str(tmp_path / "absolute.safetensors"),
+                            "BASE": "anima",
+                        }
+                    ]
+                }
+            },
+        )
+
+
 @pytest.mark.asyncio
 async def test_revise_preserves_locked_field(monkeypatch, tmp_path):
     service, _ = _service(tmp_path)
@@ -440,3 +486,4 @@ def test_server_defaults_expose_independent_character_maker_routes():
     assert feedback["json_mode"] is True
     assert draft is not feedback
     assert server.DEFAULT_CONFIG["character_maker_rag_url"] == "http://127.0.0.1:3333"
+    assert server.DEFAULT_CONFIG["character_maker_rag_repo_path"] == ""

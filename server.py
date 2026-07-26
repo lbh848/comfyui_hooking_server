@@ -91,6 +91,9 @@ from modes.character_maker_rag_data import (
     OUTPUT_FILENAME as CHARACTER_MAKER_RAG_OUTPUT_FILENAME,
     CharacterMakerRagDataError,
     convert_kr_danbooru_csv,
+    prepare_rag_install,
+    restore_rag_install,
+    validate_rag_repository,
 )
 from modes.asset_mode import CHARACTER_MAKER_TEMP_DIR
 import workflow_profiles
@@ -301,6 +304,7 @@ DEFAULT_CONFIG = {
     "embedding_model": "voyage-4-large",  # 임베딩 모델명
     "character_maker_rag_enabled": False,
     "character_maker_rag_url": "http://127.0.0.1:3333",
+    "character_maker_rag_repo_path": "",
     "character_maker_rag_top_k": 5,
     "character_maker_rag_threshold": 0.0,
     "character_maker_rag_timeout_sec": 20.0,
@@ -9412,6 +9416,16 @@ async def handle_api_config(request: web.Request) -> web.Response:
                             "캐릭터 메이커 RAG URL은 http:// 또는 https:// 주소여야 합니다."
                         )
                     body["character_maker_rag_url"] = rag_url
+                if "character_maker_rag_repo_path" in body:
+                    rag_repo_path = str(
+                        body.get("character_maker_rag_repo_path") or ""
+                    ).strip()
+                    if rag_repo_path:
+                        body["character_maker_rag_repo_path"] = (
+                            validate_rag_repository(rag_repo_path)["repository"]
+                        )
+                    else:
+                        body["character_maker_rag_repo_path"] = ""
                 if "character_maker_rag_top_k" in body:
                     rag_top_k = int(body.get("character_maker_rag_top_k"))
                     if not 1 <= rag_top_k <= 20:
@@ -12795,7 +12809,6 @@ async def handle_api_character_maker_revise(request: web.Request) -> web.Respons
 
 async def handle_api_character_maker_generate(request: web.Request) -> web.Response:
     session_id = request.match_info.get("session_id", "")
-    prepared_ref_dir = ""
     operation_lock = None
     lock_acquired = False
     try:
@@ -12827,61 +12840,23 @@ async def handle_api_character_maker_generate(request: web.Request) -> web.Respo
             raise CharacterMakerError("에셋 워크플로우 제어 토큰 [END]가 없습니다.")
 
         settings = session_state["settings"]
-        reference_subfolder = ""
-        use_generation_refs = bool(settings.get("use_references_for_generation", False))
-        reference_items = (
-            character_maker.generation_reference_items(session_id)
-            if use_generation_refs
-            else []
-        )
-        if use_generation_refs and not reference_items:
-            print(
-                f"[CHARACTER_MAKER] 생성 참고 이미지 스킵 불가: "
-                f"session={session_id}, 사용 토글 ON, 이미지 0장"
-            )
-            raise CharacterMakerError(
-                "생성 참고 이미지 사용이 켜져 있지만 업로드된 이미지가 없습니다."
-            )
-        if reference_items:
-            comfy_input_dir = str(app_config.get("comfy_input_dir") or "").strip()
-            if not comfy_input_dir:
-                print(
-                    f"[CHARACTER_MAKER] 생성 참고 이미지 준비 실패: "
-                    f"session={session_id}, comfy_input_dir 비어 있음"
-                )
-                raise CharacterMakerError(
-                    "설정의 Comfy Input 폴더 경로를 먼저 지정하세요."
-                )
-            if not os.path.isdir(comfy_input_dir):
-                print(
-                    f"[CHARACTER_MAKER] 생성 참고 이미지 준비 실패: "
-                    f"session={session_id}, comfy_input_dir 없음: {comfy_input_dir}"
-                )
-                raise CharacterMakerError(
-                    f"Comfy Input 폴더가 존재하지 않습니다: {comfy_input_dir}"
-                )
-            reference_subfolder = _prepare_ref_folder(
-                reference_items, comfy_input_dir
-            )
-            prepared_ref_dir = os.path.join(comfy_input_dir, reference_subfolder)
-
         positive = _character_maker_control_value(
             positive,
             "FACE_ID_ACTIVATE",
-            "true" if reference_subfolder else "false",
+            "false",
         )
         positive = _character_maker_control_value(
             positive,
             "FACE_ID_DIR",
-            reference_subfolder or "soya_char_ref/fallback",
+            "soya_char_ref/fallback",
         )
         result = await asset_mode.generate(
             character=f"maker-{session_id[:8]}",
             appearance="character-maker-temporary",
             outfit="character-maker-temporary",
             expression="character-maker-temporary",
-            face_id_enabled=bool(reference_subfolder),
-            reference_subfolder=reference_subfolder,
+            face_id_enabled=False,
+            reference_subfolder="",
             asset_workflow_type=settings.get("asset_workflow_type"),
             positive_prompt=positive,
             negative_prompt=negative,
@@ -12919,35 +12894,6 @@ async def handle_api_character_maker_generate(request: web.Request) -> web.Respo
     except Exception as exc:
         return _character_maker_error_response("이미지 생성", exc)
     finally:
-        if prepared_ref_dir and os.path.isdir(prepared_ref_dir):
-            try:
-                comfy_input_dir = os.path.realpath(
-                    str(app_config.get("comfy_input_dir") or "")
-                )
-                prepared_real = os.path.realpath(prepared_ref_dir)
-                expected_root = os.path.realpath(
-                    os.path.join(comfy_input_dir, "soya_char_ref")
-                )
-                if (
-                    os.path.commonpath([expected_root, prepared_real]) == expected_root
-                    and prepared_real != expected_root
-                ):
-                    shutil.rmtree(prepared_real)
-                    print(
-                        f"[CHARACTER_MAKER] Comfy 임시 참고 폴더 정리: "
-                        f"session={session_id}, path={prepared_real}"
-                    )
-                else:
-                    print(
-                        f"[CHARACTER_MAKER] Comfy 임시 참고 폴더 정리 거부: "
-                        f"session={session_id}, root={expected_root}, path={prepared_real}"
-                    )
-            except Exception as cleanup_exc:
-                print(
-                    f"[CHARACTER_MAKER] Comfy 임시 참고 폴더 정리 실패: "
-                    f"session={session_id}, path={prepared_ref_dir}, error={cleanup_exc}"
-                )
-                traceback.print_exc()
         if operation_lock is not None and lock_acquired:
             operation_lock.release()
 
@@ -13140,15 +13086,154 @@ async def handle_api_character_maker_rag_dataset_status(
         return _character_maker_error_response("RAG 태그 자료 검색", exc)
 
 
-async def handle_api_character_maker_rag_convert(
+_character_maker_rag_install_lock = asyncio.Lock()
+
+
+async def _run_character_maker_rag_builder(
+    repository: str,
+    data_dir: str,
+    index_path: str,
+) -> dict[str, Any]:
+    uv_command = shutil.which("uv")
+    if not uv_command:
+        print("[CHARACTER_MAKER_RAG_INSTALL] uv 실행 파일을 찾지 못함")
+        raise CharacterMakerRagDataError(
+            "인덱스 빌드에 필요한 uv 실행 파일을 찾을 수 없습니다."
+        )
+
+    environment = os.environ.copy()
+    environment["DATA_DIR"] = data_dir
+    environment["MODELS_DIR"] = os.path.join(repository, "models")
+    command = [
+        uv_command,
+        "run",
+        "python",
+        "-m",
+        "core.builder",
+        "b",
+    ]
+    print(
+        "[CHARACTER_MAKER_RAG_INSTALL] variant-b 인덱스 빌드 시작: "
+        f"repository={repository!r}, data_dir={data_dir!r}, command={command!r}"
+    )
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            cwd=repository,
+            env=environment,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+    except Exception as exc:
+        print(
+            "[CHARACTER_MAKER_RAG_INSTALL] 인덱스 빌더 실행 실패: "
+            f"repository={repository!r}, error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        raise CharacterMakerRagDataError(
+            f"RAG 인덱스 빌더를 실행하지 못했습니다: {exc}"
+        ) from exc
+
+    log_tail: list[str] = []
+    if process.stdout is None:
+        print(
+            "[CHARACTER_MAKER_RAG_INSTALL] 빌더 stdout 파이프 생성 실패: "
+            f"pid={process.pid}"
+        )
+        process.terminate()
+        await process.wait()
+        raise CharacterMakerRagDataError("RAG 인덱스 빌더 로그를 연결하지 못했습니다.")
+    try:
+        while True:
+            line = await process.stdout.readline()
+            if not line:
+                break
+            decoded = line.decode("utf-8", errors="replace").rstrip()
+            if decoded:
+                print(f"[CHARACTER_MAKER_RAG_BUILDER] {decoded}")
+                log_tail.append(decoded)
+                if len(log_tail) > 80:
+                    del log_tail[:-80]
+        return_code = await process.wait()
+    except asyncio.CancelledError:
+        print(
+            "[CHARACTER_MAKER_RAG_INSTALL] 인덱스 빌드 취소됨: "
+            f"pid={process.pid}, repository={repository!r}"
+        )
+        try:
+            if process.returncode is None:
+                process.terminate()
+            await process.wait()
+        except Exception as terminate_exc:
+            print(
+                "[CHARACTER_MAKER_RAG_INSTALL] 취소된 빌더 정리 실패: "
+                f"pid={process.pid}, error={type(terminate_exc).__name__}: {terminate_exc}"
+            )
+            traceback.print_exc()
+        raise
+    if return_code != 0:
+        print(
+            "[CHARACTER_MAKER_RAG_INSTALL] 인덱스 빌드 실패: "
+            f"return_code={return_code}, log_tail={log_tail[-20:]}"
+        )
+        detail = log_tail[-1] if log_tail else f"종료 코드 {return_code}"
+        raise CharacterMakerRagDataError(
+            f"RAG variant-b 인덱스 빌드에 실패했습니다: {detail}"
+        )
+    if not os.path.isdir(index_path):
+        print(
+            "[CHARACTER_MAKER_RAG_INSTALL] 빌드 성공 후 인덱스 폴더 없음: "
+            f"path={index_path!r}, log_tail={log_tail[-20:]}"
+        )
+        raise CharacterMakerRagDataError(
+            "빌더는 성공했지만 data/lancedb_b 인덱스를 찾을 수 없습니다."
+        )
+    try:
+        has_index_files = any(os.scandir(index_path))
+    except OSError as exc:
+        print(
+            "[CHARACTER_MAKER_RAG_INSTALL] 빌드 인덱스 확인 실패: "
+            f"path={index_path!r}, error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        raise CharacterMakerRagDataError(
+            f"생성된 RAG 인덱스를 확인하지 못했습니다: {exc}"
+        ) from exc
+    if not has_index_files:
+        print(
+            "[CHARACTER_MAKER_RAG_INSTALL] 빌드 인덱스 폴더 비어 있음: "
+            f"path={index_path!r}"
+        )
+        raise CharacterMakerRagDataError("생성된 RAG 인덱스 폴더가 비어 있습니다.")
+    print(
+        "[CHARACTER_MAKER_RAG_INSTALL] variant-b 인덱스 빌드 완료: "
+        f"path={index_path!r}, log_lines={len(log_tail)}"
+    )
+    return {
+        "variant": "b",
+        "index_path": index_path,
+        "log_tail": log_tail[-20:],
+    }
+
+
+async def handle_api_character_maker_rag_install(
     request: web.Request,
-) -> web.StreamResponse:
-    """사용자 KR 태그 CSV를 RAG용 CSV로 변환하고 바로 다운로드한다."""
+) -> web.Response:
+    """KR 태그 CSV를 변환해 RAG 저장소에 설치하고 variant-b를 재구축한다."""
     temp_paths: list[str] = []
-    response: web.StreamResponse | None = None
     upload_filename = ""
     requested_source = ""
+    requested_repository = ""
+    install_context: dict[str, Any] | None = None
+    install_complete = False
+    lock_acquired = False
     try:
+        if _character_maker_rag_install_lock.locked():
+            print("[CHARACTER_MAKER_RAG_INSTALL] 중복 설치 요청 거부")
+            raise CharacterMakerError("RAG 태그 자료를 이미 설치하는 중입니다.")
+        await _character_maker_rag_install_lock.acquire()
+        lock_acquired = True
+
         if (
             request.content_length is not None
             and request.content_length > CHARACTER_MAKER_RAG_MAX_UPLOAD_BYTES + 2 * 1024 * 1024
@@ -13168,6 +13253,9 @@ async def handle_api_character_maker_rag_convert(
                 break
             if part.name == "source":
                 requested_source = (await part.text()).strip()
+                continue
+            if part.name == "repository":
+                requested_repository = (await part.text()).strip()
                 continue
             if part.name != "dataset":
                 print(
@@ -13254,10 +13342,16 @@ async def handle_api_character_maker_rag_convert(
             raise CharacterMakerError("알 수 없는 태그 자료 소스입니다.")
         elif not source_path:
             print(
-                "[CHARACTER_MAKER_RAG_DATA] 변환 요청 파일 없음: "
+                "[CHARACTER_MAKER_RAG_INSTALL] 설치 요청 파일 없음: "
                 "field='dataset', source 비어 있음"
             )
-            raise CharacterMakerError("변환할 CSV 파일을 선택하세요.")
+            raise CharacterMakerError("설치할 CSV 파일을 선택하세요.")
+
+        repository = (
+            requested_repository
+            or str(app_config.get("character_maker_rag_repo_path") or "").strip()
+        )
+        repository_paths = validate_rag_repository(repository)
 
         import tempfile
 
@@ -13286,49 +13380,92 @@ async def handle_api_character_maker_rag_convert(
             )
             raise CharacterMakerError("변환 결과 파일이 비어 있습니다.")
 
-        headers = {
-            "Cache-Control": "no-store, max-age=0",
-            "Content-Disposition": (
-                f'attachment; filename="{CHARACTER_MAKER_RAG_OUTPUT_FILENAME}"'
-            ),
-            "X-CM-RAG-Input-Rows": str(summary["input_rows"]),
-            "X-CM-RAG-Written-Rows": str(summary["written_rows"]),
-            "X-CM-RAG-Below-Frequency": str(summary["below_frequency"]),
-            "X-CM-RAG-Unmatched": str(summary["unmatched"]),
-            "X-CM-RAG-Malformed": str(summary["malformed"]),
-            "X-CM-RAG-Duplicates": str(summary["duplicates"]),
-            "X-CM-RAG-Canonical-Rows": str(summary["canonical_rows"]),
-            "X-CM-RAG-Min-Post-Count": str(summary["min_post_count"]),
-        }
-        response = web.StreamResponse(status=200, headers=headers)
-        response.content_type = "text/csv"
-        response.charset = "utf-8"
-        response.content_length = output_size
-        await response.prepare(request)
-        with open(output_path, "rb") as output:
-            while True:
-                chunk = output.read(512 * 1024)
-                if not chunk:
-                    break
-                await response.write(chunk)
-        await response.write_eof()
-        print(
-            "[CHARACTER_MAKER_RAG_DATA] 변환 파일 전송 완료: "
-            f"source={upload_filename!r}, bytes={output_size}, summary={summary}"
+        backup_root = os.path.join(BASE_DIR, "요구사항")
+        install_context = await asyncio.to_thread(
+            prepare_rag_install,
+            output_path,
+            repository_paths["repository"],
+            backup_root,
         )
-        return response
+        build_result = await _run_character_maker_rag_builder(
+            install_context["repository"],
+            install_context["data_dir"],
+            install_context["index_path"],
+        )
+        install_complete = True
+        print(
+            "[CHARACTER_MAKER_RAG_INSTALL] 변환·설치 완료: "
+            f"source={upload_filename!r}, repository={install_context['repository']!r}, "
+            f"bytes={output_size}, summary={summary}"
+        )
+        return web.json_response(
+            {
+                "success": True,
+                "summary": {
+                    key: value
+                    for key, value in summary.items()
+                    if key != "unmatched_samples"
+                },
+                "installed": {
+                    "filename": CHARACTER_MAKER_RAG_OUTPUT_FILENAME,
+                    "variant": build_result["variant"],
+                    "repository_name": os.path.basename(
+                        install_context["repository"]
+                    ),
+                    "backup_name": os.path.basename(
+                        install_context["backup_dir"]
+                    ),
+                    "restart_required": True,
+                },
+            },
+            headers={"Cache-Control": "no-store, max-age=0"},
+        )
+    except asyncio.CancelledError:
+        print(
+            "[CHARACTER_MAKER_RAG_INSTALL] 설치 요청 취소됨: "
+            f"source={upload_filename!r}, repository={requested_repository!r}"
+        )
+        if install_context is not None and not install_complete:
+            try:
+                await asyncio.shield(
+                    asyncio.to_thread(restore_rag_install, install_context)
+                )
+            except Exception as restore_exc:
+                print(
+                    "[CHARACTER_MAKER_RAG_INSTALL] 취소 후 복구 실패: "
+                    f"error={type(restore_exc).__name__}: {restore_exc}"
+                )
+                traceback.print_exc()
+        raise
     except CharacterMakerRagDataError as exc:
+        if install_context is not None and not install_complete:
+            try:
+                await asyncio.to_thread(restore_rag_install, install_context)
+            except Exception as restore_exc:
+                print(
+                    "[CHARACTER_MAKER_RAG_INSTALL] 실패 후 복구 최종 실패: "
+                    f"error={type(restore_exc).__name__}: {restore_exc}"
+                )
+                traceback.print_exc()
+                exc = CharacterMakerRagDataError(
+                    f"{exc} 기존 자료 복구에도 실패했습니다: {restore_exc}"
+                )
         mapped = CharacterMakerError(str(exc))
-        return _character_maker_error_response("RAG 태그 자료 변환", mapped)
+        return _character_maker_error_response("RAG 태그 자료 설치", mapped)
     except Exception as exc:
-        if response is not None and response.prepared:
-            print(
-                "[CHARACTER_MAKER_RAG_DATA] 변환 파일 전송 중 실패: "
-                f"source={upload_filename!r}, error={type(exc).__name__}: {exc}"
-            )
-            traceback.print_exc()
-            raise
-        return _character_maker_error_response("RAG 태그 자료 변환", exc)
+        if install_context is not None and not install_complete:
+            try:
+                await asyncio.to_thread(restore_rag_install, install_context)
+            except Exception as restore_exc:
+                print(
+                    "[CHARACTER_MAKER_RAG_INSTALL] 예외 후 복구 최종 실패: "
+                    f"error={type(restore_exc).__name__}: {restore_exc}"
+                )
+                traceback.print_exc()
+                exc = CharacterMakerError(
+                    f"{exc} 기존 자료 복구에도 실패했습니다: {restore_exc}"
+                )
+        return _character_maker_error_response("RAG 태그 자료 설치", exc)
     finally:
         for path in temp_paths:
             try:
@@ -13340,6 +13477,8 @@ async def handle_api_character_maker_rag_convert(
                     f"path={path!r}, error={type(cleanup_exc).__name__}: {cleanup_exc}"
                 )
                 traceback.print_exc()
+        if lock_acquired:
+            _character_maker_rag_install_lock.release()
 
 
 async def handle_api_character_maker_capabilities(
@@ -13435,7 +13574,7 @@ app.router.add_get("/api/character_maker/session/{session_id}/image/{revision_id
 app.router.add_post("/api/character_maker/session/{session_id}/confirm", handle_api_character_maker_confirm)
 app.router.add_post("/api/character_maker/rag/test", handle_api_character_maker_rag_test)
 app.router.add_get("/api/character_maker/rag/dataset", handle_api_character_maker_rag_dataset_status)
-app.router.add_post("/api/character_maker/rag/convert", handle_api_character_maker_rag_convert)
+app.router.add_post("/api/character_maker/rag/install", handle_api_character_maker_rag_install)
 app.router.add_get("/api/character_maker/capabilities", handle_api_character_maker_capabilities)
 app.router.add_get("/api/expression_profile/scan", handle_api_expression_profile_scan)
 app.router.add_post("/api/expression_profile/create_folders", handle_api_expression_profile_create_folders)

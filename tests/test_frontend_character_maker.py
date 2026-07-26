@@ -115,17 +115,32 @@ def test_rag_settings_include_integrated_dataset_converter_and_tidy_cards():
     assert 'id="setting-character-maker-rag-data-drop"' in html
     assert 'id="setting-character-maker-rag-data-input"' in html
     assert 'id="setting-character-maker-rag-data-search-btn"' in html
-    assert 'id="setting-character-maker-rag-data-convert-btn"' in html
+    assert 'id="setting-character-maker-rag-repo-path"' in html
+    assert 'id="setting-character-maker-rag-data-install-btn"' in html
     assert "auto_complete 자료 검색" in html
     assert "직접 파일 찾기" in html
-    assert "변환 및 다운로드" in html
+    assert "변환 및 설치" in html
     assert "/api/character_maker/rag/dataset" in html
-    assert "/api/character_maker/rag/convert" in html
+    assert "/api/character_maker/rag/install" in html
     assert "cmFindRagDataset" in html
     assert "form.append('dataset', cmRagDatasetFile" in html
     assert "form.append('source', 'auto_complete')" in html
-    assert "anchor.download = 'danbooru-tags.csv'" in html
+    assert "form.append('repository', repository)" in html
+    assert "anchor.download = 'danbooru-tags.csv'" not in html
     assert "'character-maker-layout'" in html
+
+
+def test_character_maker_uses_lora_instead_of_generation_ipadapter():
+    html = _html()
+
+    assert 'id="cm-setting-lora-enabled"' in html
+    assert 'id="cm-setting-lora-panel"' in html
+    assert 'id="cm-setting-lora-list"' in html
+    assert "function cmOpenLoraPicker" in html
+    assert "lora_list: (settings.lora_list || [])" in html
+    assert "lora_enabled: !!settings.lora_enabled" in html
+    assert 'id="cm-setting-use-refs"' not in html
+    assert "use_references_for_generation" not in html
 
 
 def test_prompt_builder_accepts_raw_character_maker_fields_and_workflow_type():

@@ -10,6 +10,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from modes.character_maker_rag_data import (
     CharacterMakerRagDataError,
     convert_kr_danbooru_csv,
+    prepare_rag_install,
+    restore_rag_install,
+    validate_rag_repository,
 )
 
 
@@ -122,3 +125,51 @@ def test_converter_reports_missing_builtin_canonical_file(tmp_path):
             str(tmp_path / "missing.csv"),
             str(output),
         )
+
+
+def test_prepare_and_restore_rag_install_preserves_existing_data(tmp_path):
+    repository = tmp_path / "danbooru-tag-rag"
+    (repository / "core").mkdir(parents=True)
+    (repository / "core" / "config.py").write_text("# test\n", encoding="utf-8")
+    (repository / "core" / "builder.py").write_text("# test\n", encoding="utf-8")
+    (repository / "pyproject.toml").write_text(
+        "[project]\nname='rag-test'\n",
+        encoding="utf-8",
+    )
+    old_csv = repository / "danbooru-tags.csv"
+    old_csv.write_text("old csv\n", encoding="utf-8")
+    old_index = repository / "data" / "lancedb_b"
+    old_index.mkdir(parents=True)
+    (old_index / "old.bin").write_bytes(b"old-index")
+    converted = tmp_path / "converted.csv"
+    converted.write_text(
+        "name,category,post_count,description\nnew_tag,0,100,new\n",
+        encoding="utf-8",
+    )
+
+    paths = validate_rag_repository(str(repository))
+    context = prepare_rag_install(
+        str(converted),
+        str(repository),
+        str(tmp_path / "요구사항"),
+    )
+
+    assert paths["repository"] == str(repository.resolve())
+    assert old_csv.read_text(encoding="utf-8") == converted.read_text(encoding="utf-8")
+    assert Path(context["csv_backup"]).read_text(encoding="utf-8") == "old csv\n"
+    assert Path(context["index_backup"], "old.bin").read_bytes() == b"old-index"
+
+    (old_index / "damaged.bin").write_bytes(b"damaged")
+    restore_rag_install(context)
+
+    assert old_csv.read_text(encoding="utf-8") == "old csv\n"
+    assert (old_index / "old.bin").read_bytes() == b"old-index"
+    assert not (old_index / "damaged.bin").exists()
+
+
+def test_validate_rag_repository_rejects_an_unrelated_folder(tmp_path):
+    unrelated = tmp_path / "unrelated"
+    unrelated.mkdir()
+
+    with pytest.raises(CharacterMakerRagDataError, match="저장소가 아닙니다"):
+        validate_rag_repository(str(unrelated))

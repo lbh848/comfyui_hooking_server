@@ -6232,6 +6232,88 @@
             cursor: pointer;
         }
         .cm-setting-check input { accent-color: var(--accent); }
+        .cm-maker-lora-panel {
+            display: none;
+            grid-column: 1 / -1;
+            padding: 8px;
+            border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border));
+            border-radius: 8px;
+            background: color-mix(in srgb, var(--accent) 5%, var(--surface));
+        }
+        .cm-maker-lora-panel.visible { display: block; }
+        .cm-maker-lora-add {
+            width: 100%;
+            min-height: 30px;
+            border: 1px dashed color-mix(in srgb, var(--accent) 48%, var(--border));
+            border-radius: 7px;
+            color: var(--text2);
+            background: var(--surface);
+            font-size: .64rem;
+            cursor: pointer;
+        }
+        .cm-maker-lora-list {
+            display: grid;
+            gap: 6px;
+            margin-top: 7px;
+        }
+        .cm-maker-lora-empty {
+            padding: 7px;
+            color: var(--text2);
+            font-size: .61rem;
+            text-align: center;
+        }
+        .cm-maker-lora-item {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) 78px 24px;
+            gap: 6px;
+            align-items: center;
+            padding: 7px;
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            background: var(--surface);
+        }
+        .cm-maker-lora-name {
+            min-width: 0;
+            overflow: hidden;
+            font-size: .65rem;
+            font-weight: 700;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .cm-maker-lora-meta {
+            margin-top: 2px;
+            color: var(--text2);
+            font-size: .56rem;
+        }
+        .cm-maker-lora-trigger {
+            width: 100%;
+            min-height: 26px;
+            margin-top: 5px;
+            padding: 0 6px;
+            box-sizing: border-box;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text);
+            background: var(--surface2);
+            font-size: .61rem;
+        }
+        .cm-maker-lora-strength {
+            display: grid;
+            gap: 2px;
+            color: var(--text2);
+            font-size: .55rem;
+            text-align: center;
+        }
+        .cm-maker-lora-strength input { width: 100%; accent-color: var(--accent); }
+        .cm-maker-lora-remove {
+            width: 24px;
+            height: 24px;
+            border: 0;
+            border-radius: 5px;
+            color: var(--error);
+            background: transparent;
+            cursor: pointer;
+        }
         .cm-modal {
             position: fixed;
             inset: 0;
@@ -9030,9 +9112,14 @@
                                         Danbooru Tag RAG 사용
                                     </label>
                                     <label class="cm-setting-check">
-                                        <input id="cm-setting-use-refs" data-cm-setting="use_references_for_generation" type="checkbox" onchange="cmSettingChanged()">
-                                        생성에도 참고 이미지 사용
+                                        <input id="cm-setting-lora-enabled" data-cm-setting="lora_enabled" type="checkbox" onchange="cmLoraToggleChanged()">
+                                        생성에 LoRA 사용
                                     </label>
+                                    <div id="cm-setting-lora-panel" class="cm-maker-lora-panel">
+                                        <button type="button" class="cm-maker-lora-add"
+                                                onclick="cmOpenLoraPicker()">＋ LoRA 추가</button>
+                                        <div id="cm-setting-lora-list" class="cm-maker-lora-list"></div>
+                                    </div>
                                 </div>
                             </div>
                         </section>
@@ -13264,13 +13351,24 @@
                                 <div class="cm-rag-settings-card-head">
                                     <div class="cm-rag-settings-card-icon">⇄</div>
                                     <div class="cm-rag-settings-card-copy">
-                                        <div class="cm-rag-settings-card-title">태그 자료 변환</div>
+                                        <div class="cm-rag-settings-card-title">태그 자료 자동 설치</div>
                                         <div class="cm-rag-settings-card-desc">
-                                            사용자가 받은 KR 설명 CSV를 RAG 배포용 파일로 변환합니다.
+                                            KR 설명 CSV를 변환하고 variant-b 검색 인덱스까지 구축합니다.
                                         </div>
                                     </div>
                                 </div>
                                 <div class="cm-rag-settings-card-body">
+                                    <div class="cm-rag-settings-field">
+                                        <label for="setting-character-maker-rag-repo-path">
+                                            <span>danbooru-tag-rag 저장소 경로</span>
+                                            <span>최초 1회 지정 · 설정 저장 시 유지</span>
+                                        </label>
+                                        <input type="text"
+                                               id="setting-character-maker-rag-repo-path"
+                                               placeholder="예: E:\tools\danbooru-tag-rag"
+                                               oninput="cmRagRepositoryChanged()">
+                                    </div>
+
                                     <div class="cm-rag-data-steps">
                                         <div class="cm-rag-data-step">
                                             <b>1 · 자료 선택</b>
@@ -13281,8 +13379,8 @@
                                             내장 Danbooru 기준표
                                         </div>
                                         <div class="cm-rag-data-step">
-                                            <b>3 · 다운로드</b>
-                                            danbooru-tags.csv
+                                            <b>3 · 설치·인덱스</b>
+                                            저장소 + lancedb_b
                                         </div>
                                     </div>
 
@@ -13337,19 +13435,19 @@
                                     <div class="cm-rag-data-action">
                                         <div id="setting-character-maker-rag-data-state"
                                              class="cm-rag-data-state">
-                                            auto_complete 검색 또는 UTF-8 CSV 직접 선택 · 최대 128MB
+                                            저장소 경로 지정 후 auto_complete 자료 검색 · 최대 128MB
                                         </div>
                                         <button type="button" class="btn cm-rag-data-convert-btn"
-                                                id="setting-character-maker-rag-data-convert-btn"
-                                                onclick="cmConvertRagDataset()" disabled>
-                                            변환 및 다운로드
+                                                id="setting-character-maker-rag-data-install-btn"
+                                                onclick="cmInstallRagDataset()" disabled>
+                                            변환 및 설치
                                         </button>
                                     </div>
 
                                     <div id="setting-character-maker-rag-data-result"
                                          class="cm-rag-data-result">
                                         <div class="cm-rag-data-result-title">
-                                            ✓ danbooru-tags.csv 변환 완료
+                                            ✓ danbooru-tags.csv · variant-b 설치 완료
                                         </div>
                                         <div class="cm-rag-data-result-grid">
                                             <div class="cm-rag-data-result-stat">
@@ -13374,9 +13472,10 @@
                             <span>ⓘ</span>
                             <div>
                                 RAG는 모델 내장 기능이 아니라 서버 측 후보 검색 단계입니다.
-                                변환한 파일은 <b>danbooru-tag-rag</b> 저장소 루트에 두고
-                                <code>uv run python -m core.builder b</code>로
-                                <code>data/lancedb_b</code> 인덱스를 만드세요.
+                                설치 버튼은 기존 CSV와 <code>data/lancedb_b</code>를
+                                <code>요구사항/</code>에 백업한 뒤 자동 교체합니다.
+                                인덱스 구축에는 GPU에서도 시간이 걸릴 수 있으며, 완료 후 실행 중인
+                                RAG 사이드카는 새 인덱스를 읽도록 한 번 재시작해야 합니다.
                                 이미지 피드백은 별도로 비전 모델이 필요합니다.
                                 <a href="https://github.com/joykst96/danbooru-tag-rag"
                                    target="_blank" rel="noopener"
@@ -16517,6 +16616,36 @@
             return `${(size / (1024 * 1024)).toFixed(1)} MB`;
         }
 
+        function cmRagRepositoryPath() {
+            return document.getElementById(
+                'setting-character-maker-rag-repo-path',
+            )?.value.trim() || '';
+        }
+
+        function cmRagCanInstall() {
+            const sourceReady = !!cmRagDatasetFile
+                || !!cmRagServerDataset?.canonicalReady;
+            return sourceReady && !!cmRagRepositoryPath();
+        }
+
+        function cmRagRepositoryChanged() {
+            const button = document.getElementById(
+                'setting-character-maker-rag-data-install-btn',
+            );
+            if (button && !cmRagDatasetBusy) button.disabled = !cmRagCanInstall();
+            const state = document.getElementById('setting-character-maker-rag-data-state');
+            if (!cmRagRepositoryPath() && state) {
+                state.textContent =
+                    'danbooru-tag-rag 저장소 절대 경로를 먼저 지정하세요.';
+            } else if (
+                state
+                && (cmRagDatasetFile || cmRagServerDataset?.canonicalReady)
+            ) {
+                state.textContent =
+                    '자료 준비 완료 · 변환 후 저장소 설치와 variant-b 구축을 진행합니다.';
+            }
+        }
+
         async function cmFindRagDataset(showNotice = true) {
             if (cmRagDatasetBusy) {
                 if (showNotice) showToast('태그 자료를 변환하는 중입니다.', 'info');
@@ -16579,7 +16708,7 @@
                     'setting-character-maker-rag-data-file-meta',
                 );
                 const button = document.getElementById(
-                    'setting-character-maker-rag-data-convert-btn',
+                    'setting-character-maker-rag-data-install-btn',
                 );
                 const result = document.getElementById(
                     'setting-character-maker-rag-data-result',
@@ -16605,10 +16734,11 @@
                     return;
                 }
                 if (state) {
-                    state.textContent =
-                        '자료 준비 완료 · auto_complete의 정식 기준표와 결합합니다.';
+                    state.textContent = cmRagRepositoryPath()
+                        ? '자료 준비 완료 · 변환 후 저장소 설치와 variant-b 구축을 진행합니다.'
+                        : '자료를 찾았습니다. danbooru-tag-rag 저장소 경로를 지정하세요.';
                 }
-                if (button) button.disabled = false;
+                if (button) button.disabled = !cmRagCanInstall();
                 if (showNotice) {
                     showToast('auto_complete에서 변환 자료를 찾았습니다.', 'success');
                 }
@@ -16674,7 +16804,7 @@
             const name = document.getElementById('setting-character-maker-rag-data-file-name');
             const meta = document.getElementById('setting-character-maker-rag-data-file-meta');
             const state = document.getElementById('setting-character-maker-rag-data-state');
-            const button = document.getElementById('setting-character-maker-rag-data-convert-btn');
+            const button = document.getElementById('setting-character-maker-rag-data-install-btn');
             const result = document.getElementById('setting-character-maker-rag-data-result');
             drop?.classList.add('has-file');
             if (fileBox) fileBox.style.display = 'flex';
@@ -16685,10 +16815,12 @@
             if (state) {
                 const expectedName = 'kr_danbooru_tags_with_description';
                 state.textContent = file.name.toLowerCase().includes(expectedName)
-                    ? '파일 준비 완료 · 내장 Danbooru 기준표와 결합합니다.'
+                    ? (cmRagRepositoryPath()
+                        ? '파일 준비 완료 · 저장소 설치와 variant-b 구축을 진행합니다.'
+                        : '파일을 선택했습니다. danbooru-tag-rag 저장소 경로를 지정하세요.')
                     : 'CSV 이름이 다릅니다. 변환 시 열 구조를 서버에서 검증합니다.';
             }
-            if (button) button.disabled = false;
+            if (button) button.disabled = !cmRagCanInstall();
             result?.classList.remove('visible');
         }
 
@@ -16703,14 +16835,14 @@
             const drop = document.getElementById('setting-character-maker-rag-data-drop');
             const fileBox = document.getElementById('setting-character-maker-rag-data-file');
             const state = document.getElementById('setting-character-maker-rag-data-state');
-            const button = document.getElementById('setting-character-maker-rag-data-convert-btn');
+            const button = document.getElementById('setting-character-maker-rag-data-install-btn');
             const result = document.getElementById('setting-character-maker-rag-data-result');
             if (input) input.value = '';
             drop?.classList.remove('has-file', 'is-dragging');
             if (fileBox) fileBox.style.display = 'none';
             if (state) {
                 state.textContent =
-                    'auto_complete 검색 또는 UTF-8 CSV 직접 선택 · 최대 128MB';
+                    '저장소 경로 지정 후 auto_complete 자료 검색 · 최대 128MB';
             }
             if (button) button.disabled = true;
             result?.classList.remove('visible');
@@ -16738,77 +16870,64 @@
             cmSelectRagDataset(files);
         }
 
-        function cmRagHeaderNumber(response, name) {
-            const value = Number.parseInt(response.headers.get(name) || '0', 10);
-            return Number.isFinite(value) ? value : 0;
-        }
-
-        async function cmConvertRagDataset() {
+        async function cmInstallRagDataset() {
             if (cmRagDatasetBusy) return;
             if (!cmRagDatasetFile && !cmRagServerDataset?.canonicalReady) {
-                console.error('[CHARACTER_MAKER_RAG_DATA] 변환 요청 파일이 없습니다.');
+                console.error('[CHARACTER_MAKER_RAG_INSTALL] 설치 요청 파일이 없습니다.');
                 showToast('먼저 auto_complete 자료를 검색하거나 KR 설명 CSV를 선택하세요.', 'error');
                 return;
             }
-            const button = document.getElementById('setting-character-maker-rag-data-convert-btn');
+            const repository = cmRagRepositoryPath();
+            if (!repository) {
+                console.error('[CHARACTER_MAKER_RAG_INSTALL] RAG 저장소 경로가 없습니다.');
+                showToast('danbooru-tag-rag 저장소 경로를 먼저 지정하세요.', 'error');
+                return;
+            }
+            const button = document.getElementById('setting-character-maker-rag-data-install-btn');
             const state = document.getElementById('setting-character-maker-rag-data-state');
             const result = document.getElementById('setting-character-maker-rag-data-result');
             cmRagDatasetBusy = true;
             if (button) {
                 button.disabled = true;
                 button.classList.add('is-busy');
-                button.textContent = '변환 중...';
+                button.textContent = '설치 중...';
             }
-            if (state) state.textContent = '업로드 → 정식 태그 결합 → 다운로드 파일 생성 중...';
+            if (state) {
+                state.textContent =
+                    '변환 → 기존 자료 백업 → variant-b 인덱스 구축 중... 잠시 기다리세요.';
+            }
             result?.classList.remove('visible');
 
             try {
                 const form = new FormData();
+                form.append('repository', repository);
                 if (cmRagDatasetFile) {
                     form.append('dataset', cmRagDatasetFile, cmRagDatasetFile.name);
                 } else {
                     form.append('source', 'auto_complete');
                 }
-                const response = await fetch('/api/character_maker/rag/convert', {
+                const response = await fetch('/api/character_maker/rag/install', {
                     method: 'POST',
                     body: form,
                 });
-                if (!response.ok) {
-                    let message = `HTTP ${response.status}`;
-                    try {
-                        const payload = await response.json();
-                        message = payload.error || message;
-                    } catch (parseError) {
-                        console.error(
-                            '[CHARACTER_MAKER_RAG_DATA] 오류 응답 JSON 해석 실패:',
-                            parseError,
-                        );
-                    }
-                    throw new Error(message);
+                const payload = await response.json().catch(parseError => {
+                    console.error(
+                        '[CHARACTER_MAKER_RAG_INSTALL] 설치 응답 JSON 해석 실패:',
+                        parseError,
+                    );
+                    return {};
+                });
+                if (!response.ok || payload.success === false || payload.error) {
+                    throw new Error(payload.error || `HTTP ${response.status}`);
                 }
-
-                const blob = await response.blob();
-                if (!blob.size) {
-                    console.error('[CHARACTER_MAKER_RAG_DATA] 다운로드 결과가 비어 있습니다.');
-                    throw new Error('변환 결과 파일이 비어 있습니다.');
-                }
+                const data = payload.summary || {};
                 const summary = {
-                    input: cmRagHeaderNumber(response, 'X-CM-RAG-Input-Rows'),
-                    written: cmRagHeaderNumber(response, 'X-CM-RAG-Written-Rows'),
-                    low: cmRagHeaderNumber(response, 'X-CM-RAG-Below-Frequency'),
-                    unmatched: cmRagHeaderNumber(response, 'X-CM-RAG-Unmatched'),
-                    malformed: cmRagHeaderNumber(response, 'X-CM-RAG-Malformed'),
+                    input: Number(data.input_rows || 0),
+                    written: Number(data.written_rows || 0),
+                    low: Number(data.below_frequency || 0),
+                    unmatched: Number(data.unmatched || 0),
+                    malformed: Number(data.malformed || 0),
                 };
-
-                const url = URL.createObjectURL(blob);
-                const anchor = document.createElement('a');
-                anchor.href = url;
-                anchor.download = 'danbooru-tags.csv';
-                anchor.style.display = 'none';
-                document.body.appendChild(anchor);
-                anchor.click();
-                anchor.remove();
-                setTimeout(() => URL.revokeObjectURL(url), 1000);
 
                 document.getElementById('cm-rag-result-written').textContent =
                     summary.written.toLocaleString();
@@ -16822,22 +16941,24 @@
                 if (state) {
                     state.textContent =
                         `입력 ${summary.input.toLocaleString()}행 중 ` +
-                        `${summary.written.toLocaleString()}행을 다운로드했습니다.`;
+                        `${summary.written.toLocaleString()}행 설치 완료 · RAG 사이드카 재시작 필요`;
                 }
-                showToast('danbooru-tags.csv 변환과 다운로드를 완료했습니다.', 'success');
+                showToast(
+                    'danbooru-tags.csv와 variant-b 설치 완료 · RAG 사이드카를 재시작하세요.',
+                    'success',
+                );
             } catch (error) {
-                console.error('[CHARACTER_MAKER_RAG_DATA] 변환 실패:', error);
+                console.error('[CHARACTER_MAKER_RAG_INSTALL] 설치 실패:', error);
                 if (state) {
-                    state.textContent = `변환 실패 · ${error.message || String(error)}`;
+                    state.textContent = `설치 실패 · ${error.message || String(error)}`;
                 }
-                showToast('태그 자료 변환 실패: ' + (error.message || error), 'error');
+                showToast('태그 자료 설치 실패: ' + (error.message || error), 'error');
             } finally {
                 cmRagDatasetBusy = false;
                 if (button) {
-                    button.disabled =
-                        !cmRagDatasetFile && !cmRagServerDataset?.canonicalReady;
+                    button.disabled = !cmRagCanInstall();
                     button.classList.remove('is-busy');
-                    button.textContent = '변환 및 다운로드';
+                    button.textContent = '변환 및 설치';
                 }
             }
         }
@@ -17027,12 +17148,15 @@
             updateCharacterMakerRagSettingStatus(cmRagEnabled);
             const cmRagUrlEl = document.getElementById('setting-character-maker-rag-url');
             if (cmRagUrlEl) cmRagUrlEl.value = currentConfig.character_maker_rag_url || 'http://127.0.0.1:3333';
+            const cmRagRepoEl = document.getElementById('setting-character-maker-rag-repo-path');
+            if (cmRagRepoEl) cmRagRepoEl.value = currentConfig.character_maker_rag_repo_path || '';
             const cmRagTopKEl = document.getElementById('setting-character-maker-rag-top-k');
             if (cmRagTopKEl) cmRagTopKEl.value = currentConfig.character_maker_rag_top_k ?? 5;
             const cmRagThresholdEl = document.getElementById('setting-character-maker-rag-threshold');
             if (cmRagThresholdEl) cmRagThresholdEl.value = currentConfig.character_maker_rag_threshold ?? 0;
             const cmRagTimeoutEl = document.getElementById('setting-character-maker-rag-timeout');
             if (cmRagTimeoutEl) cmRagTimeoutEl.value = currentConfig.character_maker_rag_timeout_sec ?? 20;
+            cmRagRepositoryChanged();
 
             // 임베딩 설정
             const embProvider = currentConfig.embedding_provider || 'voyage';
@@ -17635,6 +17759,7 @@
                 asset_workflow_type: '에셋 워크플로우 타입',
                 character_maker_rag_enabled: '캐릭터 메이커 RAG 사용',
                 character_maker_rag_url: '캐릭터 메이커 RAG URL',
+                character_maker_rag_repo_path: '캐릭터 메이커 RAG 저장소 경로',
                 character_maker_rag_top_k: '캐릭터 메이커 RAG Top-K',
                 character_maker_rag_threshold: '캐릭터 메이커 RAG Threshold',
                 character_maker_rag_timeout_sec: '캐릭터 메이커 RAG Timeout',
@@ -17909,6 +18034,7 @@
                 llm_routing: collectLlmRouting(),
                 character_maker_rag_enabled: !!document.getElementById('setting-character-maker-rag-enabled')?.checked,
                 character_maker_rag_url: document.getElementById('setting-character-maker-rag-url')?.value.trim() || 'http://127.0.0.1:3333',
+                character_maker_rag_repo_path: document.getElementById('setting-character-maker-rag-repo-path')?.value.trim() || '',
                 character_maker_rag_top_k: parseInt(document.getElementById('setting-character-maker-rag-top-k')?.value, 10) || 5,
                 character_maker_rag_threshold: parseFloat(document.getElementById('setting-character-maker-rag-threshold')?.value) || 0,
                 character_maker_rag_timeout_sec: parseFloat(document.getElementById('setting-character-maker-rag-timeout')?.value) || 20,
@@ -28161,9 +28287,12 @@
                 rag_enabled: document.getElementById('cm-setting-rag')
                     ? document.getElementById('cm-setting-rag').checked
                     : !!fallback.rag_enabled,
-                use_references_for_generation: document.getElementById('cm-setting-use-refs')
-                    ? document.getElementById('cm-setting-use-refs').checked
-                    : !!fallback.use_references_for_generation,
+                lora_enabled: document.getElementById('cm-setting-lora-enabled')
+                    ? document.getElementById('cm-setting-lora-enabled').checked
+                    : !!fallback.lora_enabled,
+                lora_list: Array.isArray(fallback.lora_list)
+                    ? fallback.lora_list.map(item => ({...item}))
+                    : [],
             };
         }
 
@@ -28194,16 +28323,135 @@
             });
             const rag = document.getElementById('cm-setting-rag');
             if (rag) rag.checked = !!settings.rag_enabled;
-            const refs = document.getElementById('cm-setting-use-refs');
-            if (refs) refs.checked = !!settings.use_references_for_generation;
+            const lora = document.getElementById('cm-setting-lora-enabled');
+            if (lora) lora.checked = !!settings.lora_enabled;
+            cmRenderLoraSettings();
         }
 
         function cmSettingChanged() {
             if (!cmSession) return;
             cmSession.settings = cmCollectSettings();
             cmRagVerified = false;
+            cmRenderLoraSettings();
             cmRenderStatus();
             cmQueueSync();
+        }
+
+        function cmRenderLoraSettings() {
+            const panel = document.getElementById('cm-setting-lora-panel');
+            const list = document.getElementById('cm-setting-lora-list');
+            const enabled = !!document.getElementById('cm-setting-lora-enabled')?.checked;
+            panel?.classList.toggle('visible', enabled);
+            if (!list || !cmSession?.settings) return;
+            const items = Array.isArray(cmSession.settings.lora_list)
+                ? cmSession.settings.lora_list
+                : [];
+            if (!items.length) {
+                list.innerHTML =
+                    '<div class="cm-maker-lora-empty">선택된 LoRA가 없습니다.</div>';
+                return;
+            }
+            const capabilities = getAssetWorkflowCapabilities(
+                cmSession.settings.asset_workflow_type,
+            );
+            list.innerHTML = items.map((item, index) => {
+                const base = String(item.BASE || 'anima').toLowerCase() === 'ilxl'
+                    ? 'sdxl'
+                    : String(item.BASE || 'anima').toLowerCase();
+                const compatible = base === 'sdxl'
+                    ? capabilities.ilxl
+                    : capabilities.anima;
+                const sourceLabel = item.source === 'bot'
+                    ? '봇'
+                    : (item.source === 'instance' ? '인스턴스' : '에셋');
+                const strength = Number.isFinite(Number(item.strength))
+                    ? Number(item.strength)
+                    : 0.5;
+                return `
+                    <div class="cm-maker-lora-item">
+                        <div style="min-width:0;">
+                            <div class="cm-maker-lora-name">${escapeHtml(item.name || item.lora_path || 'LoRA')}</div>
+                            <div class="cm-maker-lora-meta">
+                                ${sourceLabel} · ${base === 'sdxl' ? 'ILXL' : 'ANIMA'}
+                                ${compatible ? '' : ' · 현재 워크플로우에서 미사용'}
+                            </div>
+                            <input class="cm-maker-lora-trigger" type="text"
+                                   value="${escapeHtml(item.trigger || '')}"
+                                   placeholder="트리거 워드"
+                                   onchange="cmUpdateLoraSetting(${index}, 'trigger', this.value)">
+                        </div>
+                        <label class="cm-maker-lora-strength">
+                            <span>강도 <b>${strength.toFixed(2)}</b></span>
+                            <input type="range" min="0" max="1" step="0.01"
+                                   value="${strength}"
+                                   oninput="this.previousElementSibling.querySelector('b').textContent=Number(this.value).toFixed(2)"
+                                   onchange="cmUpdateLoraSetting(${index}, 'strength', Number(this.value))">
+                        </label>
+                        <button type="button" class="cm-maker-lora-remove"
+                                onclick="cmRemoveLoraSetting(${index})"
+                                title="LoRA 제거">×</button>
+                    </div>`;
+            }).join('');
+        }
+
+        function cmLoraToggleChanged() {
+            if (!cmSession) return;
+            cmSession.settings.lora_enabled =
+                !!document.getElementById('cm-setting-lora-enabled')?.checked;
+            cmRenderLoraSettings();
+            cmQueueSync();
+        }
+
+        function cmUpdateLoraSetting(index, key, value) {
+            const list = cmSession?.settings?.lora_list;
+            if (!Array.isArray(list) || !list[index]) {
+                console.error('[CHARACTER_MAKER_LORA] 변경할 LoRA를 찾지 못했습니다:', index);
+                return;
+            }
+            list[index][key] = value;
+            cmQueueSync();
+        }
+
+        function cmRemoveLoraSetting(index) {
+            const list = cmSession?.settings?.lora_list;
+            if (!Array.isArray(list) || index < 0 || index >= list.length) {
+                console.error('[CHARACTER_MAKER_LORA] 제거할 LoRA를 찾지 못했습니다:', index);
+                return;
+            }
+            list.splice(index, 1);
+            cmRenderLoraSettings();
+            cmQueueSync();
+        }
+
+        async function cmOpenLoraPicker() {
+            if (!cmSession) return;
+            if (!Array.isArray(cmSession.settings.lora_list)) {
+                cmSession.settings.lora_list = [];
+            }
+            if (cmSession.settings.lora_list.length >= 12) {
+                showToast('캐릭터 메이커 LoRA는 최대 12개까지 사용할 수 있습니다.', 'error');
+                return;
+            }
+            _loraPickerCfg = {
+                list: cmSession.settings.lora_list,
+                render: () => {
+                    if (cmSession.settings.lora_list.length > 12) {
+                        cmSession.settings.lora_list.splice(12);
+                        showToast(
+                            '캐릭터 메이커 LoRA는 최대 12개까지만 유지했습니다.',
+                            'error',
+                        );
+                    }
+                    cmSession.settings.lora_enabled = true;
+                    const toggle = document.getElementById('cm-setting-lora-enabled');
+                    if (toggle) toggle.checked = true;
+                    cmRenderLoraSettings();
+                    cmQueueSync();
+                },
+                overlayId: 'cm-lora-picker-overlay',
+                showStyleTab: false,
+            };
+            await _openLoraPickerModal('캐릭터 메이커 LoRA 선택', 'cm-lora-picker-overlay');
         }
 
         function cmToggleSettingsWall() {
@@ -28555,8 +28803,8 @@
                 anima_artist_preset: settings.anima_artist_preset,
                 anima_negative_preset: settings.anima_negative_preset,
                 natural_language: '',
-                lora_list: [],
-                lora_enabled: false,
+                lora_list: (settings.lora_list || []).map(item => ({...item})),
+                lora_enabled: !!settings.lora_enabled,
                 style_lora_list: [],
                 style_lora_enabled: false,
                 face_lora_list: [],
@@ -28600,10 +28848,6 @@
             if (cmBusy || !cmSession) return;
             if (!(cmSession.fields.appearance || []).length || !(cmSession.fields.outfit || []).length) {
                 showToast('이미지 생성 전에 외모와 복장 태그를 각각 하나 이상 준비하세요.', 'error');
-                return;
-            }
-            if (cmCollectSettings().use_references_for_generation && !(cmSession.references || []).length) {
-                showToast('생성 참고 이미지 사용이 켜져 있지만 업로드된 이미지가 없습니다.', 'error');
                 return;
             }
             cmSetBusy(true, 'ComfyUI에서 새 리비전을 생성하는 중...');

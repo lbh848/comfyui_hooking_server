@@ -16,6 +16,7 @@ import datetime
 import importlib
 import io
 import json
+import math
 import os
 import shutil
 import tempfile
@@ -88,6 +89,73 @@ def _normalize_locks(value: Any) -> dict[str, bool]:
     if not isinstance(value, dict):
         raise CharacterMakerError("locks는 객체여야 합니다.")
     return {field: bool(value.get(field, False)) for field in EDITABLE_FIELDS}
+
+
+def _normalize_lora_list(value: Any) -> list[dict[str, Any]]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise CharacterMakerError("캐릭터 메이커 LoRA 목록은 배열이어야 합니다.")
+    if len(value) > 12:
+        raise CharacterMakerError("캐릭터 메이커 LoRA는 최대 12개까지 사용할 수 있습니다.")
+
+    normalized: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for index, raw in enumerate(value):
+        if not isinstance(raw, dict):
+            raise CharacterMakerError(f"LoRA {index + 1}번 항목은 객체여야 합니다.")
+        source = str(raw.get("source") or "asset").strip().lower()
+        if source not in {"asset", "bot", "instance"}:
+            raise CharacterMakerError(
+                f"LoRA {index + 1}번 항목의 source가 올바르지 않습니다."
+            )
+        lora_path = str(raw.get("lora_path") or "").strip()
+        if not lora_path or len(lora_path) > 1000:
+            raise CharacterMakerError(
+                f"LoRA {index + 1}번 항목의 모델 경로가 비어 있거나 너무 깁니다."
+            )
+        path_parts = [
+            part for part in lora_path.replace("\\", "/").split("/") if part
+        ]
+        if os.path.isabs(lora_path) or ".." in path_parts:
+            raise CharacterMakerError(
+                f"LoRA {index + 1}번 항목은 상대 모델 경로만 사용할 수 있습니다."
+            )
+        base = str(raw.get("BASE") or "anima").strip().lower()
+        if base == "ilxl":
+            base = "sdxl"
+        if base not in {"anima", "sdxl"}:
+            raise CharacterMakerError(
+                f"LoRA {index + 1}번 항목의 BASE는 anima 또는 sdxl이어야 합니다."
+            )
+        try:
+            strength = float(raw.get("strength", 0.5))
+        except (TypeError, ValueError) as exc:
+            raise CharacterMakerError(
+                f"LoRA {index + 1}번 항목의 강도가 숫자가 아닙니다."
+            ) from exc
+        if not math.isfinite(strength) or not 0.0 <= strength <= 2.0:
+            raise CharacterMakerError(
+                f"LoRA {index + 1}번 항목의 강도는 0~2 사이여야 합니다."
+            )
+        identity = (source, lora_path.casefold(), base)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        normalized.append(
+            {
+                "name": str(raw.get("name") or os.path.basename(lora_path)).strip()[:300],
+                "character": str(raw.get("character") or "").strip()[:300],
+                "lora_path": lora_path,
+                "strength": strength,
+                "preview_url": str(raw.get("preview_url") or "").strip()[:2000],
+                "trigger": str(raw.get("trigger") or "").strip()[:1000],
+                "BASE": base,
+                "source": source,
+                "lora_id": str(raw.get("lora_id") or "").strip()[:300],
+            }
+        )
+    return normalized
 
 
 def _parse_llm_payload(raw: str, *, require_queries: bool) -> dict[str, Any] | None:
@@ -220,7 +288,8 @@ class CharacterMakerService:
             "img_h": 1024,
             "seed": -1,
             "rag_enabled": bool(config.get("character_maker_rag_enabled", False)),
-            "use_references_for_generation": False,
+            "lora_enabled": False,
+            "lora_list": [],
         }
 
     def create_session(self) -> dict[str, Any]:
@@ -369,9 +438,11 @@ class CharacterMakerService:
             if not -1 <= seed <= 2**32 - 1:
                 raise CharacterMakerError("seed는 -1 또는 0~4294967295 사이여야 합니다.")
             settings["seed"] = seed
-        for key in ("rag_enabled", "use_references_for_generation"):
+        for key in ("rag_enabled", "lora_enabled"):
             if key in raw:
                 settings[key] = bool(raw.get(key))
+        if "lora_list" in raw:
+            settings["lora_list"] = _normalize_lora_list(raw.get("lora_list"))
 
     def add_reference(
         self, session_id: str, *, filename: str, mime: str, image_bytes: bytes
@@ -463,17 +534,6 @@ class CharacterMakerService:
             raise CharacterMakerError("참고 이미지를 찾을 수 없습니다.")
         _assert_within(self.temp_root, item["path"])
         return item["path"], item["mime"]
-
-    def generation_reference_items(self, session_id: str) -> list[dict[str, str]]:
-        session = self._session(session_id)
-        return [
-            {
-                "filename": f"{session_id}_{item['id']}_{item['name']}",
-                "local_path": item["path"],
-            }
-            for item in session["references"]
-            if os.path.isfile(item["path"])
-        ]
 
     def _active_revision(self, session: dict[str, Any]) -> dict[str, Any] | None:
         active_id = session.get("active_revision_id", "")
