@@ -2483,6 +2483,57 @@ def test_call3_prompts_separate_internal_speaker_ids_from_in_story_address():
         assert "Infer any in-story name, nickname, title, kinship term" in prompt
         assert "Do not force a name, nickname, or direct address" in prompt
         assert "If the proper form of address is uncertain, omit it" in prompt
+        assert "exact roster identifier belongs only on the left side of the colon" in prompt
+        assert "never leave that Latin-script roster identifier inside" in prompt
+
+
+def test_call3_output_contract_rejects_roster_ids_only_inside_localized_dialogue(capsys):
+    leaked = """[Scene slot=44]
+Maria: "Masachika 군. 수업이 많이 힘들었나 보네?" #charming
+[Scene slot=52]
+Alisa: (Alisa라면 어떻게 했을까?) #thought_cloud"""
+    valid, reason = pipeline.validate_call3_output_contract(
+        leaked,
+        [44, 52],
+        "Masachika, Alisa, Maria",
+        "한국어",
+    )
+
+    assert valid is False
+    assert "대사 본문에 내부 발화자 ID 유출" in reason
+    assert "'names': ['Masachika']" in reason
+    assert "'names': ['Alisa']" in reason
+    assert "내부 발화자 ID 유출" in capsys.readouterr().out
+
+    corrected = """[Scene slot=44]
+Maria: "마사치카 군. 수업이 많이 힘들었나 보네?" #charming
+[Scene slot=52]
+Alisa: (나라면 어떻게 했을까?) #thought_cloud"""
+    assert pipeline.validate_call3_output_contract(
+        corrected,
+        [44, 52],
+        "Masachika, Alisa, Maria",
+        "한국어",
+    ) == (True, "")
+
+
+def test_call3_output_contract_allows_roster_ids_in_speaker_prefix_and_english_body(capsys):
+    korean = '[Scene slot=7]\nMasachika: (차갑다...) #monologue_box'
+    assert pipeline.validate_call3_output_contract(
+        korean,
+        [7],
+        "Masachika, Alisa",
+        "한국어",
+    ) == (True, "")
+
+    english = '[Scene slot=7]\nAlisa: "Masachika, are you all right?" #normal'
+    assert pipeline.validate_call3_output_contract(
+        english,
+        [7],
+        "Masachika, Alisa",
+        "영어",
+    ) == (True, "")
+    assert "영어 대사 출력이므로" in capsys.readouterr().out
 
 
 def test_parse_speak_output_enforces_two_entry_limit_per_scene(capsys):
@@ -2801,6 +2852,85 @@ Hana: "둘째 장면." #normal"""
     assert "missing=[1]" in captured
     assert "CALL3-CORRECTION" in captured
     assert "교정 호출 1회 실행" in captured
+
+
+@pytest.mark.asyncio
+async def test_call3_retries_when_internal_roster_id_leaks_into_korean_dialogue(
+    monkeypatch,
+    capsys,
+):
+    call3_attempts = 0
+
+    async def fake_call(task_key, messages, **kwargs):
+        nonlocal call3_attempts
+        if task_key == "illustration_call2":
+            return """<lb-xnai>
+scenes[1]:
+  - camera: medium shot
+    characters[2]:
+      - name: Maria
+        positive: 1girl, Maria, blonde hair
+      - name: Masachika
+        positive: 1boy, Masachika, black hair
+    scene: Maria checks Masachika's notebook
+    slot: 0
+</lb-xnai>"""
+
+        assert task_key == "illustration_call3"
+        call3_attempts += 1
+        if call3_attempts == 1:
+            return (
+                '[Scene slot=0]\n'
+                'Maria: "Masachika 군. 수업이 많이 힘들었나 보네?" #charming'
+            )
+
+        correction = messages[-1]["content"]
+        assert "Never repeat a roster identifier inside quoted dialogue" in correction
+        assert "if uncertain, omit the direct address" in correction
+        assert "대사 본문에 내부 발화자 ID 유출" in correction
+        validator = kwargs.get("result_validator")
+        assert validator is not None
+        corrected = (
+            '[Scene slot=0]\n'
+            'Maria: "마사치카 군. 수업이 많이 힘들었나 보네?" #charming'
+        )
+        assert validator(corrected) == (True, "")
+        return corrected
+
+    monkeypatch.setattr(pipeline.llm_service, "callLLMTask", fake_call)
+    result = await pipeline.build_from_context(
+        {
+            "session_id": "call3_roster_leak_retry_test",
+            "target_slotted": "마리아가 마사치카의 노트를 살핀다.\n\n[Slot 0]",
+            "chats": [
+                {"role": "user", "data": "오전 수업이 끝났다."},
+                {"role": "char", "data": "마리아가 마사치카의 노트를 살핀다."},
+            ],
+        },
+        {
+            "call1_enabled": False,
+            "call3_enabled": True,
+            "speak_enabled": True,
+            "call3_prompt_mode": "manga",
+            "speak_language": "한국어",
+            "key_visual": False,
+        },
+        (
+            "### Maria\n-Appearance: 1girl, blonde hair\n\n"
+            "### Masachika\n-Appearance: 1boy, black hair"
+        ),
+        extra_names="Maria, Masachika",
+    )
+
+    assert call3_attempts == 2
+    assert result["call3_correction_used"] is True
+    assert "Masachika 군" in result["call3_initial_output"]
+    assert result["items"][0]["speak"] == (
+        'Maria: "마사치카 군. 수업이 많이 힘들었나 보네?" #charming'
+    )
+    captured = capsys.readouterr().out
+    assert "대사 본문에 내부 발화자 ID 유출" in captured
+    assert "출력 계약을 위반해" in captured
 
 
 @pytest.mark.asyncio

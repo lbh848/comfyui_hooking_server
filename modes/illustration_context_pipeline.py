@@ -3671,6 +3671,94 @@ def validate_call3_slot_coverage(
     return True, ""
 
 
+def _call3_roster_names(character_names: str) -> list[str]:
+    """CALL3의 쉼표 구분 내부 발화자 ID 목록을 입력 순서대로 반환한다."""
+    names = []
+    seen = set()
+    for value in str(character_names or "").split(","):
+        name = value.strip()
+        key = name.casefold()
+        if not name or key in seen:
+            continue
+        seen.add(key)
+        names.append(name)
+    return names
+
+
+def _call3_dialogue_roster_leaks(text: str, character_names: str) -> list[dict]:
+    """따옴표/괄호 안 대사 본문으로 유출된 내부 발화자 ID를 찾는다.
+
+    장소나 상황을 추론하는 키워드 매칭이 아니라, 서버가 직접 제공한 구조화 roster
+    ID가 메타데이터 경계를 넘어갔는지만 검증한다. 콜론 왼쪽 speaker와 #태그는
+    검사 대상이 아니다.
+    """
+    roster = _call3_roster_names(character_names)
+    if not roster:
+        return []
+
+    segments = postprocess.parse_speak(text, strip_emotion=True)
+    leaks = []
+    for index, segment in enumerate(segments, start=1):
+        body = str(segment.get("text") or "")
+        leaked_names = []
+        for name in roster:
+            # 뒤에 한국어 호칭이 공백 없이 붙은 ``Masachika군``도 잡되,
+            # 더 긴 영문 식별자의 일부만 일치시키지는 않는다.
+            pattern = rf"(?<![A-Za-z0-9_]){re.escape(name)}(?![A-Za-z0-9_])"
+            if re.search(pattern, body, re.I):
+                leaked_names.append(name)
+        if leaked_names:
+            leaks.append({
+                "entry": index,
+                "speaker": str(segment.get("speaker") or "").strip(),
+                "names": leaked_names,
+            })
+    return leaks
+
+
+def _call3_dialogue_requires_localized_names(output_language: str) -> bool:
+    """영어 출력에서는 roster ID 자체가 자연스러운 고유명일 수 있다."""
+    language = str(output_language or "").strip().casefold()
+    return language not in {"영어", "english", "en"}
+
+
+def validate_call3_output_contract(
+    text: str,
+    expected_slots: list[int],
+    character_names: str,
+    output_language: str,
+) -> tuple[bool, str]:
+    """CALL3의 slot 완전성과 대사 본문/내부 ID 경계를 함께 검증한다."""
+    valid, reason = validate_call3_slot_coverage(text, expected_slots)
+    if not valid:
+        return False, reason
+
+    if not _call3_dialogue_requires_localized_names(output_language):
+        print(
+            "[ILLUST_CONTEXT:CALL3] 영어 대사 출력이므로 roster ID 본문 유출 검사를 "
+            f"적용하지 않음: language={output_language!r}"
+        )
+        return True, ""
+
+    roster = _call3_roster_names(character_names)
+    if not roster:
+        print(
+            "[ILLUST_CONTEXT:CALL3] roster가 비어 있어 대사 본문 내부 ID 검사를 "
+            f"건너뜀: language={output_language!r}"
+        )
+        return True, ""
+
+    leaks = _call3_dialogue_roster_leaks(text, character_names)
+    if leaks:
+        reason = (
+            "CALL3 대사 본문에 내부 발화자 ID 유출: "
+            f"language={output_language!r}, leaks={leaks}"
+        )
+        print(f"[ILLUST_CONTEXT:CALL3] {reason}")
+        return False, reason
+    return True, ""
+
+
 def build_call3_dialogue_system_prompt(
     prompts: dict,
     toggles: dict,
@@ -3716,6 +3804,15 @@ def build_call3_dialogue_system_prompt(
     else:
         system_prompt = selected_prompt
     output_language = str(toggles.get("speak_language") or "한국어").strip() or "한국어"
+    roster_boundary_instruction = ""
+    if _call3_dialogue_requires_localized_names(output_language):
+        roster_boundary_instruction = (
+            "\nAn exact roster identifier may appear as machine-readable metadata only on the "
+            "left side of the colon. Do not repeat it inside quoted dialogue or parenthesized "
+            f"thought. Inside the text body, use a natural {output_language} form of address "
+            "supported by the original narrative and bounded conversation, or omit direct "
+            "address when uncertain."
+        )
     language_instruction = (
         "# OUTPUT LANGUAGE — HARD REQUIREMENT\n"
         f"Write every dialogue, thought, inner monologue, and newly created reaction in {output_language}.\n"
@@ -3723,6 +3820,7 @@ def build_call3_dialogue_system_prompt(
         "prescribed form. Do not switch the spoken text to another language even when the source "
         "narrative or examples use another language. Before answering, silently verify that every "
         f"spoken or thought line follows the required output language: {output_language}."
+        + roster_boundary_instruction
     )
     system_prompt = language_instruction + "\n\n" + system_prompt
     system_prompt += emotion_instruction
@@ -6258,14 +6356,25 @@ async def build_from_context(
         })
         call3_output = await _call_pipeline_llm("CALL3", _normalize_messages(speak_messages), stream_notify)
         call3_initial_output = call3_output
-        call3_valid, call3_failure_reason = validate_call3_slot_coverage(
+        call3_valid, call3_failure_reason = validate_call3_output_contract(
             call3_output,
             selected_slots,
+            extra_names,
+            speak_language,
         )
         if not call3_valid:
             call3_correction_used = True
+            roster_correction_instruction = ""
+            if _call3_dialogue_requires_localized_names(speak_language):
+                roster_correction_instruction = (
+                    "Keep each exact roster identifier as machine-readable speaker metadata only "
+                    "on the left side of the colon. Never repeat a roster identifier inside quoted "
+                    "dialogue or parenthesized thought. Infer a natural in-story form of address "
+                    "from the original narrative and bounded scene windows; if uncertain, omit "
+                    "the direct address. Preserve the speaker prefix and required output tag. "
+                )
             print(
-                f"[ILLUST_CONTEXT:CALL3-CORRECTION] 최초 CALL3 결과의 선택 slot이 불완전해 "
+                f"[ILLUST_CONTEXT:CALL3-CORRECTION] 최초 CALL3 결과가 출력 계약을 위반해 "
                 f"교정 호출 1회 실행: "
                 f"slots={selected_slots}, reason={call3_failure_reason}"
             )
@@ -6283,7 +6392,10 @@ async def build_from_context(
                     "Every block must contain at least one dialogue, thought, or inner "
                     "monologue entry. "
                     f"Write every dialogue and thought in {speak_language}; this language rule is mandatory. "
-                    "Character names, Scene headers, and required tags are the only exceptions. "
+                    + roster_correction_instruction
+                    + "Character names in speaker prefixes, Scene headers, and required tags are "
+                    "the only language exceptions. "
+                    f"Validation failure to fix: {call3_failure_reason}. "
                     "Output only the corrected Scene blocks."
                 ),
             }])
@@ -6291,9 +6403,11 @@ async def build_from_context(
                 "CALL3-CORRECTION",
                 _normalize_messages(retry_messages),
                 stream_notify,
-                result_validator=lambda result: validate_call3_slot_coverage(
+                result_validator=lambda result: validate_call3_output_contract(
                     result,
                     selected_slots,
+                    extra_names,
+                    speak_language,
                 ),
             )
         # CALL3가 닫는 따옴표/괄호 안 끝에 #감정을 붙여 내보낸 줄을 교정한다.

@@ -15,7 +15,7 @@ Rules:
 - Inside quoted dialogue or parenthesized thoughts, never copy an internal roster identifier merely because it appears in the roster, selected-scene metadata, or character fields.
 - Infer any in-story name, nickname, title, kinship term, pronoun, or other form of address from the original narrative and bounded conversation. Use the form that the characters would naturally use in context.
 - Do not force a name, nickname, or direct address into an entry. If the source does not naturally call for one, write the line without addressing anyone by name. If the proper form of address is uncertain, omit it instead of exposing an internal identifier or inventing one.
-- Preserve an exact roster identifier inside dialogue only when the source itself clearly uses that exact string as an intentional in-story form of address.
+- The exact roster identifier belongs only on the left side of the colon. When the requested output language is not English, never leave that Latin-script roster identifier inside quoted dialogue or parenthesized thought. Use a natural in-story form of address supported by the source, or omit direct address when uncertain.
 - Emit exactly one Scene block for every supplied selected scene, in the supplied order.
 - Use each supplied exact numeric slot once. Never output a slot that was not supplied.
 - Key visuals are intentionally excluded. Never output slot -1.
