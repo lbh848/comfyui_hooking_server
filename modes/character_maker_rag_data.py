@@ -11,6 +11,7 @@ import csv
 import datetime
 import os
 import shutil
+import subprocess
 import tempfile
 import traceback
 from typing import Any
@@ -22,10 +23,146 @@ MIN_POST_COUNT = 50
 MAX_UPLOAD_BYTES = 128 * 1024 * 1024
 OUTPUT_FILENAME = "danbooru-tags.csv"
 INDEX_VARIANT = "b"
+RAG_REPOSITORY_URL = "https://github.com/joykst96/danbooru-tag-rag.git"
 
 
 class CharacterMakerRagDataError(ValueError):
     """사용자에게 전달할 수 있는 RAG 데이터 변환 오류."""
+
+
+def ensure_rag_repository(
+    repo_path: str,
+    repository_url: str = RAG_REPOSITORY_URL,
+) -> dict[str, Any]:
+    """고정 경로에 RAG 저장소가 없으면 임시 경로로 clone 후 원자적으로 배치한다."""
+    raw_path = str(repo_path or "").strip()
+    if not raw_path:
+        print("[CHARACTER_MAKER_RAG_INSTALL] 자동 준비 대상 저장소 경로 비어 있음")
+        raise CharacterMakerRagDataError(
+            "Danbooru Tag RAG 자동 설치 경로가 지정되지 않았습니다."
+        )
+    expanded_path = os.path.expandvars(os.path.expanduser(raw_path))
+    if not os.path.isabs(expanded_path):
+        print(
+            "[CHARACTER_MAKER_RAG_INSTALL] 자동 준비 상대 경로 거부: "
+            f"path={raw_path!r}"
+        )
+        raise CharacterMakerRagDataError(
+            "RAG 저장소 자동 설치 경로는 절대 경로여야 합니다."
+        )
+
+    repository = os.path.realpath(expanded_path)
+    if os.path.isdir(repository):
+        return {
+            **validate_rag_repository(repository),
+            "repository_cloned": False,
+            "repository_url": repository_url,
+        }
+    if os.path.lexists(repository):
+        print(
+            "[CHARACTER_MAKER_RAG_INSTALL] 자동 clone 대상이 폴더가 아님: "
+            f"path={repository!r}"
+        )
+        raise CharacterMakerRagDataError(
+            f"RAG 자동 설치 위치가 폴더가 아닙니다: {repository}"
+        )
+
+    git_command = shutil.which("git")
+    if not git_command:
+        print("[CHARACTER_MAKER_RAG_INSTALL] git 실행 파일을 찾지 못함")
+        raise CharacterMakerRagDataError(
+            "RAG 저장소 자동 설치에 필요한 git 실행 파일을 찾을 수 없습니다."
+        )
+
+    parent = os.path.dirname(repository)
+    clone_temp = ""
+    try:
+        os.makedirs(parent, exist_ok=True)
+        clone_temp = tempfile.mkdtemp(
+            prefix=".danbooru-tag-rag-clone-",
+            dir=parent,
+        )
+        command = [
+            git_command,
+            "clone",
+            "--depth",
+            "1",
+            "--",
+            repository_url,
+            clone_temp,
+        ]
+        print(
+            "[CHARACTER_MAKER_RAG_INSTALL] 저장소 자동 clone 시작: "
+            f"url={repository_url!r}, target={repository!r}, command={command!r}"
+        )
+        completed = subprocess.run(
+            command,
+            cwd=parent,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+        clone_log = str(completed.stdout or "").strip()
+        if clone_log:
+            for line in clone_log.splitlines():
+                print(f"[CHARACTER_MAKER_RAG_GIT] {line}")
+        if completed.returncode != 0:
+            print(
+                "[CHARACTER_MAKER_RAG_INSTALL] 저장소 자동 clone 실패: "
+                f"return_code={completed.returncode}, "
+                f"log_tail={clone_log.splitlines()[-20:]}"
+            )
+            raise CharacterMakerRagDataError(
+                "Danbooru Tag RAG 저장소를 자동으로 받지 못했습니다. "
+                f"git 종료 코드: {completed.returncode}"
+            )
+
+        validate_rag_repository(clone_temp)
+        if os.path.lexists(repository):
+            print(
+                "[CHARACTER_MAKER_RAG_INSTALL] clone 중 대상 경로가 생성됨: "
+                f"path={repository!r}"
+            )
+            raise CharacterMakerRagDataError(
+                "RAG 저장소를 받는 동안 설치 위치가 다른 작업에 의해 생성되었습니다."
+            )
+        os.replace(clone_temp, repository)
+        clone_temp = ""
+        paths = validate_rag_repository(repository)
+        print(
+            "[CHARACTER_MAKER_RAG_INSTALL] 저장소 자동 clone 완료: "
+            f"url={repository_url!r}, path={repository!r}"
+        )
+        return {
+            **paths,
+            "repository_cloned": True,
+            "repository_url": repository_url,
+        }
+    except Exception as exc:
+        print(
+            "[CHARACTER_MAKER_RAG_INSTALL] 저장소 자동 준비 실패: "
+            f"path={repository!r}, error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        if isinstance(exc, CharacterMakerRagDataError):
+            raise
+        raise CharacterMakerRagDataError(
+            f"Danbooru Tag RAG 저장소를 자동으로 준비하지 못했습니다: {exc}"
+        ) from exc
+    finally:
+        if clone_temp and os.path.isdir(clone_temp):
+            try:
+                shutil.rmtree(clone_temp)
+            except OSError as cleanup_exc:
+                print(
+                    "[CHARACTER_MAKER_RAG_INSTALL] clone 임시 폴더 정리 실패: "
+                    f"path={clone_temp!r}, "
+                    f"error={type(cleanup_exc).__name__}: {cleanup_exc}"
+                )
+                traceback.print_exc()
 
 
 def validate_rag_repository(repo_path: str) -> dict[str, str]:

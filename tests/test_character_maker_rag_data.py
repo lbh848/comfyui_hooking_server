@@ -1,4 +1,5 @@
 import csv
+import subprocess
 import sys
 from pathlib import Path
 
@@ -10,10 +11,21 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from modes.character_maker_rag_data import (
     CharacterMakerRagDataError,
     convert_kr_danbooru_csv,
+    ensure_rag_repository,
     prepare_rag_install,
     restore_rag_install,
     validate_rag_repository,
 )
+
+
+def _create_repository_structure(path: Path) -> None:
+    (path / "core").mkdir(parents=True)
+    (path / "core" / "config.py").write_text("# test\n", encoding="utf-8")
+    (path / "core" / "builder.py").write_text("# test\n", encoding="utf-8")
+    (path / "pyproject.toml").write_text(
+        "[project]\nname='rag-test'\n",
+        encoding="utf-8",
+    )
 
 
 def _write_rows(path: Path, rows, *, encoding="utf-8"):
@@ -129,13 +141,7 @@ def test_converter_reports_missing_builtin_canonical_file(tmp_path):
 
 def test_prepare_and_restore_rag_install_preserves_existing_data(tmp_path):
     repository = tmp_path / "danbooru-tag-rag"
-    (repository / "core").mkdir(parents=True)
-    (repository / "core" / "config.py").write_text("# test\n", encoding="utf-8")
-    (repository / "core" / "builder.py").write_text("# test\n", encoding="utf-8")
-    (repository / "pyproject.toml").write_text(
-        "[project]\nname='rag-test'\n",
-        encoding="utf-8",
-    )
+    _create_repository_structure(repository)
     old_csv = repository / "danbooru-tags.csv"
     old_csv.write_text("old csv\n", encoding="utf-8")
     old_index = repository / "data" / "lancedb_b"
@@ -173,3 +179,65 @@ def test_validate_rag_repository_rejects_an_unrelated_folder(tmp_path):
 
     with pytest.raises(CharacterMakerRagDataError, match="저장소가 아닙니다"):
         validate_rag_repository(str(unrelated))
+
+
+def test_ensure_rag_repository_reuses_an_existing_repository(
+    monkeypatch,
+    tmp_path,
+):
+    repository = tmp_path / "danbooru-tag-rag"
+    _create_repository_structure(repository)
+
+    def fail_if_git_is_checked(_name):
+        raise AssertionError("기존 저장소가 있으면 git을 찾으면 안 됩니다.")
+
+    monkeypatch.setattr("modes.character_maker_rag_data.shutil.which", fail_if_git_is_checked)
+
+    result = ensure_rag_repository(str(repository))
+
+    assert result["repository"] == str(repository.resolve())
+    assert result["repository_cloned"] is False
+
+
+def test_ensure_rag_repository_clones_to_the_fixed_location(
+    monkeypatch,
+    tmp_path,
+):
+    repository = tmp_path / "auto_complete" / "danbooru-tag-rag"
+    seen_command = []
+
+    monkeypatch.setattr(
+        "modes.character_maker_rag_data.shutil.which",
+        lambda name: "git-test" if name == "git" else None,
+    )
+
+    def fake_run(command, **kwargs):
+        seen_command.append(command)
+        clone_target = Path(command[-1])
+        _create_repository_structure(clone_target)
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout="Cloning into temporary directory...\n",
+        )
+
+    monkeypatch.setattr(
+        "modes.character_maker_rag_data.subprocess.run",
+        fake_run,
+    )
+
+    result = ensure_rag_repository(str(repository))
+
+    assert result["repository"] == str(repository.resolve())
+    assert result["repository_cloned"] is True
+    assert seen_command[0][:-1] == [
+        "git-test",
+        "clone",
+        "--depth",
+        "1",
+        "--",
+        "https://github.com/joykst96/danbooru-tag-rag.git",
+    ]
+    assert Path(seen_command[0][-1]).parent == repository.parent
+    assert repository.is_dir()
+    assert not list(repository.parent.glob(".danbooru-tag-rag-clone-*"))
