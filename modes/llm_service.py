@@ -1417,10 +1417,11 @@ async def callLLMVision(messages: list, image_b64: str, image_mime: str = "image
             _response_format_ctx.reset(token)
 
 
-async def callLLMVisionStream(messages: list, image_b64: str, image_mime: str = "image/webp", model: str = None, log_history: bool = True):
+async def callLLMVisionStream(messages: list, image_b64: str, image_mime: str = "image/webp", model: str = None, log_history: bool = True, json_mode: bool = False):
     """비전(이미지 입력) LLM 스트리밍 호출. delta/done/error 이벤트를 비동기 제너레이터로 yield.
 
     callLLMStream 과 동일한 이벤트 스키마를 사용한다.
+    json_mode 는 callLLMStream 에 그대로 전달된다.
     """
     service = _current_config["llm_service"]
     if not supports_vision(service):
@@ -1442,9 +1443,9 @@ async def callLLMVisionStream(messages: list, image_b64: str, image_mime: str = 
         yield {"type": "error", "error": str(e)}
         return
 
-    _llm_log(f"callLLMVisionStream: service={service} model={use_model} mime={image_mime} img_b64_len={len(image_b64)}")
+    _llm_log(f"callLLMVisionStream: service={service} model={use_model} mime={image_mime} img_b64_len={len(image_b64)} json_mode={json_mode}")
     # callLLMStream 내부 디스패치 재사용 (이미지 포함 messages를 그대로 처리 가능)
-    async for ev in callLLMStream(new_messages, model=use_model, log_history=log_history):
+    async for ev in callLLMStream(new_messages, model=use_model, log_history=log_history, json_mode=json_mode):
         yield ev
 
 
@@ -1560,8 +1561,12 @@ async def callLLM3(messages: list, model: str = None, json_mode: bool = False) -
         _current_config["llm_custom_body"] = saved_body
 
 
-async def callLLM3Stream(messages: list, model: str = None, log_history: bool = True):
-    """LLM3 실제 스트리밍 호출. delta/done/error 이벤트를 yield한다."""
+async def callLLM3Stream(messages: list, model: str = None, log_history: bool = True,
+                         json_mode: bool = False):
+    """LLM3 실제 스트리밍 호출. delta/done/error 이벤트를 yield한다.
+
+    json_mode=True 면 _response_format_ctx 를 세팅해 response_format 전파(callLLMStream 참고).
+    """
     service = _current_config.get("llm_service3") or _current_config["llm_service"]
     use_model = model or _current_config.get("llm_model3")
     if not use_model:
@@ -1588,6 +1593,7 @@ async def callLLM3Stream(messages: list, model: str = None, log_history: bool = 
     final_ttft = None
     error_msg = ""
 
+    token = _response_format_ctx.set({"type": "json_object"}) if json_mode else None
     try:
         if key3:
             _current_config["llm_api_key"] = key3
@@ -1630,6 +1636,8 @@ async def callLLM3Stream(messages: list, model: str = None, log_history: bool = 
         traceback.print_exc()
         yield {"type": "error", "error": f"[LLM 실패] LLM3 스트리밍 오류: {e}"}
     finally:
+        if token is not None:
+            _response_format_ctx.reset(token)
         _current_config["llm_api_key"] = saved_key
         _current_config["llm_url"] = saved_url
         _current_config["llm_reasoning_preset"] = saved_preset
@@ -3284,11 +3292,17 @@ async def _dispatch_stream(messages: list, service: str, model: str):
         yield {"type": "error", "error": f"알 수 없는 LLM 서비스: {service}"}
 
 
-async def callLLMStream(messages: list, model: str = None, log_history: bool = True):
+async def callLLMStream(messages: list, model: str = None, log_history: bool = True,
+                        json_mode: bool = False):
     """LLM1 스트리밍 호출. 이벤트 dict 를 yield.
 
     log_history=True (기본) 면 done/error 시 logs/llm_history.jsonl 에 기록.
     LLM 테스트 패널처럼 일회성 테스트 용도면 False 로 끔.
+
+    json_mode=True 면 OpenAI 호환/Gemini 요청에 response_format/json responseMimeType 를
+    설정해 JSON 출력을 강제한다. Claude native/Vertex 등 비지원 프로바이더는 조용히
+    무시된다(callLLM 과 동일). 스트리밍 경로의 body 빌드가 _response_format_ctx 를
+    읽으므로, 진입 함수에서 컨텍스트를 세팅하기만 하면 _dispatch_stream 시그니처 변경 없이 전파.
     """
     service = _current_config["llm_service"]
     use_model = model or _current_config["llm_model"]
@@ -3301,33 +3315,41 @@ async def callLLMStream(messages: list, model: str = None, log_history: bool = T
     final_ttft = None
     error_msg = ""
 
-    async for ev in _dispatch_stream(messages, service, use_model):
-        if ev["type"] == "done":
-            final_text = ev.get("text", "")
-            final_tokens = ev.get("completion_tokens", 0)
-            final_prompt_tokens = ev.get("prompt_tokens", 0)
-            final_elapsed = ev.get("elapsed", 0.0)
-            final_tps = ev.get("tps", 0.0)
-            final_ttft = ev.get("ttft")
-        elif ev["type"] == "error":
-            error_msg = ev.get("error", "")
-        yield ev
+    token = _response_format_ctx.set({"type": "json_object"}) if json_mode else None
+    try:
+        async for ev in _dispatch_stream(messages, service, use_model):
+            if ev["type"] == "done":
+                final_text = ev.get("text", "")
+                final_tokens = ev.get("completion_tokens", 0)
+                final_prompt_tokens = ev.get("prompt_tokens", 0)
+                final_elapsed = ev.get("elapsed", 0.0)
+                final_tps = ev.get("tps", 0.0)
+                final_ttft = ev.get("ttft")
+            elif ev["type"] == "error":
+                error_msg = ev.get("error", "")
+            yield ev
 
-    if log_history:
-        _log_history(
-            service=service, model=use_model, messages=messages,
-            output=final_text, completion_tokens=final_tokens,
-            elapsed=final_elapsed, tps=final_tps, ttft=final_ttft,
-            error=error_msg, prompt_tokens=final_prompt_tokens,
-        )
+        if log_history:
+            _log_history(
+                service=service, model=use_model, messages=messages,
+                output=final_text, completion_tokens=final_tokens,
+                elapsed=final_elapsed, tps=final_tps, ttft=final_ttft,
+                error=error_msg, prompt_tokens=final_prompt_tokens,
+            )
+    finally:
+        if token is not None:
+            _response_format_ctx.reset(token)
 
 
-async def callLLM2Stream(messages: list, model: str = None, log_history: bool = True):
+async def callLLM2Stream(messages: list, model: str = None, log_history: bool = True,
+                         json_mode: bool = False):
     """LLM2 스트리밍 호출. 이벤트 dict 를 yield.
 
     callLLM2 의 설정 스왑 패턴(key2/url2/preset2/effort2/body2 → LLM1 슬롯 임시 덮어쓰기)과
     callLLMStream 의 스트리밍 디스패치(_dispatch_stream)를 합성한다.
     llm_service2 가 비어 있으면 LLM1 서비스/엔드포인트를 재사용(callLLM2 와 동일).
+
+    json_mode=True 면 _response_format_ctx 를 세팅해 response_format 전파(callLLMStream 참고).
     """
     service = _current_config.get("llm_service2") or _current_config["llm_service"]
     use_model = model or _current_config.get("llm_model2")
@@ -3354,6 +3376,7 @@ async def callLLM2Stream(messages: list, model: str = None, log_history: bool = 
     final_ttft = None
     error_msg = ""
 
+    token = _response_format_ctx.set({"type": "json_object"}) if json_mode else None
     try:
         if key2:
             _current_config["llm_api_key"] = key2
@@ -3386,6 +3409,8 @@ async def callLLM2Stream(messages: list, model: str = None, log_history: bool = 
                 error=error_msg, prompt_tokens=final_prompt_tokens,
             )
     finally:
+        if token is not None:
+            _response_format_ctx.reset(token)
         _current_config["llm_api_key"] = saved_key
         _current_config["llm_url"] = saved_url
         _current_config["llm_reasoning_preset"] = saved_preset
@@ -3394,11 +3419,13 @@ async def callLLM2Stream(messages: list, model: str = None, log_history: bool = 
 
 
 async def callLLMVision2Stream(messages: list, image_b64: str, image_mime: str = "image/webp",
-                                model: str = None, log_history: bool = True):
+                                model: str = None, log_history: bool = True,
+                                json_mode: bool = False):
     """비전(이미지 입력) LLM2 스트리밍 호출. delta/done/error 이벤트를 비동기 제너레이터로 yield.
 
     callLLMVision2 의 비전 처리(_normalize_vision_image/_build_vision_messages, supports_vision 체크) 후
     callLLM2Stream 으로 위임한다. callLLMVisionStream → callLLMStream 구조와 동일.
+    json_mode 는 callLLM2Stream 에 그대로 전달된다.
     """
     service = _current_config.get("llm_service2") or _current_config["llm_service"]
     if not supports_vision(service):
@@ -3420,17 +3447,19 @@ async def callLLMVision2Stream(messages: list, image_b64: str, image_mime: str =
         yield {"type": "error", "error": str(e)}
         return
 
-    _llm_log(f"callLLMVision2Stream: service={service} model={use_model} mime={image_mime} img_b64_len={len(image_b64)}")
-    async for ev in callLLM2Stream(new_messages, model=use_model, log_history=log_history):
+    _llm_log(f"callLLMVision2Stream: service={service} model={use_model} mime={image_mime} img_b64_len={len(image_b64)} json_mode={json_mode}")
+    async for ev in callLLM2Stream(new_messages, model=use_model, log_history=log_history, json_mode=json_mode):
         yield ev
 
 
 async def callLLMVision3Stream(messages: list, image_b64: str, image_mime: str = "image/webp",
-                                model: str = None, log_history: bool = True):
+                                model: str = None, log_history: bool = True,
+                                json_mode: bool = False):
     """비전(이미지 입력) LLM3 스트리밍 호출. delta/done/error 이벤트를 비동기 제너레이터로 yield.
 
     callLLMVision3 의 비전 처리(_normalize_vision_image/_build_vision_messages, supports_vision 체크) 후
     callLLM3Stream 으로 위임한다. callLLMVision2Stream → callLLM2Stream 구조와 동일.
+    json_mode 는 callLLM3Stream 에 그대로 전달된다.
     """
     service = _current_config.get("llm_service3") or _current_config["llm_service"]
     if not supports_vision(service):
@@ -3452,6 +3481,6 @@ async def callLLMVision3Stream(messages: list, image_b64: str, image_mime: str =
         yield {"type": "error", "error": str(e)}
         return
 
-    _llm_log(f"callLLMVision3Stream: service={service} model={use_model} mime={image_mime} img_b64_len={len(image_b64)}")
-    async for ev in callLLM3Stream(new_messages, model=use_model, log_history=log_history):
+    _llm_log(f"callLLMVision3Stream: service={service} model={use_model} mime={image_mime} img_b64_len={len(image_b64)} json_mode={json_mode}")
+    async for ev in callLLM3Stream(new_messages, model=use_model, log_history=log_history, json_mode=json_mode):
         yield ev

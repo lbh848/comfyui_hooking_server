@@ -1781,6 +1781,48 @@
             gap: 10px;
             min-width: 0;
         }
+        /* 이름 치환 모달 내 ? 도움말 버블 (모달 overlay z-index:10000 위에 떠야 함) */
+        .nm-help-tip {
+            position: relative;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 15px;
+            height: 15px;
+            margin-left: 3px;
+            border: 1px solid rgba(255, 255, 255, 0.8);
+            border-radius: 50%;
+            font-size: 0.68rem;
+            cursor: help;
+            line-height: 1;
+        }
+        .nm-help-tip-bubble {
+            position: absolute;
+            z-index: 10005;
+            bottom: calc(100% + 8px);
+            left: 50%;
+            transform: translateX(-50%);
+            display: none;
+            width: min(300px, 80vw);
+            padding: 9px 11px;
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            background: var(--surface2);
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+            color: var(--text);
+            font-size: 0.72rem;
+            font-weight: 400;
+            line-height: 1.5;
+            white-space: normal;
+            word-break: keep-all;
+            overflow-wrap: break-word;
+            pointer-events: none;
+        }
+        .nm-help-tip:hover .nm-help-tip-bubble,
+        .nm-help-tip:focus .nm-help-tip-bubble,
+        .nm-help-tip:focus-within .nm-help-tip-bubble {
+            display: block;
+        }
         .illust-settings .illust-setting-row.is-stacked .illust-setting-control,
         .illust-settings .illust-setting-row.is-compact .illust-setting-control {
             justify-content: stretch;
@@ -10356,6 +10398,10 @@
                             <label style="display: flex; align-items: center; gap: 4px; font-size: .85rem; color: var(--text); cursor: pointer;">
                                 <input type="checkbox" id="llm-test-vision" onchange="_onLlmTestVisionToggle()"> 비전(이미지)
                             </label>
+                            <label style="display: flex; align-items: center; gap: 4px; font-size: .85rem; color: var(--text); cursor: pointer;"
+                                   title="OpenAI 호환/Gemini는 response_format으로 JSON 출력을 강제하고, Claude native/Vertex 등 비지원 프로바이더는 조용히 무시됩니다. 프로바이더별 JSON 지원 여부 확인용.">
+                                <input type="checkbox" id="llm-test-json"> JSON
+                            </label>
                             <label id="llm-test-image-label" style="display: none; align-items: center; gap: 4px; font-size: .8rem; color: var(--text2); cursor: pointer; padding: 4px 10px; border: 1px dashed var(--border); border-radius: 6px;">
                                 📷 <span id="llm-test-image-name">이미지 선택</span>
                                 <input type="file" id="llm-test-image" accept="image/*" style="display: none;" onchange="_onLlmTestImagePick(this)">
@@ -10370,6 +10416,7 @@
                                 경과: <span id="llm-test-elapsed">0.00</span>s |
                                 <span id="llm-test-tps">0.0</span> t/s |
                                 TTFT: <span id="llm-test-ttft">-</span>
+                                <span id="llm-test-json-badge" style="display: none; margin-left: 8px;"></span>
                             </div>
                         </div>
                         <pre id="llm-test-output"
@@ -15754,6 +15801,7 @@
             document.getElementById('llm-test-elapsed').textContent = '0.00';
             document.getElementById('llm-test-tps').textContent = '0.0';
             document.getElementById('llm-test-ttft').textContent = '-';
+            _setLlmTestJsonBadge('off');
             const btn = document.getElementById('llm-test-send-btn');
             if (btn) btn.disabled = false;
         }
@@ -15767,6 +15815,39 @@
                 document.getElementById('llm-test-tps').textContent = (Math.round(tps * 10) / 10).toFixed(1);
             if (ttft !== undefined && ttft !== null)
                 document.getElementById('llm-test-ttft').textContent = (Math.round(ttft * 1000)) + 'ms';
+        }
+
+        function _setLlmTestJsonBadge(state, detail) {
+            const badge = document.getElementById('llm-test-json-badge');
+            if (!badge) return;
+            badge.style.display = 'inline';
+            if (state === 'ok') {
+                badge.textContent = 'JSON: ✓ 유효';
+                badge.style.color = 'var(--success)';
+            } else if (state === 'fail') {
+                badge.textContent = 'JSON: ✗ ' + (detail || '파싱 실패');
+                badge.style.color = 'var(--danger)';
+            } else if (state === 'error') {
+                badge.textContent = 'JSON: ✗ 오류';
+                badge.style.color = 'var(--danger)';
+            } else {
+                badge.style.display = 'none';
+                badge.textContent = '';
+            }
+        }
+
+        function _validateLlmTestJson(text) {
+            let t = (text || '').trim();
+            if (!t) { _setLlmTestJsonBadge('fail', '빈 응답'); return; }
+            // 일부 프로바이더는 JSON 모드에서도 ```json ... ``` 펜스를 씌우므로 내부만 추출해 검증.
+            const fence = t.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/);
+            if (fence) t = fence[1].trim();
+            try {
+                JSON.parse(t);
+                _setLlmTestJsonBadge('ok');
+            } catch (e) {
+                _setLlmTestJsonBadge('fail', String(e && e.message ? e.message : e).slice(0, 60));
+            }
         }
 
         async function sendLlmTest() {
@@ -15786,12 +15867,19 @@
             outEl.textContent = '';
             _setLlmTestStats(0, 0.0, 0.0, null);
             document.getElementById('llm-test-ttft').textContent = '-';
+            _setLlmTestJsonBadge('off');
             btn.disabled = true;
             btn.textContent = '전송 중…';
 
             const useStream = document.getElementById('llm-test-stream').checked;
             const useVision = document.getElementById('llm-test-vision').checked;
-            const messages = [{"role": "user", "content": text}];
+            const useJson = document.getElementById('llm-test-json')?.checked || false;
+            // JSON 토글 ON: response_format 강제만으로는 모델이 무슨 JSON을 만들지 몰라 {} 가 되므로,
+            // 입력에 JSON 출력 지시문(고정 스키마)을 덧붙여 의미 있는 JSON을 생성하고 응답을 검증한다.
+            const userContent = useJson
+                ? `다음을 JSON 객체로 출력하시오. JSON 외의 텍스트/마크다운 금지.\n스키마: {"echo": <입력 문장을 그대로>, "length": <입력 글자 수>}\n입력: ${text}`
+                : text;
+            const messages = [{"role": "user", "content": userContent}];
 
             // 비전 모드: 이미지 필수
             if (useVision && !_llmTestImage.b64) {
@@ -15804,6 +15892,7 @@
             const targetVal = (targetSel && ['llm1', 'llm2', 'llm3'].includes(targetSel.value)) ? targetSel.value : 'llm1';
             payload.target = targetVal;
             try { localStorage.setItem('llm-test-target', targetVal); } catch (_) {}
+            if (useJson) payload.json_mode = true;
             if (useVision) {
                 payload.image_b64 = _llmTestImage.b64;
                 payload.image_mime = _llmTestImage.mime;
@@ -15882,9 +15971,11 @@
                                 tps = tokens / data.elapsed;
                             }
                             _setLlmTestStats(tokens, data.elapsed, tps, data.ttft);
+                            if (useJson) _validateLlmTestJson(data.text || outEl.textContent);
                         } else if (eventType === 'error') {
                             const errMsg = data.error || '알 수 없는 오류';
                             outEl.textContent += (outEl.textContent ? '\n' : '') + '[ERROR] ' + errMsg;
+                            if (useJson) _setLlmTestJsonBadge('error');
                             showToast('LLM 오류: ' + errMsg, 'error');
                         }
                     }
@@ -46331,6 +46422,16 @@
             window._nmInfo = info;
             window._nmNamingOrder = info.naming_order || ['character', 'outfit', 'expression'];
             window._nmNamingEnabled = info.naming_enabled || {character: true, outfit: true, expression: true};
+            // 저장 상태 추적용 스냅샷(마지막으로 저장된 상태). 모달 오픈 시 = 서버에서 불러온 info 기준.
+            window._nmSavedSnapshot = {
+                export_name: info.export_name || '',
+                outfit_mapping: { ...(info.outfit_mapping || {}) },
+                expression_mapping: { ...(info.expression_mapping || {}) },
+                export_format: info.export_format || 'webp',
+                export_quality: info.export_quality || 90,
+                naming_order: [...window._nmNamingOrder],
+                naming_enabled: { ...window._nmNamingEnabled },
+            };
             window._nmSelectedOutfits = {};
             window._nmSelectedExpressions = {};
             (info.outfits || []).forEach(o => { window._nmSelectedOutfits[o] = true; });
@@ -46370,7 +46471,7 @@
                                 <div style="display:flex; align-items:center; gap:12px;">
                                     <div style="display:flex; align-items:center; gap:6px; flex:1;">
                                         <label style="font-size:0.8rem; white-space:nowrap;">형식</label>
-                                        <select id="nm-export-format" onchange="updateNamePreview()" style="flex:1; font-size:0.8rem; padding:4px 6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text);">
+                                        <select id="nm-export-format" onchange="updateNamePreview(); updateNmSaveStatus()" style="flex:1; font-size:0.8rem; padding:4px 6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text);">
                                             <option value="webp" ${info.export_format === 'webp' ? 'selected' : ''}>WebP</option>
                                             <option value="png" ${info.export_format === 'png' ? 'selected' : ''}>PNG</option>
                                             <option value="jpeg" ${info.export_format === 'jpeg' ? 'selected' : ''}>JPEG</option>
@@ -46380,7 +46481,7 @@
                                     <div style="display:flex; align-items:center; gap:6px; flex:2;">
                                         <label style="font-size:0.8rem; white-space:nowrap;">품질</label>
                                         <input type="range" id="nm-export-quality" min="1" max="90" value="${info.export_quality || 90}"
-                                            style="flex:1;" oninput="document.getElementById('nm-quality-value').textContent=this.value" />
+                                            style="flex:1;" oninput="document.getElementById('nm-quality-value').textContent=this.value; updateNmSaveStatus()" />
                                         <span id="nm-quality-value" style="font-size:0.8rem; min-width:28px; text-align:right;">${info.export_quality || 90}</span>
                                     </div>
                                 </div>
@@ -46397,14 +46498,15 @@
                         <button id="nm-next-btn" onclick="nmGoToPage(window._nmCurrentPage + 1)" style="flex:1; background:var(--accent); color:#fff; border:none; padding:8px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">다음</button>
                         <div id="nm-final-btns" style="display:none; flex:1; gap:8px; flex-wrap:wrap;">
                             <button id="nm-save-btn" onclick="saveNameMapping('${escapeHtml(charName)}')" style="flex:1; min-width:90px; background:var(--accent); color:#fff; border:none; padding:8px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">저장</button>
-                            <button id="nm-llm-auto-fix-btn" title="기존 정상 매핑은 그대로 유지하고, 빈 태그와 실제 파일명 충돌에 관련된 태그만 LLM으로 수정합니다." onclick="runNameMappingLlm('auto_fix')" style="flex:1; min-width:105px; background:#7E57C2; color:#fff; border:none; padding:8px; border-radius:6px; cursor:pointer; font-size:0.82rem; font-weight:600; line-height:1.2;">LLM 자동 수정 <span title="기존 정상 매핑은 보존합니다. 빈 태그와 충돌 태그만 LLM에 전달합니다." onclick="event.stopPropagation()" style="display:inline-flex; align-items:center; justify-content:center; width:15px; height:15px; margin-left:3px; border:1px solid rgba(255,255,255,0.8); border-radius:50%; font-size:0.68rem; cursor:help;">?</span></button>
-                            <button id="nm-llm-full-btn" title="선택한 범위의 기존 매핑을 모두 무시하고, 캐릭터·복장·표정 이름을 LLM이 처음부터 새로 추천합니다." onclick="runNameMappingLlm('full')" style="flex:1; min-width:105px; background:#5C6BC0; color:#fff; border:none; padding:8px; border-radius:6px; cursor:pointer; font-size:0.82rem; font-weight:600; line-height:1.2;">LLM 전체 매핑 <span title="기존 선택 범위의 매핑을 사용하지 않고 전부 새 추천으로 교체합니다." onclick="event.stopPropagation()" style="display:inline-flex; align-items:center; justify-content:center; width:15px; height:15px; margin-left:3px; border:1px solid rgba(255,255,255,0.8); border-radius:50%; font-size:0.68rem; cursor:help;">?</span></button>
+                            <button id="nm-llm-auto-fix-btn" onclick="runNameMappingLlm('auto_fix')" style="flex:1; min-width:105px; background:#7E57C2; color:#fff; border:none; padding:8px; border-radius:6px; cursor:pointer; font-size:0.82rem; font-weight:600; line-height:1.2;">LLM 자동 수정 <span class="nm-help-tip" onclick="event.stopPropagation()" tabindex="0">?<span class="nm-help-tip-bubble">기존 정상 매핑은 보존합니다. 빈 태그와 충돌 태그만 LLM에 전달합니다.</span></span></button>
+                            <button id="nm-llm-full-btn" onclick="runNameMappingLlm('full')" style="flex:1; min-width:105px; background:#5C6BC0; color:#fff; border:none; padding:8px; border-radius:6px; cursor:pointer; font-size:0.82rem; font-weight:600; line-height:1.2;">LLM 전체 매핑 <span class="nm-help-tip" onclick="event.stopPropagation()" tabindex="0">?<span class="nm-help-tip-bubble">기존 선택 범위의 매핑을 사용하지 않고 전부 새 추천으로 교체합니다.</span></span></button>
                             <button onclick="exportNameMappingRule()" style="flex:1; min-width:90px; background:#2196F3; color:#fff; border:none; padding:8px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600; line-height:1.2;">규칙<br>내보내기</button>
                             <button onclick="importNameMappingRule()" style="flex:1; min-width:90px; background:#FF9800; color:#fff; border:none; padding:8px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600; line-height:1.2;">규칙<br>불러오기</button>
                             <button id="nm-export-btn" onclick="exportCharacterAsset('${escapeHtml(charName)}')" style="flex:1; min-width:90px; background:#4CAF50; color:#fff; border:none; padding:8px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">내보내기 (ZIP)</button>
                             <button onclick="document.getElementById('name-mapping-overlay').remove()" style="flex:1; min-width:90px; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:8px; border-radius:6px; cursor:pointer; font-size:0.85rem;">닫기</button>
                         </div>
                     </div>
+                    <div id="nm-save-status" style="text-align:center; font-size:0.72rem; margin-top:6px; color:var(--text-secondary); font-weight:600;">변경 사항 저장됨</div>
                 </div>`;
             document.body.appendChild(overlay);
 
@@ -46431,6 +46533,8 @@
             if (prevBtn) prevBtn.style.visibility = (n === 1) ? 'hidden' : 'visible';
             if (nextBtn) nextBtn.style.display = (n === 3) ? 'none' : '';
             if (finalBtns) finalBtns.style.display = (n === 3) ? 'flex' : 'none';
+            const saveStatus = document.getElementById('nm-save-status');
+            if (saveStatus) saveStatus.style.display = (n === 3) ? '' : 'none';
             if (n === 3) {
                 renderNmBlocks();
             }
@@ -46503,7 +46607,7 @@
                     outfitsHtml += `
                         <div style="display:flex; align-items:center; gap:8px; padding:4px 0;">
                             <span style="flex:1; font-size:0.8rem; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeHtml(o)}">${escapeHtml(o)}</span>
-                            <input type="text" class="nm-outfit-input" data-original="${escapeHtml(o)}" value="${escapeHtml(mapped)}"
+                            <input type="text" class="nm-outfit-input" data-original="${escapeHtml(o)}" value="${escapeHtml(mapped)}" oninput="updateNmSaveStatus()"
                                 style="flex:1; font-size:0.8rem; padding:4px 6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); min-width:0;" />
                         </div>`;
                 }
@@ -46520,7 +46624,7 @@
                     expressionsHtml += `
                         <div style="display:flex; align-items:center; gap:8px; padding:4px 0;">
                             <span style="flex:1; font-size:0.8rem; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeHtml(e)}">${escapeHtml(e)}</span>
-                            <input type="text" class="nm-expr-input" data-original="${escapeHtml(e)}" value="${escapeHtml(mapped)}"
+                            <input type="text" class="nm-expr-input" data-original="${escapeHtml(e)}" value="${escapeHtml(mapped)}" oninput="updateNmSaveStatus()"
                                 style="flex:1; font-size:0.8rem; padding:4px 6px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); min-width:0;" />
                         </div>`;
                 }
@@ -46533,7 +46637,7 @@
                     bg: 'rgba(66,133,244,0.08)',
                     content: `<div style="display:flex; align-items:center; gap:8px;">
                             <span style="flex:1; font-size:0.85rem; font-weight:600;">${escapeHtml(window._nmCharName)}</span>
-                            <input type="text" id="nm-export-name" value="${escapeHtml(info.export_name || '')}" placeholder="내보낼 이름"
+                            <input type="text" id="nm-export-name" value="${escapeHtml(info.export_name || '')}" placeholder="내보낼 이름" oninput="updateNmSaveStatus()"
                                 style="flex:1; font-size:0.85rem; padding:6px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text);" />
                         </div>`
                 },
@@ -46578,6 +46682,7 @@
             const container = document.getElementById('nm-naming-blocks');
             if (container) container.innerHTML = namingBlocksHtml;
             updateNamePreview();
+            updateNmSaveStatus();
         }
 
         // ─── 네이밍 블록 헬퍼 ──────────────────────────────
@@ -46589,6 +46694,7 @@
             const block = document.getElementById(`nm-block-${blockId}`);
             block.style.opacity = checked ? '1' : '0.5';
             updateNamePreview();
+            updateNmSaveStatus();
         }
 
         function moveNmBlock(blockId, direction) {
@@ -46603,6 +46709,7 @@
                 container.insertBefore(blocks[newIdx], blocks[idx]);
             }
             updateNamePreview();
+            updateNmSaveStatus();
         }
 
         function updateNamePreview() {
@@ -46675,6 +46782,59 @@
                 naming_order: getNmOrderFromDOM(),
                 naming_enabled: { ...(window._nmNamingEnabled || {}) },
             };
+        }
+
+        // 현재 드래프트가 마지막 저장 상태와 다르면 true
+        // 비교 전 정규화: 빈 문자열 매핑값/좌우 공백/키 순서 차이를 무시
+        function _nmNormalizeState(obj) {
+            const out = {};
+            for (const k of Object.keys(obj).sort()) {
+                let v = obj[k];
+                if (v == null) continue;
+                if (typeof v === 'string') {
+                    v = v.trim();
+                    if (v === '') continue;
+                    out[k] = v;
+                } else if (Array.isArray(v)) {
+                    out[k] = v.map(x => String(x));
+                } else if (typeof v === 'object') {
+                    const sub = {};
+                    for (const sk of Object.keys(v).sort()) {
+                        let sv = v[sk];
+                        if (sv == null) continue;
+                        if (typeof sv === 'string') {
+                            sv = sv.trim();
+                            if (sv === '') continue;
+                            sub[sk] = sv;
+                        } else {
+                            sub[sk] = sv;
+                        }
+                    }
+                    out[k] = sub;
+                } else {
+                    out[k] = v;
+                }
+            }
+            return out;
+        }
+        function nmDraftIsDirty() {
+            const snap = window._nmSavedSnapshot;
+            if (!snap) return false;
+            const draft = collectNameMappingDraft();
+            return JSON.stringify(_nmNormalizeState(draft)) !== JSON.stringify(_nmNormalizeState(snap));
+        }
+
+        // 저장 버튼 아래 상태 표시 갱신
+        function updateNmSaveStatus() {
+            const el = document.getElementById('nm-save-status');
+            if (!el) return;
+            if (nmDraftIsDirty()) {
+                el.textContent = '변경 사항 저장 안됨';
+                el.style.color = '#e53935';
+            } else {
+                el.textContent = '변경 사항 저장됨';
+                el.style.color = 'var(--text-secondary)';
+            }
         }
 
         function formatNameMappingIssues(data, fallback = '이름 치환 규칙을 확인하세요.') {
@@ -46855,6 +47015,17 @@
                     window._nmInfo.export_name = draft.export_name;
                     window._nmInfo.outfit_mapping = { ...draft.outfit_mapping };
                     window._nmInfo.expression_mapping = { ...draft.expression_mapping };
+                    // 저장된 상태로 스냅샷 갱신 → 상태 표시 "변경 사항 저장됨"으로 전환
+                    window._nmSavedSnapshot = {
+                        export_name: draft.export_name,
+                        outfit_mapping: { ...draft.outfit_mapping },
+                        expression_mapping: { ...draft.expression_mapping },
+                        export_format: draft.export_format,
+                        export_quality: draft.export_quality,
+                        naming_order: [...draft.naming_order],
+                        naming_enabled: { ...draft.naming_enabled },
+                    };
+                    updateNmSaveStatus();
                     btn.textContent = '저장됨!';
                     setTimeout(() => {
                         btn.disabled = false;

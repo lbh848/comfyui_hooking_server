@@ -4795,6 +4795,7 @@ async def handle_api_llm_test_stream(request: web.Request) -> web.StreamResponse
     use_stream = bool(body.get("stream", True))
     image_b64 = (body.get("image_b64") or "").strip()
     image_mime = body.get("image_mime") or "image/webp"
+    use_json = bool(body.get("json_mode", False))
     target = (body.get("target") or "llm1").strip().lower()
     if target not in ("llm1", "llm2", "llm3"):
         target = "llm1"
@@ -4849,11 +4850,11 @@ async def handle_api_llm_test_stream(request: web.Request) -> web.StreamResponse
             try:
                 if use_stream:
                     # 스트리밍 비전
-                    async for ev in fn_vision_stream(messages, image_b64=image_b64, image_mime=image_mime, model=use_model, log_history=False):
+                    async for ev in fn_vision_stream(messages, image_b64=image_b64, image_mime=image_mime, model=use_model, log_history=False, json_mode=use_json):
                         await write_event(ev.get("type", "message"), ev)
                 else:
                     # 단발 비전
-                    text = await fn_vision_single(messages, image_b64=image_b64, image_mime=image_mime, model=use_model)
+                    text = await fn_vision_single(messages, image_b64=image_b64, image_mime=image_mime, model=use_model, json_mode=use_json)
                     elapsed = time.time() - t0
                     if isinstance(text, str) and text.startswith("[LLM 실패]"):
                         await write_event("error", {"error": text})
@@ -4873,7 +4874,7 @@ async def handle_api_llm_test_stream(request: web.Request) -> web.StreamResponse
             await resp.write_eof()
             return resp
         elif use_stream:
-            async for ev in fn_stream(messages, model=use_model, log_history=False):
+            async for ev in fn_stream(messages, model=use_model, log_history=False, json_mode=use_json):
                 et = ev.get("type", "message")
                 await write_event(et, ev)
                 if et == "done":
@@ -4885,7 +4886,7 @@ async def handle_api_llm_test_stream(request: web.Request) -> web.StreamResponse
             service = cur_service
             use_model_resolved = use_model or cfg.get(cur_model_key, "")
             await write_event("start", {"service": service, "model": use_model_resolved})
-            text = await fn_single(messages, model=use_model)
+            text = await fn_single(messages, model=use_model, json_mode=use_json)
             elapsed = time.time() - t0
             if isinstance(text, str) and text.startswith("[LLM 실패]"):
                 await write_event("error", {"error": text})
