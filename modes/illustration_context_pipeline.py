@@ -33,7 +33,9 @@ CONTEXT_PREFIX = "__LB_ILLUST_CONTEXT_V1__"
 RESULT_PREFIX = "__LB_ILLUST_RESULT_V1__"
 REGENERATE_PREFIX = "__LB_ILLUST_REGENERATE_V1__"
 PROMPT_BATCH_PREFIX = "__LB_ILLUST_PROMPT_BATCH_V1__"
+EASY_EDIT_PREFIX = "__LB_ILLUST_EASY_EDIT_V1__"
 MAX_ILLUSTRATION_SLOT_COUNT = 65
+MAX_EASY_EDIT_DIRECTION_LENGTH = 4000
 
 PROMPT_FILES = {
     "call1_backtranslate": "backtranslate.txt",
@@ -634,6 +636,33 @@ def parse_regenerate_request(positive: str) -> dict | None:
     return {"session_id": session_id, "slot": slot}
 
 
+def parse_easy_edit_request(positive: str) -> dict | None:
+    payload = _json_after_prefix(positive, EASY_EDIT_PREFIX)
+    if payload is None:
+        return None
+    session_id = str(payload.get("session_id") or "")
+    try:
+        slot = int(payload.get("slot"))
+    except Exception as e:
+        print(f"[ILLUST_CONTEXT:EDIT] slot 파싱 실패: {e}; payload={payload}")
+        traceback.print_exc()
+        return None
+    direction = str(payload.get("direction") or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9_-]{8,96}", session_id):
+        print(f"[ILLUST_CONTEXT:EDIT] 잘못된 session_id: {session_id!r}")
+        return None
+    if slot < -1:
+        print(f"[ILLUST_CONTEXT:EDIT] 잘못된 slot: {slot}")
+        return None
+    if not direction or len(direction) > MAX_EASY_EDIT_DIRECTION_LENGTH:
+        print(
+            f"[ILLUST_CONTEXT:EDIT] direction 길이 오류: "
+            f"session={session_id}, slot={slot}, length={len(direction)}"
+        )
+        return None
+    return {"session_id": session_id, "slot": slot, "direction": direction}
+
+
 def create_session(session_id: str, context: str) -> dict:
     lookup_key = _register_lookup_key(session_id)
     session = {
@@ -960,7 +989,13 @@ def session_item_by_slot(session_id: str, slot: int) -> dict | None:
     return None
 
 
-def update_session_image_by_slot(session_id: str, slot: int, image: bytes) -> bool:
+def update_session_image_by_slot(
+    session_id: str,
+    slot: int,
+    image: bytes,
+    *,
+    item_updates: dict | None = None,
+) -> bool:
     session = get_session(session_id)
     if not session or session.get("status") != "ready" or not image:
         print(f"[ILLUST_CONTEXT] 재생성 캐시 갱신 실패: session={session_id}, slot={slot}")
@@ -971,6 +1006,12 @@ def update_session_image_by_slot(session_id: str, slot: int, image: bytes) -> bo
         try:
             if int(item.get("slot")) == int(slot) and index < len(images):
                 images[index] = image
+                if isinstance(item_updates, dict):
+                    for key, value in item_updates.items():
+                        if value is None:
+                            item.pop(str(key), None)
+                        else:
+                            item[str(key)] = deepcopy(value)
                 session["status"] = "ready"
                 session["error"] = ""
                 active_progress = session.pop("_active_slot_progress", None)

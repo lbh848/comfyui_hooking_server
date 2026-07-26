@@ -21,6 +21,7 @@ from typing import Optional
 # 별도 워커풀(llm_max_concurrency)에서 동시 처리한다. GPU계열은 메인 루프에서 순차 처리.
 LLM_TYPES = frozenset({
     "illustration_llm_build",       # CHAT -> CALL1/2/3 -> 다중 삽화 큐 생성
+    "illustration_easy_edit",       # 저장 슬롯 -> 기존 편하게 수정 LLM -> 수정 재생성
     "instance_lora_prompt_refine",  # 태그 정제 / test_setup (instance·style·bot·asset 전부 LLM 호출)
     "bot_llm_face_tag_analysis",    # 비전 LLM 기반 얼굴/눈 태그 자동 분류
 })
@@ -105,6 +106,7 @@ class QueueManager:
         self.generate_image_with_prompt = None  # async def(positive, negative) -> (bytes, errors)
         self.process_prompt_full = None         # async def(prompt_id, prompt_data, positive, negative) -> None
         self.process_illustration_context = None # async def(queue_item) -> dict
+        self.process_illustration_easy_edit = None # async def(queue_item) -> dict
         self.save_backup = None                 # async def(img_bytes, mode, positive, negative) -> None
 
     def _settle_future(self, item: QueueItem) -> None:
@@ -902,6 +904,7 @@ class QueueManager:
         dispatch = {
             "illustration": self._handle_illustration,
             "illustration_llm_build": self._handle_illustration_llm_build,
+            "illustration_easy_edit": self._handle_illustration_easy_edit,
             "asset_generation": self._handle_asset_generation,
             "asset_lora_training": self._handle_asset_lora_training,
             "bot_lora_training": self._handle_bot_lora_training,
@@ -981,6 +984,17 @@ class QueueManager:
             return await self.process_illustration_context(item)
         except Exception as e:
             print(f"[QUEUE:ILLUST_CONTEXT] 처리 실패: {e}")
+            traceback.print_exc()
+            raise
+
+    async def _handle_illustration_easy_edit(self, item: QueueItem) -> dict:
+        """저장 슬롯의 기존 편하게 수정 LLM과 수정 재생성을 연결한다."""
+        if not self.process_illustration_easy_edit:
+            raise RuntimeError("process_illustration_easy_edit 콜백이 설정되지 않았습니다")
+        try:
+            return await self.process_illustration_easy_edit(item)
+        except Exception as e:
+            print(f"[QUEUE:ILLUST_EDIT] 처리 실패: {e}")
             traceback.print_exc()
             raise
 
@@ -1104,8 +1118,9 @@ class QueueManager:
         # 재생성 이미지 백업 저장 — 원본 백업의 bot_name 상속 (같은 봇 딱지)
         # 후처리 설정 스냅샷 + SPEAK 원문도 상속 → 재생성 결과에 동일 후처리 적용
         regen_id = uuid.uuid4().hex
+        saved_backup_name = ""
         if self.save_backup:
-            await self.save_backup(
+            saved_backup_name, img_bytes = await self.save_backup(
                 img_bytes, regen_id, positive, negative,
                 generation_time=elapsed_time, bot_name=bot_name,
                 postprocess_settings=postprocess_settings,
@@ -1119,11 +1134,15 @@ class QueueManager:
             + (f" (bot={bot_name})" if bot_name else "")
             + f" (provider={provider})"
         )
+        # QueueItem.to_dict()에 bytes가 들어가면 큐 상태 JSON 직렬화가 깨진다.
+        # 내부 브리지 소비자만 비 dataclass 속성으로 최종 이미지를 가져간다.
+        item.generated_image_bytes = img_bytes
         return {
             "success": True,
             "image_size": len(img_bytes),
             "generation_time": elapsed_time,
-            "backup_name": backup_name,
+            "backup_name": saved_backup_name or backup_name,
+            "source_backup_name": backup_name,
         }
 
     async def _handle_asset_generation(self, item: QueueItem) -> dict:

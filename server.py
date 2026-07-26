@@ -2200,6 +2200,7 @@ def init_queue_manager():
     queue_manager.fetch_real_image = fetch_real_image
     queue_manager.process_prompt_full = process_prompt
     queue_manager.process_illustration_context = process_illustration_context_queue_item
+    queue_manager.process_illustration_easy_edit = process_illustration_easy_edit_queue_item
     queue_manager.save_backup = save_backup
     queue_manager.generate_image_with_prompt = generate_image_with_prompt
     queue_manager.run_data_patch_utility = _run_data_patch_utility
@@ -2575,6 +2576,7 @@ async def _finalize_deferred_illustration_prompt(prompt_id: str, speak_text: str
         }
         entry["filename"] = filename
         entry["image_bytes"] = final_image
+        entry["backup_name"] = _backup_name
         entry.pop("_deferred_image_bytes", None)
         entry.pop("_deferred_finalize", None)
 
@@ -3167,10 +3169,14 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
         }
         prompts[prompt_id]["filename"] = our_filename
         prompts[prompt_id]["image_bytes"] = img_bytes
+        prompts[prompt_id]["backup_name"] = _backup_name
 
         if regen_session_id and regen_slot is not None:
             if not illustration_context_pipeline.update_session_image_by_slot(
-                regen_session_id, regen_slot, img_bytes
+                regen_session_id,
+                regen_slot,
+                img_bytes,
+                item_updates={"backup_name": _backup_name},
             ):
                 print(
                     f"[ILLUST_CONTEXT] 재생성 이미지는 반환하지만 캐시 갱신 실패: "
@@ -3590,12 +3596,17 @@ async def process_illustration_context_queue_item(item) -> dict:
             return image_bytes, fail_reason, cancelled
         child_prompt = prompts.get(child_id, {})
         if "_deferred_finalize" not in child_prompt:
+            if child_prompt.get("backup_name"):
+                descriptor["backup_name"] = str(child_prompt["backup_name"])
             return image_bytes, "", False
         try:
             final_image = await _finalize_deferred_illustration_prompt(
                 child_id,
                 _resolve_deferred_speak_text(child_id, descriptor),
             )
+            finalized_prompt = prompts.get(child_id, {})
+            if finalized_prompt.get("backup_name"):
+                descriptor["backup_name"] = str(finalized_prompt["backup_name"])
             return final_image, "", False
         except Exception as e:
             print(
@@ -4101,13 +4112,55 @@ async def handle_api_illustration_context_bridge_health(request: web.Request) ->
     return web.json_response({
         "ok": True,
         "service": "illustration_context_bridge",
-        "version": 6,
+        "version": 7,
         "prompt_batch": True,
+        "bot_selection": True,
+        "easy_edit": True,
         "short_slot_manifest": True,
         "lookup_key_length": 24,
         "max_slot_manifest_count": illustration_context_pipeline.MAX_ILLUSTRATION_SLOT_COUNT,
         "progress_phases": ["call1", "call2", "call2_plan", "call2_detail", "call2_fallback", "call3", "enqueue", "generating", "retrying", "regenerating", "ready", "error"],
     })
+
+
+async def handle_api_illustration_context_bridge_bots(
+    request: web.Request,
+) -> web.Response:
+    """플러그인 대시보드에 봇 이름과 현재 선택만 최소 범위로 노출한다."""
+    global app_config
+    try:
+        bot_data = _load_bot_data_readonly()
+        bot_names = []
+        seen = set()
+        for bot in bot_data.get("bots") or []:
+            name = str(bot.get("name") or "").strip() if isinstance(bot, dict) else ""
+            if name and name not in seen:
+                seen.add(name)
+                bot_names.append(name)
+
+        app_config = load_config()
+        if request.method == "POST":
+            body = await request.json()
+            selected = str(body.get("bot_selected") or "").strip()
+            if selected and selected not in seen:
+                return web.json_response(
+                    {"error": "선택한 봇이 현재 백엔드 목록에 없습니다."},
+                    status=400,
+                )
+            app_config["bot_selected"] = selected
+            save_config(app_config)
+            print(f"[ILLUST_CONTEXT:BRIDGE] 활성 봇 변경: {selected or '(없음)'}")
+
+        selected = str(app_config.get("bot_selected") or "").strip()
+        return web.json_response({
+            "ok": True,
+            "bots": bot_names,
+            "bot_selected": selected,
+        })
+    except Exception as exc:
+        print(f"[ILLUST_CONTEXT:BRIDGE] 봇 선택 처리 실패: {exc}")
+        traceback.print_exc()
+        return web.json_response({"error": str(exc)}, status=500)
 
 
 async def handle_api_illustration_context_bridge_sessions(request: web.Request) -> web.Response:
@@ -5223,6 +5276,7 @@ async def _serve_priority_reservation_for_illustration_slot(
         session_id,
         slot,
         image_bytes,
+        item_updates={"backup_name": scheduled_name},
     ):
         print(
             f"[ILLUST_CONTEXT] 예약 이미지는 반환하지만 세션 캐시 갱신 실패: "
@@ -5321,6 +5375,54 @@ async def handle_prompt(request: web.Request) -> web.Response:
         # 삽화 v14 전단계: 긍정 프롬프트 필드를 CHAT/결과 회수 transport로 사용한다.
         # 배치/재예약보다 먼저 처리해야 같은 generateImage 호출이 다른 이미지로 치환되지 않는다.
         incoming_positive = extract_prompts_by_title(prompt_data, "긍정프롬프트") or ""
+        easy_edit_request = illustration_context_pipeline.parse_easy_edit_request(
+            incoming_positive
+        )
+        if easy_edit_request is not None:
+            session_id = easy_edit_request["session_id"]
+            slot = easy_edit_request["slot"]
+            descriptor = illustration_context_pipeline.session_item_by_slot(
+                session_id,
+                slot,
+            )
+            if descriptor is None:
+                return web.json_response({"error": "illustration slot not found"}, status=404)
+            save_node = find_save_image_node(prompt_data)
+            prompts[prompt_id] = {
+                "status": "running",
+                "prompt": prompt_data,
+                "client_id": body.get("client_id", ""),
+                "extra_data": body.get("extra_data", {}),
+                "outputs": {},
+                "filename": None,
+                "save_node_id": save_node,
+                "image_bytes": None,
+                "timestamp": time.time(),
+            }
+            illustration_context_pipeline.set_session_regenerate_started(
+                session_id,
+                slot,
+                "편하게 수정",
+            )
+            asyncio.create_task(queue_manager.add_item(
+                "illustration_easy_edit",
+                f"삽화 편하게 수정 · slot {slot}",
+                {
+                    "prompt_id": prompt_id,
+                    "prompt_data": prompt_data,
+                    "raw_body": body,
+                    "payload": easy_edit_request,
+                },
+                priority=0,
+            ))
+            print(
+                f"[ILLUST_CONTEXT:EDIT] 접수: "
+                f"prompt={prompt_id[:8]}, session={session_id}, slot={slot}"
+            )
+            return web.json_response(
+                {"prompt_id": prompt_id, "number": len(prompts), "node_errors": {}}
+            )
+
         regenerate_request = illustration_context_pipeline.parse_regenerate_request(incoming_positive)
         if regenerate_request is not None:
             session_id = regenerate_request["session_id"]
@@ -5500,6 +5602,7 @@ async def handle_prompt(request: web.Request) -> web.Response:
             illustration_context_pipeline.RESULT_PREFIX,
             illustration_context_pipeline.REGENERATE_PREFIX,
             illustration_context_pipeline.PROMPT_BATCH_PREFIX,
+            illustration_context_pipeline.EASY_EDIT_PREFIX,
         )):
             print(f"[ILLUST_CONTEXT] transport marker는 있으나 payload가 유효하지 않음: {incoming_positive!r}")
             return web.json_response({"error": "invalid illustration context payload"}, status=400)
@@ -7444,14 +7547,19 @@ async def handle_api_reschedule(request: web.Request) -> web.Response:
     return web.json_response({"error": "Invalid method"}, status=405)
 
 
-async def handle_api_reschedule_with_modified_prompt(request: web.Request) -> web.Response:
+async def handle_api_reschedule_with_modified_prompt(
+    request: web.Request | None,
+    *,
+    _body: dict | None = None,
+    _return_queue_result: bool = False,
+) -> web.Response | dict:
     """Reschedule with modified prompt - generates new image with modified prompts and schedules for retransmission.
 
     생성은 통합 큐(regenerate 타입, priority=0)를 경유해 일반 삽화 생성과 ComfyUI 자원을
     공유하며 직렬 처리된다. HTTP 응답은 큐 항목 완료를 await 한다.
     """
     try:
-        body = await request.json()
+        body = copy.deepcopy(_body) if _body is not None else await request.json()
         backup_name = body.get("name", "")
         modified_positive = body.get("positive", "")
         modified_negative = body.get("negative", "")
@@ -7569,6 +7677,10 @@ async def handle_api_reschedule_with_modified_prompt(request: web.Request) -> we
         result = await item.completion_future
         elapsed_time = result.get("generation_time") if isinstance(result, dict) else None
         print(f"[RESCHEDULE_MOD] 완료: backup={backup_name}" + (f" ({elapsed_time:.1f}s)" if elapsed_time else "") + (f" (bot={src_bot_name})" if src_bot_name else ""))
+        if _return_queue_result:
+            internal_result = dict(result) if isinstance(result, dict) else {}
+            internal_result["image_bytes"] = getattr(item, "generated_image_bytes", None)
+            return internal_result
         return web.json_response({
             "success": True,
             "message": "Modified image generated"
@@ -7580,7 +7692,11 @@ async def handle_api_reschedule_with_modified_prompt(request: web.Request) -> we
         return web.json_response({"error": str(e)}, status=500)
 
 
-async def handle_api_llm_edit_prompt(request: web.Request) -> web.Response:
+async def handle_api_llm_edit_prompt(
+    request: web.Request | None,
+    *,
+    _body: dict | None = None,
+) -> web.Response:
     """삽화백업 "편하게 수정" — 장면 편집과 V3 Comfy 캐릭터 교체를 처리한다.
 
     요청: {name, positive, negative, direction, characters?}
@@ -7590,7 +7706,7 @@ async def handle_api_llm_edit_prompt(request: web.Request) -> web.Response:
     NAME/FACE/LoRA 제어 데이터와 2인 고정 마스크 스냅샷을 함께 재구성한다.
     """
     try:
-        body = await request.json()
+        body = copy.deepcopy(_body) if _body is not None else await request.json()
         backup_name = body.get("name", "")
         positive = body.get("positive", "")
         negative = body.get("negative", "")
@@ -8115,6 +8231,122 @@ async def handle_api_llm_edit_prompt(request: web.Request) -> web.Response:
         tb = traceback.format_exc()
         print(f"[ERROR] llm_edit_prompt failed: {e}\n{tb}")
         return web.json_response({"error": str(e)}, status=500)
+
+
+def _internal_json_response_payload(response: web.Response, label: str) -> dict:
+    try:
+        payload = json.loads(response.text or "{}")
+    except Exception as exc:
+        raise RuntimeError(f"{label} 응답 JSON을 읽지 못했습니다: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"{label} 응답 형식이 올바르지 않습니다")
+    if response.status >= 400 or payload.get("error"):
+        raise RuntimeError(str(payload.get("error") or f"{label} HTTP {response.status}"))
+    return payload
+
+
+async def process_illustration_easy_edit_queue_item(item) -> dict:
+    """Risu 모듈의 슬롯 편집 요청을 기존 편하게 수정/수정재생성 기능에 연결한다."""
+    params = item.params or {}
+    original_prompt_id = str(params.get("prompt_id") or "")
+    payload = params.get("payload") or {}
+    session_id = str(payload.get("session_id") or "")
+    slot = int(payload.get("slot"))
+    direction = str(payload.get("direction") or "").strip()
+
+    try:
+        descriptor = illustration_context_pipeline.session_item_by_slot(session_id, slot)
+        if descriptor is None:
+            raise RuntimeError("편집할 삽화 슬롯을 찾지 못했습니다")
+        backup_name = str(descriptor.get("backup_name") or "").strip()
+        if not backup_name:
+            raise RuntimeError(
+                "이 이미지는 편집 백업 식별자가 없는 이전 모듈 결과입니다. "
+                "↻ 버튼으로 한 번 다시 생성한 뒤 편하게 수정을 사용해주세요."
+            )
+        if ".." in backup_name or "/" in backup_name or "\\" in backup_name:
+            raise RuntimeError("편집 백업 식별자가 올바르지 않습니다")
+
+        prompt_path_json = os.path.join(WORKFLOW_BACKUP_DIR, f"{backup_name}.json")
+        prompt_path_txt = os.path.join(WORKFLOW_BACKUP_DIR, f"{backup_name}.txt")
+        prompt_path = (
+            prompt_path_json if os.path.isfile(prompt_path_json) else prompt_path_txt
+        )
+        if not os.path.isfile(prompt_path):
+            raise RuntimeError("편집할 원본 프롬프트 백업을 찾지 못했습니다")
+        source_positive, source_negative = _extract_prompts_from_backup(prompt_path)
+
+        edit_response = await handle_api_llm_edit_prompt(
+            None,
+            _body={
+                "name": backup_name,
+                "positive": source_positive,
+                "negative": source_negative,
+                "direction": direction,
+            },
+        )
+        edited = _internal_json_response_payload(edit_response, "편하게 수정")
+        modified_positive = str(edited.get("positive") or "")
+        modified_negative = str(edited.get("negative") or "")
+        if not modified_positive:
+            raise RuntimeError("편하게 수정 결과의 긍정 프롬프트가 비어 있습니다")
+
+        regenerate_result = await handle_api_reschedule_with_modified_prompt(
+            None,
+            _body={
+                "name": backup_name,
+                "positive": modified_positive,
+                "negative": modified_negative,
+                "identity_edit": edited.get("identity_edit"),
+            },
+            _return_queue_result=True,
+        )
+        if isinstance(regenerate_result, web.Response):
+            _internal_json_response_payload(regenerate_result, "수정 재생성")
+            raise RuntimeError("수정 재생성 결과 이미지가 없습니다")
+        image_bytes = regenerate_result.get("image_bytes")
+        if not image_bytes:
+            raise RuntimeError("수정 재생성 결과 이미지가 비어 있습니다")
+        new_backup_name = str(regenerate_result.get("backup_name") or backup_name)
+
+        if not illustration_context_pipeline.update_session_image_by_slot(
+            session_id,
+            slot,
+            image_bytes,
+            item_updates={"backup_name": new_backup_name},
+        ):
+            raise RuntimeError("수정 이미지를 세션 슬롯에 반영하지 못했습니다")
+
+        prompt_entry = prompts.get(original_prompt_id)
+        if not isinstance(prompt_entry, dict):
+            raise RuntimeError("편집 요청의 원본 prompt를 찾지 못했습니다")
+        save_node = prompt_entry.get("save_node_id") or "9"
+        filename = f"ComfyUI_{original_prompt_id[:8]}.png"
+        prompt_entry["image_bytes"] = image_bytes
+        prompt_entry["backup_name"] = new_backup_name
+        await complete_prompt_from_reschedule(original_prompt_id, save_node, filename)
+        print(
+            f"[ILLUST_CONTEXT:EDIT] 완료: session={session_id}, slot={slot}, "
+            f"source={backup_name}, result={new_backup_name}"
+        )
+        return {
+            "success": True,
+            "prompt_id": original_prompt_id,
+            "session_id": session_id,
+            "slot": slot,
+            "backup_name": new_backup_name,
+        }
+    except Exception as exc:
+        illustration_context_pipeline.set_session_regenerate_error(
+            session_id,
+            slot,
+            str(exc),
+        )
+        prompt_entry = prompts.get(original_prompt_id)
+        if isinstance(prompt_entry, dict):
+            prompt_entry["status"] = "completed"
+            prompt_entry["outputs"] = {"images": []}
+        raise
 
 
 async def handle_api_llm_edit_capability(request: web.Request) -> web.Response:
@@ -9537,6 +9769,8 @@ app.router.add_post("/api/lighbd/prompts", handle_api_lighbd_prompts)
 app.router.add_get("/api/illustration_context/session/{sid}/manifest", handle_api_illustration_context_manifest)
 app.router.add_get("/s/{key}", handle_api_illustration_context_short_slots)
 app.router.add_get("/api/illustration_context/bridge/health", handle_api_illustration_context_bridge_health)
+app.router.add_get("/api/illustration_context/bridge/bots", handle_api_illustration_context_bridge_bots)
+app.router.add_post("/api/illustration_context/bridge/bots", handle_api_illustration_context_bridge_bots)
 app.router.add_get("/api/illustration_context/bridge/sessions", handle_api_illustration_context_bridge_sessions)
 app.router.add_post("/api/illustration_context/bridge/client-log", handle_api_illustration_context_bridge_client_log)
 app.router.add_get("/api/illustration_context/bridge/session/{sid}", handle_api_illustration_context_bridge_session)

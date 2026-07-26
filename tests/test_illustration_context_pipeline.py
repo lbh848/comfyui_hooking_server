@@ -61,6 +61,24 @@ def test_context_and_result_transport_markers():
     assert pipeline.parse_regenerate_request(
         pipeline.REGENERATE_PREFIX + "\n" + json.dumps({"session_id": session_id, "slot": 0})
     ) == {"session_id": session_id, "slot": 0}
+    assert pipeline.parse_easy_edit_request(
+        pipeline.EASY_EDIT_PREFIX + "\n" + json.dumps({
+            "session_id": session_id,
+            "slot": 0,
+            "direction": "배경을 밤으로 바꿔줘",
+        }, ensure_ascii=False)
+    ) == {
+        "session_id": session_id,
+        "slot": 0,
+        "direction": "배경을 밤으로 바꿔줘",
+    }
+    assert pipeline.parse_easy_edit_request(
+        pipeline.EASY_EDIT_PREFIX + "\n" + json.dumps({
+            "session_id": session_id,
+            "slot": 0,
+            "direction": " ",
+        })
+    ) is None
 
 
 def test_call2_plan_selects_global_slots_and_builds_key_visual():

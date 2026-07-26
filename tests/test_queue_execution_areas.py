@@ -451,6 +451,8 @@ async def test_multi_char_mask_is_restored_before_regenerate_and_inherited_by_ba
     assert events == ["mask", "generate", "save"]
     assert saved["illustration_multi_char"] == snapshot
     assert result["success"] is True
+    assert result["backup_name"] == "new-backup"
+    assert item.generated_image_bytes == b"generated-image"
 
 
 @pytest.mark.asyncio
