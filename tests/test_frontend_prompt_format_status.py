@@ -34,3 +34,13 @@ def test_prompt_format_is_auto_selected_and_read_only():
     assert "select.disabled = true;" in lock_function
     assert "fetch(" not in lock_function
     assert "'/api/config'" not in lock_function
+
+
+def test_chansub_settings_expose_bounded_concurrency_and_rotation_key():
+    source = _frontend_source()
+
+    assert 'id="setting-chansub-max-concurrency" min="1" max="2"' in source
+    assert "currentConfig.chansub_max_concurrency ?? 1" in source
+    assert "chansub_max_concurrency: parseInt(" in source
+    assert 'id="setting-chansub-rotation-api-key"' in source
+    assert "rotation_api_key: rotationApiKey" in source

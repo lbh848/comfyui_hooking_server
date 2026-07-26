@@ -15,24 +15,49 @@ CHANSUB_URL = "https://wellspring.encrypt.gay/v1/images/nai/generate-image"
 CHANSUB_MODEL = "nai-diffusion-4-5-full"
 
 _api_key = ""
+_rotation_api_key = ""
 
 
 class ChansubRequestError(RuntimeError):
     """재시도 가능 여부를 포함한 챈섭 요청 실패."""
 
-    def __init__(self, message: str, *, retryable: bool) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        retryable: bool,
+        status: int | None = None,
+    ) -> None:
         super().__init__(message)
         self.retryable = retryable
+        self.status = status
 
 
 def update_api_key(api_key: str) -> None:
-    global _api_key
+    """하위 호환용 단일 키 갱신. 회전 키는 비운다."""
+    update_api_keys(api_key, "")
+
+
+def update_api_keys(api_key: str, rotation_api_key: str = "") -> None:
+    global _api_key, _rotation_api_key
     _api_key = (api_key or "").strip()
-    print(f"[CHANSUB_KEY] 런타임 키 갱신: {'set' if _api_key else 'empty'}")
+    _rotation_api_key = (rotation_api_key or "").strip()
+    if _rotation_api_key and _rotation_api_key == _api_key:
+        print("[CHANSUB_KEY] 회전 키가 기본 키와 같아 회전 비활성화")
+        _rotation_api_key = ""
+    print(
+        f"[CHANSUB_KEY] 런타임 키 갱신: "
+        f"primary={'set' if _api_key else 'empty'}, "
+        f"rotation={'set' if _rotation_api_key else 'empty'}"
+    )
 
 
 def has_api_key() -> bool:
     return bool(_api_key)
+
+
+def has_rotation_api_key() -> bool:
+    return bool(_rotation_api_key)
 
 
 def build_request_body(positive: str, negative: str, width: int, height: int) -> dict:
@@ -213,7 +238,9 @@ async def _post_generate_request(body: dict, headers: dict[str, str]) -> bytes:
                     f"retryable={retryable}, content_type={content_type!r}, body={detail!r}"
                 )
                 raise ChansubRequestError(
-                    f"챈섭 HTTP {response.status}: {detail}", retryable=retryable
+                    f"챈섭 HTTP {response.status}: {detail}",
+                    retryable=retryable,
+                    status=response.status,
                 )
 
             try:
@@ -257,12 +284,6 @@ async def generate_image(
         return None, message
 
     body = build_request_body(positive, negative, width, height)
-    headers = {
-        "Authorization": f"Bearer {_api_key}",
-        "Content-Type": "application/json",
-        "Accept": "application/zip, image/*, application/octet-stream",
-    }
-
     try:
         retries = max(0, int(max_retries))
         retry_delay = max(0.0, float(retry_delay_sec))
@@ -276,24 +297,63 @@ async def generate_image(
 
     total_attempts = retries + 1
     last_error = "알 수 없는 실패"
+    api_keys = [("primary", _api_key)]
+    if _rotation_api_key:
+        api_keys.append(("rotation", _rotation_api_key))
+    key_count = len(api_keys)
+    auth_failed_key_slots: set[str] = set()
 
     for attempt in range(1, total_attempts + 1):
-        if attempt > 1:
+        scheduled_key_index = (attempt - 1) % key_count
+        selected_key = next(
+            (
+                api_keys[(scheduled_key_index + offset) % key_count]
+                for offset in range(key_count)
+                if api_keys[(scheduled_key_index + offset) % key_count][0]
+                not in auth_failed_key_slots
+            ),
+            None,
+        )
+        if selected_key is None:
+            last_error = "챈섭 인증 가능한 API 키가 남아 있지 않습니다."
+            print(
+                f"[CHANSUB] 생성 중단: attempt={attempt}/{total_attempts}, "
+                f"error={last_error}"
+            )
+            return None, last_error
+        key_slot, selected_api_key = selected_key
+        prompt_retry_number = (attempt - 1) // key_count
+        if prompt_retry_number > 0:
             retry_positive, swapped_indexes = reorder_positive_prompt_for_retry(
-                positive, attempt - 1, quality_tag_start, quality_tag_count
+                positive,
+                prompt_retry_number,
+                quality_tag_start,
+                quality_tag_count,
             )
             body["input"] = retry_positive
             body["parameters"]["v4_prompt"]["caption"]["base_caption"] = retry_positive
             if swapped_indexes is not None:
                 print(
                     f"[CHANSUB] 재시도 긍정 품질 태그 순서 변경: "
-                    f"retry={attempt - 1}, swapped={swapped_indexes[0]}<->{swapped_indexes[1]}, "
+                    f"retry={prompt_retry_number}, "
+                    f"swapped={swapped_indexes[0]}<->{swapped_indexes[1]}, "
                     f"positive_len={len(retry_positive)}"
                 )
+        elif attempt > 1:
+            print(
+                f"[CHANSUB] 프롬프트 순서 유지 후 키 회전 재시도: "
+                f"attempt={attempt}/{total_attempts}, key_slot={key_slot}"
+            )
+        headers = {
+            "Authorization": f"Bearer {selected_api_key}",
+            "Content-Type": "application/json",
+            "Accept": "application/zip, image/*, application/octet-stream",
+        }
         print(
             f"[CHANSUB] → POST {CHANSUB_URL} model={CHANSUB_MODEL} "
             f"size={width}x{height} positive_len={len(positive)} negative_len={len(negative)} "
-            f"attempt={attempt}/{total_attempts}"
+            f"attempt={attempt}/{total_attempts} key_slot={key_slot} "
+            f"prompt_retry={prompt_retry_number}"
         )
         retryable = False
         try:
@@ -307,10 +367,17 @@ async def generate_image(
             }
         except ChansubRequestError as exc:
             last_error = str(exc)
-            retryable = exc.retryable
+            if exc.status in (401, 403):
+                auth_failed_key_slots.add(key_slot)
+            auth_key_fallback = bool(
+                exc.status in (401, 403)
+                and len(auth_failed_key_slots) < key_count
+            )
+            retryable = exc.retryable or auth_key_fallback
             print(
                 f"[CHANSUB] 요청 실패: attempt={attempt}/{total_attempts}, "
-                f"retryable={retryable}, error={last_error}"
+                f"key_slot={key_slot}, retryable={retryable}, "
+                f"auth_key_fallback={auth_key_fallback}, error={last_error}"
             )
         except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
             last_error = f"챈섭 생성 예외: {type(exc).__name__}: {exc}"

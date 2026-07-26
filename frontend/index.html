@@ -11381,6 +11381,26 @@
                         </div>
                         <div class="setting-row">
                             <div class="setting-label">
+                                <div class="title">회전용 API 키</div>
+                                <div class="desc">기본 키 요청이 재시도 대상 실패일 때, 긍정 프롬프트 순서를 바꾸기 전에 같은 요청을 이 키로 먼저 재시도합니다.</div>
+                            </div>
+                            <div class="setting-control">
+                                <input type="text" id="setting-chansub-rotation-api-key" placeholder="선택 사항"
+                                       style="width:300px; padding:6px 10px; border-radius:6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-family:monospace;">
+                            </div>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="title">동시 요청 허용 수</div>
+                                <div class="desc">챈섭 큐에서 동시에 실행할 이미지 생성 요청 수입니다. 실측된 범위인 1~2만 허용합니다.</div>
+                            </div>
+                            <div class="setting-control">
+                                <input type="number" id="setting-chansub-max-concurrency" min="1" max="2" step="1" value="1"
+                                       style="width:100px; padding:6px 10px; border-radius:6px; border:1px solid var(--border); background:var(--surface2); color:var(--text);">
+                            </div>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-label">
                                 <div class="title">삽화 워크플로우</div>
                                 <div class="desc">챈섭 삽화에 적용할 프롬프트 및 프리셋 계열</div>
                             </div>
@@ -14958,6 +14978,8 @@
             if (chansubRetriesEl) chansubRetriesEl.value = (currentConfig.chansub_max_retries ?? 2);
             const chansubRetryDelayEl = document.getElementById('setting-chansub-retry-delay');
             if (chansubRetryDelayEl) chansubRetryDelayEl.value = (currentConfig.chansub_retry_delay_sec ?? 3.0);
+            const chansubConcurrencyEl = document.getElementById('setting-chansub-max-concurrency');
+            if (chansubConcurrencyEl) chansubConcurrencyEl.value = (currentConfig.chansub_max_concurrency ?? 1);
             const llmConcEl = document.getElementById('setting-llm-max-concurrency');
             if (llmConcEl) llmConcEl.value = (currentConfig.llm_max_concurrency ?? 1);
             const llmStreamIdleTimeoutEl = document.getElementById('setting-llm-stream-idle-timeout');
@@ -15844,6 +15866,7 @@
                 illustration_workflow_type: normalizeIllustrationWorkflowType(document.getElementById('setting-illustration-workflow-type').value),
                 illustration_workflow_source_paths: { ...(currentConfig.illustration_workflow_source_paths || {}) },
                 chansub_workflow_type: document.getElementById('setting-chansub-workflow-type').value || 'anima',
+                chansub_max_concurrency: parseInt(document.getElementById('setting-chansub-max-concurrency').value) || 1,
                 chansub_max_retries: parseInt(document.getElementById('setting-chansub-max-retries').value) || 0,
                 chansub_retry_delay_sec: parseFloat(document.getElementById('setting-chansub-retry-delay').value) || 0,
                 comfy_input_dir: document.getElementById('setting-comfy-input-dir').value,
@@ -18245,6 +18268,8 @@
                 if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
                 const el = document.getElementById('setting-chansub-api-key');
                 if (el) el.value = data.api_key || '';
+                const rotationEl = document.getElementById('setting-chansub-rotation-api-key');
+                if (rotationEl) rotationEl.value = data.rotation_api_key || '';
             } catch (e) {
                 console.error('[CHANSUB_KEY] load failed:', e);
                 showToast('챈섭 API 키 로드 실패: ' + e.message, 'error');
@@ -18253,11 +18278,15 @@
 
         async function saveChansubKey() {
             const apiKey = (document.getElementById('setting-chansub-api-key') || {}).value || '';
+            const rotationApiKey = (document.getElementById('setting-chansub-rotation-api-key') || {}).value || '';
             try {
                 const resp = await fetch('/api/chansub/key', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ api_key: apiKey }),
+                    body: JSON.stringify({
+                        api_key: apiKey,
+                        rotation_api_key: rotationApiKey,
+                    }),
                 });
                 const data = await resp.json();
                 if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
@@ -18274,6 +18303,7 @@
                 const data = await resp.json();
                 if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
                 document.getElementById('setting-chansub-api-key').value = '';
+                document.getElementById('setting-chansub-rotation-api-key').value = '';
                 showToast('챈섭 API 키를 삭제했습니다.', 'success');
             } catch (e) {
                 console.error('[CHANSUB_KEY] delete failed:', e);

@@ -334,6 +334,84 @@ class ChansubRetryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(image, b"image-data")
         self.assertEqual(result["attempts"], 2)
 
+    async def test_rotation_key_is_tried_before_positive_prompt_reorder(self):
+        chansub_service.update_api_keys("primary-key", "rotation-key")
+        captured = []
+
+        async def capture_request(body, headers):
+            captured.append((copy.deepcopy(body), headers["Authorization"]))
+            if len(captured) == 1:
+                raise chansub_service.ChansubRequestError(
+                    "챈섭 HTTP 503: failed",
+                    retryable=True,
+                    status=503,
+                )
+            if len(captured) == 2:
+                raise chansub_service.ChansubRequestError(
+                    "챈섭 HTTP 401: invalid rotation key",
+                    retryable=False,
+                    status=401,
+                )
+            return b"image-data"
+
+        with patch.object(
+            chansub_service, "_post_generate_request", side_effect=capture_request
+        ), patch.object(chansub_service.asyncio, "sleep", new=AsyncMock()):
+            image, result = await chansub_service.generate_image(
+                "artist:name, best quality, amazing quality, 1girl, outdoors",
+                "lowres, bad hands, blurry",
+                640,
+                960,
+                max_retries=2,
+                retry_delay_sec=0,
+                quality_tag_start=1,
+                quality_tag_count=2,
+            )
+
+        self.assertEqual(
+            [authorization for _, authorization in captured],
+            ["Bearer primary-key", "Bearer rotation-key", "Bearer primary-key"],
+        )
+        self.assertEqual(captured[0][0]["input"], captured[1][0]["input"])
+        self.assertEqual(
+            captured[2][0]["input"],
+            "artist:name, amazing quality, best quality, 1girl, outdoors",
+        )
+        self.assertEqual(image, b"image-data")
+        self.assertEqual(result["attempts"], 3)
+
+    async def test_rotation_key_gets_one_auth_failover_attempt(self):
+        chansub_service.update_api_keys("primary-key", "rotation-key")
+        request_mock = AsyncMock(
+            side_effect=[
+                chansub_service.ChansubRequestError(
+                    "챈섭 HTTP 401: unauthorized",
+                    retryable=False,
+                    status=401,
+                ),
+                b"image-data",
+            ]
+        )
+
+        with patch.object(
+            chansub_service, "_post_generate_request", request_mock
+        ), patch.object(chansub_service.asyncio, "sleep", new=AsyncMock()):
+            image, result = await chansub_service.generate_image(
+                "positive",
+                "negative",
+                640,
+                960,
+                max_retries=1,
+                retry_delay_sec=0,
+            )
+
+        self.assertEqual(
+            [call.args[1]["Authorization"] for call in request_mock.await_args_list],
+            ["Bearer primary-key", "Bearer rotation-key"],
+        )
+        self.assertEqual(image, b"image-data")
+        self.assertEqual(result["attempts"], 2)
+
 
 class ChansubLlmEditTest(unittest.TestCase):
     def test_provider_metadata_detects_flat_chansub_prompt(self):

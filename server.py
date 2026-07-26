@@ -144,6 +144,7 @@ DEFAULT_CONFIG = {
     },
     "illustration_provider": "comfy",  # 하위 호환 파생값: comfy | chansub | hybrid
     "chansub_workflow_type": "anima",  # 챈섭 삽화 프롬프트 계열: anima | sdxl
+    "chansub_max_concurrency": 1,  # 챈섭 외부 요청 동시 처리 수. 실측 범위인 1~2만 허용
     "chansub_max_retries": 2,  # 챈섭 일시적 실패 시 재시도 횟수 (최초 요청 제외)
     "chansub_retry_delay_sec": 3.0,  # 챈섭 재시도 사이의 설정 대기 시간(초)
     "utility_workflow_source_path": "",  # 삽화 유틸리티 워크플로우 전체 경로
@@ -4711,24 +4712,55 @@ def _backup_chansub_key_file(path: str, operation: str) -> None:
 
 
 async def handle_api_chansub_key(request: web.Request) -> web.Response:
-    """챈섭 API 키 조회/저장/삭제. key/chansub_key.json에 원문 저장한다."""
+    """챈섭 기본/회전 API 키 조회·저장·삭제. 별도 JSON에 원문 저장한다."""
     key_dir = os.path.join(BASE_DIR, "key")
     key_path = os.path.join(key_dir, "chansub_key.json")
     try:
         if request.method == "POST":
             body = await request.json()
             api_key = body.get("api_key", "")
+            rotation_api_key = body.get("rotation_api_key", "")
             if not isinstance(api_key, str):
                 print(f"[CHANSUB_KEY] 저장 실패: api_key 타입={type(api_key).__name__}")
                 return web.json_response({"error": "api_key must be a string"}, status=400)
+            if not isinstance(rotation_api_key, str):
+                print(
+                    f"[CHANSUB_KEY] 저장 실패: rotation_api_key 타입="
+                    f"{type(rotation_api_key).__name__}"
+                )
+                return web.json_response(
+                    {"error": "rotation_api_key must be a string"}, status=400
+                )
             api_key = api_key.strip()
+            rotation_api_key = rotation_api_key.strip()
+            if rotation_api_key and rotation_api_key == api_key:
+                print("[CHANSUB_KEY] 회전 키가 기본 키와 같아 빈 값으로 저장")
+                rotation_api_key = ""
             _backup_chansub_key_file(key_path, "save")
             os.makedirs(key_dir, exist_ok=True)
             with open(key_path, "w", encoding="utf-8") as file:
-                json.dump({"api_key": api_key}, file, ensure_ascii=False, indent=2)
-            chansub_service.update_api_key(api_key)
-            print(f"[CHANSUB_KEY] 키 저장 완료: {'set' if api_key else 'empty'}")
-            return web.json_response({"success": True, "api_key": api_key, "set": bool(api_key)})
+                json.dump(
+                    {
+                        "api_key": api_key,
+                        "rotation_api_key": rotation_api_key,
+                    },
+                    file,
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            chansub_service.update_api_keys(api_key, rotation_api_key)
+            print(
+                f"[CHANSUB_KEY] 키 저장 완료: "
+                f"primary={'set' if api_key else 'empty'}, "
+                f"rotation={'set' if rotation_api_key else 'empty'}"
+            )
+            return web.json_response({
+                "success": True,
+                "api_key": api_key,
+                "rotation_api_key": rotation_api_key,
+                "set": bool(api_key),
+                "rotation_set": bool(rotation_api_key),
+            })
 
         if request.method == "DELETE":
             if os.path.isfile(key_path):
@@ -4737,20 +4769,45 @@ async def handle_api_chansub_key(request: web.Request) -> web.Response:
                 print("[CHANSUB_KEY] 키 파일 삭제 완료")
             else:
                 print("[CHANSUB_KEY] 삭제 스킵: 키 파일 없음")
-            chansub_service.update_api_key("")
-            return web.json_response({"success": True, "api_key": "", "set": False})
+            chansub_service.update_api_keys("", "")
+            return web.json_response({
+                "success": True,
+                "api_key": "",
+                "rotation_api_key": "",
+                "set": False,
+                "rotation_set": False,
+            })
 
         if not os.path.isfile(key_path):
             print("[CHANSUB_KEY] 조회: 키 파일 없음")
-            return web.json_response({"api_key": "", "set": False})
+            return web.json_response({
+                "api_key": "",
+                "rotation_api_key": "",
+                "set": False,
+                "rotation_set": False,
+            })
         with open(key_path, "r", encoding="utf-8") as file:
             data = json.load(file)
         api_key = data.get("api_key", "")
+        rotation_api_key = data.get("rotation_api_key", "")
         if not isinstance(api_key, str):
             print(f"[CHANSUB_KEY] 조회 실패: 저장된 api_key 타입={type(api_key).__name__}")
             return web.json_response({"error": "저장된 챈섭 API 키 형식이 잘못되었습니다."}, status=500)
-        chansub_service.update_api_key(api_key)
-        return web.json_response({"api_key": api_key, "set": bool(api_key)})
+        if not isinstance(rotation_api_key, str):
+            print(
+                f"[CHANSUB_KEY] 조회 실패: 저장된 rotation_api_key 타입="
+                f"{type(rotation_api_key).__name__}"
+            )
+            return web.json_response(
+                {"error": "저장된 챈섭 회전 API 키 형식이 잘못되었습니다."}, status=500
+            )
+        chansub_service.update_api_keys(api_key, rotation_api_key)
+        return web.json_response({
+            "api_key": api_key,
+            "rotation_api_key": rotation_api_key,
+            "set": bool(api_key),
+            "rotation_set": bool(rotation_api_key),
+        })
     except Exception as e:
         print(f"[CHANSUB_KEY] 처리 실패: {type(e).__name__}: {e}")
         traceback.print_exc()
@@ -4762,22 +4819,34 @@ def _load_chansub_key() -> None:
     key_path = os.path.join(BASE_DIR, "key", "chansub_key.json")
     if not os.path.isfile(key_path):
         print("[CHANSUB_KEY] 시작 로드 스킵: 키 파일 없음")
-        chansub_service.update_api_key("")
+        chansub_service.update_api_keys("", "")
         return
     try:
         with open(key_path, "r", encoding="utf-8") as file:
             data = json.load(file)
         api_key = data.get("api_key", "")
+        rotation_api_key = data.get("rotation_api_key", "")
         if not isinstance(api_key, str):
             print(f"[CHANSUB_KEY] 시작 로드 실패: api_key 타입={type(api_key).__name__}")
-            chansub_service.update_api_key("")
+            chansub_service.update_api_keys("", "")
             return
-        chansub_service.update_api_key(api_key)
-        print(f"[CHANSUB_KEY] 시작 로드 완료: {'set' if api_key else 'empty'}")
+        if not isinstance(rotation_api_key, str):
+            print(
+                f"[CHANSUB_KEY] 시작 로드 실패: rotation_api_key 타입="
+                f"{type(rotation_api_key).__name__}"
+            )
+            chansub_service.update_api_keys("", "")
+            return
+        chansub_service.update_api_keys(api_key, rotation_api_key)
+        print(
+            f"[CHANSUB_KEY] 시작 로드 완료: "
+            f"primary={'set' if api_key else 'empty'}, "
+            f"rotation={'set' if rotation_api_key else 'empty'}"
+        )
     except Exception as e:
         print(f"[CHANSUB_KEY] 시작 로드 실패: {type(e).__name__}: {e}")
         traceback.print_exc()
-        chansub_service.update_api_key("")
+        chansub_service.update_api_keys("", "")
 
 
 async def handle_api_llm_test_stream(request: web.Request) -> web.StreamResponse:
@@ -8383,6 +8452,40 @@ async def handle_api_config(request: web.Request) -> web.Response:
                     )
                 body["chansub_workflow_type"] = chansub_workflow_type
 
+            if "chansub_max_concurrency" in body:
+                try:
+                    raw_chansub_concurrency = body["chansub_max_concurrency"]
+                    if isinstance(raw_chansub_concurrency, bool):
+                        raise TypeError("bool은 허용되지 않음")
+                    chansub_max_concurrency = int(raw_chansub_concurrency)
+                    if isinstance(raw_chansub_concurrency, float) and not raw_chansub_concurrency.is_integer():
+                        raise ValueError("정수가 아닌 실수는 허용되지 않음")
+                    if (
+                        isinstance(raw_chansub_concurrency, str)
+                        and raw_chansub_concurrency.strip() != str(chansub_max_concurrency)
+                    ):
+                        raise ValueError("정수 문자열 형식이 아님")
+                except (TypeError, ValueError):
+                    print(
+                        f"[CONFIG] 챈섭 동시 요청 수 저장 거부: "
+                        f"{body.get('chansub_max_concurrency')!r}"
+                    )
+                    traceback.print_exc()
+                    return web.json_response(
+                        {"error": "챈섭 동시 요청 수는 1~2 사이의 정수여야 합니다."},
+                        status=400,
+                    )
+                if not 1 <= chansub_max_concurrency <= 2:
+                    print(
+                        f"[CONFIG] 챈섭 동시 요청 수 범위 오류: "
+                        f"{chansub_max_concurrency}"
+                    )
+                    return web.json_response(
+                        {"error": "챈섭 동시 요청 수는 1~2 사이여야 합니다."},
+                        status=400,
+                    )
+                body["chansub_max_concurrency"] = chansub_max_concurrency
+
             if "chansub_max_retries" in body:
                 try:
                     chansub_max_retries = int(body["chansub_max_retries"])
@@ -8552,7 +8655,6 @@ async def handle_api_config(request: web.Request) -> web.Response:
                         print("[ASSET_TOOL] 내장 WD Tagger 로드 완료")
                     except Exception as e:
                         print(f"[ASSET_TOOL] 내장 WD Tagger 로드 실패: {type(e).__name__}: {e}")
-                        import traceback
                         traceback.print_exc()
 
             # LLM 서비스 설정 업데이트
@@ -8604,6 +8706,15 @@ async def handle_api_config(request: web.Request) -> web.Response:
                     asyncio.ensure_future(queue_manager._ensure_llm_workers())
                 except Exception as e:
                     print(f"[CONFIG] LLM 워커풀 갱신 실패: {e}")
+                    traceback.print_exc()
+
+            # 챈섭 동시성 변경도 실행 중 서버의 외부 워커풀에 즉시 반영한다.
+            if "chansub_max_concurrency" in body:
+                try:
+                    asyncio.ensure_future(queue_manager._ensure_external_workers())
+                except Exception as e:
+                    print(f"[CONFIG] 챈섭 외부 워커풀 갱신 실패: {e}")
+                    traceback.print_exc()
 
             print(f"[CONFIG] 설정 업데이트: {list(body.keys())}")
             return web.json_response({"success": True, "config": app_config})

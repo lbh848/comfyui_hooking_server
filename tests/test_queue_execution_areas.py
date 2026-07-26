@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 from queue_manager import QueueItem, QueueManager
@@ -50,6 +52,93 @@ def test_queue_status_forces_plain_illustration_to_gpu_without_active_bot():
 
     assert item["execution_area"] == "gpu"
     assert item["provider"] == "comfy"
+
+
+def test_chansub_external_worker_default_and_bounds():
+    manager = QueueManager()
+    manager.get_config = lambda: {}
+    assert manager._target_external_workers() == 1
+
+    manager.get_config = lambda: {"chansub_max_concurrency": 2}
+    assert manager._target_external_workers() == 2
+
+    manager.get_config = lambda: {"chansub_max_concurrency": 99}
+    assert manager._target_external_workers() == 2
+
+    manager.get_config = lambda: {"chansub_max_concurrency": 1.5}
+    assert manager._target_external_workers() == 1
+
+
+@pytest.mark.asyncio
+async def test_two_chansub_workers_execute_two_requests_concurrently(monkeypatch):
+    manager = QueueManager()
+    manager.get_config = lambda: {
+        "bot_selected": "test-bot",
+        "illustration_provider": "chansub",
+        "chansub_max_concurrency": 2,
+    }
+    both_started = asyncio.Event()
+    release = asyncio.Event()
+    started = []
+
+    async def fake_execute(item):
+        started.append(item.id)
+        if len(started) == 2:
+            both_started.set()
+        await release.wait()
+        return {"success": True}
+
+    async def no_llm_workers():
+        return None
+
+    async def no_prune(_item):
+        return None
+
+    monkeypatch.setattr(manager, "_execute_item", fake_execute)
+    monkeypatch.setattr(manager, "_ensure_llm_workers", no_llm_workers)
+    monkeypatch.setattr(manager, "_deferred_prune", no_prune)
+
+    first = await manager.add_item(
+        "illustration",
+        "remote-1",
+        {"provider": "chansub"},
+        priority=0,
+    )
+    second = await manager.add_item(
+        "illustration",
+        "remote-2",
+        {"provider": "chansub"},
+        priority=0,
+    )
+
+    try:
+        await asyncio.wait_for(both_started.wait(), timeout=1)
+        status = manager.get_status()
+        assert first.status == second.status == "processing"
+        assert {item["id"] for item in status["current_externals"]} == {
+            first.id,
+            second.id,
+        }
+        assert status["external_active_workers"] == 2
+        assert status["external_target_workers"] == 2
+
+        release.set()
+        await asyncio.wait_for(
+            asyncio.gather(first.completion_future, second.completion_future),
+            timeout=1,
+        )
+        assert first.status == second.status == "completed"
+    finally:
+        release.set()
+        tasks = [
+            task
+            for task in manager._external_worker_tasks.values()
+            if not task.done()
+        ]
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
 
 @pytest.mark.asyncio

@@ -150,6 +150,122 @@ async def test_config_api_saves_hybrid_and_asset_profiles_as_derived_contract(
     assert saved[-1]["asset_workflow_type"] == "anima_only"
 
 
+@pytest.mark.parametrize("invalid_value", [0, 3, 1.5, True, "invalid"])
+@pytest.mark.asyncio
+async def test_config_api_rejects_invalid_chansub_concurrency_without_writing(
+    monkeypatch,
+    invalid_value,
+):
+    config = copy.deepcopy(server.app_config)
+    saved = []
+    monkeypatch.setattr(server, "app_config", config)
+    monkeypatch.setattr(server, "save_config", lambda value: saved.append(value))
+
+    response = await server.handle_api_config(
+        _JsonRequest({"chansub_max_concurrency": invalid_value})
+    )
+
+    assert response.status == 400
+    assert "1~2" in json.loads(response.text)["error"]
+    assert saved == []
+
+
+@pytest.mark.asyncio
+async def test_config_api_saves_chansub_concurrency_and_refreshes_workers(monkeypatch):
+    config = copy.deepcopy(server.app_config)
+    saved = []
+    refreshed = asyncio.Event()
+
+    async def fake_refresh_workers():
+        refreshed.set()
+
+    monkeypatch.setattr(server, "app_config", config)
+    monkeypatch.setattr(
+        server,
+        "save_config",
+        lambda value: saved.append(copy.deepcopy(value)),
+    )
+    monkeypatch.setattr(server.llm_service, "update_config", lambda _value: None)
+    monkeypatch.setattr(server.embedding_service, "update_config", lambda _value: None)
+    monkeypatch.setattr(
+        server.queue_manager,
+        "_ensure_external_workers",
+        fake_refresh_workers,
+    )
+
+    response = await server.handle_api_config(
+        _JsonRequest({"chansub_max_concurrency": 2})
+    )
+    await asyncio.wait_for(refreshed.wait(), timeout=1)
+
+    assert response.status == 200
+    assert saved[-1]["chansub_max_concurrency"] == 2
+    assert json.loads(response.text)["config"]["chansub_max_concurrency"] == 2
+
+
+@pytest.mark.asyncio
+async def test_chansub_key_api_saves_rotation_key_with_backup(monkeypatch, tmp_path):
+    key_dir = tmp_path / "key"
+    key_dir.mkdir()
+    key_path = key_dir / "chansub_key.json"
+    key_path.write_text(
+        json.dumps({"api_key": "old-primary"}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    runtime_updates = []
+    monkeypatch.setattr(server, "BASE_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        server.chansub_service,
+        "update_api_keys",
+        lambda primary, rotation: runtime_updates.append((primary, rotation)),
+    )
+
+    response = await server.handle_api_chansub_key(
+        _JsonRequest({
+            "api_key": "new-primary",
+            "rotation_api_key": "new-rotation",
+        })
+    )
+
+    stored = json.loads(key_path.read_text(encoding="utf-8"))
+    backups = list((tmp_path / "요구사항").glob("chansub_key_before_save_*.json"))
+    assert response.status == 200
+    assert stored == {
+        "api_key": "new-primary",
+        "rotation_api_key": "new-rotation",
+    }
+    assert runtime_updates == [("new-primary", "new-rotation")]
+    assert len(backups) == 1
+    assert json.loads(backups[0].read_text(encoding="utf-8")) == {
+        "api_key": "old-primary"
+    }
+
+
+@pytest.mark.asyncio
+async def test_chansub_key_api_loads_legacy_single_key_file(monkeypatch, tmp_path):
+    key_dir = tmp_path / "key"
+    key_dir.mkdir()
+    (key_dir / "chansub_key.json").write_text(
+        json.dumps({"api_key": "legacy-primary"}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    runtime_updates = []
+    monkeypatch.setattr(server, "BASE_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        server.chansub_service,
+        "update_api_keys",
+        lambda primary, rotation: runtime_updates.append((primary, rotation)),
+    )
+
+    response = await server.handle_api_chansub_key(SimpleNamespace(method="GET"))
+    result = json.loads(response.text)
+
+    assert response.status == 200
+    assert result["api_key"] == "legacy-primary"
+    assert result["rotation_api_key"] == ""
+    assert runtime_updates == [("legacy-primary", "")]
+
+
 @pytest.mark.asyncio
 async def test_automatic_restore_uses_compatible_illustration_builder(monkeypatch):
     captured = {}
