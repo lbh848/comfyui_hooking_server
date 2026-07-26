@@ -6187,20 +6187,11 @@
         .cm-lock-btn.locked { color: #ffd07d; border-color: rgba(244,184,95,.4); background: rgba(244,184,95,.08); }
         .cm-field-body { padding: 8px; }
         .cm-field-preset-row { margin-bottom: 6px; }
-        .cm-field-preset-select {
+        .cm-field-preset-wrap {
             width: 100%;
-            min-height: 28px;
-            padding: 0 8px;
-            border: 1px solid var(--border);
-            border-radius: 7px;
             box-sizing: border-box;
-            outline: none;
-            color: var(--text);
-            background: var(--surface2);
-            font-family: inherit;
-            font-size: .68rem;
-            cursor: pointer;
         }
+        .cm-field-preset-wrap .custom-select { font-size: .68rem; min-height: 28px; padding: 4px 8px; }
         .cm-chip-editor { display: block; }
         .cm-text-editor { display: none; }
         .cm-editor-wall.text-mode .cm-chip-editor { display: none; }
@@ -9028,10 +9019,8 @@
                                 </div>
                                 <div class="cm-field-body">
                                     <div class="cm-field-preset-row">
-                                        <select class="cm-field-preset-select" data-preset-select
-                                                onchange="cmLoadFieldPreset('appearance')">
-                                            <option value="">프리셋에서 불러오기</option>
-                                        </select>
+                                        <div class="cm-field-preset-wrap" data-preset-select
+                                             data-field="appearance"></div>
                                     </div>
                                     <div class="cm-chip-editor">
                                         <div class="cm-chip-list" data-chips></div>
@@ -9056,10 +9045,8 @@
                                 </div>
                                 <div class="cm-field-body">
                                     <div class="cm-field-preset-row">
-                                        <select class="cm-field-preset-select" data-preset-select
-                                                onchange="cmLoadFieldPreset('outfit')">
-                                            <option value="">프리셋에서 불러오기</option>
-                                        </select>
+                                        <div class="cm-field-preset-wrap" data-preset-select
+                                             data-field="outfit"></div>
                                     </div>
                                     <div class="cm-chip-editor">
                                         <div class="cm-chip-list" data-chips></div>
@@ -9084,10 +9071,8 @@
                                 </div>
                                 <div class="cm-field-body">
                                     <div class="cm-field-preset-row">
-                                        <select class="cm-field-preset-select" data-preset-select
-                                                onchange="cmLoadFieldPreset('expression')">
-                                            <option value="">프리셋에서 불러오기</option>
-                                        </select>
+                                        <div class="cm-field-preset-wrap" data-preset-select
+                                             data-field="expression"></div>
                                     </div>
                                     <div class="cm-chip-editor">
                                         <div class="cm-chip-list" data-chips></div>
@@ -9112,10 +9097,8 @@
                                 </div>
                                 <div class="cm-field-body">
                                     <div class="cm-field-preset-row">
-                                        <select class="cm-field-preset-select" data-preset-select
-                                                onchange="cmLoadFieldPreset('composition')">
-                                            <option value="">프리셋에서 불러오기</option>
-                                        </select>
+                                        <div class="cm-field-preset-wrap" data-preset-select
+                                             data-field="composition"></div>
                                     </div>
                                     <div class="cm-chip-editor">
                                         <div class="cm-chip-list" data-chips></div>
@@ -28618,37 +28601,49 @@
             expression: 'expressions',
             composition: 'composition_presets',
         };
+        // 커스텀 셀렉트(검색 내장) 식별자/onChange 래퍼 매핑.
+        // 에셋 생성 쪽 buildAssetCustomSelect + bindAssetCustomSelects 메커니즘을 그대로 재사용한다.
+        const CM_FIELD_PRESET_SELECT_IDS = {
+            appearance: 'cm-preset-appearance',
+            outfit: 'cm-preset-outfit',
+            expression: 'cm-preset-expression',
+            composition: 'cm-preset-composition',
+        };
+        const CM_FIELD_PRESET_LOAD_FNS = {
+            appearance: 'cmLoadAppearancePreset',
+            outfit: 'cmLoadOutfitPreset',
+            expression: 'cmLoadExpressionPreset',
+            composition: 'cmLoadCompositionPreset',
+        };
 
         function cmRenderFieldPresetSelects() {
             if (!assetTags) return;
             for (const field of CM_FIELDS) {
                 const card = document.querySelector(`.cm-field-card[data-field="${field}"]`);
-                const select = card?.querySelector('[data-preset-select]');
-                if (!select) continue;
+                const wrap = card?.querySelector('[data-preset-select]');
+                if (!wrap) continue;
                 const presets = assetTags[CM_FIELD_PRESET_KEYS[field]] || {};
-                select.innerHTML = '';
-                const empty = document.createElement('option');
-                empty.value = '';
-                empty.textContent = '프리셋에서 불러오기';
-                select.appendChild(empty);
+                // buildAssetCustomSelect 가 키를 sort() 하므로 ko-locale 정렬이 필요하면
+                // 미리 정렬된 객체를 넘긴다. 에셋 쪽과 동일한 디자인/검색 동작을 공유.
+                const sorted = {};
                 Object.keys(presets)
                     .sort((a, b) => a.localeCompare(b, 'ko'))
-                    .forEach(name => {
-                        const option = document.createElement('option');
-                        option.value = name;
-                        option.textContent = name;
-                        select.appendChild(option);
-                    });
-                // 불러오기는 상태가 아니라 동작이므로 항상 안내 옵션으로 되돌린다.
-                select.value = '';
+                    .forEach(k => { sorted[k] = presets[k]; });
+                wrap.innerHTML = buildAssetCustomSelect(
+                    sorted, '', '프리셋에서 불러오기',
+                    CM_FIELD_PRESET_SELECT_IDS[field],
+                    CM_FIELD_PRESET_LOAD_FNS[field],
+                );
             }
+            // 새로 주입된 .custom-select 들에 열기/닫기·검색·옵션 선택 바인딩.
+            // bindAssetCustomSelects 는 data-bound 로 중복 바인딩을 막으므로 안전.
+            bindAssetCustomSelects();
         }
 
         function cmLoadFieldPreset(field) {
             if (!cmSession || !CM_FIELDS.includes(field)) return;
-            const card = document.querySelector(`.cm-field-card[data-field="${field}"]`);
-            const select = card?.querySelector('[data-preset-select]');
-            const name = (select?.value || '').trim();
+            const selectId = CM_FIELD_PRESET_SELECT_IDS[field];
+            const name = (getAssetSelectValue(selectId) || '').trim();
             if (!name) return;
             const presets = assetTags?.[CM_FIELD_PRESET_KEYS[field]] || {};
             const tags = presets[name];
@@ -28658,7 +28653,7 @@
                     field, name,
                 );
                 showToast(`${CM_FIELD_LABELS[field]} 프리셋 '${name}'을(를) 찾을 수 없습니다.`, 'error');
-                if (select) select.value = '';
+                setAssetSelectValue(selectId, '');
                 return;
             }
             const cleaned = cmCleanTags(tags);
@@ -28666,13 +28661,20 @@
             cmSession.fields[field] = cleaned;
             cmRenderField(field);
             cmQueueSync();
-            if (select) select.value = '';
+            // 불러오기는 상태가 아니라 동작이므로 항상 안내 옵션으로 되돌린다.
+            setAssetSelectValue(selectId, '');
             if (!cleaned.length) {
                 showToast(`${CM_FIELD_LABELS[field]} 프리셋 '${name}'에 태그가 없습니다.`, 'info');
             } else {
                 showToast(`${CM_FIELD_LABELS[field]} 프리셋 '${name}' 불러옴 · ${cleaned.length} tags`, 'success');
             }
         }
+
+        // bindAssetCustomSelects 가 window[fn]() 무인자 호출을 하므로 필드별 래퍼를 둔다.
+        function cmLoadAppearancePreset() { return cmLoadFieldPreset('appearance'); }
+        function cmLoadOutfitPreset() { return cmLoadFieldPreset('outfit'); }
+        function cmLoadExpressionPreset() { return cmLoadFieldPreset('expression'); }
+        function cmLoadCompositionPreset() { return cmLoadFieldPreset('composition'); }
 
         function cmCollectSettings() {
             const fallback = cmSession?.settings || {};

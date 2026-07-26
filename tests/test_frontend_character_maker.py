@@ -68,11 +68,15 @@ def test_only_four_fields_have_free_chip_and_text_editors():
 def test_each_field_has_preset_loader_wired_to_load_function():
     html = _html()
 
+    # 에셋 생성과 동일한 커스텀 셀렉트(검색 내장) 디자인을 사용한다.
+    # 빈 래퍼 div를 두고 JS가 buildAssetCustomSelect 로 채운다.
     for field in ("appearance", "outfit", "expression", "composition"):
         assert (
-            f'onchange="cmLoadFieldPreset(\'{field}\')"' in html
-        ), f"필드 {field}에 프리셋 불러오기 onchange가 없습니다"
-        assert f"cm-field-preset-select" in html
+            f'class="cm-field-preset-wrap" data-preset-select"\n'
+            in html
+            or f'class="cm-field-preset-wrap" data-preset-select' in html
+        ), f"필드 프리셋 래퍼(cm-field-preset-wrap)이 없습니다"
+        assert f'data-field="{field}"' in html, f"필드 {field} 래퍼에 data-field가 없습니다"
 
     # 필드 → assetTags 프리셋 사전 매핑과 렌더/불러오기 함수가 정의되어 있어야 한다.
     assert "const CM_FIELD_PRESET_KEYS" in html
@@ -84,6 +88,27 @@ def test_each_field_has_preset_loader_wired_to_load_function():
     assert "function cmLoadFieldPreset(field)" in html
     # cmPopulatePresetOptions() 안에서 필드 프리셋 셀렉트도 채운다.
     assert "cmRenderFieldPresetSelects()" in html
+
+    # 에셋 쪽 빌더/바인더/값 접근 함수를 재사용해 검색 기능 내장 셀렉트를 만든다.
+    assert "const CM_FIELD_PRESET_SELECT_IDS" in html
+    assert "const CM_FIELD_PRESET_LOAD_FNS" in html
+    assert "cm-preset-appearance" in html
+    assert "cm-preset-outfit" in html
+    assert "cm-preset-expression" in html
+    assert "cm-preset-composition" in html
+    assert "buildAssetCustomSelect(" in html
+    assert "bindAssetCustomSelects()" in html
+    # 래퍼: bindAssetCustomSelects 가 window[fn]() 무인자 호출을 하므로 필드별 래퍼 필요.
+    for fn in (
+        "cmLoadAppearancePreset",
+        "cmLoadOutfitPreset",
+        "cmLoadExpressionPreset",
+        "cmLoadCompositionPreset",
+    ):
+        assert f"function {fn}(" in html, f"래퍼 함수 {fn} 정의가 없습니다"
+    # 값 읽기/되돌리기도 커스텀 셀렉트 API를 경유한다.
+    assert "getAssetSelectValue(selectId)" in html
+    assert "setAssetSelectValue(selectId, '')" in html
 
 
 def test_browser_only_persists_server_session_identifier():
