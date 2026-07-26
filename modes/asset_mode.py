@@ -15,6 +15,7 @@ import shutil
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional, Callable, Awaitable
+import workflow_profiles
 
 
 # ─── 상수 ───────────────────────────────────────────────
@@ -229,7 +230,8 @@ class AssetMode:
         self.enabled: bool = False
         self.workflow_source_path: str = ""
         self.anima_workflow_source_path: str = ""
-        self.workflow_type: str = "regular"
+        self.anima_only_workflow_source_path: str = ""
+        self.workflow_type: str = workflow_profiles.ASSET_ILXL
         self._asset_api_workflow: Optional[dict] = None
         self._asset_hash: str = ""
         self._tags: dict = copy.deepcopy(DEFAULT_TAGS)
@@ -1039,10 +1041,16 @@ class AssetMode:
         natural_language: str = "",
         lora_trigger_words: str = "",
         anima_artist_preset: str = "",
-        asset_workflow_type: str = "regular",
+        asset_workflow_type: str = workflow_profiles.ASSET_ILXL,
         anima_lora_trigger_words: str = "",
         sdxl_lora_trigger_words: str = "",
     ) -> tuple[str, str]:
+        asset_workflow_type = workflow_profiles.normalize_asset_workflow_type(
+            asset_workflow_type
+        )
+        capabilities = workflow_profiles.asset_capabilities(asset_workflow_type)
+        is_anima = capabilities["anima"]
+        is_dual = capabilities["dual"]
         q_tags = self._tags.get("quality", [])
         c_tags = self._tags.get("composition", [])
         app_tags = self._tags.get("appearances", {}).get(appearance, [])
@@ -1055,8 +1063,8 @@ class AssetMode:
         anima_q_tags = self._tags.get("anima_quality", [])
         anima_n_tags = self._tags.get("anima_negative", [])
 
-        if asset_workflow_type == "anima":
-            # ANIMA 모드: 블럭 분리 프롬프트 조립
+        if is_anima:
+            # ANIMA 계열: ANIMA 블럭을 만들고, dual 프로필만 ILXL 블럭을 덧붙인다.
             anima_quality_parts = [t.strip() for t in anima_q_tags if t.strip()]
             anima_artist_parts = [t.strip() for t in anima_artist_tags if t.strip()]
             sdxl_quality_parts = [t.strip() for t in q_tags if t.strip()]
@@ -1120,13 +1128,14 @@ class AssetMode:
             positive = "[ANIMA_QUALITY]\n" + ", ".join(anima_quality_parts)
             positive += "\n[ANIMA_ARTIST]\n" + ", ".join(anima_artist_parts)
             positive += "\n[ANIMA]\n" + ", ".join(section1_rest)
-            positive += "\n[SDXL_QUALITY]\n" + ", ".join(sdxl_quality_parts)
-            positive += "\n[SDXL_ARTIST]\n" + ", ".join(sdxl_artist_parts)
-            positive += "\n[SDXL]"
-            positive += "\n" + ", ".join(section2_rest)
+            if is_dual:
+                positive += "\n[SDXL_QUALITY]\n" + ", ".join(sdxl_quality_parts)
+                positive += "\n[SDXL_ARTIST]\n" + ", ".join(sdxl_artist_parts)
+                positive += "\n[SDXL]"
+                positive += "\n" + ", ".join(section2_rest)
             positive += "\n[CHAR_LIST]\nasset_mode"
         else:
-            # 일반 모드: 기존 로직 유지
+            # ILXL 모드: 기존 평탄 프롬프트 유지
             positive_parts = []
             # 1. LoRA 트리거 워드
             if lora_trigger_words.strip():
@@ -1161,17 +1170,31 @@ class AssetMode:
 
             positive = ", ".join(positive_parts)
 
-        positive += f"\n[FACE_ID_ACTIVATE]\n{'true' if face_id_enabled else 'false'}"
+        ipadapter_enabled = capabilities["ipadapter"]
+        if not ipadapter_enabled and (face_id_enabled or style_ref_enabled):
+            print(
+                f"[ASSET] {asset_workflow_type}에서 지원하지 않는 IPAdapter 옵션 무시: "
+                f"face_id={face_id_enabled}, style_ref={style_ref_enabled}"
+            )
+        positive += f"\n[FACE_ID_ACTIVATE]\n{'true' if face_id_enabled and ipadapter_enabled else 'false'}"
         positive += f"\n[FACE_ID_STR]\n{face_id_strength}"
         positive += f"\n[FACE_ID_DIR]\n{face_id_dir or 'soya_char_ref/fallback'}"
-        positive += f"\n[STYLE_ACTIVATE]\n{'true' if style_ref_enabled else 'false'}"
+        positive += f"\n[STYLE_ACTIVATE]\n{'true' if style_ref_enabled and ipadapter_enabled else 'false'}"
         positive += f"\n[STYLE_STR]\n{style_ref_strength}"
         positive += f"\n[STYLE_DIR]\n{style_ref_dir or 'soya_style_ref/fallback'}"
         positive += f"\n[FACE_CROP_TOP]\n{face_crop_top}"
         positive += f"\n[FACE_CROP_BOTTOM]\n{face_crop_bottom}"
         positive += f"\n[LORA_ACTIVATE]\n{'true' if lora_activate else 'false'}"
         positive += f"\n[LORA_DATA]\n{lora_data or '{"list":[]}'}"
-        positive += f"\n[FACE_LORA_ACTIVATE]\n{'true' if face_lora_activate else 'false'}"
+        effective_face_lora_activate = bool(
+            face_lora_activate and capabilities["face_lora"]
+        )
+        if face_lora_activate and not capabilities["face_lora"]:
+            print(f"[ASSET] {asset_workflow_type}에서 지원하지 않는 Face LoRA 옵션 무시")
+        positive += (
+            f"\n[FACE_LORA_ACTIVATE]\n"
+            f"{'true' if effective_face_lora_activate else 'false'}"
+        )
         # FACE_LORA_DATA에 CHAR 필드 추가
         if face_lora_data:
             try:
@@ -1184,37 +1207,42 @@ class AssetMode:
         else:
             positive += f"\n[FACE_LORA_DATA]\n{'{\"list\":[]}'}"
         # Style(그림체) LoRA — ANIMA 모드에서만 별도 토큰(분리 로더) 출력.
-        # 일반(ILXL) 모드는 스타일 LoRA가 LORA_DATA에 흡수되므로 이 토큰들을 출력하지 않음.
-        if asset_workflow_type == "anima":
+        # ILXL 모드는 스타일 LoRA가 LORA_DATA에 흡수되므로 이 토큰들을 출력하지 않음.
+        if is_anima:
             positive += f"\n[STYLE_LORA_ACTIVATE]\n{'true' if style_lora_activate else 'false'}"
             positive += f"\n[STYLE_LORA_DATA]\n{style_lora_data or '{"list":[]}'}"
         positive += f"\n[CHAR_FACE_TAG_INFORM]\n{char_face_tag_inform or '{"list":[]}'}"
-        positive += f"\n[POSE_ACTIVATE]\n{'true' if pose_enabled else 'false'}"
-        if pose_enabled and pose_data:
+        effective_pose_enabled = bool(pose_enabled and capabilities["pose"])
+        if pose_enabled and not capabilities["pose"]:
+            print(f"[ASSET] {asset_workflow_type}에서 지원하지 않는 포즈 옵션 무시")
+        positive += f"\n[POSE_ACTIVATE]\n{'true' if effective_pose_enabled else 'false'}"
+        if effective_pose_enabled and pose_data:
             positive += f"\n[POSE_DATA]\n{json.dumps(pose_data, ensure_ascii=False)}"
         else:
             positive += f"\n[POSE_DATA]\n{json.dumps(DEFAULT_POSE_DATA, ensure_ascii=False)}"
-        positive += f"\n[HRF_ACTIVATE]\n{'true' if hrf_activate else 'false'}"
-        if asset_workflow_type == "anima":
+        positive += f"\n[HRF_ACTIVATE]\n{'true' if hrf_activate and capabilities['ilxl'] else 'false'}"
+        if is_anima:
             positive += f"\n[ANIMA_HRF_ACTIVATE]\n{'true' if anima_hrf_activate else 'false'}"
         positive += f"\n[HRF_SIZE]\n{hrf_size}"
         positive += f"\n[HRF_RESTORE_SIZE]\n{'true' if hrf_restore_size else 'false'}"
         positive += f"\n[HRF_CONTROL_NET]\n{'true' if hrf_control_net else 'false'}"
         positive += f"\n[IMG_W]\n{img_w}"
         positive += f"\n[IMG_H]\n{img_h}"
-        positive += f"\n[ANIMA_FD_ACTIVATE]\n{'true' if anima_fd_activate else 'false'}"
-        positive += f"\n[ANIMA_HD_ACTIVATE]\n{'true' if anima_hd_activate else 'false'}"
-        positive += f"\n[ANIMA_ED_ACTIVATE]\n{'true' if anima_ed_activate else 'false'}"
-        positive += f"\n[FD_ACTIVATE]\n{'true' if fd_activate else 'false'}"
-        positive += f"\n[HD_ACTIVATE]\n{'true' if hd_activate else 'false'}"
-        positive += f"\n[ED_ACTIVATE]\n{'true' if ed_activate else 'false'}"
-        positive += f"\n[SEED]\n{seed}"
+        positive += f"\n[ANIMA_FD_ACTIVATE]\n{'true' if anima_fd_activate and is_anima else 'false'}"
+        positive += f"\n[ANIMA_HD_ACTIVATE]\n{'true' if anima_hd_activate and is_anima else 'false'}"
+        positive += f"\n[ANIMA_ED_ACTIVATE]\n{'true' if anima_ed_activate and is_anima else 'false'}"
+        positive += f"\n[FD_ACTIVATE]\n{'true' if fd_activate and capabilities['ilxl'] else 'false'}"
+        positive += f"\n[HD_ACTIVATE]\n{'true' if hd_activate and capabilities['ilxl'] else 'false'}"
+        positive += f"\n[ED_ACTIVATE]\n{'true' if ed_activate and capabilities['ilxl'] else 'false'}"
+        positive += f"\n[SEED]\n{seed if capabilities['seed'] else -1}"
         positive += "\n[END]"
 
-        if asset_workflow_type == "anima":
+        if is_anima:
             anima_neg_parts = [t.strip() for t in cn_tags if t.strip()] + [t.strip() for t in anima_n_tags if t.strip()]
-            sdxl_neg_parts = [t.strip() for t in cn_tags if t.strip()] + [t.strip() for t in n_tags if t.strip()]
-            negative = ", ".join(anima_neg_parts) + "\n[SDXL]\n" + ", ".join(sdxl_neg_parts)
+            negative = ", ".join(anima_neg_parts)
+            if is_dual:
+                sdxl_neg_parts = [t.strip() for t in cn_tags if t.strip()] + [t.strip() for t in n_tags if t.strip()]
+                negative += "\n[SDXL]\n" + ", ".join(sdxl_neg_parts)
         else:
             negative_parts = [t.strip() for t in cn_tags if t.strip()] + [t.strip() for t in n_tags if t.strip()]
             negative = ", ".join(negative_parts)
@@ -1408,7 +1436,7 @@ class AssetMode:
         natural_language: str = "",
         lora_trigger_words: str = "",
         anima_artist_preset: str = "",
-        asset_workflow_type: str = "regular",
+        asset_workflow_type: str = workflow_profiles.ASSET_ILXL,
         anima_lora_trigger_words: str = "",
         sdxl_lora_trigger_words: str = "",
         positive_prompt: str = None,
@@ -1468,7 +1496,7 @@ class AssetMode:
         natural_language: str,
         lora_trigger_words: str,
         anima_artist_preset: str = "",
-        asset_workflow_type: str = "regular",
+        asset_workflow_type: str = workflow_profiles.ASSET_ILXL,
         anima_lora_trigger_words: str = "",
         sdxl_lora_trigger_words: str = "",
         positive_prompt: str = None,
@@ -1487,10 +1515,22 @@ class AssetMode:
             else outfit
         )
 
-        # ANIMA 모드 시 워크플로우 경로 교체
+        asset_workflow_type = workflow_profiles.normalize_asset_workflow_type(
+            asset_workflow_type
+        )
+        # 선택 에셋 프로필에 맞는 워크플로우 경로로 교체
         saved_workflow_path = self.workflow_source_path
-        if asset_workflow_type == "anima" and self.anima_workflow_source_path:
-            self.workflow_source_path = self.anima_workflow_source_path
+        selected_workflow_path = {
+            workflow_profiles.ASSET_ILXL: self.workflow_source_path,
+            workflow_profiles.ASSET_ANIMA_ILXL: self.anima_workflow_source_path,
+            workflow_profiles.ASSET_ANIMA_ONLY: self.anima_only_workflow_source_path,
+        }[asset_workflow_type]
+        if not selected_workflow_path and asset_workflow_type != workflow_profiles.ASSET_ILXL:
+            error_msg = f"{asset_workflow_type} 에셋 워크플로우 소스 경로가 비어 있음"
+            print(f"[ASSET] {error_msg}")
+            return {"success": False, "error": error_msg}
+        if selected_workflow_path != self.workflow_source_path:
+            self.workflow_source_path = selected_workflow_path
             self._asset_api_workflow = None
             self._asset_hash = ""
         try:
@@ -1679,8 +1719,8 @@ class AssetMode:
                 "storage_outfit": storage_outfit,
             }
         finally:
-            # ANIMA 모드 워크플로우 경로 복원
-            if asset_workflow_type == "anima" and self.anima_workflow_source_path:
+            # 임시 선택 워크플로우 경로 복원
+            if self.workflow_source_path != saved_workflow_path:
                 self.workflow_source_path = saved_workflow_path
 
     # ─── 폴더/이미지 관리 ─────────────────────────────────
@@ -1770,7 +1810,7 @@ class AssetMode:
     ) -> dict:
         """오토매치 비교 이미지의 명시적 우선순위를 반환한다.
 
-        선택 복장의 일반 에셋 대표 이미지를 우선한다. ``include_existing``이
+        선택 복장의 ILXL 에셋 대표 이미지를 우선한다. ``include_existing``이
         활성화되면 외모/복장 프리셋과 무관하게 같은 캐릭터의 다른 일반 복장을
         표정 폴더명으로 탐색하고, 그래도 없을 때만 ``_automatch_defaults``
         분류 이미지를 사용한다.

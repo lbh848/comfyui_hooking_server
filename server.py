@@ -81,6 +81,7 @@ from modes import chansub_service
 from modes import illustration_chat_history
 from modes import illustration_context_pipeline
 from modes import multi_char_mask
+import workflow_profiles
 import importlib.util
 
 # ─── 설정 ───────────────────────────────────────────────
@@ -134,7 +135,13 @@ DEFAULT_CONFIG = {
     "backup_base_dir": "",  # 빈 값이면 WORKFLOW_BACKUP_DIR 사용
     "comfy_input_dir": "",  # ComfyUI input 폴더 경로 (빈값=기본경로)
     "workflow_filename": "",  # 빈 값이면 workflow 폴더의 첫 번째 json 사용
-    "illustration_provider": "comfy",  # 삽화 공급자: comfy | chansub
+    "illustration_workflow_type": workflow_profiles.ILLUST_V3,
+    "illustration_workflow_source_paths": {
+        workflow_profiles.ILLUST_V1: "",
+        workflow_profiles.ILLUST_V3: "",
+        workflow_profiles.ILLUST_V3_ANIMA: "",
+    },
+    "illustration_provider": "comfy",  # 하위 호환 파생값: comfy | chansub | hybrid
     "chansub_workflow_type": "anima",  # 챈섭 삽화 프롬프트 계열: anima | sdxl
     "chansub_max_retries": 2,  # 챈섭 일시적 실패 시 재시도 횟수 (최초 요청 제외)
     "chansub_retry_delay_sec": 3.0,  # 챈섭 재시도 사이의 설정 대기 시간(초)
@@ -276,8 +283,9 @@ DEFAULT_CONFIG = {
     "enhance_mode_enabled": False,  # 프롬프트 강화 모드 활성화 여부
     "enhance_prompt_file": "",  # 프롬프트 강화 파일명 (customprompt/)
     "asset_workflow_source_path": "",  # 에셋 생성 워크플로우 원본 소스 전체 경로
-    "anima_asset_workflow_source_path": "",  # ANIMA 에셋 생성 워크플로우 원본 소스 전체 경로
-    "asset_workflow_type": "regular",  # 에셋 워크플로우 타입: "regular" | "anima"
+    "anima_asset_workflow_source_path": "",  # ANIMA+ILXL 에셋 생성 워크플로우 원본 소스 전체 경로
+    "anima_only_asset_workflow_source_path": "",  # ONLY ANIMA 에셋 생성 워크플로우 원본 소스 전체 경로
+    "asset_workflow_type": workflow_profiles.ASSET_ILXL,
     "tag_analysis_workflow_source_path": "",  # 태그 분석 워크플로우 원본 소스 전체 경로
     "asset_tag_analysis_workflow_source_path": "",  # 폴백 태그 분석 워크플로우 원본 소스 전체 경로 (primary 결과가 비었을 때, 예: 얼굴 미감지)
     "use_builtin_tagger": False,  # 내장 WD Tagger(CPU ONNX) 사용 여부. true면 모든 태그 분석 경로가 ComfyUI 대신 내장 tagger 사용
@@ -492,6 +500,7 @@ def load_config() -> dict:
                     merged.pop(legacy_key, None)
                 # 레거시 서비스(openai-compat/customapi) -> openai 마이그레이션
                 llm_service.migrate_config(merged)
+                workflow_profiles.normalize_workflow_config(merged)
                 return merged
         except Exception as e:
             print(f"[CONFIG] 설정 파일 로드 실패: {e}")
@@ -499,7 +508,7 @@ def load_config() -> dict:
         # config.json이 없으면 기본값으로 자동 생성
         print(f"[CONFIG] config.json이 없습니다. 기본값으로 생성합니다.")
         save_config(DEFAULT_CONFIG.copy())
-    return DEFAULT_CONFIG.copy()
+    return workflow_profiles.normalize_workflow_config(copy.deepcopy(DEFAULT_CONFIG))
 
 
 def save_config(config: dict):
@@ -568,7 +577,10 @@ print(f"[ENHANCE_MODE] 초기화: enabled={enhance_mode.enabled}, prompt_file={e
 # ─── 에셋 생성 모드 초기화 ───
 asset_mode.workflow_source_path = app_config.get("asset_workflow_source_path", "")
 asset_mode.anima_workflow_source_path = app_config.get("anima_asset_workflow_source_path", "")
-asset_mode.workflow_type = app_config.get("asset_workflow_type", "regular")
+asset_mode.anima_only_workflow_source_path = app_config.get("anima_only_asset_workflow_source_path", "")
+asset_mode.workflow_type = workflow_profiles.normalize_asset_workflow_type(
+    app_config.get("asset_workflow_type")
+)
 asset_mode.mode_log_func = mode_logger.log
 asset_mode.load_tags()
 print(f"[ASSET_MODE] 초기화: source={asset_mode.workflow_source_path}, characters={len(asset_mode.list_characters())}")
@@ -601,9 +613,19 @@ pose_mode.mode_log_func = mode_logger.log
 pose_mode.load()
 print(f"[POSE_MODE] 초기화: poses={len(pose_mode.list_poses())}")
 
-def get_comfy_workflow_source_path() -> str:
-    """현재 설정된 ComfyUI 워크플로우 소스 경로를 반환한다."""
-    return app_config.get("comfy_workflow_source_path", DEFAULT_CONFIG["comfy_workflow_source_path"])
+def get_comfy_workflow_source_path(workflow_type: str | None = None) -> str:
+    """선택 프로필에 대응하는 ComfyUI 워크플로우 소스 경로를 반환한다."""
+    profile = workflow_type or app_config.get("illustration_workflow_type")
+    local_profile = workflow_profiles.illustration_local_profile(profile)
+    if local_profile:
+        return workflow_profiles.active_illustration_source_path(app_config, profile)
+    return str(
+        app_config.get(
+            "comfy_workflow_source_path",
+            DEFAULT_CONFIG["comfy_workflow_source_path"],
+        )
+        or ""
+    )
 
 
 def get_backup_base_dir() -> str:
@@ -724,10 +746,24 @@ def cleanup_logs(keep=3):
 
 
 # ─── 워크플로우 관리 ──────────────────────────────────────
-def get_workflow_file():
-    """workflow 폴더에서 첫 번째 JSON 파일을 찾는다."""
+def get_workflow_file(workflow_type: str | None = None):
+    """선택된 외부 소스를 우선 사용하고 레거시 workflow 폴더를 폴백한다."""
+    source_path = get_comfy_workflow_source_path(workflow_type)
+    if source_path:
+        if os.path.isfile(source_path):
+            return source_path
+        print(
+            f"[WORKFLOW] 선택된 삽화 워크플로우 파일이 없음: "
+            f"profile={workflow_type or app_config.get('illustration_workflow_type')!r}, "
+            f"path={source_path!r}"
+        )
+        return None
     files = sorted(glob.glob(os.path.join(WORKFLOW_DIR, "*.json")))
-    return files[0] if files else None
+    if not files:
+        print(f"[WORKFLOW] 레거시 workflow 폴더에도 JSON 파일이 없음: {WORKFLOW_DIR}")
+        return None
+    print(f"[WORKFLOW] 외부 소스 경로가 비어 레거시 파일 사용: {files[0]}")
+    return files[0]
 
 
 def compute_file_hash(filepath: str) -> str:
@@ -805,11 +841,11 @@ def analyze_conversion(original_wf: dict, api_wf: dict) -> dict:
     return info
 
 
-async def update_workflow_if_needed() -> bool:
+async def update_workflow_if_needed(workflow_type: str | None = None) -> bool:
     """워크플로우 해시를 비교하고, 필요하면 API 형식으로 변환한다."""
     global current_original_workflow, current_api_workflow, current_conversion_info
 
-    wf_file = get_workflow_file()
+    wf_file = get_workflow_file(workflow_type)
     if not wf_file:
         print("[WORKFLOW] ⚠ workflow 폴더에 JSON 파일 없음")
         return False
@@ -1007,37 +1043,46 @@ def _load_word_rules_snapshot(bot_name: str) -> list[dict]:
 def _capture_illustration_runtime_snapshot(config: dict | None = None) -> dict:
     """삽화 요청 시작 시 설정·선택 봇·단어 규칙을 하나의 값으로 고정한다."""
     config_snapshot = copy.deepcopy(app_config if config is None else config)
+    workflow_profiles.normalize_workflow_config(config_snapshot)
     bot_name = str(config_snapshot.get("bot_selected") or "")
-    provider = str(
-        config_snapshot.get("illustration_provider", "comfy") or "comfy"
-    ).strip().lower()
+    illustration_workflow_type = workflow_profiles.normalize_illustration_workflow_type(
+        config_snapshot.get("illustration_workflow_type")
+    )
+    provider = workflow_profiles.illustration_provider_mode(illustration_workflow_type)
     if not bot_name:
         provider = "comfy"
-    if provider not in ("comfy", "chansub"):
+    if provider not in ("comfy", "chansub", "hybrid"):
         print(
             f"[ILLUST] 런타임 스냅샷의 공급자가 올바르지 않음: "
             f"provider={provider!r}, comfy 사용"
         )
         provider = "comfy"
 
-    workflow_type = str(
+    chansub_workflow_type = str(
         config_snapshot.get("chansub_workflow_type", "anima") or "anima"
     ).strip().lower()
-    if workflow_type not in ("anima", "sdxl"):
+    if illustration_workflow_type == workflow_profiles.ILLUST_CHANSUB_V3_ANIMA:
+        chansub_workflow_type = "anima"
+    elif chansub_workflow_type not in ("anima", "sdxl"):
         print(
             f"[ILLUST] 런타임 스냅샷의 챈섭 워크플로우가 올바르지 않음: "
-            f"workflow={workflow_type!r}, anima 사용"
+            f"workflow={chansub_workflow_type!r}, anima 사용"
         )
-        workflow_type = "anima"
+        chansub_workflow_type = "anima"
 
     rules = _load_word_rules_snapshot(bot_name)
+    raw_toggles = copy.deepcopy(config_snapshot.get("illustration_context_toggles") or {})
+    raw_toggles["prompt_format"] = workflow_profiles.illustration_prompt_format(
+        illustration_workflow_type
+    )
     toggles = illustration_context_pipeline.merged_toggles(
-        copy.deepcopy(config_snapshot.get("illustration_context_toggles") or {})
+        raw_toggles
     )
     snapshot = {
         "bot_name": bot_name,
         "provider": provider,
-        "chansub_workflow_type": workflow_type,
+        "illustration_workflow_type": illustration_workflow_type,
+        "chansub_workflow_type": chansub_workflow_type,
         "clamp_enabled": bool(config_snapshot.get("clamp_enabled", False)),
         "clamp_value": config_snapshot.get("clamp_value", 1.2),
         "illustration_context_toggles": toggles,
@@ -1045,6 +1090,7 @@ def _capture_illustration_runtime_snapshot(config: dict | None = None) -> dict:
     }
     print(
         f"[ILLUST] 런타임 스냅샷 생성: bot={bot_name!r}, provider={provider}, "
+        f"workflow={illustration_workflow_type}, "
         f"backtranslate_parallel={toggles.get('call1_backtranslate_max_concurrency')!r}, "
         f"call1_parallel={toggles.get('call1_parallel_max_concurrency')!r}, "
         f"call2_parallel={toggles.get('call2_parallel_max_concurrency')!r}, "
@@ -1746,6 +1792,7 @@ async def generate_image_with_prompt(
     height: int | None = None,
     chansub_quality_tag_start: int = 0,
     chansub_quality_tag_count: int = 0,
+    illustration_workflow_type: str | None = None,
 ):
     """선택 공급자로 이미지를 생성한다.
 
@@ -1786,7 +1833,7 @@ async def generate_image_with_prompt(
         print(f"[GEN] 공급자 선택 실패: {message}")
         return None, message
 
-    await update_workflow_if_needed()
+    await update_workflow_if_needed(illustration_workflow_type)
     if current_api_workflow is None:
         return None, "API 워크플로우 없음"
 
@@ -2303,6 +2350,19 @@ async def _do_restore_workflow():
         return
     prompt_file = app_config.get("restore_prompt_file", "")
     if not prompt_file:
+        print("[RESTORE] 복원 프롬프트 파일이 비어 있어 자동 복원 스킵")
+        return
+    illustration_workflow_type = workflow_profiles.normalize_illustration_workflow_type(
+        app_config.get("illustration_workflow_type")
+    )
+    if not workflow_profiles.is_restore_prompt_compatible(
+        prompt_file,
+        illustration_workflow_type,
+    ):
+        print(
+            f"[RESTORE] 호환되지 않는 복원 프롬프트 스킵: "
+            f"workflow={illustration_workflow_type}, prompt={prompt_file!r}"
+        )
         return
 
     filepath = os.path.join(CUSTOMPROMPT_DIR, prompt_file)
@@ -2329,14 +2389,86 @@ async def _do_restore_workflow():
             return
 
         print(f"[RESTORE] 워크플로우 복원 실행: positive='{positive}'")
-        img_bytes, error = await generate_image_with_prompt(positive, negative)
+        # 하이브리드 자동 복원은 로컬 V3 ONLY ANIMA 워크플로우를 실행해
+        # ComfyUI 가중치를 다시 올린다. 원격 챈섭은 VRAM 복원 대상이 아니다.
+        restore_provider = workflow_profiles.illustration_providers(
+            illustration_workflow_type
+        )[0]
+        bot_name = str(app_config.get("bot_selected") or "")
+        if bot_name:
+            # V3/챈섭 복원 프롬프트도 일반 삽화와 동일한 섹션 파싱·빌더를 거쳐야 한다.
+            # 현재 GPU 큐 콜백 안에서 실행되므로 새 GPU 항목을 기다리지 않고 같은
+            # 코루틴에서 process_prompt를 호출해 교착 없이 순차 실행한다.
+            restore_prompt_id = f"auto-restore-{uuid.uuid4().hex[:8]}"
+            restore_prompt_data = {
+                "restore_pos": {
+                    "_meta": {"title": "긍정프롬프트"},
+                    "inputs": {"value": positive},
+                    "class_type": "STRING",
+                },
+                "restore_neg": {
+                    "_meta": {"title": "부정프롬프트"},
+                    "inputs": {"value": negative},
+                    "class_type": "STRING",
+                },
+            }
+            prompts[restore_prompt_id] = {
+                "status": "running",
+                "prompt": restore_prompt_data,
+                "client_id": "",
+                "extra_data": {},
+                "outputs": {},
+                "filename": None,
+                "save_node_id": find_save_image_node(restore_prompt_data),
+                "image_bytes": None,
+                "timestamp": time.time(),
+            }
+            await process_prompt(
+                restore_prompt_id,
+                restore_prompt_data,
+                {
+                    "illustration_provider": restore_provider,
+                    "illustration_gen_method": "자동 복원",
+                },
+            )
+            img_bytes = prompts.get(restore_prompt_id, {}).get("image_bytes")
+            if img_bytes:
+                print(
+                    f"[RESTORE] 삽화 파이프라인 복원 완료 "
+                    f"(이미지 {len(img_bytes):,}B, provider={restore_provider})"
+                )
+                await notify_frontend(
+                    "restore_image_saved",
+                    {"positive": positive[:100]},
+                )
+            else:
+                print(
+                    f"[RESTORE] 삽화 파이프라인 복원 결과가 비어 있음: "
+                    f"prompt_id={restore_prompt_id}, provider={restore_provider}"
+                )
+            return
+
+        img_bytes, error = await generate_image_with_prompt(
+            positive,
+            negative,
+            provider=restore_provider,
+            illustration_workflow_type=illustration_workflow_type,
+        )
         if img_bytes:
             print(f"[RESTORE] 복원 완료 (이미지 {len(img_bytes):,}B)")
-            # 백업에 저장하여 대시보드에 구분자로 표시 (생성 방법 딱지로 '자동 복원' 부여, bot_name 없음)
-            await save_backup(img_bytes, "restore", positive, negative, gen_method="자동 복원")
+            await save_backup(
+                img_bytes,
+                "restore",
+                positive,
+                negative,
+                gen_method="자동 복원",
+            )
             await notify_frontend("restore_image_saved", {"positive": positive[:100]})
         else:
-            print(f"[RESTORE] 복원 실행 결과: {error}")
+            print(
+                f"[RESTORE] 복원 실행 결과가 비어 있음: "
+                f"provider={restore_provider}, error={error}"
+            )
     except Exception as e:
         print(f"[RESTORE] 복원 중 오류: {e}")
         traceback.print_exc()
@@ -2611,17 +2743,27 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
 
         # 단어 기반 규칙 적용 / 삽화 모드 프롬프트 빌딩
         bot_name = str(runtime_snapshot.get("bot_name") or "")
+        illustration_workflow_type = workflow_profiles.normalize_illustration_workflow_type(
+            runtime_snapshot.get("illustration_workflow_type")
+            or app_config.get("illustration_workflow_type")
+        )
         illustration_provider = str(
             raw_body.get("illustration_provider")
             or runtime_snapshot.get("provider", "comfy")
             or "comfy"
         ).strip().lower()
+        if illustration_provider == "hybrid":
+            illustration_provider = workflow_profiles.illustration_provider_for_slot(
+                illustration_workflow_type,
+                raw_body.get("illustration_context_index") or 1,
+            )
         if not bot_name:
             illustration_provider = "comfy"
-        # CALL 파이프라인이 전달한 프롬프트 포맷(v1/v3/chansub). 없으면 V3(일반/수동그리기).
-        prompt_format = str(raw_body.get("illustration_prompt_format") or "v3").strip().lower()
-        if prompt_format not in ("v1", "v3", "chansub"):
-            prompt_format = "v3"
+        # 사용자가 별도 포맷을 선택하지 않는다. 프로필과 실제 실행 공급자가 빌더를 결정한다.
+        prompt_format = workflow_profiles.illustration_prompt_format(
+            illustration_workflow_type,
+            illustration_provider,
+        )
         if illustration_provider not in ("comfy", "chansub"):
             print(f"[ILLUST] 알 수 없는 공급자 {illustration_provider!r}, comfy로 폴백")
             illustration_provider = "comfy"
@@ -3010,6 +3152,7 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
             height=generation_height,
             chansub_quality_tag_start=chansub_quality_tag_start,
             chansub_quality_tag_count=chansub_quality_tag_count,
+            illustration_workflow_type=illustration_workflow_type,
         )
         elapsed_time = time.time() - start_time
 
@@ -3028,7 +3171,9 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
         # 백업 저장 (WebP + 원본 워크플로우 JSON + 변환정보)
         _backup_bot_name = bot_name if bot_name else ""
         # 수동 그리기(prompt_id 'manual-' 접두사)는 생성 방법 딱지 부여 (봇 딱지와 별개 차원)
-        _gen_method = "수동 그리기" if str(prompt_id).startswith("manual-") else ""
+        _gen_method = str(raw_body.get("illustration_gen_method") or "").strip()
+        if not _gen_method and str(prompt_id).startswith("manual-"):
+            _gen_method = "수동 그리기"
         _generation_params = {
             "width": generation_width,
             "height": generation_height,
@@ -3278,6 +3423,9 @@ async def process_illustration_context_queue_item(item) -> dict:
     runtime_snapshot = _capture_illustration_runtime_snapshot()
     active_bot = str(runtime_snapshot.get("bot_name") or "")
     illustration_provider_snapshot = str(runtime_snapshot.get("provider") or "comfy")
+    illustration_workflow_type_snapshot = workflow_profiles.normalize_illustration_workflow_type(
+        runtime_snapshot.get("illustration_workflow_type")
+    )
     illust_toggles = copy.deepcopy(
         runtime_snapshot.get("illustration_context_toggles") or {}
     )
@@ -3376,6 +3524,18 @@ async def process_illustration_context_queue_item(item) -> dict:
         defer_postprocess,
         queue_priority=None,
     ):
+        child_provider = (
+            workflow_profiles.illustration_provider_for_slot(
+                illustration_workflow_type_snapshot,
+                slot_index,
+            )
+            if illustration_provider_snapshot == "hybrid"
+            else illustration_provider_snapshot
+        )
+        child_prompt_format = workflow_profiles.illustration_prompt_format(
+            illustration_workflow_type_snapshot,
+            child_provider,
+        )
         child_id = str(uuid.uuid4())
         child_prompt = copy.deepcopy(prompt_data)
         if not set_prompt_by_title(child_prompt, "긍정프롬프트", descriptor.get("raw_positive", "")):
@@ -3390,6 +3550,9 @@ async def process_illustration_context_queue_item(item) -> dict:
                 f"session={session_id}, slot={descriptor.get('slot')}"
             )
             raise RuntimeError("부정프롬프트 노드를 교체하지 못했습니다")
+        child_runtime_snapshot = copy.deepcopy(runtime_snapshot)
+        child_runtime_snapshot["provider"] = child_provider
+        child_runtime_snapshot["illustration_workflow_type"] = illustration_workflow_type_snapshot
         prompts[child_id] = {
             "status": "running",
             "prompt": child_prompt,
@@ -3400,7 +3563,7 @@ async def process_illustration_context_queue_item(item) -> dict:
             "save_node_id": find_save_image_node(child_prompt),
             "image_bytes": None,
             "timestamp": time.time(),
-            "_illustration_runtime_snapshot": copy.deepcopy(runtime_snapshot),
+            "_illustration_runtime_snapshot": child_runtime_snapshot,
         }
         child_raw_body = {
             "prompt": child_prompt,
@@ -3409,11 +3572,11 @@ async def process_illustration_context_queue_item(item) -> dict:
             "illustration_context": context_value,
             "illustration_context_session_id": session_id,
             "illustration_context_index": slot_index,
-            "illustration_prompt_format": prompt_format,
-            "illustration_provider": illustration_provider_snapshot,
+            "illustration_prompt_format": child_prompt_format,
+            "illustration_provider": child_provider,
             "illustration_defer_postprocess": bool(defer_postprocess),
         }
-        multi_char_context = _multi_char_queue_context(descriptor, prompt_format)
+        multi_char_context = _multi_char_queue_context(descriptor, child_prompt_format)
         if multi_char_context:
             child_raw_body["illustration_multi_char"] = multi_char_context
         if queue_priority is None:
@@ -3426,7 +3589,7 @@ async def process_illustration_context_queue_item(item) -> dict:
                     "prompt_id": child_id,
                     "prompt_data": child_prompt,
                     "raw_body": child_raw_body,
-                    "provider": illustration_provider_snapshot,
+                    "provider": child_provider,
                 },
                 priority=int(queue_priority),
             )
@@ -3441,6 +3604,11 @@ async def process_illustration_context_queue_item(item) -> dict:
             raise
         pair = (child_id, child_item)
         all_child_pairs.append(pair)
+        print(
+            f"[ILLUST_CONTEXT] 하위 이미지 분배: slot={descriptor.get('slot')}, "
+            f"index={slot_index}/{total_count}, provider={child_provider}, "
+            f"format={child_prompt_format}, workflow={illustration_workflow_type_snapshot}"
+        )
         return pair
 
     # 하위 큐 완료를 기다리고 원본 또는 이미 완료된 최종 image bytes를 회수한다.
@@ -4169,10 +4337,14 @@ async def handle_api_illustration_context_toggles(request: web.Request) -> web.R
     """서버가 제어하는 삽화 CALL/출력 토글 조회·저장."""
     try:
         if request.method == "GET":
+            toggles = illustration_context_pipeline.merged_toggles(
+                app_config.get("illustration_context_toggles")
+            )
+            toggles["prompt_format"] = workflow_profiles.illustration_prompt_format(
+                app_config.get("illustration_workflow_type")
+            )
             return web.json_response({
-                "toggles": illustration_context_pipeline.merged_toggles(
-                    app_config.get("illustration_context_toggles")
-                )
+                "toggles": toggles
             })
         body = await request.json()
         raw = body.get("toggles") if isinstance(body, dict) else None
@@ -4180,6 +4352,15 @@ async def handle_api_illustration_context_toggles(request: web.Request) -> web.R
             print(f"[ILLUST_CONTEXT] toggle 저장 body가 잘못됨: {body!r}")
             return web.json_response({"error": "toggles must be object"}, status=400)
         toggles = illustration_context_pipeline.merged_toggles(raw)
+        requested_prompt_format = toggles.get("prompt_format")
+        toggles["prompt_format"] = workflow_profiles.illustration_prompt_format(
+            app_config.get("illustration_workflow_type")
+        )
+        if requested_prompt_format != toggles["prompt_format"]:
+            print(
+                f"[ILLUST_CONTEXT] 사용자 prompt_format 값을 자동 선택값으로 교체: "
+                f"requested={requested_prompt_format!r}, actual={toggles['prompt_format']!r}"
+            )
         app_config["illustration_context_toggles"] = toggles
         save_config(app_config)
         return web.json_response({"status": "ok", "toggles": toggles})
@@ -8083,6 +8264,96 @@ async def handle_api_config(request: web.Request) -> web.Response:
                     traceback.print_exc()
                     return web.json_response({"error": str(e)}, status=400)
 
+            # 새 워크플로우 프로필은 공급자/포맷/경로의 단일 진실 소스다.
+            # 구 프론트엔드가 provider만 보내는 경우에도 명시적으로 이관한다.
+            if "illustration_workflow_type" not in body and "illustration_provider" in body:
+                legacy_provider = str(body.get("illustration_provider") or "").strip().lower()
+                if legacy_provider == "chansub":
+                    body["illustration_workflow_type"] = workflow_profiles.ILLUST_CHANSUB
+                elif legacy_provider == "comfy":
+                    legacy_toggles = body.get("illustration_context_toggles") or {}
+                    body["illustration_workflow_type"] = (
+                        workflow_profiles.ILLUST_V1
+                        if isinstance(legacy_toggles, dict)
+                        and str(legacy_toggles.get("prompt_format") or "").lower() == "v1"
+                        else workflow_profiles.ILLUST_V3
+                    )
+                else:
+                    print(f"[CONFIG] 구 삽화 공급자 저장 거부: {legacy_provider!r}")
+                    return web.json_response(
+                        {"error": "삽화 공급자 값이 올바르지 않습니다."}, status=400
+                    )
+
+            if "illustration_workflow_type" in body:
+                raw_illustration_type = str(
+                    body.get("illustration_workflow_type") or ""
+                ).strip().lower()
+                if raw_illustration_type not in workflow_profiles.ILLUSTRATION_WORKFLOW_TYPES:
+                    print(
+                        f"[CONFIG] 삽화 워크플로우 타입 저장 거부: "
+                        f"{body.get('illustration_workflow_type')!r}"
+                    )
+                    return web.json_response(
+                        {"error": "지원하지 않는 삽화 워크플로우 타입입니다."}, status=400
+                    )
+                body["illustration_workflow_type"] = raw_illustration_type
+
+            if "illustration_workflow_source_paths" in body:
+                source_paths = body.get("illustration_workflow_source_paths")
+                if not isinstance(source_paths, dict):
+                    print(
+                        f"[CONFIG] 삽화 워크플로우 경로 맵 저장 거부: "
+                        f"type={type(source_paths).__name__}"
+                    )
+                    return web.json_response(
+                        {"error": "삽화 워크플로우 경로는 JSON 객체여야 합니다."},
+                        status=400,
+                    )
+                body["illustration_workflow_source_paths"] = {
+                    key: str(source_paths.get(key) or "")
+                    for key in workflow_profiles.ILLUSTRATION_LOCAL_FILENAMES
+                }
+
+            if "asset_workflow_type" in body:
+                raw_asset_type = str(body.get("asset_workflow_type") or "").strip().lower()
+                normalized_asset_type = workflow_profiles.normalize_asset_workflow_type(
+                    raw_asset_type
+                )
+                if (
+                    raw_asset_type not in workflow_profiles.ASSET_WORKFLOW_TYPES
+                    and raw_asset_type not in ("regular", "anima")
+                ):
+                    print(f"[CONFIG] 에셋 워크플로우 타입 저장 거부: {raw_asset_type!r}")
+                    return web.json_response(
+                        {"error": "지원하지 않는 에셋 워크플로우 타입입니다."}, status=400
+                    )
+                body["asset_workflow_type"] = normalized_asset_type
+
+            candidate_config = copy.deepcopy(app_config)
+            for key, value in body.items():
+                if key in DEFAULT_CONFIG:
+                    candidate_config[key] = copy.deepcopy(value)
+            workflow_profiles.normalize_workflow_config(candidate_config)
+            restore_prompt_file = str(candidate_config.get("restore_prompt_file") or "")
+            if not workflow_profiles.is_restore_prompt_compatible(
+                restore_prompt_file,
+                candidate_config["illustration_workflow_type"],
+            ):
+                print(
+                    f"[CONFIG] 복원 프롬프트 호환성 저장 거부: "
+                    f"workflow={candidate_config['illustration_workflow_type']}, "
+                    f"prompt={restore_prompt_file!r}"
+                )
+                return web.json_response(
+                    {
+                        "error": (
+                            f"{restore_prompt_file}은(는) 선택한 삽화 워크플로우와 "
+                            "호환되지 않습니다."
+                        )
+                    },
+                    status=400,
+                )
+
             if "chansub_workflow_type" in body:
                 chansub_workflow_type = str(
                     body.get("chansub_workflow_type") or ""
@@ -8093,7 +8364,7 @@ async def handle_api_config(request: web.Request) -> web.Response:
                         f"{body.get('chansub_workflow_type')!r}"
                     )
                     return web.json_response(
-                        {"error": "챈섭 워크플로우는 ANIMA 또는 SDXL만 선택할 수 있습니다."},
+                        {"error": "챈섭 워크플로우는 ANIMA 또는 ILXL만 선택할 수 있습니다."},
                         status=400,
                     )
                 body["chansub_workflow_type"] = chansub_workflow_type
@@ -8177,6 +8448,7 @@ async def handle_api_config(request: web.Request) -> web.Response:
             for key in body:
                 if key in DEFAULT_CONFIG:
                     app_config[key] = body[key]
+            workflow_profiles.normalize_workflow_config(app_config)
 
             # 삽화 모드는 항상 ON 고정 — 사용자 토글과 무관하게 True 강제
             app_config["bot_mode_enabled"] = True
@@ -8229,8 +8501,16 @@ async def handle_api_config(request: web.Request) -> web.Response:
                 asset_mode.anima_workflow_source_path = str(body["anima_asset_workflow_source_path"])
                 asset_mode._asset_api_workflow = None
                 asset_mode._asset_hash = ""
+            if "anima_only_asset_workflow_source_path" in body:
+                asset_mode.anima_only_workflow_source_path = str(
+                    body["anima_only_asset_workflow_source_path"]
+                )
+                asset_mode._asset_api_workflow = None
+                asset_mode._asset_hash = ""
             if "asset_workflow_type" in body:
-                asset_mode.workflow_type = str(body["asset_workflow_type"])
+                asset_mode.workflow_type = workflow_profiles.normalize_asset_workflow_type(
+                    body["asset_workflow_type"]
+                )
 
             # 에셋툴 모드 설정 업데이트
             if "tag_analysis_workflow_source_path" in body:
@@ -8325,7 +8605,24 @@ async def handle_api_restore_manual_draw(request: web.Request) -> web.Response:
     bot이 선택되어 있으면(삽화 모드는 항상 ON) illustration 큐로 들어가 동일한 파이프라인을 탄다."""
     prompt_file = app_config.get("restore_prompt_file", "")
     if not prompt_file:
+        print("[RESTORE_MANUAL] 복원 프롬프트 파일이 지정되지 않음")
         return web.json_response({"error": "복원 프롬프트 파일이 지정되지 않았습니다"}, status=400)
+
+    illustration_workflow_type = workflow_profiles.normalize_illustration_workflow_type(
+        app_config.get("illustration_workflow_type")
+    )
+    if not workflow_profiles.is_restore_prompt_compatible(
+        prompt_file,
+        illustration_workflow_type,
+    ):
+        print(
+            f"[RESTORE_MANUAL] 호환되지 않는 복원 프롬프트 실행 거부: "
+            f"workflow={illustration_workflow_type}, prompt={prompt_file!r}"
+        )
+        return web.json_response(
+            {"error": "선택한 삽화 워크플로우와 호환되지 않는 복원 프롬프트입니다."},
+            status=400,
+        )
 
     filepath = os.path.join(CUSTOMPROMPT_DIR, prompt_file)
     if not os.path.isfile(filepath):
@@ -8383,6 +8680,9 @@ async def handle_api_restore_manual_draw(request: web.Request) -> web.Response:
 
         # 삽화 모드(항상 ON): bot 선택 시 illustration 큐로 동일 파이프라인 타기
         if bot_name:
+            restore_provider = workflow_profiles.illustration_providers(
+                illustration_workflow_type
+            )[0]
             prompt_id = f"manual-{uuid.uuid4().hex[:8]}"
             prompt_data = {
                 "manual_pos": {
@@ -8411,7 +8711,14 @@ async def handle_api_restore_manual_draw(request: web.Request) -> web.Response:
             print(f"[RESTORE_MANUAL] 삽화 모드 큐 등록: {_label}")
             asyncio.create_task(queue_manager.add_item(
                 "illustration", _label,
-                {"prompt_id": prompt_id, "prompt_data": prompt_data, "raw_body": {}},
+                {
+                    "prompt_id": prompt_id,
+                    "prompt_data": prompt_data,
+                    "raw_body": {
+                        "illustration_provider": restore_provider,
+                        "illustration_gen_method": "수동 복원",
+                    },
+                },
                 priority=0,
             ))
         else:
@@ -8479,7 +8786,23 @@ async def handle_api_customprompt_files(request: web.Request) -> web.Response:
     for f in sorted(os.listdir(CUSTOMPROMPT_DIR)):
         if f.endswith(".py") and not f.startswith("_"):
             files.append(f)
-    return web.json_response({"files": files})
+    workflow_type = workflow_profiles.normalize_illustration_workflow_type(
+        app_config.get("illustration_workflow_type")
+    )
+    compatible_restore_files = workflow_profiles.compatible_restore_prompt_files(
+        workflow_type,
+        files,
+    )
+    return web.json_response({
+        "files": files,
+        "illustration_workflow_type": workflow_type,
+        "restore_family": workflow_profiles.restore_family(workflow_type),
+        "compatible_restore_files": compatible_restore_files,
+        "restore_compatibility": {
+            filename: sorted(families)
+            for filename, families in workflow_profiles.RESTORE_PROMPT_COMPATIBILITY.items()
+        },
+    })
 
 
 _llm_lock = asyncio.Lock()
@@ -9690,7 +10013,10 @@ async def handle_api_asset_mode_generate(request: web.Request) -> web.Response:
             natural_language=body.get("natural_language", ""),
             lora_trigger_words=body.get("lora_trigger_words", ""),
             anima_artist_preset=body.get("anima_artist_preset", ""),
-            asset_workflow_type=body.get("asset_workflow_type", "regular"),
+            asset_workflow_type=(
+                body.get("asset_workflow_type")
+                or app_config.get("asset_workflow_type", workflow_profiles.ASSET_ILXL)
+            ),
             anima_lora_trigger_words=body.get("anima_lora_trigger_words", ""),
             sdxl_lora_trigger_words=body.get("sdxl_lora_trigger_words", ""),
             storage_group=body.get("storage_group", ""),

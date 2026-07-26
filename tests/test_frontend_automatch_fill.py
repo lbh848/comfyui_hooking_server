@@ -39,11 +39,12 @@ def test_automatch_generation_uses_separate_storage_and_source_badges():
 def test_fill_worker_shows_model_specific_controls_and_existing_asset_option():
     source = _frontend_source()
 
-    assert 'id="at-fill-mode-badge">SDXL<' in source
+    assert 'id="at-fill-mode-badge">ILXL<' in source
     assert 'data-at-availability="anima"' in source
     assert 'data-at-availability="sdxl-only"' in source
     assert "ANIMA 전용" in source
-    assert "SDXL 전용" in source
+    assert "ILXL" in source
+    assert 'data-at-availability="ipadapter"' in source
     assert 'id="at-fill-use-existing" checked' in source
     assert "function atApplyFillWorkflowAvailability()" in source
 
@@ -52,7 +53,8 @@ def test_hires_details_group_is_disabled_until_a_hires_mode_is_enabled():
     source = _frontend_source()
 
     assert 'class="at-model-option-group at-model-control" id="at-fill-hrf-options"' in source
-    assert "const enabled = !!atFillSlot.hrf_sdxl || (isAnima && !!atFillSlot.hrf_anima);" in source
+    assert "(capabilities.ilxl && !!atFillSlot.hrf_sdxl)" in source
+    assert "(capabilities.anima && !!atFillSlot.hrf_anima)" in source
     assert "container.classList.toggle('is-unavailable', !enabled);" in source
     assert "container.setAttribute('aria-disabled', enabled ? 'false' : 'true');" in source
     assert "control.disabled = !enabled" in source

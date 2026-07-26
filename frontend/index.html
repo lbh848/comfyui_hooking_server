@@ -1354,7 +1354,12 @@
         .illust-workflow-option {
             transition: opacity 0.18s ease, filter 0.18s ease;
         }
-        .illust-workflow-option.disabled {
+        .illust-workflow-option.disabled,
+        .illust-workflow-option.v1-disabled {
+            opacity: 0.38;
+            filter: grayscale(1);
+        }
+        .illust-capability-unavailable {
             opacity: 0.38;
             filter: grayscale(1);
         }
@@ -5622,14 +5627,14 @@
                                 <button onclick="openIllustTagEditorModal()" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:3px 10px; border-radius:4px; cursor:pointer; font-size:0.7rem;">태그 편집</button>
                             </div>
                             <div class="illust-workflow-option" data-chansub-workflow="sdxl" style="margin-top:6px;">
-                                <div style="font-size:0.7rem; color:var(--text2); margin-bottom:2px;">SDXL 아티스트 프리셋</div>
+                                <div style="font-size:0.7rem; color:var(--text2); margin-bottom:2px;">ILXL 아티스트 프리셋</div>
                                 <select id="illust-sdxl-artist-preset" onchange="saveIllustSettings(); renderIllustPresetTags('illust-sdxl-artist-preset','illust-sdxl-artist-tags','artist_presets')" style="width:100%; padding:3px 6px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.8rem;">
                                     <option value="">-- 없음 --</option>
                                 </select>
                                 <div id="illust-sdxl-artist-tags" style="display:flex; flex-wrap:wrap; gap:3px; margin-top:4px;"></div>
                             </div>
                             <div class="illust-workflow-option" data-chansub-workflow="sdxl" style="margin-top:6px;">
-                                <div style="font-size:0.7rem; color:var(--text2); margin-bottom:2px;">SDXL 품질 프리셋</div>
+                                <div style="font-size:0.7rem; color:var(--text2); margin-bottom:2px;">ILXL 품질 프리셋</div>
                                 <select id="illust-sdxl-quality-preset" onchange="saveIllustSettings(); renderIllustPresetTags('illust-sdxl-quality-preset','illust-sdxl-quality-tags','quality_presets')" style="width:100%; padding:3px 6px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.8rem;">
                                     <option value="">-- 없음 --</option>
                                 </select>
@@ -5651,7 +5656,7 @@
                             </div>
                             <hr style="border:none; border-top:1px dashed var(--border); margin:8px 0;">
                             <div class="illust-workflow-option" data-chansub-workflow="sdxl" style="margin-top:6px;">
-                                <div style="font-size:0.7rem; color:var(--text2); margin-bottom:2px;">SDXL 부정 프리셋</div>
+                                <div style="font-size:0.7rem; color:var(--text2); margin-bottom:2px;">ILXL 부정 프리셋</div>
                                 <select id="illust-sdxl-negative-preset" onchange="saveIllustSettings(); renderIllustPresetTags('illust-sdxl-negative-preset','illust-sdxl-negative-tags','negative_presets')" style="width:100%; padding:3px 6px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.8rem;">
                                     <option value="">-- 없음 --</option>
                                 </select>
@@ -5682,7 +5687,7 @@
                                     <span class="toggle-slider"></span>
                                 </label>
                             </div>
-                            <div style="display:flex; align-items:center; gap:6px; margin-top:6px;">
+                            <div data-illust-capability="ilxl" style="display:flex; align-items:center; gap:6px; margin-top:6px;">
                                 <span class="illust-chip label-chip">HIRES FIX</span>
                                 <label class="toggle-switch" style="transform:scale(0.8);">
                                     <input type="checkbox" id="illust-hrf-toggle" onchange="saveIllustSettings()">
@@ -5690,7 +5695,7 @@
                                 </label>
                                 <span id="illust-hrf-status" class="toggle-status off" style="font-size:0.7rem;">OFF</span>
                             </div>
-                            <div style="display:flex; align-items:center; gap:6px; margin-top:4px;">
+                            <div data-illust-capability="anima" style="display:flex; align-items:center; gap:6px; margin-top:4px;">
                                 <span class="illust-chip label-chip">ANIMA HIRES FIX</span>
                                 <label class="toggle-switch" style="transform:scale(0.8);">
                                     <input type="checkbox" id="illust-anima-hrf-toggle" onchange="saveIllustSettings()">
@@ -5706,7 +5711,7 @@
                                  <input type="number" id="illust-img-h" value="756" min="256" max="4096" step="8" onchange="saveIllustSettings()" style="width:58px; padding:2px 4px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.7rem; text-align:center;">
                              </div>
                              <fieldset id="illust-local-advanced-after" style="border:0; margin:0; padding:0; min-width:0;">
-                             <div style="display:flex; align-items:center; gap:6px; margin-top:6px;">
+                             <div data-illust-capability="ipadapter" style="display:flex; align-items:center; gap:6px; margin-top:6px;">
                                 <span class="illust-chip label-chip">FACE-IPAdapter</span>
                                 <label class="toggle-switch" style="transform:scale(0.8);">
                                     <input type="checkbox" id="illust-face-id-toggle" onchange="saveIllustSettings()">
@@ -5714,15 +5719,15 @@
                                 </label>
                                 <span id="illust-face-id-status" class="toggle-status off" style="font-size:0.7rem;">OFF</span>
                             </div>
-                            <div id="illust-face-id-options" style="display:none; margin-top:4px; padding-left:8px;">
+                            <div id="illust-face-id-options" data-illust-capability="ipadapter" style="display:none; margin-top:4px; padding-left:8px;">
                                 <div style="display:flex; align-items:center; gap:6px;">
                                     <span class="illust-chip label-chip">강도</span>
                                     <input type="range" id="illust-face-id-str" min="0" max="1" step="0.01" value="0.55" oninput="document.getElementById('illust-face-id-str-val').textContent=this.value; saveIllustSettings()" style="flex:1;">
                                     <span id="illust-face-id-str-val" class="illust-chip value-chip">0.55</span>
                                 </div>
                             </div>
-                            <div style="display:flex; gap:6px; margin-top:6px;">
-                                <span class="illust-section-chip sdxl">SDXL</span>
+                            <div data-illust-capability="ilxl" style="display:flex; gap:6px; margin-top:6px;">
+                                <span class="illust-section-chip sdxl">ILXL</span>
                                 <label style="display:flex; align-items:center; gap:3px; font-size:0.75rem; cursor:pointer;">
                                     <input type="checkbox" id="illust-fd-toggle" onchange="saveIllustSettings()"> FD
                                 </label>
@@ -5733,7 +5738,7 @@
                                     <input type="checkbox" id="illust-ed-toggle" onchange="saveIllustSettings()"> ED
                                 </label>
                             </div>
-                            <div style="display:flex; gap:6px; margin-top:3px;">
+                            <div data-illust-capability="anima" style="display:flex; gap:6px; margin-top:3px;">
                                 <span class="illust-section-chip anima">ANIMA</span>
                                 <label style="display:flex; align-items:center; gap:3px; font-size:0.75rem; cursor:pointer;">
                                     <input type="checkbox" id="illust-anima-fd-toggle" onchange="saveIllustSettings()"> FD
@@ -5897,8 +5902,8 @@
                     </div>
 
                     <!-- 아티스트 프리셋 섹션 -->
-                    <div style="background:rgba(233,30,99,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
-                    <div class="section-title">아티스트 프리셋(optional)</div>
+                    <div class="workflow-mode-control" data-workflow-availability="ilxl" style="background:rgba(233,30,99,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
+                    <div class="section-title">ILXL 아티스트 프리셋(optional)</div>
                     <div style="margin-bottom:6px;">
                         <div id="asset-artist-preset-select-container"></div>
                         <div style="display:flex; gap:4px; margin-top:3px;">
@@ -5916,8 +5921,8 @@
                     </div>
 
                     <!-- 품질 태그 섹션 -->
-                    <div style="background:rgba(76,175,80,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
-                    <div class="section-title">품질 태그</div>
+                    <div class="workflow-mode-control" data-workflow-availability="ilxl" style="background:rgba(76,175,80,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
+                    <div class="section-title">ILXL 품질 태그</div>
                     <div style="margin-bottom:6px;">
                         <div id="asset-quality-preset-select-container"></div>
                         <div style="display:flex; gap:4px; margin-top:3px;">
@@ -5959,8 +5964,8 @@
                     </div>
 
                     <!-- 부정 태그 섹션 -->
-                    <div style="background:rgba(244,67,54,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
-                    <div class="section-title">부정 태그</div>
+                    <div class="workflow-mode-control" data-workflow-availability="ilxl" style="background:rgba(244,67,54,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
+                    <div class="section-title">ILXL 부정 태그</div>
                     <div style="margin-bottom:6px;">
                         <div id="asset-negative-preset-select-container"></div>
                         <div style="display:flex; gap:4px; margin-top:3px;">
@@ -6071,7 +6076,7 @@
 
                     <div style="border-top:1px solid var(--border); margin-bottom:8px;"></div>
                     <!-- FACE-IPAdapter (Face ID) 섹션 -->
-                    <div style="background:rgba(255,152,0,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
+                    <div class="workflow-mode-control" data-workflow-availability="ipadapter" style="background:rgba(255,152,0,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
                         <div style="display:flex; align-items:center; gap:8px;">
                             <div class="section-title" style="margin-bottom:0;">FACE-IPAdapter</div>
                             <label class="toggle-switch">
@@ -6106,7 +6111,7 @@
                     </div>
 
                     <!-- IPAdapter 섹션 -->
-                    <div style="background:rgba(156,39,176,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
+                    <div class="workflow-mode-control" data-workflow-availability="ipadapter" style="background:rgba(156,39,176,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
                         <div style="display:flex; align-items:center; gap:8px;">
                             <div class="section-title" style="margin-bottom:0;">IPAdapter</div>
                             <label class="toggle-switch">
@@ -6173,7 +6178,7 @@
                     </div>
                     </div>
 
-                    <!-- Style LoRA 섹션 (ANIMA/SDXL 공통) -->
+                    <!-- Style LoRA 섹션 (ANIMA/ILXL 공통) -->
                     <div id="asset-style-lora-wrapper">
                     <div style="background:rgba(76,175,80,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
                         <div style="display:flex; align-items:center; gap:8px;">
@@ -6192,9 +6197,9 @@
                     </div>
 
                     <!-- 포즈 섹션 -->
-                    <div id="asset-pose-container" class="workflow-mode-control" data-workflow-availability="regular" style="background:rgba(0,188,212,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
+                    <div id="asset-pose-container" class="workflow-mode-control" data-workflow-availability="pose" style="background:rgba(0,188,212,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
                         <div style="display:flex; align-items:center; gap:8px;">
-                            <div class="section-title" style="margin-bottom:0;">포즈 <span class="workflow-mode-reason">일반 전용</span></div>
+                            <div class="section-title" style="margin-bottom:0;">포즈 <span class="workflow-mode-reason">ILXL 단독 전용</span></div>
                             <label class="toggle-switch">
                                 <input type="checkbox" id="asset-pose-toggle" onchange="onAssetPoseToggle()">
                                 <span class="toggle-slider"></span>
@@ -6216,9 +6221,9 @@
                         <input type="number" id="asset-img-h" value="1024" min="256" max="4096" step="8" style="width:70px; padding:4px 6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:4px; font-size:0.8rem; text-align:center;" title="이미지 높이">
                     </div>
 
-                    <!-- SDXL 모드용 HRF + 디테일러 토글 -->
-                    <div id="asset-sdxl-options-wrapper" class="workflow-mode-control" data-workflow-availability="regular">
-                        <div class="workflow-mode-legend"><strong>일반 워크플로우 전용</strong><span>ANIMA에서는 아래 옵션이 적용되지 않습니다.</span></div>
+                    <!-- ILXL 모드용 HRF + 디테일러 토글 -->
+                    <div id="asset-sdxl-options-wrapper" class="workflow-mode-control" data-workflow-availability="ilxl">
+                        <div class="workflow-mode-legend"><strong>ILXL 옵션</strong><span>ONLY ANIMA에서는 아래 옵션이 적용되지 않습니다.</span></div>
                         <div style="display:flex; flex-direction:column; gap:6px; margin-bottom:8px;">
                             <div style="display:flex; align-items:center; gap:6px; padding:6px 8px; background:var(--surface2); border-radius:6px; border:1px solid var(--border);">
                                 <span style="font-size:0.8rem;">HIRES FIX</span>
@@ -6265,12 +6270,12 @@
 
                     <!-- ANIMA 모드용 HRF + 디테일러 -->
                     <div id="asset-anima-options-wrapper" class="workflow-mode-control" data-workflow-availability="anima">
-                    <div class="workflow-mode-legend"><strong>ANIMA 전용</strong><span>일반 워크플로우에서는 아래 옵션이 적용되지 않습니다.</span></div>
+                    <div class="workflow-mode-legend"><strong>ANIMA 옵션</strong><span>ILXL 단독 워크플로우에서는 아래 옵션이 적용되지 않습니다.</span></div>
                     <!-- HIRES FIX -->
                     <div style="background:var(--surface2); border-radius:8px; padding:10px; margin-bottom:8px; border:1px solid var(--border);">
                         <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
                             <span style="font-size:0.8rem; font-weight:600;">HIRES FIX</span>
-                            <label style="display:flex; align-items:center; gap:3px; font-size:0.75rem; cursor:pointer;"><input type="checkbox" id="asset-hrf-sdxl"> SDXL</label>
+                            <label class="workflow-mode-control" data-workflow-availability="ilxl" style="display:flex; align-items:center; gap:3px; font-size:0.75rem; cursor:pointer;"><input type="checkbox" id="asset-hrf-sdxl"> ILXL</label>
                             <label style="display:flex; align-items:center; gap:3px; font-size:0.75rem; cursor:pointer;"><input type="checkbox" id="asset-hrf-anima"> ANIMA</label>
                         </div>
                         <div style="display:flex; flex-direction:column; gap:4px;">
@@ -6295,8 +6300,8 @@
                     <!-- 디테일러 -->
                     <div style="background:var(--surface2); border-radius:8px; padding:10px; margin-bottom:8px; border:1px solid var(--border);">
                         <div style="font-size:0.8rem; font-weight:600; margin-bottom:6px;">디테일러</div>
-                        <div style="display:flex; gap:6px;">
-                            <span class="illust-section-chip sdxl">SDXL</span>
+                        <div class="workflow-mode-control" data-workflow-availability="ilxl" style="display:flex; gap:6px;">
+                            <span class="illust-section-chip sdxl">ILXL</span>
                             <label style="display:flex; align-items:center; gap:3px; font-size:0.75rem; cursor:pointer;"><input type="checkbox" id="asset-sdxl-fd"> FD</label>
                             <label style="display:flex; align-items:center; gap:3px; font-size:0.75rem; cursor:pointer;"><input type="checkbox" id="asset-sdxl-hd"> HD</label>
                             <label style="display:flex; align-items:center; gap:3px; font-size:0.75rem; cursor:pointer;"><input type="checkbox" id="asset-sdxl-ed"> ED</label>
@@ -6658,7 +6663,7 @@
                                             <div class="batch-slot-header">
                                                 <div class="batch-slot-heading">
                                                     <span class="batch-slot-number">01</span>
-                                                    <div><div class="batch-slot-kicker">DEFAULT ASSET WORKER</div><div class="batch-slot-title-row"><span class="batch-slot-title">빈 슬롯 생성 설정</span><span class="batch-slot-mode" id="at-fill-mode-badge">SDXL</span></div></div>
+                                                    <div><div class="batch-slot-kicker">DEFAULT ASSET WORKER</div><div class="batch-slot-title-row"><span class="batch-slot-title">빈 슬롯 생성 설정</span><span class="batch-slot-mode" id="at-fill-mode-badge">ILXL</span></div></div>
                                                 </div>
                                                 <span id="at-compare-status" style="font-size:0.68rem; color:var(--text2); display:none;"></span>
                                             </div>
@@ -6671,17 +6676,17 @@
                                                         <div class="batch-field-group"><div class="batch-field-label">복장</div><select class="at-fill-select" id="at-fill-outfit" data-at-fill-field="outfit" onchange="atOnFillFieldChange(this)"><option value="">-- 복장 --</option></select></div>
                                                         <div class="batch-field-group"><div class="batch-field-label">표정</div><div class="at-fill-locked"><span id="at-fill-expression">매칭 결과에서 자동 지정</span><span class="at-fill-lock-badge">🔒 잠금</span></div></div>
                                                         <div class="batch-field-group"><div class="batch-field-label">구도/기타 태그</div><select class="at-fill-select" id="at-fill-composition" data-at-fill-field="composition_preset" onchange="atOnFillFieldChange(this)"><option value="">-- 구도 프리셋 --</option></select></div>
-                                                        <div class="batch-field-group"><div class="batch-field-label">SDXL 품질 태그</div><select class="at-fill-select" id="at-fill-quality" data-at-fill-field="quality_preset" onchange="atOnFillFieldChange(this)"><option value="">-- SDXL 품질 프리셋 --</option></select></div>
+                                                        <div class="batch-field-group at-model-control" data-at-availability="sdxl-only"><div class="batch-field-label">ILXL 품질 태그</div><select class="at-fill-select" id="at-fill-quality" data-at-fill-field="quality_preset" onchange="atOnFillFieldChange(this)"><option value="">-- ILXL 품질 프리셋 --</option></select></div>
                                                         <div class="batch-field-group"><div class="batch-field-label">캐릭터 부정(optional)</div><select class="at-fill-select" id="at-fill-character-negative" data-at-fill-field="character_negative_preset" onchange="atOnFillFieldChange(this)"><option value="">-- 캐릭터 부정 --</option></select></div>
-                                                        <div class="batch-field-group"><div class="batch-field-label">SDXL 부정 태그</div><select class="at-fill-select" id="at-fill-negative" data-at-fill-field="negative_preset" onchange="atOnFillFieldChange(this)"><option value="">-- SDXL 부정 프리셋 --</option></select></div>
-                                                        <div class="batch-field-group"><div class="batch-field-label">SDXL 아티스트</div><select class="at-fill-select" id="at-fill-artist" data-at-fill-field="artist_preset" onchange="atOnFillFieldChange(this)"><option value="">-- SDXL 아티스트 --</option></select></div>
+                                                        <div class="batch-field-group at-model-control" data-at-availability="sdxl-only"><div class="batch-field-label">ILXL 부정 태그</div><select class="at-fill-select" id="at-fill-negative" data-at-fill-field="negative_preset" onchange="atOnFillFieldChange(this)"><option value="">-- ILXL 부정 프리셋 --</option></select></div>
+                                                        <div class="batch-field-group at-model-control" data-at-availability="sdxl-only"><div class="batch-field-label">ILXL 아티스트</div><select class="at-fill-select" id="at-fill-artist" data-at-fill-field="artist_preset" onchange="atOnFillFieldChange(this)"><option value="">-- ILXL 아티스트 --</option></select></div>
                                                         <div class="batch-field-group at-model-control" data-at-availability="anima"><div class="batch-field-label">ANIMA 아티스트 <span class="at-model-reason">ANIMA 전용</span></div><select class="at-fill-select" id="at-fill-anima-artist" data-at-fill-field="anima_artist_preset" onchange="atOnFillFieldChange(this)"><option value="">-- ANIMA 아티스트 --</option></select></div>
                                                         <div class="batch-field-group at-model-control" data-at-availability="anima"><div class="batch-field-label">ANIMA 품질 태그 <span class="at-model-reason">ANIMA 전용</span></div><select class="at-fill-select" id="at-fill-anima-quality" data-at-fill-field="anima_quality_preset" onchange="atOnFillFieldChange(this)"><option value="">-- ANIMA 품질 프리셋 --</option></select></div>
                                                         <div class="batch-field-group at-model-control" data-at-availability="anima"><div class="batch-field-label">ANIMA 부정 태그 <span class="at-model-reason">ANIMA 전용</span></div><select class="at-fill-select" id="at-fill-anima-negative" data-at-fill-field="anima_negative_preset" onchange="atOnFillFieldChange(this)"><option value="">-- ANIMA 부정 프리셋 --</option></select></div>
                                                         <div class="batch-field-group"><div class="batch-field-label">자연어</div><select class="at-fill-select" id="at-fill-natural-language" data-at-fill-field="natural_language_preset" onchange="atOnFillFieldChange(this)"><option value="">-- 자연어 프리셋 --</option></select></div>
                                                     </div>
                                                 </section>
-                                                <section class="batch-slot-section">
+                                                <section class="batch-slot-section at-model-control" data-at-availability="ipadapter">
                                                     <div class="batch-slot-section-title"><span>참조 이미지</span><span class="batch-slot-section-hint">Adapter</span></div>
                                                     <div class="batch-slot-option-stack">
                                                         <div class="batch-toggle-row"><label>FACE-IPAdapter</label><label class="toggle-switch"><input type="checkbox" id="at-fill-ref-enabled" onchange="atOnFillToggle('ref_enabled', this.checked)"><span class="toggle-slider"></span></label></div>
@@ -6712,21 +6717,21 @@
                                                 <section class="batch-slot-section">
                                                     <div class="batch-slot-section-title"><span>생성 옵션</span><span class="batch-slot-section-hint">출력 · 디테일러</span></div>
                                                     <div class="batch-slot-option-stack">
-                                                        <div class="at-model-legend"><strong>모드별 활성화:</strong> SDXL 설정은 모든 워크플로에서 사용하며, ANIMA 전용 항목과 SDXL 전용 포즈는 사용할 수 없는 모드에서 회색으로 잠깁니다.</div>
-                                                        <div class="at-model-control" data-at-availability="sdxl-only">
-                                                            <div class="batch-toggle-row"><label>포즈 <span class="at-model-reason">SDXL 전용</span></label><label class="toggle-switch"><input type="checkbox" id="at-fill-pose-enabled" onchange="atOnFillToggle('pose_enabled', this.checked)"><span class="toggle-slider"></span></label></div>
+                                                        <div class="at-model-legend"><strong>모드별 활성화:</strong> ILXL·ANIMA 지원 여부에 따라 사용할 수 없는 항목은 숨기지 않고 회색으로 잠깁니다.</div>
+                                                        <div class="at-model-control" data-at-availability="pose">
+                                                            <div class="batch-toggle-row"><label>포즈 <span class="at-model-reason">ILXL 단독 전용</span></label><label class="toggle-switch"><input type="checkbox" id="at-fill-pose-enabled" onchange="atOnFillToggle('pose_enabled', this.checked)"><span class="toggle-slider"></span></label></div>
                                                             <div class="batch-pose-select-row" id="at-fill-pose-controls" style="display:none;"><div class="batch-pose-selected-display" id="at-fill-pose-display" onclick="atOpenFillPosePicker()"><span class="placeholder">클릭하여 포즈 선택</span></div></div>
                                                         </div>
                                                         <div style="display:grid; grid-template-columns:1fr 1fr; gap:7px;"><div class="batch-field-group"><div class="batch-field-label">너비</div><input class="at-fill-select" type="number" id="at-fill-img-w" value="700" min="256" max="4096" step="8" onchange="atOnFillNumber('img_w', this.value)"></div><div class="batch-field-group"><div class="batch-field-label">높이</div><input class="at-fill-select" type="number" id="at-fill-img-h" value="1024" min="256" max="4096" step="8" onchange="atOnFillNumber('img_h', this.value)"></div></div>
                                                         <div class="at-model-option-group">
                                                             <div class="at-model-option-head"><span>HIRES FIX</span><span class="batch-slot-section-hint">업스케일</span></div>
-                                                            <div class="batch-toggle-row"><label><span class="illust-section-chip sdxl">SDXL</span> HIRES FIX</label><label class="toggle-switch"><input type="checkbox" id="at-fill-hrf" onchange="atOnFillToggle('hrf_sdxl', this.checked)"><span class="toggle-slider"></span></label></div>
+                                                            <div class="batch-toggle-row at-model-control" data-at-availability="ilxl"><label><span class="illust-section-chip sdxl">ILXL</span> HIRES FIX</label><label class="toggle-switch"><input type="checkbox" id="at-fill-hrf" onchange="atOnFillToggle('hrf_sdxl', this.checked)"><span class="toggle-slider"></span></label></div>
                                                             <div class="batch-toggle-row at-model-control" data-at-availability="anima"><label><span class="illust-section-chip anima">ANIMA</span> HIRES FIX <span class="at-model-reason">ANIMA 전용</span></label><label class="toggle-switch"><input type="checkbox" id="at-fill-anima-hrf" onchange="atOnFillToggle('hrf_anima', this.checked)"><span class="toggle-slider"></span></label></div>
                                                         </div>
                                                         <div class="at-model-option-group at-model-control" id="at-fill-hrf-options"><div class="at-model-option-head"><span>HIRES 세부 설정</span><span class="at-model-reason">HIRES 활성화 시</span></div><div style="display:flex;align-items:center;gap:6px;"><span class="batch-field-label">배율</span><input type="range" id="at-fill-hrf-size" min="1" max="3" step="0.05" value="2" style="flex:1;" oninput="atOnFillRange('hrf_size', this.value, 'at-fill-hrf-size-value')"><span id="at-fill-hrf-size-value" style="font-size:0.68rem;">2.00</span></div><div class="batch-toggle-row"><label>RESTORE SIZE</label><label class="toggle-switch"><input type="checkbox" id="at-fill-hrf-restore" checked onchange="atOnFillToggle('hrf_restore_size', this.checked)"><span class="toggle-slider"></span></label></div><div class="batch-toggle-row"><label>CONTROL NET</label><label class="toggle-switch"><input type="checkbox" id="at-fill-hrf-control" onchange="atOnFillToggle('hrf_control_net', this.checked)"><span class="toggle-slider"></span></label></div></div>
                                                         <div class="at-model-option-group">
                                                             <div class="at-model-option-head"><span>디테일러</span><span class="batch-slot-section-hint">FACE · HAND · EYE</span></div>
-                                                            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;"><span class="illust-section-chip sdxl">SDXL</span><label class="at-toolbar-check"><input type="checkbox" id="at-fill-fd" onchange="atOnFillToggle('sdxl_fd_enabled', this.checked)"> Face</label><label class="at-toolbar-check"><input type="checkbox" id="at-fill-hd" onchange="atOnFillToggle('sdxl_hd_enabled', this.checked)"> Hand</label><label class="at-toolbar-check"><input type="checkbox" id="at-fill-ed" onchange="atOnFillToggle('sdxl_ed_enabled', this.checked)"> Eye</label></div>
+                                                            <div class="at-model-control" data-at-availability="ilxl" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;"><span class="illust-section-chip sdxl">ILXL</span><label class="at-toolbar-check"><input type="checkbox" id="at-fill-fd" onchange="atOnFillToggle('sdxl_fd_enabled', this.checked)"> Face</label><label class="at-toolbar-check"><input type="checkbox" id="at-fill-hd" onchange="atOnFillToggle('sdxl_hd_enabled', this.checked)"> Hand</label><label class="at-toolbar-check"><input type="checkbox" id="at-fill-ed" onchange="atOnFillToggle('sdxl_ed_enabled', this.checked)"> Eye</label></div>
                                                             <div class="at-model-control" data-at-availability="anima" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;"><span class="illust-section-chip anima">ANIMA</span><label class="at-toolbar-check"><input type="checkbox" id="at-fill-anima-fd" onchange="atOnFillToggle('anima_fd_enabled', this.checked)"> Face</label><label class="at-toolbar-check"><input type="checkbox" id="at-fill-anima-hd" onchange="atOnFillToggle('anima_hd_enabled', this.checked)"> Hand</label><label class="at-toolbar-check"><input type="checkbox" id="at-fill-anima-ed" onchange="atOnFillToggle('anima_ed_enabled', this.checked)"> Eye</label><span class="at-model-reason">ANIMA 전용</span></div>
                                                         </div>
                                                         <div class="at-model-option-group at-model-control" data-at-availability="anima"><div class="at-model-option-head"><span>FACE CROP</span><span class="at-model-reason">ANIMA 전용</span></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:7px;"><div class="batch-field-group"><div class="batch-field-label">TOP</div><input class="at-fill-select" type="number" id="at-fill-face-crop-top" value="2.5" step="0.1" onchange="atOnFillFloat('face_crop_top', this.value)"></div><div class="batch-field-group"><div class="batch-field-label">BOTTOM</div><input class="at-fill-select" type="number" id="at-fill-face-crop-bottom" value="1" step="0.1" onchange="atOnFillFloat('face_crop_bottom', this.value)"></div></div></div>
@@ -6852,7 +6857,7 @@
                                             <label style="display:flex; align-items:center; gap:4px; font-size:0.8rem;"><input type="checkbox" id="ep-hrf-toggle" onchange="onExprProfileHrfToggle()"> HIRES</label>
                                             <select id="ep-hrf-mode" style="display:none; padding:1px 4px; border:1px solid var(--border); background:var(--surface); color:var(--text); border-radius:3px; font-size:0.7rem;">
                                                 <option value="anima">ANIMA만</option>
-                                                <option value="sdxl">SDXL만</option>
+                                                <option value="sdxl">ILXL만</option>
                                                 <option value="both" selected>둘다</option>
                                             </select>
                                             <label style="display:flex; align-items:center; gap:4px; font-size:0.8rem;"><input type="checkbox" id="ep-fd-toggle"> 페이스</label>
@@ -10451,7 +10456,7 @@
                                 <select id="setting-chansub-workflow-type" onchange="onChansubWorkflowTypeChange()"
                                         style="width:140px; padding:6px 10px; border-radius:6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.85rem;">
                                     <option value="anima">ANIMA</option>
-                                    <option value="sdxl">SDXL</option>
+                                    <option value="sdxl">ILXL</option>
                                 </select>
                             </div>
                         </div>
@@ -10492,27 +10497,34 @@
 
                 <!-- Tab 3: 삽화 관련 설정 -->
                 <div class="settings-tab-panel" id="settings-tab-illustration">
+                    <div class="asset-workflow-selector">
+                        <div class="asset-workflow-selector-copy">
+                            <div class="title">삽화 생성 워크플로우</div>
+                            <div class="desc">선택한 버전에 맞춰 공급자·프롬프트 형식·복원 프롬프트가 자동 결정됩니다.</div>
+                        </div>
+                        <select id="setting-illustration-workflow-type" class="asset-workflow-type-select"
+                                onchange="onIllustrationWorkflowTypeChange(this.value)" aria-label="삽화 워크플로우 선택">
+                            <option value="v1">V1 계열 삽화 워크플로우</option>
+                            <option value="v3">V3 계열 삽화 워크플로우 (ANIMA+ILXL)</option>
+                            <option value="v3_anima">V3 계열 삽화 워크플로우 (ONLY ANIMA)</option>
+                            <option value="chansub">챈섭</option>
+                            <option value="chansub_v3_anima">챈섭 + V3 계열 삽화 워크플로우 (ONLY ANIMA)</option>
+                        </select>
+                    </div>
                     <div class="setting-row">
                         <div class="setting-label">
-                            <div class="title">삽화 워크플로우 파일명</div>
-                            <div class="desc">삽화 생성에 사용할 워크플로우 파일 (베이스 경로 공유)</div>
+                            <div class="title">선택된 로컬 워크플로우 파일명</div>
+                            <div class="desc" id="setting-illustration-workflow-desc">삽화 생성에 사용할 JSON 파일 (베이스 경로 공유)</div>
                         </div>
-                        <div class="setting-control" style="display:flex; align-items:center; gap:8px;">
-                            <span style="font-size:0.78rem; color:var(--text2);">공급자: 챈섭</span>
-                            <label class="toggle-switch" title="켜면 삽화를 로컬 ComfyUI 대신 챈섭으로 전송">
-                                <input type="checkbox" id="setting-illustration-provider-chansub" onchange="onIllustrationProviderChange()">
-                                <span class="toggle-slider"></span>
-                            </label>
-                            <span id="setting-illustration-provider-status" class="toggle-status off">ComfyUI</span>
-                        </div>
+                        <span id="setting-illustration-provider-status" class="toggle-status off">ComfyUI</span>
                     </div>
                     <div class="form-group" style="margin-top: -8px;">
                         <div class="autocomplete-wrapper">
-                            <input type="text" id="setting-workflow-filename" placeholder="예: 0310고속워크플로우_나친척.json"
+                            <input type="text" id="setting-workflow-filename" placeholder="선택한 로컬 워크플로우 파일"
                                    oninput="onWorkflowFilenameInput(this.value)" onfocus="onWorkflowFilenameInput(this.value)">
                             <div class="autocomplete-list" id="workflow-autocomplete"></div>
                         </div>
-                        <div class="hint">검색어를 입력하면 자동으로 파일 목록이 표시됩니다</div>
+                        <div class="hint">챈섭 단독 선택 시 로컬 파일은 사용하지 않아 회색 처리됩니다.</div>
                     </div>
                     <div class="setting-row">
                         <div class="setting-label">
@@ -10762,12 +10774,13 @@
                         <div class="asset-workflow-selector">
                             <div class="asset-workflow-selector-copy">
                                 <div class="title">에셋 생성에 사용할 워크플로우</div>
-                                <div class="desc">선택한 워크플로우만 활성화되며, 아래 두 파일 경로는 항상 확인할 수 있습니다.</div>
+                                <div class="desc">선택한 워크플로우만 활성화되며, 아래 세 파일 경로는 항상 확인할 수 있습니다.</div>
                             </div>
                             <select id="setting-workflow-type-select" class="asset-workflow-type-select"
                                     onchange="onWorkflowTypeChange(this.value)" aria-label="에셋 워크플로우 선택">
-                                <option value="regular">일반 에셋 생성 워크플로우</option>
-                                <option value="anima">ANIMA 에셋 생성 워크플로우</option>
+                                <option value="ilxl">ILXL 에셋 생성 워크플로우</option>
+                                <option value="anima_ilxl">ANIMA+ILXL 에셋 생성 워크플로우</option>
+                                <option value="anima_only">ONLY ANIMA 에셋 생성 워크플로우</option>
                             </select>
                         </div>
 
@@ -10775,8 +10788,8 @@
                             <section class="asset-workflow-card active" id="setting-regular-workflow-card">
                                 <div class="asset-workflow-card-head">
                                     <div>
-                                        <div class="asset-workflow-card-title">🎨 일반 에셋 생성 워크플로우</div>
-                                        <div class="asset-workflow-card-desc">일반 에셋 이미지 생성에 사용하는 JSON 파일</div>
+                                        <div class="asset-workflow-card-title">🎨 ILXL 에셋 생성 워크플로우</div>
+                                        <div class="asset-workflow-card-desc">ILXL 에셋 이미지 생성에 사용하는 JSON 파일</div>
                                     </div>
                                     <span class="asset-workflow-status" id="setting-regular-workflow-status">현재 사용</span>
                                 </div>
@@ -10794,8 +10807,8 @@
                             <section class="asset-workflow-card inactive" id="setting-anima-workflow-card">
                                 <div class="asset-workflow-card-head">
                                     <div>
-                                        <div class="asset-workflow-card-title">🔧 ANIMA 에셋 생성 워크플로우</div>
-                                        <div class="asset-workflow-card-desc">ANIMA 에셋 이미지 생성에 사용하는 JSON 파일</div>
+                                        <div class="asset-workflow-card-title">🔧 ANIMA+ILXL 에셋 생성 워크플로우</div>
+                                        <div class="asset-workflow-card-desc">ANIMA와 ILXL을 함께 생성하는 JSON 파일</div>
                                     </div>
                                     <span class="asset-workflow-status" id="setting-anima-workflow-status">비활성</span>
                                 </div>
@@ -10808,6 +10821,25 @@
                                     <div class="hint">공통설정 탭의 '베이스 경로'에서 검색됩니다</div>
                                 </div>
                                 <input type="hidden" id="setting-anima-asset-workflow-source-path">
+                            </section>
+
+                            <section class="asset-workflow-card inactive" id="setting-anima-only-workflow-card">
+                                <div class="asset-workflow-card-head">
+                                    <div>
+                                        <div class="asset-workflow-card-title">🟦 ONLY ANIMA 에셋 생성 워크플로우</div>
+                                        <div class="asset-workflow-card-desc">ILXL 노드 없이 ANIMA만 생성하는 JSON 파일</div>
+                                    </div>
+                                    <span class="asset-workflow-status" id="setting-anima-only-workflow-status">비활성</span>
+                                </div>
+                                <div class="form-group">
+                                    <div class="autocomplete-wrapper">
+                                        <input type="text" id="setting-anima-only-asset-workflow-filename" placeholder="예: 배포_에셋(ONLY_ANIMA)_v2_3.json"
+                                               oninput="onAnimaOnlyAssetFilenameInput(this.value)" onfocus="onAnimaOnlyAssetFilenameInput(this.value)" disabled>
+                                        <div class="autocomplete-list" id="anima-only-asset-workflow-autocomplete"></div>
+                                    </div>
+                                    <div class="hint">공통설정 탭의 '베이스 경로'에서 검색됩니다</div>
+                                </div>
+                                <input type="hidden" id="setting-anima-only-asset-workflow-source-path">
                             </section>
                         </div>
                     </div>
@@ -13468,7 +13500,7 @@
             const LLM_TPL_SLOTS = {
                 system:  { hint: 'LLM의 역할·출력 형식(JSON only)을 정의. 모든 포맷에 공통 적용.' },
                 system_chansub: { hint: '챈섭 Comfy 프롬프트 편집 전용 system 역할과 positive/negative JSON 출력 규칙.' },
-                user_v3: { hint: '삽화 빌드본(ANIMA/SDXL)용 user 지시. 플레이스홀더 {direction} {scene_current} {scene_sdxl} 은 자동 치환됨.' },
+                user_v3: { hint: '삽화 빌드본(ANIMA/ILXL)용 user 지시. 플레이스홀더 {direction} {scene_current} {scene_sdxl} 은 자동 치환됨.' },
                 user_v1: { hint: 'ILXL/UPSCALE(V1)용 user 지시. 플레이스홀더 {direction} {setup} {char} {supplement} 은 자동 치환됨.' },
                 user_chansub: { hint: '챈섭 Comfy 프롬프트용 user 지시. 플레이스홀더 {direction} {positive} {negative} 는 자동 치환됨.' },
             };
@@ -13726,8 +13758,12 @@
             document.getElementById('setting-backup-webp-lossless').checked = currentConfig.backup_webp_lossless || false;
             document.getElementById('setting-backup-webp-quality').disabled = currentConfig.backup_webp_lossless || false;
 
-            // 워크플로우 경로를베이스 경로와 파일명으로 분리
-            const workflowPath = currentConfig.comfy_workflow_source_path || '';
+            // 선택된 삽화 프로필의 로컬 워크플로우 경로를 베이스 경로/파일명으로 분리
+            const illustrationPaths = currentConfig.illustration_workflow_source_paths || {};
+            const initialIllustrationType = normalizeIllustrationWorkflowType(currentConfig.illustration_workflow_type);
+            const initialLocalProfile = illustrationLocalProfile(initialIllustrationType);
+            const workflowPath = (initialLocalProfile && illustrationPaths[initialLocalProfile])
+                || currentConfig.comfy_workflow_source_path || '';
             const pathParts = splitWorkflowPath(workflowPath);
             document.getElementById('setting-workflow-base-dir').value = pathParts.baseDir;
             document.getElementById('setting-workflow-filename').value = pathParts.filename;
@@ -13870,7 +13906,7 @@
             const restoreEnabled = currentConfig.restore_mode_enabled || false;
             document.getElementById('setting-restore-enabled').checked = restoreEnabled;
             updateRestoreStatus(restoreEnabled);
-            document.getElementById('setting-restore-prompt-file').value = currentConfig.restore_prompt_file || '';
+            // loadRestorePromptFiles가 현재 삽화 프로필과 호환되는 값만 자동 선택한다.
 
             // 워크플로우 복원 프롬프트 수동 작동 설정
             const restoreManualEnabled = currentConfig.restore_manual_enabled || false;
@@ -13896,8 +13932,14 @@
             document.getElementById('setting-anima-asset-workflow-filename').value = animaAssetSplit.filename;
             document.getElementById('setting-anima-asset-workflow-source-path').value = animaAssetPath;
 
+            // ONLY ANIMA 에셋 생성 모드
+            const animaOnlyAssetPath = currentConfig.anima_only_asset_workflow_source_path || '';
+            const animaOnlyAssetSplit = splitWorkflowPath(animaOnlyAssetPath);
+            document.getElementById('setting-anima-only-asset-workflow-filename').value = animaOnlyAssetSplit.filename;
+            document.getElementById('setting-anima-only-asset-workflow-source-path').value = animaOnlyAssetPath;
+
             // 워크플로우 타입
-            const workflowType = currentConfig.asset_workflow_type || 'regular';
+            const workflowType = normalizeAssetWorkflowType(currentConfig.asset_workflow_type);
             document.getElementById('setting-workflow-type-select').value = workflowType;
             onWorkflowTypeChange(workflowType);
 
@@ -14003,6 +14045,8 @@
             updateUtilityWorkflowPath();
             updateOutfitWorkflowPath();
             updateAssetWorkflowPath();
+            updateAnimaAssetWorkflowPath();
+            updateAnimaOnlyAssetWorkflowPath();
             updateTagAnalysisWorkflowPath();
             updateLoraAnimaWorkflowPath();
             updateLoraSdxlWorkflowPath();
@@ -14408,8 +14452,9 @@
                 restore_manual_enabled: '수동 복원 모드',
                 enhance_mode_enabled: '프롬프트 강화 모드',
                 enhance_prompt_file: '강화 프롬프트 파일',
-                asset_workflow_source_path: '에셋 생성 워크플로우',
-                anima_asset_workflow_source_path: 'ANIMA 에셋 생성 워크플로우',
+                asset_workflow_source_path: 'ILXL 에셋 생성 워크플로우',
+                anima_asset_workflow_source_path: 'ANIMA+ILXL 에셋 생성 워크플로우',
+                anima_only_asset_workflow_source_path: 'ONLY ANIMA 에셋 생성 워크플로우',
                 asset_workflow_type: '에셋 워크플로우 타입',
                 tag_analysis_workflow_source_path: '스마트 매치용 태그 분석 워크플로우',
                 asset_tag_analysis_workflow_source_path: '폴백 태그 분석 워크플로우',
@@ -14613,6 +14658,7 @@
         }
 
         async function saveSettings() {
+            persistVisibleIllustrationWorkflowPath();
             for (const slot of [1, 2, 3]) {
                 const suffix = llmSlotSuffix(slot);
                 const textarea = document.getElementById(`setting-llm-custom-body${suffix}`);
@@ -14644,8 +14690,9 @@
                 webp_quality: parseInt(document.getElementById('setting-webp-quality').value) || 85,
                 backup_webp_quality: parseInt(document.getElementById('setting-backup-webp-quality').value) || 80,
                 backup_webp_lossless: document.getElementById('setting-backup-webp-lossless').checked,
-                comfy_workflow_source_path: document.getElementById('setting-workflow-path').value,
-                illustration_provider: document.getElementById('setting-illustration-provider-chansub').checked ? 'chansub' : 'comfy',
+                comfy_workflow_source_path: document.getElementById('setting-workflow-path').value || currentConfig.comfy_workflow_source_path || '',
+                illustration_workflow_type: normalizeIllustrationWorkflowType(document.getElementById('setting-illustration-workflow-type').value),
+                illustration_workflow_source_paths: { ...(currentConfig.illustration_workflow_source_paths || {}) },
                 chansub_workflow_type: document.getElementById('setting-chansub-workflow-type').value || 'anima',
                 chansub_max_retries: parseInt(document.getElementById('setting-chansub-max-retries').value) || 0,
                 chansub_retry_delay_sec: parseFloat(document.getElementById('setting-chansub-retry-delay').value) || 0,
@@ -14696,6 +14743,7 @@
                 enhance_prompt_file: document.getElementById('setting-enhance-prompt-file').value,
                 asset_workflow_source_path: document.getElementById('setting-asset-workflow-source-path').value,
                 anima_asset_workflow_source_path: document.getElementById('setting-anima-asset-workflow-source-path').value,
+                anima_only_asset_workflow_source_path: document.getElementById('setting-anima-only-asset-workflow-source-path').value,
                 asset_workflow_type: document.getElementById('setting-workflow-type-select').value,
                 tag_analysis_workflow_source_path: document.getElementById('setting-tag-analysis-workflow-source-path').value,
                 asset_tag_analysis_workflow_source_path: document.getElementById('setting-asset-tag-analysis-workflow-source-path').value,
@@ -14878,6 +14926,8 @@
                         selectFaceExtractWorkflowFile(path, filename);
                     } else if (list.id === 'anima-asset-workflow-autocomplete') {
                         selectAnimaAssetWorkflowFile(path, filename);
+                    } else if (list.id === 'anima-only-asset-workflow-autocomplete') {
+                        selectAnimaOnlyAssetWorkflowFile(path, filename);
                     } else if (list.id === 'asset-tag-analysis-workflow-autocomplete') {
                         selectAssetTagAnalysisWorkflowFile(path, filename);
                     } else if (list.id === 'debug-workflow-autocomplete') {
@@ -15452,7 +15502,7 @@
 
             // 설정 워크플로우와 폴더 워크플로우 파일명 불일치 경고
             // 실제 삽화는 workflow/ 폴더의 파일로 그려지므로, 설정과 다르면 다른 워크플로우가 사용됨
-            if ((currentConfig.illustration_provider || 'comfy') !== 'chansub') {
+            if (illustrationLocalProfile(currentConfig.illustration_workflow_type)) {
                 try {
                     const resp = await fetch('/api/workflow_name_check');
                     const chk = await resp.json();
@@ -16971,54 +17021,130 @@
             }
         }
 
-        function applyIllustrationProviderConfig(config = {}) {
-            const providerToggle = document.getElementById('setting-illustration-provider-chansub');
-            const workflowSelect = document.getElementById('setting-chansub-workflow-type');
-            if (!providerToggle || !workflowSelect) {
-                console.error('[ILLUST] 챈섭 공급자 UI 요소를 찾을 수 없습니다.');
-                return;
-            }
+        const ILLUSTRATION_WORKFLOW_TYPES = new Set(['v1', 'v3', 'v3_anima', 'chansub', 'chansub_v3_anima']);
+        let _editingIllustrationWorkflowProfile = null;
 
-            let provider = String(config.illustration_provider || 'comfy').trim().toLowerCase();
-            if (provider !== 'comfy' && provider !== 'chansub') {
-                console.error('[ILLUST] 알 수 없는 삽화 공급자, ComfyUI로 표시:', provider);
-                provider = 'comfy';
-            }
-
-            let workflowType = String(config.chansub_workflow_type || 'anima').trim().toLowerCase();
-            if (workflowType !== 'anima' && workflowType !== 'sdxl') {
-                console.error('[ILLUST] 알 수 없는 챈섭 워크플로우, ANIMA로 표시:', workflowType);
-                workflowType = 'anima';
-            }
-
-            providerToggle.checked = provider === 'chansub';
-            workflowSelect.value = workflowType;
-            onIllustrationProviderChange();
+        function normalizeIllustrationWorkflowType(value) {
+            const normalized = String(value || '').trim().toLowerCase();
+            if (ILLUSTRATION_WORKFLOW_TYPES.has(normalized)) return normalized;
+            if (normalized) console.error('[ILLUST] 알 수 없는 삽화 워크플로우 타입:', value);
+            return 'v3';
         }
 
-        function onIllustrationProviderChange() {
-            const toggle = document.getElementById('setting-illustration-provider-chansub');
-            const enabled = !!(toggle && toggle.checked);
+        function illustrationLocalProfile(type) {
+            const normalized = normalizeIllustrationWorkflowType(type);
+            if (normalized === 'chansub_v3_anima') return 'v3_anima';
+            if (normalized === 'chansub') return null;
+            return normalized;
+        }
+
+        function illustrationPromptFormatForType(type) {
+            const normalized = normalizeIllustrationWorkflowType(type);
+            if (normalized === 'v1') return 'v1';
+            if (normalized === 'chansub') return 'chansub';
+            return 'v3';
+        }
+
+        function getIllustrationCapabilities(type = null) {
+            const normalized = normalizeIllustrationWorkflowType(
+                type || document.getElementById('setting-illustration-workflow-type')?.value
+                    || currentConfig?.illustration_workflow_type
+            );
+            const chansubFamily = document.getElementById('setting-chansub-workflow-type')?.value === 'sdxl' ? 'sdxl' : 'anima';
+            if (normalized === 'v1') return { anima: true, sdxl: false, ipadapter: false, localAdvanced: false, chansub: false, v1: true };
+            if (normalized === 'v3') return { anima: true, sdxl: true, ipadapter: true, localAdvanced: true, chansub: false, v1: false };
+            if (normalized === 'v3_anima') return { anima: true, sdxl: false, ipadapter: false, localAdvanced: true, chansub: false, v1: false };
+            if (normalized === 'chansub') return { anima: chansubFamily === 'anima', sdxl: chansubFamily === 'sdxl', ipadapter: false, localAdvanced: false, chansub: true, v1: false };
+            return { anima: true, sdxl: false, ipadapter: false, localAdvanced: false, chansub: true, v1: false };
+        }
+
+        function persistVisibleIllustrationWorkflowPath() {
+            if (!_editingIllustrationWorkflowProfile || !currentConfig) return;
+            const paths = currentConfig.illustration_workflow_source_paths || (currentConfig.illustration_workflow_source_paths = {});
+            paths[_editingIllustrationWorkflowProfile] = document.getElementById('setting-workflow-path')?.value || '';
+        }
+
+        function applyIllustrationProviderConfig(config = {}) {
+            let workflowType = config.illustration_workflow_type;
+            if (!workflowType) {
+                const provider = String(config.illustration_provider || 'comfy').trim().toLowerCase();
+                const format = String(config.illustration_context_toggles?.prompt_format || 'v3').trim().toLowerCase();
+                workflowType = provider === 'chansub' ? 'chansub' : (format === 'v1' ? 'v1' : 'v3');
+            }
+            workflowType = normalizeIllustrationWorkflowType(workflowType);
+            const select = document.getElementById('setting-illustration-workflow-type');
+            const chansubSelect = document.getElementById('setting-chansub-workflow-type');
+            if (!select || !chansubSelect) {
+                console.error('[ILLUST] 삽화 워크플로우 선택 UI를 찾을 수 없습니다.');
+                return;
+            }
+            let chansubType = String(config.chansub_workflow_type || 'anima').trim().toLowerCase();
+            if (chansubType !== 'anima' && chansubType !== 'sdxl') {
+                console.error('[ILLUST] 알 수 없는 챈섭 워크플로우, ANIMA로 표시:', chansubType);
+                chansubType = 'anima';
+            }
+            if (workflowType === 'chansub_v3_anima') chansubType = 'anima';
+            chansubSelect.value = chansubType;
+            select.value = workflowType;
+            _editingIllustrationWorkflowProfile = null;
+            onIllustrationWorkflowTypeChange(workflowType);
+        }
+
+        function onIllustrationWorkflowTypeChange(type) {
+            persistVisibleIllustrationWorkflowPath();
+            const normalized = normalizeIllustrationWorkflowType(type);
+            const select = document.getElementById('setting-illustration-workflow-type');
+            if (select) select.value = normalized;
+            if (currentConfig) currentConfig.illustration_workflow_type = normalized;
+
+            const localProfile = illustrationLocalProfile(normalized);
+            const paths = currentConfig?.illustration_workflow_source_paths || {};
+            const localPath = localProfile ? (paths[localProfile] || '') : '';
+            const parts = splitWorkflowPath(localPath);
+            const wfInput = document.getElementById('setting-workflow-filename');
+            const hiddenPath = document.getElementById('setting-workflow-path');
+            if (wfInput) {
+                wfInput.value = parts.filename;
+                wfInput.disabled = !localProfile;
+                wfInput.style.opacity = localProfile ? '1' : '0.38';
+                wfInput.style.filter = localProfile ? 'none' : 'grayscale(1)';
+            }
+            if (hiddenPath) hiddenPath.value = localPath;
+            _editingIllustrationWorkflowProfile = localProfile;
+            const wfAutocomplete = document.getElementById('workflow-autocomplete');
+            if (wfAutocomplete) wfAutocomplete.style.display = localProfile ? '' : 'none';
+
+            const isChansub = normalized === 'chansub';
+            const isHybrid = normalized === 'chansub_v3_anima';
+            const chansubSelect = document.getElementById('setting-chansub-workflow-type');
+            if (chansubSelect) {
+                if (isHybrid) chansubSelect.value = 'anima';
+                chansubSelect.disabled = !isChansub;
+                chansubSelect.style.opacity = isChansub ? '1' : '0.45';
+            }
             const status = document.getElementById('setting-illustration-provider-status');
             if (status) {
-                status.textContent = enabled ? '챈섭' : 'ComfyUI';
-                status.className = enabled ? 'toggle-status on' : 'toggle-status off';
+                status.textContent = isHybrid ? 'ComfyUI + 챈섭' : (isChansub ? '챈섭' : 'ComfyUI');
+                status.className = (isChansub || isHybrid) ? 'toggle-status on' : 'toggle-status off';
             }
-            // 챈섭 공급자일 때 삽화 워크플로우 파일명 입력란 비활성 + 회색 처리
-            const wfInput = document.getElementById('setting-workflow-filename');
-            if (wfInput) {
-                wfInput.disabled = enabled;
-                wfInput.style.opacity = enabled ? '0.38' : '1';
-                wfInput.style.filter = enabled ? 'grayscale(1)' : 'none';
-            }
-            const wfAutocomplete = document.getElementById('workflow-autocomplete');
-            if (wfAutocomplete) wfAutocomplete.style.display = enabled ? 'none' : '';
+            const desc = document.getElementById('setting-illustration-workflow-desc');
+            if (desc) desc.textContent = isHybrid
+                ? '로컬 ONLY ANIMA와 챈섭 ANIMA에 장면을 교대 분배합니다.'
+                : (isChansub ? '챈섭 단독 모드에서는 로컬 JSON 파일을 사용하지 않습니다.' : '선택한 로컬 JSON 파일을 사용합니다.');
+
             updateChansubAdvancedOptions();
-            // prompt_format 드롭박스도 챈섭 상태에 맞춰 잠금/해제
-            if (typeof _applyPromptFormatChansubLock === 'function') _applyPromptFormatChansubLock();
+            _applyPromptFormatChansubLock();
+            applyIllustSettingsV1Lock();
+            loadRestorePromptFiles();
+        }
+
+        // 레거시 호출부 호환: 공급자 토글 대신 선택된 프로필을 다시 적용한다.
+        function onIllustrationProviderChange() {
+            onIllustrationWorkflowTypeChange(document.getElementById('setting-illustration-workflow-type')?.value || 'v3');
         }
 
         function onChansubWorkflowTypeChange() {
+            if (currentConfig) currentConfig.chansub_workflow_type = document.getElementById('setting-chansub-workflow-type')?.value || 'anima';
             updateChansubWorkflowOptions();
         }
 
@@ -17128,15 +17254,34 @@
                 const resp = await fetch('/api/customprompt_files');
                 const data = await resp.json();
                 const select = document.getElementById('setting-restore-prompt-file');
-                const currentValue = select.value;
+                if (!select) {
+                    console.error('[ILLUST_RESTORE] 복원 프롬프트 선택 요소를 찾지 못했습니다.');
+                    return;
+                }
+                const selectedType = normalizeIllustrationWorkflowType(
+                    document.getElementById('setting-illustration-workflow-type')?.value
+                        || currentConfig?.illustration_workflow_type
+                        || data.illustration_workflow_type
+                );
+                const requiredFamilies = selectedType === 'v1'
+                    ? ['v1']
+                    : (selectedType === 'chansub'
+                        ? ['chansub']
+                        : (selectedType === 'chansub_v3_anima' ? ['v3', 'chansub'] : ['v3']));
+                const registry = data.restore_compatibility || {};
+                const currentValue = select.value || currentConfig?.restore_prompt_file || '';
                 while (select.options.length > 1) select.remove(1);
                 (data.files || []).forEach(f => {
                     const opt = document.createElement('option');
                     opt.value = f;
                     opt.textContent = f;
+                    const families = Array.isArray(registry[f]) ? registry[f] : [];
+                    opt.disabled = !requiredFamilies.every(family => families.includes(family));
                     select.appendChild(opt);
                 });
-                select.value = currentValue;
+                const compatible = Array.from(select.options).filter(opt => opt.value && !opt.disabled);
+                const selectedOption = Array.from(select.options).find(opt => opt.value === currentValue && !opt.disabled);
+                select.value = selectedOption ? currentValue : (compatible[0]?.value || '');
             } catch (e) {
                 console.error('복원 프롬프트 파일 목록 로드 실패:', e);
             }
@@ -17309,30 +17454,66 @@
             document.getElementById('setting-asset-workflow-source-path').value = combineWorkflowPath(baseDir, filename);
         }
 
+        function normalizeAssetWorkflowType(value) {
+            const normalized = String(value || '').trim().toLowerCase();
+            if (normalized === 'regular') return 'ilxl';
+            if (normalized === 'anima') return 'anima_ilxl';
+            if (['ilxl', 'anima_ilxl', 'anima_only'].includes(normalized)) return normalized;
+            if (normalized) console.error('[ASSET] 알 수 없는 에셋 워크플로우 타입:', value);
+            return 'ilxl';
+        }
+
+        function getAssetWorkflowCapabilities(type = currentConfig?.asset_workflow_type) {
+            const normalized = normalizeAssetWorkflowType(type);
+            return {
+                type: normalized,
+                ilxl: normalized === 'ilxl' || normalized === 'anima_ilxl',
+                anima: normalized === 'anima_ilxl' || normalized === 'anima_only',
+                dual: normalized === 'anima_ilxl',
+                pose: normalized === 'ilxl',
+                ipadapter: normalized !== 'anima_only',
+                faceLora: normalized !== 'ilxl',
+                seed: normalized !== 'ilxl',
+            };
+        }
+
+        function filterAssetLorasForCapabilities(items, capabilities = getAssetWorkflowCapabilities()) {
+            return (Array.isArray(items) ? items : []).filter(item => {
+                const base = String(item?.BASE || 'anima').trim().toLowerCase();
+                return (base === 'sdxl' || base === 'ilxl') ? capabilities.ilxl : capabilities.anima;
+            });
+        }
+
         // 에셋 워크플로우 타입 변경
         function onWorkflowTypeChange(type) {
-            const isAnima = type === 'anima';
+            const normalized = normalizeAssetWorkflowType(type);
             const typeSelect = document.getElementById('setting-workflow-type-select');
             const regularCard = document.getElementById('setting-regular-workflow-card');
             const animaCard = document.getElementById('setting-anima-workflow-card');
+            const animaOnlyCard = document.getElementById('setting-anima-only-workflow-card');
             const regularInput = document.getElementById('setting-asset-workflow-filename');
             const animaInput = document.getElementById('setting-anima-asset-workflow-filename');
+            const animaOnlyInput = document.getElementById('setting-anima-only-asset-workflow-filename');
             const regularStatus = document.getElementById('setting-regular-workflow-status');
             const animaStatus = document.getElementById('setting-anima-workflow-status');
+            const animaOnlyStatus = document.getElementById('setting-anima-only-workflow-status');
 
-            if (typeSelect) typeSelect.value = isAnima ? 'anima' : 'regular';
-            regularCard?.classList.toggle('active', !isAnima);
-            regularCard?.classList.toggle('inactive', isAnima);
-            animaCard?.classList.toggle('active', isAnima);
-            animaCard?.classList.toggle('inactive', !isAnima);
-            if (regularInput) regularInput.disabled = isAnima;
-            if (animaInput) animaInput.disabled = !isAnima;
-            if (regularStatus) regularStatus.textContent = isAnima ? '비활성' : '현재 사용';
-            if (animaStatus) animaStatus.textContent = isAnima ? '현재 사용' : '비활성';
+            if (typeSelect) typeSelect.value = normalized;
+            const states = [
+                [regularCard, regularInput, regularStatus, normalized === 'ilxl'],
+                [animaCard, animaInput, animaStatus, normalized === 'anima_ilxl'],
+                [animaOnlyCard, animaOnlyInput, animaOnlyStatus, normalized === 'anima_only'],
+            ];
+            states.forEach(([card, input, status, active]) => {
+                card?.classList.toggle('active', active);
+                card?.classList.toggle('inactive', !active);
+                if (input) input.disabled = !active;
+                if (status) status.textContent = active ? '현재 사용' : '비활성';
+            });
             document.getElementById('asset-workflow-autocomplete')?.classList.remove('visible');
             document.getElementById('anima-asset-workflow-autocomplete')?.classList.remove('visible');
-            // currentConfig와 ANIMA UI 즉시 동기화
-            if (currentConfig) currentConfig.asset_workflow_type = type;
+            document.getElementById('anima-only-asset-workflow-autocomplete')?.classList.remove('visible');
+            if (currentConfig) currentConfig.asset_workflow_type = normalized;
             updateAnimaUIVisibility();
         }
 
@@ -17364,6 +17545,37 @@
             const baseDir = document.getElementById('setting-workflow-base-dir').value;
             const filename = document.getElementById('setting-anima-asset-workflow-filename').value;
             document.getElementById('setting-anima-asset-workflow-source-path').value = combineWorkflowPath(baseDir, filename);
+        }
+
+        // ONLY ANIMA 에셋 생성 워크플로우 자동완성
+        let animaOnlyAssetAutocompleteTimeout;
+        async function onAnimaOnlyAssetFilenameInput(value) {
+            updateAnimaOnlyAssetWorkflowPath();
+            const list = document.getElementById('anima-only-asset-workflow-autocomplete');
+            const baseDir = document.getElementById('setting-workflow-base-dir').value.trim();
+            clearTimeout(animaOnlyAssetAutocompleteTimeout);
+            animaOnlyAssetAutocompleteTimeout = setTimeout(async () => {
+                try {
+                    const params = new URLSearchParams({ search: value, base_dir: baseDir });
+                    const data = await fetchJSON(`/api/workflow_files?${params}`);
+                    renderAutocompleteItems(data.files, list);
+                } catch (e) {
+                    console.error('[ASSET] ONLY ANIMA 워크플로우 검색 실패:', e);
+                    list.classList.remove('visible');
+                }
+            }, 300);
+        }
+
+        function selectAnimaOnlyAssetWorkflowFile(fullPath, filename) {
+            document.getElementById('setting-anima-only-asset-workflow-filename').value = filename;
+            document.getElementById('setting-anima-only-asset-workflow-source-path').value = fullPath;
+            document.getElementById('anima-only-asset-workflow-autocomplete').classList.remove('visible');
+        }
+
+        function updateAnimaOnlyAssetWorkflowPath() {
+            const baseDir = document.getElementById('setting-workflow-base-dir').value;
+            const filename = document.getElementById('setting-anima-only-asset-workflow-filename').value;
+            document.getElementById('setting-anima-only-asset-workflow-source-path').value = combineWorkflowPath(baseDir, filename);
         }
 
         // 태그 분석 워크플로우 자동완성
@@ -18775,7 +18987,7 @@
 
         function onExprProfileHrfToggle() {
             const checked = document.getElementById('ep-hrf-toggle').checked;
-            const isAnima = currentConfig?.asset_workflow_type === 'anima';
+            const isAnima = getAssetWorkflowCapabilities().dual;
             const modeEl = document.getElementById('ep-hrf-mode');
             if (modeEl) modeEl.style.display = (checked && isAnima) ? 'inline-block' : 'none';
         }
@@ -19065,8 +19277,8 @@
             const sidebarRefImage = epRefImage;
             const hrfEnabled = document.getElementById('ep-hrf-toggle').checked;
             const epHrfMode = document.getElementById('ep-hrf-mode')?.value || 'both';
-            const epIsAnima = currentConfig && currentConfig.asset_workflow_type === 'anima';
-            if (epIsAnima) { showToast('현재 sdxl모드만 지원합니다', 'error'); return; }
+            const epIsAnima = getAssetWorkflowCapabilities().dual;
+            if (getAssetWorkflowCapabilities().type !== 'ilxl') { showToast('현재 ILXL 단독 모드만 지원합니다', 'error'); return; }
             const epAnimaHrf = epIsAnima && hrfEnabled ? (epHrfMode === 'sdxl' ? false : true) : false;
             const epEffectiveHrf = epIsAnima && hrfEnabled ? (epHrfMode === 'anima' ? false : true) : hrfEnabled;
             const fdEnabled = document.getElementById('ep-fd-toggle').checked;
@@ -19365,11 +19577,11 @@
         }
 
         function atInitFillPanel() {
-            const isAnima = currentConfig?.asset_workflow_type === 'anima';
+            const capabilities = getAssetWorkflowCapabilities();
             const badge = document.getElementById('at-fill-mode-badge');
             if (badge) {
-                badge.textContent = isAnima ? 'ANIMA' : 'SDXL';
-                badge.classList.toggle('anima', isAnima);
+                badge.textContent = capabilities.type === 'anima_only' ? 'ONLY ANIMA' : (capabilities.dual ? 'ANIMA+ILXL' : 'ILXL');
+                badge.classList.toggle('anima', capabilities.anima);
             }
             atApplyFillWorkflowAvailability();
             atUpdateFillHiresAvailability();
@@ -19381,10 +19593,10 @@
             atSetFillSelectOptions('at-fill-appearance', assetTags.appearances, atFillSlot.appearance, '-- 외모 --');
             atSetFillSelectOptions('at-fill-outfit', assetTags.outfits, atFillSlot.outfit, '-- 복장 --');
             atSetFillSelectOptions('at-fill-composition', assetTags.composition_presets, atFillSlot.composition_preset, '-- 구도 프리셋 --');
-            atSetFillSelectOptions('at-fill-quality', assetTags.quality_presets, atFillSlot.quality_preset, '-- SDXL 품질 프리셋 --');
+            atSetFillSelectOptions('at-fill-quality', assetTags.quality_presets, atFillSlot.quality_preset, '-- ILXL 품질 프리셋 --');
             atSetFillSelectOptions('at-fill-character-negative', assetTags.character_negative_presets, atFillSlot.character_negative_preset, '-- 캐릭터 부정 --');
-            atSetFillSelectOptions('at-fill-negative', assetTags.negative_presets, atFillSlot.negative_preset, '-- SDXL 부정 프리셋 --');
-            atSetFillSelectOptions('at-fill-artist', assetTags.artist_presets, atFillSlot.artist_preset, '-- SDXL 아티스트 --');
+            atSetFillSelectOptions('at-fill-negative', assetTags.negative_presets, atFillSlot.negative_preset, '-- ILXL 부정 프리셋 --');
+            atSetFillSelectOptions('at-fill-artist', assetTags.artist_presets, atFillSlot.artist_preset, '-- ILXL 아티스트 --');
             atSetFillSelectOptions('at-fill-anima-artist', assetTags.artist_presets, atFillSlot.anima_artist_preset, '-- ANIMA 아티스트 --');
             atSetFillSelectOptions('at-fill-anima-quality', assetTags.quality_presets, atFillSlot.anima_quality_preset, '-- ANIMA 품질 프리셋 --');
             atSetFillSelectOptions('at-fill-anima-negative', assetTags.negative_presets, atFillSlot.anima_negative_preset, '-- ANIMA 부정 프리셋 --');
@@ -19461,10 +19673,14 @@
         }
 
         function atApplyFillWorkflowAvailability() {
-            const isAnima = currentConfig?.asset_workflow_type === 'anima';
+            const capabilities = getAssetWorkflowCapabilities();
             document.querySelectorAll('#at-view-result [data-at-availability]').forEach(container => {
                 const availability = container.dataset.atAvailability;
-                const available = availability === 'anima' ? isAnima : (availability === 'sdxl-only' ? !isAnima : true);
+                const available = availability === 'anima' ? capabilities.anima
+                    : availability === 'sdxl-only' || availability === 'ilxl' ? capabilities.ilxl
+                    : availability === 'pose' ? capabilities.pose
+                    : availability === 'ipadapter' ? capabilities.ipadapter
+                    : true;
                 container.classList.toggle('is-unavailable', !available);
                 container.querySelectorAll('input, select, button').forEach(control => {
                     control.disabled = !available;
@@ -19473,8 +19689,8 @@
         }
 
         function atUpdateFillHiresAvailability() {
-            const isAnima = currentConfig?.asset_workflow_type === 'anima';
-            const enabled = !!atFillSlot.hrf_sdxl || (isAnima && !!atFillSlot.hrf_anima);
+            const capabilities = getAssetWorkflowCapabilities();
+            const enabled = (capabilities.ilxl && !!atFillSlot.hrf_sdxl) || (capabilities.anima && !!atFillSlot.hrf_anima);
             const container = document.getElementById('at-fill-hrf-options');
             if (!container) return;
             container.classList.toggle('is-unavailable', !enabled);
@@ -19633,11 +19849,20 @@
             const items = Array.isArray(atFillSlot[config.field]) ? atFillSlot[config.field] : [];
             container.innerHTML = '';
             items.forEach((item, index) => {
+                const capabilities = getAssetWorkflowCapabilities();
+                const base = String(item.BASE || 'anima').trim().toLowerCase();
+                const baseLabel = (base === 'sdxl' || base === 'ilxl') ? 'ILXL' : 'ANIMA';
+                const baseAvailable = baseLabel === 'ILXL' ? capabilities.ilxl : capabilities.anima;
                 const row = document.createElement('div');
                 row.className = 'at-fill-lora-item';
+                if (!baseAvailable) {
+                    row.classList.add('is-unavailable');
+                    row.style.opacity = '0.42';
+                    row.title = `${baseLabel}을 지원하지 않는 현재 워크플로우에서는 적용되지 않습니다.`;
+                }
                 const name = document.createElement('div');
                 name.className = 'at-fill-lora-name';
-                name.textContent = `${item.name || item.lora_path || 'LoRA'} · ${(item.BASE || 'anima').toUpperCase()}`;
+                name.textContent = `${item.name || item.lora_path || 'LoRA'} · ${baseLabel}`;
                 name.title = name.textContent;
                 const strength = document.createElement('input');
                 strength.type = 'range';
@@ -19645,6 +19870,7 @@
                 strength.max = '1';
                 strength.step = '0.01';
                 strength.value = Number.isFinite(Number(item.strength)) ? String(item.strength) : '0.5';
+                strength.disabled = !baseAvailable;
                 strength.title = `강도 ${Number(strength.value).toFixed(2)}`;
                 strength.oninput = () => {
                     item.strength = Number.parseFloat(strength.value);
@@ -19930,7 +20156,7 @@
                         outfit: slot.outfit,
                         expression,
                         storage_group: 'automatch_defaults',
-                        asset_workflow_type: currentConfig?.asset_workflow_type === 'anima' ? 'anima' : 'regular',
+                        asset_workflow_type: normalizeAssetWorkflowType(currentConfig?.asset_workflow_type),
                         face_id_enabled: slot.ref_enabled,
                         face_id_strength: slot.ref_strength,
                         reference_images: (slot.ref_images || []).map(image => ({ filename: image.name, local_path: image.local_path })),
@@ -29861,28 +30087,13 @@
         let botCurrentBot = '';
         let botCurrentChar = '';
 
-        // 현재 프롬프트 포맷(v1/v3/chansub)을 V1/V3/챈섭 라벨로 반환.
-        // live 셀렉트 → _illustrationContextToggles → currentConfig → 기본 v3 순서로 읽고,
-        // 챈섭 공급자가 켜져 있으면 강제 chansub 으로 간주(_applyPromptFormatChansubLock 과 동일 규칙).
+        // 현재 선택된 삽화 워크플로우가 자동 결정한 프롬프트 형식 라벨.
         function _currentPromptFormatLabel() {
-            const sel = document.querySelector('[data-illust-toggle="prompt_format"]');
-            let fmt = (sel && sel.value)
-                ? sel.value
-                : ((typeof _illustrationContextToggles !== 'undefined' && _illustrationContextToggles.prompt_format)
-                    || (typeof currentConfig !== 'undefined' && currentConfig && currentConfig.illustration_context_toggles && currentConfig.illustration_context_toggles.prompt_format)
-                    || 'v3');
-            fmt = String(fmt).toLowerCase();
-            const providerToggle = document.getElementById('setting-illustration-provider-chansub');
-            const chansubOn = providerToggle
-                ? !!providerToggle.checked
-                : String((currentConfig && currentConfig.illustration_provider) || 'comfy').toLowerCase() === 'chansub';
-            if (chansubOn) {
-                fmt = 'chansub';
-            } else if (fmt === 'chansub') {
-                // 공급자는 Comfy인데 이전 챈섭 포맷 값만 남은 경우 실제 생성 경로는
-                // V3로 동작한다. 포맷 셀렉트가 없는 백업 탭에서도 같은 유효값을 표시한다.
-                fmt = 'v3';
-            }
+            const profile = normalizeIllustrationWorkflowType(
+                document.getElementById('setting-illustration-workflow-type')?.value
+                    || currentConfig?.illustration_workflow_type
+            );
+            const fmt = illustrationPromptFormatForType(profile);
             if (fmt === 'v1') return 'V1';
             if (fmt === 'chansub') return '챈섭';
             return 'V3';
@@ -39800,28 +40011,36 @@
         let _illustSettingsProfile = 'solo';
 
         function updateChansubAdvancedOptions() {
-            const providerToggle = document.getElementById('setting-illustration-provider-chansub');
-            const enabled = !!(providerToggle && providerToggle.checked);
+            const capabilities = getIllustrationCapabilities();
             for (const id of ['illust-local-advanced-before', 'illust-local-advanced-after']) {
                 const fieldset = document.getElementById(id);
                 if (!fieldset) continue;
-                fieldset.disabled = enabled;
-                fieldset.style.opacity = enabled ? '0.38' : '1';
-                fieldset.style.filter = enabled ? 'grayscale(1)' : 'none';
+                fieldset.disabled = !capabilities.localAdvanced;
+                fieldset.style.opacity = capabilities.localAdvanced ? '1' : '0.38';
+                fieldset.style.filter = capabilities.localAdvanced ? 'none' : 'grayscale(1)';
             }
             const notice = document.getElementById('illust-chansub-advanced-notice');
-            if (notice) notice.style.display = enabled ? 'block' : 'none';
+            if (notice) notice.style.display = capabilities.chansub ? 'block' : 'none';
+            document.querySelectorAll('#illust-prompt-settings-block [data-illust-capability]').forEach(group => {
+                const capability = group.dataset.illustCapability;
+                const available = capability === 'ilxl' ? capabilities.sdxl
+                    : capability === 'anima' ? capabilities.anima
+                    : capability === 'ipadapter' ? capabilities.ipadapter
+                    : true;
+                group.classList.toggle('illust-capability-unavailable', !available);
+                group.querySelectorAll('input, select, button').forEach(control => {
+                    control.disabled = !available;
+                });
+            });
             updateChansubWorkflowOptions();
         }
 
         function updateChansubWorkflowOptions() {
-            const providerToggle = document.getElementById('setting-illustration-provider-chansub');
-            const workflowSelect = document.getElementById('setting-chansub-workflow-type');
-            const isChansub = !!(providerToggle && providerToggle.checked);
-            const workflowType = workflowSelect && workflowSelect.value === 'sdxl' ? 'sdxl' : 'anima';
+            const capabilities = getIllustrationCapabilities();
 
             document.querySelectorAll('[data-chansub-workflow]').forEach(group => {
-                const disabled = isChansub && group.dataset.chansubWorkflow !== workflowType;
+                const family = group.dataset.chansubWorkflow;
+                const disabled = family === 'sdxl' ? !capabilities.sdxl : !capabilities.anima;
                 group.classList.toggle('disabled', disabled);
                 group.setAttribute('aria-disabled', disabled ? 'true' : 'false');
                 group.querySelectorAll('input, select, button').forEach(control => {
@@ -39942,10 +40161,10 @@
         function applyIllustSettingsV1Lock() {
             const block = document.getElementById('illust-prompt-settings-block');
             if (!block) return;
-            const liveToggles = (typeof _illustrationContextToggles !== 'undefined') ? _illustrationContextToggles : null;
-            const cfgToggles = (typeof currentConfig !== 'undefined' && currentConfig && currentConfig.illustration_context_toggles) || {};
-            const fmt = String((liveToggles && liveToggles.prompt_format) || cfgToggles.prompt_format || 'v3').toLowerCase();
-            const isV1 = fmt === 'v1';
+            const isV1 = normalizeIllustrationWorkflowType(
+                document.getElementById('setting-illustration-workflow-type')?.value
+                    || currentConfig?.illustration_workflow_type
+            ) === 'v1';
             const ALLOWED = new Set(['illust-anima-quality-preset', 'illust-anima-negative-preset']);
             block.querySelectorAll('input, select').forEach(ctrl => {
                 if (ctrl.id && ALLOWED.has(ctrl.id)) {
@@ -39959,6 +40178,16 @@
                     delete ctrl.dataset.v1Locked;
                 }
             });
+            block.querySelectorAll('.illust-workflow-option').forEach(group => {
+                const controls = Array.from(group.querySelectorAll('input, select'));
+                const v1Disabled = isV1 && controls.length > 0 && controls.every(
+                    ctrl => !ctrl.id || !ALLOWED.has(ctrl.id)
+                );
+                group.classList.toggle('v1-disabled', v1Disabled);
+            });
+            // V1 잠금 해제 직후 현재 프로필의 ILXL/ANIMA/챈섭 기능 잠금을 다시 적용한다.
+            // V1 → ONLY ANIMA/챈섭 전환에서도 지원하지 않는 컨트롤은 회색으로 유지된다.
+            if (!isV1) updateChansubAdvancedOptions();
         }
 
         async function saveIllustSettings() {
@@ -40252,11 +40481,11 @@
 
         // ─── 삽화 통합 태그 편집 모달 ─────────────────────────
         const ILLUST_TAG_EDITOR_SECTIONS = [
-            { id: 'sdxl-artist',  label: 'SDXL 아티스트', selectId: 'illust-sdxl-artist-preset',  presetType: 'artist_presets' },
-            { id: 'sdxl-quality', label: 'SDXL 품질',     selectId: 'illust-sdxl-quality-preset', presetType: 'quality_presets' },
+            { id: 'sdxl-artist',  label: 'ILXL 아티스트', selectId: 'illust-sdxl-artist-preset',  presetType: 'artist_presets' },
+            { id: 'sdxl-quality', label: 'ILXL 품질',     selectId: 'illust-sdxl-quality-preset', presetType: 'quality_presets' },
             { id: 'anima-artist', label: 'ANIMA 아티스트', selectId: 'illust-anima-artist-preset', presetType: 'artist_presets' },
             { id: 'anima-quality',label: 'ANIMA 품질',    selectId: 'illust-anima-quality-preset',presetType: 'quality_presets' },
-            { id: 'sdxl-negative',label: 'SDXL 부정',     selectId: 'illust-sdxl-negative-preset',presetType: 'negative_presets' },
+            { id: 'sdxl-negative',label: 'ILXL 부정',     selectId: 'illust-sdxl-negative-preset',presetType: 'negative_presets' },
             { id: 'anima-negative',label:'ANIMA 부정',     selectId: 'illust-anima-negative-preset',presetType:'negative_presets' },
         ];
 
@@ -41377,7 +41606,7 @@
                 fields: [
                     {
                         key: 'prompt_format', label: '프롬프트 입력 형식', type: 'select', stacked: true,
-                        help: '후속 처리기가 해석할 RAW 프롬프트 구조를 선택합니다. 챈섭 공급자가 켜져 있으면 챈섭으로 고정됩니다.',
+                        help: '선택한 삽화 워크플로우 버전에 맞는 RAW 프롬프트 구조가 자동으로 적용됩니다.',
                         options: [
                             {value: 'v1', label: 'V1 — 삽화 모드 비활성화 형식 ([ILXL] / [UPSCALE])'},
                             {value: 'v3', label: 'V3 — 삽화 모드 활성화 형식 ([SETUP] / [CHAR] / [SUPPLEMENT])'},
@@ -41713,44 +41942,23 @@
             _applyCall3PromptModeLock();
         }
 
-        // prompt_format 드롭박스를 챈섭 공급자 상태와 연동.
-        // 챈섭 ON → 강제 chansub, v1/v3 비활성(회색).
-        // 챈섭 OFF → chansub 옵션 비활성(회색), 값이 chansub이면 v3로 복귀.
+        // prompt_format은 워크플로우 프로필에서 자동 결정한다.
+        // 모든 선택지를 표시하지만 사용자가 직접 변경하지 못하도록 회색 처리한다.
         function _applyPromptFormatChansubLock() {
-            // 실시간 토글 상태를 우선, 없으면 currentConfig 사용(모달 로드 시점)
-            const liveToggle = document.getElementById('setting-illustration-provider-chansub');
-            let chansubOn;
-            if (liveToggle) {
-                chansubOn = !!liveToggle.checked;
-            } else {
-                chansubOn = String(
-                    (typeof currentConfig !== 'undefined' && currentConfig && currentConfig.illustration_provider) || 'comfy'
-                ).toLowerCase() === 'chansub';
+            const profile = normalizeIllustrationWorkflowType(
+                document.getElementById('setting-illustration-workflow-type')?.value
+                    || currentConfig?.illustration_workflow_type
+            );
+            const target = illustrationPromptFormatForType(profile);
+            if (typeof _illustrationContextToggles !== 'undefined' && _illustrationContextToggles) {
+                _illustrationContextToggles.prompt_format = target;
             }
-            // 챈섭에서 Comfy로 돌아온 뒤 저장값만 chansub으로 남아 있을 수 있다.
-            // config.json은 자동 수정하지 않고 프론트의 작업 상태만 실제 V3 경로에 맞춘다.
-            if (!chansubOn
-                    && typeof _illustrationContextToggles !== 'undefined'
-                    && _illustrationContextToggles
-                    && String(_illustrationContextToggles.prompt_format || '').toLowerCase() === 'chansub') {
-                _illustrationContextToggles.prompt_format = 'v3';
-            }
-            // prompt_format 셀렉트는 삽화 프롬프트 생성 모달이 열려야 DOM에 생성된다.
-            // 모달을 열지 않은 상태에서도 상단 칩이 챈섭 전환을 즉시 반영하도록
-            // 셀렉트 조작과 칩 갱신은 분리한다(셀렉트가 없으면 조작만 스킵).
             const select = document.querySelector('[data-illust-toggle="prompt_format"]');
             if (select) {
-                Array.from(select.options).forEach(opt => {
-                    opt.disabled = chansubOn ? (opt.value !== 'chansub') : (opt.value === 'chansub');
-                });
-                if (chansubOn) {
-                    select.value = 'chansub';
-                } else if (select.value === 'chansub') {
-                    select.value = 'v3';
-                }
+                select.value = target;
+                select.disabled = true;
+                select.title = '선택한 삽화 워크플로우 버전에 따라 자동 결정됩니다.';
             }
-            // 포맷 변경/잠금이 일어날 때마다 상단 칩·상태 표시도 함께 갱신
-            // (셀렉트가 없어도 _currentPromptFormatLabel 은 live 토글로 챈섭 여부를 판단하므로 칩은 즉시 갱신됨)
             if (typeof updateBotModeStatus === 'function') updateBotModeStatus(true);
         }
 
@@ -44586,20 +44794,20 @@
         const PROMPT_CATEGORIES = [
             { key: 'lora',          label: 'LORA 트리거',  cls: 'prompt-cat-lora' },
             { key: 'anima_lora',    label: 'ANIMA LORA',  cls: 'prompt-cat-anima-lora' },
-            { key: 'sdxl_lora',     label: 'SDXL LORA',   cls: 'prompt-cat-sdxl-lora' },
+            { key: 'sdxl_lora',     label: 'ILXL LORA',   cls: 'prompt-cat-sdxl-lora' },
             { key: 'artist',       label: '아티스트',      cls: 'prompt-cat-artist' },
             { key: 'anima_artist', label: 'ANIMA 아티스트', cls: 'prompt-cat-anima-artist' },
-            { key: 'sdxl_artist',  label: 'SDXL 아티스트',  cls: 'prompt-cat-artist' },
+            { key: 'sdxl_artist',  label: 'ILXL 아티스트',  cls: 'prompt-cat-artist' },
             { key: 'quality',      label: '품질',          cls: 'prompt-cat-quality' },
             { key: 'anima_quality', label: 'ANIMA 품질',   cls: 'prompt-cat-anima-quality' },
-            { key: 'sdxl_quality',  label: 'SDXL 품질',    cls: 'prompt-cat-sdxl-quality' },
+            { key: 'sdxl_quality',  label: 'ILXL 품질',    cls: 'prompt-cat-sdxl-quality' },
             { key: 'composition',  label: '구도/기타',     cls: 'prompt-cat-composition' },
             { key: 'appearance',   label: '외모',          cls: 'prompt-cat-appearance' },
             { key: 'expression',   label: '표정',          cls: 'prompt-cat-expression' },
             { key: 'outfit',       label: '복장',          cls: 'prompt-cat-outfit' },
             { key: 'nl',           label: '자연어',        cls: 'prompt-cat-nl' },
             { key: 'anima_negative', label: 'ANIMA 부정', cls: 'prompt-cat-anima-negative' },
-            { key: 'sdxl_negative',  label: 'SDXL 부정',  cls: 'prompt-cat-sdxl-negative' },
+            { key: 'sdxl_negative',  label: 'ILXL 부정',  cls: 'prompt-cat-sdxl-negative' },
         ];
 
         // 컨트롤 블럭 타이틀 색상 맵
@@ -44670,23 +44878,26 @@
             const app = getAssetSelectValue('asset-appearance-select');
             const outfit = getAssetSelectValue('asset-outfit-select');
             const expr = getAssetSelectValue('asset-expression-select');
-            const refEnabled = document.getElementById('asset-ref-toggle').checked;
+            const capabilities = getAssetWorkflowCapabilities();
+            const hasAnima = capabilities.anima;
+            const hasIlxl = capabilities.ilxl;
+            const isDual = capabilities.dual;
+            const refEnabled = capabilities.ipadapter && document.getElementById('asset-ref-toggle').checked;
             const refStrength = parseFloat(document.getElementById('asset-ref-strength').value) || 0.55;
-            const styleRefEnabled = document.getElementById('asset-style-ref-toggle').checked;
+            const styleRefEnabled = capabilities.ipadapter && document.getElementById('asset-style-ref-toggle').checked;
             const styleRefStrength = parseFloat(document.getElementById('asset-style-ref-strength').value) || 0.55;
             const loraEnabled = document.getElementById('asset-lora-toggle').checked;
-            const poseEnabled = document.getElementById('asset-pose-toggle').checked;
-            const isAnima = currentConfig?.asset_workflow_type === 'anima';
+            const poseEnabled = capabilities.pose && document.getElementById('asset-pose-toggle').checked;
             let sdxlFdActivate, sdxlHdActivate, sdxlEdActivate, animaFdActivate, animaHdActivate, animaEdActivate;
             let hrfSdxl, hrfAnima, hrfSize, hrfRestoreSize, hrfControlNet;
-            if (isAnima) {
-                sdxlFdActivate = document.getElementById('asset-sdxl-fd').checked;
-                sdxlHdActivate = document.getElementById('asset-sdxl-hd').checked;
-                sdxlEdActivate = document.getElementById('asset-sdxl-ed').checked;
+            if (hasAnima) {
+                sdxlFdActivate = hasIlxl && document.getElementById('asset-sdxl-fd').checked;
+                sdxlHdActivate = hasIlxl && document.getElementById('asset-sdxl-hd').checked;
+                sdxlEdActivate = hasIlxl && document.getElementById('asset-sdxl-ed').checked;
                 animaFdActivate = document.getElementById('asset-anima-fd').checked;
                 animaHdActivate = document.getElementById('asset-anima-hd').checked;
                 animaEdActivate = document.getElementById('asset-anima-ed').checked;
-                hrfSdxl = document.getElementById('asset-hrf-sdxl').checked;
+                hrfSdxl = hasIlxl && document.getElementById('asset-hrf-sdxl').checked;
                 hrfAnima = document.getElementById('asset-hrf-anima').checked;
                 hrfSize = parseFloat(document.getElementById('asset-hrf-size').value) || 2.0;
                 hrfRestoreSize = document.getElementById('asset-hrf-restore-size').checked;
@@ -44718,7 +44929,10 @@
             const styleLoraEnabled = document.getElementById('asset-style-lora-toggle')?.checked || false;
             // 일반 LoRA + 스타일(그림체) LoRA 트리거를 BASE별로 병합 — 스타일 토글이 ON일 때만 스타일 포함.
             // (스타일 LoRA 트리거도 일반 LoRA와 동일 위치에 주입)
-            const triggerSrc = [...(loraEnabled ? assetLoraList : []), ...(styleLoraEnabled ? styleLoraList : [])];
+            const triggerSrc = filterAssetLorasForCapabilities(
+                [...(loraEnabled ? assetLoraList : []), ...(styleLoraEnabled ? styleLoraList : [])],
+                capabilities,
+            );
             const loraTriggerWords = triggerSrc.map(l => l.trigger).filter(t => t && t.trim()).join(', ');
             const animaLoraTriggerWords = triggerSrc.filter(l => (l.BASE || 'anima') === 'anima').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
             const sdxlLoraTriggerWords = triggerSrc.filter(l => l.BASE === 'sdxl').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
@@ -44732,7 +44946,7 @@
             let positive = '';
             let positiveColored = '';
 
-            if (isAnima) {
+            if (hasAnima) {
                 const animaQuality = animaQTags;
                 const animaArtist = animaArtistTags;
                 const sdxlQuality = qTags;
@@ -44751,9 +44965,9 @@
                 positive = '[ANIMA_QUALITY]\n' + animaQuality.join(', ')
                     + '\n[ANIMA_ARTIST]\n' + animaArtist.join(', ')
                     + '\n[ANIMA]\n' + section1Rest
-                    + '\n[SDXL_QUALITY]\n' + sdxlQuality.join(', ')
-                    + '\n[SDXL_ARTIST]\n' + sdxlArtist.join(', ')
-                    + '\n[SDXL]\n' + section2Rest
+                    + (isDual ? '\n[SDXL_QUALITY]\n' + sdxlQuality.join(', ')
+                        + '\n[SDXL_ARTIST]\n' + sdxlArtist.join(', ')
+                        + '\n[SDXL]\n' + section2Rest : '')
                     + '\n[CHAR_LIST]\nasset_mode';
 
                 const animaQualityData = [{ key: 'anima_quality', tags: animaQuality }];
@@ -44782,9 +44996,9 @@
                 positiveColored = '<span style="color:#0ff;font-weight:bold;">[ANIMA_QUALITY]</span>\n' + renderColoredPrompt(animaQualityData)
                     + '\n<span style="color:#0ff;font-weight:bold;">[ANIMA_ARTIST]</span>\n' + renderColoredPrompt(animaArtistData)
                     + '\n<span style="color:#0ff;font-weight:bold;">[ANIMA]</span>\n' + renderColoredPrompt(section1RestData)
-                    + '\n<span style="color:#0ff;font-weight:bold;">[SDXL_QUALITY]</span>\n' + renderColoredPrompt(sdxlQualityData)
-                    + '\n<span style="color:#0ff;font-weight:bold;">[SDXL_ARTIST]</span>\n' + renderColoredPrompt(sdxlArtistData)
-                    + '\n<span style="color:#ff0;font-weight:bold;">[SDXL]</span>\n' + renderColoredPrompt(section2RestData)
+                    + (isDual ? '\n<span style="color:#0ff;font-weight:bold;">[SDXL_QUALITY]</span>\n' + renderColoredPrompt(sdxlQualityData)
+                        + '\n<span style="color:#0ff;font-weight:bold;">[SDXL_ARTIST]</span>\n' + renderColoredPrompt(sdxlArtistData)
+                        + '\n<span style="color:#ff0;font-weight:bold;">[SDXL]</span>\n' + renderColoredPrompt(section2RestData) : '')
                     + '\n<span style="color:#0ff;font-weight:bold;">[CHAR_LIST]</span>\n<span class="prompt-cat-composition">asset_mode</span>';
             } else {
                 positive = [
@@ -44817,11 +45031,13 @@
             positiveFull += `\n[STYLE_STR]\n${styleRefStrength}`;
             const styleDir = document.getElementById('asset-style-ref-folder-hash-text')?.textContent || '';
             positiveFull += `\n[STYLE_DIR]\n${styleDir || 'soya_style_ref/fallback'}`;
-            const loraActive = loraEnabled && assetLoraList.length > 0;
-            const styleLoraActive = styleLoraEnabled && styleLoraList.length > 0;
-            const regularLoraData = assetLoraList.map(l => ({lora_path: resolveLoraPath(l), str: l.strength, BASE: l.BASE || 'anima'}));
-            const styleLoraData = styleLoraList.map(l => ({lora_path: resolveLoraPath(l), str: l.strength, BASE: l.BASE || 'anima'}));
-            if (isAnima) {
+            const compatibleRegularLoras = filterAssetLorasForCapabilities(assetLoraList, capabilities);
+            const compatibleStyleLoras = filterAssetLorasForCapabilities(styleLoraList, capabilities);
+            const loraActive = loraEnabled && compatibleRegularLoras.length > 0;
+            const styleLoraActive = styleLoraEnabled && compatibleStyleLoras.length > 0;
+            const regularLoraData = compatibleRegularLoras.map(l => ({lora_path: resolveLoraPath(l), str: l.strength, BASE: l.BASE || 'anima'}));
+            const styleLoraData = compatibleStyleLoras.map(l => ({lora_path: resolveLoraPath(l), str: l.strength, BASE: l.BASE || 'anima'}));
+            if (hasAnima) {
                 // ANIMA: 일반/스타일 LoRA 분리 (워크플로우에 별도 STYLE_LORA 로더 노드 존재)
                 positiveFull += `\n[LORA_ACTIVATE]\n${loraActive ? 'true' : 'false'}`;
                 positiveFull += `\n[LORA_DATA]\n${JSON.stringify({list: regularLoraData})}`;
@@ -44832,13 +45048,13 @@
                 positiveFull += `\n[LORA_DATA]\n${JSON.stringify({list: [...regularLoraData, ...styleLoraData]})}`;
             }
             // FACE_CROP (ANIMA only)
-            if (isAnima) {
+            if (hasAnima) {
                 const faceCropTop = parseFloat(document.getElementById('asset-face-crop-top').value) || 2.5;
                 const faceCropBottom = parseFloat(document.getElementById('asset-face-crop-bottom').value) || 1;
                 positiveFull += `\n[FACE_CROP_TOP]\n${faceCropTop}`;
                 positiveFull += `\n[FACE_CROP_BOTTOM]\n${faceCropBottom}`;
             }
-            positiveFull += `\n[POSE_ACTIVATE]\n${(isAnima ? false : poseEnabled) ? 'true' : 'false'}`;
+            positiveFull += `\n[POSE_ACTIVATE]\n${poseEnabled ? 'true' : 'false'}`;
             if (poseEnabled && assetSelectedPoseId) {
                 try {
                     const resp = await fetch(`/api/pose_mode/poses/${encodeURIComponent(assetSelectedPoseId)}`);
@@ -44852,13 +45068,14 @@
                 positiveFull += `\n[POSE_DATA]\n{"people":[{"pose_keypoints_2d":[381.10,379.86,1,413.21,506.58,1,223.64,436.41,1,55.33,624.12,1,64.77,454.24,1,579.09,575.30,1,362.22,935.42,1,331.06,972.15,1,196.97,797.67,1,264.96,1013.47,1,257.41,1024.49,1,350.89,820.63,1,419.82,1011.63,1,419.82,1024.49,1,315.95,343.13,1,462.31,294.46,1,263.07,365.17,1,546.35,301.80,1]}],"canvas_height":1024,"canvas_width":700}`;
             }
             // Face LoRA (ANIMA only)
-            if (isAnima) {
+            if (hasAnima) {
                 const faceLoraEnabled = document.getElementById('asset-face-lora-toggle').checked;
-                const faceLoraActive = faceLoraEnabled && faceLoraList.length > 0;
+                const compatibleFaceLoras = filterAssetLorasForCapabilities(faceLoraList, capabilities);
+                const faceLoraActive = faceLoraEnabled && compatibleFaceLoras.length > 0;
                 const faceLoraUpscaleSize = (document.getElementById('asset-face-lora-upscale')?.value || '').trim();
                 positiveFull += `\n[FACE_LORA_ACTIVATE]\n${faceLoraActive ? 'true' : 'false'}`;
                 if (faceLoraActive) {
-                    positiveFull += `\n[FACE_LORA_DATA]\n${JSON.stringify({list: faceLoraList.map(l => {
+                    positiveFull += `\n[FACE_LORA_DATA]\n${JSON.stringify({list: compatibleFaceLoras.map(l => {
                         const item = {lora_path: resolveLoraPath(l), str: l.strength, BASE: l.BASE || 'anima', CHAR: 'asset_mode'};
                         if (faceLoraUpscaleSize) item.UPSCALE_SIZE = faceLoraUpscaleSize;
                         return item;
@@ -44869,25 +45086,25 @@
                 // CHAR_FACE_TAG_INFORM
                 const faceTags = document.getElementById('asset-face-tags')?.value.trim() || '';
                 const eyeTags = document.getElementById('asset-eye-tags')?.value.trim() || '';
-                const faceAnimaTriggers = faceLoraList.filter(l => (l.BASE || 'anima') === 'anima').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
-                const faceSdxlTriggers = faceLoraList.filter(l => l.BASE === 'sdxl').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
+                const faceAnimaTriggers = compatibleFaceLoras.filter(l => (l.BASE || 'anima') === 'anima').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
+                const faceSdxlTriggers = compatibleFaceLoras.filter(l => l.BASE === 'sdxl').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
                 positiveFull += `\n[CHAR_FACE_TAG_INFORM]\n${JSON.stringify({list: [{FACE_TAGS: faceTags, EYE_TAGS: eyeTags, POSITIVE: "", TRIGGER_ANIMA: faceAnimaTriggers, TRIGGER_SDXL: faceSdxlTriggers, CHAR: "asset_mode"}]})}`;
             }
             // Style(그림체) LoRA — ANIMA는 별도 토큰(분리 로더).
-            // 일반(ILXL) 모드는 스타일 LoRA가 LORA_DATA에 흡수되므로 이 토큰들을 출력하지 않음.
-            if (isAnima) {
+                // ILXL 모드는 스타일 LoRA가 LORA_DATA에 흡수되므로 이 토큰들을 출력하지 않음.
+            if (hasAnima) {
                 positiveFull += `\n[STYLE_LORA_ACTIVATE]\n${styleLoraActive ? 'true' : 'false'}`;
                 positiveFull += `\n[STYLE_LORA_DATA]\n${JSON.stringify({list: styleLoraData})}`;
             }
             // HRF
             positiveFull += `\n[HRF_ACTIVATE]\n${hrfSdxl ? 'true' : 'false'}`;
-            if (isAnima) positiveFull += `\n[ANIMA_HRF_ACTIVATE]\n${hrfAnima ? 'true' : 'false'}`;
+            if (hasAnima) positiveFull += `\n[ANIMA_HRF_ACTIVATE]\n${hrfAnima ? 'true' : 'false'}`;
             positiveFull += `\n[HRF_SIZE]\n${hrfSize}`;
             positiveFull += `\n[HRF_RESTORE_SIZE]\n${hrfRestoreSize ? 'true' : 'false'}`;
             positiveFull += `\n[HRF_CONTROL_NET]\n${hrfControlNet ? 'true' : 'false'}`;
             positiveFull += `\n[IMG_W]\n${imgW}`;
             positiveFull += `\n[IMG_H]\n${imgH}`;
-            if (isAnima) {
+            if (hasAnima) {
                 positiveFull += `\n[ANIMA_FD_ACTIVATE]\n${animaFdActivate ? 'true' : 'false'}`;
                 positiveFull += `\n[ANIMA_HD_ACTIVATE]\n${animaHdActivate ? 'true' : 'false'}`;
                 positiveFull += `\n[ANIMA_ED_ACTIVATE]\n${animaEdActivate ? 'true' : 'false'}`;
@@ -44895,7 +45112,7 @@
             positiveFull += `\n[FD_ACTIVATE]\n${sdxlFdActivate ? 'true' : 'false'}`;
             positiveFull += `\n[HD_ACTIVATE]\n${sdxlHdActivate ? 'true' : 'false'}`;
             positiveFull += `\n[ED_ACTIVATE]\n${sdxlEdActivate ? 'true' : 'false'}`;
-            if (isAnima) {
+            if (hasAnima) {
                 const seed = parseInt(document.getElementById('asset-seed-input').value) || -1;
                 positiveFull += `\n[SEED]\n${seed}`;
             }
@@ -44903,10 +45120,10 @@
 
             let negative;
             let negativeColored;
-            if (isAnima) {
+            if (hasAnima) {
                 const animaNegParts = [...cnTags, ...animaNTags].filter(t => t.trim());
                 const sdxlNegParts = [...cnTags, ...nTags].filter(t => t.trim());
-                negative = animaNegParts.join(', ') + '\n[SDXL]\n' + sdxlNegParts.join(', ');
+                negative = animaNegParts.join(', ') + (isDual ? '\n[SDXL]\n' + sdxlNegParts.join(', ') : '');
                 const animaNegData = [
                     { key: 'negative', tags: cnTags },
                     { key: 'anima_negative', tags: animaNTags },
@@ -44915,9 +45132,9 @@
                     { key: 'negative', tags: cnTags },
                     { key: 'sdxl_negative', tags: nTags },
                 ];
-                negativeColored = renderColoredPrompt(animaNegData) +
-                    '\n<span style="color:#ff0;font-weight:bold;">[SDXL]</span>\n' +
-                    renderColoredPrompt(sdxlNegData);
+                negativeColored = renderColoredPrompt(animaNegData) + (isDual
+                    ? '\n<span style="color:#ff0;font-weight:bold;">[SDXL]</span>\n' + renderColoredPrompt(sdxlNegData)
+                    : '');
             } else {
                 negative = [...cnTags, ...nTags].join(', ');
                 negativeColored = null;
@@ -44928,7 +45145,8 @@
 
         // ─── 설정 저장/불러오기 ────────────────────────────────
         function saveAssetSettings() {
-            const isAnima = currentConfig?.asset_workflow_type === 'anima';
+            const capabilities = getAssetWorkflowCapabilities();
+            const isAnima = capabilities.anima;
             const settings = {
                 character: getAssetSelectValue('asset-character-select'),
                 appearance: getAssetSelectValue('asset-appearance-select'),
@@ -44966,14 +45184,14 @@
                 settings.face_crop_bottom = parseFloat(document.getElementById('asset-face-crop-bottom')?.value) || 1;
                 settings.face_tags = document.getElementById('asset-face-tags')?.value || '';
                 settings.eye_tags = document.getElementById('asset-eye-tags')?.value || '';
-                settings.hrf_sdxl = document.getElementById('asset-hrf-sdxl')?.checked || false;
+                settings.hrf_sdxl = capabilities.ilxl && (document.getElementById('asset-hrf-sdxl')?.checked || false);
                 settings.hrf_anima = document.getElementById('asset-hrf-anima')?.checked || false;
                 settings.hrf_size = parseFloat(document.getElementById('asset-hrf-size')?.value) || 2.0;
                 settings.hrf_restore_size = document.getElementById('asset-hrf-restore-size')?.checked || false;
                 settings.hrf_control_net = document.getElementById('asset-hrf-control-net')?.checked || false;
-                settings.sdxl_fd = document.getElementById('asset-sdxl-fd')?.checked || false;
-                settings.sdxl_hd = document.getElementById('asset-sdxl-hd')?.checked || false;
-                settings.sdxl_ed = document.getElementById('asset-sdxl-ed')?.checked || false;
+                settings.sdxl_fd = capabilities.ilxl && (document.getElementById('asset-sdxl-fd')?.checked || false);
+                settings.sdxl_hd = capabilities.ilxl && (document.getElementById('asset-sdxl-hd')?.checked || false);
+                settings.sdxl_ed = capabilities.ilxl && (document.getElementById('asset-sdxl-ed')?.checked || false);
                 settings.anima_fd = document.getElementById('asset-anima-fd')?.checked || false;
                 settings.anima_hd = document.getElementById('asset-anima-hd')?.checked || false;
                 settings.anima_ed = document.getElementById('asset-anima-ed')?.checked || false;
@@ -44997,7 +45215,7 @@
             if (!raw) { showToast('저장된 설정이 없습니다', 'error'); return; }
             let s;
             try { s = JSON.parse(raw); } catch(e) { showToast('설정 불러오기 실패', 'error'); return; }
-            const isAnima = currentConfig?.asset_workflow_type === 'anima';
+            const isAnima = getAssetWorkflowCapabilities().anima;
 
             setAssetSelectValue('asset-character-select', s.character);
             onAssetCharacterChange(true);
@@ -45448,44 +45666,52 @@
             });
         }
 
-        function applyWorkflowModeAvailability(root, isAnima = currentConfig?.asset_workflow_type === 'anima') {
+        function applyWorkflowModeAvailability(root, capabilities = getAssetWorkflowCapabilities()) {
             if (!root) return;
             root.querySelectorAll('[data-workflow-availability]').forEach(container => {
                 const availability = container.dataset.workflowAvailability;
-                const available = availability === 'anima' ? isAnima : availability === 'regular' ? !isAnima : true;
+                const available = availability === 'anima' ? capabilities.anima
+                    : availability === 'regular' || availability === 'ilxl' ? capabilities.ilxl
+                    : availability === 'pose' ? capabilities.pose
+                    : availability === 'ipadapter' ? capabilities.ipadapter
+                    : availability === 'face-lora' ? capabilities.faceLora
+                    : true;
                 setWorkflowModeAvailability(container, available);
             });
         }
 
         // ─── ANIMA UI 활성화/비활성화 및 포즈 제어 ─────────────────
         function updateAnimaUIVisibility() {
-            const isAnima = currentConfig?.asset_workflow_type === 'anima';
-            applyWorkflowModeAvailability(document, isAnima);
+            const capabilities = getAssetWorkflowCapabilities();
+            applyWorkflowModeAvailability(document, capabilities);
             // ANIMA 모드에서 기존 섹션 라벨 변경
             const qualitySection = document.getElementById('asset-quality-tags')?.closest('div[style*="rgba(76,175,80"]');
             if (qualitySection) {
                 const title = qualitySection.querySelector('.section-title');
-                if (title) title.textContent = isAnima ? 'SDXL 품질 태그' : '품질 태그';
+                if (title) title.textContent = 'ILXL 품질 태그';
             }
             const negSection = document.getElementById('asset-negative-tags')?.closest('div[style*="rgba(244,67,54"]');
             if (negSection) {
                 const title = negSection.querySelector('.section-title');
-                if (title) title.textContent = isAnima ? 'SDXL 부정 태그' : '부정 태그';
+                if (title) title.textContent = 'ILXL 부정 태그';
             }
             updatePoseForWorkflowType();
             // EP HRF 모드 드롭다운 표시 동기화
             const epHrfMode = document.getElementById('ep-hrf-mode');
             if (epHrfMode) {
                 const epHrfOn = document.getElementById('ep-hrf-toggle')?.checked;
-                epHrfMode.style.display = (isAnima && epHrfOn) ? 'inline-block' : 'none';
+                epHrfMode.style.display = (capabilities.dual && epHrfOn) ? 'inline-block' : 'none';
             }
+            if (typeof atApplyFillWorkflowAvailability === 'function') atApplyFillWorkflowAvailability();
+            if (typeof atUpdateFillHiresAvailability === 'function') atUpdateFillHiresAvailability();
         }
 
         function updatePoseForWorkflowType() {
-            const isAnima = currentConfig?.asset_workflow_type === 'anima';
+            const capabilities = getAssetWorkflowCapabilities();
             const poseContainer = document.getElementById('asset-pose-container');
             const poseToggle = document.getElementById('asset-pose-toggle');
-            setWorkflowModeAvailability(poseContainer, !isAnima);
+            setWorkflowModeAvailability(poseContainer, capabilities.pose);
+            if (!capabilities.pose && poseToggle) poseToggle.checked = false;
             if (poseToggle) document.getElementById('asset-pose-section').style.display = poseToggle.checked ? 'block' : 'none';
         }
 
@@ -46741,8 +46967,8 @@
                     </div>
                     <select onchange="assetLoraList[${i}].BASE=this.value"
                         style="width:100%; margin-top:6px; background:var(--surface); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:3px 4px; font-size:0.75rem; cursor:pointer;">
-                        <option value="anima" ${lora.BASE === 'anima' ? 'selected' : ''}>anima</option>
-                        <option value="sdxl" ${(lora.BASE === 'sdxl' || lora.BASE === 'ilxl') ? 'selected' : ''}>sdxl</option>
+                        <option value="anima" ${lora.BASE === 'anima' ? 'selected' : ''} ${getAssetWorkflowCapabilities().anima ? '' : 'disabled'}>ANIMA</option>
+                        <option value="sdxl" ${(lora.BASE === 'sdxl' || lora.BASE === 'ilxl') ? 'selected' : ''} ${getAssetWorkflowCapabilities().ilxl ? '' : 'disabled'}>ILXL</option>
                     </select>
                     <div style="display:flex; align-items:center; gap:6px; margin-top:6px;">
                         <input type="range" min="0" max="1" step="0.01" value="${lora.strength}"
@@ -46784,8 +47010,8 @@
                     </div>
                     <select onchange="faceLoraList[${i}].BASE=this.value"
                         style="width:100%; margin-top:6px; background:var(--surface); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:3px 4px; font-size:0.75rem; cursor:pointer;">
-                        <option value="anima" ${lora.BASE === 'anima' ? 'selected' : ''}>anima</option>
-                        <option value="sdxl" ${(lora.BASE === 'sdxl' || lora.BASE === 'ilxl') ? 'selected' : ''}>sdxl</option>
+                        <option value="anima" ${lora.BASE === 'anima' ? 'selected' : ''} ${getAssetWorkflowCapabilities().anima ? '' : 'disabled'}>ANIMA</option>
+                        <option value="sdxl" ${(lora.BASE === 'sdxl' || lora.BASE === 'ilxl') ? 'selected' : ''} ${getAssetWorkflowCapabilities().ilxl ? '' : 'disabled'}>ILXL</option>
                     </select>
                     <div style="display:flex; align-items:center; gap:6px; margin-top:6px;">
                         <input type="range" min="0" max="1" step="0.01" value="${lora.strength}"
@@ -46833,8 +47059,8 @@
                     </div>
                     <select onchange="styleLoraList[${i}].BASE=this.value"
                         style="width:100%; margin-top:6px; background:var(--surface); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:3px 4px; font-size:0.75rem; cursor:pointer;">
-                        <option value="anima" ${lora.BASE === 'anima' ? 'selected' : ''}>anima</option>
-                        <option value="sdxl" ${(lora.BASE === 'sdxl' || lora.BASE === 'ilxl') ? 'selected' : ''}>sdxl</option>
+                        <option value="anima" ${lora.BASE === 'anima' ? 'selected' : ''} ${getAssetWorkflowCapabilities().anima ? '' : 'disabled'}>ANIMA</option>
+                        <option value="sdxl" ${(lora.BASE === 'sdxl' || lora.BASE === 'ilxl') ? 'selected' : ''} ${getAssetWorkflowCapabilities().ilxl ? '' : 'disabled'}>ILXL</option>
                     </select>
                     <div style="display:flex; align-items:center; gap:6px; margin-top:6px;">
                         <input type="range" min="0" max="1" step="0.01" value="${lora.strength}"
@@ -47333,7 +47559,7 @@
             if (on) loadAssetPoseGrid();
         }
 
-        // SDXL 모드 HRF/디테일러 토글 리스너
+        // ILXL 모드 HRF/디테일러 토글 리스너
         document.getElementById('asset-sdxl-hrf-toggle').addEventListener('change', function() {
             const status = document.getElementById('asset-sdxl-hrf-status');
             status.textContent = this.checked ? 'ON' : 'OFF';
@@ -47728,7 +47954,7 @@
             if (s.img_w) slot.img_w = s.img_w;
             if (s.img_h) slot.img_h = s.img_h;
 
-            const isAnima = currentConfig?.asset_workflow_type === 'anima';
+            const isAnima = getAssetWorkflowCapabilities().anima;
             if (isAnima && s.anima_artist_preset !== undefined) slot.anima_artist_preset = s.anima_artist_preset;
             if (isAnima && s.anima_quality_preset !== undefined) slot.anima_quality_preset = s.anima_quality_preset;
             if (isAnima && s.anima_negative_preset !== undefined) slot.anima_negative_preset = s.anima_negative_preset;
@@ -49669,16 +49895,16 @@
                 return;
             }
 
-            const refEnabled = document.getElementById('asset-ref-toggle').checked;
-            const styleRefEnabled = document.getElementById('asset-style-ref-toggle').checked;
-            const isAnima = currentConfig?.asset_workflow_type === 'anima';
+            const capabilities = getAssetWorkflowCapabilities();
+            const refEnabled = capabilities.ipadapter && document.getElementById('asset-ref-toggle').checked;
+            const styleRefEnabled = capabilities.ipadapter && document.getElementById('asset-style-ref-toggle').checked;
 
             const requestBody = {
                 character: char,
                 outfit: outfit,
                 expression: expr,
                 appearance: app,
-                asset_workflow_type: isAnima ? 'anima' : 'regular',
+                asset_workflow_type: capabilities.type,
                 face_id_enabled: refEnabled,
                 reference_images: refEnabled ? assetRefImages.map(img => ({filename: img.name, local_path: img.local_path})) : [],
                 style_ref_enabled: styleRefEnabled,
@@ -52176,7 +52402,7 @@
             const animaQualitySel = buildCustomSelectHTML(assetTags?.quality_presets || {}, '', '-- 변경 안함 --', 'anima_quality_preset');
             const animaNegSel = buildCustomSelectHTML(assetTags?.negative_presets || {}, '', '-- 변경 안함 --', 'anima_negative_preset');
             const nlSel = buildCustomSelectHTML(assetTags?.natural_language_presets || {}, '', '-- 변경 안함 --', 'natural_language_preset');
-            const isAnima = currentConfig?.asset_workflow_type === 'anima';
+            const assetCapabilities = getAssetWorkflowCapabilities();
 
             const overlay = document.createElement('div');
             overlay.id = 'batch-bulk-overlay';
@@ -52200,10 +52426,10 @@
                             <div><div class="batch-field-label">복장</div>${outfitSel}</div>
                             <div><div class="batch-field-label">표정</div>${exprSel}</div>
                             <div><div class="batch-field-label">구도/기타 태그</div>${compSel}</div>
-                            <div><div class="batch-field-label">품질 태그 프리셋</div>${qualSel}</div>
+                            <div class="workflow-mode-control" data-workflow-availability="ilxl"><div class="batch-field-label">ILXL 품질 태그 프리셋</div>${qualSel}</div>
                             <div><div class="batch-field-label">캐릭터 부정(optional)</div>${cnSel}</div>
-                            <div><div class="batch-field-label">부정 태그 프리셋</div>${negSel}</div>
-                            <div><div class="batch-field-label">아티스트 프리셋</div>${artistSel}</div>
+                            <div class="workflow-mode-control" data-workflow-availability="ilxl"><div class="batch-field-label">ILXL 부정 태그 프리셋</div>${negSel}</div>
+                            <div class="workflow-mode-control" data-workflow-availability="ilxl"><div class="batch-field-label">ILXL 아티스트 프리셋</div>${artistSel}</div>
                             <div id="bulk-anima-artist-row" class="workflow-mode-control" data-workflow-availability="anima"><div class="batch-field-label">ANIMA 아티스트 프리셋 <span class="workflow-mode-reason">ANIMA 전용</span></div>${animaArtistSel}</div>
                             <div id="bulk-anima-quality-row" class="workflow-mode-control" data-workflow-availability="anima"><div class="batch-field-label">ANIMA 품질 프리셋 <span class="workflow-mode-reason">ANIMA 전용</span></div>${animaQualitySel}</div>
                             <div id="bulk-anima-negative-row" class="workflow-mode-control" data-workflow-availability="anima"><div class="batch-field-label">ANIMA 부정 태그 <span class="workflow-mode-reason">ANIMA 전용</span></div>${animaNegSel}</div>
@@ -52212,7 +52438,7 @@
                     </section>
 
                     <div class="batch-bulk-adapter-grid">
-                    <section class="batch-bulk-section">
+                    <section class="batch-bulk-section workflow-mode-control" data-workflow-availability="ipadapter">
                         <div class="batch-bulk-section-title">FACE-IPAdapter</div>
                         <div class="batch-bulk-control-row">
                             <label class="batch-bulk-control-label">사용 상태</label>
@@ -52247,7 +52473,7 @@
                         </div>
                     </section>
 
-                    <section class="batch-bulk-section">
+                    <section class="batch-bulk-section workflow-mode-control" data-workflow-availability="ipadapter">
                         <div class="batch-bulk-section-title">IPAdapter</div>
                         <div class="batch-bulk-control-row">
                             <label class="batch-bulk-control-label">사용 상태</label>
@@ -52342,8 +52568,8 @@
 
                     <div class="batch-bulk-section">
                         <div class="batch-bulk-section-title">디테일러</div>
-                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
-                            <label style="font-size:0.8rem;">HRF SDXL:</label>
+                        <div class="workflow-mode-control" data-workflow-availability="ilxl" style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+                            <label style="font-size:0.8rem;">HRF ILXL:</label>
                             <select id="bulk-hrf-sdxl-action" class="batch-select" style="width:auto; min-width:120px;">
                                 <option value="">변경 안함</option>
                                 <option value="on">모두 ON</option>
@@ -52387,24 +52613,24 @@
                                 <option value="off">모두 OFF</option>
                             </select>
                         </div>
-                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
-                            <label style="font-size:0.8rem;">SDXL FD:</label>
+                        <div class="workflow-mode-control" data-workflow-availability="ilxl" style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+                            <label style="font-size:0.8rem;">ILXL FD:</label>
                             <select id="bulk-sdxl-fd-action" class="batch-select" style="width:auto; min-width:120px;">
                                 <option value="">변경 안함</option>
                                 <option value="on">모두 ON</option>
                                 <option value="off">모두 OFF</option>
                             </select>
                         </div>
-                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
-                            <label style="font-size:0.8rem;">SDXL HD:</label>
+                        <div class="workflow-mode-control" data-workflow-availability="ilxl" style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+                            <label style="font-size:0.8rem;">ILXL HD:</label>
                             <select id="bulk-sdxl-hd-action" class="batch-select" style="width:auto; min-width:120px;">
                                 <option value="">변경 안함</option>
                                 <option value="on">모두 ON</option>
                                 <option value="off">모두 OFF</option>
                             </select>
                         </div>
-                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
-                            <label style="font-size:0.8rem;">SDXL ED:</label>
+                        <div class="workflow-mode-control" data-workflow-availability="ilxl" style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+                            <label style="font-size:0.8rem;">ILXL ED:</label>
                             <select id="bulk-sdxl-ed-action" class="batch-select" style="width:auto; min-width:120px;">
                                 <option value="">변경 안함</option>
                                 <option value="on">모두 ON</option>
@@ -52601,7 +52827,7 @@
             renderBulkStyleLoraList();
             renderBulkFaceTagChips();
             syncBulkFaceTagsInput();
-            applyWorkflowModeAvailability(overlay, isAnima);
+            applyWorkflowModeAvailability(overlay, assetCapabilities);
         }
 
         function bindBulkEditDropdownEvents(scope) {
@@ -52824,8 +53050,8 @@
                     </div>
                     <select onchange="bulkFaceLoraList[${i}].BASE=this.value"
                         style="width:100%; margin-top:4px; background:var(--surface); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:2px 4px; font-size:0.65rem; cursor:pointer;">
-                        <option value="anima" ${l.BASE === 'anima' ? 'selected' : ''}>anima</option>
-                        <option value="sdxl" ${(l.BASE === 'sdxl' || l.BASE === 'ilxl') ? 'selected' : ''}>sdxl</option>
+                        <option value="anima" ${l.BASE === 'anima' ? 'selected' : ''} ${getAssetWorkflowCapabilities().anima ? '' : 'disabled'}>ANIMA</option>
+                        <option value="sdxl" ${(l.BASE === 'sdxl' || l.BASE === 'ilxl') ? 'selected' : ''} ${getAssetWorkflowCapabilities().ilxl ? '' : 'disabled'}>ILXL</option>
                     </select>
                     <div style="margin-top:4px;">
                         <input type="range" min="0" max="1" step="0.01" value="${l.strength}" style="width:100%; cursor:pointer;"
@@ -52854,8 +53080,8 @@
                     </div>
                     <select onchange="bulkLoraList[${i}].BASE=this.value"
                         style="width:100%; margin-top:4px; background:var(--surface); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:2px 4px; font-size:0.65rem; cursor:pointer;">
-                        <option value="anima" ${lora.BASE === 'anima' ? 'selected' : ''}>anima</option>
-                        <option value="sdxl" ${(lora.BASE === 'sdxl' || lora.BASE === 'ilxl') ? 'selected' : ''}>sdxl</option>
+                        <option value="anima" ${lora.BASE === 'anima' ? 'selected' : ''} ${getAssetWorkflowCapabilities().anima ? '' : 'disabled'}>ANIMA</option>
+                        <option value="sdxl" ${(lora.BASE === 'sdxl' || lora.BASE === 'ilxl') ? 'selected' : ''} ${getAssetWorkflowCapabilities().ilxl ? '' : 'disabled'}>ILXL</option>
                     </select>
                     <div style="margin-top:4px;">
                         <input type="range" min="0" max="1" step="0.01" value="${lora.strength}" style="width:100%; cursor:pointer;"
@@ -52916,8 +53142,8 @@
                     </div>
                     <select onchange="bulkStyleLoraList[${i}].BASE=this.value"
                         style="width:100%; margin-top:4px; background:var(--surface); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:2px 4px; font-size:0.65rem; cursor:pointer;">
-                        <option value="anima" ${l.BASE === 'anima' ? 'selected' : ''}>anima</option>
-                        <option value="sdxl" ${(l.BASE === 'sdxl' || l.BASE === 'ilxl') ? 'selected' : ''}>sdxl</option>
+                        <option value="anima" ${l.BASE === 'anima' ? 'selected' : ''} ${getAssetWorkflowCapabilities().anima ? '' : 'disabled'}>ANIMA</option>
+                        <option value="sdxl" ${(l.BASE === 'sdxl' || l.BASE === 'ilxl') ? 'selected' : ''} ${getAssetWorkflowCapabilities().ilxl ? '' : 'disabled'}>ILXL</option>
                     </select>
                     <div style="margin-top:4px;">
                         <input type="range" min="0" max="1" step="0.01" value="${l.strength}" style="width:100%; cursor:pointer;"
@@ -53155,7 +53381,8 @@
             const animaQualitySel = buildCustomSelectHTML(assetTags?.quality_presets || {}, slot.anima_quality_preset || '', '-- ANIMA 품질 프리셋 --', 'anima_quality_preset');
             const animaNegSel = buildCustomSelectHTML(assetTags?.negative_presets || {}, slot.anima_negative_preset || '', '-- ANIMA 부정 프리셋 --', 'anima_negative_preset');
             const nlSel = buildCustomSelectHTML(assetTags?.natural_language_presets || {}, slot.natural_language_preset, '-- 자연어 프리셋 --', 'natural_language_preset');
-            const isAnima = currentConfig?.asset_workflow_type === 'anima';
+            const assetCapabilities = getAssetWorkflowCapabilities();
+            const isAnima = assetCapabilities.anima;
             const refPreviewUrls = slot.ref_preview_url ? slot.ref_preview_url.split('|').filter(Boolean) : [];
             const styleRefPreviewUrls = slot.style_ref_preview_url ? slot.style_ref_preview_url.split('|').filter(Boolean) : [];
 
@@ -53167,7 +53394,7 @@
                         <div class="batch-slot-kicker">CHAIN SLOT</div>
                         <div class="batch-slot-title-row">
                             <span class="batch-slot-title">#${idx + 1}</span>
-                            <span class="batch-slot-mode ${isAnima ? 'anima' : ''}">${isAnima ? 'ANIMA' : '일반'}</span>
+                            <span class="batch-slot-mode ${isAnima ? 'anima' : ''}">${assetCapabilities.type === 'anima_only' ? 'ONLY ANIMA' : (assetCapabilities.dual ? 'ANIMA+ILXL' : 'ILXL')}</span>
                         </div>
                     </div>
                 </div>
@@ -53189,10 +53416,10 @@
                         <div class="batch-field-group"><div class="batch-field-label">복장</div>${outfitSel}</div>
                         <div class="batch-field-group"><div class="batch-field-label">표정</div>${exprSel}</div>
                         <div class="batch-field-group"><div class="batch-field-label">구도/기타 태그</div>${compSel}</div>
-                        <div class="batch-field-group"><div class="batch-field-label">품질 태그</div>${qualSel}</div>
+                        <div class="batch-field-group workflow-mode-control" data-workflow-availability="ilxl"><div class="batch-field-label">ILXL 품질 태그</div>${qualSel}</div>
                         <div class="batch-field-group"><div class="batch-field-label">캐릭터 부정(optional)</div>${cnSel}</div>
-                        <div class="batch-field-group"><div class="batch-field-label">부정 태그</div>${negSel}</div>
-                        <div class="batch-field-group"><div class="batch-field-label">아티스트 프리셋</div>${artistSel}</div>
+                        <div class="batch-field-group workflow-mode-control" data-workflow-availability="ilxl"><div class="batch-field-label">ILXL 부정 태그</div>${negSel}</div>
+                        <div class="batch-field-group workflow-mode-control" data-workflow-availability="ilxl"><div class="batch-field-label">ILXL 아티스트 프리셋</div>${artistSel}</div>
                         <div class="batch-field-group workflow-mode-control" data-workflow-availability="anima"><div class="batch-field-label">ANIMA 아티스트 프리셋 <span class="workflow-mode-reason">ANIMA 전용</span></div>${animaArtistSel}</div>
                         <div class="batch-field-group workflow-mode-control" data-workflow-availability="anima"><div class="batch-field-label">ANIMA 품질 프리셋 <span class="workflow-mode-reason">ANIMA 전용</span></div>${animaQualitySel}</div>
                         <div class="batch-field-group workflow-mode-control" data-workflow-availability="anima"><div class="batch-field-label">ANIMA 부정 태그 <span class="workflow-mode-reason">ANIMA 전용</span></div>${animaNegSel}</div>
@@ -53200,7 +53427,7 @@
                     </div>
                 </section>
 
-                <section class="batch-slot-section">
+                <section class="batch-slot-section workflow-mode-control" data-workflow-availability="ipadapter">
                 <div class="batch-slot-section-title">
                     <span>참조 이미지</span>
                     <span class="batch-slot-section-hint">Adapter</span>
@@ -53283,8 +53510,8 @@
                                 </div>
                                 <select onchange="batchChains[${idx}].lora_list[${li}].BASE=this.value"
                                     style="width:100%; margin-top:4px; background:var(--surface); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:2px 4px; font-size:0.7rem; cursor:pointer;">
-                                    <option value="anima" ${l.BASE === 'anima' ? 'selected' : ''}>anima</option>
-                                    <option value="sdxl" ${(l.BASE === 'sdxl' || l.BASE === 'ilxl') ? 'selected' : ''}>sdxl</option>
+                                    <option value="anima" ${l.BASE === 'anima' ? 'selected' : ''} ${assetCapabilities.anima ? '' : 'disabled'}>ANIMA</option>
+                                    <option value="sdxl" ${(l.BASE === 'sdxl' || l.BASE === 'ilxl') ? 'selected' : ''} ${assetCapabilities.ilxl ? '' : 'disabled'}>ILXL</option>
                                 </select>
                                 <div style="display:flex; align-items:center; gap:4px; margin-top:4px;">
                                     <input type="range" min="0" max="1" step="0.01" value="${l.strength}" style="flex:1; cursor:pointer;"
@@ -53317,8 +53544,8 @@
                                 </div>
                                 <select onchange="batchChains[${idx}].face_lora_list[${li}].BASE=this.value"
                                     style="width:100%; margin-top:4px; background:var(--surface); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:2px 4px; font-size:0.7rem; cursor:pointer;">
-                                    <option value="anima" ${l.BASE === 'anima' ? 'selected' : ''}>anima</option>
-                                    <option value="sdxl" ${(l.BASE === 'sdxl' || l.BASE === 'ilxl') ? 'selected' : ''}>sdxl</option>
+                                    <option value="anima" ${l.BASE === 'anima' ? 'selected' : ''} ${assetCapabilities.anima ? '' : 'disabled'}>ANIMA</option>
+                                    <option value="sdxl" ${(l.BASE === 'sdxl' || l.BASE === 'ilxl') ? 'selected' : ''} ${assetCapabilities.ilxl ? '' : 'disabled'}>ILXL</option>
                                 </select>
                                 <div style="display:flex; align-items:center; gap:4px; margin-top:4px;">
                                     <input type="range" min="0" max="1" step="0.01" value="${l.strength}" style="flex:1; cursor:pointer;"
@@ -53352,8 +53579,8 @@
                                 </div>
                                 <select onchange="batchChains[${idx}].style_lora_list[${li}].BASE=this.value; updateBatchPreview(this.closest('.batch-slot'), ${idx})"
                                     style="width:100%; margin-top:4px; background:var(--surface); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:2px 4px; font-size:0.7rem; cursor:pointer;">
-                                    <option value="anima" ${l.BASE === 'anima' ? 'selected' : ''}>anima</option>
-                                    <option value="sdxl" ${(l.BASE === 'sdxl' || l.BASE === 'ilxl') ? 'selected' : ''}>sdxl</option>
+                                    <option value="anima" ${l.BASE === 'anima' ? 'selected' : ''} ${assetCapabilities.anima ? '' : 'disabled'}>ANIMA</option>
+                                    <option value="sdxl" ${(l.BASE === 'sdxl' || l.BASE === 'ilxl') ? 'selected' : ''} ${assetCapabilities.ilxl ? '' : 'disabled'}>ILXL</option>
                                 </select>
                                 <div style="display:flex; align-items:center; gap:4px; margin-top:4px;">
                                     <input type="range" min="0" max="1" step="0.01" value="${l.strength}" style="flex:1; cursor:pointer;"
@@ -53373,9 +53600,9 @@
                     <span class="batch-slot-section-hint">출력 · 디테일러</span>
                 </div>
                 <div class="batch-slot-option-stack">
-                <div class="workflow-mode-control" data-workflow-availability="regular">
+                <div class="workflow-mode-control" data-workflow-availability="pose">
                 <div class="batch-toggle-row">
-                    <label>포즈 <span class="workflow-mode-reason">일반 전용</span></label>
+                    <label>포즈 <span class="workflow-mode-reason">ILXL 단독 전용</span></label>
                     <label class="toggle-switch"><input type="checkbox" data-field="pose_enabled" ${slot.pose_enabled ? 'checked' : ''}><span class="toggle-slider"></span></label>
                 </div>
                 <div class="batch-pose-select-row" style="display:${slot.pose_enabled ? 'block' : 'none'};">
@@ -53394,7 +53621,7 @@
 
                 <div class="batch-toggle-row">
                     <label>HIRES FIX</label>
-                    <label style="display:flex; align-items:center; gap:3px; font-size:0.7rem; cursor:pointer;"><input type="checkbox" data-field="hrf_sdxl" ${slot.hrf_sdxl ? 'checked' : ''}> SDXL</label>
+                    <label class="workflow-mode-control" data-workflow-availability="ilxl" style="display:flex; align-items:center; gap:3px; font-size:0.7rem; cursor:pointer;"><input type="checkbox" data-field="hrf_sdxl" ${slot.hrf_sdxl ? 'checked' : ''}> ILXL</label>
                     <label class="workflow-mode-control" data-workflow-availability="anima" style="display:flex; align-items:center; gap:3px; font-size:0.7rem; cursor:pointer;"><input type="checkbox" data-field="hrf_anima" ${slot.hrf_anima ? 'checked' : ''}> ANIMA <span class="workflow-mode-reason">ANIMA 전용</span></label>
                 </div>
                 <div style="display:flex; flex-direction:column; gap:4px; padding:4px 6px; background:var(--surface2); border-radius:4px; border:1px solid var(--border);">
@@ -53412,8 +53639,8 @@
                         <label class="toggle-switch"><input type="checkbox" data-field="hrf_control_net" ${slot.hrf_control_net ? 'checked' : ''}><span class="toggle-slider"></span></label>
                     </div>
                 </div>
-                <div style="display:flex; gap:6px;">
-                    <span class="illust-section-chip sdxl">SDXL</span>
+                <div class="workflow-mode-control" data-workflow-availability="ilxl" style="display:flex; gap:6px;">
+                    <span class="illust-section-chip sdxl">ILXL</span>
                     <label style="display:flex; align-items:center; gap:3px; font-size:0.7rem; cursor:pointer;"><input type="checkbox" data-field="sdxl_fd_enabled" ${slot.sdxl_fd_enabled ? 'checked' : ''}> FD</label>
                     <label style="display:flex; align-items:center; gap:3px; font-size:0.7rem; cursor:pointer;"><input type="checkbox" data-field="sdxl_hd_enabled" ${slot.sdxl_hd_enabled ? 'checked' : ''}> HD</label>
                     <label style="display:flex; align-items:center; gap:3px; font-size:0.7rem; cursor:pointer;"><input type="checkbox" data-field="sdxl_ed_enabled" ${slot.sdxl_ed_enabled ? 'checked' : ''}> ED</label>
@@ -54764,8 +54991,11 @@
 
         // ─── 배치 프롬프트 빌드 (미리보기 + 전송 공통) ──────────
         function _resolveBatchSlotTags(slot) {
-            // 일반 LoRA + 스타일(그림체) LoRA 트리거를 BASE별로 병합 (스타일 토글이 ON일 때만 스타일 포함)
-            const triggerSrc = [...(slot.lora_list || []), ...(slot.style_lora_enabled ? (slot.style_lora_list || []) : [])];
+            // LoRA + 스타일(그림체) LoRA 중 현재 에셋 프로필과 호환되는 BASE만 병합한다.
+            const triggerSrc = filterAssetLorasForCapabilities([
+                ...(slot.lora_list || []),
+                ...(slot.style_lora_enabled ? (slot.style_lora_list || []) : []),
+            ]);
             const loraTriggerWords = triggerSrc.map(l => l.trigger).filter(t => t && t.trim()).join(', ');
             const animaLoraTriggerWords = triggerSrc.filter(l => (l.BASE || 'anima') === 'anima').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
             const sdxlLoraTriggerWords = triggerSrc.filter(l => l.BASE === 'sdxl').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
@@ -54789,8 +55019,10 @@
         async function buildBatchSlotPromptData(slot) {
             if (!assetTags) return null;
             const t = _resolveBatchSlotTags(slot);
-            const isAnima = currentConfig?.asset_workflow_type === 'anima';
-            const poseEnabled = isAnima ? false : (slot.pose_enabled || false);
+            const capabilities = getAssetWorkflowCapabilities();
+            const isAnima = capabilities.anima;
+            const isDual = capabilities.dual;
+            const poseEnabled = capabilities.pose && (slot.pose_enabled || false);
 
             let positiveTags = '';
             if (isAnima) {
@@ -54812,9 +55044,9 @@
                 positiveTags = '[ANIMA_QUALITY]\n' + animaQuality.join(', ')
                     + '\n[ANIMA_ARTIST]\n' + animaArtist.join(', ')
                     + '\n[ANIMA]\n' + section1Rest.join(', ')
-                    + '\n[SDXL_QUALITY]\n' + sdxlQuality.join(', ')
-                    + '\n[SDXL_ARTIST]\n' + sdxlArtist.join(', ')
-                    + '\n[SDXL]\n' + section2Rest.join(', ')
+                    + (isDual ? '\n[SDXL_QUALITY]\n' + sdxlQuality.join(', ')
+                        + '\n[SDXL_ARTIST]\n' + sdxlArtist.join(', ')
+                        + '\n[SDXL]\n' + section2Rest.join(', ') : '')
                     + '\n[CHAR_LIST]\nasset_mode';
             } else {
                 positiveTags = [
@@ -54825,10 +55057,10 @@
             }
 
             let positiveFull = positiveTags;
-            positiveFull += `\n[FACE_ID_ACTIVATE]\n${slot.ref_enabled ? 'true' : 'false'}`;
+            positiveFull += `\n[FACE_ID_ACTIVATE]\n${capabilities.ipadapter && slot.ref_enabled ? 'true' : 'false'}`;
             positiveFull += `\n[FACE_ID_STR]\n${slot.ref_strength || 0.55}`;
             positiveFull += `\n[FACE_ID_DIR]\n${slot.ref_dir || 'soya_char_ref/fallback'}`;
-            positiveFull += `\n[STYLE_ACTIVATE]\n${slot.style_ref_enabled ? 'true' : 'false'}`;
+            positiveFull += `\n[STYLE_ACTIVATE]\n${capabilities.ipadapter && slot.style_ref_enabled ? 'true' : 'false'}`;
             positiveFull += `\n[STYLE_STR]\n${slot.style_ref_strength || 0.55}`;
             positiveFull += `\n[STYLE_DIR]\n${slot.style_ref_dir || 'soya_style_ref/fallback'}`;
             // FACE_CROP (ANIMA only)
@@ -54836,10 +55068,12 @@
                 positiveFull += `\n[FACE_CROP_TOP]\n${slot.face_crop_top ?? 2.5}`;
                 positiveFull += `\n[FACE_CROP_BOTTOM]\n${slot.face_crop_bottom ?? 1}`;
             }
-            const loraActive = slot.lora_enabled && (slot.lora_list || []).length > 0;
-            const styleLoraActive = slot.style_lora_enabled && (slot.style_lora_list || []).length > 0;
-            const regularLoraData = (slot.lora_list || []).map(l => ({lora_path: resolveLoraPath(l), str: l.strength, BASE: l.BASE || 'anima'}));
-            const styleLoraData = (slot.style_lora_list || []).map(l => ({lora_path: resolveLoraPath(l), str: l.strength, BASE: l.BASE || 'anima'}));
+            const compatibleRegularLoras = filterAssetLorasForCapabilities(slot.lora_list, capabilities);
+            const compatibleStyleLoras = filterAssetLorasForCapabilities(slot.style_lora_list, capabilities);
+            const loraActive = slot.lora_enabled && compatibleRegularLoras.length > 0;
+            const styleLoraActive = slot.style_lora_enabled && compatibleStyleLoras.length > 0;
+            const regularLoraData = compatibleRegularLoras.map(l => ({lora_path: resolveLoraPath(l), str: l.strength, BASE: l.BASE || 'anima'}));
+            const styleLoraData = compatibleStyleLoras.map(l => ({lora_path: resolveLoraPath(l), str: l.strength, BASE: l.BASE || 'anima'}));
             if (isAnima) {
                 positiveFull += `\n[LORA_ACTIVATE]\n${loraActive ? 'true' : 'false'}`;
                 positiveFull += `\n[LORA_DATA]\n${JSON.stringify({list: regularLoraData})}`;
@@ -54851,11 +55085,12 @@
             }
             // Face LoRA (ANIMA only)
             if (isAnima) {
-                const faceLoraActive = slot.face_lora_enabled && (slot.face_lora_list || []).length > 0;
+                const compatibleFaceLoras = filterAssetLorasForCapabilities(slot.face_lora_list, capabilities);
+                const faceLoraActive = slot.face_lora_enabled && compatibleFaceLoras.length > 0;
                 const slotFaceLoraUpscale = (slot.face_lora_upscale_size || '').toString().trim();
                 positiveFull += `\n[FACE_LORA_ACTIVATE]\n${faceLoraActive ? 'true' : 'false'}`;
                 if (faceLoraActive) {
-                    positiveFull += `\n[FACE_LORA_DATA]\n${JSON.stringify({list: slot.face_lora_list.map(l => {
+                    positiveFull += `\n[FACE_LORA_DATA]\n${JSON.stringify({list: compatibleFaceLoras.map(l => {
                         const item = {lora_path: resolveLoraPath(l), str: l.strength, BASE: l.BASE || 'anima', CHAR: 'asset_mode'};
                         if (slotFaceLoraUpscale) item.UPSCALE_SIZE = slotFaceLoraUpscale;
                         return item;
@@ -54864,13 +55099,13 @@
                     positiveFull += `\n[FACE_LORA_DATA]\n{"list":[]}`;
                 }
                 // CHAR_FACE_TAG_INFORM
-                const faceLoraList = slot.face_lora_list || [];
+                const faceLoraList = compatibleFaceLoras;
                 const batchFaceAnimaTriggers = faceLoraList.filter(l => (l.BASE || 'anima') === 'anima').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
                 const batchFaceSdxlTriggers = faceLoraList.filter(l => l.BASE === 'sdxl').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
                 positiveFull += `\n[CHAR_FACE_TAG_INFORM]\n${JSON.stringify({list: [{FACE_TAGS: slot.face_tags || '', EYE_TAGS: slot.eye_tags || '', POSITIVE: "", TRIGGER_ANIMA: batchFaceAnimaTriggers, TRIGGER_SDXL: batchFaceSdxlTriggers, CHAR: "asset_mode"}]})}`;
             }
             // Style(그림체) LoRA — ANIMA는 별도 토큰(분리 로더).
-            // 일반(ILXL) 모드는 스타일 LoRA가 LORA_DATA에 흡수되므로 이 토큰들을 출력하지 않음.
+            // ILXL 모드는 스타일 LoRA가 LORA_DATA에 흡수되므로 이 토큰들을 출력하지 않음.
             if (isAnima) {
                 positiveFull += `\n[STYLE_LORA_ACTIVATE]\n${styleLoraActive ? 'true' : 'false'}`;
                 positiveFull += `\n[STYLE_LORA_DATA]\n${JSON.stringify({list: styleLoraData})}`;
@@ -54888,7 +55123,7 @@
             } else {
                 positiveFull += `\n[POSE_DATA]\n{"people":[{"pose_keypoints_2d":[381.10,379.86,1,413.21,506.58,1,223.64,436.41,1,55.33,624.12,1,64.77,454.24,1,579.09,575.30,1,362.22,935.42,1,331.06,972.15,1,196.97,797.67,1,264.96,1013.47,1,257.41,1024.49,1,350.89,820.63,1,419.82,1011.63,1,419.82,1024.49,1,315.95,343.13,1,462.31,294.46,1,263.07,365.17,1,546.35,301.80,1]}],"canvas_height":1024,"canvas_width":700}`;
             }
-            positiveFull += `\n[HRF_ACTIVATE]\n${slot.hrf_sdxl ? 'true' : 'false'}`;
+            positiveFull += `\n[HRF_ACTIVATE]\n${capabilities.ilxl && slot.hrf_sdxl ? 'true' : 'false'}`;
             if (isAnima) positiveFull += `\n[ANIMA_HRF_ACTIVATE]\n${slot.hrf_anima ? 'true' : 'false'}`;
             positiveFull += `\n[HRF_SIZE]\n${slot.hrf_size || 2.0}`;
             positiveFull += `\n[HRF_RESTORE_SIZE]\n${slot.hrf_restore_size !== false ? 'true' : 'false'}`;
@@ -54900,9 +55135,9 @@
                 positiveFull += `\n[ANIMA_HD_ACTIVATE]\n${slot.anima_hd_enabled ? 'true' : 'false'}`;
                 positiveFull += `\n[ANIMA_ED_ACTIVATE]\n${slot.anima_ed_enabled ? 'true' : 'false'}`;
             }
-            positiveFull += `\n[FD_ACTIVATE]\n${slot.sdxl_fd_enabled ? 'true' : 'false'}`;
-            positiveFull += `\n[HD_ACTIVATE]\n${slot.sdxl_hd_enabled ? 'true' : 'false'}`;
-            positiveFull += `\n[ED_ACTIVATE]\n${slot.sdxl_ed_enabled ? 'true' : 'false'}`;
+            positiveFull += `\n[FD_ACTIVATE]\n${capabilities.ilxl && slot.sdxl_fd_enabled ? 'true' : 'false'}`;
+            positiveFull += `\n[HD_ACTIVATE]\n${capabilities.ilxl && slot.sdxl_hd_enabled ? 'true' : 'false'}`;
+            positiveFull += `\n[ED_ACTIVATE]\n${capabilities.ilxl && slot.sdxl_ed_enabled ? 'true' : 'false'}`;
             if (isAnima) {
                 positiveFull += `\n[SEED]\n${slot.seed ?? -1}`;
             }
@@ -54912,7 +55147,7 @@
             if (isAnima) {
                 const animaNegParts = [...t.cnTags, ...t.animaNTags].filter(v => v.trim());
                 const sdxlNegParts = [...t.cnTags, ...t.nTags].filter(v => v.trim());
-                negative = animaNegParts.join(', ') + '\n[SDXL]\n' + sdxlNegParts.join(', ');
+                negative = animaNegParts.join(', ') + (isDual ? '\n[SDXL]\n' + sdxlNegParts.join(', ') : '');
             } else {
                 negative = [...t.cnTags, ...t.nTags].filter(v => v.trim()).join(', ');
             }
@@ -54923,8 +55158,10 @@
         function previewBatchSlotPrompt(slot) {
             if (!assetTags) return '(태그 데이터 로딩중)';
             const t = _resolveBatchSlotTags(slot);
-            const isAnima = currentConfig?.asset_workflow_type === 'anima';
-            const poseEnabled = isAnima ? false : (slot.pose_enabled || false);
+            const capabilities = getAssetWorkflowCapabilities();
+            const isAnima = capabilities.anima;
+            const isDual = capabilities.dual;
+            const poseEnabled = capabilities.pose && (slot.pose_enabled || false);
 
             let positiveColored = '';
 
@@ -54955,9 +55192,9 @@
                 positiveColored = '<span style="color:#0ff;font-weight:bold;">[ANIMA_QUALITY]</span>\n' + renderColoredPrompt(animaQualityData)
                     + '\n<span style="color:#0ff;font-weight:bold;">[ANIMA_ARTIST]</span>\n' + renderColoredPrompt(animaArtistData)
                     + '\n<span style="color:#0ff;font-weight:bold;">[ANIMA]</span>\n' + renderColoredPrompt(section1RestData)
-                    + '\n<span style="color:#0ff;font-weight:bold;">[SDXL_QUALITY]</span>\n' + renderColoredPrompt(sdxlQualityData)
-                    + '\n<span style="color:#0ff;font-weight:bold;">[SDXL_ARTIST]</span>\n' + renderColoredPrompt(sdxlArtistData)
-                    + '\n<span style="color:#ff0;font-weight:bold;">[SDXL]</span>\n' + renderColoredPrompt(section2RestData)
+                    + (isDual ? '\n<span style="color:#0ff;font-weight:bold;">[SDXL_QUALITY]</span>\n' + renderColoredPrompt(sdxlQualityData)
+                        + '\n<span style="color:#0ff;font-weight:bold;">[SDXL_ARTIST]</span>\n' + renderColoredPrompt(sdxlArtistData)
+                        + '\n<span style="color:#ff0;font-weight:bold;">[SDXL]</span>\n' + renderColoredPrompt(section2RestData) : '')
                     + '\n<span style="color:#0ff;font-weight:bold;">[CHAR_LIST]</span>\n<span class="prompt-cat-composition">asset_mode</span>';
             } else {
                 const categoryData = [
@@ -54975,20 +55212,22 @@
 
             // 컨트롤 섹션 (포즈는 placeholder)
             let controlPart = '';
-            controlPart += `\n[FACE_ID_ACTIVATE]\n${slot.ref_enabled ? 'true' : 'false'}`;
+            controlPart += `\n[FACE_ID_ACTIVATE]\n${capabilities.ipadapter && slot.ref_enabled ? 'true' : 'false'}`;
             controlPart += `\n[FACE_ID_STR]\n${slot.ref_strength}`;
             controlPart += `\n[FACE_ID_DIR]\n${slot.ref_dir || 'soya_char_ref/fallback'}`;
-            controlPart += `\n[STYLE_ACTIVATE]\n${slot.style_ref_enabled ? 'true' : 'false'}`;
+            controlPart += `\n[STYLE_ACTIVATE]\n${capabilities.ipadapter && slot.style_ref_enabled ? 'true' : 'false'}`;
             controlPart += `\n[STYLE_STR]\n${slot.style_ref_strength || 0.55}`;
             controlPart += `\n[STYLE_DIR]\n${slot.style_ref_dir || 'soya_style_ref/fallback'}`;
             if (isAnima) {
                 controlPart += `\n[FACE_CROP_TOP]\n${slot.face_crop_top ?? 2.5}`;
                 controlPart += `\n[FACE_CROP_BOTTOM]\n${slot.face_crop_bottom ?? 1}`;
             }
-            const loraActive = slot.lora_enabled && (slot.lora_list || []).length > 0;
-            const styleLoraActive = slot.style_lora_enabled && (slot.style_lora_list || []).length > 0;
-            const regularLoraData = (slot.lora_list || []).map(l => ({lora_path: resolveLoraPath(l), str: l.strength, BASE: l.BASE || 'anima'}));
-            const styleLoraData = (slot.style_lora_list || []).map(l => ({lora_path: resolveLoraPath(l), str: l.strength, BASE: l.BASE || 'anima'}));
+            const compatibleRegularLoras = filterAssetLorasForCapabilities(slot.lora_list, capabilities);
+            const compatibleStyleLoras = filterAssetLorasForCapabilities(slot.style_lora_list, capabilities);
+            const loraActive = slot.lora_enabled && compatibleRegularLoras.length > 0;
+            const styleLoraActive = slot.style_lora_enabled && compatibleStyleLoras.length > 0;
+            const regularLoraData = compatibleRegularLoras.map(l => ({lora_path: resolveLoraPath(l), str: l.strength, BASE: l.BASE || 'anima'}));
+            const styleLoraData = compatibleStyleLoras.map(l => ({lora_path: resolveLoraPath(l), str: l.strength, BASE: l.BASE || 'anima'}));
             if (isAnima) {
                 controlPart += `\n[LORA_ACTIVATE]\n${loraActive ? 'true' : 'false'}`;
                 controlPart += `\n[LORA_DATA]\n${JSON.stringify({list: regularLoraData})}`;
@@ -54998,27 +55237,28 @@
                 controlPart += `\n[LORA_DATA]\n${JSON.stringify({list: [...regularLoraData, ...styleLoraData]})}`;
             }
             if (isAnima) {
-                const faceLoraActive = slot.face_lora_enabled && (slot.face_lora_list || []).length > 0;
+                const compatibleFaceLoras = filterAssetLorasForCapabilities(slot.face_lora_list, capabilities);
+                const faceLoraActive = slot.face_lora_enabled && compatibleFaceLoras.length > 0;
                 const ctrlFaceLoraUpscale = (slot.face_lora_upscale_size || '').toString().trim();
                 controlPart += `\n[FACE_LORA_ACTIVATE]\n${faceLoraActive ? 'true' : 'false'}`;
-                controlPart += `\n[FACE_LORA_DATA]\n${faceLoraActive ? JSON.stringify({list: slot.face_lora_list.map(l => {
+                controlPart += `\n[FACE_LORA_DATA]\n${faceLoraActive ? JSON.stringify({list: compatibleFaceLoras.map(l => {
                     const item = {lora_path: resolveLoraPath(l), str: l.strength, BASE: l.BASE || 'anima', CHAR: 'asset_mode'};
                     if (ctrlFaceLoraUpscale) item.UPSCALE_SIZE = ctrlFaceLoraUpscale;
                     return item;
                 })}) : '{"list":[]}'}`;
-                const previewFaceLoraList = slot.face_lora_list || [];
+                const previewFaceLoraList = compatibleFaceLoras;
                 const previewFaceAnimaTriggers = previewFaceLoraList.filter(l => (l.BASE || 'anima') === 'anima').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
                 const previewFaceSdxlTriggers = previewFaceLoraList.filter(l => l.BASE === 'sdxl').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
                 controlPart += `\n[CHAR_FACE_TAG_INFORM]\n${JSON.stringify({list: [{FACE_TAGS: slot.face_tags || '', EYE_TAGS: slot.eye_tags || '', POSITIVE: "", TRIGGER_ANIMA: previewFaceAnimaTriggers, TRIGGER_SDXL: previewFaceSdxlTriggers, CHAR: "asset_mode"}]})}`;
             }
-            // Style(그림체) LoRA — 일반(ILXL) 모드는 LORA_DATA에 흡수되므로 ANIMA만 출력
+            // Style(그림체) LoRA — ILXL 모드는 LORA_DATA에 흡수되므로 ANIMA만 출력
             if (isAnima) {
                 controlPart += `\n[STYLE_LORA_ACTIVATE]\n${styleLoraActive ? 'true' : 'false'}`;
                 controlPart += `\n[STYLE_LORA_DATA]\n${JSON.stringify({list: styleLoraData})}`;
             }
             controlPart += `\n[POSE_ACTIVATE]\n${poseEnabled ? 'true' : 'false'}`;
             controlPart += `\n[POSE_DATA]\n${poseEnabled && slot.pose_id ? '(포즈: ' + slot.pose_id + ')' : '{"people":[{"pose_keypoints_2d":[...]}],"canvas_height":1024,"canvas_width":700}'}`;
-            controlPart += `\n[HRF_ACTIVATE]\n${slot.hrf_sdxl ? 'true' : 'false'}`;
+            controlPart += `\n[HRF_ACTIVATE]\n${capabilities.ilxl && slot.hrf_sdxl ? 'true' : 'false'}`;
             if (isAnima) controlPart += `\n[ANIMA_HRF_ACTIVATE]\n${slot.hrf_anima ? 'true' : 'false'}`;
             controlPart += `\n[HRF_SIZE]\n${slot.hrf_size || 2.0}`;
             controlPart += `\n[HRF_RESTORE_SIZE]\n${slot.hrf_restore_size !== false ? 'true' : 'false'}`;
@@ -55030,9 +55270,9 @@
                 controlPart += `\n[ANIMA_HD_ACTIVATE]\n${slot.anima_hd_enabled ? 'true' : 'false'}`;
                 controlPart += `\n[ANIMA_ED_ACTIVATE]\n${slot.anima_ed_enabled ? 'true' : 'false'}`;
             }
-            controlPart += `\n[FD_ACTIVATE]\n${slot.sdxl_fd_enabled ? 'true' : 'false'}`;
-            controlPart += `\n[HD_ACTIVATE]\n${slot.sdxl_hd_enabled ? 'true' : 'false'}`;
-            controlPart += `\n[ED_ACTIVATE]\n${slot.sdxl_ed_enabled ? 'true' : 'false'}`;
+            controlPart += `\n[FD_ACTIVATE]\n${capabilities.ilxl && slot.sdxl_fd_enabled ? 'true' : 'false'}`;
+            controlPart += `\n[HD_ACTIVATE]\n${capabilities.ilxl && slot.sdxl_hd_enabled ? 'true' : 'false'}`;
+            controlPart += `\n[ED_ACTIVATE]\n${capabilities.ilxl && slot.sdxl_ed_enabled ? 'true' : 'false'}`;
             if (isAnima) {
                 controlPart += `\n[SEED]\n${slot.seed ?? -1}`;
             }
@@ -55046,12 +55286,13 @@
             const cnTags = (slot.character_negative_preset && assetTags.character_negative_presets?.[slot.character_negative_preset]) || [];
             const nTags = (slot.negative_preset && assetTags.negative_presets?.[slot.negative_preset]) || [];
             const animaNTags = (slot.anima_negative_preset && assetTags.negative_presets?.[slot.anima_negative_preset]) || [];
-            const isAnima = currentConfig?.asset_workflow_type === 'anima';
+            const capabilities = getAssetWorkflowCapabilities();
+            const isAnima = capabilities.anima;
 
             if (isAnima) {
                 const animaNeg = [...cnTags, ...animaNTags].filter(t => t.trim()).join(', ');
                 const sdxlNeg = [...cnTags, ...nTags].filter(t => t.trim()).join(', ');
-                return (animaNeg || '(없음)') + ' | [SDXL] | ' + (sdxlNeg || '(없음)');
+                return (animaNeg || '(없음)') + (capabilities.dual ? ' | [SDXL] | ' + (sdxlNeg || '(없음)') : '');
             }
             const negative = [...cnTags, ...nTags].filter(t => t.trim()).join(', ');
             return negative || '(없음)';
@@ -55082,7 +55323,7 @@
 
             const repeatCount = Math.max(1, parseInt(document.getElementById('batch-repeat-count').value) || 1);
             const totalJobs = batchChains.length * repeatCount;
-            const isAnima = currentConfig?.asset_workflow_type === 'anima';
+            const assetWorkflowType = normalizeAssetWorkflowType(currentConfig?.asset_workflow_type);
 
             // 각 슬롯을 통합 큐에 추가
             let addedCount = 0;
@@ -55103,7 +55344,7 @@
                         outfit: slot.outfit,
                         expression: slot.expression,
                         appearance: slot.appearance,
-                        asset_workflow_type: isAnima ? 'anima' : 'regular',
+                        asset_workflow_type: assetWorkflowType,
                         face_id_enabled: slot.ref_enabled,
                         reference_images: (slot.ref_images || []).map(img => ({filename: img.name, local_path: img.local_path})),
                         style_ref_enabled: slot.style_ref_enabled,

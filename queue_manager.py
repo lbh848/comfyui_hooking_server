@@ -63,6 +63,7 @@ class QueueManager:
     def __init__(self):
         self.items: list[QueueItem] = []
         self.current_item: Optional[QueueItem] = None
+        self.current_external_item: Optional[QueueItem] = None
         self._processing = False
         self._lock = asyncio.Lock()
         # 일시정지: True면 새 작업을 꺼내지 않는다 (현재 실행중은 그대로 완료).
@@ -73,6 +74,9 @@ class QueueManager:
         self._llm_worker_tasks: dict[int, asyncio.Future] = {}  # wid -> Task
         self._llm_next_worker_id: int = 0
         self._llm_wakeup: asyncio.Event = asyncio.Event()
+        # 챈섭은 로컬 GPU와 자원을 공유하지 않으므로 단일 외부 워커에서 병행 처리한다.
+        self._external_worker_task: Optional[asyncio.Future] = None
+        self._external_wakeup: asyncio.Event = asyncio.Event()
         # 삽화 완료 후 다음 작업 시작 전 대기 (새 삽화 도착 시 즉시 진행)
         self._illust_wait_event: Optional[asyncio.Event] = None
         self._illust_wait_started_at: Optional[float] = None
@@ -137,6 +141,9 @@ class QueueManager:
         asyncio.ensure_future(self._process_loop())
         # LLM 워커풀도 깨움 (신규 LLM 아이템 또는 동시성 설정 변경 대응)
         asyncio.ensure_future(self._ensure_llm_workers())
+        # 챈섭 항목은 로컬 GPU 루프와 독립된 외부 워커를 깨운다.
+        if self._item_execution_area(item)[0] == "external":
+            asyncio.ensure_future(self._ensure_external_worker())
         return item
 
     async def add_items_batch(self, items_spec: list, priority: int = 10) -> list:
@@ -213,6 +220,7 @@ class QueueManager:
             # 재개: idle 상태였던 처리 루프들을 다시 기동.
             asyncio.ensure_future(self._process_loop())
             self._llm_wakeup.set()
+            self._external_wakeup.set()
         return self._paused
 
     async def cancel_all_pending(self):
@@ -273,7 +281,13 @@ class QueueManager:
         return {
             "items": [self._item_status_dict(i) for i in self.items],
             "current": self._item_status_dict(self.current_item) if self.current_item else None,
-            "processing": self._processing,
+            "current_external": (
+                self._item_status_dict(self.current_external_item)
+                if self.current_external_item else None
+            ),
+            "processing": self._processing or any(
+                item.status == "processing" for item in self.items
+            ),
             "paused": self._paused,
             "pending_count": len([i for i in self.items if i.status == "pending"]),
             "illust_waiting": self._illust_wait_event is not None,
@@ -281,6 +295,9 @@ class QueueManager:
             "illust_wait_seconds": self._illust_wait_seconds if self._illust_wait_event is not None else 0,
             "llm_active_workers": len([t for t in self._llm_worker_tasks.values() if not t.done()]),
             "llm_target_workers": self._target_llm_workers(),
+            "external_worker_active": bool(
+                self._external_worker_task and not self._external_worker_task.done()
+            ),
         }
 
     def remove_item(self, item_id: str) -> bool:
@@ -508,10 +525,14 @@ class QueueManager:
                 if not pending_items:
                     break
                 pending_items.sort(key=self._sort_key)
-                # GPU계열만 선택 (LLM계열은 워커풀이 처리)
-                gpu_pending = [i for i in pending_items if i.type not in LLM_TYPES]
+                # 로컬 GPU계열만 선택 (LLM/챈섭은 각 독립 워커가 처리)
+                gpu_pending = [
+                    i for i in pending_items
+                    if i.type not in LLM_TYPES
+                    and self._item_execution_area(i)[0] == "gpu"
+                ]
                 if not gpu_pending:
-                    break  # 남은 pending은 전부 LLM계열 → 메인 루프는 종료, 워커풀이 처리
+                    break  # 남은 pending은 LLM/외부 계열 → 각 워커가 처리
                 next_item = gpu_pending[0]
                 # 순서 보존: 더 높은 우선순위 작업이 pending/processing 중이면
                 # (예: analysis → refine → training 의존성) 그것이 끝날 때까지 대기.
@@ -563,6 +584,8 @@ class QueueManager:
         self._settle_future(item)
         if is_gpu:
             self.current_item = None
+        elif self._item_execution_area(item)[0] == "external":
+            self.current_external_item = None
         was_illustration = item.type == "illustration"
         # 완료 알림 후 잠시 유지 — 완료 항목을 UI에 2초간 띄운 뒤 삭제(프룬)하되,
         # 백그라운드로 지연시켜 다음 큐가 즉시 시작되도록 한다(파이프라인은 블록하지 않음).
@@ -573,6 +596,7 @@ class QueueManager:
             await self._wait_after_illustration()
         # 어떤 아이템이 완료되면 우선순위 블록이 풀렸을 수 있으니 메인 루프 재점검
         asyncio.ensure_future(self._process_loop())
+        self._external_wakeup.set()
 
     async def _deferred_prune(self, item: QueueItem):
         """완료/실패/취소 항목을 UI에 2초간 띄운 뒤 리스트에서 삭제한다.
@@ -585,6 +609,60 @@ class QueueManager:
             await self._notify_queue_updated()
         except Exception as e:
             print(f"[QUEUE] 지연 프룬 실패: item={getattr(item, 'id', '')}, error={e}")
+            traceback.print_exc()
+
+    # ─── 챈섭 외부 워커 ─────────────────────────────────────
+
+    async def _ensure_external_worker(self):
+        """로컬 GPU와 독립된 챈섭 워커 한 개를 유지한다."""
+        if self._external_worker_task is None or self._external_worker_task.done():
+            self._external_worker_task = asyncio.ensure_future(
+                self._external_worker_loop()
+            )
+            print("[QUEUE:EXTERNAL] 챈섭 외부 워커 시작")
+        self._external_wakeup.set()
+
+    def _pop_next_external_item(self) -> Optional[QueueItem]:
+        pending = [
+            item for item in self.items
+            if item.status == "pending"
+            and self._item_execution_area(item)[0] == "external"
+        ]
+        if not pending:
+            return None
+        pending.sort(key=self._sort_key)
+        item = pending[0]
+        item.status = "processing"
+        item.started_at = time.time()
+        item.progress = 0.0
+        return item
+
+    async def _external_worker_loop(self):
+        try:
+            while True:
+                if self._paused:
+                    self._external_wakeup.clear()
+                    print("[QUEUE:EXTERNAL] 일시정지 대기")
+                    await self._external_wakeup.wait()
+                    continue
+                item = self._pop_next_external_item()
+                if item is None:
+                    self._external_wakeup.clear()
+                    if any(
+                        candidate.status == "pending"
+                        and self._item_execution_area(candidate)[0] == "external"
+                        for candidate in self.items
+                    ):
+                        continue
+                    await self._external_wakeup.wait()
+                    continue
+                self.current_external_item = item
+                await self._run_item_pipeline(item, is_gpu=False)
+        except asyncio.CancelledError:
+            print("[QUEUE:EXTERNAL] 챈섭 외부 워커 종료")
+            raise
+        except Exception as e:
+            print(f"[QUEUE:EXTERNAL] 챈섭 외부 워커 치명적 예외: {e}")
             traceback.print_exc()
 
     # ─── LLM 워커풀 ─────────────────────────────────────────
@@ -953,7 +1031,10 @@ class QueueManager:
             natural_language=body.get("natural_language", ""),
             lora_trigger_words=body.get("lora_trigger_words", ""),
             anima_artist_preset=body.get("anima_artist_preset", ""),
-            asset_workflow_type=body.get("asset_workflow_type", "regular"),
+            asset_workflow_type=(
+                body.get("asset_workflow_type")
+                or config.get("asset_workflow_type", "ilxl")
+            ),
             anima_lora_trigger_words=body.get("anima_lora_trigger_words", ""),
             sdxl_lora_trigger_words=body.get("sdxl_lora_trigger_words", ""),
             positive_prompt=body.get("positive_prompt"),
