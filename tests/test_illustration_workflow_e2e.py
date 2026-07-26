@@ -204,6 +204,91 @@ async def test_config_api_saves_chansub_concurrency_and_refreshes_workers(monkey
 
 
 @pytest.mark.asyncio
+async def test_config_api_saves_chansub_builtin_quality_tag_filter(monkeypatch):
+    config = copy.deepcopy(server.app_config)
+    saved = []
+    monkeypatch.setattr(server, "app_config", config)
+    monkeypatch.setattr(
+        server,
+        "save_config",
+        lambda value: saved.append(copy.deepcopy(value)),
+    )
+    monkeypatch.setattr(server.llm_service, "update_config", lambda _value: None)
+    monkeypatch.setattr(server.embedding_service, "update_config", lambda _value: None)
+
+    response = await server.handle_api_config(
+        _JsonRequest({"chansub_strip_builtin_quality_tags": False})
+    )
+
+    assert response.status == 200
+    assert saved[-1]["chansub_strip_builtin_quality_tags"] is False
+    assert (
+        json.loads(response.text)["config"]["chansub_strip_builtin_quality_tags"]
+        is False
+    )
+
+
+@pytest.mark.asyncio
+async def test_config_api_rejects_non_boolean_chansub_quality_tag_filter(
+    monkeypatch,
+):
+    config = copy.deepcopy(server.app_config)
+    saved = []
+    monkeypatch.setattr(server, "app_config", config)
+    monkeypatch.setattr(server, "save_config", lambda value: saved.append(value))
+
+    response = await server.handle_api_config(
+        _JsonRequest({"chansub_strip_builtin_quality_tags": "false"})
+    )
+
+    assert response.status == 400
+    assert "true/false" in json.loads(response.text)["error"]
+    assert saved == []
+
+
+@pytest.mark.asyncio
+async def test_chansub_generation_passes_filter_setting_without_changing_positive(
+    monkeypatch,
+):
+    config = copy.deepcopy(server.app_config)
+    config["chansub_strip_builtin_quality_tags"] = False
+    captured = {}
+
+    async def fake_generate_image(positive, negative, width, height, **kwargs):
+        captured.update(
+            {
+                "positive": positive,
+                "negative": negative,
+                "width": width,
+                "height": height,
+                "kwargs": kwargs,
+            }
+        )
+        return b"image-data", {"provider": "chansub"}
+
+    monkeypatch.setattr(server, "app_config", config)
+    monkeypatch.setattr(
+        server.chansub_service,
+        "generate_image",
+        fake_generate_image,
+    )
+    positive = "masterpiece, best_quality, highres, 1girl"
+
+    image, result = await server.generate_image_with_prompt(
+        positive,
+        "lowres",
+        provider="chansub",
+        width=640,
+        height=960,
+    )
+
+    assert captured["positive"] == positive
+    assert captured["kwargs"]["strip_builtin_quality_tags"] is False
+    assert image == b"image-data"
+    assert result == {"provider": "chansub"}
+
+
+@pytest.mark.asyncio
 async def test_chansub_key_api_saves_rotation_key_with_backup(monkeypatch, tmp_path):
     key_dir = tmp_path / "key"
     key_dir.mkdir()

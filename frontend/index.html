@@ -11422,6 +11422,21 @@
                         </div>
                         <div class="setting-row">
                             <div class="setting-label">
+                                <div class="title">내장 품질 태그 전송 제외</div>
+                                <div class="desc">챈섭 전송본에서 masterpiece, best_quality(best quality), highres의 최상위 완전 일치 태그만 제거합니다. 저장·백업 프롬프트는 원문을 유지합니다.</div>
+                            </div>
+                            <div class="setting-control" style="display:flex; align-items:center; gap:8px;">
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="setting-chansub-strip-builtin-quality-tags"
+                                           onchange="updateChansubStripQualityTagsStatus(this.checked)" checked>
+                                    <span class="toggle-slider"></span>
+                                </label>
+                                <span id="setting-chansub-strip-builtin-quality-tags-status"
+                                      class="toggle-status on">ON</span>
+                            </div>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-label">
                                 <div class="title">실패 시 재시도 횟수</div>
                                 <div class="desc">최초 요청을 제외한 추가 시도 횟수. 네트워크·타임아웃, HTTP 408/429/5xx, 이미지 응답 해석 실패에만 적용됩니다.</div>
                             </div>
@@ -15048,6 +15063,10 @@
             if (chansubRetryDelayEl) chansubRetryDelayEl.value = (currentConfig.chansub_retry_delay_sec ?? 3.0);
             const chansubConcurrencyEl = document.getElementById('setting-chansub-max-concurrency');
             if (chansubConcurrencyEl) chansubConcurrencyEl.value = (currentConfig.chansub_max_concurrency ?? 1);
+            const chansubStripQualityTags = currentConfig.chansub_strip_builtin_quality_tags !== false;
+            const chansubStripQualityTagsEl = document.getElementById('setting-chansub-strip-builtin-quality-tags');
+            if (chansubStripQualityTagsEl) chansubStripQualityTagsEl.checked = chansubStripQualityTags;
+            updateChansubStripQualityTagsStatus(chansubStripQualityTags);
             const llmConcEl = document.getElementById('setting-llm-max-concurrency');
             if (llmConcEl) llmConcEl.value = (currentConfig.llm_max_concurrency ?? 1);
             const llmStreamIdleTimeoutEl = document.getElementById('setting-llm-stream-idle-timeout');
@@ -15927,6 +15946,7 @@
                 chansub_max_concurrency: parseInt(document.getElementById('setting-chansub-max-concurrency').value) || 1,
                 chansub_max_retries: parseInt(document.getElementById('setting-chansub-max-retries').value) || 0,
                 chansub_retry_delay_sec: parseFloat(document.getElementById('setting-chansub-retry-delay').value) || 0,
+                chansub_strip_builtin_quality_tags: document.getElementById('setting-chansub-strip-builtin-quality-tags').checked,
                 comfy_input_dir: document.getElementById('setting-comfy-input-dir').value,
                 backup_base_dir: document.getElementById('setting-backup-dir').value,
                 backup_max_count: parseInt(document.getElementById('setting-backup-max-count').value) || 500,
@@ -18157,7 +18177,18 @@
             }
         }
 
-        // ─── 챈섭 API 키 별도 저장 (key/chansub_key.json) ───
+        // ─── 챈섭 설정 및 API 키 별도 저장 (key/chansub_key.json) ───
+        function updateChansubStripQualityTagsStatus(checked) {
+            const status = document.getElementById('setting-chansub-strip-builtin-quality-tags-status');
+            if (!status) {
+                console.error('[CHANSUB] 내장 품질 태그 제외 상태 표시 요소를 찾을 수 없습니다.');
+                return;
+            }
+            status.textContent = checked ? 'ON' : 'OFF';
+            status.classList.toggle('on', checked);
+            status.classList.toggle('off', !checked);
+        }
+
         async function loadChansubKey() {
             try {
                 const resp = await fetch('/api/chansub/key');

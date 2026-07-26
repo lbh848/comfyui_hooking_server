@@ -190,6 +190,44 @@ class ChansubServiceTest(unittest.TestCase):
         self.assertFalse(chansub_service._is_retryable_http_status(400))
         self.assertFalse(chansub_service._is_retryable_http_status(401))
 
+    def test_strip_builtin_quality_tags_uses_exact_top_level_matches(self):
+        positive = (
+            "masterpiece, artist:name, best_quality, amazing quality, highres, "
+            "1girl, (best quality:1.2), masterpiece style"
+        )
+
+        filtered, quality_start, quality_count, removed = (
+            chansub_service.strip_builtin_quality_tags_for_request(
+                positive,
+                quality_tag_start=2,
+                quality_tag_count=2,
+            )
+        )
+
+        self.assertEqual(
+            filtered,
+            "artist:name, amazing quality, 1girl, "
+            "(best quality:1.2), masterpiece style",
+        )
+        self.assertEqual((quality_start, quality_count), (1, 1))
+        self.assertEqual(removed, ["masterpiece", "best_quality", "highres"])
+
+    def test_strip_builtin_quality_tags_accepts_space_and_case_variants(self):
+        filtered, quality_start, quality_count, removed = (
+            chansub_service.strip_builtin_quality_tags_for_request(
+                "MASTERPIECE, Best Quality, HIGHRES, 1girl",
+                quality_tag_start=0,
+                quality_tag_count=3,
+            )
+        )
+
+        self.assertEqual(filtered, "1girl")
+        self.assertEqual((quality_start, quality_count), (0, 0))
+        self.assertEqual(
+            removed,
+            ["MASTERPIECE", "Best Quality", "HIGHRES"],
+        )
+
     def test_retry_reorders_only_quality_area_of_positive_prompt(self):
         positive = r"artist:name, best quality, amazing quality, 1girl, (red dress, blue ribbon)"
 
@@ -289,6 +327,111 @@ class ChansubRetryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sleep_mock.await_count, 2)
         sleep_mock.assert_awaited_with(1.5)
 
+    async def test_request_filter_does_not_mutate_source_prompt(self):
+        positive = (
+            "masterpiece, best_quality, highres, 1girl, "
+            "(best quality:1.2), outdoors"
+        )
+        captured_bodies = []
+
+        async def capture_request(body, headers):
+            captured_bodies.append(copy.deepcopy(body))
+            return b"image-data"
+
+        with patch.object(
+            chansub_service,
+            "_post_generate_request",
+            side_effect=capture_request,
+        ):
+            image, result = await chansub_service.generate_image(
+                positive,
+                "lowres",
+                640,
+                960,
+                max_retries=0,
+                strip_builtin_quality_tags=True,
+            )
+
+        self.assertEqual(
+            positive,
+            "masterpiece, best_quality, highres, 1girl, "
+            "(best quality:1.2), outdoors",
+        )
+        self.assertEqual(
+            captured_bodies[0]["input"],
+            "1girl, (best quality:1.2), outdoors",
+        )
+        self.assertEqual(
+            captured_bodies[0]["parameters"]["v4_prompt"]["caption"]["base_caption"],
+            "1girl, (best quality:1.2), outdoors",
+        )
+        self.assertEqual(image, b"image-data")
+        self.assertEqual(result["attempts"], 1)
+
+    async def test_request_filter_can_be_disabled(self):
+        positive = "masterpiece, best_quality, highres, 1girl"
+        request_mock = AsyncMock(return_value=b"image-data")
+
+        with patch.object(
+            chansub_service,
+            "_post_generate_request",
+            request_mock,
+        ):
+            image, result = await chansub_service.generate_image(
+                positive,
+                "lowres",
+                640,
+                960,
+                max_retries=0,
+                strip_builtin_quality_tags=False,
+            )
+
+        sent_body = request_mock.await_args.args[0]
+        self.assertEqual(sent_body["input"], positive)
+        self.assertEqual(image, b"image-data")
+        self.assertEqual(result["attempts"], 1)
+
+    async def test_retry_reorders_adjusted_quality_range_after_filter(self):
+        captured_bodies = []
+
+        async def capture_request(body, headers):
+            captured_bodies.append(copy.deepcopy(body))
+            if len(captured_bodies) == 1:
+                raise chansub_service.ChansubRequestError(
+                    "챈섭 HTTP 500: failed",
+                    retryable=True,
+                )
+            return b"image-data"
+
+        with patch.object(
+            chansub_service,
+            "_post_generate_request",
+            side_effect=capture_request,
+        ), patch.object(chansub_service.asyncio, "sleep", new=AsyncMock()):
+            image, result = await chansub_service.generate_image(
+                "artist:name, masterpiece, best quality, amazing quality, "
+                "very aesthetic, highres, 1girl",
+                "lowres",
+                640,
+                960,
+                max_retries=1,
+                retry_delay_sec=0,
+                quality_tag_start=1,
+                quality_tag_count=5,
+                strip_builtin_quality_tags=True,
+            )
+
+        self.assertEqual(
+            captured_bodies[0]["input"],
+            "artist:name, amazing quality, very aesthetic, 1girl",
+        )
+        self.assertEqual(
+            captured_bodies[1]["input"],
+            "artist:name, very aesthetic, amazing quality, 1girl",
+        )
+        self.assertEqual(image, b"image-data")
+        self.assertEqual(result["attempts"], 2)
+
     async def test_retry_updates_both_positive_prompt_fields_only_after_failure(self):
         captured_bodies = []
 
@@ -312,6 +455,7 @@ class ChansubRetryTest(unittest.IsolatedAsyncioTestCase):
                 retry_delay_sec=0,
                 quality_tag_start=1,
                 quality_tag_count=2,
+                strip_builtin_quality_tags=False,
             )
 
         first_params = captured_bodies[0]["parameters"]
@@ -366,6 +510,7 @@ class ChansubRetryTest(unittest.IsolatedAsyncioTestCase):
                 retry_delay_sec=0,
                 quality_tag_start=1,
                 quality_tag_count=2,
+                strip_builtin_quality_tags=False,
             )
 
         self.assertEqual(

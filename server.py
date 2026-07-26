@@ -145,6 +145,7 @@ DEFAULT_CONFIG = {
     "chansub_max_concurrency": 1,  # 챈섭 외부 요청 동시 처리 수. 실측 범위인 1~2만 허용
     "chansub_max_retries": 2,  # 챈섭 일시적 실패 시 재시도 횟수 (최초 요청 제외)
     "chansub_retry_delay_sec": 3.0,  # 챈섭 재시도 사이의 설정 대기 시간(초)
+    "chansub_strip_builtin_quality_tags": True,  # 챈섭 전송본에서 서버 내장 추정 품질 태그 제외
     "utility_workflow_source_path": "",  # 삽화 유틸리티 워크플로우 전체 경로
     "bot_mode_enabled": True,  # 삽화 모드: 항상 ON 고정 (V1/V3 분기는 파이프라인이 포맷 감지로 처리)
     "debug_mode_enabled": False,  # 디버깅 모드 (ComfyUI 전송만 중단)
@@ -1806,6 +1807,10 @@ async def generate_image_with_prompt(
             retry_delay_sec=app_config.get("chansub_retry_delay_sec", 3.0),
             quality_tag_start=chansub_quality_tag_start,
             quality_tag_count=chansub_quality_tag_count,
+            strip_builtin_quality_tags=app_config.get(
+                "chansub_strip_builtin_quality_tags",
+                True,
+            ),
         )
         if progress_callback and image_bytes:
             try:
@@ -8713,6 +8718,26 @@ async def handle_api_config(request: web.Request) -> web.Response:
                         status=400,
                     )
                 body["chansub_retry_delay_sec"] = chansub_retry_delay_sec
+
+            if "chansub_strip_builtin_quality_tags" in body:
+                chansub_strip_builtin_quality_tags = body.get(
+                    "chansub_strip_builtin_quality_tags"
+                )
+                if not isinstance(chansub_strip_builtin_quality_tags, bool):
+                    print(
+                        f"[CONFIG] 챈섭 내장 품질 태그 제외 설정 저장 거부: "
+                        f"value={chansub_strip_builtin_quality_tags!r}, "
+                        f"type={type(chansub_strip_builtin_quality_tags).__name__}"
+                    )
+                    return web.json_response(
+                        {
+                            "error": (
+                                "챈섭 내장 품질 태그 제외 설정은 "
+                                "true/false여야 합니다."
+                            )
+                        },
+                        status=400,
+                    )
 
             if "llm_stream_idle_timeout_seconds" in body:
                 raw_idle_timeout = body.get("llm_stream_idle_timeout_seconds")

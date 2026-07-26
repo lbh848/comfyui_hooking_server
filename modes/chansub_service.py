@@ -13,6 +13,9 @@ import aiohttp
 
 CHANSUB_URL = "https://wellspring.encrypt.gay/v1/images/nai/generate-image"
 CHANSUB_MODEL = "nai-diffusion-4-5-full"
+CHANSUB_BUILTIN_QUALITY_TAGS = frozenset(
+    {"masterpiece", "best quality", "highres"}
+)
 
 _api_key = ""
 _rotation_api_key = ""
@@ -191,6 +194,58 @@ def _split_top_level_prompt_tags(prompt: str) -> list[str]:
     return tags
 
 
+def _normalize_builtin_quality_tag(tag: str) -> str:
+    """비교할 때만 공백/밑줄과 대소문자 차이를 정규화한다."""
+    return " ".join(str(tag).strip().lower().replace("_", " ").split())
+
+
+def strip_builtin_quality_tags_for_request(
+    positive: str,
+    quality_tag_start: int = 0,
+    quality_tag_count: int = 0,
+) -> tuple[str, int, int, list[str]]:
+    """챈섭 전송본에서 내장 품질 태그만 빼고 재시도 품질 범위를 보정한다.
+
+    괄호 가중치가 붙은 태그나 더 긴 태그는 제거하지 않고, 최상위 쉼표로
+    분리된 태그 전체가 대상과 일치할 때만 제거한다.
+    """
+    tags = _split_top_level_prompt_tags(positive)
+    quality_start = min(max(0, int(quality_tag_start)), len(tags))
+    quality_end = min(
+        quality_start + max(0, int(quality_tag_count)),
+        len(tags),
+    )
+
+    kept_tags: list[str] = []
+    removed_tags: list[str] = []
+    removed_before_quality = 0
+    removed_in_quality = 0
+    for index, tag in enumerate(tags):
+        normalized = _normalize_builtin_quality_tag(tag)
+        if normalized in CHANSUB_BUILTIN_QUALITY_TAGS:
+            removed_tags.append(tag)
+            if index < quality_start:
+                removed_before_quality += 1
+            elif index < quality_end:
+                removed_in_quality += 1
+            continue
+        kept_tags.append(tag)
+
+    if not removed_tags:
+        return positive, quality_start, quality_end - quality_start, []
+
+    adjusted_quality_start = quality_start - removed_before_quality
+    adjusted_quality_count = (
+        quality_end - quality_start - removed_in_quality
+    )
+    return (
+        ", ".join(kept_tags),
+        adjusted_quality_start,
+        adjusted_quality_count,
+        removed_tags,
+    )
+
+
 def reorder_positive_prompt_for_retry(
     positive: str,
     retry_number: int,
@@ -273,6 +328,7 @@ async def generate_image(
     retry_delay_sec: float = 3.0,
     quality_tag_start: int = 0,
     quality_tag_count: int = 0,
+    strip_builtin_quality_tags: bool = True,
 ) -> tuple[bytes | None, str | dict]:
     if not _api_key:
         message = "챈섭 API 키가 설정되지 않았습니다."
@@ -283,7 +339,56 @@ async def generate_image(
         print(f"[CHANSUB] 생성 중단: {message}")
         return None, message
 
-    body = build_request_body(positive, negative, width, height)
+    if not isinstance(strip_builtin_quality_tags, bool):
+        message = (
+            "챈섭 내장 품질 태그 제외 설정은 true/false여야 합니다: "
+            f"{strip_builtin_quality_tags!r}"
+        )
+        print(f"[CHANSUB] 생성 중단: {message}")
+        return None, message
+
+    request_positive = positive
+    request_quality_tag_start = quality_tag_start
+    request_quality_tag_count = quality_tag_count
+    if strip_builtin_quality_tags:
+        try:
+            (
+                request_positive,
+                request_quality_tag_start,
+                request_quality_tag_count,
+                removed_tags,
+            ) = strip_builtin_quality_tags_for_request(
+                positive,
+                quality_tag_start,
+                quality_tag_count,
+            )
+        except (TypeError, ValueError) as exc:
+            print(
+                f"[CHANSUB] 내장 품질 태그 제외 실패: "
+                f"quality_tag_start={quality_tag_start!r}, "
+                f"quality_tag_count={quality_tag_count!r}, error={exc}"
+            )
+            traceback.print_exc()
+            return None, (
+                f"챈섭 내장 품질 태그 제외 실패: "
+                f"{type(exc).__name__}: {exc}"
+            )
+        if removed_tags:
+            print(
+                f"[CHANSUB] 전송본 내장 품질 태그 제외: "
+                f"removed={removed_tags!r}, "
+                f"positive_len={len(positive)}->{len(request_positive)}, "
+                f"quality_range=({quality_tag_start}, {quality_tag_count})"
+                f"->({request_quality_tag_start}, {request_quality_tag_count})"
+            )
+        else:
+            print("[CHANSUB] 전송본 내장 품질 태그 제외: 일치 태그 없음")
+        if not request_positive.strip():
+            message = "내장 품질 태그 제외 후 챈섭 POSITIVE 프롬프트가 비었습니다."
+            print(f"[CHANSUB] 생성 중단: {message}")
+            return None, message
+
+    body = build_request_body(request_positive, negative, width, height)
     try:
         retries = max(0, int(max_retries))
         retry_delay = max(0.0, float(retry_delay_sec))
@@ -325,10 +430,10 @@ async def generate_image(
         prompt_retry_number = (attempt - 1) // key_count
         if prompt_retry_number > 0:
             retry_positive, swapped_indexes = reorder_positive_prompt_for_retry(
-                positive,
+                request_positive,
                 prompt_retry_number,
-                quality_tag_start,
-                quality_tag_count,
+                request_quality_tag_start,
+                request_quality_tag_count,
             )
             body["input"] = retry_positive
             body["parameters"]["v4_prompt"]["caption"]["base_caption"] = retry_positive
@@ -351,7 +456,8 @@ async def generate_image(
         }
         print(
             f"[CHANSUB] → POST {CHANSUB_URL} model={CHANSUB_MODEL} "
-            f"size={width}x{height} positive_len={len(positive)} negative_len={len(negative)} "
+            f"size={width}x{height} positive_len={len(body['input'])} "
+            f"negative_len={len(negative)} "
             f"attempt={attempt}/{total_attempts} key_slot={key_slot} "
             f"prompt_retry={prompt_retry_number}"
         )

@@ -46,6 +46,18 @@ def test_chansub_settings_expose_bounded_concurrency_and_rotation_key():
     assert "rotation_api_key: rotationApiKey" in source
 
 
+def test_chansub_settings_expose_builtin_quality_tag_filter():
+    source = _frontend_source()
+
+    assert 'id="setting-chansub-strip-builtin-quality-tags"' in source
+    assert "currentConfig.chansub_strip_builtin_quality_tags !== false" in source
+    assert (
+        "chansub_strip_builtin_quality_tags: "
+        "document.getElementById('setting-chansub-strip-builtin-quality-tags').checked"
+    ) in source
+    assert "저장·백업 프롬프트는 원문을 유지합니다." in source
+
+
 def test_queue_has_visible_dynamic_hybrid_assignment_area():
     source = _frontend_source()
 
