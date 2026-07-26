@@ -11,31 +11,25 @@ Previously tracked character state:
 Known character appearance and default outfit:
 {lb_extra_costume}
 
-Required JSON schema:
+Required JSON shape (all five arrays must exist; keep them empty when there is no change):
 {
   "reference_assignments": [
     {
       "segment_id": "C001",
       "surface": "exact referring expression copied from that segment",
-      "occurrence": 1,
-      "canonical_name": "exact canonical character name",
-      "replacement": "minimal grammatical replacement containing that canonical name",
-      "confidence": 0.0
+      "canonical_name": "exact canonical character name"
     }
   ],
   "history_characters": ["canonical name"],
-  "current_characters": [
-    {"name": "canonical name", "confidence": 0.0}
-  ],
+  "current_characters": ["canonical name"],
   "wardrobe_events": [
     {
       "segment_id": "C001",
       "character": "canonical name",
-      "operation": "keep|wear|add|remove|replace|set|open|close|adjust|nude|topless|bottomless|reset_default|contextual_reset",
+      "operation": "wear|add|remove|replace|set|open|close|adjust|nude|topless|bottomless|reset_default|contextual_reset",
       "items": ["specific garment or accessory"],
       "state_after": "clothed|partial|nude|topless|bottomless|underwear_only|unknown",
-      "evidence": "exact short excerpt copied from that CURRENT segment, or empty for keep",
-      "confidence": 0.0
+      "evidence": "exact short excerpt copied from that CURRENT segment"
     }
   ],
   "unresolved_references": [
@@ -51,14 +45,16 @@ Required JSON schema:
 Rules:
 - history_characters are characters who appear in PAST HISTORY.
 - current_characters are every character present, acting, speaking, being addressed, or clearly participating in CURRENT CONTEXT. Include implicit participants when discourse establishes them.
+- Use plain canonical-name strings in history_characters and current_characters. Do not wrap a certain name in an object. Only use {"name": ..., "confidence": ...} when confidence is below 1.0 and materially useful.
 - Appearing in CURRENT does not authorize a wardrobe change. Existing wardrobe is carried forward by default.
-- Emit a changing wardrobe event only when the CURRENT context establishes a wear/remove/replace/adjustment or a justified temporal/contextual reset. Copy exact evidence from the numbered segment.
+- Emit only actual wardrobe changes established by CURRENT. Never emit keep events or restate carried-forward/default outfits. Copy exact evidence from the numbered segment.
 - Track nude, topless, bottomless, underwear-only, open, displaced, and partially removed clothing as real wardrobe states. An empty outfit is not "unknown" when nudity is established.
 - A garment absent from a camera view is not removed. Visibility and wardrobe state are different.
-- For each referring expression whose identity matters, copy its exact surface form and occurrence number. This includes pronouns, aliases, descriptive references, plural references, and contextually omitted subjects when a safe explicit replacement span exists.
+- Emit a reference_assignment only when downstream character presence, attribution, or wardrobe tracking would otherwise be wrong or genuinely ambiguous. Do not enumerate every pronoun after identity is already clear, do not emit canonical names already present, and do not repeat equivalent references in the same segment.
+- Omit occurrence when it is 1. Omit replacement when the canonical name itself is the correct replacement. Omit confidence when fully certain; omitted values default to 1.0.
 - For possessives or reflexives, replacement may add only the minimal grammar around the canonical name, such as "Alice's" or "Alice herself".
 - If one expression refers to multiple characters, use a natural replacement containing all canonical names.
 - Never guess an ambiguous identity. Put it in unresolved_references.
 - Names in reference_assignments must use the canonical list exactly when a matching character exists.
-- Keep confidence calibrated. Use below 0.70 whenever the result should trigger a broader-context fallback.
+- Keep confidence calibrated. Include confidence only for uncertainty; use below 0.70 whenever the result should trigger a broader-context fallback.
 - Output one valid JSON object and nothing else. No Markdown fence, analysis, or prose.
