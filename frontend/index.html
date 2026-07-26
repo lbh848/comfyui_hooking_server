@@ -585,6 +585,12 @@
             opacity: 0;
             pointer-events: none;
             transition: opacity 0.3s;
+            max-width: min(900px, 92vw);
+            max-height: 45vh;
+            overflow-y: auto;
+            white-space: pre-line;
+            line-height: 1.45;
+            text-align: left;
         }
 
         .toast.visible {
@@ -15081,14 +15087,14 @@
         }
 
         // ─── 토스트 알림 ───
-        function showToast(message, type) {
+        function showToast(message, type, duration = 5000) {
             const toast = document.getElementById('toast');
             toast.textContent = message;
             toast.className = 'toast visible ' + type;
             clearTimeout(toast._timer);
             toast._timer = setTimeout(() => {
                 toast.className = 'toast';
-            }, 5000);
+            }, duration);
         }
 
         // ─── 복장 추출 진행 토스트 (우측 하단, 수동 종료) ───
@@ -16910,6 +16916,8 @@
             { key: 'refine_lb_extra',          label: '외모/복장 태그 정제',kind: '비전' },
             { key: 'refine_lora_prompt',       label: 'LoRA/에셋/스타일 정제', kind: '비전' },
             { key: 'refine_lora_test_setup',   label: '테스트 이미지 일괄 세팅(봇/에셋)',kind: '텍스트' },
+            { key: 'asset_name_mapping_auto_fix', label: '에셋 이름 자동 수정', kind: 'JSON', json: true },
+            { key: 'asset_name_mapping_full',  label: '에셋 이름 전체 매핑', kind: 'JSON', json: true },
             { key: 'edit_illustration_prompt', label: '삽화 LLM과 함께 수정', kind: '비전/JSON' },
             { key: 'illustration_call1_backtranslate', label: '삽화 CALL1 역번역',               kind: '텍스트' },
             { key: 'illustration_call1',       label: '삽화 CALL1 (전처리)',           kind: '텍스트' },
@@ -16966,7 +16974,8 @@
                     fbTarget = entry.fallback ? (legacyFallback[primary] || 'none') : 'none';
                 }
                 // 구조화 응답 작업은 JSON response_format 토글을 제공한다.
-                const supportsJson = t.key === 'edit_illustration_prompt'
+                const supportsJson = !!t.json
+                    || t.key === 'edit_illustration_prompt'
                     || t.key === 'illustration_multi_char_mask';
                 const jsonMode = supportsJson ? (entry.json_mode !== undefined ? !!entry.json_mode : true) : null;
                 const retryDelay = llmRouteNumber(entry.retry_delay_sec, 0);
@@ -17011,7 +17020,7 @@
             if (!llm3Ready) {
                 html += '<div style="margin-top: 6px; font-size: 12px; color: #d89a3a;">⚠ 외부 API 탭에서 LLM3 모델명을 설정해야 LLM3(메인/폴백) 선택지가 활성화됩니다.</div>';
             }
-            html += '<div style="margin-top: 6px; font-size: 11px; color: var(--text-dim);">💡 메인 재시도를 모두 소진한 뒤 폴백으로 넘어갑니다. JSON 토글은 <b>삽화 LLM과 함께 수정</b>에만 적용됩니다.</div>';
+            html += '<div style="margin-top: 6px; font-size: 11px; color: var(--text-dim);">💡 메인 재시도를 모두 소진한 뒤 폴백으로 넘어갑니다. JSON 작업은 서비스 호환성 문제가 있을 때 포맷 강제를 끌 수 있습니다.</div>';
             container.innerHTML = html;
         }
 
@@ -17044,8 +17053,8 @@
                 } else {
                     entry.fallback = false;
                 }
-                // JSON 포맷 토글은 edit_illustration_prompt 에만 저장
-                if (t.key === 'edit_illustration_prompt') {
+                // 구조화 응답 작업은 JSON response_format 설정도 저장
+                if (t.json || t.key === 'edit_illustration_prompt' || t.key === 'illustration_multi_char_mask') {
                     const jm = document.querySelector(`input[data-route-key="${t.key}"][data-route-field="json_mode"]`);
                     entry.json_mode = !!(jm && jm.checked);
                 }
@@ -46303,8 +46312,13 @@
             try {
                 const resp = await fetch(`/api/asset_mode/name_mapping/${enc(charName)}`);
                 info = await resp.json();
+                if (!resp.ok || info.error) {
+                    showToast(info.error || '이름 치환 정보를 불러올 수 없습니다.', 'error', 10000);
+                    return;
+                }
             } catch (e) {
-                alert('이름 치환 정보를 불러올 수 없습니다: ' + e.message);
+                console.error('[ASSET_NAME_MAPPING] 정보 로드 실패:', e);
+                showToast('이름 치환 정보를 불러올 수 없습니다: ' + e.message, 'error', 10000);
                 return;
             }
 
@@ -46383,6 +46397,8 @@
                         <button id="nm-next-btn" onclick="nmGoToPage(window._nmCurrentPage + 1)" style="flex:1; background:var(--accent); color:#fff; border:none; padding:8px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">다음</button>
                         <div id="nm-final-btns" style="display:none; flex:1; gap:8px; flex-wrap:wrap;">
                             <button id="nm-save-btn" onclick="saveNameMapping('${escapeHtml(charName)}')" style="flex:1; min-width:90px; background:var(--accent); color:#fff; border:none; padding:8px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">저장</button>
+                            <button id="nm-llm-auto-fix-btn" title="기존 정상 매핑은 그대로 유지하고, 빈 태그와 실제 파일명 충돌에 관련된 태그만 LLM으로 수정합니다." onclick="runNameMappingLlm('auto_fix')" style="flex:1; min-width:105px; background:#7E57C2; color:#fff; border:none; padding:8px; border-radius:6px; cursor:pointer; font-size:0.82rem; font-weight:600; line-height:1.2;">LLM 자동 수정 <span title="기존 정상 매핑은 보존합니다. 빈 태그와 충돌 태그만 LLM에 전달합니다." onclick="event.stopPropagation()" style="display:inline-flex; align-items:center; justify-content:center; width:15px; height:15px; margin-left:3px; border:1px solid rgba(255,255,255,0.8); border-radius:50%; font-size:0.68rem; cursor:help;">?</span></button>
+                            <button id="nm-llm-full-btn" title="선택한 범위의 기존 매핑을 모두 무시하고, 캐릭터·복장·표정 이름을 LLM이 처음부터 새로 추천합니다." onclick="runNameMappingLlm('full')" style="flex:1; min-width:105px; background:#5C6BC0; color:#fff; border:none; padding:8px; border-radius:6px; cursor:pointer; font-size:0.82rem; font-weight:600; line-height:1.2;">LLM 전체 매핑 <span title="기존 선택 범위의 매핑을 사용하지 않고 전부 새 추천으로 교체합니다." onclick="event.stopPropagation()" style="display:inline-flex; align-items:center; justify-content:center; width:15px; height:15px; margin-left:3px; border:1px solid rgba(255,255,255,0.8); border-radius:50%; font-size:0.68rem; cursor:help;">?</span></button>
                             <button onclick="exportNameMappingRule()" style="flex:1; min-width:90px; background:#2196F3; color:#fff; border:none; padding:8px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600; line-height:1.2;">규칙<br>내보내기</button>
                             <button onclick="importNameMappingRule()" style="flex:1; min-width:90px; background:#FF9800; color:#fff; border:none; padding:8px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600; line-height:1.2;">규칙<br>불러오기</button>
                             <button id="nm-export-btn" onclick="exportCharacterAsset('${escapeHtml(charName)}')" style="flex:1; min-width:90px; background:#4CAF50; color:#fff; border:none; padding:8px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">내보내기 (ZIP)</button>
@@ -46619,44 +46635,205 @@
             return [...container.querySelectorAll('.nm-naming-block')].map(b => b.dataset.blockId);
         }
 
-        async function saveNameMapping(character) {
-            const exportName = document.getElementById('nm-export-name').value.trim();
+        function getNameMappingSelection() {
+            const outfitMap = window._nmSelectedOutfits || {};
+            const expressionMap = window._nmSelectedExpressions || {};
+            return {
+                outfits: Object.keys(outfitMap).filter(name => !!outfitMap[name]),
+                expressions: Object.keys(expressionMap).filter(name => !!expressionMap[name]),
+            };
+        }
 
-            // 표시된(선택된) 항목만 편집 반영. 표시되지 않은(선택 해제) 항목의 기존 매핑은 유지.
-            const outfitMapping = (window._nmInfo && window._nmInfo.outfit_mapping) ? { ...window._nmInfo.outfit_mapping } : {};
+        function collectNameMappingDraft() {
+            const exportInput = document.getElementById('nm-export-name');
+            const formatInput = document.getElementById('nm-export-format');
+            const qualityInput = document.getElementById('nm-export-quality');
+            const outfitMapping = (window._nmInfo && window._nmInfo.outfit_mapping)
+                ? { ...window._nmInfo.outfit_mapping }
+                : {};
             document.querySelectorAll('.nm-outfit-input').forEach(input => {
                 const val = input.value.trim();
                 if (val) outfitMapping[input.dataset.original] = val;
                 else delete outfitMapping[input.dataset.original];
             });
 
-            const expressionMapping = (window._nmInfo && window._nmInfo.expression_mapping) ? { ...window._nmInfo.expression_mapping } : {};
+            const expressionMapping = (window._nmInfo && window._nmInfo.expression_mapping)
+                ? { ...window._nmInfo.expression_mapping }
+                : {};
             document.querySelectorAll('.nm-expr-input').forEach(input => {
                 const val = input.value.trim();
                 if (val) expressionMapping[input.dataset.original] = val;
                 else delete expressionMapping[input.dataset.original];
             });
 
-            // 중복 검사: 모든 변환 이름을 모아서 빈도 확인
-            const allValues = [];
-            if (exportName) allValues.push(exportName);
-            for (const v of Object.values(outfitMapping)) allValues.push(v);
-            for (const v of Object.values(expressionMapping)) allValues.push(v);
+            return {
+                export_name: exportInput ? exportInput.value.trim() : '',
+                outfit_mapping: outfitMapping,
+                expression_mapping: expressionMapping,
+                export_format: formatInput ? formatInput.value : 'webp',
+                export_quality: qualityInput ? parseInt(qualityInput.value, 10) : 90,
+                naming_order: getNmOrderFromDOM(),
+                naming_enabled: { ...(window._nmNamingEnabled || {}) },
+            };
+        }
 
-            const freq = {};
-            allValues.forEach(v => { freq[v] = (freq[v] || 0) + 1; });
-            const duplicates = Object.keys(freq).filter(v => freq[v] > 1);
-            if (duplicates.length > 0) {
-                showToast(`중복된 변환 이름: ${duplicates.join(', ')}`, 'warning');
+        function formatNameMappingIssues(data, fallback = '이름 치환 규칙을 확인하세요.') {
+            const issues = Array.isArray(data && data.errors) ? data.errors : [];
+            const lines = [];
+            if (data && data.error) lines.push(String(data.error));
+            for (const issue of issues.slice(0, 5)) {
+                lines.push(`• ${issue.message || issue.code || fallback}`);
+                const details = Array.isArray(issue.details) ? issue.details : [];
+                details.slice(0, 8).forEach(detail => lines.push(`  - ${detail}`));
+                if (details.length > 8) lines.push(`  - 외 ${details.length - 8}건`);
+                if (issue.resolution) lines.push(`  해결: ${issue.resolution}`);
+            }
+            if (issues.length > 5) lines.push(`• 외 ${issues.length - 5}개 문제`);
+            if (!lines.length && data && Array.isArray(data.details)) {
+                data.details.slice(0, 10).forEach(detail => lines.push(`• ${detail}`));
+            }
+            return lines.length ? lines.join('\n') : fallback;
+        }
+
+        async function validateNameMappingDraft(character, draft, selection) {
+            try {
+                const resp = await fetch('/api/asset_mode/name_mapping/validate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        character,
+                        outfits: selection.outfits,
+                        expressions: selection.expressions,
+                        mapping: draft,
+                    }),
+                });
+                const data = await resp.json();
+                return { ok: resp.ok && !!data.success, data };
+            } catch (error) {
+                console.error('[ASSET_NAME_MAPPING] 사전 검증 요청 실패:', error);
+                return {
+                    ok: false,
+                    data: { error: `이름 치환 규칙 검증 요청 실패: ${error.message}` },
+                };
+            }
+        }
+
+        function applyLlmNameMappingResult(result) {
+            const mapping = result && result.mapping;
+            if (!mapping || !window._nmInfo) return false;
+            window._nmInfo.export_name = mapping.export_name || '';
+            window._nmInfo.outfit_mapping = {
+                ...(window._nmInfo.outfit_mapping || {}),
+                ...(mapping.outfit_mapping || {}),
+            };
+            window._nmInfo.expression_mapping = {
+                ...(window._nmInfo.expression_mapping || {}),
+                ...(mapping.expression_mapping || {}),
+            };
+            renderNmBlocks();
+            return true;
+        }
+
+        async function runNameMappingLlm(mode) {
+            const character = window._nmCharName;
+            const selection = getNameMappingSelection();
+            if (!selection.outfits.length || !selection.expressions.length) {
+                showToast('LLM 매핑할 복장과 표정을 각각 하나 이상 선택하세요.', 'error', 9000);
                 return;
+            }
+            const draft = collectNameMappingDraft();
+            // LLM 결과 재렌더 전에 사용자가 바꾼 순서·토글·출력 설정을 세션 상태에 보존한다.
+            window._nmNamingOrder = [...draft.naming_order];
+            window._nmNamingEnabled = { ...draft.naming_enabled };
+            window._nmInfo.export_format = draft.export_format;
+            window._nmInfo.export_quality = draft.export_quality;
+            const buttonId = mode === 'auto_fix' ? 'nm-llm-auto-fix-btn' : 'nm-llm-full-btn';
+            const button = document.getElementById(buttonId);
+            const llmButtons = [
+                document.getElementById('nm-llm-auto-fix-btn'),
+                document.getElementById('nm-llm-full-btn'),
+            ].filter(Boolean);
+            const originalButtonHtml = new Map(llmButtons.map(item => [item, item.innerHTML]));
+            llmButtons.forEach(item => { item.disabled = true; });
+            if (button) button.textContent = 'LLM 처리중...';
+            try {
+                const resp = await fetch('/api/asset_mode/name_mapping/llm', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        mode,
+                        character,
+                        outfits: selection.outfits,
+                        expressions: selection.expressions,
+                        mapping: draft,
+                    }),
+                });
+                const data = await resp.json();
+                if (!resp.ok || !data.success) {
+                    const issueSource = data.validation && data.validation.errors && data.validation.errors.length
+                        ? { ...data.validation, error: data.error }
+                        : data;
+                    showToast(
+                        formatNameMappingIssues(issueSource, data.error || 'LLM 이름 매핑 실패'),
+                        'error',
+                        15000,
+                    );
+                    return;
+                }
+                if (data.no_changes) {
+                    showToast(data.message || '빈 태그나 충돌 태그가 없어 수정할 항목이 없습니다.', 'success', 7000);
+                    return;
+                }
+                if (!applyLlmNameMappingResult(data)) {
+                    console.error('[ASSET_NAME_MAPPING] LLM 응답에 mapping 누락:', data);
+                    showToast('LLM 응답에 적용할 매핑 데이터가 없습니다.', 'error', 9000);
+                    return;
+                }
+                const label = mode === 'auto_fix' ? 'LLM 자동 수정' : 'LLM 전체 매핑';
+                showToast(`${label} 결과를 입력란에 반영했습니다. 검토 후 저장하세요.`, 'success', 9000);
+            } catch (error) {
+                console.error('[ASSET_NAME_MAPPING] LLM 요청 실패:', error);
+                showToast(`LLM 이름 매핑 요청 실패: ${error.message}`, 'error', 12000);
+            } finally {
+                llmButtons.forEach(item => {
+                    item.disabled = false;
+                    item.innerHTML = originalButtonHtml.get(item);
+                });
+            }
+        }
+
+        async function saveNameMapping(character) {
+            const draft = collectNameMappingDraft();
+            const selection = getNameMappingSelection();
+            const validation = await validateNameMappingDraft(character, draft, selection);
+            if (!validation.ok) {
+                const mappingBlockingCodes = new Set([
+                    'invalid_mapping',
+                    'invalid_mapping_type',
+                    'unsafe_mapping_name',
+                    'filename_too_long',
+                    'filename_collision',
+                    'invalid_naming_order',
+                    'invalid_naming_enabled',
+                    'all_naming_blocks_disabled',
+                    'unsupported_export_format',
+                    'invalid_export_quality',
+                ]);
+                const blocking = (validation.data.errors || [])
+                    .filter(issue => mappingBlockingCodes.has(issue.code));
+                if (blocking.length) {
+                    showToast(
+                        formatNameMappingIssues({ errors: blocking }, '저장할 이름 치환 규칙을 확인하세요.'),
+                        'error',
+                        15000,
+                    );
+                    return;
+                }
             }
 
             const btn = document.getElementById('nm-save-btn');
             btn.disabled = true;
             btn.textContent = '저장중...';
-
-            const exportFormat = document.getElementById('nm-export-format').value;
-            const exportQuality = parseInt(document.getElementById('nm-export-quality').value, 10);
 
             try {
                 const resp = await fetch('/api/asset_mode/name_mapping', {
@@ -46664,29 +46841,33 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         character,
-                        export_name: exportName,
-                        outfit_mapping: outfitMapping,
-                        expression_mapping: expressionMapping,
-                        export_format: exportFormat,
-                        export_quality: exportQuality,
-                        naming_order: getNmOrderFromDOM(),
-                        naming_enabled: window._nmNamingEnabled,
+                        export_name: draft.export_name,
+                        outfit_mapping: draft.outfit_mapping,
+                        expression_mapping: draft.expression_mapping,
+                        export_format: draft.export_format,
+                        export_quality: draft.export_quality,
+                        naming_order: draft.naming_order,
+                        naming_enabled: draft.naming_enabled,
                     }),
                 });
                 const result = await resp.json();
                 if (result.success) {
+                    window._nmInfo.export_name = draft.export_name;
+                    window._nmInfo.outfit_mapping = { ...draft.outfit_mapping };
+                    window._nmInfo.expression_mapping = { ...draft.expression_mapping };
                     btn.textContent = '저장됨!';
                     setTimeout(() => {
                         btn.disabled = false;
                         btn.textContent = '저장';
                     }, 1500);
                 } else {
-                    alert('저장 실패: ' + (result.error || '알 수 없는 오류'));
+                    showToast('저장 실패: ' + (result.error || '알 수 없는 오류'), 'error', 10000);
                     btn.disabled = false;
                     btn.textContent = '저장';
                 }
             } catch (e) {
-                alert('저장 실패: ' + e.message);
+                console.error('[ASSET_NAME_MAPPING] 저장 실패:', e);
+                showToast('저장 실패: ' + e.message, 'error', 10000);
                 btn.disabled = false;
                 btn.textContent = '저장';
             }
@@ -46694,30 +46875,7 @@
 
         // ─── 치환 규칙 내보내기/불러오기 ────────────────────
         function exportNameMappingRule() {
-            const exportName = document.getElementById('nm-export-name').value.trim();
-            // 기존 매핑(선택 해제된 항목 포함)을 베이스로 두고 표시된 입력란만 반영
-            const outfitMapping = (window._nmInfo && window._nmInfo.outfit_mapping) ? { ...window._nmInfo.outfit_mapping } : {};
-            document.querySelectorAll('.nm-outfit-input').forEach(input => {
-                const val = input.value.trim();
-                if (val) outfitMapping[input.dataset.original] = val;
-                else delete outfitMapping[input.dataset.original];
-            });
-            const expressionMapping = (window._nmInfo && window._nmInfo.expression_mapping) ? { ...window._nmInfo.expression_mapping } : {};
-            document.querySelectorAll('.nm-expr-input').forEach(input => {
-                const val = input.value.trim();
-                if (val) expressionMapping[input.dataset.original] = val;
-                else delete expressionMapping[input.dataset.original];
-            });
-
-            const data = {
-                export_name: exportName,
-                outfit_mapping: outfitMapping,
-                expression_mapping: expressionMapping,
-                export_format: document.getElementById('nm-export-format').value,
-                export_quality: parseInt(document.getElementById('nm-export-quality').value, 10),
-                naming_order: getNmOrderFromDOM(),
-                naming_enabled: window._nmNamingEnabled,
-            };
+            const data = collectNameMappingDraft();
 
             const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
             const url = URL.createObjectURL(blob);
@@ -46776,11 +46934,17 @@
         async function exportCharacterAsset(character) {
             const btn = document.getElementById('nm-export-btn');
             // 1·2페이지에서 선택한 표정/복장만 내보내기
-            const sel = window._nmSelectedOutfits && window._nmSelectedExpressions;
-            const outfits = sel ? Object.keys(window._nmSelectedOutfits).filter(k => window._nmSelectedOutfits[k]) : null;
-            const expressions = sel ? Object.keys(window._nmSelectedExpressions).filter(k => window._nmSelectedExpressions[k]) : null;
-            if (sel && ((outfits && outfits.length === 0) || (expressions && expressions.length === 0))) {
+            const selection = getNameMappingSelection();
+            const outfits = selection.outfits;
+            const expressions = selection.expressions;
+            if (!outfits.length || !expressions.length) {
                 showToast('선택된 표정/복장이 없습니다. 1·2페이지에서 항목을 선택하세요.', 'error');
+                return;
+            }
+            const draft = collectNameMappingDraft();
+            const validation = await validateNameMappingDraft(character, draft, selection);
+            if (!validation.ok) {
+                showToast(formatNameMappingIssues(validation.data), 'error', 15000);
                 return;
             }
             btn.disabled = true;
@@ -46789,11 +46953,11 @@
                 const resp = await fetch('/api/asset_mode/export', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ character, outfits, expressions }),
+                    body: JSON.stringify({ character, outfits, expressions, mapping: draft }),
                 });
                 if (!resp.ok) {
                     const data = await resp.json().catch(() => ({}));
-                    showToast(data.error || '내보내기 실패', 'error');
+                    showToast(formatNameMappingIssues(data, data.error || '내보내기 실패'), 'error', 15000);
                     btn.disabled = false;
                     btn.textContent = '내보내기 (ZIP)';
                     return;
@@ -46807,7 +46971,16 @@
                 a.click();
                 a.remove();
                 URL.revokeObjectURL(url);
-                showToast('내보내기 완료!', 'success');
+                const warnings = (validation.data && validation.data.warnings) || [];
+                if (warnings.length) {
+                    showToast(
+                        `내보내기 완료 (일부 제외됨)\n${formatNameMappingIssues({ errors: warnings })}`,
+                        'warning',
+                        12000,
+                    );
+                } else {
+                    showToast('내보내기 완료!', 'success');
+                }
                 btn.disabled = false;
                 btn.textContent = '내보내기 (ZIP)';
             } catch (e) {

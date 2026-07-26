@@ -13,6 +13,8 @@ import uuid
 import hashlib
 import shutil
 import traceback
+import re
+import unicodedata
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional, Callable, Awaitable
 import workflow_profiles
@@ -26,6 +28,15 @@ AUTOMATCH_DEFAULT_OUTFIT_DIR = "_automatch_defaults"
 TAGS_FILE = os.path.join(ASSET_DATA_DIR, "tags.json")
 HIDDEN_TAGS_FILE = os.path.join(ASSET_DATA_DIR, "hidden_tags.json")
 NAME_MAPPING_FILE = os.path.join(ASSET_DATA_DIR, "name_mapping.json")
+NAME_MAPPING_BACKUP_DIR = os.path.join(BASE_DIR, "요구사항")
+
+EXPORT_NAMING_BLOCKS = ("character", "outfit", "expression")
+_INVALID_EXPORT_TOKEN_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+_WINDOWS_RESERVED_NAMES = {
+    "CON", "PRN", "AUX", "NUL",
+    *(f"COM{i}" for i in range(1, 10)),
+    *(f"LPT{i}" for i in range(1, 10)),
+}
 
 # 프리셋매니징 대상 카테고리
 PRESET_MGMT_CATEGORIES = [
@@ -2125,15 +2136,72 @@ class AssetMode:
         if os.path.isfile(NAME_MAPPING_FILE):
             try:
                 with open(NAME_MAPPING_FILE, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except Exception:
-                pass
+                    data = json.load(f)
+                if not isinstance(data, dict):
+                    print(
+                        f"[ASSET_NAME_MAPPING] 로드 실패: 최상위 값이 객체가 아님 "
+                        f"path={NAME_MAPPING_FILE}, type={type(data).__name__}"
+                    )
+                    return {}
+                return data
+            except Exception as e:
+                print(f"[ASSET_NAME_MAPPING] 로드 실패: path={NAME_MAPPING_FILE}, error={e}")
+                traceback.print_exc()
+        else:
+            print(f"[ASSET_NAME_MAPPING] 매핑 파일 없음, 빈 규칙 사용: {NAME_MAPPING_FILE}")
         return {}
 
     def _save_name_mapping(self, data: dict):
-        os.makedirs(os.path.dirname(NAME_MAPPING_FILE), exist_ok=True)
-        with open(NAME_MAPPING_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+        if not isinstance(data, dict):
+            print(f"[ASSET_NAME_MAPPING] 저장 거부: data type={type(data).__name__}")
+            raise ValueError("이름 치환 데이터는 JSON 객체여야 합니다.")
+        try:
+            os.makedirs(os.path.dirname(NAME_MAPPING_FILE), exist_ok=True)
+        except Exception as e:
+            print(
+                f"[ASSET_NAME_MAPPING] 저장 폴더 생성 실패: "
+                f"path={os.path.dirname(NAME_MAPPING_FILE)}, error={e}"
+            )
+            traceback.print_exc()
+            raise
+        if os.path.isfile(NAME_MAPPING_FILE):
+            try:
+                os.makedirs(NAME_MAPPING_BACKUP_DIR, exist_ok=True)
+                stamp = time.strftime("%Y%m%d_%H%M%S")
+                suffix = uuid.uuid4().hex[:8]
+                backup_path = os.path.join(
+                    NAME_MAPPING_BACKUP_DIR,
+                    f"name_mapping_{stamp}_{suffix}.json",
+                )
+                shutil.copy2(NAME_MAPPING_FILE, backup_path)
+                print(f"[ASSET_NAME_MAPPING] 저장 전 백업 완료: {backup_path}")
+            except Exception as e:
+                print(
+                    f"[ASSET_NAME_MAPPING] 저장 중단: 백업 실패 "
+                    f"source={NAME_MAPPING_FILE}, error={e}"
+                )
+                traceback.print_exc()
+                raise RuntimeError("기존 이름 치환 파일 백업에 실패하여 저장을 중단했습니다.") from e
+        temp_path = f"{NAME_MAPPING_FILE}.{uuid.uuid4().hex}.tmp"
+        try:
+            with open(temp_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            os.replace(temp_path, NAME_MAPPING_FILE)
+        except Exception as e:
+            print(f"[ASSET_NAME_MAPPING] UTF-8 저장 실패: path={NAME_MAPPING_FILE}, error={e}")
+            traceback.print_exc()
+            if os.path.isfile(temp_path):
+                try:
+                    os.remove(temp_path)
+                    print(f"[ASSET_NAME_MAPPING] 실패한 임시 저장 파일 정리: {temp_path}")
+                except Exception as cleanup_error:
+                    print(
+                        f"[ASSET_NAME_MAPPING] 임시 저장 파일 정리 실패: "
+                        f"path={temp_path}, error={cleanup_error}"
+                    )
+                    traceback.print_exc()
+            raise
+        print(f"[ASSET_NAME_MAPPING] UTF-8 저장 완료: {NAME_MAPPING_FILE}")
 
     def get_character_export_info(self, character: str) -> dict:
         """캐릭터 폴더에서 실제 복장/표정 목록을 스캔하여 이름 치환 규칙과 함께 반환."""
@@ -2147,20 +2215,14 @@ class AssetMode:
                     continue
                 if outfit_dir_name == "Lora":
                     continue
-                # 빈 표정 폴더 정리
+                outfit_has_files = False
                 for expr_dir_name in sorted(os.listdir(outfit_path)):
                     expr_path = os.path.join(outfit_path, expr_dir_name)
-                    if os.path.isdir(expr_path) and not os.listdir(expr_path):
-                        os.rmdir(expr_path)
-                # 빈 복장 폴더 정리
-                if not os.listdir(outfit_path):
-                    os.rmdir(outfit_path)
-                    continue
-                outfits.add(outfit_dir_name)
-                for expr_dir_name in sorted(os.listdir(outfit_path)):
-                    expr_path = os.path.join(outfit_path, expr_dir_name)
-                    if os.path.isdir(expr_path):
+                    if os.path.isdir(expr_path) and os.listdir(expr_path):
+                        outfit_has_files = True
                         expressions.add(expr_dir_name)
+                if outfit_has_files:
+                    outfits.add(outfit_dir_name)
 
         mapping = self._load_name_mapping().get(character, {})
 
@@ -2177,20 +2239,558 @@ class AssetMode:
             "naming_enabled": mapping.get("naming_enabled", {"character": True, "outfit": True, "expression": True}),
         }
 
+    @staticmethod
+    def _export_issue(code: str, message: str, *, details=None, **extra) -> dict:
+        issue = {"code": code, "message": message}
+        if details:
+            issue["details"] = details
+        issue.update(extra)
+        return issue
+
+    @staticmethod
+    def _normalize_export_collision_key(filename: str) -> str:
+        """Windows/ZIP 소비 환경에서도 같은 이름으로 취급될 값을 하나로 묶는다."""
+        return unicodedata.normalize("NFC", filename).rstrip(" .").casefold()
+
+    @staticmethod
+    def _validate_export_token(value, label: str) -> list[dict]:
+        errors = []
+        if not isinstance(value, str):
+            return [AssetMode._export_issue(
+                "invalid_mapping_type",
+                f"{label} 치환값은 문자열이어야 합니다. 현재 형식: {type(value).__name__}",
+            )]
+        if not value:
+            return [AssetMode._export_issue("empty_mapping", f"{label} 치환값이 비어 있습니다.")]
+        if value != value.strip():
+            errors.append(AssetMode._export_issue(
+                "unsafe_mapping_name",
+                f"{label} 치환값 '{value}'의 앞뒤 공백을 제거하세요.",
+            ))
+        if value.endswith((".", " ")):
+            errors.append(AssetMode._export_issue(
+                "unsafe_mapping_name",
+                f"{label} 치환값 '{value}'은(는) 점이나 공백으로 끝날 수 없습니다.",
+            ))
+        if value in (".", "..") or _INVALID_EXPORT_TOKEN_RE.search(value):
+            errors.append(AssetMode._export_issue(
+                "unsafe_mapping_name",
+                f"{label} 치환값 '{value}'에 파일명으로 사용할 수 없는 문자가 있습니다. "
+                "금지 문자: < > : \" / \\ | ? *",
+            ))
+        stem = value.split(".", 1)[0].upper()
+        if stem in _WINDOWS_RESERVED_NAMES:
+            errors.append(AssetMode._export_issue(
+                "unsafe_mapping_name",
+                f"{label} 치환값 '{value}'은(는) Windows 예약 이름이라 사용할 수 없습니다.",
+            ))
+        return errors
+
+    @staticmethod
+    def _coerce_export_mapping(raw_mapping: dict | None) -> dict:
+        """저장 스키마와 프론트엔드 draft 스키마를 하나의 내부 형식으로 맞춘다."""
+        if not isinstance(raw_mapping, dict):
+            return {}
+        return {
+            "export_name": raw_mapping.get("export_name", ""),
+            "outfits": raw_mapping.get("outfits", raw_mapping.get("outfit_mapping", {})),
+            "expressions": raw_mapping.get("expressions", raw_mapping.get("expression_mapping", {})),
+            "export_format": raw_mapping.get("export_format", "webp"),
+            "export_quality": raw_mapping.get("export_quality", 90),
+            "naming_order": raw_mapping.get("naming_order", list(EXPORT_NAMING_BLOCKS)),
+            "naming_enabled": raw_mapping.get(
+                "naming_enabled",
+                {"character": True, "outfit": True, "expression": True},
+            ),
+        }
+
+    def build_character_export_plan(
+        self,
+        character: str,
+        selected_outfits=None,
+        selected_expressions=None,
+        mapping_override: dict | None = None,
+    ) -> dict:
+        """실제 대표 이미지와 최종 파일명을 기준으로 내보내기를 사전 검증한다."""
+        errors = []
+        warnings = []
+        files = []
+
+        if not isinstance(character, str) or not character.strip():
+            print(f"[ASSET_EXPORT_VALIDATE] 캐릭터 이름 누락: value={character!r}")
+            errors.append(self._export_issue("missing_character", "캐릭터 이름이 비어 있습니다."))
+            return {"success": False, "errors": errors, "warnings": warnings, "files": files, "file_count": 0}
+
+        char_dir = os.path.join(ASSET_DIR, self._safe_dirname(character))
+        if not os.path.isdir(char_dir):
+            print(f"[ASSET_EXPORT_VALIDATE] 캐릭터 폴더 없음: {char_dir}")
+            errors.append(self._export_issue(
+                "character_directory_missing",
+                f"캐릭터 에셋 폴더가 없습니다: {character}",
+            ))
+            return {"success": False, "errors": errors, "warnings": warnings, "files": files, "file_count": 0}
+
+        stored = self._load_name_mapping().get(character, {})
+        mapping = self._coerce_export_mapping(mapping_override if mapping_override is not None else stored)
+        if mapping_override is not None and not isinstance(mapping_override, dict):
+            print(f"[ASSET_EXPORT_VALIDATE] mapping_override 형식 오류: {type(mapping_override).__name__}")
+            errors.append(self._export_issue("invalid_mapping", "이름 치환 규칙이 JSON 객체가 아닙니다."))
+
+        outfit_map = mapping.get("outfits")
+        expression_map = mapping.get("expressions")
+        if not isinstance(outfit_map, dict):
+            print(f"[ASSET_EXPORT_VALIDATE] outfits 매핑 형식 오류: {type(outfit_map).__name__}")
+            errors.append(self._export_issue("invalid_mapping", "복장 치환 규칙이 JSON 객체가 아닙니다."))
+            outfit_map = {}
+        if not isinstance(expression_map, dict):
+            print(f"[ASSET_EXPORT_VALIDATE] expressions 매핑 형식 오류: {type(expression_map).__name__}")
+            errors.append(self._export_issue("invalid_mapping", "표정 치환 규칙이 JSON 객체가 아닙니다."))
+            expression_map = {}
+
+        naming_order = mapping.get("naming_order")
+        if not isinstance(naming_order, list):
+            naming_order = []
+        invalid_blocks = [
+            b for b in naming_order
+            if not isinstance(b, str) or b not in EXPORT_NAMING_BLOCKS
+        ]
+        duplicate_blocks = sorted({
+            b for b in naming_order
+            if isinstance(b, str) and naming_order.count(b) > 1
+        })
+        missing_blocks = [b for b in EXPORT_NAMING_BLOCKS if b not in naming_order]
+        if invalid_blocks or duplicate_blocks or missing_blocks or not naming_order:
+            details = []
+            if invalid_blocks:
+                details.append(f"알 수 없는 블록: {', '.join(map(str, invalid_blocks))}")
+            if duplicate_blocks:
+                details.append(f"중복 블록: {', '.join(duplicate_blocks)}")
+            if missing_blocks:
+                details.append(f"누락 블록: {', '.join(missing_blocks)}")
+            if not naming_order:
+                details.append("파일명 블록 순서가 비어 있음")
+            print(f"[ASSET_EXPORT_VALIDATE] 네이밍 순서 오류: {details}")
+            errors.append(self._export_issue(
+                "invalid_naming_order",
+                "파일명 구성 순서가 올바르지 않습니다.",
+                details=details,
+            ))
+            naming_order = list(EXPORT_NAMING_BLOCKS)
+
+        naming_enabled = mapping.get("naming_enabled")
+        if not isinstance(naming_enabled, dict):
+            print(f"[ASSET_EXPORT_VALIDATE] naming_enabled 형식 오류: {type(naming_enabled).__name__}")
+            errors.append(self._export_issue("invalid_naming_enabled", "파일명 블록 설정이 올바르지 않습니다."))
+            naming_enabled = {block: True for block in EXPORT_NAMING_BLOCKS}
+        invalid_enabled = [
+            block for block in EXPORT_NAMING_BLOCKS
+            if block in naming_enabled and not isinstance(naming_enabled[block], bool)
+        ]
+        if invalid_enabled:
+            print(f"[ASSET_EXPORT_VALIDATE] 파일명 블록 토글 형식 오류: {invalid_enabled}")
+            errors.append(self._export_issue(
+                "invalid_naming_enabled",
+                "파일명 블록의 켜기/끄기 값은 true 또는 false여야 합니다.",
+                details=invalid_enabled,
+            ))
+            naming_enabled = {
+                block: naming_enabled.get(block, True)
+                if isinstance(naming_enabled.get(block, True), bool)
+                else True
+                for block in EXPORT_NAMING_BLOCKS
+            }
+        enabled_order = [block for block in naming_order if bool(naming_enabled.get(block, True))]
+        if not enabled_order:
+            print("[ASSET_EXPORT_VALIDATE] 모든 파일명 블록이 비활성화됨")
+            errors.append(self._export_issue(
+                "all_naming_blocks_disabled",
+                "캐릭터·복장·표정 파일명 블록이 모두 꺼져 있습니다. 하나 이상 켜세요.",
+            ))
+
+        available_outfits = []
+        available_expressions = set()
+        for outfit_name in sorted(os.listdir(char_dir)):
+            outfit_path = os.path.join(char_dir, outfit_name)
+            if outfit_name == "Lora" or not os.path.isdir(outfit_path):
+                continue
+            available_outfits.append(outfit_name)
+            for expression_name in sorted(os.listdir(outfit_path)):
+                if os.path.isdir(os.path.join(outfit_path, expression_name)):
+                    available_expressions.add(expression_name)
+
+        def _selection(raw, available, label, empty_code):
+            if raw is None:
+                return set(available)
+            if not isinstance(raw, (list, tuple, set)):
+                print(f"[ASSET_EXPORT_VALIDATE] {label} 선택 형식 오류: {type(raw).__name__}")
+                errors.append(self._export_issue(
+                    "invalid_selection",
+                    f"선택한 {label} 목록 형식이 올바르지 않습니다.",
+                ))
+                return set()
+            chosen = {value for value in raw if isinstance(value, str)}
+            if not chosen:
+                print(f"[ASSET_EXPORT_VALIDATE] 선택된 {label} 없음")
+                errors.append(self._export_issue(empty_code, f"선택된 {label}이 없습니다."))
+                return set()
+            unknown = sorted(chosen - set(available))
+            if unknown:
+                print(f"[ASSET_EXPORT_VALIDATE] 존재하지 않는 {label} 선택: {unknown}")
+                errors.append(self._export_issue(
+                    "stale_selection",
+                    f"선택한 {label} 중 현재 에셋 폴더에 없는 항목이 있습니다.",
+                    details=unknown,
+                ))
+            return chosen & set(available)
+
+        selected_outfit_set = _selection(
+            selected_outfits, available_outfits, "복장", "empty_outfit_selection"
+        )
+        selected_expression_set = _selection(
+            selected_expressions, available_expressions, "표정", "empty_expression_selection"
+        )
+
+        export_format = str(mapping.get("export_format") or "webp").lower()
+        format_map = {
+            "webp": ("WEBP", ".webp"),
+            "png": ("PNG", ".png"),
+            "jpeg": ("JPEG", ".jpg"),
+            "jpg": ("JPEG", ".jpg"),
+            "avif": ("AVIF", ".avif"),
+        }
+        if export_format not in format_map:
+            print(f"[ASSET_EXPORT_VALIDATE] 지원하지 않는 출력 형식: {export_format!r}")
+            errors.append(self._export_issue(
+                "unsupported_export_format",
+                f"지원하지 않는 이미지 형식입니다: {export_format}",
+            ))
+            export_format = "webp"
+        pil_format, extension = format_map[export_format]
+
+        missing_representatives = []
+        raw_candidates = []
+        for outfit_name in available_outfits:
+            if outfit_name not in selected_outfit_set:
+                continue
+            outfit_path = os.path.join(char_dir, outfit_name)
+            for expression_name in sorted(os.listdir(outfit_path)):
+                expression_path = os.path.join(outfit_path, expression_name)
+                if not os.path.isdir(expression_path) or expression_name not in selected_expression_set:
+                    continue
+                rep_path = os.path.join(expression_path, "_representative.json")
+                rep_file = ""
+                if os.path.isfile(rep_path):
+                    try:
+                        with open(rep_path, "r", encoding="utf-8") as f:
+                            rep_data = json.load(f)
+                        if isinstance(rep_data, dict):
+                            rep_file = rep_data.get("filename", "")
+                    except Exception as e:
+                        print(f"[ASSET_EXPORT_VALIDATE] 대표 이미지 정보 로드 실패: path={rep_path}, error={e}")
+                        traceback.print_exc()
+                if rep_file and (
+                    not isinstance(rep_file, str)
+                    or os.path.basename(rep_file) != rep_file
+                    or rep_file in (".", "..")
+                ):
+                    print(
+                        f"[ASSET_EXPORT_VALIDATE] 안전하지 않은 대표 이미지 파일명 무시: "
+                        f"path={rep_path}, filename={rep_file!r}"
+                    )
+                    rep_file = ""
+                if not rep_file or not os.path.isfile(os.path.join(expression_path, rep_file)):
+                    missing_representatives.append({"outfit": outfit_name, "expression": expression_name})
+                    continue
+                raw_candidates.append({
+                    "outfit": outfit_name,
+                    "expression": expression_name,
+                    "source_filename": rep_file,
+                    "image_path": os.path.join(expression_path, rep_file),
+                })
+
+        if missing_representatives:
+            details = [f"{item['outfit']} / {item['expression']}" for item in missing_representatives]
+            print(
+                f"[ASSET_EXPORT_VALIDATE] 대표 이미지 누락으로 제외: "
+                f"character={character!r}, combinations={details}"
+            )
+            warnings.append(self._export_issue(
+                "missing_representative",
+                f"대표 이미지가 없어 제외되는 조합이 {len(details)}개 있습니다.",
+                details=details,
+            ))
+        if not raw_candidates:
+            print(
+                f"[ASSET_EXPORT_VALIDATE] 내보낼 대표 이미지 없음: character={character!r}, "
+                f"outfits={sorted(selected_outfit_set)}, expressions={sorted(selected_expression_set)}"
+            )
+            errors.append(self._export_issue(
+                "no_exportable_representatives",
+                "선택한 복장·표정 조합에 내보낼 대표 이미지가 없습니다.",
+                details=[f"복장: {', '.join(sorted(selected_outfit_set)) or '(없음)'}",
+                         f"표정: {', '.join(sorted(selected_expression_set)) or '(없음)'}"],
+            ))
+
+        export_name = mapping.get("export_name") or character
+        missing_outfits = set()
+        missing_expressions = set()
+        invalid_issue_keys = set()
+
+        def _record_token_errors(token, label):
+            token_errors = self._validate_export_token(token, label)
+            for issue in token_errors:
+                key = (issue["code"], issue["message"])
+                if key not in invalid_issue_keys:
+                    invalid_issue_keys.add(key)
+                    errors.append(issue)
+            return not token_errors
+
+        for candidate in raw_candidates:
+            parts = []
+            valid = True
+            for block in enabled_order:
+                if block == "character":
+                    token = export_name
+                    label = "캐릭터 이름"
+                elif block == "outfit":
+                    token = outfit_map.get(candidate["outfit"], "")
+                    label = f"복장 '{candidate['outfit']}'"
+                    if not token:
+                        missing_outfits.add(candidate["outfit"])
+                        valid = False
+                        continue
+                else:
+                    token = expression_map.get(candidate["expression"], "")
+                    label = f"표정 '{candidate['expression']}'"
+                    if not token:
+                        missing_expressions.add(candidate["expression"])
+                        valid = False
+                        continue
+                if not _record_token_errors(token, label):
+                    valid = False
+                parts.append(token)
+            if not valid or not parts:
+                continue
+            filename = "_".join(parts) + extension
+            if len(filename) > 240:
+                errors.append(self._export_issue(
+                    "filename_too_long",
+                    f"최종 파일명이 240자를 초과합니다: {filename[:120]}…",
+                ))
+                continue
+            files.append({**candidate, "filename": filename})
+
+        if missing_outfits:
+            names = sorted(missing_outfits)
+            print(f"[ASSET_EXPORT_VALIDATE] 복장 매핑 누락으로 조합 제외: {names}")
+            warnings.append(self._export_issue(
+                "missing_outfit_mapping",
+                f"선택한 복장 {len(names)}개의 치환 이름이 비어 있어 해당 조합을 제외합니다.",
+                details=names,
+            ))
+        if missing_expressions:
+            names = sorted(missing_expressions)
+            print(f"[ASSET_EXPORT_VALIDATE] 표정 매핑 누락으로 조합 제외: {names}")
+            warnings.append(self._export_issue(
+                "missing_expression_mapping",
+                f"선택한 표정 {len(names)}개의 치환 이름이 비어 있어 해당 조합을 제외합니다.",
+                details=names,
+            ))
+
+        if raw_candidates and not files and (missing_outfits or missing_expressions):
+            print(
+                f"[ASSET_EXPORT_VALIDATE] 치환 이름이 채워진 내보내기 대상 없음: "
+                f"character={character!r}, missing_outfits={sorted(missing_outfits)}, "
+                f"missing_expressions={sorted(missing_expressions)}"
+            )
+            errors.append(self._export_issue(
+                "no_mapped_export_files",
+                "선택한 조합 중 치환 이름이 모두 채워진 이미지가 없습니다.",
+                details=[
+                    "치환 이름을 하나 이상 채우거나 LLM 자동 수정을 실행하세요.",
+                    "빈 치환값이 있는 조합은 자동으로 제외됩니다.",
+                ],
+            ))
+
+        collision_groups = {}
+        for item in files:
+            collision_groups.setdefault(
+                self._normalize_export_collision_key(item["filename"]), []
+            ).append(item)
+        collisions = []
+        for group in collision_groups.values():
+            if len(group) < 2:
+                continue
+            collisions.append({
+                "filename": group[0]["filename"],
+                "sources": [
+                    {"outfit": item["outfit"], "expression": item["expression"]}
+                    for item in group
+                ],
+            })
+        if collisions:
+            details = []
+            for collision in collisions:
+                source_text = ", ".join(
+                    f"{source['outfit']} / {source['expression']}"
+                    for source in collision["sources"]
+                )
+                details.append(f"{collision['filename']} ← {source_text}")
+            print(f"[ASSET_EXPORT_VALIDATE] 최종 파일명 충돌: {details}")
+            errors.append(self._export_issue(
+                "filename_collision",
+                f"서로 다른 이미지가 같은 최종 파일명으로 매핑됩니다 ({len(collisions)}건).",
+                details=details,
+                collisions=collisions,
+                resolution=(
+                    "충돌한 복장·표정 치환값을 서로 다르게 바꾸거나, 파일명 구성에서 "
+                    "복장/표정 블록을 다시 켠 뒤 재시도하세요."
+                ),
+            ))
+
+        try:
+            export_quality = max(1, min(90, int(mapping.get("export_quality", 90))))
+        except (TypeError, ValueError) as e:
+            print(f"[ASSET_EXPORT_VALIDATE] 출력 품질 형식 오류: {mapping.get('export_quality')!r}, error={e}")
+            traceback.print_exc()
+            errors.append(self._export_issue("invalid_export_quality", "이미지 품질은 1~90 사이 숫자여야 합니다."))
+            export_quality = 90
+
+        return {
+            "success": not errors,
+            "errors": errors,
+            "warnings": warnings,
+            "files": files,
+            "file_count": len(files),
+            "mapping": {
+                **mapping,
+                "export_name": export_name,
+                "outfits": outfit_map,
+                "expressions": expression_map,
+                "export_format": export_format,
+                "export_quality": export_quality,
+                "pil_format": pil_format,
+                "extension": extension,
+                "naming_order": naming_order,
+                "naming_enabled": naming_enabled,
+            },
+            "selection": {
+                "outfits": sorted(selected_outfit_set),
+                "expressions": sorted(selected_expression_set),
+            },
+        }
+
+    @staticmethod
+    def public_export_plan(plan: dict) -> dict:
+        """로컬 절대 경로를 제외하고 API로 반환 가능한 검증 결과를 만든다."""
+        return {
+            "success": bool(plan.get("success")),
+            "errors": plan.get("errors", []),
+            "warnings": plan.get("warnings", []),
+            "file_count": int(plan.get("file_count", 0)),
+            "files": [
+                {
+                    "outfit": item.get("outfit", ""),
+                    "expression": item.get("expression", ""),
+                    "filename": item.get("filename", ""),
+                }
+                for item in plan.get("files", [])
+            ],
+            "selection": plan.get("selection", {}),
+        }
+
     def save_character_name_mapping(self, character: str, export_name: str,
                                     outfit_mapping: dict, expression_mapping: dict,
                                     export_format: str = "webp", export_quality: int = 90,
                                     naming_order: list = None, naming_enabled: dict = None) -> dict:
         """캐릭터 이름 치환 규칙 저장."""
+        if not isinstance(character, str) or not character.strip():
+            print(f"[ASSET_NAME_MAPPING] 저장 거부: character={character!r}")
+            raise ValueError("캐릭터 이름이 필요합니다.")
+        if not isinstance(export_name, str):
+            print(f"[ASSET_NAME_MAPPING] 저장 거부: export_name type={type(export_name).__name__}")
+            raise ValueError("캐릭터 치환 이름은 문자열이어야 합니다.")
+        if not isinstance(outfit_mapping, dict) or not isinstance(expression_mapping, dict):
+            print(
+                f"[ASSET_NAME_MAPPING] 저장 거부: outfits={type(outfit_mapping).__name__}, "
+                f"expressions={type(expression_mapping).__name__}"
+            )
+            raise ValueError("복장/표정 치환 규칙은 JSON 객체여야 합니다.")
+
+        if export_name:
+            token_errors = self._validate_export_token(export_name, "캐릭터 이름")
+            if token_errors:
+                print(f"[ASSET_NAME_MAPPING] 저장 거부: {token_errors[0]['message']}")
+                raise ValueError(token_errors[0]["message"])
+        cleaned_mappings = {}
+        for category, mapping in (("outfits", outfit_mapping), ("expressions", expression_mapping)):
+            label = "복장" if category == "outfits" else "표정"
+            cleaned = {}
+            for original, mapped in mapping.items():
+                if not isinstance(original, str):
+                    print(
+                        f"[ASSET_NAME_MAPPING] 저장 거부: {label} 원본 키 형식="
+                        f"{type(original).__name__}"
+                    )
+                    raise ValueError(f"{label} 원본 이름은 문자열이어야 합니다.")
+                if mapped == "":
+                    print(f"[ASSET_NAME_MAPPING] 빈 치환값 제거: {label}={original!r}")
+                    continue
+                token_errors = self._validate_export_token(mapped, f"{label} '{original}'")
+                if token_errors:
+                    print(f"[ASSET_NAME_MAPPING] 저장 거부: {token_errors[0]['message']}")
+                    raise ValueError(token_errors[0]["message"])
+                cleaned[original] = mapped
+            cleaned_mappings[category] = cleaned
+        outfit_mapping = cleaned_mappings["outfits"]
+        expression_mapping = cleaned_mappings["expressions"]
+
+        export_format = str(export_format or "webp").lower()
+        if export_format not in ("webp", "png", "jpeg", "jpg", "avif"):
+            print(f"[ASSET_NAME_MAPPING] 저장 거부: export_format={export_format!r}")
+            raise ValueError(f"지원하지 않는 이미지 형식입니다: {export_format}")
+        try:
+            export_quality = max(1, min(90, int(export_quality)))
+        except (TypeError, ValueError) as e:
+            print(f"[ASSET_NAME_MAPPING] 저장 거부: export_quality={export_quality!r}, error={e}")
+            traceback.print_exc()
+            raise ValueError("이미지 품질은 1~90 사이 숫자여야 합니다.") from e
+
+        if naming_order is None:
+            naming_order = list(EXPORT_NAMING_BLOCKS)
+        if (
+            not isinstance(naming_order, list)
+            or len(naming_order) != len(EXPORT_NAMING_BLOCKS)
+            or not all(isinstance(block, str) for block in naming_order)
+            or set(naming_order) != set(EXPORT_NAMING_BLOCKS)
+        ):
+            print(f"[ASSET_NAME_MAPPING] 저장 거부: naming_order={naming_order!r}")
+            raise ValueError("파일명 블록 순서는 캐릭터·복장·표정을 각각 한 번씩 포함해야 합니다.")
+
+        if naming_enabled is None:
+            naming_enabled = {block: True for block in EXPORT_NAMING_BLOCKS}
+        if not isinstance(naming_enabled, dict) or any(
+            block in naming_enabled and not isinstance(naming_enabled[block], bool)
+            for block in EXPORT_NAMING_BLOCKS
+        ):
+            print(f"[ASSET_NAME_MAPPING] 저장 거부: naming_enabled={naming_enabled!r}")
+            raise ValueError("파일명 블록의 켜기/끄기 값은 true 또는 false여야 합니다.")
+        naming_enabled = {
+            block: naming_enabled.get(block, True) for block in EXPORT_NAMING_BLOCKS
+        }
+        if not any(naming_enabled.values()):
+            print("[ASSET_NAME_MAPPING] 저장 거부: 모든 파일명 블록 비활성화")
+            raise ValueError("캐릭터·복장·표정 파일명 블록을 하나 이상 켜야 합니다.")
+
         data = self._load_name_mapping()
         data[character] = {
             "export_name": export_name,
             "outfits": outfit_mapping,
             "expressions": expression_mapping,
             "export_format": export_format,
-            "export_quality": max(1, min(100, int(export_quality))),
-            "naming_order": naming_order or ["character", "outfit", "expression"],
-            "naming_enabled": naming_enabled or {"character": True, "outfit": True, "expression": True},
+            "export_quality": export_quality,
+            "naming_order": naming_order,
+            "naming_enabled": naming_enabled,
         }
         self._save_name_mapping(data)
         return {"success": True}
@@ -2222,42 +2822,45 @@ class AssetMode:
         self._save_name_mapping(data)
         return {"success": True}
 
-    def export_character_zip(self, character: str, selected_outfits=None, selected_expressions=None) -> str:
+    def export_character_zip(
+        self,
+        character: str,
+        selected_outfits=None,
+        selected_expressions=None,
+        mapping_override: dict | None = None,
+        export_plan: dict | None = None,
+    ):
         """캐릭터의 대표 이미지를 이름 치환 규칙에 따라 이름_복장_표정.ext로 만들어 zip 반환.
         selected_outfits / selected_expressions(디렉터리명 리스트)가 주어지면 해당 항목만 내보낸다.
         None이면 전체 내보내기(기존 동작)."""
-        import zipfile, io, tempfile, logging
+        import zipfile, io, logging
         from PIL import Image
 
         log = logging.getLogger("asset_export")
-        sel_out = set(selected_outfits) if selected_outfits is not None else None
-        sel_expr = set(selected_expressions) if selected_expressions is not None else None
-        log.info(f"[ZIP 내보내기] 시작 — 캐릭터: {character}, 선택 복장={sel_out}, 선택 표정={sel_expr}")
-
-        char_dir = os.path.join(ASSET_DIR, self._safe_dirname(character))
-        if not os.path.isdir(char_dir):
-            log.warning(f"[ZIP 내보내기] 캐릭터 디렉토리 없음: {char_dir}")
+        plan = export_plan or self.build_character_export_plan(
+            character,
+            selected_outfits,
+            selected_expressions,
+            mapping_override,
+        )
+        if not plan.get("success"):
+            for issue in plan.get("errors", []):
+                print(
+                    f"[ZIP 내보내기] 사전 검증 실패: code={issue.get('code')}, "
+                    f"message={issue.get('message')}, details={issue.get('details', [])}"
+                )
             return None
 
-        mapping = self._load_name_mapping().get(character, {})
-        export_name = mapping.get("export_name", "") or character
-        outfit_map = mapping.get("outfits", {})
-        expr_map = mapping.get("expressions", {})
-        export_format = mapping.get("export_format", "webp").lower()
-        export_quality = max(1, min(90, int(mapping.get("export_quality", 90))))
-        naming_order = mapping.get("naming_order", ["character", "outfit", "expression"])
-        naming_enabled = mapping.get("naming_enabled", {"character": True, "outfit": True, "expression": True})
-        log.info(f"[ZIP 내보내기] 포맷={export_format}, 품질={export_quality}, 내보내기 이름={export_name}, 순서={naming_order}")
-
-        # 포맷별 PIL 포맷 문자열 및 확장자
-        FORMAT_MAP = {
-            "webp": ("WEBP", ".webp"),
-            "png": ("PNG", ".png"),
-            "jpeg": ("JPEG", ".jpg"),
-            "jpg": ("JPEG", ".jpg"),
-            "avif": ("AVIF", ".avif"),
-        }
-        pil_format, ext = FORMAT_MAP.get(export_format, ("WEBP", ".webp"))
+        mapping = plan["mapping"]
+        export_format = mapping["export_format"]
+        export_quality = mapping["export_quality"]
+        pil_format = mapping["pil_format"]
+        ext = mapping["extension"]
+        log.info(
+            f"[ZIP 내보내기] 시작 — 캐릭터: {character}, "
+            f"선택 복장={plan['selection']['outfits']}, 선택 표정={plan['selection']['expressions']}, "
+            f"파일={plan['file_count']}개, 포맷={export_format}, 품질={export_quality}"
+        )
 
         # 로컬 저장 품질 (90) 대비 보정값 계산
         # 사용자가 80 설정 → PIL quality = round(80/0.9) ≈ 89 → 유효 품질 ~80%
@@ -2271,100 +2874,35 @@ class AssetMode:
 
         buf = io.BytesIO()
         added = 0
-        skipped_no_mapping = 0
-        skipped_no_rep = 0
         used_names = set()
 
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-            for outfit_dir_name in sorted(os.listdir(char_dir)):
-                outfit_path = os.path.join(char_dir, outfit_dir_name)
-                if not os.path.isdir(outfit_path):
-                    continue
-                if outfit_dir_name == "Lora":
-                    continue
-                if sel_out is not None and outfit_dir_name not in sel_out:
-                    continue
-                for expr_dir_name in sorted(os.listdir(outfit_path)):
-                    expr_path = os.path.join(outfit_path, expr_dir_name)
-                    if not os.path.isdir(expr_path):
-                        continue
-                    if sel_expr is not None and expr_dir_name not in sel_expr:
-                        continue
+            for item in plan["files"]:
+                rep_file = item["source_filename"]
+                img_path = item["image_path"]
+                zip_name = item["filename"]
+                collision_key = self._normalize_export_collision_key(zip_name)
+                if collision_key in used_names:
+                    print(f"[ZIP 내보내기] 내부 충돌 감지: {zip_name}")
+                    raise RuntimeError(f"사전 검증 후 파일명 충돌이 다시 감지되었습니다: {zip_name}")
+                used_names.add(collision_key)
 
-                    # 대표 이미지 찾기
-                    rep_file = ""
-                    rep_json = os.path.join(expr_path, "_representative.json")
-                    if os.path.isfile(rep_json):
-                        try:
-                            with open(rep_json, "r", encoding="utf-8") as f:
-                                rep_file = json.load(f).get("filename", "")
-                        except Exception:
-                            pass
-                    if not rep_file:
-                        skipped_no_rep += 1
-                        continue
-
-                    img_path = os.path.join(expr_path, rep_file)
-                    if not os.path.isfile(img_path):
-                        continue
-
-                    # 치환 이름이 설정되지 않은 항목은 건너뛰기
-                    o_name = outfit_map.get(outfit_dir_name, "")
-                    e_name = expr_map.get(expr_dir_name, "")
-
-                    # 활성화된 블록 중 매핑 누락 확인
-                    skip = False
-                    for block_id in naming_order:
-                        if not naming_enabled.get(block_id, True):
-                            continue
-                        if block_id == "outfit" and not o_name:
-                            skip = True
-                            break
-                        elif block_id == "expression" and not e_name:
-                            skip = True
-                            break
-                    if skip:
-                        skipped_no_mapping += 1
-                        continue
-
-                    # 순서와 활성화 상태에 따라 파일명 구성
-                    parts = []
-                    for block_id in naming_order:
-                        if not naming_enabled.get(block_id, True):
-                            continue
-                        if block_id == "character":
-                            parts.append(export_name)
-                        elif block_id == "outfit":
-                            parts.append(o_name)
-                        elif block_id == "expression":
-                            parts.append(e_name)
-                    if not parts:
-                        continue
-                    base = "_".join(parts)
-                    zip_name = base + ext
-                    # 동일 이름 처리
-                    if zip_name in used_names:
-                        idx = 2
-                        while f"{base}_{idx}{ext}" in used_names:
-                            idx += 1
-                        zip_name = f"{base}_{idx}{ext}"
-                    used_names.add(zip_name)
-
-                    orig_ext = os.path.splitext(rep_file)[1].lower()
-                    # 같은 포맷 + 재압축 불필요 → 원본 그대로
-                    if orig_ext == ext and not need_recompress:
-                        zf.write(img_path, zip_name)
-                        log.info(f"[ZIP 내보내기] [{added + 1}] 원본 그대로 추가: {zip_name}")
-                    else:
-                        try:
-                            log.info(f"[ZIP 내보내기] [{added + 1}] 변환 중: {rep_file} → {zip_name} ({pil_format}, q={pil_quality})")
-                            img = Image.open(img_path)
-                            # JPEG는 알파 채널 미지원 → RGB 변환
+                orig_ext = os.path.splitext(rep_file)[1].lower()
+                if orig_ext == ext and not need_recompress:
+                    zf.write(img_path, zip_name)
+                    log.info(f"[ZIP 내보내기] [{added + 1}] 원본 그대로 추가: {zip_name}")
+                else:
+                    try:
+                        log.info(
+                            f"[ZIP 내보내기] [{added + 1}] 변환 중: "
+                            f"{rep_file} → {zip_name} ({pil_format}, q={pil_quality})"
+                        )
+                        with Image.open(img_path) as opened:
+                            opened.load()
+                            img = opened
                             if pil_format == "JPEG" and img.mode in ("RGBA", "LA", "P"):
                                 img = img.convert("RGB")
-                            elif pil_format == "AVIF" and img.mode == "RGBA":
-                                pass  # AVIF는 RGBA 지원
-                            elif img.mode not in ("RGB", "RGBA"):
+                            elif pil_format != "AVIF" and img.mode not in ("RGB", "RGBA"):
                                 img = img.convert("RGBA") if pil_format != "JPEG" else img.convert("RGB")
 
                             img_buf = io.BytesIO()
@@ -2372,23 +2910,34 @@ class AssetMode:
                             if pil_format in ("WEBP", "JPEG", "AVIF"):
                                 save_kwargs["quality"] = pil_quality
                             if pil_format == "WEBP":
-                                save_kwargs["method"] = 6  # 압축 속도 느리지만 최고 품질
+                                save_kwargs["method"] = 6
                             img.save(img_buf, **save_kwargs)
-                            img_buf.seek(0)
-                            zf.writestr(zip_name, img_buf.read())
-                            log.info(f"[ZIP 내보내기] [{added + 1}] 변환 완료: {zip_name} ({len(img_buf.getvalue())} bytes)")
-                        except Exception as e:
-                            # 변환 실패 시 원본 그대로 사용
-                            log.warning(f"[ZIP 내보내기] [{added + 1}] 변환 실패, 원본 사용: {zip_name} — {e}")
-                            zf.write(img_path, zip_name)
+                        img_buf.seek(0)
+                        zf.writestr(zip_name, img_buf.read())
+                        log.info(
+                            f"[ZIP 내보내기] [{added + 1}] 변환 완료: "
+                            f"{zip_name} ({len(img_buf.getvalue())} bytes)"
+                        )
+                    except Exception as e:
+                        print(
+                            f"[ZIP 내보내기] 이미지 변환 실패: source={img_path}, "
+                            f"target={zip_name}, format={pil_format}, error={e}"
+                        )
+                        traceback.print_exc()
+                        raise RuntimeError(
+                            f"이미지 변환에 실패했습니다: {rep_file} → {zip_name} ({e})"
+                        ) from e
 
-                    added += 1
+                added += 1
 
         if added == 0:
-            log.warning(f"[ZIP 내보내기] 추가된 파일 없음 (매핑 누락={skipped_no_mapping}, 대표이미지 없음={skipped_no_rep})")
+            print(f"[ZIP 내보내기] 추가된 파일 없음: character={character!r}")
             return None
         buf.seek(0)
-        log.info(f"[ZIP 내보내기] 완료 — 총 {added}개 파일, 매핑 누락={skipped_no_mapping}, 대표이미지 없음={skipped_no_rep}, ZIP 크기={buf.getbuffer().nbytes / 1024:.1f}KB")
+        log.info(
+            f"[ZIP 내보내기] 완료 — 총 {added}개 파일, "
+            f"ZIP 크기={buf.getbuffer().nbytes / 1024:.1f}KB"
+        )
         return buf
 
     # ─── 표정 프로필 ─────────────────────────────────────
