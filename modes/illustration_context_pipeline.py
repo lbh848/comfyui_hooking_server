@@ -3048,6 +3048,7 @@ def _parse_call2_detail_output(
         )
     plan_id_by_slot = dict(zip(assigned_slots, assigned_plan_ids))
     by_slot = {int(item["slot"]): item for item in descriptors}
+    discarded_slots: set[int] = set()
     for slot, item in by_slot.items():
         # plan_id는 모델 출력 계약이 아니라 서버 내부 식별자다. 검증을 통과한
         # 고유 slot을 신뢰하고 전역 PLAN에서 확정한 값을 항상 주입한다.
@@ -3065,7 +3066,13 @@ def _parse_call2_detail_output(
                 f"slot={slot}",
             )
             if character_reason:
-                return [], character_reason
+                discarded_slots.add(slot)
+                print(
+                    f"[ILLUST_CONTEXT:CALL2_DETAIL] PLAN 캐릭터 불일치로 "
+                    f"해당 슬롯 폐기: source={source}, slot={slot}, "
+                    f"reason={character_reason}"
+                )
+                continue
             for folded, (expected_name, expected_outfit) in expected_by_name.items():
                 character = actual_by_name[folded]
                 actual_outfit = character.get("outfit_state")
@@ -3091,7 +3098,11 @@ def _parse_call2_detail_output(
                     and not _outfit_state_is_known(expected_outfit)
                     else deepcopy(expected_outfit)
                 )
-    return keyvis_descriptors + [by_slot[slot] for slot in assigned_slots], ""
+    return keyvis_descriptors + [
+        by_slot[slot]
+        for slot in assigned_slots
+        if slot not in discarded_slots
+    ], ""
 
 
 def descriptors_to_toon(descriptors: list[dict]) -> str:
@@ -3226,7 +3237,7 @@ async def _run_parallel_call2_details(
         }])
 
         def validate(result):
-            parsed, reason = _parse_call2_detail_output(
+            _parsed, reason = _parse_call2_detail_output(
                 result,
                 toggles,
                 assigned_slots,
@@ -3235,7 +3246,11 @@ async def _run_parallel_call2_details(
                 assigned_wardrobes_by_slot,
                 assigned_keyvis_plan,
             )
-            return bool(parsed), reason or "CALL2-DETAIL 파싱 실패"
+            if reason:
+                return False, reason
+            # PLAN/DETAIL 캐릭터 불일치로 모든 scene이 폐기된 빈 shard도
+            # 정상 처리다. 파싱 실패와 유효한 빈 결과를 구분한다.
+            return True, ""
 
         call_name = f"CALL2-DETAIL {index}/{total}"
         if attempt_kind == "duplicate":
@@ -3300,13 +3315,13 @@ async def _run_parallel_call2_details(
                 assigned_wardrobes_by_slot,
                 assigned_keyvis_plan,
             )
-            if not descriptors:
+            if reason:
                 print(
                     f"[ILLUST_CONTEXT:CALL2_DETAIL] 복장 교정 재호출 후에도 실패: "
                     f"job={index}/{total}, slots={assigned_slots}, reason={reason}"
                 )
-        if not descriptors:
-            raise ValueError(reason or f"CALL2-DETAIL {index}/{total} 파싱 실패")
+        if reason:
+            raise ValueError(reason)
         return {"raw": raw_output, "descriptors": descriptors}
 
     try:
@@ -5801,6 +5816,7 @@ async def build_from_context(
     call2_fallback_expected_slots: list[int] | None = None
     call2_fallback_scene_plan: list[dict] = []
     call2_fallback_keyvis_plan: dict | None = None
+    call2_detail_completed = False
     descriptors = []
     if toggles.get("call2_parallel_enabled"):
         parallel_stage = "CALL2-PLAN"
@@ -5946,6 +5962,7 @@ async def build_from_context(
                 )
                 parallel_stage = "CALL2-DETAIL-MERGE"
                 call2_output = descriptors_to_toon(descriptors)
+                call2_detail_completed = True
         except asyncio.CancelledError:
             print("[ILLUST_CONTEXT:CALL2_PARALLEL] 상위 작업 취소로 병렬 CALL2 중단")
             raise
@@ -5965,7 +5982,7 @@ async def build_from_context(
             call2_detail_outputs = []
             descriptors = []
 
-    if not descriptors:
+    if not descriptors and not call2_detail_completed:
         is_parallel_fallback = bool(call2_parallel_fallback_reason)
         call2_call_name = "CALL2-FALLBACK" if is_parallel_fallback else "CALL2"
         call2_parse_source = call2_call_name
@@ -6090,7 +6107,7 @@ async def build_from_context(
     # CALL2 파싱 실패 시 CALL2-FIX(repair.txt)가 TOON 블록을 교정한다.
     # CALL3는 대사 생성 전용이므로 교정은 여기서 먼저 마무리한다.
     call2_fix_output = ""
-    if not descriptors:
+    if not descriptors and not call2_detail_completed:
         if progress:
             await progress(48, "call2_fix", "CALL2-FIX TOON 교정")
         fix_messages = [{
@@ -6116,14 +6133,21 @@ async def build_from_context(
     # 이미지 생성에는 CALL3의 대사가 필요하지 않다. CALL2(+필요 시 FIX)가 확정되면
     # 슬롯/RAW를 먼저 고정하고 콜백으로 공개해, CALL3와 이미지 생성을 병렬로 진행한다.
     # 콜백에는 SPEAK이 없는 RAW가 전달되며 최종 반환 RAW에는 아래 CALL3 결과가 합쳐진다.
+    had_descriptors_before_slot_sanitize = bool(descriptors)
     descriptors = attach_descriptor_anchors(
         descriptors,
         original_slotted,
     )
     descriptors = sanitize_descriptor_slots(descriptors, original_slotted)
     if not descriptors:
-        print("[ILLUST_CONTEXT:CALL2] 슬롯 보정 후 생성할 descriptor가 없음")
-        raise RuntimeError("CALL2 결과에 유효한 장면 슬롯이 없습니다")
+        if call2_detail_completed and not had_descriptors_before_slot_sanitize:
+            print(
+                "[ILLUST_CONTEXT:CALL2_DETAIL] PLAN 캐릭터 불일치로 "
+                "모든 scene 슬롯이 폐기되어 빈 결과로 완료"
+            )
+        else:
+            print("[ILLUST_CONTEXT:CALL2] 슬롯 보정 후 생성할 descriptor가 없음")
+            raise RuntimeError("CALL2 결과에 유효한 장면 슬롯이 없습니다")
 
     last_visual_by_character = _last_visual_by_character(descriptors)
     character_states_after = deepcopy((persistent_history or {}).get("state_before") or {})

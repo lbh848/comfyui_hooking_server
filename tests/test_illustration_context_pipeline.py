@@ -398,6 +398,85 @@ def test_call2_detail_recovers_one_unnamed_character_from_plan(capsys):
     assert "PLAN으로 단일 누락 캐릭터 이름 복구" in capsys.readouterr().out
 
 
+def test_call2_detail_discards_only_slot_with_character_mismatch(capsys):
+    detail_output = _toon_for_slots([4, 9])
+    slot_nine_marker = (
+        "    scene: classroom\n"
+        "    plan_id: S010\n"
+        "    slot: 9"
+    )
+    detail_output = detail_output.replace(
+        slot_nine_marker,
+        "      - name: Alisa\n"
+        "        positive: 1girl, silver hair\n"
+        "        negative: lowres\n"
+        "        outfit_state:\n"
+        "          body_state: clothed\n"
+        "          worn: [school uniform]\n"
+        "          removed: []\n"
+        + slot_nine_marker,
+    )
+    school_uniform = {
+        "body_state": "clothed",
+        "worn": ["school uniform"],
+        "removed": [],
+    }
+
+    descriptors, reason = pipeline._parse_call2_detail_output(
+        detail_output,
+        pipeline.merged_toggles({"key_visual": False}),
+        [4, 9],
+        ["S001", "S002"],
+        "TEST-CALL2-DETAIL-CHARACTER-DISCARD",
+        {
+            4: {"Hana": school_uniform},
+            9: {
+                "Hana": school_uniform,
+                "Alisa": school_uniform,
+                "Maria": school_uniform,
+            },
+        },
+    )
+
+    assert reason == ""
+    assert [item["slot"] for item in descriptors] == [4]
+    output = capsys.readouterr().out
+    assert "PLAN 캐릭터 불일치로 해당 슬롯 폐기" in output
+    assert "slot=9" in output
+    assert "expected=['Hana', 'Alisa', 'Maria']" in output
+    assert "actual=['Hana', 'Alisa']" in output
+
+
+def test_call2_detail_keeps_keyvis_character_mismatch_as_error():
+    detail_output = _toon_for_slots([4]).replace(
+        "</lb-xnai>",
+        "keyvis:\n"
+        "  camera: full body\n"
+        "  characters[1]:\n"
+        "    - name: Hana\n"
+        "      positive: 1girl, black hair\n"
+        "      negative: lowres\n"
+        "  scene: classroom, daylight\n"
+        "  supplement: Hana stands at the center.\n"
+        "</lb-xnai>",
+    )
+
+    descriptors, reason = pipeline._parse_call2_detail_output(
+        detail_output,
+        pipeline.merged_toggles({"key_visual": True}),
+        [4],
+        ["S001"],
+        "TEST-CALL2-DETAIL-KEYVIS-CHARACTER-MISMATCH",
+        assigned_keyvis_plan={
+            "characters": ["Maria"],
+            "scene_brief": "Maria stands at the center.",
+        },
+    )
+
+    assert descriptors == []
+    assert "PLAN 캐릭터 불일치: keyvis" in reason
+
+
 @pytest.mark.asyncio
 async def test_call2_detail_wardrobe_conflict_retries_only_that_shard(monkeypatch, capsys):
     call_names = []
@@ -497,6 +576,105 @@ async def test_call2_detail_preserves_successful_shards_and_retries_only_failed(
     assert sum("CALL2-DETAIL 2/3" in name for name in call_names) == 2
     assert any("FAILED-SHARD-RETRY" in name for name in call_names)
     assert "성공 shard 보존 후 실패 shard만 재시도" in capsys.readouterr().out
+
+
+@pytest.mark.asyncio
+async def test_call2_detail_accepts_empty_shard_after_character_discard(monkeypatch, capsys):
+    call_names = []
+
+    async def fake_pipeline_call(call_name, messages, *args, **kwargs):
+        call_names.append(call_name)
+        return _toon_for_slots([60])
+
+    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
+    descriptors, raw_outputs = await pipeline._run_parallel_call2_details(
+        scene_plan=[{
+            "plan_id": "S001",
+            "slot": 60,
+            "anchor_segment": "C001",
+            "source_segments": ["C001"],
+            "characters": ["Maria"],
+            "scene_brief": "Maria stands alone",
+            "wardrobe_snapshot": {
+                "Maria": {
+                    "body_state": "clothed",
+                    "worn": ["school uniform"],
+                    "removed": [],
+                },
+            },
+        }],
+        keyvis_descriptor=None,
+        call2_context_messages=[{"role": "system", "content": "Build detail."}],
+        call2_format="Return TOON.",
+        toggles=pipeline.merged_toggles({
+            "key_visual": False,
+            "call2_parallel_max_concurrency": 1,
+            "call2_parallel_slow_retry_enabled": False,
+        }),
+        stream_notify=None,
+    )
+
+    assert descriptors == []
+    assert len(raw_outputs) == 1
+    assert call_names == ["CALL2-DETAIL 1/1"]
+    assert "PLAN 캐릭터 불일치로 해당 슬롯 폐기" in capsys.readouterr().out
+
+
+@pytest.mark.asyncio
+async def test_call2_pipeline_returns_empty_without_fallback_when_all_slots_discarded(
+    monkeypatch,
+    capsys,
+):
+    call_names = []
+
+    async def fake_pipeline_call(call_name, messages, *args, **kwargs):
+        call_names.append(call_name)
+        if call_name == "CALL2-PLAN":
+            return json.dumps({
+                "scene_plan": [{
+                    "anchor_segment": "C001",
+                    "characters": ["Maria"],
+                    "scene_brief": "Maria stands alone",
+                }],
+                "keyvis_plan": None,
+            })
+        if call_name == "CALL2-DETAIL 1/1":
+            return _toon_for_slots([0])
+        raise AssertionError(f"unexpected call: {call_name}")
+
+    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
+    result = await pipeline.build_from_context(
+        {
+            "session_id": "call2_all_character_mismatch_discard_test",
+            "target_slotted": "Hana waits.\n\n[Slot 0]",
+            "chats": [
+                {"role": "user", "data": "Continue."},
+                {"role": "char", "data": "Hana waits."},
+            ],
+        },
+        {
+            "call1_enabled": False,
+            "call2_parallel_enabled": True,
+            "call2_parallel_max_concurrency": 1,
+            "call2_parallel_slow_retry_enabled": False,
+            "scene_min": 1,
+            "scene_max": 1,
+            "key_visual": False,
+            "call3_enabled": False,
+            "speak_enabled": False,
+        },
+        "### Hana\n-default_outfit\nschool uniform",
+        extra_costume="### Hana\n-default_outfit\nschool uniform",
+        extra_names="Hana",
+        backtranslate_names="Hana",
+    )
+
+    assert call_names == ["CALL2-PLAN", "CALL2-DETAIL 1/1"]
+    assert result["items"] == []
+    assert result["call2_fix_output"] == ""
+    assert result["call2_fallback_stage"] == ""
+    assert "scenes: []" in result["call2_output"]
+    assert "모든 scene 슬롯이 폐기되어 빈 결과로 완료" in capsys.readouterr().out
 
 
 @pytest.mark.asyncio
