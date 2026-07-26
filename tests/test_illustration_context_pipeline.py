@@ -1957,6 +1957,19 @@ def test_call3_dialogue_prompt_selects_speak_or_manga_and_scopes_emotions():
     assert "#emotion" not in manga_prompt
 
 
+def test_call3_prompts_separate_internal_speaker_ids_from_in_story_address():
+    prompts = pipeline.load_prompt_files()
+
+    for prompt_key in ("call3_speak", "call3_manga"):
+        prompt = prompts[prompt_key]
+        assert "internal identifiers for machine-readable speaker attribution only" in prompt
+        assert "use the exact matching identifier from the character roster" in prompt
+        assert "never copy an internal roster identifier merely because it appears" in prompt
+        assert "Infer any in-story name, nickname, title, kinship term" in prompt
+        assert "Do not force a name, nickname, or direct address" in prompt
+        assert "If the proper form of address is uncertain, omit it" in prompt
+
+
 def test_parse_speak_output_enforces_two_entry_limit_per_scene(capsys):
     parsed = pipeline.parse_speak_output(
         '''[Scene slot=3]
