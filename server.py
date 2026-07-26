@@ -13692,6 +13692,10 @@ async def _run_character_maker_rag_builder(
     environment = os.environ.copy()
     environment["DATA_DIR"] = data_dir
     environment["MODELS_DIR"] = os.path.join(repository, "models")
+    # Windows에서 자식 프로세스가 cp949로 한글을 출력해 서버(utf-8) 디코딩 시
+    # 글자가 깨지는 것을 막기 위해 UTF-8 출력을 강제한다.
+    environment["PYTHONUTF8"] = "1"
+    environment["PYTHONIOENCODING"] = "utf-8"
     command = [
         python_executable,
         "-m",
