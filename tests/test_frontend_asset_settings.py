@@ -119,3 +119,85 @@ def test_asset_generation_options_are_shared_across_workflows():
         "asset-anima-ed",
     ):
         assert f"getElementById('{shared_id}')" in build_prompt
+
+
+def test_lv2_asset_navigation_resolves_storage_names_without_stale_selection():
+    source = _frontend_source()
+    navigate = _function_source(
+        source,
+        "navigateToImages(charName, outfit, expression)",
+        "syncAssetSelectFromDirname(selectId, dirname)",
+    )
+    sync_select = _function_source(
+        source,
+        "syncAssetSelectFromDirname(selectId, dirname)",
+        "navigateAssetBreadcrumb(level)",
+    )
+
+    assert "syncAssetSelectFromDirname('asset-outfit-select', outfit);" in navigate
+    assert "syncAssetSelectFromDirname('asset-expression-select', expression);" in navigate
+    assert "if (!getAssetSelectValue('asset-outfit-select'))" not in navigate
+    assert "if (!getAssetSelectValue('asset-expression-select'))" not in navigate
+    assert "onAssetOutfitChange(true);" in navigate
+    assert "onAssetExpressionChange(true);" in navigate
+
+    assert "opt.dataset.value === normalizedDirname" in sync_select
+    assert "value.replace(re, '').trim() === normalizedDirname" in sync_select
+    assert "matches.length === 1" in sync_select
+    assert "matches.length > 1" in sync_select
+    assert "setAssetSelectValue(selectId, '');" in sync_select
+    assert "Lv2 선택 동기화 실패: 폴더명 비어 있음" in sync_select
+    assert "Lv2 선택 동기화 실패: 일치 옵션 없음" in sync_select
+    assert "return true;" in sync_select
+
+
+def test_lv2_asset_navigation_reloads_images_once_after_atomic_selection_sync():
+    source = _frontend_source()
+    navigate = _function_source(
+        source,
+        "navigateToImages(charName, outfit, expression)",
+        "syncAssetSelectFromDirname(selectId, dirname)",
+    )
+    outfit_change = _function_source(
+        source,
+        "onAssetOutfitChange(skipImageReload = false)",
+        "addAssetOutfit()",
+    )
+    expression_change = _function_source(
+        source,
+        "onAssetExpressionChange(skipImageReload = false)",
+        "addAssetExpression()",
+    )
+
+    assert navigate.count("loadAssetImages();") == 1
+    assert "assetNavLevel === 2 && !skipImageReload" in outfit_change
+    assert "assetNavLevel === 2 && !skipImageReload" in expression_change
+
+
+def test_lv2_navigation_keeps_storage_names_separate_from_automatch_chain_names():
+    source = _frontend_source()
+    navigate = _function_source(
+        source,
+        "navigateToImages(charName, outfit, expression)",
+        "syncAssetSelectFromDirname(selectId, dirname)",
+    )
+    name_mapping_export = source[
+        source.index("function atExportNameMapping()") :
+        source.index("async function atExportChain()")
+    ]
+    chain_export = source[
+        source.index("async function atExportChain()") :
+        source.index("// ─── 임베딩 설정 UI")
+    ]
+
+    # Lv2 image URLs keep the actual storage directory names.
+    assert "assetNavOutfit = outfit;" in navigate
+    assert "assetNavExpression = expression;" in navigate
+
+    # Name-mapping export keys target those sanitized storage directories.
+    assert "const safeName = match.name.replace(" in name_mapping_export
+    assert "expressionMapping[safeName] = cleanedValue;" in name_mapping_export
+
+    # Chain slots and per-expression settings keep the original tag name.
+    assert "const exprSettings = perExpr[match.name] || {};" in chain_export
+    assert "expression: match.name," in chain_export

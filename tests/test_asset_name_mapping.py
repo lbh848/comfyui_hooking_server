@@ -125,6 +125,29 @@ def test_same_word_in_different_mapping_categories_is_not_a_collision(mode):
     assert plan["files"][0]["filename"] == "alice_same_same.webp"
 
 
+def test_automatch_safe_expression_mapping_targets_storage_directory(mode):
+    asset_mode, root, _, _ = mode
+    original_expression = "SDstudio-80/shared/annoyed_v3"
+    stored_expression = asset_mode._safe_dirname(original_expression)
+    _write_representative(root, "alice", "uniform", stored_expression)
+    mapping = _mapping(
+        outfits={"uniform": "school"},
+        expressions={stored_expression: "annoyed"},
+    )
+
+    plan = asset_mode.build_character_export_plan(
+        "alice",
+        selected_outfits=["uniform"],
+        selected_expressions=[stored_expression],
+        mapping_override=mapping,
+    )
+
+    assert original_expression != stored_expression
+    assert plan["success"] is True
+    assert plan["selection"]["expressions"] == [stored_expression]
+    assert plan["files"][0]["filename"] == "alice_school_annoyed.webp"
+
+
 def test_disabled_outfit_block_does_not_require_outfit_mapping(mode):
     asset_mode, root, _, _ = mode
     _write_representative(root, "alice", "uniform", "smile")

@@ -80,6 +80,12 @@ from modes import chansub_service
 from modes import illustration_chat_history
 from modes import illustration_context_pipeline
 from modes import multi_char_mask
+from modes.character_maker_mode import (
+    MAX_REFERENCE_BYTES,
+    CharacterMakerError,
+    CharacterMakerService,
+)
+from modes.asset_mode import CHARACTER_MAKER_TEMP_DIR
 import workflow_profiles
 import importlib.util
 
@@ -265,6 +271,12 @@ DEFAULT_CONFIG = {
         "asset_name_mapping_full": _llm_route_defaults(
             max_retries=1, fallback_max_retries=1, json_mode=True
         ),
+        "character_maker_draft": _llm_route_defaults(
+            max_retries=1, fallback_max_retries=1, json_mode=True
+        ),
+        "character_maker_feedback": _llm_route_defaults(
+            max_retries=1, fallback_max_retries=1, json_mode=True
+        ),
         "edit_illustration_prompt":_llm_route_defaults(json_mode=True),  # 끄면 response_format 미전송(Cerebras/Gemma 루프 회피)
         # 삽화 컨텍스트 파이프라인 역번역/CALL1/2/2-FIX/3. 메인 LLM/폴백은 외부 API 분기 탭에서 드롭박스로 선택.
         # 폴백 없음(fallback_target 미지정)이 기본.
@@ -280,6 +292,11 @@ DEFAULT_CONFIG = {
     "embedding_url": "https://api.voyageai.com/v1/embeddings",  # 임베딩 API URL
     "embedding_api_key": "",      # 임베딩 API 키
     "embedding_model": "voyage-4-large",  # 임베딩 모델명
+    "character_maker_rag_enabled": False,
+    "character_maker_rag_url": "http://127.0.0.1:3333",
+    "character_maker_rag_top_k": 5,
+    "character_maker_rag_threshold": 0.0,
+    "character_maker_rag_timeout_sec": 20.0,
     "outfit_prompt_file": "",   # 복장정리프롬프트 파일명 (customprompt/)
     "restore_prompt_file": "",  # 워크플로우 복원 프롬프트 파일명 (customprompt/)
     "restore_mode_enabled": False,  # 워크플로우 복원 프롬프트 활성화 여부
@@ -566,6 +583,17 @@ asset_mode.workflow_type = workflow_profiles.normalize_asset_workflow_type(
 asset_mode.mode_log_func = mode_logger.log
 asset_mode.load_tags()
 print(f"[ASSET_MODE] 초기화: source={asset_mode.workflow_source_path}, characters={len(asset_mode.list_characters())}")
+
+# ─── 캐릭터 메이커 (서버 프로세스 수명 임시 세션) ───
+character_maker = CharacterMakerService(
+    asset_mode,
+    lambda: app_config,
+    temp_root=CHARACTER_MAKER_TEMP_DIR,
+)
+print(
+    f"[CHARACTER_MAKER] 초기화: boot={character_maker.boot_id}, "
+    f"temp_root={CHARACTER_MAKER_TEMP_DIR}"
+)
 
 # ─── 에셋툴 모드 초기화 ───
 asset_tool = asset_tool_mode.AssetToolMode()
@@ -9365,6 +9393,42 @@ async def handle_api_config(request: web.Request) -> web.Response:
                     )
                 body["asset_workflow_type"] = normalized_asset_type
 
+            try:
+                if "character_maker_rag_enabled" in body:
+                    body["character_maker_rag_enabled"] = bool(
+                        body.get("character_maker_rag_enabled")
+                    )
+                if "character_maker_rag_url" in body:
+                    rag_url = str(body.get("character_maker_rag_url") or "").strip().rstrip("/")
+                    if not re.fullmatch(r"https?://[^\s]+", rag_url):
+                        raise ValueError(
+                            "캐릭터 메이커 RAG URL은 http:// 또는 https:// 주소여야 합니다."
+                        )
+                    body["character_maker_rag_url"] = rag_url
+                if "character_maker_rag_top_k" in body:
+                    rag_top_k = int(body.get("character_maker_rag_top_k"))
+                    if not 1 <= rag_top_k <= 20:
+                        raise ValueError("캐릭터 메이커 RAG Top-K는 1~20 사이여야 합니다.")
+                    body["character_maker_rag_top_k"] = rag_top_k
+                if "character_maker_rag_threshold" in body:
+                    rag_threshold = float(body.get("character_maker_rag_threshold"))
+                    if not math.isfinite(rag_threshold) or not -1.0 <= rag_threshold <= 1.0:
+                        raise ValueError(
+                            "캐릭터 메이커 RAG 임계값은 -1.0~1.0 사이여야 합니다."
+                        )
+                    body["character_maker_rag_threshold"] = rag_threshold
+                if "character_maker_rag_timeout_sec" in body:
+                    rag_timeout = float(body.get("character_maker_rag_timeout_sec"))
+                    if not math.isfinite(rag_timeout) or not 2.0 <= rag_timeout <= 120.0:
+                        raise ValueError(
+                            "캐릭터 메이커 RAG 제한 시간은 2~120초 사이여야 합니다."
+                        )
+                    body["character_maker_rag_timeout_sec"] = rag_timeout
+            except (TypeError, ValueError) as e:
+                print(f"[CONFIG] 캐릭터 메이커 RAG 설정 저장 거부: {e}")
+                traceback.print_exc()
+                return web.json_response({"error": str(e)}, status=400)
+
             candidate_config = copy.deepcopy(app_config)
             for key, value in body.items():
                 if key in DEFAULT_CONFIG:
@@ -11112,6 +11176,7 @@ async def handle_api_asset_mode_generate(request: web.Request) -> web.Response:
             anima_lora_trigger_words=body.get("anima_lora_trigger_words", ""),
             sdxl_lora_trigger_words=body.get("sdxl_lora_trigger_words", ""),
             storage_group=body.get("storage_group", ""),
+            storage_session=body.get("storage_session", ""),
         )
         return web.json_response(result)
     except Exception as e:
@@ -12520,6 +12585,486 @@ async def handle_api_asset_mode_batch_set_negative(request: web.Request) -> web.
         traceback.print_exc()
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
+
+# ─── 캐릭터 메이커 ─────────────────────────────────────────
+def _character_maker_error_response(
+    label: str, exc: Exception, *, status: int = 400
+) -> web.Response:
+    print(
+        f"[CHARACTER_MAKER] {label} 실패: "
+        f"{type(exc).__name__}: {exc}"
+    )
+    traceback.print_exc()
+    return web.json_response(
+        {"success": False, "error": str(exc)},
+        status=status if isinstance(exc, CharacterMakerError) else 500,
+    )
+
+
+def _character_maker_control_value(prompt: str, key: str, value: str) -> str:
+    pattern = rf"(\[{re.escape(key)}\]\r?\n)[^\r\n]*"
+    if re.search(pattern, prompt):
+        return re.sub(pattern, lambda match: match.group(1) + value, prompt, count=1)
+    end_token = "\n[END]"
+    addition = f"\n[{key}]\n{value}"
+    if end_token in prompt:
+        return prompt.replace(end_token, addition + end_token, 1)
+    print(
+        f"[CHARACTER_MAKER] 프롬프트 제어 토큰 누락: "
+        f"key={key}, end_token=False"
+    )
+    return prompt + addition + end_token
+
+
+async def handle_api_character_maker_create(request: web.Request) -> web.Response:
+    try:
+        return web.json_response(
+            {"success": True, "session": character_maker.create_session()}
+        )
+    except Exception as exc:
+        return _character_maker_error_response("세션 생성", exc)
+
+
+async def handle_api_character_maker_get(request: web.Request) -> web.Response:
+    session_id = request.match_info.get("session_id", "")
+    try:
+        return web.json_response(
+            {"success": True, "session": character_maker.public_session(session_id)}
+        )
+    except Exception as exc:
+        return _character_maker_error_response("세션 조회", exc, status=404)
+
+
+async def handle_api_character_maker_update(request: web.Request) -> web.Response:
+    session_id = request.match_info.get("session_id", "")
+    try:
+        async with character_maker.operation_lock(session_id):
+            body = await request.json()
+            return web.json_response(
+                {
+                    "success": True,
+                    "session": character_maker.update_session(session_id, body),
+                }
+            )
+    except Exception as exc:
+        return _character_maker_error_response("세션 변경", exc)
+
+
+async def handle_api_character_maker_delete(request: web.Request) -> web.Response:
+    session_id = request.match_info.get("session_id", "")
+    try:
+        async with character_maker.operation_lock(session_id):
+            character_maker.delete_session(session_id)
+            return web.json_response({"success": True})
+    except Exception as exc:
+        return _character_maker_error_response("세션 삭제", exc, status=404)
+
+
+async def handle_api_character_maker_reference_upload(
+    request: web.Request,
+) -> web.Response:
+    session_id = request.match_info.get("session_id", "")
+    added_reference_ids: list[str] = []
+    operation_lock = None
+    lock_acquired = False
+    try:
+        operation_lock = character_maker.operation_lock(session_id)
+        await operation_lock.acquire()
+        lock_acquired = True
+        reader = await request.multipart()
+        uploaded = 0
+        while True:
+            part = await reader.next()
+            if part is None:
+                break
+            if not part.filename:
+                print(
+                    f"[CHARACTER_MAKER] 참고 이미지 업로드 필드 스킵: "
+                    f"session={session_id}, name={part.name!r}, filename 없음"
+                )
+                continue
+            data = bytearray()
+            while True:
+                chunk = await part.read_chunk(size=256 * 1024)
+                if not chunk:
+                    break
+                data.extend(chunk)
+                if len(data) > MAX_REFERENCE_BYTES:
+                    print(
+                        f"[CHARACTER_MAKER] 참고 이미지 용량 초과: "
+                        f"session={session_id}, filename={part.filename!r}, "
+                        f"bytes>{MAX_REFERENCE_BYTES}"
+                    )
+                    raise CharacterMakerError("참고 이미지 한 장은 12MB를 넘을 수 없습니다.")
+            state = character_maker.add_reference(
+                session_id,
+                filename=part.filename,
+                mime=part.headers.get("Content-Type", ""),
+                image_bytes=bytes(data),
+            )
+            if state["references"]:
+                added_reference_ids.append(state["references"][-1]["id"])
+            uploaded += 1
+        if uploaded == 0:
+            print(
+                f"[CHARACTER_MAKER] 참고 이미지 업로드 실패: "
+                f"session={session_id}, 파일 없음"
+            )
+            raise CharacterMakerError("업로드할 이미지 파일이 없습니다.")
+        return web.json_response(
+            {
+                "success": True,
+                "uploaded": uploaded,
+                "session": character_maker.public_session(session_id),
+            }
+        )
+    except Exception as exc:
+        if added_reference_ids:
+            print(
+                f"[CHARACTER_MAKER] 참고 이미지 업로드 롤백: "
+                f"session={session_id}, references={added_reference_ids}"
+            )
+            for reference_id in reversed(added_reference_ids):
+                try:
+                    character_maker.remove_reference(session_id, reference_id)
+                except Exception as rollback_exc:
+                    print(
+                        f"[CHARACTER_MAKER] 참고 이미지 업로드 롤백 실패: "
+                        f"session={session_id}, reference={reference_id}, "
+                        f"error={rollback_exc}"
+                    )
+                    traceback.print_exc()
+        return _character_maker_error_response("참고 이미지 업로드", exc)
+    finally:
+        if operation_lock is not None and lock_acquired:
+            operation_lock.release()
+
+
+async def handle_api_character_maker_reference_get(
+    request: web.Request,
+) -> web.StreamResponse:
+    session_id = request.match_info.get("session_id", "")
+    reference_id = request.match_info.get("reference_id", "")
+    try:
+        path, mime = character_maker.reference_path(session_id, reference_id)
+        response = web.FileResponse(
+            path,
+            headers={"Cache-Control": "no-store, max-age=0"},
+        )
+        response.content_type = mime
+        return response
+    except Exception as exc:
+        return _character_maker_error_response("참고 이미지 조회", exc, status=404)
+
+
+async def handle_api_character_maker_reference_delete(
+    request: web.Request,
+) -> web.Response:
+    session_id = request.match_info.get("session_id", "")
+    reference_id = request.match_info.get("reference_id", "")
+    try:
+        async with character_maker.operation_lock(session_id):
+            return web.json_response(
+                {
+                    "success": True,
+                    "session": character_maker.remove_reference(
+                        session_id, reference_id
+                    ),
+                }
+            )
+    except Exception as exc:
+        return _character_maker_error_response("참고 이미지 삭제", exc, status=404)
+
+
+async def handle_api_character_maker_revise(request: web.Request) -> web.Response:
+    session_id = request.match_info.get("session_id", "")
+    try:
+        body = await request.json()
+        result = await character_maker.revise(session_id, body)
+        return web.json_response(result)
+    except Exception as exc:
+        return _character_maker_error_response("LLM 수정", exc)
+
+
+async def handle_api_character_maker_generate(request: web.Request) -> web.Response:
+    session_id = request.match_info.get("session_id", "")
+    prepared_ref_dir = ""
+    operation_lock = None
+    lock_acquired = False
+    try:
+        operation_lock = character_maker.operation_lock(session_id)
+        await operation_lock.acquire()
+        lock_acquired = True
+        body = await request.json()
+        update_payload = {
+            key: body[key]
+            for key in ("world_context", "fields", "locks", "settings")
+            if key in body
+        }
+        session_state = character_maker.update_session(session_id, update_payload)
+        positive = body.get("positive_prompt")
+        negative = body.get("negative_prompt")
+        if not isinstance(positive, str) or not positive.strip():
+            print(
+                f"[CHARACTER_MAKER] 생성 거부: "
+                f"session={session_id}, positive_prompt 비어 있음"
+            )
+            raise CharacterMakerError("생성 프롬프트가 비어 있습니다.")
+        if not isinstance(negative, str):
+            raise CharacterMakerError("부정 프롬프트는 문자열이어야 합니다.")
+        if "[END]" not in positive:
+            print(
+                f"[CHARACTER_MAKER] 생성 거부: "
+                f"session={session_id}, [END] 토큰 누락"
+            )
+            raise CharacterMakerError("에셋 워크플로우 제어 토큰 [END]가 없습니다.")
+
+        settings = session_state["settings"]
+        reference_subfolder = ""
+        use_generation_refs = bool(settings.get("use_references_for_generation", False))
+        reference_items = (
+            character_maker.generation_reference_items(session_id)
+            if use_generation_refs
+            else []
+        )
+        if use_generation_refs and not reference_items:
+            print(
+                f"[CHARACTER_MAKER] 생성 참고 이미지 스킵 불가: "
+                f"session={session_id}, 사용 토글 ON, 이미지 0장"
+            )
+            raise CharacterMakerError(
+                "생성 참고 이미지 사용이 켜져 있지만 업로드된 이미지가 없습니다."
+            )
+        if reference_items:
+            comfy_input_dir = str(app_config.get("comfy_input_dir") or "").strip()
+            if not comfy_input_dir:
+                print(
+                    f"[CHARACTER_MAKER] 생성 참고 이미지 준비 실패: "
+                    f"session={session_id}, comfy_input_dir 비어 있음"
+                )
+                raise CharacterMakerError(
+                    "설정의 Comfy Input 폴더 경로를 먼저 지정하세요."
+                )
+            if not os.path.isdir(comfy_input_dir):
+                print(
+                    f"[CHARACTER_MAKER] 생성 참고 이미지 준비 실패: "
+                    f"session={session_id}, comfy_input_dir 없음: {comfy_input_dir}"
+                )
+                raise CharacterMakerError(
+                    f"Comfy Input 폴더가 존재하지 않습니다: {comfy_input_dir}"
+                )
+            reference_subfolder = _prepare_ref_folder(
+                reference_items, comfy_input_dir
+            )
+            prepared_ref_dir = os.path.join(comfy_input_dir, reference_subfolder)
+
+        positive = _character_maker_control_value(
+            positive,
+            "FACE_ID_ACTIVATE",
+            "true" if reference_subfolder else "false",
+        )
+        positive = _character_maker_control_value(
+            positive,
+            "FACE_ID_DIR",
+            reference_subfolder or "soya_char_ref/fallback",
+        )
+        result = await asset_mode.generate(
+            character=f"maker-{session_id[:8]}",
+            appearance="character-maker-temporary",
+            outfit="character-maker-temporary",
+            expression="character-maker-temporary",
+            face_id_enabled=bool(reference_subfolder),
+            reference_subfolder=reference_subfolder,
+            asset_workflow_type=settings.get("asset_workflow_type"),
+            positive_prompt=positive,
+            negative_prompt=negative,
+            storage_group="character_maker",
+            storage_session=session_id,
+        )
+        if not result.get("success"):
+            print(
+                f"[CHARACTER_MAKER] 이미지 생성 실패: "
+                f"session={session_id}, result={result}"
+            )
+            return web.json_response(result, status=500)
+        local_path = result.get("local_path", "")
+        prompt_record_path = result.get("prompt_record_path", "")
+        session_state = character_maker.add_revision(
+            session_id,
+            image_path=local_path,
+            prompt_path=prompt_record_path,
+            positive=positive,
+            negative=negative,
+            note=str(body.get("note") or ""),
+        )
+        public_result = {
+            key: value
+            for key, value in result.items()
+            if key not in ("local_path", "prompt_record_path")
+        }
+        return web.json_response(
+            {
+                "success": True,
+                "generation": public_result,
+                "session": session_state,
+            }
+        )
+    except Exception as exc:
+        return _character_maker_error_response("이미지 생성", exc)
+    finally:
+        if prepared_ref_dir and os.path.isdir(prepared_ref_dir):
+            try:
+                comfy_input_dir = os.path.realpath(
+                    str(app_config.get("comfy_input_dir") or "")
+                )
+                prepared_real = os.path.realpath(prepared_ref_dir)
+                expected_root = os.path.realpath(
+                    os.path.join(comfy_input_dir, "soya_char_ref")
+                )
+                if (
+                    os.path.commonpath([expected_root, prepared_real]) == expected_root
+                    and prepared_real != expected_root
+                ):
+                    shutil.rmtree(prepared_real)
+                    print(
+                        f"[CHARACTER_MAKER] Comfy 임시 참고 폴더 정리: "
+                        f"session={session_id}, path={prepared_real}"
+                    )
+                else:
+                    print(
+                        f"[CHARACTER_MAKER] Comfy 임시 참고 폴더 정리 거부: "
+                        f"session={session_id}, root={expected_root}, path={prepared_real}"
+                    )
+            except Exception as cleanup_exc:
+                print(
+                    f"[CHARACTER_MAKER] Comfy 임시 참고 폴더 정리 실패: "
+                    f"session={session_id}, path={prepared_ref_dir}, error={cleanup_exc}"
+                )
+                traceback.print_exc()
+        if operation_lock is not None and lock_acquired:
+            operation_lock.release()
+
+
+async def handle_api_character_maker_image(
+    request: web.Request,
+) -> web.StreamResponse:
+    session_id = request.match_info.get("session_id", "")
+    revision_id = request.match_info.get("revision_id", "")
+    try:
+        path, mime = character_maker.revision_path(session_id, revision_id)
+        response = web.FileResponse(
+            path,
+            headers={"Cache-Control": "no-store, max-age=0"},
+        )
+        response.content_type = mime
+        return response
+    except Exception as exc:
+        return _character_maker_error_response("리비전 이미지 조회", exc, status=404)
+
+
+async def handle_api_character_maker_confirm(request: web.Request) -> web.Response:
+    session_id = request.match_info.get("session_id", "")
+    try:
+        async with character_maker.operation_lock(session_id):
+            body = await request.json()
+            return web.json_response(character_maker.confirm(session_id, body))
+    except Exception as exc:
+        return _character_maker_error_response("캐릭터 확정", exc)
+
+
+async def handle_api_character_maker_rag_test(request: web.Request) -> web.Response:
+    try:
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise CharacterMakerError("RAG 테스트 요청은 객체여야 합니다.")
+        override = {}
+        if "url" in body:
+            rag_url = str(body.get("url") or "").strip().rstrip("/")
+            if not re.fullmatch(r"https?://[^\s]+", rag_url):
+                raise CharacterMakerError(
+                    "RAG URL은 http:// 또는 https:// 주소여야 합니다."
+                )
+            override["character_maker_rag_url"] = rag_url
+        if "top_k" in body:
+            top_k = int(body.get("top_k"))
+            if not 1 <= top_k <= 20:
+                raise CharacterMakerError("RAG Top-K는 1~20 사이여야 합니다.")
+            override["character_maker_rag_top_k"] = top_k
+        if "threshold" in body:
+            threshold = float(body.get("threshold"))
+            if not math.isfinite(threshold) or not -1.0 <= threshold <= 1.0:
+                raise CharacterMakerError("RAG Threshold는 -1~1 사이여야 합니다.")
+            override["character_maker_rag_threshold"] = threshold
+        if "timeout_sec" in body:
+            timeout_sec = float(body.get("timeout_sec"))
+            if not math.isfinite(timeout_sec) or not 2.0 <= timeout_sec <= 120.0:
+                raise CharacterMakerError("RAG Timeout은 2~120초 사이여야 합니다.")
+            override["character_maker_rag_timeout_sec"] = timeout_sec
+        result = await character_maker.test_rag(
+            str(body.get("query") or ""), config_override=override
+        )
+        return web.json_response(result)
+    except Exception as exc:
+        return _character_maker_error_response("RAG 연결 테스트", exc)
+
+
+async def handle_api_character_maker_capabilities(
+    request: web.Request,
+) -> web.Response:
+    try:
+        llm_config = llm_service.get_config()
+        routing = app_config.get("llm_routing") or {}
+
+        def _route_capability(task_key: str) -> dict[str, Any]:
+            route = routing.get(task_key, {}) or {}
+            slot = route.get("primary", "llm1")
+            service_key = {
+                "llm1": "llm_service",
+                "llm2": "llm_service2",
+                "llm3": "llm_service3",
+            }.get(slot, "llm_service")
+            service_name = str(
+                llm_config.get(service_key)
+                or llm_config.get("llm_service")
+                or ""
+            )
+            return {
+                "slot": slot,
+                "service": service_name,
+                "vision_ready": bool(
+                    service_name and llm_service.supports_vision(service_name)
+                ),
+            }
+
+        draft_capability = _route_capability("character_maker_draft")
+        feedback_capability = _route_capability("character_maker_feedback")
+        return web.json_response(
+            {
+                "success": True,
+                "boot_id": character_maker.boot_id,
+                "vision": {
+                    "ready": feedback_capability["vision_ready"],
+                    "slot": feedback_capability["slot"],
+                    "service": feedback_capability["service"],
+                },
+                "routes": {
+                    "draft": draft_capability,
+                    "feedback": feedback_capability,
+                },
+                "rag": {
+                    "enabled": bool(
+                        app_config.get("character_maker_rag_enabled", False)
+                    ),
+                    "url": app_config.get(
+                        "character_maker_rag_url", "http://127.0.0.1:3333"
+                    ),
+                },
+            }
+        )
+    except Exception as exc:
+        return _character_maker_error_response("기능 상태 조회", exc)
+
+
 app.router.add_get("/api/asset_mode/status", handle_api_asset_mode_status)
 app.router.add_get("/api/asset_mode/tags", handle_api_asset_mode_tags_get)
 app.router.add_get("/api/asset_mode/hidden_tags", handle_api_asset_mode_hidden_tags_get)
@@ -12543,6 +13088,19 @@ app.router.add_post("/api/asset_mode/batch_analyze_representatives", handle_api_
 app.router.add_post("/api/asset_mode/analyze_selected", handle_api_asset_mode_analyze_selected)
 app.router.add_post("/api/asset_mode/cancel_analyze", handle_api_asset_mode_cancel_analyze)
 app.router.add_post("/api/asset_mode/batch_set_negative", handle_api_asset_mode_batch_set_negative)
+app.router.add_post("/api/character_maker/session", handle_api_character_maker_create)
+app.router.add_get("/api/character_maker/session/{session_id}", handle_api_character_maker_get)
+app.router.add_patch("/api/character_maker/session/{session_id}", handle_api_character_maker_update)
+app.router.add_delete("/api/character_maker/session/{session_id}", handle_api_character_maker_delete)
+app.router.add_post("/api/character_maker/session/{session_id}/reference", handle_api_character_maker_reference_upload)
+app.router.add_get("/api/character_maker/session/{session_id}/reference/{reference_id}", handle_api_character_maker_reference_get)
+app.router.add_delete("/api/character_maker/session/{session_id}/reference/{reference_id}", handle_api_character_maker_reference_delete)
+app.router.add_post("/api/character_maker/session/{session_id}/revise", handle_api_character_maker_revise)
+app.router.add_post("/api/character_maker/session/{session_id}/generate", handle_api_character_maker_generate)
+app.router.add_get("/api/character_maker/session/{session_id}/image/{revision_id}", handle_api_character_maker_image)
+app.router.add_post("/api/character_maker/session/{session_id}/confirm", handle_api_character_maker_confirm)
+app.router.add_post("/api/character_maker/rag/test", handle_api_character_maker_rag_test)
+app.router.add_get("/api/character_maker/capabilities", handle_api_character_maker_capabilities)
 app.router.add_get("/api/expression_profile/scan", handle_api_expression_profile_scan)
 app.router.add_post("/api/expression_profile/create_folders", handle_api_expression_profile_create_folders)
 app.router.add_get("/api/asset_mode/name_mapping/{character}", handle_api_asset_mode_name_mapping_get)

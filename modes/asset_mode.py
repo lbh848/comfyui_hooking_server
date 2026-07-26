@@ -14,6 +14,7 @@ import hashlib
 import shutil
 import traceback
 import re
+import tempfile
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional, Callable, Awaitable
@@ -25,6 +26,10 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ASSET_DATA_DIR = os.path.join(BASE_DIR, "asset_data")
 ASSET_DIR = os.path.join(BASE_DIR, "asset")
 AUTOMATCH_DEFAULT_OUTFIT_DIR = "_automatch_defaults"
+_CHARACTER_MAKER_TEMP_CONTEXT = tempfile.TemporaryDirectory(
+    prefix="comfyui_character_maker_"
+)
+CHARACTER_MAKER_TEMP_DIR = _CHARACTER_MAKER_TEMP_CONTEXT.name
 TAGS_FILE = os.path.join(ASSET_DATA_DIR, "tags.json")
 HIDDEN_TAGS_FILE = os.path.join(ASSET_DATA_DIR, "hidden_tags.json")
 NAME_MAPPING_FILE = os.path.join(ASSET_DATA_DIR, "name_mapping.json")
@@ -1455,6 +1460,7 @@ class AssetMode:
         style_lora_activate: bool = False,
         style_lora_data: str = "",
         storage_group: str = "",
+        storage_session: str = "",
     ) -> dict:
         async with self._lock:
             self._is_generating = True
@@ -1472,7 +1478,7 @@ class AssetMode:
                     anima_lora_trigger_words, sdxl_lora_trigger_words,
                     positive_prompt, negative_prompt,
                     style_lora_activate, style_lora_data,
-                    storage_group,
+                    storage_group, storage_session,
                 )
             finally:
                 self._is_generating = False
@@ -1515,9 +1521,16 @@ class AssetMode:
         style_lora_activate: bool = False,
         style_lora_data: str = "",
         storage_group: str = "",
+        storage_session: str = "",
     ) -> dict:
-        if storage_group not in ("", "automatch_defaults"):
+        if storage_group not in ("", "automatch_defaults", "character_maker"):
             error_msg = f"지원하지 않는 에셋 저장 분류: {storage_group}"
+            print(f"[ASSET] {error_msg}")
+            return {"success": False, "error": error_msg}
+        if storage_group == "character_maker" and not re.fullmatch(
+            r"[0-9a-f]{32}", str(storage_session or "")
+        ):
+            error_msg = f"캐릭터 메이커 임시 세션 ID가 유효하지 않음: {storage_session!r}"
             print(f"[ASSET] {error_msg}")
             return {"success": False, "error": error_msg}
         storage_outfit = (
@@ -1595,7 +1608,6 @@ class AssetMode:
                 return {"success": False, "error": "프롬프트가 비어있음"}
 
             # seed=-1이면 매 생성마다 랜덤값으로 치환
-            import re
             def _replace_seed(m):
                 import random
                 return "[SEED]\n" + str(random.randint(0, 2**32 - 1))
@@ -1666,12 +1678,19 @@ class AssetMode:
                     })
                 return {"success": False, "error": error_msg}
 
-            save_dir = os.path.join(
-                ASSET_DIR,
-                self._safe_dirname(character),
-                self._safe_dirname(storage_outfit),
-                self._safe_dirname(expression),
-            )
+            if storage_group == "character_maker":
+                save_dir = os.path.join(
+                    CHARACTER_MAKER_TEMP_DIR,
+                    storage_session,
+                    "images",
+                )
+            else:
+                save_dir = os.path.join(
+                    ASSET_DIR,
+                    self._safe_dirname(character),
+                    self._safe_dirname(storage_outfit),
+                    self._safe_dirname(expression),
+                )
             os.makedirs(save_dir, exist_ok=True)
 
             filename = f"{int(time.time())}_{uuid.uuid4().hex[:6]}.webp"
@@ -1683,7 +1702,12 @@ class AssetMode:
                 img = Image.open(BytesIO(img_bytes))
                 save_img = img if img.mode == "RGBA" else img.convert("RGB")
                 save_img.save(filepath, format="WEBP", quality=90, method=4)
-            except Exception:
+            except Exception as webp_error:
+                print(
+                    f"[ASSET] WEBP 저장 실패, PNG 원본 저장 시도: "
+                    f"path={filepath}, error={type(webp_error).__name__}: {webp_error}"
+                )
+                traceback.print_exc()
                 filename = f"{int(time.time())}_{uuid.uuid4().hex[:6]}.png"
                 filepath = os.path.join(save_dir, filename)
                 with open(filepath, "wb") as f:
@@ -1705,6 +1729,20 @@ class AssetMode:
             except Exception as e:
                 print(f"[ASSET] 프롬프트 기록 저장 실패: {prompt_record_path} ({e})")
                 traceback.print_exc()
+                if storage_group == "character_maker":
+                    try:
+                        if os.path.isfile(filepath):
+                            os.remove(filepath)
+                    except Exception as cleanup_error:
+                        print(
+                            f"[ASSET] 캐릭터 메이커 실패 이미지 정리 실패: "
+                            f"path={filepath}, error={cleanup_error}"
+                        )
+                        traceback.print_exc()
+                    return {
+                        "success": False,
+                        "error": "캐릭터 메이커 임시 프롬프트 기록 저장 실패",
+                    }
 
             self._log("generate_saved", {
                 "character": character, "outfit": outfit, "expression": expression,
@@ -1720,7 +1758,7 @@ class AssetMode:
                     "storage_outfit": storage_outfit,
                 })
 
-            return {
+            result = {
                 "success": True,
                 "filename": filename,
                 "character": character,
@@ -1729,6 +1767,10 @@ class AssetMode:
                 "storage_group": storage_group,
                 "storage_outfit": storage_outfit,
             }
+            if storage_group == "character_maker":
+                result["local_path"] = filepath
+                result["prompt_record_path"] = prompt_record_path
+            return result
         finally:
             # 임시 선택 워크플로우 경로 복원
             if self.workflow_source_path != saved_workflow_path:

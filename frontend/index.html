@@ -3425,7 +3425,8 @@
         .tab-btn[onclick*="'asset-upload'"],
         .tab-btn[onclick*="'pose'"],
         .tab-btn[onclick*="'batch'"],
-        #tab-btn-smart-asset {
+        #tab-btn-smart-asset,
+        #tab-btn-character-maker {
             background: rgba(80, 200, 120, 0.12);
             border-radius: 6px;
         }
@@ -5309,6 +5310,595 @@
         .pm-main { flex: 1; min-width: 0; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
         .pm-main > div { flex: 1; min-height: 0; }
         #tab-smart-asset-content.active { margin: -20px -24px; }
+
+        /* ─── 캐릭터 메이커 ───────────────────────────────── */
+        #tab-character-maker-content.active { margin: -20px -24px; }
+        .cm-shell {
+            --cm-appearance: #9ed56f;
+            --cm-outfit: #57c793;
+            --cm-expression: #f0a65d;
+            --cm-composition: #67b9e8;
+            display: flex;
+            flex-direction: column;
+            height: calc(100vh - 60px);
+            min-height: 640px;
+            overflow: hidden;
+            color: var(--text);
+            background:
+                radial-gradient(circle at 48% 8%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 34%),
+                var(--bg);
+        }
+        .cm-toolbar {
+            min-height: 60px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            padding: 8px 16px;
+            border-bottom: 1px solid var(--border);
+            background: linear-gradient(135deg, color-mix(in srgb, var(--surface2) 88%, #18365d), var(--surface));
+            flex: 0 0 auto;
+        }
+        .cm-brand { display: flex; align-items: center; gap: 11px; min-width: 0; }
+        .cm-brand-mark {
+            width: 38px;
+            height: 38px;
+            display: grid;
+            place-items: center;
+            border-radius: 12px;
+            color: #fff;
+            font-size: 1.15rem;
+            background: linear-gradient(145deg, #6b8cff, #9368ec 58%, #d369b1);
+            box-shadow: 0 8px 22px rgba(109, 107, 239, 0.3);
+        }
+        .cm-brand-title { font-size: 0.95rem; font-weight: 760; letter-spacing: 0.01em; }
+        .cm-brand-subtitle { margin-top: 2px; color: var(--text2); font-size: 0.67rem; white-space: nowrap; }
+        .cm-status-row { display: flex; align-items: center; justify-content: flex-end; gap: 6px; flex-wrap: wrap; }
+        .cm-status-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            min-height: 26px;
+            padding: 0 9px;
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            background: color-mix(in srgb, var(--surface) 86%, transparent);
+            color: var(--text2);
+            font-size: 0.68rem;
+            white-space: nowrap;
+        }
+        .cm-status-pill::before {
+            content: '';
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: #7b8494;
+        }
+        .cm-status-pill.ready::before { background: #63d392; box-shadow: 0 0 7px rgba(99,211,146,.65); }
+        .cm-status-pill.warn::before { background: #f4b85f; box-shadow: 0 0 7px rgba(244,184,95,.48); }
+        .cm-status-pill.error::before { background: #ef6b72; }
+        .cm-toolbar-btn {
+            min-height: 30px;
+            padding: 0 11px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface2);
+            color: var(--text);
+            cursor: pointer;
+            font-size: 0.72rem;
+        }
+        .cm-toolbar-btn:hover { border-color: color-mix(in srgb, var(--accent) 60%, var(--border)); }
+        .cm-workspace {
+            display: grid;
+            grid-template-columns: minmax(250px, 310px) minmax(420px, 1fr) minmax(330px, 390px);
+            flex: 1;
+            min-height: 0;
+            overflow: hidden;
+        }
+        .cm-context-rail,
+        .cm-editor-wall {
+            min-height: 0;
+            background: color-mix(in srgb, var(--surface) 95%, transparent);
+        }
+        .cm-context-rail {
+            display: flex;
+            flex-direction: column;
+            gap: 9px;
+            padding: 10px;
+            border-right: 1px solid var(--border);
+            overflow: hidden;
+        }
+        .cm-editor-wall {
+            display: flex;
+            flex-direction: column;
+            border-left: 1px solid var(--border);
+            overflow: hidden;
+        }
+        .cm-card {
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            background: color-mix(in srgb, var(--surface2) 75%, var(--surface));
+            box-shadow: 0 6px 20px rgba(0,0,0,.08);
+            overflow: hidden;
+        }
+        .cm-card-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            padding: 9px 11px;
+            border-bottom: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+            font-size: 0.76rem;
+            font-weight: 700;
+        }
+        .cm-card-kicker { color: var(--text2); font-size: 0.61rem; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
+        .cm-world-card { flex: 0 0 auto; }
+        .cm-world-text {
+            width: 100%;
+            min-height: 94px;
+            max-height: 190px;
+            padding: 10px 11px;
+            border: 0;
+            resize: vertical;
+            outline: none;
+            box-sizing: border-box;
+            background: transparent;
+            color: var(--text);
+            font-family: inherit;
+            font-size: 0.75rem;
+            line-height: 1.55;
+        }
+        .cm-reference-card { flex: 0 0 auto; }
+        .cm-reference-drop {
+            margin: 9px;
+            min-height: 52px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            border: 1px dashed color-mix(in srgb, var(--accent) 45%, var(--border));
+            border-radius: 9px;
+            color: var(--text2);
+            font-size: 0.68rem;
+            cursor: pointer;
+            transition: .16s ease;
+        }
+        .cm-reference-drop:hover,
+        .cm-reference-drop.dragover {
+            color: var(--text);
+            border-color: var(--accent);
+            background: color-mix(in srgb, var(--accent) 8%, transparent);
+        }
+        .cm-reference-grid {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 5px;
+            padding: 0 9px 9px;
+        }
+        .cm-reference-item {
+            position: relative;
+            aspect-ratio: 1;
+            overflow: hidden;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface);
+        }
+        .cm-reference-item img { width: 100%; height: 100%; display: block; object-fit: cover; }
+        .cm-reference-remove {
+            position: absolute;
+            top: 3px;
+            right: 3px;
+            width: 18px;
+            height: 18px;
+            padding: 0;
+            border: 0;
+            border-radius: 50%;
+            color: #fff;
+            background: rgba(8,12,20,.74);
+            cursor: pointer;
+            font-size: .65rem;
+        }
+        .cm-chat-card { flex: 1; min-height: 190px; display: flex; flex-direction: column; }
+        .cm-chat-log {
+            flex: 1;
+            min-height: 0;
+            overflow-y: auto;
+            padding: 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 7px;
+        }
+        .cm-message {
+            max-width: 92%;
+            padding: 8px 9px;
+            border-radius: 10px;
+            font-size: 0.72rem;
+            line-height: 1.45;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+        .cm-message.user {
+            align-self: flex-end;
+            color: #fff;
+            background: linear-gradient(145deg, color-mix(in srgb, var(--accent) 84%, #5774d9), var(--accent2));
+            border-bottom-right-radius: 3px;
+        }
+        .cm-message.assistant {
+            align-self: flex-start;
+            color: var(--text);
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-bottom-left-radius: 3px;
+        }
+        .cm-chat-empty { margin: auto; color: var(--text2); text-align: center; font-size: .72rem; line-height: 1.55; }
+        .cm-chat-compose { padding: 8px; border-top: 1px solid var(--border); background: var(--surface); }
+        .cm-feedback-input {
+            width: 100%;
+            min-height: 62px;
+            max-height: 140px;
+            padding: 8px 9px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            resize: vertical;
+            box-sizing: border-box;
+            outline: none;
+            background: var(--surface2);
+            color: var(--text);
+            font-family: inherit;
+            font-size: .74rem;
+        }
+        .cm-feedback-input:focus { border-color: var(--accent); }
+        .cm-compose-actions { display: flex; align-items: center; gap: 6px; margin-top: 7px; }
+        .cm-hint { color: var(--text2); font-size: .62rem; line-height: 1.35; }
+        .cm-btn {
+            min-height: 31px;
+            padding: 0 11px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface2);
+            color: var(--text);
+            cursor: pointer;
+            font-size: .72rem;
+            font-weight: 650;
+            transition: .15s ease;
+        }
+        .cm-btn:hover:not(:disabled) { transform: translateY(-1px); border-color: var(--accent); }
+        .cm-btn:disabled { opacity: .46; cursor: not-allowed; }
+        .cm-btn.primary { border-color: transparent; color: #fff; background: linear-gradient(145deg, var(--accent), var(--accent2)); }
+        .cm-btn.success { border-color: transparent; color: #fff; background: linear-gradient(145deg, #369d68, #4bbd83); }
+        .cm-btn.danger { color: #ff9ca0; border-color: rgba(239,107,114,.35); background: rgba(239,107,114,.08); }
+        .cm-stage {
+            min-width: 0;
+            min-height: 0;
+            display: flex;
+            flex-direction: column;
+            padding: 12px;
+            overflow: hidden;
+        }
+        .cm-canvas {
+            position: relative;
+            flex: 1;
+            min-height: 300px;
+            display: grid;
+            place-items: center;
+            overflow: hidden;
+            border: 1px solid color-mix(in srgb, var(--border) 82%, #6f83be);
+            border-radius: 16px;
+            background:
+                linear-gradient(45deg, rgba(255,255,255,.018) 25%, transparent 25% 75%, rgba(255,255,255,.018) 75%),
+                linear-gradient(45deg, rgba(255,255,255,.018) 25%, transparent 25% 75%, rgba(255,255,255,.018) 75%),
+                color-mix(in srgb, var(--surface2) 88%, #121725);
+            background-position: 0 0, 14px 14px;
+            background-size: 28px 28px;
+            box-shadow: inset 0 0 70px rgba(0,0,0,.16);
+        }
+        .cm-canvas img { width: 100%; height: 100%; display: none; object-fit: contain; }
+        .cm-canvas.has-image img { display: block; }
+        .cm-canvas-empty { max-width: 320px; padding: 26px; text-align: center; color: var(--text2); }
+        .cm-canvas.has-image .cm-canvas-empty { display: none; }
+        .cm-canvas-empty-mark {
+            width: 64px;
+            height: 64px;
+            display: grid;
+            place-items: center;
+            margin: 0 auto 12px;
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            color: #9baef5;
+            background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+            font-size: 1.7rem;
+        }
+        .cm-busy-overlay {
+            position: absolute;
+            inset: 0;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            gap: 10px;
+            color: #fff;
+            background: rgba(9,13,22,.72);
+            backdrop-filter: blur(5px);
+            z-index: 3;
+        }
+        .cm-busy-overlay.visible { display: flex; }
+        .cm-stage-actions {
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            padding: 10px 1px 8px;
+            flex-wrap: wrap;
+        }
+        .cm-stage-meta { margin-left: auto; color: var(--text2); font-size: .68rem; }
+        .cm-diff-strip {
+            min-height: 34px;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            padding: 6px 8px;
+            border: 1px solid var(--border);
+            border-radius: 9px;
+            background: var(--surface);
+            overflow-x: auto;
+        }
+        .cm-diff-empty { color: var(--text2); font-size: .66rem; }
+        .cm-diff-chip { flex: 0 0 auto; padding: 3px 7px; border-radius: 999px; font-size: .63rem; }
+        .cm-diff-chip.add { color: #8ee7b4; background: rgba(71,184,120,.13); border: 1px solid rgba(71,184,120,.3); }
+        .cm-diff-chip.remove { color: #ff9ca0; background: rgba(239,107,114,.11); border: 1px solid rgba(239,107,114,.28); text-decoration: line-through; }
+        .cm-revisions {
+            min-height: 82px;
+            display: flex;
+            align-items: stretch;
+            gap: 7px;
+            padding: 8px 1px 0;
+            overflow-x: auto;
+        }
+        .cm-revision {
+            position: relative;
+            flex: 0 0 68px;
+            overflow: hidden;
+            border: 1px solid var(--border);
+            border-radius: 9px;
+            background: var(--surface);
+            cursor: pointer;
+        }
+        .cm-revision.active { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent); }
+        .cm-revision img { width: 100%; height: 100%; display: block; object-fit: cover; }
+        .cm-revision-label {
+            position: absolute;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            padding: 2px 4px;
+            color: #fff;
+            text-align: center;
+            font-size: .58rem;
+            background: rgba(5,8,14,.74);
+        }
+        .cm-editor-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            padding: 10px 11px;
+            border-bottom: 1px solid var(--border);
+            background: linear-gradient(135deg, color-mix(in srgb, var(--surface2) 90%, #263a5e), var(--surface));
+            flex: 0 0 auto;
+        }
+        .cm-editor-title { font-size: .78rem; font-weight: 750; }
+        .cm-mode-toggle {
+            display: inline-flex;
+            padding: 2px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface);
+        }
+        .cm-mode-toggle button {
+            min-height: 24px;
+            padding: 0 8px;
+            border: 0;
+            border-radius: 6px;
+            color: var(--text2);
+            background: transparent;
+            cursor: pointer;
+            font-size: .65rem;
+        }
+        .cm-mode-toggle button.active { color: #fff; background: var(--accent); }
+        .cm-field-list { flex: 1; min-height: 0; padding: 8px; overflow-y: auto; }
+        .cm-field-card {
+            margin-bottom: 7px;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            background: var(--surface);
+            overflow: hidden;
+        }
+        .cm-field-card:last-child { margin-bottom: 0; }
+        .cm-field-head {
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            padding: 8px 9px;
+            border-bottom: 1px solid var(--border);
+        }
+        .cm-field-dot { width: 8px; height: 8px; border-radius: 50%; }
+        .cm-field-card[data-field="appearance"] .cm-field-dot { background: var(--cm-appearance); }
+        .cm-field-card[data-field="outfit"] .cm-field-dot { background: var(--cm-outfit); }
+        .cm-field-card[data-field="expression"] .cm-field-dot { background: var(--cm-expression); }
+        .cm-field-card[data-field="composition"] .cm-field-dot { background: var(--cm-composition); }
+        .cm-field-name { font-size: .73rem; font-weight: 700; }
+        .cm-field-count { color: var(--text2); font-size: .61rem; }
+        .cm-lock-btn {
+            margin-left: auto;
+            min-height: 24px;
+            padding: 0 7px;
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            color: var(--text2);
+            background: var(--surface2);
+            cursor: pointer;
+            font-size: .62rem;
+        }
+        .cm-lock-btn.locked { color: #ffd07d; border-color: rgba(244,184,95,.4); background: rgba(244,184,95,.08); }
+        .cm-field-body { padding: 8px; }
+        .cm-chip-editor { display: block; }
+        .cm-text-editor { display: none; }
+        .cm-editor-wall.text-mode .cm-chip-editor { display: none; }
+        .cm-editor-wall.text-mode .cm-text-editor { display: block; }
+        .cm-chip-list { display: flex; flex-wrap: wrap; gap: 4px; min-height: 26px; }
+        .cm-tag-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            max-width: 100%;
+            padding: 3px 5px 3px 7px;
+            border: 1px solid color-mix(in srgb, var(--border) 72%, var(--accent));
+            border-radius: 999px;
+            background: var(--surface2);
+            color: var(--text);
+            font-size: .64rem;
+        }
+        .cm-tag-chip span { overflow: hidden; text-overflow: ellipsis; }
+        .cm-tag-chip button { padding: 0 2px; border: 0; color: var(--text2); background: transparent; cursor: pointer; }
+        .cm-tag-add { display: flex; gap: 5px; margin-top: 6px; }
+        .cm-tag-add input,
+        .cm-tag-textarea {
+            width: 100%;
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            box-sizing: border-box;
+            outline: none;
+            color: var(--text);
+            background: var(--surface2);
+            font-family: inherit;
+            font-size: .68rem;
+        }
+        .cm-tag-add input { min-height: 28px; padding: 0 8px; }
+        .cm-tag-textarea { min-height: 72px; padding: 7px 8px; resize: vertical; line-height: 1.45; }
+        .cm-tag-add input:focus,
+        .cm-tag-textarea:focus { border-color: var(--accent); }
+        .cm-settings-wall {
+            flex: 0 0 auto;
+            border-top: 1px solid var(--border);
+            background: color-mix(in srgb, var(--surface2) 88%, #1d2940);
+            transition: max-height .22s ease;
+            max-height: 390px;
+            overflow: hidden;
+        }
+        .cm-settings-wall.collapsed { max-height: 40px; }
+        .cm-settings-head {
+            height: 40px;
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            padding: 0 11px;
+            cursor: pointer;
+            font-size: .72rem;
+            font-weight: 720;
+            background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 11%, transparent), transparent);
+        }
+        .cm-settings-head .arrow { margin-left: auto; color: var(--text2); transition: transform .2s; }
+        .cm-settings-wall.collapsed .cm-settings-head .arrow { transform: rotate(180deg); }
+        .cm-settings-body {
+            max-height: 350px;
+            padding: 8px 10px 11px;
+            overflow-y: auto;
+        }
+        .cm-setting-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+        .cm-setting { min-width: 0; }
+        .cm-setting.wide { grid-column: 1 / -1; }
+        .cm-setting label { display: block; margin-bottom: 3px; color: var(--text2); font-size: .61rem; }
+        .cm-setting select,
+        .cm-setting input[type="number"] {
+            width: 100%;
+            min-height: 29px;
+            padding: 0 7px;
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            box-sizing: border-box;
+            color: var(--text);
+            background: var(--surface);
+            font-size: .66rem;
+        }
+        .cm-setting-check {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            min-height: 30px;
+            padding: 0 7px;
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            color: var(--text);
+            background: var(--surface);
+            font-size: .64rem;
+            cursor: pointer;
+        }
+        .cm-setting-check input { accent-color: var(--accent); }
+        .cm-modal {
+            position: fixed;
+            inset: 0;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            background: rgba(5,8,14,.7);
+            backdrop-filter: blur(5px);
+            z-index: 10020;
+        }
+        .cm-modal.visible { display: flex; }
+        .cm-modal-shell {
+            width: min(650px, 94vw);
+            max-height: 88vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            color: var(--text);
+            background: var(--surface);
+            box-shadow: 0 24px 80px rgba(0,0,0,.55);
+        }
+        .cm-modal-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; border-bottom: 1px solid var(--border); }
+        .cm-modal-title { font-size: .92rem; font-weight: 750; }
+        .cm-modal-close { border: 0; color: var(--text2); background: transparent; cursor: pointer; font-size: 1.1rem; }
+        .cm-modal-body { padding: 14px 16px; overflow-y: auto; }
+        .cm-confirm-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        .cm-confirm-field.wide { grid-column: 1 / -1; }
+        .cm-confirm-field label { display: block; margin-bottom: 4px; color: var(--text2); font-size: .68rem; }
+        .cm-confirm-field input,
+        .cm-confirm-field select {
+            width: 100%;
+            min-height: 34px;
+            padding: 0 9px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            box-sizing: border-box;
+            color: var(--text);
+            background: var(--surface2);
+            font-size: .73rem;
+        }
+        .cm-confirm-summary {
+            margin-top: 12px;
+            padding: 10px;
+            border: 1px solid rgba(244,184,95,.28);
+            border-radius: 9px;
+            color: var(--text2);
+            background: rgba(244,184,95,.06);
+            font-size: .68rem;
+            line-height: 1.55;
+        }
+        .cm-modal-actions { display: flex; justify-content: flex-end; gap: 7px; padding: 12px 16px; border-top: 1px solid var(--border); }
+        @media (max-width: 1180px) {
+            .cm-workspace { grid-template-columns: 270px minmax(380px, 1fr) 340px; }
+            .cm-brand-subtitle { display: none; }
+        }
+        @media (max-width: 940px) {
+            .cm-shell { overflow-y: auto; height: auto; min-height: calc(100vh - 80px); }
+            .cm-workspace { grid-template-columns: 1fr; overflow: visible; }
+            .cm-context-rail,
+            .cm-editor-wall { border: 0; min-height: 520px; }
+            .cm-stage { min-height: 620px; order: -1; }
+            .cm-toolbar { align-items: flex-start; }
+        }
         #tab-preset-mgmt-content.active { margin: -40px 0; }
 
         .pm-view { overflow-y: auto; overflow-x: hidden; }
@@ -6276,6 +6866,7 @@
         <button class="tab-btn" onclick="switchTab('pose')">에셋 Pose 편집</button>
         <button class="tab-btn" onclick="switchTab('batch')">에셋 일괄 생성</button>
         <button id="tab-btn-smart-asset" class="tab-btn" onclick="switchTab('smart-asset')">오토매치</button>
+        <button id="tab-btn-character-maker" class="tab-btn" onclick="switchTab('character-maker')">캐릭터 메이커</button>
         <span class="tab-divider"></span>
         <button id="tab-btn-preset-mgmt" class="tab-btn" onclick="switchTab('preset-mgmt')">프리셋매니징</button>
         <button id="tab-btn-lora" class="tab-btn" onclick="switchTab('lora')">로라매니징</button>
@@ -7765,6 +8356,348 @@
                                 </div>
                             </div>
                         </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 캐릭터 메이커 탭 -->
+        <div id="tab-character-maker-content" class="tab-content">
+            <div class="cm-shell">
+                <div class="cm-toolbar">
+                    <div class="cm-brand">
+                        <div class="cm-brand-mark">✦</div>
+                        <div>
+                            <div class="cm-brand-title">Character Maker</div>
+                            <div class="cm-brand-subtitle">세계관과 이미지 피드백을 읽는 LLM과 캐릭터를 함께 다듬습니다</div>
+                        </div>
+                    </div>
+                    <div class="cm-status-row">
+                        <span class="cm-status-pill" id="cm-session-status">임시 세션 · 준비 중</span>
+                        <span class="cm-status-pill" id="cm-revision-status">리비전 0</span>
+                        <span class="cm-status-pill" id="cm-vision-status">Vision 확인 중</span>
+                        <span class="cm-status-pill" id="cm-rag-status">RAG 확인 중</span>
+                        <span class="cm-status-pill warn" id="cm-save-status">확정 전 · 임시값</span>
+                        <button class="cm-toolbar-btn" onclick="cmResetSession()">새 캐릭터</button>
+                    </div>
+                </div>
+
+                <div class="cm-workspace">
+                    <aside class="cm-context-rail">
+                        <section class="cm-card cm-world-card">
+                            <div class="cm-card-head">
+                                <div>
+                                    <div>세계관 · 캐릭터 맥락</div>
+                                    <div class="cm-card-kicker">Persistent in this session</div>
+                                </div>
+                                <span class="cm-hint" id="cm-world-count">0 / 20,000</span>
+                            </div>
+                            <textarea id="cm-world-context" class="cm-world-text"
+                                      placeholder="시대, 지역, 직업, 종족, 분위기, 피해야 할 요소 등 캐릭터가 속한 세계의 정보를 적어주세요."
+                                      oninput="cmOnWorldInput()"></textarea>
+                        </section>
+
+                        <section class="cm-card cm-reference-card">
+                            <div class="cm-card-head">
+                                <div>
+                                    <div>참고 이미지</div>
+                                    <div class="cm-card-kicker">Vision references · 최대 8장</div>
+                                </div>
+                                <span class="cm-hint" id="cm-reference-count">0 / 8</span>
+                            </div>
+                            <div id="cm-reference-drop" class="cm-reference-drop"
+                                 onclick="document.getElementById('cm-reference-input').click()">
+                                <span style="font-size:1rem;">＋</span>
+                                <span>드래그하거나 클릭하여 이미지 추가</span>
+                            </div>
+                            <input id="cm-reference-input" type="file" accept="image/*" multiple hidden
+                                   onchange="cmUploadReferences(this.files)">
+                            <div id="cm-reference-grid" class="cm-reference-grid"></div>
+                        </section>
+
+                        <section class="cm-card cm-chat-card">
+                            <div class="cm-card-head">
+                                <div>
+                                    <div>LLM 공동 편집</div>
+                                    <div class="cm-card-kicker">Request · inspect · revise</div>
+                                </div>
+                                <span class="cm-hint">잠금 필드는 유지</span>
+                            </div>
+                            <div id="cm-chat-log" class="cm-chat-log">
+                                <div class="cm-chat-empty">원하는 특징을 말하면 네 영역의 태그 초안을 만듭니다.<br>이미지를 만든 뒤에는 보이는 문제를 그대로 피드백하세요.</div>
+                            </div>
+                            <div class="cm-chat-compose">
+                                <textarea id="cm-feedback-input" class="cm-feedback-input"
+                                          placeholder="예: 차가운 인상이지만 악역처럼 보이지 않게, 재킷은 더 실용적으로 바꿔줘."
+                                          onkeydown="cmFeedbackKeydown(event)"></textarea>
+                                <div class="cm-compose-actions">
+                                    <span class="cm-hint" style="flex:1;">Ctrl/⌘ + Enter 전송</span>
+                                    <button id="cm-revise-btn" class="cm-btn primary" onclick="cmRevise()">LLM 수정</button>
+                                </div>
+                            </div>
+                        </section>
+                    </aside>
+
+                    <section class="cm-stage">
+                        <div id="cm-canvas" class="cm-canvas">
+                            <img id="cm-active-image" alt="캐릭터 메이커 현재 리비전">
+                            <div class="cm-canvas-empty">
+                                <div class="cm-canvas-empty-mark">✦</div>
+                                <div style="font-size:.9rem; font-weight:720; color:var(--text); margin-bottom:7px;">아직 생성된 이미지가 없습니다</div>
+                                <div style="font-size:.72rem; line-height:1.55;">세계관을 적고 LLM에게 첫 요청을 보내거나<br>오른쪽 태그를 직접 입력한 뒤 이미지를 생성하세요.</div>
+                            </div>
+                            <div id="cm-busy-overlay" class="cm-busy-overlay">
+                                <div class="spinner"></div>
+                                <div id="cm-busy-text" style="font-size:.78rem;">처리 중...</div>
+                            </div>
+                        </div>
+                        <div class="cm-stage-actions">
+                            <button id="cm-generate-btn" class="cm-btn primary" onclick="cmGenerate()">이미지 생성</button>
+                            <button class="cm-btn" onclick="cmPreviewPrompt()">프롬프트 보기</button>
+                            <button id="cm-confirm-open-btn" class="cm-btn success" onclick="cmOpenConfirm()">캐릭터 확정</button>
+                            <span id="cm-stage-meta" class="cm-stage-meta">활성 리비전 없음</span>
+                        </div>
+                        <div id="cm-diff-strip" class="cm-diff-strip">
+                            <span class="cm-diff-empty">LLM 수정 전후의 태그 차이가 여기에 표시됩니다.</span>
+                        </div>
+                        <div id="cm-revisions" class="cm-revisions"></div>
+                    </section>
+
+                    <aside id="cm-editor-wall" class="cm-editor-wall">
+                        <div class="cm-editor-head">
+                            <div>
+                                <div class="cm-editor-title">자유 편집 영역</div>
+                                <div class="cm-hint">사용자와 LLM이 함께 수정 · 확정 전에는 임시값</div>
+                            </div>
+                            <div class="cm-mode-toggle" aria-label="태그 편집 모드">
+                                <button id="cm-mode-chip" class="active" onclick="cmSetEditorMode('chip')">Chip</button>
+                                <button id="cm-mode-text" onclick="cmSetEditorMode('text')">Text</button>
+                            </div>
+                        </div>
+
+                        <div class="cm-field-list">
+                            <section class="cm-field-card" data-field="appearance">
+                                <div class="cm-field-head">
+                                    <span class="cm-field-dot"></span>
+                                    <span class="cm-field-name">외모</span>
+                                    <span class="cm-field-count" data-count>0 tags</span>
+                                    <button class="cm-lock-btn" data-lock onclick="cmToggleLock('appearance')">열림</button>
+                                </div>
+                                <div class="cm-field-body">
+                                    <div class="cm-chip-editor">
+                                        <div class="cm-chip-list" data-chips></div>
+                                        <div class="cm-tag-add">
+                                            <input data-add-input placeholder="태그 추가 · 쉼표 구분"
+                                                   onkeydown="cmTagInputKeydown(event, 'appearance')">
+                                            <button class="cm-btn" onclick="cmAddTags('appearance')">＋</button>
+                                        </div>
+                                    </div>
+                                    <textarea class="cm-tag-textarea cm-text-editor" data-text
+                                              placeholder="comma, separated, tags"
+                                              oninput="cmTextFieldInput('appearance', this.value)"></textarea>
+                                </div>
+                            </section>
+
+                            <section class="cm-field-card" data-field="outfit">
+                                <div class="cm-field-head">
+                                    <span class="cm-field-dot"></span>
+                                    <span class="cm-field-name">복장</span>
+                                    <span class="cm-field-count" data-count>0 tags</span>
+                                    <button class="cm-lock-btn" data-lock onclick="cmToggleLock('outfit')">열림</button>
+                                </div>
+                                <div class="cm-field-body">
+                                    <div class="cm-chip-editor">
+                                        <div class="cm-chip-list" data-chips></div>
+                                        <div class="cm-tag-add">
+                                            <input data-add-input placeholder="태그 추가 · 쉼표 구분"
+                                                   onkeydown="cmTagInputKeydown(event, 'outfit')">
+                                            <button class="cm-btn" onclick="cmAddTags('outfit')">＋</button>
+                                        </div>
+                                    </div>
+                                    <textarea class="cm-tag-textarea cm-text-editor" data-text
+                                              placeholder="comma, separated, tags"
+                                              oninput="cmTextFieldInput('outfit', this.value)"></textarea>
+                                </div>
+                            </section>
+
+                            <section class="cm-field-card" data-field="expression">
+                                <div class="cm-field-head">
+                                    <span class="cm-field-dot"></span>
+                                    <span class="cm-field-name">표정</span>
+                                    <span class="cm-field-count" data-count>0 tags</span>
+                                    <button class="cm-lock-btn" data-lock onclick="cmToggleLock('expression')">열림</button>
+                                </div>
+                                <div class="cm-field-body">
+                                    <div class="cm-chip-editor">
+                                        <div class="cm-chip-list" data-chips></div>
+                                        <div class="cm-tag-add">
+                                            <input data-add-input placeholder="태그 추가 · 쉼표 구분"
+                                                   onkeydown="cmTagInputKeydown(event, 'expression')">
+                                            <button class="cm-btn" onclick="cmAddTags('expression')">＋</button>
+                                        </div>
+                                    </div>
+                                    <textarea class="cm-tag-textarea cm-text-editor" data-text
+                                              placeholder="comma, separated, tags"
+                                              oninput="cmTextFieldInput('expression', this.value)"></textarea>
+                                </div>
+                            </section>
+
+                            <section class="cm-field-card" data-field="composition">
+                                <div class="cm-field-head">
+                                    <span class="cm-field-dot"></span>
+                                    <span class="cm-field-name">구도 / 기타</span>
+                                    <span class="cm-field-count" data-count>0 tags</span>
+                                    <button class="cm-lock-btn" data-lock onclick="cmToggleLock('composition')">열림</button>
+                                </div>
+                                <div class="cm-field-body">
+                                    <div class="cm-chip-editor">
+                                        <div class="cm-chip-list" data-chips></div>
+                                        <div class="cm-tag-add">
+                                            <input data-add-input placeholder="태그 추가 · 쉼표 구분"
+                                                   onkeydown="cmTagInputKeydown(event, 'composition')">
+                                            <button class="cm-btn" onclick="cmAddTags('composition')">＋</button>
+                                        </div>
+                                    </div>
+                                    <textarea class="cm-tag-textarea cm-text-editor" data-text
+                                              placeholder="comma, separated, tags"
+                                              oninput="cmTextFieldInput('composition', this.value)"></textarea>
+                                </div>
+                            </section>
+                        </div>
+
+                        <section id="cm-settings-wall" class="cm-settings-wall collapsed">
+                            <div class="cm-settings-head" onclick="cmToggleSettingsWall()">
+                                <span>▦</span>
+                                <span>생성 설정 · 프리셋 전용</span>
+                                <span class="cm-hint">이 영역은 LLM이 수정하지 않음</span>
+                                <span class="arrow">⌃</span>
+                            </div>
+                            <div class="cm-settings-body" onclick="event.stopPropagation()">
+                                <div class="cm-setting-grid">
+                                    <div class="cm-setting wide">
+                                        <label for="cm-setting-workflow">에셋 워크플로우</label>
+                                        <select id="cm-setting-workflow" data-cm-setting="asset_workflow_type" onchange="cmSettingChanged()">
+                                            <option value="ilxl">ILXL</option>
+                                            <option value="anima_ilxl">ANIMA + ILXL</option>
+                                            <option value="anima_only">ONLY ANIMA</option>
+                                        </select>
+                                    </div>
+                                    <div class="cm-setting">
+                                        <label for="cm-setting-quality">ILXL 품질 프리셋</label>
+                                        <select id="cm-setting-quality" data-cm-setting="quality_preset" onchange="cmSettingChanged()"></select>
+                                    </div>
+                                    <div class="cm-setting">
+                                        <label for="cm-setting-artist">ILXL 아티스트 프리셋</label>
+                                        <select id="cm-setting-artist" data-cm-setting="artist_preset" onchange="cmSettingChanged()"></select>
+                                    </div>
+                                    <div class="cm-setting">
+                                        <label for="cm-setting-anima-quality">ANIMA 품질 프리셋</label>
+                                        <select id="cm-setting-anima-quality" data-cm-setting="anima_quality_preset" onchange="cmSettingChanged()"></select>
+                                    </div>
+                                    <div class="cm-setting">
+                                        <label for="cm-setting-anima-artist">ANIMA 아티스트 프리셋</label>
+                                        <select id="cm-setting-anima-artist" data-cm-setting="anima_artist_preset" onchange="cmSettingChanged()"></select>
+                                    </div>
+                                    <div class="cm-setting">
+                                        <label for="cm-setting-negative">ILXL 부정 프리셋</label>
+                                        <select id="cm-setting-negative" data-cm-setting="negative_preset" onchange="cmSettingChanged()"></select>
+                                    </div>
+                                    <div class="cm-setting">
+                                        <label for="cm-setting-anima-negative">ANIMA 부정 프리셋</label>
+                                        <select id="cm-setting-anima-negative" data-cm-setting="anima_negative_preset" onchange="cmSettingChanged()"></select>
+                                    </div>
+                                    <div class="cm-setting">
+                                        <label for="cm-setting-char-negative">캐릭터 부정 프리셋</label>
+                                        <select id="cm-setting-char-negative" data-cm-setting="character_negative_preset" onchange="cmSettingChanged()"></select>
+                                    </div>
+                                    <div class="cm-setting">
+                                        <label for="cm-setting-natural">자연어 프리셋</label>
+                                        <select id="cm-setting-natural" data-cm-setting="natural_language_preset" onchange="cmSettingChanged()"></select>
+                                    </div>
+                                    <div class="cm-setting">
+                                        <label for="cm-setting-width">너비</label>
+                                        <input id="cm-setting-width" data-cm-setting="img_w" type="number" min="256" max="4096" step="8" value="700" onchange="cmSettingChanged()">
+                                    </div>
+                                    <div class="cm-setting">
+                                        <label for="cm-setting-height">높이</label>
+                                        <input id="cm-setting-height" data-cm-setting="img_h" type="number" min="256" max="4096" step="8" value="1024" onchange="cmSettingChanged()">
+                                    </div>
+                                    <div class="cm-setting wide">
+                                        <label for="cm-setting-seed">Seed · -1은 매번 랜덤</label>
+                                        <input id="cm-setting-seed" data-cm-setting="seed" type="number" min="-1" max="4294967295" step="1" value="-1" onchange="cmSettingChanged()">
+                                    </div>
+                                    <label class="cm-setting-check">
+                                        <input id="cm-setting-rag" data-cm-setting="rag_enabled" type="checkbox" onchange="cmSettingChanged()">
+                                        Danbooru Tag RAG 사용
+                                    </label>
+                                    <label class="cm-setting-check">
+                                        <input id="cm-setting-use-refs" data-cm-setting="use_references_for_generation" type="checkbox" onchange="cmSettingChanged()">
+                                        생성에도 참고 이미지 사용
+                                    </label>
+                                </div>
+                            </div>
+                        </section>
+                    </aside>
+                </div>
+            </div>
+
+            <div id="cm-confirm-modal" class="cm-modal" onclick="if(event.target===this)cmCloseConfirm()">
+                <div class="cm-modal-shell">
+                    <div class="cm-modal-head">
+                        <div>
+                            <div class="cm-modal-title">캐릭터 확정 · 프리셋 등록</div>
+                            <div class="cm-hint" style="margin-top:3px;">확정 시 외모·복장을 영구 프리셋에 등록합니다.</div>
+                        </div>
+                        <button class="cm-modal-close" onclick="cmCloseConfirm()">✕</button>
+                    </div>
+                    <div class="cm-modal-body">
+                        <div class="cm-confirm-grid">
+                            <div class="cm-confirm-field wide">
+                                <label for="cm-confirm-character">캐릭터 이름 · 신규</label>
+                                <input id="cm-confirm-character" placeholder="예: 에이라">
+                            </div>
+                            <div class="cm-confirm-field">
+                                <label for="cm-confirm-appearance">외모 프리셋 이름 · 필수</label>
+                                <input id="cm-confirm-appearance" value="기본 외모">
+                            </div>
+                            <div class="cm-confirm-field">
+                                <label for="cm-confirm-outfit">복장 프리셋 이름 · 필수</label>
+                                <input id="cm-confirm-outfit" value="기본 복장">
+                            </div>
+                            <div class="cm-confirm-field">
+                                <label for="cm-confirm-expression-mode">표정 등록</label>
+                                <select id="cm-confirm-expression-mode" onchange="cmUpdateConfirmMode()">
+                                    <option value="none">등록하지 않음</option>
+                                    <option value="existing">기존 표정 프리셋 사용</option>
+                                    <option value="new">새 표정 프리셋 등록</option>
+                                </select>
+                            </div>
+                            <div class="cm-confirm-field">
+                                <label for="cm-confirm-expression">표정 프리셋</label>
+                                <select id="cm-confirm-expression"></select>
+                                <input id="cm-confirm-expression-new" placeholder="새 표정 이름" style="display:none;">
+                            </div>
+                            <div class="cm-confirm-field">
+                                <label for="cm-confirm-composition-mode">구도 / 기타 등록</label>
+                                <select id="cm-confirm-composition-mode" onchange="cmUpdateConfirmMode()">
+                                    <option value="none">등록하지 않음</option>
+                                    <option value="new">새 구도 프리셋 등록</option>
+                                </select>
+                            </div>
+                            <div class="cm-confirm-field">
+                                <label for="cm-confirm-composition">구도 프리셋 이름</label>
+                                <input id="cm-confirm-composition" placeholder="예: 캐릭터 시트" disabled>
+                            </div>
+                            <div class="cm-confirm-field wide">
+                                <label for="cm-confirm-revision">대표 이미지 리비전 · 선택</label>
+                                <select id="cm-confirm-revision"></select>
+                            </div>
+                        </div>
+                        <div id="cm-confirm-summary" class="cm-confirm-summary"></div>
+                    </div>
+                    <div class="cm-modal-actions">
+                        <button class="cm-btn" onclick="cmCloseConfirm()">취소</button>
+                        <button id="cm-confirm-submit" class="cm-btn success" onclick="cmConfirmCharacter()">영구 등록하고 확정</button>
                     </div>
                 </div>
             </div>
@@ -10843,6 +11776,7 @@
                         <button class="settings-tab-btn" onclick="switchSettingsTab('api_route')">외부 API 분기</button>
                         <button class="settings-tab-btn" onclick="switchSettingsTab('illustration')">삽화</button>
                         <button class="settings-tab-btn" onclick="switchSettingsTab('asset')">에셋</button>
+                        <button class="settings-tab-btn" onclick="switchSettingsTab('character_maker')">캐릭터 메이커</button>
                         <button class="settings-tab-btn" onclick="switchSettingsTab('lora')">로라</button>
                         <button class="settings-tab-btn" onclick="switchSettingsTab('queue')">큐</button>
                         <button class="settings-tab-btn" onclick="switchSettingsTab('debug')">디버그</button>
@@ -11833,6 +12767,87 @@
                         <div class="hint">공통설정 탭의 '베이스 경로'에서 검색됩니다</div>
                     </div>
                     <input type="hidden" id="setting-asset-tag-analysis-workflow-source-path">
+                </div>
+
+                <!-- 캐릭터 메이커 설정 -->
+                <div class="settings-tab-panel" id="settings-tab-character_maker">
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="title">Danbooru Tag RAG · 새 세션 기본값</div>
+                            <div class="desc">
+                                <a href="https://github.com/joykst96/danbooru-tag-rag" target="_blank" rel="noopener"
+                                   style="color:var(--accent);">joykst96/danbooru-tag-rag</a>를 사이드카로 연결합니다.
+                                현재 캐릭터는 오른쪽 생성 설정의 토글로 별도 제어합니다.
+                                RAG는 후보 태그 검색만 담당하고 최종 선택은 캐릭터 메이커 LLM이 수행합니다.
+                            </div>
+                        </div>
+                        <div class="setting-control">
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="setting-character-maker-rag-enabled"
+                                       onchange="updateCharacterMakerRagSettingStatus(this.checked)">
+                                <span class="toggle-slider"></span>
+                            </label>
+                            <span id="setting-character-maker-rag-status" class="toggle-status off">OFF</span>
+                        </div>
+                    </div>
+
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="title">RAG 서버 URL</div>
+                            <div class="desc">기본값은 로컬 사이드카 주소입니다. 저장 전에도 아래 테스트 버튼은 현재 입력값을 사용합니다.</div>
+                        </div>
+                        <div class="setting-control" style="min-width:320px;">
+                            <input type="text" id="setting-character-maker-rag-url"
+                                   value="http://127.0.0.1:3333" placeholder="http://127.0.0.1:3333"
+                                   style="width:100%;">
+                        </div>
+                    </div>
+
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="title">검색 파라미터</div>
+                            <div class="desc">필드별 의미 검색 후보 수, 최소 점수, 요청 제한 시간입니다.</div>
+                        </div>
+                        <div class="setting-control" style="display:flex; gap:8px; flex-wrap:wrap;">
+                            <label style="font-size:.75rem; color:var(--text2);">Top-K
+                                <input type="number" id="setting-character-maker-rag-top-k"
+                                       min="1" max="20" step="1" value="5" style="width:72px; margin-left:4px;">
+                            </label>
+                            <label style="font-size:.75rem; color:var(--text2);">Threshold
+                                <input type="number" id="setting-character-maker-rag-threshold"
+                                       min="-1" max="1" step="0.01" value="0" style="width:82px; margin-left:4px;">
+                            </label>
+                            <label style="font-size:.75rem; color:var(--text2);">Timeout
+                                <input type="number" id="setting-character-maker-rag-timeout"
+                                       min="2" max="120" step="1" value="20" style="width:76px; margin-left:4px;">
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="setting-row" style="align-items:flex-start;">
+                        <div class="setting-label">
+                            <div class="title">연결 및 검색 테스트</div>
+                            <div class="desc">헬스 체크 후 입력한 문장으로 <code>/api/direct_search</code> 응답까지 확인합니다.</div>
+                        </div>
+                        <div class="setting-control" style="min-width:420px; display:flex; gap:8px;">
+                            <input type="text" id="setting-character-maker-rag-query"
+                                   value="silver hair blue eyes" placeholder="검색 테스트 문장" style="flex:1;">
+                            <button type="button" class="btn" id="setting-character-maker-rag-test-btn"
+                                    onclick="testCharacterMakerRag()">테스트</button>
+                        </div>
+                    </div>
+                    <pre id="setting-character-maker-rag-test-output"
+                         style="min-height:80px; max-height:260px; overflow:auto; margin:8px 0 0; padding:10px;
+                                border:1px solid var(--border); border-radius:8px; background:var(--surface2);
+                                color:var(--text2); font-size:.73rem; line-height:1.5; white-space:pre-wrap;">아직 테스트하지 않았습니다.</pre>
+
+                    <div style="margin-top:12px; padding:10px; border:1px solid rgba(244,184,95,.28);
+                                border-radius:8px; background:rgba(244,184,95,.06);
+                                color:var(--text2); font-size:.75rem; line-height:1.55;">
+                        RAG를 꺼도 캐릭터 메이커는 동작합니다. 켜진 상태에서 RAG 서버 연결이 실패하면 후보 검증 없이
+                        조용히 진행하지 않고 오류를 표시합니다. 비전 모델은 외부 API 분기의
+                        <b>캐릭터 메이커 이미지 피드백</b> 작업에 지정하세요.
+                    </div>
                 </div>
 
                 <div class="settings-tab-panel" id="settings-tab-lora">
@@ -14901,6 +15916,59 @@
             }
         }
 
+        function updateCharacterMakerRagSettingStatus(enabled) {
+            const status = document.getElementById('setting-character-maker-rag-status');
+            if (!status) return;
+            status.textContent = enabled ? 'ON' : 'OFF';
+            status.className = 'toggle-status ' + (enabled ? 'on' : 'off');
+        }
+
+        async function testCharacterMakerRag() {
+            const button = document.getElementById('setting-character-maker-rag-test-btn');
+            const output = document.getElementById('setting-character-maker-rag-test-output');
+            if (!button || !output) {
+                console.error('[CHARACTER_MAKER_RAG] 설정 테스트 UI를 찾지 못했습니다.');
+                return;
+            }
+            button.disabled = true;
+            button.textContent = '테스트 중...';
+            output.textContent = 'RAG 서버 상태와 직접 검색 응답을 확인하는 중입니다...';
+            try {
+                const payload = {
+                    url: document.getElementById('setting-character-maker-rag-url')?.value.trim(),
+                    top_k: Number(document.getElementById('setting-character-maker-rag-top-k')?.value || 5),
+                    threshold: Number(document.getElementById('setting-character-maker-rag-threshold')?.value || 0),
+                    timeout_sec: Number(document.getElementById('setting-character-maker-rag-timeout')?.value || 20),
+                    query: document.getElementById('setting-character-maker-rag-query')?.value.trim() || '',
+                };
+                const response = await fetch('/api/character_maker/rag/test', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                });
+                const data = await response.json().catch(error => {
+                    console.error('[CHARACTER_MAKER_RAG] 테스트 응답 JSON 해석 실패:', error);
+                    return {};
+                });
+                if (!response.ok || data.success === false || data.error) {
+                    throw new Error(data.error || `HTTP ${response.status}`);
+                }
+                output.textContent = JSON.stringify(data, null, 2);
+                cmRagVerified = true;
+                if (cmSession) cmRenderStatus();
+                showToast('Danbooru Tag RAG 연결 테스트에 성공했습니다.', 'success');
+            } catch (error) {
+                console.error('[CHARACTER_MAKER_RAG] 연결 테스트 실패:', error);
+                cmRagVerified = false;
+                if (cmSession) cmRenderStatus();
+                output.textContent = `테스트 실패\n${error.message || String(error)}`;
+                showToast('RAG 테스트 실패: ' + (error.message || error), 'error');
+            } finally {
+                button.disabled = false;
+                button.textContent = '테스트';
+            }
+        }
+
         // ─── 설정 모달 탭 전환 ───
         function switchSettingsTab(tabName) {
             document.querySelectorAll('.settings-tab-btn').forEach(btn => btn.classList.remove('active'));
@@ -15066,6 +16134,20 @@
 
             // 외부 API 분기(작업별 LLM1/LLM2 라우팅) 테이블 빌드
             renderLlmRoutingTable();
+
+            // 캐릭터 메이커 RAG 사이드카 설정
+            const cmRagEnabled = !!currentConfig.character_maker_rag_enabled;
+            const cmRagEnabledEl = document.getElementById('setting-character-maker-rag-enabled');
+            if (cmRagEnabledEl) cmRagEnabledEl.checked = cmRagEnabled;
+            updateCharacterMakerRagSettingStatus(cmRagEnabled);
+            const cmRagUrlEl = document.getElementById('setting-character-maker-rag-url');
+            if (cmRagUrlEl) cmRagUrlEl.value = currentConfig.character_maker_rag_url || 'http://127.0.0.1:3333';
+            const cmRagTopKEl = document.getElementById('setting-character-maker-rag-top-k');
+            if (cmRagTopKEl) cmRagTopKEl.value = currentConfig.character_maker_rag_top_k ?? 5;
+            const cmRagThresholdEl = document.getElementById('setting-character-maker-rag-threshold');
+            if (cmRagThresholdEl) cmRagThresholdEl.value = currentConfig.character_maker_rag_threshold ?? 0;
+            const cmRagTimeoutEl = document.getElementById('setting-character-maker-rag-timeout');
+            if (cmRagTimeoutEl) cmRagTimeoutEl.value = currentConfig.character_maker_rag_timeout_sec ?? 20;
 
             // 임베딩 설정
             const embProvider = currentConfig.embedding_provider || 'voyage';
@@ -15666,6 +16748,11 @@
                 anima_asset_workflow_source_path: 'ANIMA+ILXL 에셋 생성 워크플로우',
                 anima_only_asset_workflow_source_path: 'ONLY ANIMA 에셋 생성 워크플로우',
                 asset_workflow_type: '에셋 워크플로우 타입',
+                character_maker_rag_enabled: '캐릭터 메이커 RAG 사용',
+                character_maker_rag_url: '캐릭터 메이커 RAG URL',
+                character_maker_rag_top_k: '캐릭터 메이커 RAG Top-K',
+                character_maker_rag_threshold: '캐릭터 메이커 RAG Threshold',
+                character_maker_rag_timeout_sec: '캐릭터 메이커 RAG Timeout',
                 tag_analysis_workflow_source_path: '스마트 매치용 태그 분석 워크플로우',
                 asset_tag_analysis_workflow_source_path: '폴백 태그 분석 워크플로우',
                 use_builtin_tagger: '내장 WD Tagger 사용',
@@ -15935,6 +17022,11 @@
                 llm_reasoning_effort3: (document.getElementById('setting-llm-reasoning-effort3') || {}).value || '',
                 llm_custom_body3: (document.getElementById('setting-llm-custom-body3') || {}).value || '',
                 llm_routing: collectLlmRouting(),
+                character_maker_rag_enabled: !!document.getElementById('setting-character-maker-rag-enabled')?.checked,
+                character_maker_rag_url: document.getElementById('setting-character-maker-rag-url')?.value.trim() || 'http://127.0.0.1:3333',
+                character_maker_rag_top_k: parseInt(document.getElementById('setting-character-maker-rag-top-k')?.value, 10) || 5,
+                character_maker_rag_threshold: parseFloat(document.getElementById('setting-character-maker-rag-threshold')?.value) || 0,
+                character_maker_rag_timeout_sec: parseFloat(document.getElementById('setting-character-maker-rag-timeout')?.value) || 20,
                 embedding_provider: document.getElementById('setting-embedding-provider').value,
                 embedding_url: document.getElementById('setting-embedding-url').value,
                 embedding_api_key: document.getElementById('setting-embedding-api-key').value,
@@ -17963,6 +19055,8 @@
             { key: 'asset_name_mapping_auto_fix', label: '에셋 이름 자동 수정', kind: 'JSON', json: true },
             { key: 'asset_name_mapping_full',  label: '에셋 이름 전체 매핑', kind: 'JSON', json: true },
             { key: 'edit_illustration_prompt', label: '삽화 편하게 수정', kind: '비전/JSON' },
+            { key: 'character_maker_draft',    label: '캐릭터 메이커 초안', kind: '텍스트/JSON', json: true },
+            { key: 'character_maker_feedback', label: '캐릭터 메이커 이미지 피드백', kind: '비전/JSON', json: true },
             { key: 'illustration_call1_backtranslate', label: '삽화 CALL1 역번역',               kind: '텍스트' },
             { key: 'illustration_call1',       label: '삽화 CALL1 (전처리)',           kind: '텍스트' },
             { key: 'illustration_call2',       label: '삽화 CALL2 (본문)',             kind: '텍스트' },
@@ -25959,6 +27053,967 @@
             }
         });
 
+        // ─── 캐릭터 메이커 ─────────────────────────────────────
+        const CM_FIELDS = ['appearance', 'outfit', 'expression', 'composition'];
+        const CM_FIELD_LABELS = {
+            appearance: '외모',
+            outfit: '복장',
+            expression: '표정',
+            composition: '구도/기타',
+        };
+        const CM_SESSION_STORAGE_KEY = 'characterMakerSessionId';
+        let cmSession = null;
+        let cmCapabilities = null;
+        let cmInitialized = false;
+        let cmBusy = false;
+        let cmSyncTimer = null;
+        let cmSyncVersion = 0;
+        let cmLastDiff = null;
+        let cmRagVerified = false;
+
+        async function cmRequest(url, options = {}) {
+            const response = await fetch(url, options);
+            let data = {};
+            try {
+                data = await response.json();
+            } catch (error) {
+                console.error('[CHARACTER_MAKER] API 응답 JSON 해석 실패:', url, response.status, error);
+            }
+            if (!response.ok || data.error || data.success === false) {
+                const error = new Error(data.error || `HTTP ${response.status}`);
+                error.status = response.status;
+                error.data = data;
+                throw error;
+            }
+            return data;
+        }
+
+        function cmCurrentPayload() {
+            return {
+                world_context: cmSession?.world_context || '',
+                fields: Object.fromEntries(CM_FIELDS.map(field => [
+                    field,
+                    [...(cmSession?.fields?.[field] || [])],
+                ])),
+                locks: Object.fromEntries(CM_FIELDS.map(field => [
+                    field,
+                    !!cmSession?.locks?.[field],
+                ])),
+                settings: cmCollectSettings(),
+            };
+        }
+
+        async function cmCreateSession() {
+            const data = await cmRequest('/api/character_maker/session', { method: 'POST' });
+            cmSession = data.session;
+            sessionStorage.setItem(CM_SESSION_STORAGE_KEY, cmSession.id);
+            cmLastDiff = null;
+            return cmSession;
+        }
+
+        async function cmLoadOrCreateSession() {
+            const savedId = sessionStorage.getItem(CM_SESSION_STORAGE_KEY) || '';
+            if (savedId) {
+                try {
+                    const data = await cmRequest(`/api/character_maker/session/${encodeURIComponent(savedId)}`);
+                    cmSession = data.session;
+                    return cmSession;
+                } catch (error) {
+                    console.error('[CHARACTER_MAKER] 저장된 임시 세션 복원 실패, 새 세션 생성:', savedId, error);
+                    sessionStorage.removeItem(CM_SESSION_STORAGE_KEY);
+                }
+            }
+            return cmCreateSession();
+        }
+
+        async function initCharacterMaker() {
+            cmBindReferenceDrop();
+            if (!assetTags) {
+                try {
+                    await loadAssetData();
+                } catch (error) {
+                    console.error('[CHARACTER_MAKER] 프리셋 데이터 로드 실패:', error);
+                    showToast('캐릭터 메이커 프리셋을 불러오지 못했습니다.', 'error');
+                    return;
+                }
+            }
+
+            try {
+                const capabilityData = await cmRequest('/api/character_maker/capabilities');
+                cmCapabilities = capabilityData;
+            } catch (error) {
+                console.error('[CHARACTER_MAKER] 기능 상태 조회 실패:', error);
+                cmCapabilities = {
+                    vision: { ready: false, service: '' },
+                    rag: { enabled: false, url: '' },
+                };
+            }
+            if (
+                cmSession
+                && cmCapabilities?.boot_id
+                && cmSession.boot_id !== cmCapabilities.boot_id
+            ) {
+                console.error(
+                    '[CHARACTER_MAKER] 서버 재시작 감지, 이전 임시 세션 폐기:',
+                    cmSession.id,
+                    cmSession.boot_id,
+                    cmCapabilities.boot_id,
+                );
+                sessionStorage.removeItem(CM_SESSION_STORAGE_KEY);
+                cmSession = null;
+                cmLastDiff = null;
+                cmRagVerified = false;
+                showToast('서버가 재시작되어 캐릭터 메이커 임시 작업을 새로 시작합니다.', 'error', 7000);
+            }
+
+            if (!cmSession) {
+                cmSetBusy(true, '임시 작업공간을 준비하는 중...');
+                try {
+                    await cmLoadOrCreateSession();
+                } catch (error) {
+                    console.error('[CHARACTER_MAKER] 임시 세션 준비 실패:', error);
+                    showToast('캐릭터 메이커 세션 준비 실패: ' + error.message, 'error');
+                    cmSetBusy(false);
+                    return;
+                }
+                cmSetBusy(false);
+            }
+
+            cmPopulatePresetOptions();
+            cmApplySettingsToUI();
+            const savedEditorMode = sessionStorage.getItem('characterMakerEditorMode') || 'chip';
+            cmSetEditorMode(savedEditorMode, false);
+            cmRender();
+            cmInitialized = true;
+        }
+
+        function cmBindReferenceDrop() {
+            const drop = document.getElementById('cm-reference-drop');
+            if (!drop || drop.dataset.bound === '1') return;
+            drop.dataset.bound = '1';
+            drop.addEventListener('dragover', event => {
+                event.preventDefault();
+                drop.classList.add('dragover');
+            });
+            drop.addEventListener('dragleave', () => drop.classList.remove('dragover'));
+            drop.addEventListener('drop', event => {
+                event.preventDefault();
+                drop.classList.remove('dragover');
+                if (event.dataTransfer?.files?.length) cmUploadReferences(event.dataTransfer.files);
+            });
+        }
+
+        function cmCleanTags(value) {
+            const source = Array.isArray(value)
+                ? value
+                : splitTagsPreservingParens(String(value || '').replace(/\r?\n/g, ','));
+            const result = [];
+            const seen = new Set();
+            for (const item of source) {
+                const tag = String(item || '').trim();
+                const key = tag.toLocaleLowerCase();
+                if (!tag || seen.has(key)) continue;
+                seen.add(key);
+                result.push(tag);
+            }
+            return result.slice(0, 160);
+        }
+
+        function cmFillPresetSelect(id, values, placeholder) {
+            const select = document.getElementById(id);
+            if (!select) return;
+            const previous = select.value;
+            select.innerHTML = '';
+            const empty = document.createElement('option');
+            empty.value = '';
+            empty.textContent = placeholder;
+            select.appendChild(empty);
+            Object.keys(values || {}).sort((a, b) => a.localeCompare(b, 'ko')).forEach(name => {
+                const option = document.createElement('option');
+                option.value = name;
+                option.textContent = name;
+                select.appendChild(option);
+            });
+            if ([...select.options].some(option => option.value === previous)) select.value = previous;
+        }
+
+        function cmPopulatePresetOptions() {
+            cmFillPresetSelect('cm-setting-quality', assetTags?.quality_presets, '사용 안 함');
+            cmFillPresetSelect('cm-setting-artist', assetTags?.artist_presets, '사용 안 함');
+            cmFillPresetSelect('cm-setting-anima-quality', assetTags?.quality_presets, '사용 안 함');
+            cmFillPresetSelect('cm-setting-anima-artist', assetTags?.artist_presets, '사용 안 함');
+            cmFillPresetSelect('cm-setting-negative', assetTags?.negative_presets, '사용 안 함');
+            cmFillPresetSelect('cm-setting-anima-negative', assetTags?.negative_presets, '사용 안 함');
+            cmFillPresetSelect('cm-setting-char-negative', assetTags?.character_negative_presets, '사용 안 함');
+            cmFillPresetSelect('cm-setting-natural', assetTags?.natural_language_presets, '사용 안 함');
+            cmFillPresetSelect('cm-confirm-expression', assetTags?.expressions, '표정 선택');
+        }
+
+        function cmCollectSettings() {
+            const fallback = cmSession?.settings || {};
+            const stringValue = (id, key) => {
+                const element = document.getElementById(id);
+                return element ? element.value : (fallback[key] || '');
+            };
+            const numberValue = (id, key, defaultValue) => {
+                const element = document.getElementById(id);
+                const value = Number(element ? element.value : fallback[key]);
+                return Number.isFinite(value) ? value : defaultValue;
+            };
+            return {
+                asset_workflow_type: stringValue('cm-setting-workflow', 'asset_workflow_type') || 'ilxl',
+                quality_preset: stringValue('cm-setting-quality', 'quality_preset'),
+                artist_preset: stringValue('cm-setting-artist', 'artist_preset'),
+                negative_preset: stringValue('cm-setting-negative', 'negative_preset'),
+                character_negative_preset: stringValue('cm-setting-char-negative', 'character_negative_preset'),
+                natural_language_preset: stringValue('cm-setting-natural', 'natural_language_preset'),
+                anima_quality_preset: stringValue('cm-setting-anima-quality', 'anima_quality_preset'),
+                anima_artist_preset: stringValue('cm-setting-anima-artist', 'anima_artist_preset'),
+                anima_negative_preset: stringValue('cm-setting-anima-negative', 'anima_negative_preset'),
+                img_w: Math.round(numberValue('cm-setting-width', 'img_w', 700)),
+                img_h: Math.round(numberValue('cm-setting-height', 'img_h', 1024)),
+                seed: Math.round(numberValue('cm-setting-seed', 'seed', -1)),
+                rag_enabled: document.getElementById('cm-setting-rag')
+                    ? document.getElementById('cm-setting-rag').checked
+                    : !!fallback.rag_enabled,
+                use_references_for_generation: document.getElementById('cm-setting-use-refs')
+                    ? document.getElementById('cm-setting-use-refs').checked
+                    : !!fallback.use_references_for_generation,
+            };
+        }
+
+        function cmApplySettingsToUI() {
+            if (!cmSession?.settings) return;
+            const settings = cmSession.settings;
+            const values = {
+                'cm-setting-workflow': settings.asset_workflow_type || 'ilxl',
+                'cm-setting-quality': settings.quality_preset || '',
+                'cm-setting-artist': settings.artist_preset || '',
+                'cm-setting-negative': settings.negative_preset || '',
+                'cm-setting-char-negative': settings.character_negative_preset || '',
+                'cm-setting-natural': settings.natural_language_preset || '',
+                'cm-setting-anima-quality': settings.anima_quality_preset || '',
+                'cm-setting-anima-artist': settings.anima_artist_preset || '',
+                'cm-setting-anima-negative': settings.anima_negative_preset || '',
+                'cm-setting-width': settings.img_w ?? 700,
+                'cm-setting-height': settings.img_h ?? 1024,
+                'cm-setting-seed': settings.seed ?? -1,
+            };
+            Object.entries(values).forEach(([id, value]) => {
+                const element = document.getElementById(id);
+                if (element && [...(element.options || [])].some(option => option.value === String(value))) {
+                    element.value = value;
+                } else if (element && !element.options) {
+                    element.value = value;
+                }
+            });
+            const rag = document.getElementById('cm-setting-rag');
+            if (rag) rag.checked = !!settings.rag_enabled;
+            const refs = document.getElementById('cm-setting-use-refs');
+            if (refs) refs.checked = !!settings.use_references_for_generation;
+        }
+
+        function cmSettingChanged() {
+            if (!cmSession) return;
+            cmSession.settings = cmCollectSettings();
+            cmRagVerified = false;
+            cmRenderStatus();
+            cmQueueSync();
+        }
+
+        function cmToggleSettingsWall() {
+            document.getElementById('cm-settings-wall')?.classList.toggle('collapsed');
+        }
+
+        function cmSetEditorMode(mode, persist = true) {
+            const normalized = mode === 'text' ? 'text' : 'chip';
+            const wall = document.getElementById('cm-editor-wall');
+            wall?.classList.toggle('text-mode', normalized === 'text');
+            document.getElementById('cm-mode-chip')?.classList.toggle('active', normalized === 'chip');
+            document.getElementById('cm-mode-text')?.classList.toggle('active', normalized === 'text');
+            if (persist) sessionStorage.setItem('characterMakerEditorMode', normalized);
+        }
+
+        function cmRenderField(field, preserveActiveText = false) {
+            if (!cmSession) return;
+            const card = document.querySelector(`.cm-field-card[data-field="${field}"]`);
+            if (!card) return;
+            const tags = cmSession.fields?.[field] || [];
+            const chipList = card.querySelector('[data-chips]');
+            if (chipList) {
+                chipList.innerHTML = tags.map((tag, index) => `
+                    <span class="cm-tag-chip">
+                        <span title="${escapeHtml(tag)}">${escapeHtml(tag)}</span>
+                        <button type="button" onclick="cmRemoveTag('${field}', ${index})" aria-label="태그 삭제">×</button>
+                    </span>`).join('');
+                if (!tags.length) {
+                    chipList.innerHTML = '<span class="cm-hint">아직 태그가 없습니다.</span>';
+                }
+            }
+            const textarea = card.querySelector('[data-text]');
+            if (textarea && (!preserveActiveText || document.activeElement !== textarea)) {
+                textarea.value = tags.join(', ');
+            }
+            const count = card.querySelector('[data-count]');
+            if (count) count.textContent = `${tags.length} tags`;
+            const locked = !!cmSession.locks?.[field];
+            const lockButton = card.querySelector('[data-lock]');
+            if (lockButton) {
+                lockButton.classList.toggle('locked', locked);
+                lockButton.textContent = locked ? 'LLM 잠금' : 'LLM 열림';
+                lockButton.title = locked ? 'LLM 수정에서 이 영역을 유지합니다' : 'LLM이 이 영역을 수정할 수 있습니다';
+            }
+        }
+
+        function cmRenderChat() {
+            const log = document.getElementById('cm-chat-log');
+            if (!log || !cmSession) return;
+            const chat = cmSession.chat || [];
+            if (!chat.length) {
+                log.innerHTML = '<div class="cm-chat-empty">원하는 특징을 말하면 네 영역의 태그 초안을 만듭니다.<br>이미지를 만든 뒤에는 보이는 문제를 그대로 피드백하세요.</div>';
+                return;
+            }
+            log.innerHTML = chat.map(message => `
+                <div class="cm-message ${message.role === 'user' ? 'user' : 'assistant'}">${escapeHtml(message.content || '')}</div>
+            `).join('');
+            log.scrollTop = log.scrollHeight;
+        }
+
+        function cmRenderReferences() {
+            const grid = document.getElementById('cm-reference-grid');
+            const count = document.getElementById('cm-reference-count');
+            if (!grid || !cmSession) return;
+            const references = cmSession.references || [];
+            if (count) count.textContent = `${references.length} / 8`;
+            grid.innerHTML = references.map(reference => `
+                <div class="cm-reference-item" title="${escapeHtml(reference.name || '')}">
+                    <img src="${reference.url}?v=${encodeURIComponent(cmSession.updated_at || '')}" alt="">
+                    <button class="cm-reference-remove" type="button"
+                            onclick="event.stopPropagation(); cmRemoveReference('${reference.id}')">×</button>
+                </div>
+            `).join('');
+        }
+
+        function cmRenderRevisions() {
+            const revisionsEl = document.getElementById('cm-revisions');
+            const canvas = document.getElementById('cm-canvas');
+            const image = document.getElementById('cm-active-image');
+            const meta = document.getElementById('cm-stage-meta');
+            if (!revisionsEl || !canvas || !image || !cmSession) return;
+            const revisions = cmSession.revisions || [];
+            const active = revisions.find(item => item.id === cmSession.active_revision_id);
+            revisionsEl.innerHTML = revisions.map((revision, index) => `
+                <div class="cm-revision ${revision.id === cmSession.active_revision_id ? 'active' : ''}"
+                     role="button" tabindex="0"
+                     onclick="cmSelectRevision('${revision.id}')"
+                     onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();cmSelectRevision('${revision.id}');}">
+                    <img src="${revision.url}?v=${encodeURIComponent(revision.created_at || '')}" alt="리비전 ${index + 1}">
+                    <span class="cm-revision-label">R${index + 1}</span>
+                </div>
+            `).join('');
+            if (active) {
+                const nextSrc = `${active.url}?v=${encodeURIComponent(active.created_at || '')}`;
+                if (image.getAttribute('src') !== nextSrc) image.src = nextSrc;
+                image.onerror = () => {
+                    console.error('[CHARACTER_MAKER] 활성 리비전 이미지를 표시하지 못했습니다:', active.id);
+                };
+                canvas.classList.add('has-image');
+                const index = revisions.indexOf(active) + 1;
+                if (meta) meta.textContent = `활성 리비전 R${index} · ${active.fields?.appearance?.length || 0}/${active.fields?.outfit?.length || 0}/${active.fields?.expression?.length || 0}/${active.fields?.composition?.length || 0} tags`;
+            } else {
+                image.removeAttribute('src');
+                canvas.classList.remove('has-image');
+                if (meta) meta.textContent = '활성 리비전 없음';
+            }
+        }
+
+        function cmRenderStatus() {
+            if (!cmSession) return;
+            const sessionStatus = document.getElementById('cm-session-status');
+            if (sessionStatus) {
+                sessionStatus.textContent = `임시 세션 · ${cmSession.id.slice(0, 8)}`;
+                sessionStatus.className = 'cm-status-pill ready';
+            }
+            const revisionStatus = document.getElementById('cm-revision-status');
+            if (revisionStatus) {
+                revisionStatus.textContent = `리비전 ${(cmSession.revisions || []).length}`;
+                revisionStatus.className = `cm-status-pill ${(cmSession.revisions || []).length ? 'ready' : ''}`;
+            }
+            const visionStatus = document.getElementById('cm-vision-status');
+            const visionReady = !!cmCapabilities?.vision?.ready;
+            if (visionStatus) {
+                const service = cmCapabilities?.vision?.service || '미설정';
+                visionStatus.textContent = visionReady ? `Vision · ${service}` : `Vision 필요 · ${service}`;
+                visionStatus.className = `cm-status-pill ${visionReady ? 'ready' : 'error'}`;
+            }
+            const ragStatus = document.getElementById('cm-rag-status');
+            const ragEnabled = !!cmSession.settings?.rag_enabled;
+            if (ragStatus) {
+                ragStatus.textContent = ragEnabled
+                    ? (cmRagVerified ? 'Danbooru RAG · 연결됨' : 'Danbooru RAG · ON / 미확인')
+                    : 'Danbooru RAG · OFF';
+                ragStatus.className = `cm-status-pill ${ragEnabled ? (cmRagVerified ? 'ready' : 'warn') : ''}`;
+            }
+            const saveStatus = document.getElementById('cm-save-status');
+            if (saveStatus) {
+                if (cmSession.finalized) {
+                    saveStatus.textContent = `등록 완료 · ${cmSession.finalized.character_name}`;
+                    saveStatus.className = 'cm-status-pill ready';
+                } else {
+                    saveStatus.textContent = '확정 전 · 서버 메모리 임시값';
+                    saveStatus.className = 'cm-status-pill warn';
+                }
+            }
+            const world = document.getElementById('cm-world-context');
+            const worldCount = document.getElementById('cm-world-count');
+            if (worldCount) worldCount.textContent = `${(world?.value || '').length.toLocaleString()} / 20,000`;
+        }
+
+        function cmRenderDiff(diff = cmLastDiff) {
+            const strip = document.getElementById('cm-diff-strip');
+            if (!strip) return;
+            const chips = [];
+            for (const field of CM_FIELDS) {
+                const entry = diff?.[field] || {};
+                for (const tag of entry.added || []) {
+                    chips.push(`<span class="cm-diff-chip add">+ ${escapeHtml(CM_FIELD_LABELS[field])} · ${escapeHtml(tag)}</span>`);
+                }
+                for (const tag of entry.removed || []) {
+                    chips.push(`<span class="cm-diff-chip remove">− ${escapeHtml(CM_FIELD_LABELS[field])} · ${escapeHtml(tag)}</span>`);
+                }
+            }
+            strip.innerHTML = chips.length
+                ? chips.join('')
+                : '<span class="cm-diff-empty">이번 수정에서 태그 변화가 없습니다.</span>';
+        }
+
+        function cmRender() {
+            if (!cmSession) return;
+            const world = document.getElementById('cm-world-context');
+            if (world && document.activeElement !== world) world.value = cmSession.world_context || '';
+            CM_FIELDS.forEach(field => cmRenderField(field));
+            cmRenderChat();
+            cmRenderReferences();
+            cmRenderRevisions();
+            cmRenderStatus();
+            cmRenderDiff();
+        }
+
+        function cmQueueSync(delay = 450) {
+            if (!cmSession) return;
+            clearTimeout(cmSyncTimer);
+            const version = ++cmSyncVersion;
+            const saveStatus = document.getElementById('cm-save-status');
+            if (saveStatus && !cmSession.finalized) {
+                saveStatus.textContent = '임시값 동기화 대기';
+                saveStatus.className = 'cm-status-pill warn';
+            }
+            cmSyncTimer = setTimeout(() => cmSyncSession(version), delay);
+        }
+
+        async function cmSyncSession(version = ++cmSyncVersion) {
+            clearTimeout(cmSyncTimer);
+            cmSyncTimer = null;
+            if (!cmSession) return;
+            const sessionId = cmSession.id;
+            try {
+                await cmRequest(`/api/character_maker/session/${encodeURIComponent(sessionId)}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(cmCurrentPayload()),
+                    keepalive: true,
+                });
+                if (version === cmSyncVersion && cmSession?.id === sessionId) cmRenderStatus();
+            } catch (error) {
+                console.error('[CHARACTER_MAKER] 임시값 동기화 실패:', sessionId, error);
+                const saveStatus = document.getElementById('cm-save-status');
+                if (saveStatus) {
+                    saveStatus.textContent = '임시값 동기화 실패';
+                    saveStatus.className = 'cm-status-pill error';
+                }
+            }
+        }
+
+        function cmOnWorldInput() {
+            if (!cmSession) return;
+            const world = document.getElementById('cm-world-context');
+            cmSession.world_context = (world?.value || '').slice(0, 20000);
+            const count = document.getElementById('cm-world-count');
+            if (count) count.textContent = `${cmSession.world_context.length.toLocaleString()} / 20,000`;
+            cmQueueSync();
+        }
+
+        function cmTextFieldInput(field, value) {
+            if (!cmSession || !CM_FIELDS.includes(field)) return;
+            cmSession.fields[field] = cmCleanTags(value);
+            cmRenderField(field, true);
+            cmQueueSync();
+        }
+
+        function cmTagInputKeydown(event, field) {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                cmAddTags(field);
+            }
+        }
+
+        function cmAddTags(field) {
+            if (!cmSession || !CM_FIELDS.includes(field)) return;
+            const card = document.querySelector(`.cm-field-card[data-field="${field}"]`);
+            const input = card?.querySelector('[data-add-input]');
+            const added = cmCleanTags(input?.value || '');
+            if (!added.length) return;
+            cmSession.fields[field] = cmCleanTags([...(cmSession.fields[field] || []), ...added]);
+            if (input) input.value = '';
+            cmRenderField(field);
+            cmQueueSync();
+        }
+
+        function cmRemoveTag(field, index) {
+            if (!cmSession || !CM_FIELDS.includes(field)) return;
+            const tags = [...(cmSession.fields[field] || [])];
+            if (index < 0 || index >= tags.length) {
+                console.error('[CHARACTER_MAKER] 삭제할 태그 인덱스가 유효하지 않습니다:', field, index);
+                return;
+            }
+            tags.splice(index, 1);
+            cmSession.fields[field] = tags;
+            cmRenderField(field);
+            cmQueueSync();
+        }
+
+        function cmToggleLock(field) {
+            if (!cmSession || !CM_FIELDS.includes(field)) return;
+            cmSession.locks[field] = !cmSession.locks[field];
+            cmRenderField(field);
+            cmQueueSync();
+        }
+
+        function cmFeedbackKeydown(event) {
+            if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+                event.preventDefault();
+                cmRevise();
+            }
+        }
+
+        function cmSetBusy(active, message = '처리 중...') {
+            cmBusy = !!active;
+            document.getElementById('cm-busy-overlay')?.classList.toggle('visible', cmBusy);
+            const busyText = document.getElementById('cm-busy-text');
+            if (busyText) busyText.textContent = message;
+            ['cm-revise-btn', 'cm-generate-btn', 'cm-confirm-open-btn'].forEach(id => {
+                const button = document.getElementById(id);
+                if (button) button.disabled = cmBusy;
+            });
+        }
+
+        async function cmRevise() {
+            if (cmBusy || !cmSession) return;
+            const input = document.getElementById('cm-feedback-input');
+            const message = input?.value.trim() || '';
+            if (!message) {
+                showToast('LLM에게 전달할 요청이나 피드백을 입력하세요.', 'error');
+                return;
+            }
+            const needsVision = !!cmSession.active_revision_id || !!(cmSession.references || []).length;
+            const routeCapability = cmSession.active_revision_id
+                ? cmCapabilities?.routes?.feedback
+                : cmCapabilities?.routes?.draft;
+            const routeVisionReady = routeCapability
+                ? !!routeCapability.vision_ready
+                : !!cmCapabilities?.vision?.ready;
+            if (needsVision && !routeVisionReady) {
+                showToast('현재 입력에는 비전 지원 LLM 경로가 필요합니다. 외부 API 분기를 확인하세요.', 'error');
+                return;
+            }
+            cmSetBusy(true, cmSession.active_revision_id ? '현재 이미지와 피드백을 함께 분석하는 중...' : '세계관에서 캐릭터 태그를 설계하는 중...');
+            try {
+                const data = await cmRequest(`/api/character_maker/session/${encodeURIComponent(cmSession.id)}/revise`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ...cmCurrentPayload(), message }),
+                });
+                cmSession = data.session;
+                cmLastDiff = data.diff || null;
+                if (data.rag?.enabled) cmRagVerified = true;
+                if (input) input.value = '';
+                cmApplySettingsToUI();
+                cmRender();
+                const ragNote = data.rag?.enabled ? ' · RAG 후보 검증 포함' : '';
+                showToast('LLM 공동 편집이 반영되었습니다' + ragNote, 'success');
+            } catch (error) {
+                console.error('[CHARACTER_MAKER] LLM 수정 실패:', error);
+                if (cmSession?.settings?.rag_enabled) {
+                    cmRagVerified = false;
+                    cmRenderStatus();
+                }
+                showToast('LLM 수정 실패: ' + error.message, 'error');
+            } finally {
+                cmSetBusy(false);
+            }
+        }
+
+        function cmBuildGenerationSlot() {
+            const settings = cmCollectSettings();
+            return {
+                asset_workflow_type: settings.asset_workflow_type,
+                raw_appearance_tags: [...(cmSession.fields.appearance || [])],
+                raw_outfit_tags: [...(cmSession.fields.outfit || [])],
+                raw_expression_tags: [...(cmSession.fields.expression || [])],
+                raw_composition_tags: [...(cmSession.fields.composition || [])],
+                quality_preset: settings.quality_preset,
+                artist_preset: settings.artist_preset,
+                negative_preset: settings.negative_preset,
+                character_negative_preset: settings.character_negative_preset,
+                natural_language_preset: settings.natural_language_preset,
+                anima_quality_preset: settings.anima_quality_preset,
+                anima_artist_preset: settings.anima_artist_preset,
+                anima_negative_preset: settings.anima_negative_preset,
+                natural_language: '',
+                lora_list: [],
+                lora_enabled: false,
+                style_lora_list: [],
+                style_lora_enabled: false,
+                face_lora_list: [],
+                face_lora_enabled: false,
+                ref_enabled: false,
+                ref_strength: 0.55,
+                style_ref_enabled: false,
+                style_ref_strength: 0.55,
+                pose_enabled: false,
+                hrf_sdxl: false,
+                hrf_anima: false,
+                hrf_size: 2,
+                hrf_restore_size: true,
+                hrf_control_net: false,
+                sdxl_fd_enabled: false,
+                sdxl_hd_enabled: false,
+                sdxl_ed_enabled: false,
+                anima_fd_enabled: false,
+                anima_hd_enabled: false,
+                anima_ed_enabled: false,
+                img_w: settings.img_w,
+                img_h: settings.img_h,
+                seed: settings.seed,
+            };
+        }
+
+        async function cmBuildPromptData() {
+            if (!assetTags) {
+                console.error('[CHARACTER_MAKER] 프롬프트 생성 실패: assetTags가 비어 있습니다.');
+                throw new Error('에셋 프리셋 데이터가 준비되지 않았습니다.');
+            }
+            const promptData = await buildBatchSlotPromptData(cmBuildGenerationSlot());
+            if (!promptData?.positive) {
+                console.error('[CHARACTER_MAKER] 프롬프트 생성 결과가 비어 있습니다:', promptData);
+                throw new Error('생성 프롬프트를 만들지 못했습니다.');
+            }
+            return promptData;
+        }
+
+        async function cmGenerate() {
+            if (cmBusy || !cmSession) return;
+            if (!(cmSession.fields.appearance || []).length || !(cmSession.fields.outfit || []).length) {
+                showToast('이미지 생성 전에 외모와 복장 태그를 각각 하나 이상 준비하세요.', 'error');
+                return;
+            }
+            if (cmCollectSettings().use_references_for_generation && !(cmSession.references || []).length) {
+                showToast('생성 참고 이미지 사용이 켜져 있지만 업로드된 이미지가 없습니다.', 'error');
+                return;
+            }
+            cmSetBusy(true, 'ComfyUI에서 새 리비전을 생성하는 중...');
+            try {
+                const promptData = await cmBuildPromptData();
+                const payload = {
+                    ...cmCurrentPayload(),
+                    positive_prompt: promptData.positive,
+                    negative_prompt: promptData.negative || '',
+                    note: `외모 ${cmSession.fields.appearance.length} · 복장 ${cmSession.fields.outfit.length} · 표정 ${cmSession.fields.expression.length} · 구도 ${cmSession.fields.composition.length}`,
+                };
+                const data = await cmRequest(`/api/character_maker/session/${encodeURIComponent(cmSession.id)}/generate`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                });
+                cmSession = data.session;
+                cmRender();
+                showToast(`새 이미지 리비전 R${cmSession.revisions.length}을 생성했습니다.`, 'success');
+            } catch (error) {
+                console.error('[CHARACTER_MAKER] 이미지 생성 실패:', error);
+                showToast('이미지 생성 실패: ' + error.message, 'error');
+            } finally {
+                cmSetBusy(false);
+            }
+        }
+
+        async function cmPreviewPrompt() {
+            if (!cmSession) return;
+            try {
+                const promptData = await cmBuildPromptData();
+                document.getElementById('cm-prompt-preview-modal')?.remove();
+                const modal = document.createElement('div');
+                modal.id = 'cm-prompt-preview-modal';
+                modal.className = 'cm-modal visible';
+                modal.innerHTML = `
+                    <div class="cm-modal-shell" style="width:min(860px,95vw);">
+                        <div class="cm-modal-head">
+                            <div class="cm-modal-title">생성 프롬프트 미리보기</div>
+                            <button class="cm-modal-close" type="button" aria-label="닫기">✕</button>
+                        </div>
+                        <div class="cm-modal-body">
+                            <div class="cm-hint" style="margin-bottom:5px;">Positive</div>
+                            <pre data-positive style="max-height:38vh;overflow:auto;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);white-space:pre-wrap;word-break:break-word;font-size:.7rem;"></pre>
+                            <div class="cm-hint" style="margin:12px 0 5px;">Negative</div>
+                            <pre data-negative style="max-height:20vh;overflow:auto;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);white-space:pre-wrap;word-break:break-word;font-size:.7rem;"></pre>
+                        </div>
+                    </div>`;
+                modal.querySelector('[data-positive]').textContent = promptData.positive;
+                modal.querySelector('[data-negative]').textContent = promptData.negative || '(비어 있음)';
+                modal.querySelector('.cm-modal-close').onclick = () => modal.remove();
+                modal.onclick = event => { if (event.target === modal) modal.remove(); };
+                document.body.appendChild(modal);
+            } catch (error) {
+                console.error('[CHARACTER_MAKER] 프롬프트 미리보기 실패:', error);
+                showToast('프롬프트 미리보기 실패: ' + error.message, 'error');
+            }
+        }
+
+        async function cmUploadReferences(fileList) {
+            if (cmBusy || !cmSession) return;
+            const files = [...(fileList || [])].filter(file => file.type?.startsWith('image/'));
+            if (!files.length) {
+                console.error('[CHARACTER_MAKER] 참고 이미지 업로드 스킵: 이미지 파일 없음');
+                showToast('업로드할 이미지 파일을 선택하세요.', 'error');
+                return;
+            }
+            const remaining = Math.max(0, 8 - (cmSession.references || []).length);
+            if (!remaining) {
+                showToast('참고 이미지는 최대 8장까지 올릴 수 있습니다.', 'error');
+                return;
+            }
+            const selected = files.slice(0, remaining);
+            const form = new FormData();
+            selected.forEach(file => form.append('files', file, file.name));
+            cmSetBusy(true, `참고 이미지 ${selected.length}장을 준비하는 중...`);
+            try {
+                const data = await cmRequest(`/api/character_maker/session/${encodeURIComponent(cmSession.id)}/reference`, {
+                    method: 'POST',
+                    body: form,
+                });
+                cmSession = data.session;
+                cmRenderReferences();
+                cmRenderStatus();
+                const input = document.getElementById('cm-reference-input');
+                if (input) input.value = '';
+                showToast(`참고 이미지 ${data.uploaded || selected.length}장을 추가했습니다.`, 'success');
+            } catch (error) {
+                console.error('[CHARACTER_MAKER] 참고 이미지 업로드 실패:', error);
+                showToast('참고 이미지 업로드 실패: ' + error.message, 'error');
+            } finally {
+                cmSetBusy(false);
+            }
+        }
+
+        async function cmRemoveReference(referenceId) {
+            if (cmBusy || !cmSession) return;
+            try {
+                const data = await cmRequest(`/api/character_maker/session/${encodeURIComponent(cmSession.id)}/reference/${encodeURIComponent(referenceId)}`, {
+                    method: 'DELETE',
+                });
+                cmSession = data.session;
+                cmRenderReferences();
+                cmRenderStatus();
+            } catch (error) {
+                console.error('[CHARACTER_MAKER] 참고 이미지 삭제 실패:', referenceId, error);
+                showToast('참고 이미지 삭제 실패: ' + error.message, 'error');
+            }
+        }
+
+        async function cmSelectRevision(revisionId) {
+            if (cmBusy || !cmSession || cmSession.active_revision_id === revisionId) return;
+            try {
+                const data = await cmRequest(`/api/character_maker/session/${encodeURIComponent(cmSession.id)}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ active_revision_id: revisionId }),
+                });
+                cmSession = data.session;
+                cmRenderRevisions();
+                cmRenderStatus();
+            } catch (error) {
+                console.error('[CHARACTER_MAKER] 리비전 선택 실패:', revisionId, error);
+                showToast('리비전 선택 실패: ' + error.message, 'error');
+            }
+        }
+
+        function cmOpenConfirm() {
+            if (!cmSession) return;
+            if (!(cmSession.fields.appearance || []).length || !(cmSession.fields.outfit || []).length) {
+                showToast('확정 전에 외모와 복장 태그를 각각 하나 이상 준비하세요.', 'error');
+                return;
+            }
+            cmPopulatePresetOptions();
+            const revisionSelect = document.getElementById('cm-confirm-revision');
+            if (revisionSelect) {
+                revisionSelect.innerHTML = '<option value="">대표 이미지는 등록하지 않음</option>';
+                (cmSession.revisions || []).forEach((revision, index) => {
+                    const option = document.createElement('option');
+                    option.value = revision.id;
+                    option.textContent = `R${index + 1}${revision.id === cmSession.active_revision_id ? ' · 현재 선택' : ''}`;
+                    revisionSelect.appendChild(option);
+                });
+            }
+            document.getElementById('cm-confirm-expression-mode').value = 'none';
+            document.getElementById('cm-confirm-composition-mode').value = 'none';
+            cmUpdateConfirmMode();
+            cmUpdateConfirmSummary();
+            document.getElementById('cm-confirm-modal')?.classList.add('visible');
+        }
+
+        function cmCloseConfirm() {
+            document.getElementById('cm-confirm-modal')?.classList.remove('visible');
+        }
+
+        function cmUpdateConfirmMode() {
+            const expressionMode = document.getElementById('cm-confirm-expression-mode')?.value || 'none';
+            const expressionSelect = document.getElementById('cm-confirm-expression');
+            const expressionNew = document.getElementById('cm-confirm-expression-new');
+            if (expressionSelect) expressionSelect.style.display = expressionMode === 'existing' ? '' : 'none';
+            if (expressionNew) expressionNew.style.display = expressionMode === 'new' ? '' : 'none';
+
+            const compositionMode = document.getElementById('cm-confirm-composition-mode')?.value || 'none';
+            const composition = document.getElementById('cm-confirm-composition');
+            if (composition) composition.disabled = compositionMode !== 'new';
+
+            const revision = document.getElementById('cm-confirm-revision');
+            if (revision) {
+                revision.disabled = expressionMode === 'none';
+                if (expressionMode === 'none') {
+                    revision.value = '';
+                } else if (!revision.value && cmSession?.active_revision_id) {
+                    revision.value = cmSession.active_revision_id;
+                }
+            }
+            cmUpdateConfirmSummary();
+        }
+
+        function cmUpdateConfirmSummary() {
+            const summary = document.getElementById('cm-confirm-summary');
+            if (!summary || !cmSession) return;
+            const expressionMode = document.getElementById('cm-confirm-expression-mode')?.value || 'none';
+            const compositionMode = document.getElementById('cm-confirm-composition-mode')?.value || 'none';
+            summary.innerHTML = `
+                <b>영구 등록</b> · 외모 ${cmSession.fields.appearance.length} tags / 복장 ${cmSession.fields.outfit.length} tags<br>
+                <b>선택 등록</b> · 표정 ${expressionMode === 'none' ? '등록 안 함' : cmSession.fields.expression.length + ' tags'}
+                / 구도 ${compositionMode === 'none' ? '등록 안 함' : cmSession.fields.composition.length + ' tags'}<br>
+                태그 데이터 저장 전 <code>요구사항/</code>에 자동 백업합니다.
+                ${expressionMode === 'none' ? '<br>표정을 등록하지 않으면 현재 이미지는 대표 에셋으로 승격하지 않습니다.' : ''}
+            `;
+        }
+
+        async function cmConfirmCharacter() {
+            if (cmBusy || !cmSession) return;
+            const expressionMode = document.getElementById('cm-confirm-expression-mode')?.value || 'none';
+            const compositionMode = document.getElementById('cm-confirm-composition-mode')?.value || 'none';
+            const expressionName = expressionMode === 'new'
+                ? document.getElementById('cm-confirm-expression-new')?.value.trim()
+                : (expressionMode === 'existing' ? document.getElementById('cm-confirm-expression')?.value : '');
+            const payload = {
+                character_name: document.getElementById('cm-confirm-character')?.value.trim() || '',
+                appearance_name: document.getElementById('cm-confirm-appearance')?.value.trim() || '',
+                outfit_name: document.getElementById('cm-confirm-outfit')?.value.trim() || '',
+                expression_mode: expressionMode,
+                expression_name: expressionName || '',
+                composition_mode: compositionMode,
+                composition_name: compositionMode === 'new'
+                    ? (document.getElementById('cm-confirm-composition')?.value.trim() || '')
+                    : '',
+                revision_id: document.getElementById('cm-confirm-revision')?.value || '',
+            };
+            if (!payload.character_name || !payload.appearance_name || !payload.outfit_name) {
+                showToast('캐릭터, 외모 프리셋, 복장 프리셋 이름을 모두 입력하세요.', 'error');
+                return;
+            }
+            if (expressionMode !== 'none' && !payload.expression_name) {
+                showToast('등록하거나 사용할 표정 프리셋을 선택하세요.', 'error');
+                return;
+            }
+            if (compositionMode === 'new' && !payload.composition_name) {
+                showToast('새 구도 프리셋 이름을 입력하세요.', 'error');
+                return;
+            }
+
+            cmSetBusy(true, '태그를 백업하고 캐릭터 프리셋을 등록하는 중...');
+            const submit = document.getElementById('cm-confirm-submit');
+            if (submit) submit.disabled = true;
+            try {
+                const data = await cmRequest(`/api/character_maker/session/${encodeURIComponent(cmSession.id)}/confirm`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                });
+                cmSession = data.session;
+                cmCloseConfirm();
+                cmRender();
+                try {
+                    await loadAssetData();
+                } catch (reloadError) {
+                    console.error('[CHARACTER_MAKER] 확정 후 에셋 프리셋 다시 읽기 실패:', reloadError);
+                }
+                showToast(`캐릭터 '${data.finalized.character_name}' 등록을 완료했습니다.`, 'success', 7000);
+            } catch (error) {
+                console.error('[CHARACTER_MAKER] 캐릭터 확정 실패:', payload, error);
+                showToast('캐릭터 확정 실패: ' + error.message, 'error', 7000);
+            } finally {
+                if (submit) submit.disabled = false;
+                cmSetBusy(false);
+            }
+        }
+
+        async function cmResetSession() {
+            if (cmBusy) return;
+            if (cmSession && !window.confirm('현재 임시 캐릭터 작업을 지우고 새 캐릭터를 시작할까요?')) return;
+            cmSetBusy(true, '새 임시 세션을 만드는 중...');
+            const previousId = cmSession?.id || '';
+            try {
+                if (previousId) {
+                    try {
+                        await cmRequest(`/api/character_maker/session/${encodeURIComponent(previousId)}`, {
+                            method: 'DELETE',
+                        });
+                    } catch (deleteError) {
+                        console.error('[CHARACTER_MAKER] 이전 임시 세션 삭제 실패:', previousId, deleteError);
+                    }
+                }
+                sessionStorage.removeItem(CM_SESSION_STORAGE_KEY);
+                cmSession = null;
+                await cmCreateSession();
+                cmPopulatePresetOptions();
+                cmApplySettingsToUI();
+                cmRender();
+                showToast('새 캐릭터 임시 작업공간을 만들었습니다.', 'success');
+            } catch (error) {
+                console.error('[CHARACTER_MAKER] 새 세션 생성 실패:', error);
+                showToast('새 캐릭터 시작 실패: ' + error.message, 'error');
+            } finally {
+                cmSetBusy(false);
+            }
+        }
+
+        window.addEventListener('pagehide', () => {
+            if (!cmSession || !cmInitialized) return;
+            try {
+                fetch(`/api/character_maker/session/${encodeURIComponent(cmSession.id)}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(cmCurrentPayload()),
+                    keepalive: true,
+                }).catch(error => console.error('[CHARACTER_MAKER] 페이지 종료 동기화 실패:', error));
+            } catch (error) {
+                console.error('[CHARACTER_MAKER] 페이지 종료 동기화 요청 구성 실패:', error);
+            }
+        });
+
         // ─── 에셋 생성 모드 ────────────────────────────────────
         let assetTags = null;
         let _botNegativePresetsCache = null;
@@ -26047,15 +28102,22 @@
                 if (!assetTags) await loadAssetData();
                 await atLoadCharacterList();
                 atSwitchView('upload');
-            } else if (name === 'preset-mgmt') {
+            } else if (name === 'character-maker') {
                 document.querySelectorAll('.tab-btn')[7].classList.add('active');
+                document.getElementById('tab-character-maker-content').classList.add('active');
+                if (!assetTags) await loadAssetData();
+                await initCharacterMaker();
+                const sb = document.getElementById('stats-bar');
+                if (sb) sb.style.display = 'none';
+            } else if (name === 'preset-mgmt') {
+                document.querySelectorAll('.tab-btn')[8].classList.add('active');
                 document.getElementById('tab-preset-mgmt-content').classList.add('active');
                 if (!assetTags) loadAssetData();
                 pmLoadData();
                 const sb = document.getElementById('stats-bar');
                 if (sb) sb.style.display = 'none';
             } else if (name === 'lora') {
-                document.querySelectorAll('.tab-btn')[8].classList.add('active');
+                document.querySelectorAll('.tab-btn')[9].classList.add('active');
                 document.getElementById('tab-lora-content').classList.add('active');
                 const savedMode = sessionStorage.getItem('loraMode') || 'asset';
                 switchLoraMode(savedMode);
@@ -45906,7 +47968,7 @@
             } catch (e) { showToast('요청 실패: ' + e.message, 'error'); }
         }
 
-        function onAssetOutfitChange() {
+        function onAssetOutfitChange(skipImageReload = false) {
             const outfit = getAssetSelectValue('asset-outfit-select');
             const tagsDiv = document.getElementById('asset-outfit-tags');
             tagsDiv.innerHTML = '';
@@ -45920,7 +47982,7 @@
 
             updateAssetBreadcrumb();
             updateGenerateBtn();
-            if (assetNavLevel === 2) loadAssetImages();
+            if (assetNavLevel === 2 && !skipImageReload) loadAssetImages();
         }
 
         function addAssetOutfit() {
@@ -45951,7 +48013,7 @@
             } catch (e) { showToast('요청 실패: ' + e.message, 'error'); }
         }
 
-        function onAssetExpressionChange() {
+        function onAssetExpressionChange(skipImageReload = false) {
             const expr = getAssetSelectValue('asset-expression-select');
             const tagsDiv = document.getElementById('asset-expression-tags');
             tagsDiv.innerHTML = '';
@@ -45965,7 +48027,7 @@
 
             updateAssetBreadcrumb();
             updateGenerateBtn();
-            if (assetNavLevel === 2) loadAssetImages();
+            if (assetNavLevel === 2 && !skipImageReload) loadAssetImages();
         }
 
         function addAssetExpression() {
@@ -50946,40 +53008,78 @@
             // 사이드바 동기화
             document.getElementById('asset-character-select').value = charName;
             onAssetCharacterChange(true);
-            setAssetSelectValue('asset-outfit-select', outfit);
-            if (!getAssetSelectValue('asset-outfit-select')) {
-                matchSelectByDirname('asset-outfit-select', outfit);
-            }
-            onAssetOutfitChange();
-            setAssetSelectValue('asset-expression-select', expression);
-            if (!getAssetSelectValue('asset-expression-select')) {
-                matchSelectByDirname('asset-expression-select', expression);
-            }
-            onAssetExpressionChange();
+            syncAssetSelectFromDirname('asset-outfit-select', outfit);
+            onAssetOutfitChange(true);
+            syncAssetSelectFromDirname('asset-expression-select', expression);
+            onAssetExpressionChange(true);
             updateAssetBreadcrumb();
+            updateGenerateBtn();
             loadAssetImages();
         }
 
-        function matchSelectByDirname(selectId, dirname) {
+        function syncAssetSelectFromDirname(selectId, dirname) {
             // Python _safe_dirname()과 동일: \p{L}(유니코드 글자) + \p{N}(유니코드 숫자) + 공백/_/-/. 유지
             const re = /[^\p{L}\p{N} _\-\.]/gu;
+            const normalizedDirname = dirname == null ? '' : String(dirname);
             const cs = document.querySelector(`.custom-select[data-select-id="${selectId}"]`);
-            if (!cs) return;
-            const options = cs.querySelectorAll('.custom-select-option');
-            for (const opt of options) {
-                const val = opt.dataset.value;
-                if (!val) continue;
-                const sanitized = val.replace(re, '').trim();
-                if (sanitized === dirname) {
-                    setAssetSelectValue(selectId, val);
-                    // onChange 콜백 실행
-                    const onChangeFn = cs.dataset.onchange;
-                    if (onChangeFn && typeof window[onChangeFn] === 'function') {
-                        window[onChangeFn]();
-                    }
-                    return;
+            if (!cs) {
+                console.error(`[ASSET] Lv2 선택 동기화 실패: 컨트롤 없음 (${selectId}, dirname=${normalizedDirname})`);
+                return false;
+            }
+
+            const optionList = cs.querySelector('.custom-select-option-list');
+            if (!optionList) {
+                console.error(`[ASSET] Lv2 선택 동기화 실패: 옵션 목록 없음 (${selectId}, dirname=${normalizedDirname})`);
+                return false;
+            }
+
+            if (!normalizedDirname) {
+                const previous = getAssetSelectValue(selectId);
+                setAssetSelectValue(selectId, '');
+                console.error(`[ASSET] Lv2 선택 동기화 실패: 폴더명 비어 있음 (${selectId}, previous=${previous})`);
+                return false;
+            }
+
+            const options = Array.from(optionList.querySelectorAll('.custom-select-option'));
+            let target = options.find(opt => opt.dataset.value === normalizedDirname);
+
+            if (!target) {
+                const matches = options.filter(opt => {
+                    const value = opt.dataset.value;
+                    return value && value.replace(re, '').trim() === normalizedDirname;
+                });
+                if (matches.length === 1) {
+                    target = matches[0];
+                } else if (matches.length > 1) {
+                    const previous = getAssetSelectValue(selectId);
+                    setAssetSelectValue(selectId, '');
+                    console.error(
+                        `[ASSET] Lv2 선택 동기화 실패: 정리된 폴더명 중복 ` +
+                        `(${selectId}, dirname=${normalizedDirname}, previous=${previous}, ` +
+                        `candidates=${matches.map(opt => opt.dataset.value).join(' | ')})`
+                    );
+                    return false;
                 }
             }
+
+            if (!target) {
+                const previous = getAssetSelectValue(selectId);
+                setAssetSelectValue(selectId, '');
+                console.error(
+                    `[ASSET] Lv2 선택 동기화 실패: 일치 옵션 없음 ` +
+                    `(${selectId}, dirname=${normalizedDirname}, previous=${previous})`
+                );
+                return false;
+            }
+
+            if (!setAssetSelectValue(selectId, target.dataset.value)) {
+                console.error(
+                    `[ASSET] Lv2 선택 동기화 실패: 선택값 적용 실패 ` +
+                    `(${selectId}, dirname=${normalizedDirname}, value=${target.dataset.value})`
+                );
+                return false;
+            }
+            return true;
         }
 
         async function navigateAssetBreadcrumb(level) {
@@ -56637,10 +58737,18 @@
             const artistTags = (slot.artist_preset && assetTags.artist_presets?.[slot.artist_preset]) || [];
             const animaArtistTags = (slot.anima_artist_preset && assetTags.artist_presets?.[slot.anima_artist_preset]) || [];
             const qTags = (slot.quality_preset && assetTags.quality_presets?.[slot.quality_preset]) || [];
-            const cTags = (slot.composition_preset && assetTags.composition_presets?.[slot.composition_preset]) || [];
-            const appTags = (slot.appearance && assetTags.appearances?.[slot.appearance]) || [];
-            const exprTags = (slot.expression && assetTags.expressions?.[slot.expression]) || [];
-            const outfitTags = (slot.outfit && assetTags.outfits?.[slot.outfit]) || [];
+            const cTags = Array.isArray(slot.raw_composition_tags)
+                ? slot.raw_composition_tags
+                : ((slot.composition_preset && assetTags.composition_presets?.[slot.composition_preset]) || []);
+            const appTags = Array.isArray(slot.raw_appearance_tags)
+                ? slot.raw_appearance_tags
+                : ((slot.appearance && assetTags.appearances?.[slot.appearance]) || []);
+            const exprTags = Array.isArray(slot.raw_expression_tags)
+                ? slot.raw_expression_tags
+                : ((slot.expression && assetTags.expressions?.[slot.expression]) || []);
+            const outfitTags = Array.isArray(slot.raw_outfit_tags)
+                ? slot.raw_outfit_tags
+                : ((slot.outfit && assetTags.outfits?.[slot.outfit]) || []);
             const naturalLanguage = slot.natural_language_preset
                 ? (assetTags?.natural_language_presets?.[slot.natural_language_preset] || slot.natural_language || '')
                 : (slot.natural_language || '');
@@ -56654,7 +58762,7 @@
         async function buildBatchSlotPromptData(slot) {
             if (!assetTags) return null;
             const t = _resolveBatchSlotTags(slot);
-            const capabilities = getAssetWorkflowCapabilities();
+            const capabilities = getAssetWorkflowCapabilities(slot.asset_workflow_type);
             const isAnima = capabilities.anima;
             const isDual = capabilities.dual;
             const poseEnabled = capabilities.pose && (slot.pose_enabled || false);

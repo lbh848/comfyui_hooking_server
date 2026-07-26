@@ -1225,6 +1225,7 @@ class QueueManager:
             positive_prompt=body.get("positive_prompt"),
             negative_prompt=body.get("negative_prompt"),
             storage_group=body.get("storage_group", ""),
+            storage_session=body.get("storage_session", ""),
         )
 
         # 저장 전에 실패한 경우에도 오토매치 UI가 해당 큐 항목을 완료 처리할 수 있도록
