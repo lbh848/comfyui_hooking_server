@@ -6293,6 +6293,98 @@ def _read_backup_multi_char_context(backup_name: str, source_positive: str) -> d
         raise
 
 
+def _load_bot_data_readonly() -> dict:
+    """마이그레이션/저장 부작용 없이 bot.json을 읽는다."""
+    path = llm_prompt_edit.BOT_JSON_PATH
+    if not os.path.isfile(path):
+        print(f"[LLM_EDIT:IDENTITY] bot.json 파일 없음: {path}")
+        raise FileNotFoundError(f"봇 데이터 파일이 없습니다: {path}")
+    try:
+        with open(path, "r", encoding="utf-8") as file:
+            data = json.load(file)
+    except Exception as exc:
+        print(f"[LLM_EDIT:IDENTITY] bot.json 읽기 실패: path={path}, error={exc}")
+        traceback.print_exc()
+        raise
+    if not isinstance(data, dict) or not isinstance(data.get("bots"), list):
+        print(
+            f"[LLM_EDIT:IDENTITY] bot.json 구조 오류: "
+            f"root={type(data).__name__}, bots={type(data.get('bots')).__name__ if isinstance(data, dict) else 'missing'}"
+        )
+        raise ValueError("봇 데이터의 bots가 배열이 아닙니다")
+    return data
+
+
+def _load_active_bot_character_selection(
+    raw_character_names: object,
+    *,
+    expected_count: int,
+    requested_bot_name: str = "",
+) -> tuple[str, dict, dict, list[str]]:
+    """편하게 수정에서 보낸 캐릭터를 현재 활성 봇 기준으로 검증한다."""
+    active_bot_name = str(app_config.get("bot_selected") or "").strip()
+    if not active_bot_name:
+        print("[LLM_EDIT:IDENTITY] 활성 봇(bot_selected)이 비어 있음")
+        raise ValueError("캐릭터를 바꾸려면 먼저 활성 봇을 선택해주세요")
+    if requested_bot_name and requested_bot_name != active_bot_name:
+        print(
+            f"[LLM_EDIT:IDENTITY] 모달을 연 뒤 활성 봇이 변경됨: "
+            f"requested={requested_bot_name!r}, active={active_bot_name!r}"
+        )
+        raise ValueError("활성 봇이 변경되었습니다. 편하게 수정 모달을 다시 열어주세요")
+
+    try:
+        bot_root = _load_bot_data_readonly()
+    except Exception as exc:
+        print(f"[LLM_EDIT:IDENTITY] 봇 데이터 로드 실패: {exc}")
+        traceback.print_exc()
+        raise ValueError(f"활성 봇 데이터를 불러오지 못했습니다: {exc}") from exc
+    bot = next(
+        (
+            item
+            for item in (bot_root.get("bots") or [])
+            if isinstance(item, dict) and item.get("name") == active_bot_name
+        ),
+        None,
+    )
+    if bot is None:
+        print(f"[LLM_EDIT:IDENTITY] 활성 봇을 bot.json에서 찾지 못함: {active_bot_name!r}")
+        raise ValueError(f"활성 봇을 찾을 수 없습니다: {active_bot_name}")
+
+    names = llm_prompt_edit.validate_character_selection(bot, raw_character_names)
+    if len(names) != expected_count:
+        print(
+            f"[LLM_EDIT:IDENTITY] 원본 인원과 선택 인원이 다름: "
+            f"expected={expected_count}, selected={names}"
+        )
+        raise ValueError(
+            f"기존 {expected_count}인 구성을 유지해야 합니다. 현재 선택: {len(names)}명"
+        )
+    return active_bot_name, bot_root, bot, names
+
+
+def _v3_prompt_character_names(blocks: dict, multi_payload: object = None) -> list[str]:
+    """V3 제어 블록에서 고정 슬롯 순서의 캐릭터 이름을 읽는다."""
+    if isinstance(multi_payload, dict) and multi_payload.get("enable") is True:
+        names = [
+            str(name or "").strip()
+            for name in (multi_payload.get("char_name_list") or [])
+            if str(name or "").strip()
+        ]
+    else:
+        names = [
+            name.strip()
+            for name in str(blocks.get("CHAR_LIST") or "").split(",")
+            if name.strip()
+        ]
+    if len(names) not in (1, 2):
+        print(f"[LLM_EDIT:IDENTITY] 지원하지 않는 V3 캐릭터 슬롯 수: {names}")
+        raise ValueError(
+            f"편하게 수정의 캐릭터 교체는 1인 또는 2인 백업만 지원합니다: {len(names)}명"
+        )
+    return names
+
+
 def _ensure_backup_filter_cache(backup_dir: str) -> dict:
     """필터 캐시를 반환한다. 완전히 구축된 캐시가 있으면 그것을 반환하고,
     없거나 빌드 중이면 백그라운드 빌드를 예약한 뒤 부분 캐시(또는 빈 캐시)를 즉시 반환한다.
@@ -7467,6 +7559,7 @@ async def handle_api_reschedule_with_modified_prompt(request: web.Request) -> we
         backup_name = body.get("name", "")
         modified_positive = body.get("positive", "")
         modified_negative = body.get("negative", "")
+        identity_edit = body.get("identity_edit")
 
         if ".." in backup_name or "/" in backup_name or "\\" in backup_name:
             return web.json_response({"error": "Invalid name"}, status=400)
@@ -7494,6 +7587,47 @@ async def handle_api_reschedule_with_modified_prompt(request: web.Request) -> we
                 backup_name,
                 source_positive,
             )
+            if identity_edit is not None:
+                if not isinstance(identity_edit, dict):
+                    raise ValueError("identity_edit 요청이 object가 아닙니다")
+                if src_provider != "comfy" or llm_prompt_edit.detect_format(
+                    source_positive,
+                    provider=src_provider,
+                ) != "v3":
+                    raise ValueError("캐릭터·FACE·LoRA 교체는 V3 Comfy 백업만 지원합니다")
+                source_blocks = llm_prompt_edit.parse_blocks(source_positive)
+                source_multi_payload = multi_char_mask.extract_multi_char_prompt_payload(
+                    source_positive
+                )
+                previous_names = _v3_prompt_character_names(
+                    source_blocks,
+                    source_multi_payload,
+                )
+                (
+                    src_bot_name,
+                    _identity_bot_root,
+                    _identity_bot,
+                    identity_names,
+                ) = _load_active_bot_character_selection(
+                    identity_edit.get("character_names"),
+                    expected_count=len(previous_names),
+                    requested_bot_name=str(identity_edit.get("bot_name") or ""),
+                )
+                llm_prompt_edit.validate_v3_character_identity(
+                    effective_positive,
+                    identity_names,
+                )
+                if src_multi_char:
+                    src_multi_char = multi_char_mask.remap_multi_char_snapshot(
+                        src_multi_char,
+                        identity_names,
+                    )
+                elif len(identity_names) == 2:
+                    raise ValueError("2인 캐릭터 교체에 필요한 고정 마스크 스냅샷이 없습니다")
+                print(
+                    f"[RESCHEDULE_MOD:IDENTITY] 활성 봇/캐릭터 교체 검증 완료: "
+                    f"backup={backup_name}, bot={src_bot_name!r}, characters={identity_names}"
+                )
             if src_multi_char:
                 multi_char_mask.validate_multi_char_prompt_context(
                     effective_positive,
@@ -7501,15 +7635,15 @@ async def handle_api_reschedule_with_modified_prompt(request: web.Request) -> we
                 )
         except Exception as e:
             print(
-                f"[RESCHEDULE_MOD:MULTI_CHAR] 마스크 복원/검증 실패: "
+                f"[RESCHEDULE_MOD:IDENTITY] 캐릭터/마스크 검증 실패: "
                 f"backup={backup_name}, error={e}"
             )
             traceback.print_exc()
             return web.json_response(
                 {
                     "error": (
-                        "다중 캐릭터 수정에서는 인원·순서·마스크 제어 블록을 "
-                        f"유지해야 합니다: {e}"
+                        "편하게 수정의 캐릭터·FACE·LoRA 또는 다중 마스크 데이터를 "
+                        f"안전하게 검증하지 못했습니다: {e}"
                     )
                 },
                 status=409,
@@ -7551,13 +7685,13 @@ async def handle_api_reschedule_with_modified_prompt(request: web.Request) -> we
 
 
 async def handle_api_llm_edit_prompt(request: web.Request) -> web.Response:
-    """삽화백업 "LLM과 함께 수정" — LLM(비전)이 이미지+프롬프트 분석 후
-    주제 3개 블럭(ANIMA_CONTENT/ANIMA_ALL/SDXL)의 장면 태그만 편집해 반환한다.
+    """삽화백업 "편하게 수정" — 장면 편집과 V3 Comfy 캐릭터 교체를 처리한다.
 
-    요청: {name, positive, negative, direction}
-    응답: {plan, positive, negative} 또는 {error}
+    요청: {name, positive, negative, direction, characters?}
+    응답: {plan, positive, negative, identity_edit?} 또는 {error}
 
-    제어 블럭/트리거/아티스트/품질은 백엔드가 보존·재조립한다(llm_prompt_edit 참조).
+    V1/챈섭은 기존 장면 편집만 유지한다. V3 Comfy에서 characters가 전달되면
+    NAME/FACE/LoRA 제어 데이터와 2인 고정 마스크 스냅샷을 함께 재구성한다.
     """
     try:
         body = await request.json()
@@ -7565,6 +7699,7 @@ async def handle_api_llm_edit_prompt(request: web.Request) -> web.Response:
         positive = body.get("positive", "")
         negative = body.get("negative", "")
         direction = (body.get("direction", "") or "").strip()
+        requested_characters = body.get("characters") if "characters" in body else None
 
         # 경로 조작 가드 (기존 reschedule 핸들러와 동일)
         if ".." in backup_name or "/" in backup_name or "\\" in backup_name:
@@ -7585,11 +7720,20 @@ async def handle_api_llm_edit_prompt(request: web.Request) -> web.Response:
             print(f"[LLM_EDIT] format mismatch (지원 불가) name={backup_name}")
             return web.json_response({
                 "error": "이 백업은 지원 형식이 아닙니다. "
-                         "LLM과 함께 수정은 삽화 빌드본(V3: ANIMA_CONTENT/SDXL 등) 또는 "
+                         "편하게 수정은 삽화 빌드본(V3: ANIMA_CONTENT/SDXL 등) 또는 "
                          "V1(ILXL/UPSCALE) 또는 챈섭 Comfy 프롬프트에서만 동작합니다."
             }, status=400)
 
         print(f"[LLM_EDIT] 감지된 포맷: {fmt} name={backup_name}")
+        if requested_characters is not None and (fmt != "v3" or backup_provider != "comfy"):
+            print(
+                f"[LLM_EDIT:IDENTITY] 지원하지 않는 포맷/공급자의 캐릭터 교체 요청: "
+                f"format={fmt}, provider={backup_provider}"
+            )
+            return web.json_response(
+                {"error": "캐릭터·FACE·LoRA 교체는 V3 Comfy 백업에서만 지원합니다."},
+                status=400,
+            )
 
         # 2) 포맷별 파싱 + 장면 추출
         # V3 파이프라인 상태
@@ -7599,6 +7743,13 @@ async def handle_api_llm_edit_prompt(request: web.Request) -> web.Response:
         scene_anima = ""
         scene_sdxl = ""
         multi_char_edit_payload = None
+        remapped_multi_char_snapshot = None
+        selected_trigger_data = None
+        identity_contract = ""
+        identity_bot_root = None
+        identity_bot = None
+        identity_names = None
+        identity_bot_name = ""
         # V1 파이프라인 상태
         v1_parsed = {}
         v1_char = ""
@@ -7650,7 +7801,7 @@ async def handle_api_llm_edit_prompt(request: web.Request) -> web.Response:
                     status=400,
                 )
 
-            # 3) bot_name 복원({name}_info.json) → 트리거 복원
+            # 3) 원본 bot_name 및 선택 캐릭터 컨텍스트 복원
             info_path = os.path.join(WORKFLOW_BACKUP_DIR, f"{backup_name}_info.json")
             try:
                 if os.path.isfile(info_path):
@@ -7660,7 +7811,97 @@ async def handle_api_llm_edit_prompt(request: web.Request) -> web.Response:
             except Exception as e:
                 print(f"[LLM_EDIT] _info.json 읽기 실패 name={backup_name}: {e}")
 
+            previous_names = []
+            if requested_characters is not None:
+                try:
+                    previous_names = _v3_prompt_character_names(
+                        blocks,
+                        multi_char_edit_payload,
+                    )
+                    (
+                        identity_bot_name,
+                        identity_bot_root,
+                        identity_bot,
+                        identity_names,
+                    ) = _load_active_bot_character_selection(
+                        requested_characters,
+                        expected_count=len(previous_names),
+                    )
+                    selected_trigger_data = llm_prompt_edit.collect_character_triggers(
+                        identity_bot,
+                        identity_names,
+                    )
+                    identity_contract = llm_prompt_edit.character_selection_contract(
+                        identity_bot,
+                        previous_names,
+                        identity_names,
+                    )
+
+                    if multi_char_edit_payload:
+                        prompt_path_json = os.path.join(
+                            WORKFLOW_BACKUP_DIR,
+                            f"{backup_name}.json",
+                        )
+                        prompt_path_txt = os.path.join(
+                            WORKFLOW_BACKUP_DIR,
+                            f"{backup_name}.txt",
+                        )
+                        prompt_path = (
+                            prompt_path_json
+                            if os.path.isfile(prompt_path_json)
+                            else prompt_path_txt
+                        )
+                        if not os.path.isfile(prompt_path):
+                            raise ValueError("2인 백업의 원본 프롬프트 파일이 없습니다")
+                        source_positive, _source_negative = _extract_prompts_from_backup(
+                            prompt_path
+                        )
+                        source_snapshot = _read_backup_multi_char_context(
+                            backup_name,
+                            source_positive,
+                        )
+                        if source_snapshot is None:
+                            raise ValueError("2인 백업의 고정 마스크 스냅샷이 없습니다")
+                        remapped_multi_char_snapshot = multi_char_mask.remap_multi_char_snapshot(
+                            source_snapshot,
+                            identity_names,
+                        )
+                        multi_char_edit_payload = copy.deepcopy(multi_char_edit_payload)
+                        multi_char_edit_payload["char_num"] = len(identity_names)
+                        multi_char_edit_payload["char_name_list"] = list(identity_names)
+                        multi_char_edit_payload["mask_fingerprint"] = remapped_multi_char_snapshot[
+                            "mask_fingerprint"
+                        ]
+                    print(
+                        f"[LLM_EDIT:IDENTITY] 캐릭터 교체 준비 완료: "
+                        f"backup={backup_name}, bot={identity_bot_name!r}, "
+                        f"old={previous_names}, new={identity_names}"
+                    )
+                except Exception as exc:
+                    print(
+                        f"[LLM_EDIT:IDENTITY] 캐릭터 교체 준비 실패: "
+                        f"backup={backup_name}, error={exc}"
+                    )
+                    traceback.print_exc()
+                    return web.json_response({"error": str(exc)}, status=400)
+
             triggers = llm_prompt_edit.recover_triggers(blocks, bot_name)
+            if identity_bot is not None:
+                # 같은 편집 모달에서 캐릭터를 연속 변경한 경우 현재 프롬프트는 이미
+                # 활성 봇 트리거를 가질 수 있다. 원본 봇과 활성 봇의 이전 슬롯 트리거를
+                # 모두 접두부로 취급해 장면 태그로 새는 것을 막는다.
+                try:
+                    active_previous_triggers = llm_prompt_edit.collect_character_triggers(
+                        identity_bot,
+                        previous_names,
+                    )
+                    triggers["anima"].update(active_previous_triggers["anima"])
+                    triggers["sdxl"].update(active_previous_triggers["sdxl"])
+                except ValueError as exc:
+                    print(
+                        f"[LLM_EDIT:IDENTITY] 이전 슬롯이 활성 봇에 없어 원본 트리거만 사용: "
+                        f"old={previous_names}, reason={exc}"
+                    )
 
             # 4) 주제 블럭에서 원본 장면 토큰 추출(접두부 제거)
             prefix_sets = llm_prompt_edit.build_prefix_sets(blocks, triggers)
@@ -7676,6 +7917,8 @@ async def handle_api_llm_edit_prompt(request: web.Request) -> web.Response:
                     "positive": positive,
                     "negative": negative,
                 })
+            if identity_bot_name:
+                bot_name = identity_bot_name
 
         # 5) 백업 이미지 읽기 (없으면 텍스트 폴백)
         image_b64 = ""
@@ -7707,6 +7950,7 @@ async def handle_api_llm_edit_prompt(request: web.Request) -> web.Response:
                 scene_anima,
                 scene_sdxl,
                 multi_char_payload=multi_char_edit_payload,
+                identity_contract=identity_contract,
             )
         # 우하단 LIGHBD LLM 위젯 활성화 — 다른 LLM 서비스(bot_mode 등)와 동일 패턴.
         # raw 전체를 위젯에 띄워 파싱 실패 원인을 즉시 확인 가능하게 한다.
@@ -7860,6 +8104,20 @@ async def handle_api_llm_edit_prompt(request: web.Request) -> web.Response:
                 if isinstance(v, str) and v.strip():
                     cleaned, _ = apply_word_replacements(v, "", bot_name)
                     parsed[key] = cleaned
+            if identity_names:
+                try:
+                    parsed = llm_prompt_edit.bind_scene_characters(
+                        parsed,
+                        identity_names,
+                        previous_names,
+                    )
+                except Exception as exc:
+                    print(
+                        f"[LLM_EDIT:IDENTITY] LLM 캐릭터 슬롯 결속 실패: "
+                        f"backup={backup_name}, error={exc}"
+                    )
+                    traceback.print_exc()
+                    return web.json_response({"error": str(exc)}, status=400)
 
         # 9) 재조립
         if fmt == "chansub":
@@ -7870,16 +8128,64 @@ async def handle_api_llm_edit_prompt(request: web.Request) -> web.Response:
             reassembled, scene = llm_prompt_edit.reassemble_v1(positive, v1_parsed, parsed)
             reassembled_negative = negative
         else:
-            reassembled, scene = llm_prompt_edit.reassemble(positive, blocks, triggers, parsed)
+            reassemble_triggers = triggers
+            if selected_trigger_data:
+                reassemble_triggers = {
+                    "anima": selected_trigger_data["anima_ordered"],
+                    "sdxl": selected_trigger_data["sdxl_ordered"],
+                }
+            reassembled, scene = llm_prompt_edit.reassemble(
+                positive,
+                blocks,
+                reassemble_triggers,
+                parsed,
+            )
             reassembled_negative = negative
+            if identity_names:
+                try:
+                    reassembled, reassembled_negative = (
+                        llm_prompt_edit.rebuild_v3_character_identity(
+                            reassembled,
+                            reassembled_negative,
+                            bot_name=identity_bot_name,
+                            bot=identity_bot,
+                            bot_root=identity_bot_root,
+                            tags=asset_mode._tags,
+                            character_names=identity_names,
+                            scene=scene,
+                            multi_char_snapshot=remapped_multi_char_snapshot,
+                        )
+                    )
+                    llm_prompt_edit.validate_v3_character_identity(
+                        reassembled,
+                        identity_names,
+                    )
+                    if remapped_multi_char_snapshot:
+                        multi_char_mask.validate_multi_char_prompt_context(
+                            reassembled,
+                            remapped_multi_char_snapshot,
+                        )
+                except Exception as exc:
+                    print(
+                        f"[LLM_EDIT:IDENTITY] 제어 데이터 재구성 실패: "
+                        f"backup={backup_name}, error={exc}"
+                    )
+                    traceback.print_exc()
+                    return web.json_response({"error": str(exc)}, status=400)
         plan_text = (scene.get("plan", "") or "장면 태그를 수정했습니다.") + fallback_note
 
         print(f"[LLM_EDIT] 완료 name={backup_name} plan={plan_text!r}")
-        return web.json_response({
+        response_payload = {
             "plan": plan_text,
             "positive": reassembled,
             "negative": reassembled_negative,
-        })
+        }
+        if identity_names:
+            response_payload["identity_edit"] = {
+                "bot_name": identity_bot_name,
+                "character_names": identity_names,
+            }
+        return web.json_response(response_payload)
 
     except Exception as e:
         tb = traceback.format_exc()
@@ -8880,10 +9186,9 @@ async def handle_api_restore_manual_characters(request: web.Request) -> web.Resp
         )
 
     try:
-        from modes.bot_mode import _load_bot_data
-        data = _load_bot_data() or {}
+        data = _load_bot_data_readonly()
     except Exception as e:
-        print(f"[RESTORE_MANUAL_CHARS] _load_bot_data 실패: {e}")
+        print(f"[RESTORE_MANUAL_CHARS] bot.json 읽기 실패: {e}")
         traceback.print_exc()
         return web.json_response({"error": f"봇 데이터 로드 실패: {e}"}, status=500)
 

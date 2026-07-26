@@ -1,13 +1,15 @@
-"""삽화백업 "LLM과 함께 수정" 지원 모듈.
+"""삽화백업 "편하게 수정" 지원 모듈.
 
 빌드된 긍정 프롬프트(illust_prompt_builder.build_positive_prompt 출력)에서
 주제 3개 블럭(ANIMA_CONTENT/ANIMA_ALL/SDXL)의 장면(setup/char/supplement)만
 LLM이 편집하고, 트리거/아티스트/품질/제어 블럭은 백엔드가 보존·재조립한다.
 
 핵심 불변량:
-- 제어 블럭([LORA_DATA]/[SEED]/[CACHE_PATH] 등)은 1바이트도 수정하지 않는다.
-  단, 활성 [MULTI_CHAR]의 장면 조건(char/background/composition)은 고정 마스크와
-  동기화해야 하므로 인원·순서·지문을 보존한 채 구조적으로 갱신한다.
+- 일반 장면 편집은 제어 블럭([LORA_DATA]/[SEED]/[CACHE_PATH] 등)을 수정하지 않는다.
+- 사용자가 V3 Comfy 캐릭터를 명시적으로 선택한 경우에만 CHAR_LIST/CACHE/FACE/LoRA
+  제어 블럭을 활성 봇 데이터로 재구성한다. 시드·해상도·디테일러 등은 그대로 보존한다.
+- 활성 [MULTI_CHAR]의 장면 조건과 선택 캐릭터 순서는 고정 마스크 기하를 유지한 채
+  동기화하며, 이름이 포함된 마스크 지문은 새 슬롯 이름에 맞춰 다시 계산한다.
 - 트리거/아티스트/품질 토큰은 LLM에 전달하지 않고 백엔드에서 접두부로 보존한다.
 - 3개 주제 블럭은 동일 장면을 공유(supplement는 SDXL 제외) — LLM이 한 번 서술한
   scene_setup/char/supplement 를 백엔드가 3블럭에 일관 주입한다.
@@ -19,6 +21,7 @@ import re
 import shutil
 import traceback
 import datetime
+from copy import deepcopy
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ASSET_DATA_DIR = os.path.join(BASE_DIR, "asset_data")
@@ -439,7 +442,10 @@ def recover_triggers(blocks: dict, bot_name: str) -> dict:
             anima.add(char_name)
             sdxl.add(char_name)
             continue
-        loras = char_data.get(lora_key, char_data.get("loras", []))
+        loras = list(char_data.get(lora_key, char_data.get("loras", [])) or [])
+        # 그림체 LoRA 트리거도 메인 ANIMA/SDXL 프롬프트 접두부에 포함된다.
+        # 이를 누락하면 캐릭터 교체 시 이전 그림체 트리거가 장면 태그로 오인되어 남는다.
+        loras.extend(char_data.get("style_loras", []) or [])
         for lora in loras:
             if not isinstance(lora, dict):
                 continue
@@ -451,6 +457,157 @@ def recover_triggers(blocks: dict, bot_name: str) -> dict:
                 anima.add(trigger)
 
     return {"anima": anima, "sdxl": sdxl}
+
+
+def validate_character_selection(bot: object, character_names: object) -> list[str]:
+    """활성 봇의 1인/2인 캐릭터 선택을 검증하고 정식 이름으로 반환한다."""
+    if not isinstance(bot, dict):
+        raise ValueError("활성 봇 데이터가 올바르지 않습니다")
+    requested = [str(name or "").strip() for name in (character_names or [])]
+    if len(requested) not in (1, 2) or any(not name for name in requested):
+        raise ValueError(f"캐릭터 선택은 1명 또는 2명이어야 합니다: {requested}")
+    if len({name.casefold() for name in requested}) != len(requested):
+        raise ValueError(f"같은 캐릭터를 두 슬롯에 선택할 수 없습니다: {requested}")
+
+    canonical = {
+        str(character.get("name") or "").strip().casefold(): str(
+            character.get("name") or ""
+        ).strip()
+        for character in (bot.get("characters") or [])
+        if isinstance(character, dict) and str(character.get("name") or "").strip()
+    }
+    missing = [name for name in requested if name.casefold() not in canonical]
+    if missing:
+        print(
+            f"[LLM_EDIT:IDENTITY] 활성 봇에 없는 캐릭터 선택: "
+            f"bot={bot.get('name')!r}, missing={missing}"
+        )
+        raise ValueError(f"활성 봇에서 캐릭터를 찾을 수 없습니다: {', '.join(missing)}")
+    return [canonical[name.casefold()] for name in requested]
+
+
+def collect_character_triggers(bot: dict, character_names: list[str]) -> dict:
+    """선택 캐릭터의 메인/Regional Conditioning 트리거를 수집한다."""
+    names = validate_character_selection(bot, character_names)
+    characters = bot.get("characters") or []
+    is_multi = len(names) >= 2
+    lora_key = "loras_group" if is_multi else "loras_solo"
+    anima = []
+    sdxl = []
+    anima_by_char = {name: [] for name in names}
+    shared_anima = []
+
+    def append_unique(target: list, value: object) -> None:
+        text = str(value or "").strip()
+        if text and text not in target:
+            target.append(text)
+
+    for name in names:
+        character = next(
+            (
+                item
+                for item in characters
+                if isinstance(item, dict)
+                and str(item.get("name") or "").strip().casefold() == name.casefold()
+            ),
+            None,
+        )
+        if character is None:
+            raise ValueError(f"선택 캐릭터 데이터를 찾을 수 없습니다: {name}")
+        for lora in character.get(lora_key, character.get("loras", [])) or []:
+            if not isinstance(lora, dict):
+                continue
+            trigger = lora.get("trigger", name)
+            if lora.get("BASE", "anima") == "sdxl":
+                append_unique(sdxl, trigger)
+            else:
+                append_unique(anima, trigger)
+                append_unique(anima_by_char[name], trigger)
+        for lora in character.get("style_loras", []) or []:
+            if not isinstance(lora, dict):
+                continue
+            trigger = lora.get("trigger", "")
+            if lora.get("BASE", "anima") == "sdxl":
+                append_unique(sdxl, trigger)
+            else:
+                append_unique(anima, trigger)
+                append_unique(shared_anima, trigger)
+
+    return {
+        "anima": set(anima),
+        "sdxl": set(sdxl),
+        "anima_ordered": anima,
+        "sdxl_ordered": sdxl,
+        "anima_by_char": anima_by_char,
+        "shared_anima": shared_anima,
+    }
+
+
+def character_selection_contract(
+    bot: dict,
+    previous_names: list[str],
+    selected_names: list[str],
+) -> str:
+    """LLM이 선택된 정체성을 scene_char에 명시하도록 동적 계약을 만든다."""
+    names = validate_character_selection(bot, selected_names)
+    characters = bot.get("characters") or []
+    identity_lines = []
+    for index, name in enumerate(names):
+        character = next(
+            item
+            for item in characters
+            if isinstance(item, dict)
+            and str(item.get("name") or "").strip().casefold() == name.casefold()
+        )
+        identity_lines.append(
+            f"{index + 1}. {name}: gender={str(character.get('gender_tag') or '').strip() or '(none)'}; "
+            f"face={str(character.get('face_tags') or '').strip() or '(none)'}; "
+            f"eyes={str(character.get('eye_tags') or '').strip() or '(none)'}"
+        )
+    return (
+        "\n\n## User-selected character identity contract (mandatory)\n"
+        f"Previous character order: {json.dumps(previous_names, ensure_ascii=False)}\n"
+        f"New exact character order: {json.dumps(names, ensure_ascii=False)}\n"
+        "The user explicitly selected these identities, so this contract overrides the generic "
+        "instruction to preserve the previous character identity. Remove conflicting old identity "
+        "traits and rewrite scene_char for the selected characters while preserving unrelated pose, "
+        "outfit, and scene details unless the edit direction says otherwise.\n"
+        "Canonical identity reference from the active bot:\n"
+        + "\n".join(identity_lines)
+        + "\nEach scene_char character block must start with its exact selected character name. "
+        "For two characters, keep the exact order and use one ` | ` separator."
+    )
+
+
+def bind_scene_characters(
+    parsed: dict,
+    character_names: list[str],
+    previous_names: list[str] = None,
+) -> dict:
+    """LLM scene_char 블록을 선택 캐릭터의 정확한 슬롯 이름에 결속한다."""
+    scene = _coerce_scene_fields(parsed)
+    names = [str(name or "").strip() for name in character_names]
+    blocks = _split_char_blocks(scene.get("scene_char", ""))
+    if len(blocks) != len(names):
+        raise ValueError(
+            "선택 캐릭터 수와 LLM scene_char 블록 수가 다릅니다: "
+            f"characters={len(names)}, blocks={len(blocks)}"
+        )
+    bound = []
+    discarded_names = {
+        str(old_name or "").strip().casefold()
+        for old_name in (previous_names or [])
+        if str(old_name or "").strip()
+    }
+    for name, block in zip(names, blocks):
+        tokens = _split_tokens(block)
+        discarded_names.add(name.casefold())
+        tokens = [token for token in tokens if token.casefold() not in discarded_names]
+        bound.append(_join_tags(name, *tokens))
+    result = dict(parsed)
+    result.update(scene)
+    result["scene_char"] = " | ".join(bound)
+    return result
 
 
 def extract_scene_tokens(block_content: str, prefix_tokens: set) -> str:
@@ -548,6 +705,7 @@ def build_llm_messages(
     scene_current: str,
     scene_sdxl: str,
     multi_char_payload: dict = None,
+    identity_contract: str = "",
 ) -> list:
     """LLM(비전) 호출용 messages 빌드 (V3 빌드본).
 
@@ -564,6 +722,8 @@ def build_llm_messages(
         "scene_sdxl": scene_sdxl,
     })
     user += _multi_char_edit_contract(multi_char_payload)
+    if identity_contract:
+        user += str(identity_contract)
 
     return [
         {"role": "system", "content": system},
@@ -835,6 +995,219 @@ def reassemble(positive: str, blocks: dict, triggers: dict, parsed: dict) -> tup
     reassembled = _SUBJECT_RE.sub(_repl, positive)
     reassembled = _sync_multi_char_payload_for_scene(reassembled, blocks, scene)
     return reassembled, scene
+
+
+def _replace_or_insert_block(positive: str, block_name: str, content: str) -> str:
+    """단일 라인 V3 제어 블록을 치환하고, 레거시 누락 블록은 제어부에 삽입한다."""
+    pattern = re.compile(rf"(^\[{re.escape(block_name)}\]\r?\n).*$", re.MULTILINE)
+    updated, count = pattern.subn(lambda match: match.group(1) + content, positive)
+    if count == 1:
+        return updated
+    if count > 1:
+        raise ValueError(f"[{block_name}] 제어 블록이 중복되었습니다: {count}")
+
+    insert_at = len(positive)
+    for anchor in ("HRF_ACTIVATE", "IMG_W", "END"):
+        match = re.search(rf"^\[{anchor}\]\r?$", positive, re.MULTILINE)
+        if match:
+            insert_at = match.start()
+            break
+    prefix = positive[:insert_at].rstrip("\r\n")
+    suffix = positive[insert_at:].lstrip("\r\n")
+    inserted = f"{prefix}\n[{block_name}]\n{content}"
+    if suffix:
+        inserted += "\n" + suffix
+    print(f"[LLM_EDIT:IDENTITY] 레거시 누락 제어 블록 삽입: [{block_name}]")
+    return inserted
+
+
+def rebuild_v3_character_identity(
+    positive: str,
+    negative: str,
+    *,
+    bot_name: str,
+    bot: dict,
+    bot_root: dict,
+    tags: dict,
+    character_names: list[str],
+    scene: dict,
+    multi_char_snapshot: dict = None,
+) -> tuple[str, str]:
+    """선택 캐릭터에 맞춰 V3의 NAME/FACE/LoRA 제어 데이터를 원자적으로 재구성한다."""
+    from modes.illust_prompt_builder import IllustPromptBuilder
+
+    names = validate_character_selection(bot, character_names)
+    if str(bot.get("name") or "") != str(bot_name or ""):
+        raise ValueError(
+            f"활성 봇 이름과 봇 데이터가 다릅니다: expected={bot_name!r}, actual={bot.get('name')!r}"
+        )
+
+    current_blocks = parse_blocks(positive)
+    profile = "group" if len(names) >= 2 else "solo"
+    settings_key = f"illust_settings_{profile}"
+    settings = deepcopy(bot.get(settings_key, bot.get("illust_settings", {})) or {})
+    settings["positive_whitelist"] = list((bot_root or {}).get("positive_whitelist", []) or [])
+    settings["positive_blacklist"] = list((bot_root or {}).get("positive_blacklist", []) or [])
+
+    try:
+        settings["face_id_str"] = float(current_blocks.get("FACE_ID_STR", settings.get("face_id_str", 0.55)))
+    except (TypeError, ValueError) as exc:
+        print(
+            f"[LLM_EDIT:IDENTITY] FACE_ID_STR 파싱 실패: "
+            f"value={current_blocks.get('FACE_ID_STR')!r}, error={exc}"
+        )
+        traceback.print_exc()
+        raise ValueError("기존 FACE_ID_STR 값이 숫자가 아닙니다") from exc
+
+    raw_face_lora = current_blocks.get("FACE_LORA_DATA", "")
+    if raw_face_lora:
+        try:
+            face_lora_payload = json.loads(raw_face_lora)
+            for item in face_lora_payload.get("list", []) if isinstance(face_lora_payload, dict) else []:
+                if isinstance(item, dict) and str(item.get("UPSCALE_SIZE") or "").strip():
+                    settings["face_lora_upscale_size"] = str(item["UPSCALE_SIZE"]).strip()
+                    break
+        except Exception as exc:
+            print(f"[LLM_EDIT:IDENTITY] 기존 FACE_LORA_DATA 파싱 실패: {exc}")
+            traceback.print_exc()
+            raise ValueError(f"기존 FACE_LORA_DATA를 읽지 못했습니다: {exc}") from exc
+
+    scene_data = _coerce_scene_fields(scene)
+    builder = IllustPromptBuilder()
+    candidate_positive = builder.build_positive_prompt(
+        scene_data.get("scene_setup", ""),
+        scene_data.get("scene_char", ""),
+        scene_data.get("scene_supplement", ""),
+        names,
+        bot,
+        tags or {},
+        settings,
+        bot_name,
+    )
+    candidate_negative = builder.build_negative_prompt(tags or {}, settings, names, bot)
+    candidate_blocks = parse_blocks(candidate_positive)
+
+    identity_blocks = (
+        "CHAR_LIST",
+        "CACHE_PATH",
+        "FACE_ID_DIR",
+        "LORA_ACTIVATE",
+        "LORA_DATA",
+        "FACE_LORA_ACTIVATE",
+        "FACE_LORA_DATA",
+        "STYLE_LORA_ACTIVATE",
+        "STYLE_LORA_DATA",
+        "CHAR_FACE_TAG_INFORM",
+    )
+    rebuilt = positive
+    for block_name in identity_blocks:
+        if block_name not in candidate_blocks:
+            print(f"[LLM_EDIT:IDENTITY] 후보 제어 블록 누락: [{block_name}]")
+            raise ValueError(f"선택 캐릭터의 [{block_name}] 데이터를 만들지 못했습니다")
+        rebuilt = _replace_or_insert_block(rebuilt, block_name, candidate_blocks[block_name])
+
+    existing_multi = parse_blocks(rebuilt).get("MULTI_CHAR", "")
+    if multi_char_snapshot is not None:
+        try:
+            payload = json.loads(existing_multi)
+        except Exception as exc:
+            print(f"[LLM_EDIT:IDENTITY] MULTI_CHAR 파싱 실패: {exc}")
+            traceback.print_exc()
+            raise ValueError(f"기존 MULTI_CHAR 데이터를 읽지 못했습니다: {exc}") from exc
+        if not isinstance(payload, dict) or payload.get("enable") is not True:
+            raise ValueError("2인 캐릭터 교체에는 활성 MULTI_CHAR 제어 블록이 필요합니다")
+        snapshot_names = [str(name or "").strip() for name in multi_char_snapshot.get("character_order", [])]
+        if [name.casefold() for name in snapshot_names] != [name.casefold() for name in names]:
+            raise ValueError(
+                "재매핑 마스크와 선택 캐릭터 순서가 다릅니다: "
+                f"mask={snapshot_names}, selected={names}"
+            )
+        trigger_data = collect_character_triggers(bot, names)
+        payload["char_num"] = len(names)
+        payload["char_name_list"] = list(names)
+        payload["char_trigger_list"] = [
+            list(dict.fromkeys(
+                trigger_data["anima_by_char"].get(name, [])
+                + trigger_data["shared_anima"]
+            ))
+            for name in names
+        ]
+        payload["background_trigger_list"] = list(trigger_data["shared_anima"])
+        payload["mask_fingerprint"] = str(multi_char_snapshot.get("mask_fingerprint") or "")
+        rebuilt = _replace_or_insert_block(
+            rebuilt,
+            "MULTI_CHAR",
+            json.dumps(payload, ensure_ascii=False),
+        )
+    elif len(names) >= 2:
+        raise ValueError("2인 캐릭터 교체에 필요한 마스크 스냅샷이 없습니다")
+
+    print(
+        f"[LLM_EDIT:IDENTITY] V3 캐릭터 제어 데이터 동기화 완료: "
+        f"bot={bot_name!r}, profile={profile}, characters={names}"
+    )
+    return rebuilt, candidate_negative
+
+
+def validate_v3_character_identity(positive: str, character_names: list[str]) -> None:
+    """수정 재생성 직전에 캐릭터 제어 블록이 선택 슬롯과 일치하는지 검증한다."""
+    names = [str(name or "").strip() for name in character_names]
+    blocks = parse_blocks(positive)
+    prompt_names = [
+        value.strip() for value in blocks.get("CHAR_LIST", "").split(",") if value.strip()
+    ]
+    if [name.casefold() for name in prompt_names] != [name.casefold() for name in names]:
+        raise ValueError(
+            f"CHAR_LIST와 선택 캐릭터가 다릅니다: prompt={prompt_names}, selected={names}"
+        )
+
+    json_blocks = (
+        "CACHE_PATH",
+        "FACE_ID_DIR",
+        "LORA_DATA",
+        "FACE_LORA_DATA",
+        "CHAR_FACE_TAG_INFORM",
+    )
+    expected = {name.casefold() for name in names}
+    for block_name in json_blocks:
+        raw = blocks.get(block_name, "")
+        if not raw:
+            raise ValueError(f"[{block_name}] 제어 블록이 없습니다")
+        try:
+            payload = json.loads(raw)
+        except Exception as exc:
+            print(f"[LLM_EDIT:IDENTITY] [{block_name}] JSON 파싱 실패: {exc}")
+            traceback.print_exc()
+            raise ValueError(f"[{block_name}] JSON이 올바르지 않습니다") from exc
+        items = payload.get("list") if isinstance(payload, dict) else None
+        if not isinstance(items, list):
+            raise ValueError(f"[{block_name}].list가 배열이 아닙니다")
+        observed = {
+            str(item.get("CHAR") or "").strip().casefold()
+            for item in items
+            if isinstance(item, dict) and str(item.get("CHAR") or "").strip()
+        }
+        if not observed.issubset(expected):
+            raise ValueError(
+                f"[{block_name}]에 선택 밖 캐릭터가 남아 있습니다: "
+                f"observed={sorted(observed)}, selected={names}"
+            )
+        if block_name in ("CACHE_PATH", "FACE_ID_DIR", "CHAR_FACE_TAG_INFORM") and observed != expected:
+            raise ValueError(
+                f"[{block_name}] 캐릭터 구성이 불완전합니다: "
+                f"observed={sorted(observed)}, selected={names}"
+            )
+
+    multi = blocks.get("MULTI_CHAR", "")
+    if len(names) == 2:
+        if not multi:
+            raise ValueError("2인 선택인데 [MULTI_CHAR] 제어 블록이 없습니다")
+        payload = json.loads(multi)
+        multi_names = [str(name or "").strip() for name in payload.get("char_name_list", [])]
+        if [name.casefold() for name in multi_names] != [name.casefold() for name in names]:
+            raise ValueError(
+                f"MULTI_CHAR와 선택 캐릭터 순서가 다릅니다: multi={multi_names}, selected={names}"
+            )
 
 
 # ─── V1 (ILXL/UPSCALE) 프롬프트 지원 ──────────────────────────

@@ -8,6 +8,7 @@ import shutil
 import traceback
 import hashlib
 import json
+from copy import deepcopy
 from typing import Iterable
 
 from PIL import Image, ImageDraw
@@ -328,6 +329,55 @@ def validate_multi_char_prompt_context(positive: object, context: object) -> dic
             f"prompt={prompt_fingerprint!r}, mask={snapshot['mask_fingerprint']!r}"
         )
     return snapshot
+
+
+def remap_multi_char_snapshot(context: object, character_names: object) -> dict:
+    """고정 마스크의 기하는 유지하고 슬롯별 캐릭터 이름만 교체한다.
+
+    캐릭터 이름도 레이아웃 지문에 포함되므로 새 이름에 맞춰 지문을 다시 계산한다.
+    원본 스냅샷은 수정하지 않는다.
+    """
+    snapshot = normalize_multi_char_snapshot(context)
+    if snapshot is None:
+        raise ValueError("재매핑할 다중 캐릭터 마스크 스냅샷이 없습니다")
+
+    names = [str(name or "").strip() for name in (character_names or [])]
+    if len(names) != snapshot["char_num"] or any(not name for name in names):
+        raise ValueError(
+            "마스크 재매핑 캐릭터 수가 기존 슬롯 수와 다릅니다: "
+            f"expected={snapshot['char_num']}, actual={len(names)}, names={names}"
+        )
+    folded = [name.casefold() for name in names]
+    if len(set(folded)) != len(folded):
+        raise ValueError(f"마스크 재매핑 캐릭터가 중복되었습니다: {names}")
+
+    remapped = deepcopy(snapshot)
+    remapped["character_order"] = list(names)
+    remapped["mask_fingerprint"] = ""
+    layout = remapped.get("layout")
+    if not isinstance(layout, dict):
+        raise ValueError("마스크 재매핑 레이아웃이 object가 아닙니다")
+    layout["character_order"] = list(names)
+    regions = layout.get("regions")
+    if not isinstance(regions, list) or len(regions) != len(names):
+        raise ValueError(
+            "마스크 재매핑 영역 수가 캐릭터 수와 다릅니다: "
+            f"regions={len(regions) if isinstance(regions, list) else 'invalid'}, names={len(names)}"
+        )
+    for index, name in enumerate(names):
+        if not isinstance(regions[index], dict):
+            raise ValueError(f"마스크 재매핑 영역이 object가 아닙니다: index={index}")
+        regions[index]["name"] = name
+
+    normalized = normalize_multi_char_snapshot(remapped)
+    if normalized is None:
+        raise ValueError("다중 캐릭터 마스크 재매핑 결과가 비활성 상태입니다")
+    print(
+        "[MULTI_CHAR:REMAP] 고정 마스크 캐릭터 재매핑 완료: "
+        f"old={snapshot['character_order']}, new={names}, "
+        f"fingerprint={normalized['mask_fingerprint'][:12]}"
+    )
+    return normalized
 
 
 def recover_multi_char_snapshot_from_sessions(
