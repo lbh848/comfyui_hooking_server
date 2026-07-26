@@ -312,7 +312,7 @@ async def test_automatic_restore_uses_compatible_illustration_builder(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_hybrid_context_line_distributes_scenes_to_separate_builders(
+async def test_hybrid_context_line_enqueues_scenes_for_dynamic_assignment(
     monkeypatch,
     tmp_path,
 ):
@@ -351,6 +351,7 @@ async def test_hybrid_context_line_distributes_scenes_to_separate_builders(
                 params["raw_body"]["illustration_prompt_format"],
                 snapshot["provider"],
                 snapshot["illustration_workflow_type"],
+                params.get("hybrid_prompt_formats"),
             )
         )
         future = asyncio.get_running_loop().create_future()
@@ -399,11 +400,14 @@ async def test_hybrid_context_line_distributes_scenes_to_separate_builders(
         result = await server.process_illustration_context_queue_item(parent_item)
 
         assert enqueued == [
-            ("comfy", "v3", "comfy", "chansub_v3_anima"),
-            ("chansub", "chansub", "chansub", "chansub_v3_anima"),
-            ("comfy", "v3", "comfy", "chansub_v3_anima"),
-            ("chansub", "chansub", "chansub", "chansub_v3_anima"),
-        ]
+            (
+                "hybrid",
+                "v3",
+                "hybrid",
+                "chansub_v3_anima",
+                {"comfy": "v3", "chansub": "chansub"},
+            ),
+        ] * 4
         assert result["count"] == 4
         assert pipeline.get_session(session_id)["images"] == [
             b"image-1",

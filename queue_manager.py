@@ -146,8 +146,8 @@ class QueueManager:
         asyncio.ensure_future(self._process_loop())
         # LLM 워커풀도 깨움 (신규 LLM 아이템 또는 동시성 설정 변경 대응)
         asyncio.ensure_future(self._ensure_llm_workers())
-        # 챈섭 항목은 로컬 GPU 루프와 독립된 외부 워커를 깨운다.
-        if self._item_execution_area(item)[0] == "external":
+        # 챈섭 및 아직 공급자가 정해지지 않은 하이브리드 항목은 외부 워커도 깨운다.
+        if self._item_execution_area(item)[0] in ("external", "hybrid"):
             asyncio.ensure_future(self._ensure_external_workers())
         return item
 
@@ -241,7 +241,7 @@ class QueueManager:
             await self._notify_queue_updated()
 
     def _item_execution_area(self, item: QueueItem) -> tuple[str, str]:
-        """큐 UI용 실행 영역과 공급자를 반환한다. 실제 스케줄 순서는 변경하지 않는다."""
+        """큐 실행 영역과 공급자를 반환한다. hybrid는 먼저 빈 실행 레인이 가져간다."""
         if item.type in LLM_TYPES:
             return "llm", "llm"
 
@@ -273,7 +273,55 @@ class QueueManager:
                 provider = "comfy"
         if provider == "chansub":
             return "external", "chansub"
+        if provider == "hybrid":
+            return "hybrid", "hybrid"
         return "gpu", provider or "local"
+
+    def _bind_hybrid_item_provider(self, item: QueueItem, provider: str) -> bool:
+        """대기 중인 하이브리드 항목을 실제로 claim한 comfy/chansub 레인에 고정한다."""
+        if provider not in ("comfy", "chansub"):
+            print(
+                f"[QUEUE:HYBRID] 공급자 바인딩 실패: item={item.id}, "
+                f"provider={provider!r}"
+            )
+            return False
+        if self._item_execution_area(item)[0] != "hybrid":
+            return False
+        params = item.params
+        if not isinstance(params, dict):
+            print(
+                f"[QUEUE:HYBRID] params 형식 오류: item={item.id}, "
+                f"type={type(params).__name__}"
+            )
+            return False
+        raw_body = params.get("raw_body")
+        if not isinstance(raw_body, dict):
+            print(
+                f"[QUEUE:HYBRID] raw_body 형식 오류, 빈 객체로 복구: "
+                f"item={item.id}, type={type(raw_body).__name__}"
+            )
+            raw_body = {}
+            params["raw_body"] = raw_body
+        prompt_formats = params.get("hybrid_prompt_formats")
+        if not isinstance(prompt_formats, dict):
+            print(
+                f"[QUEUE:HYBRID] 공급자별 프롬프트 형식 없음, 기본값 사용: "
+                f"item={item.id}, type={type(prompt_formats).__name__}"
+            )
+            prompt_formats = {}
+        prompt_format = str(
+            prompt_formats.get(provider)
+            or ("chansub" if provider == "chansub" else "v3")
+        ).strip().lower()
+        params["provider"] = provider
+        params["hybrid_assigned_provider"] = provider
+        raw_body["illustration_provider"] = provider
+        raw_body["illustration_prompt_format"] = prompt_format
+        print(
+            f"[QUEUE:HYBRID] 동적 공급자 배정: item={item.id}, "
+            f"provider={provider}, prompt_format={prompt_format}"
+        )
+        return True
 
     def _item_status_dict(self, item: QueueItem) -> dict:
         data = item.to_dict()
@@ -537,11 +585,11 @@ class QueueManager:
                 if not pending_items:
                     break
                 pending_items.sort(key=self._sort_key)
-                # 로컬 GPU계열만 선택 (LLM/챈섭은 각 독립 워커가 처리)
+                # 로컬 GPU 항목과 아직 미할당인 하이브리드 항목을 선택한다.
                 gpu_pending = [
                     i for i in pending_items
                     if i.type not in LLM_TYPES
-                    and self._item_execution_area(i)[0] == "gpu"
+                    and self._item_execution_area(i)[0] in ("gpu", "hybrid")
                 ]
                 if not gpu_pending:
                     break  # 남은 pending은 LLM/외부 계열 → 각 워커가 처리
@@ -567,6 +615,12 @@ class QueueManager:
                 blocking = any(_is_blocker(i) for i in self.items)
                 if blocking:
                     break  # 블록 해제는 완료 시 _run_item_pipeline 이 _process_loop를 재점검
+                if self._item_execution_area(next_item)[0] == "hybrid":
+                    if not self._bind_hybrid_item_provider(next_item, "comfy"):
+                        print(
+                            f"[QUEUE:HYBRID] GPU 레인 claim 실패: item={next_item.id}"
+                        )
+                        break
                 self.current_item = next_item
                 await self._run_item_pipeline(next_item, is_gpu=True)
         finally:
@@ -702,12 +756,16 @@ class QueueManager:
         pending = [
             item for item in self.items
             if item.status == "pending"
-            and self._item_execution_area(item)[0] == "external"
+            and self._item_execution_area(item)[0] in ("external", "hybrid")
         ]
         if not pending:
             return None
         pending.sort(key=self._sort_key)
         item = pending[0]
+        if self._item_execution_area(item)[0] == "hybrid":
+            if not self._bind_hybrid_item_provider(item, "chansub"):
+                print(f"[QUEUE:HYBRID] 외부 레인 claim 실패: item={item.id}")
+                return None
         item.status = "processing"
         item.started_at = time.time()
         item.progress = 0.0
@@ -737,7 +795,8 @@ class QueueManager:
                     self._external_wakeup.clear()
                     if any(
                         candidate.status == "pending"
-                        and self._item_execution_area(candidate)[0] == "external"
+                        and self._item_execution_area(candidate)[0]
+                        in ("external", "hybrid")
                         for candidate in self.items
                     ):
                         continue

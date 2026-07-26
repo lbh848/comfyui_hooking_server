@@ -1185,7 +1185,7 @@
         }
         .queue-lanes {
             display:grid;
-            grid-template-columns:repeat(3, minmax(0, 1fr));
+            grid-template-columns:repeat(4, minmax(0, 1fr));
             gap:12px;
             align-items:start;
         }
@@ -1221,6 +1221,7 @@
             min-height:56px; color:var(--text3); font-size:0.76rem;
         }
         .queue-lane.llm { border-top:2px solid #8b5cf6; }
+        .queue-lane.hybrid { border-top:2px solid #f59e0b; }
         .queue-lane.gpu { border-top:2px solid #22c55e; }
         .queue-lane.external { border-top:2px solid #38bdf8; }
         .queue-modal-item {
@@ -51939,6 +51940,7 @@
 
         const _queueAreaDefinitions = [
             {key: 'llm', icon: '🧠', title: 'LLM 처리', note: 'CALL 및 프롬프트 분석'},
+            {key: 'hybrid', icon: '⚡', title: '동적 배분', note: '먼저 빈 GPU/챈섭이 실행'},
             {key: 'gpu', icon: '🖥️', title: 'GPU', note: '로컬 ComfyUI 작업'},
             {key: 'external', icon: '☁️', title: '외부 서비스', note: '챈섭 API 작업'},
         ];

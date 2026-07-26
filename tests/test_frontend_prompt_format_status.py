@@ -44,3 +44,12 @@ def test_chansub_settings_expose_bounded_concurrency_and_rotation_key():
     assert "chansub_max_concurrency: parseInt(" in source
     assert 'id="setting-chansub-rotation-api-key"' in source
     assert "rotation_api_key: rotationApiKey" in source
+
+
+def test_queue_has_visible_dynamic_hybrid_assignment_area():
+    source = _frontend_source()
+
+    assert "{key: 'hybrid', icon: '⚡', title: '동적 배분'" in source
+    assert "먼저 빈 GPU/챈섭이 실행" in source
+    assert "grid-template-columns:repeat(4, minmax(0, 1fr))" in source
+    assert ".queue-lane.hybrid { border-top:2px solid #f59e0b; }" in source

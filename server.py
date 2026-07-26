@@ -3537,18 +3537,23 @@ async def process_illustration_context_queue_item(item) -> dict:
         defer_postprocess,
         queue_priority=None,
     ):
-        child_provider = (
-            workflow_profiles.illustration_provider_for_slot(
+        child_provider = illustration_provider_snapshot
+        hybrid_prompt_formats = None
+        if child_provider == "hybrid":
+            hybrid_prompt_formats = {
+                provider: workflow_profiles.illustration_prompt_format(
+                    illustration_workflow_type_snapshot,
+                    provider,
+                )
+                for provider in ("comfy", "chansub")
+            }
+            # 대기 중 표시용 형식이다. 실행 레인이 claim할 때 실제 형식으로 교체된다.
+            child_prompt_format = hybrid_prompt_formats["comfy"]
+        else:
+            child_prompt_format = workflow_profiles.illustration_prompt_format(
                 illustration_workflow_type_snapshot,
-                slot_index,
+                child_provider,
             )
-            if illustration_provider_snapshot == "hybrid"
-            else illustration_provider_snapshot
-        )
-        child_prompt_format = workflow_profiles.illustration_prompt_format(
-            illustration_workflow_type_snapshot,
-            child_provider,
-        )
         child_id = str(uuid.uuid4())
         child_prompt = copy.deepcopy(prompt_data)
         if not set_prompt_by_title(child_prompt, "긍정프롬프트", descriptor.get("raw_positive", "")):
@@ -3595,15 +3600,18 @@ async def process_illustration_context_queue_item(item) -> dict:
         if queue_priority is None:
             queue_priority = 1 if multi_char_context else 0
         try:
+            child_params = {
+                "prompt_id": child_id,
+                "prompt_data": child_prompt,
+                "raw_body": child_raw_body,
+                "provider": child_provider,
+            }
+            if hybrid_prompt_formats is not None:
+                child_params["hybrid_prompt_formats"] = hybrid_prompt_formats
             child_item = await queue_manager.add_item(
                 "illustration",
                 f"삽화 {slot_index}/{total_count} · slot {descriptor.get('slot')}",
-                {
-                    "prompt_id": child_id,
-                    "prompt_data": child_prompt,
-                    "raw_body": child_raw_body,
-                    "provider": child_provider,
-                },
+                child_params,
                 priority=int(queue_priority),
             )
         except Exception as e:
@@ -3620,7 +3628,8 @@ async def process_illustration_context_queue_item(item) -> dict:
         print(
             f"[ILLUST_CONTEXT] 하위 이미지 분배: slot={descriptor.get('slot')}, "
             f"index={slot_index}/{total_count}, provider={child_provider}, "
-            f"format={child_prompt_format}, workflow={illustration_workflow_type_snapshot}"
+            f"format={child_prompt_format}, dynamic={hybrid_prompt_formats is not None}, "
+            f"workflow={illustration_workflow_type_snapshot}"
         )
         return pair
 

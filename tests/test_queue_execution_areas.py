@@ -24,6 +24,7 @@ def test_queue_status_separates_llm_gpu_and_chansub_areas():
         _item("illustration_llm_build"),
         _item("illustration", {"provider": "comfy"}),
         _item("illustration", {"provider": "chansub"}),
+        _item("illustration", {"provider": "hybrid"}),
     ]
 
     status = manager.get_status()
@@ -32,12 +33,32 @@ def test_queue_status_separates_llm_gpu_and_chansub_areas():
         "llm",
         "gpu",
         "external",
+        "hybrid",
     ]
     assert [item["provider"] for item in status["items"]] == [
         "llm",
         "comfy",
         "chansub",
+        "hybrid",
     ]
+
+
+def test_pending_hybrid_item_moves_to_claimed_queue_area():
+    manager = QueueManager()
+    item = _item("illustration", {
+        "provider": "hybrid",
+        "raw_body": {"illustration_provider": "hybrid"},
+        "hybrid_prompt_formats": {"comfy": "v3", "chansub": "chansub"},
+    })
+    manager.items = [item]
+
+    assert manager.get_status()["items"][0]["execution_area"] == "hybrid"
+
+    assert manager._bind_hybrid_item_provider(item, "chansub") is True
+    moved = manager.get_status()["items"][0]
+    assert moved["execution_area"] == "external"
+    assert moved["provider"] == "chansub"
+    assert item.params["raw_body"]["illustration_prompt_format"] == "chansub"
 
 
 def test_queue_status_forces_plain_illustration_to_gpu_without_active_bot():
@@ -130,6 +151,102 @@ async def test_two_chansub_workers_execute_two_requests_concurrently(monkeypatch
         assert first.status == second.status == "completed"
     finally:
         release.set()
+        tasks = [
+            task
+            for task in manager._external_worker_tasks.values()
+            if not task.done()
+        ]
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+
+@pytest.mark.parametrize("fast_provider", ["comfy", "chansub"])
+@pytest.mark.asyncio
+async def test_faster_hybrid_lane_claims_remaining_pending_items(
+    monkeypatch,
+    fast_provider,
+):
+    manager = QueueManager()
+    manager.get_config = lambda: {
+        "bot_selected": "test-bot",
+        "illustration_provider": "hybrid",
+        "chansub_max_concurrency": 1,
+    }
+    initial_lanes_started = asyncio.Event()
+    all_items_started = asyncio.Event()
+    release_gpu = asyncio.Event()
+    release_external = asyncio.Event()
+    starts = []
+
+    async def fake_execute(item):
+        provider = item.params["provider"]
+        starts.append((item.id, provider))
+        if len(starts) >= 2:
+            initial_lanes_started.set()
+        if len(starts) == 4:
+            all_items_started.set()
+        if provider == "comfy":
+            await release_gpu.wait()
+        else:
+            await release_external.wait()
+        return {"success": True, "provider": provider}
+
+    async def no_llm_workers():
+        return None
+
+    async def no_wait():
+        return None
+
+    async def no_prune(_item):
+        return None
+
+    monkeypatch.setattr(manager, "_execute_item", fake_execute)
+    monkeypatch.setattr(manager, "_ensure_llm_workers", no_llm_workers)
+    monkeypatch.setattr(manager, "_wait_after_illustration", no_wait)
+    monkeypatch.setattr(manager, "_deferred_prune", no_prune)
+
+    items = []
+    for index in range(4):
+        items.append(await manager.add_item(
+            "illustration",
+            f"dynamic-{index}",
+            {
+                "provider": "hybrid",
+                "raw_body": {"illustration_provider": "hybrid"},
+                "hybrid_prompt_formats": {
+                    "comfy": "v3",
+                    "chansub": "chansub",
+                },
+            },
+            priority=0,
+        ))
+
+    try:
+        await asyncio.wait_for(initial_lanes_started.wait(), timeout=1)
+        assert {provider for _, provider in starts[:2]} == {"comfy", "chansub"}
+
+        # 한 레인만 먼저 풀면 남은 두 작업도 먼저 빈 같은 레인이 연속으로 가져간다.
+        if fast_provider == "comfy":
+            release_gpu.set()
+        else:
+            release_external.set()
+        await asyncio.wait_for(all_items_started.wait(), timeout=1)
+        slow_provider = "chansub" if fast_provider == "comfy" else "comfy"
+        assert [provider for _, provider in starts].count(fast_provider) == 3
+        assert [provider for _, provider in starts].count(slow_provider) == 1
+
+        release_external.set()
+        release_gpu.set()
+        await asyncio.wait_for(
+            asyncio.gather(*(item.completion_future for item in items)),
+            timeout=1,
+        )
+        assert all(item.status == "completed" for item in items)
+    finally:
+        release_external.set()
+        release_gpu.set()
         tasks = [
             task
             for task in manager._external_worker_tasks.values()
