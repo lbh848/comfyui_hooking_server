@@ -486,4 +486,7 @@ def test_server_defaults_expose_independent_character_maker_routes():
     assert feedback["json_mode"] is True
     assert draft is not feedback
     assert server.DEFAULT_CONFIG["character_maker_rag_url"] == "http://127.0.0.1:3333"
-    assert server.DEFAULT_CONFIG["character_maker_rag_repo_path"] == ""
+    # 저장소 경로는 auto_complete/danbooru-tag-rag 고정값을 사용한다.
+    assert server.DEFAULT_CONFIG["character_maker_rag_repo_path"] == (
+        server._character_maker_rag_repo_dir()
+    )

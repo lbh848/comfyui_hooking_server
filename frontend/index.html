@@ -13361,12 +13361,12 @@
                                     <div class="cm-rag-settings-field">
                                         <label for="setting-character-maker-rag-repo-path">
                                             <span>danbooru-tag-rag 저장소 경로</span>
-                                            <span>최초 1회 지정 · 설정 저장 시 유지</span>
+                                            <span>auto_complete/danbooru-tag-rag 고정</span>
                                         </label>
                                         <input type="text"
                                                id="setting-character-maker-rag-repo-path"
-                                               placeholder="예: E:\tools\danbooru-tag-rag"
-                                               oninput="cmRagRepositoryChanged()">
+                                               readonly
+                                               placeholder="auto_complete/danbooru-tag-rag (고정)">
                                     </div>
 
                                     <div class="cm-rag-data-steps">
@@ -13435,7 +13435,7 @@
                                     <div class="cm-rag-data-action">
                                         <div id="setting-character-maker-rag-data-state"
                                              class="cm-rag-data-state">
-                                            저장소 경로 지정 후 auto_complete 자료 검색 · 최대 128MB
+                                            고정 저장소(auto_complete/danbooru-tag-rag) 사용 · auto_complete 자료 검색 · 최대 128MB
                                         </div>
                                         <button type="button" class="btn cm-rag-data-convert-btn"
                                                 id="setting-character-maker-rag-data-install-btn"
@@ -16634,10 +16634,8 @@
             );
             if (button && !cmRagDatasetBusy) button.disabled = !cmRagCanInstall();
             const state = document.getElementById('setting-character-maker-rag-data-state');
-            if (!cmRagRepositoryPath() && state) {
-                state.textContent =
-                    'danbooru-tag-rag 저장소 절대 경로를 먼저 지정하세요.';
-            } else if (
+            // 저장소 경로는 auto_complete/danbooru-tag-rag 로 고정되어 항상 존재한다.
+            if (
                 state
                 && (cmRagDatasetFile || cmRagServerDataset?.canonicalReady)
             ) {
@@ -17149,7 +17147,12 @@
             const cmRagUrlEl = document.getElementById('setting-character-maker-rag-url');
             if (cmRagUrlEl) cmRagUrlEl.value = currentConfig.character_maker_rag_url || 'http://127.0.0.1:3333';
             const cmRagRepoEl = document.getElementById('setting-character-maker-rag-repo-path');
-            if (cmRagRepoEl) cmRagRepoEl.value = currentConfig.character_maker_rag_repo_path || '';
+            if (cmRagRepoEl) {
+                // 저장소 경로는 서버가 auto_complete/danbooru-tag-rag 로 고정해 내려준다.
+                // 구형 config.json 등으로 빈 값이 온 경우에도 고정 경로를 표시한다(서버가 설치 시 강제).
+                cmRagRepoEl.value = currentConfig.character_maker_rag_repo_path
+                    || 'auto_complete/danbooru-tag-rag';
+            }
             const cmRagTopKEl = document.getElementById('setting-character-maker-rag-top-k');
             if (cmRagTopKEl) cmRagTopKEl.value = currentConfig.character_maker_rag_top_k ?? 5;
             const cmRagThresholdEl = document.getElementById('setting-character-maker-rag-threshold');

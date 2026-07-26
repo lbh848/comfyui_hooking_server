@@ -111,6 +111,17 @@ WORKFLOW_BACKUP_DIR = os.path.join(BASE_DIR, "workflow_backup")
 LOG_DIR = os.path.join(BASE_DIR, "logs")
 FRONTEND_DIR = os.path.join(BASE_DIR, "frontend")
 CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
+
+
+def _character_maker_rag_repo_dir() -> str:
+    """캐릭터 메이커 RAG 저장소 고정 경로를 현재 BASE_DIR 기준으로 반환한다.
+
+    auto_complete/ 는 .gitignore에 포함되어 커밋되지 않으므로 로컬 전용 경로다.
+    사용자 입력값 없이 항상 이 경로를 사용하며, 저장소 폴더 유무는 설치 시점에
+    validate_rag_repository() 로 검증한다. 테스트에서 BASE_DIR를 monkeypatch할 수
+    있도록 import 시점이 아닌 호출 시점에 BASE_DIR를 읽어 계산한다.
+    """
+    return os.path.join(BASE_DIR, "auto_complete", "danbooru-tag-rag")
 MODE_WORKFLOW_DIR = os.path.join(BASE_DIR, "mode_workflow")
 CURRENT_MODE_WORK_DIR = os.path.join(BASE_DIR, "current_mode_workflow")
 WORKFLOW_BACKUP_STATIC_DIR = os.path.join(BASE_DIR, "workflow_backup_static")
@@ -304,7 +315,7 @@ DEFAULT_CONFIG = {
     "embedding_model": "voyage-4-large",  # 임베딩 모델명
     "character_maker_rag_enabled": False,
     "character_maker_rag_url": "http://127.0.0.1:3333",
-    "character_maker_rag_repo_path": "",
+    "character_maker_rag_repo_path": _character_maker_rag_repo_dir(),
     "character_maker_rag_top_k": 5,
     "character_maker_rag_threshold": 0.0,
     "character_maker_rag_timeout_sec": 20.0,
@@ -9417,15 +9428,13 @@ async def handle_api_config(request: web.Request) -> web.Response:
                         )
                     body["character_maker_rag_url"] = rag_url
                 if "character_maker_rag_repo_path" in body:
-                    rag_repo_path = str(
-                        body.get("character_maker_rag_repo_path") or ""
-                    ).strip()
-                    if rag_repo_path:
-                        body["character_maker_rag_repo_path"] = (
-                            validate_rag_repository(rag_repo_path)["repository"]
-                        )
-                    else:
-                        body["character_maker_rag_repo_path"] = ""
+                    # 저장소 경로는 auto_complete/danbooru-tag-rag 고정.
+                    # 사용자 입력값을 무시하고 항상 고정 경로로 강제한다.
+                    # 저장소 폴더 유무는 이 시점이 아닌 설치 시점에 검증하여,
+                    # 저장소 미클론 상태에서 설정 저장 전체가 거부되는 일을 막는다.
+                    body["character_maker_rag_repo_path"] = (
+                        _character_maker_rag_repo_dir()
+                    )
                 if "character_maker_rag_top_k" in body:
                     rag_top_k = int(body.get("character_maker_rag_top_k"))
                     if not 1 <= rag_top_k <= 20:
@@ -13347,10 +13356,10 @@ async def handle_api_character_maker_rag_install(
             )
             raise CharacterMakerError("설치할 CSV 파일을 선택하세요.")
 
-        repository = (
-            requested_repository
-            or str(app_config.get("character_maker_rag_repo_path") or "").strip()
-        )
+        # 저장소 경로는 auto_complete/danbooru-tag-rag 고정.
+        # 요청이나 설정값을 무시하고 항상 고정 경로를 사용한다.
+        # 저장소 폴더가 없으면 validate_rag_repository()가 명확한 안내와 함께 거부한다.
+        repository = _character_maker_rag_repo_dir()
         repository_paths = validate_rag_repository(repository)
 
         import tempfile

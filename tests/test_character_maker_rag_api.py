@@ -64,7 +64,7 @@ async def test_rag_dataset_status_and_auto_complete_install(
         )
     )
     repository = _create_rag_repository(
-        tmp_path / "danbooru-tag-rag",
+        auto_complete / "danbooru-tag-rag",
         with_existing_data=True,
     )
     monkeypatch.setattr(server, "BASE_DIR", str(tmp_path))
@@ -165,7 +165,7 @@ async def test_rag_install_accepts_direct_upload(
         "long_hair,0,4000000,longhair\nblue_eyes,0,3000000,blue_eye\n",
         encoding="utf-8",
     )
-    repository = _create_rag_repository(tmp_path / "danbooru-tag-rag")
+    repository = _create_rag_repository(auto_complete / "danbooru-tag-rag")
     monkeypatch.setattr(server, "BASE_DIR", str(tmp_path))
 
     async def fake_builder(repository_arg, data_dir, index_path):
@@ -243,7 +243,7 @@ async def test_rag_install_restores_existing_files_when_builder_fails(
         _csv_bytes([["long hair", 0, 4800833, "긴 머리"]])
     )
     repository = _create_rag_repository(
-        tmp_path / "danbooru-tag-rag",
+        auto_complete / "danbooru-tag-rag",
         with_existing_data=True,
     )
     monkeypatch.setattr(server, "BASE_DIR", str(tmp_path))
