@@ -16401,6 +16401,11 @@
                         }
                         const groups = new Map();
                         for (const service of llmServiceCatalog) {
+                            // "Provider Manager" 그룹은 외부 프로젝트에서 복사해 온
+                            // OpenAI 호환 프리셋 묶음으로, UI 선택지에서는 숨긴다.
+                            // 백엔드 카탈로그/호출 경로는 유지되므로 이미 해당 서비스로
+                            // 저장된 기존 설정은 아래 레거시 옵션 분기가 "(기존 설정)"으로 표시해 동작한다.
+                            if (service.group === 'Provider Manager') continue;
                             const groupName = service.group || '기타';
                             if (!groups.has(groupName)) {
                                 const group = document.createElement('optgroup');
