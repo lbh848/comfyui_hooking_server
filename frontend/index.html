@@ -12331,7 +12331,7 @@
                         <button class="settings-tab-btn" onclick="switchSettingsTab('api_route')">외부 API 분기</button>
                         <button class="settings-tab-btn" onclick="switchSettingsTab('illustration')">삽화</button>
                         <button class="settings-tab-btn" onclick="switchSettingsTab('asset')">에셋</button>
-                        <button class="settings-tab-btn" onclick="switchSettingsTab('character_maker')">캐릭터 메이커</button>
+                        <button class="settings-tab-btn" onclick="switchSettingsTab('character_maker')">단부르 RAG</button>
                         <button class="settings-tab-btn" onclick="switchSettingsTab('lora')">로라</button>
                         <button class="settings-tab-btn" onclick="switchSettingsTab('queue')">큐</button>
                         <button class="settings-tab-btn" onclick="switchSettingsTab('debug')">디버그</button>
@@ -13333,11 +13333,11 @@
                                 <h3>Danbooru Tag RAG</h3>
                                 <p>
                                     실제 Danbooru 태그 후보를 검색해 캐릭터 메이커 LLM에 제공합니다.
-                                    사이드카 연결과 배포용 태그 자료 준비를 이 화면에서 함께 관리할 수 있습니다.
+                                    로컬 RAG 연결과 배포용 태그 자료 준비를 이 화면에서 함께 관리할 수 있습니다.
                                 </p>
                             </div>
                             <div class="cm-rag-settings-badges">
-                                <span class="cm-rag-settings-badge">로컬 사이드카 :3333</span>
+                                <span class="cm-rag-settings-badge">로컬 RAG :3333</span>
                                 <span class="cm-rag-settings-badge">저장소 자동 준비</span>
                             </div>
                         </section>
@@ -13356,7 +13356,7 @@
                                 <div class="cm-rag-settings-card-body">
                                     <div class="cm-rag-settings-toggle">
                                         <div>
-                                            <strong>새 세션에서 RAG 사용</strong>
+                                            <strong>캐릭터 maker에서 RAG 사용</strong>
                                             <small>캐릭터별 생성 설정에서 다시 끌 수 있습니다.</small>
                                         </div>
                                         <div class="cm-rag-settings-toggle-control">
@@ -13444,6 +13444,22 @@
                                     </div>
                                 </div>
                                 <div class="cm-rag-settings-card-body">
+                                    <div class="cm-rag-settings-toggle">
+                                        <div>
+                                            <strong>매니저 시작시 같이 시작</strong>
+                                            <small>자료가 설치된 경우에만 켤 수 있습니다. 매니저를 켤 때 로컬 RAG도 함께 실행합니다.</small>
+                                        </div>
+                                        <div class="cm-rag-settings-toggle-control">
+                                            <label class="toggle-switch">
+                                                <input type="checkbox" id="setting-character-maker-rag-autostart"
+                                                       onchange="updateCharacterMakerRagAutostartStatus(this.checked)"
+                                                       disabled>
+                                                <span class="toggle-slider"></span>
+                                            </label>
+                                            <span id="setting-character-maker-rag-autostart-status" class="toggle-status off">OFF</span>
+                                        </div>
+                                    </div>
+
                                     <div class="cm-rag-settings-field">
                                         <label for="setting-character-maker-rag-repo-path">
                                             <span>danbooru-tag-rag 저장소 경로</span>
@@ -13561,7 +13577,7 @@
                                 저장소가 없으면 고정 위치에 자동으로 받은 뒤, 기존 CSV와
                                 <code>data/lancedb_b</code>를 <code>요구사항/</code>에
                                 백업하고 교체합니다. 설치 후 위의 실행·끄기 버튼으로 로컬
-                                RAG 사이드카를 관리할 수 있습니다. 인덱스 구축과 최초 모델
+                                RAG를 관리할 수 있습니다. 인덱스 구축과 최초 모델
                                 준비에는 GPU에서도 시간이 걸릴 수 있습니다.
                                 이미지 피드백은 별도로 비전 모델이 필요합니다.
                                 <a href="https://github.com/joykst96/danbooru-tag-rag"
@@ -16645,6 +16661,19 @@
             status.className = 'toggle-status ' + (enabled ? 'on' : 'off');
         }
 
+        function updateCharacterMakerRagAutostartStatus(enabled) {
+            const status = document.getElementById('setting-character-maker-rag-autostart-status');
+            if (!status) return;
+            status.textContent = enabled ? 'ON' : 'OFF';
+            status.className = 'toggle-status ' + (enabled ? 'on' : 'off');
+        }
+
+        function cmApplyRagAutostartDisabledState(dataReady) {
+            const toggle = document.getElementById('setting-character-maker-rag-autostart');
+            if (!toggle) return;
+            toggle.disabled = !dataReady;
+        }
+
         let cmRagRuntimePollTimer = null;
         let cmRagRuntimeState = 'stopped';
         let cmRagRuntimeManaged = false;
@@ -16672,7 +16701,7 @@
                 running: `실행 중${data?.pid ? ` · PID ${data.pid}` : ''}`,
                 starting: '시작 중 · 모델을 불러오는 중입니다...',
                 external: '외부에서 실행 중 · 연결 가능',
-                error: `실행 실패 · ${data?.error || '사이드카 로그를 확인하세요.'}`,
+                error: `실행 실패 · ${data?.error || '로컬 RAG 로그를 확인하세요.'}`,
                 stopped: dataReady ? '중지됨 · 실행할 수 있습니다.' : '중지됨 · 먼저 변환 및 설치가 필요합니다.',
             };
             status.textContent = labels[state] || labels.stopped;
@@ -16701,6 +16730,7 @@
             if (installButton && !cmRagDatasetBusy) {
                 installButton.disabled = !cmRagCanInstall();
             }
+            cmApplyRagAutostartDisabledState(dataReady);
 
             const configuredUrl = (
                 document.getElementById('setting-character-maker-rag-url')?.value
@@ -16769,7 +16799,7 @@
                         showToast('로컬 Danbooru RAG가 준비되었습니다.', 'success');
                     } else if (data?.state === 'error') {
                         showToast(
-                            '로컬 RAG 실행 실패: ' + (data.error || '사이드카 로그를 확인하세요.'),
+                            '로컬 RAG 실행 실패: ' + (data.error || '로컬 RAG 로그를 확인하세요.'),
                             'error',
                         );
                     }
@@ -17474,6 +17504,10 @@
             const cmRagEnabledEl = document.getElementById('setting-character-maker-rag-enabled');
             if (cmRagEnabledEl) cmRagEnabledEl.checked = cmRagEnabled;
             updateCharacterMakerRagSettingStatus(cmRagEnabled);
+            const cmRagAutostart = !!currentConfig.character_maker_rag_autostart;
+            const cmRagAutostartEl = document.getElementById('setting-character-maker-rag-autostart');
+            if (cmRagAutostartEl) cmRagAutostartEl.checked = cmRagAutostart;
+            updateCharacterMakerRagAutostartStatus(cmRagAutostart);
             const cmRagUrlEl = document.getElementById('setting-character-maker-rag-url');
             if (cmRagUrlEl) cmRagUrlEl.value = currentConfig.character_maker_rag_url || 'http://127.0.0.1:3333';
             const cmRagRepoEl = document.getElementById('setting-character-maker-rag-repo-path');
@@ -18091,6 +18125,7 @@
                 anima_only_asset_workflow_source_path: 'ONLY ANIMA 에셋 생성 워크플로우',
                 asset_workflow_type: '에셋 워크플로우 타입',
                 character_maker_rag_enabled: '캐릭터 메이커 RAG 사용',
+                character_maker_rag_autostart: '캐릭터 메이커 RAG 자동 시작',
                 character_maker_rag_url: '캐릭터 메이커 RAG URL',
                 character_maker_rag_repo_path: '캐릭터 메이커 RAG 저장소 경로',
                 character_maker_rag_top_k: '캐릭터 메이커 RAG Top-K',
@@ -18366,6 +18401,7 @@
                 llm_custom_body3: (document.getElementById('setting-llm-custom-body3') || {}).value || '',
                 llm_routing: collectLlmRouting(),
                 character_maker_rag_enabled: !!document.getElementById('setting-character-maker-rag-enabled')?.checked,
+                character_maker_rag_autostart: !!document.getElementById('setting-character-maker-rag-autostart')?.checked,
                 character_maker_rag_url: document.getElementById('setting-character-maker-rag-url')?.value.trim() || 'http://127.0.0.1:3333',
                 character_maker_rag_repo_path: document.getElementById('setting-character-maker-rag-repo-path')?.value.trim() || '',
                 character_maker_rag_top_k: parseInt(document.getElementById('setting-character-maker-rag-top-k')?.value, 10) || 5,

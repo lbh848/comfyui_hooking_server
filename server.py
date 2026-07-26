@@ -320,6 +320,7 @@ DEFAULT_CONFIG = {
     "character_maker_rag_top_k": 5,
     "character_maker_rag_threshold": 0.0,
     "character_maker_rag_timeout_sec": 20.0,
+    "character_maker_rag_autostart": False,  # 매니저 시작 시 로컬 RAG 함께 시작
     "outfit_prompt_file": "",   # 복장정리프롬프트 파일명 (customprompt/)
     "restore_prompt_file": "",  # 워크플로우 복원 프롬프트 파일명 (customprompt/)
     "restore_mode_enabled": False,  # 워크플로우 복원 프롬프트 활성화 여부
@@ -9421,6 +9422,10 @@ async def handle_api_config(request: web.Request) -> web.Response:
                     body["character_maker_rag_enabled"] = bool(
                         body.get("character_maker_rag_enabled")
                     )
+                if "character_maker_rag_autostart" in body:
+                    body["character_maker_rag_autostart"] = bool(
+                        body.get("character_maker_rag_autostart")
+                    )
                 if "character_maker_rag_url" in body:
                     rag_url = str(body.get("character_maker_rag_url") or "").strip().rstrip("/")
                     if not re.fullmatch(r"https?://[^\s]+", rag_url):
@@ -13275,7 +13280,7 @@ async def _drain_character_maker_rag_output(
             "[CHARACTER_MAKER_RAG_RUNTIME] 사이드카 stdout 파이프 생성 실패: "
             f"pid={process.pid}"
         )
-        _character_maker_rag_process_error = "사이드카 로그 파이프를 만들지 못했습니다."
+        _character_maker_rag_process_error = "로컬 RAG 로그 파이프를 만들지 못했습니다."
         return
     try:
         while True:
@@ -13294,7 +13299,7 @@ async def _drain_character_maker_rag_output(
             _character_maker_rag_process_ready = False
             if not _character_maker_rag_process_error:
                 _character_maker_rag_process_error = (
-                    f"RAG 사이드카가 종료되었습니다(코드 {return_code})."
+                    f"로컬 RAG가 종료되었습니다(코드 {return_code})."
                 )
             print(
                 "[CHARACTER_MAKER_RAG_RUNTIME] 사이드카 프로세스 종료: "
@@ -13310,7 +13315,7 @@ async def _drain_character_maker_rag_output(
         )
         traceback.print_exc()
         _character_maker_rag_process_error = (
-            f"사이드카 로그 처리 실패: {type(exc).__name__}: {exc}"
+            f"로컬 RAG 로그 처리 실패: {type(exc).__name__}: {exc}"
         )
 
 
@@ -13325,7 +13330,7 @@ async def _monitor_character_maker_rag_ready(
         while asyncio.get_running_loop().time() < deadline:
             if process.returncode is not None:
                 _character_maker_rag_process_error = (
-                    f"RAG 사이드카가 종료되었습니다(코드 {process.returncode})."
+                    f"로컬 RAG가 종료되었습니다(코드 {process.returncode})."
                 )
                 print(
                     "[CHARACTER_MAKER_RAG_RUNTIME] 준비 전 사이드카 종료: "
@@ -13345,7 +13350,7 @@ async def _monitor_character_maker_rag_ready(
             last_error = probe_error
             await asyncio.sleep(1.0)
         _character_maker_rag_process_error = (
-            "RAG 사이드카가 300초 안에 준비되지 않았습니다. "
+            "로컬 RAG가 300초 안에 준비되지 않았습니다. "
             f"마지막 확인: {last_error}"
         )
         print(
@@ -13499,7 +13504,7 @@ async def _start_character_maker_rag_runtime() -> dict[str, Any]:
             )
             traceback.print_exc()
             raise CharacterMakerRagDataError(
-                f"RAG 사이드카를 실행하지 못했습니다: {exc}"
+                f"로컬 RAG를 실행하지 못했습니다: {exc}"
             ) from exc
 
         _character_maker_rag_process = process
@@ -13580,7 +13585,7 @@ async def _stop_character_maker_rag_runtime(
             )
             traceback.print_exc()
             raise CharacterMakerRagDataError(
-                f"RAG 사이드카를 끄지 못했습니다: {exc}"
+                f"로컬 RAG를 끄지 못했습니다: {exc}"
             ) from exc
         if _character_maker_rag_ready_task is not None:
             _character_maker_rag_ready_task.cancel()
@@ -18319,6 +18324,36 @@ async def on_startup(app):
     asyncio.create_task(_noti_refresh_loop())
     # 프런트엔드 자동 열기
     webbrowser.open(f"http://127.0.0.1:{PORT}/")
+
+    # 캐릭터 메이커 로컬 RAG 자동 시작(설정 켜짐 + 자료 설치되어 있을 때)
+    if app_config.get("character_maker_rag_autostart", False):
+        async def _autostart_character_maker_rag():
+            try:
+                repository_paths = validate_rag_repository(
+                    _character_maker_rag_repo_dir()
+                )
+                csv_ok = os.path.isfile(repository_paths["csv_path"])
+                index_path = repository_paths["index_path"]
+                try:
+                    index_ok = os.path.isdir(index_path) and any(os.scandir(index_path))
+                except OSError:
+                    index_ok = False
+                if not (csv_ok and index_ok):
+                    print(
+                        "[CHARACTER_MAKER_RAG_AUTOSTART] 자료가 설치되지 않아 "
+                        "자동 시작을 건너뜁니다."
+                    )
+                    return
+                print("[CHARACTER_MAKER_RAG_AUTOSTART] 로컬 RAG 자동 시작을 시도합니다.")
+                await _start_character_maker_rag_runtime()
+            except Exception as exc:
+                print(
+                    f"[CHARACTER_MAKER_RAG_AUTOSTART] 자동 시작 실패: "
+                    f"{type(exc).__name__}: {exc}"
+                )
+                traceback.print_exc()
+
+        asyncio.create_task(_autostart_character_maker_rag())
 
 
 app.on_startup.append(on_startup)
