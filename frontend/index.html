@@ -13371,6 +13371,10 @@
                         case 'notification_new':
                             handleNotiWsEvent(msg.data);
                             break;
+                        // 활성봇 변경(플러그인/프론트 양쪽에서 발생) — 삽화 백업 탭 동기화
+                        case 'bot_selected_changed':
+                            handleBotSelectedChanged(msg.data);
+                            break;
                     }
                 } catch (e) {
                     console.error('[Frontend WS] 메시지 처리 실패:', e);
@@ -14404,7 +14408,11 @@
 
             // 편하게 수정 버튼: V3(빌드본) 또는 V1(ILXL/UPSCALE)일 때 활성화
             const llmBtn = document.getElementById('modal-llm-edit-btn');
-            const provider = ((promptData.conversion_info || {}).provider || 'comfy');
+            const provider = (
+                (promptData.conversion_info || {}).prompt_provider
+                || (promptData.conversion_info || {}).provider
+                || 'comfy'
+            );
             const fmt = detectPromptFormat(positive, provider);
             const supported = !!fmt;
             llmBtn.disabled = !supported;
@@ -33395,6 +33403,39 @@
             updateWordReplacementsCount();
             loadIllustSettings();
             loadPositiveRules();
+        }
+
+        // 외부(플러그인 또는 다른 화면)에서 활성봇이 바뀐 경우 동기화.
+        // 사용자 조작이 아니므로 saveBotSelected() 역송을 하지 않는다(루프 방지).
+        function applyExternalBotSelection(newBot) {
+            botCurrentBot = String(newBot || '');
+            const botSelect = document.getElementById('bot-select');
+            if (botSelect) {
+                if (botData && Array.isArray(botData.bots)
+                        && !Array.from(botSelect.options).some(o => o.value === botCurrentBot)) {
+                    renderBotSelect();
+                }
+                botSelect.value = botCurrentBot;
+            }
+            applyBotSelectionUi();
+            loadIllustArtistPresets();
+            const pop = document.getElementById('active-bot-popover');
+            if (pop && pop.style.display === 'flex') renderBotFloatPopover();
+        }
+
+        // WS bot_selected_changed 이벤트 처리. 자기 POST의 echo는 무시한다.
+        function handleBotSelectedChanged(data) {
+            const newBot = String(data?.bot_selected || '');
+            if (newBot === botCurrentBot) return;  // 자기 변경 echo — 무시
+            // 봇 목록이 아직 로드되지 않았거나 새 봇이 목록에 없으면 다시 불러와서 반영
+            if (!botData || !Array.isArray(botData.bots)
+                    || (newBot && !botData.bots.some(b => b.name === newBot))) {
+                ensureBotDataLoaded()
+                    .then(() => applyExternalBotSelection(newBot))
+                    .catch(e => console.error('[BOT] 외부 봇 선택 동기화(재로드) 실패:', e));
+                return;
+            }
+            applyExternalBotSelection(newBot);
         }
 
         function selectBot(botName) {

@@ -58,6 +58,7 @@ def test_pending_hybrid_item_moves_to_claimed_queue_area():
     moved = manager.get_status()["items"][0]
     assert moved["execution_area"] == "external"
     assert moved["provider"] == "chansub"
+    assert item.params["raw_body"]["illustration_provider_mode"] == "hybrid"
     assert item.params["raw_body"]["illustration_prompt_format"] == "chansub"
 
 

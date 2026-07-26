@@ -693,6 +693,22 @@ async def _notify_llm_stream_event(event: dict):
     await notify_frontend("lighbd_llm_stream", event)
 
 
+async def notify_bot_selected_changed(selected: str) -> None:
+    """활성봇(bot_selected) 변경을 프론트엔드 삽화 백업 탭에 브로드캐스트한다.
+
+    플러그인(/api/illustration_context/bridge/bots)과 프론트(/api/config) 양쪽에서
+    활성봇을 바꿀 수 있어, 어느 쪽이 바꿔도 반대쪽 UI가 실시간 동기화되도록 한다.
+    """
+    try:
+        await notify_frontend(
+            "bot_selected_changed",
+            {"bot_selected": str(selected or "")},
+        )
+    except Exception as exc:
+        print(f"[BOT_SELECTED] WS 알림 실패: {exc}")
+        traceback.print_exc()
+
+
 llm_service.set_stream_notify_func(_notify_llm_stream_event)
 
 current_original_workflow = None   # 원본 워크플로우 (ComfyUI 드래그앤드롭용)
@@ -1340,6 +1356,8 @@ async def save_backup(
     postprocess_settings: dict = None,
     speak_text: str = "",
     provider: str = "comfy",
+    provider_mode: str = "",
+    prompt_provider: str = "",
     generation_params: dict = None,
     original_workflow_snapshot=_BACKUP_SNAPSHOT_UNSET,
     api_workflow_snapshot=_BACKUP_SNAPSHOT_UNSET,
@@ -1351,8 +1369,29 @@ async def save_backup(
     gen_method: 생성 방법 딱지 (수동 그리기 / 자동 복원 등). 일반 생성·재생성은 빈칸.
     postprocess_settings: 후처리(vn) 설정 스냅샷. dict이면 [SPEAK] 합성을 이미지에 적용.
     speak_text: 후처리에 쓸 [SPEAK] 원문 (postprocess_settings 있을 때만 의미).
+    provider: 실제 이미지를 생성한 공급자(comfy 또는 chansub).
+    provider_mode: 생성 요청의 공급자 모드(comfy/chansub/hybrid).
+    prompt_provider: 저장 프롬프트 문법을 만든 공급자(comfy 또는 chansub).
     *_snapshot: 이미지 생성과 백업이 겹칠 때 해당 이미지 생성 시점의 전역 메타데이터를 고정한다.
     illustration_multi_char: 2~3인 재생성용 정규화 레이아웃 스냅샷."""
+    provider = str(provider or "comfy").strip().lower()
+    if provider not in ("comfy", "chansub"):
+        print(f"[BACKUP] 알 수 없는 실제 공급자 {provider!r}, comfy 사용")
+        provider = "comfy"
+    provider_mode = str(provider_mode or provider).strip().lower()
+    if provider_mode not in ("comfy", "chansub", "hybrid"):
+        print(
+            f"[BACKUP] 알 수 없는 공급자 모드 {provider_mode!r}, "
+            f"실제 공급자 {provider!r} 사용"
+        )
+        provider_mode = provider
+    prompt_provider = str(prompt_provider or provider).strip().lower()
+    if prompt_provider not in ("comfy", "chansub"):
+        print(
+            f"[BACKUP] 알 수 없는 프롬프트 공급자 {prompt_provider!r}, "
+            f"실제 공급자 {provider!r} 사용"
+        )
+        prompt_provider = provider
     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     base_name = f"{ts}_{prompt_id[:8]}"
     try:
@@ -1501,7 +1540,9 @@ async def save_backup(
         info_to_save["bot_name"] = bot_name
     if gen_method:
         info_to_save["gen_method"] = gen_method
-    info_to_save["provider"] = provider or "comfy"
+    info_to_save["provider"] = provider
+    info_to_save["provider_mode"] = provider_mode
+    info_to_save["prompt_provider"] = prompt_provider
     if generation_params:
         info_to_save["generation_params"] = generation_params
     # 후처리 설정 스냅샷 + SPEAK 원문 저장 (재생성 시 동일하게 재적용하기 위함)
@@ -2561,6 +2602,16 @@ async def _finalize_deferred_illustration_prompt(prompt_id: str, speak_text: str
             postprocess_settings=postprocess_settings,
             speak_text=str(speak_text or ""),
             provider=str(state.get("provider") or "comfy"),
+            provider_mode=str(
+                state.get("provider_mode")
+                or state.get("provider")
+                or "comfy"
+            ),
+            prompt_provider=str(
+                state.get("prompt_provider")
+                or state.get("provider")
+                or "comfy"
+            ),
             generation_params=state.get("generation_params"),
             original_workflow_snapshot=state.get("original_workflow"),
             api_workflow_snapshot=state.get("api_workflow"),
@@ -2681,26 +2732,49 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
             runtime_snapshot.get("illustration_workflow_type")
             or app_config.get("illustration_workflow_type")
         )
+        requested_provider = str(
+            raw_body.get("illustration_provider") or ""
+        ).strip().lower()
         illustration_provider = str(
-            raw_body.get("illustration_provider")
+            requested_provider
             or runtime_snapshot.get("provider", "comfy")
             or "comfy"
         ).strip().lower()
+        illustration_provider_mode = str(
+            raw_body.get("illustration_provider_mode")
+            or (
+                requested_provider
+                if requested_provider in ("comfy", "chansub", "hybrid")
+                else runtime_snapshot.get("provider", illustration_provider)
+            )
+            or illustration_provider
+        ).strip().lower()
         if illustration_provider == "hybrid":
+            illustration_provider_mode = "hybrid"
             illustration_provider = workflow_profiles.illustration_provider_for_slot(
                 illustration_workflow_type,
                 raw_body.get("illustration_context_index") or 1,
             )
         if not bot_name:
             illustration_provider = "comfy"
+            illustration_provider_mode = "comfy"
+        if illustration_provider not in ("comfy", "chansub"):
+            print(
+                f"[ILLUST] 알 수 없는 공급자 "
+                f"{illustration_provider!r}, comfy로 폴백"
+            )
+            illustration_provider = "comfy"
+        if illustration_provider_mode not in ("comfy", "chansub", "hybrid"):
+            print(
+                f"[ILLUST] 알 수 없는 공급자 모드 "
+                f"{illustration_provider_mode!r}, 실제 공급자 사용"
+            )
+            illustration_provider_mode = illustration_provider
         # 사용자가 별도 포맷을 선택하지 않는다. 프로필과 실제 실행 공급자가 빌더를 결정한다.
         prompt_format = workflow_profiles.illustration_prompt_format(
             illustration_workflow_type,
             illustration_provider,
         )
-        if illustration_provider not in ("comfy", "chansub"):
-            print(f"[ILLUST] 알 수 없는 공급자 {illustration_provider!r}, comfy로 폴백")
-            illustration_provider = "comfy"
         chansub_workflow_type = str(
             runtime_snapshot.get("chansub_workflow_type", "anima") or "anima"
         ).strip().lower()
@@ -3127,6 +3201,8 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                 "word_rules": copy.deepcopy(word_rules_snapshot),
                 "gen_method": _gen_method,
                 "provider": illustration_provider,
+                "provider_mode": illustration_provider_mode,
+                "prompt_provider": illustration_provider,
                 "generation_params": copy.deepcopy(_generation_params),
                 "original_workflow": copy.deepcopy(current_original_workflow),
                 "api_workflow": copy.deepcopy(current_api_workflow),
@@ -3155,6 +3231,8 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
             postprocess_settings=_pp_settings,
             speak_text=_speak_text,
             provider=illustration_provider,
+            provider_mode=illustration_provider_mode,
+            prompt_provider=illustration_provider,
             generation_params=_generation_params,
             illustration_multi_char=(
                 queued_multi_char if multi_char_requested else None
@@ -4150,6 +4228,7 @@ async def handle_api_illustration_context_bridge_bots(
             app_config["bot_selected"] = selected
             save_config(app_config)
             print(f"[ILLUST_CONTEXT:BRIDGE] 활성 봇 변경: {selected or '(없음)'}")
+            await notify_bot_selected_changed(selected)
 
         selected = str(app_config.get("bot_selected") or "").strip()
         return web.json_response({
@@ -5348,6 +5427,23 @@ async def _enqueue_illustration_session_slot(
         operation_label,
         whole_session=whole_session,
     )
+    backup_name = str(descriptor.get("backup_name") or "").strip()
+    if backup_name and _backup_uses_hybrid_regeneration(backup_name):
+        asyncio.create_task(process_illustration_remote_regenerate(
+            prompt_id,
+            session_id,
+            slot,
+            backup_name,
+            operation_label,
+        ))
+        print(
+            f"[ILLUST_CONTEXT:REMOTE_REGEN] 하이브리드 백업 접수: "
+            f"session={session_id}, slot={slot}, backup={backup_name}, "
+            f"operation={operation_label}"
+        )
+        return web.json_response(
+            {"prompt_id": prompt_id, "number": len(prompts), "node_errors": {}}
+        )
     asyncio.create_task(queue_manager.add_item(
         "illustration",
         f"삽화 {operation_label} · slot {slot}",
@@ -5463,6 +5559,26 @@ async def handle_prompt(request: web.Request) -> web.Response:
                 "illustration_regenerate_session_id": session_id,
                 "illustration_regenerate_slot": slot,
             }
+            backup_name = str(descriptor.get("backup_name") or "").strip()
+            if backup_name and _backup_uses_hybrid_regeneration(backup_name):
+                asyncio.create_task(process_illustration_remote_regenerate(
+                    prompt_id,
+                    session_id,
+                    slot,
+                    backup_name,
+                    "재생성",
+                ))
+                print(
+                    f"[ILLUST_CONTEXT:REMOTE_REGEN] 하이브리드 슬롯 재생성 접수: "
+                    f"session={session_id}, slot={slot}, backup={backup_name}"
+                )
+                return web.json_response(
+                    {
+                        "prompt_id": prompt_id,
+                        "number": len(prompts),
+                        "node_errors": {},
+                    }
+                )
             asyncio.create_task(queue_manager.add_item(
                 "illustration",
                 f"삽화 재생성 · slot {slot}",
@@ -6093,6 +6209,284 @@ def _read_backup_generation(backup_name: str) -> tuple[str, dict]:
         return "comfy", {}
 
 
+def _read_backup_provider_mode(
+    backup_name: str,
+    actual_provider: str = "",
+) -> str:
+    """백업이 comfy/chansub 단독인지 hybrid에서 생성됐는지 반환한다.
+
+    provider_mode 도입 전 백업은 실제 공급자 단독으로 간주한다. 현재 설정을 보고
+    추측하지 않으므로 기존 단독 백업에 하이브리드 폴백이 잘못 적용되지 않는다.
+    """
+    fallback = str(actual_provider or "comfy").strip().lower()
+    if fallback not in ("comfy", "chansub"):
+        print(
+            f"[BACKUP] provider_mode 폴백 공급자 오류: "
+            f"backup={backup_name}, provider={fallback!r}; comfy 사용"
+        )
+        fallback = "comfy"
+    info_path = os.path.join(WORKFLOW_BACKUP_DIR, f"{backup_name}_info.json")
+    if not os.path.isfile(info_path):
+        print(
+            f"[BACKUP] 공급자 모드 메타 없음, 단독 모드 사용: "
+            f"backup={backup_name}, mode={fallback}"
+        )
+        return fallback
+    try:
+        with open(info_path, "r", encoding="utf-8") as f:
+            info = json.load(f)
+        if not isinstance(info, dict):
+            print(
+                f"[BACKUP] 공급자 모드 info 형식 오류, 단독 모드 사용: "
+                f"backup={backup_name}, type={type(info).__name__}, mode={fallback}"
+            )
+            return fallback
+        mode = str(info.get("provider_mode") or fallback).strip().lower()
+        if mode not in ("comfy", "chansub", "hybrid"):
+            print(
+                f"[BACKUP] 알 수 없는 공급자 모드, 단독 모드 사용: "
+                f"backup={backup_name}, mode={mode!r}, fallback={fallback}"
+            )
+            return fallback
+        return mode
+    except Exception as e:
+        print(
+            f"[BACKUP] 공급자 모드 읽기 실패, 단독 모드 사용: "
+            f"backup={backup_name}, mode={fallback}, error={e}"
+        )
+        traceback.print_exc()
+        return fallback
+
+
+def _read_backup_prompt_provider(
+    backup_name: str,
+    actual_provider: str = "",
+) -> str:
+    """저장 프롬프트 문법의 공급자를 반환한다.
+
+    폴백 결과는 실제 생성 공급자와 프롬프트 문법이 다를 수 있다. 구버전 백업은
+    두 값이 같았으므로 실제 공급자를 기본값으로 사용한다.
+    """
+    fallback = str(actual_provider or "comfy").strip().lower()
+    if fallback not in ("comfy", "chansub"):
+        print(
+            f"[BACKUP] prompt_provider 폴백 공급자 오류: "
+            f"backup={backup_name}, provider={fallback!r}; comfy 사용"
+        )
+        fallback = "comfy"
+    info_path = os.path.join(WORKFLOW_BACKUP_DIR, f"{backup_name}_info.json")
+    if not os.path.isfile(info_path):
+        print(
+            f"[BACKUP] 프롬프트 공급자 메타 없음, 실제 공급자 사용: "
+            f"backup={backup_name}, provider={fallback}"
+        )
+        return fallback
+    try:
+        with open(info_path, "r", encoding="utf-8") as f:
+            info = json.load(f)
+        if not isinstance(info, dict):
+            print(
+                f"[BACKUP] 프롬프트 공급자 info 형식 오류, 실제 공급자 사용: "
+                f"backup={backup_name}, type={type(info).__name__}, "
+                f"provider={fallback}"
+            )
+            return fallback
+        prompt_provider = str(
+            info.get("prompt_provider") or fallback
+        ).strip().lower()
+        if prompt_provider not in ("comfy", "chansub"):
+            print(
+                f"[BACKUP] 알 수 없는 프롬프트 공급자, 실제 공급자 사용: "
+                f"backup={backup_name}, prompt_provider={prompt_provider!r}, "
+                f"provider={fallback}"
+            )
+            return fallback
+        return prompt_provider
+    except Exception as e:
+        print(
+            f"[BACKUP] 프롬프트 공급자 읽기 실패, 실제 공급자 사용: "
+            f"backup={backup_name}, provider={fallback}, error={e}"
+        )
+        traceback.print_exc()
+        return fallback
+
+
+def _backup_uses_hybrid_regeneration(backup_name: str) -> bool:
+    """명시적으로 hybrid 출처가 저장된 백업인지 확인한다."""
+    if (
+        not backup_name
+        or ".." in backup_name
+        or "/" in backup_name
+        or "\\" in backup_name
+    ):
+        print(
+            f"[REGEN:FALLBACK] 하이브리드 백업 확인 실패 - 잘못된 이름: "
+            f"{backup_name!r}"
+        )
+        return False
+    provider, _generation_params = _read_backup_generation(backup_name)
+    return _read_backup_provider_mode(backup_name, provider) == "hybrid"
+
+
+def _regeneration_params_for_provider(
+    source_provider: str,
+    attempt_provider: str,
+    source_params: dict,
+) -> dict:
+    """재생성 시도 공급자에 맞는 최소 생성 파라미터를 반환한다."""
+    params = copy.deepcopy(source_params) if isinstance(source_params, dict) else {}
+    if attempt_provider == source_provider:
+        return params
+    if attempt_provider == "chansub":
+        width = params.get("width")
+        height = params.get("height")
+        try:
+            width = max(64, int(width or 756))
+            height = max(64, int(height or 756))
+        except (TypeError, ValueError) as e:
+            print(
+                f"[REGEN:FALLBACK] 챈섭 크기 변환 실패, 756x756 사용: "
+                f"width={width!r}, height={height!r}, error={e}"
+            )
+            width = 756
+            height = 756
+        return {
+            "width": width,
+            "height": height,
+            "model": chansub_service.CHANSUB_MODEL,
+        }
+    return {}
+
+
+async def _run_regeneration_attempts(
+    *,
+    backup_name: str,
+    positive: str,
+    negative: str,
+    bot_name: str,
+    postprocess_settings: dict | None,
+    speak_text: str,
+    source_provider: str,
+    provider_mode: str,
+    prompt_provider: str,
+    generation_params: dict,
+    illustration_multi_char: dict | None,
+    label: str,
+) -> tuple[dict, object]:
+    """공급자 레인을 점유하지 않는 위치에서 재생성 시도를 순차 조정한다.
+
+    하이브리드 백업만 실제 생성 공급자를 먼저 사용하고 실패 시 반대 공급자를
+    새 큐 항목으로 등록한다. 각 시도는 해당 GPU/외부 워커가 실행하므로 서로의
+    레인을 기다리며 교착하거나 로컬 GPU 직렬화를 우회하지 않는다.
+    """
+    source_provider = str(source_provider or "comfy").strip().lower()
+    if source_provider not in ("comfy", "chansub"):
+        print(
+            f"[REGEN:FALLBACK] 원본 공급자 오류: "
+            f"backup={backup_name}, provider={source_provider!r}"
+        )
+        raise ValueError(f"지원하지 않는 원본 공급자입니다: {source_provider!r}")
+    provider_mode = str(provider_mode or source_provider).strip().lower()
+    if provider_mode not in ("comfy", "chansub", "hybrid"):
+        print(
+            f"[REGEN:FALLBACK] 공급자 모드 오류, 단독 모드 사용: "
+            f"backup={backup_name}, mode={provider_mode!r}, "
+            f"provider={source_provider}"
+        )
+        provider_mode = source_provider
+    prompt_provider = str(prompt_provider or source_provider).strip().lower()
+    if prompt_provider not in ("comfy", "chansub"):
+        print(
+            f"[REGEN:FALLBACK] 프롬프트 공급자 오류, 원본 공급자 사용: "
+            f"backup={backup_name}, prompt_provider={prompt_provider!r}, "
+            f"provider={source_provider}"
+        )
+        prompt_provider = source_provider
+
+    providers = [source_provider]
+    if provider_mode == "hybrid":
+        providers.append("chansub" if source_provider == "comfy" else "comfy")
+
+    failures: list[tuple[str, str]] = []
+    for attempt_index, provider in enumerate(providers, start=1):
+        is_fallback = attempt_index > 1
+        attempt_label = (
+            f"{label} 폴백({provider}): {backup_name}"
+            if is_fallback
+            else f"{label}: {backup_name}"
+        )
+        attempt_params = _regeneration_params_for_provider(
+            source_provider,
+            provider,
+            generation_params,
+        )
+        print(
+            f"[REGEN:FALLBACK] 시도 시작: backup={backup_name}, "
+            f"attempt={attempt_index}/{len(providers)}, provider={provider}, "
+            f"mode={provider_mode}, fallback={is_fallback}"
+        )
+        try:
+            queue_item = await queue_manager.add_item(
+                "regenerate",
+                attempt_label,
+                {
+                    "backup_name": backup_name,
+                    "positive": positive,
+                    "negative": negative,
+                    "bot_name": bot_name or "",
+                    "postprocess_settings": postprocess_settings,
+                    "speak_text": speak_text or "",
+                    "provider": provider,
+                    "provider_mode": provider_mode,
+                    "prompt_provider": prompt_provider,
+                    "generation_params": attempt_params,
+                    "illustration_multi_char": illustration_multi_char,
+                },
+                priority=0,
+            )
+            result = await queue_item.completion_future
+            if not isinstance(result, dict):
+                print(
+                    f"[REGEN:FALLBACK] 큐 결과 형식 오류: "
+                    f"backup={backup_name}, provider={provider}, "
+                    f"type={type(result).__name__}"
+                )
+                raise RuntimeError("재생성 큐 결과 형식이 올바르지 않습니다")
+            result = dict(result)
+            result["provider"] = provider
+            result["provider_mode"] = provider_mode
+            result["prompt_provider"] = prompt_provider
+            result["fallback_used"] = is_fallback
+            print(
+                f"[REGEN:FALLBACK] 시도 성공: backup={backup_name}, "
+                f"provider={provider}, fallback={is_fallback}"
+            )
+            return result, queue_item
+        except asyncio.CancelledError:
+            print(
+                f"[REGEN:FALLBACK] 시도 취소: backup={backup_name}, "
+                f"provider={provider}"
+            )
+            raise
+        except Exception as e:
+            failures.append((provider, str(e)))
+            print(
+                f"[REGEN:FALLBACK] 시도 실패: backup={backup_name}, "
+                f"attempt={attempt_index}/{len(providers)}, "
+                f"provider={provider}, error={e}"
+            )
+            traceback.print_exc()
+
+    detail = "; ".join(
+        f"{provider}: {error}" for provider, error in failures
+    ) or "알 수 없는 오류"
+    print(
+        f"[REGEN:FALLBACK] 모든 시도 실패: "
+        f"backup={backup_name}, failures={detail}"
+    )
+    raise RuntimeError(f"재생성 공급자 시도가 모두 실패했습니다 ({detail})")
+
+
 def _read_backup_multi_char_context(backup_name: str, source_positive: str) -> dict | None:
     """백업의 다중 캐릭터 레이아웃을 읽고 프롬프트 지문과 대조한다.
 
@@ -6302,8 +6696,13 @@ def _llm_edit_identity_capability(backup_name: str) -> dict:
         return result
 
     provider, _generation_params = _read_backup_generation(backup_name)
-    fmt = llm_prompt_edit.detect_format(source_positive, provider=provider) or ""
+    prompt_provider = _read_backup_prompt_provider(backup_name, provider)
+    fmt = llm_prompt_edit.detect_format(
+        source_positive,
+        provider=prompt_provider,
+    ) or ""
     result["provider"] = provider
+    result["prompt_provider"] = prompt_provider
     result["format"] = fmt
     if provider != "comfy" or fmt != "v3":
         result["reason"] = (
@@ -7276,7 +7675,12 @@ async def handle_api_postprocess_match_image(request: web.Request) -> web.Respon
 
 
 
-async def handle_api_regenerate(request: web.Request) -> web.Response:
+async def handle_api_regenerate(
+    request: web.Request | None,
+    *,
+    _body: dict | None = None,
+    _return_queue_result: bool = False,
+) -> web.Response | dict:
     """백업의 프롬프트 + 현재 워크플로우로 이미지를 재생성해 반환한다.
 
     생성 자체는 통합 큐(regenerate 타입, priority=0)를 경유해 일반 삽화 생성과
@@ -7285,7 +7689,7 @@ async def handle_api_regenerate(request: web.Request) -> web.Response:
     base64는 더 이상 반환하지 않는다.)
     """
     try:
-        body = await request.json()
+        body = copy.deepcopy(_body) if _body is not None else await request.json()
         backup_name = body.get("name", "")
 
         if ".." in backup_name or "/" in backup_name or "\\" in backup_name:
@@ -7318,6 +7722,14 @@ async def handle_api_regenerate(request: web.Request) -> web.Response:
         # 원본 백업의 후처리 설정 스냅샷 + SPEAK 원문 상속 (재생성에 동일 적용)
         src_pp_settings, src_speak_text = _read_backup_postprocess(backup_name)
         src_provider, src_generation_params = _read_backup_generation(backup_name)
+        src_provider_mode = _read_backup_provider_mode(
+            backup_name,
+            src_provider,
+        )
+        src_prompt_provider = _read_backup_prompt_provider(
+            backup_name,
+            src_provider,
+        )
         try:
             src_multi_char = _read_backup_multi_char_context(
                 backup_name,
@@ -7342,26 +7754,36 @@ async def handle_api_regenerate(request: web.Request) -> web.Response:
         print(f"[REGEN] 재생성 큐 등록: {backup_name}")
         print(f"[REGEN] 긍정: {positive}")
 
-        item = await queue_manager.add_item(
-            "regenerate",
-            f"재생성: {backup_name}",
-            {
-                "backup_name": backup_name,
-                "positive": positive,
-                "negative": negative,
-                "bot_name": src_bot_name or "",
-                "postprocess_settings": src_pp_settings,
-                "speak_text": src_speak_text,
-                "provider": src_provider,
-                "generation_params": src_generation_params,
-                "illustration_multi_char": src_multi_char,
-            },
-            priority=0,
+        result, item = await _run_regeneration_attempts(
+            backup_name=backup_name,
+            positive=positive,
+            negative=negative,
+            bot_name=src_bot_name or "",
+            postprocess_settings=src_pp_settings,
+            speak_text=src_speak_text,
+            source_provider=src_provider,
+            provider_mode=src_provider_mode,
+            prompt_provider=src_prompt_provider,
+            generation_params=src_generation_params,
+            illustration_multi_char=src_multi_char,
+            label="재생성",
         )
-        # 큐 처리 완료를 동기 대기 — 프론트엔드의 await 기반 UX(스피너/토스트) 보존
-        result = await item.completion_future
         elapsed_time = result.get("generation_time") if isinstance(result, dict) else None
-        print(f"[REGEN] 완료: backup={backup_name} ({elapsed_time:.1f}s)" if elapsed_time else f"[REGEN] 완료: {backup_name}")
+        used_provider = str(result.get("provider") or src_provider)
+        fallback_used = bool(result.get("fallback_used"))
+        print(
+            f"[REGEN] 완료: backup={backup_name}"
+            + (f" ({elapsed_time:.1f}s)" if elapsed_time else "")
+            + f" (provider={used_provider}, fallback={fallback_used})"
+        )
+        if _return_queue_result:
+            internal_result = dict(result)
+            internal_result["image_bytes"] = getattr(
+                item,
+                "generated_image_bytes",
+                None,
+            )
+            return internal_result
         return web.json_response({"success": True, "message": "재생성 완료"})
 
     except Exception as e:
@@ -7586,6 +8008,14 @@ async def handle_api_reschedule_with_modified_prompt(
         # 원본 백업의 후처리 설정 스냅샷 + SPEAK 원문 상속 (재생성에 동일 적용)
         src_pp_settings, src_speak_text = _read_backup_postprocess(backup_name)
         src_provider, src_generation_params = _read_backup_generation(backup_name)
+        src_provider_mode = _read_backup_provider_mode(
+            backup_name,
+            src_provider,
+        )
+        src_prompt_provider = _read_backup_prompt_provider(
+            backup_name,
+            src_provider,
+        )
         try:
             src_multi_char = _read_backup_multi_char_context(
                 backup_name,
@@ -7596,7 +8026,7 @@ async def handle_api_reschedule_with_modified_prompt(
                     raise ValueError("identity_edit 요청이 object가 아닙니다")
                 if src_provider != "comfy" or llm_prompt_edit.detect_format(
                     source_positive,
-                    provider=src_provider,
+                    provider=src_prompt_provider,
                 ) != "v3":
                     raise ValueError("캐릭터·FACE·LoRA 교체는 V3 Comfy 백업만 지원합니다")
                 source_blocks = llm_prompt_edit.parse_blocks(source_positive)
@@ -7657,26 +8087,29 @@ async def handle_api_reschedule_with_modified_prompt(
         print(f"[RESCHEDULE_MOD] Modified positive: {effective_positive}")
         print(f"[RESCHEDULE_MOD] Modified negative: {effective_negative}")
 
-        item = await queue_manager.add_item(
-            "regenerate",
-            f"수정재생성: {backup_name}",
-            {
-                "backup_name": backup_name,
-                "positive": effective_positive,
-                "negative": effective_negative,
-                "bot_name": src_bot_name or "",
-                "postprocess_settings": src_pp_settings,
-                "speak_text": src_speak_text,
-                "provider": src_provider,
-                "generation_params": src_generation_params,
-                "illustration_multi_char": src_multi_char,
-            },
-            priority=0,
+        result, item = await _run_regeneration_attempts(
+            backup_name=backup_name,
+            positive=effective_positive,
+            negative=effective_negative,
+            bot_name=src_bot_name or "",
+            postprocess_settings=src_pp_settings,
+            speak_text=src_speak_text,
+            source_provider=src_provider,
+            provider_mode=src_provider_mode,
+            prompt_provider=src_prompt_provider,
+            generation_params=src_generation_params,
+            illustration_multi_char=src_multi_char,
+            label="수정재생성",
         )
-        # 큐 처리 완료 동기 대기 — 프론트엔드의 await 기반 UX 보존
-        result = await item.completion_future
         elapsed_time = result.get("generation_time") if isinstance(result, dict) else None
-        print(f"[RESCHEDULE_MOD] 완료: backup={backup_name}" + (f" ({elapsed_time:.1f}s)" if elapsed_time else "") + (f" (bot={src_bot_name})" if src_bot_name else ""))
+        used_provider = str(result.get("provider") or src_provider)
+        fallback_used = bool(result.get("fallback_used"))
+        print(
+            f"[RESCHEDULE_MOD] 완료: backup={backup_name}"
+            + (f" ({elapsed_time:.1f}s)" if elapsed_time else "")
+            + (f" (bot={src_bot_name})" if src_bot_name else "")
+            + f" (provider={used_provider}, fallback={fallback_used})"
+        )
         if _return_queue_result:
             internal_result = dict(result) if isinstance(result, dict) else {}
             internal_result["image_bytes"] = getattr(item, "generated_image_bytes", None)
@@ -7726,8 +8159,17 @@ async def handle_api_llm_edit_prompt(
             return web.json_response({"error": "수정 방향을 입력해주세요."}, status=400)
 
         # 1) 포맷 자동 감지 — 챈섭은 프롬프트 키워드가 아닌 백업 메타데이터로 감지한다.
-        backup_provider, _backup_generation_params = _read_backup_generation(backup_name)
-        fmt = llm_prompt_edit.detect_format(positive, provider=backup_provider)
+        backup_provider, _backup_generation_params = _read_backup_generation(
+            backup_name
+        )
+        backup_prompt_provider = _read_backup_prompt_provider(
+            backup_name,
+            backup_provider,
+        )
+        fmt = llm_prompt_edit.detect_format(
+            positive,
+            provider=backup_prompt_provider,
+        )
         if not fmt:
             print(f"[LLM_EDIT] format mismatch (지원 불가) name={backup_name}")
             return web.json_response({
@@ -7736,7 +8178,10 @@ async def handle_api_llm_edit_prompt(
                          "V1(ILXL/UPSCALE) 또는 챈섭 Comfy 프롬프트에서만 동작합니다."
             }, status=400)
 
-        print(f"[LLM_EDIT] 감지된 포맷: {fmt} name={backup_name}")
+        print(
+            f"[LLM_EDIT] 감지된 포맷: {fmt} name={backup_name} "
+            f"provider={backup_provider}, prompt_provider={backup_prompt_provider}"
+        )
         identity_capability = None
         if requested_characters is not None:
             if fmt != "v3" or backup_provider != "comfy":
@@ -8243,6 +8688,97 @@ def _internal_json_response_payload(response: web.Response, label: str) -> dict:
     if response.status >= 400 or payload.get("error"):
         raise RuntimeError(str(payload.get("error") or f"{label} HTTP {response.status}"))
     return payload
+
+
+async def process_illustration_remote_regenerate(
+    prompt_id: str,
+    session_id: str,
+    slot: int,
+    backup_name: str,
+    operation_label: str = "재생성",
+) -> dict:
+    """원격 슬롯의 하이브리드 백업을 공통 재생성 폴백 경로로 처리한다."""
+    try:
+        regenerate_result = await handle_api_regenerate(
+            None,
+            _body={"name": backup_name},
+            _return_queue_result=True,
+        )
+        if isinstance(regenerate_result, web.Response):
+            _internal_json_response_payload(
+                regenerate_result,
+                f"원격 {operation_label}",
+            )
+            raise RuntimeError(f"원격 {operation_label} 결과 이미지가 없습니다")
+        if not isinstance(regenerate_result, dict):
+            raise RuntimeError(
+                f"원격 {operation_label} 결과 형식이 올바르지 않습니다"
+            )
+        image_bytes = regenerate_result.get("image_bytes")
+        if not image_bytes:
+            raise RuntimeError(f"원격 {operation_label} 결과 이미지가 비어 있습니다")
+        new_backup_name = str(
+            regenerate_result.get("backup_name") or backup_name
+        )
+
+        if not illustration_context_pipeline.update_session_image_by_slot(
+            session_id,
+            slot,
+            image_bytes,
+            item_updates={"backup_name": new_backup_name},
+        ):
+            raise RuntimeError(
+                f"원격 {operation_label} 이미지를 세션 슬롯에 반영하지 못했습니다"
+            )
+
+        prompt_entry = prompts.get(prompt_id)
+        if not isinstance(prompt_entry, dict):
+            raise RuntimeError(f"원격 {operation_label} prompt를 찾지 못했습니다")
+        save_node = prompt_entry.get("save_node_id") or "9"
+        filename = f"ComfyUI_{prompt_id[:8]}.png"
+        prompt_entry["image_bytes"] = image_bytes
+        prompt_entry["backup_name"] = new_backup_name
+        await complete_prompt_from_reschedule(prompt_id, save_node, filename)
+        print(
+            f"[ILLUST_CONTEXT:REMOTE_REGEN] 완료: "
+            f"session={session_id}, slot={slot}, source={backup_name}, "
+            f"result={new_backup_name}, provider={regenerate_result.get('provider')}, "
+            f"fallback={bool(regenerate_result.get('fallback_used'))}"
+        )
+        return {
+            "success": True,
+            "prompt_id": prompt_id,
+            "session_id": session_id,
+            "slot": slot,
+            "backup_name": new_backup_name,
+            "provider": regenerate_result.get("provider"),
+            "fallback_used": bool(regenerate_result.get("fallback_used")),
+        }
+    except Exception as exc:
+        print(
+            f"[ILLUST_CONTEXT:REMOTE_REGEN] 실패: "
+            f"prompt={prompt_id}, session={session_id}, slot={slot}, "
+            f"backup={backup_name}, error={exc}"
+        )
+        traceback.print_exc()
+        illustration_context_pipeline.set_session_regenerate_error(
+            session_id,
+            slot,
+            str(exc),
+        )
+        prompt_entry = prompts.get(prompt_id)
+        if isinstance(prompt_entry, dict):
+            prompt_entry["status"] = "completed"
+            prompt_entry["outputs"] = {"images": []}
+            prompt_entry["image_bytes"] = None
+        return {
+            "success": False,
+            "prompt_id": prompt_id,
+            "session_id": session_id,
+            "slot": slot,
+            "backup_name": backup_name,
+            "error": str(exc),
+        }
 
 
 async def process_illustration_easy_edit_queue_item(item) -> dict:
@@ -9144,6 +9680,11 @@ async def handle_api_config(request: web.Request) -> web.Response:
                 except Exception as e:
                     print(f"[CONFIG] 챈섭 외부 워커풀 갱신 실패: {e}")
                     traceback.print_exc()
+
+            # 활성봇(bot_selected) 변경 시 프론트엔드 삽화 백업 탭에 브로드캐스트
+            # (플러그인과 프론트 양쪽에서 봇을 바꿀 수 있어 동기화 필요)
+            if "bot_selected" in body:
+                await notify_bot_selected_changed(app_config.get("bot_selected") or "")
 
             print(f"[CONFIG] 설정 업데이트: {list(body.keys())}")
             return web.json_response({"success": True, "config": app_config})

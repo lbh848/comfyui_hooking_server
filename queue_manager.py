@@ -317,6 +317,7 @@ class QueueManager:
         ).strip().lower()
         params["provider"] = provider
         params["hybrid_assigned_provider"] = provider
+        raw_body["illustration_provider_mode"] = "hybrid"
         raw_body["illustration_provider"] = provider
         raw_body["illustration_prompt_format"] = prompt_format
         print(
@@ -1039,6 +1040,12 @@ class QueueManager:
         postprocess_settings = params.get("postprocess_settings")
         speak_text = params.get("speak_text", "") or ""
         provider = (params.get("provider", "comfy") or "comfy").strip().lower()
+        provider_mode = (
+            params.get("provider_mode", provider) or provider
+        ).strip().lower()
+        prompt_provider = (
+            params.get("prompt_provider", provider) or provider
+        ).strip().lower()
         generation_params = params.get("generation_params") or {}
         multi_char_context = params.get("illustration_multi_char")
 
@@ -1126,6 +1133,8 @@ class QueueManager:
                 postprocess_settings=postprocess_settings,
                 speak_text=speak_text,
                 provider=provider,
+                provider_mode=provider_mode,
+                prompt_provider=prompt_provider,
                 generation_params=generation_params,
                 illustration_multi_char=multi_char_context,
             )
@@ -1143,6 +1152,9 @@ class QueueManager:
             "generation_time": elapsed_time,
             "backup_name": saved_backup_name or backup_name,
             "source_backup_name": backup_name,
+            "provider": provider,
+            "provider_mode": provider_mode,
+            "prompt_provider": prompt_provider,
         }
 
     async def _handle_asset_generation(self, item: QueueItem) -> dict:
