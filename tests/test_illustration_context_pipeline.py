@@ -763,6 +763,43 @@ scenes[1]:
     assert pipeline.session_item_by_slot("cache_test_1234", 0)["scene"] == "classroom, sunset"
 
 
+def test_prompt_batch_accepts_65_items_and_rejects_66():
+    session_id = "risu_" + ("d" * 64)
+    items = [
+        {
+            "slot": slot,
+            "positive": f"scene {slot}",
+            "negative": "low quality",
+        }
+        for slot in [-1, *range(64)]
+    ]
+
+    accepted = pipeline.parse_prompt_batch_request(
+        pipeline.PROMPT_BATCH_PREFIX
+        + "\n"
+        + json.dumps({"session_id": session_id, "items": items})
+    )
+
+    assert pipeline.MAX_ILLUSTRATION_SLOT_COUNT == 65
+    assert accepted is not None
+    assert len(accepted["items"]) == 65
+    assert [item["slot"] for item in accepted["items"]] == [-1, *range(64)]
+
+    rejected = pipeline.parse_prompt_batch_request(
+        pipeline.PROMPT_BATCH_PREFIX
+        + "\n"
+        + json.dumps({
+            "session_id": session_id,
+            "items": [*items, {
+                "slot": 64,
+                "positive": "scene 64",
+                "negative": "low quality",
+            }],
+        })
+    )
+    assert rejected is None
+
+
 def test_short_lookup_key_returns_only_ready_slots_and_survives_metadata_reload(
     tmp_path, monkeypatch
 ):
@@ -792,6 +829,45 @@ def test_short_lookup_key_returns_only_ready_slots_and_survives_metadata_reload(
     finally:
         pipeline._SESSIONS.pop(session_id, None)
         pipeline._LOOKUP_KEYS.pop(lookup_key, None)
+
+
+def test_short_lookup_key_accepts_65_slots_and_rejects_66(tmp_path, monkeypatch):
+    monkeypatch.setattr(pipeline, "SESSION_DIR", str(tmp_path / "sessions"))
+    accepted_key = "e" * 24
+    accepted_id = "risu_" + accepted_key + ("1" * 40)
+    rejected_key = "f" * 24
+    rejected_id = "risu_" + rejected_key + ("2" * 40)
+    accepted_items = [
+        {"kind": "keyvis" if slot == -1 else "scene", "slot": slot}
+        for slot in [-1, *range(64)]
+    ]
+    rejected_items = [
+        *accepted_items,
+        {"kind": "scene", "slot": 64},
+    ]
+
+    try:
+        pipeline.create_session(accepted_id, "context")
+        pipeline.set_session_result(
+            accepted_id,
+            accepted_items,
+            [b"image"] * len(accepted_items),
+        )
+        assert pipeline.session_slots_by_lookup_key(accepted_key) == [-1, *range(64)]
+
+        pipeline.create_session(rejected_id, "context")
+        pipeline.set_session_result(
+            rejected_id,
+            rejected_items,
+            [b"image"] * len(rejected_items),
+        )
+        with pytest.raises(ValueError, match=r"count=66, max=65"):
+            pipeline.session_slots_by_lookup_key(rejected_key)
+    finally:
+        pipeline._SESSIONS.pop(accepted_id, None)
+        pipeline._SESSIONS.pop(rejected_id, None)
+        pipeline._LOOKUP_KEYS.pop(accepted_key, None)
+        pipeline._LOOKUP_KEYS.pop(rejected_key, None)
 
 
 def test_partial_result_returns_only_successful_slots_and_tracks_failures(

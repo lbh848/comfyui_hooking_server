@@ -33,6 +33,7 @@ CONTEXT_PREFIX = "__LB_ILLUST_CONTEXT_V1__"
 RESULT_PREFIX = "__LB_ILLUST_RESULT_V1__"
 REGENERATE_PREFIX = "__LB_ILLUST_REGENERATE_V1__"
 PROMPT_BATCH_PREFIX = "__LB_ILLUST_PROMPT_BATCH_V1__"
+MAX_ILLUSTRATION_SLOT_COUNT = 65
 
 PROMPT_FILES = {
     "call1_backtranslate": "backtranslate.txt",
@@ -547,11 +548,15 @@ def parse_prompt_batch_request(positive: str) -> dict | None:
         return None
 
     raw_items = payload.get("items")
-    if not isinstance(raw_items, list) or not 1 <= len(raw_items) <= 16:
+    if (
+        not isinstance(raw_items, list)
+        or not 1 <= len(raw_items) <= MAX_ILLUSTRATION_SLOT_COUNT
+    ):
         count = len(raw_items) if isinstance(raw_items, list) else -1
         print(
             f"[ILLUST_PROMPT_BATCH] 잘못된 items 개수: "
-            f"session={session_id}, count={count}"
+            f"session={session_id}, count={count}, "
+            f"max={MAX_ILLUSTRATION_SLOT_COUNT}"
         )
         return None
 
@@ -1080,8 +1085,11 @@ def session_slots_by_lookup_key(lookup_key: str) -> list[int]:
         seen.add(slot)
         slots.append(slot)
 
-    if not 1 <= len(slots) <= 16:
-        raise ValueError(f"invalid illustration slot count: key={key}, count={len(slots)}")
+    if not 1 <= len(slots) <= MAX_ILLUSTRATION_SLOT_COUNT:
+        raise ValueError(
+            f"invalid illustration slot count: key={key}, count={len(slots)}, "
+            f"max={MAX_ILLUSTRATION_SLOT_COUNT}"
+        )
     return slots
 
 
