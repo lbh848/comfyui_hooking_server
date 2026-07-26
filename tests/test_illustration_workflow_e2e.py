@@ -380,3 +380,21 @@ def test_frontend_shows_all_profiles_and_disables_manual_prompt_format():
     assert "group.classList.toggle('disabled', disabled);" in source
     assert "if (!isV1) updateChansubAdvancedOptions();" in source
     assert 'data-illust-capability="ipadapter"' in source
+
+
+def test_frontend_shows_all_local_illustration_workflows_as_two_column_cards():
+    source = (Path(__file__).resolve().parents[1] / "frontend" / "index.html").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'class="asset-workflow-grid" id="setting-illustration-workflow-grid"' in source
+    for ui_key in ("v1", "v3", "v3-anima"):
+        assert f'id="setting-illustration-{ui_key}-workflow-card"' in source
+        assert f'id="setting-illustration-{ui_key}-workflow-filename"' in source
+        assert f'id="setting-illustration-{ui_key}-workflow-source-path"' in source
+        assert f'id="setting-illustration-{ui_key}-workflow-status"' in source
+    assert "const active = profile === localProfile;" in source
+    assert "card?.classList.toggle('active', active);" in source
+    assert "input.disabled = !active;" in source
+    assert "isHybrid ? '하이브리드 로컬' : '현재 사용'" in source
+    assert 'id="setting-workflow-filename"' not in source

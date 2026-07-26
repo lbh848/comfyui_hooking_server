@@ -10513,18 +10513,66 @@
                     </div>
                     <div class="setting-row">
                         <div class="setting-label">
-                            <div class="title">선택된 로컬 워크플로우 파일명</div>
-                            <div class="desc" id="setting-illustration-workflow-desc">삽화 생성에 사용할 JSON 파일 (베이스 경로 공유)</div>
+                            <div class="title">로컬 삽화 워크플로우 파일</div>
+                            <div class="desc" id="setting-illustration-workflow-desc">세 파일을 모두 표시하며 실제 실행 대상만 활성화됩니다.</div>
                         </div>
                         <span id="setting-illustration-provider-status" class="toggle-status off">ComfyUI</span>
                     </div>
-                    <div class="form-group" style="margin-top: -8px;">
-                        <div class="autocomplete-wrapper">
-                            <input type="text" id="setting-workflow-filename" placeholder="선택한 로컬 워크플로우 파일"
-                                   oninput="onWorkflowFilenameInput(this.value)" onfocus="onWorkflowFilenameInput(this.value)">
-                            <div class="autocomplete-list" id="workflow-autocomplete"></div>
-                        </div>
-                        <div class="hint">챈섭 단독 선택 시 로컬 파일은 사용하지 않아 회색 처리됩니다.</div>
+                    <div class="asset-workflow-grid" id="setting-illustration-workflow-grid" style="margin: -8px 0 14px;">
+                        <section class="asset-workflow-card inactive" id="setting-illustration-v1-workflow-card">
+                            <div class="asset-workflow-card-head">
+                                <div>
+                                    <div class="asset-workflow-card-title">V1 계열 삽화 워크플로우</div>
+                                    <div class="asset-workflow-card-desc">배포_삽화_v1_1.json</div>
+                                </div>
+                                <span class="asset-workflow-status" id="setting-illustration-v1-workflow-status">비활성</span>
+                            </div>
+                            <div class="form-group">
+                                <div class="autocomplete-wrapper">
+                                    <input type="text" id="setting-illustration-v1-workflow-filename" placeholder="배포_삽화_v1_1.json"
+                                           oninput="onIllustrationWorkflowFilenameInput('v1', this.value)" onfocus="onIllustrationWorkflowFilenameInput('v1', this.value)" disabled>
+                                    <div class="autocomplete-list" id="illustration-v1-workflow-autocomplete" data-illustration-profile="v1"></div>
+                                </div>
+                                <div class="hint">공통설정 탭의 베이스 경로를 공유합니다</div>
+                            </div>
+                            <input type="hidden" id="setting-illustration-v1-workflow-source-path">
+                        </section>
+                        <section class="asset-workflow-card inactive" id="setting-illustration-v3-workflow-card">
+                            <div class="asset-workflow-card-head">
+                                <div>
+                                    <div class="asset-workflow-card-title">V3 계열 삽화 워크플로우</div>
+                                    <div class="asset-workflow-card-desc">배포_삽화_v3_4.json · ANIMA+ILXL</div>
+                                </div>
+                                <span class="asset-workflow-status" id="setting-illustration-v3-workflow-status">비활성</span>
+                            </div>
+                            <div class="form-group">
+                                <div class="autocomplete-wrapper">
+                                    <input type="text" id="setting-illustration-v3-workflow-filename" placeholder="배포_삽화_v3_4.json"
+                                           oninput="onIllustrationWorkflowFilenameInput('v3', this.value)" onfocus="onIllustrationWorkflowFilenameInput('v3', this.value)" disabled>
+                                    <div class="autocomplete-list" id="illustration-v3-workflow-autocomplete" data-illustration-profile="v3"></div>
+                                </div>
+                                <div class="hint">공통설정 탭의 베이스 경로를 공유합니다</div>
+                            </div>
+                            <input type="hidden" id="setting-illustration-v3-workflow-source-path">
+                        </section>
+                        <section class="asset-workflow-card inactive" id="setting-illustration-v3-anima-workflow-card">
+                            <div class="asset-workflow-card-head">
+                                <div>
+                                    <div class="asset-workflow-card-title">V3 계열 삽화 워크플로우 (ONLY ANIMA)</div>
+                                    <div class="asset-workflow-card-desc">배포_삽화(ONLY_ANIMA)_v3_4.json</div>
+                                </div>
+                                <span class="asset-workflow-status" id="setting-illustration-v3-anima-workflow-status">비활성</span>
+                            </div>
+                            <div class="form-group">
+                                <div class="autocomplete-wrapper">
+                                    <input type="text" id="setting-illustration-v3-anima-workflow-filename" placeholder="배포_삽화(ONLY_ANIMA)_v3_4.json"
+                                           oninput="onIllustrationWorkflowFilenameInput('v3_anima', this.value)" onfocus="onIllustrationWorkflowFilenameInput('v3_anima', this.value)" disabled>
+                                    <div class="autocomplete-list" id="illustration-v3-anima-workflow-autocomplete" data-illustration-profile="v3_anima"></div>
+                                </div>
+                                <div class="hint">하이브리드 선택 시 로컬 실행에 사용됩니다</div>
+                            </div>
+                            <input type="hidden" id="setting-illustration-v3-anima-workflow-source-path">
+                        </section>
                     </div>
                     <div class="setting-row">
                         <div class="setting-label">
@@ -13766,8 +13814,14 @@
                 || currentConfig.comfy_workflow_source_path || '';
             const pathParts = splitWorkflowPath(workflowPath);
             document.getElementById('setting-workflow-base-dir').value = pathParts.baseDir;
-            document.getElementById('setting-workflow-filename').value = pathParts.filename;
             document.getElementById('setting-workflow-path').value = workflowPath;
+            for (const profile of ['v1', 'v3', 'v3_anima']) {
+                const profilePath = illustrationPaths[profile]
+                    || (profile === initialLocalProfile ? workflowPath : '');
+                const profileParts = splitWorkflowPath(profilePath);
+                document.getElementById(`setting-illustration-${profile.replace('_', '-')}-workflow-filename`).value = profileParts.filename;
+                document.getElementById(`setting-illustration-${profile.replace('_', '-')}-workflow-source-path`).value = profilePath;
+            }
             applyIllustrationProviderConfig(currentConfig);
 
             // 삽화 유틸리티 워크플로우 경로를 파일명으로 분리
@@ -14037,10 +14091,9 @@
 
         // 워크플로우 경로 업데이트
         function updateWorkflowPath() {
-            const baseDir = document.getElementById('setting-workflow-base-dir').value;
-            const filename = document.getElementById('setting-workflow-filename').value;
-            const fullPath = combineWorkflowPath(baseDir, filename);
-            document.getElementById('setting-workflow-path').value = fullPath;
+            for (const profile of ['v1', 'v3', 'v3_anima']) {
+                updateIllustrationWorkflowPath(profile);
+            }
             // 베이스 경로 변경 시 에셋/복장/로라/유틸리티 경로도 함께 갱신
             updateUtilityWorkflowPath();
             updateOutfitWorkflowPath();
@@ -14658,7 +14711,7 @@
         }
 
         async function saveSettings() {
-            persistVisibleIllustrationWorkflowPath();
+            persistIllustrationWorkflowPaths();
             for (const slot of [1, 2, 3]) {
                 const suffix = llmSlotSuffix(slot);
                 const textarea = document.getElementById(`setting-llm-custom-body${suffix}`);
@@ -14849,27 +14902,82 @@
             return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
         }
 
-        async function onWorkflowFilenameInput(value) {
-            const autocompleteList = document.getElementById('workflow-autocomplete');
-            updateWorkflowPath();
-            clearTimeout(autocompleteTimeout);
-            autocompleteTimeout = setTimeout(async () => {
+        const illustrationWorkflowAutocompleteTimeouts = {};
+
+        function illustrationWorkflowUiKey(profile) {
+            return String(profile || '').replace('_', '-');
+        }
+
+        function updateIllustrationWorkflowPath(profile) {
+            const normalized = ['v1', 'v3', 'v3_anima'].includes(profile) ? profile : null;
+            if (!normalized) {
+                console.error('[ILLUST] 로컬 워크플로우 경로 갱신 프로필 오류:', profile);
+                return;
+            }
+            const uiKey = illustrationWorkflowUiKey(normalized);
+            const baseDir = document.getElementById('setting-workflow-base-dir').value;
+            const filename = document.getElementById(`setting-illustration-${uiKey}-workflow-filename`).value;
+            const fullPath = combineWorkflowPath(baseDir, filename);
+            document.getElementById(`setting-illustration-${uiKey}-workflow-source-path`).value = fullPath;
+            if (currentConfig) {
+                const paths = currentConfig.illustration_workflow_source_paths
+                    || (currentConfig.illustration_workflow_source_paths = {});
+                paths[normalized] = fullPath;
+            }
+            const selectedType = normalizeIllustrationWorkflowType(
+                document.getElementById('setting-illustration-workflow-type')?.value
+                    || currentConfig?.illustration_workflow_type
+            );
+            if (illustrationLocalProfile(selectedType) === normalized) {
+                document.getElementById('setting-workflow-path').value = fullPath;
+            }
+        }
+
+        async function onIllustrationWorkflowFilenameInput(profile, value) {
+            const normalized = ['v1', 'v3', 'v3_anima'].includes(profile) ? profile : null;
+            if (!normalized) {
+                console.error('[ILLUST] 워크플로우 자동완성 프로필 오류:', profile);
+                return;
+            }
+            const uiKey = illustrationWorkflowUiKey(normalized);
+            const autocompleteList = document.getElementById(`illustration-${uiKey}-workflow-autocomplete`);
+            updateIllustrationWorkflowPath(normalized);
+            clearTimeout(illustrationWorkflowAutocompleteTimeouts[normalized]);
+            illustrationWorkflowAutocompleteTimeouts[normalized] = setTimeout(async () => {
                 try {
                     const baseDir = document.getElementById('setting-workflow-base-dir').value;
                     const params = new URLSearchParams({ search: value, base_dir: baseDir });
                     const data = await fetchJSON(`/api/workflow_files?${params}`);
                     renderAutocompleteItems(data.files, autocompleteList);
                 } catch (e) {
-                    console.error('워크플로우 파일 검색 실패:', e);
+                    console.error(`[ILLUST] ${normalized} 워크플로우 파일 검색 실패:`, e);
                     autocompleteList.classList.remove('visible');
                 }
             }, 300);
         }
 
-        function selectWorkflowFile(fullPath, filename) {
-            document.getElementById('setting-workflow-filename').value = filename;
-            document.getElementById('setting-workflow-path').value = fullPath;
-            document.getElementById('workflow-autocomplete').classList.remove('visible');
+        function selectIllustrationWorkflowFile(profile, fullPath, filename) {
+            const normalized = ['v1', 'v3', 'v3_anima'].includes(profile) ? profile : null;
+            if (!normalized) {
+                console.error('[ILLUST] 워크플로우 파일 선택 프로필 오류:', profile);
+                return;
+            }
+            const uiKey = illustrationWorkflowUiKey(normalized);
+            document.getElementById(`setting-illustration-${uiKey}-workflow-filename`).value = filename;
+            document.getElementById(`setting-illustration-${uiKey}-workflow-source-path`).value = fullPath;
+            if (currentConfig) {
+                const paths = currentConfig.illustration_workflow_source_paths
+                    || (currentConfig.illustration_workflow_source_paths = {});
+                paths[normalized] = fullPath;
+            }
+            const selectedType = normalizeIllustrationWorkflowType(
+                document.getElementById('setting-illustration-workflow-type')?.value
+                    || currentConfig?.illustration_workflow_type
+            );
+            if (illustrationLocalProfile(selectedType) === normalized) {
+                document.getElementById('setting-workflow-path').value = fullPath;
+            }
+            document.getElementById(`illustration-${uiKey}-workflow-autocomplete`).classList.remove('visible');
         }
 
         async function onUtilityFilenameInput(value) {
@@ -14904,8 +15012,8 @@
                 const list = item.closest('.autocomplete-list');
                 if (path && filename && list) {
                     // 어떤 자동완성인지 id로 분기
-                    if (list.id === 'workflow-autocomplete') {
-                        selectWorkflowFile(path, filename);
+                    if (list.dataset.illustrationProfile) {
+                        selectIllustrationWorkflowFile(list.dataset.illustrationProfile, path, filename);
                     } else if (list.id === 'utility-autocomplete') {
                         selectUtilityFile(path, filename);
                     } else if (list.id === 'outfit-workflow-autocomplete') {
@@ -17022,7 +17130,7 @@
         }
 
         const ILLUSTRATION_WORKFLOW_TYPES = new Set(['v1', 'v3', 'v3_anima', 'chansub', 'chansub_v3_anima']);
-        let _editingIllustrationWorkflowProfile = null;
+        const ILLUSTRATION_LOCAL_PROFILES = ['v1', 'v3', 'v3_anima'];
 
         function normalizeIllustrationWorkflowType(value) {
             const normalized = String(value || '').trim().toLowerCase();
@@ -17058,10 +17166,23 @@
             return { anima: true, sdxl: false, ipadapter: false, localAdvanced: false, chansub: true, v1: false };
         }
 
-        function persistVisibleIllustrationWorkflowPath() {
-            if (!_editingIllustrationWorkflowProfile || !currentConfig) return;
-            const paths = currentConfig.illustration_workflow_source_paths || (currentConfig.illustration_workflow_source_paths = {});
-            paths[_editingIllustrationWorkflowProfile] = document.getElementById('setting-workflow-path')?.value || '';
+        function persistIllustrationWorkflowPaths() {
+            if (!currentConfig) return;
+            const paths = currentConfig.illustration_workflow_source_paths
+                || (currentConfig.illustration_workflow_source_paths = {});
+            for (const profile of ILLUSTRATION_LOCAL_PROFILES) {
+                const uiKey = illustrationWorkflowUiKey(profile);
+                const pathInput = document.getElementById(`setting-illustration-${uiKey}-workflow-source-path`);
+                if (pathInput) paths[profile] = pathInput.value || '';
+            }
+            const selectedType = normalizeIllustrationWorkflowType(
+                document.getElementById('setting-illustration-workflow-type')?.value
+                    || currentConfig.illustration_workflow_type
+            );
+            const localProfile = illustrationLocalProfile(selectedType);
+            document.getElementById('setting-workflow-path').value = localProfile
+                ? (paths[localProfile] || '')
+                : '';
         }
 
         function applyIllustrationProviderConfig(config = {}) {
@@ -17086,12 +17207,11 @@
             if (workflowType === 'chansub_v3_anima') chansubType = 'anima';
             chansubSelect.value = chansubType;
             select.value = workflowType;
-            _editingIllustrationWorkflowProfile = null;
-            onIllustrationWorkflowTypeChange(workflowType);
+            onIllustrationWorkflowTypeChange(workflowType, { persist: false });
         }
 
-        function onIllustrationWorkflowTypeChange(type) {
-            persistVisibleIllustrationWorkflowPath();
+        function onIllustrationWorkflowTypeChange(type, options = {}) {
+            if (options.persist !== false) persistIllustrationWorkflowPaths();
             const normalized = normalizeIllustrationWorkflowType(type);
             const select = document.getElementById('setting-illustration-workflow-type');
             if (select) select.value = normalized;
@@ -17100,22 +17220,27 @@
             const localProfile = illustrationLocalProfile(normalized);
             const paths = currentConfig?.illustration_workflow_source_paths || {};
             const localPath = localProfile ? (paths[localProfile] || '') : '';
-            const parts = splitWorkflowPath(localPath);
-            const wfInput = document.getElementById('setting-workflow-filename');
             const hiddenPath = document.getElementById('setting-workflow-path');
-            if (wfInput) {
-                wfInput.value = parts.filename;
-                wfInput.disabled = !localProfile;
-                wfInput.style.opacity = localProfile ? '1' : '0.38';
-                wfInput.style.filter = localProfile ? 'none' : 'grayscale(1)';
-            }
             if (hiddenPath) hiddenPath.value = localPath;
-            _editingIllustrationWorkflowProfile = localProfile;
-            const wfAutocomplete = document.getElementById('workflow-autocomplete');
-            if (wfAutocomplete) wfAutocomplete.style.display = localProfile ? '' : 'none';
 
             const isChansub = normalized === 'chansub';
             const isHybrid = normalized === 'chansub_v3_anima';
+            for (const profile of ILLUSTRATION_LOCAL_PROFILES) {
+                const uiKey = illustrationWorkflowUiKey(profile);
+                const active = profile === localProfile;
+                const card = document.getElementById(`setting-illustration-${uiKey}-workflow-card`);
+                const input = document.getElementById(`setting-illustration-${uiKey}-workflow-filename`);
+                const cardStatus = document.getElementById(`setting-illustration-${uiKey}-workflow-status`);
+                card?.classList.toggle('active', active);
+                card?.classList.toggle('inactive', !active);
+                if (input) input.disabled = !active;
+                if (cardStatus) cardStatus.textContent = active
+                    ? (isHybrid ? '하이브리드 로컬' : '현재 사용')
+                    : '비활성';
+                if (!active) {
+                    document.getElementById(`illustration-${uiKey}-workflow-autocomplete`)?.classList.remove('visible');
+                }
+            }
             const chansubSelect = document.getElementById('setting-chansub-workflow-type');
             if (chansubSelect) {
                 if (isHybrid) chansubSelect.value = 'anima';
