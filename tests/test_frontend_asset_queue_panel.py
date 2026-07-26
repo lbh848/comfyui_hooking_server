@@ -16,8 +16,20 @@ def test_asset_queue_panel_starts_expanded():
     source = _frontend_source()
 
     assert "let assetQueueExpanded = true;" in source
+    assert source.count("assetQueueExpanded = true;") == 1
     assert 'class="asset-queue-panel visible"' in source
     assert 'aria-expanded="true"' in source
+    assert 'id="asset-queue-wall-tab"' in source
+    assert 'aria-hidden="true" tabindex="-1"' in source
+
+
+def test_asset_queue_panel_keeps_user_state_when_queue_becomes_empty():
+    source = _frontend_source()
+    render_function = _function_source(
+        source, "renderAssetQueueUI()", "removeQueueItemBackend(id)"
+    )
+
+    assert "if (assetQueue.length === 0) assetQueueExpanded = true;" not in render_function
 
 
 def test_asset_queue_panel_has_dedicated_collapse_control():
@@ -26,10 +38,24 @@ def test_asset_queue_panel_has_dedicated_collapse_control():
     assert 'id="queue-panel-collapse-btn"' in source
     assert 'onclick="collapseAssetQueuePanel()"' in source
     collapse_function = _function_source(
-        source, "collapseAssetQueuePanel()", "toggleAssetQueuePanel()"
+        source, "collapseAssetQueuePanel()", "expandAssetQueuePanel()"
     )
     assert "setAssetQueuePanelExpanded(false);" in collapse_function
-    assert "bar.focus();" in collapse_function
+    assert "wallTab.focus();" in collapse_function
+
+
+def test_asset_queue_panel_has_left_wall_expand_tab():
+    source = _frontend_source()
+
+    assert 'class="asset-queue-wall-tab"' in source
+    assert 'onclick="expandAssetQueuePanel()"' in source
+    assert '.asset-queue-container.collapsed .asset-queue-wall-tab' in source
+    assert '.asset-queue-container.collapsed .asset-queue-bar' in source
+    expand_function = _function_source(
+        source, "expandAssetQueuePanel()", "toggleAssetQueuePanel()"
+    )
+    assert "setAssetQueuePanelExpanded(true);" in expand_function
+    assert "collapseBtn.focus();" in expand_function
 
 
 def test_asset_queue_panel_toggle_updates_visual_and_accessibility_state():
@@ -44,4 +70,8 @@ def test_asset_queue_panel_toggle_updates_visual_and_accessibility_state():
     assert "bar.setAttribute('aria-expanded', 'false');" in state_function
     assert "panel.inert = false;" in state_function
     assert "panel.inert = true;" in state_function
+    assert "container.classList.add('collapsed');" in state_function
+    assert "container.classList.remove('collapsed');" in state_function
+    assert "wallTab.tabIndex = 0;" in state_function
+    assert "wallTab.tabIndex = -1;" in state_function
     assert "console.error('[QUEUE] setAssetQueuePanelExpanded" in state_function

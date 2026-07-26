@@ -4635,7 +4635,7 @@
         .asset-queue-container {
             position: fixed;
             bottom: 18px;
-            left: 18px;
+            left: 0;
             z-index: 9000;
             display: flex;
             flex-direction: column;
@@ -4662,11 +4662,12 @@
             box-sizing: border-box;
             background: color-mix(in srgb, var(--surface) 94%, #111827);
             border: 1px solid color-mix(in srgb, var(--border) 78%, var(--accent));
-            border-radius: 12px;
+            border-left: 0;
+            border-radius: 0 12px 12px 0;
             padding: 9px 11px 9px 13px;
             cursor: pointer;
             box-shadow: 0 10px 30px rgba(0,0,0,0.42), 0 1px 0 rgba(255,255,255,0.04) inset;
-            transition: border-color 0.2s, box-shadow 0.2s, transform 0.2s;
+            transition: border-color 0.2s, box-shadow 0.2s, transform 0.24s ease, opacity 0.18s ease;
             user-select: none;
         }
         .asset-queue-bar:hover {
@@ -4675,7 +4676,8 @@
             transform: translateY(-1px);
         }
         .asset-queue-bar:focus-visible,
-        .queue-panel-collapse-btn:focus-visible {
+        .queue-panel-collapse-btn:focus-visible,
+        .asset-queue-wall-tab:focus-visible {
             outline: 2px solid var(--accent);
             outline-offset: 2px;
         }
@@ -4768,7 +4770,8 @@
             position: relative;
             background: color-mix(in srgb, var(--surface) 96%, #111827);
             border: 1px solid color-mix(in srgb, var(--border) 78%, var(--accent));
-            border-radius: 14px;
+            border-left: 0;
+            border-radius: 0 14px 14px 0;
             width: 100%;
             max-height: min(480px, 58vh);
             box-sizing: border-box;
@@ -4778,7 +4781,7 @@
             margin-bottom: 8px;
             overflow: hidden;
             transform-origin: bottom left;
-            transition: opacity 0.2s ease, transform 0.2s ease;
+            transition: opacity 0.18s ease, transform 0.24s ease;
         }
         .asset-queue-panel::before {
             content: '';
@@ -4856,6 +4859,74 @@
             color: var(--text);
             border-color: color-mix(in srgb, var(--accent) 60%, var(--border));
             background: var(--surface3);
+        }
+        /* 접힌 상태에서 좌측 벽에 남는 큐 손잡이 */
+        .asset-queue-wall-tab {
+            position: absolute;
+            left: 0;
+            bottom: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 5px;
+            width: 42px;
+            min-height: 92px;
+            padding: 10px 5px;
+            box-sizing: border-box;
+            border: 1px solid color-mix(in srgb, var(--border) 72%, var(--accent));
+            border-left: 0;
+            border-radius: 0 11px 11px 0;
+            background: color-mix(in srgb, var(--surface) 95%, #111827);
+            color: var(--text);
+            box-shadow: 8px 10px 26px rgba(0,0,0,0.42), 0 1px 0 rgba(255,255,255,0.05) inset;
+            cursor: pointer;
+            opacity: 0;
+            visibility: hidden;
+            pointer-events: none;
+            transform: translateX(-100%);
+            transition: opacity 0.18s ease, transform 0.22s ease, visibility 0s linear 0.22s, border-color 0.15s, background 0.15s;
+        }
+        .asset-queue-wall-tab:hover {
+            border-color: color-mix(in srgb, var(--accent) 68%, var(--border));
+            background: color-mix(in srgb, var(--surface2) 92%, var(--accent));
+        }
+        .queue-wall-tab-label {
+            font-size: 0.8rem;
+            font-weight: 800;
+            line-height: 1;
+        }
+        .queue-wall-tab-count {
+            display: grid;
+            place-items: center;
+            min-width: 22px;
+            height: 22px;
+            padding: 0 4px;
+            box-sizing: border-box;
+            border-radius: 999px;
+            background: color-mix(in srgb, var(--accent) 20%, var(--surface2));
+            color: color-mix(in srgb, var(--accent) 68%, white);
+            font-size: 0.68rem;
+            font-weight: 800;
+        }
+        .queue-wall-tab-arrow {
+            color: var(--text2);
+            font-size: 1.05rem;
+            font-weight: 800;
+            line-height: 0.8;
+        }
+        .asset-queue-container.collapsed .asset-queue-panel,
+        .asset-queue-container.collapsed .asset-queue-bar {
+            opacity: 0;
+            transform: translateX(calc(-100% - 16px));
+            pointer-events: none;
+        }
+        .asset-queue-container.collapsed .asset-queue-wall-tab {
+            opacity: 1;
+            visibility: visible;
+            pointer-events: auto;
+            transform: translateX(0);
+            transition-delay: 0.1s, 0.1s, 0s, 0s, 0s;
         }
         .asset-queue-panel-body {
             overflow-y: auto;
@@ -4961,9 +5032,9 @@
         }
         @media (max-width: 520px) {
             .asset-queue-container {
-                left: 10px;
+                left: 0;
                 bottom: 10px;
-                width: calc(100vw - 20px);
+                width: calc(100vw - 10px);
                 max-width: none;
             }
             .asset-queue-panel { max-height: 55vh; }
@@ -7828,6 +7899,12 @@
             <button class="queue-stop-btn" id="queue-bar-stop-btn" onclick="event.stopPropagation(); stopAssetQueue();" onkeydown="event.stopPropagation();">중단</button>
             <div class="queue-expand-icon" id="queue-bar-expand-icon" aria-hidden="true">⌄</div>
         </div>
+        <!-- 접으면 좌측 벽에 남는 펼치기 탭 -->
+        <button type="button" class="asset-queue-wall-tab" id="asset-queue-wall-tab" aria-controls="asset-queue-panel" aria-expanded="true" aria-hidden="true" tabindex="-1" onclick="expandAssetQueuePanel()" title="작업 큐 펼치기">
+            <span class="queue-wall-tab-label">큐</span>
+            <span class="queue-wall-tab-count" id="queue-wall-tab-count">0</span>
+            <span class="queue-wall-tab-arrow" aria-hidden="true">›</span>
+        </button>
     </div>
 
     <!-- 이미지 크롭 모달 -->
@@ -25800,7 +25877,7 @@
         let assetQueueCounter = 0;
         let assetCurrentQueueId = null;
         let assetQueueProcessing = false;
-        // 페이지(서버) 시작 및 새 큐 시작 시 확장 패널을 기본으로 보여준다.
+        // 페이지(서버)를 처음 열 때만 확장 상태로 시작하며, 이후 사용자 선택은 유지한다.
         let assetQueueExpanded = true;
 
         function isAssetGenerating() {
@@ -50878,7 +50955,6 @@
                     if (assetQueue.length === 0) {
                         document.getElementById('asset-queue-container').style.display = 'none';
                         hideTopProgress();
-                        assetQueueExpanded = true;
                         stopCountdownInterval();
                     }
                 }, 300);
@@ -50888,7 +50964,6 @@
                 if (assetQueue.length === 0) {
                     document.getElementById('asset-queue-container').style.display = 'none';
                     hideTopProgress();
-                    assetQueueExpanded = true;
                     stopCountdownInterval();
                 }
             }
@@ -50940,7 +51015,6 @@
                     if (assetQueue.length === 0) {
                         document.getElementById('asset-queue-container').style.display = 'none';
                         hideTopProgress();
-                        assetQueueExpanded = true;
                         stopCountdownInterval();
                     }
                     resolve();
@@ -50997,9 +51071,22 @@
             const processing = assetQueue.find(q => q.status === 'processing');
             const pending = assetQueue.filter(q => q.status === 'pending');
             const hasActive = processing || pending.length > 0;
+            const wallTab = document.getElementById('asset-queue-wall-tab');
+            const wallTabCount = document.getElementById('queue-wall-tab-count');
+            if (!wallTab || !wallTabCount) {
+                console.error('[QUEUE] renderAssetQueueUI: 좌측 벽 큐 탭 요소 누락', {
+                    wallTab: !!wallTab, wallTabCount: !!wallTabCount,
+                });
+            } else {
+                const activeCount = pending.length + (processing ? 1 : 0);
+                wallTabCount.textContent = hasActive ? String(activeCount) : '✓';
+                const wallTabLabel = hasActive
+                    ? `작업 큐 펼치기, 처리 또는 대기 ${activeCount}개`
+                    : '작업 큐 펼치기, 모든 작업 완료';
+                wallTab.setAttribute('aria-label', wallTabLabel);
+                wallTab.title = wallTabLabel;
+            }
 
-            // 큐가 완전히 끝난 뒤 다음 큐가 생기면 다시 펼친 상태로 시작한다.
-            if (assetQueue.length === 0) assetQueueExpanded = true;
             container.style.display = assetQueue.length > 0 ? 'flex' : 'none';
             setAssetQueuePanelExpanded(assetQueueExpanded);
 
@@ -51220,45 +51307,71 @@
 
         function setAssetQueuePanelExpanded(expanded) {
             assetQueueExpanded = Boolean(expanded);
+            const container = document.getElementById('asset-queue-container');
             const panel = document.getElementById('asset-queue-panel');
             const bar = document.getElementById('asset-queue-bar');
             const icon = document.getElementById('queue-bar-expand-icon');
             const collapseBtn = document.getElementById('queue-panel-collapse-btn');
-            if (!panel || !bar || !icon || !collapseBtn) {
+            const wallTab = document.getElementById('asset-queue-wall-tab');
+            if (!container || !panel || !bar || !icon || !collapseBtn || !wallTab) {
                 console.error('[QUEUE] setAssetQueuePanelExpanded: 큐 접기 UI 요소 누락', {
-                    panel: !!panel, bar: !!bar, icon: !!icon, collapseBtn: !!collapseBtn,
+                    container: !!container, panel: !!panel, bar: !!bar, icon: !!icon,
+                    collapseBtn: !!collapseBtn, wallTab: !!wallTab,
                 });
                 return;
             }
             if (assetQueueExpanded) {
+                container.classList.remove('collapsed');
                 panel.classList.remove('hidden');
                 panel.classList.add('visible');
                 bar.classList.add('expanded');
                 panel.setAttribute('aria-hidden', 'false');
                 panel.inert = false;
                 bar.setAttribute('aria-expanded', 'true');
+                bar.setAttribute('aria-hidden', 'false');
+                bar.inert = false;
+                bar.tabIndex = 0;
+                wallTab.setAttribute('aria-expanded', 'true');
+                wallTab.setAttribute('aria-hidden', 'true');
+                wallTab.tabIndex = -1;
                 bar.title = '작업 큐 접기';
                 icon.textContent = '⌄';
             } else {
+                container.classList.add('collapsed');
                 panel.classList.remove('visible');
                 panel.classList.add('hidden');
                 bar.classList.remove('expanded');
                 panel.setAttribute('aria-hidden', 'true');
                 panel.inert = true;
                 bar.setAttribute('aria-expanded', 'false');
-                bar.title = '작업 큐 펼치기';
+                bar.setAttribute('aria-hidden', 'true');
+                bar.inert = true;
+                bar.tabIndex = -1;
+                wallTab.setAttribute('aria-expanded', 'false');
+                wallTab.setAttribute('aria-hidden', 'false');
+                wallTab.tabIndex = 0;
                 icon.textContent = '⌃';
             }
         }
 
         function collapseAssetQueuePanel() {
-            const bar = document.getElementById('asset-queue-bar');
-            if (!bar) {
-                console.error('[QUEUE] collapseAssetQueuePanel: asset-queue-bar 요소 없음');
+            const wallTab = document.getElementById('asset-queue-wall-tab');
+            if (!wallTab) {
+                console.error('[QUEUE] collapseAssetQueuePanel: asset-queue-wall-tab 요소 없음');
                 return;
             }
-            bar.focus();
             setAssetQueuePanelExpanded(false);
+            wallTab.focus();
+        }
+
+        function expandAssetQueuePanel() {
+            const collapseBtn = document.getElementById('queue-panel-collapse-btn');
+            if (!collapseBtn) {
+                console.error('[QUEUE] expandAssetQueuePanel: queue-panel-collapse-btn 요소 없음');
+                return;
+            }
+            setAssetQueuePanelExpanded(true);
+            collapseBtn.focus();
         }
 
         function toggleAssetQueuePanel() {
