@@ -42,8 +42,6 @@ import piexif
 import piexif.helper
 HAS_PIEXIF = True
 
-# 배치 모드 import
-from modes import batch_mode
 from modes import outfit_mode
 from modes import enhance_mode
 from modes import asset_mode
@@ -163,10 +161,7 @@ DEFAULT_CONFIG = {
         }
     },
     "bot_selected": "",  # 삽화 모드에서 선택된 봇 이름
-    "batch_mode_enabled": False,  # 배치 모드 활성화 여부
-    "batch_timeout_seconds": 5.0,  # 배치 모드 타임아웃 (초)
     "notification_enabled": True,  # 배치 완료 알림
-    "auto_reschedule_enabled": False,  # 배치 완료 시 자동 재예약
     "clamp_enabled": False,  # 프롬프트 가중치 클램프 활성화 여부
     "clamp_value": 1.2,  # 가중치 클램프 최대값
     "outfit_mode_enabled": False,  # 복장 추출 모드 활성화 여부
@@ -545,28 +540,6 @@ app_config = load_config()
 REAL_COMFY_PORT = int(app_config.get("comfyui_port", os.environ.get("REAL_COMFY_PORT", "8188")))
 # 삽화 전용 포트: None이면 메인 포트(REAL_COMFY_PORT) 사용
 REAL_COMFY_ILLUST_PORT = app_config.get("comfyui_port_illustration")  # None or int
-
-
-# ─── 배치 모드 초기화 ─────────────────────────────────────
-def get_batch_mode_enabled() -> bool:
-    """배치 모드 활성화 여부를 반환한다."""
-    return app_config.get("batch_mode_enabled", False)
-
-
-def get_batch_timeout_seconds() -> float:
-    """배치 모드 타임아웃을 반환한다."""
-    return app_config.get("batch_timeout_seconds", 5.0)
-
-
-def init_batch_mode():
-    """배치 모드를 초기화한다."""
-    batch_mode.timeout_seconds = get_batch_timeout_seconds()
-    batch_mode.enabled = get_batch_mode_enabled()
-    # 함수는 나중에 설정 (함수가 정의된 후에)
-    print(f"[BATCH_MODE] 초기화: enabled={batch_mode.enabled}, timeout={batch_mode.timeout_seconds}s")
-
-
-init_batch_mode()
 
 
 # ─── 복장 추출 모드 초기화 (함수 의존성 없는 부분만) ───
@@ -2205,14 +2178,6 @@ async def handle_api_workflow_test_status(request: web.Request) -> web.Response:
     return web.json_response({"running": _wf_test_running})
 
 
-# ─── 배치 모드 함수 설정 (generate_image_with_prompt 정의 후) ───
-batch_mode.generate_image_func = generate_image_with_prompt
-batch_mode.save_backup_func = save_backup
-batch_mode.notify_frontend_func = notify_frontend
-batch_mode.mode_log_func = mode_logger.log
-batch_mode.on_batch_complete = outfit_mode.process_batch_images
-
-
 # ─── 통합 큐 매니저 초기화 (init_queue_manager에서 호출) ───
 def init_queue_manager():
     queue_manager.notify_frontend = notify_frontend
@@ -2285,57 +2250,6 @@ async def _run_data_patch_utility(bot_name: str, char_name: str) -> dict:
     print(f"[DATA_PATCH_UTILITY] {char_name} 결과 저장: {len(img_bytes):,} bytes")
     return {"character": char_name, "message": f"{char_name} 완료"}
 
-# ─── 프롬프트 강화 콜백 ───
-async def _before_generate_enhance(request, batch):
-    """배치 이미지 생성 전 프롬프트 강화"""
-    if not enhance_mode.enabled:
-        return
-
-    clean_positive = request.processed_positive or request.positive
-    if not clean_positive:
-        return
-
-    # 강화 전 원본을 저장 (재전송 매칭용)
-    request.original_processed_positive = clean_positive
-
-    chat_content = request.chat_content or ""
-    enhanced, original = await enhance_mode.enhance_prompt(clean_positive, chat_content)
-
-    if enhanced != original:
-        enhance_mode.track_original(request.request_id, original)
-        request.processed_positive = enhanced
-        request.wildcard_info = enhance_mode.get_last_wildcard_info()
-        print(f"[ENHANCE] 프롬프트 강화 적용: {request.request_id}")
-    else:
-        print(f"[ENHANCE] 프롬프트 변경 없음: {request.request_id}")
-
-
-# ─── 배치 전처리 콜백 (동일 chat 재처리 방지) ───
-async def _preprocess_batch(batch):
-    """배치 시작 시 1회 호출: 중복 chat 감지 및 이전 배치 정리"""
-    from modes.prompt_enhance_mode_preprocess import preprocess_clean_duplicate_chats
-
-    # 배치 구분자 추적 초기화
-    enhance_mode._batch_separator_chars.clear()
-
-    if not batch.requests:
-        return
-
-    # 첫 번째 요청의 chat으로 비교
-    first_chat = batch.requests[0].chat_content or ""
-    if not first_chat:
-        # chat_content가 없으면 positive에서 [CHAT] 섹션 추출 시도
-        from modes.prompt_enhance_mode import PromptEnhanceMode
-        first_chat = PromptEnhanceMode._extract_section(
-            batch.requests[0].processed_positive or batch.requests[0].positive, "CHAT"
-        )
-
-    deleted = await preprocess_clean_duplicate_chats(first_chat)
-    if deleted > 0:
-        print(f"[PREPROCESS] 배치 {batch.batch_id}: {deleted}개 중복 엔트리 정리")
-
-batch_mode.before_generate_func = _before_generate_enhance
-batch_mode.preprocess_func = _preprocess_batch
 outfit_mode.notify_frontend_func = notify_frontend
 enhance_mode.notify_frontend_func = notify_frontend
 # 복장 추출 모드 함수 의존성 설정 (convert_workflow_via_endpoint 정의 후)
@@ -5264,22 +5178,6 @@ async def _serve_priority_reservation_for_illustration_slot(
     reservation_kind = ""
     reservation_detail = ""
 
-    if batch_mode.has_scheduled_images():
-        compare_positive, _ = split_prompt_chat(str(raw_positive or ""))
-        if app_config.get("clamp_enabled", False):
-            compare_positive = clamp_weights(
-                compare_positive,
-                app_config.get("clamp_value", 1.2),
-            )
-        scheduled_result = batch_mode.get_scheduled_image(compare_positive)
-        if scheduled_result is not None:
-            image_bytes, request_info = scheduled_result
-            reservation_kind = "batch"
-            reservation_detail = str(request_info.get("request_id") or "")
-            await notify_frontend("batch_resend_used", request_info)
-            if not batch_mode.has_scheduled_images():
-                await notify_frontend("batch_resend_completed", {})
-
     if image_bytes is None and reschedule_queue is not None:
         scheduled = reschedule_queue
         image_bytes = scheduled.get("image_bytes")
@@ -5601,71 +5499,6 @@ async def handle_prompt(request: web.Request) -> web.Response:
             print(f"[ILLUST_CONTEXT] transport marker는 있으나 payload가 유효하지 않음: {incoming_positive!r}")
             return web.json_response({"error": "invalid illustration context payload"}, status=400)
 
-        # 배치 모드 재전송 예약 확인 (batch_mode의 scheduled_batch 우선)
-        if batch_mode.has_scheduled_images():
-            # 프롬프트에서 긍정 프롬프트 추출 후 [chat] 분리
-            prompt_data = body.get("prompt", {})
-            incoming_positive = extract_prompts_by_title(prompt_data, "긍정프롬프트") or ""
-            incoming_positive, _ = split_prompt_chat(incoming_positive)
-            if app_config.get("clamp_enabled", False):
-                incoming_positive = clamp_weights(incoming_positive, app_config.get("clamp_value", 1.2))
-
-            scheduled_result = batch_mode.get_scheduled_image(incoming_positive)
-            if scheduled_result is None:
-                # 일치하는 이미지가 없을 경우
-                if not batch_mode.has_scheduled_images():
-                    await notify_frontend("batch_resend_completed", {})
-            if scheduled_result:
-                img_bytes, req_info = scheduled_result
-                print(f"[BATCH_MODE] 재전송 이미지 사용 (프롬프트 일치): {req_info['request_id']}")
-                
-                # 전송 내역 websocket 알림 (ui 업데이트를 위해)
-                await notify_frontend("batch_resend_used", req_info)
-                
-                # 방금 가져온 것이 마지막이었다면 배치 예약이 종료되었는지 확인하고 알림
-                if not batch_mode.has_scheduled_images():
-                    await notify_frontend("batch_resend_completed", {})
-
-                our_filename = f"ComfyUI_{prompt_id[:8]}.png"
-                save_node = find_save_image_node(body.get("prompt", {}))
-
-                prompts[prompt_id] = {
-                    "status": "completed",
-                    "prompt": body.get("prompt", {}),
-                    "client_id": body.get("client_id", ""),
-                    "extra_data": body.get("extra_data", {}),
-                    "outputs": {"images": [{"filename": our_filename, "subfolder": "", "type": "output"}]},
-                    "filename": our_filename,
-                    "save_node_id": save_node,
-                    "image_bytes": img_bytes,
-                    "timestamp": time.time(),
-                }
-
-                # WS: executed + executing(null)
-                executed_msg = {
-                    "type": "executed",
-                    "data": {
-                        "node": save_node,
-                        "output": {"images": [{"filename": our_filename, "subfolder": "", "type": "output"}]},
-                        "prompt_id": prompt_id,
-                    },
-                }
-                exec_done_msg = {
-                    "type": "executing",
-                    "data": {"node": None, "prompt_id": prompt_id},
-                }
-                for sid, ws in list(ws_connections.items()):
-                    try:
-                        await ws.send_json(executed_msg)
-                        await ws.send_json(exec_done_msg)
-                    except:
-                        pass
-
-                await notify_frontend("batch_resend_used", {"request_id": req_info["request_id"], "index": req_info["index"], "total": req_info["total"]})
-                return web.json_response(
-                    {"prompt_id": prompt_id, "number": len(prompts), "node_errors": {}}
-                )
-
         # 기존 reschedule_queue 확인
         if reschedule_queue is not None:
             print(f"[RESCHEDULE] Using scheduled backup: {reschedule_queue['name']}")
@@ -5696,78 +5529,6 @@ async def handle_prompt(request: web.Request) -> web.Response:
 
             # Send completion messages immediately
             asyncio.create_task(complete_prompt_from_reschedule(prompt_id, save_node, our_filename))
-            return web.json_response(
-                {"prompt_id": prompt_id, "number": len(prompts), "node_errors": {}}
-            )
-
-        # 배치 모드가 활성화되어 있으면 배치 모드로 처리
-        if batch_mode.enabled:
-            prompt_data = body.get("prompt", {})
-            positive = extract_prompts_by_title(prompt_data, "긍정프롬프트") or ""
-            negative = extract_prompts_by_title(prompt_data, "부정프롬프트") or ""
-
-            # [chat] 섹션 분리
-            processed_positive, chat_content = split_prompt_chat(positive)
-            # positive를 [CHAT] 제거된 버전으로 교체
-            positive = processed_positive
-
-            # 가중치 클램프 적용
-            if app_config.get("clamp_enabled", False):
-                clamp_val = app_config.get("clamp_value", 1.2)
-                positive = clamp_weights(positive, clamp_val)
-                negative = clamp_weights(negative, clamp_val)
-                processed_positive = positive  # 클램프 적용 후 동기화
-
-            # 배치에 요청 추가 및 검은색 이미지 반환
-            request_id, black_image = await batch_mode.add_request(
-                positive, negative, prompt_data,
-                processed_positive=processed_positive,
-                chat_content=chat_content,
-            )
-
-            our_filename = f"ComfyUI_{prompt_id[:8]}.png"
-            save_node = find_save_image_node(prompt_data)
-
-            prompts[prompt_id] = {
-                "status": "completed",
-                "prompt": prompt_data,
-                "client_id": body.get("client_id", ""),
-                "extra_data": body.get("extra_data", {}),
-                "outputs": {"images": [{"filename": our_filename, "subfolder": "", "type": "output"}]},
-                "filename": our_filename,
-                "save_node_id": save_node,
-                "image_bytes": black_image,
-                "timestamp": time.time(),
-            }
-
-            print(f"[BATCH_MODE] 요청 접수: {request_id} (검은색 이미지 반환)")
-
-            # Notify frontend that item added
-            await notify_frontend("batch_request_added", {
-                "request_id": request_id, 
-                "count": len(batch_mode.current_batch.requests) if batch_mode.current_batch else 1
-            })
-
-            # WS: executed + executing(null) - 검은색 이미지 전송
-            executed_msg = {
-                "type": "executed",
-                "data": {
-                    "node": save_node,
-                    "output": {"images": [{"filename": our_filename, "subfolder": "", "type": "output"}]},
-                    "prompt_id": prompt_id,
-                },
-            }
-            exec_done_msg = {
-                "type": "executing",
-                "data": {"node": None, "prompt_id": prompt_id},
-            }
-            for sid, ws in list(ws_connections.items()):
-                try:
-                    await ws.send_json(executed_msg)
-                    await ws.send_json(exec_done_msg)
-                except:
-                    pass
-
             return web.json_response(
                 {"prompt_id": prompt_id, "number": len(prompts), "node_errors": {}}
             )
@@ -8247,12 +8008,6 @@ async def handle_api_set_llm_edit_template(request: web.Request) -> web.Response
         return web.json_response({"success": False, "error": str(e)})
 
 
-# ─── 배치 모드 API ─────────────────────────────────────────
-async def handle_api_batch_mode_status(request: web.Request) -> web.Response:
-    """배치 모드 상태를 반환한다."""
-    return web.json_response(batch_mode.get_status())
-
-
 # ─── 복장 추출 모드 API ──────────────────────────────────
 async def handle_api_outfit_mode_status(request: web.Request) -> web.Response:
     """복장 추출 모드 상태를 반환한다."""
@@ -8328,11 +8083,8 @@ async def handle_api_outfit_mode_extract(request: web.Request) -> web.Response:
         return web.json_response({"error": "복장 추출 워크플로우를 로드할 수 없음"}, status=400)
 
     # 가장 최근 완료된 배치 찾기
+    # 배치 모드 하위시스템 제거로 더 이상 배치 소스가 없음 → 항상 추출 불가
     batch = None
-    if batch_mode.scheduled_batch:
-        batch = batch_mode.scheduled_batch
-    elif batch_mode.completed_batches:
-        batch = batch_mode.completed_batches[-1]
 
     if batch is None:
         return web.json_response({"error": "추출할 배치가 없음"}, status=400)
@@ -8439,75 +8191,6 @@ async def handle_api_mode_workflow_files(request: web.Request) -> web.Response:
         result.sort(key=lambda x: x["mtime"], reverse=True)
         return web.json_response({"files": result, "count": len(result)})
     except Exception as e:
-        return web.json_response({"error": str(e)}, status=500)
-
-
-async def handle_api_batch_mode_config(request: web.Request) -> web.Response:
-    """배치 모드 설정을 변경한다."""
-    global app_config
-    try:
-        body = await request.json()
-
-        # enabled 설정
-        if "enabled" in body:
-            batch_mode.enabled = bool(body["enabled"])
-            app_config["batch_mode_enabled"] = batch_mode.enabled
-            print(f"[BATCH_MODE] enabled = {batch_mode.enabled}")
-
-        # timeout 설정
-        if "timeout_seconds" in body:
-            timeout = float(body["timeout_seconds"])
-            if timeout > 0:
-                batch_mode.timeout_seconds = timeout
-                app_config["batch_timeout_seconds"] = timeout
-                print(f"[BATCH_MODE] timeout_seconds = {timeout}")
-
-        # 설정 저장
-        save_config(app_config)
-
-        return web.json_response({
-            "success": True,
-            "status": batch_mode.get_status()
-        })
-    except Exception as e:
-        print(f"[ERROR] batch_mode_config failed: {e}")
-        return web.json_response({"error": str(e)}, status=500)
-
-
-async def handle_api_batch_mode_schedule_resend(request: web.Request) -> web.Response:
-    """최근 완료된 배치를 재전송 예약한다."""
-    try:
-        success = batch_mode.schedule_resend()
-        if success:
-            status = batch_mode.get_status()
-            await notify_frontend("batch_resend_scheduled", status.get("scheduled_batch"))
-            return web.json_response({
-                "success": True,
-                "message": "배치 재전송 예약 완료",
-                "status": status
-            })
-        else:
-            return web.json_response({
-                "success": False,
-                "message": "예약할 배치가 없습니다"
-            }, status=400)
-    except Exception as e:
-        print(f"[ERROR] batch_mode_schedule_resend failed: {e}")
-        return web.json_response({"error": str(e)}, status=500)
-
-
-async def handle_api_batch_mode_cancel_resend(request: web.Request) -> web.Response:
-    """재전송 예약을 취소한다."""
-    try:
-        success = batch_mode.cancel_resend()
-        await notify_frontend("batch_resend_cancelled", {})
-        return web.json_response({
-            "success": success,
-            "message": "재전송 예약 취소됨" if success else "취소할 예약이 없음",
-            "status": batch_mode.get_status()
-        })
-    except Exception as e:
-        print(f"[ERROR] batch_mode_cancel_resend failed: {e}")
         return web.json_response({"error": str(e)}, status=500)
 
 
@@ -8901,14 +8584,6 @@ async def handle_api_config(request: web.Request) -> web.Response:
             if "comfyui_port_illustration" in body:
                 val = body["comfyui_port_illustration"]
                 REAL_COMFY_ILLUST_PORT = int(val) if val else None
-
-            # 배치 모드 타임아웃 업데이트
-            if "batch_timeout_seconds" in body:
-                batch_mode.timeout_seconds = float(body["batch_timeout_seconds"])
-
-            # 배치 모드 활성화 상태 동기화
-            if "batch_mode_enabled" in body:
-                batch_mode.enabled = bool(body["batch_mode_enabled"])
 
             # 복장 추출 모드 설정 업데이트
             if "outfit_mode_enabled" in body:
@@ -9712,11 +9387,6 @@ app.router.add_post("/api/bot_mode/postprocess_bubble", bot_mode.handle_save_pos
 app.router.add_post("/api/llm_edit_prompt", handle_api_llm_edit_prompt)
 app.router.add_get("/api/llm_edit_prompt_template", handle_api_get_llm_edit_template)
 app.router.add_post("/api/llm_edit_prompt_template", handle_api_set_llm_edit_template)
-# 배치 모드 API
-app.router.add_get("/api/batch_mode/status", handle_api_batch_mode_status)
-app.router.add_post("/api/batch_mode/config", handle_api_batch_mode_config)
-app.router.add_post("/api/batch_mode/schedule_resend", handle_api_batch_mode_schedule_resend)
-app.router.add_post("/api/batch_mode/cancel_resend", handle_api_batch_mode_cancel_resend)
 # 복장 추출 모드 API
 app.router.add_get("/api/outfit_mode/status", handle_api_outfit_mode_status)
 app.router.add_post("/api/outfit_mode/config", handle_api_outfit_mode_config)

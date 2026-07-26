@@ -6249,7 +6249,6 @@
             <button onclick="openSettingsModal()">⚙️ 설정</button>
             <button id="tunnel-btn" onclick="openShareModal()">🔗 공유</button>
             <button onclick="reloadWorkflow()">📂 삽화 워크플로우 가져오기</button>
-            <button onclick="toggleBatchMode()" id="batch-mode-btn">🔄 삽화 배치모드: <span id="batch-mode-status">OFF</span></button>
             <button onclick="manualRestoreDraw()" id="restore-manual-btn" style="display:none;">🖌️ 삽화 수동 그리기</button>
             <button onclick="reconnectFrontendWs()" id="ws-reconnect-btn" title="WS 재연결" style="display:inline-flex; align-items:center; gap:6px;">
                 <span id="ws-status-led" title="WS 미연결" style="width:9px; height:9px; border-radius:50%; background:#e53935; box-shadow:0 0 4px rgba(229,57,53,0.7); flex:0 0 auto; transition:background .2s, box-shadow .2s;"></span>
@@ -6331,16 +6330,6 @@
             <div class="info-item">
                 <span class="label">상태:</span>
                 <span class="value" id="conv-status">로딩중...</span>
-            </div>
-        </div>
-    </div>
-    
-    <!-- 배치 상태 고정 바 -->
-    <div class="status-bar" id="batch-info-bar" style="display:none; background:var(--surface2); border-bottom: 2px solid var(--accent);">
-        <div class="info-grid">
-            <div class="info-item">
-                <span class="label">⏳ 배치 모드 진행상황:</span>
-                <span class="value" id="batch-progress-text" style="color:var(--text);">-</span>
             </div>
         </div>
     </div>
@@ -11636,18 +11625,6 @@
                         </div>
                     </div>
 
-                    <div class="setting-row">
-                        <div class="setting-label">
-                            <div class="title">배치 모드 타임아웃</div>
-                            <div class="desc">마지막 입력 후 배치 처리까지 대기 시간 (초)</div>
-                        </div>
-                        <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
-                            <input type="number" id="setting-batch-timeout" min="1" max="60" step="0.5" value="5"
-                                   style="width: 80px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text);">
-                            <span>초</span>
-                        </div>
-                    </div>
-
                     <!-- 완료 알림 -->
                     <div class="setting-row">
                         <div class="setting-label">
@@ -11660,21 +11637,6 @@
                                 <span class="toggle-slider"></span>
                             </label>
                             <span id="notification-status" class="toggle-status">OFF</span>
-                        </div>
-                    </div>
-
-                    <!-- 자동 재예약 -->
-                    <div class="setting-row">
-                        <div class="setting-label">
-                            <div class="title">자동 재예약</div>
-                            <div class="desc">배치 그림 완성 시 가장 최근 배치로 자동 재예약</div>
-                        </div>
-                        <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
-                            <label class="toggle-switch">
-                                <input type="checkbox" id="setting-auto-reschedule" onchange="updateAutoRescheduleStatus(this.checked)">
-                                <span class="toggle-slider"></span>
-                            </label>
-                            <span id="auto-reschedule-status" class="toggle-status">OFF</span>
                         </div>
                     </div>
 
@@ -13233,48 +13195,6 @@
                             // 백그라운드 필터 캐시 빌드 완료 → 드롭다운 최종 갱신
                             if (typeof loadBackupFilters === 'function') loadBackupFilters();
                             break;
-                        case 'batch_processing_started':
-                            showToast(`배치 처리 시작 (${msg.data.request_count}개)`, 'info');
-                            batchModeState.processing_batch = {
-                                batch_id: msg.data.batch_id,
-                                total: msg.data.request_count,
-                                index: 0
-                            };
-                            updateBatchModeUI();
-                            break;
-                        case 'batch_request_added':
-                            showToast(`더미 이미지 전송됨 (${msg.data.count}개 대기중)`, 'info');
-                            loadBatchModeStatus();
-                            break;
-                        case 'batch_request_completed':
-                            showToast(`배치 처리 중... (${msg.data.index + 1}/${msg.data.total})`, 'info');
-                            if (batchModeState.processing_batch) {
-                                batchModeState.processing_batch.index = msg.data.index + 1;
-                            }
-                            updateBatchModeUI();
-                            break;
-                        case 'batch_completed':
-                            showToast(`배치 완료 (${msg.data.completed}개 성공, ${msg.data.failed}개 실패)`, msg.data.failed > 0 ? 'warn' : 'success');
-                            batchModeState.processing_batch = null;
-                            loadBatchModeStatus();
-                            loadBackups(true);
-                            // 복장 추출 버튼 표시 (활성화된 경우)
-                            updateHeaderButtonsVisibility();
-                            // 배치 완료 알림 (알림음 + 탭 반짝임)
-                            if (currentConfig.notification_enabled !== false) {
-                                startBatchCompleteNotification();
-                            }
-                            // 자동 재예약
-                            if (currentConfig.auto_reschedule_enabled) {
-                                scheduleBatchResend();
-                            }
-                            break;
-                        case 'batch_resend_scheduled':
-                            batchModeState.scheduled_batch = msg.data;
-                            updateBatchModeUI();
-                            showToast('배치 재전송 예약이 완료되었습니다', 'success');
-                            loadBackups(true);
-                            break;
                         // LoRA 학습 진행률
                         case 'lora_training_progress':
                             if (typeof updateLoraTrainingUI === 'function') {
@@ -13312,25 +13232,6 @@
                         // 공용 이미지 생성 진행도
                         case 'generation_progress':
                             updateTopProgress(msg.data.value || 0, msg.data.max || 0);
-                            break;
-                            batchModeState.scheduled_batch = null;
-                            updateBatchModeUI();
-                            showToast('배치 재전송 예약이 취소되었습니다', 'info');
-                            loadBackups(true);
-                            break;
-                        case 'batch_resend_used':
-                            showToast(`예약된 이미지 전송 (${msg.data.index + 1}/${msg.data.total})`, 'success');
-                            if (batchModeState.scheduled_batch) {
-                                batchModeState.scheduled_batch.sent = msg.data.index + 1;
-                                batchModeState.scheduled_batch.remaining = msg.data.total - (msg.data.index + 1);
-                                updateBatchModeUI();
-                            }
-                            break;
-                        case 'batch_resend_completed':
-                            batchModeState.scheduled_batch = null;
-                            updateBatchModeUI();
-                            showToast('재전송 예약이 모두 완료되었습니다', 'success');
-                            loadBackups(true);
                             break;
                         // 복장 추출 이벤트
                         case 'outfit_processing_started':
@@ -13690,9 +13591,6 @@
             paginationState.isLoading = true;
 
             try {
-                // 배치 모드 상태 갱신 (초록색 표시를 위해)
-                await loadBatchModeStatus();
-
                 const params = new URLSearchParams({
                     offset: paginationState.offset,
                     limit: paginationState.limit,
@@ -13828,11 +13726,6 @@
                 return;
             }
 
-            // 현재 배치/예약된 배치의 파일명 목록
-            const currentBatchFiles = new Set(batchModeState.current_batch?.backup_filenames || []);
-            const scheduledBatchFiles = new Set(batchModeState.scheduled_batch?.backup_filenames || []);
-            const lastCompletedFiles = new Set(batchModeState.last_completed_batch_filenames || []);
-
             let html = '<div class="backup-grid">';
             for (const b of backups) {
                 const dateStr = formatDate(b.mtime);
@@ -13845,13 +13738,7 @@
                 // Store prompt data in Map (avoids data-attribute truncation issues)
                 promptDataMap.set(b.name, { positive, negative, enhanced_positive: b.enhanced_positive || '', wildcard_info: b.wildcard_info || {}, conversion_info: b.conversion_info || {} });
 
-                // 현재 배치 또는 예약된 배치에 속한 카드인지 확인
-                const isInCurrentBatch = currentBatchFiles.has(b.name);
-                const isInScheduledBatch = scheduledBatchFiles.has(b.name);
-                const isCompletedBatch = !isInScheduledBatch && lastCompletedFiles.has(b.name);
-                const cardClass = isInScheduledBatch ? 'backup-card scheduled-batch' :
-                                     isInCurrentBatch ? 'backup-card current-batch' :
-                                     isCompletedBatch ? 'backup-card completed-batch' : 'backup-card';
+                const cardClass = 'backup-card';
 
                 html += `
                 <div class="${cardClass}" data-name="${escapeAttr(b.name)}">
@@ -14253,17 +14140,6 @@
 
         // ─── 백업 삭제 (이미지 + 메타데이터 3개 + 보조 파일 전부) ───
         async function deleteBackup(name, btn) {
-            // 배치에 속한 백업은 삭제 금지 (프론트 선검사)
-            const currentBatchFiles = new Set(batchModeState.current_batch?.backup_filenames || []);
-            const scheduledBatchFiles = new Set(batchModeState.scheduled_batch?.backup_filenames || []);
-            if (scheduledBatchFiles.has(name)) {
-                showToast('예약된 배치의 백업은 삭제할 수 없습니다', 'error');
-                return;
-            }
-            if (currentBatchFiles.has(name)) {
-                showToast('현재 배치 진행 중인 백업은 삭제할 수 없습니다', 'error');
-                return;
-            }
             if (!confirm(`이 백업을 삭제하시겠습니까?\n\n${name}\n\n이미지와 메타데이터가 모두 삭제되며, 삭제된 이미지 파일은 복구되지 않습니다.`)) {
                 return;
             }
@@ -15218,18 +15094,10 @@
             document.getElementById('setting-embedding-model').value = currentConfig.embedding_model || 'voyage-4-large';
             onEmbeddingProviderChange();
 
-            // 배치 모드 타임아웃 설정
-            document.getElementById('setting-batch-timeout').value = currentConfig.batch_timeout_seconds || 5.0;
-
             // 완료 알림
             const notificationEnabled = currentConfig.notification_enabled !== false;
             document.getElementById('setting-notification-enabled').checked = notificationEnabled;
             updateNotificationStatus(notificationEnabled);
-
-            // 자동 재예약
-            const autoReschedule = currentConfig.auto_reschedule_enabled || false;
-            document.getElementById('setting-auto-reschedule').checked = autoReschedule;
-            updateAutoRescheduleStatus(autoReschedule);
 
             // 복장 추출 모드 설정
             const outfitEnabled = currentConfig.outfit_mode_enabled || false;
@@ -15804,9 +15672,7 @@
                 embedding_url: '임베딩 URL',
                 embedding_api_key: '임베딩 API Key',
                 embedding_model: '임베딩 모델',
-                batch_timeout_seconds: '배치 타임아웃(초)',
                 notification_enabled: '완료 알림',
-                auto_reschedule_enabled: '자동 재예약',
                 outfit_mode_enabled: '복장 추출 모드',
                 outfit_workflow_source_path: '복장 워크플로우 경로',
                 outfit_prompt_file: '복장 프롬프트 파일',
@@ -16091,9 +15957,7 @@
                 embedding_url: document.getElementById('setting-embedding-url').value,
                 embedding_api_key: document.getElementById('setting-embedding-api-key').value,
                 embedding_model: document.getElementById('setting-embedding-model').value,
-                batch_timeout_seconds: parseFloat(document.getElementById('setting-batch-timeout').value) || 5.0,
                 notification_enabled: document.getElementById('setting-notification-enabled').checked,
-                auto_reschedule_enabled: document.getElementById('setting-auto-reschedule').checked,
                 bot_mode_enabled: document.getElementById('bot-mode-toggle').checked,
                 bot_selected: botCurrentBot || '',
                 outfit_mode_enabled: document.getElementById('setting-outfit-enabled').checked,
@@ -16125,7 +15989,6 @@
                 bot_lora_load_path: document.getElementById('setting-lora-load-path').value.trim().replace(/\\?$/, '\\SOYA_CHAR_LORA\\SOYA_BOT_LORA'),
                 instance_lora_load_path: document.getElementById('setting-lora-load-path').value.trim().replace(/\\?$/, '\\SOYA_CHAR_LORA\\SOYA_INSTANCE_LORA'),
                 style_lora_load_path: document.getElementById('setting-lora-load-path').value.trim().replace(/\\?$/, '\\SOYA_CHAR_LORA\\SOYA_STYLE_LORA'),
-                batch_mode_enabled: currentConfig.batch_mode_enabled || false,
                 webp_lossless: currentConfig.webp_lossless || false,
                 workflow_filename: currentConfig.workflow_filename || '',
                 debug_workflow_source_path: document.getElementById('setting-debug-workflow-source-path').value,
@@ -16152,8 +16015,6 @@
                     applyIllustrationProviderConfig(currentConfig);
                     // ANIMA UI 가시성 업데이트
                     updateAnimaUIVisibility();
-                    // 배치 모드 상태 갱신
-                    loadBatchModeStatus();
                     // 버튼 가시성 업데이트
                     updateHeaderButtonsVisibility();
                     // 복장 추출 모드 설정 동기화
@@ -16490,135 +16351,6 @@
             });
         }
 
-        // ─── 배치 모드 관련 ───
-        let batchModeState = {
-            enabled: false,
-            timeout_seconds: 5.0,
-            scheduled_batch: null,
-            current_batch: null,
-            processing_batch: null  // frontend-only state for processing
-        };
-
-        async function loadBatchModeStatus() {
-            try {
-                const resp = await fetch('/api/batch_mode/status');
-                const data = await resp.json();
-                
-                // Preserve frontend-only states
-                const processingBatch = batchModeState.processing_batch;
-                batchModeState = data;
-                batchModeState.processing_batch = processingBatch;
-                
-                updateBatchModeUI();
-            } catch (e) {
-                console.error('배치 모드 상태 로드 실패:', e);
-            }
-        }
-
-        function updateBatchModeUI() {
-            const statusSpan = document.getElementById('batch-mode-status');
-            const btn = document.getElementById('batch-mode-btn');
-            const scheduleBtn = document.getElementById('batch-schedule-btn');
-            const cancelBtn = document.getElementById('batch-cancel-btn');
-            const batchInfoBar = document.getElementById('batch-info-bar');
-            const batchProgressText = document.getElementById('batch-progress-text');
-
-            if (statusSpan) {
-                statusSpan.textContent = batchModeState.enabled ? 'ON' : 'OFF';
-            }
-            if (btn) {
-                btn.style.background = batchModeState.enabled ? 'var(--success)' : '';
-            }
-
-            // 배치 정보 바 표시/숨김
-            if (batchInfoBar) {
-                if (batchModeState.enabled || batchModeState.current_batch || batchModeState.scheduled_batch || batchModeState.processing_batch) {
-                    batchInfoBar.style.display = 'block';
-                    let progressStr = '';
-                    if (batchModeState.scheduled_batch) {
-                         progressStr = `재전송 예약 중... (남음: ${batchModeState.scheduled_batch.remaining}개 / 총: ${batchModeState.scheduled_batch.total}개)`;
-                    } else if (batchModeState.processing_batch) {
-                         progressStr = `실제 이미지 생성 중... (${batchModeState.processing_batch.index}/${batchModeState.processing_batch.total})`;
-                    } else if (batchModeState.current_batch) {
-                         const statusStr = batchModeState.current_batch.status === 'collecting' ? '요청 취합 중' : '대기 중';
-                         progressStr = `리스트 생성 중 (${statusStr}, ${batchModeState.current_batch.request_count}개)`;
-                    } else if (batchModeState.enabled) {
-                         progressStr = '수신 대기 중 (더미 이미지 전송 준비완료)';
-                    }
-                    batchProgressText.textContent = progressStr || '-';
-                } else {
-                    batchInfoBar.style.display = 'none';
-                }
-            }
-
-            // 예약 상태 표시
-            if (scheduleBtn && cancelBtn) {
-                if (batchModeState.scheduled_batch) {
-                    scheduleBtn.style.display = 'none';
-                    cancelBtn.style.display = '';
-                    cancelBtn.textContent = `❌ 예약 취소 (${batchModeState.scheduled_batch.remaining}개 남음)`;
-                } else {
-                    scheduleBtn.style.display = '';
-                    cancelBtn.style.display = 'none';
-                }
-            }
-
-            // 배치 모드 상태 변경 시 헤더 버튼 가시성도 업데이트
-            updateHeaderButtonsVisibility();
-        }
-
-        async function toggleBatchMode() {
-            try {
-                const newEnabled = !batchModeState.enabled;
-                const resp = await fetch('/api/batch_mode/config', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ enabled: newEnabled })
-                });
-                const data = await resp.json();
-                if (data.success) {
-                    batchModeState = data.status;
-                    updateBatchModeUI();
-                    updateHeaderButtonsVisibility();
-                    showToast(`배치 모드 ${newEnabled ? '활성화' : '비활성화'}`, 'success');
-                }
-            } catch (e) {
-                showToast('배치 모드 설정 실패: ' + e.message, 'error');
-            }
-        }
-
-        async function scheduleBatchResend() {
-            try {
-                const resp = await fetch('/api/batch_mode/schedule_resend', {
-                    method: 'POST'
-                });
-                const data = await resp.json();
-                if (data.success) {
-                    batchModeState = data.status;
-                    updateBatchModeUI();
-                    showToast(`재전송 예약 완료 (${data.status.scheduled_batch.total}개)`, 'success');
-                } else {
-                    showToast(data.message || 'warn');
-                }
-            } catch (e) {
-                showToast('재전송 예약 실패: ' + e.message, 'error');
-            }
-        }
-
-        async function cancelBatchResend() {
-            try {
-                const resp = await fetch('/api/batch_mode/cancel_resend', {
-                    method: 'POST'
-                });
-                const data = await resp.json();
-                batchModeState = data.status;
-                updateBatchModeUI();
-                showToast('재전송 예약 취소됨', 'success');
-            } catch (e) {
-                showToast('예약 취소 실패: ' + e.message, 'error');
-            }
-        }
-
         // ─── 완료 알림 ───
         function updateNotificationStatus(checked) {
             const el = document.getElementById('notification-status');
@@ -16626,34 +16358,13 @@
             el.className = 'toggle-status ' + (checked ? 'on' : 'off');
         }
 
-        // ─── 자동 재예약 ───
-        function updateAutoRescheduleStatus(checked) {
-            const el = document.getElementById('auto-reschedule-status');
-            el.textContent = checked ? 'ON' : 'OFF';
-            el.className = 'toggle-status ' + (checked ? 'on' : 'off');
-        }
-
         // ─── 복장 추출 모드 ───
         function updateOutfitStatus(checked) {
-            // 켜려는 경우 배치 모드 확인
-            if (checked && !(batchModeState.enabled || false)) {
-                // 체크박스 원복
-                document.getElementById('setting-outfit-enabled').checked = false;
-                // 플로팅 경고 표시
-                showFloatingWarning('배치 모드를 먼저 활성화해주세요');
-                return;
-            }
             document.getElementById('outfit-status').textContent = checked ? 'ON' : 'OFF';
             updateHeaderButtonsVisibility();
         }
 
         function updateEnhanceStatus(checked) {
-            // 켜려는 경우 배치 모드 확인
-            if (checked && !(batchModeState.enabled || false)) {
-                document.getElementById('setting-enhance-enabled').checked = false;
-                showFloatingWarning('배치 모드를 먼저 활성화해주세요');
-                return;
-            }
             document.getElementById('enhance-status').textContent = checked ? 'ON' : 'OFF';
         }
 
@@ -16699,18 +16410,12 @@
 
         // ─── 헤더 버튼 가시성 업데이트 ───
         function updateHeaderButtonsVisibility() {
-            const batchOn = batchModeState.enabled || false;
             const outfitOn = document.getElementById('setting-outfit-enabled').checked;
             const restoreManualOn = document.getElementById('setting-restore-manual-enabled').checked;
 
-            // 배치 재전송 버튼: 배치 모드 ON일 때만
-            const batchScheduleBtn = document.getElementById('batch-schedule-btn');
-            if (batchScheduleBtn) batchScheduleBtn.style.display = batchOn ? '' : 'none';
-
-            // 복장 추출 버튼: 배치 모드 + 복장 모드 둘 다 ON일 때만
-            const showOutfit = batchOn && outfitOn;
+            // 복장 추출 버튼: 복장 모드 ON일 때만
             const outfitBtn = document.getElementById('outfit-btn');
-            if (outfitBtn) outfitBtn.style.display = showOutfit ? '' : 'none';
+            if (outfitBtn) outfitBtn.style.display = outfitOn ? '' : 'none';
 
             // 수동 그리기 버튼: 수동 복원 모드 ON일 때만
             const restoreManualBtn = document.getElementById('restore-manual-btn');
@@ -19595,10 +19300,8 @@
         loadBackupFilters();
         connectFrontendWs();
 
-        // 배치 모드 상태를 먼저 로드한 후, 다른 모드 초기화
+        // 설정 로드 후 각 모드 초기화
         (async () => {
-            await loadBatchModeStatus();
-
             try {
                 const cfg = await loadCurrentConfig();
                 applyIllustrationProviderConfig(cfg);
