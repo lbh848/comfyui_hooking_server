@@ -3287,6 +3287,53 @@
             color: var(--text);
             background: var(--surface);
         }
+        .cm-rag-runtime-control {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto auto;
+            gap: 7px;
+            align-items: center;
+            padding: 9px 10px;
+            border: 1px solid var(--border);
+            border-radius: 9px;
+            background: var(--surface);
+        }
+        .cm-rag-runtime-state {
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            min-width: 0;
+            color: var(--text2);
+            font-size: .64rem;
+        }
+        .cm-rag-runtime-state::before {
+            content: "";
+            width: 8px;
+            height: 8px;
+            flex: 0 0 auto;
+            border-radius: 50%;
+            background: var(--text2);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--text2) 12%, transparent);
+        }
+        .cm-rag-runtime-state.running::before {
+            background: var(--success);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 15%, transparent);
+        }
+        .cm-rag-runtime-state.starting::before {
+            background: #f4b85f;
+            box-shadow: 0 0 0 3px rgba(244, 184, 95, .15);
+        }
+        .cm-rag-runtime-state.error::before {
+            background: var(--danger, #e45858);
+            box-shadow: 0 0 0 3px rgba(228, 88, 88, .15);
+        }
+        .cm-rag-runtime-control .btn {
+            min-height: 32px;
+            white-space: nowrap;
+        }
+        .cm-rag-runtime-control .btn.danger {
+            color: var(--danger, #e45858);
+            border-color: rgba(228, 88, 88, .35);
+        }
         .cm-rag-settings-test-output {
             min-height: 62px;
             margin: 0;
@@ -6139,6 +6186,21 @@
         }
         .cm-lock-btn.locked { color: #ffd07d; border-color: rgba(244,184,95,.4); background: rgba(244,184,95,.08); }
         .cm-field-body { padding: 8px; }
+        .cm-field-preset-row { margin-bottom: 6px; }
+        .cm-field-preset-select {
+            width: 100%;
+            min-height: 28px;
+            padding: 0 8px;
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            box-sizing: border-box;
+            outline: none;
+            color: var(--text);
+            background: var(--surface2);
+            font-family: inherit;
+            font-size: .68rem;
+            cursor: pointer;
+        }
         .cm-chip-editor { display: block; }
         .cm-text-editor { display: none; }
         .cm-editor-wall.text-mode .cm-chip-editor { display: none; }
@@ -8965,6 +9027,12 @@
                                     <button class="cm-lock-btn" data-lock onclick="cmToggleLock('appearance')">열림</button>
                                 </div>
                                 <div class="cm-field-body">
+                                    <div class="cm-field-preset-row">
+                                        <select class="cm-field-preset-select" data-preset-select
+                                                onchange="cmLoadFieldPreset('appearance')">
+                                            <option value="">프리셋에서 불러오기</option>
+                                        </select>
+                                    </div>
                                     <div class="cm-chip-editor">
                                         <div class="cm-chip-list" data-chips></div>
                                         <div class="cm-tag-add">
@@ -8987,6 +9055,12 @@
                                     <button class="cm-lock-btn" data-lock onclick="cmToggleLock('outfit')">열림</button>
                                 </div>
                                 <div class="cm-field-body">
+                                    <div class="cm-field-preset-row">
+                                        <select class="cm-field-preset-select" data-preset-select
+                                                onchange="cmLoadFieldPreset('outfit')">
+                                            <option value="">프리셋에서 불러오기</option>
+                                        </select>
+                                    </div>
                                     <div class="cm-chip-editor">
                                         <div class="cm-chip-list" data-chips></div>
                                         <div class="cm-tag-add">
@@ -9009,6 +9083,12 @@
                                     <button class="cm-lock-btn" data-lock onclick="cmToggleLock('expression')">열림</button>
                                 </div>
                                 <div class="cm-field-body">
+                                    <div class="cm-field-preset-row">
+                                        <select class="cm-field-preset-select" data-preset-select
+                                                onchange="cmLoadFieldPreset('expression')">
+                                            <option value="">프리셋에서 불러오기</option>
+                                        </select>
+                                    </div>
                                     <div class="cm-chip-editor">
                                         <div class="cm-chip-list" data-chips></div>
                                         <div class="cm-tag-add">
@@ -9031,6 +9111,12 @@
                                     <button class="cm-lock-btn" data-lock onclick="cmToggleLock('composition')">열림</button>
                                 </div>
                                 <div class="cm-field-body">
+                                    <div class="cm-field-preset-row">
+                                        <select class="cm-field-preset-select" data-preset-select
+                                                onchange="cmLoadFieldPreset('composition')">
+                                            <option value="">프리셋에서 불러오기</option>
+                                        </select>
+                                    </div>
                                     <div class="cm-chip-editor">
                                         <div class="cm-chip-list" data-chips></div>
                                         <div class="cm-tag-add">
@@ -13268,8 +13354,8 @@
                                 </p>
                             </div>
                             <div class="cm-rag-settings-badges">
-                                <span class="cm-rag-settings-badge">외부 사이드카 :3333</span>
-                                <span class="cm-rag-settings-badge">CSV 변환기 내장</span>
+                                <span class="cm-rag-settings-badge">로컬 사이드카 :3333</span>
+                                <span class="cm-rag-settings-badge">저장소 자동 준비</span>
                             </div>
                         </section>
 
@@ -13308,6 +13394,23 @@
                                         <input type="text" id="setting-character-maker-rag-url"
                                                value="http://127.0.0.1:3333"
                                                placeholder="http://127.0.0.1:3333">
+                                    </div>
+
+                                    <div class="cm-rag-runtime-control">
+                                        <div id="setting-character-maker-rag-runtime-state"
+                                             class="cm-rag-runtime-state">
+                                            로컬 RAG 상태 확인 중...
+                                        </div>
+                                        <button type="button" class="btn"
+                                                id="setting-character-maker-rag-runtime-start"
+                                                onclick="cmStartRagRuntime()">
+                                            실행
+                                        </button>
+                                        <button type="button" class="btn danger"
+                                                id="setting-character-maker-rag-runtime-stop"
+                                                onclick="cmStopRagRuntime()" disabled>
+                                            끄기
+                                        </button>
                                     </div>
 
                                     <div class="cm-rag-settings-params">
@@ -13472,10 +13575,11 @@
                             <span>ⓘ</span>
                             <div>
                                 RAG는 모델 내장 기능이 아니라 서버 측 후보 검색 단계입니다.
-                                설치 버튼은 기존 CSV와 <code>data/lancedb_b</code>를
-                                <code>요구사항/</code>에 백업한 뒤 자동 교체합니다.
-                                인덱스 구축에는 GPU에서도 시간이 걸릴 수 있으며, 완료 후 실행 중인
-                                RAG 사이드카는 새 인덱스를 읽도록 한 번 재시작해야 합니다.
+                                저장소가 없으면 고정 위치에 자동으로 받은 뒤, 기존 CSV와
+                                <code>data/lancedb_b</code>를 <code>요구사항/</code>에
+                                백업하고 교체합니다. 설치 후 위의 실행·끄기 버튼으로 로컬
+                                RAG 사이드카를 관리할 수 있습니다. 인덱스 구축과 최초 모델
+                                준비에는 GPU에서도 시간이 걸릴 수 있습니다.
                                 이미지 피드백은 별도로 비전 모델이 필요합니다.
                                 <a href="https://github.com/joykst96/danbooru-tag-rag"
                                    target="_blank" rel="noopener"
@@ -16558,6 +16662,233 @@
             status.className = 'toggle-status ' + (enabled ? 'on' : 'off');
         }
 
+        let cmRagRuntimePollTimer = null;
+        let cmRagRuntimeState = 'stopped';
+        let cmRagRuntimeManaged = false;
+
+        function cmRenderRagRuntimeStatus(data) {
+            const status = document.getElementById(
+                'setting-character-maker-rag-runtime-state',
+            );
+            const startButton = document.getElementById(
+                'setting-character-maker-rag-runtime-start',
+            );
+            const stopButton = document.getElementById(
+                'setting-character-maker-rag-runtime-stop',
+            );
+            if (!status || !startButton || !stopButton) {
+                console.error('[CHARACTER_MAKER_RAG_RUNTIME] 실행 상태 UI를 찾지 못했습니다.');
+                return;
+            }
+
+            const state = String(data?.state || 'stopped');
+            cmRagRuntimeState = state;
+            cmRagRuntimeManaged = !!data?.managed;
+            const dataReady = !!data?.data_ready;
+            const labels = {
+                running: `실행 중${data?.pid ? ` · PID ${data.pid}` : ''}`,
+                starting: '시작 중 · 모델을 불러오는 중입니다...',
+                external: '외부에서 실행 중 · 연결 가능',
+                error: `실행 실패 · ${data?.error || '사이드카 로그를 확인하세요.'}`,
+                stopped: dataReady ? '중지됨 · 실행할 수 있습니다.' : '중지됨 · 먼저 변환 및 설치가 필요합니다.',
+            };
+            status.textContent = labels[state] || labels.stopped;
+            status.className = 'cm-rag-runtime-state ' + (
+                state === 'external' ? 'running' : state
+            );
+            status.title = Array.isArray(data?.log_tail)
+                ? data.log_tail.slice(-10).join('\n')
+                : '';
+            startButton.disabled = (
+                !dataReady
+                || !!data?.managed
+                || state === 'running'
+                || state === 'starting'
+                || state === 'external'
+            );
+            stopButton.disabled = !data?.managed
+                || (
+                    state !== 'running'
+                    && state !== 'starting'
+                    && state !== 'error'
+                );
+            const installButton = document.getElementById(
+                'setting-character-maker-rag-data-install-btn',
+            );
+            if (installButton && !cmRagDatasetBusy) {
+                installButton.disabled = !cmRagCanInstall();
+            }
+
+            const configuredUrl = (
+                document.getElementById('setting-character-maker-rag-url')?.value
+                || ''
+            ).trim().replace(/\/+$/, '').toLowerCase();
+            const managesConfiguredUrl = (
+                configuredUrl === 'http://127.0.0.1:3333'
+                || configuredUrl === 'http://localhost:3333'
+            );
+            if (managesConfiguredUrl) {
+                if (state === 'running' || state === 'external') {
+                    cmRagVerified = true;
+                } else if (state === 'stopped' || state === 'error') {
+                    cmRagVerified = false;
+                }
+            }
+            if (cmSession) cmRenderStatus();
+        }
+
+        async function cmRefreshRagRuntimeStatus(showError = false) {
+            try {
+                const response = await fetch('/api/character_maker/rag/runtime', {
+                    cache: 'no-store',
+                });
+                const data = await response.json().catch(error => {
+                    console.error(
+                        '[CHARACTER_MAKER_RAG_RUNTIME] 상태 응답 JSON 해석 실패:',
+                        error,
+                    );
+                    return {};
+                });
+                if (!response.ok || data.success === false || data.error) {
+                    throw new Error(data.error || `HTTP ${response.status}`);
+                }
+                cmRenderRagRuntimeStatus(data);
+                return data;
+            } catch (error) {
+                console.error('[CHARACTER_MAKER_RAG_RUNTIME] 상태 확인 실패:', error);
+                const status = document.getElementById(
+                    'setting-character-maker-rag-runtime-state',
+                );
+                if (status) {
+                    status.textContent = `상태 확인 실패 · ${error.message || String(error)}`;
+                    status.className = 'cm-rag-runtime-state error';
+                }
+                if (showError) {
+                    showToast('로컬 RAG 상태 확인 실패: ' + (error.message || error), 'error');
+                }
+                return null;
+            }
+        }
+
+        function cmPollRagRuntimeUntilSettled() {
+            if (cmRagRuntimePollTimer) {
+                clearTimeout(cmRagRuntimePollTimer);
+                cmRagRuntimePollTimer = null;
+            }
+            const deadline = Date.now() + 5 * 60 * 1000;
+            const poll = async () => {
+                const data = await cmRefreshRagRuntimeStatus(false);
+                if (data?.state === 'starting' && Date.now() < deadline) {
+                    cmRagRuntimePollTimer = setTimeout(poll, 1000);
+                } else {
+                    cmRagRuntimePollTimer = null;
+                    if (data?.state === 'running') {
+                        showToast('로컬 Danbooru RAG가 준비되었습니다.', 'success');
+                    } else if (data?.state === 'error') {
+                        showToast(
+                            '로컬 RAG 실행 실패: ' + (data.error || '사이드카 로그를 확인하세요.'),
+                            'error',
+                        );
+                    }
+                }
+            };
+            void poll();
+        }
+
+        async function cmStartRagRuntime() {
+            const startButton = document.getElementById(
+                'setting-character-maker-rag-runtime-start',
+            );
+            const stopButton = document.getElementById(
+                'setting-character-maker-rag-runtime-stop',
+            );
+            const runtimeStatus = document.getElementById(
+                'setting-character-maker-rag-runtime-state',
+            );
+            const installButton = document.getElementById(
+                'setting-character-maker-rag-data-install-btn',
+            );
+            cmRagRuntimeState = 'starting';
+            cmRagRuntimeManaged = true;
+            if (startButton) {
+                startButton.disabled = true;
+                startButton.textContent = '시작 중...';
+            }
+            if (stopButton) stopButton.disabled = true;
+            if (installButton) installButton.disabled = true;
+            if (runtimeStatus) {
+                runtimeStatus.textContent = '시작 준비 중 · 의존성을 확인하고 있습니다...';
+                runtimeStatus.className = 'cm-rag-runtime-state starting';
+            }
+            try {
+                const response = await fetch('/api/character_maker/rag/runtime/start', {
+                    method: 'POST',
+                });
+                const data = await response.json().catch(error => {
+                    console.error(
+                        '[CHARACTER_MAKER_RAG_RUNTIME] 실행 응답 JSON 해석 실패:',
+                        error,
+                    );
+                    return {};
+                });
+                if (!response.ok || data.success === false || data.error) {
+                    throw new Error(data.error || `HTTP ${response.status}`);
+                }
+                cmRenderRagRuntimeStatus(data);
+                if (data.state === 'external') {
+                    showToast('이미 실행 중인 로컬 RAG에 연결했습니다.', 'success');
+                } else if (data.state === 'running') {
+                    showToast('로컬 Danbooru RAG가 실행 중입니다.', 'success');
+                } else {
+                    showToast('로컬 RAG를 시작했습니다. 모델 준비를 기다립니다.', 'info');
+                    cmPollRagRuntimeUntilSettled();
+                }
+            } catch (error) {
+                console.error('[CHARACTER_MAKER_RAG_RUNTIME] 실행 실패:', error);
+                showToast('로컬 RAG 실행 실패: ' + (error.message || error), 'error');
+                await cmRefreshRagRuntimeStatus(false);
+            } finally {
+                if (startButton) startButton.textContent = '실행';
+            }
+        }
+
+        async function cmStopRagRuntime() {
+            if (cmRagRuntimePollTimer) {
+                clearTimeout(cmRagRuntimePollTimer);
+                cmRagRuntimePollTimer = null;
+            }
+            const stopButton = document.getElementById(
+                'setting-character-maker-rag-runtime-stop',
+            );
+            if (stopButton) {
+                stopButton.disabled = true;
+                stopButton.textContent = '끄는 중...';
+            }
+            try {
+                const response = await fetch('/api/character_maker/rag/runtime/stop', {
+                    method: 'POST',
+                });
+                const data = await response.json().catch(error => {
+                    console.error(
+                        '[CHARACTER_MAKER_RAG_RUNTIME] 종료 응답 JSON 해석 실패:',
+                        error,
+                    );
+                    return {};
+                });
+                if (!response.ok || data.success === false || data.error) {
+                    throw new Error(data.error || `HTTP ${response.status}`);
+                }
+                cmRenderRagRuntimeStatus(data);
+                showToast('로컬 Danbooru RAG를 껐습니다.', 'success');
+            } catch (error) {
+                console.error('[CHARACTER_MAKER_RAG_RUNTIME] 종료 실패:', error);
+                showToast('로컬 RAG 종료 실패: ' + (error.message || error), 'error');
+                await cmRefreshRagRuntimeStatus(false);
+            } finally {
+                if (stopButton) stopButton.textContent = '끄기';
+            }
+        }
+
         async function testCharacterMakerRag() {
             const button = document.getElementById('setting-character-maker-rag-test-btn');
             const output = document.getElementById('setting-character-maker-rag-test-output');
@@ -16625,7 +16956,12 @@
         function cmRagCanInstall() {
             const sourceReady = !!cmRagDatasetFile
                 || !!cmRagServerDataset?.canonicalReady;
-            return sourceReady && !!cmRagRepositoryPath();
+            const runtimeStopped = !cmRagRuntimeManaged && (
+                cmRagRuntimeState !== 'running'
+                && cmRagRuntimeState !== 'starting'
+                && cmRagRuntimeState !== 'external'
+            );
+            return sourceReady && !!cmRagRepositoryPath() && runtimeStopped;
         }
 
         function cmRagRepositoryChanged() {
@@ -16884,15 +17220,19 @@
             const button = document.getElementById('setting-character-maker-rag-data-install-btn');
             const state = document.getElementById('setting-character-maker-rag-data-state');
             const result = document.getElementById('setting-character-maker-rag-data-result');
+            const runtimeStartButton = document.getElementById(
+                'setting-character-maker-rag-runtime-start',
+            );
             cmRagDatasetBusy = true;
             if (button) {
                 button.disabled = true;
                 button.classList.add('is-busy');
                 button.textContent = '설치 중...';
             }
+            if (runtimeStartButton) runtimeStartButton.disabled = true;
             if (state) {
                 state.textContent =
-                    '변환 → 기존 자료 백업 → variant-b 인덱스 구축 중... 잠시 기다리세요.';
+                    '저장소 확인·자동 준비 → 변환 → 기존 자료 백업 → variant-b 인덱스 구축 중...';
             }
             result?.classList.remove('visible');
 
@@ -16936,13 +17276,16 @@
                 document.getElementById('cm-rag-result-malformed').textContent =
                     summary.malformed.toLocaleString();
                 result?.classList.add('visible');
+                const repositoryCloned = !!payload.installed?.repository_cloned;
                 if (state) {
                     state.textContent =
                         `입력 ${summary.input.toLocaleString()}행 중 ` +
-                        `${summary.written.toLocaleString()}행 설치 완료 · RAG 사이드카 재시작 필요`;
+                        `${summary.written.toLocaleString()}행 설치 완료` +
+                        `${repositoryCloned ? ' · 저장소 자동 설치됨' : ''} · 위 실행 버튼으로 시작`;
                 }
                 showToast(
-                    'danbooru-tags.csv와 variant-b 설치 완료 · RAG 사이드카를 재시작하세요.',
+                    `${repositoryCloned ? '저장소 준비 · ' : ''}` +
+                    'danbooru-tags.csv와 variant-b 설치 완료 · 실행 버튼을 누르세요.',
                     'success',
                 );
             } catch (error) {
@@ -16958,6 +17301,7 @@
                     button.classList.remove('is-busy');
                     button.textContent = '변환 및 설치';
                 }
+                await cmRefreshRagRuntimeStatus(false);
             }
         }
 
@@ -16979,6 +17323,9 @@
                 && !cmRagDatasetScanned
             ) {
                 void cmFindRagDataset(false);
+            }
+            if (tabName === 'character_maker') {
+                void cmRefreshRagRuntimeStatus(false);
             }
             // 활성 탭이 보이도록 스크롤
             const scroll = document.getElementById('settings-tab-scroll');
@@ -28261,6 +28608,70 @@
             cmFillPresetSelect('cm-setting-char-negative', assetTags?.character_negative_presets, '사용 안 함');
             cmFillPresetSelect('cm-setting-natural', assetTags?.natural_language_presets, '사용 안 함');
             cmFillPresetSelect('cm-confirm-expression', assetTags?.expressions, '표정 선택');
+            cmRenderFieldPresetSelects();
+        }
+
+        // 필드별 프리셋 키 매핑: 캐릭터 메이커 4개 필드 → assetTags의 전역 프리셋 사전
+        const CM_FIELD_PRESET_KEYS = {
+            appearance: 'appearances',
+            outfit: 'outfits',
+            expression: 'expressions',
+            composition: 'composition_presets',
+        };
+
+        function cmRenderFieldPresetSelects() {
+            if (!assetTags) return;
+            for (const field of CM_FIELDS) {
+                const card = document.querySelector(`.cm-field-card[data-field="${field}"]`);
+                const select = card?.querySelector('[data-preset-select]');
+                if (!select) continue;
+                const presets = assetTags[CM_FIELD_PRESET_KEYS[field]] || {};
+                select.innerHTML = '';
+                const empty = document.createElement('option');
+                empty.value = '';
+                empty.textContent = '프리셋에서 불러오기';
+                select.appendChild(empty);
+                Object.keys(presets)
+                    .sort((a, b) => a.localeCompare(b, 'ko'))
+                    .forEach(name => {
+                        const option = document.createElement('option');
+                        option.value = name;
+                        option.textContent = name;
+                        select.appendChild(option);
+                    });
+                // 불러오기는 상태가 아니라 동작이므로 항상 안내 옵션으로 되돌린다.
+                select.value = '';
+            }
+        }
+
+        function cmLoadFieldPreset(field) {
+            if (!cmSession || !CM_FIELDS.includes(field)) return;
+            const card = document.querySelector(`.cm-field-card[data-field="${field}"]`);
+            const select = card?.querySelector('[data-preset-select]');
+            const name = (select?.value || '').trim();
+            if (!name) return;
+            const presets = assetTags?.[CM_FIELD_PRESET_KEYS[field]] || {};
+            const tags = presets[name];
+            if (!Array.isArray(tags)) {
+                console.error(
+                    '[CHARACTER_MAKER] 필드 프리셋을 찾을 수 없습니다:',
+                    field, name,
+                );
+                showToast(`${CM_FIELD_LABELS[field]} 프리셋 '${name}'을(를) 찾을 수 없습니다.`, 'error');
+                if (select) select.value = '';
+                return;
+            }
+            const cleaned = cmCleanTags(tags);
+            // 교체: 기존 필드 태그를 프리셋 태그로 덮어쓴 뒤 임시 세션에 동기화.
+            cmSession.fields[field] = cleaned;
+            cmRenderField(field);
+            cmQueueSync();
+            if (select) select.value = '';
+            if (!cleaned.length) {
+                showToast(`${CM_FIELD_LABELS[field]} 프리셋 '${name}'에 태그가 없습니다.`, 'info');
+            } else {
+                showToast(`${CM_FIELD_LABELS[field]} 프리셋 '${name}' 불러옴 · ${cleaned.length} tags`, 'success');
+            }
         }
 
         function cmCollectSettings() {

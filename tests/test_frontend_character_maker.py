@@ -65,6 +65,27 @@ def test_only_four_fields_have_free_chip_and_text_editors():
     assert "raw_composition_tags" in html
 
 
+def test_each_field_has_preset_loader_wired_to_load_function():
+    html = _html()
+
+    for field in ("appearance", "outfit", "expression", "composition"):
+        assert (
+            f'onchange="cmLoadFieldPreset(\'{field}\')"' in html
+        ), f"필드 {field}에 프리셋 불러오기 onchange가 없습니다"
+        assert f"cm-field-preset-select" in html
+
+    # 필드 → assetTags 프리셋 사전 매핑과 렌더/불러오기 함수가 정의되어 있어야 한다.
+    assert "const CM_FIELD_PRESET_KEYS" in html
+    assert "appearance: 'appearances'" in html
+    assert "outfit: 'outfits'" in html
+    assert "expression: 'expressions'" in html
+    assert "composition: 'composition_presets'" in html
+    assert "function cmRenderFieldPresetSelects()" in html
+    assert "function cmLoadFieldPreset(field)" in html
+    # cmPopulatePresetOptions() 안에서 필드 프리셋 셀렉트도 채운다.
+    assert "cmRenderFieldPresetSelects()" in html
+
+
 def test_browser_only_persists_server_session_identifier():
     html = _html()
 
@@ -101,7 +122,13 @@ def test_rag_settings_test_and_external_llm_routes_are_visible():
     assert "https://github.com/joykst96/danbooru-tag-rag" in html
     assert 'id="setting-character-maker-rag-enabled"' in html
     assert 'id="setting-character-maker-rag-test-btn"' in html
+    assert 'id="setting-character-maker-rag-runtime-start"' in html
+    assert 'id="setting-character-maker-rag-runtime-stop"' in html
     assert "/api/character_maker/rag/test" in html
+    assert "/api/character_maker/rag/runtime/start" in html
+    assert "/api/character_maker/rag/runtime/stop" in html
+    assert "cmStartRagRuntime" in html
+    assert "cmStopRagRuntime" in html
     assert "character_maker_draft" in html
     assert "character_maker_feedback" in html
     assert "캐릭터 메이커 이미지 피드백" in html
@@ -122,6 +149,7 @@ def test_rag_settings_include_integrated_dataset_converter_and_tidy_cards():
     assert "변환 및 설치" in html
     assert "/api/character_maker/rag/dataset" in html
     assert "/api/character_maker/rag/install" in html
+    assert "저장소 확인·자동 준비" in html
     assert "cmFindRagDataset" in html
     assert "form.append('dataset', cmRagDatasetFile" in html
     assert "form.append('source', 'auto_complete')" in html
