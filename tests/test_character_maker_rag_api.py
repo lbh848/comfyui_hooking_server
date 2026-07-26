@@ -141,16 +141,13 @@ async def test_rag_dataset_status_and_auto_complete_install(
         "name,category,post_count,description",
         'long_hair,0,4800833,[패션 > 헤어스타일] 긴 머리. 키워드: 장발',
     ]
+    # 외부 백업 없이 저장소 폴더 안에서 덮어쓴다.
     backups = list(
         (tmp_path / "요구사항").glob(
             "character_maker_rag_before_install_*"
         )
     )
-    assert len(backups) == 1
-    assert (backups[0] / "danbooru-tags.csv").read_text(
-        encoding="utf-8"
-    ) == "old csv\n"
-    assert (backups[0] / "lancedb_b" / "old-index.bin").read_bytes() == b"old"
+    assert backups == []
 
 
 @pytest.mark.asyncio
@@ -227,7 +224,7 @@ async def test_rag_install_accepts_direct_upload(
 
 
 @pytest.mark.asyncio
-async def test_rag_install_restores_existing_files_when_builder_fails(
+async def test_rag_install_leaves_overwritten_state_when_builder_fails(
     monkeypatch,
     tmp_path,
 ):
@@ -275,13 +272,25 @@ async def test_rag_install_restores_existing_files_when_builder_fails(
     finally:
         await client.close()
 
+    # 복구 없음: 실패 안내와 함께 재설치를 안내한다.
     assert response.status == 400
     assert "의도한 빌드 실패" in payload["error"]
-    assert (repository / "danbooru-tags.csv").read_text(encoding="utf-8") == "old csv\n"
+    assert "다시 설치" in payload["error"]
+    # CSV는 이미 새 값으로 덮어쓴 채로 남는다(복구하지 않는다).
+    new_csv = (repository / "danbooru-tags.csv").read_text(encoding="utf-8")
+    assert "long_hair" in new_csv
+    assert "old csv" not in new_csv
+    # 인덱스도 복구/정리하지 않는다.
     assert (
         repository / "data" / "lancedb_b" / "old-index.bin"
     ).read_bytes() == b"old"
-    assert not (repository / "data" / "lancedb_b" / "damaged.bin").exists()
+    assert (
+        repository / "data" / "lancedb_b" / "damaged.bin"
+    ).read_bytes() == b"damaged"
+    # 외부 백업 폴더는 만들지 않는다.
+    assert list(
+        (tmp_path / "요구사항").glob("character_maker_rag_before_install_*")
+    ) == []
 
 
 @pytest.mark.asyncio

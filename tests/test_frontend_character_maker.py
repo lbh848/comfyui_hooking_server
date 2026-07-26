@@ -174,7 +174,10 @@ def test_rag_settings_include_integrated_dataset_converter_and_tidy_cards():
     assert "변환 및 설치" in html
     assert "/api/character_maker/rag/dataset" in html
     assert "/api/character_maker/rag/install" in html
-    assert "저장소 확인·자동 준비" in html
+    assert 'id="setting-character-maker-rag-data-progress"' in html
+    assert 'id="setting-character-maker-rag-data-progress-fill"' in html
+    assert "handleCmRagInstallProgress" in html
+    assert "character_maker_rag_install_progress" in html
     assert "cmFindRagDataset" in html
     assert "form.append('dataset', cmRagDatasetFile" in html
     assert "form.append('source', 'auto_complete')" in html

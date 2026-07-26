@@ -93,7 +93,6 @@ from modes.character_maker_rag_data import (
     convert_kr_danbooru_csv,
     ensure_rag_repository,
     prepare_rag_install,
-    restore_rag_install,
     validate_rag_repository,
 )
 from modes.asset_mode import CHARACTER_MAKER_TEMP_DIR
@@ -13731,16 +13730,49 @@ async def _run_character_maker_rag_builder(
         await process.wait()
         raise CharacterMakerRagDataError("RAG 인덱스 빌더 로그를 연결하지 못했습니다.")
     try:
+        last_overall = -1
+
+        def _handle_builder_segment(decoded: str) -> None:
+            nonlocal last_overall
+            print(f"[CHARACTER_MAKER_RAG_BUILDER] {decoded}")
+            log_tail.append(decoded)
+            if len(log_tail) > 80:
+                del log_tail[:-80]
+            # tqdm 진행바에서 임베딩 완료율을 파싱해 전체 진행률로 매핑(40→95%).
+            pct_matches = re.findall(r"(\d+)%", decoded)
+            if not pct_matches:
+                return
+            try:
+                builder_pct = int(pct_matches[-1])
+            except ValueError:
+                return
+            overall = int(40 + max(0, min(100, builder_pct)) * 0.55)
+            if overall == last_overall:
+                return
+            last_overall = overall
+            asyncio.ensure_future(
+                _emit_rag_install_progress(
+                    "인덱스 빌드", overall, f"임베딩 {builder_pct}%"
+                )
+            )
+
+        # tqdm은 \r로 같은 줄을 갱신하므로 \r 도 줄 경계로 취급해 실시간 %를 잡는다.
+        buffer = b""
         while True:
-            line = await process.stdout.readline()
-            if not line:
+            chunk = await process.stdout.read(4096)
+            if not chunk:
                 break
-            decoded = line.decode("utf-8", errors="replace").rstrip()
+            buffer += chunk
+            segments = re.split(rb"[\r\n]", buffer)
+            buffer = segments.pop()
+            for raw_segment in segments:
+                decoded = raw_segment.decode("utf-8", errors="replace").strip()
+                if decoded:
+                    _handle_builder_segment(decoded)
+        if buffer.strip():
+            decoded = buffer.decode("utf-8", errors="replace").strip()
             if decoded:
-                print(f"[CHARACTER_MAKER_RAG_BUILDER] {decoded}")
-                log_tail.append(decoded)
-                if len(log_tail) > 80:
-                    del log_tail[:-80]
+                _handle_builder_segment(decoded)
         return_code = await process.wait()
     except asyncio.CancelledError:
         print(
@@ -13803,6 +13835,18 @@ async def _run_character_maker_rag_builder(
     }
 
 
+async def _emit_rag_install_progress(phase: str, progress: int, detail: str = "") -> None:
+    """RAG 태그 자료 설치 진행률을 프론트엔드에 WebSocket으로 전송한다."""
+    await notify_frontend(
+        "character_maker_rag_install_progress",
+        {
+            "phase": phase,
+            "progress": int(max(0, min(100, progress))),
+            "detail": detail,
+        },
+    )
+
+
 async def handle_api_character_maker_rag_install(
     request: web.Request,
 ) -> web.Response:
@@ -13812,7 +13856,6 @@ async def handle_api_character_maker_rag_install(
     requested_source = ""
     requested_repository = ""
     install_context: dict[str, Any] | None = None
-    install_complete = False
     lock_acquired = False
     try:
         if _character_maker_rag_install_lock.locked():
@@ -13820,6 +13863,7 @@ async def handle_api_character_maker_rag_install(
             raise CharacterMakerError("RAG 태그 자료를 이미 설치하는 중입니다.")
         await _character_maker_rag_install_lock.acquire()
         lock_acquired = True
+        await _emit_rag_install_progress("시작", 0, "설치 시작")
 
         if _character_maker_rag_runtime_lock.locked():
             print(
@@ -13957,10 +14001,12 @@ async def handle_api_character_maker_rag_install(
         # 요청이나 설정값을 무시하고 항상 고정 경로를 사용하며, 폴더가 없으면
         # 공식 저장소를 임시 폴더에 clone한 뒤 검증하여 원자적으로 배치한다.
         repository = _character_maker_rag_repo_dir()
+        await _emit_rag_install_progress("저장소 준비", 5, "저장소 확인·clone")
         repository_paths = await asyncio.to_thread(
             ensure_rag_repository,
             repository,
         )
+        await _emit_rag_install_progress("저장소 준비", 10, "저장소 준비 완료")
 
         import tempfile
 
@@ -13975,12 +14021,39 @@ async def handle_api_character_maker_rag_install(
         output_file.close()
         temp_paths.append(output_path)
         canonical_path = os.path.join(BASE_DIR, "auto_complete", "danbooru.csv")
+
+        loop = asyncio.get_running_loop()
+        convert_last_emit = {"t": 0.0}
+
+        def _convert_progress_cb(current: int, total: int) -> None:
+            if total <= 0:
+                return
+            now = time.time()
+            if current < total and now - convert_last_emit["t"] < 0.2:
+                return
+            convert_last_emit["t"] = now
+            frac = max(0.0, min(1.0, current / max(1, total)))
+            pct = int(15 + frac * 20)  # 15 → 35
+            try:
+                asyncio.run_coroutine_threadsafe(
+                    _emit_rag_install_progress(
+                        "태그 변환", pct, f"{current}/{total}행"
+                    ),
+                    loop,
+                )
+            except Exception:
+                print("[CHARACTER_MAKER_RAG_INSTALL] 변환 진행 전송 실패")
+                traceback.print_exc()
+
+        await _emit_rag_install_progress("태그 변환", 15, "변환 시작")
         summary = await asyncio.to_thread(
             convert_kr_danbooru_csv,
             source_path,
             canonical_path,
             output_path,
+            progress_cb=_convert_progress_cb,
         )
+        await _emit_rag_install_progress("태그 변환", 35, "변환 완료")
         output_size = os.path.getsize(output_path)
         if output_size <= 0:
             print(
@@ -13989,19 +14062,21 @@ async def handle_api_character_maker_rag_install(
             )
             raise CharacterMakerError("변환 결과 파일이 비어 있습니다.")
 
-        backup_root = os.path.join(BASE_DIR, "요구사항")
+        await _emit_rag_install_progress("CSV 설치", 38, "저장소에 CSV 덮어쓰기")
         install_context = await asyncio.to_thread(
             prepare_rag_install,
             output_path,
             repository_paths["repository"],
-            backup_root,
+        )
+        await _emit_rag_install_progress(
+            "인덱스 빌드", 40, "임베딩 모델 로드·인덱스 구축 시작"
         )
         build_result = await _run_character_maker_rag_builder(
             install_context["repository"],
             install_context["data_dir"],
             install_context["index_path"],
         )
-        install_complete = True
+        await _emit_rag_install_progress("완료", 100, "설치 완료")
         print(
             "[CHARACTER_MAKER_RAG_INSTALL] 변환·설치 완료: "
             f"source={upload_filename!r}, repository={install_context['repository']!r}, "
@@ -14024,9 +14099,6 @@ async def handle_api_character_maker_rag_install(
                     "repository_cloned": bool(
                         repository_paths.get("repository_cloned", False)
                     ),
-                    "backup_name": os.path.basename(
-                        install_context["backup_dir"]
-                    ),
                     "restart_required": True,
                 },
             },
@@ -14037,47 +14109,34 @@ async def handle_api_character_maker_rag_install(
             "[CHARACTER_MAKER_RAG_INSTALL] 설치 요청 취소됨: "
             f"source={upload_filename!r}, repository={requested_repository!r}"
         )
-        if install_context is not None and not install_complete:
-            try:
-                await asyncio.shield(
-                    asyncio.to_thread(restore_rag_install, install_context)
-                )
-            except Exception as restore_exc:
-                print(
-                    "[CHARACTER_MAKER_RAG_INSTALL] 취소 후 복구 실패: "
-                    f"error={type(restore_exc).__name__}: {restore_exc}"
-                )
-                traceback.print_exc()
         raise
     except CharacterMakerRagDataError as exc:
-        if install_context is not None and not install_complete:
-            try:
-                await asyncio.to_thread(restore_rag_install, install_context)
-            except Exception as restore_exc:
-                print(
-                    "[CHARACTER_MAKER_RAG_INSTALL] 실패 후 복구 최종 실패: "
-                    f"error={type(restore_exc).__name__}: {restore_exc}"
-                )
-                traceback.print_exc()
-                exc = CharacterMakerRagDataError(
-                    f"{exc} 기존 자료 복구에도 실패했습니다: {restore_exc}"
-                )
-        mapped = CharacterMakerError(str(exc))
+        print(
+            "[CHARACTER_MAKER_RAG_INSTALL] 설치 실패(복구 없음). "
+            "태그 자료를 다시 설치해야 합니다: "
+            f"error={type(exc).__name__}: {exc}"
+        )
+        await _emit_rag_install_progress(
+            "실패", 0, f"설치 실패 · 태그 자료를 다시 설치해 주세요: {exc}"
+        )
+        mapped = CharacterMakerError(
+            f"{exc} 기존 자료는 복구하지 않습니다. 태그 자료를 다시 설치해 주세요."
+        )
         return _character_maker_error_response("RAG 태그 자료 설치", mapped)
     except Exception as exc:
-        if install_context is not None and not install_complete:
-            try:
-                await asyncio.to_thread(restore_rag_install, install_context)
-            except Exception as restore_exc:
-                print(
-                    "[CHARACTER_MAKER_RAG_INSTALL] 예외 후 복구 최종 실패: "
-                    f"error={type(restore_exc).__name__}: {restore_exc}"
-                )
-                traceback.print_exc()
-                exc = CharacterMakerError(
-                    f"{exc} 기존 자료 복구에도 실패했습니다: {restore_exc}"
-                )
-        return _character_maker_error_response("RAG 태그 자료 설치", exc)
+        print(
+            "[CHARACTER_MAKER_RAG_INSTALL] 예외로 설치 실패(복구 없음). "
+            "태그 자료를 다시 설치해야 합니다: "
+            f"error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        await _emit_rag_install_progress(
+            "실패", 0, f"설치 실패 · 태그 자료를 다시 설치해 주세요: {exc}"
+        )
+        mapped = CharacterMakerError(
+            f"{exc} 기존 자료는 복구하지 않습니다. 태그 자료를 다시 설치해 주세요."
+        )
+        return _character_maker_error_response("RAG 태그 자료 설치", mapped)
     finally:
         for path in temp_paths:
             try:

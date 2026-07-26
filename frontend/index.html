@@ -3458,6 +3458,33 @@
             font-size: .61rem;
             line-height: 1.45;
         }
+        .cm-rag-data-progress {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 8px;
+        }
+        .cm-rag-data-progress-bar {
+            flex: 1;
+            min-width: 0;
+            height: 8px;
+            border-radius: 999px;
+            background: color-mix(in srgb, var(--border) 60%, var(--surface));
+            overflow: hidden;
+        }
+        .cm-rag-data-progress-fill {
+            height: 100%;
+            border-radius: 999px;
+            background: var(--accent);
+            transition: width .25s ease;
+        }
+        .cm-rag-data-progress-text {
+            flex: none;
+            font-size: .62rem;
+            color: var(--text2);
+            font-variant-numeric: tabular-nums;
+            white-space: nowrap;
+        }
         .cm-rag-data-convert-btn {
             min-height: 34px;
             white-space: nowrap;
@@ -13545,6 +13572,15 @@
                                             변환 및 설치
                                         </button>
                                     </div>
+                                    <div id="setting-character-maker-rag-data-progress"
+                                         class="cm-rag-data-progress" style="display:none;">
+                                        <div class="cm-rag-data-progress-bar">
+                                            <div id="setting-character-maker-rag-data-progress-fill"
+                                                 class="cm-rag-data-progress-fill" style="width:0%"></div>
+                                        </div>
+                                        <div id="setting-character-maker-rag-data-progress-text"
+                                             class="cm-rag-data-progress-text">0%</div>
+                                    </div>
 
                                     <div id="setting-character-maker-rag-data-result"
                                          class="cm-rag-data-result">
@@ -13575,10 +13611,11 @@
                             <div>
                                 RAG는 모델 내장 기능이 아니라 서버 측 후보 검색 단계입니다.
                                 저장소가 없으면 고정 위치에 자동으로 받은 뒤, 기존 CSV와
-                                <code>data/lancedb_b</code>를 <code>요구사항/</code>에
-                                백업하고 교체합니다. 설치 후 위의 실행·끄기 버튼으로 로컬
-                                RAG를 관리할 수 있습니다. 인덱스 구축과 최초 모델
-                                준비에는 GPU에서도 시간이 걸릴 수 있습니다.
+                                <code>data/lancedb_b</code>를 저장소 폴더 안에서 그대로
+                                덮어쓰고 교체합니다(외부 백업 없음). 설치 중 실패하면
+                                이전 상태로 되돌리지 않으므로 태그 자료를 다시 설치해 주세요.
+                                설치 후 위의 실행·끄기 버튼으로 로컬 RAG를 관리할 수 있습니다.
+                                인덱스 구축과 최초 모델 준비에는 GPU에서도 시간이 걸릴 수 있습니다.
                                 이미지 피드백은 별도로 비전 모델이 필요합니다.
                                 <a href="https://github.com/joykst96/danbooru-tag-rag"
                                    target="_blank" rel="noopener"
@@ -14915,6 +14952,12 @@
                         case 'backup_filter_ready':
                             // 백그라운드 필터 캐시 빌드 완료 → 드롭다운 최종 갱신
                             if (typeof loadBackupFilters === 'function') loadBackupFilters();
+                            break;
+                        // 캐릭터 메이커 RAG 태그 자료 설치 진행률
+                        case 'character_maker_rag_install_progress':
+                            if (typeof handleCmRagInstallProgress === 'function') {
+                                handleCmRagInstallProgress(msg.data);
+                            }
                             break;
                         // LoRA 학습 진행률
                         case 'lora_training_progress':
@@ -17217,6 +17260,24 @@
             cmSelectRagDataset(files);
         }
 
+        function handleCmRagInstallProgress(data) {
+            const pct = Math.max(0, Math.min(100, Number(data?.progress || 0)));
+            const phase = data?.phase || '';
+            const detail = data?.detail || '';
+            const wrap = document.getElementById('setting-character-maker-rag-data-progress');
+            const fill = document.getElementById('setting-character-maker-rag-data-progress-fill');
+            const text = document.getElementById('setting-character-maker-rag-data-progress-text');
+            const state = document.getElementById('setting-character-maker-rag-data-state');
+            if (wrap) wrap.style.display = 'flex';
+            if (fill) fill.style.width = pct + '%';
+            if (text) text.textContent = pct + '%';
+            if (state) {
+                state.textContent = detail
+                    ? `${phase} · ${pct}% · ${detail}`
+                    : `${phase} · ${pct}%`;
+            }
+        }
+
         async function cmInstallRagDataset() {
             if (cmRagDatasetBusy) return;
             if (!cmRagDatasetFile && !cmRagServerDataset?.canonicalReady) {
@@ -17243,11 +17304,8 @@
                 button.textContent = '설치 중...';
             }
             if (runtimeStartButton) runtimeStartButton.disabled = true;
-            if (state) {
-                state.textContent =
-                    '저장소 확인·자동 준비 → 변환 → 기존 자료 백업 → variant-b 인덱스 구축 중...';
-            }
             result?.classList.remove('visible');
+            handleCmRagInstallProgress({phase: '시작', progress: 0, detail: '설치 시작'});
 
             try {
                 const form = new FormData();
@@ -17289,6 +17347,10 @@
                 document.getElementById('cm-rag-result-malformed').textContent =
                     summary.malformed.toLocaleString();
                 result?.classList.add('visible');
+                const _cmRagProgWrap = document.getElementById(
+                    'setting-character-maker-rag-data-progress',
+                );
+                if (_cmRagProgWrap) _cmRagProgWrap.style.display = 'none';
                 const repositoryCloned = !!payload.installed?.repository_cloned;
                 if (state) {
                     state.textContent =

@@ -13,7 +13,6 @@ from modes.character_maker_rag_data import (
     convert_kr_danbooru_csv,
     ensure_rag_repository,
     prepare_rag_install,
-    restore_rag_install,
     validate_rag_repository,
 )
 
@@ -139,7 +138,28 @@ def test_converter_reports_missing_builtin_canonical_file(tmp_path):
         )
 
 
-def test_prepare_and_restore_rag_install_preserves_existing_data(tmp_path):
+def test_converter_invokes_progress_callback_with_row_counts(tmp_path):
+    canonical = tmp_path / "danbooru.csv"
+    source = tmp_path / "source.csv"
+    output = tmp_path / "output.csv"
+    _write_rows(canonical, [["blue_eyes", 0, 1000, ""]])
+    rows = [["blue eyes", 0, 900, f"설명 {i}"] for i in range(2500)]
+    _write_rows(source, rows)
+
+    events: list[tuple[int, int]] = []
+
+    def cb(current, total):
+        events.append((current, total))
+
+    convert_kr_danbooru_csv(str(source), str(canonical), str(output), progress_cb=cb)
+
+    assert events, "progress_cb 가 한 번도 호출되지 않았습니다"
+    assert events[0] == (0, len(rows))
+    assert events[-1] == (len(rows), len(rows))
+    assert all(0 <= c <= t for c, t in events)
+
+
+def test_prepare_rag_install_overwrites_csv_in_place_without_backup(tmp_path):
     repository = tmp_path / "danbooru-tag-rag"
     _create_repository_structure(repository)
     old_csv = repository / "danbooru-tags.csv"
@@ -157,20 +177,19 @@ def test_prepare_and_restore_rag_install_preserves_existing_data(tmp_path):
     context = prepare_rag_install(
         str(converted),
         str(repository),
-        str(tmp_path / "요구사항"),
     )
 
     assert paths["repository"] == str(repository.resolve())
+    # CSV 는 저장소 폴더 안에서 그대로 덮어쓴다.
     assert old_csv.read_text(encoding="utf-8") == converted.read_text(encoding="utf-8")
-    assert Path(context["csv_backup"]).read_text(encoding="utf-8") == "old csv\n"
-    assert Path(context["index_backup"], "old.bin").read_bytes() == b"old-index"
-
-    (old_index / "damaged.bin").write_bytes(b"damaged")
-    restore_rag_install(context)
-
-    assert old_csv.read_text(encoding="utf-8") == "old csv\n"
+    # 외부 백업 디렉토리/컨텍스트 키를 만들지 않는다.
+    assert "backup_dir" not in context
+    assert "csv_backup" not in context
+    assert "index_backup" not in context
+    # 요구사항 백업 폴더가 생성되지 않는다.
+    assert not (tmp_path / "요구사항").exists()
+    # 기존 인덱스는 빌더가 담당하므로 설치 단계에서 건드리지 않는다.
     assert (old_index / "old.bin").read_bytes() == b"old-index"
-    assert not (old_index / "damaged.bin").exists()
 
 
 def test_validate_rag_repository_rejects_an_unrelated_folder(tmp_path):

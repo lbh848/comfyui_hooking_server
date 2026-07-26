@@ -8,7 +8,6 @@
 from __future__ import annotations
 
 import csv
-import datetime
 import os
 import shutil
 import subprocess
@@ -251,9 +250,12 @@ def validate_rag_repository(repo_path: str) -> dict[str, str]:
 def prepare_rag_install(
     converted_csv_path: str,
     repo_path: str,
-    backup_root: str,
 ) -> dict[str, Any]:
-    """기존 CSV/variant-b 인덱스를 백업하고 새 CSV를 원자적으로 설치한다."""
+    """새 CSV를 저장소 폴더 안에 원자적으로 덮어쓴다(외부 백업 없음).
+
+    기존 CSV/인덱스는 저장소 폴더 안에서 그대로 교체된다. 빌드 실패 시 이전 상태로
+    되돌리지 않으므로, 호출자는 사용자에게 태그 자료를 다시 설치하도록 안내해야 한다.
+    """
     if not os.path.isfile(converted_csv_path):
         print(
             "[CHARACTER_MAKER_RAG_INSTALL] 변환 CSV 없음: "
@@ -262,56 +264,10 @@ def prepare_rag_install(
         raise CharacterMakerRagDataError("설치할 변환 CSV를 찾을 수 없습니다.")
 
     paths = validate_rag_repository(repo_path)
-    raw_backup_root = str(backup_root or "").strip()
-    if not raw_backup_root:
-        print("[CHARACTER_MAKER_RAG_INSTALL] 백업 루트 비어 있음")
-        raise CharacterMakerRagDataError("RAG 설치 백업 폴더가 지정되지 않았습니다.")
-    if not os.path.isabs(raw_backup_root):
-        print(
-            "[CHARACTER_MAKER_RAG_INSTALL] 상대 백업 루트 거부: "
-            f"path={raw_backup_root!r}"
-        )
-        raise CharacterMakerRagDataError("RAG 설치 백업 폴더는 절대 경로여야 합니다.")
-    backup_root = os.path.realpath(raw_backup_root)
-    os.makedirs(backup_root, exist_ok=True)
-    stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-    backup_dir = os.path.join(
-        backup_root,
-        f"character_maker_rag_before_install_{stamp}",
-    )
-    os.makedirs(backup_dir, exist_ok=False)
-
     csv_path = paths["csv_path"]
-    index_path = paths["index_path"]
-    csv_backup = os.path.join(backup_dir, OUTPUT_FILENAME)
-    index_backup = os.path.join(
-        backup_dir,
-        f"lancedb_{INDEX_VARIANT}",
-    )
-    context: dict[str, Any] = {
-        **paths,
-        "backup_dir": backup_dir,
-        "csv_backup": csv_backup,
-        "index_backup": index_backup,
-        "had_csv": os.path.isfile(csv_path),
-        "had_index": os.path.isdir(index_path),
-        "installed": False,
-    }
+    context: dict[str, Any] = {**paths}
 
     try:
-        if context["had_csv"]:
-            shutil.copy2(csv_path, csv_backup)
-            print(
-                "[CHARACTER_MAKER_RAG_INSTALL] 기존 CSV 백업 완료: "
-                f"source={csv_path!r}, backup={csv_backup!r}"
-            )
-        if context["had_index"]:
-            shutil.copytree(index_path, index_backup)
-            print(
-                "[CHARACTER_MAKER_RAG_INSTALL] 기존 인덱스 백업 완료: "
-                f"source={index_path!r}, backup={index_backup!r}"
-            )
-
         temporary = tempfile.NamedTemporaryFile(
             mode="wb",
             prefix=".danbooru-tags-install-",
@@ -327,11 +283,9 @@ def prepare_rag_install(
         finally:
             if os.path.isfile(temporary_path):
                 os.remove(temporary_path)
-        context["installed"] = True
         print(
-            "[CHARACTER_MAKER_RAG_INSTALL] 새 CSV 설치 완료: "
-            f"path={csv_path!r}, bytes={os.path.getsize(csv_path)}, "
-            f"backup={backup_dir!r}"
+            "[CHARACTER_MAKER_RAG_INSTALL] 새 CSV 설치 완료(덮어쓰기): "
+            f"path={csv_path!r}, bytes={os.path.getsize(csv_path)}"
         )
         return context
     except Exception as exc:
@@ -340,110 +294,10 @@ def prepare_rag_install(
             f"repository={paths['repository']!r}, error={type(exc).__name__}: {exc}"
         )
         traceback.print_exc()
-        if context.get("installed"):
-            try:
-                restore_rag_install(context)
-            except Exception:
-                traceback.print_exc()
         if isinstance(exc, CharacterMakerRagDataError):
             raise
         raise CharacterMakerRagDataError(
             f"RAG 설치 파일을 준비하지 못했습니다: {exc}"
-        ) from exc
-
-
-def restore_rag_install(context: dict[str, Any]) -> None:
-    """빌드 실패 시 설치 전 CSV와 variant-b 인덱스를 복구한다."""
-    raw_repository = str(context.get("repository") or "").strip()
-    raw_csv_path = str(context.get("csv_path") or "").strip()
-    raw_index_path = str(context.get("index_path") or "").strip()
-    if not raw_repository or not raw_csv_path or not raw_index_path:
-        print(
-            "[CHARACTER_MAKER_RAG_INSTALL] 복구 컨텍스트 경로 누락: "
-            f"repository={raw_repository!r}, csv={raw_csv_path!r}, "
-            f"index={raw_index_path!r}"
-        )
-        raise CharacterMakerRagDataError("RAG 설치 복구 정보가 완전하지 않습니다.")
-    repository = os.path.realpath(raw_repository)
-    csv_path = os.path.realpath(raw_csv_path)
-    index_path = os.path.realpath(raw_index_path)
-    if not os.path.isdir(repository):
-        print(
-            "[CHARACTER_MAKER_RAG_INSTALL] 복구 저장소 검증 실패: "
-            f"repository={repository!r}"
-        )
-        raise CharacterMakerRagDataError("RAG 설치 실패 후 저장소를 복구하지 못했습니다.")
-    if (
-        os.path.basename(csv_path).casefold() != OUTPUT_FILENAME.casefold()
-        or os.path.basename(index_path).casefold()
-        != f"lancedb_{INDEX_VARIANT}".casefold()
-    ):
-        print(
-            "[CHARACTER_MAKER_RAG_INSTALL] 복구 대상명 검증 실패: "
-            f"csv={csv_path!r}, index={index_path!r}"
-        )
-        raise CharacterMakerRagDataError("RAG 설치 복구 대상 파일명이 올바르지 않습니다.")
-    for label, path in (("CSV", csv_path), ("인덱스", index_path)):
-        try:
-            if os.path.commonpath([repository, path]) != repository:
-                print(
-                    "[CHARACTER_MAKER_RAG_INSTALL] 복구 경로 이탈 거부: "
-                    f"label={label}, repository={repository!r}, path={path!r}"
-                )
-                raise CharacterMakerRagDataError(
-                    f"RAG {label} 복구 경로가 저장소 밖을 가리킵니다."
-                )
-        except ValueError as exc:
-            print(
-                "[CHARACTER_MAKER_RAG_INSTALL] 복구 경로 검증 실패: "
-                f"label={label}, repository={repository!r}, path={path!r}, error={exc}"
-            )
-            traceback.print_exc()
-            raise CharacterMakerRagDataError(
-                f"RAG {label} 복구 경로를 확인하지 못했습니다."
-            ) from exc
-
-    csv_backup = str(context.get("csv_backup") or "")
-    index_backup = str(context.get("index_backup") or "")
-    try:
-        if context.get("had_csv") and os.path.isfile(csv_backup):
-            temporary = tempfile.NamedTemporaryFile(
-                mode="wb",
-                prefix=".danbooru-tags-restore-",
-                suffix=".csv",
-                dir=repository,
-                delete=False,
-            )
-            temporary_path = temporary.name
-            temporary.close()
-            try:
-                shutil.copyfile(csv_backup, temporary_path)
-                os.replace(temporary_path, csv_path)
-            finally:
-                if os.path.isfile(temporary_path):
-                    os.remove(temporary_path)
-        elif not context.get("had_csv") and os.path.isfile(csv_path):
-            os.remove(csv_path)
-
-        if context.get("had_index") and os.path.isdir(index_backup):
-            if os.path.isdir(index_path):
-                shutil.rmtree(index_path)
-            os.makedirs(os.path.dirname(index_path), exist_ok=True)
-            shutil.copytree(index_backup, index_path)
-        elif not context.get("had_index") and os.path.isdir(index_path):
-            shutil.rmtree(index_path)
-        print(
-            "[CHARACTER_MAKER_RAG_INSTALL] 설치 전 상태 복구 완료: "
-            f"repository={repository!r}, backup={context.get('backup_dir')!r}"
-        )
-    except Exception as exc:
-        print(
-            "[CHARACTER_MAKER_RAG_INSTALL] 설치 전 상태 복구 실패: "
-            f"repository={repository!r}, error={type(exc).__name__}: {exc}"
-        )
-        traceback.print_exc()
-        raise CharacterMakerRagDataError(
-            f"RAG 설치 실패 후 기존 자료 복구에도 실패했습니다: {exc}"
         ) from exc
 
 
@@ -545,11 +399,15 @@ def convert_kr_danbooru_csv(
     output_csv_path: str,
     *,
     min_post_count: int = MIN_POST_COUNT,
+    progress_cb=None,
 ) -> dict[str, Any]:
     """한국어 설명 CSV를 정식 RAG 입력 CSV로 변환한다.
 
     정식 태그명과 카테고리는 내장 기준표에서만 가져온다. 기준표와 매칭되지 않는
     행을 category 0으로 추측해 넣지 않으므로 일반 태그 검색 공간을 오염시키지 않는다.
+
+    ``progress_cb(current, total)`` 를 주면 행 단위로 진행을 알린다. 동기 콜백이며
+    스레드 안전 여부는 호출자가 보장한다.
     """
     if not os.path.isfile(source_csv_path):
         print(
@@ -579,6 +437,26 @@ def convert_kr_danbooru_csv(
     unmatched_samples: list[str] = []
     seen: set[str] = set()
 
+    total_rows = 0
+    if progress_cb is not None:
+        try:
+            with open(source_csv_path, "rb") as _count_f:
+                total_rows = sum(
+                    chunk.count(b"\n")
+                    for chunk in iter(lambda: _count_f.read(1 << 20), b"")
+                )
+        except OSError as exc:
+            print(
+                "[CHARACTER_MAKER_RAG_DATA] \uc785\ub825 \ud589 \uc218 \uc0ac\uc804 \uc9d1\uacc4 \uc2e4\ud328: "
+                f"path={source_csv_path!r}, error={type(exc).__name__}: {exc}"
+            )
+            total_rows = 0
+        try:
+            progress_cb(0, max(total_rows, 0))
+        except Exception:
+            print("[CHARACTER_MAKER_RAG_DATA] progress_cb \ucd08\uae30 \ud638\ucd9c \uc2e4\ud328")
+            traceback.print_exc()
+
     try:
         with (
             open(source_csv_path, "r", encoding="utf-8-sig", newline="") as source,
@@ -598,6 +476,20 @@ def convert_kr_danbooru_csv(
                 ):
                     summary["header_rows"] += 1
                     continue
+
+                if (
+                    progress_cb is not None
+                    and total_rows > 0
+                    and line_number % 2000 == 0
+                ):
+                    try:
+                        progress_cb(line_number, total_rows)
+                    except Exception:
+                        print(
+                            "[CHARACTER_MAKER_RAG_DATA] progress_cb 호출 실패: "
+                            f"line={line_number}"
+                        )
+                        traceback.print_exc()
 
                 summary["input_rows"] += 1
                 if len(row) != 4:
@@ -646,6 +538,12 @@ def convert_kr_danbooru_csv(
                     [canonical_tag, category, post_count, str(row[3] or "").strip()]
                 )
                 summary["written_rows"] += 1
+            if progress_cb is not None and total_rows > 0:
+                try:
+                    progress_cb(total_rows, total_rows)
+                except Exception:
+                    print("[CHARACTER_MAKER_RAG_DATA] progress_cb 종료 호출 실패")
+                    traceback.print_exc()
     except UnicodeError as exc:
         print(
             "[CHARACTER_MAKER_RAG_DATA] 입력 CSV UTF-8 해석 실패: "
