@@ -7128,62 +7128,15 @@
                         <input type="number" id="asset-img-h" value="1024" min="256" max="4096" step="8" style="width:70px; padding:4px 6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); border-radius:4px; font-size:0.8rem; text-align:center;" title="이미지 높이">
                     </div>
 
-                    <!-- ILXL 모드용 HRF + 디테일러 토글 -->
-                    <div id="asset-sdxl-options-wrapper" class="workflow-mode-control" data-workflow-availability="ilxl-only">
-                        <div class="workflow-mode-legend"><strong>ILXL 옵션</strong><span>ILXL 전용 워크플로우에서만 사용합니다. ANIMA 포함 워크플로우는 아래 ANIMA 옵션을 사용합니다.</span></div>
-                        <div style="display:flex; flex-direction:column; gap:6px; margin-bottom:8px;">
-                            <div style="display:flex; align-items:center; gap:6px; padding:6px 8px; background:var(--surface2); border-radius:6px; border:1px solid var(--border);">
-                                <span style="font-size:0.8rem;">HIRES FIX</span>
-                                <label class="toggle-switch">
-                                    <input type="checkbox" id="asset-sdxl-hrf-toggle">
-                                    <span class="toggle-slider"></span>
-                                </label>
-                                <span id="asset-sdxl-hrf-status" class="toggle-status off">OFF</span>
-                            </div>
-                            <div id="asset-sdxl-hrf-options" style="display:none; padding:6px 8px; background:var(--surface2); border-radius:6px; border:1px solid var(--border); gap:6px; flex-direction:column;">
-                                <div style="display:flex; align-items:center; gap:6px;">
-                                    <span style="font-size:0.75rem; color:var(--text-secondary); min-width:fit-content;">업스케일링 비율</span>
-                                    <input type="range" id="asset-sdxl-hrf-size" min="1" max="3" step="0.05" value="2.0" style="flex:1; cursor:pointer;">
-                                    <span id="asset-sdxl-hrf-size-val" style="font-size:0.75rem; min-width:28px; text-align:right;">2.0</span>
-                                </div>
-                                <div style="display:flex; align-items:center; gap:6px;">
-                                    <span style="font-size:0.75rem;">RESTORE SIZE</span>
-                                    <label class="toggle-switch"><input type="checkbox" id="asset-sdxl-hrf-restore-size" checked><span class="toggle-slider"></span></label>
-                                    <span id="asset-sdxl-hrf-restore-size-status" class="toggle-status on">ON</span>
-                                </div>
-                                <div style="display:flex; align-items:center; gap:6px;">
-                                    <span style="font-size:0.75rem;">CONTROL NET</span>
-                                    <label class="toggle-switch"><input type="checkbox" id="asset-sdxl-hrf-control-net"><span class="toggle-slider"></span></label>
-                                    <span id="asset-sdxl-hrf-control-net-status" class="toggle-status off">OFF</span>
-                                </div>
-                            </div>
-                            <div style="display:flex; align-items:center; gap:6px; padding:6px 8px; background:var(--surface2); border-radius:6px; border:1px solid var(--border);">
-                                <span style="font-size:0.8rem;">페이스 디테일러</span>
-                                <label class="toggle-switch"><input type="checkbox" id="asset-sdxl-fd-toggle"><span class="toggle-slider"></span></label>
-                                <span id="asset-sdxl-fd-status" class="toggle-status off">OFF</span>
-                            </div>
-                            <div style="display:flex; align-items:center; gap:6px; padding:6px 8px; background:var(--surface2); border-radius:6px; border:1px solid var(--border);">
-                                <span style="font-size:0.8rem;">핸드 디테일러</span>
-                                <label class="toggle-switch"><input type="checkbox" id="asset-sdxl-hd-toggle"><span class="toggle-slider"></span></label>
-                                <span id="asset-sdxl-hd-status" class="toggle-status off">OFF</span>
-                            </div>
-                            <div style="display:flex; align-items:center; gap:6px; padding:6px 8px; background:var(--surface2); border-radius:6px; border:1px solid var(--border);">
-                                <span style="font-size:0.8rem;">눈 디테일러</span>
-                                <label class="toggle-switch"><input type="checkbox" id="asset-sdxl-ed-toggle"><span class="toggle-slider"></span></label>
-                                <span id="asset-sdxl-ed-status" class="toggle-status off">OFF</span>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- ANIMA 모드용 HRF + 디테일러 -->
-                    <div id="asset-anima-options-wrapper" class="workflow-mode-control" data-workflow-availability="anima">
-                    <div class="workflow-mode-legend"><strong>ANIMA 옵션</strong><span>ILXL 단독 워크플로우에서는 아래 옵션이 적용되지 않습니다.</span></div>
+                    <!-- 워크플로우 공용 HRF + 디테일러 -->
+                    <div id="asset-generation-options-wrapper">
+                    <div class="workflow-mode-legend"><strong>생성 옵션</strong><span>현재 워크플로우에서 지원하는 ILXL·ANIMA 항목만 활성화됩니다.</span></div>
                     <!-- HIRES FIX -->
                     <div style="background:var(--surface2); border-radius:8px; padding:10px; margin-bottom:8px; border:1px solid var(--border);">
                         <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
                             <span style="font-size:0.8rem; font-weight:600;">HIRES FIX</span>
                             <label class="workflow-mode-control" data-workflow-availability="ilxl" style="display:flex; align-items:center; gap:3px; font-size:0.75rem; cursor:pointer;"><input type="checkbox" id="asset-hrf-sdxl"> ILXL</label>
-                            <label style="display:flex; align-items:center; gap:3px; font-size:0.75rem; cursor:pointer;"><input type="checkbox" id="asset-hrf-anima"> ANIMA</label>
+                            <label class="workflow-mode-control" data-workflow-availability="anima" style="display:flex; align-items:center; gap:3px; font-size:0.75rem; cursor:pointer;"><input type="checkbox" id="asset-hrf-anima"> ANIMA</label>
                         </div>
                         <div style="display:flex; flex-direction:column; gap:4px;">
                             <div style="display:flex; align-items:center; gap:6px;">
@@ -7213,19 +7166,19 @@
                             <label style="display:flex; align-items:center; gap:3px; font-size:0.75rem; cursor:pointer;"><input type="checkbox" id="asset-sdxl-hd"> HD</label>
                             <label style="display:flex; align-items:center; gap:3px; font-size:0.75rem; cursor:pointer;"><input type="checkbox" id="asset-sdxl-ed"> ED</label>
                         </div>
-                        <div style="display:flex; gap:6px; margin-top:3px;">
+                        <div class="workflow-mode-control" data-workflow-availability="anima" style="display:flex; gap:6px; margin-top:3px;">
                             <span class="illust-section-chip anima">ANIMA</span>
                             <label style="display:flex; align-items:center; gap:3px; font-size:0.75rem; cursor:pointer;"><input type="checkbox" id="asset-anima-fd"> FD</label>
                             <label style="display:flex; align-items:center; gap:3px; font-size:0.75rem; cursor:pointer;"><input type="checkbox" id="asset-anima-hd"> HD</label>
                             <label style="display:flex; align-items:center; gap:3px; font-size:0.75rem; cursor:pointer;"><input type="checkbox" id="asset-anima-ed"> ED</label>
                         </div>
-                        <div style="display:flex; gap:6px; align-items:center; margin-top:6px;">
+                        <div class="workflow-mode-control" data-workflow-availability="anima" style="display:flex; gap:6px; align-items:center; margin-top:6px;">
                             <span class="illust-chip label-chip" style="background:rgba(76,175,80,0.15); color:#81c784; border:1px solid rgba(76,175,80,0.35);">FD / ED 시 고정 사이즈</span>
                             <input type="number" id="asset-face-lora-upscale" min="0" step="1" placeholder="사용안함" style="width:80px; padding:2px 4px; border-radius:4px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-size:0.7rem; text-align:center;">
                             <span style="font-size:0.65rem; color:var(--text-muted);">비움 = 사용안함</span>
                         </div>
                         <!-- 디테일러 옵션 -->
-                        <div style="margin-top:8px; border-top:1px solid var(--border); padding-top:8px;">
+                        <div class="workflow-mode-control" data-workflow-availability="anima" style="margin-top:8px; border-top:1px solid var(--border); padding-top:8px;">
                             <div style="font-size:0.75rem; color:var(--text-secondary); margin-bottom:4px;">FACE CROP OPTION</div>
                             <div style="display:flex; gap:8px; align-items:center; margin-bottom:6px;">
                                 <span style="font-size:0.7rem; color:var(--text-muted);">TOP</span>
@@ -46177,33 +46130,17 @@
             const styleRefStrength = parseFloat(document.getElementById('asset-style-ref-strength').value) || 0.55;
             const loraEnabled = document.getElementById('asset-lora-toggle').checked;
             const poseEnabled = capabilities.pose && document.getElementById('asset-pose-toggle').checked;
-            let sdxlFdActivate, sdxlHdActivate, sdxlEdActivate, animaFdActivate, animaHdActivate, animaEdActivate;
-            let hrfSdxl, hrfAnima, hrfSize, hrfRestoreSize, hrfControlNet;
-            if (hasAnima) {
-                sdxlFdActivate = hasIlxl && document.getElementById('asset-sdxl-fd').checked;
-                sdxlHdActivate = hasIlxl && document.getElementById('asset-sdxl-hd').checked;
-                sdxlEdActivate = hasIlxl && document.getElementById('asset-sdxl-ed').checked;
-                animaFdActivate = document.getElementById('asset-anima-fd').checked;
-                animaHdActivate = document.getElementById('asset-anima-hd').checked;
-                animaEdActivate = document.getElementById('asset-anima-ed').checked;
-                hrfSdxl = hasIlxl && document.getElementById('asset-hrf-sdxl').checked;
-                hrfAnima = document.getElementById('asset-hrf-anima').checked;
-                hrfSize = parseFloat(document.getElementById('asset-hrf-size').value) || 2.0;
-                hrfRestoreSize = document.getElementById('asset-hrf-restore-size').checked;
-                hrfControlNet = document.getElementById('asset-hrf-control-net').checked;
-            } else {
-                sdxlFdActivate = document.getElementById('asset-sdxl-fd-toggle').checked;
-                sdxlHdActivate = document.getElementById('asset-sdxl-hd-toggle').checked;
-                sdxlEdActivate = document.getElementById('asset-sdxl-ed-toggle').checked;
-                animaFdActivate = false;
-                animaHdActivate = false;
-                animaEdActivate = false;
-                hrfSdxl = document.getElementById('asset-sdxl-hrf-toggle').checked;
-                hrfAnima = false;
-                hrfSize = parseFloat(document.getElementById('asset-sdxl-hrf-size').value) || 2.0;
-                hrfRestoreSize = document.getElementById('asset-sdxl-hrf-restore-size').checked;
-                hrfControlNet = document.getElementById('asset-sdxl-hrf-control-net').checked;
-            }
+            const sdxlFdActivate = hasIlxl && document.getElementById('asset-sdxl-fd').checked;
+            const sdxlHdActivate = hasIlxl && document.getElementById('asset-sdxl-hd').checked;
+            const sdxlEdActivate = hasIlxl && document.getElementById('asset-sdxl-ed').checked;
+            const animaFdActivate = hasAnima && document.getElementById('asset-anima-fd').checked;
+            const animaHdActivate = hasAnima && document.getElementById('asset-anima-hd').checked;
+            const animaEdActivate = hasAnima && document.getElementById('asset-anima-ed').checked;
+            const hrfSdxl = hasIlxl && document.getElementById('asset-hrf-sdxl').checked;
+            const hrfAnima = hasAnima && document.getElementById('asset-hrf-anima').checked;
+            const hrfSize = parseFloat(document.getElementById('asset-hrf-size').value) || 2.0;
+            const hrfRestoreSize = document.getElementById('asset-hrf-restore-size').checked;
+            const hrfControlNet = document.getElementById('asset-hrf-control-net').checked;
             const imgW = parseInt(document.getElementById('asset-img-w').value) || 700;
             const imgH = parseInt(document.getElementById('asset-img-h').value) || 1024;
 
@@ -46463,6 +46400,17 @@
                 pose_id: assetSelectedPoseId || '',
                 img_w: parseInt(document.getElementById('asset-img-w')?.value) || 700,
                 img_h: parseInt(document.getElementById('asset-img-h')?.value) || 1024,
+                hrf_sdxl: capabilities.ilxl && (document.getElementById('asset-hrf-sdxl')?.checked || false),
+                hrf_anima: capabilities.anima && (document.getElementById('asset-hrf-anima')?.checked || false),
+                hrf_size: parseFloat(document.getElementById('asset-hrf-size')?.value) || 2.0,
+                hrf_restore_size: document.getElementById('asset-hrf-restore-size')?.checked || false,
+                hrf_control_net: document.getElementById('asset-hrf-control-net')?.checked || false,
+                sdxl_fd: capabilities.ilxl && (document.getElementById('asset-sdxl-fd')?.checked || false),
+                sdxl_hd: capabilities.ilxl && (document.getElementById('asset-sdxl-hd')?.checked || false),
+                sdxl_ed: capabilities.ilxl && (document.getElementById('asset-sdxl-ed')?.checked || false),
+                anima_fd: capabilities.anima && (document.getElementById('asset-anima-fd')?.checked || false),
+                anima_hd: capabilities.anima && (document.getElementById('asset-anima-hd')?.checked || false),
+                anima_ed: capabilities.anima && (document.getElementById('asset-anima-ed')?.checked || false),
             };
             if (isAnima) {
                 settings.anima_artist_preset = getAssetSelectValue('anima-artist-preset-select');
@@ -46474,27 +46422,8 @@
                 settings.face_crop_bottom = parseFloat(document.getElementById('asset-face-crop-bottom')?.value) || 1;
                 settings.face_tags = document.getElementById('asset-face-tags')?.value || '';
                 settings.eye_tags = document.getElementById('asset-eye-tags')?.value || '';
-                settings.hrf_sdxl = capabilities.ilxl && (document.getElementById('asset-hrf-sdxl')?.checked || false);
-                settings.hrf_anima = document.getElementById('asset-hrf-anima')?.checked || false;
-                settings.hrf_size = parseFloat(document.getElementById('asset-hrf-size')?.value) || 2.0;
-                settings.hrf_restore_size = document.getElementById('asset-hrf-restore-size')?.checked || false;
-                settings.hrf_control_net = document.getElementById('asset-hrf-control-net')?.checked || false;
-                settings.sdxl_fd = capabilities.ilxl && (document.getElementById('asset-sdxl-fd')?.checked || false);
-                settings.sdxl_hd = capabilities.ilxl && (document.getElementById('asset-sdxl-hd')?.checked || false);
-                settings.sdxl_ed = capabilities.ilxl && (document.getElementById('asset-sdxl-ed')?.checked || false);
-                settings.anima_fd = document.getElementById('asset-anima-fd')?.checked || false;
-                settings.anima_hd = document.getElementById('asset-anima-hd')?.checked || false;
-                settings.anima_ed = document.getElementById('asset-anima-ed')?.checked || false;
                 settings.face_lora_upscale_size = document.getElementById('asset-face-lora-upscale')?.value || '';
                 settings.seed = parseInt(document.getElementById('asset-seed-input')?.value) || -1;
-            } else {
-                settings.hrf_sdxl = document.getElementById('asset-sdxl-hrf-toggle')?.checked || false;
-                settings.hrf_size = parseFloat(document.getElementById('asset-sdxl-hrf-size')?.value) || 2.0;
-                settings.hrf_restore_size = document.getElementById('asset-sdxl-hrf-restore-size')?.checked || false;
-                settings.hrf_control_net = document.getElementById('asset-sdxl-hrf-control-net')?.checked || false;
-                settings.sdxl_fd = document.getElementById('asset-sdxl-fd-toggle')?.checked || false;
-                settings.sdxl_hd = document.getElementById('asset-sdxl-hd-toggle')?.checked || false;
-                settings.sdxl_ed = document.getElementById('asset-sdxl-ed-toggle')?.checked || false;
             }
             try {
                 localStorage.setItem('assetModeSettings', JSON.stringify(settings));
@@ -46606,6 +46535,29 @@
                 const imgH = document.getElementById('asset-img-h');
                 if (imgH) imgH.value = s.img_h || 1024;
 
+                const hrfSdxl = document.getElementById('asset-hrf-sdxl');
+                if (hrfSdxl) hrfSdxl.checked = s.hrf_sdxl || false;
+                const hrfAnima = document.getElementById('asset-hrf-anima');
+                if (hrfAnima) hrfAnima.checked = s.hrf_anima || false;
+                const hrfSize = document.getElementById('asset-hrf-size');
+                if (hrfSize) { hrfSize.value = s.hrf_size || 2.0; hrfSize.dispatchEvent(new Event('input')); }
+                const hrfRestore = document.getElementById('asset-hrf-restore-size');
+                if (hrfRestore) hrfRestore.checked = s.hrf_restore_size !== false;
+                const hrfControlNet = document.getElementById('asset-hrf-control-net');
+                if (hrfControlNet) hrfControlNet.checked = s.hrf_control_net || false;
+                const sdxlFd = document.getElementById('asset-sdxl-fd');
+                if (sdxlFd) sdxlFd.checked = s.sdxl_fd || false;
+                const sdxlHd = document.getElementById('asset-sdxl-hd');
+                if (sdxlHd) sdxlHd.checked = s.sdxl_hd || false;
+                const sdxlEd = document.getElementById('asset-sdxl-ed');
+                if (sdxlEd) sdxlEd.checked = s.sdxl_ed || false;
+                const animaFd = document.getElementById('asset-anima-fd');
+                if (animaFd) animaFd.checked = s.anima_fd || false;
+                const animaHd = document.getElementById('asset-anima-hd');
+                if (animaHd) animaHd.checked = s.anima_hd || false;
+                const animaEd = document.getElementById('asset-anima-ed');
+                if (animaEd) animaEd.checked = s.anima_ed || false;
+
                 if (isAnima) {
                     restoreSelect('anima-artist-preset-select', s.anima_artist_preset, 'ANIMA 아티스트 프리셋');
                     loadAnimaArtistPreset();
@@ -46626,47 +46578,10 @@
                     if (typeof initFaceTagsFromArray === 'function') initFaceTagsFromArray(s.face_tags || '');
                     const eyeTags = document.getElementById('asset-eye-tags');
                     if (eyeTags) eyeTags.value = s.eye_tags || '';
-                    const hrfSdxl = document.getElementById('asset-hrf-sdxl');
-                    if (hrfSdxl) hrfSdxl.checked = s.hrf_sdxl || false;
-                    const hrfAnima = document.getElementById('asset-hrf-anima');
-                    if (hrfAnima) hrfAnima.checked = s.hrf_anima || false;
-                    const hrfSize = document.getElementById('asset-hrf-size');
-                    if (hrfSize) { hrfSize.value = s.hrf_size || 2.0; hrfSize.dispatchEvent(new Event('input')); }
-                    const hrfRestore = document.getElementById('asset-hrf-restore-size');
-                    if (hrfRestore) hrfRestore.checked = s.hrf_restore_size !== false;
-                    const hrfControlNet = document.getElementById('asset-hrf-control-net');
-                    if (hrfControlNet) hrfControlNet.checked = s.hrf_control_net || false;
-                    const sdxlFd = document.getElementById('asset-sdxl-fd');
-                    if (sdxlFd) sdxlFd.checked = s.sdxl_fd || false;
-                    const sdxlHd = document.getElementById('asset-sdxl-hd');
-                    if (sdxlHd) sdxlHd.checked = s.sdxl_hd || false;
-                    const sdxlEd = document.getElementById('asset-sdxl-ed');
-                    if (sdxlEd) sdxlEd.checked = s.sdxl_ed || false;
-                    const animaFd = document.getElementById('asset-anima-fd');
-                    if (animaFd) animaFd.checked = s.anima_fd || false;
-                    const animaHd = document.getElementById('asset-anima-hd');
-                    if (animaHd) animaHd.checked = s.anima_hd || false;
-                    const animaEd = document.getElementById('asset-anima-ed');
-                    if (animaEd) animaEd.checked = s.anima_ed || false;
                     const faceLoraUpscale = document.getElementById('asset-face-lora-upscale');
                     if (faceLoraUpscale) faceLoraUpscale.value = s.face_lora_upscale_size || '';
                     const seedInput = document.getElementById('asset-seed-input');
                     if (seedInput) seedInput.value = s.seed ?? -1;
-                } else {
-                    const hrfSdxl = document.getElementById('asset-sdxl-hrf-toggle');
-                    if (hrfSdxl) { hrfSdxl.checked = s.hrf_sdxl || false; hrfSdxl.dispatchEvent(new Event('change')); }
-                    const hrfSize = document.getElementById('asset-sdxl-hrf-size');
-                    if (hrfSize) { hrfSize.value = s.hrf_size || 2.0; hrfSize.dispatchEvent(new Event('input')); }
-                    const hrfRestore = document.getElementById('asset-sdxl-hrf-restore-size');
-                    if (hrfRestore) hrfRestore.checked = s.hrf_restore_size !== false;
-                    const hrfControlNet = document.getElementById('asset-sdxl-hrf-control-net');
-                    if (hrfControlNet) hrfControlNet.checked = s.hrf_control_net || false;
-                    const sdxlFd = document.getElementById('asset-sdxl-fd-toggle');
-                    if (sdxlFd) sdxlFd.checked = s.sdxl_fd || false;
-                    const sdxlHd = document.getElementById('asset-sdxl-hd-toggle');
-                    if (sdxlHd) sdxlHd.checked = s.sdxl_hd || false;
-                    const sdxlEd = document.getElementById('asset-sdxl-ed-toggle');
-                    if (sdxlEd) sdxlEd.checked = s.sdxl_ed || false;
                 }
                 updateGenerateBtn();
 
@@ -47018,7 +46933,6 @@
             root.querySelectorAll('[data-workflow-availability]').forEach(container => {
                 const availability = container.dataset.workflowAvailability;
                 const available = availability === 'anima' ? capabilities.anima
-                    : availability === 'ilxl-only' ? capabilities.type === 'ilxl'
                     : availability === 'regular' || availability === 'ilxl' ? capabilities.ilxl
                     : availability === 'pose' ? capabilities.pose
                     : availability === 'ipadapter' ? capabilities.ipadapter
@@ -49246,42 +49160,7 @@
             if (on) loadAssetPoseGrid();
         }
 
-        // ILXL 모드 HRF/디테일러 토글 리스너
-        document.getElementById('asset-sdxl-hrf-toggle').addEventListener('change', function() {
-            const status = document.getElementById('asset-sdxl-hrf-status');
-            status.textContent = this.checked ? 'ON' : 'OFF';
-            status.className = 'toggle-status ' + (this.checked ? 'on' : 'off');
-            document.getElementById('asset-sdxl-hrf-options').style.display = this.checked ? 'flex' : 'none';
-        });
-        document.getElementById('asset-sdxl-hrf-size').addEventListener('input', function() {
-            document.getElementById('asset-sdxl-hrf-size-val').textContent = parseFloat(this.value).toFixed(2);
-        });
-        document.getElementById('asset-sdxl-hrf-restore-size').addEventListener('change', function() {
-            const status = document.getElementById('asset-sdxl-hrf-restore-size-status');
-            status.textContent = this.checked ? 'ON' : 'OFF';
-            status.className = 'toggle-status ' + (this.checked ? 'on' : 'off');
-        });
-        document.getElementById('asset-sdxl-hrf-control-net').addEventListener('change', function() {
-            const status = document.getElementById('asset-sdxl-hrf-control-net-status');
-            status.textContent = this.checked ? 'ON' : 'OFF';
-            status.className = 'toggle-status ' + (this.checked ? 'on' : 'off');
-        });
-        document.getElementById('asset-sdxl-fd-toggle').addEventListener('change', function() {
-            const status = document.getElementById('asset-sdxl-fd-status');
-            status.textContent = this.checked ? 'ON' : 'OFF';
-            status.className = 'toggle-status ' + (this.checked ? 'on' : 'off');
-        });
-        document.getElementById('asset-sdxl-hd-toggle').addEventListener('change', function() {
-            const status = document.getElementById('asset-sdxl-hd-status');
-            status.textContent = this.checked ? 'ON' : 'OFF';
-            status.className = 'toggle-status ' + (this.checked ? 'on' : 'off');
-        });
-        document.getElementById('asset-sdxl-ed-toggle').addEventListener('change', function() {
-            const status = document.getElementById('asset-sdxl-ed-status');
-            status.textContent = this.checked ? 'ON' : 'OFF';
-            status.className = 'toggle-status ' + (this.checked ? 'on' : 'off');
-        });
-        // ANIMA 모드 HRF 옵션 리스너
+        // 공용 HRF 옵션 리스너
         document.getElementById('asset-hrf-size').addEventListener('input', function() {
             document.getElementById('asset-hrf-size-val').textContent = parseFloat(this.value).toFixed(2);
         });
@@ -59146,5 +59025,3 @@
         <div class="ac-tooltip" id="ac-tooltip"></div>
 </body>
 </html>
-
-

@@ -86,12 +86,36 @@ def test_asset_settings_wait_for_lightweight_preset_requests():
     assert "console.error(`[ASSET] 태그 프리셋 적용 예외:" in modify_tags
 
 
-def test_standalone_ilxl_options_are_enabled_only_for_ilxl_workflow():
+def test_asset_generation_options_are_shared_across_workflows():
     source = _frontend_source()
+    build_prompt = _function_source(
+        source, "buildAssetPromptFromUI()", "saveAssetSettings()"
+    )
 
-    assert (
-        'id="asset-sdxl-options-wrapper" class="workflow-mode-control" '
-        'data-workflow-availability="ilxl-only"'
-    ) in source
-    assert "availability === 'ilxl-only' ? capabilities.type === 'ilxl'" in source
-    assert "ANIMA 포함 워크플로우는 아래 ANIMA 옵션을 사용합니다." in source
+    assert 'id="asset-generation-options-wrapper"' in source
+    assert "<strong>생성 옵션</strong>" in source
+    assert 'id="asset-sdxl-options-wrapper"' not in source
+    assert 'id="asset-anima-options-wrapper"' not in source
+    assert "availability === 'ilxl-only'" not in source
+    for removed_id in (
+        "asset-sdxl-hrf-toggle",
+        "asset-sdxl-hrf-size",
+        "asset-sdxl-hrf-restore-size",
+        "asset-sdxl-hrf-control-net",
+        "asset-sdxl-fd-toggle",
+        "asset-sdxl-hd-toggle",
+        "asset-sdxl-ed-toggle",
+    ):
+        assert removed_id not in source
+    for shared_id in (
+        "asset-hrf-sdxl",
+        "asset-hrf-anima",
+        "asset-hrf-size",
+        "asset-sdxl-fd",
+        "asset-sdxl-hd",
+        "asset-sdxl-ed",
+        "asset-anima-fd",
+        "asset-anima-hd",
+        "asset-anima-ed",
+    ):
+        assert f"getElementById('{shared_id}')" in build_prompt
