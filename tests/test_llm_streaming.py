@@ -125,6 +125,75 @@ async def test_task_stream_event_contains_task_metadata(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_task_metadata_sink_captures_stream_usage(monkeypatch):
+    """스트리밍 callLLMTask 가 done 이벤트의 usage 토큰을 metadata_sink 에 채운다."""
+    config = _test_config()
+    config["llm_stream"] = True
+    config["llm_routing"] = {
+        "unit_task": {"primary": "llm1", "fallback_target": None}
+    }
+    monkeypatch.setattr(llm_service, "_current_config", config)
+
+    async def fake_stream(messages, service, model):
+        yield {"type": "start", "service": service, "model": model}
+        yield {"type": "delta", "text": "안녕"}
+        yield {
+            "type": "done",
+            "text": "안녕",
+            "completion_tokens": 42,
+            "prompt_tokens": 128,
+            "elapsed": 0.5,
+            "tps": 84.0,
+        }
+
+    monkeypatch.setattr(llm_service, "_dispatch_stream", fake_stream)
+
+    async def notify(_event):
+        return None
+
+    monkeypatch.setattr(llm_service, "_stream_notify_func", notify)
+
+    sink: dict = {}
+    result = await llm_service.callLLMTask(
+        "unit_task",
+        [{"role": "user", "content": "hello"}],
+        metadata_sink=sink,
+    )
+
+    assert result == "안녕"
+    assert sink.get("completion_tokens") == 42
+    assert sink.get("prompt_tokens") == 128
+    assert sink.get("tps") == 84.0
+
+
+@pytest.mark.asyncio
+async def test_task_metadata_sink_falls_back_to_approx_offline(monkeypatch):
+    """비스트리밍 callLLMTask 는 usage 를 못 얻으므로 sink 를 근사치로 채운다."""
+    config = _test_config()
+    config["llm_stream"] = False
+    config["llm_routing"] = {
+        "unit_task": {"primary": "llm1", "fallback_target": None}
+    }
+    monkeypatch.setattr(llm_service, "_current_config", config)
+
+    async def dispatch(messages, service, model):
+        return "ABCDEFGHIJ"  # 10자 → _approx_tokens = max(1, 10//3) = 3
+
+    monkeypatch.setattr(llm_service, "_dispatch", dispatch)
+
+    sink: dict = {}
+    result = await llm_service.callLLMTask(
+        "unit_task",
+        [{"role": "user", "content": "hello"}],
+        metadata_sink=sink,
+    )
+
+    assert result == "ABCDEFGHIJ"
+    assert sink.get("completion_tokens") == 3
+    assert sink.get("prompt_tokens") >= 1
+
+
+@pytest.mark.asyncio
 async def test_task_stream_inherits_pipeline_display_call_name(monkeypatch):
     config = _test_config()
     config["llm_stream2"] = True

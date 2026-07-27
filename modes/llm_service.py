@@ -920,6 +920,11 @@ _stream_metadata_ctx: ContextVar = ContextVar("llm_stream_metadata", default=Non
 # 이벤트가 발생하지 않는다.
 _stream_observer_ctx: ContextVar = ContextVar("llm_stream_observer", default=None)
 
+# 상위 호출자(callLLMTask/callLLMVisionTask)가 스트림 done 이벤트의 usage 토큰을
+# 끌어올리기 위한 싱크. usage는 _stream_call_to_text 의 로컬 record 에만 담기고
+# _stream_metadata_ctx 에는 채워지지 않으므로, 별도 싱크를 통해 done 분기에서 채워 돌려준다.
+_usage_sink_ctx: ContextVar = ContextVar("llm_usage_sink", default=None)
+
 # server.py가 등록하는 비동기 프론트엔드 알림 콜백.
 # llm_service가 server를 직접 import하지 않게 하여 순환 import를 피한다.
 _stream_notify_func = None
@@ -1846,7 +1851,7 @@ async def _invoke_routed_with_retry(
             last_result = None
             accepted = False
             last_reason = f"{type(e).__name__}: {e}"
-            print(
+            _llm_log(
                 f"[LLM_ROUTE] 호출 예외: task={task_key}, phase={phase}, slot={slot}, "
                 f"attempt={attempt}/{total_attempts}, error={last_reason}"
             )
@@ -1860,12 +1865,12 @@ async def _invoke_routed_with_retry(
                 )
             return last_result, True, "", None
 
-        print(
+        _llm_log(
             f"[LLM_ROUTE] 호출 실패: task={task_key}, phase={phase}, slot={slot}, "
             f"attempt={attempt}/{total_attempts}, reason={last_reason}"
         )
         if attempt < total_attempts:
-            print(
+            _llm_log(
                 f"[LLM_ROUTE] 재시도 대기: task={task_key}, phase={phase}, slot={slot}, "
                 f"next_attempt={attempt + 1}/{total_attempts}, delay={retry_delay_sec}초"
             )
@@ -1957,6 +1962,7 @@ async def callLLMTask(
     json_mode: bool = False,
     result_validator=None,
     stream_observer=None,
+    metadata_sink: dict | None = None,
 ) -> str:
     """
     작업별 라우팅 텍스트 LLM 호출.
@@ -1979,6 +1985,7 @@ async def callLLMTask(
             "llm_slot": slot,
         })
         observer_token = _stream_observer_ctx.set(stream_observer)
+        sink_token = _usage_sink_ctx.set(metadata_sink) if metadata_sink is not None else None
         try:
             stream_key = "llm_stream" if slot == "llm1" else f"llm_stream{slot[-1]}"
             await _emit_request_stream_observer({
@@ -1994,6 +2001,8 @@ async def callLLMTask(
                 json_mode=eff_json,
             )
         finally:
+            if sink_token is not None:
+                _usage_sink_ctx.reset(sink_token)
             _stream_observer_ctx.reset(observer_token)
             _stream_metadata_ctx.reset(meta_token)
 
@@ -2031,12 +2040,14 @@ async def callLLMTask(
         raise last_exception
     if not accepted and _is_llm_failed(result):
         if isinstance(result, str) and result.strip().startswith("[LLM 실패]"):
+            _fill_usage_sink_fallback(metadata_sink, result, messages)
             return result
-        print(
+        _llm_log(
             f"[LLM_ROUTE] 빈 응답으로 최종 실패: task={task_key}, "
             f"phase={final_phase}, reason={reason}"
         )
         return f"[LLM 실패] {task_key} {final_phase} 재시도 소진: {reason}"
+    _fill_usage_sink_fallback(metadata_sink, result, messages)
     return result
 
 
@@ -2179,6 +2190,7 @@ async def callLLMVisionTask(
     json_mode: bool = False,
     result_validator=None,
     images: list = None,
+    metadata_sink: dict | None = None,
 ) -> str:
     """
     작업별 라우팅 비전 LLM 호출.
@@ -2204,6 +2216,7 @@ async def callLLMVisionTask(
             "call_name": task_key,
             "llm_slot": slot,
         })
+        sink_token = _usage_sink_ctx.set(metadata_sink) if metadata_sink is not None else None
         try:
             if images:
                 # 다중 이미지: 단일 image_b64 자리는 무시하고 images 로 전송.
@@ -2215,6 +2228,8 @@ async def callLLMVisionTask(
                 messages, image_b64, image_mime, model=model, json_mode=eff_json
             )
         finally:
+            if sink_token is not None:
+                _usage_sink_ctx.reset(sink_token)
             _stream_metadata_ctx.reset(meta_token)
 
     retry_policy = _routing_retry_policy(task_key)
@@ -2251,12 +2266,14 @@ async def callLLMVisionTask(
         raise last_exception
     if not accepted and _is_llm_failed(result):
         if isinstance(result, str) and result.strip().startswith("[LLM 실패]"):
+            _fill_usage_sink_fallback(metadata_sink, result, messages)
             return result
-        print(
+        _llm_log(
             f"[LLM_ROUTE] 빈 응답으로 최종 실패: task={task_key}, "
             f"phase={final_phase}, reason={reason}"
         )
         return f"[LLM 실패] {task_key} {final_phase} 재시도 소진: {reason}"
+    _fill_usage_sink_fallback(metadata_sink, result, messages)
     return result
 
 
@@ -2601,6 +2618,16 @@ async def _stream_call_to_text(messages: list, service: str, model: str, llm_slo
                     if event.get(source_key) is not None:
                         record[target_key] = event[source_key]
                 record["last_event_at"] = time.time()
+                # 상위 호출자(callLLMTask 등)가 usage 싱크를 걸어두었으면 done/error 의
+                # 토큰 통계와 실패 원인을 끌어올린다. 비스트리밍 경로에선 이 분기가 안 타서
+                # sink 가 비게 되며, callLLMTask 끝에서 근사치 폴백으로 채운다.
+                _sink = _usage_sink_ctx.get()
+                if _sink is not None:
+                    if event_type == "error":
+                        _sink["error"] = error_msg
+                    for _uk in ("completion_tokens", "prompt_tokens", "elapsed", "tps", "ttft"):
+                        if event.get(_uk) is not None:
+                            _sink[_uk] = event[_uk]
                 payload["partial_text"] = str(record.get("text", "") or "")
                 payload["partial_length"] = len(payload["partial_text"])
                 await _emit_request_stream_observer(payload)
@@ -2690,6 +2717,21 @@ def _approx_input_tokens(messages: list) -> int:
                 elif isinstance(part, str):
                     total += len(part)
     return max(1, total // 3)
+
+
+def _fill_usage_sink_fallback(sink: dict | None, result, messages: list) -> None:
+    """스트리밍 usage를 못 얻었을 때(비스트리밍 경로·빈 응답) sink를 근사치로 채운다.
+
+    스트리밍 경로에서 이미 sink 에 값이 들어 있으면 건드리지 않고, 비어 있을 때만
+    _approx_tokens/_approx_input_tokens 휴리스틱으로 채운다. 실패 응답([LLM 실패]/None)은
+    토큰 근사치가 무의미하므로 채우지 않는다.
+    """
+    if sink is None or _is_llm_failed(result):
+        return
+    if "completion_tokens" not in sink:
+        sink["completion_tokens"] = _approx_tokens(result) if isinstance(result, str) else 0
+    if "prompt_tokens" not in sink:
+        sink["prompt_tokens"] = _approx_input_tokens(messages)
 
 
 async def _stream_openai_compat(messages: list, model: str, url: str,

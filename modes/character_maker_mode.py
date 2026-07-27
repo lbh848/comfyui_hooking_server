@@ -1113,6 +1113,9 @@ class CharacterMakerService:
             raw, require_queries=require_queries
         )
         t0 = time.perf_counter()
+        # callLLMTask/VisionTask 가 스트림 usage 토큰을 채워 돌려줄 싱크.
+        # 스트리밍 경로에선 진짜 usage, 비스트리밍/실패 시엔 근사치 또는 0.
+        sink: dict = {}
         try:
             if images:
                 # 다중 비전: CURRENT(활성 리비전) + REF(참고 이미지) 각각 별도 이미지로 전송.
@@ -1122,6 +1125,7 @@ class CharacterMakerService:
                     images=images,
                     json_mode=True,
                     result_validator=validator,
+                    metadata_sink=sink,
                 )
             else:
                 raw = await llm_service.callLLMTask(
@@ -1129,17 +1133,18 @@ class CharacterMakerService:
                     messages,
                     json_mode=True,
                     result_validator=validator,
+                    metadata_sink=sink,
                 )
         except Exception as exc:
             self._log_cm_history(
                 task_key, messages, f"[LLM 실패] {exc}", t0,
-                status="error", error=str(exc),
+                status="error", error=str(exc), sink=sink,
             )
             raise
         if isinstance(raw, str) and raw.strip().startswith("[LLM 실패]"):
             print(f"[CHARACTER_MAKER] LLM 호출 최종 실패: task={task_key}, result={raw}")
             self._log_cm_history(
-                task_key, messages, raw, t0, status="error", error=raw,
+                task_key, messages, raw, t0, status="error", error=raw, sink=sink,
             )
             raise CharacterMakerError(raw)
         parsed = _parse_llm_payload(raw, require_queries=require_queries)
@@ -1150,10 +1155,10 @@ class CharacterMakerService:
             )
             self._log_cm_history(
                 task_key, messages, raw, t0, status="error",
-                error="LLM 응답 형식이 올바르지 않습니다.",
+                error="LLM 응답 형식이 올바르지 않습니다.", sink=sink,
             )
             raise CharacterMakerError("LLM 응답 형식이 올바르지 않습니다.")
-        self._log_cm_history(task_key, messages, raw, t0, status="ok")
+        self._log_cm_history(task_key, messages, raw, t0, status="ok", sink=sink)
         return parsed
 
     def _log_cm_history(
@@ -1165,28 +1170,31 @@ class CharacterMakerService:
         *,
         status: str,
         error: str = "",
+        sink: dict | None = None,
     ) -> None:
         """캐릭터 메이커 LLM 호출을 LIGHBD 자세히(lighbd_history.jsonl)에 기록.
 
         비전 입력(이미지)은 messages 의 텍스트와 별도라 텍스트 히스토리엔
         포함되지 않는다(자세히 모달은 텍스트 입출력만 표시). 토큰 통계는
-        task 호출 경로에서 전달되지 않으므로 0/미측정으로 둔다.
+        callLLMTask/VisionTask 의 metadata_sink 로부터 받아 기록하며, 스트리밍
+        usage 를 못 얻은 경우(비스트리밍/실패)엔 근사치 또는 0으로 떨어진다.
         """
         try:
             from modes.lighbd_service import _log_lighbd_history
 
             elapsed = round(time.perf_counter() - t0, 3)
             output_text = output if isinstance(output, str) else str(output)
+            sk = sink or {}
             record = {
                 "ts": datetime.datetime.now().isoformat(timespec="seconds"),
                 "prompt_id": task_key,
                 "call_name": "캐릭터 메이커",
                 "input": messages,
                 "output": output_text,
-                "completion_tokens": 0,
-                "prompt_tokens": 0,
+                "completion_tokens": int(sk.get("completion_tokens") or 0),
+                "prompt_tokens": int(sk.get("prompt_tokens") or 0),
                 "elapsed": elapsed,
-                "tps": 0.0,
+                "tps": float(sk.get("tps") or 0.0),
                 "status": status,
             }
             if error:
