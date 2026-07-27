@@ -1176,6 +1176,21 @@
         /* ─── 설정 모달 ─── */
         .settings-modal .modal-content {
             max-width: 680px;
+            /* 가로 스크롤/우측 드리프트 방지: overflow-y:auto 만 있으면
+               overflow-x 가 auto 로 계산되어 탭 내용이 폭을 1px 만 넘어도
+               가로 스크롤이 생기고 포커스 시 우측으로 튐 수 있다. */
+            overflow-x: hidden;
+        }
+        .settings-modal .modal-body {
+            overflow-x: hidden;
+        }
+        /* 고정폭 입력창이 모달 폭을 초과하지 않도록 상한. (원본 width 는 유지, 좁아지면 100% 로 축소) */
+        .settings-modal .modal-body input[type="text"],
+        .settings-modal .modal-body input[type="number"],
+        .settings-modal .modal-body input[type="password"],
+        .settings-modal .modal-body select,
+        .settings-modal .modal-body textarea {
+            max-width: 100%;
         }
 
         /* 큐 모달 아이템 */
