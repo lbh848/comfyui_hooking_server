@@ -192,6 +192,14 @@ def _parse_llm_payload(raw: str, *, require_queries: bool) -> dict[str, Any] | N
     rag_queries: dict[str, list[str]] = {}
     for field in EDITABLE_FIELDS:
         queries = raw_queries.get(field, [])
+        # LLM이 배열 대신 단일 문자열을 반환하는 경우가 잦아 [query]로 정규화한다.
+        # 비-리스트/비-문자열(숫자 등)은 여전히 거부(None)하여 의미 왜곡을 막는다.
+        if isinstance(queries, str):
+            print(
+                f"[CHARACTER_MAKER] rag_queries 값을 배열로 정규화: "
+                f"field={field}, raw_type=str"
+            )
+            queries = [queries]
         if not isinstance(queries, list):
             return None
         clean_queries: list[str] = []
@@ -1118,8 +1126,9 @@ class CharacterMakerService:
             "Return one JSON object with assistant_message, fields, rag_queries, and optionally "
             "natural_language. "
             "fields must contain exactly appearance/outfit/expression/composition string arrays. "
-            "rag_queries must contain the same four keys with short Korean or English semantic "
-            "search units. Tags should describe visible, image-generatable details. "
+            "rag_queries must contain the same four keys, each mapping to a non-empty ARRAY of "
+            "short Korean or English semantic search unit strings (never a bare string). "
+            "Tags should describe visible, image-generatable details. "
             f"Danbooru RAG is {'enabled' if rag_enabled else 'disabled'}."
         )
         manifest = copy.deepcopy(image_manifest or [])
@@ -1454,7 +1463,7 @@ class CharacterMakerService:
                     "Select Danbooru tags for the character edit. Do not use hard-coded keyword "
                     "matching. For every unlocked field, fields may contain only exact tag strings "
                     "present in that field's candidate_pool. Preserve locked fields exactly. "
-                    "Return JSON with assistant_message, fields, and rag_queries (empty arrays allowed)."
+                    "Return JSON with assistant_message, fields, and rag_queries (arrays only, empty arrays allowed; never a bare string)."
                 ),
             },
             {
