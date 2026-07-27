@@ -1176,13 +1176,15 @@
         /* ─── 설정 모달 ─── */
         .settings-modal .modal-content {
             max-width: 680px;
-            /* 가로 스크롤/우측 드리프트 방지: overflow-y:auto 만 있으면
-               overflow-x 가 auto 로 계산되어 탭 내용이 폭을 1px 만 넘어도
-               가로 스크롤이 생기고 포커스 시 우측으로 튐 수 있다. */
-            overflow-x: hidden;
+            /* 우측 드리프트 원천 차단: overflow-x:hidden 은 스크롤바만 숨길 뿐
+               여전히 스크롤 컨테이너라 포커스/scrollIntoView 가 우측으로 자동
+               스크롤시킨다. clip 은 스크롤 컨테이너 자체가 아니므로 프로그래밍
+               스크롤/포커스 자동 스크롤이 아예 동작하지 않는다. 수직 스크롤은
+               overflow-y:auto 로 유지된다. */
+            overflow-x: clip;
         }
         .settings-modal .modal-body {
-            overflow-x: hidden;
+            overflow-x: clip;
         }
         /* 고정폭 입력창이 모달 폭을 초과하지 않도록 상한. (원본 width 는 유지, 좁아지면 100% 로 축소) */
         .settings-modal .modal-body input[type="text"],
@@ -17115,14 +17117,18 @@
                 void cmRefreshRagArtifactStatus(false);
                 void cmRefreshRagRuntimeStatus(false);
             }
-            // 활성 탭이 보이도록 스크롤
-            const scroll = document.getElementById('settings-tab-scroll');
-            if (scroll && targetBtn) {
-                const left = targetBtn.offsetLeft - 10;
-                const right = left + targetBtn.offsetWidth + 20 - scroll.clientWidth;
-                if (left < scroll.scrollLeft) scroll.scrollTo({ left, behavior: 'smooth' });
-                else if (right > scroll.scrollLeft) scroll.scrollTo({ left: right, behavior: 'smooth' });
-                setTimeout(updateSettingsTabArrows, 250);
+            // 활성 탭이 보이도록 최소 스크롤.
+            // 이전에는 활성 탭을 우측 끝으로 밀어붙이는(scrollTo right) 로직 때문에,
+            // 우측 탭을 누를 때마다 탭 바가 우측으로 계속 밀려 좌측 탭이 잘리고
+            // debug→common 복귀 시에도 sl=57에 멈춰 0으로 돌아오지 않는
+            // "우측 드리프트"가 발생했다. inline:'nearest' 는 탭이 보이지 않을
+            // 때만 최소한으로 스크롤하므로 드리프트가 사라진다.
+            // (상위 modal-content/modal-body 는 overflow-x:clip 이라 가로 스크롤
+            //  컨테이너가 아니므로 scrollIntoView 가 가로로 끌고 가지 않고
+            //  settings-tab-scroll 만 가로 스크롤한다.)
+            if (targetBtn) {
+                targetBtn.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+                setTimeout(updateSettingsTabArrows, 300);
             }
             // 탭 전환 시 모든 자동완성 닫기
             document.querySelectorAll('.autocomplete-list').forEach(list => list.classList.remove('visible'));
