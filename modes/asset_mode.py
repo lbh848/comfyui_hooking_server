@@ -29,6 +29,9 @@ AUTOMATCH_DEFAULT_OUTFIT_DIR = "_automatch_defaults"
 # 프로젝트 루트 안의 안정 디렉터리를 사용하며 .gitignore로 배포에서 제외한다.
 CHARACTER_MAKER_TEMP_DIR = os.path.join(BASE_DIR, "character_maker_data")
 os.makedirs(CHARACTER_MAKER_TEMP_DIR, exist_ok=True)
+# 캐릭터 메이커 단일 영속 세션 식별자. character_maker_mode.SINGLE_SESSION_ID 와
+# 동일한 값이어야 한다(순환 import 회피를 위해 이쪽에 리터럴로 정의).
+CHARACTER_MAKER_SINGLE_SESSION_ID = "default"
 TAGS_FILE = os.path.join(ASSET_DATA_DIR, "tags.json")
 HIDDEN_TAGS_FILE = os.path.join(ASSET_DATA_DIR, "hidden_tags.json")
 NAME_MAPPING_FILE = os.path.join(ASSET_DATA_DIR, "name_mapping.json")
@@ -1526,10 +1529,13 @@ class AssetMode:
             error_msg = f"지원하지 않는 에셋 저장 분류: {storage_group}"
             print(f"[ASSET] {error_msg}")
             return {"success": False, "error": error_msg}
-        if storage_group == "character_maker" and not re.fullmatch(
-            r"[0-9a-f]{32}", str(storage_session or "")
-        ):
-            error_msg = f"캐릭터 메이커 임시 세션 ID가 유효하지 않음: {storage_session!r}"
+        if storage_group == "character_maker" and str(
+            storage_session or ""
+        ) != CHARACTER_MAKER_SINGLE_SESSION_ID:
+            error_msg = (
+                f"캐릭터 메이커 단일 영속 세션 ID가 유효하지 않음: {storage_session!r} "
+                f"(예상: {CHARACTER_MAKER_SINGLE_SESSION_ID!r})"
+            )
             print(f"[ASSET] {error_msg}")
             return {"success": False, "error": error_msg}
         storage_outfit = (

@@ -520,7 +520,7 @@ def test_character_maker_asset_generation_stays_in_temporary_root(
     monkeypatch.setattr(mode, "_log", lambda *_args, **_kwargs: None)
     mode.build_prompt_with_workflow_func = lambda _workflow, _positive, _negative: {}
     mode.submit_workflow_func = submit_workflow
-    session_id = "a" * 32
+    session_id = asset_mode_module.CHARACTER_MAKER_SINGLE_SESSION_ID
 
     result = asyncio.run(
         mode.generate(
