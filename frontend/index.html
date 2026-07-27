@@ -5915,7 +5915,8 @@
             font-size: 0.75rem;
             line-height: 1.55;
         }
-        .cm-reference-card { flex: 0 0 auto; }
+        /* 자유 편집 영역(우측 에디터 열) 하단에 배치 — 필드 카드(order:2) 뒤. */
+        .cm-reference-card { flex: 0 0 auto; order: 3; margin: 0 8px 8px; }
         .cm-reference-drop {
             margin: 9px;
             min-height: 52px;
@@ -5938,7 +5939,7 @@
         }
         .cm-reference-grid {
             display: grid;
-            grid-template-columns: repeat(4, minmax(0, 1fr));
+            grid-template-columns: repeat(3, minmax(0, 1fr));
             gap: 5px;
             padding: 0 9px 9px;
         }
@@ -9025,24 +9026,6 @@
                                       oninput="cmOnWorldInput()"></textarea>
                         </section>
 
-                        <section class="cm-card cm-reference-card">
-                            <div class="cm-card-head">
-                                <div>
-                                    <div>참고 이미지</div>
-                                    <div class="cm-card-kicker">Vision references · 최대 8장</div>
-                                </div>
-                                <span class="cm-hint" id="cm-reference-count">0 / 8</span>
-                            </div>
-                            <div id="cm-reference-drop" class="cm-reference-drop"
-                                 onclick="document.getElementById('cm-reference-input').click()">
-                                <span style="font-size:1rem;">＋</span>
-                                <span>드래그하거나 클릭하여 이미지 추가</span>
-                            </div>
-                            <input id="cm-reference-input" type="file" accept="image/*" multiple hidden
-                                   onchange="cmUploadReferences(this.files)">
-                            <div id="cm-reference-grid" class="cm-reference-grid"></div>
-                        </section>
-
                         <section class="cm-card cm-chat-card">
                             <div class="cm-card-head">
                                 <div>
@@ -9208,6 +9191,24 @@
                                 </div>
                             </section>
                         </div>
+
+                        <section class="cm-card cm-reference-card">
+                            <div class="cm-card-head">
+                                <div>
+                                    <div>참고 이미지</div>
+                                    <div class="cm-card-kicker">Vision references · 최대 8장</div>
+                                </div>
+                                <span class="cm-hint" id="cm-reference-count">0 / 8</span>
+                            </div>
+                            <div id="cm-reference-drop" class="cm-reference-drop"
+                                 onclick="document.getElementById('cm-reference-input').click()">
+                                <span style="font-size:1rem;">＋</span>
+                                <span>드래그하거나 클릭하여 이미지 추가</span>
+                            </div>
+                            <input id="cm-reference-input" type="file" accept="image/*" multiple hidden
+                                   onchange="cmUploadReferences(this.files)">
+                            <div id="cm-reference-grid" class="cm-reference-grid"></div>
+                        </section>
 
                         <aside id="cm-settings-wall" class="cm-settings-wall collapsed" aria-expanded="false" aria-label="생성 설정 프리셋 전용">
                             <div class="cm-settings-panel" onclick="event.stopPropagation()">
