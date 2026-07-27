@@ -6033,7 +6033,16 @@
             font-size: .74rem;
         }
         .cm-feedback-input:focus { border-color: var(--accent); }
-        .cm-compose-actions { display: flex; align-items: center; gap: 6px; margin-top: 7px; }
+        .cm-compose-actions { display: flex; flex-direction: column; gap: 6px; margin-top: 7px; }
+        .cm-compose-hint { display: block; }
+        .cm-compose-btns { display: flex; gap: 6px; }
+        .cm-compose-btns .cm-btn {
+            flex: 1 1 0;
+            min-width: 0;
+            white-space: normal;
+            line-height: 1.25;
+            text-align: center;
+        }
         .cm-hint { color: var(--text2); font-size: .62rem; line-height: 1.35; }
         .cm-btn {
             min-height: 31px;
@@ -6181,7 +6190,7 @@
             color: #fff;
             background: rgba(9,13,22,.72);
             backdrop-filter: blur(5px);
-            z-index: 3;
+            z-index: 10;
         }
         .cm-busy-overlay.visible { display: flex; }
         .cm-stage-actions {
@@ -9180,9 +9189,11 @@
                                           placeholder="예: 차가운 인상이지만 악역처럼 보이지 않게, 재킷은 더 실용적으로 바꿔줘."
                                           onkeydown="cmFeedbackKeydown(event)"></textarea>
                                 <div class="cm-compose-actions">
-                                    <span class="cm-hint" style="flex:1;">Ctrl/⌘ + Enter · 사용자 기준</span>
-                                    <button id="cm-revise-user-btn" class="cm-btn primary" onclick="cmRevise('user')" title="사용자 태그에서 출발해 LLM이 수정 후 다시 그림">LLM 수정 (사용자 기준)</button>
-                                    <button id="cm-revise-llm-btn" class="cm-btn" onclick="cmRevise('llm')" title="LLM이 수정 중인 태그에서 출발해 LLM이 추가 수정 후 다시 그림">LLM 수정 (LLM 기준)</button>
+                                    <span class="cm-hint cm-compose-hint">Ctrl/⌘ + Enter 전송</span>
+                                    <div class="cm-compose-btns">
+                                        <button id="cm-revise-llm-btn" class="cm-btn" onclick="cmRevise('llm')" title="LLM이 수정 중인 태그에서 출발해 LLM이 추가 수정 후 다시 그림">LLM 수정<br>(LLM 기준)</button>
+                                        <button id="cm-revise-user-btn" class="cm-btn primary" onclick="cmRevise('user')" title="사용자 태그에서 출발해 LLM이 수정 후 다시 그림">LLM 수정<br>(사용자 기준)</button>
+                                    </div>
                                 </div>
                             </div>
                         </section>
