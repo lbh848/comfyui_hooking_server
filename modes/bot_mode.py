@@ -3674,9 +3674,17 @@ async def handle_get_auto_face_tag_prompt(request):
 
 
 async def handle_get_auto_face_tag_test_image(request):
-    """GET /api/bot_mode/auto_face_tag_test_image - 배포 번들 테스트 이미지(base64 data URL)."""
+    """GET /api/bot_mode/auto_face_tag_test_image - 배포 번들 테스트 이미지(base64 data URL).
+    ?ref=1 이면 REF/참고용 test_img2.webp 를 반환한다(없으면 test_img.webp 로 폴백)."""
     import base64
-    path = os.path.join(AUTO_FACE_TAG_PROMPTS_DIR, "test_img.webp")
+    use_ref = request.query.get("ref") == "1"
+    filename = "test_img2.webp" if use_ref else "test_img.webp"
+    path = os.path.join(AUTO_FACE_TAG_PROMPTS_DIR, filename)
+    if use_ref and not os.path.isfile(path):
+        # test_img2 가 없으면 test_img 로 폴백
+        print(f"[BOT_MODE] REF 테스트 이미지 없음, test_img 로 폴백: {path}")
+        filename = "test_img.webp"
+        path = os.path.join(AUTO_FACE_TAG_PROMPTS_DIR, filename)
     if not os.path.isfile(path):
         print(f"[BOT_MODE] 테스트 이미지 없음: {path}")
         return web.json_response({"success": False, "error": f"테스트 이미지가 없습니다: {path}"})

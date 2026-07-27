@@ -13044,6 +13044,9 @@
                             <label style="display: flex; align-items: center; gap: 4px; font-size: .85rem; color: var(--text); cursor: pointer;">
                                 <input type="checkbox" id="llm-test-vision" onchange="_onLlmTestVisionToggle()"> 비전(이미지)
                             </label>
+                            <label id="llm-test-multi-label" style="display: none; align-items: center; gap: 4px; font-size: .85rem; color: var(--text); cursor: pointer;" title="다중 비전: CURRENT 외에 REF(참고 이미지)를 함께 전송. 캐릭터 메이커 revise 비전과 동일 경로. 비전 ON일 때만 활성.">
+                                <input type="checkbox" id="llm-test-multi" onchange="_onLlmTestMultiToggle()"> 다중 이미지
+                            </label>
                             <label style="display: flex; align-items: center; gap: 4px; font-size: .85rem; color: var(--text); cursor: pointer;"
                                    title="OpenAI 호환/Gemini는 response_format으로 JSON 출력을 강제하고, Claude native/Vertex 등 비지원 프로바이더는 조용히 무시됩니다. 프로바이더별 JSON 지원 여부 확인용.">
                                 <input type="checkbox" id="llm-test-json"> JSON
@@ -19121,25 +19124,72 @@
         async function _onLlmTestVisionToggle() {
             const checked = document.getElementById('llm-test-vision').checked;
             const label = document.getElementById('llm-test-image-label');
-            const refLabel = document.getElementById('llm-test-ref-image-label');
-            const refClearBtn = document.getElementById('llm-test-ref-clear-btn');
+            const multiLabel = document.getElementById('llm-test-multi-label');
             if (checked) {
                 if (label) label.style.display = 'flex';
-                if (refLabel) refLabel.style.display = 'flex';
-                if (refClearBtn) refClearBtn.style.display = 'inline-block';
+                if (multiLabel) multiLabel.style.display = 'flex';
                 if (!_llmTestImage.b64) {
                     await _loadDefaultTestImage();
                 }
-                // REF 기본 1장 자동 채우기(매번 업로드하는 수고 생략).
-                // 단일 비전(CURRENT만)으로 테스트하려면 ✕ 버튼으로 REF를 비우면 된다.
-                if (_llmTestImage.b64 && _llmTestRefImages.length === 0) {
-                    _setRefImages([{ b64: _llmTestImage.b64, mime: _llmTestImage.mime, source: '기본(test_img.webp)' }]);
-                }
             } else {
                 if (label) label.style.display = 'none';
-                if (refLabel) refLabel.style.display = 'none';
-                if (refClearBtn) refClearBtn.style.display = 'none';
+                if (multiLabel) multiLabel.style.display = 'none';
+                // 비전을 끄면 다중도 함께 해제하고 REF 슬롯을 숨긴다.
+                const multi = document.getElementById('llm-test-multi');
+                if (multi) multi.checked = false;
+                _hideRefSlot();
                 _clearLlmTestRefImages();
+            }
+        }
+
+        async function _onLlmTestMultiToggle() {
+            const checked = document.getElementById('llm-test-multi').checked;
+            if (checked) {
+                _showRefSlot();
+                // REF 기본 1장 자동 채우기(test_img2). 매번 업로드하는 수고 생략.
+                if (_llmTestRefImages.length === 0) {
+                    await _loadDefaultRefImage();
+                }
+            } else {
+                _hideRefSlot();
+                _clearLlmTestRefImages();
+            }
+        }
+
+        function _showRefSlot() {
+            const refLabel = document.getElementById('llm-test-ref-image-label');
+            const refClearBtn = document.getElementById('llm-test-ref-clear-btn');
+            if (refLabel) refLabel.style.display = 'flex';
+            if (refClearBtn) refClearBtn.style.display = 'inline-block';
+        }
+
+        function _hideRefSlot() {
+            const refLabel = document.getElementById('llm-test-ref-image-label');
+            const refClearBtn = document.getElementById('llm-test-ref-clear-btn');
+            if (refLabel) refLabel.style.display = 'none';
+            if (refClearBtn) refClearBtn.style.display = 'none';
+        }
+
+        async function _loadDefaultRefImage() {
+            try {
+                const resp = await fetch('/api/bot_mode/auto_face_tag_test_image?ref=1');
+                const text = await resp.text();
+                let data;
+                try { data = JSON.parse(text); }
+                catch (_) {
+                    showToast(`REF 기본 이미지 로드 실패: 서버 응답이 JSON이 아님 (HTTP ${resp.status})`, 'error');
+                    return false;
+                }
+                if (!data.success) { showToast(`REF 기본 이미지 로드 실패: ${data.error || ''}`, 'error'); return false; }
+                _setRefImages([{
+                    b64: data.data.image_b64,
+                    mime: data.data.mime || 'image/webp',
+                    source: '기본(test_img2.webp)',
+                }]);
+                return true;
+            } catch (e) {
+                showToast(`REF 기본 이미지 로드 실패: ${e.message}`, 'error');
+                return false;
             }
         }
 
@@ -19312,7 +19362,7 @@
                     // 다중 비전: CURRENT(필수) + REF 목록. 단일 image_b64 대신 images 배열 전송.
                     // 캐릭터 메이커 revise 비전(callLLMVisionTask images=)과 동일 전송 형태.
                     if (!_llmTestImage.b64) {
-                        showToast('다중 비전 시 CURRENT 이미지가 필요합니다. 기본 이미지를 로드하거나 파일을 선택하세요.', 'error');
+                        showToast('다중 이미지 전송 시 CURRENT 이미지가 필요합니다. 기본 이미지를 로드하거나 파일을 선택하세요.', 'error');
                         return;
                     }
                     payload.images = [
