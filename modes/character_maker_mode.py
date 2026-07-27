@@ -866,18 +866,29 @@ class CharacterMakerService:
         )
 
     def _encode_vision_image(self, path: str) -> tuple[str, str] | None:
-        """단일 이미지를 비전용으로 다운스케일/인코딩해 (b64, mime) 반환.
+        """단일 이미지를 원본 bytes + 감지된 mime 로 (b64, mime) 반환.
 
-        격자 합성이나 라벨 없이 원본 비율을 유지한 한 장의 깔끔한 이미지로 만든다.
+        포맷(PNG/WEBP)과 해상도 가공은 하지 않는다 — LLM 전송 포맷은 전역 설정
+        (llm_service._normalize_vision_image + llm_vision_compress)에서만 결정한다.
         다중 비전에서 CURRENT/REF 각각이 이 결과 한 장씩으로 전송된다. 실패 시 None.
         """
+        _fmt_to_mime = {
+            "PNG": "image/png",
+            "JPEG": "image/jpeg",
+            "JPG": "image/jpeg",
+            "WEBP": "image/webp",
+            "GIF": "image/gif",
+        }
         try:
             with Image.open(path) as source:
-                image = source.convert("RGB")
-                image.thumbnail((768, 768), Image.Resampling.LANCZOS)
-                output = io.BytesIO()
-                image.save(output, format="WEBP", quality=85, method=4)
-                return base64.b64encode(output.getvalue()).decode("ascii"), "image/webp"
+                fmt = (source.format or "").upper()
+            mime = _fmt_to_mime.get(fmt, "application/octet-stream")
+            with open(path, "rb") as handle:
+                raw = handle.read()
+            if not raw:
+                print(f"[CHARACTER_MAKER] 비전 이미지 파일이 비어 있음: path={path}")
+                return None
+            return base64.b64encode(raw).decode("ascii"), mime
         except Exception as exc:
             print(
                 f"[CHARACTER_MAKER] 비전 이미지 인코딩 실패: "

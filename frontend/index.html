@@ -12916,6 +12916,20 @@
 
                     <div class="setting-row">
                         <div class="setting-label">
+                            <div class="title">이미지를 webp으로 압축해서 전송</div>
+                            <div class="desc">토글이 꺼져있다면, 가장 호환성이 좋은 png로 보냅니다.(비전 사용시)</div>
+                        </div>
+                        <div class="setting-control" style="display:flex; align-items:center; gap:8px;">
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="setting-llm-vision-compress" onchange="updateLlmVisionCompressStatus(1, this.checked)">
+                                <span class="toggle-slider"></span>
+                            </label>
+                            <span id="setting-llm-vision-compress-status" class="toggle-status off">OFF</span>
+                        </div>
+                    </div>
+
+                    <div class="setting-row">
+                        <div class="setting-label">
                             <div class="title">LLM1 동시 요청 수</div>
                             <div class="desc">LLM1에서 동시에 실행할 실제 API 요청 상한입니다. 텍스트·비전·스트림·재시도에 공통 적용되며, 외부 API의 RPM/TPM 제한을 고려해 설정하세요.</div>
                         </div>
@@ -13066,6 +13080,20 @@
 
                     <div class="setting-row">
                         <div class="setting-label">
+                            <div class="title">이미지를 webp으로 압축해서 전송</div>
+                            <div class="desc">토글이 꺼져있다면, 가장 호환성이 좋은 png로 보냅니다.(비전 사용시)</div>
+                        </div>
+                        <div class="setting-control" style="display:flex; align-items:center; gap:8px;">
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="setting-llm-vision-compress2" onchange="updateLlmVisionCompressStatus(2, this.checked)">
+                                <span class="toggle-slider"></span>
+                            </label>
+                            <span id="setting-llm-vision-compress2-status" class="toggle-status off">OFF</span>
+                        </div>
+                    </div>
+
+                    <div class="setting-row">
+                        <div class="setting-label">
                             <div class="title">LLM2 동시 요청 수</div>
                             <div class="desc">LLM2에서 동시에 실행할 실제 API 요청 상한입니다. LLM1과 독립적으로 적용됩니다.</div>
                         </div>
@@ -13133,6 +13161,7 @@
                     <div class="setting-row" id="llm-api-key3-row" style="display:none;"><div class="setting-label"><div class="title">LLM3 API 키 (옵션)</div><div class="desc">비워두면 LLM1 키 재사용</div></div><div class="setting-control"><input id="setting-llm-api-key3" type="text" placeholder="sk-..." style="width:300px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-family:monospace;"></div></div>
                     <div class="setting-row" id="llm-url3-row" style="display:none;"><div class="setting-label"><div class="title">LLM3 베이스 URL (옵션)</div><div class="desc">비워두면 LLM1 URL 또는 선택한 서비스의 기본 URL 사용</div></div><div class="setting-control"><input id="setting-llm-url3" type="text" placeholder="https://..." style="width:300px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);"></div></div>
                     <div class="setting-row"><div class="setting-label"><div class="title">LLM3 스트리밍</div><div class="desc">LLM3 요청을 실제 chunk 스트림으로 받고 LLM로그창에 실시간 표시합니다.</div></div><div class="setting-control" style="display:flex;align-items:center;gap:8px;"><label class="toggle-switch"><input type="checkbox" id="setting-llm-stream3" onchange="updateLlmStreamStatus(3, this.checked)"><span class="toggle-slider"></span></label><span id="setting-llm-stream3-status" class="toggle-status off">OFF</span></div></div>
+                    <div class="setting-row"><div class="setting-label"><div class="title">이미지를 webp으로 압축해서 전송</div><div class="desc">토글이 꺼져있다면, 가장 호환성이 좋은 png로 보냅니다.(비전 사용시)</div></div><div class="setting-control" style="display:flex;align-items:center;gap:8px;"><label class="toggle-switch"><input type="checkbox" id="setting-llm-vision-compress3" onchange="updateLlmVisionCompressStatus(3, this.checked)"><span class="toggle-slider"></span></label><span id="setting-llm-vision-compress3-status" class="toggle-status off">OFF</span></div></div>
                     <div class="setting-row">
                         <div class="setting-label">
                             <div class="title">LLM3 동시 요청 수</div>
@@ -17801,6 +17830,15 @@
             updateLlmStreamStatus(1, !!currentConfig.llm_stream);
             updateLlmStreamStatus(2, !!currentConfig.llm_stream2);
             updateLlmStreamStatus(3, !!currentConfig.llm_stream3);
+            const _vc1 = document.getElementById('setting-llm-vision-compress');
+            if (_vc1) _vc1.checked = !!currentConfig.llm_vision_compress;
+            const _vc2 = document.getElementById('setting-llm-vision-compress2');
+            if (_vc2) _vc2.checked = !!currentConfig.llm_vision_compress2;
+            const _vc3 = document.getElementById('setting-llm-vision-compress3');
+            if (_vc3) _vc3.checked = !!currentConfig.llm_vision_compress3;
+            updateLlmVisionCompressStatus(1, !!currentConfig.llm_vision_compress);
+            updateLlmVisionCompressStatus(2, !!currentConfig.llm_vision_compress2);
+            updateLlmVisionCompressStatus(3, !!currentConfig.llm_vision_compress3);
             const llmUrlEl = document.getElementById('setting-llm-url');
             if (llmUrlEl) llmUrlEl.value = currentConfig.llm_url || '';
             const llmUrl2El = document.getElementById('setting-llm-url2');
@@ -18781,6 +18819,9 @@
                 llm_stream: document.getElementById('setting-llm-stream').checked,
                 llm_stream2: document.getElementById('setting-llm-stream2').checked,
                 llm_stream3: document.getElementById('setting-llm-stream3').checked,
+                llm_vision_compress: (document.getElementById('setting-llm-vision-compress') || {}).checked,
+                llm_vision_compress2: (document.getElementById('setting-llm-vision-compress2') || {}).checked,
+                llm_vision_compress3: (document.getElementById('setting-llm-vision-compress3') || {}).checked,
                 llm_url: (document.getElementById('setting-llm-url') || {}).value || '',
                 llm_url2: (document.getElementById('setting-llm-url2') || {}).value || '',
                 llm_url3: (document.getElementById('setting-llm-url3') || {}).value || '',
@@ -20582,6 +20623,15 @@
         function updateLlmStreamStatus(slot, checked) {
             const suffix = slot === 1 ? '' : String(slot);
             const status = document.getElementById(`setting-llm-stream${suffix}-status`);
+            if (!status) return;
+            status.textContent = checked ? 'ON' : 'OFF';
+            status.classList.toggle('on', checked);
+            status.classList.toggle('off', !checked);
+        }
+
+        function updateLlmVisionCompressStatus(slot, checked) {
+            const suffix = slot === 1 ? '' : String(slot);
+            const status = document.getElementById(`setting-llm-vision-compress${suffix}-status`);
             if (!status) return;
             status.textContent = checked ? 'ON' : 'OFF';
             status.classList.toggle('on', checked);

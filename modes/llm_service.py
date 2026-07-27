@@ -481,6 +481,9 @@ _current_config = _ContextConfig({
     "llm_stream_idle_timeout_seconds": 90.0,  # 0=비활성, 그 외 10~3600초
     "llm_stream_idle_timeout_seconds2": 90.0,
     "llm_stream_idle_timeout_seconds3": 90.0,
+    "llm_vision_compress": False,        # LLM1 비전 이미지 webp 압축 전송 (False=PNG 호환)
+    "llm_vision_compress2": False,       # LLM2 비전 webp 압축
+    "llm_vision_compress3": False,       # LLM3 비전 webp 압축
     # 작업별 LLM1/LLM2/LLM3 라우팅과 메인/폴백 재시도 정책(외부 API 분기).
     # 실제 기본값은 server.py 의 DEFAULT_CONFIG 에서 update_config 로 내려온다.
     "llm_routing": {},
@@ -501,6 +504,7 @@ for _slot_n in range(4, LLM_SLOT_COUNT + 1):
         f"llm_stream{_suffix}": False,
         f"llm_max_concurrency{_suffix}": 1,
         f"llm_stream_idle_timeout_seconds{_suffix}": 90.0,
+        f"llm_vision_compress{_suffix}": False,
     })
 
 
@@ -579,6 +583,7 @@ def _slot_config_overrides(slot: str) -> dict:
         ("llm_reasoning_preset", f"llm_reasoning_preset{suffix}", "auto"),
         ("llm_reasoning_effort", f"llm_reasoning_effort{suffix}", ""),
         ("llm_custom_body", f"llm_custom_body{suffix}", ""),
+        ("llm_vision_compress", f"llm_vision_compress{suffix}", False),
     ):
         slot_value = _base_config_get(slot_key, "")
         overrides[base_key] = (
@@ -1169,6 +1174,22 @@ def _normalize_vision_image(image_b64: str, image_mime: str) -> tuple:
             # GIF는 투명 프레임 보존을 위해 네이티브 통과
             if fmt == "GIF":
                 return image_b64, "image/gif"
+            # webp 압축 전송 토글(llm_vision_compress)이 켜져 있으면 원본 픽셀을
+            # 유지한 채 WEBP 품질 압축만 해서 보낸다. PNG 재인코딩을 거치지 않는다
+            # (비전 컨텍스트 폭발 방지). WEBP 미지원 프로바이더는 토글 OFF로 PNG 사용.
+            compress_webp = bool(_current_config.get("llm_vision_compress", False))
+            if compress_webp:
+                # 이미 WEBP면 재압축 손실을 막기 위해 그대로 통과.
+                if fmt == "WEBP":
+                    return image_b64, "image/webp"
+                img.load()
+                out = io.BytesIO()
+                save_img = img if img.mode in ("RGBA", "LA") else img.convert("RGB")
+                save_img.save(out, format="WEBP", quality=85, method=4)
+                new_b64 = _b64.b64encode(out.getvalue()).decode("ascii")
+                _llm_log(f"_normalize_vision_image: webp 압축 {fmt}/{image_mime} -> image/webp "
+                         f"({len(raw)}B -> {len(out.getvalue())}B)")
+                return new_b64, "image/webp"
             # WEBP / AVIF / HEIF / BMP / TIFF / 미식별 등 → PNG 재인코딩
             # (WEBP는 Cerebras 등 webp 미지원 비전 프로바이더 호환을 위해 PNG로)
             img.load()

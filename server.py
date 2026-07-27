@@ -267,6 +267,9 @@ DEFAULT_CONFIG = {
     "llm_stream_idle_timeout_seconds": 90.0,  # 0=비활성, 그 외 10~3600초
     "llm_stream_idle_timeout_seconds2": 90.0,
     "llm_stream_idle_timeout_seconds3": 90.0,
+    "llm_vision_compress": False,        # LLM1 비전 이미지 webp 압축 전송 (False=PNG 호환)
+    "llm_vision_compress2": False,       # LLM2 비전 webp 압축
+    "llm_vision_compress3": False,       # LLM3 비전 webp 압축
     # 작업별 LLM1/LLM2/LLM3 라우팅 및 메인/폴백 재시도 정책(외부 API 분기 탭).
     "llm_routing": {
         "extract_outfit":          _llm_route_defaults(fallback=True),
@@ -363,6 +366,7 @@ for _slot_n in range(4, llm_service.LLM_SLOT_COUNT + 1):
         f"llm_stream{_suffix}": False,
         f"llm_stream_idle_timeout_seconds{_suffix}": 90.0,
         f"llm_max_concurrency{_suffix}": 1,
+        f"llm_vision_compress{_suffix}": False,
     })
 
 # 워크플로우 백업 최대 보관 수 (기본값, config에서 덮어씀)
@@ -9431,6 +9435,9 @@ async def handle_api_config(request: web.Request) -> web.Response:
                     body["character_maker_rag_autostart"] = bool(
                         body.get("character_maker_rag_autostart")
                     )
+                for _vk in ("llm_vision_compress", "llm_vision_compress2", "llm_vision_compress3"):
+                    if _vk in body:
+                        body[_vk] = bool(body.get(_vk))
                 if "character_maker_rag_top_k" in body:
                     rag_top_k = int(body.get("character_maker_rag_top_k"))
                     if not 1 <= rag_top_k <= 20:
@@ -9803,6 +9810,9 @@ async def handle_api_config(request: web.Request) -> web.Response:
                 "llm_stream_idle_timeout_seconds": app_config.get("llm_stream_idle_timeout_seconds", 90.0),
                 "llm_stream_idle_timeout_seconds2": app_config.get("llm_stream_idle_timeout_seconds2", 90.0),
                 "llm_stream_idle_timeout_seconds3": app_config.get("llm_stream_idle_timeout_seconds3", 90.0),
+                "llm_vision_compress": app_config.get("llm_vision_compress", False),
+                "llm_vision_compress2": app_config.get("llm_vision_compress2", False),
+                "llm_vision_compress3": app_config.get("llm_vision_compress3", False),
                 "llm_routing": app_config.get("llm_routing", {}),
             })
 
@@ -17458,6 +17468,7 @@ async def on_startup(app):
         "llm_stream": app_config.get("llm_stream", False),
         "llm_max_concurrency": app_config.get("llm_max_concurrency", 1),
         "llm_stream_idle_timeout_seconds": app_config.get("llm_stream_idle_timeout_seconds", 90.0),
+        "llm_vision_compress": app_config.get("llm_vision_compress", False),
     }
     for _n in range(2, llm_service.LLM_SLOT_COUNT + 1):
         _s = str(_n)
@@ -17471,6 +17482,7 @@ async def on_startup(app):
             f"llm_stream{_s}": app_config.get(f"llm_stream{_s}", False),
             f"llm_max_concurrency{_s}": app_config.get(f"llm_max_concurrency{_s}", 1),
             f"llm_stream_idle_timeout_seconds{_s}": app_config.get(f"llm_stream_idle_timeout_seconds{_s}", 90.0),
+            f"llm_vision_compress{_s}": app_config.get(f"llm_vision_compress{_s}", False),
         })
     _llm_cfg["llm_routing"] = app_config.get("llm_routing", {})
     llm_service.update_config(_llm_cfg)
