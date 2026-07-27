@@ -165,28 +165,62 @@ def _normalize_lora_list(value: Any) -> list[dict[str, Any]]:
     return normalized
 
 
-def _parse_llm_payload(raw: str, *, require_queries: bool) -> dict[str, Any] | None:
-    parsed = llm_prompt_edit.parse_llm_json(raw)
+def _parse_llm_payload(
+    raw: str, *, require_queries: bool
+) -> tuple[dict[str, Any] | None, str]:
+    """LLM 응답을 검증·정규화한다.
+
+    Returns:
+        (parsed, reason) — 성공 시 (정규화된 딕셔너리, "").
+        실패 시 (None, "<구체적 사유>"). 사유는 LIGHBD 자세히 로그와 프론트 에러에
+        그대로 노출되므로, 어느 검증 단계에서 왜 막혔는지 사람이 읽을 수 있어야 한다.
+        (과거엔 모든 실패를 None 하나로 뭉뚱그려 "형식이 올바르지 않습니다"만 남아
+        원인 분석이 불가능했다.)
+    """
+    try:
+        parsed = llm_prompt_edit.parse_llm_json(raw)
+    except Exception as exc:
+        return None, f"LLM 응답을 JSON으로 파싱하지 못했습니다: {type(exc).__name__}: {exc}"
     if not isinstance(parsed, dict):
-        return None
+        return None, "LLM 응답이 JSON 객체가 아닙니다."
     assistant_message = parsed.get("assistant_message")
-    fields = parsed.get("fields")
     if not isinstance(assistant_message, str) or not assistant_message.strip():
-        return None
+        return None, "assistant_message(문자열)가 없거나 비어 있습니다."
+    fields = parsed.get("fields")
     if not isinstance(fields, dict):
-        return None
+        return None, "fields(객체)가 없습니다."
     if set(fields) != set(EDITABLE_FIELDS):
-        return None
+        missing = sorted(set(EDITABLE_FIELDS) - set(fields))
+        extra = sorted(set(fields) - set(EDITABLE_FIELDS))
+        detail = "; ".join(
+            p for p in (
+                f"누락={missing}" if missing else "",
+                f"잉여={extra}" if extra else "",
+            ) if p
+        )
+        return None, (
+            f"fields 키가 {sorted(EDITABLE_FIELDS)}와 정확히 일치해야 합니다. ({detail})"
+        )
     try:
         normalized_fields = _normalize_fields(fields)
-    except CharacterMakerError:
-        return None
+    except CharacterMakerError as exc:
+        return None, f"fields 값을 정규화하지 못했습니다: {exc}"
 
     raw_queries = parsed.get("rag_queries", {})
     if require_queries and not isinstance(raw_queries, dict):
-        return None
+        return None, "rag_queries(객체)가 없습니다."
     if require_queries and set(raw_queries) != set(EDITABLE_FIELDS):
-        return None
+        missing = sorted(set(EDITABLE_FIELDS) - set(raw_queries))
+        extra = sorted(set(raw_queries) - set(EDITABLE_FIELDS))
+        detail = "; ".join(
+            p for p in (
+                f"누락={missing}" if missing else "",
+                f"잉여={extra}" if extra else "",
+            ) if p
+        )
+        return None, (
+            f"rag_queries 키가 {sorted(EDITABLE_FIELDS)}와 일치해야 합니다. ({detail})"
+        )
     if not isinstance(raw_queries, dict):
         raw_queries = {}
     rag_queries: dict[str, list[str]] = {}
@@ -201,11 +235,17 @@ def _parse_llm_payload(raw: str, *, require_queries: bool) -> dict[str, Any] | N
             )
             queries = [queries]
         if not isinstance(queries, list):
-            return None
+            return None, (
+                f"rag_queries[{field}]가 배열(또는 단일 문자열)이어야 합니다. "
+                f"(실제 타입: {type(queries).__name__})"
+            )
         clean_queries: list[str] = []
         for query in queries:
             if not isinstance(query, str):
-                return None
+                return None, (
+                    f"rag_queries[{field}]의 원소가 문자열이 아닙니다. "
+                    f"(타입: {type(query).__name__})"
+                )
             query = query.strip()
             if query and query not in clean_queries:
                 clean_queries.append(query[:300])
@@ -223,20 +263,19 @@ def _parse_llm_payload(raw: str, *, require_queries: bool) -> dict[str, Any] | N
         "fields": normalized_fields,
         "rag_queries": rag_queries,
         "natural_language": natural_language,
-    }
+    }, ""
 
 
 def validate_character_maker_llm_result(
     raw: str, *, require_queries: bool = True
 ) -> tuple[bool, str]:
-    """callLLMTask/callLLMVisionTask result_validator 계약."""
-    parsed = _parse_llm_payload(raw, require_queries=require_queries)
+    """callLLMTask/callLLMVisionTask result_validator 계약.
+
+    실패 시 구체적 사유를 그대로 넘긴다(LIGHBD per-attempt 로그에 노출).
+    """
+    parsed, reason = _parse_llm_payload(raw, require_queries=require_queries)
     if parsed is None:
-        return (
-            False,
-            "assistant_message, fields(4개 배열), rag_queries(4개 배열)를 가진 JSON 객체가 필요합니다. "
-            "(natural_language는 선택)",
-        )
+        return False, reason or "LLM 응답 형식이 올바르지 않습니다."
     return True, ""
 
 
@@ -1180,6 +1219,7 @@ class CharacterMakerService:
         images: list[tuple[str, str]] | None,
         *,
         require_queries: bool,
+        call_label: str = "캐릭터 메이커",
     ) -> dict[str, Any]:
         validator = lambda raw: validate_character_maker_llm_result(
             raw, require_queries=require_queries
@@ -1192,7 +1232,8 @@ class CharacterMakerService:
         def _on_attempt_fail(info: dict) -> None:
             """재시도 중 각 실패 시도를 자세히(lighbd_history.jsonl)에 개별 기록한다.
             최종 결과(성공/파싱실패)는 _log_cm_history 가 별도로 남기고, 여기는 중간
-            실패 가시성용. sink 는 시도 간 공유/덮어쓰기되므로 호출 시점에 스냅샷한다."""
+            실패 가시성용. sink 는 시도 간 공유/덮어쓰기되므로 호출 시점에 스냅샷한다.
+            call_label 로 어느 단계(draft/RAG 선택)의 시도인지 구분한다."""
             try:
                 from modes.lighbd_service import _log_lighbd_history
 
@@ -1200,7 +1241,7 @@ class CharacterMakerService:
                 _log_lighbd_history({
                     "ts": datetime.datetime.now().isoformat(timespec="seconds"),
                     "prompt_id": task_key,
-                    "call_name": "캐릭터 메이커",
+                    "call_name": call_label,
                     "input": messages,
                     "output": str(info.get("result") or ""),
                     "completion_tokens": int(snap.get("completion_tokens") or 0),
@@ -1242,27 +1283,30 @@ class CharacterMakerService:
         except Exception as exc:
             self._log_cm_history(
                 task_key, messages, f"[LLM 실패] {exc}", t0,
-                status="error", error=str(exc), sink=sink,
+                status="error", error=str(exc), sink=sink, call_label=call_label,
             )
             raise
         if isinstance(raw, str) and raw.strip().startswith("[LLM 실패]"):
             print(f"[CHARACTER_MAKER] LLM 호출 최종 실패: task={task_key}, result={raw}")
             self._log_cm_history(
                 task_key, messages, raw, t0, status="error", error=raw, sink=sink,
+                call_label=call_label,
             )
             raise CharacterMakerError(raw)
-        parsed = _parse_llm_payload(raw, require_queries=require_queries)
+        parsed, reason = _parse_llm_payload(raw, require_queries=require_queries)
         if parsed is None:
             print(
                 f"[CHARACTER_MAKER] LLM JSON 검증 실패: task={task_key}, "
-                f"raw={str(raw)[:1000]!r}"
+                f"reason={reason}, raw={str(raw)[:1000]!r}"
             )
             self._log_cm_history(
                 task_key, messages, raw, t0, status="error",
-                error="LLM 응답 형식이 올바르지 않습니다.", sink=sink,
+                error=reason, sink=sink, call_label=call_label,
             )
-            raise CharacterMakerError("LLM 응답 형식이 올바르지 않습니다.")
-        self._log_cm_history(task_key, messages, raw, t0, status="ok", sink=sink)
+            raise CharacterMakerError(reason)
+        self._log_cm_history(
+            task_key, messages, raw, t0, status="ok", sink=sink, call_label=call_label,
+        )
         return parsed
 
     def _log_cm_history(
@@ -1275,8 +1319,12 @@ class CharacterMakerService:
         status: str,
         error: str = "",
         sink: dict | None = None,
+        call_label: str = "캐릭터 메이커",
     ) -> None:
         """캐릭터 메이커 LLM 호출을 LIGHBD 자세히(lighbd_history.jsonl)에 기록.
+
+        call_label 은 자세히 카드에서 두 단계(1단계 수정 / 2단계 RAG 태그선택)를
+        구분하는 배지(call_name)로 쓰인다.
 
         비전 입력(이미지)은 messages 의 텍스트와 별도라 텍스트 히스토리엔
         포함되지 않는다(자세히 모달은 텍스트 입출력만 표시). 토큰 통계는
@@ -1292,7 +1340,7 @@ class CharacterMakerService:
             record = {
                 "ts": datetime.datetime.now().isoformat(timespec="seconds"),
                 "prompt_id": task_key,
-                "call_name": "캐릭터 메이커",
+                "call_name": call_label,
                 "input": messages,
                 "output": output_text,
                 "completion_tokens": int(sk.get("completion_tokens") or 0),
@@ -1482,7 +1530,8 @@ class CharacterMakerService:
             },
         ]
         selected = await self._call_revision_llm(
-            task_key, selection_messages, None, require_queries=False
+            task_key, selection_messages, None, require_queries=False,
+            call_label="캐릭터 메이커 · 2단계(RAG 태그선택)",
         )
 
         final_fields: dict[str, list[str]] = {}
@@ -1603,7 +1652,8 @@ class CharacterMakerService:
                 image_manifest=image_manifest,
             )
             draft = await self._call_revision_llm(
-                task_key, messages, images or None, require_queries=True
+                task_key, messages, images or None, require_queries=True,
+                call_label="캐릭터 메이커 · 1단계(수정)",
             )
 
             for field in EDITABLE_FIELDS:

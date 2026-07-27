@@ -20693,7 +20693,24 @@
                 : '-';
             const statusMeta = getLighbdHistoryStatusMeta(record.status);
             const isError = statusMeta.isError;
-            const outputText = isError ? (record.error || record.output || '-') : (record.output || '-');
+            const errorText = record.error || '';
+            const rawOutput = record.output || '';
+            // 에러 레코드는 '오류 내용'과 'LLM 원본 응답'을 분리해 함께 표시.
+            // 과거엔 error가 output을 가려서 원본 응답을 볼 수 없어 "왜 실패했는지"
+            // 분석이 불가능했다(원본은 로그엔 저장되어 있었으나 UI가 숨김).
+            const outputSectionHtml = isError
+                ? `<section class="lighbd-detail-section">
+                            <div class="lighbd-detail-section-title">오류 내용</div>
+                            <pre class="lighbd-detail-content">${escapeHtml(errorText || '-')}</pre>
+                        </section>
+                        <section class="lighbd-detail-section">
+                            <div class="lighbd-detail-section-title">LLM 원본 응답 <span style="color:var(--text2); font-weight:400;">(파싱 실패 원인 분석용)</span></div>
+                            <pre class="lighbd-detail-content">${escapeHtml(rawOutput || '(원본 응답 없음)')}</pre>
+                        </section>`
+                : `<section class="lighbd-detail-section">
+                            <div class="lighbd-detail-section-title">출력 전체</div>
+                            <pre class="lighbd-detail-content">${escapeHtml(rawOutput || '-')}</pre>
+                        </section>`;
             const ttft = record.ttft == null ? '-' : `${record.ttft}s`;
 
             const overlay = document.createElement('div');
@@ -20722,10 +20739,7 @@
                             <div class="lighbd-detail-section-title">입력 전체</div>
                             <pre class="lighbd-detail-content">${escapeHtml(inputText)}</pre>
                         </section>
-                        <section class="lighbd-detail-section">
-                            <div class="lighbd-detail-section-title">${isError ? '오류 내용' : '출력 전체'}</div>
-                            <pre class="lighbd-detail-content">${escapeHtml(String(outputText))}</pre>
-                        </section>
+                        ${outputSectionHtml}
                     </div>
                 </div>`;
             overlay.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeLighbdHistoryDetail(); });

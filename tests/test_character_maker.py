@@ -1024,16 +1024,38 @@ def test_parse_llm_payload_natural_language_optional():
     ok, _ = validate_character_maker_llm_result(_llm_payload(appearance=["hair"]))
     assert ok
     # natural_language 가 있으면 파싱된다.
-    parsed = character_maker_module._parse_llm_payload(
+    parsed, reason = character_maker_module._parse_llm_payload(
         _llm_payload(natural_language="dreamy floral atmosphere"),
         require_queries=True,
     )
+    assert reason == ""
+    assert parsed is not None
     assert parsed["natural_language"] == "dreamy floral atmosphere"
     # natural_language 가 없으면 None(변경 없음 신호).
-    parsed_none = character_maker_module._parse_llm_payload(
+    parsed_none, reason_none = character_maker_module._parse_llm_payload(
         _llm_payload(), require_queries=True
     )
+    assert reason_none == ""
+    assert parsed_none is not None
     assert parsed_none["natural_language"] is None
+
+
+def test_parse_llm_payload_returns_specific_reason_on_failure():
+    # 실패 시 (None, 구체적 사유) — 사유는 자세히 로그/에러에 노출되므로
+    # "형식이 올바르지 않습니다" 같은 뭉뚱그린 메시지여선 안 된다.
+    parsed, reason = character_maker_module._parse_llm_payload(
+        "이건 JSON이 아닙니다", require_queries=True
+    )
+    assert parsed is None
+    assert reason  # 비어있지 않은 구체적 사유
+
+    bad = json.loads(_llm_payload(appearance=["hair"]))
+    bad["fields"].pop("composition")  # 필드 누락
+    parsed2, reason2 = character_maker_module._parse_llm_payload(
+        json.dumps(bad, ensure_ascii=False), require_queries=True
+    )
+    assert parsed2 is None
+    assert "composition" in reason2 or "누락" in reason2
 
 
 def test_backward_compat_loads_session_without_natural_language(tmp_path):
