@@ -14,7 +14,6 @@ import hashlib
 import shutil
 import traceback
 import re
-import tempfile
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional, Callable, Awaitable
@@ -26,10 +25,10 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ASSET_DATA_DIR = os.path.join(BASE_DIR, "asset_data")
 ASSET_DIR = os.path.join(BASE_DIR, "asset")
 AUTOMATCH_DEFAULT_OUTFIT_DIR = "_automatch_defaults"
-_CHARACTER_MAKER_TEMP_CONTEXT = tempfile.TemporaryDirectory(
-    prefix="comfyui_character_maker_"
-)
-CHARACTER_MAKER_TEMP_DIR = _CHARACTER_MAKER_TEMP_CONTEXT.name
+# 캐릭터 메이커 작업공간: 서버 재시작에도 살아있는 단일 영속 세션.
+# 프로젝트 루트 안의 안정 디렉터리를 사용하며 .gitignore로 배포에서 제외한다.
+CHARACTER_MAKER_TEMP_DIR = os.path.join(BASE_DIR, "character_maker_data")
+os.makedirs(CHARACTER_MAKER_TEMP_DIR, exist_ok=True)
 TAGS_FILE = os.path.join(ASSET_DATA_DIR, "tags.json")
 HIDDEN_TAGS_FILE = os.path.join(ASSET_DATA_DIR, "hidden_tags.json")
 NAME_MAPPING_FILE = os.path.join(ASSET_DATA_DIR, "name_mapping.json")

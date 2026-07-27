@@ -13,6 +13,8 @@ asset/
 asset_data/
 style_lora_data/
 pose_data/
+# 캐릭터 메이커 단일 영속 세션 작업공간 (내 작업물, 배포 제외)
+character_maker_data/
 bot/
 instance_lora/
 current_mode_workflow/

@@ -593,7 +593,7 @@ asset_mode.mode_log_func = mode_logger.log
 asset_mode.load_tags()
 print(f"[ASSET_MODE] 초기화: source={asset_mode.workflow_source_path}, characters={len(asset_mode.list_characters())}")
 
-# ─── 캐릭터 메이커 (서버 프로세스 수명 임시 세션) ───
+# ─── 캐릭터 메이커 (단일 영속 세션, 배포 제외 디렉터리) ───
 character_maker = CharacterMakerService(
     asset_mode,
     lambda: app_config,
@@ -12949,6 +12949,8 @@ def _character_maker_rag_runtime_snapshot() -> dict[str, Any]:
     status = _character_maker_rag_service.status()
     if status["loaded"]:
         state = "running"
+    elif status.get("loading"):
+        state = "loading"
     elif status["error"]:
         state = "error"
     else:
@@ -12958,6 +12960,7 @@ def _character_maker_rag_runtime_snapshot() -> dict[str, Any]:
         "mode": "embedded",
         "ready": bool(status["ready"]),
         "installed": bool(status["installed"]),
+        "loading": bool(status.get("loading")),
         "index_path": status["index_path"],
         "model_cache": status["model_cache"],
         "row_count": status["row_count"],

@@ -2,9 +2,10 @@
 Character Maker
 
 캐릭터 확정 전까지의 세계관, 대화, 자유 편집 태그, 참고 이미지와 생성 결과를
-서버 프로세스 수명에만 묶어 관리한다. 이 모듈은 config.json 또는 tags.json을
-자동으로 수정하지 않는다. tags.json 반영은 confirm()의 명시적 확정 단계에서만
-백업 후 원자적으로 수행한다.
+단일 영속 세션(default)으로 관리한다. 세션 상태는 temp_root/default/session.json
+에 원자적으로 저장되어 서버 재시작에도 유지되며, 배포에서는 제외된다. 이 모듈은
+config.json 또는 tags.json을 자동으로 수정하지 않는다. tags.json 반영은
+confirm()의 명시적 확정 단계에서만 백업 후 원자적으로 수행한다.
 """
 
 from __future__ import annotations
@@ -34,6 +35,7 @@ from .danbooru_rag import DanbooruRagError, get_danbooru_rag_service
 
 EDITABLE_FIELDS = ("appearance", "outfit", "expression", "composition")
 RAG_COLD_START_TIMEOUT_SECONDS = 300.0
+SINGLE_SESSION_ID = "default"
 MAX_REFERENCE_COUNT = 8
 MAX_REFERENCE_BYTES = 12 * 1024 * 1024
 MAX_CHAT_ITEMS = 40
@@ -272,6 +274,8 @@ class CharacterMakerService:
         self.boot_id = uuid.uuid4().hex
         self.sessions: dict[str, dict[str, Any]] = {}
         self._operation_locks: dict[str, asyncio.Lock] = {}
+        # 단일 고정 세션을 디스크에서 로드(없으면 새로 생성·저장).
+        self._load_or_create_session()
 
     def _default_settings(self) -> dict[str, Any]:
         config = self.config_getter() or {}
@@ -315,14 +319,20 @@ class CharacterMakerService:
             "face_crop_bottom": 1.0,
         }
 
-    def create_session(self) -> dict[str, Any]:
-        session_id = uuid.uuid4().hex
-        session_dir = os.path.join(self.temp_root, session_id)
+    def _session_dir(self) -> str:
+        return os.path.join(self.temp_root, SINGLE_SESSION_ID)
+
+    def _session_json_path(self) -> str:
+        return os.path.join(self._session_dir(), "session.json")
+
+    def _fresh_session(self) -> dict[str, Any]:
+        """새 빈 단일 세션 객체를 만든다(디스크 디렉터리도 보장)."""
+        session_dir = self._session_dir()
         os.makedirs(os.path.join(session_dir, "references"), exist_ok=True)
         os.makedirs(os.path.join(session_dir, "images"), exist_ok=True)
         now = _now_iso()
-        session = {
-            "id": session_id,
+        return {
+            "id": SINGLE_SESSION_ID,
             "boot_id": self.boot_id,
             "created_at": now,
             "updated_at": now,
@@ -336,22 +346,166 @@ class CharacterMakerService:
             "active_revision_id": "",
             "finalized": None,
         }
-        self.sessions[session_id] = session
-        self._operation_locks[session_id] = asyncio.Lock()
-        print(f"[CHARACTER_MAKER] 임시 세션 생성: session={session_id}, boot={self.boot_id}")
-        return self.public_session(session_id)
+
+    def _install_single_session(self, session: dict[str, Any]) -> None:
+        session["id"] = SINGLE_SESSION_ID
+        session["boot_id"] = self.boot_id
+        self.sessions = {SINGLE_SESSION_ID: session}
+        self._operation_locks = {SINGLE_SESSION_ID: asyncio.Lock()}
+
+    def _load_session_from_disk(self) -> dict[str, Any] | None:
+        path = self._session_json_path()
+        if not os.path.isfile(path):
+            return None
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                data = json.load(handle)
+        except Exception as exc:
+            print(
+                f"[CHARACTER_MAKER] 세션 영속화 파일 로드 실패, 새 세션 시작: "
+                f"path={path}, error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            return None
+        if not isinstance(data, dict) or data.get("id") != SINGLE_SESSION_ID:
+            print(
+                f"[CHARACTER_MAKER] 세션 영속화 파일 무효, 새 세션 시작: path={path}"
+            )
+            return None
+
+        # 누락된 최상위 필드 보완.
+        data.setdefault("world_context", "")
+        data.setdefault("fields", {field: [] for field in EDITABLE_FIELDS})
+        data.setdefault("locks", {field: False for field in EDITABLE_FIELDS})
+        data.setdefault("settings", {})
+        data.setdefault("chat", [])
+        data.setdefault("references", [])
+        data.setdefault("revisions", [])
+        data.setdefault("active_revision_id", "")
+        data.setdefault("finalized", None)
+        data.setdefault("created_at", _now_iso())
+        data.setdefault("updated_at", _now_iso())
+        for field in EDITABLE_FIELDS:
+            data["fields"].setdefault(field, [])
+            data["locks"].setdefault(field, False)
+        # 새 설정 키가 추가되어도 기본값으로 채운다(사용자 값은 보존).
+        defaults = self._default_settings()
+        for key, value in defaults.items():
+            data["settings"].setdefault(key, copy.deepcopy(value))
+
+        # 디스크에 없어진 참고 이미지 정리(조용히 버리지 않고 로그).
+        kept_references: list[dict[str, Any]] = []
+        for item in data["references"]:
+            if not isinstance(item, dict):
+                continue
+            if not os.path.isfile(item.get("path", "")):
+                print(
+                    f"[CHARACTER_MAKER] 로드 시 누락된 참고 이미지 제외: "
+                    f"reference={item.get('id')}, path={item.get('path')}"
+                )
+                continue
+            kept_references.append(item)
+        data["references"] = kept_references
+
+        # 디스크에 없어진 리비전 이미지 정리.
+        kept_revisions: list[dict[str, Any]] = []
+        for item in data["revisions"]:
+            if not isinstance(item, dict):
+                continue
+            if not os.path.isfile(item.get("image_path", "")):
+                print(
+                    f"[CHARACTER_MAKER] 로드 시 누락된 리비전 이미지 제외: "
+                    f"revision={item.get('id')}, path={item.get('image_path')}"
+                )
+                continue
+            kept_revisions.append(item)
+        data["revisions"] = kept_revisions
+
+        # 활성 리비전이 정리 중에 사라졌으면 해제.
+        active_id = data.get("active_revision_id", "")
+        if active_id and not any(
+            item.get("id") == active_id for item in data["revisions"]
+        ):
+            print(f"[CHARACTER_MAKER] 로드 시 활성 리비전이 없어 해제: id={active_id}")
+            data["active_revision_id"] = ""
+
+        session_dir = self._session_dir()
+        os.makedirs(os.path.join(session_dir, "references"), exist_ok=True)
+        os.makedirs(os.path.join(session_dir, "images"), exist_ok=True)
+        return data
+
+    def _load_or_create_session(self) -> None:
+        session = self._load_session_from_disk()
+        if session is None:
+            session = self._fresh_session()
+            self._install_single_session(session)
+            self._persist_session(session)
+            print(
+                f"[CHARACTER_MAKER] 단일 세션 새로 생성: session={SINGLE_SESSION_ID}, "
+                f"boot={self.boot_id}"
+            )
+        else:
+            self._install_single_session(session)
+            print(
+                f"[CHARACTER_MAKER] 단일 세션 디스크에서 복원: session={SINGLE_SESSION_ID}, "
+                f"boot={self.boot_id}, revisions={len(session['revisions'])}, "
+                f"references={len(session['references'])}"
+            )
+
+    def _persist_session(self, session: dict[str, Any]) -> None:
+        """단일 세션 상태를 session.json에 원자적으로 저장한다."""
+        try:
+            self._atomic_write_json(self._session_json_path(), session)
+        except Exception as exc:
+            print(
+                f"[CHARACTER_MAKER] 세션 영속화 실패: "
+                f"session={session.get('id')}, error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+
+    def create_session(self) -> dict[str, Any]:
+        """단일 고정 세션을 빈 세션으로 리셋한다(기존 작업 삭제)."""
+        self._reset_single_session()
+        session = self.sessions[SINGLE_SESSION_ID]
+        self._persist_session(session)
+        print(
+            f"[CHARACTER_MAKER] 세션 리셋: session={SINGLE_SESSION_ID}, "
+            f"boot={self.boot_id}"
+        )
+        return self.public_session(SINGLE_SESSION_ID)
+
+    def _reset_single_session(self) -> None:
+        session_dir = self._session_dir()
+        _assert_within(self.temp_root, session_dir)
+        if os.path.isdir(session_dir):
+            shutil.rmtree(session_dir)
+        session = self._fresh_session()
+        session["boot_id"] = self.boot_id
+        self.sessions[SINGLE_SESSION_ID] = session
+        # 작업 잠금은 기존 객체를 유지한다(현재 연산이 잡고 있을 수 있음).
+        self._operation_locks.setdefault(SINGLE_SESSION_ID, asyncio.Lock())
 
     def _session(self, session_id: str) -> dict[str, Any]:
-        session = self.sessions.get(str(session_id or "").strip())
+        # 단일 세션 모델: 식별자와 무관하게 항상 같은 세션을 반환한다.
+        # 영속화 파일이 외부에서 삭제되는 등 예외 상황에서도 새로 복구한다.
+        session = self.sessions.get(SINGLE_SESSION_ID)
         if session is None:
             print(
-                f"[CHARACTER_MAKER] 세션 조회 실패: session={session_id!r}, "
-                f"boot={self.boot_id}, active={len(self.sessions)}"
+                f"[CHARACTER_MAKER] 단일 세션 누락, 복구: boot={self.boot_id}, "
+                f"요청={session_id!r}"
             )
-            raise CharacterMakerError(
-                "임시 세션이 없거나 서버가 재시작되었습니다. 새 세션을 시작하세요."
-            )
+            self._load_or_create_session()
+            session = self.sessions[SINGLE_SESSION_ID]
         return session
+
+    def _live_asset_workflow_type(self) -> str:
+        """에셋 워크플로우 타입은 전역 config(설정→삽화)를 따른다.
+
+        CM 세션이 과거 스냅샷을 영속화하더라도, 표시/생성에는 항상 현재
+        전역값을 쓴다. 설정에서 바꾸고 저장하면 CM에 곧바로 반영되도록.
+        """
+        config = self.config_getter() or {}
+        return str(config.get("asset_workflow_type") or "ilxl")
 
     def public_session(self, session_id: str) -> dict[str, Any]:
         session = self._session(session_id)
@@ -376,7 +530,7 @@ class CharacterMakerService:
             }
             for item in session["revisions"]
         ]
-        return {
+        result = {
             "id": session["id"],
             "boot_id": session["boot_id"],
             "created_at": session["created_at"],
@@ -391,6 +545,9 @@ class CharacterMakerService:
             "active_revision_id": active_revision_id,
             "finalized": copy.deepcopy(session.get("finalized")),
         }
+        # 워크플로우 타입은 CM 세션 스냅샷이 아닌 전역 config의 live 값을 따른다.
+        result["settings"]["asset_workflow_type"] = self._live_asset_workflow_type()
+        return result
 
     def operation_lock(self, session_id: str) -> asyncio.Lock:
         session = self._session(session_id)
@@ -427,6 +584,7 @@ class CharacterMakerService:
                 raise CharacterMakerError("선택한 리비전을 찾을 수 없습니다.")
             session["active_revision_id"] = revision_id
         session["updated_at"] = _now_iso()
+        self._persist_session(session)
         return self.public_session(session_id)
 
     def _update_settings(self, session: dict[str, Any], raw: Any) -> None:
@@ -557,6 +715,7 @@ class CharacterMakerService:
             f"[CHARACTER_MAKER] 참고 이미지 추가: session={session_id}, "
             f"reference={reference_id}, bytes={len(image_bytes)}, format={fmt}"
         )
+        self._persist_session(session)
         return self.public_session(session_id)
 
     def remove_reference(self, session_id: str, reference_id: str) -> dict[str, Any]:
@@ -583,6 +742,7 @@ class CharacterMakerService:
             f"[CHARACTER_MAKER] 참고 이미지 삭제: "
             f"session={session_id}, reference={reference_id}"
         )
+        self._persist_session(session)
         return self.public_session(session_id)
 
     def reference_path(self, session_id: str, reference_id: str) -> tuple[str, str]:
@@ -1012,6 +1172,7 @@ class CharacterMakerService:
             f"[CHARACTER_MAKER] LLM 수정 완료: session={session_id}, "
             f"task={task_key}, vision={vision is not None}, rag={rag_enabled}"
         )
+        self._persist_session(session)
         return {
             "success": True,
             "session": self.public_session(session_id),
@@ -1067,6 +1228,7 @@ class CharacterMakerService:
             f"[CHARACTER_MAKER] 리비전 추가: session={session_id}, "
             f"revision={revision_id}, count={len(session['revisions'])}"
         )
+        self._persist_session(session)
         return self.public_session(session_id)
 
     def revision_path(self, session_id: str, revision_id: str) -> tuple[str, str]:
@@ -1369,6 +1531,7 @@ class CharacterMakerService:
             f"[CHARACTER_MAKER] 캐릭터 확정 완료: session={session_id}, "
             f"character={character_name!r}, image={bool(promoted_image)}"
         )
+        self._persist_session(session)
         return {
             "success": True,
             "finalized": finalized,
@@ -1376,11 +1539,11 @@ class CharacterMakerService:
         }
 
     def delete_session(self, session_id: str) -> None:
-        session = self._session(session_id)
-        session_dir = os.path.join(self.temp_root, session["id"])
-        _assert_within(self.temp_root, session_dir)
-        if os.path.isdir(session_dir):
-            shutil.rmtree(session_dir)
-        del self.sessions[session_id]
-        self._operation_locks.pop(session_id, None)
-        print(f"[CHARACTER_MAKER] 임시 세션 삭제 완료: session={session_id}")
+        # 단일 고정 세션: 삭제 요청은 빈 세션 리셋과 같다.
+        # _session을 먼저 호출해 세션이 없으면 복구(예외 방지).
+        self._session(session_id)
+        self._reset_single_session()
+        self._persist_session(self.sessions[SINGLE_SESSION_ID])
+        print(
+            f"[CHARACTER_MAKER] 세션 삭제(리셋) 완료: session={SINGLE_SESSION_ID}"
+        )

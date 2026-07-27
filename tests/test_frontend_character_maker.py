@@ -177,14 +177,15 @@ def test_each_field_has_preset_loader_wired_to_load_function():
     assert "setAssetSelectValue(selectId, '')" in html
 
 
-def test_browser_persists_session_id_and_generation_settings():
+def test_browser_uses_single_persistent_session_and_persists_settings():
     html = _html()
 
-    # 세션 식별자는 sessionStorage(서버 메모리 세션을 가리키는 포인터).
-    assert "const CM_SESSION_STORAGE_KEY = 'characterMakerSessionId'" in html
-    assert "sessionStorage.setItem(CM_SESSION_STORAGE_KEY, cmSession.id)" in html
-    assert "sessionStorage.getItem(CM_SESSION_STORAGE_KEY)" in html
-    assert "cmSession.boot_id !== cmCapabilities.boot_id" in html
+    # 단일 영속 세션: 식별자는 고정 'default'이며 sessionStorage에 저장하지 않는다.
+    assert "const CM_SINGLE_SESSION_ID = 'default'" in html
+    assert "CM_SESSION_STORAGE_KEY" not in html
+    assert "sessionStorage.setItem(CM_SESSION_STORAGE_KEY" not in html
+    # 서버 재시작 감지 폐기 분기는 제거되었다(세션이 디스크에 보존되므로).
+    assert "cmSession.boot_id !== cmCapabilities.boot_id" not in html
     # 생성 설정은 세션을 갈아치워도 유지되도록 localStorage에 영속화한다.
     assert "const CM_SETTINGS_STORAGE_KEY = 'characterMakerSettings'" in html
     assert "function cmPersistSettings" in html

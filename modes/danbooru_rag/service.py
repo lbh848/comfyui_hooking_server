@@ -75,6 +75,9 @@ class DanbooruRagService:
         self._lock = threading.RLock()
         self._last_error = ""
         self._missing_reported = False
+        # warmup 진행 중 표시. status()는 이벤트 루프 스레드에서 락 없이 읽으므로
+        # warmup이 잡고 있는 RLock를 기다리지 않는다(서버 먹통 방지).
+        self._loading = False
 
     def index_available(self) -> bool:
         table_dir = self.index_path / f"{TABLE_NAME}.lance"
@@ -175,6 +178,7 @@ class DanbooruRagService:
     def warmup(self) -> dict[str, Any]:
         """Load the table and embedding model without starting another server."""
         with self._lock:
+            self._loading = True
             try:
                 table = self._get_table()
                 self._get_model()
@@ -196,6 +200,8 @@ class DanbooruRagService:
                 if not isinstance(exc, DanbooruRagError):
                     traceback.print_exc()
                 raise
+            finally:
+                self._loading = False
 
     def search(
         self,
@@ -313,30 +319,35 @@ class DanbooruRagService:
             }
 
     def status(self) -> dict[str, Any]:
-        with self._lock:
-            installed = self.index_available()
-            loaded = self._model is not None and self._table is not None
-            row_count = 0
-            if self._table is not None:
-                try:
-                    row_count = int(self._table.count_rows())
-                except Exception as exc:
-                    print(
-                        "[DANBOORU_RAG] 상태용 행 수 조회 실패: "
-                        f"error={type(exc).__name__}: {exc}"
-                    )
-                    traceback.print_exc()
-            return {
-                "mode": "embedded",
-                "variant": "b",
-                "installed": bool(installed),
-                "loaded": bool(loaded),
-                "ready": bool(installed and loaded),
-                "row_count": row_count,
-                "index_path": str(self.index_path),
-                "model_cache": str(self.model_cache),
-                "error": self._last_error,
-            }
+        # 주의: self._lock를 잡지 않는다. warmup이 모델 로드 동안 RLock를
+        # 장시간 쥐고 있으므로, 여기서 락을 잡으려 하면 이벤트 루프(메인)
+        # 스레드가 블록되어 서버 전체가 먹통이 된다. 대신 최선의 읽기로
+        # 스냅샷을 반환한다. _model/_table은 lazy 1회 세팅 후 unload 전까지
+        # 안정적이므로 락 없이 읽어도 안전하다.
+        installed = self.index_available()
+        loaded = self._model is not None and self._table is not None
+        row_count = 0
+        if self._table is not None:
+            try:
+                row_count = int(self._table.count_rows())
+            except Exception as exc:
+                print(
+                    "[DANBOORU_RAG] 상태용 행 수 조회 실패: "
+                    f"error={type(exc).__name__}: {exc}"
+                )
+                traceback.print_exc()
+        return {
+            "mode": "embedded",
+            "variant": "b",
+            "installed": bool(installed),
+            "loaded": bool(loaded),
+            "ready": bool(installed and loaded),
+            "loading": bool(self._loading),
+            "row_count": row_count,
+            "index_path": str(self.index_path),
+            "model_cache": str(self.model_cache),
+            "error": self._last_error,
+        }
 
 
 _service = DanbooruRagService()

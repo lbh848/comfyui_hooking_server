@@ -174,9 +174,10 @@ def test_llm_schema_requires_exact_editable_fields_and_queries():
     )[0] is False
 
 
-def test_session_is_memory_scoped_and_not_restored_by_new_service(tmp_path):
+def test_session_persists_across_service_restart(tmp_path):
     service, _ = _service(tmp_path)
-    session = service.create_session()
+    # 단일 고정 세션: 시작 시 빈 세션이 자동 생성된다.
+    session = service.public_session(character_maker_module.SINGLE_SESSION_ID)
     service.update_session(
         session["id"],
         {
@@ -192,10 +193,14 @@ def test_session_is_memory_scoped_and_not_restored_by_new_service(tmp_path):
 
     assert service.public_session(session["id"])["world_context"] == "마법 공학 도시"
 
+    # 같은 temp_root에서 서비스를 새로 만들면(=재시작) 디스크에서 세션이 복원된다.
     restarted, _ = _service(tmp_path)
     assert restarted.boot_id != service.boot_id
-    with pytest.raises(CharacterMakerError):
-        restarted.public_session(session["id"])
+    restored = restarted.public_session(character_maker_module.SINGLE_SESSION_ID)
+    assert restored["id"] == character_maker_module.SINGLE_SESSION_ID
+    assert restored["world_context"] == "마법 공학 도시"
+    assert restored["fields"]["appearance"] == ["silver_hair"]
+    assert restored["fields"]["outfit"] == ["long_coat"]
 
 
 def test_session_settings_accept_lora_and_do_not_expose_generation_ipadapter(tmp_path):

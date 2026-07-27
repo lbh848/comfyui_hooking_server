@@ -9001,7 +9001,7 @@
                         </div>
                     </div>
                     <div class="cm-status-row">
-                        <span class="cm-status-pill" id="cm-session-status">임시 세션 · 준비 중</span>
+                        <span class="cm-status-pill" id="cm-session-status">캐릭터 메이커 · 준비 중</span>
                         <span class="cm-status-pill" id="cm-revision-status">리비전 0</span>
                         <span class="cm-status-pill" id="cm-vision-status">Vision 확인 중</span>
                         <span class="cm-status-pill" id="cm-rag-status">RAG 확인 중</span>
@@ -16765,6 +16765,7 @@
         let cmRagRuntimeLoaded = false;
         let cmRagIndexInstalled = false;
         let cmRagDatasetBusy = false;
+        let cmRagLoadingPollTimer = null;
 
         function cmFormatDatasetBytes(bytes) {
             const size = Number(bytes || 0);
@@ -16793,6 +16794,9 @@
                     const rows = Number(data?.row_count || 0);
                     status.textContent = `내장 RAG 준비됨${rows ? ` · ${rows.toLocaleString()}태그` : ''}`;
                     status.className = 'cm-rag-runtime-state running';
+                } else if (state === 'loading') {
+                    status.textContent = '내장 RAG 로드 중… · 서버는 계속 응답합니다';
+                    status.className = 'cm-rag-runtime-state starting';
                 } else if (installed) {
                     status.textContent = '인덱스 설치됨 · 첫 검색 때 자동 로드';
                     status.className = 'cm-rag-runtime-state stopped';
@@ -16801,11 +16805,23 @@
                     status.className = 'cm-rag-runtime-state stopped';
                 }
             }
+            const isLoading = state === 'loading';
             if (startButton) {
-                startButton.disabled = !installed || loaded || cmRagDatasetBusy;
+                startButton.disabled = !installed || loaded || cmRagDatasetBusy || isLoading;
             }
             if (stopButton) {
-                stopButton.disabled = !loaded || cmRagDatasetBusy;
+                stopButton.disabled = !loaded || cmRagDatasetBusy || isLoading;
+            }
+            // 로드 중에는 완료를 감지하도록 주기 재폴링(서버는 논블로킹이라 응답 가능).
+            if (cmRagLoadingPollTimer) {
+                clearTimeout(cmRagLoadingPollTimer);
+                cmRagLoadingPollTimer = null;
+            }
+            if (isLoading) {
+                cmRagLoadingPollTimer = setTimeout(() => {
+                    cmRagLoadingPollTimer = null;
+                    void cmRefreshRagRuntimeStatus(false);
+                }, 2500);
             }
             if (installButton) {
                 installButton.disabled = cmRagDatasetBusy || loaded;
@@ -18202,6 +18218,8 @@
                     updateAnimaUIVisibility();
                     // 버튼 가시성 업데이트
                     updateHeaderButtonsVisibility();
+                    // 캐릭터 메이커 에셋 워크플로우 타입을 전역 config 값으로 즉시 동기화
+                    cmSyncWorkflowFromConfig();
                     // 복장 추출 모드 설정 동기화
                     try {
                         await fetch('/api/outfit_mode/config', {
@@ -28172,7 +28190,9 @@
             expression: '표정',
             composition: '구도/기타',
         };
-        const CM_SESSION_STORAGE_KEY = 'characterMakerSessionId';
+        // 캐릭터 메이커는 단일 영속 세션 하나만 사용한다. 서버가 디스크에서 로드/보존하므로
+        // 브라우저에 세션 식별자를 따로 저장하지 않는다.
+        const CM_SINGLE_SESSION_ID = 'default';
         // 생성 설정(프리셋·해상도·시드·LoRA·HIRES·디테일러·FACE CROP 등)을 세션을 갈아치워도 유지.
         const CM_SETTINGS_STORAGE_KEY = 'characterMakerSettings';
         let cmSession = null;
@@ -28218,11 +28238,11 @@
         }
 
         async function cmCreateSession() {
+            // POST = 서버의 단일 세션을 빈 세션으로 리셋. 세션 id는 항상 'default'이다.
             const data = await cmRequest('/api/character_maker/session', { method: 'POST' });
             cmSession = data.session;
-            sessionStorage.setItem(CM_SESSION_STORAGE_KEY, cmSession.id);
             cmLastDiff = null;
-            // 새 세션은 서버 기본값으로 시작하므로 영속화된 생성 설정을 덮어쓴다.
+            // 리셋된 빈 세션은 서버 기본값이므로, 영속화된 생성 설정(localStorage)을 다시 반영한다.
             // 실제 동기화/영속화는 cmApplySettingsToUI가 DOM에 반영한 뒤에 수행한다.
             if (cmMergePersistedSettings()) {
                 cmNeedsPostLoadSync = true;
@@ -28231,18 +28251,11 @@
         }
 
         async function cmLoadOrCreateSession() {
-            const savedId = sessionStorage.getItem(CM_SESSION_STORAGE_KEY) || '';
-            if (savedId) {
-                try {
-                    const data = await cmRequest(`/api/character_maker/session/${encodeURIComponent(savedId)}`);
-                    cmSession = data.session;
-                    return cmSession;
-                } catch (error) {
-                    console.error('[CHARACTER_MAKER] 저장된 임시 세션 복원 실패, 새 세션 생성:', savedId, error);
-                    sessionStorage.removeItem(CM_SESSION_STORAGE_KEY);
-                }
-            }
-            return cmCreateSession();
+            // 단일 영속 세션: 항상 동일한 id로 조회. 서버가 디스크에서 복원해 반환한다.
+            const data = await cmRequest(`/api/character_maker/session/${encodeURIComponent(CM_SINGLE_SESSION_ID)}`);
+            cmSession = data.session;
+            cmLastDiff = null;
+            return cmSession;
         }
 
         async function initCharacterMaker() {
@@ -28267,30 +28280,14 @@
                     rag: { enabled: false, url: '' },
                 };
             }
-            if (
-                cmSession
-                && cmCapabilities?.boot_id
-                && cmSession.boot_id !== cmCapabilities.boot_id
-            ) {
-                console.error(
-                    '[CHARACTER_MAKER] 서버 재시작 감지, 이전 임시 세션 폐기:',
-                    cmSession.id,
-                    cmSession.boot_id,
-                    cmCapabilities.boot_id,
-                );
-                sessionStorage.removeItem(CM_SESSION_STORAGE_KEY);
-                cmSession = null;
-                cmLastDiff = null;
-                cmRagVerified = false;
-                showToast('서버가 재시작되어 캐릭터 메이커 임시 작업을 새로 시작합니다.', 'error', 7000);
-            }
-
+            // 단일 영속 세션: 서버 재시작에도 같은 세션이 살아있으므로 boot_id 불일치로
+            // 폐기하지 않는다. 페이지 로드마다 서버에서 최신 상태를 가져온다.
             if (!cmSession) {
-                cmSetBusy(true, '임시 작업공간을 준비하는 중...');
+                cmSetBusy(true, '작업공간을 불러오는 중...');
                 try {
                     await cmLoadOrCreateSession();
                 } catch (error) {
-                    console.error('[CHARACTER_MAKER] 임시 세션 준비 실패:', error);
+                    console.error('[CHARACTER_MAKER] 세션 준비 실패:', error);
                     showToast('캐릭터 메이커 세션 준비 실패: ' + error.message, 'error');
                     cmSetBusy(false);
                     return;
@@ -28527,6 +28524,17 @@
                 face_crop_top: floatValue('cm-setting-face-crop-top', 'face_crop_top', 2.5),
                 face_crop_bottom: floatValue('cm-setting-face-crop-bottom', 'face_crop_bottom', 1.0),
             };
+        }
+
+        // 전역 에셋 워크플로우 타입(설정→삽화)이 바뀌면 CM에 즉시 반영한다.
+        // CM 세션의 asset_workflow_type은 전역 config를 따르므로(서버 public_session이
+        // live 값으로 덮어쓴다), 저장 직후 cmSession에도 밀어넣고 재렌더.
+        function cmSyncWorkflowFromConfig() {
+            if (!cmSession?.settings) return;
+            const next = normalizeAssetWorkflowType(currentConfig?.asset_workflow_type);
+            if (cmSession.settings.asset_workflow_type === next) return;
+            cmSession.settings.asset_workflow_type = next;
+            cmApplySettingsToUI();
         }
 
         function cmApplySettingsToUI() {
@@ -28929,7 +28937,9 @@
             if (!cmSession) return;
             const sessionStatus = document.getElementById('cm-session-status');
             if (sessionStatus) {
-                sessionStatus.textContent = `임시 세션 · ${cmSession.id.slice(0, 8)}`;
+                sessionStatus.textContent = cmSession.finalized
+                    ? '캐릭터 메이커 · 확정 완료'
+                    : '캐릭터 메이커 작업공간';
                 sessionStatus.className = 'cm-status-pill ready';
             }
             const revisionStatus = document.getElementById('cm-revision-status');
@@ -28958,7 +28968,7 @@
                     saveStatus.textContent = `등록 완료 · ${cmSession.finalized.character_name}`;
                     saveStatus.className = 'cm-status-pill ready';
                 } else {
-                    saveStatus.textContent = '확정 전 · 서버 메모리 임시값';
+                    saveStatus.textContent = '확정 전 · 자동 저장됨';
                     saveStatus.className = 'cm-status-pill warn';
                 }
             }
@@ -29522,26 +29532,18 @@
 
         async function cmResetSession() {
             if (cmBusy) return;
-            if (cmSession && !window.confirm('현재 임시 캐릭터 작업을 지우고 새 캐릭터를 시작할까요?')) return;
-            cmSetBusy(true, '새 임시 세션을 만드는 중...');
-            const previousId = cmSession?.id || '';
+            if (cmSession && !window.confirm('현재 캐릭터 작업을 지우고 새 캐릭터를 시작할까요?')) return;
+            cmSetBusy(true, '새 캐릭터 작업공간을 만드는 중...');
             try {
-                if (previousId) {
-                    try {
-                        await cmRequest(`/api/character_maker/session/${encodeURIComponent(previousId)}`, {
-                            method: 'DELETE',
-                        });
-                    } catch (deleteError) {
-                        console.error('[CHARACTER_MAKER] 이전 임시 세션 삭제 실패:', previousId, deleteError);
-                    }
-                }
-                sessionStorage.removeItem(CM_SESSION_STORAGE_KEY);
                 cmSession = null;
+                cmLastDiff = null;
+                cmRagVerified = false;
+                // POST create = 서버 단일 세션을 빈 세션으로 리셋.
                 await cmCreateSession();
                 cmPopulatePresetOptions();
                 cmApplySettingsToUI();
                 cmRender();
-                showToast('새 캐릭터 임시 작업공간을 만들었습니다.', 'success');
+                showToast('새 캐릭터 작업공간을 만들었습니다.', 'success');
             } catch (error) {
                 console.error('[CHARACTER_MAKER] 새 세션 생성 실패:', error);
                 showToast('새 캐릭터 시작 실패: ' + error.message, 'error');
