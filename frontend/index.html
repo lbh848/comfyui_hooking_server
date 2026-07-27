@@ -9222,8 +9222,8 @@
                                         <div class="batch-slot-section-title"><span>에셋 워크플로우</span><span class="batch-slot-section-hint" id="cm-workflow-badge">ILXL</span></div>
                                         <div class="batch-slot-fields-grid">
                                             <div class="batch-field-group cm-field-wide">
-                                                <div class="batch-field-label">워크플로우 타입</div>
-                                                <select class="at-fill-select" id="cm-setting-workflow" data-cm-setting="asset_workflow_type" onchange="cmSettingChanged(); cmApplySettingsAvailability()">
+                                                <div class="batch-field-label">워크플로우 타입 <span class="at-model-reason">설정 → 삽화에서 결정</span></div>
+                                                <select class="at-fill-select" id="cm-setting-workflow" data-cm-setting="asset_workflow_type" disabled>
                                                     <option value="ilxl">ILXL</option>
                                                     <option value="anima_ilxl">ANIMA + ILXL</option>
                                                     <option value="anima_only">ONLY ANIMA</option>
@@ -9271,17 +9271,28 @@
                                         <div class="batch-slot-option-stack">
                                             <div class="batch-toggle-row"><label>LoRA</label><label class="toggle-switch"><input type="checkbox" id="cm-setting-lora-enabled" data-cm-setting="lora_enabled" onchange="cmLoraToggleChanged()"><span class="toggle-slider"></span></label></div>
                                             <div id="cm-setting-lora-panel" class="cm-maker-lora-panel">
-                                                <button type="button" class="cm-maker-lora-add" onclick="cmOpenLoraPicker()">＋ LoRA 추가</button>
+                                                <button type="button" class="cm-maker-lora-add" onclick="cmOpenLoraPicker('regular')">＋ LoRA 추가</button>
                                                 <div id="cm-setting-lora-list" class="cm-maker-lora-list"></div>
                                             </div>
-                                            <div class="batch-toggle-row at-model-control cm-unsupported" data-cm-unsupported="style-lora"><label>Style LoRA <span class="at-model-reason">CM 미지원</span></label><label class="toggle-switch"><input type="checkbox" disabled><span class="toggle-slider"></span></label></div>
-                                            <div class="batch-toggle-row at-model-control cm-unsupported" data-at-availability="anima" data-cm-unsupported="face-lora"><label>Face LoRA <span class="at-model-reason">ANIMA · CM 미지원</span></label><label class="toggle-switch"><input type="checkbox" disabled><span class="toggle-slider"></span></label></div>
+                                            <div class="batch-toggle-row"><label>Style LoRA</label><label class="toggle-switch"><input type="checkbox" id="cm-setting-style-lora-enabled" data-cm-setting="style_lora_enabled" onchange="cmLoraToggleChanged('style')"><span class="toggle-slider"></span></label></div>
+                                            <div id="cm-setting-style-lora-panel" class="cm-maker-lora-panel">
+                                                <button type="button" class="cm-maker-lora-add" onclick="cmOpenLoraPicker('style')">＋ Style LoRA 추가</button>
+                                                <div id="cm-setting-style-lora-list" class="cm-maker-lora-list"></div>
+                                            </div>
+                                            <div class="at-model-control" data-at-availability="anima">
+                                                <div class="batch-toggle-row"><label>Face LoRA <span class="at-model-reason">ANIMA 전용</span></label><label class="toggle-switch"><input type="checkbox" id="cm-setting-face-lora-enabled" data-cm-setting="face_lora_enabled" onchange="cmLoraToggleChanged('face')"><span class="toggle-slider"></span></label></div>
+                                                <div id="cm-setting-face-lora-panel" class="cm-maker-lora-panel">
+                                                    <button type="button" class="cm-maker-lora-add" onclick="cmOpenLoraPicker('face')">＋ Face LoRA 추가</button>
+                                                    <div id="cm-setting-face-lora-list" class="cm-maker-lora-list"></div>
+                                                </div>
+                                            </div>
                                         </div>
                                     </section>
 
                                     <section class="batch-slot-section">
                                         <div class="batch-slot-section-title"><span>생성 옵션</span><span class="batch-slot-section-hint">출력 · 디테일러</span></div>
                                         <div class="batch-slot-option-stack">
+                                            <div class="at-model-legend"><strong>모드별 활성화:</strong> ILXL·ANIMA 지원 여부에 따라 사용할 수 없는 항목은 숨기지 않고 회색으로 잠급니다.</div>
                                             <div class="at-model-control cm-unsupported" data-at-availability="pose" data-cm-unsupported="pose">
                                                 <div class="batch-toggle-row"><label>포즈 <span class="at-model-reason">ILXL 단독 · CM 미지원</span></label><label class="toggle-switch"><input type="checkbox" disabled><span class="toggle-slider"></span></label></div>
                                             </div>
@@ -9289,19 +9300,31 @@
                                                 <div class="batch-field-group"><div class="batch-field-label">너비</div><input class="at-fill-select" id="cm-setting-width" data-cm-setting="img_w" type="number" min="256" max="4096" step="8" value="700" onchange="cmSettingChanged()"></div>
                                                 <div class="batch-field-group"><div class="batch-field-label">높이</div><input class="at-fill-select" id="cm-setting-height" data-cm-setting="img_h" type="number" min="256" max="4096" step="8" value="1024" onchange="cmSettingChanged()"></div>
                                             </div>
-                                            <div class="at-model-option-group cm-unsupported" data-cm-unsupported="hires">
-                                                <div class="at-model-option-head"><span>HIRES FIX</span><span class="at-model-reason">CM 미지원</span></div>
-                                                <div class="batch-toggle-row at-model-control" data-at-availability="ilxl"><label><span class="illust-section-chip sdxl">ILXL</span> HIRES FIX</label><label class="toggle-switch"><input type="checkbox" disabled><span class="toggle-slider"></span></label></div>
-                                                <div class="batch-toggle-row at-model-control" data-at-availability="anima"><label><span class="illust-section-chip anima">ANIMA</span> HIRES FIX</label><label class="toggle-switch"><input type="checkbox" disabled><span class="toggle-slider"></span></label></div>
+                                            <div class="at-model-option-group">
+                                                <div class="at-model-option-head"><span>HIRES FIX</span><span class="batch-slot-section-hint">업스케일</span></div>
+                                                <div class="batch-toggle-row at-model-control" data-at-availability="ilxl"><label><span class="illust-section-chip sdxl">ILXL</span> HIRES FIX</label><label class="toggle-switch"><input type="checkbox" id="cm-setting-hrf-sdxl" data-cm-setting="hrf_sdxl" onchange="cmSettingChanged()"><span class="toggle-slider"></span></label></div>
+                                                <div class="batch-toggle-row at-model-control" data-at-availability="anima"><label><span class="illust-section-chip anima">ANIMA</span> HIRES FIX <span class="at-model-reason">ANIMA 전용</span></label><label class="toggle-switch"><input type="checkbox" id="cm-setting-hrf-anima" data-cm-setting="hrf_anima" onchange="cmSettingChanged()"><span class="toggle-slider"></span></label></div>
                                             </div>
-                                            <div class="at-model-option-group cm-unsupported" data-cm-unsupported="detailer">
-                                                <div class="at-model-option-head"><span>디테일러</span><span class="at-model-reason">CM 미지원</span></div>
-                                                <div class="at-model-control" data-at-availability="ilxl" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;"><span class="illust-section-chip sdxl">ILXL</span><label class="at-toolbar-check"><input type="checkbox" disabled> Face</label><label class="at-toolbar-check"><input type="checkbox" disabled> Hand</label><label class="at-toolbar-check"><input type="checkbox" disabled> Eye</label></div>
-                                                <div class="at-model-control" data-at-availability="anima" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;"><span class="illust-section-chip anima">ANIMA</span><label class="at-toolbar-check"><input type="checkbox" disabled> Face</label><label class="at-toolbar-check"><input type="checkbox" disabled> Hand</label><label class="at-toolbar-check"><input type="checkbox" disabled> Eye</label><span class="at-model-reason">ANIMA 전용</span></div>
+                                            <div class="at-model-option-group">
+                                                <div class="at-model-option-head"><span>HIRES 세부 설정</span><span class="at-model-reason">HIRES 활성화 시</span></div>
+                                                <div style="display:flex;align-items:center;gap:6px;"><span class="batch-field-label">배율</span><input type="range" id="cm-setting-hrf-size" data-cm-setting="hrf_size" min="1" max="3" step="0.05" value="2" style="flex:1;" oninput="document.getElementById('cm-setting-hrf-size-value').textContent=Number(this.value).toFixed(2)" onchange="cmSettingChanged()"><span id="cm-setting-hrf-size-value" style="font-size:0.68rem;">2.00</span></div>
+                                                <div class="batch-toggle-row"><label>RESTORE SIZE</label><label class="toggle-switch"><input type="checkbox" id="cm-setting-hrf-restore" data-cm-setting="hrf_restore_size" checked onchange="cmSettingChanged()"><span class="toggle-slider"></span></label></div>
+                                                <div class="batch-toggle-row"><label>CONTROL NET</label><label class="toggle-switch"><input type="checkbox" id="cm-setting-hrf-control" data-cm-setting="hrf_control_net" onchange="cmSettingChanged()"><span class="toggle-slider"></span></label></div>
                                             </div>
-                                            <div class="at-model-option-group at-model-control cm-unsupported" data-at-availability="anima" data-cm-unsupported="face-crop">
-                                                <div class="at-model-option-head"><span>FACE CROP</span><span class="at-model-reason">ANIMA · CM 미지원</span></div>
-                                                <div style="display:grid;grid-template-columns:1fr 1fr;gap:7px;"><div class="batch-field-group"><div class="batch-field-label">TOP</div><input class="at-fill-select" type="number" disabled></div><div class="batch-field-group"><div class="batch-field-label">BOTTOM</div><input class="at-fill-select" type="number" disabled></div></div>
+                                            <div class="at-model-option-group">
+                                                <div class="at-model-option-head"><span>디테일러</span><span class="batch-slot-section-hint">FACE · HAND · EYE</span></div>
+                                                <div class="at-model-control" data-at-availability="ilxl" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;"><span class="illust-section-chip sdxl">ILXL</span><label class="at-toolbar-check"><input type="checkbox" id="cm-setting-sdxl-fd" data-cm-setting="sdxl_fd_enabled" onchange="cmSettingChanged()"> Face</label><label class="at-toolbar-check"><input type="checkbox" id="cm-setting-sdxl-hd" data-cm-setting="sdxl_hd_enabled" onchange="cmSettingChanged()"> Hand</label><label class="at-toolbar-check"><input type="checkbox" id="cm-setting-sdxl-ed" data-cm-setting="sdxl_ed_enabled" onchange="cmSettingChanged()"> Eye</label></div>
+                                                <div class="at-model-control" data-at-availability="anima" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;"><span class="illust-section-chip anima">ANIMA</span><label class="at-toolbar-check"><input type="checkbox" id="cm-setting-anima-fd" data-cm-setting="anima_fd_enabled" onchange="cmSettingChanged()"> Face</label><label class="at-toolbar-check"><input type="checkbox" id="cm-setting-anima-hd" data-cm-setting="anima_hd_enabled" onchange="cmSettingChanged()"> Hand</label><label class="at-toolbar-check"><input type="checkbox" id="cm-setting-anima-ed" data-cm-setting="anima_ed_enabled" onchange="cmSettingChanged()"> Eye</label><span class="at-model-reason">ANIMA 전용</span></div>
+                                            </div>
+                                            <div class="at-model-option-group at-model-control" data-at-availability="anima">
+                                                <div class="at-model-option-head"><span>FACE CROP</span><span class="at-model-reason">ANIMA 전용</span></div>
+                                                <div style="display:grid;grid-template-columns:1fr 1fr;gap:7px;"><div class="batch-field-group"><div class="batch-field-label">TOP</div><input class="at-fill-select" id="cm-setting-face-crop-top" data-cm-setting="face_crop_top" type="number" step="0.1" value="2.5" onchange="cmSettingChanged()"></div><div class="batch-field-group"><div class="batch-field-label">BOTTOM</div><input class="at-fill-select" id="cm-setting-face-crop-bottom" data-cm-setting="face_crop_bottom" type="number" step="0.1" value="1" onchange="cmSettingChanged()"></div></div>
+                                            </div>
+                                            <div class="at-model-option-group at-model-control" data-at-availability="anima">
+                                                <div class="at-model-option-head"><span>Face LoRA 보정</span><span class="at-model-reason">ANIMA 전용</span></div>
+                                                <div class="batch-field-group"><div class="batch-field-label">고정 사이즈</div><input class="at-fill-select" id="cm-setting-face-upscale" data-cm-setting="face_lora_upscale_size" type="number" placeholder="사용 안 함" onchange="cmSettingChanged()"></div>
+                                                <div class="batch-field-group"><div class="batch-field-label">FACE TAGS</div><input class="at-fill-select" id="cm-setting-face-tags" data-cm-setting="face_tags" type="text" onchange="cmSettingChanged()"></div>
+                                                <div class="batch-field-group"><div class="batch-field-label">EYE TAGS</div><input class="at-fill-select" id="cm-setting-eye-tags" data-cm-setting="eye_tags" type="text" onchange="cmSettingChanged()"></div>
                                             </div>
                                             <div class="batch-field-group"><div class="batch-field-label">Seed · -1은 매번 랜덤</div><input class="at-fill-select" id="cm-setting-seed" data-cm-setting="seed" type="number" min="-1" max="4294967295" step="1" value="-1" onchange="cmSettingChanged()"></div>
                                             <div class="batch-toggle-row"><label>Danbooru Tag RAG</label><label class="toggle-switch"><input type="checkbox" id="cm-setting-rag" data-cm-setting="rag_enabled" onchange="cmSettingChanged()"><span class="toggle-slider"></span></label></div>
@@ -28150,6 +28173,8 @@
             composition: '구도/기타',
         };
         const CM_SESSION_STORAGE_KEY = 'characterMakerSessionId';
+        // 생성 설정(프리셋·해상도·시드·LoRA·HIRES·디테일러·FACE CROP 등)을 세션을 갈아치워도 유지.
+        const CM_SETTINGS_STORAGE_KEY = 'characterMakerSettings';
         let cmSession = null;
         let cmCapabilities = null;
         let cmInitialized = false;
@@ -28158,6 +28183,7 @@
         let cmSyncVersion = 0;
         let cmLastDiff = null;
         let cmRagVerified = false;
+        let cmNeedsPostLoadSync = false;
 
         async function cmRequest(url, options = {}) {
             const response = await fetch(url, options);
@@ -28196,6 +28222,11 @@
             cmSession = data.session;
             sessionStorage.setItem(CM_SESSION_STORAGE_KEY, cmSession.id);
             cmLastDiff = null;
+            // 새 세션은 서버 기본값으로 시작하므로 영속화된 생성 설정을 덮어쓴다.
+            // 실제 동기화/영속화는 cmApplySettingsToUI가 DOM에 반영한 뒤에 수행한다.
+            if (cmMergePersistedSettings()) {
+                cmNeedsPostLoadSync = true;
+            }
             return cmSession;
         }
 
@@ -28432,6 +28463,27 @@
                 const value = Number(element ? element.value : fallback[key]);
                 return Number.isFinite(value) ? value : defaultValue;
             };
+            const floatValue = (id, key, defaultValue) => {
+                const element = document.getElementById(id);
+                const value = Number(element ? element.value : fallback[key]);
+                return Number.isFinite(value) ? value : defaultValue;
+            };
+            const boolValue = (id, key) => {
+                const element = document.getElementById(id);
+                return element ? !!element.checked : !!fallback[key];
+            };
+            const textValue = (id, key) => {
+                const element = document.getElementById(id);
+                const value = element ? element.value : fallback[key];
+                return typeof value === 'string' ? value : String(value ?? '');
+            };
+            const optionalNumber = (id, key) => {
+                const element = document.getElementById(id);
+                const raw = element ? element.value : fallback[key];
+                if (raw === '' || raw === null || raw === undefined) return '';
+                const value = Number(raw);
+                return Number.isFinite(value) ? String(value) : '';
+            };
             return {
                 asset_workflow_type: stringValue('cm-setting-workflow', 'asset_workflow_type') || 'ilxl',
                 quality_preset: stringValue('cm-setting-quality', 'quality_preset'),
@@ -28445,15 +28497,35 @@
                 img_w: Math.round(numberValue('cm-setting-width', 'img_w', 700)),
                 img_h: Math.round(numberValue('cm-setting-height', 'img_h', 1024)),
                 seed: Math.round(numberValue('cm-setting-seed', 'seed', -1)),
-                rag_enabled: document.getElementById('cm-setting-rag')
-                    ? document.getElementById('cm-setting-rag').checked
-                    : !!fallback.rag_enabled,
-                lora_enabled: document.getElementById('cm-setting-lora-enabled')
-                    ? document.getElementById('cm-setting-lora-enabled').checked
-                    : !!fallback.lora_enabled,
+                rag_enabled: boolValue('cm-setting-rag', 'rag_enabled'),
+                lora_enabled: boolValue('cm-setting-lora-enabled', 'lora_enabled'),
                 lora_list: Array.isArray(fallback.lora_list)
                     ? fallback.lora_list.map(item => ({...item}))
                     : [],
+                style_lora_enabled: boolValue('cm-setting-style-lora-enabled', 'style_lora_enabled'),
+                style_lora_list: Array.isArray(fallback.style_lora_list)
+                    ? fallback.style_lora_list.map(item => ({...item}))
+                    : [],
+                face_lora_enabled: boolValue('cm-setting-face-lora-enabled', 'face_lora_enabled'),
+                face_lora_list: Array.isArray(fallback.face_lora_list)
+                    ? fallback.face_lora_list.map(item => ({...item}))
+                    : [],
+                face_lora_upscale_size: optionalNumber('cm-setting-face-upscale', 'face_lora_upscale_size'),
+                face_tags: textValue('cm-setting-face-tags', 'face_tags'),
+                eye_tags: textValue('cm-setting-eye-tags', 'eye_tags'),
+                hrf_sdxl: boolValue('cm-setting-hrf-sdxl', 'hrf_sdxl'),
+                hrf_anima: boolValue('cm-setting-hrf-anima', 'hrf_anima'),
+                hrf_size: floatValue('cm-setting-hrf-size', 'hrf_size', 2.0),
+                hrf_restore_size: boolValue('cm-setting-hrf-restore', 'hrf_restore_size'),
+                hrf_control_net: boolValue('cm-setting-hrf-control', 'hrf_control_net'),
+                sdxl_fd_enabled: boolValue('cm-setting-sdxl-fd', 'sdxl_fd_enabled'),
+                sdxl_hd_enabled: boolValue('cm-setting-sdxl-hd', 'sdxl_hd_enabled'),
+                sdxl_ed_enabled: boolValue('cm-setting-sdxl-ed', 'sdxl_ed_enabled'),
+                anima_fd_enabled: boolValue('cm-setting-anima-fd', 'anima_fd_enabled'),
+                anima_hd_enabled: boolValue('cm-setting-anima-hd', 'anima_hd_enabled'),
+                anima_ed_enabled: boolValue('cm-setting-anima-ed', 'anima_ed_enabled'),
+                face_crop_top: floatValue('cm-setting-face-crop-top', 'face_crop_top', 2.5),
+                face_crop_bottom: floatValue('cm-setting-face-crop-bottom', 'face_crop_bottom', 1.0),
             };
         }
 
@@ -28473,40 +28545,84 @@
                 'cm-setting-width': settings.img_w ?? 700,
                 'cm-setting-height': settings.img_h ?? 1024,
                 'cm-setting-seed': settings.seed ?? -1,
+                'cm-setting-hrf-size': settings.hrf_size ?? 2,
+                'cm-setting-face-crop-top': settings.face_crop_top ?? 2.5,
+                'cm-setting-face-crop-bottom': settings.face_crop_bottom ?? 1,
+                'cm-setting-face-upscale': settings.face_lora_upscale_size ?? '',
+                'cm-setting-face-tags': settings.face_tags || '',
+                'cm-setting-eye-tags': settings.eye_tags || '',
             };
             Object.entries(values).forEach(([id, value]) => {
                 const element = document.getElementById(id);
-                if (element && [...(element.options || [])].some(option => option.value === String(value))) {
-                    element.value = value;
-                } else if (element && !element.options) {
+                if (!element) return;
+                if (element.options) {
+                    if ([...element.options].some(option => option.value === String(value))) {
+                        element.value = value;
+                    }
+                } else {
                     element.value = value;
                 }
             });
-            const rag = document.getElementById('cm-setting-rag');
-            if (rag) rag.checked = !!settings.rag_enabled;
-            const lora = document.getElementById('cm-setting-lora-enabled');
-            if (lora) lora.checked = !!settings.lora_enabled;
-            cmRenderLoraSettings();
+            const hrfSizeValue = document.getElementById('cm-setting-hrf-size-value');
+            if (hrfSizeValue) {
+                hrfSizeValue.textContent = Number(settings.hrf_size ?? 2).toFixed(2);
+            }
+            const checkboxes = {
+                'cm-setting-rag': settings.rag_enabled,
+                'cm-setting-lora-enabled': settings.lora_enabled,
+                'cm-setting-style-lora-enabled': settings.style_lora_enabled,
+                'cm-setting-face-lora-enabled': settings.face_lora_enabled,
+                'cm-setting-hrf-sdxl': settings.hrf_sdxl,
+                'cm-setting-hrf-anima': settings.hrf_anima,
+                'cm-setting-hrf-restore': settings.hrf_restore_size !== false,
+                'cm-setting-hrf-control': settings.hrf_control_net,
+                'cm-setting-sdxl-fd': settings.sdxl_fd_enabled,
+                'cm-setting-sdxl-hd': settings.sdxl_hd_enabled,
+                'cm-setting-sdxl-ed': settings.sdxl_ed_enabled,
+                'cm-setting-anima-fd': settings.anima_fd_enabled,
+                'cm-setting-anima-hd': settings.anima_hd_enabled,
+                'cm-setting-anima-ed': settings.anima_ed_enabled,
+            };
+            Object.entries(checkboxes).forEach(([id, value]) => {
+                const element = document.getElementById(id);
+                if (element) element.checked = !!value;
+            });
+            cmRenderAllLoraSettings();
             cmApplySettingsAvailability();
+            // 새 세션에 영속화 설정을 반영한 직후라면, DOM이 채워진 시점에서 서버/스토리지에 동기화.
+            if (cmNeedsPostLoadSync) {
+                cmNeedsPostLoadSync = false;
+                cmPersistSettings();
+                cmQueueSync();
+            }
         }
 
         function cmSettingChanged() {
             if (!cmSession) return;
             cmSession.settings = cmCollectSettings();
             cmRagVerified = false;
-            cmRenderLoraSettings();
+            cmRenderAllLoraSettings();
             cmRenderStatus();
             cmQueueSync();
         }
 
-        function cmRenderLoraSettings() {
-            const panel = document.getElementById('cm-setting-lora-panel');
-            const list = document.getElementById('cm-setting-lora-list');
-            const enabled = !!document.getElementById('cm-setting-lora-enabled')?.checked;
+        // CM LoRA는 일반/스타일/페이스 3종류. 각 종류별로 설정 키·패널·피커 오버레이가 다르다.
+        const CM_LORA_KINDS = {
+            regular: { listKey: 'lora_list', enabledKey: 'lora_enabled', toggleId: 'cm-setting-lora-enabled', panelId: 'cm-setting-lora-panel', listId: 'cm-setting-lora-list', overlay: 'cm-lora-picker-overlay', showStyleTab: false, title: '캐릭터 메이커 LoRA 선택' },
+            style: { listKey: 'style_lora_list', enabledKey: 'style_lora_enabled', toggleId: 'cm-setting-style-lora-enabled', panelId: 'cm-setting-style-lora-panel', listId: 'cm-setting-style-lora-list', overlay: 'cm-style-lora-picker-overlay', showStyleTab: true, title: '캐릭터 메이커 Style LoRA 선택' },
+            face: { listKey: 'face_lora_list', enabledKey: 'face_lora_enabled', toggleId: 'cm-setting-face-lora-enabled', panelId: 'cm-setting-face-lora-panel', listId: 'cm-setting-face-lora-list', overlay: 'cm-face-lora-picker-overlay', showStyleTab: false, title: '캐릭터 메이커 Face LoRA 선택' },
+        };
+
+        function cmRenderLoraSettings(kind = 'regular') {
+            const cfg = CM_LORA_KINDS[kind];
+            if (!cfg) return;
+            const panel = document.getElementById(cfg.panelId);
+            const list = document.getElementById(cfg.listId);
+            const enabled = !!document.getElementById(cfg.toggleId)?.checked;
             panel?.classList.toggle('visible', enabled);
             if (!list || !cmSession?.settings) return;
-            const items = Array.isArray(cmSession.settings.lora_list)
-                ? cmSession.settings.lora_list
+            const items = Array.isArray(cmSession.settings[cfg.listKey])
+                ? cmSession.settings[cfg.listKey]
                 : [];
             if (!items.length) {
                 list.innerHTML =
@@ -28540,80 +28656,90 @@
                             <input class="cm-maker-lora-trigger" type="text"
                                    value="${escapeHtml(item.trigger || '')}"
                                    placeholder="트리거 워드"
-                                   onchange="cmUpdateLoraSetting(${index}, 'trigger', this.value)">
+                                   onchange="cmUpdateLoraSetting('${kind}', ${index}, 'trigger', this.value)">
                         </div>
                         <label class="cm-maker-lora-strength">
                             <span>강도 <b>${strength.toFixed(2)}</b></span>
                             <input type="range" min="0" max="1" step="0.01"
                                    value="${strength}"
                                    oninput="this.previousElementSibling.querySelector('b').textContent=Number(this.value).toFixed(2)"
-                                   onchange="cmUpdateLoraSetting(${index}, 'strength', Number(this.value))">
+                                   onchange="cmUpdateLoraSetting('${kind}', ${index}, 'strength', Number(this.value))">
                         </label>
                         <button type="button" class="cm-maker-lora-remove"
-                                onclick="cmRemoveLoraSetting(${index})"
+                                onclick="cmRemoveLoraSetting('${kind}', ${index})"
                                 title="LoRA 제거">×</button>
                     </div>`;
             }).join('');
         }
 
-        function cmLoraToggleChanged() {
+        function cmRenderAllLoraSettings() {
+            Object.keys(CM_LORA_KINDS).forEach(kind => cmRenderLoraSettings(kind));
+        }
+
+        function cmLoraToggleChanged(kind = 'regular') {
             if (!cmSession) return;
-            cmSession.settings.lora_enabled =
-                !!document.getElementById('cm-setting-lora-enabled')?.checked;
-            cmRenderLoraSettings();
+            const cfg = CM_LORA_KINDS[kind];
+            if (!cfg) return;
+            cmSession.settings[cfg.enabledKey] =
+                !!document.getElementById(cfg.toggleId)?.checked;
+            cmRenderLoraSettings(kind);
             cmQueueSync();
         }
 
-        function cmUpdateLoraSetting(index, key, value) {
-            const list = cmSession?.settings?.lora_list;
+        function cmUpdateLoraSetting(kind, index, key, value) {
+            const cfg = CM_LORA_KINDS[kind];
+            const list = cfg && cmSession?.settings?.[cfg.listKey];
             if (!Array.isArray(list) || !list[index]) {
-                console.error('[CHARACTER_MAKER_LORA] 변경할 LoRA를 찾지 못했습니다:', index);
+                console.error('[CHARACTER_MAKER_LORA] 변경할 LoRA를 찾지 못했습니다:', kind, index);
                 return;
             }
             list[index][key] = value;
             cmQueueSync();
         }
 
-        function cmRemoveLoraSetting(index) {
-            const list = cmSession?.settings?.lora_list;
+        function cmRemoveLoraSetting(kind, index) {
+            const cfg = CM_LORA_KINDS[kind];
+            const list = cfg && cmSession?.settings?.[cfg.listKey];
             if (!Array.isArray(list) || index < 0 || index >= list.length) {
-                console.error('[CHARACTER_MAKER_LORA] 제거할 LoRA를 찾지 못했습니다:', index);
+                console.error('[CHARACTER_MAKER_LORA] 제거할 LoRA를 찾지 못했습니다:', kind, index);
                 return;
             }
             list.splice(index, 1);
-            cmRenderLoraSettings();
+            cmRenderLoraSettings(kind);
             cmQueueSync();
         }
 
-        async function cmOpenLoraPicker() {
+        async function cmOpenLoraPicker(kind = 'regular') {
             if (!cmSession) return;
-            if (!Array.isArray(cmSession.settings.lora_list)) {
-                cmSession.settings.lora_list = [];
+            const cfg = CM_LORA_KINDS[kind];
+            if (!cfg) return;
+            if (!Array.isArray(cmSession.settings[cfg.listKey])) {
+                cmSession.settings[cfg.listKey] = [];
             }
-            if (cmSession.settings.lora_list.length >= 12) {
-                showToast('캐릭터 메이커 LoRA는 최대 12개까지 사용할 수 있습니다.', 'error');
+            if (cmSession.settings[cfg.listKey].length >= 12) {
+                showToast('캐릭터 메이커 LoRA는 종류별로 최대 12개까지 사용할 수 있습니다.', 'error');
                 return;
             }
             _loraPickerCfg = {
-                list: cmSession.settings.lora_list,
+                list: cmSession.settings[cfg.listKey],
                 render: () => {
-                    if (cmSession.settings.lora_list.length > 12) {
-                        cmSession.settings.lora_list.splice(12);
+                    if (cmSession.settings[cfg.listKey].length > 12) {
+                        cmSession.settings[cfg.listKey].splice(12);
                         showToast(
                             '캐릭터 메이커 LoRA는 최대 12개까지만 유지했습니다.',
                             'error',
                         );
                     }
-                    cmSession.settings.lora_enabled = true;
-                    const toggle = document.getElementById('cm-setting-lora-enabled');
+                    cmSession.settings[cfg.enabledKey] = true;
+                    const toggle = document.getElementById(cfg.toggleId);
                     if (toggle) toggle.checked = true;
-                    cmRenderLoraSettings();
+                    cmRenderLoraSettings(kind);
                     cmQueueSync();
                 },
-                overlayId: 'cm-lora-picker-overlay',
-                showStyleTab: false,
+                overlayId: cfg.overlay,
+                showStyleTab: cfg.showStyleTab,
             };
-            await _openLoraPickerModal('캐릭터 메이커 LoRA 선택', 'cm-lora-picker-overlay');
+            await _openLoraPickerModal(cfg.title, cfg.overlay);
         }
 
         function cmToggleSettingsWall(force) {
@@ -28872,8 +28998,58 @@
             cmRenderPromptLockSummary();
         }
 
+        function cmLoadPersistedSettings() {
+            try {
+                const raw = localStorage.getItem(CM_SETTINGS_STORAGE_KEY);
+                if (!raw) return null;
+                const parsed = JSON.parse(raw);
+                return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+                    ? parsed
+                    : null;
+            } catch (error) {
+                console.error('[CHARACTER_MAKER] 영속화 설정 로드 실패:', error);
+                return null;
+            }
+        }
+
+        function cmPersistSettings() {
+            if (!cmSession) return;
+            try {
+                const snapshot = cmCollectSettings();
+                // 워크플로우 타입은 설정→삽화의 전역값을 따르므로 영속화에서 제외한다.
+                delete snapshot.asset_workflow_type;
+                localStorage.setItem(
+                    CM_SETTINGS_STORAGE_KEY,
+                    JSON.stringify(snapshot),
+                );
+            } catch (error) {
+                console.error('[CHARACTER_MAKER] 영속화 설정 저장 실패:', error);
+            }
+        }
+
+        // 새로 만든 세션(서버 기본값) 위에 영속화된 설정을 덮어쓴다.
+        // 설정 스키마에 있는 키만 반영하며, 배열은 얕게 복사한다.
+        function cmMergePersistedSettings() {
+            if (!cmSession?.settings) return false;
+            const persisted = cmLoadPersistedSettings();
+            if (!persisted) return false;
+            let applied = false;
+            Object.entries(persisted).forEach(([key, value]) => {
+                // 워크플로우 타입은 설정→삽화의 전역값을 따르므로 복원하지 않는다.
+                if (key === 'asset_workflow_type') return;
+                if (!(key in cmSession.settings)) return;
+                cmSession.settings[key] = Array.isArray(value)
+                    ? value.map(item => ({...item}))
+                    : value;
+                applied = true;
+            });
+            return applied;
+        }
+
         function cmQueueSync(delay = 450) {
             if (!cmSession) return;
+            // 설정 변경을 즉시 영속화(탭/세션 종료 직전 상황 대비). 네트워크 동기화는 아래 디바운스.
+            cmPersistSettings();
             clearTimeout(cmSyncTimer);
             const version = ++cmSyncVersion;
             const saveStatus = document.getElementById('cm-save-status');
@@ -29045,26 +29221,31 @@
                 natural_language: '',
                 lora_list: (settings.lora_list || []).map(item => ({...item})),
                 lora_enabled: !!settings.lora_enabled,
-                style_lora_list: [],
-                style_lora_enabled: false,
-                face_lora_list: [],
-                face_lora_enabled: false,
+                style_lora_list: (settings.style_lora_list || []).map(item => ({...item})),
+                style_lora_enabled: !!settings.style_lora_enabled,
+                face_lora_list: (settings.face_lora_list || []).map(item => ({...item})),
+                face_lora_enabled: !!settings.face_lora_enabled,
+                face_lora_upscale_size: settings.face_lora_upscale_size ?? '',
+                face_tags: settings.face_tags || '',
+                eye_tags: settings.eye_tags || '',
                 ref_enabled: false,
                 ref_strength: 0.55,
                 style_ref_enabled: false,
                 style_ref_strength: 0.55,
                 pose_enabled: false,
-                hrf_sdxl: false,
-                hrf_anima: false,
-                hrf_size: 2,
-                hrf_restore_size: true,
-                hrf_control_net: false,
-                sdxl_fd_enabled: false,
-                sdxl_hd_enabled: false,
-                sdxl_ed_enabled: false,
-                anima_fd_enabled: false,
-                anima_hd_enabled: false,
-                anima_ed_enabled: false,
+                hrf_sdxl: !!settings.hrf_sdxl,
+                hrf_anima: !!settings.hrf_anima,
+                hrf_size: settings.hrf_size ?? 2,
+                hrf_restore_size: settings.hrf_restore_size !== false,
+                hrf_control_net: !!settings.hrf_control_net,
+                sdxl_fd_enabled: !!settings.sdxl_fd_enabled,
+                sdxl_hd_enabled: !!settings.sdxl_hd_enabled,
+                sdxl_ed_enabled: !!settings.sdxl_ed_enabled,
+                anima_fd_enabled: !!settings.anima_fd_enabled,
+                anima_hd_enabled: !!settings.anima_hd_enabled,
+                anima_ed_enabled: !!settings.anima_ed_enabled,
+                face_crop_top: settings.face_crop_top ?? 2.5,
+                face_crop_bottom: settings.face_crop_bottom ?? 1,
                 img_w: settings.img_w,
                 img_h: settings.img_h,
                 seed: settings.seed,
@@ -29371,6 +29552,7 @@
 
         window.addEventListener('pagehide', () => {
             if (!cmSession || !cmInitialized) return;
+            cmPersistSettings();
             try {
                 fetch(`/api/character_maker/session/${encodeURIComponent(cmSession.id)}`, {
                     method: 'PATCH',

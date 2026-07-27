@@ -60,3 +60,6 @@ models/
 # Runtime-downloaded / user-uploaded fonts (Noto Sans KR 자동 다운로드 + 업로드)
 fonts/
 
+# 임시 작업/검증 산출물 (스크립트 추출물, 스크린샷 등)
+.work/
+

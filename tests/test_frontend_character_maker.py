@@ -88,18 +88,30 @@ def test_settings_drawer_disables_items_by_asset_workflow():
     assert 'data-at-availability="anima"' in html
     assert "function cmApplySettingsAvailability" in html
     assert "getAssetWorkflowCapabilities" in html
-    # 워크플로우 셀렉트 변경 시 가용성을 다시 적용한다.
-    assert 'onchange="cmSettingChanged(); cmApplySettingsAvailability()"' in html
+    # 워크플로우 타입은 설정→삽화의 전역값을 따르므로 드로어 셀렉트는 읽기전용(disabled).
+    assert 'id="cm-setting-workflow" data-cm-setting="asset_workflow_type" disabled' in html
+    assert "설정 → 삽화에서 결정" in html
 
 
-def test_settings_drawer_marks_unsupported_features_as_locked():
+def test_settings_drawer_marks_only_pose_and_ipadapter_as_locked():
     html = _html()
 
-    # CM 백엔드가 소비하지 않는 항목들은 회색 잠금 표시로만 보여준다.
-    for key in ("ipadapter", "pose", "hires", "detailer", "face-crop", "style-lora", "face-lora"):
+    # pose·ipadapter(참조 이미지)는 CM 미지원 잠금으로 남겨둔다.
+    for key in ("ipadapter", "pose"):
         assert f'data-cm-unsupported="{key}"' in html, f"미지원 표시가 없습니다: {key}"
     assert "cm-unsupported" in html
-    # 미지원 컨트롤은 비활성화되어 있다.
+    # 나머지(hires/detailer/face-crop/style-lora/face-lora)는 잠금을 풀고 실제 컨트롤을 제공한다.
+    for key in ("hires", "detailer", "face-crop", "style-lora", "face-lora"):
+        assert f'data-cm-unsupported="{key}"' not in html, f"여전히 잠겨 있습니다: {key}"
+    # 기능 컨트롤이 마크업에 존재한다(에셋/오토매치와 동일 토큰 세트).
+    assert 'id="cm-setting-hrf-sdxl"' in html
+    assert 'id="cm-setting-hrf-anima"' in html
+    assert 'id="cm-setting-style-lora-enabled"' in html
+    assert 'id="cm-setting-face-lora-enabled"' in html
+    assert 'id="cm-setting-face-crop-top"' in html
+    assert 'id="cm-setting-sdxl-fd"' in html
+    assert 'id="cm-setting-anima-ed"' in html
+    # 미지원 컨트롤(ipadapter/pose)은 여전히 비활성화되어 있다.
     assert "<input type=\"checkbox\" disabled>" in html or 'type="checkbox" disabled' in html
 
 
@@ -165,14 +177,19 @@ def test_each_field_has_preset_loader_wired_to_load_function():
     assert "setAssetSelectValue(selectId, '')" in html
 
 
-def test_browser_only_persists_server_session_identifier():
+def test_browser_persists_session_id_and_generation_settings():
     html = _html()
 
+    # 세션 식별자는 sessionStorage(서버 메모리 세션을 가리키는 포인터).
     assert "const CM_SESSION_STORAGE_KEY = 'characterMakerSessionId'" in html
     assert "sessionStorage.setItem(CM_SESSION_STORAGE_KEY, cmSession.id)" in html
     assert "sessionStorage.getItem(CM_SESSION_STORAGE_KEY)" in html
     assert "cmSession.boot_id !== cmCapabilities.boot_id" in html
-    assert "localStorage.setItem('characterMaker" not in html
+    # 생성 설정은 세션을 갈아치워도 유지되도록 localStorage에 영속화한다.
+    assert "const CM_SETTINGS_STORAGE_KEY = 'characterMakerSettings'" in html
+    assert "function cmPersistSettings" in html
+    assert "function cmMergePersistedSettings" in html
+    assert "cmMergePersistedSettings()" in html
 
 
 def test_character_maker_apis_and_optional_confirmation_modes_are_wired():

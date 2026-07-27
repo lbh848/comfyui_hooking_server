@@ -291,6 +291,28 @@ class CharacterMakerService:
             "rag_enabled": bool(config.get("character_maker_rag_enabled", False)),
             "lora_enabled": False,
             "lora_list": [],
+            # 생성 옵션 — 에셋/오토매치와 동일 프롬프트 토큰 세트.
+            # pose·ipadapter(참조 이미지)는 CM 미지원 잠금으로 유지한다.
+            "style_lora_enabled": False,
+            "style_lora_list": [],
+            "face_lora_enabled": False,
+            "face_lora_list": [],
+            "face_lora_upscale_size": "",
+            "face_tags": "",
+            "eye_tags": "",
+            "hrf_sdxl": False,
+            "hrf_anima": False,
+            "hrf_size": 2.0,
+            "hrf_restore_size": True,
+            "hrf_control_net": False,
+            "sdxl_fd_enabled": False,
+            "sdxl_hd_enabled": False,
+            "sdxl_ed_enabled": False,
+            "anima_fd_enabled": False,
+            "anima_hd_enabled": False,
+            "anima_ed_enabled": False,
+            "face_crop_top": 2.5,
+            "face_crop_bottom": 1.0,
         }
 
     def create_session(self) -> dict[str, Any]:
@@ -442,8 +464,50 @@ class CharacterMakerService:
         for key in ("rag_enabled", "lora_enabled"):
             if key in raw:
                 settings[key] = bool(raw.get(key))
+        for key in (
+            "style_lora_enabled",
+            "face_lora_enabled",
+            "hrf_sdxl",
+            "hrf_anima",
+            "hrf_restore_size",
+            "hrf_control_net",
+            "sdxl_fd_enabled",
+            "sdxl_hd_enabled",
+            "sdxl_ed_enabled",
+            "anima_fd_enabled",
+            "anima_hd_enabled",
+            "anima_ed_enabled",
+        ):
+            if key in raw:
+                settings[key] = bool(raw.get(key))
         if "lora_list" in raw:
             settings["lora_list"] = _normalize_lora_list(raw.get("lora_list"))
+        for key in ("style_lora_list", "face_lora_list"):
+            if key in raw:
+                settings[key] = _normalize_lora_list(raw.get(key))
+        for key in ("face_tags", "eye_tags", "face_lora_upscale_size"):
+            if key in raw:
+                value = raw.get(key)
+                if not isinstance(value, (str, int, float)) or isinstance(value, bool):
+                    raise CharacterMakerError(f"{key} 설정은 문자열 또는 숫자여야 합니다.")
+                settings[key] = str(value).strip()[:500]
+        if "hrf_size" in raw:
+            try:
+                hrf_size = float(raw.get("hrf_size"))
+            except (TypeError, ValueError) as exc:
+                raise CharacterMakerError("hrf_size는 숫자여야 합니다.") from exc
+            if not math.isfinite(hrf_size) or not 1.0 <= hrf_size <= 3.0:
+                raise CharacterMakerError("hrf_size는 1.0~3.0 사이여야 합니다.")
+            settings["hrf_size"] = hrf_size
+        for key in ("face_crop_top", "face_crop_bottom"):
+            if key in raw:
+                try:
+                    value = float(raw.get(key))
+                except (TypeError, ValueError) as exc:
+                    raise CharacterMakerError(f"{key}는 숫자여야 합니다.") from exc
+                if not math.isfinite(value) or not 0.0 <= value <= 10.0:
+                    raise CharacterMakerError(f"{key}는 0.0~10.0 사이여야 합니다.")
+                settings[key] = value
 
     def add_reference(
         self, session_id: str, *, filename: str, mime: str, image_bytes: bytes
