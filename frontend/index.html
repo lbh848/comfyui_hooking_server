@@ -6263,11 +6263,10 @@
         .cm-settings-wall {
             position: fixed;
             right: 0;
-            /* 상단 기존 UI를 덮지 않도록 그 아래로 시작:
-               header(0~111) + tab-bar(111~191) + status-bar(191~230) = 230px,
-               그리고 캐릭터 메이커 toolbar(60px) 아래 = editor-wall 시작선(290px)에 정렬.
-               이전엔 top 없이 bottom:0 + max-height:88vh 라 top≈12vh(≈150px)에서 시작해
-               손잡이가 탭바/상태바를 덮었음. */
+            /* top/max-height은 JS(cmAlignSettingsWall)가 #cm-editor-wall의 실제 상단
+               좌표로 덮어쓴다. 아래 290px은 헤더+툴바 높이 가정의 폴백 기본값이며,
+               실제 헤더/DPI/창 크기가 달라도 JS가 툴바 하단(=자유 편집 영역 상단)에
+               정확히 맞추므로 손잡이 위쪽에 빈 공간이 생기지 않는다. */
             top: 290px;
             bottom: 0;
             z-index: 8800;
@@ -28274,6 +28273,7 @@
             cmSetEditorMode(savedEditorMode, false);
             cmRender();
             cmInitialized = true;
+            requestAnimationFrame(cmAlignSettingsWall);
         }
 
         function cmBindReferenceDrop() {
@@ -28632,6 +28632,27 @@
             if (!willCollapse) {
                 cmApplySettingsAvailability();
                 cmRenderPromptLockSummary();
+            }
+            cmAlignSettingsWall();
+        }
+
+        // 생성 설정 드로어(손잡이)의 세로 시작선을 에디터 열 상단(=툴바 하단)에 맞춘다.
+        // CSS의 top:290px(헤더230+툴바60 가정)은 고정값이라 실제 헤더 높이·DPI·창 크기가
+        // 다르면 툴바와 손잡이 사이에 '자유 편집 영역' 타이틀 높이만큼 빈 공간이 생긴다.
+        // 에디터 열의 실제 viewport top을 읽어 wall의 top/max-height를 동기화한다.
+        let cmSettingsWallResizeBound = false;
+        function cmAlignSettingsWall() {
+            const wall = document.getElementById('cm-settings-wall');
+            const editorWall = document.getElementById('cm-editor-wall');
+            const tab = document.getElementById('tab-character-maker-content');
+            if (!wall || !editorWall || !tab || !tab.classList.contains('active')) return;
+            const top = Math.round(editorWall.getBoundingClientRect().top);
+            if (!Number.isFinite(top) || top <= 0) return;
+            wall.style.top = top + 'px';
+            wall.style.maxHeight = `calc(100vh - ${top}px)`;
+            if (!cmSettingsWallResizeBound) {
+                cmSettingsWallResizeBound = true;
+                window.addEventListener('resize', cmAlignSettingsWall);
             }
         }
 
