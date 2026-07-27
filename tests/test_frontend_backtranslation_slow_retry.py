@@ -75,3 +75,12 @@ def test_lighbd_live_uses_only_real_stream_ids_and_prunes_legacy_ghosts():
     assert ".filter(s => s.active && s.id !== 'legacy')" in FRONTEND
     assert "if (state.active && !serverIds.has(id))" in FRONTEND
     assert "if (id !== 'legacy' && state.active && !serverIds.has(id))" not in FRONTEND
+
+
+def test_lighbd_live_exposes_manual_parallel_retry_race():
+    assert 'class="act-parallel-retry"' in FRONTEND
+    assert ">병렬로 재시도</button>" in FRONTEND
+    assert "_controlLighbdStream(state.id, 'parallel_retry')" in FRONTEND
+    assert "병렬 경쟁 ${activeRaces.size}" in FRONTEND
+    assert "raceRoleLabels = { original: '원본', parallel: '병렬 재시도' }" in FRONTEND
+    assert "병렬 재시도 기록" in FRONTEND

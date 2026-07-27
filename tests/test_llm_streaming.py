@@ -663,6 +663,227 @@ async def test_manual_retry_closes_old_stream_and_starts_new_stream(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_manual_parallel_retry_keeps_original_and_uses_faster_success(monkeypatch):
+    config = _test_config()
+    config["llm_stream"] = True
+    config["llm_max_concurrency"] = 2
+    monkeypatch.setattr(llm_service, "_current_config", config)
+    llm_service._active_streams.clear()
+    calls = 0
+    original_wait = asyncio.Event()
+    frontend_events = []
+    history_events = []
+
+    async def racing_stream(messages, service, model):
+        nonlocal calls
+        calls += 1
+        attempt = calls
+        yield {"type": "start", "service": service, "model": model}
+        if attempt == 1:
+            yield {
+                "type": "delta",
+                "text": "느린 원본",
+                "elapsed": 0.1,
+                "ttft": 0.1,
+            }
+            await original_wait.wait()
+            yield {
+                "type": "done",
+                "text": "느린 원본 완료",
+                "completion_tokens": 4,
+                "prompt_tokens": 8,
+                "elapsed": 2.0,
+                "tps": 2.0,
+                "ttft": 0.1,
+            }
+            return
+        yield {
+            "type": "delta",
+            "text": "빠른 병렬",
+            "elapsed": 0.05,
+            "ttft": 0.05,
+        }
+        yield {
+            "type": "done",
+            "text": "빠른 병렬 완료",
+            "completion_tokens": 5,
+            "prompt_tokens": 8,
+            "elapsed": 0.2,
+            "tps": 25.0,
+            "ttft": 0.05,
+        }
+
+    async def notify(event):
+        frontend_events.append(event)
+
+    async def record_history(event):
+        history_events.append(event)
+
+    monkeypatch.setattr(llm_service, "_dispatch_stream_unlimited", racing_stream)
+    monkeypatch.setattr(llm_service, "_stream_notify_func", notify)
+    monkeypatch.setattr(
+        llm_service,
+        "_manual_parallel_history_func",
+        record_history,
+    )
+
+    sink = {}
+    task = asyncio.create_task(
+        llm_service.callLLMTask(
+            "unit_task",
+            [{"role": "user", "content": "hello"}],
+            metadata_sink=sink,
+        )
+    )
+    original = await _wait_for_active_stream(
+        lambda stream: stream["text"] == "느린 원본"
+    )
+
+    assert llm_service.request_stream_control(
+        original["stream_id"], "parallel_retry"
+    ) == (True, "parallel_retry")
+    assert await task == "빠른 병렬 완료"
+    assert calls == 2
+    assert llm_service.get_active_streams() == []
+    assert sink["completion_tokens"] == 5
+    assert sink["tps"] == 25.0
+
+    starts = [event for event in frontend_events if event["type"] == "start"]
+    assert len({event["stream_id"] for event in starts}) == 2
+    assert any(event["type"] == "race_started" for event in frontend_events)
+    assert any(
+        event["type"] == "race_contender_started"
+        for event in frontend_events
+    )
+    assert any(
+        event["type"] == "cancelled" and event["reason"] == "race_lost"
+        for event in frontend_events
+    )
+    assert any(event["type"] == "race_won" for event in frontend_events)
+    assert any(event["type"] == "race_lost" for event in frontend_events)
+
+    assert len(history_events) == 1
+    history = history_events[0]
+    assert history["winner_stream_id"] != original["stream_id"]
+    assert {attempt["race_role"] for attempt in history["attempts"]} == {
+        "original",
+        "parallel",
+    }
+
+
+@pytest.mark.asyncio
+async def test_manual_parallel_retry_rejects_when_slot_limit_has_no_room(monkeypatch):
+    config = _test_config()
+    config["llm_stream"] = True
+    config["llm_max_concurrency"] = 1
+    monkeypatch.setattr(llm_service, "_current_config", config)
+    llm_service._active_streams.clear()
+    release = asyncio.Event()
+    calls = 0
+
+    async def single_slot_stream(messages, service, model):
+        nonlocal calls
+        calls += 1
+        yield {"type": "start", "service": service, "model": model}
+        yield {"type": "delta", "text": "원본", "elapsed": 0.1, "ttft": 0.1}
+        await release.wait()
+        yield {
+            "type": "done",
+            "text": "원본 완료",
+            "completion_tokens": 2,
+            "elapsed": 0.2,
+            "tps": 10.0,
+            "ttft": 0.1,
+        }
+
+    monkeypatch.setattr(
+        llm_service,
+        "_dispatch_stream_unlimited",
+        single_slot_stream,
+    )
+    task = asyncio.create_task(
+        llm_service.callLLM([{"role": "user", "content": "hello"}])
+    )
+    original = await _wait_for_active_stream(lambda stream: stream["text"] == "원본")
+
+    accepted, message = llm_service.request_stream_control(
+        original["stream_id"], "parallel_retry"
+    )
+    assert accepted is False
+    assert "여유 슬롯이 없습니다" in message
+    assert calls == 1
+
+    release.set()
+    assert await task == "원본 완료"
+    assert llm_service.get_active_streams() == []
+
+
+@pytest.mark.asyncio
+async def test_manual_parallel_retry_waits_for_other_attempt_when_one_errors(monkeypatch):
+    config = _test_config()
+    config["llm_stream"] = True
+    config["llm_max_concurrency"] = 2
+    monkeypatch.setattr(llm_service, "_current_config", config)
+    llm_service._active_streams.clear()
+    calls = 0
+    duplicate_failed = asyncio.Event()
+    history_events = []
+
+    async def one_error_stream(messages, service, model):
+        nonlocal calls
+        calls += 1
+        attempt = calls
+        yield {"type": "start", "service": service, "model": model}
+        if attempt == 1:
+            yield {"type": "delta", "text": "원본", "elapsed": 0.1, "ttft": 0.1}
+            await duplicate_failed.wait()
+            yield {
+                "type": "done",
+                "text": "원본 성공",
+                "completion_tokens": 3,
+                "elapsed": 0.4,
+                "tps": 7.5,
+                "ttft": 0.1,
+            }
+            return
+        duplicate_failed.set()
+        yield {"type": "error", "error": "복제 provider 실패"}
+
+    async def record_history(event):
+        history_events.append(event)
+
+    monkeypatch.setattr(
+        llm_service,
+        "_dispatch_stream_unlimited",
+        one_error_stream,
+    )
+    monkeypatch.setattr(
+        llm_service,
+        "_manual_parallel_history_func",
+        record_history,
+    )
+    task = asyncio.create_task(
+        llm_service.callLLM([{"role": "user", "content": "hello"}])
+    )
+    original = await _wait_for_active_stream(lambda stream: stream["text"] == "원본")
+
+    assert llm_service.request_stream_control(
+        original["stream_id"], "parallel_retry"
+    ) == (True, "parallel_retry")
+    assert await task == "원본 성공"
+
+    history = history_events[0]
+    assert history["winner_stream_id"] == original["stream_id"]
+    failed = next(
+        attempt
+        for attempt in history["attempts"]
+        if attempt["race_role"] == "parallel"
+    )
+    assert failed["outcome_kind"] == "failure"
+    assert "복제 provider 실패" in failed["error"]
+
+
+@pytest.mark.asyncio
 async def test_use_partial_requires_and_passes_task_validator(monkeypatch):
     config = _test_config()
     config["llm_stream"] = True

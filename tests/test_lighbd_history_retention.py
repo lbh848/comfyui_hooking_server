@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import datetime as _dt
+import asyncio
 import sys
 import types
 from pathlib import Path
+
+import pytest
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -59,4 +62,69 @@ def test_multi_char_history_has_independent_retention_budget(tmp_path, monkeypat
         "general-4",
         "multi-4",
     ]
+    assert (tmp_path / "요구사항" / "lighbd_history.jsonl.bak").is_file()
+
+
+@pytest.mark.asyncio
+async def test_manual_parallel_race_records_winner_and_discarded_without_ok_duplicate(
+    tmp_path,
+    monkeypatch,
+):
+    history_path = tmp_path / "logs" / "lighbd_history.jsonl"
+    monkeypatch.setattr(lighbd_service, "LIGHBD_HISTORY_PATH", str(history_path))
+    monkeypatch.setattr(lighbd_service, "BASE_DIR", str(tmp_path))
+    monkeypatch.setattr(lighbd_service, "LOG_DIR", str(tmp_path / "logs"))
+    lighbd_service._MANUAL_RACE_SUCCESS_SUPPRESSIONS.clear()
+
+    owner_task = asyncio.current_task()
+    lighbd_service._log_manual_parallel_race({
+        "race_id": "race-1",
+        "owner_task_id": id(owner_task),
+        "task_key": "unit_task",
+        "call_name": "단위 요청",
+        "service": "openai",
+        "model": "model-1",
+        "llm_slot": "llm1",
+        "input": [{"role": "user", "content": "hello"}],
+        "winner_stream_id": "parallel-id",
+        "attempts": [
+            {
+                "stream_id": "original-id",
+                "race_role": "original",
+                "race_status": "lost",
+                "outcome_kind": "cancelled",
+                "text": "느린 부분",
+                "completion_tokens": 2,
+                "prompt_tokens": 4,
+                "elapsed": 1.2,
+                "tps": 1.7,
+            },
+            {
+                "stream_id": "parallel-id",
+                "race_role": "parallel",
+                "outcome_kind": "success",
+                "text": "빠른 완료",
+                "completion_tokens": 3,
+                "prompt_tokens": 4,
+                "elapsed": 0.3,
+                "tps": 10.0,
+            },
+        ],
+    })
+    lighbd_service._log_lighbd_history({
+        "call_name": "단위 요청",
+        "input": [{"role": "user", "content": "hello"}],
+        "output": "빠른 완료",
+        "status": "ok",
+    })
+
+    saved = lighbd_service._load_lighbd_history(limit=10)
+    assert len(saved) == 2
+    assert [record["status"] for record in saved] == [
+        "race_lost",
+        "race_won",
+    ]
+    assert saved[0]["race_role"] == "original"
+    assert saved[1]["race_role"] == "parallel"
+    assert saved[1]["winner_stream_id"] == "parallel-id"
     assert (tmp_path / "요구사항" / "lighbd_history.jsonl.bak").is_file()

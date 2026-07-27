@@ -636,6 +636,22 @@ class _LlmRequestGate:
             )
             self.active += 1
 
+    async def try_acquire(self) -> bool:
+        """대기하지 않고 슬롯 하나를 예약한다.
+
+        수동 병렬 재시도는 "나중에 재시도"가 아니라 지금 원본과 경쟁해야 하므로,
+        여유가 없으면 대기열에 넣지 않고 즉시 실패시킨다.
+        """
+        async with self.condition:
+            if self.active >= _llm_max_concurrency(self.slot):
+                return False
+            self.active += 1
+            return True
+
+    def has_capacity_now(self) -> bool:
+        """현재 이벤트 루프 시점의 즉시 실행 가능 여부를 반환한다."""
+        return self.active < _llm_max_concurrency(self.slot)
+
     async def release(self) -> None:
         async with self.condition:
             self.active = max(0, self.active - 1)
@@ -1098,6 +1114,10 @@ _usage_sink_ctx: ContextVar = ContextVar("llm_usage_sink", default=None)
 # llm_service가 server를 직접 import하지 않게 하여 순환 import를 피한다.
 _stream_notify_func = None
 
+# 수동 병렬 재시도 결과를 LB 자세히 이력에 남기는 콜백.
+# 이력 파일 소유자는 lighbd_service이므로 server.py가 두 모듈을 연결한다.
+_manual_parallel_history_func = None
+
 
 async def _emit_request_stream_observer(event: dict) -> None:
     """현재 요청에 등록된 스트림 관찰자에게 이벤트를 안전하게 전달한다."""
@@ -1124,6 +1144,37 @@ def set_stream_notify_func(callback):
         print("[LLM_STREAM] 프론트엔드 알림 콜백 해제")
     else:
         print("[LLM_STREAM] 프론트엔드 알림 콜백 등록 완료")
+
+
+def set_manual_parallel_history_func(callback):
+    """수동 병렬 재시도 이력 기록 콜백을 등록한다."""
+    global _manual_parallel_history_func
+    _manual_parallel_history_func = callback
+    if callback is None:
+        print("[LLM_STREAM] 병렬 재시도 이력 콜백 해제")
+    else:
+        print("[LLM_STREAM] 병렬 재시도 이력 콜백 등록 완료")
+
+
+async def _emit_manual_parallel_history(record: dict) -> None:
+    """병렬 경쟁 결과를 자세히 이력 소유자에게 안전하게 전달한다."""
+    if _manual_parallel_history_func is None:
+        print(
+            f"[LLM_STREAM] 병렬 재시도 이력 기록 건너뜀: 콜백 미설정 "
+            f"race_id={record.get('race_id', '')}"
+        )
+        return
+    try:
+        result = _manual_parallel_history_func(dict(record))
+        if inspect.isawaitable(result):
+            await result
+    except Exception as e:
+        print(
+            f"[LLM_STREAM] 병렬 재시도 이력 콜백 실패: "
+            f"race_id={record.get('race_id', '')}, "
+            f"error={type(e).__name__}: {e}"
+        )
+        traceback.print_exc()
 
 
 def supports_vision(service: str) -> bool:
@@ -2460,11 +2511,27 @@ def _stream_http_timeout() -> httpx.Timeout:
 
 
 def _public_stream_state(record: dict) -> dict:
-    return {
+    state = {
         key: value
         for key, value in record.items()
         if not key.startswith("_")
     }
+    coordinator = record.get("_race_coordinator")
+    if coordinator is not None:
+        try:
+            state["parallel_retry_available"] = bool(
+                record.get("active")
+                and not coordinator.parallel_started
+                and coordinator.capacity_available_now()
+            )
+        except Exception as e:
+            print(
+                f"[LLM_STREAM] 병렬 재시도 가능 상태 계산 실패: "
+                f"stream_id={record.get('stream_id')}, error={e}"
+            )
+            traceback.print_exc()
+            state["parallel_retry_available"] = False
+    return state
 
 
 def get_active_streams() -> list[dict]:
@@ -2479,18 +2546,54 @@ def get_active_streams() -> list[dict]:
 
 
 def request_stream_control(stream_id: str, action: str) -> tuple[bool, str]:
-    """활성 스트림에 cancel/retry/use_partial 제어를 요청한다."""
+    """활성 스트림에 cancel/retry/parallel_retry/use_partial 제어를 요청한다."""
     record = _active_streams.get(str(stream_id or ""))
     if record is None:
         print(f"[LLM_STREAM] 제어 요청 실패: 활성 스트림 없음 stream_id={stream_id!r}")
         return False, "활성 스트림을 찾을 수 없습니다."
     normalized = str(action or "").strip().lower()
-    if normalized not in ("cancel", "retry", "use_partial"):
+    if normalized not in ("cancel", "retry", "parallel_retry", "use_partial"):
         print(
             f"[LLM_STREAM] 제어 요청 거부: stream_id={stream_id}, "
             f"action={action!r}"
         )
-        return False, "action은 cancel, retry, use_partial 중 하나여야 합니다."
+        return (
+            False,
+            "action은 cancel, retry, parallel_retry, use_partial 중 하나여야 합니다.",
+        )
+    coordinator = record.get("_race_coordinator")
+    if coordinator is None:
+        print(
+            f"[LLM_STREAM] 제어 요청 거부: 경쟁 조정 상태 없음 "
+            f"stream_id={stream_id}, action={normalized}"
+        )
+        return False, "스트림 경쟁 제어 상태가 손상되었습니다."
+    if normalized == "parallel_retry":
+        if coordinator.parallel_started:
+            print(
+                f"[LLM_STREAM] 병렬 재시도 중복 요청 거부: "
+                f"stream_id={stream_id}, race_id={coordinator.race_id}"
+            )
+            return False, "이미 이 요청의 병렬 재시도가 실행 중이거나 실행되었습니다."
+        if not coordinator.capacity_available_now():
+            gate = _request_gate(str(record.get("llm_slot") or "llm1"))
+            limit = _llm_max_concurrency(str(record.get("llm_slot") or "llm1"))
+            print(
+                f"[LLM_STREAM] 병렬 재시도 여유 슬롯 없음: "
+                f"stream_id={stream_id}, slot={record.get('llm_slot')}, "
+                f"active={gate.active}, limit={limit}"
+            )
+            return (
+                False,
+                f"{str(record.get('llm_slot') or 'llm1').upper()} 동시 요청 "
+                f"여유 슬롯이 없습니다. (사용 중 {gate.active}/{limit})",
+            )
+    if normalized == "retry" and coordinator.parallel_started and not coordinator.resolved:
+        print(
+            f"[LLM_STREAM] 병렬 경쟁 중 일반 재시도 거부: "
+            f"stream_id={stream_id}, race_id={coordinator.race_id}"
+        )
+        return False, "병렬 경쟁 중에는 일반 재시도를 사용할 수 없습니다."
     control_event = record.get("_control_event")
     if not isinstance(control_event, asyncio.Event):
         print(f"[LLM_STREAM] 제어 이벤트 누락: stream_id={stream_id}")
@@ -2516,6 +2619,8 @@ def _register_active_stream(
     model: str,
     llm_slot: str,
     metadata: dict,
+    coordinator,
+    race_role: str = "",
 ) -> dict:
     now = time.time()
     record = {
@@ -2535,8 +2640,14 @@ def _register_active_stream(
         "ttft": None,
         "started_at": now,
         "last_event_at": now,
+        "race_id": coordinator.race_id if race_role else "",
+        "race_role": race_role,
+        "race_status": "racing" if race_role else "",
+        "parallel_retry_supported": _llm_max_concurrency(llm_slot) > 1,
         "_control_event": asyncio.Event(),
         "_control_action": "",
+        "_forced_cancel_reason": "",
+        "_race_coordinator": coordinator,
     }
     _active_streams[stream_id] = record
     return record
@@ -2551,40 +2662,6 @@ async def _close_stream_iterator(iterator) -> None:
     except Exception as e:
         print(f"[LLM_STREAM] 스트림 iterator 종료 실패: {type(e).__name__}: {e}")
         traceback.print_exc()
-
-
-async def _next_controlled_stream_event(iterator, record: dict):
-    """다음 provider 이벤트, 수동 제어, idle timeout 중 먼저 발생한 결과를 반환."""
-    next_task = asyncio.ensure_future(iterator.__anext__())
-    control_task = asyncio.ensure_future(record["_control_event"].wait())
-    idle_timeout = _stream_idle_timeout_seconds()
-    try:
-        done, _pending = await asyncio.wait(
-            {next_task, control_task},
-            timeout=idle_timeout if idle_timeout > 0 else None,
-            return_when=asyncio.FIRST_COMPLETED,
-        )
-        if not done:
-            next_task.cancel()
-            with suppress(asyncio.CancelledError, StopAsyncIteration):
-                await next_task
-            return "idle", idle_timeout
-        if control_task in done:
-            next_task.cancel()
-            with suppress(asyncio.CancelledError, StopAsyncIteration):
-                await next_task
-            return "control", str(record.get("_control_action", "") or "cancel")
-        try:
-            return "event", next_task.result()
-        except StopAsyncIteration:
-            return "eof", None
-    finally:
-        for task in (next_task, control_task):
-            if not task.done():
-                task.cancel()
-        for task in (next_task, control_task):
-            with suppress(asyncio.CancelledError, StopAsyncIteration):
-                await task
 
 
 async def _emit_stream_event(event: dict) -> None:
@@ -2602,6 +2679,684 @@ async def _emit_stream_event(event: dict) -> None:
         traceback.print_exc()
 
 
+def _history_safe_stream_messages(messages: list) -> list:
+    """병렬 경쟁 이력에서 이미지 base64 본문만 제거한 입력 복사본을 만든다."""
+    safe_messages = []
+    for message in messages or []:
+        if not isinstance(message, dict):
+            safe_messages.append(message)
+            continue
+        safe_message = dict(message)
+        content = message.get("content")
+        if not isinstance(content, list):
+            safe_messages.append(safe_message)
+            continue
+        safe_parts = []
+        for part in content:
+            if not isinstance(part, dict):
+                safe_parts.append(part)
+                continue
+            if part.get("type") == "image_url":
+                safe_parts.append({
+                    "type": "image_url",
+                    "image_url": {"url": "[이미지 데이터 생략]"},
+                })
+                continue
+            if part.get("type") == "image" or "inline_data" in part:
+                safe_part = dict(part)
+                if "source" in safe_part:
+                    safe_part["source"] = {"data": "[이미지 데이터 생략]"}
+                if "inline_data" in safe_part:
+                    safe_part["inline_data"] = {"data": "[이미지 데이터 생략]"}
+                safe_parts.append(safe_part)
+                continue
+            safe_parts.append(dict(part))
+        safe_message["content"] = safe_parts
+        safe_messages.append(safe_message)
+    return safe_messages
+
+
+def _stream_record_event_fields(record: dict) -> dict:
+    return {
+        "race_id": str(record.get("race_id") or ""),
+        "race_role": str(record.get("race_role") or ""),
+        "race_status": str(record.get("race_status") or ""),
+        "parallel_retry_supported": bool(
+            record.get("parallel_retry_supported", False)
+        ),
+    }
+
+
+def _apply_stream_outcome_usage(outcome: dict) -> None:
+    """최종 채택된 시도의 usage만 상위 sink에 반영한다."""
+    sink = _usage_sink_ctx.get()
+    if sink is None:
+        return
+    snapshot = outcome.get("snapshot") or {}
+    if outcome.get("kind") == "failure":
+        sink["error"] = str(outcome.get("error") or "")
+    else:
+        sink.pop("error", None)
+    for key in ("completion_tokens", "prompt_tokens", "elapsed", "tps", "ttft"):
+        if snapshot.get(key) is not None:
+            sink[key] = snapshot[key]
+
+
+class _ManualParallelStreamRace:
+    """한 상위 LLM 호출 안에서 원본과 수동 복제 스트림을 조정한다."""
+
+    def __init__(
+        self,
+        messages: list,
+        service: str,
+        model: str,
+        llm_slot: str,
+        metadata: dict,
+    ):
+        self.messages = messages
+        self.service = service
+        self.model = model
+        self.llm_slot = llm_slot
+        self.metadata = metadata
+        self.race_id = ""
+        self.parallel_started = False
+        self.resolved = False
+        self.tasks: dict[str, asyncio.Task] = {}
+        self.snapshots: dict[str, dict] = {}
+        self.finished_outcomes: dict[str, dict] = {}
+        self.result_queue: asyncio.Queue = asyncio.Queue()
+        self.race_attempt_ids: list[str] = []
+        owner_task = asyncio.current_task()
+        self.owner_task_id = id(owner_task) if owner_task is not None else 0
+
+    def capacity_available_now(self) -> bool:
+        if self.parallel_started:
+            return False
+        if _llm_max_concurrency(self.llm_slot) <= 1:
+            return False
+        return _request_gate(self.llm_slot).has_capacity_now()
+
+    def start_attempt(
+        self,
+        *,
+        stream_id: str | None = None,
+        race_role: str = "",
+        preacquired_gate: _LlmRequestGate | None = None,
+    ) -> str:
+        stream_id = stream_id or uuid.uuid4().hex
+        task = asyncio.create_task(
+            _consume_stream_attempt(
+                self,
+                stream_id,
+                race_role=race_role,
+                preacquired_gate=preacquired_gate,
+            )
+        )
+        self.tasks[stream_id] = task
+
+        def _done(completed_task: asyncio.Task, sid: str = stream_id) -> None:
+            try:
+                outcome = completed_task.result()
+            except asyncio.CancelledError:
+                snapshot = dict(self.snapshots.get(sid) or {})
+                outcome = {
+                    "stream_id": sid,
+                    "kind": "cancelled",
+                    "error": str(snapshot.get("error") or "스트림 취소"),
+                    "snapshot": snapshot,
+                }
+            except Exception as e:
+                print(
+                    f"[LLM_STREAM] 스트림 시도 task 예외: "
+                    f"stream_id={sid}, error={type(e).__name__}: {e}"
+                )
+                traceback.print_exc()
+                snapshot = dict(self.snapshots.get(sid) or {})
+                outcome = {
+                    "stream_id": sid,
+                    "kind": "failure",
+                    "error": f"{type(e).__name__}: {e}",
+                    "value": f"[LLM 실패] {e}",
+                    "snapshot": snapshot,
+                }
+            self.finished_outcomes[sid] = outcome
+            self.result_queue.put_nowait(outcome)
+
+        task.add_done_callback(_done)
+        return stream_id
+
+    async def request_parallel(self, source_stream_id: str) -> tuple[bool, str]:
+        if self.parallel_started:
+            message = "이미 이 요청의 병렬 재시도가 실행 중이거나 실행되었습니다."
+            print(
+                f"[LLM_STREAM] 병렬 재시도 시작 거부: "
+                f"source={source_stream_id}, reason={message}"
+            )
+            return False, message
+
+        gate = _request_gate(self.llm_slot)
+        if not await gate.try_acquire():
+            limit = _llm_max_concurrency(self.llm_slot)
+            message = (
+                f"{self.llm_slot.upper()} 동시 요청 여유 슬롯이 없습니다. "
+                f"(사용 중 {gate.active}/{limit})"
+            )
+            print(
+                f"[LLM_STREAM] 병렬 재시도 즉시 슬롯 확보 실패: "
+                f"source={source_stream_id}, active={gate.active}, limit={limit}"
+            )
+            return False, message
+
+        self.parallel_started = True
+        self.race_id = uuid.uuid4().hex
+        parallel_stream_id = uuid.uuid4().hex
+        self.race_attempt_ids = [source_stream_id, parallel_stream_id]
+
+        source_record = _active_streams.get(source_stream_id)
+        if source_record is None:
+            await gate.release()
+            self.parallel_started = False
+            self.race_id = ""
+            self.race_attempt_ids = []
+            message = "원본 스트림이 이미 종료되어 병렬 재시도를 시작할 수 없습니다."
+            print(
+                f"[LLM_STREAM] 병렬 재시도 원본 소실: "
+                f"source={source_stream_id}, race_id={self.race_id}"
+            )
+            return False, message
+
+        source_record.update({
+            "race_id": self.race_id,
+            "race_role": "original",
+            "race_status": "racing",
+        })
+        self.snapshots[source_stream_id] = _public_stream_state(source_record)
+        try:
+            self.start_attempt(
+                stream_id=parallel_stream_id,
+                race_role="parallel",
+                preacquired_gate=gate,
+            )
+        except Exception as e:
+            await gate.release()
+            self.parallel_started = False
+            self.race_id = ""
+            self.race_attempt_ids = []
+            source_record.update({
+                "race_id": "",
+                "race_role": "",
+                "race_status": "",
+            })
+            print(
+                f"[LLM_STREAM] 병렬 재시도 task 생성 실패: "
+                f"source={source_stream_id}, error={type(e).__name__}: {e}"
+            )
+            traceback.print_exc()
+            return False, f"병렬 재시도 task 생성 실패: {e}"
+
+        await _emit_stream_event({
+            **self.metadata,
+            "type": "race_started",
+            "service": self.service,
+            "model": self.model,
+            "stream_id": source_stream_id,
+            "llm_slot": self.llm_slot,
+            "race_id": self.race_id,
+            "race_role": "original",
+            "race_status": "racing",
+            "peer_stream_id": parallel_stream_id,
+            "parallel_retry_supported": True,
+        })
+        await _emit_stream_event({
+            **self.metadata,
+            "type": "race_contender_started",
+            "service": self.service,
+            "model": self.model,
+            "stream_id": parallel_stream_id,
+            "llm_slot": self.llm_slot,
+            "race_id": self.race_id,
+            "race_role": "parallel",
+            "race_status": "racing",
+            "peer_stream_id": source_stream_id,
+            "parallel_retry_supported": True,
+        })
+        print(
+            f"[LLM_STREAM] 수동 병렬 재시도 시작: race_id={self.race_id}, "
+            f"original={source_stream_id}, parallel={parallel_stream_id}, "
+            f"slot={self.llm_slot}, gate={gate.active}/{_llm_max_concurrency(self.llm_slot)}"
+        )
+        return True, parallel_stream_id
+
+    async def cancel_other_attempts(self, winner_stream_id: str) -> None:
+        pending = []
+        for stream_id, task in self.tasks.items():
+            if stream_id == winner_stream_id or task.done():
+                continue
+            record = _active_streams.get(stream_id)
+            if record is not None:
+                record["_forced_cancel_reason"] = "race_lost"
+            task.cancel()
+            pending.append(task)
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+
+    def has_unprocessed_attempts(self, processed_ids: set[str]) -> bool:
+        return any(stream_id not in processed_ids for stream_id in self.tasks)
+
+    def history_payload(self, winner_stream_id: str = "") -> dict:
+        attempts = []
+        for stream_id in self.race_attempt_ids:
+            snapshot = dict(self.snapshots.get(stream_id) or {})
+            outcome = self.finished_outcomes.get(stream_id) or {}
+            attempts.append({
+                **snapshot,
+                "stream_id": stream_id,
+                "outcome_kind": str(outcome.get("kind") or ""),
+                "error": str(
+                    outcome.get("error")
+                    or snapshot.get("error")
+                    or ""
+                ),
+            })
+        return {
+            "race_id": self.race_id,
+            "owner_task_id": self.owner_task_id,
+            "task_key": str(self.metadata.get("task_key") or ""),
+            "call_name": str(
+                self.metadata.get("call_name")
+                or self.metadata.get("task_key")
+                or "LLM 요청"
+            ),
+            "service": self.service,
+            "model": self.model,
+            "llm_slot": self.llm_slot,
+            "input": _history_safe_stream_messages(self.messages),
+            "winner_stream_id": winner_stream_id,
+            "attempts": attempts,
+        }
+
+
+async def _consume_stream_attempt(
+    coordinator: _ManualParallelStreamRace,
+    stream_id: str,
+    *,
+    race_role: str = "",
+    preacquired_gate: _LlmRequestGate | None = None,
+) -> dict:
+    """provider 스트림 하나를 소비한다. 병렬 시작 제어는 연결을 끊지 않는다."""
+    service = coordinator.service
+    model = coordinator.model
+    llm_slot = coordinator.llm_slot
+    metadata = coordinator.metadata
+    record = _register_active_stream(
+        stream_id,
+        service,
+        model,
+        llm_slot,
+        metadata,
+        coordinator,
+        race_role=race_role,
+    )
+    coordinator.snapshots[stream_id] = _public_stream_state(record)
+    await _emit_request_stream_observer({
+        **metadata,
+        "type": "stream_open",
+        "service": service,
+        "model": model,
+        "stream_id": stream_id,
+        "llm_slot": llm_slot,
+        "partial_text": "",
+        "partial_length": 0,
+        **_stream_record_event_fields(record),
+    })
+
+    iterator_source = (
+        _dispatch_stream_unlimited(messages=coordinator.messages, service=service, model=model)
+        if preacquired_gate is not None
+        else _dispatch_stream(coordinator.messages, service, model)
+    )
+    iterator = iterator_source.__aiter__()
+    partial_parts: list[str] = []
+    final_text = ""
+    error_msg = ""
+    done_seen = False
+    next_task: asyncio.Task | None = None
+
+    async def _stop_next_task() -> None:
+        nonlocal next_task
+        if next_task is None:
+            return
+        if not next_task.done():
+            next_task.cancel()
+        with suppress(asyncio.CancelledError, StopAsyncIteration):
+            await next_task
+        next_task = None
+
+    try:
+        while True:
+            if next_task is None:
+                next_task = asyncio.ensure_future(iterator.__anext__())
+            control_task = asyncio.ensure_future(record["_control_event"].wait())
+            idle_timeout = _stream_idle_timeout_seconds()
+            timeout = None
+            if idle_timeout > 0:
+                since_event = max(
+                    0.0,
+                    time.time() - float(record.get("last_event_at") or time.time()),
+                )
+                timeout = max(0.0, idle_timeout - since_event)
+            try:
+                done, _pending = await asyncio.wait(
+                    {next_task, control_task},
+                    timeout=timeout,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+            finally:
+                if not control_task.done():
+                    control_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await control_task
+
+            if not done:
+                await _stop_next_task()
+                partial_text = "".join(partial_parts)
+                error_msg = (
+                    f"{service} stream 무응답 제한 초과: {idle_timeout:g}초 "
+                    f"(partial_len={len(partial_text)})"
+                )
+                record.update({
+                    "status": "오류",
+                    "error": error_msg,
+                    "text": partial_text,
+                })
+                print(
+                    f"[LLM_STREAM] {error_msg}: stream_id={stream_id}, "
+                    f"slot={llm_slot}, model={model}"
+                )
+                payload = {
+                    **metadata,
+                    "type": "error",
+                    "error": error_msg,
+                    "termination_reason": "idle_timeout",
+                    "partial_text": partial_text,
+                    "service": service,
+                    "model": model,
+                    "stream_id": stream_id,
+                    "llm_slot": llm_slot,
+                    **_stream_record_event_fields(record),
+                }
+                await _emit_request_stream_observer(payload)
+                await _emit_stream_event(payload)
+                break
+
+            # provider 이벤트와 제어가 동시에 도착했다면 provider 완료를 먼저 확정한다.
+            if next_task in done:
+                try:
+                    event = next_task.result()
+                except StopAsyncIteration:
+                    next_task = None
+                    break
+                next_task = None
+                event_type = event.get("type")
+                if event_type == "start":
+                    record["status"] = "시작"
+                elif event_type == "delta":
+                    delta_text = str(event.get("text", "") or "")
+                    if delta_text:
+                        partial_parts.append(delta_text)
+                    record["text"] = "".join(partial_parts)
+                    record["status"] = "스트리밍"
+                elif event_type == "done":
+                    done_seen = True
+                    final_text = str(event.get("text", "") or "")
+                    record["text"] = final_text or "".join(partial_parts)
+                    record["status"] = "완료"
+                elif event_type == "error":
+                    error_msg = str(
+                        event.get("error", "") or "알 수 없는 스트리밍 오류"
+                    )
+                    record["status"] = "오류"
+                    record["error"] = error_msg
+                else:
+                    print(
+                        f"[LLM_STREAM] 알 수 없는 provider 이벤트: "
+                        f"stream_id={stream_id}, event_type={event_type!r}, event={event}"
+                    )
+                for source_key, target_key in (
+                    ("completion_tokens", "completion_tokens"),
+                    ("prompt_tokens", "prompt_tokens"),
+                    ("elapsed", "elapsed"),
+                    ("tps", "tps"),
+                    ("ttft", "ttft"),
+                ):
+                    if event.get(source_key) is not None:
+                        record[target_key] = event[source_key]
+                record["last_event_at"] = time.time()
+                payload = {
+                    **metadata,
+                    **event,
+                    "stream_id": stream_id,
+                    "llm_slot": llm_slot,
+                    "partial_text": str(record.get("text", "") or ""),
+                    "partial_length": len(str(record.get("text", "") or "")),
+                    **_stream_record_event_fields(record),
+                }
+                coordinator.snapshots[stream_id] = _public_stream_state(record)
+                await _emit_request_stream_observer(payload)
+                await _emit_stream_event(payload)
+                if event_type in ("done", "error"):
+                    break
+                continue
+
+            action = str(record.get("_control_action", "") or "cancel")
+            record["_control_action"] = ""
+            record["_control_event"].clear()
+            if action == "parallel_retry":
+                started, detail = await coordinator.request_parallel(stream_id)
+                if not started:
+                    payload = {
+                        **metadata,
+                        "type": "parallel_retry_rejected",
+                        "error": detail,
+                        "service": service,
+                        "model": model,
+                        "stream_id": stream_id,
+                        "llm_slot": llm_slot,
+                        **_stream_record_event_fields(record),
+                    }
+                    await _emit_stream_event(payload)
+                continue
+
+            await _stop_next_task()
+            partial_text = "".join(partial_parts)
+            if action == "use_partial" and partial_text:
+                elapsed = max(0.0, time.time() - float(record["started_at"]))
+                tokens = _approx_tokens(partial_text)
+                record.update({
+                    "status": "완료",
+                    "text": partial_text,
+                    "completion_tokens": tokens,
+                    "prompt_tokens": _approx_input_tokens(coordinator.messages),
+                    "elapsed": elapsed,
+                    "tps": tokens / elapsed if elapsed > 0 else 0.0,
+                })
+                payload = {
+                    **metadata,
+                    "type": "done",
+                    "text": partial_text,
+                    "partial": True,
+                    "termination_reason": "manual_partial",
+                    "completion_tokens": tokens,
+                    "prompt_tokens": record["prompt_tokens"],
+                    "elapsed": elapsed,
+                    "tps": record["tps"],
+                    "ttft": record.get("ttft"),
+                    "service": service,
+                    "model": model,
+                    "stream_id": stream_id,
+                    "llm_slot": llm_slot,
+                    "partial_text": partial_text,
+                    "partial_length": len(partial_text),
+                    **_stream_record_event_fields(record),
+                }
+                coordinator.snapshots[stream_id] = _public_stream_state(record)
+                await _emit_request_stream_observer(payload)
+                await _emit_stream_event(payload)
+                print(
+                    f"[LLM_STREAM] 부분 응답 사용 요청: stream_id={stream_id}, "
+                    f"partial_len={len(partial_text)}"
+                )
+                return {
+                    "stream_id": stream_id,
+                    "kind": "success",
+                    "value": PartialStreamText(partial_text),
+                    "snapshot": dict(coordinator.snapshots[stream_id]),
+                }
+            if action == "use_partial":
+                action = "cancel"
+                error_msg = "부분 응답이 비어 있어 사용할 수 없습니다"
+                print(f"[LLM_STREAM] {error_msg}: stream_id={stream_id}")
+            payload = {
+                **metadata,
+                "type": "cancelled",
+                "reason": action,
+                "error": error_msg,
+                "partial_text": partial_text,
+                "service": service,
+                "model": model,
+                "stream_id": stream_id,
+                "llm_slot": llm_slot,
+                **_stream_record_event_fields(record),
+            }
+            record.update({
+                "status": "재시도 전환" if action == "retry" else "중지",
+                "text": partial_text,
+                "error": error_msg,
+            })
+            coordinator.snapshots[stream_id] = _public_stream_state(record)
+            await _emit_request_stream_observer(payload)
+            await _emit_stream_event(payload)
+            if action == "retry":
+                print(
+                    f"[LLM_STREAM] 수동 재시도 시작: old_stream_id={stream_id}, "
+                    f"slot={llm_slot}, partial_len={len(partial_text)}"
+                )
+                return {
+                    "stream_id": stream_id,
+                    "kind": "retry",
+                    "snapshot": dict(coordinator.snapshots[stream_id]),
+                }
+            reason = error_msg or f"{service} stream 사용자가 중지함"
+            return {
+                "stream_id": stream_id,
+                "kind": "cancelled",
+                "value": ManualCancelledText(f"[LLM 실패] {reason}"),
+                "error": reason,
+                "snapshot": dict(coordinator.snapshots[stream_id]),
+            }
+    except asyncio.CancelledError:
+        await _stop_next_task()
+        reason = str(record.get("_forced_cancel_reason") or "parent_cancelled")
+        partial_text = "".join(partial_parts)
+        record.update({
+            "status": "경쟁 패배 · 폐기" if reason == "race_lost" else "중지",
+            "text": partial_text,
+            "race_status": "lost" if reason == "race_lost" else record.get("race_status", ""),
+            "error": "더 빠른 응답이 채택되어 폐기됨" if reason == "race_lost" else "",
+        })
+        coordinator.snapshots[stream_id] = _public_stream_state(record)
+        print(
+            f"[LLM_STREAM] 스트림 취소 전파: stream_id={stream_id}, "
+            f"slot={llm_slot}, reason={reason}, partial_len={len(partial_text)}"
+        )
+        payload = {
+            **metadata,
+            "type": "cancelled",
+            "reason": reason,
+            "partial_text": partial_text,
+            "service": service,
+            "model": model,
+            "stream_id": stream_id,
+            "llm_slot": llm_slot,
+            **_stream_record_event_fields(record),
+        }
+        await _emit_request_stream_observer(payload)
+        await _emit_stream_event(payload)
+        raise
+    except Exception as e:
+        await _stop_next_task()
+        error_msg = f"{service} stream 소비 예외: {e}"
+        partial_text = "".join(partial_parts)
+        record.update({
+            "status": "오류",
+            "text": partial_text,
+            "error": error_msg,
+        })
+        coordinator.snapshots[stream_id] = _public_stream_state(record)
+        print(
+            f"[LLM_STREAM] {error_msg}: stream_id={stream_id}, "
+            f"partial_len={len(partial_text)}"
+        )
+        traceback.print_exc()
+        payload = {
+            **metadata,
+            "type": "error",
+            "error": error_msg,
+            "partial_text": partial_text,
+            "service": service,
+            "model": model,
+            "stream_id": stream_id,
+            "llm_slot": llm_slot,
+            **_stream_record_event_fields(record),
+        }
+        await _emit_request_stream_observer(payload)
+        await _emit_stream_event(payload)
+    finally:
+        await _stop_next_task()
+        record["active"] = False
+        elapsed = max(0.0, time.time() - float(record["started_at"]))
+        if not record.get("elapsed"):
+            record["elapsed"] = elapsed
+        coordinator.snapshots[stream_id] = _public_stream_state(record)
+        await _close_stream_iterator(iterator)
+        _active_streams.pop(stream_id, None)
+        if preacquired_gate is not None:
+            await preacquired_gate.release()
+
+    snapshot = dict(coordinator.snapshots.get(stream_id) or {})
+    if done_seen and final_text:
+        return {
+            "stream_id": stream_id,
+            "kind": "success",
+            "value": final_text,
+            "snapshot": snapshot,
+        }
+    if error_msg:
+        print(
+            f"[LLM_STREAM] 시도 실패: slot={llm_slot} service={service} "
+            f"model={model} stream_id={stream_id} error={error_msg}"
+        )
+        return {
+            "stream_id": stream_id,
+            "kind": "failure",
+            "value": f"[LLM 실패] {error_msg}",
+            "error": error_msg,
+            "snapshot": snapshot,
+        }
+    empty_error = f"{service} 스트리밍 응답이 비어 있습니다"
+    print(
+        f"[LLM_STREAM] 빈 응답: slot={llm_slot} service={service} "
+        f"model={model} stream_id={stream_id} done_seen={done_seen}"
+    )
+    return {
+        "stream_id": stream_id,
+        "kind": "failure",
+        "value": f"[LLM 실패] {empty_error}",
+        "error": empty_error,
+        "snapshot": snapshot,
+    }
+
+
 async def _stream_call_to_text(messages: list, service: str, model: str, llm_slot: str) -> str:
     """실제 API 스트림을 소비하면서 delta를 프론트엔드에 전달하고 최종 문자열을 반환한다.
 
@@ -2617,207 +3372,122 @@ async def _stream_call_to_text(messages: list, service: str, model: str, llm_slo
             f"slot={llm_slot} service={service} model={model}"
         )
 
-    while True:
-        stream_id = uuid.uuid4().hex
-        record = _register_active_stream(stream_id, service, model, llm_slot, metadata)
-        await _emit_request_stream_observer({
-            **metadata,
-            "type": "stream_open",
-            "service": service,
-            "model": model,
-            "stream_id": stream_id,
-            "llm_slot": llm_slot,
-            "partial_text": "",
-            "partial_length": 0,
-        })
-        iterator = _dispatch_stream(messages, service, model).__aiter__()
-        partial_parts: list[str] = []
-        final_text = ""
-        error_msg = ""
-        done_seen = False
-        retry_requested = False
+    coordinator = _ManualParallelStreamRace(
+        messages,
+        service,
+        model,
+        llm_slot,
+        metadata,
+    )
+    coordinator.start_attempt()
+    processed_ids: set[str] = set()
+    last_outcome: dict | None = None
 
-        try:
-            while True:
-                outcome, value = await _next_controlled_stream_event(iterator, record)
-                if outcome == "eof":
-                    break
-                if outcome == "idle":
-                    error_msg = (
-                        f"{service} stream 무응답 제한 초과: {float(value):g}초 "
-                        f"(partial_len={len(''.join(partial_parts))})"
-                    )
-                    print(
-                        f"[LLM_STREAM] {error_msg}: stream_id={stream_id}, "
-                        f"slot={llm_slot}, model={model}"
-                    )
+    try:
+        while True:
+            outcome = await coordinator.result_queue.get()
+            stream_id = str(outcome.get("stream_id") or "")
+            if not stream_id or stream_id in processed_ids:
+                print(
+                    f"[LLM_STREAM] 중복/잘못된 시도 결과 무시: "
+                    f"stream_id={stream_id!r}, outcome={outcome}"
+                )
+                continue
+            processed_ids.add(stream_id)
+            last_outcome = outcome
+            kind = str(outcome.get("kind") or "failure")
+
+            if kind == "retry":
+                coordinator.start_attempt()
+                continue
+
+            if kind == "success":
+                if coordinator.parallel_started:
+                    coordinator.resolved = True
+                    await coordinator.cancel_other_attempts(stream_id)
+                    winner_snapshot = outcome.get("snapshot") or {}
                     await _emit_stream_event({
                         **metadata,
-                        "type": "error",
-                        "error": error_msg,
-                        "termination_reason": "idle_timeout",
-                        "partial_text": "".join(partial_parts),
+                        "type": "race_won",
                         "service": service,
                         "model": model,
                         "stream_id": stream_id,
                         "llm_slot": llm_slot,
+                        "race_id": coordinator.race_id,
+                        "race_role": str(winner_snapshot.get("race_role") or ""),
+                        "race_status": "won",
                     })
-                    break
-                if outcome == "control":
-                    action = str(value or "cancel")
-                    partial_text = "".join(partial_parts)
-                    if action == "use_partial" and partial_text:
-                        elapsed = max(0.0, time.time() - float(record["started_at"]))
-                        tokens = _approx_tokens(partial_text)
+                    for loser_id in coordinator.race_attempt_ids:
+                        if loser_id == stream_id:
+                            continue
+                        loser_snapshot = coordinator.snapshots.get(loser_id) or {}
                         await _emit_stream_event({
                             **metadata,
-                            "type": "done",
-                            "text": partial_text,
-                            "partial": True,
-                            "termination_reason": "manual_partial",
-                            "completion_tokens": tokens,
-                            "prompt_tokens": _approx_input_tokens(messages),
-                            "elapsed": elapsed,
-                            "tps": tokens / elapsed if elapsed > 0 else 0.0,
-                            "ttft": record.get("ttft"),
+                            "type": "race_lost",
                             "service": service,
                             "model": model,
-                            "stream_id": stream_id,
+                            "stream_id": loser_id,
                             "llm_slot": llm_slot,
+                            "race_id": coordinator.race_id,
+                            "race_role": str(loser_snapshot.get("race_role") or ""),
+                            "race_status": "lost",
+                            "partial_text": str(loser_snapshot.get("text") or ""),
+                            "winner_stream_id": stream_id,
                         })
-                        print(
-                            f"[LLM_STREAM] 부분 응답 사용 요청: stream_id={stream_id}, "
-                            f"partial_len={len(partial_text)}"
-                        )
-                        return PartialStreamText(partial_text)
-                    if action == "use_partial":
-                        action = "cancel"
-                        error_msg = "부분 응답이 비어 있어 사용할 수 없습니다"
-                        print(f"[LLM_STREAM] {error_msg}: stream_id={stream_id}")
-                    await _emit_stream_event({
-                        **metadata,
-                        "type": "cancelled",
-                        "reason": action,
-                        "error": error_msg,
-                        "partial_text": partial_text,
-                        "service": service,
-                        "model": model,
-                        "stream_id": stream_id,
-                        "llm_slot": llm_slot,
-                    })
-                    if action == "retry":
-                        retry_requested = True
-                        print(
-                            f"[LLM_STREAM] 수동 재시도 시작: old_stream_id={stream_id}, "
-                            f"slot={llm_slot}, partial_len={len(partial_text)}"
-                        )
-                    else:
-                        reason = error_msg or f"{service} stream 사용자가 중지함"
-                        return ManualCancelledText(f"[LLM 실패] {reason}")
-                    break
+                    await _emit_manual_parallel_history(
+                        coordinator.history_payload(stream_id)
+                    )
+                    print(
+                        f"[LLM_STREAM] 병렬 경쟁 승자 확정: "
+                        f"race_id={coordinator.race_id}, winner={stream_id}, "
+                        f"role={winner_snapshot.get('race_role')}"
+                    )
+                _apply_stream_outcome_usage(outcome)
+                return outcome.get("value", "")
 
-                event = value
-                event_type = event.get("type")
-                payload = {
-                    **metadata,
-                    **event,
-                    "stream_id": stream_id,
-                    "llm_slot": llm_slot,
-                }
-                if event_type == "delta":
-                    delta_text = str(event.get("text", "") or "")
-                    if delta_text:
-                        partial_parts.append(delta_text)
-                    record["text"] = "".join(partial_parts)
-                    record["status"] = "스트리밍"
-                elif event_type == "done":
-                    done_seen = True
-                    final_text = str(event.get("text", "") or "")
-                    record["text"] = final_text or "".join(partial_parts)
-                    record["status"] = "완료"
-                elif event_type == "error":
-                    error_msg = str(event.get("error", "") or "알 수 없는 스트리밍 오류")
-                    record["status"] = "오류"
-                for source_key, target_key in (
-                    ("completion_tokens", "completion_tokens"),
-                    ("prompt_tokens", "prompt_tokens"),
-                    ("elapsed", "elapsed"),
-                    ("tps", "tps"),
-                    ("ttft", "ttft"),
+            if coordinator.has_unprocessed_attempts(processed_ids):
+                continue
+
+            coordinator.resolved = True
+            _apply_stream_outcome_usage(outcome)
+            if coordinator.parallel_started:
+                await _emit_manual_parallel_history(coordinator.history_payload(""))
+                failures = [
+                    str(
+                        (coordinator.finished_outcomes.get(sid) or {}).get("error")
+                        or "알 수 없는 실패"
+                    )
+                    for sid in coordinator.race_attempt_ids
+                ]
+                combined = " / ".join(failures)
+                print(
+                    f"[LLM_STREAM] 병렬 경쟁 전체 실패: "
+                    f"race_id={coordinator.race_id}, errors={combined}"
+                )
+                if any(
+                    (coordinator.finished_outcomes.get(sid) or {}).get("kind")
+                    == "cancelled"
+                    for sid in coordinator.race_attempt_ids
                 ):
-                    if event.get(source_key) is not None:
-                        record[target_key] = event[source_key]
-                record["last_event_at"] = time.time()
-                # 상위 호출자(callLLMTask 등)가 usage 싱크를 걸어두었으면 done/error 의
-                # 토큰 통계와 실패 원인을 끌어올린다. 비스트리밍 경로에선 이 분기가 안 타서
-                # sink 가 비게 되며, callLLMTask 끝에서 근사치 폴백으로 채운다.
-                _sink = _usage_sink_ctx.get()
-                if _sink is not None:
-                    if event_type == "error":
-                        _sink["error"] = error_msg
-                    for _uk in ("completion_tokens", "prompt_tokens", "elapsed", "tps", "ttft"):
-                        if event.get(_uk) is not None:
-                            _sink[_uk] = event[_uk]
-                payload["partial_text"] = str(record.get("text", "") or "")
-                payload["partial_length"] = len(payload["partial_text"])
-                await _emit_request_stream_observer(payload)
-                await _emit_stream_event(payload)
-                if event_type in ("done", "error"):
-                    break
-        except asyncio.CancelledError:
-            print(
-                f"[LLM_STREAM] 상위 작업 취소 전파: stream_id={stream_id}, "
-                f"slot={llm_slot}, service={service}, model={model}"
-            )
-            await _emit_stream_event({
-                **metadata,
-                "type": "cancelled",
-                "reason": "parent_cancelled",
-                "partial_text": "".join(partial_parts),
-                "service": service,
-                "model": model,
-                "stream_id": stream_id,
-                "llm_slot": llm_slot,
-            })
-            raise
-        except Exception as e:
-            error_msg = f"{service} stream 소비 예외: {e}"
-            print(
-                f"[LLM_STREAM] {error_msg}: stream_id={stream_id}, "
-                f"partial_len={len(''.join(partial_parts))}"
-            )
-            traceback.print_exc()
-            await _emit_stream_event({
-                **metadata,
-                "type": "error",
-                "error": error_msg,
-                "partial_text": "".join(partial_parts),
-                "service": service,
-                "model": model,
-                "stream_id": stream_id,
-                "llm_slot": llm_slot,
-            })
-        finally:
-            record["active"] = False
-            await _close_stream_iterator(iterator)
-            _active_streams.pop(stream_id, None)
-
-        if retry_requested:
-            continue
-        if done_seen and final_text:
-            return final_text
-        if error_msg:
-            print(
-                f"[LLM_STREAM] 호출 실패: slot={llm_slot} service={service} "
-                f"model={model} error={error_msg}"
-            )
-            return f"[LLM 실패] {error_msg}"
-
+                    return ManualCancelledText(
+                        f"[LLM 실패] 병렬 요청이 모두 중지되거나 실패했습니다: {combined}"
+                    )
+                return f"[LLM 실패] 병렬 요청이 모두 실패했습니다: {combined}"
+            return outcome.get("value") or f"[LLM 실패] {outcome.get('error') or '스트림 실패'}"
+    except asyncio.CancelledError:
         print(
-            f"[LLM_STREAM] 빈 응답: slot={llm_slot} service={service} "
-            f"model={model} done_seen={done_seen}"
+            f"[LLM_STREAM] 상위 작업 취소: slot={llm_slot}, "
+            f"service={service}, model={model}, attempts={len(coordinator.tasks)}"
         )
-        return f"[LLM 실패] {service} 스트리밍 응답이 비어 있습니다"
+        for stream_id, task in coordinator.tasks.items():
+            if task.done():
+                continue
+            record = _active_streams.get(stream_id)
+            if record is not None:
+                record["_forced_cancel_reason"] = "parent_cancelled"
+            task.cancel()
+        await asyncio.gather(*coordinator.tasks.values(), return_exceptions=True)
+        raise
 
 
 def _approx_tokens(text: str) -> int:

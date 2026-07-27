@@ -14,6 +14,7 @@ import uuid
 import time
 import asyncio
 import datetime
+import hashlib
 import traceback
 
 import yaml
@@ -210,6 +211,45 @@ LIGHBD_HISTORY_PATH = os.path.join(LOG_DIR, "lighbd_history.jsonl")
 LIGHBD_GENERAL_HISTORY_MAX = 20
 LIGHBD_MULTI_CHAR_HISTORY_MAX = 100
 LIGHBD_HISTORY_MAX = LIGHBD_GENERAL_HISTORY_MAX + LIGHBD_MULTI_CHAR_HISTORY_MAX
+_MANUAL_RACE_SUCCESS_SUPPRESSIONS: list[dict] = []
+
+
+def _current_async_task_id() -> int:
+    try:
+        task = asyncio.current_task()
+    except RuntimeError:
+        return 0
+    return id(task) if task is not None else 0
+
+
+def _history_output_digest(output) -> str:
+    return hashlib.sha256(
+        str(output or "").encode("utf-8", errors="replace")
+    ).hexdigest()
+
+
+def _consume_manual_race_success_suppression(record: dict) -> bool:
+    """core가 이미 기록한 병렬 승자와 호출자 측 일반 OK 기록의 중복을 막는다."""
+    if str(record.get("status") or "").lower() != "ok":
+        return False
+    now = time.monotonic()
+    task_id = _current_async_task_id()
+    output_digest = _history_output_digest(record.get("output"))
+    kept = []
+    matched = False
+    for pending in _MANUAL_RACE_SUCCESS_SUPPRESSIONS:
+        if float(pending.get("expires_at") or 0.0) <= now:
+            continue
+        if (
+            not matched
+            and int(pending.get("task_id") or 0) == task_id
+            and str(pending.get("output_digest") or "") == output_digest
+        ):
+            matched = True
+            continue
+        kept.append(pending)
+    _MANUAL_RACE_SUCCESS_SUPPRESSIONS[:] = kept
+    return matched
 
 
 def _is_multi_char_history_record(record: object) -> bool:
@@ -249,6 +289,13 @@ def _log_lighbd_history(record: dict) -> None:
 
     CLAUDE.md 규칙: write 전 백업. 요구사항/ 폴더에 .bak 보관.
     """
+    if _consume_manual_race_success_suppression(record):
+        print(
+            f"[LIGHBD] 병렬 경쟁 승자 일반 OK 중복 기록 생략: "
+            f"call_name={record.get('call_name')!r}, "
+            f"output_len={len(str(record.get('output') or ''))}"
+        )
+        return
     try:
         os.makedirs(LOG_DIR, exist_ok=True)
         history_backup_dir = os.path.join(BASE_DIR, "요구사항")
@@ -282,6 +329,143 @@ def _log_lighbd_history(record: dict) -> None:
             f.writelines(existing_lines)
     except Exception as e:
         print(f"[LIGHBD] history 쓰기 실패: {e}")
+        traceback.print_exc()
+
+
+def _log_manual_parallel_race(event: dict) -> None:
+    """수동 병렬 재시도의 두 시도를 승리/폐기 상태로 자세히에 기록한다."""
+    race_id = str(event.get("race_id") or "")
+    attempts = event.get("attempts")
+    if not race_id:
+        print(f"[LIGHBD] 병렬 경쟁 이력 기록 실패: race_id 없음 event={event}")
+        return
+    if not isinstance(attempts, list) or len(attempts) < 2:
+        print(
+            f"[LIGHBD] 병렬 경쟁 이력 기록 실패: 시도 정보 부족 "
+            f"race_id={race_id}, attempts={attempts!r}"
+        )
+        return
+
+    winner_stream_id = str(event.get("winner_stream_id") or "")
+    base_call_name = str(
+        event.get("call_name")
+        or event.get("task_key")
+        or "LLM 요청"
+    )
+    input_messages = event.get("input")
+    if not isinstance(input_messages, list):
+        print(
+            f"[LIGHBD] 병렬 경쟁 입력 형식 오류: "
+            f"race_id={race_id}, input_type={type(input_messages).__name__}; 빈 입력 사용"
+        )
+        input_messages = []
+
+    records = []
+    for attempt in attempts:
+        if not isinstance(attempt, dict):
+            print(
+                f"[LIGHBD] 병렬 경쟁 시도 형식 오류: "
+                f"race_id={race_id}, attempt={attempt!r}"
+            )
+            continue
+        stream_id = str(attempt.get("stream_id") or "")
+        role = str(attempt.get("race_role") or "")
+        role_label = "병렬 재시도" if role == "parallel" else "원본"
+        outcome_kind = str(attempt.get("outcome_kind") or "")
+        is_winner = bool(winner_stream_id and stream_id == winner_stream_id)
+        if is_winner:
+            status = "race_won"
+            race_result = "winner"
+            error_text = ""
+        elif winner_stream_id and str(attempt.get("race_status") or "") == "lost":
+            status = "race_lost"
+            race_result = "discarded"
+            error_text = "더 빠른 응답이 채택되어 이 응답은 폐기되었습니다."
+        elif outcome_kind == "cancelled":
+            status = "cancelled"
+            race_result = "cancelled"
+            error_text = str(attempt.get("error") or "요청이 중지되었습니다.")
+        elif outcome_kind == "failure":
+            status = "error"
+            race_result = "failed"
+            error_text = str(attempt.get("error") or "병렬 요청이 실패했습니다.")
+        elif winner_stream_id:
+            status = "race_lost"
+            race_result = "discarded"
+            error_text = "더 빠른 응답이 채택되어 이 응답은 폐기되었습니다."
+        else:
+            status = "error"
+            race_result = "failed"
+            error_text = str(attempt.get("error") or "병렬 요청이 실패했습니다.")
+
+        record = {
+            "ts": datetime.datetime.now().isoformat(timespec="seconds"),
+            "history_id": f"{race_id}:{role or stream_id}",
+            "prompt_id": str(event.get("task_key") or race_id),
+            "call_name": f"{base_call_name} · {role_label}",
+            "task_key": str(event.get("task_key") or ""),
+            "service": str(event.get("service") or ""),
+            "model": str(event.get("model") or attempt.get("model") or ""),
+            "llm_slot": str(event.get("llm_slot") or attempt.get("llm_slot") or ""),
+            "input": input_messages,
+            "output": str(attempt.get("text") or ""),
+            "completion_tokens": int(attempt.get("completion_tokens") or 0),
+            "prompt_tokens": int(attempt.get("prompt_tokens") or 0),
+            "elapsed": round(float(attempt.get("elapsed") or 0.0), 3),
+            "tps": round(float(attempt.get("tps") or 0.0), 1),
+            "ttft": (
+                round(float(attempt.get("ttft")), 3)
+                if attempt.get("ttft") is not None
+                else None
+            ),
+            "status": status,
+            "race_id": race_id,
+            "race_role": role,
+            "race_result": race_result,
+            "stream_id": stream_id,
+            "winner_stream_id": winner_stream_id,
+        }
+        if error_text:
+            record["error"] = error_text
+        records.append(record)
+
+    if len(records) < 2:
+        print(
+            f"[LIGHBD] 병렬 경쟁 이력 기록 실패: 유효한 레코드 부족 "
+            f"race_id={race_id}, valid={len(records)}"
+        )
+        return
+
+    # 최신 목록에서 승자가 먼저 보이도록 패배를 먼저 append한다.
+    ordered = sorted(
+        records,
+        key=lambda record: 1 if record.get("status") == "race_won" else 0,
+    )
+    try:
+        for record in ordered:
+            _log_lighbd_history(record)
+        winner_record = next(
+            (record for record in records if record.get("status") == "race_won"),
+            None,
+        )
+        if winner_record is not None:
+            _MANUAL_RACE_SUCCESS_SUPPRESSIONS.append({
+                "task_id": int(event.get("owner_task_id") or 0),
+                "output_digest": _history_output_digest(
+                    winner_record.get("output")
+                ),
+                "expires_at": time.monotonic() + 30.0,
+            })
+        print(
+            f"[LIGHBD] 병렬 경쟁 자세히 기록 완료: "
+            f"race_id={race_id}, winner={winner_stream_id or '(없음)'}, "
+            f"records={len(records)}"
+        )
+    except Exception as e:
+        print(
+            f"[LIGHBD] 병렬 경쟁 자세히 기록 실패: "
+            f"race_id={race_id}, error={type(e).__name__}: {e}"
+        )
         traceback.print_exc()
 
 

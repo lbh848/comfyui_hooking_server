@@ -759,6 +759,18 @@ async def _notify_llm_stream_event(event: dict):
     await notify_frontend("lighbd_llm_stream", event)
 
 
+async def _record_manual_parallel_race(event: dict):
+    """수동 병렬 재시도의 승자/폐기 시도를 LB 자세히 이력에 기록한다."""
+    try:
+        lighbd_service._log_manual_parallel_race(event)
+    except Exception as e:
+        print(
+            f"[LLM_STREAM] 병렬 재시도 자세히 기록 실패: "
+            f"race_id={event.get('race_id', '')}, error={type(e).__name__}: {e}"
+        )
+        traceback.print_exc()
+
+
 async def notify_bot_selected_changed(selected: str) -> None:
     """활성봇(bot_selected) 변경을 프론트엔드 삽화 백업 탭에 브로드캐스트한다.
 
@@ -776,6 +788,7 @@ async def notify_bot_selected_changed(selected: str) -> None:
 
 
 llm_service.set_stream_notify_func(_notify_llm_stream_event)
+llm_service.set_manual_parallel_history_func(_record_manual_parallel_race)
 
 current_original_workflow = None   # 원본 워크플로우 (ComfyUI 드래그앤드롭용)
 current_api_workflow = None        # API 형식 워크플로우 (실행용)
@@ -5479,7 +5492,7 @@ async def handle_api_llm_streams(request: web.Request) -> web.Response:
 
 
 async def handle_api_llm_stream_control(request: web.Request) -> web.Response:
-    """활성 스트림에 cancel/retry/use_partial 제어를 요청한다."""
+    """활성 스트림에 cancel/retry/parallel_retry/use_partial 제어를 요청한다."""
     stream_id = str(request.match_info.get("stream_id", "") or "").strip()
     if not stream_id:
         print("[LLM_STREAM_API] 제어 요청 거부: stream_id가 비어 있음")

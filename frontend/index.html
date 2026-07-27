@@ -7761,6 +7761,9 @@
         .lighbd-live-card-head { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-bottom: 1px solid var(--border); background: rgba(255,255,255,0.025); }
         .lighbd-live-card-title { min-width: 0; font-size: 0.82rem; font-weight: 700; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .lighbd-live-card-slot { font-size: 0.62rem; font-weight: 700; color: #80deea; background: rgba(0,188,212,0.14); border: 1px solid rgba(0,188,212,0.35); border-radius: 5px; padding: 1px 6px; flex-shrink: 0; }
+        .lighbd-live-card-race { display: none; font-size: 0.62rem; font-weight: 700; border-radius: 5px; padding: 1px 6px; flex-shrink: 0; }
+        .lighbd-live-card-race.is-original { display: inline-flex; color: #ffe082; background: rgba(255,193,7,0.14); border: 1px solid rgba(255,193,7,0.35); }
+        .lighbd-live-card-race.is-parallel { display: inline-flex; color: #ce93d8; background: rgba(156,39,176,0.16); border: 1px solid rgba(156,39,176,0.38); }
         .lighbd-live-card-status { margin-left: auto; font-size: 0.68rem; font-weight: 600; padding: 2px 8px; border-radius: 999px; flex-shrink: 0; }
         .lighbd-live-card-status.st-run { color: #80deea; background: rgba(0,188,212,0.16); }
         .lighbd-live-card-status.st-done { color: #a5d6a7; background: rgba(76,175,80,0.16); }
@@ -7775,6 +7778,8 @@
         .lighbd-live-card-out { margin: 0; padding: 9px 12px; max-height: 180px; overflow: auto; overflow-anchor: none; color: var(--text); font-family: monospace; font-size: 0.74rem; line-height: 1.45; white-space: pre-wrap; word-break: break-word; background: rgba(0,0,0,0.18); }
         @media (max-width: 680px) {
             .lighbd-live-shell { width: 100%; height: 92vh; }
+            .lighbd-live-card-head { flex-wrap: wrap; }
+            .lighbd-live-card-actions { width: 100%; margin-left: 0; justify-content: flex-end; overflow-x: auto; }
             .lighbd-live-card-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
         }
     </style>
@@ -20182,6 +20187,11 @@
                 tps: 0,
                 ttft: null,
                 hasDelta: false,
+                raceId: '',
+                raceRole: '',
+                raceStatus: '',
+                parallelRetrySupported: false,
+                parallelRetryAvailable: false,
             };
         }
 
@@ -20251,6 +20261,11 @@
                     state.tps = Number(item.tps ?? 0);
                     state.ttft = item.ttft == null ? null : Number(item.ttft);
                     state.hasDelta = state.output.length > 0;
+                    state.raceId = String(item.race_id || '');
+                    state.raceRole = String(item.race_role || '');
+                    state.raceStatus = String(item.race_status || '');
+                    state.parallelRetrySupported = !!item.parallel_retry_supported;
+                    state.parallelRetryAvailable = !!item.parallel_retry_available;
                     if (item.started_at) state._startedAt = Number(item.started_at) * 1000;
                     _lighbdLlmStreams.set(id, state);
                 }
@@ -20284,7 +20299,12 @@
                 });
                 const payload = await response.json();
                 if (!response.ok || !payload.success) throw new Error(payload.error || `HTTP ${response.status}`);
-                const labels = { retry: '재시도', use_partial: '현재 내용 사용', cancel: '중지' };
+                const labels = {
+                    retry: '재시도',
+                    parallel_retry: '병렬로 재시도',
+                    use_partial: '현재 내용 사용',
+                    cancel: '중지',
+                };
                 showToast(`LLM 스트림 ${labels[action] || action} 요청을 보냈습니다.`, 'info');
             } catch (error) {
                 console.error('[LB_STREAM] 스트림 제어 실패:', streamId, action, error);
@@ -20305,6 +20325,12 @@
             state.slot = data.llm_slot || state.slot;
             state.callName = data.call_name || data.task_key || state.callName;
             state.model = data.model || state.model;
+            if (data.race_id !== undefined) state.raceId = String(data.race_id || '');
+            if (data.race_role !== undefined) state.raceRole = String(data.race_role || '');
+            if (data.race_status !== undefined) state.raceStatus = String(data.race_status || '');
+            if (data.parallel_retry_supported !== undefined) {
+                state.parallelRetrySupported = !!data.parallel_retry_supported;
+            }
             // API 키 누락처럼 provider가 start 없이 곧바로 error를 내는 경로도 창에 표시한다.
             if (isNewStream && t !== 'start') _lighbdSelectedStreamId = streamId;
 
@@ -20353,7 +20379,36 @@
                 if (data.partial_text) state.output = String(data.partial_text);
                 const reason = data.reason || 'cancel';
                 state.status = (state.callName ? state.callName + ' · ' : '')
-                    + (reason === 'retry' ? '재시도 전환' : '중지');
+                    + (reason === 'retry'
+                        ? '재시도 전환'
+                        : (reason === 'race_lost' ? '병렬 경쟁 패배 · 폐기' : '중지'));
+                if (reason === 'race_lost') state.raceStatus = 'lost';
+            } else if (t === 'race_started') {
+                state.active = true;
+                state.raceId = String(data.race_id || state.raceId || '');
+                state.raceRole = String(data.race_role || state.raceRole || 'original');
+                state.raceStatus = 'racing';
+                state.status = (state.callName ? state.callName + ' · ' : '') + '병렬 경쟁 중';
+            } else if (t === 'race_contender_started') {
+                state.active = true;
+                state.raceId = String(data.race_id || state.raceId || '');
+                state.raceRole = String(data.race_role || state.raceRole || 'parallel');
+                state.raceStatus = 'racing';
+                state.status = (state.callName ? state.callName + ' · ' : '') + '병렬 재시도 시작';
+                if (!state._startedAt) state._startedAt = Date.now();
+            } else if (t === 'parallel_retry_rejected') {
+                const reason = data.error || '병렬 재시도를 시작할 수 없습니다.';
+                console.error('[LB_STREAM] 병렬 재시도 시작 거부:', streamId, reason);
+                showToast(reason, 'error');
+            } else if (t === 'race_won') {
+                state.active = false;
+                state.raceStatus = 'won';
+                state.status = (state.callName ? state.callName + ' · ' : '') + '병렬 경쟁 승리';
+            } else if (t === 'race_lost') {
+                state.active = false;
+                state.raceStatus = 'lost';
+                if (data.partial_text !== undefined) state.output = String(data.partial_text || state.output);
+                state.status = (state.callName ? state.callName + ' · ' : '') + '병렬 경쟁 패배 · 폐기';
             } else {
                 console.error('[LB_STREAM] 알 수 없는 이벤트 타입:', data);
                 return;
@@ -20457,9 +20512,11 @@
                 <div class="lighbd-live-card-head">
                     <span class="lighbd-live-card-slot"></span>
                     <span class="lighbd-live-card-title"></span>
+                    <span class="lighbd-live-card-race"></span>
                     <span class="lighbd-live-card-status st-run"></span>
                     <div class="lighbd-live-card-actions">
                         <button type="button" class="act-retry" title="현재 연결을 끊고 같은 요청을 새 스트림으로 재시도">재시도</button>
+                        <button type="button" class="act-parallel-retry" title="원본을 유지한 채 같은 요청을 하나 더 실행하고 먼저 완료된 응답을 사용">병렬로 재시도</button>
                         <button type="button" class="act-partial" title="현재까지 받은 내용을 결과로 사용">현재 내용 사용</button>
                         <button type="button" class="act-cancel" title="현재 스트림 중지">중지</button>
                     </div>
@@ -20476,6 +20533,7 @@
                 root,
                 slot: root.querySelector('.lighbd-live-card-slot'),
                 title: root.querySelector('.lighbd-live-card-title'),
+                race: root.querySelector('.lighbd-live-card-race'),
                 status: root.querySelector('.lighbd-live-card-status'),
                 fModel: root.querySelector('.f-model'),
                 fPtok: root.querySelector('.f-ptok'),
@@ -20485,11 +20543,13 @@
                 fTtft: root.querySelector('.f-ttft'),
                 out: root.querySelector('.lighbd-live-card-out'),
                 retry: root.querySelector('.act-retry'),
+                parallelRetry: root.querySelector('.act-parallel-retry'),
                 partial: root.querySelector('.act-partial'),
                 cancel: root.querySelector('.act-cancel'),
                 lastOutput: null,
             };
             card.retry.addEventListener('click', () => _controlLighbdStream(state.id, 'retry'));
+            card.parallelRetry.addEventListener('click', () => _controlLighbdStream(state.id, 'parallel_retry'));
             card.partial.addEventListener('click', () => _controlLighbdStream(state.id, 'use_partial'));
             card.cancel.addEventListener('click', () => _controlLighbdStream(state.id, 'cancel'));
             return card;
@@ -20505,9 +20565,14 @@
             const streaming = [..._lighbdLlmStreams.values()]
                 .filter(s => s.active && s.id !== 'legacy');
             const ordered = streaming.slice(-_LIGHTBD_LIVE_MAX_CARDS);
+            const activeRaces = new Set(
+                streaming.map(s => s.raceId).filter(Boolean)
+            );
 
             // 요약
-            summary.innerHTML = `<span class="pill">스트리밍 ${streaming.length}</span><span>최대 ${_LIGHTBD_LIVE_MAX_CARDS}개 표시</span>`;
+            summary.innerHTML = `<span class="pill">스트리밍 ${streaming.length}</span>`
+                + (activeRaces.size ? `<span class="pill">병렬 경쟁 ${activeRaces.size}</span>` : '')
+                + `<span>최대 ${_LIGHTBD_LIVE_MAX_CARDS}개 표시</span>`;
 
             if (ordered.length === 0) {
                 list.innerHTML = '<div class="lighbd-live-empty">진행 중인 LLM 스트림이 없습니다.</div>';
@@ -20545,12 +20610,27 @@
                 card.fElapsed.textContent = Number(state.elapsed || 0).toFixed(2);
                 card.fTps.textContent = Number(state.tps || 0).toFixed(1);
                 card.fTtft.textContent = state.ttft == null ? '-' : Math.round(state.ttft * 1000) + 'ms';
+                const raceLabels = { original: '원본', parallel: '병렬 재시도' };
+                card.race.textContent = raceLabels[state.raceRole] || '';
+                card.race.className = 'lighbd-live-card-race'
+                    + (state.raceRole === 'original' ? ' is-original' : '')
+                    + (state.raceRole === 'parallel' ? ' is-parallel' : '');
                 card.root.classList.toggle('is-active', !!state.active);
                 card.root.classList.toggle('is-error', !state.active && !!(state.status && state.status.includes('오류')));
                 const controlsDisabled = !state.active || state.id === 'legacy';
-                card.retry.disabled = controlsDisabled;
+                card.retry.disabled = controlsDisabled || !!state.raceId;
+                card.parallelRetry.disabled = controlsDisabled
+                    || !state.parallelRetrySupported
+                    || !!state.raceId;
                 card.cancel.disabled = controlsDisabled;
                 card.partial.disabled = controlsDisabled || !state.output;
+                if (!state.parallelRetrySupported) {
+                    card.parallelRetry.title = '이 LLM 슬롯의 동시 요청 상한이 1이라 병렬 실행할 수 없습니다.';
+                } else if (state.raceId) {
+                    card.parallelRetry.title = '이미 이 요청이 병렬 경쟁 중입니다.';
+                } else {
+                    card.parallelRetry.title = '원본을 유지한 채 같은 요청을 하나 더 실행하고 먼저 완료된 응답을 사용';
+                }
 
                 // DOM을 다시 삽입하지 않고, 카드 내부 pre를 매 렌더마다 하단에 고정한다.
                 const outText = state.output || '-';
@@ -20712,6 +20792,23 @@
                             <pre class="lighbd-detail-content">${escapeHtml(rawOutput || '-')}</pre>
                         </section>`;
             const ttft = record.ttft == null ? '-' : `${record.ttft}s`;
+            const raceRoleLabels = { original: '원본', parallel: '병렬 재시도' };
+            const raceResultLabels = {
+                winner: '먼저 완료되어 채택',
+                discarded: '다른 응답이 먼저 완료되어 폐기',
+                failed: '요청 실패',
+                cancelled: '요청 중지',
+            };
+            const raceSectionHtml = record.race_id
+                ? `<section class="lighbd-detail-section">
+                            <div class="lighbd-detail-section-title">병렬 재시도 기록</div>
+                            <pre class="lighbd-detail-content">경쟁 그룹: ${escapeHtml(record.race_id)}
+역할: ${escapeHtml(raceRoleLabels[record.race_role] || record.race_role || '-')}
+결과: ${escapeHtml(raceResultLabels[record.race_result] || record.race_result || '-')}
+스트림 ID: ${escapeHtml(record.stream_id || '-')}
+채택 스트림 ID: ${escapeHtml(record.winner_stream_id || '(없음)')}</pre>
+                        </section>`
+                : '';
 
             const overlay = document.createElement('div');
             overlay.id = 'lighbd-history-detail-overlay';
@@ -20739,6 +20836,7 @@
                             <div class="lighbd-detail-section-title">입력 전체</div>
                             <pre class="lighbd-detail-content">${escapeHtml(inputText)}</pre>
                         </section>
+                        ${raceSectionHtml}
                         ${outputSectionHtml}
                     </div>
                 </div>`;
