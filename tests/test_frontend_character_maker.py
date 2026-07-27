@@ -33,20 +33,74 @@ def test_character_maker_has_at_a_glance_three_rail_workflow():
     assert 'id="cm-settings-wall" class="cm-settings-wall collapsed"' in html
 
 
-def test_editor_wall_places_settings_before_fields_with_one_scroll_container():
+def test_editor_wall_keeps_single_scroll_and_fields_order():
     html = _html()
 
+    # 에디터 열은 여전히 단일 스크롤 컨테이너이고 필드 리스트 순서를 유지한다.
     editor_css = html[html.index(".cm-editor-wall {"):html.index(".cm-card {")]
     field_css = html[html.index(".cm-field-list {"):html.index(".cm-field-card {")]
-    settings_css = html[html.index(".cm-settings-wall {"):html.index(".cm-settings-wall.collapsed")]
-    settings_body_css = html[html.index(".cm-settings-body {"):html.index(".cm-setting-grid {")]
-
     assert "overflow-y: auto;" in editor_css
     assert "order: 2;" in field_css
     assert "overflow: visible;" in field_css
-    assert "order: 1;" in settings_css
-    assert "overflow-y: auto;" not in settings_body_css
-    assert "overflow: visible;" in settings_body_css
+
+
+def test_settings_wall_is_a_fixed_side_drawer_with_handle():
+    html = _html()
+
+    # 설정 패널은 에디터 열 플로우를 벗어나 우측에 뜨는 fixed 드로어.
+    settings_css = html[html.index(".cm-settings-wall {"):html.index(".cm-settings-panel {")]
+    assert "position: fixed;" in settings_css
+    assert "right: 0;" in settings_css
+    assert "z-index:" in settings_css
+
+    # 항상 보이는 명확한 손잡이 + 슬라이드 패널.
+    assert 'id="cm-settings-handle"' in html
+    assert "cm-settings-handle-text" in html  # 세로 라벨
+    assert "cm-settings-handle-arrow" in html
+    assert 'class="cm-settings-panel"' in html
+
+    # 접힘(기본)에서 패널은 우측 바깥으로 슬라이드되어 숨고, 열리면 돌아온다.
+    panel_css = html[html.index(".cm-settings-panel {"):html.index(".cm-settings-head {")]
+    assert "transform: translateX" in panel_css
+    assert ".cm-settings-wall:not(.collapsed) .cm-settings-panel" in html
+
+    # 패널 본체는 자체 스크롤을 갖는다.
+    body_css = html[html.index(".cm-settings-body {"):html.index(".cm-settings-handle {")]
+    assert "overflow-y: auto;" in body_css
+
+
+def test_settings_drawer_marks_prompt_composition_as_locked():
+    html = _html()
+
+    # 외모·복장·표정·구도는 LLM+사람 협동 영역 → 🔒 잠금(읽기 전용) 표시.
+    for field in ("appearance", "outfit", "expression", "composition"):
+        assert f'data-cm-lock-summary="{field}"' in html
+    assert "at-fill-lock-badge" in html
+    assert "🔒 잠금" in html
+    assert "function cmRenderPromptLockSummary" in html
+
+
+def test_settings_drawer_disables_items_by_asset_workflow():
+    html = _html()
+
+    # 에셋 워크플로우(ILXL/ANIMA) 기반 가용성 잠금이 프리셋 셀렉트에 반영되어 있다.
+    assert 'data-at-availability="sdxl-only"' in html
+    assert 'data-at-availability="anima"' in html
+    assert "function cmApplySettingsAvailability" in html
+    assert "getAssetWorkflowCapabilities" in html
+    # 워크플로우 셀렉트 변경 시 가용성을 다시 적용한다.
+    assert 'onchange="cmSettingChanged(); cmApplySettingsAvailability()"' in html
+
+
+def test_settings_drawer_marks_unsupported_features_as_locked():
+    html = _html()
+
+    # CM 백엔드가 소비하지 않는 항목들은 회색 잠금 표시로만 보여준다.
+    for key in ("ipadapter", "pose", "hires", "detailer", "face-crop", "style-lora", "face-lora"):
+        assert f'data-cm-unsupported="{key}"' in html, f"미지원 표시가 없습니다: {key}"
+    assert "cm-unsupported" in html
+    # 미지원 컨트롤은 비활성화되어 있다.
+    assert "<input type=\"checkbox\" disabled>" in html or 'type="checkbox" disabled' in html
 
 
 def test_only_four_fields_have_free_chip_and_text_editors():
@@ -159,29 +213,26 @@ def test_rag_settings_test_and_external_llm_routes_are_visible():
     assert "캐릭터 메이커 이미지 피드백" in html
 
 
-def test_rag_settings_include_integrated_dataset_converter_and_tidy_cards():
+def test_rag_settings_install_the_prebuilt_huggingface_index():
     html = _html()
 
     assert 'class="cm-rag-settings-page"' in html
     assert 'class="cm-rag-settings-grid"' in html
-    assert 'id="setting-character-maker-rag-data-drop"' in html
-    assert 'id="setting-character-maker-rag-data-input"' in html
-    assert 'id="setting-character-maker-rag-data-search-btn"' in html
-    assert 'id="setting-character-maker-rag-repo-path"' in html
     assert 'id="setting-character-maker-rag-data-install-btn"' in html
-    assert "auto_complete 자료 검색" in html
-    assert "직접 파일 찾기" in html
-    assert "변환 및 설치" in html
+    assert "Hugging Face variant-b" in html
+    assert "다운로드 및 설치" in html
+    assert "크기 + SHA-256" in html
     assert "/api/character_maker/rag/dataset" in html
     assert "/api/character_maker/rag/install" in html
     assert 'id="setting-character-maker-rag-data-progress"' in html
     assert 'id="setting-character-maker-rag-data-progress-fill"' in html
     assert "handleCmRagInstallProgress" in html
     assert "character_maker_rag_install_progress" in html
-    assert "cmFindRagDataset" in html
-    assert "form.append('dataset', cmRagDatasetFile" in html
-    assert "form.append('source', 'auto_complete')" in html
-    assert "form.append('repository', repository)" in html
+    assert "cmInstallRagDataset" in html
+    assert "cmRefreshRagArtifactStatus" in html
+    assert "setting-character-maker-rag-repo-path" not in html
+    assert "cmFindRagDataset" not in html
+    assert "form.append('dataset'" not in html
     assert "anchor.download = 'danbooru-tags.csv'" not in html
     assert "'character-maker-layout'" in html
 

@@ -25,14 +25,15 @@ import traceback
 import uuid
 from typing import Any, Callable
 
-import aiohttp
 from PIL import Image, ImageDraw
 
 from . import llm_prompt_edit
 from . import llm_service
+from .danbooru_rag import DanbooruRagError, get_danbooru_rag_service
 
 
 EDITABLE_FIELDS = ("appearance", "outfit", "expression", "composition")
+RAG_COLD_START_TIMEOUT_SECONDS = 300.0
 MAX_REFERENCE_COUNT = 8
 MAX_REFERENCE_BYTES = 12 * 1024 * 1024
 MAX_CHAT_ITEMS = 40
@@ -661,63 +662,81 @@ class CharacterMakerService:
             raise CharacterMakerError("LLM 응답 형식이 올바르지 않습니다.")
         return parsed
 
+    async def _ensure_rag_ready(self, service: Any) -> dict[str, Any]:
+        """Allow model/index cold start without weakening search timeouts."""
+        status = await asyncio.to_thread(service.status)
+        if status.get("loaded"):
+            return {
+                "success": True,
+                "loaded": True,
+                "row_count": int(status.get("row_count") or 0),
+                "variant": str(status.get("variant") or "b"),
+                "mode": "embedded",
+            }
+        try:
+            return await asyncio.wait_for(
+                asyncio.to_thread(service.warmup),
+                timeout=RAG_COLD_START_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError as exc:
+            print(
+                "[CHARACTER_MAKER_RAG] 내장 서비스 최초 준비 시간 초과: "
+                f"timeout={RAG_COLD_START_TIMEOUT_SECONDS}"
+            )
+            traceback.print_exc()
+            raise CharacterMakerError(
+                "내장 RAG 최초 준비가 "
+                f"{RAG_COLD_START_TIMEOUT_SECONDS:g}초 안에 끝나지 않았습니다."
+            ) from exc
+
     async def _rag_search(
         self, query: str, *, config: dict[str, Any]
     ) -> list[dict[str, Any]]:
-        base_url = str(config.get("character_maker_rag_url") or "").strip().rstrip("/")
-        if not base_url:
-            raise CharacterMakerError("Danbooru Tag RAG URL이 설정되지 않았습니다.")
         top_k = max(1, min(20, int(config.get("character_maker_rag_top_k", 5))))
         threshold = float(config.get("character_maker_rag_threshold", 0.0))
         timeout_seconds = max(
             2.0, min(120.0, float(config.get("character_maker_rag_timeout_sec", 20.0)))
         )
-        url = base_url + "/api/direct_search"
-        timeout = aiohttp.ClientTimeout(total=timeout_seconds)
+        service = get_danbooru_rag_service()
+        await self._ensure_rag_ready(service)
         try:
-            async with aiohttp.ClientSession(timeout=timeout) as client:
-                async with client.post(
-                    url,
-                    json={
-                        "query": query,
-                        "variant": "b",
-                        "top_k": top_k,
-                        "threshold": threshold,
-                        "categories": [0],
-                    },
-                ) as response:
-                    text = await response.text()
-                    if response.status != 200:
-                        print(
-                            f"[CHARACTER_MAKER_RAG] 검색 실패: query={query!r}, "
-                            f"status={response.status}, body={text[:500]!r}"
-                        )
-                        raise CharacterMakerError(
-                            f"RAG 검색 실패(HTTP {response.status}): {query}"
-                        )
-                    try:
-                        payload = json.loads(text)
-                    except json.JSONDecodeError as exc:
-                        print(
-                            f"[CHARACTER_MAKER_RAG] 검색 응답 JSON 실패: "
-                            f"query={query!r}, body={text[:500]!r}"
-                        )
-                        traceback.print_exc()
-                        raise CharacterMakerError("RAG 검색 응답이 JSON이 아닙니다.") from exc
-        except CharacterMakerError:
-            raise
-        except Exception as exc:
+            results = await asyncio.wait_for(
+                asyncio.to_thread(
+                    service.search,
+                    query,
+                    top_k=top_k,
+                    threshold=threshold,
+                    categories={0},
+                ),
+                timeout=timeout_seconds,
+            )
+        except asyncio.TimeoutError as exc:
             print(
-                f"[CHARACTER_MAKER_RAG] 검색 예외: "
-                f"url={url}, query={query!r}, error={type(exc).__name__}: {exc}"
+                "[CHARACTER_MAKER_RAG] 내장 검색 시간 초과: "
+                f"query={query!r}, timeout={timeout_seconds}"
             )
             traceback.print_exc()
-            raise CharacterMakerError(f"RAG 서버 연결 실패: {exc}") from exc
-        results = payload.get("results")
+            raise CharacterMakerError(
+                f"내장 RAG 검색이 {timeout_seconds:g}초 안에 끝나지 않았습니다."
+            ) from exc
+        except DanbooruRagError as exc:
+            print(
+                "[CHARACTER_MAKER_RAG] 내장 검색 실패: "
+                f"query={query!r}, error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            raise CharacterMakerError(str(exc)) from exc
+        except Exception as exc:
+            print(
+                "[CHARACTER_MAKER_RAG] 내장 검색 예외: "
+                f"query={query!r}, error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            raise CharacterMakerError(f"내장 RAG 검색 실패: {exc}") from exc
         if not isinstance(results, list):
             print(
                 f"[CHARACTER_MAKER_RAG] 검색 결과 누락: query={query!r}, "
-                f"payload_type={type(payload).__name__}"
+                f"result_type={type(results).__name__}"
             )
             raise CharacterMakerError("RAG 검색 결과 배열이 없습니다.")
         return [item for item in results if isinstance(item, dict) and item.get("tag")]
@@ -1014,52 +1033,31 @@ class CharacterMakerService:
         config = copy.deepcopy(self.config_getter() or {})
         if config_override:
             config.update(config_override)
-        base_url = str(config.get("character_maker_rag_url") or "").strip().rstrip("/")
-        if not base_url:
-            raise CharacterMakerError("Danbooru Tag RAG URL이 설정되지 않았습니다.")
-        timeout_seconds = max(
-            2.0, min(120.0, float(config.get("character_maker_rag_timeout_sec", 20.0)))
-        )
         started = time.perf_counter()
+        service = get_danbooru_rag_service()
         try:
-            timeout = aiohttp.ClientTimeout(total=timeout_seconds)
-            async with aiohttp.ClientSession(timeout=timeout) as client:
-                async with client.get(base_url + "/api/health") as response:
-                    health_text = await response.text()
-                    if response.status != 200:
-                        print(
-                            f"[CHARACTER_MAKER_RAG] 상태 확인 실패: "
-                            f"status={response.status}, body={health_text[:500]!r}"
-                        )
-                        raise CharacterMakerError(
-                            f"RAG 상태 확인 실패(HTTP {response.status})"
-                        )
-                    try:
-                        health = json.loads(health_text)
-                    except json.JSONDecodeError as exc:
-                        print(
-                            f"[CHARACTER_MAKER_RAG] 상태 응답 JSON 실패: "
-                            f"body={health_text[:500]!r}"
-                        )
-                        traceback.print_exc()
-                        raise CharacterMakerError("RAG 상태 응답이 JSON이 아닙니다.") from exc
+            health = await self._ensure_rag_ready(service)
             results = []
             if query.strip():
                 results = await self._rag_search(query.strip()[:300], config=config)
             else:
-                print(
-                    f"[CHARACTER_MAKER_RAG] 검색어 없이 상태 확인만 완료: "
-                    f"url={base_url}"
-                )
+                print("[CHARACTER_MAKER_RAG] 검색어 없이 내장 상태 확인만 완료")
         except CharacterMakerError:
             raise
-        except Exception as exc:
+        except DanbooruRagError as exc:
             print(
-                f"[CHARACTER_MAKER_RAG] 연결 테스트 예외: "
-                f"url={base_url}, error={type(exc).__name__}: {exc}"
+                "[CHARACTER_MAKER_RAG] 내장 테스트 실패: "
+                f"error={type(exc).__name__}: {exc}"
             )
             traceback.print_exc()
-            raise CharacterMakerError(f"RAG 연결 테스트 실패: {exc}") from exc
+            raise CharacterMakerError(str(exc)) from exc
+        except Exception as exc:
+            print(
+                "[CHARACTER_MAKER_RAG] 내장 테스트 예외: "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            raise CharacterMakerError(f"내장 RAG 테스트 실패: {exc}") from exc
         return {
             "success": True,
             "health": health,

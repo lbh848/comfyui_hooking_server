@@ -86,14 +86,11 @@ from modes.character_maker_mode import (
     CharacterMakerError,
     CharacterMakerService,
 )
-from modes.character_maker_rag_data import (
-    MAX_UPLOAD_BYTES as CHARACTER_MAKER_RAG_MAX_UPLOAD_BYTES,
-    OUTPUT_FILENAME as CHARACTER_MAKER_RAG_OUTPUT_FILENAME,
-    CharacterMakerRagDataError,
-    convert_kr_danbooru_csv,
-    ensure_rag_repository,
-    prepare_rag_install,
-    validate_rag_repository,
+from modes.danbooru_rag import (
+    DanbooruRagError,
+    DanbooruRagIndexInstaller,
+    DanbooruRagInstallError,
+    get_danbooru_rag_service,
 )
 from modes.asset_mode import CHARACTER_MAKER_TEMP_DIR
 import workflow_profiles
@@ -113,15 +110,6 @@ FRONTEND_DIR = os.path.join(BASE_DIR, "frontend")
 CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
 
 
-def _character_maker_rag_repo_dir() -> str:
-    """캐릭터 메이커 RAG 저장소 고정 경로를 현재 BASE_DIR 기준으로 반환한다.
-
-    auto_complete/ 는 .gitignore에 포함되어 커밋되지 않으므로 로컬 전용 경로다.
-    사용자 입력값 없이 항상 이 경로를 사용하며, 저장소 폴더 유무는 설치 시점에
-    validate_rag_repository() 로 검증한다. 테스트에서 BASE_DIR를 monkeypatch할 수
-    있도록 import 시점이 아닌 호출 시점에 BASE_DIR를 읽어 계산한다.
-    """
-    return os.path.join(BASE_DIR, "auto_complete", "danbooru-tag-rag")
 MODE_WORKFLOW_DIR = os.path.join(BASE_DIR, "mode_workflow")
 CURRENT_MODE_WORK_DIR = os.path.join(BASE_DIR, "current_mode_workflow")
 WORKFLOW_BACKUP_STATIC_DIR = os.path.join(BASE_DIR, "workflow_backup_static")
@@ -314,12 +302,10 @@ DEFAULT_CONFIG = {
     "embedding_api_key": "",      # 임베딩 API 키
     "embedding_model": "voyage-4-large",  # 임베딩 모델명
     "character_maker_rag_enabled": False,
-    "character_maker_rag_url": "http://127.0.0.1:3333",
-    "character_maker_rag_repo_path": _character_maker_rag_repo_dir(),
     "character_maker_rag_top_k": 5,
     "character_maker_rag_threshold": 0.0,
     "character_maker_rag_timeout_sec": 20.0,
-    "character_maker_rag_autostart": False,  # 매니저 시작 시 로컬 RAG 함께 시작
+    "character_maker_rag_autostart": False,  # 서버 시작 시 내장 RAG 미리 로드
     "outfit_prompt_file": "",   # 복장정리프롬프트 파일명 (customprompt/)
     "restore_prompt_file": "",  # 워크플로우 복원 프롬프트 파일명 (customprompt/)
     "restore_mode_enabled": False,  # 워크플로우 복원 프롬프트 활성화 여부
@@ -9425,21 +9411,6 @@ async def handle_api_config(request: web.Request) -> web.Response:
                     body["character_maker_rag_autostart"] = bool(
                         body.get("character_maker_rag_autostart")
                     )
-                if "character_maker_rag_url" in body:
-                    rag_url = str(body.get("character_maker_rag_url") or "").strip().rstrip("/")
-                    if not re.fullmatch(r"https?://[^\s]+", rag_url):
-                        raise ValueError(
-                            "캐릭터 메이커 RAG URL은 http:// 또는 https:// 주소여야 합니다."
-                        )
-                    body["character_maker_rag_url"] = rag_url
-                if "character_maker_rag_repo_path" in body:
-                    # 저장소 경로는 auto_complete/danbooru-tag-rag 고정.
-                    # 사용자 입력값을 무시하고 항상 고정 경로로 강제한다.
-                    # 저장소 폴더 유무는 이 시점이 아닌 설치 시점에 검증하여,
-                    # 저장소 미클론 상태에서 설정 저장 전체가 거부되는 일을 막는다.
-                    body["character_maker_rag_repo_path"] = (
-                        _character_maker_rag_repo_dir()
-                    )
                 if "character_maker_rag_top_k" in body:
                     rag_top_k = int(body.get("character_maker_rag_top_k"))
                     if not 1 <= rag_top_k <= 20:
@@ -12945,13 +12916,6 @@ async def handle_api_character_maker_rag_test(request: web.Request) -> web.Respo
         if not isinstance(body, dict):
             raise CharacterMakerError("RAG 테스트 요청은 객체여야 합니다.")
         override = {}
-        if "url" in body:
-            rag_url = str(body.get("url") or "").strip().rstrip("/")
-            if not re.fullmatch(r"https?://[^\s]+", rag_url):
-                raise CharacterMakerError(
-                    "RAG URL은 http:// 또는 https:// 주소여야 합니다."
-                )
-            override["character_maker_rag_url"] = rag_url
         if "top_k" in body:
             top_k = int(body.get("top_k"))
             if not 1 <= top_k <= 20:
@@ -12972,107 +12936,32 @@ async def handle_api_character_maker_rag_test(request: web.Request) -> web.Respo
         )
         return web.json_response(result)
     except Exception as exc:
-        return _character_maker_error_response("RAG 연결 테스트", exc)
+        return _character_maker_error_response("내장 RAG 테스트", exc)
 
 
-def _character_maker_rag_dataset_status() -> dict[str, Any]:
-    auto_complete_dir = os.path.realpath(os.path.join(BASE_DIR, "auto_complete"))
-    canonical_path = os.path.realpath(
-        os.path.join(auto_complete_dir, "danbooru.csv")
-    )
-    preferred_name = "KR_danbooru_tags_with_description v3_modified.csv"
-    dataset_path = ""
-    candidates: list[str] = []
-    if not os.path.isdir(auto_complete_dir):
-        print(
-            "[CHARACTER_MAKER_RAG_DATA] auto_complete 폴더 없음: "
-            f"path={auto_complete_dir!r}"
-        )
+_character_maker_rag_install_lock = asyncio.Lock()
+_character_maker_rag_runtime_lock = asyncio.Lock()
+_character_maker_rag_service = get_danbooru_rag_service()
+_character_maker_rag_installer = DanbooruRagIndexInstaller()
+
+
+def _character_maker_rag_runtime_snapshot() -> dict[str, Any]:
+    status = _character_maker_rag_service.status()
+    if status["loaded"]:
+        state = "running"
+    elif status["error"]:
+        state = "error"
     else:
-        try:
-            for entry in os.scandir(auto_complete_dir):
-                if (
-                    entry.is_file()
-                    and entry.name.casefold().endswith(".csv")
-                    and entry.name.casefold().startswith(
-                        "kr_danbooru_tags_with_description"
-                    )
-                ):
-                    candidates.append(entry.name)
-        except OSError as exc:
-            print(
-                "[CHARACTER_MAKER_RAG_DATA] auto_complete 검색 실패: "
-                f"path={auto_complete_dir!r}, error={type(exc).__name__}: {exc}"
-            )
-            traceback.print_exc()
-            raise CharacterMakerError(
-                f"auto_complete 폴더를 검색하지 못했습니다: {exc}"
-            ) from exc
-
-        candidates.sort(key=str.casefold)
-        preferred_path = os.path.realpath(
-            os.path.join(auto_complete_dir, preferred_name)
-        )
-        if os.path.isfile(preferred_path):
-            dataset_path = preferred_path
-        elif candidates:
-            dataset_path = os.path.realpath(
-                os.path.join(auto_complete_dir, candidates[0])
-            )
-            if len(candidates) > 1:
-                print(
-                    "[CHARACTER_MAKER_RAG_DATA] KR CSV 후보 여러 개: "
-                    f"selected={os.path.basename(dataset_path)!r}, "
-                    f"candidates={candidates}"
-                )
-
-    if dataset_path:
-        try:
-            if os.path.commonpath([auto_complete_dir, dataset_path]) != auto_complete_dir:
-                print(
-                    "[CHARACTER_MAKER_RAG_DATA] KR CSV 경로 이탈 거부: "
-                    f"root={auto_complete_dir!r}, path={dataset_path!r}"
-                )
-                dataset_path = ""
-        except ValueError as exc:
-            print(
-                "[CHARACTER_MAKER_RAG_DATA] KR CSV 경로 검증 실패: "
-                f"root={auto_complete_dir!r}, path={dataset_path!r}, error={exc}"
-            )
-            traceback.print_exc()
-            dataset_path = ""
-
-    dataset_available = bool(dataset_path and os.path.isfile(dataset_path))
-    canonical_available = bool(
-        os.path.isfile(canonical_path)
-        and os.path.commonpath([auto_complete_dir, canonical_path])
-        == auto_complete_dir
-    )
-    if not dataset_available:
-        print(
-            "[CHARACTER_MAKER_RAG_DATA] auto_complete KR CSV 미발견: "
-            f"path={auto_complete_dir!r}, candidates={candidates}"
-        )
-    if not canonical_available:
-        print(
-            "[CHARACTER_MAKER_RAG_DATA] auto_complete 기준표 미발견: "
-            f"path={canonical_path!r}"
-        )
+        state = "stopped"
     return {
-        "directory": auto_complete_dir,
-        "dataset": {
-            "available": dataset_available,
-            "filename": os.path.basename(dataset_path) if dataset_available else "",
-            "size": os.path.getsize(dataset_path) if dataset_available else 0,
-            "path": dataset_path if dataset_available else "",
-            "candidates": candidates,
-        },
-        "canonical": {
-            "available": canonical_available,
-            "filename": "danbooru.csv" if canonical_available else "",
-            "size": os.path.getsize(canonical_path) if canonical_available else 0,
-            "path": canonical_path if canonical_available else "",
-        },
+        "state": state,
+        "mode": "embedded",
+        "ready": bool(status["ready"]),
+        "installed": bool(status["installed"]),
+        "index_path": status["index_path"],
+        "model_cache": status["model_cache"],
+        "row_count": status["row_count"],
+        "error": status["error"],
     }
 
 
@@ -13080,562 +12969,69 @@ async def handle_api_character_maker_rag_dataset_status(
     request: web.Request,
 ) -> web.Response:
     try:
-        status = _character_maker_rag_dataset_status()
+        artifact = _character_maker_rag_installer.status()
+        runtime = _character_maker_rag_runtime_snapshot()
         return web.json_response(
             {
                 "success": True,
-                "dataset": {
-                    key: value
-                    for key, value in status["dataset"].items()
-                    if key != "path"
+                "artifact": artifact,
+                "runtime": runtime,
+                "source": {
+                    "repository": "byung-hyun/eye_segmentation_model",
+                    "path": "comfyui_hooking_server/danbooru_rag/lancedb_b.zip",
                 },
-                "canonical": {
-                    key: value
-                    for key, value in status["canonical"].items()
-                    if key != "path"
-                },
-            }
+            },
+            headers={"Cache-Control": "no-store, max-age=0"},
         )
     except Exception as exc:
-        return _character_maker_error_response("RAG 태그 자료 검색", exc)
-
-
-_character_maker_rag_install_lock = asyncio.Lock()
-_character_maker_rag_runtime_lock = asyncio.Lock()
-_character_maker_rag_process: asyncio.subprocess.Process | None = None
-_character_maker_rag_log_task: asyncio.Task | None = None
-_character_maker_rag_ready_task: asyncio.Task | None = None
-_character_maker_rag_process_ready = False
-_character_maker_rag_process_error = ""
-_character_maker_rag_process_log_tail: list[str] = []
-_CHARACTER_MAKER_RAG_LOCAL_URL = "http://127.0.0.1:3333"
-
-
-def _character_maker_rag_python_executable() -> str:
-    """프로젝트 루트의 uv 관리 .venv Python만 RAG 실행에 사용한다."""
-    expected_venv = os.path.realpath(os.path.join(BASE_DIR, ".venv"))
-    python_executable = os.path.realpath(sys.executable)
-    try:
-        inside_project_venv = (
-            os.path.commonpath([expected_venv, python_executable])
-            == expected_venv
-        )
-    except ValueError as exc:
-        print(
-            "[CHARACTER_MAKER_RAG_RUNTIME] Python 경로 검증 실패: "
-            f"venv={expected_venv!r}, python={python_executable!r}, error={exc}"
-        )
-        traceback.print_exc()
-        inside_project_venv = False
-    if not inside_project_venv:
-        print(
-            "[CHARACTER_MAKER_RAG_RUNTIME] 프로젝트 .venv 외 Python 거부: "
-            f"expected={expected_venv!r}, actual={python_executable!r}"
-        )
-        raise CharacterMakerRagDataError(
-            "RAG는 프로젝트의 uv 관리 .venv에서만 실행할 수 있습니다. "
-            "서버를 'uv run python server.py'로 실행하세요."
-        )
-    return python_executable
-
-
-async def _prepare_character_maker_rag_dependencies(repository: str) -> str:
-    """RAG 패키지를 별도 venv 없이 프로젝트 루트 .venv에 uv로 설치한다."""
-    uv_command = shutil.which("uv")
-    if not uv_command:
-        print("[CHARACTER_MAKER_RAG_RUNTIME] uv 실행 파일을 찾지 못함")
-        raise CharacterMakerRagDataError(
-            "RAG 실행에 필요한 uv 실행 파일을 찾을 수 없습니다."
-        )
-    python_executable = _character_maker_rag_python_executable()
-    command = [
-        uv_command,
-        "pip",
-        "install",
-        "--python",
-        python_executable,
-        "--editable",
-        repository,
-    ]
-    print(
-        "[CHARACTER_MAKER_RAG_RUNTIME] 의존성 준비 시작: "
-        f"repository={repository!r}, command={command!r}"
-    )
-    try:
-        process = await asyncio.create_subprocess_exec(
-            *command,
-            cwd=BASE_DIR,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-        )
-    except Exception as exc:
-        print(
-            "[CHARACTER_MAKER_RAG_RUNTIME] 의존성 설치 실행 실패: "
-            f"error={type(exc).__name__}: {exc}"
-        )
-        traceback.print_exc()
-        raise CharacterMakerRagDataError(
-            f"RAG 의존성 설치를 시작하지 못했습니다: {exc}"
-        ) from exc
-
-    log_tail: list[str] = []
-    if process.stdout is None:
-        print("[CHARACTER_MAKER_RAG_RUNTIME] 의존성 설치 stdout 파이프 없음")
-        process.terminate()
-        await process.wait()
-        raise CharacterMakerRagDataError(
-            "RAG 의존성 설치 로그를 연결하지 못했습니다."
-        )
-    try:
-        while True:
-            line = await process.stdout.readline()
-            if not line:
-                break
-            decoded = line.decode("utf-8", errors="replace").rstrip()
-            if decoded:
-                print(f"[CHARACTER_MAKER_RAG_UV] {decoded}")
-                log_tail.append(decoded)
-                if len(log_tail) > 80:
-                    del log_tail[:-80]
-        return_code = await process.wait()
-    except asyncio.CancelledError:
-        print(
-            "[CHARACTER_MAKER_RAG_RUNTIME] 의존성 준비 취소됨: "
-            f"pid={process.pid}, repository={repository!r}"
-        )
-        try:
-            if process.returncode is None:
-                process.terminate()
-            await process.wait()
-        except Exception as terminate_exc:
-            print(
-                "[CHARACTER_MAKER_RAG_RUNTIME] 취소된 의존성 설치 정리 실패: "
-                f"pid={process.pid}, "
-                f"error={type(terminate_exc).__name__}: {terminate_exc}"
-            )
-            traceback.print_exc()
-        raise
-    except Exception as exc:
-        print(
-            "[CHARACTER_MAKER_RAG_RUNTIME] 의존성 설치 로그 처리 실패: "
-            f"pid={process.pid}, error={type(exc).__name__}: {exc}"
-        )
-        traceback.print_exc()
-        try:
-            if process.returncode is None:
-                process.terminate()
-            await process.wait()
-        except Exception as terminate_exc:
-            print(
-                "[CHARACTER_MAKER_RAG_RUNTIME] 실패한 의존성 설치 정리 실패: "
-                f"pid={process.pid}, "
-                f"error={type(terminate_exc).__name__}: {terminate_exc}"
-            )
-            traceback.print_exc()
-        raise CharacterMakerRagDataError(
-            f"RAG 의존성 설치 로그를 처리하지 못했습니다: {exc}"
-        ) from exc
-    if return_code != 0:
-        print(
-            "[CHARACTER_MAKER_RAG_RUNTIME] 의존성 설치 실패: "
-            f"return_code={return_code}, log_tail={log_tail[-20:]}"
-        )
-        detail = log_tail[-1] if log_tail else f"종료 코드 {return_code}"
-        raise CharacterMakerRagDataError(
-            f"RAG 의존성 설치에 실패했습니다: {detail}"
-        )
-    print(
-        "[CHARACTER_MAKER_RAG_RUNTIME] 의존성 준비 완료: "
-        f"python={python_executable!r}"
-    )
-    return python_executable
-
-
-async def _probe_character_maker_local_rag() -> tuple[bool, str]:
-    timeout = aiohttp.ClientTimeout(total=2.0)
-    try:
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.get(
-                _CHARACTER_MAKER_RAG_LOCAL_URL + "/api/health",
-                headers={"Accept": "application/json"},
-            ) as response:
-                if response.status != 200:
-                    return False, f"HTTP {response.status}"
-                payload = await response.json(content_type=None)
-                if str(payload.get("status") or "").lower() != "ok":
-                    return False, f"예상하지 못한 상태 응답: {payload!r}"
-                return True, ""
-    except Exception as exc:
-        return False, f"{type(exc).__name__}: {exc}"
-
-
-async def _drain_character_maker_rag_output(
-    process: asyncio.subprocess.Process,
-) -> None:
-    global _character_maker_rag_process_ready
-    global _character_maker_rag_process_error
-    if process.stdout is None:
-        print(
-            "[CHARACTER_MAKER_RAG_RUNTIME] 사이드카 stdout 파이프 생성 실패: "
-            f"pid={process.pid}"
-        )
-        _character_maker_rag_process_error = "로컬 RAG 로그 파이프를 만들지 못했습니다."
-        return
-    try:
-        while True:
-            line = await process.stdout.readline()
-            if not line:
-                break
-            decoded = line.decode("utf-8", errors="replace").rstrip()
-            if not decoded:
-                continue
-            print(f"[CHARACTER_MAKER_RAG_SIDECAR] {decoded}")
-            _character_maker_rag_process_log_tail.append(decoded)
-            if len(_character_maker_rag_process_log_tail) > 80:
-                del _character_maker_rag_process_log_tail[:-80]
-        return_code = await process.wait()
-        if process is _character_maker_rag_process:
-            _character_maker_rag_process_ready = False
-            if not _character_maker_rag_process_error:
-                _character_maker_rag_process_error = (
-                    f"로컬 RAG가 종료되었습니다(코드 {return_code})."
-                )
-            print(
-                "[CHARACTER_MAKER_RAG_RUNTIME] 사이드카 프로세스 종료: "
-                f"pid={process.pid}, return_code={return_code}, "
-                f"log_tail={_character_maker_rag_process_log_tail[-20:]}"
-            )
-    except asyncio.CancelledError:
-        raise
-    except Exception as exc:
-        print(
-            "[CHARACTER_MAKER_RAG_RUNTIME] 사이드카 로그 처리 실패: "
-            f"pid={process.pid}, error={type(exc).__name__}: {exc}"
-        )
-        traceback.print_exc()
-        _character_maker_rag_process_error = (
-            f"로컬 RAG 로그 처리 실패: {type(exc).__name__}: {exc}"
-        )
-
-
-async def _monitor_character_maker_rag_ready(
-    process: asyncio.subprocess.Process,
-) -> None:
-    global _character_maker_rag_process_ready
-    global _character_maker_rag_process_error
-    deadline = asyncio.get_running_loop().time() + 300.0
-    last_error = ""
-    try:
-        while asyncio.get_running_loop().time() < deadline:
-            if process.returncode is not None:
-                _character_maker_rag_process_error = (
-                    f"로컬 RAG가 종료되었습니다(코드 {process.returncode})."
-                )
-                print(
-                    "[CHARACTER_MAKER_RAG_RUNTIME] 준비 전 사이드카 종료: "
-                    f"pid={process.pid}, return_code={process.returncode}, "
-                    f"log_tail={_character_maker_rag_process_log_tail[-20:]}"
-                )
-                return
-            ready, probe_error = await _probe_character_maker_local_rag()
-            if ready:
-                _character_maker_rag_process_ready = True
-                _character_maker_rag_process_error = ""
-                print(
-                    "[CHARACTER_MAKER_RAG_RUNTIME] 사이드카 준비 완료: "
-                    f"pid={process.pid}, url={_CHARACTER_MAKER_RAG_LOCAL_URL!r}"
-                )
-                return
-            last_error = probe_error
-            await asyncio.sleep(1.0)
-        _character_maker_rag_process_error = (
-            "로컬 RAG가 300초 안에 준비되지 않았습니다. "
-            f"마지막 확인: {last_error}"
-        )
-        print(
-            "[CHARACTER_MAKER_RAG_RUNTIME] 사이드카 준비 시간 초과: "
-            f"pid={process.pid}, error={_character_maker_rag_process_error!r}, "
-            f"log_tail={_character_maker_rag_process_log_tail[-20:]}"
-        )
-    except asyncio.CancelledError:
-        raise
-    except Exception as exc:
-        _character_maker_rag_process_error = (
-            f"RAG 준비 상태 확인 실패: {type(exc).__name__}: {exc}"
-        )
-        print(
-            "[CHARACTER_MAKER_RAG_RUNTIME] 준비 상태 확인 실패: "
-            f"pid={process.pid}, error={type(exc).__name__}: {exc}"
-        )
-        traceback.print_exc()
-
-
-def _character_maker_rag_runtime_snapshot() -> dict[str, Any]:
-    process = _character_maker_rag_process
-    managed_running = process is not None and process.returncode is None
-    if managed_running:
-        if _character_maker_rag_process_ready:
-            state = "running"
-        elif _character_maker_rag_process_error:
-            state = "error"
-        else:
-            state = "starting"
-    elif process is not None and _character_maker_rag_process_error:
-        state = "error"
-    else:
-        state = "stopped"
-
-    repository = _character_maker_rag_repo_dir()
-    data_path = os.path.join(repository, CHARACTER_MAKER_RAG_OUTPUT_FILENAME)
-    index_path = os.path.join(repository, "data", "lancedb_b")
-    try:
-        index_ready = os.path.isdir(index_path) and any(os.scandir(index_path))
-    except OSError as exc:
-        print(
-            "[CHARACTER_MAKER_RAG_RUNTIME] 인덱스 상태 확인 실패: "
-            f"path={index_path!r}, error={type(exc).__name__}: {exc}"
-        )
-        traceback.print_exc()
-        index_ready = False
-    return {
-        "state": state,
-        "managed": managed_running,
-        "pid": process.pid if managed_running else None,
-        "ready": bool(managed_running and _character_maker_rag_process_ready),
-        "url": _CHARACTER_MAKER_RAG_LOCAL_URL,
-        "repository_ready": os.path.isdir(repository),
-        "data_ready": bool(os.path.isfile(data_path) and index_ready),
-        "error": _character_maker_rag_process_error,
-        "log_tail": _character_maker_rag_process_log_tail[-20:],
-    }
+        return _character_maker_error_response("RAG 인덱스 상태 확인", exc)
 
 
 async def _start_character_maker_rag_runtime() -> dict[str, Any]:
-    global _character_maker_rag_process
-    global _character_maker_rag_log_task
-    global _character_maker_rag_ready_task
-    global _character_maker_rag_process_ready
-    global _character_maker_rag_process_error
     async with _character_maker_rag_runtime_lock:
         if _character_maker_rag_install_lock.locked():
-            print(
-                "[CHARACTER_MAKER_RAG_RUNTIME] 설치 중 실행 요청 거부"
+            print("[CHARACTER_MAKER_RAG] 인덱스 설치 중 모델 로드 요청 거부")
+            raise CharacterMakerError(
+                "RAG 인덱스를 설치하는 중입니다. 설치 완료 후 다시 시도하세요."
             )
-            raise CharacterMakerRagDataError(
-                "RAG 태그 자료를 설치하는 중입니다. 설치가 끝난 뒤 실행하세요."
-            )
-        if (
-            _character_maker_rag_process is not None
-            and _character_maker_rag_process.returncode is None
-        ):
+        try:
+            await asyncio.to_thread(_character_maker_rag_service.warmup)
+            print("[CHARACTER_MAKER_RAG] 내장 모델과 인덱스 로드 완료")
             return _character_maker_rag_runtime_snapshot()
-
-        external_ready, _ = await _probe_character_maker_local_rag()
-        if external_ready:
+        except DanbooruRagError as exc:
             print(
-                "[CHARACTER_MAKER_RAG_RUNTIME] 외부 로컬 사이드카 감지: "
-                f"url={_CHARACTER_MAKER_RAG_LOCAL_URL!r}"
-            )
-            return {
-                **_character_maker_rag_runtime_snapshot(),
-                "state": "external",
-                "ready": True,
-                "managed": False,
-            }
-
-        repository_paths = validate_rag_repository(
-            _character_maker_rag_repo_dir()
-        )
-        if not os.path.isfile(repository_paths["csv_path"]):
-            print(
-                "[CHARACTER_MAKER_RAG_RUNTIME] 실행용 CSV 없음: "
-                f"path={repository_paths['csv_path']!r}"
-            )
-            raise CharacterMakerRagDataError(
-                "RAG 태그 자료가 설치되지 않았습니다. 먼저 '변환 및 설치'를 실행하세요."
-            )
-        index_path = repository_paths["index_path"]
-        try:
-            index_ready = os.path.isdir(index_path) and any(os.scandir(index_path))
-        except OSError as exc:
-            print(
-                "[CHARACTER_MAKER_RAG_RUNTIME] 실행용 인덱스 확인 실패: "
-                f"path={index_path!r}, error={type(exc).__name__}: {exc}"
-            )
-            traceback.print_exc()
-            raise CharacterMakerRagDataError(
-                f"RAG 인덱스를 확인하지 못했습니다: {exc}"
-            ) from exc
-        if not index_ready:
-            print(
-                "[CHARACTER_MAKER_RAG_RUNTIME] 실행용 인덱스 없음 또는 비어 있음: "
-                f"path={index_path!r}"
-            )
-            raise CharacterMakerRagDataError(
-                "RAG variant-b 인덱스가 없습니다. 먼저 '변환 및 설치'를 실행하세요."
-            )
-
-        python_executable = await _prepare_character_maker_rag_dependencies(
-            repository_paths["repository"]
-        )
-        environment = os.environ.copy()
-        environment["DATA_DIR"] = repository_paths["data_dir"]
-        environment["MODELS_DIR"] = os.path.join(
-            repository_paths["repository"], "models"
-        )
-        command = [python_executable, "-m", "core.api"]
-        print(
-            "[CHARACTER_MAKER_RAG_RUNTIME] 사이드카 실행 시작: "
-            f"repository={repository_paths['repository']!r}, command={command!r}"
-        )
-        try:
-            process = await asyncio.create_subprocess_exec(
-                *command,
-                cwd=repository_paths["repository"],
-                env=environment,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-            )
-        except Exception as exc:
-            print(
-                "[CHARACTER_MAKER_RAG_RUNTIME] 사이드카 실행 실패: "
+                "[CHARACTER_MAKER_RAG] 내장 서비스 로드 실패: "
                 f"error={type(exc).__name__}: {exc}"
             )
             traceback.print_exc()
-            raise CharacterMakerRagDataError(
-                f"로컬 RAG를 실행하지 못했습니다: {exc}"
-            ) from exc
-
-        _character_maker_rag_process = process
-        _character_maker_rag_process_ready = False
-        _character_maker_rag_process_error = ""
-        _character_maker_rag_process_log_tail.clear()
-        _character_maker_rag_log_task = asyncio.create_task(
-            _drain_character_maker_rag_output(process)
-        )
-        _character_maker_rag_ready_task = asyncio.create_task(
-            _monitor_character_maker_rag_ready(process)
-        )
-        return _character_maker_rag_runtime_snapshot()
+            raise CharacterMakerError(str(exc)) from exc
 
 
-async def _stop_character_maker_rag_runtime(
-    *, check_external: bool = True
-) -> dict[str, Any]:
-    global _character_maker_rag_process
-    global _character_maker_rag_log_task
-    global _character_maker_rag_ready_task
-    global _character_maker_rag_process_ready
-    global _character_maker_rag_process_error
+async def _stop_character_maker_rag_runtime() -> dict[str, Any]:
     async with _character_maker_rag_runtime_lock:
-        process = _character_maker_rag_process
-        if process is None or process.returncode is not None:
-            if check_external:
-                external_ready, _ = await _probe_character_maker_local_rag()
-                if external_ready:
-                    print(
-                        "[CHARACTER_MAKER_RAG_RUNTIME] 외부 사이드카 종료 요청 거부: "
-                        f"url={_CHARACTER_MAKER_RAG_LOCAL_URL!r}"
-                    )
-                    raise CharacterMakerRagDataError(
-                        "이 서버가 실행하지 않은 RAG 프로세스는 여기서 끌 수 없습니다."
-                    )
-            for task in (
-                _character_maker_rag_ready_task,
-                _character_maker_rag_log_task,
-            ):
-                if task is not None and not task.done():
-                    task.cancel()
-                    try:
-                        await task
-                    except asyncio.CancelledError:
-                        pass
-            _character_maker_rag_process = None
-            _character_maker_rag_log_task = None
-            _character_maker_rag_ready_task = None
-            _character_maker_rag_process_ready = False
-            _character_maker_rag_process_error = ""
-            return _character_maker_rag_runtime_snapshot()
-
-        print(
-            "[CHARACTER_MAKER_RAG_RUNTIME] 사이드카 종료 시작: "
-            f"pid={process.pid}"
-        )
         try:
-            process.terminate()
-            try:
-                await asyncio.wait_for(process.wait(), timeout=10.0)
-            except asyncio.TimeoutError:
-                print(
-                    "[CHARACTER_MAKER_RAG_RUNTIME] 정상 종료 시간 초과, 강제 종료: "
-                    f"pid={process.pid}"
-                )
-                process.kill()
-                await process.wait()
-        except ProcessLookupError:
-            print(
-                "[CHARACTER_MAKER_RAG_RUNTIME] 종료 중 이미 사라진 프로세스: "
-                f"pid={process.pid}"
-            )
+            await asyncio.to_thread(_character_maker_rag_service.unload)
+            print("[CHARACTER_MAKER_RAG] 내장 모델과 인덱스 언로드 완료")
+            return _character_maker_rag_runtime_snapshot()
         except Exception as exc:
             print(
-                "[CHARACTER_MAKER_RAG_RUNTIME] 사이드카 종료 실패: "
-                f"pid={process.pid}, error={type(exc).__name__}: {exc}"
+                "[CHARACTER_MAKER_RAG] 내장 서비스 언로드 실패: "
+                f"error={type(exc).__name__}: {exc}"
             )
             traceback.print_exc()
-            raise CharacterMakerRagDataError(
-                f"로컬 RAG를 끄지 못했습니다: {exc}"
-            ) from exc
-        if _character_maker_rag_ready_task is not None:
-            _character_maker_rag_ready_task.cancel()
-            try:
-                await _character_maker_rag_ready_task
-            except asyncio.CancelledError:
-                pass
-        if _character_maker_rag_log_task is not None:
-            try:
-                await asyncio.wait_for(
-                    _character_maker_rag_log_task,
-                    timeout=3.0,
-                )
-            except asyncio.TimeoutError:
-                print(
-                    "[CHARACTER_MAKER_RAG_RUNTIME] 로그 작업 종료 시간 초과: "
-                    f"pid={process.pid}"
-                )
-                _character_maker_rag_log_task.cancel()
-            except asyncio.CancelledError:
-                pass
-        _character_maker_rag_process = None
-        _character_maker_rag_log_task = None
-        _character_maker_rag_ready_task = None
-        _character_maker_rag_process_ready = False
-        _character_maker_rag_process_error = ""
-        print(
-            "[CHARACTER_MAKER_RAG_RUNTIME] 사이드카 종료 완료: "
-            f"pid={process.pid}"
-        )
-        return _character_maker_rag_runtime_snapshot()
+            raise
 
 
 async def handle_api_character_maker_rag_runtime_status(
     request: web.Request,
 ) -> web.Response:
     try:
-        status = _character_maker_rag_runtime_snapshot()
-        if status["state"] == "stopped":
-            external_ready, _ = await _probe_character_maker_local_rag()
-            if external_ready:
-                status.update(
-                    {
-                        "state": "external",
-                        "managed": False,
-                        "ready": True,
-                    }
-                )
-        return web.json_response({"success": True, **status})
+        return web.json_response(
+            {"success": True, **_character_maker_rag_runtime_snapshot()},
+            headers={"Cache-Control": "no-store, max-age=0"},
+        )
     except Exception as exc:
-        return _character_maker_error_response("RAG 실행 상태 확인", exc)
+        return _character_maker_error_response("내장 RAG 상태 확인", exc)
 
 
 async def handle_api_character_maker_rag_runtime_start(
@@ -13644,13 +13040,8 @@ async def handle_api_character_maker_rag_runtime_start(
     try:
         status = await _start_character_maker_rag_runtime()
         return web.json_response({"success": True, **status})
-    except CharacterMakerRagDataError as exc:
-        return _character_maker_error_response(
-            "RAG 실행",
-            CharacterMakerError(str(exc)),
-        )
     except Exception as exc:
-        return _character_maker_error_response("RAG 실행", exc)
+        return _character_maker_error_response("내장 RAG 로드", exc)
 
 
 async def handle_api_character_maker_rag_runtime_stop(
@@ -13659,188 +13050,26 @@ async def handle_api_character_maker_rag_runtime_stop(
     try:
         status = await _stop_character_maker_rag_runtime()
         return web.json_response({"success": True, **status})
-    except CharacterMakerRagDataError as exc:
-        return _character_maker_error_response(
-            "RAG 종료",
-            CharacterMakerError(str(exc)),
-        )
     except Exception as exc:
-        return _character_maker_error_response("RAG 종료", exc)
+        return _character_maker_error_response("내장 RAG 언로드", exc)
 
 
 async def _character_maker_rag_runtime_cleanup(app: web.Application) -> None:
-    """메인 서버 종료 시 이 서버가 시작한 RAG 사이드카만 정리한다."""
     try:
-        await _stop_character_maker_rag_runtime(check_external=False)
+        await _stop_character_maker_rag_runtime()
     except Exception as exc:
         print(
-            "[CHARACTER_MAKER_RAG_RUNTIME] 서버 종료 중 사이드카 정리 실패: "
+            "[CHARACTER_MAKER_RAG] 서버 종료 중 내장 서비스 정리 실패: "
             f"error={type(exc).__name__}: {exc}"
         )
         traceback.print_exc()
 
 
-async def _run_character_maker_rag_builder(
-    repository: str,
-    data_dir: str,
-    index_path: str,
-) -> dict[str, Any]:
-    python_executable = await _prepare_character_maker_rag_dependencies(
-        repository
-    )
-
-    environment = os.environ.copy()
-    environment["DATA_DIR"] = data_dir
-    environment["MODELS_DIR"] = os.path.join(repository, "models")
-    # Windows에서 자식 프로세스가 cp949로 한글을 출력해 서버(utf-8) 디코딩 시
-    # 글자가 깨지는 것을 막기 위해 UTF-8 출력을 강제한다.
-    environment["PYTHONUTF8"] = "1"
-    environment["PYTHONIOENCODING"] = "utf-8"
-    command = [
-        python_executable,
-        "-m",
-        "core.builder",
-        "b",
-    ]
-    print(
-        "[CHARACTER_MAKER_RAG_INSTALL] variant-b 인덱스 빌드 시작: "
-        f"repository={repository!r}, data_dir={data_dir!r}, command={command!r}"
-    )
-    try:
-        process = await asyncio.create_subprocess_exec(
-            *command,
-            cwd=repository,
-            env=environment,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-        )
-    except Exception as exc:
-        print(
-            "[CHARACTER_MAKER_RAG_INSTALL] 인덱스 빌더 실행 실패: "
-            f"repository={repository!r}, error={type(exc).__name__}: {exc}"
-        )
-        traceback.print_exc()
-        raise CharacterMakerRagDataError(
-            f"RAG 인덱스 빌더를 실행하지 못했습니다: {exc}"
-        ) from exc
-
-    log_tail: list[str] = []
-    if process.stdout is None:
-        print(
-            "[CHARACTER_MAKER_RAG_INSTALL] 빌더 stdout 파이프 생성 실패: "
-            f"pid={process.pid}"
-        )
-        process.terminate()
-        await process.wait()
-        raise CharacterMakerRagDataError("RAG 인덱스 빌더 로그를 연결하지 못했습니다.")
-    try:
-        last_overall = -1
-
-        def _handle_builder_segment(decoded: str) -> None:
-            nonlocal last_overall
-            print(f"[CHARACTER_MAKER_RAG_BUILDER] {decoded}")
-            log_tail.append(decoded)
-            if len(log_tail) > 80:
-                del log_tail[:-80]
-            # tqdm 진행바에서 임베딩 완료율을 파싱해 전체 진행률로 매핑(40→95%).
-            pct_matches = re.findall(r"(\d+)%", decoded)
-            if not pct_matches:
-                return
-            try:
-                builder_pct = int(pct_matches[-1])
-            except ValueError:
-                return
-            overall = int(40 + max(0, min(100, builder_pct)) * 0.55)
-            if overall == last_overall:
-                return
-            last_overall = overall
-            asyncio.ensure_future(
-                _emit_rag_install_progress(
-                    "인덱스 빌드", overall, f"임베딩 {builder_pct}%"
-                )
-            )
-
-        # tqdm은 \r로 같은 줄을 갱신하므로 \r 도 줄 경계로 취급해 실시간 %를 잡는다.
-        buffer = b""
-        while True:
-            chunk = await process.stdout.read(4096)
-            if not chunk:
-                break
-            buffer += chunk
-            segments = re.split(rb"[\r\n]", buffer)
-            buffer = segments.pop()
-            for raw_segment in segments:
-                decoded = raw_segment.decode("utf-8", errors="replace").strip()
-                if decoded:
-                    _handle_builder_segment(decoded)
-        if buffer.strip():
-            decoded = buffer.decode("utf-8", errors="replace").strip()
-            if decoded:
-                _handle_builder_segment(decoded)
-        return_code = await process.wait()
-    except asyncio.CancelledError:
-        print(
-            "[CHARACTER_MAKER_RAG_INSTALL] 인덱스 빌드 취소됨: "
-            f"pid={process.pid}, repository={repository!r}"
-        )
-        try:
-            if process.returncode is None:
-                process.terminate()
-            await process.wait()
-        except Exception as terminate_exc:
-            print(
-                "[CHARACTER_MAKER_RAG_INSTALL] 취소된 빌더 정리 실패: "
-                f"pid={process.pid}, error={type(terminate_exc).__name__}: {terminate_exc}"
-            )
-            traceback.print_exc()
-        raise
-    if return_code != 0:
-        print(
-            "[CHARACTER_MAKER_RAG_INSTALL] 인덱스 빌드 실패: "
-            f"return_code={return_code}, log_tail={log_tail[-20:]}"
-        )
-        detail = log_tail[-1] if log_tail else f"종료 코드 {return_code}"
-        raise CharacterMakerRagDataError(
-            f"RAG variant-b 인덱스 빌드에 실패했습니다: {detail}"
-        )
-    if not os.path.isdir(index_path):
-        print(
-            "[CHARACTER_MAKER_RAG_INSTALL] 빌드 성공 후 인덱스 폴더 없음: "
-            f"path={index_path!r}, log_tail={log_tail[-20:]}"
-        )
-        raise CharacterMakerRagDataError(
-            "빌더는 성공했지만 data/lancedb_b 인덱스를 찾을 수 없습니다."
-        )
-    try:
-        has_index_files = any(os.scandir(index_path))
-    except OSError as exc:
-        print(
-            "[CHARACTER_MAKER_RAG_INSTALL] 빌드 인덱스 확인 실패: "
-            f"path={index_path!r}, error={type(exc).__name__}: {exc}"
-        )
-        traceback.print_exc()
-        raise CharacterMakerRagDataError(
-            f"생성된 RAG 인덱스를 확인하지 못했습니다: {exc}"
-        ) from exc
-    if not has_index_files:
-        print(
-            "[CHARACTER_MAKER_RAG_INSTALL] 빌드 인덱스 폴더 비어 있음: "
-            f"path={index_path!r}"
-        )
-        raise CharacterMakerRagDataError("생성된 RAG 인덱스 폴더가 비어 있습니다.")
-    print(
-        "[CHARACTER_MAKER_RAG_INSTALL] variant-b 인덱스 빌드 완료: "
-        f"path={index_path!r}, log_lines={len(log_tail)}"
-    )
-    return {
-        "variant": "b",
-        "index_path": index_path,
-        "log_tail": log_tail[-20:],
-    }
-
-
-async def _emit_rag_install_progress(phase: str, progress: int, detail: str = "") -> None:
-    """RAG 태그 자료 설치 진행률을 프론트엔드에 WebSocket으로 전송한다."""
+async def _emit_rag_install_progress(
+    phase: str,
+    progress: int,
+    detail: str = "",
+) -> None:
     await notify_frontend(
         "character_maker_rag_install_progress",
         {
@@ -13854,304 +13083,75 @@ async def _emit_rag_install_progress(phase: str, progress: int, detail: str = ""
 async def handle_api_character_maker_rag_install(
     request: web.Request,
 ) -> web.Response:
-    """KR 태그 CSV를 변환해 RAG 저장소에 설치하고 variant-b를 재구축한다."""
-    temp_paths: list[str] = []
-    upload_filename = ""
-    requested_source = ""
-    requested_repository = ""
-    install_context: dict[str, Any] | None = None
     lock_acquired = False
     try:
         if _character_maker_rag_install_lock.locked():
             print("[CHARACTER_MAKER_RAG_INSTALL] 중복 설치 요청 거부")
-            raise CharacterMakerError("RAG 태그 자료를 이미 설치하는 중입니다.")
+            raise CharacterMakerError("RAG 인덱스를 이미 설치하는 중입니다.")
         await _character_maker_rag_install_lock.acquire()
         lock_acquired = True
-        await _emit_rag_install_progress("시작", 0, "설치 시작")
+        await _emit_rag_install_progress("시작", 0, "Hugging Face 설치 시작")
 
-        if _character_maker_rag_runtime_lock.locked():
-            print(
-                "[CHARACTER_MAKER_RAG_INSTALL] 실행 상태 변경 중 설치 요청 거부"
+        async with _character_maker_rag_runtime_lock:
+            await asyncio.to_thread(_character_maker_rag_service.unload)
+
+            loop = asyncio.get_running_loop()
+
+            def _progress_callback(phase: str, progress: int, detail: str) -> None:
+                try:
+                    asyncio.run_coroutine_threadsafe(
+                        _emit_rag_install_progress(phase, progress, detail),
+                        loop,
+                    )
+                except Exception as callback_exc:
+                    print(
+                        "[CHARACTER_MAKER_RAG_INSTALL] 진행 전송 예약 실패: "
+                        f"error={type(callback_exc).__name__}: {callback_exc}"
+                    )
+                    traceback.print_exc()
+
+            result = await asyncio.to_thread(
+                _character_maker_rag_installer.install,
+                progress_callback=_progress_callback,
             )
-            raise CharacterMakerError(
-                "로컬 RAG 실행 상태를 변경하는 중입니다. 잠시 후 다시 설치하세요."
-            )
-        if (
-            _character_maker_rag_process is not None
-            and _character_maker_rag_process.returncode is None
-        ):
-            print(
-                "[CHARACTER_MAKER_RAG_INSTALL] 실행 중인 사이드카로 설치 거부: "
-                f"pid={_character_maker_rag_process.pid}"
-            )
-            raise CharacterMakerError(
-                "로컬 RAG가 실행 중입니다. 설정에서 먼저 '끄기'를 누른 뒤 설치하세요."
-            )
 
-        if (
-            request.content_length is not None
-            and request.content_length > CHARACTER_MAKER_RAG_MAX_UPLOAD_BYTES + 2 * 1024 * 1024
-        ):
-            print(
-                "[CHARACTER_MAKER_RAG_DATA] 업로드 요청 용량 초과: "
-                f"content_length={request.content_length}, "
-                f"limit={CHARACTER_MAKER_RAG_MAX_UPLOAD_BYTES}"
-            )
-            raise CharacterMakerError("태그 CSV는 128MB를 넘을 수 없습니다.")
-
-        reader = await request.multipart()
-        source_path = ""
-        while True:
-            part = await reader.next()
-            if part is None:
-                break
-            if part.name == "source":
-                requested_source = (await part.text()).strip()
-                continue
-            if part.name == "repository":
-                requested_repository = (await part.text()).strip()
-                continue
-            if part.name != "dataset":
-                print(
-                    "[CHARACTER_MAKER_RAG_DATA] 알 수 없는 multipart 필드 스킵: "
-                    f"name={part.name!r}, filename={part.filename!r}"
-                )
-                continue
-            if source_path:
-                print(
-                    "[CHARACTER_MAKER_RAG_DATA] 중복 데이터 파일 거부: "
-                    f"first={upload_filename!r}, duplicate={part.filename!r}"
-                )
-                raise CharacterMakerError("한 번에 CSV 파일 하나만 변환할 수 있습니다.")
-            upload_filename = re.split(r"[\\/]", str(part.filename or ""))[-1].strip()
-            if not upload_filename:
-                print(
-                    "[CHARACTER_MAKER_RAG_DATA] 업로드 파일명 없음: "
-                    f"field={part.name!r}"
-                )
-                raise CharacterMakerError("변환할 CSV 파일을 선택하세요.")
-            if not upload_filename.casefold().endswith(".csv"):
-                print(
-                    "[CHARACTER_MAKER_RAG_DATA] CSV 확장자 거부: "
-                    f"filename={upload_filename!r}"
-                )
-                raise CharacterMakerError("CSV 파일만 변환할 수 있습니다.")
-
-            import tempfile
-
-            source_file = tempfile.NamedTemporaryFile(
-                mode="wb",
-                prefix="rag_kr_source_",
-                suffix=".csv",
-                dir=character_maker.temp_root,
-                delete=False,
-            )
-            source_path = source_file.name
-            temp_paths.append(source_path)
-            uploaded_bytes = 0
-            try:
-                while True:
-                    chunk = await part.read_chunk(size=512 * 1024)
-                    if not chunk:
-                        break
-                    uploaded_bytes += len(chunk)
-                    if uploaded_bytes > CHARACTER_MAKER_RAG_MAX_UPLOAD_BYTES:
-                        print(
-                            "[CHARACTER_MAKER_RAG_DATA] 업로드 파일 용량 초과: "
-                            f"filename={upload_filename!r}, "
-                            f"bytes>{CHARACTER_MAKER_RAG_MAX_UPLOAD_BYTES}"
-                        )
-                        raise CharacterMakerError("태그 CSV는 128MB를 넘을 수 없습니다.")
-                    source_file.write(chunk)
-            finally:
-                source_file.close()
-            if uploaded_bytes == 0:
-                print(
-                    "[CHARACTER_MAKER_RAG_DATA] 빈 업로드 파일 거부: "
-                    f"filename={upload_filename!r}"
-                )
-                raise CharacterMakerError("선택한 CSV 파일이 비어 있습니다.")
-
-        if source_path and requested_source:
-            print(
-                "[CHARACTER_MAKER_RAG_DATA] 변환 입력 중복 거부: "
-                f"upload={upload_filename!r}, source={requested_source!r}"
-            )
-            raise CharacterMakerError(
-                "업로드 파일과 auto_complete 자료를 동시에 선택할 수 없습니다."
-            )
-        if not source_path and requested_source == "auto_complete":
-            local_status = _character_maker_rag_dataset_status()
-            if not local_status["dataset"]["available"]:
-                raise CharacterMakerError(
-                    "auto_complete에서 KR_danbooru_tags_with_description CSV를 찾지 못했습니다."
-                )
-            source_path = local_status["dataset"]["path"]
-            upload_filename = local_status["dataset"]["filename"]
-        elif not source_path and requested_source:
-            print(
-                "[CHARACTER_MAKER_RAG_DATA] 알 수 없는 변환 소스 거부: "
-                f"source={requested_source!r}"
-            )
-            raise CharacterMakerError("알 수 없는 태그 자료 소스입니다.")
-        elif not source_path:
-            print(
-                "[CHARACTER_MAKER_RAG_INSTALL] 설치 요청 파일 없음: "
-                "field='dataset', source 비어 있음"
-            )
-            raise CharacterMakerError("설치할 CSV 파일을 선택하세요.")
-
-        # 저장소 경로는 auto_complete/danbooru-tag-rag 고정.
-        # 요청이나 설정값을 무시하고 항상 고정 경로를 사용하며, 폴더가 없으면
-        # 공식 저장소를 임시 폴더에 clone한 뒤 검증하여 원자적으로 배치한다.
-        repository = _character_maker_rag_repo_dir()
-        await _emit_rag_install_progress("저장소 준비", 5, "저장소 확인·clone")
-        repository_paths = await asyncio.to_thread(
-            ensure_rag_repository,
-            repository,
-        )
-        await _emit_rag_install_progress("저장소 준비", 10, "저장소 준비 완료")
-
-        import tempfile
-
-        output_file = tempfile.NamedTemporaryFile(
-            mode="wb",
-            prefix="rag_converted_",
-            suffix=".csv",
-            dir=character_maker.temp_root,
-            delete=False,
-        )
-        output_path = output_file.name
-        output_file.close()
-        temp_paths.append(output_path)
-        canonical_path = os.path.join(BASE_DIR, "auto_complete", "danbooru.csv")
-
-        loop = asyncio.get_running_loop()
-        convert_last_emit = {"t": 0.0}
-
-        def _convert_progress_cb(current: int, total: int) -> None:
-            if total <= 0:
-                return
-            now = time.time()
-            if current < total and now - convert_last_emit["t"] < 0.2:
-                return
-            convert_last_emit["t"] = now
-            frac = max(0.0, min(1.0, current / max(1, total)))
-            pct = int(15 + frac * 20)  # 15 → 35
-            try:
-                asyncio.run_coroutine_threadsafe(
-                    _emit_rag_install_progress(
-                        "태그 변환", pct, f"{current}/{total}행"
-                    ),
-                    loop,
-                )
-            except Exception:
-                print("[CHARACTER_MAKER_RAG_INSTALL] 변환 진행 전송 실패")
-                traceback.print_exc()
-
-        await _emit_rag_install_progress("태그 변환", 15, "변환 시작")
-        summary = await asyncio.to_thread(
-            convert_kr_danbooru_csv,
-            source_path,
-            canonical_path,
-            output_path,
-            progress_cb=_convert_progress_cb,
-        )
-        await _emit_rag_install_progress("태그 변환", 35, "변환 완료")
-        output_size = os.path.getsize(output_path)
-        if output_size <= 0:
-            print(
-                "[CHARACTER_MAKER_RAG_DATA] 변환 출력 파일 비어 있음: "
-                f"path={output_path!r}, summary={summary}"
-            )
-            raise CharacterMakerError("변환 결과 파일이 비어 있습니다.")
-
-        await _emit_rag_install_progress("CSV 설치", 38, "저장소에 CSV 덮어쓰기")
-        install_context = await asyncio.to_thread(
-            prepare_rag_install,
-            output_path,
-            repository_paths["repository"],
-        )
-        await _emit_rag_install_progress(
-            "인덱스 빌드", 40, "임베딩 모델 로드·인덱스 구축 시작"
-        )
-        build_result = await _run_character_maker_rag_builder(
-            install_context["repository"],
-            install_context["data_dir"],
-            install_context["index_path"],
-        )
-        await _emit_rag_install_progress("완료", 100, "설치 완료")
         print(
-            "[CHARACTER_MAKER_RAG_INSTALL] 변환·설치 완료: "
-            f"source={upload_filename!r}, repository={install_context['repository']!r}, "
-            f"bytes={output_size}, summary={summary}"
+            "[CHARACTER_MAKER_RAG_INSTALL] Hugging Face 인덱스 설치 완료: "
+            f"artifact={result.get('artifact_version')!r}, "
+            f"revision={result.get('revision')!r}, "
+            f"index={result.get('index_path')!r}"
         )
         return web.json_response(
             {
                 "success": True,
-                "summary": {
-                    key: value
-                    for key, value in summary.items()
-                    if key != "unmatched_samples"
-                },
-                "installed": {
-                    "filename": CHARACTER_MAKER_RAG_OUTPUT_FILENAME,
-                    "variant": build_result["variant"],
-                    "repository_name": os.path.basename(
-                        install_context["repository"]
-                    ),
-                    "repository_cloned": bool(
-                        repository_paths.get("repository_cloned", False)
-                    ),
-                    "restart_required": True,
-                },
+                "installed": result,
+                "runtime": _character_maker_rag_runtime_snapshot(),
             },
             headers={"Cache-Control": "no-store, max-age=0"},
         )
     except asyncio.CancelledError:
-        print(
-            "[CHARACTER_MAKER_RAG_INSTALL] 설치 요청 취소됨: "
-            f"source={upload_filename!r}, repository={requested_repository!r}"
-        )
+        print("[CHARACTER_MAKER_RAG_INSTALL] 설치 요청 취소됨")
         raise
-    except CharacterMakerRagDataError as exc:
+    except (DanbooruRagInstallError, DanbooruRagError) as exc:
         print(
-            "[CHARACTER_MAKER_RAG_INSTALL] 설치 실패(복구 없음). "
-            "태그 자료를 다시 설치해야 합니다: "
-            f"error={type(exc).__name__}: {exc}"
-        )
-        await _emit_rag_install_progress(
-            "실패", 0, f"설치 실패 · 태그 자료를 다시 설치해 주세요: {exc}"
-        )
-        mapped = CharacterMakerError(
-            f"{exc} 기존 자료는 복구하지 않습니다. 태그 자료를 다시 설치해 주세요."
-        )
-        return _character_maker_error_response("RAG 태그 자료 설치", mapped)
-    except Exception as exc:
-        print(
-            "[CHARACTER_MAKER_RAG_INSTALL] 예외로 설치 실패(복구 없음). "
-            "태그 자료를 다시 설치해야 합니다: "
+            "[CHARACTER_MAKER_RAG_INSTALL] 설치 실패: "
             f"error={type(exc).__name__}: {exc}"
         )
         traceback.print_exc()
-        await _emit_rag_install_progress(
-            "실패", 0, f"설치 실패 · 태그 자료를 다시 설치해 주세요: {exc}"
+        await _emit_rag_install_progress("실패", 0, str(exc))
+        return _character_maker_error_response(
+            "RAG 인덱스 설치",
+            CharacterMakerError(str(exc)),
         )
-        mapped = CharacterMakerError(
-            f"{exc} 기존 자료는 복구하지 않습니다. 태그 자료를 다시 설치해 주세요."
+    except Exception as exc:
+        print(
+            "[CHARACTER_MAKER_RAG_INSTALL] 예외로 설치 실패: "
+            f"error={type(exc).__name__}: {exc}"
         )
-        return _character_maker_error_response("RAG 태그 자료 설치", mapped)
+        traceback.print_exc()
+        await _emit_rag_install_progress("실패", 0, str(exc))
+        return _character_maker_error_response("RAG 인덱스 설치", exc)
     finally:
-        for path in temp_paths:
-            try:
-                if os.path.isfile(path):
-                    os.remove(path)
-            except OSError as cleanup_exc:
-                print(
-                    "[CHARACTER_MAKER_RAG_DATA] 임시 파일 정리 실패: "
-                    f"path={path!r}, error={type(cleanup_exc).__name__}: {cleanup_exc}"
-                )
-                traceback.print_exc()
         if lock_acquired:
             _character_maker_rag_install_lock.release()
 
@@ -14203,9 +13203,7 @@ async def handle_api_character_maker_capabilities(
                     "enabled": bool(
                         app_config.get("character_maker_rag_enabled", False)
                     ),
-                    "url": app_config.get(
-                        "character_maker_rag_url", "http://127.0.0.1:3333"
-                    ),
+                    **_character_maker_rag_runtime_snapshot(),
                 },
             }
         )
@@ -18388,26 +17386,18 @@ async def on_startup(app):
     # 프런트엔드 자동 열기
     webbrowser.open(f"http://127.0.0.1:{PORT}/")
 
-    # 캐릭터 메이커 로컬 RAG 자동 시작(설정 켜짐 + 자료 설치되어 있을 때)
+    # 캐릭터 메이커 내장 RAG 미리 로드(설정 켜짐 + 인덱스 설치되어 있을 때)
     if app_config.get("character_maker_rag_autostart", False):
         async def _autostart_character_maker_rag():
             try:
-                repository_paths = validate_rag_repository(
-                    _character_maker_rag_repo_dir()
-                )
-                csv_ok = os.path.isfile(repository_paths["csv_path"])
-                index_path = repository_paths["index_path"]
-                try:
-                    index_ok = os.path.isdir(index_path) and any(os.scandir(index_path))
-                except OSError:
-                    index_ok = False
-                if not (csv_ok and index_ok):
+                status = _character_maker_rag_service.status()
+                if not status["installed"]:
                     print(
-                        "[CHARACTER_MAKER_RAG_AUTOSTART] 자료가 설치되지 않아 "
-                        "자동 시작을 건너뜁니다."
+                        "[CHARACTER_MAKER_RAG_AUTOSTART] 인덱스가 설치되지 않아 "
+                        "미리 로드를 건너뜁니다."
                     )
                     return
-                print("[CHARACTER_MAKER_RAG_AUTOSTART] 로컬 RAG 자동 시작을 시도합니다.")
+                print("[CHARACTER_MAKER_RAG_AUTOSTART] 내장 RAG 미리 로드를 시도합니다.")
                 await _start_character_maker_rag_runtime()
             except Exception as exc:
                 print(

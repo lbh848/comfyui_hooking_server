@@ -5857,6 +5857,7 @@
             flex: 1;
             min-height: 0;
             overflow: hidden;
+            --cm-handle-w: 34px;   /* 생성 설정 드로어 손잡이 폭 — 에디터 열과 공유 */
         }
         .cm-context-rail,
         .cm-editor-wall {
@@ -5877,6 +5878,8 @@
             border-left: 1px solid var(--border);
             overflow-y: auto;
             scrollbar-gutter: stable;
+            /* 생성 설정 드로어 손잡이가 우측 edge에 별도 lane을 차지하도록 예약 */
+            margin-right: calc(var(--cm-handle-w) + 8px);
         }
         .cm-card {
             border: 1px solid var(--border);
@@ -6183,7 +6186,8 @@
             border: 1px solid var(--border);
             border-radius: 10px;
             background: var(--surface);
-            overflow: hidden;
+            /* overflow: hidden 제거 — 필드 프리셋 custom-select 드롭다운이
+               카드 하단에서 잘리는 현상 방지. z-index와 무관하게 overflow 로 잘림. */
         }
         .cm-field-card:last-child { margin-bottom: 0; }
         .cm-field-head {
@@ -6255,63 +6259,133 @@
         .cm-tag-textarea { min-height: 72px; padding: 7px 8px; resize: vertical; line-height: 1.45; }
         .cm-tag-add input:focus,
         .cm-tag-textarea:focus { border-color: var(--accent); }
+        /* ─── 생성 설정 · 프리셋 전용 (우측 슬라이드 드로어) ─── */
         .cm-settings-wall {
-            order: 1;
-            flex: 0 0 auto;
-            border-top: 1px solid var(--border);
+            position: fixed;
+            right: 0;
+            bottom: 0;
+            z-index: 8800;
+            display: flex;
+            align-items: stretch;
+            max-height: 88vh;
+            pointer-events: none;       /* 컨테이너는 클릭 투과; 패널·손잡이만 auto */
+            overflow: hidden;           /* 슬라이드아웃 패널이 뷰포트 밖으로 나가도 스크롤바 유발 방지 */
+        }
+        .cm-settings-panel {
+            pointer-events: auto;
+            display: flex;
+            flex-direction: column;
+            width: 462px;
+            max-width: calc(100vw - var(--cm-handle-w) - 24px);
+            max-height: 88vh;
             background: color-mix(in srgb, var(--surface2) 88%, #1d2940);
-            transition: max-height .22s ease;
-            max-height: 720px;
-            overflow: hidden;
+            border: 1px solid var(--border);
+            border-right: 0;
+            border-radius: 12px 0 0 12px;
+            box-shadow: -10px 12px 34px rgba(0,0,0,0.45);
+            transform: translateX(calc(100% + var(--cm-handle-w)));
+            transition: transform .26s cubic-bezier(.22,.61,.36,1);
         }
-        .cm-settings-wall.collapsed { max-height: 40px; }
+        .cm-settings-wall:not(.collapsed) .cm-settings-panel { transform: translateX(0); }
         .cm-settings-head {
-            height: 40px;
             display: flex;
             align-items: center;
-            gap: 7px;
-            padding: 0 11px;
-            cursor: pointer;
-            font-size: .72rem;
-            font-weight: 720;
-            background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 11%, transparent), transparent);
+            gap: 8px;
+            padding: 11px 12px;
+            border-bottom: 1px solid var(--border);
+            background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 14%, transparent), transparent);
         }
-        .cm-settings-head .arrow { margin-left: auto; color: var(--text2); transition: transform .2s; }
-        .cm-settings-wall.collapsed .cm-settings-head .arrow { transform: rotate(180deg); }
+        .cm-settings-title { font-size: .76rem; font-weight: 720; color: var(--text); }
+        .cm-settings-head .cm-hint { font-size: .6rem; }
+        .cm-settings-close {
+            margin-left: auto;
+            width: 26px; height: 26px;
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            background: var(--surface);
+            color: var(--text);
+            cursor: pointer;
+            font-size: .82rem;
+            line-height: 1;
+        }
+        .cm-settings-close:hover { background: var(--surface2); }
         .cm-settings-body {
-            padding: 8px 10px 11px;
-            overflow: visible;
-        }
-        .cm-setting-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
-        .cm-setting { min-width: 0; }
-        .cm-setting.wide { grid-column: 1 / -1; }
-        .cm-setting label { display: block; margin-bottom: 3px; color: var(--text2); font-size: .61rem; }
-        .cm-setting select,
-        .cm-setting input[type="number"] {
-            width: 100%;
-            min-height: 29px;
-            padding: 0 7px;
-            border: 1px solid var(--border);
-            border-radius: 7px;
-            box-sizing: border-box;
-            color: var(--text);
-            background: var(--surface);
-            font-size: .66rem;
-        }
-        .cm-setting-check {
+            padding: 10px 11px 13px;
+            overflow-y: auto;
+            overflow-x: hidden;
             display: flex;
-            align-items: center;
-            gap: 6px;
-            min-height: 30px;
-            padding: 0 7px;
-            border: 1px solid var(--border);
-            border-radius: 7px;
-            color: var(--text);
-            background: var(--surface);
-            font-size: .64rem;
-            cursor: pointer;
+            flex-direction: column;
+            gap: 9px;
         }
-        .cm-setting-check input { accent-color: var(--accent); }
+        /* 손잡이 — 항상 우측 edge에 표시되는 명확한 세로 탭 */
+        .cm-settings-handle {
+            pointer-events: auto;
+            width: var(--cm-handle-w);
+            align-self: stretch;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 9px;
+            padding: 14px 4px;
+            box-sizing: border-box;
+            border: 1px solid color-mix(in srgb, var(--border) 70%, var(--accent));
+            border-right: 0;
+            border-radius: 10px 0 0 10px;
+            background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 18%, var(--surface)), color-mix(in srgb, var(--surface) 92%, #111827));
+            color: var(--text);
+            cursor: pointer;
+            box-shadow: -6px 8px 20px rgba(0,0,0,0.42);
+            transition: background .18s ease, transform .18s ease;
+        }
+        .cm-settings-handle:hover {
+            background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 28%, var(--surface)), color-mix(in srgb, var(--surface) 88%, #111827));
+        }
+        .cm-settings-handle:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+        .cm-settings-handle-icon { font-size: 1rem; line-height: 1; }
+        .cm-settings-handle-text {
+            writing-mode: vertical-rl;
+            text-orientation: mixed;
+            font-size: .73rem;
+            font-weight: 760;
+            letter-spacing: .06em;
+        }
+        .cm-settings-handle-sub {
+            writing-mode: vertical-rl;
+            text-orientation: mixed;
+            font-size: .56rem;
+            color: var(--text2);
+            letter-spacing: .04em;
+        }
+        .cm-settings-handle-arrow {
+            font-size: .82rem;
+            line-height: 1;
+            color: var(--accent);
+            transition: transform .22s ease;
+        }
+        .cm-settings-wall:not(.collapsed) .cm-settings-handle-arrow { transform: rotate(180deg); }
+        /* 잠금/미지원 안내 */
+        .cm-prompt-lock-note,
+        .cm-unsupported-note {
+            font-size: .63rem;
+            line-height: 1.5;
+            color: var(--text2);
+            padding: 7px 9px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface2);
+        }
+        .cm-prompt-lock-note strong { color: var(--text); }
+        /* CM 미지원 항목은 가용성과 무관하게 항상 회색 잠금 */
+        .cm-unsupported { opacity: .5; filter: grayscale(.7); }
+        .cm-unsupported input, .cm-unsupported select, .cm-unsupported button { cursor: not-allowed !important; }
+        /* 드로어 내 그리드 2열(오토매치 빈 슬롯과 동일) */
+        .cm-settings-wall .batch-slot-fields-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+        .cm-settings-wall .batch-field-group.cm-field-wide { grid-column: 1 / -1; }
+        @media (max-width: 560px) {
+            .cm-settings-wall .batch-slot-fields-grid { grid-template-columns: 1fr; }
+            .cm-settings-panel { width: calc(100vw - var(--cm-handle-w)); }
+        }
         .cm-maker-lora-panel {
             display: none;
             grid-column: 1 / -1;
@@ -9142,83 +9216,115 @@
                             </section>
                         </div>
 
-                        <section id="cm-settings-wall" class="cm-settings-wall collapsed">
-                            <div class="cm-settings-head" onclick="cmToggleSettingsWall()">
-                                <span>▦</span>
-                                <span>생성 설정 · 프리셋 전용</span>
-                                <span class="cm-hint">이 영역은 LLM이 수정하지 않음</span>
-                                <span class="arrow">⌃</span>
-                            </div>
-                            <div class="cm-settings-body" onclick="event.stopPropagation()">
-                                <div class="cm-setting-grid">
-                                    <div class="cm-setting wide">
-                                        <label for="cm-setting-workflow">에셋 워크플로우</label>
-                                        <select id="cm-setting-workflow" data-cm-setting="asset_workflow_type" onchange="cmSettingChanged()">
-                                            <option value="ilxl">ILXL</option>
-                                            <option value="anima_ilxl">ANIMA + ILXL</option>
-                                            <option value="anima_only">ONLY ANIMA</option>
-                                        </select>
-                                    </div>
-                                    <div class="cm-setting">
-                                        <label for="cm-setting-quality">ILXL 품질 프리셋</label>
-                                        <select id="cm-setting-quality" data-cm-setting="quality_preset" onchange="cmSettingChanged()"></select>
-                                    </div>
-                                    <div class="cm-setting">
-                                        <label for="cm-setting-artist">ILXL 아티스트 프리셋</label>
-                                        <select id="cm-setting-artist" data-cm-setting="artist_preset" onchange="cmSettingChanged()"></select>
-                                    </div>
-                                    <div class="cm-setting">
-                                        <label for="cm-setting-anima-quality">ANIMA 품질 프리셋</label>
-                                        <select id="cm-setting-anima-quality" data-cm-setting="anima_quality_preset" onchange="cmSettingChanged()"></select>
-                                    </div>
-                                    <div class="cm-setting">
-                                        <label for="cm-setting-anima-artist">ANIMA 아티스트 프리셋</label>
-                                        <select id="cm-setting-anima-artist" data-cm-setting="anima_artist_preset" onchange="cmSettingChanged()"></select>
-                                    </div>
-                                    <div class="cm-setting">
-                                        <label for="cm-setting-negative">ILXL 부정 프리셋</label>
-                                        <select id="cm-setting-negative" data-cm-setting="negative_preset" onchange="cmSettingChanged()"></select>
-                                    </div>
-                                    <div class="cm-setting">
-                                        <label for="cm-setting-anima-negative">ANIMA 부정 프리셋</label>
-                                        <select id="cm-setting-anima-negative" data-cm-setting="anima_negative_preset" onchange="cmSettingChanged()"></select>
-                                    </div>
-                                    <div class="cm-setting">
-                                        <label for="cm-setting-char-negative">캐릭터 부정 프리셋</label>
-                                        <select id="cm-setting-char-negative" data-cm-setting="character_negative_preset" onchange="cmSettingChanged()"></select>
-                                    </div>
-                                    <div class="cm-setting">
-                                        <label for="cm-setting-natural">자연어 프리셋</label>
-                                        <select id="cm-setting-natural" data-cm-setting="natural_language_preset" onchange="cmSettingChanged()"></select>
-                                    </div>
-                                    <div class="cm-setting">
-                                        <label for="cm-setting-width">너비</label>
-                                        <input id="cm-setting-width" data-cm-setting="img_w" type="number" min="256" max="4096" step="8" value="700" onchange="cmSettingChanged()">
-                                    </div>
-                                    <div class="cm-setting">
-                                        <label for="cm-setting-height">높이</label>
-                                        <input id="cm-setting-height" data-cm-setting="img_h" type="number" min="256" max="4096" step="8" value="1024" onchange="cmSettingChanged()">
-                                    </div>
-                                    <div class="cm-setting wide">
-                                        <label for="cm-setting-seed">Seed · -1은 매번 랜덤</label>
-                                        <input id="cm-setting-seed" data-cm-setting="seed" type="number" min="-1" max="4294967295" step="1" value="-1" onchange="cmSettingChanged()">
-                                    </div>
-                                    <label class="cm-setting-check">
-                                        <input id="cm-setting-rag" data-cm-setting="rag_enabled" type="checkbox" onchange="cmSettingChanged()">
-                                        Danbooru Tag RAG 사용
-                                    </label>
-                                    <label class="cm-setting-check">
-                                        <input id="cm-setting-lora-enabled" data-cm-setting="lora_enabled" type="checkbox" onchange="cmLoraToggleChanged()">
-                                        생성에 LoRA 사용
-                                    </label>
-                                    <div id="cm-setting-lora-panel" class="cm-maker-lora-panel">
-                                        <button type="button" class="cm-maker-lora-add"
-                                                onclick="cmOpenLoraPicker()">＋ LoRA 추가</button>
-                                        <div id="cm-setting-lora-list" class="cm-maker-lora-list"></div>
-                                    </div>
+                        <aside id="cm-settings-wall" class="cm-settings-wall collapsed" aria-expanded="false" aria-label="생성 설정 프리셋 전용">
+                            <div class="cm-settings-panel" onclick="event.stopPropagation()">
+                                <div class="cm-settings-head">
+                                    <span class="cm-settings-title">▦ 생성 설정 · 프리셋 전용</span>
+                                    <span class="cm-hint">이 영역은 LLM이 수정하지 않음</span>
+                                    <button type="button" class="cm-settings-close" onclick="cmToggleSettingsWall(false)" title="생성 설정 접기" aria-label="생성 설정 접기">✕</button>
+                                </div>
+                                <div class="cm-settings-body">
+                                    <div class="at-model-legend"><strong>표시 규칙:</strong> 에셋 워크플로우(ILXL·ANIMA)에 따라 쓸 수 없는 항목과 캐릭터 메이커가 아직 지원하지 않는 항목은 회색으로 잠깁니다.</div>
+
+                                    <section class="batch-slot-section">
+                                        <div class="batch-slot-section-title"><span>에셋 워크플로우</span><span class="batch-slot-section-hint" id="cm-workflow-badge">ILXL</span></div>
+                                        <div class="batch-slot-fields-grid">
+                                            <div class="batch-field-group cm-field-wide">
+                                                <div class="batch-field-label">워크플로우 타입</div>
+                                                <select class="at-fill-select" id="cm-setting-workflow" data-cm-setting="asset_workflow_type" onchange="cmSettingChanged(); cmApplySettingsAvailability()">
+                                                    <option value="ilxl">ILXL</option>
+                                                    <option value="anima_ilxl">ANIMA + ILXL</option>
+                                                    <option value="anima_only">ONLY ANIMA</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                    </section>
+
+                                    <section class="batch-slot-section">
+                                        <div class="batch-slot-section-title"><span>프롬프트 구성</span><span class="batch-slot-section-hint">자유 편집 영역 연동 · 🔒 잠금</span></div>
+                                        <div class="cm-prompt-lock-note">외모·복장·표정·구도는 사용자와 LLM이 함께 다루는 영역입니다. 여기서는 잠겨 있으며 <strong>자유 편집 영역</strong>에서 수정합니다.</div>
+                                        <div class="batch-slot-fields-grid">
+                                            <div class="batch-field-group"><div class="batch-field-label">외모</div><div class="at-fill-locked"><span data-cm-lock-summary="appearance">자유 편집 영역에서 수정</span><span class="at-fill-lock-badge">🔒 잠금</span></div></div>
+                                            <div class="batch-field-group"><div class="batch-field-label">복장</div><div class="at-fill-locked"><span data-cm-lock-summary="outfit">자유 편집 영역에서 수정</span><span class="at-fill-lock-badge">🔒 잠금</span></div></div>
+                                            <div class="batch-field-group"><div class="batch-field-label">표정</div><div class="at-fill-locked"><span data-cm-lock-summary="expression">자유 편집 영역에서 수정</span><span class="at-fill-lock-badge">🔒 잠금</span></div></div>
+                                            <div class="batch-field-group"><div class="batch-field-label">구도 / 기타</div><div class="at-fill-locked"><span data-cm-lock-summary="composition">자유 편집 영역에서 수정</span><span class="at-fill-lock-badge">🔒 잠금</span></div></div>
+                                        </div>
+                                    </section>
+
+                                    <section class="batch-slot-section">
+                                        <div class="batch-slot-section-title"><span>프리셋 태그</span><span class="batch-slot-section-hint">ILXL · ANIMA</span></div>
+                                        <div class="batch-slot-fields-grid">
+                                            <div class="batch-field-group at-model-control" data-at-availability="sdxl-only"><div class="batch-field-label">ILXL 품질 태그</div><select class="at-fill-select" id="cm-setting-quality" data-cm-setting="quality_preset" onchange="cmSettingChanged()"></select></div>
+                                            <div class="batch-field-group at-model-control" data-at-availability="sdxl-only"><div class="batch-field-label">ILXL 아티스트</div><select class="at-fill-select" id="cm-setting-artist" data-cm-setting="artist_preset" onchange="cmSettingChanged()"></select></div>
+                                            <div class="batch-field-group at-model-control" data-at-availability="sdxl-only"><div class="batch-field-label">ILXL 부정 태그</div><select class="at-fill-select" id="cm-setting-negative" data-cm-setting="negative_preset" onchange="cmSettingChanged()"></select></div>
+                                            <div class="batch-field-group at-model-control" data-at-availability="anima"><div class="batch-field-label">ANIMA 품질 태그 <span class="at-model-reason">ANIMA 전용</span></div><select class="at-fill-select" id="cm-setting-anima-quality" data-cm-setting="anima_quality_preset" onchange="cmSettingChanged()"></select></div>
+                                            <div class="batch-field-group at-model-control" data-at-availability="anima"><div class="batch-field-label">ANIMA 아티스트 <span class="at-model-reason">ANIMA 전용</span></div><select class="at-fill-select" id="cm-setting-anima-artist" data-cm-setting="anima_artist_preset" onchange="cmSettingChanged()"></select></div>
+                                            <div class="batch-field-group at-model-control" data-at-availability="anima"><div class="batch-field-label">ANIMA 부정 태그 <span class="at-model-reason">ANIMA 전용</span></div><select class="at-fill-select" id="cm-setting-anima-negative" data-cm-setting="anima_negative_preset" onchange="cmSettingChanged()"></select></div>
+                                            <div class="batch-field-group"><div class="batch-field-label">캐릭터 부정(optional)</div><select class="at-fill-select" id="cm-setting-char-negative" data-cm-setting="character_negative_preset" onchange="cmSettingChanged()"></select></div>
+                                            <div class="batch-field-group"><div class="batch-field-label">자연어</div><select class="at-fill-select" id="cm-setting-natural" data-cm-setting="natural_language_preset" onchange="cmSettingChanged()"></select></div>
+                                        </div>
+                                    </section>
+
+                                    <section class="batch-slot-section at-model-control cm-unsupported" data-at-availability="ipadapter" data-cm-unsupported="ipadapter">
+                                        <div class="batch-slot-section-title"><span>참조 이미지</span><span class="batch-slot-section-hint">CM 미지원 · 잠금</span></div>
+                                        <div class="cm-unsupported-note">캐릭터 메이커에서는 아직 참조 이미지(IPAdapter)를 지원하지 않습니다.</div>
+                                        <div class="batch-slot-option-stack">
+                                            <div class="batch-toggle-row"><label>FACE-IPAdapter</label><label class="toggle-switch"><input type="checkbox" disabled><span class="toggle-slider"></span></label></div>
+                                            <div class="batch-toggle-row"><label>IPAdapter</label><label class="toggle-switch"><input type="checkbox" disabled><span class="toggle-slider"></span></label></div>
+                                        </div>
+                                    </section>
+
+                                    <section class="batch-slot-section">
+                                        <div class="batch-slot-section-title"><span>LoRA</span><span class="batch-slot-section-hint">모델 보정</span></div>
+                                        <div class="batch-slot-option-stack">
+                                            <div class="batch-toggle-row"><label>LoRA</label><label class="toggle-switch"><input type="checkbox" id="cm-setting-lora-enabled" data-cm-setting="lora_enabled" onchange="cmLoraToggleChanged()"><span class="toggle-slider"></span></label></div>
+                                            <div id="cm-setting-lora-panel" class="cm-maker-lora-panel">
+                                                <button type="button" class="cm-maker-lora-add" onclick="cmOpenLoraPicker()">＋ LoRA 추가</button>
+                                                <div id="cm-setting-lora-list" class="cm-maker-lora-list"></div>
+                                            </div>
+                                            <div class="batch-toggle-row at-model-control cm-unsupported" data-cm-unsupported="style-lora"><label>Style LoRA <span class="at-model-reason">CM 미지원</span></label><label class="toggle-switch"><input type="checkbox" disabled><span class="toggle-slider"></span></label></div>
+                                            <div class="batch-toggle-row at-model-control cm-unsupported" data-at-availability="anima" data-cm-unsupported="face-lora"><label>Face LoRA <span class="at-model-reason">ANIMA · CM 미지원</span></label><label class="toggle-switch"><input type="checkbox" disabled><span class="toggle-slider"></span></label></div>
+                                        </div>
+                                    </section>
+
+                                    <section class="batch-slot-section">
+                                        <div class="batch-slot-section-title"><span>생성 옵션</span><span class="batch-slot-section-hint">출력 · 디테일러</span></div>
+                                        <div class="batch-slot-option-stack">
+                                            <div class="at-model-control cm-unsupported" data-at-availability="pose" data-cm-unsupported="pose">
+                                                <div class="batch-toggle-row"><label>포즈 <span class="at-model-reason">ILXL 단독 · CM 미지원</span></label><label class="toggle-switch"><input type="checkbox" disabled><span class="toggle-slider"></span></label></div>
+                                            </div>
+                                            <div style="display:grid; grid-template-columns:1fr 1fr; gap:7px;">
+                                                <div class="batch-field-group"><div class="batch-field-label">너비</div><input class="at-fill-select" id="cm-setting-width" data-cm-setting="img_w" type="number" min="256" max="4096" step="8" value="700" onchange="cmSettingChanged()"></div>
+                                                <div class="batch-field-group"><div class="batch-field-label">높이</div><input class="at-fill-select" id="cm-setting-height" data-cm-setting="img_h" type="number" min="256" max="4096" step="8" value="1024" onchange="cmSettingChanged()"></div>
+                                            </div>
+                                            <div class="at-model-option-group cm-unsupported" data-cm-unsupported="hires">
+                                                <div class="at-model-option-head"><span>HIRES FIX</span><span class="at-model-reason">CM 미지원</span></div>
+                                                <div class="batch-toggle-row at-model-control" data-at-availability="ilxl"><label><span class="illust-section-chip sdxl">ILXL</span> HIRES FIX</label><label class="toggle-switch"><input type="checkbox" disabled><span class="toggle-slider"></span></label></div>
+                                                <div class="batch-toggle-row at-model-control" data-at-availability="anima"><label><span class="illust-section-chip anima">ANIMA</span> HIRES FIX</label><label class="toggle-switch"><input type="checkbox" disabled><span class="toggle-slider"></span></label></div>
+                                            </div>
+                                            <div class="at-model-option-group cm-unsupported" data-cm-unsupported="detailer">
+                                                <div class="at-model-option-head"><span>디테일러</span><span class="at-model-reason">CM 미지원</span></div>
+                                                <div class="at-model-control" data-at-availability="ilxl" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;"><span class="illust-section-chip sdxl">ILXL</span><label class="at-toolbar-check"><input type="checkbox" disabled> Face</label><label class="at-toolbar-check"><input type="checkbox" disabled> Hand</label><label class="at-toolbar-check"><input type="checkbox" disabled> Eye</label></div>
+                                                <div class="at-model-control" data-at-availability="anima" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;"><span class="illust-section-chip anima">ANIMA</span><label class="at-toolbar-check"><input type="checkbox" disabled> Face</label><label class="at-toolbar-check"><input type="checkbox" disabled> Hand</label><label class="at-toolbar-check"><input type="checkbox" disabled> Eye</label><span class="at-model-reason">ANIMA 전용</span></div>
+                                            </div>
+                                            <div class="at-model-option-group at-model-control cm-unsupported" data-at-availability="anima" data-cm-unsupported="face-crop">
+                                                <div class="at-model-option-head"><span>FACE CROP</span><span class="at-model-reason">ANIMA · CM 미지원</span></div>
+                                                <div style="display:grid;grid-template-columns:1fr 1fr;gap:7px;"><div class="batch-field-group"><div class="batch-field-label">TOP</div><input class="at-fill-select" type="number" disabled></div><div class="batch-field-group"><div class="batch-field-label">BOTTOM</div><input class="at-fill-select" type="number" disabled></div></div>
+                                            </div>
+                                            <div class="batch-field-group"><div class="batch-field-label">Seed · -1은 매번 랜덤</div><input class="at-fill-select" id="cm-setting-seed" data-cm-setting="seed" type="number" min="-1" max="4294967295" step="1" value="-1" onchange="cmSettingChanged()"></div>
+                                            <div class="batch-toggle-row"><label>Danbooru Tag RAG</label><label class="toggle-switch"><input type="checkbox" id="cm-setting-rag" data-cm-setting="rag_enabled" onchange="cmSettingChanged()"><span class="toggle-slider"></span></label></div>
+                                        </div>
+                                    </section>
                                 </div>
                             </div>
-                        </section>
+
+                            <button type="button" id="cm-settings-handle" class="cm-settings-handle" onclick="cmToggleSettingsWall()" aria-expanded="false" aria-controls="cm-settings-wall" title="생성 설정 펼치기">
+                                <span class="cm-settings-handle-icon" aria-hidden="true">⚙</span>
+                                <span class="cm-settings-handle-text">생성 설정</span>
+                                <span class="cm-settings-handle-arrow" aria-hidden="true">◀</span>
+                                <span class="cm-settings-handle-sub">프리셋 전용</span>
+                            </button>
+                        </aside>
                     </aside>
                 </div>
             </div>
@@ -13356,16 +13462,13 @@
                     <div class="cm-rag-settings-page">
                         <section class="cm-rag-settings-hero">
                             <div>
-                                <div class="cm-rag-settings-eyebrow">Retrieval</div>
+                                <div class="cm-rag-settings-eyebrow">Embedded Retrieval</div>
                                 <h3>Danbooru Tag RAG</h3>
-                                <p>
-                                    실제 Danbooru 태그 후보를 검색해 캐릭터 메이커 LLM에 제공합니다.
-                                    로컬 RAG 연결과 배포용 태그 자료 준비를 이 화면에서 함께 관리할 수 있습니다.
-                                </p>
+                                <p>실제 Danbooru 태그 후보를 메인 서버 프로세스에서 직접 검색합니다.</p>
                             </div>
                             <div class="cm-rag-settings-badges">
-                                <span class="cm-rag-settings-badge">로컬 RAG :3333</span>
-                                <span class="cm-rag-settings-badge">저장소 자동 준비</span>
+                                <span class="cm-rag-settings-badge">프로세스 내장</span>
+                                <span class="cm-rag-settings-badge">Hugging Face 인덱스</span>
                             </div>
                         </section>
 
@@ -13374,7 +13477,7 @@
                                 <div class="cm-rag-settings-card-head">
                                     <div class="cm-rag-settings-card-icon">⌁</div>
                                     <div class="cm-rag-settings-card-copy">
-                                        <div class="cm-rag-settings-card-title">연결 및 검색 설정</div>
+                                        <div class="cm-rag-settings-card-title">내장 검색 설정</div>
                                         <div class="cm-rag-settings-card-desc">
                                             새 캐릭터 세션의 기본값과 직접 검색 파라미터입니다.
                                         </div>
@@ -13396,30 +13499,20 @@
                                         </div>
                                     </div>
 
-                                    <div class="cm-rag-settings-field">
-                                        <label for="setting-character-maker-rag-url">
-                                            <span>RAG 서버 URL</span>
-                                            <span>기본 로컬 주소</span>
-                                        </label>
-                                        <input type="text" id="setting-character-maker-rag-url"
-                                               value="http://127.0.0.1:3333"
-                                               placeholder="http://127.0.0.1:3333">
-                                    </div>
-
                                     <div class="cm-rag-runtime-control">
                                         <div id="setting-character-maker-rag-runtime-state"
                                              class="cm-rag-runtime-state">
-                                            로컬 RAG 상태 확인 중...
+                                            내장 RAG 상태 확인 중...
                                         </div>
                                         <button type="button" class="btn"
                                                 id="setting-character-maker-rag-runtime-start"
                                                 onclick="cmStartRagRuntime()">
-                                            실행
+                                            미리 로드
                                         </button>
                                         <button type="button" class="btn danger"
                                                 id="setting-character-maker-rag-runtime-stop"
                                                 onclick="cmStopRagRuntime()" disabled>
-                                            끄기
+                                            메모리 해제
                                         </button>
                                     </div>
 
@@ -13435,7 +13528,7 @@
                                                    min="-1" max="1" step="0.01" value="0">
                                         </div>
                                         <div class="cm-rag-settings-field">
-                                            <label for="setting-character-maker-rag-timeout">Timeout · 초</label>
+                                            <label for="setting-character-maker-rag-timeout">검색 Timeout · 초</label>
                                             <input type="number" id="setting-character-maker-rag-timeout"
                                                    min="2" max="120" step="1" value="20">
                                         </div>
@@ -13443,8 +13536,8 @@
 
                                     <div class="cm-rag-settings-field">
                                         <label for="setting-character-maker-rag-query">
-                                            <span>연결 및 직접 검색 테스트</span>
-                                            <span>/api/direct_search</span>
+                                            <span>내장 검색 테스트</span>
+                                            <span>variant-b · general</span>
                                         </label>
                                         <div class="cm-rag-settings-test-row">
                                             <input type="text" id="setting-character-maker-rag-query"
@@ -13462,19 +13555,19 @@
 
                             <section class="cm-rag-settings-card">
                                 <div class="cm-rag-settings-card-head">
-                                    <div class="cm-rag-settings-card-icon">⇄</div>
+                                    <div class="cm-rag-settings-card-icon">⇩</div>
                                     <div class="cm-rag-settings-card-copy">
-                                        <div class="cm-rag-settings-card-title">태그 자료 자동 설치</div>
+                                        <div class="cm-rag-settings-card-title">인덱스 설치</div>
                                         <div class="cm-rag-settings-card-desc">
-                                            KR 설명 CSV를 변환하고 variant-b 검색 인덱스까지 구축합니다.
+                                            고정 revision의 variant-b 인덱스를 내려받고 SHA-256 검증 후 설치합니다.
                                         </div>
                                     </div>
                                 </div>
                                 <div class="cm-rag-settings-card-body">
                                     <div class="cm-rag-settings-toggle">
                                         <div>
-                                            <strong>매니저 시작시 같이 시작</strong>
-                                            <small>자료가 설치된 경우에만 켤 수 있습니다. 매니저를 켤 때 로컬 RAG도 함께 실행합니다.</small>
+                                            <strong>매니저 시작 시 미리 로드</strong>
+                                            <small>설치된 인덱스와 임베딩 모델을 서버 시작 시 메모리에 올립니다.</small>
                                         </div>
                                         <div class="cm-rag-settings-toggle-control">
                                             <label class="toggle-switch">
@@ -13487,89 +13580,30 @@
                                         </div>
                                     </div>
 
-                                    <div class="cm-rag-settings-field">
-                                        <label for="setting-character-maker-rag-repo-path">
-                                            <span>danbooru-tag-rag 저장소 경로</span>
-                                            <span>auto_complete/danbooru-tag-rag 고정</span>
-                                        </label>
-                                        <input type="text"
-                                               id="setting-character-maker-rag-repo-path"
-                                               readonly
-                                               placeholder="auto_complete/danbooru-tag-rag (고정)">
-                                    </div>
-
                                     <div class="cm-rag-data-steps">
                                         <div class="cm-rag-data-step">
-                                            <b>1 · 자료 선택</b>
-                                            KR 설명 CSV
+                                            <b>1 · 다운로드</b>
+                                            Hugging Face Xet
                                         </div>
                                         <div class="cm-rag-data-step">
-                                            <b>2 · 정식 결합</b>
-                                            내장 Danbooru 기준표
+                                            <b>2 · 검증</b>
+                                            크기 + SHA-256
                                         </div>
                                         <div class="cm-rag-data-step">
-                                            <b>3 · 설치·인덱스</b>
-                                            저장소 + lancedb_b
+                                            <b>3 · 설치</b>
+                                            auto_complete
                                         </div>
-                                    </div>
-
-                                    <input type="file" id="setting-character-maker-rag-data-input"
-                                           accept=".csv,text/csv" hidden
-                                           onchange="cmSelectRagDataset(this.files)">
-                                    <div id="setting-character-maker-rag-data-drop"
-                                         class="cm-rag-data-drop"
-                                         role="button" tabindex="0"
-                                         onclick="cmBrowseRagDataset()"
-                                         onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();cmBrowseRagDataset();}"
-                                         ondragover="cmRagDatasetDrag(event, true)"
-                                         ondragleave="cmRagDatasetDrag(event, false)"
-                                         ondrop="cmDropRagDataset(event)">
-                                        <div>
-                                            <div class="cm-rag-data-drop-icon">CSV</div>
-                                            <div class="cm-rag-data-drop-title">
-                                                auto_complete 자료 검색
-                                            </div>
-                                            <div class="cm-rag-data-drop-note">
-                                                안내된 폴더의 KR 설명 CSV를 자동으로 찾습니다.<br>
-                                                다른 위치의 파일은 여기에 놓거나 직접 선택하세요.<br>
-                                                원본은 수정하지 않으며, 직접 올린 파일은 변환 직후 폐기합니다.
-                                            </div>
-                                            <div class="cm-rag-data-drop-actions">
-                                                <button type="button" class="btn"
-                                                        id="setting-character-maker-rag-data-search-btn"
-                                                        onclick="event.stopPropagation();cmFindRagDataset(true);">
-                                                    자료 검색
-                                                </button>
-                                                <button type="button" class="btn"
-                                                        onclick="event.stopPropagation();cmBrowseRagDataset();">
-                                                    직접 파일 찾기
-                                                </button>
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    <div id="setting-character-maker-rag-data-file"
-                                         class="cm-rag-data-file" style="display:none;">
-                                        <span>▤</span>
-                                        <div style="min-width:0; flex:1;">
-                                            <div id="setting-character-maker-rag-data-file-name"
-                                                 class="cm-rag-data-file-name"></div>
-                                            <div id="setting-character-maker-rag-data-file-meta"
-                                                 class="cm-rag-data-file-meta"></div>
-                                        </div>
-                                        <button type="button" class="btn"
-                                                onclick="cmClearRagDataset()">변경</button>
                                     </div>
 
                                     <div class="cm-rag-data-action">
                                         <div id="setting-character-maker-rag-data-state"
                                              class="cm-rag-data-state">
-                                            고정 저장소(auto_complete/danbooru-tag-rag) 사용 · auto_complete 자료 검색 · 최대 128MB
+                                            Hugging Face 인덱스 상태를 확인하는 중입니다.
                                         </div>
                                         <button type="button" class="btn cm-rag-data-convert-btn"
                                                 id="setting-character-maker-rag-data-install-btn"
-                                                onclick="cmInstallRagDataset()" disabled>
-                                            변환 및 설치
+                                                onclick="cmInstallRagDataset()">
+                                            다운로드 및 설치
                                         </button>
                                     </div>
                                     <div id="setting-character-maker-rag-data-progress"
@@ -13585,20 +13619,17 @@
                                     <div id="setting-character-maker-rag-data-result"
                                          class="cm-rag-data-result">
                                         <div class="cm-rag-data-result-title">
-                                            ✓ danbooru-tags.csv · variant-b 설치 완료
+                                            ✓ Hugging Face variant-b 인덱스 설치 완료
                                         </div>
                                         <div class="cm-rag-data-result-grid">
                                             <div class="cm-rag-data-result-stat">
-                                                <b id="cm-rag-result-written">0</b><span>변환</span>
+                                                <b id="cm-rag-result-version">-</b><span>버전</span>
                                             </div>
                                             <div class="cm-rag-data-result-stat">
-                                                <b id="cm-rag-result-low">0</b><span>빈도 제외</span>
+                                                <b id="cm-rag-result-rows">0</b><span>태그</span>
                                             </div>
                                             <div class="cm-rag-data-result-stat">
-                                                <b id="cm-rag-result-unmatched">0</b><span>미매칭</span>
-                                            </div>
-                                            <div class="cm-rag-data-result-stat">
-                                                <b id="cm-rag-result-malformed">0</b><span>손상 행</span>
+                                                <b id="cm-rag-result-size">0 MB</b><span>다운로드</span>
                                             </div>
                                         </div>
                                     </div>
@@ -13609,14 +13640,8 @@
                         <div class="cm-rag-settings-note">
                             <span>ⓘ</span>
                             <div>
-                                RAG는 모델 내장 기능이 아니라 서버 측 후보 검색 단계입니다.
-                                저장소가 없으면 고정 위치에 자동으로 받은 뒤, 기존 CSV와
-                                <code>data/lancedb_b</code>를 저장소 폴더 안에서 그대로
-                                덮어쓰고 교체합니다(외부 백업 없음). 설치 중 실패하면
-                                이전 상태로 되돌리지 않으므로 태그 자료를 다시 설치해 주세요.
-                                설치 후 위의 실행·끄기 버튼으로 로컬 RAG를 관리할 수 있습니다.
-                                인덱스 구축과 최초 모델 준비에는 GPU에서도 시간이 걸릴 수 있습니다.
-                                이미지 피드백은 별도로 비전 모델이 필요합니다.
+                                RAG 검색 코드는 메인 서버에 내장되며 인덱스는 <code>auto_complete/danbooru_rag_data</code>에 설치됩니다.
+                                최초 검색 시 <code>intfloat/multilingual-e5-large</code> 모델을 Hugging Face에서 받을 수 있습니다.
                                 <a href="https://github.com/joykst96/danbooru-tag-rag"
                                    target="_blank" rel="noopener"
                                    style="color:var(--accent);">원본 프로젝트 보기</a>
@@ -16715,81 +16740,63 @@
             const toggle = document.getElementById('setting-character-maker-rag-autostart');
             if (!toggle) return;
             toggle.disabled = !dataReady;
+            if (!dataReady && toggle.checked) {
+                toggle.checked = false;
+                updateCharacterMakerRagAutostartStatus(false);
+            }
         }
 
-        let cmRagRuntimePollTimer = null;
         let cmRagRuntimeState = 'stopped';
-        let cmRagRuntimeManaged = false;
+        let cmRagRuntimeLoaded = false;
+        let cmRagIndexInstalled = false;
+        let cmRagDatasetBusy = false;
+
+        function cmFormatDatasetBytes(bytes) {
+            const size = Number(bytes || 0);
+            if (size < 1024) return `${size} B`;
+            if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+            return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+        }
 
         function cmRenderRagRuntimeStatus(data) {
-            const status = document.getElementById(
-                'setting-character-maker-rag-runtime-state',
-            );
-            const startButton = document.getElementById(
-                'setting-character-maker-rag-runtime-start',
-            );
-            const stopButton = document.getElementById(
-                'setting-character-maker-rag-runtime-stop',
-            );
-            if (!status || !startButton || !stopButton) {
-                console.error('[CHARACTER_MAKER_RAG_RUNTIME] 실행 상태 UI를 찾지 못했습니다.');
-                return;
-            }
-
+            const status = document.getElementById('setting-character-maker-rag-runtime-state');
+            const startButton = document.getElementById('setting-character-maker-rag-runtime-start');
+            const stopButton = document.getElementById('setting-character-maker-rag-runtime-stop');
+            const installButton = document.getElementById('setting-character-maker-rag-data-install-btn');
             const state = String(data?.state || 'stopped');
+            const installed = !!data?.installed;
+            const loaded = !!data?.ready || state === 'running';
             cmRagRuntimeState = state;
-            cmRagRuntimeManaged = !!data?.managed;
-            const dataReady = !!data?.data_ready;
-            const labels = {
-                running: `실행 중${data?.pid ? ` · PID ${data.pid}` : ''}`,
-                starting: '시작 중 · 모델을 불러오는 중입니다...',
-                external: '외부에서 실행 중 · 연결 가능',
-                error: `실행 실패 · ${data?.error || '로컬 RAG 로그를 확인하세요.'}`,
-                stopped: dataReady ? '중지됨 · 실행할 수 있습니다.' : '중지됨 · 먼저 변환 및 설치가 필요합니다.',
-            };
-            status.textContent = labels[state] || labels.stopped;
-            status.className = 'cm-rag-runtime-state ' + (
-                state === 'external' ? 'running' : state
-            );
-            status.title = Array.isArray(data?.log_tail)
-                ? data.log_tail.slice(-10).join('\n')
-                : '';
-            startButton.disabled = (
-                !dataReady
-                || !!data?.managed
-                || state === 'running'
-                || state === 'starting'
-                || state === 'external'
-            );
-            stopButton.disabled = !data?.managed
-                || (
-                    state !== 'running'
-                    && state !== 'starting'
-                    && state !== 'error'
-                );
-            const installButton = document.getElementById(
-                'setting-character-maker-rag-data-install-btn',
-            );
-            if (installButton && !cmRagDatasetBusy) {
-                installButton.disabled = !cmRagCanInstall();
-            }
-            cmApplyRagAutostartDisabledState(dataReady);
+            cmRagRuntimeLoaded = loaded;
+            cmRagIndexInstalled = installed;
 
-            const configuredUrl = (
-                document.getElementById('setting-character-maker-rag-url')?.value
-                || ''
-            ).trim().replace(/\/+$/, '').toLowerCase();
-            const managesConfiguredUrl = (
-                configuredUrl === 'http://127.0.0.1:3333'
-                || configuredUrl === 'http://localhost:3333'
-            );
-            if (managesConfiguredUrl) {
-                if (state === 'running' || state === 'external') {
-                    cmRagVerified = true;
-                } else if (state === 'stopped' || state === 'error') {
-                    cmRagVerified = false;
+            if (status) {
+                if (state === 'error') {
+                    status.textContent = `내장 RAG 오류 · ${data?.error || '로그를 확인하세요.'}`;
+                    status.className = 'cm-rag-runtime-state error';
+                } else if (loaded) {
+                    const rows = Number(data?.row_count || 0);
+                    status.textContent = `내장 RAG 준비됨${rows ? ` · ${rows.toLocaleString()}태그` : ''}`;
+                    status.className = 'cm-rag-runtime-state running';
+                } else if (installed) {
+                    status.textContent = '인덱스 설치됨 · 첫 검색 때 자동 로드';
+                    status.className = 'cm-rag-runtime-state stopped';
+                } else {
+                    status.textContent = '인덱스 미설치 · 오른쪽에서 다운로드하세요.';
+                    status.className = 'cm-rag-runtime-state stopped';
                 }
             }
+            if (startButton) {
+                startButton.disabled = !installed || loaded || cmRagDatasetBusy;
+            }
+            if (stopButton) {
+                stopButton.disabled = !loaded || cmRagDatasetBusy;
+            }
+            if (installButton) {
+                installButton.disabled = cmRagDatasetBusy || loaded;
+            }
+            cmApplyRagAutostartDisabledState(installed);
+            cmRagVerified = loaded;
             if (cmSession) cmRenderStatus();
         }
 
@@ -16799,10 +16806,7 @@
                     cache: 'no-store',
                 });
                 const data = await response.json().catch(error => {
-                    console.error(
-                        '[CHARACTER_MAKER_RAG_RUNTIME] 상태 응답 JSON 해석 실패:',
-                        error,
-                    );
+                    console.error('[CHARACTER_MAKER_RAG] 상태 JSON 해석 실패:', error);
                     return {};
                 });
                 if (!response.ok || data.success === false || data.error) {
@@ -16811,137 +16815,72 @@
                 cmRenderRagRuntimeStatus(data);
                 return data;
             } catch (error) {
-                console.error('[CHARACTER_MAKER_RAG_RUNTIME] 상태 확인 실패:', error);
-                const status = document.getElementById(
-                    'setting-character-maker-rag-runtime-state',
-                );
+                console.error('[CHARACTER_MAKER_RAG] 상태 확인 실패:', error);
+                const status = document.getElementById('setting-character-maker-rag-runtime-state');
                 if (status) {
                     status.textContent = `상태 확인 실패 · ${error.message || String(error)}`;
                     status.className = 'cm-rag-runtime-state error';
                 }
                 if (showError) {
-                    showToast('로컬 RAG 상태 확인 실패: ' + (error.message || error), 'error');
+                    showToast('내장 RAG 상태 확인 실패: ' + (error.message || error), 'error');
                 }
                 return null;
             }
         }
 
-        function cmPollRagRuntimeUntilSettled() {
-            if (cmRagRuntimePollTimer) {
-                clearTimeout(cmRagRuntimePollTimer);
-                cmRagRuntimePollTimer = null;
-            }
-            const deadline = Date.now() + 5 * 60 * 1000;
-            const poll = async () => {
-                const data = await cmRefreshRagRuntimeStatus(false);
-                if (data?.state === 'starting' && Date.now() < deadline) {
-                    cmRagRuntimePollTimer = setTimeout(poll, 1000);
-                } else {
-                    cmRagRuntimePollTimer = null;
-                    if (data?.state === 'running') {
-                        showToast('로컬 Danbooru RAG가 준비되었습니다.', 'success');
-                    } else if (data?.state === 'error') {
-                        showToast(
-                            '로컬 RAG 실행 실패: ' + (data.error || '로컬 RAG 로그를 확인하세요.'),
-                            'error',
-                        );
-                    }
-                }
-            };
-            void poll();
-        }
-
         async function cmStartRagRuntime() {
-            const startButton = document.getElementById(
-                'setting-character-maker-rag-runtime-start',
-            );
-            const stopButton = document.getElementById(
-                'setting-character-maker-rag-runtime-stop',
-            );
-            const runtimeStatus = document.getElementById(
-                'setting-character-maker-rag-runtime-state',
-            );
-            const installButton = document.getElementById(
-                'setting-character-maker-rag-data-install-btn',
-            );
-            cmRagRuntimeState = 'starting';
-            cmRagRuntimeManaged = true;
+            const startButton = document.getElementById('setting-character-maker-rag-runtime-start');
             if (startButton) {
                 startButton.disabled = true;
-                startButton.textContent = '시작 중...';
-            }
-            if (stopButton) stopButton.disabled = true;
-            if (installButton) installButton.disabled = true;
-            if (runtimeStatus) {
-                runtimeStatus.textContent = '시작 준비 중 · 의존성을 확인하고 있습니다...';
-                runtimeStatus.className = 'cm-rag-runtime-state starting';
+                startButton.textContent = '로드 중...';
             }
             try {
                 const response = await fetch('/api/character_maker/rag/runtime/start', {
                     method: 'POST',
                 });
                 const data = await response.json().catch(error => {
-                    console.error(
-                        '[CHARACTER_MAKER_RAG_RUNTIME] 실행 응답 JSON 해석 실패:',
-                        error,
-                    );
+                    console.error('[CHARACTER_MAKER_RAG] 로드 JSON 해석 실패:', error);
                     return {};
                 });
                 if (!response.ok || data.success === false || data.error) {
                     throw new Error(data.error || `HTTP ${response.status}`);
                 }
                 cmRenderRagRuntimeStatus(data);
-                if (data.state === 'external') {
-                    showToast('이미 실행 중인 로컬 RAG에 연결했습니다.', 'success');
-                } else if (data.state === 'running') {
-                    showToast('로컬 Danbooru RAG가 실행 중입니다.', 'success');
-                } else {
-                    showToast('로컬 RAG를 시작했습니다. 모델 준비를 기다립니다.', 'info');
-                    cmPollRagRuntimeUntilSettled();
-                }
+                showToast('내장 Danbooru RAG를 메모리에 로드했습니다.', 'success');
             } catch (error) {
-                console.error('[CHARACTER_MAKER_RAG_RUNTIME] 실행 실패:', error);
-                showToast('로컬 RAG 실행 실패: ' + (error.message || error), 'error');
+                console.error('[CHARACTER_MAKER_RAG] 로드 실패:', error);
+                showToast('내장 RAG 로드 실패: ' + (error.message || error), 'error');
                 await cmRefreshRagRuntimeStatus(false);
             } finally {
-                if (startButton) startButton.textContent = '실행';
+                if (startButton) startButton.textContent = '미리 로드';
             }
         }
 
         async function cmStopRagRuntime() {
-            if (cmRagRuntimePollTimer) {
-                clearTimeout(cmRagRuntimePollTimer);
-                cmRagRuntimePollTimer = null;
-            }
-            const stopButton = document.getElementById(
-                'setting-character-maker-rag-runtime-stop',
-            );
+            const stopButton = document.getElementById('setting-character-maker-rag-runtime-stop');
             if (stopButton) {
                 stopButton.disabled = true;
-                stopButton.textContent = '끄는 중...';
+                stopButton.textContent = '해제 중...';
             }
             try {
                 const response = await fetch('/api/character_maker/rag/runtime/stop', {
                     method: 'POST',
                 });
                 const data = await response.json().catch(error => {
-                    console.error(
-                        '[CHARACTER_MAKER_RAG_RUNTIME] 종료 응답 JSON 해석 실패:',
-                        error,
-                    );
+                    console.error('[CHARACTER_MAKER_RAG] 언로드 JSON 해석 실패:', error);
                     return {};
                 });
                 if (!response.ok || data.success === false || data.error) {
                     throw new Error(data.error || `HTTP ${response.status}`);
                 }
                 cmRenderRagRuntimeStatus(data);
-                showToast('로컬 Danbooru RAG를 껐습니다.', 'success');
+                showToast('내장 Danbooru RAG 메모리를 해제했습니다.', 'success');
             } catch (error) {
-                console.error('[CHARACTER_MAKER_RAG_RUNTIME] 종료 실패:', error);
-                showToast('로컬 RAG 종료 실패: ' + (error.message || error), 'error');
+                console.error('[CHARACTER_MAKER_RAG] 언로드 실패:', error);
+                showToast('내장 RAG 메모리 해제 실패: ' + (error.message || error), 'error');
                 await cmRefreshRagRuntimeStatus(false);
             } finally {
-                if (stopButton) stopButton.textContent = '끄기';
+                if (stopButton) stopButton.textContent = '메모리 해제';
             }
         }
 
@@ -16954,10 +16893,9 @@
             }
             button.disabled = true;
             button.textContent = '테스트 중...';
-            output.textContent = 'RAG 서버 상태와 직접 검색 응답을 확인하는 중입니다...';
+            output.textContent = '내장 모델과 인덱스를 준비하고 직접 검색하는 중입니다...';
             try {
                 const payload = {
-                    url: document.getElementById('setting-character-maker-rag-url')?.value.trim(),
                     top_k: Number(document.getElementById('setting-character-maker-rag-top-k')?.value || 5),
                     threshold: Number(document.getElementById('setting-character-maker-rag-threshold')?.value || 0),
                     timeout_sec: Number(document.getElementById('setting-character-maker-rag-timeout')?.value || 20),
@@ -16969,7 +16907,7 @@
                     body: JSON.stringify(payload),
                 });
                 const data = await response.json().catch(error => {
-                    console.error('[CHARACTER_MAKER_RAG] 테스트 응답 JSON 해석 실패:', error);
+                    console.error('[CHARACTER_MAKER_RAG] 테스트 JSON 해석 실패:', error);
                     return {};
                 });
                 if (!response.ok || data.success === false || data.error) {
@@ -16978,286 +16916,18 @@
                 output.textContent = JSON.stringify(data, null, 2);
                 cmRagVerified = true;
                 if (cmSession) cmRenderStatus();
-                showToast('Danbooru Tag RAG 연결 테스트에 성공했습니다.', 'success');
+                await cmRefreshRagRuntimeStatus(false);
+                showToast('내장 Danbooru Tag RAG 테스트에 성공했습니다.', 'success');
             } catch (error) {
-                console.error('[CHARACTER_MAKER_RAG] 연결 테스트 실패:', error);
+                console.error('[CHARACTER_MAKER_RAG] 테스트 실패:', error);
                 cmRagVerified = false;
                 if (cmSession) cmRenderStatus();
                 output.textContent = `테스트 실패\n${error.message || String(error)}`;
-                showToast('RAG 테스트 실패: ' + (error.message || error), 'error');
+                showToast('내장 RAG 테스트 실패: ' + (error.message || error), 'error');
             } finally {
                 button.disabled = false;
                 button.textContent = '테스트';
             }
-        }
-
-        let cmRagDatasetFile = null;
-        let cmRagServerDataset = null;
-        let cmRagDatasetScanned = false;
-        let cmRagDatasetBusy = false;
-
-        function cmFormatDatasetBytes(bytes) {
-            const size = Number(bytes || 0);
-            if (size < 1024) return `${size} B`;
-            if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
-            return `${(size / (1024 * 1024)).toFixed(1)} MB`;
-        }
-
-        function cmRagRepositoryPath() {
-            return document.getElementById(
-                'setting-character-maker-rag-repo-path',
-            )?.value.trim() || '';
-        }
-
-        function cmRagCanInstall() {
-            const sourceReady = !!cmRagDatasetFile
-                || !!cmRagServerDataset?.canonicalReady;
-            const runtimeStopped = !cmRagRuntimeManaged && (
-                cmRagRuntimeState !== 'running'
-                && cmRagRuntimeState !== 'starting'
-                && cmRagRuntimeState !== 'external'
-            );
-            return sourceReady && !!cmRagRepositoryPath() && runtimeStopped;
-        }
-
-        function cmRagRepositoryChanged() {
-            const button = document.getElementById(
-                'setting-character-maker-rag-data-install-btn',
-            );
-            if (button && !cmRagDatasetBusy) button.disabled = !cmRagCanInstall();
-            const state = document.getElementById('setting-character-maker-rag-data-state');
-            // 저장소 경로는 auto_complete/danbooru-tag-rag 로 고정되어 항상 존재한다.
-            if (
-                state
-                && (cmRagDatasetFile || cmRagServerDataset?.canonicalReady)
-            ) {
-                state.textContent =
-                    '자료 준비 완료 · 변환 후 저장소 설치와 variant-b 구축을 진행합니다.';
-            }
-        }
-
-        async function cmFindRagDataset(showNotice = true) {
-            if (cmRagDatasetBusy) {
-                if (showNotice) showToast('태그 자료를 변환하는 중입니다.', 'info');
-                return;
-            }
-            const searchButton = document.getElementById(
-                'setting-character-maker-rag-data-search-btn',
-            );
-            const state = document.getElementById('setting-character-maker-rag-data-state');
-            if (searchButton) {
-                searchButton.disabled = true;
-                searchButton.textContent = '검색 중...';
-            }
-            if (state) state.textContent = 'auto_complete 폴더에서 KR 설명 CSV를 찾는 중...';
-            try {
-                const response = await fetch('/api/character_maker/rag/dataset', {
-                    cache: 'no-store',
-                });
-                const data = await response.json().catch(error => {
-                    console.error(
-                        '[CHARACTER_MAKER_RAG_DATA] 자료 검색 응답 JSON 해석 실패:',
-                        error,
-                    );
-                    return {};
-                });
-                if (!response.ok || data.success === false || data.error) {
-                    throw new Error(data.error || `HTTP ${response.status}`);
-                }
-                cmRagDatasetScanned = true;
-                if (!data.dataset?.available) {
-                    cmRagServerDataset = null;
-                    if (state) {
-                        state.textContent =
-                            'auto_complete에서 KR 설명 CSV를 찾지 못했습니다. 파일을 넣은 뒤 다시 검색하세요.';
-                    }
-                    if (showNotice) {
-                        showToast('auto_complete에서 KR 설명 CSV를 찾지 못했습니다.', 'error');
-                    }
-                    return;
-                }
-
-                cmRagDatasetFile = null;
-                cmRagServerDataset = {
-                    ...data.dataset,
-                    canonicalReady: !!data.canonical?.available,
-                };
-                const input = document.getElementById(
-                    'setting-character-maker-rag-data-input',
-                );
-                const drop = document.getElementById(
-                    'setting-character-maker-rag-data-drop',
-                );
-                const fileBox = document.getElementById(
-                    'setting-character-maker-rag-data-file',
-                );
-                const name = document.getElementById(
-                    'setting-character-maker-rag-data-file-name',
-                );
-                const meta = document.getElementById(
-                    'setting-character-maker-rag-data-file-meta',
-                );
-                const button = document.getElementById(
-                    'setting-character-maker-rag-data-install-btn',
-                );
-                const result = document.getElementById(
-                    'setting-character-maker-rag-data-result',
-                );
-                if (input) input.value = '';
-                drop?.classList.add('has-file');
-                if (fileBox) fileBox.style.display = 'flex';
-                if (name) name.textContent = data.dataset.filename;
-                if (meta) {
-                    meta.textContent =
-                        `${cmFormatDatasetBytes(data.dataset.size)} · auto_complete에서 발견`;
-                }
-                result?.classList.remove('visible');
-                if (!data.canonical?.available) {
-                    if (state) {
-                        state.textContent =
-                            'KR CSV는 찾았지만 내장 기준표 danbooru.csv가 없습니다.';
-                    }
-                    if (button) button.disabled = true;
-                    if (showNotice) {
-                        showToast('auto_complete/danbooru.csv가 필요합니다.', 'error');
-                    }
-                    return;
-                }
-                if (state) {
-                    state.textContent = cmRagRepositoryPath()
-                        ? '자료 준비 완료 · 변환 후 저장소 설치와 variant-b 구축을 진행합니다.'
-                        : '자료를 찾았습니다. danbooru-tag-rag 저장소 경로를 지정하세요.';
-                }
-                if (button) button.disabled = !cmRagCanInstall();
-                if (showNotice) {
-                    showToast('auto_complete에서 변환 자료를 찾았습니다.', 'success');
-                }
-            } catch (error) {
-                console.error('[CHARACTER_MAKER_RAG_DATA] 자료 검색 실패:', error);
-                cmRagDatasetScanned = true;
-                cmRagServerDataset = null;
-                if (state) state.textContent = `자료 검색 실패 · ${error.message || error}`;
-                if (showNotice) {
-                    showToast('태그 자료 검색 실패: ' + (error.message || error), 'error');
-                }
-            } finally {
-                if (searchButton) {
-                    searchButton.disabled = false;
-                    searchButton.textContent = '자료 검색';
-                }
-            }
-        }
-
-        function cmBrowseRagDataset() {
-            if (cmRagDatasetBusy) {
-                showToast('태그 자료를 변환하는 중입니다.', 'info');
-                return;
-            }
-            const input = document.getElementById('setting-character-maker-rag-data-input');
-            if (!input) {
-                console.error('[CHARACTER_MAKER_RAG_DATA] 파일 입력 UI를 찾지 못했습니다.');
-                showToast('태그 자료 파일 입력을 찾지 못했습니다.', 'error');
-                return;
-            }
-            input.click();
-        }
-
-        function cmSelectRagDataset(files) {
-            const file = files && files.length ? files[0] : null;
-            if (!file) {
-                console.error('[CHARACTER_MAKER_RAG_DATA] 선택된 파일이 없습니다.');
-                return;
-            }
-            if (!String(file.name || '').toLowerCase().endsWith('.csv')) {
-                console.error('[CHARACTER_MAKER_RAG_DATA] CSV가 아닌 파일 선택:', file.name);
-                showToast('CSV 파일만 선택할 수 있습니다.', 'error');
-                cmClearRagDataset();
-                return;
-            }
-            if (!file.size) {
-                console.error('[CHARACTER_MAKER_RAG_DATA] 빈 파일 선택:', file.name);
-                showToast('선택한 CSV 파일이 비어 있습니다.', 'error');
-                cmClearRagDataset();
-                return;
-            }
-            if (file.size > 128 * 1024 * 1024) {
-                console.error('[CHARACTER_MAKER_RAG_DATA] 파일 용량 초과:', file.name, file.size);
-                showToast('태그 CSV는 128MB를 넘을 수 없습니다.', 'error');
-                cmClearRagDataset();
-                return;
-            }
-
-            cmRagDatasetFile = file;
-            cmRagServerDataset = null;
-            const drop = document.getElementById('setting-character-maker-rag-data-drop');
-            const fileBox = document.getElementById('setting-character-maker-rag-data-file');
-            const name = document.getElementById('setting-character-maker-rag-data-file-name');
-            const meta = document.getElementById('setting-character-maker-rag-data-file-meta');
-            const state = document.getElementById('setting-character-maker-rag-data-state');
-            const button = document.getElementById('setting-character-maker-rag-data-install-btn');
-            const result = document.getElementById('setting-character-maker-rag-data-result');
-            drop?.classList.add('has-file');
-            if (fileBox) fileBox.style.display = 'flex';
-            if (name) name.textContent = file.name;
-            if (meta) {
-                meta.textContent = `${cmFormatDatasetBytes(file.size)} · 로컬 파일 · 서버에 보관하지 않음`;
-            }
-            if (state) {
-                const expectedName = 'kr_danbooru_tags_with_description';
-                state.textContent = file.name.toLowerCase().includes(expectedName)
-                    ? (cmRagRepositoryPath()
-                        ? '파일 준비 완료 · 저장소 설치와 variant-b 구축을 진행합니다.'
-                        : '파일을 선택했습니다. danbooru-tag-rag 저장소 경로를 지정하세요.')
-                    : 'CSV 이름이 다릅니다. 변환 시 열 구조를 서버에서 검증합니다.';
-            }
-            if (button) button.disabled = !cmRagCanInstall();
-            result?.classList.remove('visible');
-        }
-
-        function cmClearRagDataset() {
-            if (cmRagDatasetBusy) {
-                showToast('변환이 끝난 뒤 파일을 변경할 수 있습니다.', 'info');
-                return;
-            }
-            cmRagDatasetFile = null;
-            cmRagServerDataset = null;
-            const input = document.getElementById('setting-character-maker-rag-data-input');
-            const drop = document.getElementById('setting-character-maker-rag-data-drop');
-            const fileBox = document.getElementById('setting-character-maker-rag-data-file');
-            const state = document.getElementById('setting-character-maker-rag-data-state');
-            const button = document.getElementById('setting-character-maker-rag-data-install-btn');
-            const result = document.getElementById('setting-character-maker-rag-data-result');
-            if (input) input.value = '';
-            drop?.classList.remove('has-file', 'is-dragging');
-            if (fileBox) fileBox.style.display = 'none';
-            if (state) {
-                state.textContent =
-                    '저장소 경로 지정 후 auto_complete 자료 검색 · 최대 128MB';
-            }
-            if (button) button.disabled = true;
-            result?.classList.remove('visible');
-        }
-
-        function cmRagDatasetDrag(event, active) {
-            event.preventDefault();
-            event.stopPropagation();
-            const drop = document.getElementById('setting-character-maker-rag-data-drop');
-            drop?.classList.toggle('is-dragging', !!active);
-        }
-
-        function cmDropRagDataset(event) {
-            cmRagDatasetDrag(event, false);
-            if (cmRagDatasetBusy) {
-                showToast('태그 자료를 변환하는 중입니다.', 'info');
-                return;
-            }
-            const files = event.dataTransfer?.files;
-            if (!files || !files.length) {
-                console.error('[CHARACTER_MAKER_RAG_DATA] 드롭된 파일이 없습니다.');
-                showToast('드롭된 파일을 읽지 못했습니다.', 'error');
-                return;
-            }
-            cmSelectRagDataset(files);
         }
 
         function handleCmRagInstallProgress(data) {
@@ -17278,104 +16948,107 @@
             }
         }
 
+        async function cmRefreshRagArtifactStatus(showError = false) {
+            const state = document.getElementById('setting-character-maker-rag-data-state');
+            const result = document.getElementById('setting-character-maker-rag-data-result');
+            try {
+                const response = await fetch('/api/character_maker/rag/dataset', {
+                    cache: 'no-store',
+                });
+                const data = await response.json().catch(error => {
+                    console.error('[CHARACTER_MAKER_RAG] 인덱스 상태 JSON 해석 실패:', error);
+                    return {};
+                });
+                if (!response.ok || data.success === false || data.error) {
+                    throw new Error(data.error || `HTTP ${response.status}`);
+                }
+                const artifact = data.artifact || {};
+                cmRagIndexInstalled = !!artifact.installed;
+                if (state) {
+                    state.textContent = artifact.installed
+                        ? `설치됨 · ${artifact.artifact_version || '버전 미상'} · ${Number(artifact.row_count || 0).toLocaleString()}태그`
+                        : '미설치 · Hugging Face에서 약 365MB를 다운로드합니다.';
+                }
+                if (artifact.installed) {
+                    const version = document.getElementById('cm-rag-result-version');
+                    const rows = document.getElementById('cm-rag-result-rows');
+                    const size = document.getElementById('cm-rag-result-size');
+                    if (version) version.textContent = artifact.artifact_version || '-';
+                    if (rows) rows.textContent = Number(artifact.row_count || 0).toLocaleString();
+                    if (size) size.textContent = cmFormatDatasetBytes(artifact.archive_size || 0);
+                    result?.classList.add('visible');
+                } else {
+                    result?.classList.remove('visible');
+                }
+                cmApplyRagAutostartDisabledState(cmRagIndexInstalled);
+                return data;
+            } catch (error) {
+                console.error('[CHARACTER_MAKER_RAG] 인덱스 상태 확인 실패:', error);
+                if (state) state.textContent = `인덱스 상태 확인 실패 · ${error.message || error}`;
+                if (showError) {
+                    showToast('RAG 인덱스 상태 확인 실패: ' + (error.message || error), 'error');
+                }
+                return null;
+            }
+        }
+
         async function cmInstallRagDataset() {
             if (cmRagDatasetBusy) return;
-            if (!cmRagDatasetFile && !cmRagServerDataset?.canonicalReady) {
-                console.error('[CHARACTER_MAKER_RAG_INSTALL] 설치 요청 파일이 없습니다.');
-                showToast('먼저 auto_complete 자료를 검색하거나 KR 설명 CSV를 선택하세요.', 'error');
-                return;
-            }
-            const repository = cmRagRepositoryPath();
-            if (!repository) {
-                console.error('[CHARACTER_MAKER_RAG_INSTALL] RAG 저장소 경로가 없습니다.');
-                showToast('danbooru-tag-rag 저장소 경로를 먼저 지정하세요.', 'error');
+            if (cmRagRuntimeLoaded) {
+                showToast('먼저 내장 RAG 메모리를 해제하세요.', 'error');
                 return;
             }
             const button = document.getElementById('setting-character-maker-rag-data-install-btn');
             const state = document.getElementById('setting-character-maker-rag-data-state');
             const result = document.getElementById('setting-character-maker-rag-data-result');
-            const runtimeStartButton = document.getElementById(
-                'setting-character-maker-rag-runtime-start',
-            );
             cmRagDatasetBusy = true;
             if (button) {
                 button.disabled = true;
                 button.classList.add('is-busy');
                 button.textContent = '설치 중...';
             }
-            if (runtimeStartButton) runtimeStartButton.disabled = true;
             result?.classList.remove('visible');
-            handleCmRagInstallProgress({phase: '시작', progress: 0, detail: '설치 시작'});
+            handleCmRagInstallProgress({phase: '시작', progress: 0, detail: 'Hugging Face 설치 시작'});
 
             try {
-                const form = new FormData();
-                form.append('repository', repository);
-                if (cmRagDatasetFile) {
-                    form.append('dataset', cmRagDatasetFile, cmRagDatasetFile.name);
-                } else {
-                    form.append('source', 'auto_complete');
-                }
                 const response = await fetch('/api/character_maker/rag/install', {
                     method: 'POST',
-                    body: form,
+                    headers: { 'Content-Type': 'application/json' },
+                    body: '{}',
                 });
-                const payload = await response.json().catch(parseError => {
-                    console.error(
-                        '[CHARACTER_MAKER_RAG_INSTALL] 설치 응답 JSON 해석 실패:',
-                        parseError,
-                    );
+                const payload = await response.json().catch(error => {
+                    console.error('[CHARACTER_MAKER_RAG] 설치 JSON 해석 실패:', error);
                     return {};
                 });
                 if (!response.ok || payload.success === false || payload.error) {
                     throw new Error(payload.error || `HTTP ${response.status}`);
                 }
-                const data = payload.summary || {};
-                const summary = {
-                    input: Number(data.input_rows || 0),
-                    written: Number(data.written_rows || 0),
-                    low: Number(data.below_frequency || 0),
-                    unmatched: Number(data.unmatched || 0),
-                    malformed: Number(data.malformed || 0),
-                };
-
-                document.getElementById('cm-rag-result-written').textContent =
-                    summary.written.toLocaleString();
-                document.getElementById('cm-rag-result-low').textContent =
-                    summary.low.toLocaleString();
-                document.getElementById('cm-rag-result-unmatched').textContent =
-                    summary.unmatched.toLocaleString();
-                document.getElementById('cm-rag-result-malformed').textContent =
-                    summary.malformed.toLocaleString();
+                const installed = payload.installed || {};
+                const version = document.getElementById('cm-rag-result-version');
+                const rows = document.getElementById('cm-rag-result-rows');
+                const size = document.getElementById('cm-rag-result-size');
+                if (version) version.textContent = installed.artifact_version || '-';
+                if (rows) rows.textContent = Number(installed.row_count || 0).toLocaleString();
+                if (size) size.textContent = cmFormatDatasetBytes(installed.archive_size || 0);
                 result?.classList.add('visible');
-                const _cmRagProgWrap = document.getElementById(
-                    'setting-character-maker-rag-data-progress',
-                );
-                if (_cmRagProgWrap) _cmRagProgWrap.style.display = 'none';
-                const repositoryCloned = !!payload.installed?.repository_cloned;
+                const progress = document.getElementById('setting-character-maker-rag-data-progress');
+                if (progress) progress.style.display = 'none';
                 if (state) {
-                    state.textContent =
-                        `입력 ${summary.input.toLocaleString()}행 중 ` +
-                        `${summary.written.toLocaleString()}행 설치 완료` +
-                        `${repositoryCloned ? ' · 저장소 자동 설치됨' : ''} · 위 실행 버튼으로 시작`;
+                    state.textContent = `설치 완료 · ${installed.artifact_version || '버전 미상'} · 첫 검색 때 자동 로드`;
                 }
-                showToast(
-                    `${repositoryCloned ? '저장소 준비 · ' : ''}` +
-                    'danbooru-tags.csv와 variant-b 설치 완료 · 실행 버튼을 누르세요.',
-                    'success',
-                );
+                showToast('Hugging Face Danbooru RAG 인덱스 설치 완료', 'success');
             } catch (error) {
-                console.error('[CHARACTER_MAKER_RAG_INSTALL] 설치 실패:', error);
-                if (state) {
-                    state.textContent = `설치 실패 · ${error.message || String(error)}`;
-                }
-                showToast('태그 자료 설치 실패: ' + (error.message || error), 'error');
+                console.error('[CHARACTER_MAKER_RAG] 설치 실패:', error);
+                if (state) state.textContent = `설치 실패 · ${error.message || String(error)}`;
+                showToast('RAG 인덱스 설치 실패: ' + (error.message || error), 'error');
             } finally {
                 cmRagDatasetBusy = false;
                 if (button) {
-                    button.disabled = !cmRagCanInstall();
+                    button.disabled = false;
                     button.classList.remove('is-busy');
-                    button.textContent = '변환 및 설치';
+                    button.textContent = '다운로드 및 설치';
                 }
+                await cmRefreshRagArtifactStatus(false);
                 await cmRefreshRagRuntimeStatus(false);
             }
         }
@@ -17391,15 +17064,8 @@
                 'character-maker-layout',
                 tabName === 'character_maker',
             );
-            if (
-                tabName === 'character_maker'
-                && !cmRagDatasetFile
-                && !cmRagServerDataset
-                && !cmRagDatasetScanned
-            ) {
-                void cmFindRagDataset(false);
-            }
             if (tabName === 'character_maker') {
+                void cmRefreshRagArtifactStatus(false);
                 void cmRefreshRagRuntimeStatus(false);
             }
             // 활성 탭이 보이도록 스크롤
@@ -17561,7 +17227,7 @@
             // 외부 API 분기(작업별 LLM1/LLM2 라우팅) 테이블 빌드
             renderLlmRoutingTable();
 
-            // 캐릭터 메이커 RAG 사이드카 설정
+            // 캐릭터 메이커 내장 RAG 설정
             const cmRagEnabled = !!currentConfig.character_maker_rag_enabled;
             const cmRagEnabledEl = document.getElementById('setting-character-maker-rag-enabled');
             if (cmRagEnabledEl) cmRagEnabledEl.checked = cmRagEnabled;
@@ -17570,22 +17236,14 @@
             const cmRagAutostartEl = document.getElementById('setting-character-maker-rag-autostart');
             if (cmRagAutostartEl) cmRagAutostartEl.checked = cmRagAutostart;
             updateCharacterMakerRagAutostartStatus(cmRagAutostart);
-            const cmRagUrlEl = document.getElementById('setting-character-maker-rag-url');
-            if (cmRagUrlEl) cmRagUrlEl.value = currentConfig.character_maker_rag_url || 'http://127.0.0.1:3333';
-            const cmRagRepoEl = document.getElementById('setting-character-maker-rag-repo-path');
-            if (cmRagRepoEl) {
-                // 저장소 경로는 서버가 auto_complete/danbooru-tag-rag 로 고정해 내려준다.
-                // 구형 config.json 등으로 빈 값이 온 경우에도 고정 경로를 표시한다(서버가 설치 시 강제).
-                cmRagRepoEl.value = currentConfig.character_maker_rag_repo_path
-                    || 'auto_complete/danbooru-tag-rag';
-            }
             const cmRagTopKEl = document.getElementById('setting-character-maker-rag-top-k');
             if (cmRagTopKEl) cmRagTopKEl.value = currentConfig.character_maker_rag_top_k ?? 5;
             const cmRagThresholdEl = document.getElementById('setting-character-maker-rag-threshold');
             if (cmRagThresholdEl) cmRagThresholdEl.value = currentConfig.character_maker_rag_threshold ?? 0;
             const cmRagTimeoutEl = document.getElementById('setting-character-maker-rag-timeout');
             if (cmRagTimeoutEl) cmRagTimeoutEl.value = currentConfig.character_maker_rag_timeout_sec ?? 20;
-            cmRagRepositoryChanged();
+            void cmRefreshRagArtifactStatus(false);
+            void cmRefreshRagRuntimeStatus(false);
 
             // 임베딩 설정
             const embProvider = currentConfig.embedding_provider || 'voyage';
@@ -18188,8 +17846,6 @@
                 asset_workflow_type: '에셋 워크플로우 타입',
                 character_maker_rag_enabled: '캐릭터 메이커 RAG 사용',
                 character_maker_rag_autostart: '캐릭터 메이커 RAG 자동 시작',
-                character_maker_rag_url: '캐릭터 메이커 RAG URL',
-                character_maker_rag_repo_path: '캐릭터 메이커 RAG 저장소 경로',
                 character_maker_rag_top_k: '캐릭터 메이커 RAG Top-K',
                 character_maker_rag_threshold: '캐릭터 메이커 RAG Threshold',
                 character_maker_rag_timeout_sec: '캐릭터 메이커 RAG Timeout',
@@ -18464,8 +18120,6 @@
                 llm_routing: collectLlmRouting(),
                 character_maker_rag_enabled: !!document.getElementById('setting-character-maker-rag-enabled')?.checked,
                 character_maker_rag_autostart: !!document.getElementById('setting-character-maker-rag-autostart')?.checked,
-                character_maker_rag_url: document.getElementById('setting-character-maker-rag-url')?.value.trim() || 'http://127.0.0.1:3333',
-                character_maker_rag_repo_path: document.getElementById('setting-character-maker-rag-repo-path')?.value.trim() || '',
                 character_maker_rag_top_k: parseInt(document.getElementById('setting-character-maker-rag-top-k')?.value, 10) || 5,
                 character_maker_rag_threshold: parseFloat(document.getElementById('setting-character-maker-rag-threshold')?.value) || 0,
                 character_maker_rag_timeout_sec: parseFloat(document.getElementById('setting-character-maker-rag-timeout')?.value) || 20,
@@ -28840,6 +28494,7 @@
             const lora = document.getElementById('cm-setting-lora-enabled');
             if (lora) lora.checked = !!settings.lora_enabled;
             cmRenderLoraSettings();
+            cmApplySettingsAvailability();
         }
 
         function cmSettingChanged() {
@@ -28968,8 +28623,64 @@
             await _openLoraPickerModal('캐릭터 메이커 LoRA 선택', 'cm-lora-picker-overlay');
         }
 
-        function cmToggleSettingsWall() {
-            document.getElementById('cm-settings-wall')?.classList.toggle('collapsed');
+        function cmToggleSettingsWall(force) {
+            const wall = document.getElementById('cm-settings-wall');
+            if (!wall) return;
+            const willCollapse = typeof force === 'boolean'
+                ? force
+                : !wall.classList.contains('collapsed');
+            wall.classList.toggle('collapsed', willCollapse);
+            wall.setAttribute('aria-expanded', String(!willCollapse));
+            const handle = document.getElementById('cm-settings-handle');
+            if (handle) {
+                handle.setAttribute('aria-expanded', String(!willCollapse));
+                handle.title = willCollapse ? '생성 설정 펼치기' : '생성 설정 접기';
+            }
+            if (!willCollapse) {
+                cmApplySettingsAvailability();
+                cmRenderPromptLockSummary();
+            }
+        }
+
+        // 에셋 워크플로우(ILXL/ANIMA)에 따라 쓸 수 없는 항목을 회색 잠금.
+        // CM 미지원(.cm-unsupported) 항목은 마크업 disabled를 유지하고 건드리지 않는다.
+        function cmApplySettingsAvailability() {
+            const wall = document.getElementById('cm-settings-wall');
+            if (!wall) return;
+            const workflowEl = document.getElementById('cm-setting-workflow');
+            const capabilities = getAssetWorkflowCapabilities(workflowEl?.value);
+            const badge = document.getElementById('cm-workflow-badge');
+            if (badge) {
+                badge.textContent = capabilities.dual ? 'ILXL+ANIMA'
+                    : capabilities.anima ? 'ANIMA'
+                    : 'ILXL';
+            }
+            wall.querySelectorAll('[data-at-availability]').forEach(container => {
+                const availability = container.dataset.atAvailability;
+                const available = availability === 'anima' ? capabilities.anima
+                    : (availability === 'sdxl-only' || availability === 'ilxl') ? capabilities.ilxl
+                    : availability === 'pose' ? capabilities.pose
+                    : availability === 'ipadapter' ? capabilities.ipadapter
+                    : true;
+                container.classList.toggle('is-unavailable', !available);
+                if (container.classList.contains('cm-unsupported')) return; // 미지원은 항상 잠금
+                container.querySelectorAll('input, select, button').forEach(control => {
+                    control.disabled = !available;
+                });
+            });
+        }
+
+        // 프롬프트 구성(외모·복장·표정·구도) 잠금 행을 자유 편집 영역의 현재 태그 수와 동기화.
+        function cmRenderPromptLockSummary() {
+            if (!cmSession?.fields) return;
+            ['appearance', 'outfit', 'expression', 'composition'].forEach(field => {
+                const node = document.querySelector(`[data-cm-lock-summary="${field}"]`);
+                if (!node) return;
+                const tags = Array.isArray(cmSession.fields[field]) ? cmSession.fields[field] : [];
+                node.textContent = tags.length
+                    ? `${tags.length}개 태그 · 자유 편집 영역 연동`
+                    : '자유 편집 영역에서 수정';
+            });
         }
 
         function cmSetEditorMode(mode, persist = true) {
@@ -29144,6 +28855,7 @@
             cmRenderRevisions();
             cmRenderStatus();
             cmRenderDiff();
+            cmRenderPromptLockSummary();
         }
 
         function cmQueueSync(delay = 450) {

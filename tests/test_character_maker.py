@@ -1,4 +1,5 @@
 import asyncio
+import asyncio
 import base64
 import copy
 import importlib
@@ -80,6 +81,69 @@ def _llm_payload(*, appearance=None, outfit=None, expression=None, composition=N
         },
         ensure_ascii=False,
     )
+
+
+@pytest.mark.asyncio
+async def test_rag_cold_start_uses_300_seconds_but_search_keeps_configured_timeout(
+    monkeypatch,
+    tmp_path,
+):
+    service, _ = _service(tmp_path)
+
+    class FakeRagService:
+        def __init__(self):
+            self.loaded = False
+
+        def status(self):
+            return {
+                "loaded": self.loaded,
+                "row_count": 0,
+                "variant": "b",
+            }
+
+        def warmup(self):
+            self.loaded = True
+            return {
+                "success": True,
+                "loaded": True,
+                "row_count": 12,
+                "variant": "b",
+                "mode": "embedded",
+            }
+
+        def search(self, query, **kwargs):
+            return [{"tag": "long_hair", "score": 0.9}]
+
+    fake_rag = FakeRagService()
+    monkeypatch.setattr(
+        character_maker_module,
+        "get_danbooru_rag_service",
+        lambda: fake_rag,
+    )
+    real_wait_for = asyncio.wait_for
+    observed_timeouts = []
+
+    async def capture_wait_for(awaitable, timeout):
+        observed_timeouts.append(timeout)
+        return await real_wait_for(awaitable, timeout=timeout)
+
+    monkeypatch.setattr(
+        character_maker_module.asyncio,
+        "wait_for",
+        capture_wait_for,
+    )
+
+    payload = await service.test_rag(
+        "긴 머리",
+        config_override={"character_maker_rag_timeout_sec": 7},
+    )
+
+    assert payload["results"][0]["tag"] == "long_hair"
+    assert observed_timeouts == [
+        character_maker_module.RAG_COLD_START_TIMEOUT_SECONDS,
+        7.0,
+    ]
+    assert character_maker_module.RAG_COLD_START_TIMEOUT_SECONDS == 300.0
 
 
 def test_llm_schema_requires_exact_editable_fields_and_queries():
@@ -228,7 +292,6 @@ async def test_rag_only_accepts_candidates_or_existing_user_tags(monkeypatch, tm
         tmp_path,
         config={
             "character_maker_rag_enabled": True,
-            "character_maker_rag_url": "http://127.0.0.1:3333",
         },
     )
     session = service.create_session()
@@ -485,8 +548,8 @@ def test_server_defaults_expose_independent_character_maker_routes():
     assert draft["json_mode"] is True
     assert feedback["json_mode"] is True
     assert draft is not feedback
-    assert server.DEFAULT_CONFIG["character_maker_rag_url"] == "http://127.0.0.1:3333"
-    # 저장소 경로는 auto_complete/danbooru-tag-rag 고정값을 사용한다.
-    assert server.DEFAULT_CONFIG["character_maker_rag_repo_path"] == (
-        server._character_maker_rag_repo_dir()
-    )
+    assert server.DEFAULT_CONFIG["character_maker_rag_enabled"] is False
+    assert server.DEFAULT_CONFIG["character_maker_rag_autostart"] is False
+    assert server.DEFAULT_CONFIG["character_maker_rag_top_k"] == 5
+    assert "character_maker_rag_url" not in server.DEFAULT_CONFIG
+    assert "character_maker_rag_repo_path" not in server.DEFAULT_CONFIG
