@@ -5967,6 +5967,31 @@
             font-size: 0.75rem;
             line-height: 1.55;
         }
+        /* 시드 카드 — 자유편집 영역 하단(필드 카드 뒤, 참고 이미지 앞). order:2 로
+           field-list(같은 order, 소스상 뒤) 다음·참고 이미지(order:3) 앞에 렌더. */
+        .cm-seed-card { order: 2; flex: 0 0 auto; margin: 0 8px 8px; padding: 9px 10px 8px; border: 1px solid var(--border); border-radius: 10px; background: color-mix(in srgb, var(--surface2) 55%, var(--surface)); }
+        .cm-seed-card .cm-card-head { margin-bottom: 7px; }
+        .cm-seed-card .cm-card-kicker { color: var(--text2); font-size: 0.61rem; }
+        .cm-seed-body { display: flex; align-items: stretch; gap: 7px; }
+        .cm-seed-mode-toggle { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; flex: 0 0 auto; }
+        .cm-seed-mode-btn {
+            border: 0; background: transparent; color: var(--text2);
+            padding: 0 10px; font-size: 0.7rem; font-weight: 700; cursor: pointer;
+            line-height: 1.7; transition: .14s ease; white-space: nowrap;
+        }
+        .cm-seed-mode-btn + .cm-seed-mode-btn { border-left: 1px solid var(--border); }
+        .cm-seed-mode-btn.active { background: color-mix(in srgb, var(--accent) 24%, transparent); color: var(--text); }
+        .cm-seed-mode-btn:hover:not(.active) { background: color-mix(in srgb, var(--surface2) 80%, transparent); color: var(--text); }
+        .cm-seed-input {
+            flex: 1 1 auto; min-width: 0; padding: 4px 8px;
+            border: 1px solid var(--border); border-radius: 8px;
+            background: var(--surface); color: var(--text);
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.78rem;
+            outline: none; box-sizing: border-box;
+        }
+        .cm-seed-input:focus { border-color: var(--accent); }
+        .cm-seed-help { margin-top: 5px; font-size: 0.66rem; }
+
         /* 자유 편집 영역(우측 에디터 열) 하단에 배치 — 필드 카드(order:2) 뒤. */
         .cm-reference-card { flex: 0 0 auto; order: 3; margin: 0 8px 8px; }
         .cm-reference-drop {
@@ -9515,6 +9540,23 @@
                             </section>
                         </div>
 
+                        <section class="cm-card cm-seed-card">
+                            <div class="cm-card-head">
+                                <div>
+                                    <div>시드</div>
+                                    <div class="cm-card-kicker">좋은 그림이 나오면 📌 고정</div>
+                                </div>
+                            </div>
+                            <div class="cm-seed-body">
+                                <div class="cm-seed-mode-toggle" role="group" aria-label="시드 모드">
+                                    <button type="button" id="cm-seed-mode-random" class="cm-seed-mode-btn active" onclick="cmSetSeedMode('random')" title="매 생성마다 새 시드">🎲 랜덤</button>
+                                    <button type="button" id="cm-seed-mode-fixed" class="cm-seed-mode-btn" onclick="cmSetSeedMode('fixed')" title="현재 시드를 고정해 재사용">📌 고정</button>
+                                </div>
+                                <input id="cm-setting-seed" class="cm-seed-input" type="number" min="0" max="4294967295" step="1" value="0" onchange="cmSeedInputChanged(this.value)" title="시드 값 — 직접 입력하면 고정 모드로 전환">
+                            </div>
+                            <div class="cm-hint cm-seed-help">랜덤: 생성마다 새 시드 · 고정: 같은 시드 재사용</div>
+                        </section>
+
                         <section class="cm-card cm-reference-card">
                             <div class="cm-card-head">
                                 <div>
@@ -9649,7 +9691,7 @@
                                                 <div class="batch-field-group"><div class="batch-field-label">FACE TAGS</div><input class="at-fill-select" id="cm-setting-face-tags" data-cm-setting="face_tags" type="text" onchange="cmSettingChanged()"></div>
                                                 <div class="batch-field-group"><div class="batch-field-label">EYE TAGS</div><input class="at-fill-select" id="cm-setting-eye-tags" data-cm-setting="eye_tags" type="text" onchange="cmSettingChanged()"></div>
                                             </div>
-                                            <div class="batch-field-group"><div class="batch-field-label">Seed · -1은 매번 랜덤</div><input class="at-fill-select" id="cm-setting-seed" data-cm-setting="seed" type="number" min="-1" max="4294967295" step="1" value="-1" onchange="cmSettingChanged()"></div>
+                                            <!-- Seed 는 자유편집 영역(시드 카드)으로 이동 — 🎲랜덤/📌고정 토글. -->
                                             <div class="batch-toggle-row"><label>Danbooru Tag RAG</label><label class="toggle-switch"><input type="checkbox" id="cm-setting-rag" data-cm-setting="rag_enabled" onchange="cmSettingChanged()"><span class="toggle-slider"></span></label></div>
                                         </div>
                                     </section>
@@ -29090,6 +29132,10 @@
         const CM_SINGLE_SESSION_ID = 'default';
         // 생성 설정(프리셋·해상도·시드·LoRA·HIRES·디테일러·FACE CROP 등)을 세션을 갈아치워도 유지.
         const CM_SETTINGS_STORAGE_KEY = 'characterMakerSettings';
+        // 시드 모드('random'|'fixed')는 프론트엔드 전용 상태. 시드 값 자체는 항상 구체적
+        // 숫자로 송출하므로(-1 사용 안 함) 'random'이면 생성 직전에 새 시드를 굴린다.
+        const CM_SEED_MODE_STORAGE_KEY = 'characterMakerSeedMode';
+        let cmSeedMode = 'random';
         let cmSession = null;
         let cmCapabilities = null;
         let cmInitialized = false;
@@ -29557,6 +29603,7 @@
                 const element = document.getElementById(id);
                 if (element) element.checked = !!value;
             });
+            cmRenderSeedControl();
             cmRenderAllLoraSettings();
             cmApplySettingsAvailability();
             // 새 세션에 영속화 설정을 반영한 직후라면, DOM이 채워진 시점에서 서버/스토리지에 동기화.
@@ -29574,6 +29621,88 @@
             cmRenderAllLoraSettings();
             cmRenderStatus();
             cmQueueSync();
+        }
+
+        // ─── 시드 제어(자유편집 영역 시드 카드) ───
+        // 시드는 항상 0~2^32-1 구체적 숫자. -1(서버측 랜덤 치환)은 사용하지 않는다.
+        // 'random' 모드: 생성 직전(cmPrepareSeedForGenerate)에 새 시드를 굴려 송출.
+        // 'fixed' 모드: 현재 시드를 그대로 재사용. 좋은 그림이 나오면 📌 고정.
+        function cmLoadSeedMode() {
+            try {
+                const value = localStorage.getItem(CM_SEED_MODE_STORAGE_KEY);
+                if (value === 'random' || value === 'fixed') return value;
+            } catch (error) {
+                console.error('[CHARACTER_MAKER] 시드 모드 로드 실패:', error);
+            }
+            return 'random';
+        }
+        function cmSaveSeedMode(mode) {
+            try {
+                localStorage.setItem(CM_SEED_MODE_STORAGE_KEY, mode);
+            } catch (error) {
+                console.error('[CHARACTER_MAKER] 시드 모드 저장 실패:', error);
+            }
+        }
+        function cmIsValidSeed(n) {
+            return Number.isInteger(n) && n >= 0 && n <= 4294967295;
+        }
+        function cmRollSeed() {
+            // 0 ~ 2^32-1. Math.random()*2^32 의 floor 는 [0, 2^32-1].
+            return Math.floor(Math.random() * 4294967296);
+        }
+        function cmRenderSeedModeButtons() {
+            const randomBtn = document.getElementById('cm-seed-mode-random');
+            const fixedBtn = document.getElementById('cm-seed-mode-fixed');
+            if (randomBtn) randomBtn.classList.toggle('active', cmSeedMode === 'random');
+            if (fixedBtn) fixedBtn.classList.toggle('active', cmSeedMode === 'fixed');
+        }
+        function cmSetSeedMode(mode) {
+            if (mode !== 'random' && mode !== 'fixed') return;
+            cmSeedMode = mode;
+            cmSaveSeedMode(mode);
+            cmRenderSeedModeButtons();
+        }
+        // 시드 입력칸을 사용자가 직접 수정 → 유효한 구체적 시드로 보정하고 'fixed' 로 전환.
+        function cmSeedInputChanged(raw) {
+            let n = Math.floor(Number(raw));
+            if (!Number.isFinite(n) || n < 0) {
+                n = cmRollSeed();
+            } else if (n > 4294967295) {
+                n = 4294967295;
+            }
+            const el = document.getElementById('cm-setting-seed');
+            if (el) el.value = n;
+            if (cmSession?.settings) cmSession.settings.seed = n;
+            cmSetSeedMode('fixed');
+            cmSettingChanged();
+        }
+        // cm-setting-seed 요소가 항상 유효한 구체적 시드를 갖도록 보정하고 모드 버튼을 렌더.
+        // -1(구/서버 기본값) 이거나 범위 밖이면 새 시드를 굴린다.
+        function cmRenderSeedControl() {
+            cmSeedMode = cmLoadSeedMode();
+            const el = document.getElementById('cm-setting-seed');
+            if (el) {
+                let n = Math.floor(Number(el.value));
+                if (!cmIsValidSeed(n)) {
+                    n = cmRollSeed();
+                    el.value = n;
+                    if (cmSession?.settings) cmSession.settings.seed = n;
+                }
+            }
+            cmRenderSeedModeButtons();
+        }
+        // 생성 직전 호출: 'random' 모드면 새 시드를 굴려 입력칸/세션에 반영.
+        // 'fixed' 라도 현재 값이 유효하지 않으면(빈 칸/범위 밖) 새 시드로 보정.
+        // cmBuildPromptData·cmCollectSettings 가 이 값을 읽어 [SEED] 토큰과 설정에 넣는다.
+        function cmPrepareSeedForGenerate() {
+            const el = document.getElementById('cm-setting-seed');
+            let n = el ? Math.floor(Number(el.value)) : NaN;
+            if (cmSeedMode === 'random' || !cmIsValidSeed(n)) {
+                n = cmRollSeed();
+                if (el) el.value = n;
+                if (cmSession?.settings) cmSession.settings.seed = n;
+            }
+            if (cmSeedMode === 'random') cmPersistSettings();
         }
 
         // CM LoRA는 일반/스타일/페이스 3종류. 각 종류별로 설정 키·패널·피커 오버레이가 다르다.
@@ -30329,6 +30458,7 @@
 
                 // 2) 즉시 다시 그리기(우측 LLM 이미지)
                 cmSetBusy(true, `${baseLabel} · ComfyUI에서 LLM 결과를 그리는 중...`);
+                cmPrepareSeedForGenerate();
                 const promptData = await cmBuildPromptData('llm');
                 const genPayload = {
                     world_context: cmSession.world_context || '',
@@ -30463,6 +30593,7 @@
             }
             cmSetBusy(true, 'ComfyUI에서 새 리비전을 생성하는 중...');
             try {
+                cmPrepareSeedForGenerate();
                 const promptData = await cmBuildPromptData('user');
                 const payload = {
                     ...cmCurrentPayload(),
