@@ -33,6 +33,34 @@ def test_character_maker_has_at_a_glance_three_rail_workflow():
     assert 'id="cm-settings-wall" class="cm-settings-wall collapsed"' in html
 
 
+def test_character_maker_marks_chat_branch_scope_and_accept_checkpoint():
+    html = _html()
+
+    assert 'id="cm-chat-scope"' in html
+    assert "cm-message-context-badge" in html
+    assert "사용자 기준" in html
+    assert "LLM 기준" in html
+    assert "accept됨" in html
+    assert "폐기됨" in html
+    assert "active_chat_branch_id" in html
+    assert "user_chat_checkpoint_id" in html
+    assert "현재 대화 분기" in html
+    assert "사용자 체크포인트로 병합" in html
+
+
+def test_character_maker_actions_follow_llm_to_user_flow():
+    html = _html()
+    action_start = html.index('<div class="cm-stage-actions">')
+    action_end = html.index('<div id="cm-diff-strip"', action_start)
+    actions = html[action_start:action_end]
+
+    assert actions.index('id="cm-accept-btn"') < actions.index('id="cm-generate-btn"')
+    assert "사용자에게 적용 →" in actions
+    assert "사용자 이미지 생성" in actions
+    assert 'class="cm-stage-action-side user"' in actions
+    assert "grid-template-columns: minmax(170px, .8fr) minmax(290px, 1.2fr);" in html
+
+
 def test_editor_wall_keeps_single_scroll_and_fields_order():
     html = _html()
 

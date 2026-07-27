@@ -39,6 +39,7 @@ SINGLE_SESSION_ID = "default"
 MAX_REFERENCE_COUNT = 8
 MAX_REFERENCE_BYTES = 12 * 1024 * 1024
 MAX_CHAT_ITEMS = 40
+MAX_CHAT_CONTEXT_ITEMS = 12
 MAX_REVISIONS = 12
 
 
@@ -342,6 +343,8 @@ class CharacterMakerService:
             "locks": {field: False for field in EDITABLE_FIELDS},
             "settings": self._default_settings(),
             "chat": [],
+            "active_chat_branch_id": "",
+            "user_chat_checkpoint_id": "",
             "references": [],
             "revisions": [],
             "active_revision_id": "",
@@ -382,6 +385,8 @@ class CharacterMakerService:
         data.setdefault("locks", {field: False for field in EDITABLE_FIELDS})
         data.setdefault("settings", {})
         data.setdefault("chat", [])
+        data.setdefault("active_chat_branch_id", "")
+        data.setdefault("user_chat_checkpoint_id", "")
         data.setdefault("references", [])
         data.setdefault("revisions", [])
         data.setdefault("active_revision_id", "")
@@ -393,6 +398,46 @@ class CharacterMakerService:
             data["fields"].setdefault(field, [])
             data["llm_fields"].setdefault(field, [])
             data["locks"].setdefault(field, False)
+        # 과거 채팅은 기준을 추측하지 않는다. 기준 메타데이터가 없는 항목은
+        # "unknown"으로 보존하되 새 LLM 요청의 체크포인트 문맥에는 포함하지 않는다.
+        migrated_chat_items = 0
+        normalized_chat: list[dict[str, Any]] = []
+        for item in data["chat"]:
+            if not isinstance(item, dict):
+                print(
+                    "[CHARACTER_MAKER] 로드 시 잘못된 채팅 항목 제외: "
+                    f"type={type(item).__name__}"
+                )
+                continue
+            normalized = copy.deepcopy(item)
+            item_migrated = False
+            if normalized.get("base") not in ("user", "llm", "unknown"):
+                normalized["base"] = "unknown"
+                item_migrated = True
+            branch_id = normalized.get("branch_id")
+            if not isinstance(branch_id, str):
+                normalized["branch_id"] = ""
+                item_migrated = True
+            normalized["accepted"] = bool(normalized.get("accepted", False))
+            checkpoint_id = normalized.get("checkpoint_id")
+            if not isinstance(checkpoint_id, str):
+                normalized["checkpoint_id"] = ""
+                item_migrated = True
+            if item_migrated:
+                migrated_chat_items += 1
+            normalized_chat.append(normalized)
+        data["chat"] = normalized_chat[-MAX_CHAT_ITEMS:]
+        if migrated_chat_items:
+            print(
+                "[CHARACTER_MAKER] 기준 메타데이터 없는 과거 채팅을 "
+                f"'unknown'으로 보존: count={migrated_chat_items}"
+            )
+        if not isinstance(data["active_chat_branch_id"], str):
+            print("[CHARACTER_MAKER] 잘못된 활성 채팅 분기 ID를 해제합니다.")
+            data["active_chat_branch_id"] = ""
+        if not isinstance(data["user_chat_checkpoint_id"], str):
+            print("[CHARACTER_MAKER] 잘못된 사용자 채팅 체크포인트 ID를 해제합니다.")
+            data["user_chat_checkpoint_id"] = ""
         # 과거 리비전은 사용자 생성(source 없음 → "user")으로 표시한다.
         for item in data["revisions"]:
             if not isinstance(item, dict):
@@ -564,6 +609,8 @@ class CharacterMakerService:
             "locks": copy.deepcopy(session["locks"]),
             "settings": copy.deepcopy(session["settings"]),
             "chat": copy.deepcopy(session["chat"]),
+            "active_chat_branch_id": session.get("active_chat_branch_id", ""),
+            "user_chat_checkpoint_id": session.get("user_chat_checkpoint_id", ""),
             "references": references,
             "revisions": revisions,
             "active_revision_id": active_revision_id,
@@ -839,47 +886,160 @@ class CharacterMakerService:
             traceback.print_exc()
             return None
 
-    def _revision_vision_images(
+    def _revision_vision_inputs(
         self, session: dict[str, Any], *, base: str = "user"
-    ) -> list[tuple[str, str]]:
-        """revise 비전으로 보낼 이미지 목록을 각각 별도 이미지로 반환.
+    ) -> list[dict[str, Any]]:
+        """revise 비전 이미지와 역할 manifest를 함께 준비한다.
 
-        - 첫 이미지 = CURRENT: base 가 'llm' 이면 LLM 활성 리비전(마지막으로 그린 이미지),
-          그 외는 사용자 활성 리비전(사용자 태그로 생성된 이미지). LLM 결과는 base='user'
-          일 때 비전에 포함되지 않는다("LLM 결과물 무시").
-        - 이후 이미지 = REF: 사용자 참고 이미지(최대 MAX_REFERENCE_COUNT).
-
-        격자 합성(montage) 없이 한 장씩 독립된 이미지로 전송한다.
-        후보는 있으나 모두 인코딩에 실패하면 CharacterMakerError.
+        CURRENT가 없거나 인코딩에 실패해도 남은 REF의 역할이 CURRENT로 밀리지 않도록
+        각 이미지에 결정론적인 role 메타데이터를 유지한다. 실제 provider 전송은
+        ``(b64, mime)`` 배열이지만, 같은 순서의 manifest가 텍스트 입력에 포함된다.
         """
-        candidates: list[tuple[str, str]] = []
+        candidates: list[dict[str, Any]] = []
         active = self._active_revision_for(session, base)
-        if active and os.path.isfile(active["image_path"]):
-            candidates.append(("CURRENT", active["image_path"]))
+        if active:
+            active_path = active.get("image_path", "")
+            if active_path and os.path.isfile(active_path):
+                candidates.append(
+                    {
+                        "role": "CURRENT",
+                        "path": active_path,
+                        "revision_id": str(active.get("id") or ""),
+                        "source": base,
+                    }
+                )
+            else:
+                print(
+                    f"[CHARACTER_MAKER] CURRENT 이미지 파일 없음: "
+                    f"session={session['id']}, base={base}, path={active_path!r}"
+                )
         for index, item in enumerate(
             session["references"][:MAX_REFERENCE_COUNT], start=1
         ):
-            if os.path.isfile(item["path"]):
-                candidates.append((f"REF {index}", item["path"]))
+            reference_path = item.get("path", "")
+            if reference_path and os.path.isfile(reference_path):
+                candidates.append(
+                    {
+                        "role": "REF",
+                        "path": reference_path,
+                        "reference_index": index,
+                        "reference_id": str(item.get("id") or ""),
+                    }
+                )
+            else:
+                print(
+                    f"[CHARACTER_MAKER] REF 이미지 파일 없음: "
+                    f"session={session['id']}, reference={item.get('id')}, "
+                    f"path={reference_path!r}"
+                )
         if not candidates:
             print(
                 f"[CHARACTER_MAKER] 비전 입력 없음: "
                 f"session={session['id']}, active_revision 없음, reference 없음"
             )
             return []
-        images: list[tuple[str, str]] = []
-        for label, path in candidates:
-            encoded = self._encode_vision_image(path)
-            if encoded:
-                images.append(encoded)
-            else:
+
+        prepared: list[dict[str, Any]] = []
+        for candidate in candidates:
+            encoded = self._encode_vision_image(candidate["path"])
+            if not encoded:
                 print(
                     f"[CHARACTER_MAKER] 비전 이미지 스킵: "
-                    f"session={session['id']}, label={label}, path={path}"
+                    f"session={session['id']}, role={candidate['role']}, "
+                    f"path={candidate['path']}"
                 )
-        if not images:
+                continue
+            image_b64, image_mime = encoded
+            manifest = {
+                "position": len(prepared) + 1,
+                "role": candidate["role"],
+            }
+            if candidate["role"] == "CURRENT":
+                manifest.update(
+                    {
+                        "source": candidate["source"],
+                        "revision_id": candidate["revision_id"],
+                        "description": "Latest selected generated image to modify.",
+                    }
+                )
+            else:
+                manifest.update(
+                    {
+                        "reference_index": candidate["reference_index"],
+                        "reference_id": candidate["reference_id"],
+                        "description": "User-provided visual reference; do not treat as the edit target.",
+                    }
+                )
+            prepared.append(
+                {
+                    "b64": image_b64,
+                    "mime": image_mime,
+                    "manifest": manifest,
+                }
+            )
+        if not prepared:
             raise CharacterMakerError("비전 입력 이미지를 준비하지 못했습니다.")
-        return images
+        return prepared
+
+    def _revision_vision_images(
+        self, session: dict[str, Any], *, base: str = "user"
+    ) -> list[tuple[str, str]]:
+        """하위 호환용 이미지 배열. 새 호출 경로는 역할 manifest도 함께 사용한다."""
+        return [
+            (item["b64"], item["mime"])
+            for item in self._revision_vision_inputs(session, base=base)
+        ]
+
+    @staticmethod
+    def _image_legend(image_manifest: list[dict[str, Any]]) -> str:
+        if not image_manifest:
+            return "No images are attached. Reason only from text and current fields."
+        if any(item.get("role") == "CURRENT" for item in image_manifest):
+            return (
+                "Images are attached separately in image_manifest order. "
+                "Exactly one CURRENT image is the edit target. Every REF image is "
+                "user-provided reference evidence and is not the edit target."
+            )
+        return (
+            "No CURRENT image is attached. Every attached image is a REF supplied "
+            "only as reference evidence; do not treat the first REF as a generated "
+            "image to modify."
+        )
+
+    @staticmethod
+    def _chat_context_for_request(
+        session: dict[str, Any],
+        *,
+        base: str,
+        branch_id: str,
+        current_message_id: str,
+    ) -> list[dict[str, Any]]:
+        """기준별 LLM 문맥을 사용자 체크포인트와 활성 분기로 제한한다."""
+        selected: list[dict[str, Any]] = []
+        for item in session.get("chat", []):
+            if item.get("id") == current_message_id:
+                continue
+            accepted = bool(item.get("accepted", False))
+            active_branch_item = (
+                base == "llm"
+                and bool(branch_id)
+                and item.get("branch_id") == branch_id
+            )
+            if not accepted and not active_branch_item:
+                continue
+            selected.append(
+                {
+                    "role": "assistant"
+                    if item.get("role") == "assistant"
+                    else "user",
+                    "content": str(item.get("content") or ""),
+                    "base": item.get("base")
+                    if item.get("base") in ("user", "llm")
+                    else "unknown",
+                    "accepted": accepted,
+                }
+            )
+        return selected[-MAX_CHAT_CONTEXT_ITEMS:]
 
     def _revision_messages(
         self,
@@ -888,11 +1048,15 @@ class CharacterMakerService:
         *,
         rag_enabled: bool,
         base: str = "user",
+        branch_id: str = "",
+        current_message_id: str = "",
+        image_manifest: list[dict[str, Any]] | None = None,
     ) -> list[dict[str, str]]:
         system = (
             "You are a collaborative character-design editor for an image-generation UI. "
-            "Reason from the complete world context, conversation, current visual evidence, "
-            "references, and user feedback. Do not use hard-coded keyword matching. "
+            "Reason from the world context, provided checkpoint/branch conversation, current "
+            "visual evidence, references, and user feedback. Do not use hard-coded keyword "
+            "matching. "
             "You may modify only appearance, outfit, expression, and composition. "
             "All other generation settings are read-only presets. Preserve locked fields exactly. "
             "Return one JSON object with assistant_message, fields, and rag_queries. "
@@ -901,7 +1065,13 @@ class CharacterMakerService:
             "search units. Tags should describe visible, image-generatable details. "
             f"Danbooru RAG is {'enabled' if rag_enabled else 'disabled'}."
         )
-        history = session["chat"][:-1][-12:]
+        manifest = copy.deepcopy(image_manifest or [])
+        history = self._chat_context_for_request(
+            session,
+            base=base,
+            branch_id=branch_id,
+            current_message_id=current_message_id,
+        )
         base_fields = (
             session["llm_fields"] if base == "llm" else session["fields"]
         )
@@ -911,12 +1081,16 @@ class CharacterMakerService:
             "current_fields": base_fields,
             "locks": session["locks"],
             "read_only_settings": session["settings"],
-            "recent_conversation": history,
-            "image_legend": (
-                "Attached images are sent separately (not a grid). "
-                "The first image (CURRENT) is the latest generated image to modify; "
-                "any following images (REF) are user-provided references."
+            "conversation_scope": (
+                "accepted user checkpoint plus the active LLM branch"
+                if base == "llm"
+                else "accepted user checkpoint only; superseded unaccepted branches are excluded"
             ),
+            "branch_id": branch_id,
+            "user_chat_checkpoint_id": session.get("user_chat_checkpoint_id", ""),
+            "recent_conversation": history,
+            "image_legend": self._image_legend(manifest),
+            "image_manifest": manifest,
         }
         return [
             {"role": "system", "content": system},
@@ -1268,8 +1442,24 @@ class CharacterMakerService:
             session["llm_fields"] if base == "llm" else session["fields"]
         )
         before = copy.deepcopy(base_fields)
+        previous_branch_id = str(session.get("active_chat_branch_id") or "")
+        if base == "user" or not previous_branch_id:
+            branch_id = uuid.uuid4().hex
+            session["active_chat_branch_id"] = branch_id
+        else:
+            branch_id = previous_branch_id
+        user_message_id = uuid.uuid4().hex
         session["chat"].append(
-            {"id": uuid.uuid4().hex, "role": "user", "content": feedback, "at": _now_iso()}
+            {
+                "id": user_message_id,
+                "role": "user",
+                "content": feedback,
+                "at": _now_iso(),
+                "base": base,
+                "branch_id": branch_id,
+                "accepted": False,
+                "checkpoint_id": "",
+            }
         )
         session["chat"] = session["chat"][-MAX_CHAT_ITEMS:]
 
@@ -1277,31 +1467,56 @@ class CharacterMakerService:
         rag_enabled = bool(session["settings"].get("rag_enabled", False))
         active = self._active_revision_for(session, base)
         task_key = "character_maker_feedback" if active else "character_maker_draft"
-        images = self._revision_vision_images(session, base=base)
-        messages = self._revision_messages(
-            session, feedback, rag_enabled=rag_enabled, base=base
-        )
-        draft = await self._call_revision_llm(
-            task_key, messages, images or None, require_queries=True
-        )
-
-        for field in EDITABLE_FIELDS:
-            if session["locks"][field]:
-                draft["fields"][field] = list(before[field])
-
-        rag_meta: dict[str, Any] = {"enabled": False}
-        if rag_enabled:
-            refined_fields, rag_details = await self._rag_refine(
-                task_key=task_key,
-                session=session,
-                draft=draft,
-                config=config,
+        try:
+            vision_inputs = self._revision_vision_inputs(session, base=base)
+            images = [
+                (item["b64"], item["mime"]) for item in vision_inputs
+            ]
+            image_manifest = [
+                copy.deepcopy(item["manifest"]) for item in vision_inputs
+            ]
+            messages = self._revision_messages(
+                session,
+                feedback,
+                rag_enabled=rag_enabled,
                 base=base,
+                branch_id=branch_id,
+                current_message_id=user_message_id,
+                image_manifest=image_manifest,
             )
-            final_fields = refined_fields
-            rag_meta = {"enabled": True, **rag_details}
-        else:
-            final_fields = draft["fields"]
+            draft = await self._call_revision_llm(
+                task_key, messages, images or None, require_queries=True
+            )
+
+            for field in EDITABLE_FIELDS:
+                if session["locks"][field]:
+                    draft["fields"][field] = list(before[field])
+
+            rag_meta: dict[str, Any] = {"enabled": False}
+            if rag_enabled:
+                refined_fields, rag_details = await self._rag_refine(
+                    task_key=task_key,
+                    session=session,
+                    draft=draft,
+                    config=config,
+                    base=base,
+                )
+                final_fields = refined_fields
+                rag_meta = {"enabled": True, **rag_details}
+            else:
+                final_fields = draft["fields"]
+        except Exception:
+            session["chat"] = [
+                item
+                for item in session["chat"]
+                if item.get("id") != user_message_id
+            ]
+            session["active_chat_branch_id"] = previous_branch_id
+            print(
+                f"[CHARACTER_MAKER] 실패한 수정 대화 롤백: "
+                f"session={session_id}, base={base}, branch={branch_id}"
+            )
+            raise
 
         for field in EDITABLE_FIELDS:
             if session["locks"][field]:
@@ -1316,13 +1531,18 @@ class CharacterMakerService:
                 "role": "assistant",
                 "content": assistant_message,
                 "at": _now_iso(),
+                "base": base,
+                "branch_id": branch_id,
+                "accepted": False,
+                "checkpoint_id": "",
             }
         )
         session["chat"] = session["chat"][-MAX_CHAT_ITEMS:]
         session["updated_at"] = _now_iso()
         print(
             f"[CHARACTER_MAKER] LLM 수정 완료: session={session_id}, "
-            f"task={task_key}, vision_images={len(images)}, rag={rag_enabled}"
+            f"task={task_key}, base={base}, branch={branch_id}, "
+            f"vision_images={len(images)}, rag={rag_enabled}"
         )
         self._persist_session(session)
         return {
@@ -1437,10 +1657,11 @@ class CharacterMakerService:
         return item["image_path"], mime
 
     def accept(self, session_id: str) -> dict[str, Any]:
-        """LLM(우측) 작업 결과를 사용자(좌측) 영역으로 복사한다.
+        """LLM(좌측) 작업 결과를 사용자(우측) 영역과 대화 체크포인트로 병합한다.
 
         - llm_fields → fields (태그 복사)
         - llm_active_revision_id → active_revision_id (이미지 복사, 리비전은 복제하지 않고 id 공유)
+        - 현재 활성 채팅 분기의 미승인 메시지 → 사용자 체크포인트로 승인
         - llm_fields / llm_active_revision_id 는 유지하여 이어 편집 가능
         """
         session = self._session(session_id)
@@ -1457,10 +1678,39 @@ class CharacterMakerService:
             raise CharacterMakerError("LLM 결과에 복사할 태그가 없습니다.")
         session["fields"] = copy.deepcopy(llm_fields)
         session["active_revision_id"] = llm_revision_id
+        branch_id = str(session.get("active_chat_branch_id") or "")
+        accepted_count = 0
+        checkpoint_id = str(session.get("user_chat_checkpoint_id") or "")
+        if branch_id:
+            pending_items = [
+                item
+                for item in session.get("chat", [])
+                if item.get("branch_id") == branch_id
+                and not bool(item.get("accepted", False))
+            ]
+            if pending_items:
+                checkpoint_id = uuid.uuid4().hex
+                for item in pending_items:
+                    item["accepted"] = True
+                    item["checkpoint_id"] = checkpoint_id
+                    accepted_count += 1
+                session["user_chat_checkpoint_id"] = checkpoint_id
+            else:
+                print(
+                    f"[CHARACTER_MAKER] accept 채팅 병합 스킵: "
+                    f"session={session_id}, branch={branch_id}, 미승인 메시지 없음"
+                )
+        else:
+            print(
+                f"[CHARACTER_MAKER] accept 채팅 병합 스킵: "
+                f"session={session_id}, 활성 채팅 분기 없음"
+            )
         session["updated_at"] = _now_iso()
         print(
             f"[CHARACTER_MAKER] accept: LLM 결과를 사용자 영역으로 복사: "
-            f"session={session_id}, revision={llm_revision_id}"
+            f"session={session_id}, revision={llm_revision_id}, "
+            f"branch={branch_id or 'none'}, chat_accepted={accepted_count}, "
+            f"checkpoint={checkpoint_id or 'none'}"
         )
         self._persist_session(session)
         return self.public_session(session_id)

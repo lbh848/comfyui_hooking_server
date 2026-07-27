@@ -448,6 +448,221 @@ async def test_revise_sends_current_and_references_as_separate_images(
     assert len(captured["images"]) == 2
 
 
+def test_ref_only_manifest_never_labels_first_reference_as_current(
+    monkeypatch, tmp_path
+):
+    service, _ = _service(tmp_path)
+    session = service.create_session()
+    images_dir = Path(service.temp_root) / session["id"] / "images"
+    images_dir.mkdir(parents=True, exist_ok=True)
+    ref_path = images_dir / "only-ref.webp"
+    ref_path.write_bytes(b"ref-bytes")
+    live = service._session(session["id"])
+    live["references"].append(
+        {
+            "id": "ref-only",
+            "name": "only-ref.webp",
+            "mime": "image/webp",
+            "path": str(ref_path),
+        }
+    )
+    monkeypatch.setattr(
+        service,
+        "_encode_vision_image",
+        lambda path: (f"B64::{Path(path).name}", "image/webp"),
+    )
+
+    prepared = service._revision_vision_inputs(live, base="user")
+    manifest = [item["manifest"] for item in prepared]
+    messages = service._revision_messages(
+        live,
+        "참고 이미지를 반영해줘",
+        rag_enabled=False,
+        base="user",
+        image_manifest=manifest,
+    )
+    user_payload = json.loads(messages[1]["content"].split("\n", 1)[1])
+
+    assert len(prepared) == 1
+    assert manifest[0]["position"] == 1
+    assert manifest[0]["role"] == "REF"
+    assert "No CURRENT image is attached" in user_payload["image_legend"]
+    assert user_payload["image_manifest"][0]["role"] == "REF"
+
+
+def test_manifest_keeps_ref_role_when_current_encoding_fails(monkeypatch, tmp_path):
+    service, _ = _service(tmp_path)
+    session = service.create_session()
+    images_dir = Path(service.temp_root) / session["id"] / "images"
+    images_dir.mkdir(parents=True, exist_ok=True)
+    current_path = images_dir / "current.webp"
+    prompt_path = images_dir / "current_prompt.json"
+    ref_path = images_dir / "ref.webp"
+    current_path.write_bytes(b"current-bytes")
+    prompt_path.write_text("{}", encoding="utf-8")
+    ref_path.write_bytes(b"ref-bytes")
+    service.add_revision(
+        session["id"],
+        image_path=str(current_path),
+        prompt_path=str(prompt_path),
+        positive="p[END]",
+        negative="n",
+        source="user",
+    )
+    live = service._session(session["id"])
+    live["references"].append(
+        {"id": "ref1", "name": "ref.webp", "mime": "image/webp", "path": str(ref_path)}
+    )
+
+    def fake_encode(path):
+        if Path(path).name == "current.webp":
+            return None
+        return (f"B64::{Path(path).name}", "image/webp")
+
+    monkeypatch.setattr(service, "_encode_vision_image", fake_encode)
+
+    prepared = service._revision_vision_inputs(live, base="user")
+
+    assert len(prepared) == 1
+    assert prepared[0]["manifest"]["position"] == 1
+    assert prepared[0]["manifest"]["role"] == "REF"
+
+
+def test_legacy_chat_is_preserved_as_unknown_but_excluded_from_context(tmp_path):
+    service, _ = _service(tmp_path)
+    public_session = service.create_session()
+    session_id = public_session["id"]
+    session = service._session(session_id)
+    session["chat"] = [
+        {
+            "id": "legacy-user",
+            "role": "user",
+            "content": "old user message",
+            "at": "2026-01-01T00:00:00+00:00",
+        },
+        {
+            "id": "legacy-assistant",
+            "role": "assistant",
+            "content": "old assistant message",
+            "at": "2026-01-01T00:00:01+00:00",
+        },
+    ]
+    service._persist_session(session)
+
+    restarted, _ = _service(tmp_path)
+    loaded = restarted._session(session_id)
+
+    assert [item["base"] for item in loaded["chat"]] == ["unknown", "unknown"]
+    assert all(item["branch_id"] == "" for item in loaded["chat"])
+    assert all(item["accepted"] is False for item in loaded["chat"])
+    assert all(item["checkpoint_id"] == "" for item in loaded["chat"])
+    assert (
+        restarted._chat_context_for_request(
+            loaded,
+            base="user",
+            branch_id="new-branch",
+            current_message_id="",
+        )
+        == []
+    )
+
+
+@pytest.mark.asyncio
+async def test_chat_branches_filter_history_and_accept_merges_checkpoint(
+    monkeypatch, tmp_path
+):
+    service, _ = _service(tmp_path)
+    session = service.create_session()
+    service.update_session(
+        session["id"],
+        {
+            "fields": {
+                "appearance": ["blue_eyes"],
+                "outfit": ["user_coat"],
+                "expression": [],
+                "composition": [],
+            }
+        },
+    )
+    captured_payloads = []
+
+    async def fake_call(task_key, messages, **kwargs):
+        captured_payloads.append(
+            json.loads(messages[1]["content"].split("\n", 1)[1])
+        )
+        return _llm_payload(
+            appearance=["silver_hair"],
+            outfit=["tailored_coat"],
+            expression=["smile"],
+            composition=["portrait"],
+        )
+
+    monkeypatch.setattr(character_maker_module.llm_service, "callLLMTask", fake_call)
+    monkeypatch.setattr(
+        character_maker_module.llm_service, "callLLMVisionTask", fake_call
+    )
+
+    first = await service.revise(
+        session["id"], {"message": "첫 사용자 기준 요청", "base": "user"}
+    )
+    first_branch = first["session"]["active_chat_branch_id"]
+    assert captured_payloads[0]["recent_conversation"] == []
+
+    continued = await service.revise(
+        session["id"], {"message": "LLM 결과를 계속 수정", "base": "llm"}
+    )
+    assert continued["session"]["active_chat_branch_id"] == first_branch
+    assert [
+        item["content"] for item in captured_payloads[1]["recent_conversation"]
+    ] == ["첫 사용자 기준 요청", "수정했습니다."]
+
+    restarted = await service.revise(
+        session["id"], {"message": "사용자 상태에서 다시 시작", "base": "user"}
+    )
+    second_branch = restarted["session"]["active_chat_branch_id"]
+    assert second_branch != first_branch
+    assert captured_payloads[2]["recent_conversation"] == []
+
+    png_bytes = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+    )
+    images_dir = Path(service.temp_root) / session["id"] / "images"
+    image_path = images_dir / "accepted.png"
+    prompt_path = images_dir / "accepted_prompt.json"
+    image_path.write_bytes(png_bytes)
+    prompt_path.write_text("{}", encoding="utf-8")
+    service.add_revision(
+        session["id"],
+        image_path=str(image_path),
+        prompt_path=str(prompt_path),
+        positive="p[END]",
+        negative="n",
+        source="llm",
+    )
+    accepted = service.accept(session["id"])
+    assert accepted["user_chat_checkpoint_id"]
+    second_branch_items = [
+        item for item in accepted["chat"] if item.get("branch_id") == second_branch
+    ]
+    first_branch_items = [
+        item for item in accepted["chat"] if item.get("branch_id") == first_branch
+    ]
+    assert second_branch_items and all(item["accepted"] for item in second_branch_items)
+    assert first_branch_items and not any(item["accepted"] for item in first_branch_items)
+
+    after_checkpoint = await service.revise(
+        session["id"], {"message": "체크포인트에서 새 변경", "base": "user"}
+    )
+    third_branch = after_checkpoint["session"]["active_chat_branch_id"]
+    assert third_branch not in (first_branch, second_branch)
+    assert [
+        item["content"] for item in captured_payloads[3]["recent_conversation"]
+    ] == ["사용자 상태에서 다시 시작", "수정했습니다."]
+    assert captured_payloads[3]["conversation_scope"].startswith(
+        "accepted user checkpoint only"
+    )
+
+
 def test_accept_copies_llm_result_to_user(tmp_path):
     service, _ = _service(tmp_path)
     session = service.create_session()
