@@ -27,6 +27,7 @@ LLM_TYPES = frozenset({
     "illustration_easy_edit",       # 저장 슬롯 -> 기존 편하게 수정 LLM -> 수정 재생성
     "instance_lora_prompt_refine",  # 태그 정제 / test_setup (instance·style·bot·asset 전부 LLM 호출)
     "bot_llm_face_tag_analysis",    # 비전 LLM 기반 얼굴/눈 태그 자동 분류
+    "character_maker",              # 캐릭터 메이커 draft/feedback LLM 수정 (revise)
 })
 
 
@@ -111,6 +112,8 @@ class QueueManager:
         self.process_illustration_context = None # async def(queue_item) -> dict
         self.process_illustration_easy_edit = None # async def(queue_item) -> dict
         self.save_backup = None                 # async def(img_bytes, mode, positive, negative) -> None
+        # 캐릭터 메이커 싱글턴(server.py에서 런타임 주입). _handle_character_maker 가 revise 호출.
+        self.character_maker = None
 
     def _settle_future(self, item: QueueItem) -> None:
         """아이템이 종료 상태(completed/failed/cancelled)에 도달했을 때
@@ -950,6 +953,7 @@ class QueueManager:
             "regenerate": self._handle_regenerate,
             "bot_llm_face_tag_analysis": self._handle_bot_llm_face_tag_analysis,
             "instance_lora_prompt_refine": self._handle_instance_lora_prompt_refine,
+            "character_maker": self._handle_character_maker,
         }
         handler = dispatch.get(item.type)
         if not handler:
@@ -957,6 +961,22 @@ class QueueManager:
         return await handler(item)
 
     # ─── 타입별 핸들러 ──────────────────────────────────────
+
+    async def _handle_character_maker(self, item: QueueItem) -> dict:
+        """캐릭터 메이커 LLM 수정(draft/feedback). params 로 session_id/payload 를 받아
+        character_maker.revise 를 호출하고 결과를 completion_future 로 회신한다.
+        HTTP 핸들러가 await item.completion_future 로 동기적으로 결과를 받아가므로
+        프론트엔드 revise 흐름(request→wait→JSON)은 그대로 유지된다."""
+        cm = self.character_maker
+        if cm is None:
+            raise RuntimeError("character_maker 인스턴스가 큐에 주입되지 않았습니다")
+        params = item.params or {}
+        session_id = params.get("session_id", "")
+        payload = params.get("payload") or {}
+        await self._notify_progress(item, {"percentage": 5, "phase": "running"})
+        result = await cm.revise(session_id, payload)
+        await self._notify_progress(item, {"percentage": 100, "phase": "completed"})
+        return result
 
     async def _handle_illustration(self, item: QueueItem) -> dict:
         """삽화 생성 (최우선, RisuAI 프롬프트 플로우)."""

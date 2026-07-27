@@ -546,3 +546,58 @@ async def test_refine_still_blocks_training_under_priority_ten():
     executed = await _run_process_loop_with_fake_pipeline(manager)
 
     assert executed == []
+
+
+@pytest.mark.asyncio
+async def test_character_maker_item_lands_in_llm_lane():
+    manager = QueueManager()
+    manager.get_config = lambda: {}
+    manager.items = [_item("character_maker", {"session_id": "s1", "payload": {}})]
+
+    assert manager.get_status()["items"][0]["execution_area"] == "llm"
+
+
+@pytest.mark.asyncio
+async def test_character_maker_handler_calls_revise_and_returns_result():
+    manager = QueueManager()
+    received = {}
+
+    class FakeCM:
+        async def revise(self, session_id, payload):
+            received["session_id"] = session_id
+            received["payload"] = payload
+            return {"ok": True, "session_id": session_id}
+
+    manager.character_maker = FakeCM()
+    item = _item("character_maker", {"session_id": "s1", "payload": {"message": "hi"}})
+
+    result = await manager._execute_item(item)
+
+    assert result == {"ok": True, "session_id": "s1"}
+    assert received == {"session_id": "s1", "payload": {"message": "hi"}}
+    assert item.progress == 100.0
+
+
+@pytest.mark.asyncio
+async def test_character_maker_handler_raises_when_revise_raises():
+    manager = QueueManager()
+
+    class FakeCM:
+        async def revise(self, session_id, payload):
+            raise RuntimeError("LLM 호출 실패")
+
+    manager.character_maker = FakeCM()
+    item = _item("character_maker", {"session_id": "s1", "payload": {}})
+
+    with pytest.raises(RuntimeError, match="LLM 호출 실패"):
+        await manager._handle_character_maker(item)
+
+
+@pytest.mark.asyncio
+async def test_character_maker_handler_errors_when_instance_not_injected():
+    manager = QueueManager()
+    item = _item("character_maker", {"session_id": "s1", "payload": {}})
+
+    with pytest.raises(RuntimeError, match="character_maker 인스턴스가 큐에 주입되지 않았습니다"):
+        await manager._handle_character_maker(item)
+

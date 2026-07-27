@@ -628,6 +628,9 @@ print(
     f"[CHARACTER_MAKER] 초기화: boot={character_maker.boot_id}, "
     f"temp_root={CHARACTER_MAKER_TEMP_DIR}"
 )
+# 캐릭터 메이커 LLM 호출을 통합 작업큐(character_maker 타입)에서 실행하도록 주입.
+# _handle_character_maker 가 self.character_maker.revise(...) 를 호출한다.
+queue_manager.character_maker = character_maker
 
 # ─── 에셋툴 모드 초기화 ───
 asset_tool = asset_tool_mode.AssetToolMode()
@@ -12885,7 +12888,15 @@ async def handle_api_character_maker_revise(request: web.Request) -> web.Respons
     session_id = request.match_info.get("session_id", "")
     try:
         body = await request.json()
-        result = await character_maker.revise(session_id, body)
+        # 통합 작업큐(character_maker 타입)에서 실행. 큐 패널에 노출되고 LLM 워커풀이
+        # 실행하며, 완료/실패 시 completion_future 가 결과를 회신(set_result / set_exception).
+        # 실패 시 await 가 raise 하므로 아래 except 로 기존 에러 응답 경로가 그대로 동작한다.
+        item = await queue_manager.add_item(
+            "character_maker",
+            label="캐릭터 메이커 수정",
+            params={"session_id": session_id, "payload": body},
+        )
+        result = await item.completion_future
         return web.json_response(result)
     except Exception as exc:
         return _character_maker_error_response("LLM 수정", exc)
