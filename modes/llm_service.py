@@ -1462,11 +1462,13 @@ async def callLLMVision(messages: list, image_b64: str = None, image_mime: str =
             _response_format_ctx.reset(token)
 
 
-async def callLLMVisionStream(messages: list, image_b64: str, image_mime: str = "image/webp", model: str = None, log_history: bool = True, json_mode: bool = False):
+async def callLLMVisionStream(messages: list, image_b64: str = None, image_mime: str = "image/webp", model: str = None, log_history: bool = True, json_mode: bool = False, images: list = None):
     """비전(이미지 입력) LLM 스트리밍 호출. delta/done/error 이벤트를 비동기 제너레이터로 yield.
 
     callLLMStream 과 동일한 이벤트 스키마를 사용한다.
     json_mode 는 callLLMStream 에 그대로 전달된다.
+    images(다중) 가 주어지면 단일 image_b64 대신 격자 합성 없이 각각 별도 이미지로 전송한다
+    (단발 callLLMVision 의 다중 경로와 동일).
     """
     service = _current_config["llm_service"]
     if not supports_vision(service):
@@ -1475,20 +1477,21 @@ async def callLLMVisionStream(messages: list, image_b64: str, image_mime: str = 
             "텍스트 전용 SDK를 사용하는 vertex 대신 OpenAI 호환/Gemini/Claude 등을 선택하세요."
         )
     use_model = model or _current_config["llm_model"]
-    if not image_b64:
+    # images(다중)가 주어지지 않았으면 단일 image_b64 가 필수.
+    if not images and not image_b64:
         yield {"type": "error", "error": "callLLMVisionStream: image_b64 가 비어 있습니다."}
         return
 
-    # AVIF / octet-stream 등 비전 LLM이 못 여는 포맷을 PNG로 정규화
-    image_b64, image_mime = _normalize_vision_image(image_b64, image_mime)
-
+    # 단일(image_b64)/다중(images) 모두 정규화(AVIF/octet-stream 등은 PNG로) 후 비전 messages 빌드.
     try:
-        new_messages = _build_vision_messages(messages, image_b64, image_mime=image_mime)
+        new_messages, log_mime, log_len = _prepare_vision_messages(
+            messages, image_b64, image_mime, images
+        )
     except ValueError as e:
         yield {"type": "error", "error": str(e)}
         return
 
-    _llm_log(f"callLLMVisionStream: service={service} model={use_model} mime={image_mime} img_b64_len={len(image_b64)} json_mode={json_mode}")
+    _llm_log(f"callLLMVisionStream: service={service} model={use_model} mime={log_mime} img_b64_len={log_len} json_mode={json_mode}")
     # callLLMStream 내부 디스패치 재사용 (이미지 포함 messages를 그대로 처리 가능)
     async for ev in callLLMStream(new_messages, model=use_model, log_history=log_history, json_mode=json_mode):
         yield ev
@@ -3470,14 +3473,15 @@ async def callLLM2Stream(messages: list, model: str = None, log_history: bool = 
         _current_config["llm_custom_body"] = saved_body
 
 
-async def callLLMVision2Stream(messages: list, image_b64: str, image_mime: str = "image/webp",
+async def callLLMVision2Stream(messages: list, image_b64: str = None, image_mime: str = "image/webp",
                                 model: str = None, log_history: bool = True,
-                                json_mode: bool = False):
+                                json_mode: bool = False, images: list = None):
     """비전(이미지 입력) LLM2 스트리밍 호출. delta/done/error 이벤트를 비동기 제너레이터로 yield.
 
-    callLLMVision2 의 비전 처리(_normalize_vision_image/_build_vision_messages, supports_vision 체크) 후
+    callLLMVision2 의 비전 처리(_prepare_vision_messages, supports_vision 체크) 후
     callLLM2Stream 으로 위임한다. callLLMVisionStream → callLLMStream 구조와 동일.
     json_mode 는 callLLM2Stream 에 그대로 전달된다.
+    images(다중) 가 주어지면 단일 image_b64 대신 각각 별도 이미지로 전송한다.
     """
     service = _current_config.get("llm_service2") or _current_config["llm_service"]
     if not supports_vision(service):
@@ -3488,30 +3492,33 @@ async def callLLMVision2Stream(messages: list, image_b64: str, image_mime: str =
     if not use_model:
         yield {"type": "error", "error": "[LLM 실패] LLM2 모델명이 설정되지 않았습니다"}
         return
-    if not image_b64:
+    # images(다중)가 주어지지 않았으면 단일 image_b64 가 필수.
+    if not images and not image_b64:
         yield {"type": "error", "error": "callLLMVision2Stream: image_b64 가 비어 있습니다."}
         return
 
     try:
-        image_b64, image_mime = _normalize_vision_image(image_b64, image_mime)
-        new_messages = _build_vision_messages(messages, image_b64, image_mime=image_mime)
+        new_messages, log_mime, log_len = _prepare_vision_messages(
+            messages, image_b64, image_mime, images
+        )
     except ValueError as e:
         yield {"type": "error", "error": str(e)}
         return
 
-    _llm_log(f"callLLMVision2Stream: service={service} model={use_model} mime={image_mime} img_b64_len={len(image_b64)} json_mode={json_mode}")
+    _llm_log(f"callLLMVision2Stream: service={service} model={use_model} mime={log_mime} img_b64_len={log_len} json_mode={json_mode}")
     async for ev in callLLM2Stream(new_messages, model=use_model, log_history=log_history, json_mode=json_mode):
         yield ev
 
 
-async def callLLMVision3Stream(messages: list, image_b64: str, image_mime: str = "image/webp",
+async def callLLMVision3Stream(messages: list, image_b64: str = None, image_mime: str = "image/webp",
                                 model: str = None, log_history: bool = True,
-                                json_mode: bool = False):
+                                json_mode: bool = False, images: list = None):
     """비전(이미지 입력) LLM3 스트리밍 호출. delta/done/error 이벤트를 비동기 제너레이터로 yield.
 
-    callLLMVision3 의 비전 처리(_normalize_vision_image/_build_vision_messages, supports_vision 체크) 후
+    callLLMVision3 의 비전 처리(_prepare_vision_messages, supports_vision 체크) 후
     callLLM3Stream 으로 위임한다. callLLMVision2Stream → callLLM2Stream 구조와 동일.
     json_mode 는 callLLM3Stream 에 그대로 전달된다.
+    images(다중) 가 주어지면 단일 image_b64 대신 각각 별도 이미지로 전송한다.
     """
     service = _current_config.get("llm_service3") or _current_config["llm_service"]
     if not supports_vision(service):
@@ -3522,17 +3529,19 @@ async def callLLMVision3Stream(messages: list, image_b64: str, image_mime: str =
     if not use_model:
         yield {"type": "error", "error": "[LLM 실패] LLM3 모델명이 설정되지 않았습니다"}
         return
-    if not image_b64:
+    # images(다중)가 주어지지 않았으면 단일 image_b64 가 필수.
+    if not images and not image_b64:
         yield {"type": "error", "error": "callLLMVision3Stream: image_b64 가 비어 있습니다."}
         return
 
     try:
-        image_b64, image_mime = _normalize_vision_image(image_b64, image_mime)
-        new_messages = _build_vision_messages(messages, image_b64, image_mime=image_mime)
+        new_messages, log_mime, log_len = _prepare_vision_messages(
+            messages, image_b64, image_mime, images
+        )
     except ValueError as e:
         yield {"type": "error", "error": str(e)}
         return
 
-    _llm_log(f"callLLMVision3Stream: service={service} model={use_model} mime={image_mime} img_b64_len={len(image_b64)} json_mode={json_mode}")
+    _llm_log(f"callLLMVision3Stream: service={service} model={use_model} mime={log_mime} img_b64_len={log_len} json_mode={json_mode}")
     async for ev in callLLM3Stream(new_messages, model=use_model, log_history=log_history, json_mode=json_mode):
         yield ev

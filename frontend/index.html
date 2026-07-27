@@ -13048,9 +13048,13 @@
                                    title="OpenAI 호환/Gemini는 response_format으로 JSON 출력을 강제하고, Claude native/Vertex 등 비지원 프로바이더는 조용히 무시됩니다. 프로바이더별 JSON 지원 여부 확인용.">
                                 <input type="checkbox" id="llm-test-json"> JSON
                             </label>
-                            <label id="llm-test-image-label" style="display: none; align-items: center; gap: 4px; font-size: .8rem; color: var(--text2); cursor: pointer; padding: 4px 10px; border: 1px dashed var(--border); border-radius: 6px;">
-                                📷 <span id="llm-test-image-name">이미지 선택</span>
+                            <label id="llm-test-image-label" style="display: none; align-items: center; gap: 4px; font-size: .8rem; color: var(--text2); cursor: pointer; padding: 4px 10px; border: 1px dashed var(--border); border-radius: 6px;" title="CURRENT: 비전에 보낼 메인 이미지 1장">
+                                📷 CURRENT <span id="llm-test-image-name">이미지 선택</span>
                                 <input type="file" id="llm-test-image" accept="image/*" style="display: none;" onchange="_onLlmTestImagePick(this)">
+                            </label>
+                            <label id="llm-test-ref-image-label" style="display: none; align-items: center; gap: 4px; font-size: .8rem; color: var(--text2); cursor: pointer; padding: 4px 10px; border: 1px dashed var(--border); border-radius: 6px;" title="REF: CURRENT 와 함께 보낼 참고 이미지(여러 장 가능). 1장 이상 선택 시 CURRENT+REF 다중 비전으로 전송 — 캐릭터 메이커 revise 비전과 동일 경로. 단발/스트리밍 모두 가능.">
+                                🖼 REF <span id="llm-test-ref-image-name">REF (선택, 여러 장)</span>
+                                <input type="file" id="llm-test-ref-image" accept="image/*" multiple style="display: none;" onchange="_onLlmTestRefImagePick(this)">
                             </label>
                             <button id="llm-test-send-btn" onclick="sendLlmTest()"
                                     style="padding: 6px 14px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); cursor: pointer;">전송</button>
@@ -19076,7 +19080,8 @@
 
         // ─── LLM 테스트 패널 ───
         let _llmTestAbort = null;
-        let _llmTestImage = { b64: '', mime: '', source: '' }; // 비전 테스트용 이미지
+        let _llmTestImage = { b64: '', mime: '', source: '' }; // 비전 테스트용 CURRENT 이미지(단일)
+        let _llmTestRefImages = []; // 비전 테스트용 REF 이미지(다중). 1장 이상이면 CURRENT+REF 다중 전송.
 
         // LLM1/LLM2/LLM3 선택 복원
         (function _restoreLlmTestTarget() {
@@ -19115,14 +19120,68 @@
         async function _onLlmTestVisionToggle() {
             const checked = document.getElementById('llm-test-vision').checked;
             const label = document.getElementById('llm-test-image-label');
+            const refLabel = document.getElementById('llm-test-ref-image-label');
             if (checked) {
                 if (label) label.style.display = 'flex';
+                if (refLabel) refLabel.style.display = 'flex';
                 if (!_llmTestImage.b64) {
                     await _loadDefaultTestImage();
                 }
             } else {
                 if (label) label.style.display = 'none';
+                if (refLabel) refLabel.style.display = 'none';
+                _clearLlmTestRefImages();
             }
+        }
+
+        function _clearLlmTestRefImages() {
+            _llmTestRefImages = [];
+            const nameEl = document.getElementById('llm-test-ref-image-name');
+            if (nameEl) nameEl.textContent = 'REF (선택, 여러 장)';
+            const input = document.getElementById('llm-test-ref-image');
+            if (input) input.value = '';
+        }
+
+        function _onLlmTestRefImagePick(input) {
+            const files = input.files;
+            if (!files || !files.length) return;
+            const picked = [];
+            let processed = 0;
+            const total = files.length;
+            Array.from(files).forEach((file) => {
+                const reader = new FileReader();
+                reader.onload = () => {
+                    const m = String(reader.result || '').match(/^data:([^;]+);base64,(.+)$/);
+                    if (m) {
+                        picked.push({ mime: m[1], b64: m[2], source: file.name });
+                    } else {
+                        showToast(`REF 이미지 인코딩 실패: ${file.name}`, 'error');
+                    }
+                    processed += 1;
+                    if (processed === total) {
+                        _llmTestRefImages = picked;
+                        const nameEl = document.getElementById('llm-test-ref-image-name');
+                        if (nameEl) {
+                            if (picked.length) {
+                                const names = picked.map(p => p.source).join(', ');
+                                nameEl.textContent = `REF ${picked.length}장 (${names})`;
+                            } else {
+                                nameEl.textContent = 'REF (선택, 여러 장)';
+                            }
+                        }
+                    }
+                };
+                reader.onerror = () => {
+                    showToast(`REF 이미지 읽기 실패: ${file.name}`, 'error');
+                    processed += 1;
+                    if (processed === total) {
+                        _llmTestRefImages = picked;
+                    }
+                };
+                reader.readAsDataURL(file);
+            });
+            // 같은 파일 다시 선택 가능하도록 value 리셋
+            input.value = '';
         }
 
         function _onLlmTestImagePick(input) {
@@ -19241,8 +19300,22 @@
             try { localStorage.setItem('llm-test-target', targetVal); } catch (_) {}
             if (useJson) payload.json_mode = true;
             if (useVision) {
-                payload.image_b64 = _llmTestImage.b64;
-                payload.image_mime = _llmTestImage.mime;
+                if (_llmTestRefImages.length > 0) {
+                    // 다중 비전: CURRENT(필수) + REF 목록. 단일 image_b64 대신 images 배열 전송.
+                    // 캐릭터 메이커 revise 비전(callLLMVisionTask images=)과 동일 전송 형태.
+                    if (!_llmTestImage.b64) {
+                        showToast('다중 비전 시 CURRENT 이미지가 필요합니다. 기본 이미지를 로드하거나 파일을 선택하세요.', 'error');
+                        return;
+                    }
+                    payload.images = [
+                        { b64: _llmTestImage.b64, mime: _llmTestImage.mime },
+                        ..._llmTestRefImages.map(r => ({ b64: r.b64, mime: r.mime })),
+                    ];
+                } else {
+                    // 단일 CURRENT
+                    payload.image_b64 = _llmTestImage.b64;
+                    payload.image_mime = _llmTestImage.mime;
+                }
             }
 
             try {

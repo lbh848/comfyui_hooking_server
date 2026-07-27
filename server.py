@@ -4968,6 +4968,21 @@ async def handle_api_llm_test_stream(request: web.Request) -> web.StreamResponse
     use_stream = bool(body.get("stream", True))
     image_b64 = (body.get("image_b64") or "").strip()
     image_mime = body.get("image_mime") or "image/webp"
+    # 다중 비전: CURRENT + REF 들을 [{b64, mime}, ...] 로 받아 [(b64, mime), ...] 튜플 리스트로 정규화.
+    # 캐릭터 메이커 revise 비전(callLLMVisionTask images=)과 동일 전송 형태. 단발/스트리밍 모두 지원.
+    raw_images = body.get("images")
+    images = None
+    if isinstance(raw_images, list) and raw_images:
+        norm_imgs: list = []
+        for item in raw_images:
+            if isinstance(item, dict) and item.get("b64"):
+                norm_imgs.append((item["b64"], item.get("mime") or item.get("image_mime") or "image/webp"))
+            elif isinstance(item, (list, tuple)) and len(item) >= 2 and item[0]:
+                norm_imgs.append((item[0], item[1] or "image/webp"))
+        if norm_imgs:
+            images = norm_imgs
+        else:
+            print(f"[LLM_TEST_STREAM] images 무시: 항목 파싱 실패 (len={len(raw_images)}), 단일 image_b64 로 폴백")
     use_json = bool(body.get("json_mode", False))
     target = (body.get("target") or "llm1").strip().lower()
     if target not in ("llm1", "llm2", "llm3"):
@@ -5010,7 +5025,7 @@ async def handle_api_llm_test_stream(request: web.Request) -> web.StreamResponse
         return resp.write(f"event: {event_type}\ndata: {payload}\n\n".encode("utf-8"))
 
     try:
-        if image_b64:
+        if image_b64 or images:
             # 비전 호출
             if not llm_service.supports_vision(cur_service):
                 await write_event("error", {"error": f"현재 LLM 서비스({cur_service})는 비전을 지원하지 않습니다."})
@@ -5023,11 +5038,11 @@ async def handle_api_llm_test_stream(request: web.Request) -> web.StreamResponse
             try:
                 if use_stream:
                     # 스트리밍 비전
-                    async for ev in fn_vision_stream(messages, image_b64=image_b64, image_mime=image_mime, model=use_model, log_history=False, json_mode=use_json):
+                    async for ev in fn_vision_stream(messages, image_b64=image_b64, image_mime=image_mime, model=use_model, log_history=False, json_mode=use_json, images=images):
                         await write_event(ev.get("type", "message"), ev)
                 else:
                     # 단발 비전
-                    text = await fn_vision_single(messages, image_b64=image_b64, image_mime=image_mime, model=use_model, json_mode=use_json)
+                    text = await fn_vision_single(messages, image_b64=image_b64, image_mime=image_mime, model=use_model, json_mode=use_json, images=images)
                     elapsed = time.time() - t0
                     if isinstance(text, str) and text.startswith("[LLM 실패]"):
                         await write_event("error", {"error": text})
