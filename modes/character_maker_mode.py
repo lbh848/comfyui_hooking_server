@@ -26,7 +26,7 @@ import traceback
 import uuid
 from typing import Any, Callable
 
-from PIL import Image, ImageDraw
+from PIL import Image
 
 from . import llm_prompt_edit
 from . import llm_service
@@ -818,51 +818,68 @@ class CharacterMakerService:
             None,
         )
 
-    def _vision_sheet(
+    def _encode_vision_image(self, path: str) -> tuple[str, str] | None:
+        """단일 이미지를 비전용으로 다운스케일/인코딩해 (b64, mime) 반환.
+
+        격자 합성이나 라벨 없이 원본 비율을 유지한 한 장의 깔끔한 이미지로 만든다.
+        다중 비전에서 CURRENT/REF 각각이 이 결과 한 장씩으로 전송된다. 실패 시 None.
+        """
+        try:
+            with Image.open(path) as source:
+                image = source.convert("RGB")
+                image.thumbnail((768, 768), Image.Resampling.LANCZOS)
+                output = io.BytesIO()
+                image.save(output, format="WEBP", quality=85, method=4)
+                return base64.b64encode(output.getvalue()).decode("ascii"), "image/webp"
+        except Exception as exc:
+            print(
+                f"[CHARACTER_MAKER] 비전 이미지 인코딩 실패: "
+                f"path={path}, error={exc}"
+            )
+            traceback.print_exc()
+            return None
+
+    def _revision_vision_images(
         self, session: dict[str, Any], *, base: str = "user"
-    ) -> tuple[str, str] | None:
-        sources: list[tuple[str, str]] = []
+    ) -> list[tuple[str, str]]:
+        """revise 비전으로 보낼 이미지 목록을 각각 별도 이미지로 반환.
+
+        - 첫 이미지 = CURRENT: base 가 'llm' 이면 LLM 활성 리비전(마지막으로 그린 이미지),
+          그 외는 사용자 활성 리비전(사용자 태그로 생성된 이미지). LLM 결과는 base='user'
+          일 때 비전에 포함되지 않는다("LLM 결과물 무시").
+        - 이후 이미지 = REF: 사용자 참고 이미지(최대 MAX_REFERENCE_COUNT).
+
+        격자 합성(montage) 없이 한 장씩 독립된 이미지로 전송한다.
+        후보는 있으나 모두 인코딩에 실패하면 CharacterMakerError.
+        """
+        candidates: list[tuple[str, str]] = []
         active = self._active_revision_for(session, base)
         if active and os.path.isfile(active["image_path"]):
-            sources.append(("CURRENT", active["image_path"]))
+            candidates.append(("CURRENT", active["image_path"]))
         for index, item in enumerate(
             session["references"][:MAX_REFERENCE_COUNT], start=1
         ):
             if os.path.isfile(item["path"]):
-                sources.append((f"REF {index}", item["path"]))
-        if not sources:
+                candidates.append((f"REF {index}", item["path"]))
+        if not candidates:
             print(
                 f"[CHARACTER_MAKER] 비전 입력 없음: "
                 f"session={session['id']}, active_revision 없음, reference 없음"
             )
-            return None
-        try:
-            tile_w, tile_h, label_h = 384, 384, 28
-            columns = 2 if len(sources) > 1 else 1
-            rows = (len(sources) + columns - 1) // columns
-            sheet = Image.new("RGB", (tile_w * columns, (tile_h + label_h) * rows), "#121722")
-            draw = ImageDraw.Draw(sheet)
-            for index, (label, path) in enumerate(sources):
-                with Image.open(path) as source:
-                    image = source.convert("RGB")
-                    image.thumbnail((tile_w, tile_h), Image.Resampling.LANCZOS)
-                    x0 = (index % columns) * tile_w
-                    y0 = (index // columns) * (tile_h + label_h)
-                    x = x0 + (tile_w - image.width) // 2
-                    y = y0 + label_h + (tile_h - image.height) // 2
-                    sheet.paste(image, (x, y))
-                    draw.rectangle((x0, y0, x0 + tile_w, y0 + label_h), fill="#202a3b")
-                    draw.text((x0 + 10, y0 + 8), label, fill="#f4f7fb")
-            output = io.BytesIO()
-            sheet.save(output, format="WEBP", quality=88, method=4)
-            return base64.b64encode(output.getvalue()).decode("ascii"), "image/webp"
-        except Exception as exc:
-            print(
-                f"[CHARACTER_MAKER] 비전 입력 시트 생성 실패: "
-                f"session={session['id']}, sources={len(sources)}, error={exc}"
-            )
-            traceback.print_exc()
-            raise CharacterMakerError("비전 입력 이미지를 준비하지 못했습니다.") from exc
+            return []
+        images: list[tuple[str, str]] = []
+        for label, path in candidates:
+            encoded = self._encode_vision_image(path)
+            if encoded:
+                images.append(encoded)
+            else:
+                print(
+                    f"[CHARACTER_MAKER] 비전 이미지 스킵: "
+                    f"session={session['id']}, label={label}, path={path}"
+                )
+        if not images:
+            raise CharacterMakerError("비전 입력 이미지를 준비하지 못했습니다.")
+        return images
 
     def _revision_messages(
         self,
@@ -895,7 +912,11 @@ class CharacterMakerService:
             "locks": session["locks"],
             "read_only_settings": session["settings"],
             "recent_conversation": history,
-            "image_legend": "CURRENT is the latest generated image; REF N are user references.",
+            "image_legend": (
+                "Attached images are sent separately (not a grid). "
+                "The first image (CURRENT) is the latest generated image to modify; "
+                "any following images (REF) are user-provided references."
+            ),
         }
         return [
             {"role": "system", "content": system},
@@ -910,7 +931,7 @@ class CharacterMakerService:
         self,
         task_key: str,
         messages: list[dict[str, str]],
-        vision: tuple[str, str] | None,
+        images: list[tuple[str, str]] | None,
         *,
         require_queries: bool,
     ) -> dict[str, Any]:
@@ -919,12 +940,12 @@ class CharacterMakerService:
         )
         t0 = time.perf_counter()
         try:
-            if vision is not None:
+            if images:
+                # 다중 비전: CURRENT(활성 리비전) + REF(참고 이미지) 각각 별도 이미지로 전송.
                 raw = await llm_service.callLLMVisionTask(
                     task_key,
                     messages,
-                    image_b64=vision[0],
-                    image_mime=vision[1],
+                    images=images,
                     json_mode=True,
                     result_validator=validator,
                 )
@@ -1256,12 +1277,12 @@ class CharacterMakerService:
         rag_enabled = bool(session["settings"].get("rag_enabled", False))
         active = self._active_revision_for(session, base)
         task_key = "character_maker_feedback" if active else "character_maker_draft"
-        vision = self._vision_sheet(session, base=base)
+        images = self._revision_vision_images(session, base=base)
         messages = self._revision_messages(
             session, feedback, rag_enabled=rag_enabled, base=base
         )
         draft = await self._call_revision_llm(
-            task_key, messages, vision, require_queries=True
+            task_key, messages, images or None, require_queries=True
         )
 
         for field in EDITABLE_FIELDS:
@@ -1301,7 +1322,7 @@ class CharacterMakerService:
         session["updated_at"] = _now_iso()
         print(
             f"[CHARACTER_MAKER] LLM 수정 완료: session={session_id}, "
-            f"task={task_key}, vision={vision is not None}, rag={rag_enabled}"
+            f"task={task_key}, vision_images={len(images)}, rag={rag_enabled}"
         )
         self._persist_session(session)
         return {

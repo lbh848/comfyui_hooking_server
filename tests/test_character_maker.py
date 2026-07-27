@@ -338,6 +338,116 @@ async def test_revise_base_llm_starts_from_llm_fields(monkeypatch, tmp_path):
     assert result["session"]["llm_fields"]["outfit"] == ["tailored_coat"]
 
 
+@pytest.mark.asyncio
+async def test_revise_sends_current_and_references_as_separate_images(
+    monkeypatch, tmp_path
+):
+    """LLM 수정 비전은 격자 합성(montage) 없이 CURRENT 1장 + REF 각각 별도 이미지로 전송.
+
+    - base='llm' → CURRENT = LLM 활성 리비전(마지막으로 그린 이미지)
+    - base='user' → CURRENT = 사용자 활성 리비전(LLM 결과는 비전에서 무시)
+    """
+    service, _ = _service(tmp_path)
+    session = service.create_session()
+    service.update_session(
+        session["id"],
+        {
+            "fields": {
+                "appearance": ["blue_eyes"],
+                "outfit": ["user_coat"],
+                "expression": [],
+                "composition": [],
+            },
+            "llm_fields": {
+                "appearance": ["silver_hair"],
+                "outfit": ["llm_coat"],
+                "expression": [],
+                "composition": [],
+            },
+        },
+    )
+
+    images_dir = Path(service.temp_root) / session["id"] / "images"
+    images_dir.mkdir(parents=True, exist_ok=True)
+
+    def _make_revision(filename, source):
+        image_path = images_dir / filename
+        prompt_path = images_dir / f"{filename}_prompt.json"
+        image_path.write_bytes(b"image-bytes")
+        prompt_path.write_text("{}", encoding="utf-8")
+        return service.add_revision(
+            session["id"],
+            image_path=str(image_path),
+            prompt_path=str(prompt_path),
+            positive="p[END]",
+            negative="n",
+            note=source,
+            source=source,
+        )
+
+    # LLM 리비전 먼저, 사용자 리비전 나중에 추가 →
+    # llm_active_revision_id=llm.webp, active_revision_id=user.webp
+    _make_revision("llm.webp", "llm")
+    _make_revision("user.webp", "user")
+
+    # 참고 이미지 1장을 세션에 직접 추가
+    ref_path = images_dir / "ref.webp"
+    ref_path.write_bytes(b"ref-bytes")
+    live = service._session(session["id"])
+    live["references"].append(
+        {"id": "ref1", "name": "ref.webp", "mime": "image/webp", "path": str(ref_path)}
+    )
+
+    # 실제 인코딩 대신 경로별 마커를 반환해 어떤 이미지가 CURRENT/REF로 잡혔는지 검증
+    def fake_encode(path):
+        return (f"B64::{Path(path).name}", "image/webp")
+
+    monkeypatch.setattr(service, "_encode_vision_image", fake_encode)
+
+    captured: dict = {}
+
+    async def fake_vision(task_key, messages, *, images=None, **kw):
+        captured["task_key"] = task_key
+        captured["images"] = list(images or [])
+        return _llm_payload(
+            appearance=["silver_hair"],
+            outfit=["long_coat"],
+            expression=[],
+            composition=[],
+        )
+
+    async def fake_text(task_key, messages, **kw):
+        # 비전 경로가 아니면(이미지 없음) 대체용 페이크
+        captured["task_key"] = task_key
+        captured["images"] = []
+        return _llm_payload(
+            appearance=["silver_hair"],
+            outfit=["long_coat"],
+            expression=[],
+            composition=[],
+        )
+
+    monkeypatch.setattr(character_maker_module.llm_service, "callLLMVisionTask", fake_vision)
+    monkeypatch.setattr(character_maker_module.llm_service, "callLLMTask", fake_text)
+
+    # base='llm' → CURRENT = LLM 마지막 이미지 + REF
+    await service.revise(session["id"], {"message": "더 차갑게", "base": "llm"})
+    assert captured["task_key"] == "character_maker_feedback"
+    assert captured["images"][0] == ("B64::llm.webp", "image/webp")
+    assert ("B64::ref.webp", "image/webp") in captured["images"]
+    assert ("B64::user.webp", "image/webp") not in captured["images"]
+    assert len(captured["images"]) == 2
+
+    # base='user' → CURRENT = 사용자 이미지(LLM 결과 무시) + REF
+    captured.clear()
+    await service.revise(session["id"], {"message": "다시", "base": "user"})
+    assert captured["task_key"] == "character_maker_feedback"
+    assert captured["images"][0] == ("B64::user.webp", "image/webp")
+    assert ("B64::llm.webp", "image/webp") not in captured["images"]
+    assert ("B64::ref.webp", "image/webp") in captured["images"]
+    assert len(captured["images"]) == 2
+
+
 def test_accept_copies_llm_result_to_user(tmp_path):
     service, _ = _service(tmp_path)
     session = service.create_session()

@@ -1019,9 +1019,13 @@ def _normalize_vision_image(image_b64: str, image_mime: str) -> tuple:
         return image_b64, image_mime
 
 
-def _build_vision_messages(messages: list, image_b64: str, image_mime: str = "image/webp") -> list:
-    """텍스트 messages + 이미지 → 마지막 user 메시지에 image_url 파트를 추가한 복사본 반환.
-    각 _call_*/_stream_* 함수는 content가 list인 경우를 서비스 포맷에 맞게 변환한다.
+def _build_vision_messages_multi(messages: list, images: list) -> list:
+    """텍스트 messages + 여러 이미지 → 마지막 user 메시지 content에 image_url 파트를
+    순서대로 모두 추가한 복사본 반환. images: [(b64, mime), ...] (정규화된 값).
+
+    각 _call_*/_stream_* 함수는 content가 list인 경우를 서비스 포맷에 맞게 변환하며,
+    image_url 파트가 여러 개면 OpenAI 호환/Gemini/Claude/Vertex 모두 각각 별도의
+    이미지로 취급한다(격자 합성 아님).
     """
     new_messages = [dict(m) for m in messages]
     last_user_idx = None
@@ -1032,11 +1036,50 @@ def _build_vision_messages(messages: list, image_b64: str, image_mime: str = "im
     if last_user_idx is None:
         raise ValueError("callLLMVision: user 메시지가 없습니다.")
     user_text = _msg_text(new_messages[last_user_idx].get("content", ""))
-    new_messages[last_user_idx]["content"] = [
-        {"type": "text", "text": user_text},
-        {"type": "image_url", "image_url": {"url": f"data:{image_mime};base64,{image_b64}"}},
-    ]
+    parts = [{"type": "text", "text": user_text}]
+    for image_b64, image_mime in images:
+        parts.append(
+            {"type": "image_url",
+             "image_url": {"url": f"data:{image_mime};base64,{image_b64}"}}
+        )
+    new_messages[last_user_idx]["content"] = parts
     return new_messages
+
+
+def _build_vision_messages(messages: list, image_b64: str, image_mime: str = "image/webp") -> list:
+    """텍스트 messages + 단일 이미지 → 마지막 user 메시지에 image_url 파트를 추가한 복사본.
+    다중 이미지는 _build_vision_messages_multi 참조. 하위 호환 단일 이미지 래퍼.
+    """
+    return _build_vision_messages_multi(messages, [(image_b64, image_mime)])
+
+
+def _prepare_vision_messages(
+    messages: list, image_b64, image_mime: str, images
+) -> tuple:
+    """단일/다중 이미지를 정규화해 비전 messages를 빌드한다.
+
+    images(비어있지 않은 list)가 주어지면 다중 이미지 경로, 아니면 단일 image_b64 경로.
+    반환: (new_messages, log_mime, log_len). 유효한 이미지가 없으면 ValueError.
+    로그 표시용 mime/총 b64 길이도 함께 반환한다.
+    """
+    if images:
+        normalized: list = []
+        for b64, mime in images:
+            if not b64:
+                continue
+            nb, nm = _normalize_vision_image(b64, mime)
+            normalized.append((nb, nm))
+        if not normalized:
+            raise ValueError("callLLMVision: images 가 비어 있습니다.")
+        new_messages = _build_vision_messages_multi(messages, normalized)
+        log_mime = ",".join(m for _, m in normalized)
+        log_len = sum(len(b) for b, _ in normalized)
+        return new_messages, log_mime, log_len
+    if not image_b64:
+        raise ValueError("callLLMVision: image_b64 가 비어 있습니다.")
+    nb, nm = _normalize_vision_image(image_b64, image_mime)
+    new_messages = _build_vision_messages(messages, nb, image_mime=nm)
+    return new_messages, nm, len(nb)
 
 
 async def _call_ollama(messages: list, model: str) -> str:
@@ -1366,7 +1409,8 @@ async def callLLM(messages: list, model: str = None, json_mode: bool = False) ->
             _response_format_ctx.reset(token)
 
 
-async def callLLMVision(messages: list, image_b64: str, image_mime: str = "image/webp", model: str = None, json_mode: bool = False) -> str:
+async def callLLMVision(messages: list, image_b64: str = None, image_mime: str = "image/webp",
+                        model: str = None, json_mode: bool = False, images: list = None) -> str:
     """
     비전(이미지 입력) LLM 호출 공개 함수.
 
@@ -1375,12 +1419,15 @@ async def callLLMVision(messages: list, image_b64: str, image_mime: str = "image
 
     Args:
         messages: [{"role":"system"/"user", "content": "..."}] (텍스트만)
-        image_b64: base64 인코딩된 이미지 데이터 (data: 접두어 제외)
-        image_mime: 이미지 MIME 타입 (기본 image/webp)
+        image_b64: base64 인코딩된 단일 이미지 데이터 (data: 접두어 제외).
+                   images 가 주어지면 무시된다.
+        image_mime: 단일 이미지의 MIME 타입 (기본 image/webp)
         model: 모델명 (None이면 설정에서 가져옴)
         json_mode: True 면 OpenAI 호환/Gemini 요청에 response_format=json_object 를
                    설정해 JSON 출력을 강제한다. 비지원 프로바이더는 프롬프트 기반 JSON
                    지시에 의존한다(응답은 호출자가 파싱).
+        images: 다중 이미지. [(b64, mime), ...] 를 주면 격자 합성 없이 각각 별도의
+                이미지 파트로 함께 전송한다. 비어있지 않은 리스트일 때만 다중 경로.
 
     Returns:
         LLM 응답 텍스트. 실패 시 "[LLM 실패] ..." 형식의 에러 문자열 반환.
@@ -1395,18 +1442,16 @@ async def callLLMVision(messages: list, image_b64: str, image_mime: str = "image
 
     use_model = model or _current_config["llm_model"]
 
-    if not image_b64:
-        return "[LLM 실패] callLLMVision: image_b64 가 비어 있습니다."
-
-    # AVIF / octet-stream 등 비전 LLM이 못 여는 포맷을 PNG로 정규화
-    image_b64, image_mime = _normalize_vision_image(image_b64, image_mime)
-
+    # 단일(image_b64) 또는 다중(images) 이미지를 정규화해 비전 messages 빌드.
+    # AVIF / octet-stream 등 비전 LLM이 못 여는 포맷은 PNG로 정규화된다.
     try:
-        new_messages = _build_vision_messages(messages, image_b64, image_mime=image_mime)
+        new_messages, log_mime, log_len = _prepare_vision_messages(
+            messages, image_b64, image_mime, images
+        )
     except ValueError as e:
         return f"[LLM 실패] {e}"
 
-    _llm_log(f"callLLMVision: service={service} model={use_model} mime={image_mime} img_b64_len={len(image_b64)} json_mode={json_mode}")
+    _llm_log(f"callLLMVision: service={service} model={use_model} mime={log_mime} img_b64_len={log_len} json_mode={json_mode}")
     token = _response_format_ctx.set({"type": "json_object"}) if json_mode else None
     try:
         if bool(_current_config.get("llm_stream", False)):
@@ -1992,14 +2037,15 @@ async def callLLMTask(
     return result
 
 
-async def callLLMVision2(messages: list, image_b64: str, image_mime: str = "image/webp",
-                         model: str = None, json_mode: bool = False) -> str:
+async def callLLMVision2(messages: list, image_b64: str = None, image_mime: str = "image/webp",
+                         model: str = None, json_mode: bool = False, images: list = None) -> str:
     """
     LLM2 비전(이미지 입력) 호출 공개 함수.
 
     callLLM2 의 설정 스왑 패턴(key2/url2/preset2/effort2/body2 → LLM1 슬롯 임시 덮어쓰기)과
     callLLMVision 의 비전 처리(_normalize_vision_image/_build_vision_messages)를 합성.
     LLM2 서비스가 비전을 지원하지 않으면 RuntimeError 대신 "[LLM 실패]" 문자열 반환.
+    images(다중) 가 주어지면 격자 합성 없이 각각 별도 이미지로 전송한다.
     """
     service = _current_config.get("llm_service2") or _current_config["llm_service"]
     if not supports_vision(service):
@@ -2009,9 +2055,6 @@ async def callLLMVision2(messages: list, image_b64: str, image_mime: str = "imag
     use_model = model or _current_config["llm_model2"]
     if not use_model:
         return "[LLM 실패] LLM2 모델명이 설정되지 않았습니다"
-
-    if not image_b64:
-        return "[LLM 실패] callLLMVision2: image_b64 가 비어 있습니다."
 
     # 설정 스왑용 LLM2 값
     key2 = _current_config.get("llm_api_key2", "")
@@ -2027,12 +2070,13 @@ async def callLLMVision2(messages: list, image_b64: str, image_mime: str = "imag
 
     # 비전 messages 빌드는 스왑 전/후 무관하지만, 로그 정확도를 위해 스왑과 무관하게 수행
     try:
-        image_b64, image_mime = _normalize_vision_image(image_b64, image_mime)
-        new_messages = _build_vision_messages(messages, image_b64, image_mime=image_mime)
+        new_messages, log_mime, log_len = _prepare_vision_messages(
+            messages, image_b64, image_mime, images
+        )
     except ValueError as e:
         return f"[LLM 실패] {e}"
 
-    _llm_log(f"callLLMVision2: service={service} model={use_model} mime={image_mime} img_b64_len={len(image_b64)} json_mode={json_mode}")
+    _llm_log(f"callLLMVision2: service={service} model={use_model} mime={log_mime} img_b64_len={log_len} json_mode={json_mode}")
     token = _response_format_ctx.set({"type": "json_object"}) if json_mode else None
     try:
         if key2:
@@ -2058,14 +2102,15 @@ async def callLLMVision2(messages: list, image_b64: str, image_mime: str = "imag
         _current_config["llm_custom_body"] = saved_body
 
 
-async def callLLMVision3(messages: list, image_b64: str, image_mime: str = "image/webp",
-                         model: str = None, json_mode: bool = False) -> str:
+async def callLLMVision3(messages: list, image_b64: str = None, image_mime: str = "image/webp",
+                         model: str = None, json_mode: bool = False, images: list = None) -> str:
     """
     LLM3 비전(이미지 입력) 호출 공개 함수.
 
     callLLM3 의 설정 스왑 패턴(key3/url3/preset3/effort3/body3 → LLM1 슬롯 임시 덮어쓰기)과
     callLLMVision 의 비전 처리(_normalize_vision_image/_build_vision_messages)를 합성.
     LLM3 서비스가 비전을 지원하지 않으면 RuntimeError 대신 "[LLM 실패]" 문자열 반환.
+    images(다중) 가 주어지면 격자 합성 없이 각각 별도 이미지로 전송한다.
     """
     service = _current_config.get("llm_service3") or _current_config["llm_service"]
     if not supports_vision(service):
@@ -2075,9 +2120,6 @@ async def callLLMVision3(messages: list, image_b64: str, image_mime: str = "imag
     use_model = model or _current_config.get("llm_model3")
     if not use_model:
         return "[LLM 실패] LLM3 모델명이 설정되지 않았습니다"
-
-    if not image_b64:
-        return "[LLM 실패] callLLMVision3: image_b64 가 비어 있습니다."
 
     # 설정 스왑용 LLM3 값
     key3 = _current_config.get("llm_api_key3", "")
@@ -2093,12 +2135,13 @@ async def callLLMVision3(messages: list, image_b64: str, image_mime: str = "imag
 
     # 비전 messages 빌드는 스왑 전/후 무관하지만, 로그 정확도를 위해 스왑과 무관하게 수행
     try:
-        image_b64, image_mime = _normalize_vision_image(image_b64, image_mime)
-        new_messages = _build_vision_messages(messages, image_b64, image_mime=image_mime)
+        new_messages, log_mime, log_len = _prepare_vision_messages(
+            messages, image_b64, image_mime, images
+        )
     except ValueError as e:
         return f"[LLM 실패] {e}"
 
-    _llm_log(f"callLLMVision3: service={service} model={use_model} mime={image_mime} img_b64_len={len(image_b64)} json_mode={json_mode}")
+    _llm_log(f"callLLMVision3: service={service} model={use_model} mime={log_mime} img_b64_len={log_len} json_mode={json_mode}")
     token = _response_format_ctx.set({"type": "json_object"}) if json_mode else None
     try:
         if key3:
@@ -2127,11 +2170,12 @@ async def callLLMVision3(messages: list, image_b64: str, image_mime: str = "imag
 async def callLLMVisionTask(
     task_key: str,
     messages: list,
-    image_b64: str,
+    image_b64: str = None,
     image_mime: str = "image/webp",
     model: str = None,
     json_mode: bool = False,
     result_validator=None,
+    images: list = None,
 ) -> str:
     """
     작업별 라우팅 비전 LLM 호출.
@@ -2139,6 +2183,8 @@ async def callLLMVisionTask(
     config["llm_routing"][task_key] 의 primary(llm1/llm2/llm3) 에 따라 메인 비전 LLM 호출 후,
     작업별 설정에 따라 메인 비전 LLM을 재시도한 뒤, 실패하면 폴백 비전 LLM도 별도
     정책으로 재시도한다. result_validator가 있으면 형식/내용 검증 실패도 포함한다.
+
+    images(다중) 가 주어지면 단일 image_b64 대신 격자 합성 없이 각각 별도 이미지로 전송한다.
     """
     primary, fb_target = _routing_for(task_key)
     # 라우팅 엔트리에 json_mode 가 명시되어 있으면 그 값 우선(edit_illustration_prompt 토글).
@@ -2156,6 +2202,12 @@ async def callLLMVisionTask(
             "llm_slot": slot,
         })
         try:
+            if images:
+                # 다중 이미지: 단일 image_b64 자리는 무시하고 images 로 전송.
+                return await func(
+                    messages, None, "image/webp",
+                    model=model, json_mode=eff_json, images=images,
+                )
             return await func(
                 messages, image_b64, image_mime, model=model, json_mode=eff_json
             )
