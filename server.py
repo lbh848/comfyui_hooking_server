@@ -12917,9 +12917,15 @@ async def handle_api_character_maker_generate(request: web.Request) -> web.Respo
         # source=="llm" 인 경우 사용자 fields 를 건드리지 않는다.
         # 리비전 스냅샷은 add_revision 이 session["llm_fields"] 에서 만든다.
         if source == "user":
-            update_keys = ("world_context", "fields", "locks", "settings")
+            update_keys = (
+                "world_context",
+                "fields",
+                "locks",
+                "settings",
+                "natural_language",
+            )
         else:
-            update_keys = ("world_context", "locks", "settings")
+            update_keys = ("world_context", "locks", "settings", "llm_natural_language")
         update_payload = {
             key: body[key] for key in update_keys if key in body
         }

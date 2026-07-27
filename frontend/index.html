@@ -6509,6 +6509,25 @@
         .cm-tag-textarea { min-height: 72px; padding: 7px 8px; resize: vertical; line-height: 1.45; }
         .cm-tag-add input:focus,
         .cm-tag-textarea:focus { border-color: var(--accent); }
+        /* 자연어 자유편집 — 태그 textarea와 달리 항상 표시(.cm-text-editor 기본 display:none 무시). */
+        .cm-natural-textarea {
+            display: block;
+            width: 100%;
+            min-height: 96px;
+            padding: 7px 8px;
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            box-sizing: border-box;
+            outline: none;
+            color: var(--text);
+            background: var(--surface);
+            resize: vertical;
+            line-height: 1.5;
+            font-family: inherit;
+            font-size: 0.82rem;
+        }
+        .cm-natural-textarea:focus { border-color: var(--accent); }
+        .cm-natural-help { margin-top: 5px; font-size: 0.72rem; }
         /* ─── 생성 설정 · 프리셋 전용 (우측 슬라이드 드로어) ─── */
         .cm-settings-wall {
             position: fixed;
@@ -9474,6 +9493,26 @@
                                               oninput="cmTextFieldInput('composition', this.value)"></textarea>
                                 </div>
                             </section>
+
+                            <section class="cm-field-card cm-natural-card" data-field="natural_language">
+                                <div class="cm-field-head">
+                                    <span class="cm-field-dot"></span>
+                                    <span class="cm-field-name">자연어</span>
+                                    <span class="cm-field-count" data-natural-count>0자</span>
+                                    <button class="cm-lock-btn" data-lock onclick="cmToggleLock('natural_language')">열림</button>
+                                </div>
+                                <div class="cm-field-body">
+                                    <div class="cm-field-preset-row">
+                                        <div class="cm-field-preset-wrap" data-preset-select
+                                             data-field="natural_language"></div>
+                                    </div>
+                                    <textarea class="cm-natural-textarea cm-text-editor" data-natural-text
+                                              maxlength="2000"
+                                              placeholder="Anima 자연어 — 최소 2문장, 묘사적으로. 분위기·구성·감정 의도를 적으세요 (예: 'a large blue peony flower covering half of her face'). 태그와 섞어 써도 되며, 비워도 됩니다."
+                                              oninput="cmNaturalLanguageInput(this.value)"></textarea>
+                                    <div class="cm-hint cm-natural-help">💡 Anima는 자연어 이해력이 높습니다. 분위기·구성·감정을 문장으로 적으면 태그만으로는 어려운 표현이 가능합니다.</div>
+                                </div>
+                            </section>
                         </div>
 
                         <section class="cm-card cm-reference-card">
@@ -9538,7 +9577,6 @@
                                             <div class="batch-field-group at-model-control" data-at-availability="anima"><div class="batch-field-label">ANIMA 아티스트 <span class="at-model-reason">ANIMA 전용</span></div><select class="at-fill-select" id="cm-setting-anima-artist" data-cm-setting="anima_artist_preset" onchange="cmSettingChanged()"></select></div>
                                             <div class="batch-field-group at-model-control" data-at-availability="anima"><div class="batch-field-label">ANIMA 부정 태그 <span class="at-model-reason">ANIMA 전용</span></div><select class="at-fill-select" id="cm-setting-anima-negative" data-cm-setting="anima_negative_preset" onchange="cmSettingChanged()"></select></div>
                                             <div class="batch-field-group"><div class="batch-field-label">캐릭터 부정(optional)</div><select class="at-fill-select" id="cm-setting-char-negative" data-cm-setting="character_negative_preset" onchange="cmSettingChanged()"></select></div>
-                                            <div class="batch-field-group"><div class="batch-field-label">자연어</div><select class="at-fill-select" id="cm-setting-natural" data-cm-setting="natural_language_preset" onchange="cmSettingChanged()"></select></div>
                                         </div>
                                     </section>
 
@@ -29039,6 +29077,8 @@
 
         // ─── 캐릭터 메이커 ─────────────────────────────────────
         const CM_FIELDS = ['appearance', 'outfit', 'expression', 'composition'];
+        // 잠금(LLM 수정 보호) 대상: 태그 필드 4종 + 자연어. 백엔드 LOCKABLE_FIELDS와 대응.
+        const CM_LOCKABLE = [...CM_FIELDS, 'natural_language'];
         const CM_FIELD_LABELS = {
             appearance: '외모',
             outfit: '복장',
@@ -29080,11 +29120,12 @@
         function cmCurrentPayload() {
             return {
                 world_context: cmSession?.world_context || '',
+                natural_language: cmSession?.natural_language || '',
                 fields: Object.fromEntries(CM_FIELDS.map(field => [
                     field,
                     [...(cmSession?.fields?.[field] || [])],
                 ])),
-                locks: Object.fromEntries(CM_FIELDS.map(field => [
+                locks: Object.fromEntries(CM_LOCKABLE.map(field => [
                     field,
                     !!cmSession?.locks?.[field],
                 ])),
@@ -29271,7 +29312,6 @@
             cmFillPresetSelect('cm-setting-negative', assetTags?.negative_presets, '사용 안 함');
             cmFillPresetSelect('cm-setting-anima-negative', assetTags?.negative_presets, '사용 안 함');
             cmFillPresetSelect('cm-setting-char-negative', assetTags?.character_negative_presets, '사용 안 함');
-            cmFillPresetSelect('cm-setting-natural', assetTags?.natural_language_presets, '사용 안 함');
             cmFillPresetSelect('cm-confirm-expression', assetTags?.expressions, '표정 선택');
             cmRenderFieldPresetSelects();
         }
@@ -29315,6 +29355,21 @@
                     sorted, '', '프리셋에서 불러오기',
                     CM_FIELD_PRESET_SELECT_IDS[field],
                     CM_FIELD_PRESET_LOAD_FNS[field],
+                );
+            }
+            // 자연어 카드: 자연어 프리셋(문자열)을 검색 셀렉트로. 다른 필드와 동일 UI.
+            const nlWrap = document.querySelector(
+                '.cm-field-card[data-field="natural_language"] [data-preset-select]'
+            );
+            if (nlWrap) {
+                const nlPresets = assetTags.natural_language_presets || {};
+                const nlSorted = {};
+                Object.keys(nlPresets)
+                    .sort((a, b) => a.localeCompare(b, 'ko'))
+                    .forEach(k => { nlSorted[k] = nlPresets[k]; });
+                nlWrap.innerHTML = buildAssetCustomSelect(
+                    nlSorted, '', '자연어 프리셋에서 불러오기',
+                    'cm-preset-natural-language', 'cmLoadNaturalLanguagePreset',
                 );
             }
             // 새로 주입된 .custom-select 들에 열기/닫기·검색·옵션 선택 바인딩.
@@ -29396,7 +29451,6 @@
                 artist_preset: stringValue('cm-setting-artist', 'artist_preset'),
                 negative_preset: stringValue('cm-setting-negative', 'negative_preset'),
                 character_negative_preset: stringValue('cm-setting-char-negative', 'character_negative_preset'),
-                natural_language_preset: stringValue('cm-setting-natural', 'natural_language_preset'),
                 anima_quality_preset: stringValue('cm-setting-anima-quality', 'anima_quality_preset'),
                 anima_artist_preset: stringValue('cm-setting-anima-artist', 'anima_artist_preset'),
                 anima_negative_preset: stringValue('cm-setting-anima-negative', 'anima_negative_preset'),
@@ -29455,7 +29509,6 @@
                 'cm-setting-artist': settings.artist_preset || '',
                 'cm-setting-negative': settings.negative_preset || '',
                 'cm-setting-char-negative': settings.character_negative_preset || '',
-                'cm-setting-natural': settings.natural_language_preset || '',
                 'cm-setting-anima-quality': settings.anima_quality_preset || '',
                 'cm-setting-anima-artist': settings.anima_artist_preset || '',
                 'cm-setting-anima-negative': settings.anima_negative_preset || '',
@@ -29780,6 +29833,53 @@
             }
         }
 
+        function cmRenderNaturalLanguage(preserveActiveText = false) {
+            if (!cmSession) return;
+            const card = document.querySelector('.cm-field-card[data-field="natural_language"]');
+            if (!card) return;
+            const text = cmSession.natural_language || '';
+            const textarea = card.querySelector('[data-natural-text]');
+            if (textarea && (!preserveActiveText || document.activeElement !== textarea)) {
+                textarea.value = text;
+            }
+            const count = card.querySelector('[data-natural-count]');
+            if (count) count.textContent = `${text.length}자`;
+            const locked = !!cmSession.locks?.natural_language;
+            const lockButton = card.querySelector('[data-lock]');
+            if (lockButton) {
+                lockButton.classList.toggle('locked', locked);
+                lockButton.textContent = locked ? 'LLM 잠금' : 'LLM 열림';
+                lockButton.title = locked ? 'LLM 수정에서 이 영역을 유지합니다' : 'LLM이 이 영역을 수정할 수 있습니다';
+            }
+        }
+
+        function cmNaturalLanguageInput(value) {
+            if (!cmSession) return;
+            cmSession.natural_language = String(value || '').slice(0, 2000);
+            cmRenderNaturalLanguage(true);
+            cmQueueSync();
+        }
+
+        function cmLoadNaturalLanguagePreset() {
+            if (!cmSession) return;
+            const name = (getAssetSelectValue('cm-preset-natural-language') || '').trim();
+            if (!name) return;
+            const presets = assetTags?.natural_language_presets || {};
+            const text = presets[name];
+            if (typeof text !== 'string') {
+                console.error('[CHARACTER_MAKER] 자연어 프리셋을 찾을 수 없습니다:', name);
+                showToast(`자연어 프리셋 '${name}'을(를) 찾을 수 없습니다.`, 'error');
+                setAssetSelectValue('cm-preset-natural-language', '');
+                return;
+            }
+            cmSession.natural_language = text.slice(0, 2000);
+            cmRenderNaturalLanguage();
+            cmQueueSync();
+            // 불러오기는 상태가 아니라 동작이므로 항상 안내 옵션으로 되돌린다.
+            setAssetSelectValue('cm-preset-natural-language', '');
+            showToast(`자연어 프리셋 '${name}' 불러옴 · ${cmSession.natural_language.length}자`, 'success');
+        }
+
         function cmRenderChat() {
             const log = document.getElementById('cm-chat-log');
             if (!log || !cmSession) return;
@@ -29998,6 +30098,7 @@
             const world = document.getElementById('cm-world-context');
             if (world && document.activeElement !== world) world.value = cmSession.world_context || '';
             CM_FIELDS.forEach(field => cmRenderField(field));
+            cmRenderNaturalLanguage();
             cmRenderChat();
             cmRenderReferences();
             cmRenderStage();
@@ -30141,9 +30242,13 @@
         }
 
         function cmToggleLock(field) {
-            if (!cmSession || !CM_FIELDS.includes(field)) return;
+            if (!cmSession || !CM_LOCKABLE.includes(field)) return;
             cmSession.locks[field] = !cmSession.locks[field];
-            cmRenderField(field);
+            if (field === 'natural_language') {
+                cmRenderNaturalLanguage();
+            } else {
+                cmRenderField(field);
+            }
             cmQueueSync();
         }
 
@@ -30279,7 +30384,7 @@
             }
         }
 
-        function cmBuildGenerationSlot(fields = cmSession?.fields) {
+        function cmBuildGenerationSlot(fields = cmSession?.fields, naturalLanguage = '') {
             const settings = cmCollectSettings();
             const src = fields || (cmSession?.fields);
             return {
@@ -30292,11 +30397,10 @@
                 artist_preset: settings.artist_preset,
                 negative_preset: settings.negative_preset,
                 character_negative_preset: settings.character_negative_preset,
-                natural_language_preset: settings.natural_language_preset,
                 anima_quality_preset: settings.anima_quality_preset,
                 anima_artist_preset: settings.anima_artist_preset,
                 anima_negative_preset: settings.anima_negative_preset,
-                natural_language: '',
+                natural_language: naturalLanguage || '',
                 lora_list: (settings.lora_list || []).map(item => ({...item})),
                 lora_enabled: !!settings.lora_enabled,
                 style_lora_list: (settings.style_lora_list || []).map(item => ({...item})),
@@ -30338,7 +30442,12 @@
             const fields = source === 'llm'
                 ? (cmSession?.llm_fields || cmSession?.fields)
                 : (cmSession?.fields);
-            const promptData = await buildBatchSlotPromptData(cmBuildGenerationSlot(fields));
+            const naturalLanguage = source === 'llm'
+                ? (cmSession?.llm_natural_language ?? cmSession?.natural_language ?? '')
+                : (cmSession?.natural_language ?? '');
+            const promptData = await buildBatchSlotPromptData(
+                cmBuildGenerationSlot(fields, naturalLanguage)
+            );
             if (!promptData?.positive) {
                 console.error('[CHARACTER_MAKER] 프롬프트 생성 결과가 비어 있습니다:', promptData);
                 throw new Error('생성 프롬프트를 만들지 못했습니다.');

@@ -34,6 +34,9 @@ from .danbooru_rag import DanbooruRagError, get_danbooru_rag_service
 
 
 EDITABLE_FIELDS = ("appearance", "outfit", "expression", "composition")
+# 잠금(LLM 수정 보호) 대상: 태그 필드 4종 + 자연어. 자연어는 별도 최상위 문자열 필드.
+LOCKABLE_FIELDS = EDITABLE_FIELDS + ("natural_language",)
+MAX_NATURAL_LANGUAGE_LENGTH = 2000
 RAG_COLD_START_TIMEOUT_SECONDS = 300.0
 SINGLE_SESSION_ID = "default"
 MAX_REFERENCE_COUNT = 8
@@ -92,7 +95,7 @@ def _normalize_locks(value: Any) -> dict[str, bool]:
         value = {}
     if not isinstance(value, dict):
         raise CharacterMakerError("locks는 객체여야 합니다.")
-    return {field: bool(value.get(field, False)) for field in EDITABLE_FIELDS}
+    return {field: bool(value.get(field, False)) for field in LOCKABLE_FIELDS}
 
 
 def _normalize_lora_list(value: Any) -> list[dict[str, Any]]:
@@ -200,10 +203,18 @@ def _parse_llm_payload(raw: str, *, require_queries: bool) -> dict[str, Any] | N
                 clean_queries.append(query[:300])
         rag_queries[field] = clean_queries[:4]
 
+    # natural_language는 선택적 키 — 없거나 비-문자열이면 None(변경 없음 신호).
+    natural_language = parsed.get("natural_language")
+    if natural_language is not None and not isinstance(natural_language, str):
+        natural_language = None
+    if isinstance(natural_language, str):
+        natural_language = natural_language.strip()[:MAX_NATURAL_LANGUAGE_LENGTH]
+
     return {
         "assistant_message": assistant_message.strip()[:4000],
         "fields": normalized_fields,
         "rag_queries": rag_queries,
+        "natural_language": natural_language,
     }
 
 
@@ -215,7 +226,8 @@ def validate_character_maker_llm_result(
     if parsed is None:
         return (
             False,
-            "assistant_message, fields(4개 배열), rag_queries(4개 배열)를 가진 JSON 객체가 필요합니다.",
+            "assistant_message, fields(4개 배열), rag_queries(4개 배열)를 가진 JSON 객체가 필요합니다. "
+            "(natural_language는 선택)",
         )
     return True, ""
 
@@ -286,7 +298,6 @@ class CharacterMakerService:
             "artist_preset": "",
             "negative_preset": "",
             "character_negative_preset": "",
-            "natural_language_preset": "",
             "anima_quality_preset": "",
             "anima_artist_preset": "",
             "anima_negative_preset": "",
@@ -338,9 +349,11 @@ class CharacterMakerService:
             "created_at": now,
             "updated_at": now,
             "world_context": "",
+            "natural_language": "",
+            "llm_natural_language": "",
             "fields": {field: [] for field in EDITABLE_FIELDS},
             "llm_fields": {field: [] for field in EDITABLE_FIELDS},
-            "locks": {field: False for field in EDITABLE_FIELDS},
+            "locks": {field: False for field in LOCKABLE_FIELDS},
             "settings": self._default_settings(),
             "chat": [],
             "active_chat_branch_id": "",
@@ -380,9 +393,15 @@ class CharacterMakerService:
 
         # 누락된 최상위 필드 보완.
         data.setdefault("world_context", "")
+        data.setdefault("natural_language", "")
+        if not isinstance(data.get("natural_language"), str):
+            data["natural_language"] = ""
+        data.setdefault("llm_natural_language", "")
+        if not isinstance(data.get("llm_natural_language"), str):
+            data["llm_natural_language"] = ""
         data.setdefault("fields", {field: [] for field in EDITABLE_FIELDS})
         data.setdefault("llm_fields", {field: [] for field in EDITABLE_FIELDS})
-        data.setdefault("locks", {field: False for field in EDITABLE_FIELDS})
+        data.setdefault("locks", {field: False for field in LOCKABLE_FIELDS})
         data.setdefault("settings", {})
         data.setdefault("chat", [])
         data.setdefault("active_chat_branch_id", "")
@@ -398,6 +417,7 @@ class CharacterMakerService:
             data["fields"].setdefault(field, [])
             data["llm_fields"].setdefault(field, [])
             data["locks"].setdefault(field, False)
+        data["locks"].setdefault("natural_language", False)
         # 과거 채팅은 기준을 추측하지 않는다. 기준 메타데이터가 없는 항목은
         # "unknown"으로 보존하되 새 LLM 요청의 체크포인트 문맥에는 포함하지 않는다.
         migrated_chat_items = 0
@@ -590,6 +610,7 @@ class CharacterMakerService:
                 "id": item["id"],
                 "created_at": item["created_at"],
                 "fields": copy.deepcopy(item["fields"]),
+                "natural_language": item.get("natural_language", ""),
                 "note": item.get("note", ""),
                 "source": item.get("source", "user"),
                 "url": f"/api/character_maker/session/{session_id}/image/{item['id']}",
@@ -604,6 +625,8 @@ class CharacterMakerService:
             "created_at": session["created_at"],
             "updated_at": session["updated_at"],
             "world_context": session["world_context"],
+            "natural_language": session.get("natural_language", ""),
+            "llm_natural_language": session.get("llm_natural_language", ""),
             "fields": copy.deepcopy(session["fields"]),
             "llm_fields": copy.deepcopy(session["llm_fields"]),
             "locks": copy.deepcopy(session["locks"]),
@@ -642,6 +665,20 @@ class CharacterMakerService:
             if not isinstance(world_context, str):
                 raise CharacterMakerError("세계관 정보는 문자열이어야 합니다.")
             session["world_context"] = world_context[:20000]
+        # 자연어(사용자 영역) — 자유 텍스트, 빈 값 허용.
+        if "natural_language" in payload:
+            natural_language = payload.get("natural_language")
+            if not isinstance(natural_language, str):
+                raise CharacterMakerError("자연어 정보는 문자열이어야 합니다.")
+            session["natural_language"] = natural_language[:MAX_NATURAL_LANGUAGE_LENGTH]
+        # LLM 영역 자연어 — LLM 수정 결과 반영용. 사용자 영역과 분리.
+        if "llm_natural_language" in payload:
+            llm_natural_language = payload.get("llm_natural_language")
+            if not isinstance(llm_natural_language, str):
+                raise CharacterMakerError("LLM 자연어 정보는 문자열이어야 합니다.")
+            session["llm_natural_language"] = llm_natural_language[
+                :MAX_NATURAL_LANGUAGE_LENGTH
+            ]
         if "fields" in payload:
             session["fields"] = _normalize_fields(payload.get("fields"))
         if "llm_fields" in payload:
@@ -678,7 +715,6 @@ class CharacterMakerService:
             "artist_preset",
             "negative_preset",
             "character_negative_preset",
-            "natural_language_preset",
             "anima_quality_preset",
             "anima_artist_preset",
             "anima_negative_preset",
@@ -1068,9 +1104,19 @@ class CharacterMakerService:
             "Reason from the world context, provided checkpoint/branch conversation, current "
             "visual evidence, references, and user feedback. Do not use hard-coded keyword "
             "matching. "
-            "You may modify only appearance, outfit, expression, and composition. "
+            "You may modify appearance, outfit, expression, composition, and natural_language. "
             "All other generation settings are read-only presets. Preserve locked fields exactly. "
-            "Return one JSON object with assistant_message, fields, and rag_queries. "
+            "natural_language is free-form descriptive text inserted into the image prompt; it "
+            "may be empty. "
+            "Natural-language guidance for the Anima model (which uses a Qwen LLM text encoder "
+            "and understands descriptive sentences well): prefer at least 2 descriptive "
+            "sentences; use natural language for mood, composition, and emotional intent that "
+            "pure tags cannot convey (e.g. 'a large blue peony flower covering half of her face'); "
+            "name a character first then describe their basic appearance; layer the prompt as "
+            "quality -> subject -> specific details -> atmosphere -> mood; natural language may "
+            "be interleaved with tags in any order. "
+            "Return one JSON object with assistant_message, fields, rag_queries, and optionally "
+            "natural_language. "
             "fields must contain exactly appearance/outfit/expression/composition string arrays. "
             "rag_queries must contain the same four keys with short Korean or English semantic "
             "search units. Tags should describe visible, image-generatable details. "
@@ -1086,10 +1132,16 @@ class CharacterMakerService:
         base_fields = (
             session["llm_fields"] if base == "llm" else session["fields"]
         )
+        base_natural_language = (
+            session["llm_natural_language"]
+            if base == "llm"
+            else session["natural_language"]
+        )
         user_payload = {
             "world_context": session["world_context"],
             "feedback": feedback,
             "current_fields": base_fields,
+            "current_natural_language": base_natural_language,
             "locks": session["locks"],
             "read_only_settings": session["settings"],
             "conversation_scope": (
@@ -1480,7 +1532,7 @@ class CharacterMakerService:
         # base=="llm" 은 사용자 fields 를 건드리지 않고 LLM 작업 영역(llm_fields)에서 출발한다.
         sync_keys = ("world_context", "locks", "settings")
         if base == "user":
-            sync_keys = sync_keys + ("fields",)
+            sync_keys = sync_keys + ("fields", "natural_language")
         self.update_session(
             session_id,
             {key: payload[key] for key in sync_keys if key in payload},
@@ -1493,6 +1545,12 @@ class CharacterMakerService:
             session["llm_fields"] if base == "llm" else session["fields"]
         )
         before = copy.deepcopy(base_fields)
+        before_nl = (
+            session["llm_natural_language"]
+            if base == "llm"
+            else session["natural_language"]
+        )
+        draft_nl = before_nl
         previous_branch_id = str(session.get("active_chat_branch_id") or "")
         if base == "user" or not previous_branch_id:
             branch_id = uuid.uuid4().hex
@@ -1542,6 +1600,12 @@ class CharacterMakerService:
             for field in EDITABLE_FIELDS:
                 if session["locks"][field]:
                     draft["fields"][field] = list(before[field])
+            # 자연어: 잠금 상태이거나 LLM이 반환하지 않았으면 이전값 유지.
+            if (
+                not session["locks"].get("natural_language")
+                and draft.get("natural_language") is not None
+            ):
+                draft_nl = draft.get("natural_language") or ""
 
             rag_meta: dict[str, Any] = {"enabled": False}
             if rag_enabled:
@@ -1575,6 +1639,7 @@ class CharacterMakerService:
         # LLM 수정 결과는 항상 LLM 작업 영역(llm_fields)에 기록한다.
         # 사용자 영역(fields)은 accept 로만 갱신된다.
         session["llm_fields"] = _normalize_fields(final_fields)
+        session["llm_natural_language"] = (draft_nl or "")[:MAX_NATURAL_LANGUAGE_LENGTH]
         assistant_message = draft["assistant_message"]
         session["chat"].append(
             {
@@ -1627,11 +1692,17 @@ class CharacterMakerService:
             if source == "llm"
             else copy.deepcopy(session["fields"])
         )
+        natural_language_snapshot = (
+            session["llm_natural_language"]
+            if source == "llm"
+            else session["natural_language"]
+        )
         item = {
             "id": revision_id,
             "created_at": _now_iso(),
             "source": source,
             "fields": fields_snapshot,
+            "natural_language": natural_language_snapshot,
             "settings": copy.deepcopy(session["settings"]),
             "image_path": image_path,
             "prompt_path": prompt_path,
@@ -1728,6 +1799,7 @@ class CharacterMakerService:
         if not has_tags:
             raise CharacterMakerError("LLM 결과에 복사할 태그가 없습니다.")
         session["fields"] = copy.deepcopy(llm_fields)
+        session["natural_language"] = session.get("llm_natural_language", "")
         session["active_revision_id"] = llm_revision_id
         branch_id = str(session.get("active_chat_branch_id") or "")
         accepted_count = 0

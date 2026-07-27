@@ -304,3 +304,21 @@ def test_prompt_builder_accepts_raw_character_maker_fields_and_workflow_type():
     assert "Array.isArray(slot.raw_expression_tags)" in html
     assert "Array.isArray(slot.raw_composition_tags)" in html
     assert "getAssetWorkflowCapabilities(slot.asset_workflow_type)" in html
+
+
+def test_character_maker_has_free_edit_natural_language_card():
+    html = _html()
+    # 자유편집영역에 자연어 카드(외모/복장/표정/구도와 동일: preset-row + textarea + 잠금).
+    assert 'class="cm-field-card cm-natural-card"' in html
+    assert 'data-field="natural_language"' in html
+    assert 'data-natural-text' in html
+    assert "cmToggleLock('natural_language')" in html
+    assert "cmNaturalLanguageInput" in html
+    assert "cmRenderNaturalLanguage" in html
+    # 자연어 프리셋 "불러오기" 검색 셀렉트가 카드 안에 있다.
+    assert "cmLoadNaturalLanguagePreset" in html
+    # 설정 패널의 구식 자연어 드롭다운은 제거되었다(settings가 아닌 최상위 natural_language).
+    assert 'id="cm-setting-natural"' not in html
+    assert 'data-cm-setting="natural_language_preset"' not in html
+    # Anima 자연어 가이드가 UI 도움말에 반영되어 있다.
+    assert "Anima는 자연어 이해력" in html

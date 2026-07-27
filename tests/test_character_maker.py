@@ -62,25 +62,32 @@ def _service(tmp_path, *, config=None, tags=None):
     return service, manager
 
 
-def _llm_payload(*, appearance=None, outfit=None, expression=None, composition=None):
-    return json.dumps(
-        {
-            "assistant_message": "수정했습니다.",
-            "fields": {
-                "appearance": appearance or [],
-                "outfit": outfit or [],
-                "expression": expression or [],
-                "composition": composition or [],
-            },
-            "rag_queries": {
-                "appearance": ["hair and eyes"],
-                "outfit": ["practical coat"],
-                "expression": ["gentle smile"],
-                "composition": ["portrait"],
-            },
+def _llm_payload(
+    *,
+    appearance=None,
+    outfit=None,
+    expression=None,
+    composition=None,
+    natural_language=None,
+):
+    payload = {
+        "assistant_message": "수정했습니다.",
+        "fields": {
+            "appearance": appearance or [],
+            "outfit": outfit or [],
+            "expression": expression or [],
+            "composition": composition or [],
         },
-        ensure_ascii=False,
-    )
+        "rag_queries": {
+            "appearance": ["hair and eyes"],
+            "outfit": ["practical coat"],
+            "expression": ["gentle smile"],
+            "composition": ["portrait"],
+        },
+    }
+    if natural_language is not None:
+        payload["natural_language"] = natural_language
+    return json.dumps(payload, ensure_ascii=False)
 
 
 @pytest.mark.asyncio
@@ -987,3 +994,186 @@ def test_server_defaults_expose_independent_character_maker_routes():
     assert server.DEFAULT_CONFIG["character_maker_rag_top_k"] == 5
     assert "character_maker_rag_url" not in server.DEFAULT_CONFIG
     assert "character_maker_rag_repo_path" not in server.DEFAULT_CONFIG
+
+
+def test_natural_language_roundtrip_and_persist(tmp_path):
+    service, _ = _service(tmp_path)
+    session = service.create_session()
+    public = service.update_session(
+        session["id"],
+        {"natural_language": "a large blue peony flower covering half of her face"},
+    )
+    assert (
+        public["natural_language"]
+        == "a large blue peony flower covering half of her face"
+    )
+    assert public["llm_natural_language"] == ""
+    # 길이 상한(2000자) 적용.
+    public = service.update_session(
+        session["id"], {"natural_language": "x" * 3000}
+    )
+    assert len(public["natural_language"]) == 2000
+    # 같은 temp_root 로 새 서비스를 만들면 디스크에서 복원된다.
+    service2, _ = _service(tmp_path)
+    reloaded = service2.public_session(session["id"])
+    assert len(reloaded["natural_language"]) == 2000
+
+
+def test_parse_llm_payload_natural_language_optional():
+    # natural_language 키가 없어도 태그 필드만으로 유효하다.
+    ok, _ = validate_character_maker_llm_result(_llm_payload(appearance=["hair"]))
+    assert ok
+    # natural_language 가 있으면 파싱된다.
+    parsed = character_maker_module._parse_llm_payload(
+        _llm_payload(natural_language="dreamy floral atmosphere"),
+        require_queries=True,
+    )
+    assert parsed["natural_language"] == "dreamy floral atmosphere"
+    # natural_language 가 없으면 None(변경 없음 신호).
+    parsed_none = character_maker_module._parse_llm_payload(
+        _llm_payload(), require_queries=True
+    )
+    assert parsed_none["natural_language"] is None
+
+
+def test_backward_compat_loads_session_without_natural_language(tmp_path):
+    """과거 session.json(자연어 키 없음) 로드 시 기본값으로 채운다."""
+    session_dir = tmp_path / "temporary" / "default"
+    session_dir.mkdir(parents=True)
+    legacy = {
+        "id": "default",
+        "boot_id": "legacy",
+        "world_context": "legacy world",
+        "fields": {
+            "appearance": [],
+            "outfit": [],
+            "expression": [],
+            "composition": [],
+        },
+        "llm_fields": {
+            "appearance": [],
+            "outfit": [],
+            "expression": [],
+            "composition": [],
+        },
+        "locks": {
+            "appearance": False,
+            "outfit": False,
+            "expression": False,
+            "composition": False,
+        },
+        "settings": {},
+        "chat": [],
+        "active_chat_branch_id": "",
+        "user_chat_checkpoint_id": "",
+        "references": [],
+        "revisions": [],
+        "active_revision_id": "",
+        "llm_active_revision_id": "",
+        "finalized": None,
+    }
+    (session_dir / "session.json").write_text(
+        json.dumps(legacy, ensure_ascii=False), encoding="utf-8"
+    )
+    service, _ = _service(tmp_path)
+    public = service.public_session("default")
+    assert public["natural_language"] == ""
+    assert public["llm_natural_language"] == ""
+    assert public["locks"]["natural_language"] is False
+    assert public["world_context"] == "legacy world"
+
+
+@pytest.mark.asyncio
+async def test_revise_updates_llm_natural_language_and_preserves_user(
+    monkeypatch, tmp_path
+):
+    service, _ = _service(tmp_path)
+    session = service.create_session()
+    service.update_session(
+        session["id"],
+        {
+            "natural_language": "user original text",
+            "fields": {
+                "appearance": ["blue_eyes"],
+                "outfit": ["coat"],
+                "expression": [],
+                "composition": [],
+            },
+        },
+    )
+
+    async def fake_call(task_key, messages, **kwargs):
+        return _llm_payload(
+            appearance=["silver_hair"],
+            outfit=["tailored_coat"],
+            expression=["smile"],
+            composition=["portrait"],
+            natural_language="a large blue peony flower covering half of her face",
+        )
+
+    monkeypatch.setattr(character_maker_module.llm_service, "callLLMTask", fake_call)
+    result = await service.revise(session["id"], {"message": "더 몽환적으로"})
+    # LLM 결과 자연어는 llm_natural_language 에. 사용자 natural_language 는 유지.
+    assert (
+        result["session"]["llm_natural_language"]
+        == "a large blue peony flower covering half of her face"
+    )
+    assert result["session"]["natural_language"] == "user original text"
+
+
+@pytest.mark.asyncio
+async def test_revise_preserves_locked_natural_language(monkeypatch, tmp_path):
+    service, _ = _service(tmp_path)
+    session = service.create_session()
+    service.update_session(
+        session["id"],
+        {"natural_language": "locked text", "locks": {"natural_language": True}},
+    )
+
+    async def fake_call(task_key, messages, **kwargs):
+        return _llm_payload(
+            appearance=["silver_hair"],
+            outfit=["tailored_coat"],
+            expression=["smile"],
+            composition=["portrait"],
+            natural_language="should not apply",
+        )
+
+    monkeypatch.setattr(character_maker_module.llm_service, "callLLMTask", fake_call)
+    result = await service.revise(session["id"], {"message": "바꿔줘"})
+    # 잠금 상태이므로 자연어는 이전값을 유지한다.
+    assert result["session"]["llm_natural_language"] == "locked text"
+
+
+def test_accept_copies_llm_natural_language(tmp_path):
+    service, _ = _service(tmp_path)
+    session = service.create_session()
+    service.update_session(
+        session["id"],
+        {
+            "natural_language": "user original",
+            "llm_fields": {
+                "appearance": ["silver_hair"],
+                "outfit": ["tailored_coat"],
+                "expression": ["smile"],
+                "composition": ["portrait"],
+            },
+            "llm_natural_language": "accepted llm text",
+        },
+    )
+    image_path = (
+        Path(service.temp_root) / session["id"] / "images" / "llm_revision.webp"
+    )
+    prompt_path = image_path.with_name("llm_revision_prompt.json")
+    image_path.write_bytes(b"llm-revision-image")
+    prompt_path.write_text("{}", encoding="utf-8")
+    service.add_revision(
+        session["id"],
+        image_path=str(image_path),
+        prompt_path=str(prompt_path),
+        positive="positive[END]",
+        negative="negative",
+        source="llm",
+    )
+    accepted = service.accept(session["id"])
+    assert accepted["natural_language"] == "accepted llm text"
