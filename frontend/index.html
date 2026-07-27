@@ -6390,14 +6390,20 @@
         .cm-revision-badge.llm { background: rgba(108,52,180,.85); }
         .cm-llm-tags {
             display: flex;
-            align-items: center;
-            gap: 5px;
+            flex-direction: column;
+            gap: 6px;
             padding: 6px 8px;
             margin-top: 7px;
             border: 1px solid color-mix(in srgb, #9b6cff 35%, var(--border));
             border-radius: 9px;
             background: color-mix(in srgb, #9b6cff 7%, var(--surface));
-            overflow-x: auto;
+        }
+        /* 태그 칩 블록 — 칩이 많아지면 가로 스크롤 대신 다음 줄로 줄바꿈(wrap)하여 모아 표시. */
+        .cm-llm-tags-row {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 5px;
         }
         .cm-llm-tags-title {
             flex: 0 0 auto;
@@ -6417,6 +6423,31 @@
             white-space: nowrap;
         }
         .cm-llm-tags-empty { font-size: .64rem; color: var(--text2); }
+        /* 자연어 블록 — 태그 행 아래, 비어있으면 렌더 자체를 생략. 말줄임 없이 줄바꿈. */
+        .cm-llm-natural {
+            display: flex;
+            gap: 6px;
+            align-items: flex-start;
+            padding-top: 6px;
+            border-top: 1px dashed color-mix(in srgb, #9b6cff 30%, transparent);
+        }
+        .cm-llm-natural-title {
+            flex: 0 0 auto;
+            font-size: .62rem;
+            font-weight: 700;
+            color: #c9a8ff;
+            white-space: nowrap;
+            line-height: 1.5;
+        }
+        .cm-llm-natural-text {
+            flex: 1 1 auto;
+            min-width: 0;
+            font-size: .66rem;
+            line-height: 1.5;
+            color: #e8d9ff;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
         .cm-editor-head {
             display: flex;
             align-items: center;
@@ -9381,8 +9412,10 @@
                             </div>
                         </div>
                         <div id="cm-llm-tags" class="cm-llm-tags" aria-label="LLM 현재 태그(읽기 전용)">
-                            <span class="cm-llm-tags-title">LLM 태그</span>
-                            <span class="cm-llm-tags-empty">아직 LLM이 수정한 태그가 없습니다.</span>
+                            <div class="cm-llm-tags-row">
+                                <span class="cm-llm-tags-title">LLM 태그</span>
+                                <span class="cm-llm-tags-empty">아직 LLM이 수정한 태그가 없습니다.</span>
+                            </div>
                         </div>
                         <div class="cm-stage-actions">
                             <div class="cm-stage-action-side llm">
@@ -30150,11 +30183,25 @@
                     chips.push(`<span class="cm-llm-tag-chip">${escapeHtml(CM_FIELD_LABELS[field])}: ${escapeHtml(tag)}</span>`);
                 }
             }
-            // title 은 항상 유지
+            const naturalLanguage = (cmSession.llm_natural_language || '').trim();
             const titleHtml = '<span class="cm-llm-tags-title">LLM 태그</span>';
-            container.innerHTML = chips.length
-                ? titleHtml + chips.join('')
-                : titleHtml + '<span class="cm-llm-tags-empty">아직 LLM이 수정한 태그가 없습니다.</span>';
+            // 태그 칩 블록(wrap 줄바꿈) + 자연어 블록(아래)을 세로로 쌓는다.
+            // 둘 다 비어있으면 안내 문구만.
+            const parts = [];
+            if (chips.length) {
+                parts.push(`<div class="cm-llm-tags-row">${titleHtml}${chips.join('')}</div>`);
+            }
+            if (naturalLanguage) {
+                parts.push(
+                    '<div class="cm-llm-natural">'
+                    + '<span class="cm-llm-natural-title">자연어</span>'
+                    + `<span class="cm-llm-natural-text">${escapeHtml(naturalLanguage)}</span>`
+                    + '</div>'
+                );
+            }
+            container.innerHTML = parts.length
+                ? parts.join('')
+                : `<div class="cm-llm-tags-row">${titleHtml}<span class="cm-llm-tags-empty">아직 LLM이 수정한 태그가 없습니다.</span></div>`;
         }
 
         // 하위 호환: 기존 호출 지점(cmRenderRevisions 이름)이 있을 수 있어 분할 렌더로 위임.
