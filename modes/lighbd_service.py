@@ -267,7 +267,14 @@ def _log_lighbd_history(record: dict) -> None:
                 print(f"[LIGHBD] history 읽기/백업 실패: {e}")
                 existing_lines = []
 
-        line = json.dumps(record, ensure_ascii=False) + "\n"
+        # append 시점의 ts로 덮어쓴다: 호출자가 함수 진입(시작) 시각으로 고정한 ts가
+        # 그대로 영속화되면, 재시도 끝에 성공한 최종 OK 레코드가 자기 자신의 attempt
+        # 실패 기록보다 더 과거 ts를 가져 정렬 시 ERROR 위로 올라가는 버그가 생긴다.
+        # 영속화 순간(= 호출 완료 시각)으로 갱신해 append 순서 = ts 순서를 보장한다.
+        # 원본 객체는 부작용을 피해 변경하지 않는다.
+        stamped = dict(record)
+        stamped["ts"] = datetime.datetime.now().isoformat(timespec="seconds")
+        line = json.dumps(stamped, ensure_ascii=False) + "\n"
         existing_lines.append(line)
         existing_lines = _trim_lighbd_history_lines(existing_lines)
 
@@ -351,7 +358,12 @@ def _update_lighbd_history_records(updates_by_id: dict[str, dict]) -> int:
 
 
 def _load_lighbd_history(limit: int = LIGHBD_HISTORY_MAX) -> list:
-    """보존된 일반/다중 분리 히스토리를 오래된 → 최신 순으로 반환한다."""
+    """보존된 일반/다중 분리 히스토리를 오래된 → 최신 순(ts 기준)으로 반환한다.
+
+    파일 append 순서가 항상 시간순은 아니므로(동시 호출·같은 초 기록 등),
+    ts 기준 stable 정렬로 확정한다. 같은 초 내에서는 append 순서(=발생 순서)가
+    유지된다. 프론트는 이 결과를 reverse 해 최신 → 오래된 순으로 표시한다.
+    """
     if not os.path.exists(LIGHBD_HISTORY_PATH):
         return []
     try:
@@ -366,6 +378,7 @@ def _load_lighbd_history(limit: int = LIGHBD_HISTORY_MAX) -> list:
                 records.append(json.loads(ln))
             except Exception:
                 continue
+        records.sort(key=lambda r: str(r.get("ts") or ""))
         return records[-limit:]
     except Exception as e:
         print(f"[LIGHBD] history 읽기 실패: {e}")

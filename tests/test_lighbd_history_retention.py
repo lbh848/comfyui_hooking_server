@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import datetime as _dt
 import sys
+import types
 from pathlib import Path
 
 
@@ -17,6 +19,24 @@ def test_multi_char_history_has_independent_retention_budget(tmp_path, monkeypat
     monkeypatch.setattr(lighbd_service, "LIGHBD_GENERAL_HISTORY_MAX", 2)
     monkeypatch.setattr(lighbd_service, "LIGHBD_MULTI_CHAR_HISTORY_MAX", 3)
     monkeypatch.setattr(lighbd_service, "LIGHBD_HISTORY_MAX", 5)
+
+    # _log_lighbd_history가 append 시점에 ts를 now()로 갱신하므로, 빡빡한 루프에서
+    # 초 경계를 넘길 때 ts가 섞여 정렬 결과가 흔들리는 flake를 막기 위해
+    # now()가 호출될 때마다 1초씩 증가하는 datetime을 주입한다. lighbd_service 안에서
+    # 참조하는 datetime만 가짜로 바꾼다(전역 datetime 모듈은 그대로).
+    class _StepDateTime:
+        _counter = 0
+
+        @classmethod
+        def now(cls, tz=None):
+            cls._counter += 1
+            return _dt.datetime(2024, 1, 1, 0, 0, cls._counter)
+
+    monkeypatch.setattr(
+        lighbd_service,
+        "datetime",
+        types.SimpleNamespace(datetime=_StepDateTime),
+    )
 
     records = [
         {"prompt_id": "general-1", "task_key": "illustration_call1"},
