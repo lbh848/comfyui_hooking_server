@@ -302,6 +302,79 @@ async def test_revise_preserves_locked_field(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_call_revision_llm_records_raw_response_on_validation_exhaustion(
+    monkeypatch, tmp_path
+):
+    """검증 실패로 재시도가 소진되면 callLLMTask가 원문을 버린 [LLM 실패] 문자열만
+    돌려주더라도, per-attempt 콜백이 보존한 원문 응답이 최종 요약 레코드의
+    output(자세히 모달 "LLM 원본 응답")에 남아야 한다. error("오류 내용")은 별개."""
+    service, _ = _service(tmp_path)
+    messages = [{"role": "user", "content": "수정"}]
+
+    raw_response = (
+        '{"assistant_message": "ok", "fields": {"appearance": ["blue_eyes"], '
+        '"outfit": ["coat"], "expression": [], "composition": [], '
+        '"natural_language": "잉여 키 때문에 검증 실패"}, "rag_queries": {}}'
+    )
+    failure_string = (
+        "[LLM 실패] character_maker_feedback primary 재시도 소진: "
+        "fields 키가 ['appearance', 'composition', 'expression', 'outfit']와 "
+        "정확히 일치해야 합니다. (잉여=['natural_language'])"
+    )
+
+    async def fake_call(task_key, _messages, **kwargs):
+        # callLLMTask 실제 동작 흉내: 검증 실패 시 on_attempt_failure 콜백에 원문을
+        # 넘긴 뒤, 재시도 소진 시 원문을 버린 [LLM 실패] 문자열을 반환.
+        cb = kwargs.get("on_attempt_failure")
+        if cb:
+            cb({
+                "task_key": task_key,
+                "phase": "primary",
+                "slot": "llm1",
+                "attempt": 1,
+                "total_attempts": 2,
+                "reason": "fields 키가 ... (잉여=['natural_language'])",
+                "result": raw_response,
+                "exception": None,
+            })
+        return failure_string
+
+    monkeypatch.setattr(character_maker_module.llm_service, "callLLMTask", fake_call)
+
+    captured = []
+    from modes import lighbd_service as lighbd_service_module
+    monkeypatch.setattr(lighbd_service_module, "_log_lighbd_history", captured.append)
+
+    with pytest.raises(CharacterMakerError):
+        await service._call_revision_llm(
+            "character_maker_feedback",
+            messages,
+            None,
+            require_queries=True,
+            call_label="2단계(RAG 태그선택)",
+        )
+
+    # 최종 요약 레코드(error 가 [LLM 실패]로 시작)와 per-attempt 레코드([재시도 ...]
+    # 로 시작)가 각각 기록된다.
+    summary_records = [
+        r for r in captured if str(r.get("error", "")).startswith("[LLM 실패]")
+    ]
+    assert summary_records, "최종 요약([LLM 실패]) 레코드가 기록되어야 함"
+    summary = summary_records[-1]
+    assert summary["status"] == "error"
+    assert summary["call_name"] == "2단계(RAG 태그선택)"
+    # 핵심: output 은 에러 문자열이 아니라 LLM 이 실제 반환한 원문이어야 한다.
+    assert summary["output"] == raw_response
+    assert summary["error"] == failure_string
+
+    attempt_records = [
+        r for r in captured if str(r.get("error", "")).startswith("[재시도")
+    ]
+    assert attempt_records, "per-attempt([재시도 ...]) 레코드도 기록되어야 함"
+    assert attempt_records[-1]["output"] == raw_response
+
+
+@pytest.mark.asyncio
 async def test_revise_base_llm_starts_from_llm_fields(monkeypatch, tmp_path):
     """base='llm' 은 사용자 fields 를 무시하고 llm_fields 에서 출발한다."""
     service, _ = _service(tmp_path)

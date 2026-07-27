@@ -1228,14 +1228,26 @@ class CharacterMakerService:
         # callLLMTask/VisionTask 가 스트림 usage 토큰을 채워 돌려줄 싱크.
         # 스트리밍 경로에선 진짜 usage, 비스트리밍/실패 시엔 근사치 또는 0.
         sink: dict = {}
+        # 검증 실패를 일으킨 마지막 원문 응답. callLLMTask 가 재시도 소진 시
+        # 원문을 버리고 reason 만 남긴 [LLM 실패] 문자열을 반환하므로, per-attempt
+        # 콜백이 받은 마지막 원문을 보존해 최종 요약 레코드의 output(=자세히 모달
+        # "LLM 원본 응답" 필드)에 채운다.
+        last_raw_result: str | None = None
 
         def _on_attempt_fail(info: dict) -> None:
             """재시도 중 각 실패 시도를 자세히(lighbd_history.jsonl)에 개별 기록한다.
             최종 결과(성공/파싱실패)는 _log_cm_history 가 별도로 남기고, 여기는 중간
             실패 가시성용. sink 는 시도 간 공유/덮어쓰기되므로 호출 시점에 스냅샷한다.
             call_label 로 어느 단계(draft/RAG 선택)의 시도인지 구분한다."""
+            nonlocal last_raw_result
             try:
                 from modes.lighbd_service import _log_lighbd_history
+
+                # 검증 실패를 일으킨 원문 응답 보존(최종 요약 레코드 output용).
+                # 매 시도 갱신하므로 콜백 시리즈가 끝나면 마지막 시도의 원문이 남는다.
+                attempt_raw = info.get("result")
+                if attempt_raw:
+                    last_raw_result = str(attempt_raw)
 
                 snap = dict(sink or {})
                 _log_lighbd_history({
@@ -1287,10 +1299,17 @@ class CharacterMakerService:
             )
             raise
         if isinstance(raw, str) and raw.strip().startswith("[LLM 실패]"):
-            print(f"[CHARACTER_MAKER] LLM 호출 최종 실패: task={task_key}, result={raw}")
+            # raw 는 callLLMTask 가 reason 만으로 만든 [LLM 실패] 문자열이라 원문이 없다.
+            # per-attempt 콜백이 보존한 마지막 원문(last_raw_result)이 있으면 output(자세히
+            # 모달 "LLM 원본 응답")에 우선 사용하고, error("오류 내용")에는 원인 문자열을 둔다.
+            history_output = last_raw_result or raw
+            print(
+                f"[CHARACTER_MAKER] LLM 호출 최종 실패: task={task_key}, "
+                f"result={raw}, raw_captured={bool(last_raw_result)}"
+            )
             self._log_cm_history(
-                task_key, messages, raw, t0, status="error", error=raw, sink=sink,
-                call_label=call_label,
+                task_key, messages, history_output, t0, status="error", error=raw,
+                sink=sink, call_label=call_label,
             )
             raise CharacterMakerError(raw)
         parsed, reason = _parse_llm_payload(raw, require_queries=require_queries)
