@@ -265,6 +265,8 @@ DEFAULT_CONFIG = {
     "llm_stream2": False,             # LLM2 실제 API 스트리밍
     "llm_stream3": False,             # LLM3 실제 API 스트리밍
     "llm_stream_idle_timeout_seconds": 90.0,  # 0=비활성, 그 외 10~3600초
+    "llm_stream_idle_timeout_seconds2": 90.0,
+    "llm_stream_idle_timeout_seconds3": 90.0,
     # 작업별 LLM1/LLM2/LLM3 라우팅 및 메인/폴백 재시도 정책(외부 API 분기 탭).
     "llm_routing": {
         "extract_outfit":          _llm_route_defaults(fallback=True),
@@ -296,7 +298,9 @@ DEFAULT_CONFIG = {
         "illustration_call3":      _llm_route_defaults(),  # 대사 생성(speak/manga)
         "illustration_multi_char_mask": _llm_route_defaults(json_mode=True),  # CALL3 뒤 캐릭터별 정규화 영역 계산
     },
-    "llm_max_concurrency": 1,         # LLM계열 큐 아이템(태그 정제/얼굴 태그 분류) 동시 처리 수. 1=순차(현행 동작). GPU/ComfyUI 작업과 무관.
+    "llm_max_concurrency": 1,         # LLM1 실제 API 동시 요청 상한
+    "llm_max_concurrency2": 1,        # LLM2 실제 API 동시 요청 상한
+    "llm_max_concurrency3": 1,        # LLM3 실제 API 동시 요청 상한
     "embedding_provider": "voyage",  # 임베딩 프로바이더: voyage / custom
     "embedding_url": "https://api.voyageai.com/v1/embeddings",  # 임베딩 API URL
     "embedding_api_key": "",      # 임베딩 API 키
@@ -9592,32 +9596,89 @@ async def handle_api_config(request: web.Request) -> web.Response:
                         status=400,
                     )
 
-            if "llm_stream_idle_timeout_seconds" in body:
-                raw_idle_timeout = body.get("llm_stream_idle_timeout_seconds")
+            for llm_label, concurrency_key in (
+                ("LLM1", "llm_max_concurrency"),
+                ("LLM2", "llm_max_concurrency2"),
+                ("LLM3", "llm_max_concurrency3"),
+            ):
+                if concurrency_key not in body:
+                    continue
+                raw_concurrency = body.get(concurrency_key)
+                try:
+                    if isinstance(raw_concurrency, bool):
+                        raise TypeError("bool은 허용되지 않음")
+                    numeric_concurrency = float(raw_concurrency)
+                    if (
+                        not math.isfinite(numeric_concurrency)
+                        or not numeric_concurrency.is_integer()
+                    ):
+                        raise ValueError("유한한 정수가 아님")
+                    concurrency = int(numeric_concurrency)
+                except (TypeError, ValueError) as e:
+                    print(
+                        f"[CONFIG] {llm_label} 동시 요청 수 저장 거부: "
+                        f"key={concurrency_key}, value={raw_concurrency!r}, error={e}"
+                    )
+                    traceback.print_exc()
+                    return web.json_response(
+                        {"error": f"{llm_label} 동시 요청 수는 1~20 사이의 정수여야 합니다."},
+                        status=400,
+                    )
+                if not 1 <= concurrency <= 20:
+                    print(
+                        f"[CONFIG] {llm_label} 동시 요청 수 범위 오류: "
+                        f"key={concurrency_key}, value={concurrency}"
+                    )
+                    return web.json_response(
+                        {"error": f"{llm_label} 동시 요청 수는 1~20 사이여야 합니다."},
+                        status=400,
+                    )
+                body[concurrency_key] = concurrency
+
+            for llm_label, timeout_key in (
+                ("LLM1", "llm_stream_idle_timeout_seconds"),
+                ("LLM2", "llm_stream_idle_timeout_seconds2"),
+                ("LLM3", "llm_stream_idle_timeout_seconds3"),
+            ):
+                if timeout_key not in body:
+                    continue
+                raw_idle_timeout = body.get(timeout_key)
                 try:
                     if isinstance(raw_idle_timeout, bool):
                         raise TypeError("bool은 허용되지 않음")
                     idle_timeout = float(raw_idle_timeout)
+                    if not math.isfinite(idle_timeout):
+                        raise ValueError("유한한 숫자가 아님")
                 except (TypeError, ValueError) as e:
                     print(
-                        f"[CONFIG] LLM 스트림 무응답 제한 저장 거부: "
-                        f"value={raw_idle_timeout!r}, error={e}"
+                        f"[CONFIG] {llm_label} 스트림 무응답 제한 저장 거부: "
+                        f"key={timeout_key}, value={raw_idle_timeout!r}, error={e}"
                     )
                     traceback.print_exc()
                     return web.json_response(
-                        {"error": "LLM 스트림 무응답 제한은 0 또는 10~3600초 숫자여야 합니다."},
+                        {
+                            "error": (
+                                f"{llm_label} 스트림 무응답 제한은 "
+                                "0 또는 10~3600초 숫자여야 합니다."
+                            )
+                        },
                         status=400,
                     )
                 if idle_timeout != 0 and not 10 <= idle_timeout <= 3600:
                     print(
-                        f"[CONFIG] LLM 스트림 무응답 제한 범위 오류: "
-                        f"value={idle_timeout}"
+                        f"[CONFIG] {llm_label} 스트림 무응답 제한 범위 오류: "
+                        f"key={timeout_key}, value={idle_timeout}"
                     )
                     return web.json_response(
-                        {"error": "LLM 스트림 무응답 제한은 0 또는 10~3600초여야 합니다."},
+                        {
+                            "error": (
+                                f"{llm_label} 스트림 무응답 제한은 "
+                                "0 또는 10~3600초여야 합니다."
+                            )
+                        },
                         status=400,
                     )
-                body["llm_stream_idle_timeout_seconds"] = idle_timeout
+                body[timeout_key] = idle_timeout
 
             # 설정 업데이트
             for key in body:
@@ -9735,7 +9796,12 @@ async def handle_api_config(request: web.Request) -> web.Response:
                 "llm_stream": app_config.get("llm_stream", False),
                 "llm_stream2": app_config.get("llm_stream2", False),
                 "llm_stream3": app_config.get("llm_stream3", False),
+                "llm_max_concurrency": app_config.get("llm_max_concurrency", 1),
+                "llm_max_concurrency2": app_config.get("llm_max_concurrency2", 1),
+                "llm_max_concurrency3": app_config.get("llm_max_concurrency3", 1),
                 "llm_stream_idle_timeout_seconds": app_config.get("llm_stream_idle_timeout_seconds", 90.0),
+                "llm_stream_idle_timeout_seconds2": app_config.get("llm_stream_idle_timeout_seconds2", 90.0),
+                "llm_stream_idle_timeout_seconds3": app_config.get("llm_stream_idle_timeout_seconds3", 90.0),
                 "llm_routing": app_config.get("llm_routing", {}),
             })
 
@@ -9751,7 +9817,14 @@ async def handle_api_config(request: web.Request) -> web.Response:
             save_config(app_config)
 
             # LLM 동시성 설정 변경 시 워커풀 즉시 갱신 (다음 아이템 적재까지 대기하지 않음)
-            if "llm_max_concurrency" in body:
+            if any(
+                key in body
+                for key in (
+                    "llm_max_concurrency",
+                    "llm_max_concurrency2",
+                    "llm_max_concurrency3",
+                )
+            ):
                 try:
                     asyncio.ensure_future(queue_manager._ensure_llm_workers())
                 except Exception as e:
@@ -17398,7 +17471,12 @@ async def on_startup(app):
         "llm_stream": app_config.get("llm_stream", False),
         "llm_stream2": app_config.get("llm_stream2", False),
         "llm_stream3": app_config.get("llm_stream3", False),
+        "llm_max_concurrency": app_config.get("llm_max_concurrency", 1),
+        "llm_max_concurrency2": app_config.get("llm_max_concurrency2", 1),
+        "llm_max_concurrency3": app_config.get("llm_max_concurrency3", 1),
         "llm_stream_idle_timeout_seconds": app_config.get("llm_stream_idle_timeout_seconds", 90.0),
+        "llm_stream_idle_timeout_seconds2": app_config.get("llm_stream_idle_timeout_seconds2", 90.0),
+        "llm_stream_idle_timeout_seconds3": app_config.get("llm_stream_idle_timeout_seconds3", 90.0),
         "llm_routing": app_config.get("llm_routing", {}),
     })
     # API 키는 config.json 이 아닌 key/llm_keys.json 에서 로드

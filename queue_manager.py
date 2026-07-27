@@ -18,7 +18,8 @@ from typing import Optional
 
 
 # LLM계열 큐 아이템 타입 — GPU/ComfyUI 자원을 쓰지 않고 네트워크(LLM API)만 사용하므로
-# 별도 워커풀(llm_max_concurrency)에서 동시 처리한다. GPU계열은 메인 루프에서 순차 처리.
+# 별도 워커풀(설정된 LLM 슬롯별 동시 요청 상한의 합)에서 처리한다.
+# 실제 API 동시성은 llm_service의 슬롯별 게이트가 최종 제한한다.
 LLM_TYPES = frozenset({
     "illustration_llm_build",       # CHAT -> CALL1/2/3 -> 다중 삽화 큐 생성
     "illustration_easy_edit",       # 저장 슬롯 -> 기존 편하게 수정 LLM -> 수정 재생성
@@ -73,7 +74,7 @@ class QueueManager:
         # 일시정지: True면 새 작업을 꺼내지 않는다 (현재 실행중은 그대로 완료).
         # 큐 적재(add_item)는 계속되며, 재개 시 대기 항목이 순차 처리된다.
         self._paused = False
-        # LLM계열 병렬 워커풀 — llm_max_concurrency 개수만큼 동시 처리.
+        # LLM계열 병렬 워커풀 — 설정된 LLM 슬롯별 요청 상한의 합만큼 producer를 둔다.
         # GPU계열(item.type not in LLM_TYPES)은 메인 _process_loop 에서 순차 처리된다.
         self._llm_worker_tasks: dict[int, asyncio.Future] = {}  # wid -> Task
         self._llm_next_worker_id: int = 0
@@ -825,16 +826,42 @@ class QueueManager:
     # ─── LLM 워커풀 ─────────────────────────────────────────
 
     def _target_llm_workers(self) -> int:
-        """config의 llm_max_concurrency 값 (최소 1)."""
-        try:
-            n = int((self.get_config() if self.get_config else {}).get("llm_max_concurrency", 1))
-        except Exception as e:
-            print(f"[QUEUE:LLM_WORKER] llm_max_concurrency 읽기 실패, 기본 1 사용: {e}")
-            n = 1
-        return max(1, n)
+        """설정된 LLM 슬롯의 실제 요청 상한 합만큼 큐 producer를 유지한다."""
+        config = self.get_config() if self.get_config else {}
+        total = 0
+        for slot, model_key, concurrency_key in (
+            ("LLM1", "llm_model", "llm_max_concurrency"),
+            ("LLM2", "llm_model2", "llm_max_concurrency2"),
+            ("LLM3", "llm_model3", "llm_max_concurrency3"),
+        ):
+            if slot != "LLM1" and not str(config.get(model_key, "") or "").strip():
+                continue
+            raw = config.get(concurrency_key, 1)
+            try:
+                if isinstance(raw, bool):
+                    raise TypeError("bool은 허용되지 않음")
+                numeric = float(raw)
+                if not numeric.is_integer():
+                    raise ValueError("정수가 아님")
+                value = int(numeric)
+            except (TypeError, ValueError, OverflowError) as e:
+                print(
+                    f"[QUEUE:LLM_WORKER] {slot} 동시 요청 수 읽기 실패, "
+                    f"기본 1 사용: key={concurrency_key}, value={raw!r}, error={e}"
+                )
+                traceback.print_exc()
+                value = 1
+            if not 1 <= value <= 20:
+                print(
+                    f"[QUEUE:LLM_WORKER] {slot} 동시 요청 수 범위 오류, "
+                    f"기본 1 사용: key={concurrency_key}, value={value}"
+                )
+                value = 1
+            total += value
+        return max(1, total)
 
     async def _ensure_llm_workers(self):
-        """활성 LLM 워커 수를 llm_max_concurrency 에 맞춘다. 부족하면 추가 spawn, 초과면 축소 표시."""
+        """활성 LLM 워커 수를 슬롯별 상한 합에 맞춘다. 부족하면 추가하고 초과면 축소한다."""
         # 종료된 워커 정리
         self._llm_worker_tasks = {wid: t for wid, t in self._llm_worker_tasks.items() if not t.done()}
         target = self._target_llm_workers()
@@ -866,7 +893,7 @@ class QueueManager:
         return item
 
     async def _llm_worker_loop(self, wid: int):
-        """LLM계열 아이템을 꺼내 처리하는 워커. llm_max_concurrency 만큼 동시에 실행된다."""
+        """LLM계열 아이템을 꺼내 처리하는 producer 워커."""
         try:
             while True:
                 # 종료된 형제 워커 정리 + 축소 대상이면 자발 종료

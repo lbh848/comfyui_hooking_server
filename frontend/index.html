@@ -12878,6 +12878,28 @@
                         </div>
                     </div>
 
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="title">LLM1 동시 요청 수</div>
+                            <div class="desc">LLM1에서 동시에 실행할 실제 API 요청 상한입니다. 텍스트·비전·스트림·재시도에 공통 적용되며, 외부 API의 RPM/TPM 제한을 고려해 설정하세요.</div>
+                        </div>
+                        <div class="setting-control">
+                            <input type="number" id="setting-llm-max-concurrency" min="1" max="20" step="1"
+                                   style="width:80px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:.85rem;">
+                        </div>
+                    </div>
+
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="title">LLM1 스트림 무응답 제한(초)</div>
+                            <div class="desc">LLM1 스트림에서 새 이벤트가 이 시간 동안 오지 않으면 연결을 정리합니다. 0은 비활성화, 그 외에는 10~3600초입니다.</div>
+                        </div>
+                        <div class="setting-control">
+                            <input type="number" id="setting-llm-stream-idle-timeout" min="0" max="3600" step="1"
+                                   style="width:92px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:.85rem;">
+                        </div>
+                    </div>
+
                     <div class="setting-row" id="llm-reasoning-row" style="display: flex;">
                         <div class="setting-label">
                             <div class="title">LLM1 Reasoning 설정</div>
@@ -13004,6 +13026,28 @@
                         </div>
                     </div>
 
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="title">LLM2 동시 요청 수</div>
+                            <div class="desc">LLM2에서 동시에 실행할 실제 API 요청 상한입니다. LLM1과 독립적으로 적용됩니다.</div>
+                        </div>
+                        <div class="setting-control">
+                            <input type="number" id="setting-llm-max-concurrency2" min="1" max="20" step="1"
+                                   style="width:80px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:.85rem;">
+                        </div>
+                    </div>
+
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="title">LLM2 스트림 무응답 제한(초)</div>
+                            <div class="desc">LLM2 스트림에만 적용됩니다. 0은 비활성화, 그 외에는 10~3600초입니다.</div>
+                        </div>
+                        <div class="setting-control">
+                            <input type="number" id="setting-llm-stream-idle-timeout2" min="0" max="3600" step="1"
+                                   style="width:92px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:.85rem;">
+                        </div>
+                    </div>
+
                     <div class="setting-row" id="llm-reasoning2-row" style="display: flex;">
                         <div class="setting-label">
                             <div class="title">LLM2 Reasoning 설정</div>
@@ -13049,6 +13093,26 @@
                     <div class="setting-row" id="llm-api-key3-row" style="display:none;"><div class="setting-label"><div class="title">LLM3 API 키 (옵션)</div><div class="desc">비워두면 LLM1 키 재사용</div></div><div class="setting-control"><input id="setting-llm-api-key3" type="text" placeholder="sk-..." style="width:300px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-family:monospace;"></div></div>
                     <div class="setting-row" id="llm-url3-row" style="display:none;"><div class="setting-label"><div class="title">LLM3 베이스 URL (옵션)</div><div class="desc">비워두면 LLM1 URL 또는 선택한 서비스의 기본 URL 사용</div></div><div class="setting-control"><input id="setting-llm-url3" type="text" placeholder="https://..." style="width:300px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);"></div></div>
                     <div class="setting-row"><div class="setting-label"><div class="title">LLM3 스트리밍</div><div class="desc">LLM3 요청을 실제 chunk 스트림으로 받고 LLM로그창에 실시간 표시합니다.</div></div><div class="setting-control" style="display:flex;align-items:center;gap:8px;"><label class="toggle-switch"><input type="checkbox" id="setting-llm-stream3" onchange="updateLlmStreamStatus(3, this.checked)"><span class="toggle-slider"></span></label><span id="setting-llm-stream3-status" class="toggle-status off">OFF</span></div></div>
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="title">LLM3 동시 요청 수</div>
+                            <div class="desc">LLM3에서 동시에 실행할 실제 API 요청 상한입니다. LLM1·LLM2와 독립적으로 적용됩니다.</div>
+                        </div>
+                        <div class="setting-control">
+                            <input type="number" id="setting-llm-max-concurrency3" min="1" max="20" step="1"
+                                   style="width:80px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:.85rem;">
+                        </div>
+                    </div>
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="title">LLM3 스트림 무응답 제한(초)</div>
+                            <div class="desc">LLM3 스트림에만 적용됩니다. 0은 비활성화, 그 외에는 10~3600초입니다.</div>
+                        </div>
+                        <div class="setting-control">
+                            <input type="number" id="setting-llm-stream-idle-timeout3" min="0" max="3600" step="1"
+                                   style="width:92px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:.85rem;">
+                        </div>
+                    </div>
                     <div class="setting-row" id="llm-reasoning3-row" style="display:flex;">
                         <div class="setting-label"><div class="title">LLM3 Reasoning 설정</div><div class="desc">비워두면 LLM1 reasoning 설정을 재사용합니다.</div></div>
                         <div class="setting-control" style="display:flex;flex-direction:column;align-items:stretch;gap:8px;min-width:360px;">
@@ -13068,29 +13132,6 @@
                         </div>
                         <textarea id="setting-llm-custom-body3" placeholder="{ ... }" style="width:100%;min-height:120px;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-family:monospace;"></textarea>
                         <div id="llm-custom-body3-status" style="margin-top:6px;font-size:.75rem;color:var(--text2);"></div>
-                    </div>
-
-                    <!-- LLM 동시 요청 수 -->
-                    <div class="setting-row">
-                        <div class="setting-label">
-                            <div class="title">LLM 동시 요청 수</div>
-                            <div class="desc">큐에 쌓인 LLM 작업(태그 정제 · 얼굴/눈 태그 자동 분류)을 외부 API에 동시에 몇 개까지 요청할지. 1=순차(현행 동작). GPU/ComfyUI 작업(학습·삽화 등)과는 무관하게 네트워크만 병렬로 사용. 외부 API의 RPM/TPM 제한을 고려해 설정.</div>
-                        </div>
-                        <div class="setting-control">
-                            <input type="number" id="setting-llm-max-concurrency" min="1" max="20" step="1"
-                                   style="width: 80px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: .85rem;">
-                        </div>
-                    </div>
-
-                    <div class="setting-row">
-                        <div class="setting-label">
-                            <div class="title">스트림 무응답 제한(초)</div>
-                            <div class="desc">새 스트림 이벤트가 이 시간 동안 오지 않으면 연결을 정리합니다. 0은 제한 비활성화, 그 외에는 10~3600초입니다.</div>
-                        </div>
-                        <div class="setting-control">
-                            <input type="number" id="setting-llm-stream-idle-timeout" min="0" max="3600" step="1"
-                                   style="width: 92px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: .85rem;">
-                        </div>
                     </div>
 
                     </div>
@@ -17483,8 +17524,16 @@
             updateChansubStripQualityTagsStatus(chansubStripQualityTags);
             const llmConcEl = document.getElementById('setting-llm-max-concurrency');
             if (llmConcEl) llmConcEl.value = (currentConfig.llm_max_concurrency ?? 1);
+            const llmConc2El = document.getElementById('setting-llm-max-concurrency2');
+            if (llmConc2El) llmConc2El.value = (currentConfig.llm_max_concurrency2 ?? 1);
+            const llmConc3El = document.getElementById('setting-llm-max-concurrency3');
+            if (llmConc3El) llmConc3El.value = (currentConfig.llm_max_concurrency3 ?? 1);
             const llmStreamIdleTimeoutEl = document.getElementById('setting-llm-stream-idle-timeout');
             if (llmStreamIdleTimeoutEl) llmStreamIdleTimeoutEl.value = (currentConfig.llm_stream_idle_timeout_seconds ?? 90);
+            const llmStreamIdleTimeout2El = document.getElementById('setting-llm-stream-idle-timeout2');
+            if (llmStreamIdleTimeout2El) llmStreamIdleTimeout2El.value = (currentConfig.llm_stream_idle_timeout_seconds2 ?? 90);
+            const llmStreamIdleTimeout3El = document.getElementById('setting-llm-stream-idle-timeout3');
+            if (llmStreamIdleTimeout3El) llmStreamIdleTimeout3El.value = (currentConfig.llm_stream_idle_timeout_seconds3 ?? 90);
             const llmPresetEl = document.getElementById('setting-llm-reasoning-preset');
             if (llmPresetEl) llmPresetEl.value = currentConfig.llm_reasoning_preset || 'auto';
             const llmEffortEl = document.getElementById('setting-llm-reasoning-effort');
@@ -18120,6 +18169,12 @@
                 llm_model: 'LLM 모델',
                 llm_service2: 'LLM2 서비스',
                 llm_model2: 'LLM2 모델',
+                llm_max_concurrency: 'LLM1 동시 요청 수',
+                llm_max_concurrency2: 'LLM2 동시 요청 수',
+                llm_max_concurrency3: 'LLM3 동시 요청 수',
+                llm_stream_idle_timeout_seconds: 'LLM1 스트림 무응답 제한',
+                llm_stream_idle_timeout_seconds2: 'LLM2 스트림 무응답 제한',
+                llm_stream_idle_timeout_seconds3: 'LLM3 스트림 무응답 제한',
                 embedding_provider: '임베딩 프로바이더',
                 embedding_url: '임베딩 URL',
                 embedding_api_key: '임베딩 API Key',
@@ -18457,7 +18512,11 @@
                 debug_workflow_source_path: document.getElementById('setting-debug-workflow-source-path').value,
                 queue_type_order: currentConfig.queue_type_order || {},
                 llm_max_concurrency: parseInt(document.getElementById('setting-llm-max-concurrency').value) || 1,
+                llm_max_concurrency2: parseInt(document.getElementById('setting-llm-max-concurrency2').value) || 1,
+                llm_max_concurrency3: parseInt(document.getElementById('setting-llm-max-concurrency3').value) || 1,
                 llm_stream_idle_timeout_seconds: Number(document.getElementById('setting-llm-stream-idle-timeout').value),
+                llm_stream_idle_timeout_seconds2: Number(document.getElementById('setting-llm-stream-idle-timeout2').value),
+                llm_stream_idle_timeout_seconds3: Number(document.getElementById('setting-llm-stream-idle-timeout3').value),
             };
 
             try {

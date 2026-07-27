@@ -20,7 +20,8 @@ import os
 import time
 import traceback
 import uuid
-from contextlib import suppress
+import weakref
+from contextlib import asynccontextmanager, suppress
 from contextvars import ContextVar
 import aiohttp
 import httpx
@@ -414,14 +415,14 @@ _request_config_override_ctx: ContextVar[dict | None] = ContextVar(
     "llm_request_config_override",
     default=None,
 )
+_llm_slot_ctx: ContextVar[str] = ContextVar("llm_request_slot", default="llm1")
 
 
 class _ContextConfig(dict):
     """요청별 LLM 슬롯 설정을 ContextVar로 격리하는 dict.
 
-    LLM2/LLM3 설정을 전역 LLM1 키에 임시 덮어쓰는 기존 공개 함수와 달리,
-    작업 라우팅의 병렬 호출은 이 조회 오버레이를 사용해 서로의 키/URL/추론
-    설정을 오염시키지 않는다.
+    LLM2/LLM3 요청은 이 조회 오버레이를 사용해 서로의 키/URL/추론 설정을
+    오염시키지 않는다.
     """
 
     def __getitem__(self, key):
@@ -465,7 +466,12 @@ _current_config = _ContextConfig({
     "llm_stream": False,              # LLM1 실제 API 스트리밍
     "llm_stream2": False,             # LLM2 실제 API 스트리밍
     "llm_stream3": False,             # LLM3 실제 API 스트리밍
+    "llm_max_concurrency": 1,         # LLM1 실제 API 동시 요청 상한
+    "llm_max_concurrency2": 1,        # LLM2 실제 API 동시 요청 상한
+    "llm_max_concurrency3": 1,        # LLM3 실제 API 동시 요청 상한
     "llm_stream_idle_timeout_seconds": 90.0,  # 0=비활성, 그 외 10~3600초
+    "llm_stream_idle_timeout_seconds2": 90.0,
+    "llm_stream_idle_timeout_seconds3": 90.0,
     # 작업별 LLM1/LLM2/LLM3 라우팅과 메인/폴백 재시도 정책(외부 API 분기).
     # 실제 기본값은 server.py 의 DEFAULT_CONFIG 에서 update_config 로 내려온다.
     "llm_routing": {},
@@ -502,14 +508,151 @@ def update_config(config: dict):
     """server.py에서 설정 업데이트"""
     global _current_config
     migrate_config(config)
+    concurrency_changed = any(
+        key in config
+        for key in (
+            "llm_max_concurrency",
+            "llm_max_concurrency2",
+            "llm_max_concurrency3",
+        )
+    )
     for key, value in config.items():
         if key in _current_config:
             _current_config[key] = value
+    if concurrency_changed:
+        _wake_request_limit_waiters()
     _llm_log(f"설정 업데이트: {_redact_dict(config)}")
 
 
 def get_config() -> dict:
     return _current_config.copy()
+
+
+def _normalize_llm_slot(slot: str | None) -> str:
+    normalized = str(slot or "llm1").strip().lower()
+    if normalized not in ("llm1", "llm2", "llm3"):
+        print(f"[LLM_LIMIT] 알 수 없는 슬롯, LLM1 사용: slot={slot!r}")
+        return "llm1"
+    return normalized
+
+
+def _slot_suffix(slot: str | None) -> str:
+    normalized = _normalize_llm_slot(slot)
+    return "" if normalized == "llm1" else normalized[-1]
+
+
+def _base_config_get(key: str, default=None):
+    """ContextVar 오버레이를 무시하고 저장된 전역 설정값을 읽는다."""
+    return dict.get(_current_config, key, default)
+
+
+def _slot_config_overrides(slot: str) -> dict:
+    """LLM2/3 전용 연결 설정을 요청별 LLM1 조회 키로 투영한다."""
+    suffix = _slot_suffix(slot)
+    if not suffix:
+        return {}
+    overrides = {}
+    for base_key, slot_key, base_default in (
+        ("llm_api_key", f"llm_api_key{suffix}", ""),
+        ("llm_url", f"llm_url{suffix}", ""),
+        ("llm_reasoning_preset", f"llm_reasoning_preset{suffix}", "auto"),
+        ("llm_reasoning_effort", f"llm_reasoning_effort{suffix}", ""),
+        ("llm_custom_body", f"llm_custom_body{suffix}", ""),
+    ):
+        slot_value = _base_config_get(slot_key, "")
+        overrides[base_key] = (
+            slot_value
+            if slot_value
+            else _base_config_get(base_key, base_default)
+        )
+    return overrides
+
+
+def _llm_max_concurrency(slot: str | None = None) -> int:
+    normalized = _normalize_llm_slot(slot or _llm_slot_ctx.get())
+    key = f"llm_max_concurrency{_slot_suffix(normalized)}"
+    raw = _base_config_get(key, 1)
+    try:
+        if isinstance(raw, bool):
+            raise TypeError("bool은 허용되지 않음")
+        numeric = float(raw)
+        if not math.isfinite(numeric) or not numeric.is_integer():
+            raise ValueError("유한한 정수가 아님")
+        value = int(numeric)
+    except (TypeError, ValueError) as e:
+        print(
+            f"[LLM_LIMIT] 동시 요청 수 파싱 실패, 1 사용: "
+            f"slot={normalized}, key={key}, value={raw!r}, error={e}"
+        )
+        traceback.print_exc()
+        return 1
+    if not 1 <= value <= 20:
+        print(
+            f"[LLM_LIMIT] 동시 요청 수 범위 오류, 1 사용: "
+            f"slot={normalized}, key={key}, value={value}"
+        )
+        return 1
+    return value
+
+
+class _LlmRequestGate:
+    """실행 중 설정 변경도 안전하게 반영하는 슬롯별 동시성 게이트."""
+
+    def __init__(self, slot: str):
+        self.slot = _normalize_llm_slot(slot)
+        self.active = 0
+        self.condition = asyncio.Condition()
+
+    async def acquire(self) -> None:
+        async with self.condition:
+            await self.condition.wait_for(
+                lambda: self.active < _llm_max_concurrency(self.slot)
+            )
+            self.active += 1
+
+    async def release(self) -> None:
+        async with self.condition:
+            self.active = max(0, self.active - 1)
+            self.condition.notify_all()
+
+    async def wake(self) -> None:
+        async with self.condition:
+            self.condition.notify_all()
+
+
+_request_gates_by_loop = weakref.WeakKeyDictionary()
+
+
+def _request_gate(slot: str) -> _LlmRequestGate:
+    loop = asyncio.get_running_loop()
+    gates = _request_gates_by_loop.setdefault(loop, {})
+    normalized = _normalize_llm_slot(slot)
+    gate = gates.get(normalized)
+    if gate is None:
+        gate = _LlmRequestGate(normalized)
+        gates[normalized] = gate
+    return gate
+
+
+def _wake_request_limit_waiters() -> None:
+    """현재 이벤트 루프에서 설정 한도 변경을 기다리는 요청을 즉시 재평가한다."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    for gate in _request_gates_by_loop.get(loop, {}).values():
+        loop.create_task(gate.wake())
+
+
+@asynccontextmanager
+async def _limit_llm_request(slot: str | None = None):
+    normalized = _normalize_llm_slot(slot or _llm_slot_ctx.get())
+    gate = _request_gate(normalized)
+    await gate.acquire()
+    try:
+        yield
+    finally:
+        await gate.release()
 
 
 # ─── URL / reasoning 헬퍼 ───────────────────────────────────
@@ -1350,8 +1493,8 @@ async def _call_claude(messages: list, model: str) -> str:
 
 # ─── 공개 함수 ──────────────────────────────────────────────
 
-async def _dispatch(messages: list, service: str, model: str) -> str:
-    """서비스 라우팅 내부 함수"""
+async def _dispatch_unlimited(messages: list, service: str, model: str) -> str:
+    """동시성 게이트 안에서 실행되는 서비스 라우팅 내부 함수."""
     _llm_log(f"_dispatch: service={service}, model={model}")
 
     if service == "copilot":
@@ -1381,6 +1524,12 @@ async def _dispatch(messages: list, service: str, model: str) -> str:
         return f"[LLM 실패] 알 수 없는 LLM 서비스: {service}"
 
 
+async def _dispatch(messages: list, service: str, model: str) -> str:
+    """현재 LLM 슬롯의 실제 API 동시 요청 상한을 적용해 호출한다."""
+    async with _limit_llm_request():
+        return await _dispatch_unlimited(messages, service, model)
+
+
 async def callLLM(messages: list, model: str = None, json_mode: bool = False) -> str:
     """
     LLM1 호출 공개 함수 (단일 시도)
@@ -1404,12 +1553,14 @@ async def callLLM(messages: list, model: str = None, json_mode: bool = False) ->
     """
     service = _current_config["llm_service"]
     use_model = model or _current_config["llm_model"]
+    slot_token = _llm_slot_ctx.set("llm1")
     token = _response_format_ctx.set({"type": "json_object"}) if json_mode else None
     try:
         if bool(_current_config.get("llm_stream", False)):
             return await _stream_call_to_text(messages, service, use_model, "llm1")
         return await _dispatch(messages, service, use_model)
     finally:
+        _llm_slot_ctx.reset(slot_token)
         if token is not None:
             _response_format_ctx.reset(token)
 
@@ -1458,11 +1609,13 @@ async def callLLMVision(messages: list, image_b64: str = None, image_mime: str =
 
     _llm_log(f"callLLMVision: service={service} model={use_model} mime={log_mime} img_b64_len={log_len} json_mode={json_mode}")
     token = _response_format_ctx.set({"type": "json_object"}) if json_mode else None
+    slot_token = _llm_slot_ctx.set("llm1")
     try:
         if bool(_current_config.get("llm_stream", False)):
             return await _stream_call_to_text(new_messages, service, use_model, "llm1")
         return await _dispatch(new_messages, service, use_model)
     finally:
+        _llm_slot_ctx.reset(slot_token)
         if token is not None:
             _response_format_ctx.reset(token)
 
@@ -1523,39 +1676,20 @@ async def callLLM2(messages: list, model: str = None, json_mode: bool = False) -
     if not use_model:
         return "[LLM 실패] LLM2 모델명이 설정되지 않았습니다"
 
-    key2 = _current_config.get("llm_api_key2", "")
-    url2 = _current_config.get("llm_url2", "")
-    preset2 = _current_config.get("llm_reasoning_preset2", "")
-    effort2 = _current_config.get("llm_reasoning_effort2", "")
-    body2 = _current_config.get("llm_custom_body2", "")
-    saved_key = _current_config.get("llm_api_key", "")
-    saved_url = _current_config.get("llm_url", "")
-    saved_preset = _current_config.get("llm_reasoning_preset", "auto")
-    saved_effort = _current_config.get("llm_reasoning_effort", "")
-    saved_body = _current_config.get("llm_custom_body", "")
+    config_token = _request_config_override_ctx.set(
+        _slot_config_overrides("llm2")
+    )
+    slot_token = _llm_slot_ctx.set("llm2")
     token = _response_format_ctx.set({"type": "json_object"}) if json_mode else None
     try:
-        if key2:
-            _current_config["llm_api_key"] = key2
-        if url2:
-            _current_config["llm_url"] = url2
-        if preset2:
-            _current_config["llm_reasoning_preset"] = preset2
-        if effort2:
-            _current_config["llm_reasoning_effort"] = effort2
-        if body2:
-            _current_config["llm_custom_body"] = body2
         if bool(_current_config.get("llm_stream2", False)):
             return await _stream_call_to_text(messages, service, use_model, "llm2")
         return await _dispatch(messages, service, use_model)
     finally:
         if token is not None:
             _response_format_ctx.reset(token)
-        _current_config["llm_api_key"] = saved_key
-        _current_config["llm_url"] = saved_url
-        _current_config["llm_reasoning_preset"] = saved_preset
-        _current_config["llm_reasoning_effort"] = saved_effort
-        _current_config["llm_custom_body"] = saved_body
+        _llm_slot_ctx.reset(slot_token)
+        _request_config_override_ctx.reset(config_token)
 
 
 async def callLLM3(messages: list, model: str = None, json_mode: bool = False) -> str:
@@ -1570,28 +1704,12 @@ async def callLLM3(messages: list, model: str = None, json_mode: bool = False) -
         print("[LLM3] 호출 실패: LLM3 모델명이 설정되지 않았습니다")
         return "[LLM 실패] LLM3 모델명이 설정되지 않았습니다"
 
-    key3 = _current_config.get("llm_api_key3", "")
-    url3 = _current_config.get("llm_url3", "")
-    preset3 = _current_config.get("llm_reasoning_preset3", "")
-    effort3 = _current_config.get("llm_reasoning_effort3", "")
-    body3 = _current_config.get("llm_custom_body3", "")
-    saved_key = _current_config.get("llm_api_key", "")
-    saved_url = _current_config.get("llm_url", "")
-    saved_preset = _current_config.get("llm_reasoning_preset", "auto")
-    saved_effort = _current_config.get("llm_reasoning_effort", "")
-    saved_body = _current_config.get("llm_custom_body", "")
+    config_token = _request_config_override_ctx.set(
+        _slot_config_overrides("llm3")
+    )
+    slot_token = _llm_slot_ctx.set("llm3")
     token = _response_format_ctx.set({"type": "json_object"}) if json_mode else None
     try:
-        if key3:
-            _current_config["llm_api_key"] = key3
-        if url3:
-            _current_config["llm_url"] = url3
-        if preset3:
-            _current_config["llm_reasoning_preset"] = preset3
-        if effort3:
-            _current_config["llm_reasoning_effort"] = effort3
-        if body3:
-            _current_config["llm_custom_body"] = body3
         print(f"[LLM3] 호출 시작: service={service}, model={use_model}, messages={len(messages)}")
         if bool(_current_config.get("llm_stream3", False)):
             result = await _stream_call_to_text(messages, service, use_model, "llm3")
@@ -1607,11 +1725,8 @@ async def callLLM3(messages: list, model: str = None, json_mode: bool = False) -
     finally:
         if token is not None:
             _response_format_ctx.reset(token)
-        _current_config["llm_api_key"] = saved_key
-        _current_config["llm_url"] = saved_url
-        _current_config["llm_reasoning_preset"] = saved_preset
-        _current_config["llm_reasoning_effort"] = saved_effort
-        _current_config["llm_custom_body"] = saved_body
+        _llm_slot_ctx.reset(slot_token)
+        _request_config_override_ctx.reset(config_token)
 
 
 async def callLLM3Stream(messages: list, model: str = None, log_history: bool = True,
@@ -1627,17 +1742,6 @@ async def callLLM3Stream(messages: list, model: str = None, log_history: bool = 
         yield {"type": "error", "error": "[LLM 실패] LLM3 모델명이 설정되지 않았습니다"}
         return
 
-    key3 = _current_config.get("llm_api_key3", "")
-    url3 = _current_config.get("llm_url3", "")
-    preset3 = _current_config.get("llm_reasoning_preset3", "")
-    effort3 = _current_config.get("llm_reasoning_effort3", "")
-    body3 = _current_config.get("llm_custom_body3", "")
-    saved_key = _current_config.get("llm_api_key", "")
-    saved_url = _current_config.get("llm_url", "")
-    saved_preset = _current_config.get("llm_reasoning_preset", "auto")
-    saved_effort = _current_config.get("llm_reasoning_effort", "")
-    saved_body = _current_config.get("llm_custom_body", "")
-
     final_text = ""
     final_tokens = 0
     final_prompt_tokens = 0
@@ -1646,19 +1750,12 @@ async def callLLM3Stream(messages: list, model: str = None, log_history: bool = 
     final_ttft = None
     error_msg = ""
 
+    config_token = _request_config_override_ctx.set(
+        _slot_config_overrides("llm3")
+    )
+    slot_token = _llm_slot_ctx.set("llm3")
     token = _response_format_ctx.set({"type": "json_object"}) if json_mode else None
     try:
-        if key3:
-            _current_config["llm_api_key"] = key3
-        if url3:
-            _current_config["llm_url"] = url3
-        if preset3:
-            _current_config["llm_reasoning_preset"] = preset3
-        if effort3:
-            _current_config["llm_reasoning_effort"] = effort3
-        if body3:
-            _current_config["llm_custom_body"] = body3
-
         async for ev in _dispatch_stream(messages, service, use_model):
             if ev["type"] == "done":
                 final_text = ev.get("text", "")
@@ -1691,11 +1788,8 @@ async def callLLM3Stream(messages: list, model: str = None, log_history: bool = 
     finally:
         if token is not None:
             _response_format_ctx.reset(token)
-        _current_config["llm_api_key"] = saved_key
-        _current_config["llm_url"] = saved_url
-        _current_config["llm_reasoning_preset"] = saved_preset
-        _current_config["llm_reasoning_effort"] = saved_effort
-        _current_config["llm_custom_body"] = saved_body
+        _llm_slot_ctx.reset(slot_token)
+        _request_config_override_ctx.reset(config_token)
 
 
 # ─── 작업별 LLM 라우팅 (외부 API 분기) ─────────────────────────
@@ -1902,11 +1996,6 @@ def routing_primary_model(task_key: str) -> str:
     return _current_config.get("llm_model") or ""
 
 
-def _base_config_get(key: str, default=None):
-    """ContextVar 오버레이를 무시하고 저장된 전역 설정값을 읽는다."""
-    return dict.get(_current_config, key, default)
-
-
 async def _call_routed_text_slot(
     slot: str,
     messages: list,
@@ -1924,22 +2013,8 @@ async def _call_routed_text_slot(
         print(f"[LLM{suffix}] 호출 실패: LLM{suffix} 모델명이 설정되지 않았습니다")
         return f"[LLM 실패] LLM{suffix} 모델명이 설정되지 않았습니다"
 
-    overrides = {}
-    for base_key, slot_key, base_default in (
-        ("llm_api_key", f"llm_api_key{suffix}", ""),
-        ("llm_url", f"llm_url{suffix}", ""),
-        ("llm_reasoning_preset", f"llm_reasoning_preset{suffix}", "auto"),
-        ("llm_reasoning_effort", f"llm_reasoning_effort{suffix}", ""),
-        ("llm_custom_body", f"llm_custom_body{suffix}", ""),
-    ):
-        slot_value = _base_config_get(slot_key, "")
-        overrides[base_key] = (
-            slot_value
-            if slot_value
-            else _base_config_get(base_key, base_default)
-        )
-
-    config_token = _request_config_override_ctx.set(overrides)
+    config_token = _request_config_override_ctx.set(_slot_config_overrides(slot))
+    slot_token = _llm_slot_ctx.set(slot)
     format_token = _response_format_ctx.set({"type": "json_object"}) if json_mode else None
     try:
         if bool(_base_config_get(f"llm_stream{suffix}", False)):
@@ -1952,6 +2027,7 @@ async def _call_routed_text_slot(
     finally:
         if format_token is not None:
             _response_format_ctx.reset(format_token)
+        _llm_slot_ctx.reset(slot_token)
         _request_config_override_ctx.reset(config_token)
 
 
@@ -2056,7 +2132,7 @@ async def callLLMVision2(messages: list, image_b64: str = None, image_mime: str 
     """
     LLM2 비전(이미지 입력) 호출 공개 함수.
 
-    callLLM2 의 설정 스왑 패턴(key2/url2/preset2/effort2/body2 → LLM1 슬롯 임시 덮어쓰기)과
+    LLM2 요청별 설정 오버레이와
     callLLMVision 의 비전 처리(_normalize_vision_image/_build_vision_messages)를 합성.
     LLM2 서비스가 비전을 지원하지 않으면 RuntimeError 대신 "[LLM 실패]" 문자열 반환.
     images(다중) 가 주어지면 격자 합성 없이 각각 별도 이미지로 전송한다.
@@ -2070,19 +2146,7 @@ async def callLLMVision2(messages: list, image_b64: str = None, image_mime: str 
     if not use_model:
         return "[LLM 실패] LLM2 모델명이 설정되지 않았습니다"
 
-    # 설정 스왑용 LLM2 값
-    key2 = _current_config.get("llm_api_key2", "")
-    url2 = _current_config.get("llm_url2", "")
-    preset2 = _current_config.get("llm_reasoning_preset2", "")
-    effort2 = _current_config.get("llm_reasoning_effort2", "")
-    body2 = _current_config.get("llm_custom_body2", "")
-    saved_key = _current_config.get("llm_api_key", "")
-    saved_url = _current_config.get("llm_url", "")
-    saved_preset = _current_config.get("llm_reasoning_preset", "auto")
-    saved_effort = _current_config.get("llm_reasoning_effort", "")
-    saved_body = _current_config.get("llm_custom_body", "")
-
-    # 비전 messages 빌드는 스왑 전/후 무관하지만, 로그 정확도를 위해 스왑과 무관하게 수행
+    # 비전 messages 빌드는 요청별 설정 오버레이 전/후와 무관하다.
     try:
         new_messages, log_mime, log_len = _prepare_vision_messages(
             messages, image_b64, image_mime, images
@@ -2091,29 +2155,20 @@ async def callLLMVision2(messages: list, image_b64: str = None, image_mime: str 
         return f"[LLM 실패] {e}"
 
     _llm_log(f"callLLMVision2: service={service} model={use_model} mime={log_mime} img_b64_len={log_len} json_mode={json_mode}")
+    config_token = _request_config_override_ctx.set(
+        _slot_config_overrides("llm2")
+    )
+    slot_token = _llm_slot_ctx.set("llm2")
     token = _response_format_ctx.set({"type": "json_object"}) if json_mode else None
     try:
-        if key2:
-            _current_config["llm_api_key"] = key2
-        if url2:
-            _current_config["llm_url"] = url2
-        if preset2:
-            _current_config["llm_reasoning_preset"] = preset2
-        if effort2:
-            _current_config["llm_reasoning_effort"] = effort2
-        if body2:
-            _current_config["llm_custom_body"] = body2
         if bool(_current_config.get("llm_stream2", False)):
             return await _stream_call_to_text(new_messages, service, use_model, "llm2")
         return await _dispatch(new_messages, service, use_model)
     finally:
         if token is not None:
             _response_format_ctx.reset(token)
-        _current_config["llm_api_key"] = saved_key
-        _current_config["llm_url"] = saved_url
-        _current_config["llm_reasoning_preset"] = saved_preset
-        _current_config["llm_reasoning_effort"] = saved_effort
-        _current_config["llm_custom_body"] = saved_body
+        _llm_slot_ctx.reset(slot_token)
+        _request_config_override_ctx.reset(config_token)
 
 
 async def callLLMVision3(messages: list, image_b64: str = None, image_mime: str = "image/webp",
@@ -2121,7 +2176,7 @@ async def callLLMVision3(messages: list, image_b64: str = None, image_mime: str 
     """
     LLM3 비전(이미지 입력) 호출 공개 함수.
 
-    callLLM3 의 설정 스왑 패턴(key3/url3/preset3/effort3/body3 → LLM1 슬롯 임시 덮어쓰기)과
+    LLM3 요청별 설정 오버레이와
     callLLMVision 의 비전 처리(_normalize_vision_image/_build_vision_messages)를 합성.
     LLM3 서비스가 비전을 지원하지 않으면 RuntimeError 대신 "[LLM 실패]" 문자열 반환.
     images(다중) 가 주어지면 격자 합성 없이 각각 별도 이미지로 전송한다.
@@ -2135,19 +2190,7 @@ async def callLLMVision3(messages: list, image_b64: str = None, image_mime: str 
     if not use_model:
         return "[LLM 실패] LLM3 모델명이 설정되지 않았습니다"
 
-    # 설정 스왑용 LLM3 값
-    key3 = _current_config.get("llm_api_key3", "")
-    url3 = _current_config.get("llm_url3", "")
-    preset3 = _current_config.get("llm_reasoning_preset3", "")
-    effort3 = _current_config.get("llm_reasoning_effort3", "")
-    body3 = _current_config.get("llm_custom_body3", "")
-    saved_key = _current_config.get("llm_api_key", "")
-    saved_url = _current_config.get("llm_url", "")
-    saved_preset = _current_config.get("llm_reasoning_preset", "auto")
-    saved_effort = _current_config.get("llm_reasoning_effort", "")
-    saved_body = _current_config.get("llm_custom_body", "")
-
-    # 비전 messages 빌드는 스왑 전/후 무관하지만, 로그 정확도를 위해 스왑과 무관하게 수행
+    # 비전 messages 빌드는 요청별 설정 오버레이 전/후와 무관하다.
     try:
         new_messages, log_mime, log_len = _prepare_vision_messages(
             messages, image_b64, image_mime, images
@@ -2156,29 +2199,20 @@ async def callLLMVision3(messages: list, image_b64: str = None, image_mime: str 
         return f"[LLM 실패] {e}"
 
     _llm_log(f"callLLMVision3: service={service} model={use_model} mime={log_mime} img_b64_len={log_len} json_mode={json_mode}")
+    config_token = _request_config_override_ctx.set(
+        _slot_config_overrides("llm3")
+    )
+    slot_token = _llm_slot_ctx.set("llm3")
     token = _response_format_ctx.set({"type": "json_object"}) if json_mode else None
     try:
-        if key3:
-            _current_config["llm_api_key"] = key3
-        if url3:
-            _current_config["llm_url"] = url3
-        if preset3:
-            _current_config["llm_reasoning_preset"] = preset3
-        if effort3:
-            _current_config["llm_reasoning_effort"] = effort3
-        if body3:
-            _current_config["llm_custom_body"] = body3
         if bool(_current_config.get("llm_stream3", False)):
             return await _stream_call_to_text(new_messages, service, use_model, "llm3")
         return await _dispatch(new_messages, service, use_model)
     finally:
         if token is not None:
             _response_format_ctx.reset(token)
-        _current_config["llm_api_key"] = saved_key
-        _current_config["llm_url"] = saved_url
-        _current_config["llm_reasoning_preset"] = saved_preset
-        _current_config["llm_reasoning_effort"] = saved_effort
-        _current_config["llm_custom_body"] = saved_body
+        _llm_slot_ctx.reset(slot_token)
+        _request_config_override_ctx.reset(config_token)
 
 
 async def callLLMVisionTask(
@@ -2300,21 +2334,29 @@ class ManualCancelledText(str):
 _active_streams: dict[str, dict] = {}
 
 
-def _stream_idle_timeout_seconds() -> float:
-    raw = _current_config.get("llm_stream_idle_timeout_seconds", 90.0)
+def _stream_idle_timeout_seconds(slot: str | None = None) -> float:
+    normalized = _normalize_llm_slot(slot or _llm_slot_ctx.get())
+    key = f"llm_stream_idle_timeout_seconds{_slot_suffix(normalized)}"
+    raw = _base_config_get(key, 90.0)
     try:
+        if isinstance(raw, bool):
+            raise TypeError("bool은 허용되지 않음")
         value = float(raw)
     except (TypeError, ValueError) as e:
         print(
-            f"[LLM_STREAM] 무응답 제한 설정 파싱 실패: value={raw!r}, "
+            f"[LLM_STREAM] 무응답 제한 설정 파싱 실패: "
+            f"slot={normalized}, key={key}, value={raw!r}, "
             f"error={type(e).__name__}: {e}; 90초 사용"
         )
         traceback.print_exc()
         return 90.0
     if value == 0:
         return 0.0
-    if not 10 <= value <= 3600:
-        print(f"[LLM_STREAM] 무응답 제한 범위 오류: value={value}; 90초 사용")
+    if not math.isfinite(value) or not 10 <= value <= 3600:
+        print(
+            f"[LLM_STREAM] 무응답 제한 범위 오류: "
+            f"slot={normalized}, key={key}, value={value}; 90초 사용"
+        )
         return 90.0
     return value
 
@@ -3326,8 +3368,8 @@ async def _stream_provider_manager_service(messages: list, model: str, service: 
         yield event
 
 
-async def _dispatch_stream(messages: list, service: str, model: str):
-    """스트리밍 라우팅. yield events."""
+async def _dispatch_stream_unlimited(messages: list, service: str, model: str):
+    """동시성 게이트 안에서 실행되는 스트리밍 라우팅."""
     _llm_log(f"_dispatch_stream: service={service}, model={model}")
 
     if service == "copilot":
@@ -3389,6 +3431,13 @@ async def _dispatch_stream(messages: list, service: str, model: str):
         yield {"type": "error", "error": f"알 수 없는 LLM 서비스: {service}"}
 
 
+async def _dispatch_stream(messages: list, service: str, model: str):
+    """현재 LLM 슬롯의 상한을 스트림이 끝날 때까지 점유하며 이벤트를 전달한다."""
+    async with _limit_llm_request():
+        async for event in _dispatch_stream_unlimited(messages, service, model):
+            yield event
+
+
 async def callLLMStream(messages: list, model: str = None, log_history: bool = True,
                         json_mode: bool = False):
     """LLM1 스트리밍 호출. 이벤트 dict 를 yield.
@@ -3412,6 +3461,7 @@ async def callLLMStream(messages: list, model: str = None, log_history: bool = T
     final_ttft = None
     error_msg = ""
 
+    slot_token = _llm_slot_ctx.set("llm1")
     token = _response_format_ctx.set({"type": "json_object"}) if json_mode else None
     try:
         async for ev in _dispatch_stream(messages, service, use_model):
@@ -3436,14 +3486,14 @@ async def callLLMStream(messages: list, model: str = None, log_history: bool = T
     finally:
         if token is not None:
             _response_format_ctx.reset(token)
+        _llm_slot_ctx.reset(slot_token)
 
 
 async def callLLM2Stream(messages: list, model: str = None, log_history: bool = True,
                          json_mode: bool = False):
     """LLM2 스트리밍 호출. 이벤트 dict 를 yield.
 
-    callLLM2 의 설정 스왑 패턴(key2/url2/preset2/effort2/body2 → LLM1 슬롯 임시 덮어쓰기)과
-    callLLMStream 의 스트리밍 디스패치(_dispatch_stream)를 합성한다.
+    LLM2 요청별 설정 오버레이와 callLLMStream의 스트리밍 디스패치를 합성한다.
     llm_service2 가 비어 있으면 LLM1 서비스/엔드포인트를 재사용(callLLM2 와 동일).
 
     json_mode=True 면 _response_format_ctx 를 세팅해 response_format 전파(callLLMStream 참고).
@@ -3454,17 +3504,6 @@ async def callLLM2Stream(messages: list, model: str = None, log_history: bool = 
         yield {"type": "error", "error": "[LLM 실패] LLM2 모델명이 설정되지 않았습니다"}
         return
 
-    key2 = _current_config.get("llm_api_key2", "")
-    url2 = _current_config.get("llm_url2", "")
-    preset2 = _current_config.get("llm_reasoning_preset2", "")
-    effort2 = _current_config.get("llm_reasoning_effort2", "")
-    body2 = _current_config.get("llm_custom_body2", "")
-    saved_key = _current_config.get("llm_api_key", "")
-    saved_url = _current_config.get("llm_url", "")
-    saved_preset = _current_config.get("llm_reasoning_preset", "auto")
-    saved_effort = _current_config.get("llm_reasoning_effort", "")
-    saved_body = _current_config.get("llm_custom_body", "")
-
     final_text = ""
     final_tokens = 0
     final_prompt_tokens = 0
@@ -3473,19 +3512,12 @@ async def callLLM2Stream(messages: list, model: str = None, log_history: bool = 
     final_ttft = None
     error_msg = ""
 
+    config_token = _request_config_override_ctx.set(
+        _slot_config_overrides("llm2")
+    )
+    slot_token = _llm_slot_ctx.set("llm2")
     token = _response_format_ctx.set({"type": "json_object"}) if json_mode else None
     try:
-        if key2:
-            _current_config["llm_api_key"] = key2
-        if url2:
-            _current_config["llm_url"] = url2
-        if preset2:
-            _current_config["llm_reasoning_preset"] = preset2
-        if effort2:
-            _current_config["llm_reasoning_effort"] = effort2
-        if body2:
-            _current_config["llm_custom_body"] = body2
-
         async for ev in _dispatch_stream(messages, service, use_model):
             if ev["type"] == "done":
                 final_text = ev.get("text", "")
@@ -3508,11 +3540,8 @@ async def callLLM2Stream(messages: list, model: str = None, log_history: bool = 
     finally:
         if token is not None:
             _response_format_ctx.reset(token)
-        _current_config["llm_api_key"] = saved_key
-        _current_config["llm_url"] = saved_url
-        _current_config["llm_reasoning_preset"] = saved_preset
-        _current_config["llm_reasoning_effort"] = saved_effort
-        _current_config["llm_custom_body"] = saved_body
+        _llm_slot_ctx.reset(slot_token)
+        _request_config_override_ctx.reset(config_token)
 
 
 async def callLLMVision2Stream(messages: list, image_b64: str = None, image_mime: str = "image/webp",
