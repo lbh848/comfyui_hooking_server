@@ -6263,11 +6263,17 @@
         .cm-settings-wall {
             position: fixed;
             right: 0;
+            /* 상단 기존 UI를 덮지 않도록 그 아래로 시작:
+               header(0~111) + tab-bar(111~191) + status-bar(191~230) = 230px,
+               그리고 캐릭터 메이커 toolbar(60px) 아래 = editor-wall 시작선(290px)에 정렬.
+               이전엔 top 없이 bottom:0 + max-height:88vh 라 top≈12vh(≈150px)에서 시작해
+               손잡이가 탭바/상태바를 덮었음. */
+            top: 290px;
             bottom: 0;
             z-index: 8800;
             display: flex;
             align-items: stretch;
-            max-height: 88vh;
+            max-height: calc(100vh - 290px);
             pointer-events: none;       /* 컨테이너는 클릭 투과; 패널·손잡이만 auto */
             overflow: hidden;           /* 슬라이드아웃 패널이 뷰포트 밖으로 나가도 스크롤바 유발 방지 */
         }
