@@ -311,15 +311,17 @@ async def test_call_revision_llm_records_raw_response_on_validation_exhaustion(
     service, _ = _service(tmp_path)
     messages = [{"role": "user", "content": "수정"}]
 
+    # setting_override 는 알려진 보정 대상이 아니므로 진짜 검증 실패를 유발한다.
+    # (natural_language 중첩은 이제 보정되어 통과하므로 실패 트리거로 쓸 수 없다.)
     raw_response = (
         '{"assistant_message": "ok", "fields": {"appearance": ["blue_eyes"], '
         '"outfit": ["coat"], "expression": [], "composition": [], '
-        '"natural_language": "잉여 키 때문에 검증 실패"}, "rag_queries": {}}'
+        '"setting_override": ["forbidden"]}, "rag_queries": {}}'
     )
     failure_string = (
         "[LLM 실패] character_maker_feedback primary 재시도 소진: "
         "fields 키가 ['appearance', 'composition', 'expression', 'outfit']와 "
-        "정확히 일치해야 합니다. (잉여=['natural_language'])"
+        "정확히 일치해야 합니다. (잉여=['setting_override'])"
     )
 
     async def fake_call(task_key, _messages, **kwargs):
@@ -333,7 +335,7 @@ async def test_call_revision_llm_records_raw_response_on_validation_exhaustion(
                 "slot": "llm1",
                 "attempt": 1,
                 "total_attempts": 2,
-                "reason": "fields 키가 ... (잉여=['natural_language'])",
+                "reason": "fields 키가 ... (잉여=['setting_override'])",
                 "result": raw_response,
                 "exception": None,
             })
@@ -1111,6 +1113,39 @@ def test_parse_llm_payload_natural_language_optional():
     assert reason_none == ""
     assert parsed_none is not None
     assert parsed_none["natural_language"] is None
+
+
+def test_parse_llm_payload_lifts_nested_natural_language_out_of_fields():
+    """LLM이 natural_language를 fields 안에 잘못 넣으면 최상위 키로 끌어올려 보정한다.
+    이 실수 하나로 재시도를 소진하지 않도록(프롬프트로 줄이되 보정으로 흡수)."""
+    nested = (
+        '{"assistant_message": "ok", "fields": {"appearance": ["blue_eyes"], '
+        '"outfit": ["coat"], "expression": ["smile"], "composition": ["portrait"], '
+        '"natural_language": "a large blue peony flower covering half of her face"}, '
+        '"rag_queries": {"appearance": ["q"], "outfit": ["q"], '
+        '"expression": ["q"], "composition": ["q"]}}'
+    )
+    parsed, reason = character_maker_module._parse_llm_payload(
+        nested, require_queries=True
+    )
+    assert parsed is not None, f"보정 후 유효해야 함: {reason}"
+    assert reason == ""
+    # 최상위로 올라온 natural_language 가 결과에 반영된다.
+    assert (
+        parsed["natural_language"]
+        == "a large blue peony flower covering half of her face"
+    )
+    # fields 에서는 natural_language 가 제거되어 4개 키만 남는다.
+    assert set(parsed["fields"]) == set(character_maker_module.EDITABLE_FIELDS)
+
+    # 최상위에 이미 있으면(정상 배치) 그것이 우선되고, fields 내 중복은 무시된다.
+    both = json.loads(nested)
+    both["natural_language"] = "top-level wins"
+    parsed2, _ = character_maker_module._parse_llm_payload(
+        json.dumps(both, ensure_ascii=False), require_queries=True
+    )
+    assert parsed2 is not None
+    assert parsed2["natural_language"] == "top-level wins"
 
 
 def test_parse_llm_payload_returns_specific_reason_on_failure():

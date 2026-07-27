@@ -189,6 +189,17 @@ def _parse_llm_payload(
     fields = parsed.get("fields")
     if not isinstance(fields, dict):
         return None, "fields(객체)가 없습니다."
+    # LLM이 natural_language를 fields 안에 잘못 넣는 사례가 잦아, 최상위 키로 끌어올려
+    # 보정한다(이 키 하나 때문에 재시도를 소진하는 낭비를 막기 위함). 최상위에 이미
+    # natural_language가 있으면(정상 배치) 그것을 우선하고, fields 내 중복은 무시한다.
+    if "natural_language" in fields and "natural_language" not in parsed:
+        parsed["natural_language"] = fields["natural_language"]
+        print(
+            "[CHARACTER_MAKER] natural_language를 fields 안에서 최상위 키로 보정: "
+            f"value_type={type(fields['natural_language']).__name__}"
+        )
+    if "natural_language" in fields:
+        fields = {k: v for k, v in fields.items() if k != "natural_language"}
     if set(fields) != set(EDITABLE_FIELDS):
         missing = sorted(set(EDITABLE_FIELDS) - set(fields))
         extra = sorted(set(fields) - set(EDITABLE_FIELDS))
@@ -1151,7 +1162,8 @@ class CharacterMakerService:
             "Reason from the world context, provided checkpoint/branch conversation, current "
             "visual evidence, references, and user feedback. Do not use hard-coded keyword "
             "matching. "
-            "You may modify appearance, outfit, expression, composition, and natural_language. "
+            "You may modify four tag fields (appearance, outfit, expression, composition) "
+            "and a SEPARATE top-level field natural_language. "
             "All other generation settings are read-only presets. Preserve locked fields exactly. "
             "natural_language is free-form descriptive text inserted into the image prompt; it "
             "may be empty. "
@@ -1165,6 +1177,8 @@ class CharacterMakerService:
             "Return one JSON object with assistant_message, fields, rag_queries, and optionally "
             "natural_language. "
             "fields must contain exactly appearance/outfit/expression/composition string arrays. "
+            "natural_language is a TOP-LEVEL key (sibling of fields and rag_queries), NEVER a key "
+            "inside fields. "
             "rag_queries must contain the same four keys, each mapping to a non-empty ARRAY of "
             "short Korean or English semantic search unit strings (never a bare string). "
             "Tags should describe visible, image-generatable details. "
