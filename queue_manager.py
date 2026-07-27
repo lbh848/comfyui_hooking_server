@@ -23,6 +23,7 @@ from modes import llm_service
 # 별도 워커풀(설정된 LLM 슬롯별 동시 요청 상한의 합)에서 처리한다.
 # 실제 API 동시성은 llm_service의 슬롯별 게이트가 최종 제한한다.
 LLM_TYPES = frozenset({
+    "llm_test",                    # 설정 화면 LLM1~5 연결 테스트
     "illustration_llm_build",       # CHAT -> CALL1/2/3 -> 다중 삽화 큐 생성
     "illustration_easy_edit",       # 저장 슬롯 -> 기존 편하게 수정 LLM -> 수정 재생성
     "instance_lora_prompt_refine",  # 태그 정제 / test_setup (instance·style·bot·asset 전부 LLM 호출)
@@ -128,7 +129,15 @@ class QueueManager:
         elif item.status == "cancelled":
             fut.set_exception(RuntimeError("큐 항목이 취소되었습니다"))
 
-    async def add_item(self, item_type: str, label: str, params: dict, priority: int = 10, skip_notify: bool = False) -> QueueItem:
+    async def add_item(
+        self,
+        item_type: str,
+        label: str,
+        params: dict,
+        priority: int = 10,
+        skip_notify: bool = False,
+        runtime_handler=None,
+    ) -> QueueItem:
         item = QueueItem(
             id=uuid.uuid4().hex[:12],
             type=item_type,
@@ -136,6 +145,16 @@ class QueueManager:
             params=params,
             priority=priority,
         )
+        if runtime_handler is not None:
+            if not callable(runtime_handler):
+                print(
+                    f"[QUEUE] 런타임 핸들러 등록 실패: "
+                    f"type={item_type}, handler_type={type(runtime_handler).__name__}"
+                )
+                raise TypeError("runtime_handler는 호출 가능해야 합니다")
+            # QueueItem.to_dict()/asdict 결과에 포함하지 않아 큐 API 직렬화 계약을
+            # 유지한다. LLM 테스트처럼 현재 프로세스에서만 유효한 작업에 사용한다.
+            item._runtime_handler = runtime_handler
         # 대기 완료를 기다릴 수 있도록 Future 부착 (재생성 HTTP 핸들러 등이 await)
         try:
             item.completion_future = asyncio.get_running_loop().create_future()
@@ -937,6 +956,7 @@ class QueueManager:
                 return await self._handle_tag_analysis_single(item)
             return await self._handle_tag_analysis(item)
         dispatch = {
+            "llm_test": self._handle_llm_test,
             "illustration": self._handle_illustration,
             "illustration_llm_build": self._handle_illustration_llm_build,
             "illustration_easy_edit": self._handle_illustration_easy_edit,
@@ -961,6 +981,17 @@ class QueueManager:
         return await handler(item)
 
     # ─── 타입별 핸들러 ──────────────────────────────────────
+
+    async def _handle_llm_test(self, item: QueueItem) -> dict:
+        """설정 화면의 일회성 LLM 테스트를 LLM 워커에서 실행한다."""
+        handler = getattr(item, "_runtime_handler", None)
+        if not callable(handler):
+            print(
+                f"[QUEUE:LLM_TEST] 실행 실패: 런타임 핸들러 없음 "
+                f"item={item.id}, params={item.params!r}"
+            )
+            raise RuntimeError("LLM 테스트 런타임 핸들러가 없습니다")
+        return await handler(item)
 
     async def _handle_character_maker(self, item: QueueItem) -> dict:
         """캐릭터 메이커 LLM 수정(draft/feedback). params 로 session_id/payload 를 받아

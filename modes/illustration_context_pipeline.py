@@ -3973,12 +3973,43 @@ async def _call_pipeline_llm(
                 }
         await stream_notify(event)
 
+    async def _record_attempt_failure(event: dict) -> None:
+        """라우팅 재시도에서 버려지는 실패 응답도 LB 자세히 이력에 남긴다."""
+        raw_result = event.get("result")
+        attempt_exception = event.get("exception")
+        raw_output = "" if raw_result is None else str(raw_result)
+        if not raw_output and attempt_exception is not None:
+            raw_output = f"{type(attempt_exception).__name__}: {attempt_exception}"
+        reason = str(event.get("reason") or raw_output or "LLM 시도 실패")
+        failure_record = dict(history_record)
+        failure_record.update({
+            "ts": datetime.datetime.now().isoformat(timespec="seconds"),
+            "history_id": uuid.uuid4().hex,
+            "parent_history_id": str(history_id or ""),
+            "phase": str(event.get("phase") or ""),
+            "llm_slot": str(event.get("slot") or ""),
+            "attempt": int(event.get("attempt") or 0),
+            "total_attempts": int(event.get("total_attempts") or 0),
+            "output": raw_output,
+            "elapsed": round(time.time() - started, 3),
+            "status": "error",
+            "error": reason,
+        })
+        print(
+            f"[ILLUST_CONTEXT:{call_name}] LLM 시도 실패 기록: "
+            f"phase={failure_record['phase']}, slot={failure_record['llm_slot']}, "
+            f"attempt={failure_record['attempt']}/{failure_record['total_attempts']}, "
+            f"reason={reason}, raw={raw_output[:300]!r}"
+        )
+        lighbd_service._log_lighbd_history(failure_record)
+
     try:
         if stream_notify:
             await _notify({
                 "type": "start", "call_name": call_name, "model": model, "text": "",
             })
         call_kwargs = {}
+        call_kwargs["on_attempt_failure"] = _record_attempt_failure
         if result_validator is not None:
             call_kwargs["result_validator"] = result_validator
         if json_mode:

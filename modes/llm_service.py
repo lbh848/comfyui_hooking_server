@@ -2183,15 +2183,20 @@ async def callLLMTask(
         final_phase = "fallback"
     if not accepted and last_exception is not None:
         raise last_exception
-    if not accepted and _is_llm_failed(result):
+    if not accepted:
         if isinstance(result, str) and result.strip().startswith("[LLM 실패]"):
             _fill_usage_sink_fallback(metadata_sink, result, messages)
             return result
         _llm_log(
-            f"[LLM_ROUTE] 빈 응답으로 최종 실패: task={task_key}, "
-            f"phase={final_phase}, reason={reason}"
+            f"[LLM_ROUTE] 최종 검증 실패: task={task_key}, "
+            f"phase={final_phase}, reason={reason}, "
+            f"raw={str(result or '')[:300]!r}"
         )
-        return f"[LLM 실패] {task_key} {final_phase} 재시도 소진: {reason}"
+        failure = (
+            f"[LLM 실패] {task_key} {final_phase} 재시도 소진: {reason}"
+        )
+        _fill_usage_sink_fallback(metadata_sink, failure, messages)
+        return failure
     _fill_usage_sink_fallback(metadata_sink, result, messages)
     return result
 
@@ -2376,15 +2381,20 @@ async def callLLMVisionTask(
         final_phase = "fallback"
     if not accepted and last_exception is not None:
         raise last_exception
-    if not accepted and _is_llm_failed(result):
+    if not accepted:
         if isinstance(result, str) and result.strip().startswith("[LLM 실패]"):
             _fill_usage_sink_fallback(metadata_sink, result, messages)
             return result
         _llm_log(
-            f"[LLM_ROUTE] 빈 응답으로 최종 실패: task={task_key}, "
-            f"phase={final_phase}, reason={reason}"
+            f"[LLM_ROUTE] 최종 검증 실패: task={task_key}, "
+            f"phase={final_phase}, reason={reason}, "
+            f"raw={str(result or '')[:300]!r}"
         )
-        return f"[LLM 실패] {task_key} {final_phase} 재시도 소진: {reason}"
+        failure = (
+            f"[LLM 실패] {task_key} {final_phase} 재시도 소진: {reason}"
+        )
+        _fill_usage_sink_fallback(metadata_sink, failure, messages)
+        return failure
     _fill_usage_sink_fallback(metadata_sink, result, messages)
     return result
 

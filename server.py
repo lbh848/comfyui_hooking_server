@@ -55,6 +55,7 @@ logging.basicConfig(level=logging.INFO, format='[%(name)s] %(message)s')
 # aiohttp.access (매 요청마다 찍히는 HTTP access 로그) 도배 방지
 logging.getLogger("aiohttp.access").setLevel(logging.WARNING)
 from modes import llm_service
+from modes import lighbd_service
 from modes import llm_prompt_edit
 from modes import autocomplete_service
 from modes import asset_tool_mode
@@ -739,16 +740,16 @@ async def notify_frontend(event_type: str, data: dict = None):
                 peer = ""
             ws_closed = ws.closed
             if not quiet_stream_delta:
-                print(f"[WS-NOTIFY]   → 송신 시도 client={client_id[:8]} peer={peer} pong_age={pong_age:.1f}s ws.closed={ws_closed}")
+                print(f"[WS-NOTIFY] [SEND] client={client_id[:8]} peer={peer} pong_age={pong_age:.1f}s ws.closed={ws_closed}")
             if ws_closed:
-                print(f"[WS-NOTIFY]     ✗ 이미 닫힌 ws — 제거 ({client_id[:8]})")
+                print(f"[WS-NOTIFY] [CLOSED] 이미 닫힌 ws 제거 ({client_id[:8]})")
                 frontend_ws_connections.pop(client_id, None)
                 continue
             await ws.send_json(message)
             if not quiet_stream_delta:
-                print(f"[WS-NOTIFY]     ✓ 송신 성공 ({client_id[:8]})")
+                print(f"[WS-NOTIFY] [OK] 송신 성공 ({client_id[:8]})")
         except Exception as e:
-            print(f"[WS-NOTIFY]     ✗ 송신 실패 client={client_id[:8]} err={type(e).__name__}: {e}")
+            print(f"[WS-NOTIFY] [FAIL] 송신 실패 client={client_id[:8]} err={type(e).__name__}: {e}")
             frontend_ws_connections.pop(client_id, None)
             traceback.print_exc()
 
@@ -5007,7 +5008,19 @@ async def handle_api_llm_test_stream(request: web.Request) -> web.StreamResponse
     use_json = bool(body.get("json_mode", False))
     target = (body.get("target") or "llm1").strip().lower()
     if target not in llm_service.LLM_SLOT_IDS:
-        target = "llm1"
+        print(
+            f"[LLM_TEST_STREAM] 요청 거부: 유효하지 않은 target={target!r}, "
+            f"allowed={sorted(llm_service.LLM_SLOT_IDS)}"
+        )
+        return web.json_response(
+            {
+                "error": (
+                    f"target은 {', '.join(sorted(llm_service.LLM_SLOT_IDS))} "
+                    "중 하나여야 합니다"
+                )
+            },
+            status=400,
+        )
 
     # target(slot) 에 따른 서비스/모델/함수 선택. 슬롯별 호출 함수 매핑.
     _slot_fns = {
@@ -5023,6 +5036,29 @@ async def handle_api_llm_test_stream(request: web.Request) -> web.StreamResponse
     cur_model_key = f"llm_model{_suffix}"
     fn_stream, fn_vision_stream, fn_single, fn_vision_single = _slot_fns.get(target, _slot_fns["llm1"])
 
+    use_model_resolved = use_model or cfg.get(cur_model_key, "")
+    prompt_id = f"llm_test:{uuid.uuid4().hex[:12]}"
+    history_record = {
+        "ts": datetime.datetime.now().isoformat(timespec="seconds"),
+        "prompt_id": prompt_id,
+        "call_name": "LLM TEST",
+        "task_key": "llm_test",
+        "llm_slot": target,
+        "service": cur_service,
+        "model": use_model_resolved,
+        "input": messages,
+        "output": "",
+        "completion_tokens": 0,
+        "prompt_tokens": llm_service._approx_input_tokens(messages),
+        "elapsed": 0.0,
+        "tps": 0.0,
+        "status": "processing",
+    }
+    if image_b64 or images:
+        history_record["vision_image_count"] = (
+            len(images) if images else 1
+        )
+
     resp = web.StreamResponse(status=200, headers={
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
@@ -5030,93 +5066,320 @@ async def handle_api_llm_test_stream(request: web.Request) -> web.StreamResponse
         "X-Accel-Buffering": "no",
     })
     await resp.prepare(request)
+    response_finished = False
+    history_logged = False
+    terminal_error = ""
+    stream_parts: list[str] = []
 
-    def write_event(event_type: str, data: dict):
+    async def write_event(event_type: str, data: dict) -> None:
         payload = json.dumps(data, ensure_ascii=False)
-        return resp.write(f"event: {event_type}\ndata: {payload}\n\n".encode("utf-8"))
+        await resp.write(
+            f"event: {event_type}\ndata: {payload}\n\n".encode("utf-8")
+        )
 
-    try:
-        if image_b64 or images:
-            # 비전 호출
-            if not llm_service.supports_vision(cur_service):
-                await write_event("error", {"error": f"현재 LLM 서비스({cur_service})는 비전을 지원하지 않습니다."})
-                await resp.write_eof()
-                return resp
-            service = cur_service
-            use_model_resolved = use_model or cfg.get(cur_model_key, "")
-            await write_event("start", {"service": service, "model": use_model_resolved})
-            t0 = time.time()
-            try:
-                if use_stream:
-                    # 스트리밍 비전
-                    async for ev in fn_vision_stream(messages, image_b64=image_b64, image_mime=image_mime, model=use_model, log_history=False, json_mode=use_json, images=images):
-                        await write_event(ev.get("type", "message"), ev)
+    async def publish_event(event_type: str, data: dict) -> None:
+        """SSE·LB 실시간 창·상세 이력에 같은 이벤트를 반영한다."""
+        nonlocal terminal_error
+        event_data = dict(data or {})
+        if event_type == "delta":
+            delta_text = str(event_data.get("text") or "")
+            if delta_text:
+                stream_parts.append(delta_text)
+                history_record["output"] = "".join(stream_parts)
+        elif event_type == "done":
+            done_text = str(
+                event_data.get("text")
+                or history_record.get("output")
+                or "".join(stream_parts)
+            )
+            history_record.update({
+                "output": done_text,
+                "completion_tokens": int(
+                    event_data.get("completion_tokens") or max(1, len(done_text) // 3)
+                ),
+                "prompt_tokens": int(
+                    event_data.get("prompt_tokens")
+                    or history_record["prompt_tokens"]
+                ),
+                "elapsed": round(float(event_data.get("elapsed") or 0.0), 3),
+                "tps": round(float(event_data.get("tps") or 0.0), 1),
+                "status": "ok",
+            })
+            if event_data.get("ttft") is not None:
+                history_record["ttft"] = round(
+                    float(event_data.get("ttft")), 3
+                )
+        elif event_type in ("error", "cancelled"):
+            terminal_error = str(
+                event_data.get("error")
+                or event_data.get("reason")
+                or "LLM 테스트 실패"
+            )
+            raw_output = str(
+                event_data.get("partial_text")
+                or event_data.get("text")
+                or history_record.get("output")
+                or terminal_error
+            )
+            history_record.update({
+                "output": raw_output,
+                "status": "error",
+                "error": terminal_error,
+            })
+
+        ws_event = dict(event_data)
+        ws_event.update({
+            "type": event_type,
+            "prompt_id": prompt_id,
+            "call_name": "LLM TEST",
+            "task_key": "llm_test",
+            "llm_slot": target,
+        })
+        ws_event.setdefault("service", cur_service)
+        ws_event.setdefault("model", use_model_resolved)
+        try:
+            await notify_frontend("lighbd_llm_stream", ws_event)
+        except Exception as notify_error:
+            print(
+                f"[LLM_TEST_STREAM] LB 실시간 알림 실패: "
+                f"{type(notify_error).__name__}: {notify_error}"
+            )
+            traceback.print_exc()
+        await write_event(event_type, event_data)
+
+    async def run_queued_test(_queue_item) -> dict:
+        nonlocal response_finished, history_logged, terminal_error
+        started = time.time()
+        try:
+            if image_b64 or images:
+                if not llm_service.supports_vision(cur_service):
+                    await publish_event(
+                        "error",
+                        {
+                            "error": (
+                                f"현재 LLM 서비스({cur_service})는 "
+                                "비전을 지원하지 않습니다."
+                            )
+                        },
+                    )
+                elif use_stream:
+                    await publish_event(
+                        "start",
+                        {
+                            "service": cur_service,
+                            "model": use_model_resolved,
+                        },
+                    )
+                    async for ev in fn_vision_stream(
+                        messages,
+                        image_b64=image_b64,
+                        image_mime=image_mime,
+                        model=use_model,
+                        log_history=False,
+                        json_mode=use_json,
+                        images=images,
+                    ):
+                        await publish_event(ev.get("type", "message"), ev)
                 else:
-                    # 단발 비전
-                    text = await fn_vision_single(messages, image_b64=image_b64, image_mime=image_mime, model=use_model, json_mode=use_json, images=images)
-                    elapsed = time.time() - t0
+                    await publish_event(
+                        "start",
+                        {
+                            "service": cur_service,
+                            "model": use_model_resolved,
+                        },
+                    )
+                    text = await fn_vision_single(
+                        messages,
+                        image_b64=image_b64,
+                        image_mime=image_mime,
+                        model=use_model,
+                        json_mode=use_json,
+                        images=images,
+                    )
+                    elapsed = time.time() - started
                     if isinstance(text, str) and text.startswith("[LLM 실패]"):
-                        await write_event("error", {"error": text})
+                        await publish_event("error", {"error": text})
                     else:
                         tokens = max(1, len(text) // 3)
                         tps = (tokens / elapsed) if elapsed > 0 else 0.0
-                        await write_event("done", {
-                            "text": text,
-                            "completion_tokens": tokens,
-                            "prompt_tokens": llm_service._approx_input_tokens(messages),
-                            "elapsed": elapsed,
-                            "tps": tps,
-                            "ttft": None,
-                        })
-            except Exception as ve:
-                await write_event("error", {"error": f"{type(ve).__name__}: {ve}"})
-            await resp.write_eof()
-            return resp
-        elif use_stream:
-            async for ev in fn_stream(messages, model=use_model, log_history=False, json_mode=use_json):
-                et = ev.get("type", "message")
-                await write_event(et, ev)
-                if et == "done":
-                    # 통계용 추가 이벤트 (프론트에서 이미 done 에서 읽어도 됨)
-                    pass
-        else:
-            # 단발 호출 → start / done 두 이벤트만
-            t0 = time.time()
-            service = cur_service
-            use_model_resolved = use_model or cfg.get(cur_model_key, "")
-            await write_event("start", {"service": service, "model": use_model_resolved})
-            text = await fn_single(messages, model=use_model, json_mode=use_json)
-            elapsed = time.time() - t0
-            if isinstance(text, str) and text.startswith("[LLM 실패]"):
-                await write_event("error", {"error": text})
+                        await publish_event("done", {
+                                "text": text,
+                                "completion_tokens": tokens,
+                                "prompt_tokens": history_record["prompt_tokens"],
+                                "elapsed": elapsed,
+                                "tps": tps,
+                                "ttft": None,
+                            })
+            elif use_stream:
+                async for ev in fn_stream(
+                    messages,
+                    model=use_model,
+                    log_history=False,
+                    json_mode=use_json,
+                ):
+                    await publish_event(ev.get("type", "message"), ev)
             else:
-                tokens = max(1, len(text) // 3)
-                tps = (tokens / elapsed) if elapsed > 0 else 0.0
-                prompt_tokens = llm_service._approx_input_tokens(messages)
-                # 히스토리 로깅
-                llm_service._log_history(
-                    service=service, model=use_model_resolved,
-                    messages=messages, output=text,
-                    completion_tokens=tokens, elapsed=elapsed, tps=tps,
-                    prompt_tokens=prompt_tokens,
+                await publish_event(
+                    "start",
+                    {
+                        "service": cur_service,
+                        "model": use_model_resolved,
+                    },
                 )
-                await write_event("done", {
-                    "text": text,
-                    "completion_tokens": tokens,
-                    "prompt_tokens": prompt_tokens,
-                    "elapsed": elapsed,
-                    "tps": tps,
-                    "ttft": None,
-                })
-    except Exception as e:
-        tb = traceback.format_exc()
-        print(f"[LLM_TEST_STREAM] error: {e}\n{tb}")
-        try:
-            await write_event("error", {"error": f"{type(e).__name__}: {e}"})
-        except Exception:
-            pass
+                text = await fn_single(
+                    messages,
+                    model=use_model,
+                    json_mode=use_json,
+                )
+                elapsed = time.time() - started
+                if isinstance(text, str) and text.startswith("[LLM 실패]"):
+                    await publish_event("error", {"error": text})
+                else:
+                    tokens = max(1, len(text) // 3)
+                    tps = (tokens / elapsed) if elapsed > 0 else 0.0
+                    prompt_tokens = history_record["prompt_tokens"]
+                    llm_service._log_history(
+                        service=cur_service,
+                        model=use_model_resolved,
+                        messages=messages,
+                        output=text,
+                        completion_tokens=tokens,
+                        elapsed=elapsed,
+                        tps=tps,
+                        prompt_tokens=prompt_tokens,
+                    )
+                    await publish_event("done", {
+                        "text": text,
+                        "completion_tokens": tokens,
+                        "prompt_tokens": prompt_tokens,
+                        "elapsed": elapsed,
+                        "tps": tps,
+                        "ttft": None,
+                    })
 
-    await resp.write_eof()
+            if history_record.get("status") == "processing":
+                terminal_error = "LLM 스트림이 done/error 이벤트 없이 종료되었습니다"
+                print(
+                    f"[LLM_TEST_STREAM] 호출 실패: target={target}, "
+                    f"model={use_model_resolved}, error={terminal_error}"
+                )
+                await publish_event("error", {"error": terminal_error})
+        except Exception as e:
+            terminal_error = f"{type(e).__name__}: {e}"
+            print(
+                f"[LLM_TEST_STREAM] 실행 예외: target={target}, "
+                f"model={use_model_resolved}, error={terminal_error}"
+            )
+            traceback.print_exc()
+            if history_record.get("status") != "error":
+                try:
+                    await publish_event("error", {"error": terminal_error})
+                except Exception as publish_error:
+                    print(
+                        f"[LLM_TEST_STREAM] 오류 이벤트 전송 실패: "
+                        f"{type(publish_error).__name__}: {publish_error}"
+                    )
+                    traceback.print_exc()
+        finally:
+            elapsed = time.time() - started
+            if not history_record.get("elapsed"):
+                history_record["elapsed"] = round(elapsed, 3)
+            if history_record.get("status") == "processing":
+                terminal_error = terminal_error or "LLM 테스트가 비정상 종료되었습니다"
+                history_record.update({
+                    "status": "error",
+                    "error": terminal_error,
+                    "output": history_record.get("output") or terminal_error,
+                })
+            try:
+                lighbd_service._log_lighbd_history(history_record)
+                history_logged = True
+            except Exception as history_error:
+                print(
+                    f"[LLM_TEST_STREAM] LB 자세히 기록 실패: "
+                    f"{type(history_error).__name__}: {history_error}"
+                )
+                traceback.print_exc()
+            try:
+                await resp.write_eof()
+                response_finished = True
+            except Exception as eof_error:
+                print(
+                    f"[LLM_TEST_STREAM] SSE 종료 실패: "
+                    f"{type(eof_error).__name__}: {eof_error}"
+                )
+                traceback.print_exc()
+
+        if terminal_error:
+            raise RuntimeError(terminal_error)
+        return {
+            "target": target,
+            "model": use_model_resolved,
+            "status": "ok",
+            "prompt_id": prompt_id,
+        }
+
+    try:
+        item = await queue_manager.add_item(
+            "llm_test",
+            f"LLM 테스트 · {target.upper()} · {use_model_resolved or '(모델 없음)'}",
+            {
+                "target": target,
+                "model": use_model_resolved,
+                "stream": use_stream,
+                "json_mode": use_json,
+                "vision": bool(image_b64 or images),
+                "prompt_id": prompt_id,
+            },
+            priority=10,
+            runtime_handler=run_queued_test,
+        )
+        completion_future = getattr(item, "completion_future", None)
+        if completion_future is None:
+            raise RuntimeError("LLM 테스트 큐 완료 Future가 없습니다")
+        try:
+            await completion_future
+        except Exception:
+            # 실행 실패는 run_queued_test가 SSE error와 LB 상세에 먼저 기록하고,
+            # QueueManager도 failed 상태로 표시한다.
+            if not terminal_error:
+                raise
+    except Exception as e:
+        if not terminal_error:
+            terminal_error = f"{type(e).__name__}: {e}"
+            print(
+                f"[LLM_TEST_STREAM] 큐 등록/대기 실패: target={target}, "
+                f"model={use_model_resolved}, error={terminal_error}"
+            )
+            traceback.print_exc()
+            if not response_finished:
+                try:
+                    await publish_event("error", {"error": terminal_error})
+                except Exception as publish_error:
+                    print(
+                        f"[LLM_TEST_STREAM] 큐 실패 이벤트 전송 실패: "
+                        f"{type(publish_error).__name__}: {publish_error}"
+                    )
+                    traceback.print_exc()
+                if not history_logged:
+                    lighbd_service._log_lighbd_history(history_record)
+                    history_logged = True
+                try:
+                    await resp.write_eof()
+                    response_finished = True
+                except Exception as eof_error:
+                    print(
+                        f"[LLM_TEST_STREAM] 큐 실패 SSE 종료 실패: "
+                        f"{type(eof_error).__name__}: {eof_error}"
+                    )
+                    traceback.print_exc()
+
+    if not response_finished:
+        try:
+            await resp.write_eof()
+        except Exception as e:
+            print(f"[LLM_TEST_STREAM] 최종 SSE 종료 실패: {e}")
+            traceback.print_exc()
     return resp
 
 

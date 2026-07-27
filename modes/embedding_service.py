@@ -274,7 +274,7 @@ def update_config(config: dict):
     _log(f"설정 업데이트: provider={_current_config['embedding_provider']}, "
          f"url={_current_config['embedding_url']}, "
          f"model={_current_config['embedding_model']}, "
-         f"api_key={'(empty)' if not _current_config.get('embedding_api_key') else _current_config['embedding_api_key']}")
+         f"api_key={'set' if _current_config.get('embedding_api_key') else 'empty'}")
 
 
 def get_config() -> dict:

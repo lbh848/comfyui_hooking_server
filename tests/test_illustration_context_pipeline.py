@@ -3267,7 +3267,7 @@ async def test_pipeline_llm_records_success_in_lighbd_history(monkeypatch):
     events = []
     messages = [{"role": "user", "content": "scene"}]
 
-    async def fake_call(task_key, actual_messages):
+    async def fake_call(task_key, actual_messages, **_kwargs):
         assert task_key == "illustration_call1"
         assert actual_messages == messages
         return "completed output"
@@ -3296,7 +3296,7 @@ async def test_pipeline_llm_records_failure_in_lighbd_history(monkeypatch):
     events = []
     messages = [{"role": "user", "content": "broken scene"}]
 
-    async def fake_call(task_key, actual_messages):
+    async def fake_call(task_key, actual_messages, **_kwargs):
         return "[LLM 실패] upstream unavailable"
 
     async def fake_notify(event):
