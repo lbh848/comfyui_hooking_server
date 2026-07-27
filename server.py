@@ -12801,10 +12801,17 @@ async def handle_api_character_maker_generate(request: web.Request) -> web.Respo
         await operation_lock.acquire()
         lock_acquired = True
         body = await request.json()
+        source = str(body.get("source") or "user")
+        if source not in ("user", "llm"):
+            raise CharacterMakerError("source 는 user 또는 llm 이어야 합니다.")
+        # source=="llm" 인 경우 사용자 fields 를 건드리지 않는다.
+        # 리비전 스냅샷은 add_revision 이 session["llm_fields"] 에서 만든다.
+        if source == "user":
+            update_keys = ("world_context", "fields", "locks", "settings")
+        else:
+            update_keys = ("world_context", "locks", "settings")
         update_payload = {
-            key: body[key]
-            for key in ("world_context", "fields", "locks", "settings")
-            if key in body
+            key: body[key] for key in update_keys if key in body
         }
         session_state = character_maker.update_session(session_id, update_payload)
         positive = body.get("positive_prompt")
@@ -12863,6 +12870,7 @@ async def handle_api_character_maker_generate(request: web.Request) -> web.Respo
             positive=positive,
             negative=negative,
             note=str(body.get("note") or ""),
+            source=source,
         )
         public_result = {
             key: value
@@ -12881,6 +12889,20 @@ async def handle_api_character_maker_generate(request: web.Request) -> web.Respo
     finally:
         if operation_lock is not None and lock_acquired:
             operation_lock.release()
+
+
+async def handle_api_character_maker_accept(request: web.Request) -> web.Response:
+    session_id = request.match_info.get("session_id", "")
+    try:
+        async with character_maker.operation_lock(session_id):
+            return web.json_response(
+                {
+                    "success": True,
+                    "session": character_maker.accept(session_id),
+                }
+            )
+    except Exception as exc:
+        return _character_maker_error_response("LLM 결과 accept", exc)
 
 
 async def handle_api_character_maker_image(
@@ -13246,6 +13268,7 @@ app.router.add_get("/api/character_maker/session/{session_id}/reference/{referen
 app.router.add_delete("/api/character_maker/session/{session_id}/reference/{reference_id}", handle_api_character_maker_reference_delete)
 app.router.add_post("/api/character_maker/session/{session_id}/revise", handle_api_character_maker_revise)
 app.router.add_post("/api/character_maker/session/{session_id}/generate", handle_api_character_maker_generate)
+app.router.add_post("/api/character_maker/session/{session_id}/accept", handle_api_character_maker_accept)
 app.router.add_get("/api/character_maker/session/{session_id}/image/{revision_id}", handle_api_character_maker_image)
 app.router.add_post("/api/character_maker/session/{session_id}/confirm", handle_api_character_maker_confirm)
 app.router.add_post("/api/character_maker/rag/test", handle_api_character_maker_rag_test)

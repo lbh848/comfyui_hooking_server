@@ -6063,9 +6063,9 @@
         .cm-canvas {
             position: relative;
             flex: 1;
-            min-height: 300px;
-            display: grid;
-            place-items: center;
+            min-height: 320px;
+            display: flex;
+            align-items: stretch;
             overflow: hidden;
             border: 1px solid color-mix(in srgb, var(--border) 82%, #6f83be);
             border-radius: 16px;
@@ -6076,22 +6076,99 @@
             background-position: 0 0, 14px 14px;
             background-size: 28px 28px;
             box-shadow: inset 0 0 70px rgba(0,0,0,.16);
+            --cm-split: 0.5;
+            touch-action: none;
         }
-        .cm-canvas img { width: 100%; height: 100%; display: none; object-fit: contain; }
-        .cm-canvas.has-image img { display: block; }
-        .cm-canvas-empty { max-width: 320px; padding: 26px; text-align: center; color: var(--text2); }
-        .cm-canvas.has-image .cm-canvas-empty { display: none; }
-        .cm-canvas-empty-mark {
-            width: 64px;
-            height: 64px;
+        .cm-pane {
+            position: relative;
+            flex: 0 0 0;
+            flex-grow: var(--cm-split, 0.5);
+            flex-basis: 0;
+            min-width: 0;
             display: grid;
             place-items: center;
-            margin: 0 auto 12px;
+            overflow: hidden;
+        }
+        /* 우측 pane 은 좌측(--cm-split)의 여분(1 - --cm-split)을 차지한다. */
+        .cm-pane.cm-pane--right { flex-grow: calc(1 - var(--cm-split, 0.5)); }
+        .cm-pane img {
+            width: 100%;
+            height: 100%;
+            display: none;
+            object-fit: contain;
+        }
+        .cm-pane.has-image img { display: block; }
+        .cm-pane-empty {
+            max-width: 280px;
+            padding: 22px;
+            text-align: center;
+            color: var(--text2);
+        }
+        .cm-pane.has-image .cm-pane-empty { display: none; }
+        .cm-pane-empty-mark {
+            width: 52px;
+            height: 52px;
+            display: grid;
+            place-items: center;
+            margin: 0 auto 10px;
             border: 1px solid var(--border);
-            border-radius: 20px;
+            border-radius: 16px;
             color: #9baef5;
             background: color-mix(in srgb, var(--accent) 10%, var(--surface));
-            font-size: 1.7rem;
+            font-size: 1.4rem;
+        }
+        .cm-pane-label {
+            position: absolute;
+            top: 7px;
+            left: 8px;
+            z-index: 2;
+            padding: 2px 8px;
+            border-radius: 999px;
+            font-size: .6rem;
+            font-weight: 650;
+            letter-spacing: .02em;
+            color: #fff;
+            background: rgba(5,8,14,.74);
+            border: 1px solid rgba(255,255,255,.08);
+        }
+        /* 우측 pane 의 라벨은 오른쪽 끝에 배치. */
+        .cm-pane.cm-pane--right .cm-pane-label {
+            left: auto;
+            right: 8px;
+        }
+        /* 역할별 라벨 색: LLM(보라) / 사용자(기본). */
+        .cm-pane.is-llm .cm-pane-label {
+            color: #d7c6ff;
+            background: rgba(28,16,46,.78);
+        }
+        .cm-split-handle {
+            flex: 0 0 7px;
+            position: relative;
+            z-index: 4;
+            cursor: col-resize;
+            background: color-mix(in srgb, var(--border) 70%, #121722);
+            border-left: 1px solid rgba(255,255,255,.06);
+            border-right: 1px solid rgba(0,0,0,.28);
+            transition: background .12s ease;
+        }
+        .cm-split-handle::after {
+            content: "";
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 3px;
+            height: 30px;
+            border-radius: 3px;
+            background: rgba(255,255,255,.22);
+        }
+        .cm-split-handle:hover,
+        .cm-split-handle.dragging {
+            background: color-mix(in srgb, var(--accent) 55%, #121722);
+        }
+        .cm-split-handle:hover::after,
+        .cm-split-handle.dragging::after {
+            background: rgba(255,255,255,.55);
         }
         .cm-busy-overlay {
             position: absolute;
@@ -6148,6 +6225,7 @@
             cursor: pointer;
         }
         .cm-revision.active { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent); }
+        .cm-revision.llm-active { border-color: #9b6cff; box-shadow: 0 0 0 2px color-mix(in srgb, #9b6cff 28%, transparent); }
         .cm-revision img { width: 100%; height: 100%; display: block; object-fit: cover; }
         .cm-revision-label {
             position: absolute;
@@ -6160,6 +6238,49 @@
             font-size: .58rem;
             background: rgba(5,8,14,.74);
         }
+        .cm-revision-badge {
+            position: absolute;
+            top: 3px;
+            left: 3px;
+            z-index: 2;
+            padding: 1px 5px;
+            border-radius: 5px;
+            font-size: .54rem;
+            font-weight: 700;
+            letter-spacing: .02em;
+            color: #fff;
+        }
+        .cm-revision-badge.user { background: rgba(33,90,180,.82); }
+        .cm-revision-badge.llm { background: rgba(108,52,180,.85); }
+        .cm-llm-tags {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            padding: 6px 8px;
+            margin-top: 7px;
+            border: 1px solid color-mix(in srgb, #9b6cff 35%, var(--border));
+            border-radius: 9px;
+            background: color-mix(in srgb, #9b6cff 7%, var(--surface));
+            overflow-x: auto;
+        }
+        .cm-llm-tags-title {
+            flex: 0 0 auto;
+            font-size: .62rem;
+            font-weight: 700;
+            color: #c9a8ff;
+            white-space: nowrap;
+        }
+        .cm-llm-tag-chip {
+            flex: 0 0 auto;
+            padding: 2px 7px;
+            border-radius: 999px;
+            font-size: .62rem;
+            color: #e8d9ff;
+            background: color-mix(in srgb, #9b6cff 16%, var(--surface2));
+            border: 1px solid color-mix(in srgb, #9b6cff 28%, transparent);
+            white-space: nowrap;
+        }
+        .cm-llm-tags-empty { font-size: .64rem; color: var(--text2); }
         .cm-editor-head {
             display: flex;
             align-items: center;
@@ -9059,8 +9180,9 @@
                                           placeholder="예: 차가운 인상이지만 악역처럼 보이지 않게, 재킷은 더 실용적으로 바꿔줘."
                                           onkeydown="cmFeedbackKeydown(event)"></textarea>
                                 <div class="cm-compose-actions">
-                                    <span class="cm-hint" style="flex:1;">Ctrl/⌘ + Enter 전송</span>
-                                    <button id="cm-revise-btn" class="cm-btn primary" onclick="cmRevise()">LLM 수정</button>
+                                    <span class="cm-hint" style="flex:1;">Ctrl/⌘ + Enter · 사용자 기준</span>
+                                    <button id="cm-revise-user-btn" class="cm-btn primary" onclick="cmRevise('user')" title="사용자 태그에서 출발해 LLM이 수정 후 다시 그림">LLM 수정 (사용자 기준)</button>
+                                    <button id="cm-revise-llm-btn" class="cm-btn" onclick="cmRevise('llm')" title="LLM이 수정 중인 태그에서 출발해 LLM이 추가 수정 후 다시 그림">LLM 수정 (LLM 기준)</button>
                                 </div>
                             </div>
                         </section>
@@ -9068,19 +9190,37 @@
 
                     <section class="cm-stage">
                         <div id="cm-canvas" class="cm-canvas">
-                            <img id="cm-active-image" alt="캐릭터 메이커 현재 리비전">
-                            <div class="cm-canvas-empty">
-                                <div class="cm-canvas-empty-mark">✦</div>
-                                <div style="font-size:.9rem; font-weight:720; color:var(--text); margin-bottom:7px;">아직 생성된 이미지가 없습니다</div>
-                                <div style="font-size:.72rem; line-height:1.55;">세계관을 적고 LLM에게 첫 요청을 보내거나<br>오른쪽 태그를 직접 입력한 뒤 이미지를 생성하세요.</div>
+                            <div class="cm-pane is-llm" id="cm-pane-llm">
+                                <img id="cm-llm-image" alt="캐릭터 메이커 LLM 리비전">
+                                <div class="cm-pane-empty">
+                                    <div class="cm-pane-empty-mark">✦</div>
+                                    <div style="font-size:.86rem; font-weight:720; color:var(--text); margin-bottom:6px;">LLM 이미지 없음</div>
+                                    <div style="font-size:.7rem; line-height:1.55;">채팅으로 요청을 보내면<br>LLM이 태그를 수정해 그립니다.</div>
+                                </div>
+                                <div class="cm-pane-label">LLM</div>
+                            </div>
+                            <div id="cm-split-handle" class="cm-split-handle" title="드래그하여 좌우 비율 조절" role="separator" aria-orientation="vertical"></div>
+                            <div class="cm-pane cm-pane--right is-user" id="cm-pane-user">
+                                <img id="cm-user-image" alt="캐릭터 메이커 사용자 리비전">
+                                <div class="cm-pane-empty">
+                                    <div class="cm-pane-empty-mark">✦</div>
+                                    <div style="font-size:.86rem; font-weight:720; color:var(--text); margin-bottom:6px;">사용자 이미지 없음</div>
+                                    <div style="font-size:.7rem; line-height:1.55;">태그를 직접 입력한 뒤<br>'이미지 생성'으로 그려보세요.</div>
+                                </div>
+                                <div class="cm-pane-label">사용자</div>
                             </div>
                             <div id="cm-busy-overlay" class="cm-busy-overlay">
                                 <div class="spinner"></div>
                                 <div id="cm-busy-text" style="font-size:.78rem;">처리 중...</div>
                             </div>
                         </div>
+                        <div id="cm-llm-tags" class="cm-llm-tags" aria-label="LLM 현재 태그(읽기 전용)">
+                            <span class="cm-llm-tags-title">LLM 태그</span>
+                            <span class="cm-llm-tags-empty">아직 LLM이 수정한 태그가 없습니다.</span>
+                        </div>
                         <div class="cm-stage-actions">
                             <button id="cm-generate-btn" class="cm-btn primary" onclick="cmGenerate()">이미지 생성</button>
+                            <button id="cm-accept-btn" class="cm-btn success" onclick="cmAccept()" title="좌측 LLM 결과(태그+이미지)를 우측 사용자 영역으로 복사">accept</button>
                             <button class="cm-btn" onclick="cmPreviewPrompt()">프롬프트 보기</button>
                             <button id="cm-confirm-open-btn" class="cm-btn success" onclick="cmOpenConfirm()">캐릭터 확정</button>
                             <span id="cm-stage-meta" class="cm-stage-meta">활성 리비전 없음</span>
@@ -28282,6 +28422,7 @@
 
         async function initCharacterMaker() {
             cmBindReferenceDrop();
+            cmInitSplitHandle();
             if (!assetTags) {
                 try {
                     await loadAssetData();
@@ -28324,6 +28465,59 @@
             cmRender();
             cmInitialized = true;
             requestAnimationFrame(cmAlignSettingsWall);
+        }
+
+        function cmInitSplitHandle() {
+            const canvas = document.getElementById('cm-canvas');
+            const handle = document.getElementById('cm-split-handle');
+            if (!canvas || !handle || handle.dataset.bound === '1') return;
+            handle.dataset.bound = '1';
+
+            const applyRatio = ratio => {
+                const clamped = Math.min(0.88, Math.max(0.12, ratio));
+                canvas.style.setProperty('--cm-split', clamped.toFixed(4));
+                return clamped;
+            };
+            // 저장된 비율 복원.
+            try {
+                const saved = parseFloat(localStorage.getItem('cm-split-ratio'));
+                if (Number.isFinite(saved)) applyRatio(saved);
+            } catch (error) {
+                console.error('[CHARACTER_MAKER] 분할 비율 복원 실패:', error);
+            }
+
+            let dragging = false;
+            const onMove = event => {
+                if (!dragging) return;
+                const rect = canvas.getBoundingClientRect();
+                if (!rect.width) return;
+                const ratio = (event.clientX - rect.left) / rect.width;
+                applyRatio(ratio);
+            };
+            const onUp = event => {
+                if (!dragging) return;
+                dragging = false;
+                handle.classList.remove('dragging');
+                try {
+                    handle.releasePointerCapture(event.pointerId);
+                } catch (error) { /* 무시 */ }
+                const ratio = parseFloat(canvas.style.getPropertyValue('--cm-split'));
+                if (Number.isFinite(ratio)) {
+                    try { localStorage.setItem('cm-split-ratio', String(ratio)); }
+                    catch (error) { console.error('[CHARACTER_MAKER] 분할 비율 저장 실패:', error); }
+                }
+                window.removeEventListener('pointermove', onMove);
+                window.removeEventListener('pointerup', onUp);
+            };
+            handle.addEventListener('pointerdown', event => {
+                event.preventDefault();
+                dragging = true;
+                handle.classList.add('dragging');
+                try { handle.setPointerCapture(event.pointerId); }
+                catch (error) { /* 무시 */ }
+                window.addEventListener('pointermove', onMove);
+                window.addEventListener('pointerup', onUp);
+            });
         }
 
         function cmBindReferenceDrop() {
@@ -28922,38 +29116,89 @@
             `).join('');
         }
 
-        function cmRenderRevisions() {
+        function cmRenderStage() {
             const revisionsEl = document.getElementById('cm-revisions');
-            const canvas = document.getElementById('cm-canvas');
-            const image = document.getElementById('cm-active-image');
+            const userPane = document.getElementById('cm-pane-user');
+            const llmPane = document.getElementById('cm-pane-llm');
+            const userImage = document.getElementById('cm-user-image');
+            const llmImage = document.getElementById('cm-llm-image');
             const meta = document.getElementById('cm-stage-meta');
-            if (!revisionsEl || !canvas || !image || !cmSession) return;
+            if (!revisionsEl || !userPane || !llmPane || !userImage || !llmImage || !cmSession) return;
             const revisions = cmSession.revisions || [];
-            const active = revisions.find(item => item.id === cmSession.active_revision_id);
-            revisionsEl.innerHTML = revisions.map((revision, index) => `
-                <div class="cm-revision ${revision.id === cmSession.active_revision_id ? 'active' : ''}"
+            const activeId = cmSession.active_revision_id;
+            const llmActiveId = cmSession.llm_active_revision_id;
+            const active = revisions.find(item => item.id === activeId);
+            const llmActive = revisions.find(item => item.id === llmActiveId);
+
+            const renderPane = (paneEl, imgEl, revision) => {
+                if (revision) {
+                    const nextSrc = `${revision.url}?v=${encodeURIComponent(revision.created_at || '')}`;
+                    if (imgEl.getAttribute('src') !== nextSrc) imgEl.src = nextSrc;
+                    imgEl.onerror = () => {
+                        console.error('[CHARACTER_MAKER] 리비전 이미지 표시 실패:', revision.id);
+                    };
+                    paneEl.classList.add('has-image');
+                } else {
+                    imgEl.removeAttribute('src');
+                    paneEl.classList.remove('has-image');
+                }
+            };
+            renderPane(userPane, userImage, active);
+            renderPane(llmPane, llmImage, llmActive);
+
+            // 히스토리 스트립: 출처(user/llm) 배지 + 활성 표시. 클릭 시 출처에 맞춰 좌/우 슬롯 로드.
+            revisionsEl.innerHTML = revisions.map((revision, index) => {
+                const source = revision.source === 'llm' ? 'llm' : 'user';
+                const isActive = revision.id === activeId;
+                const isLlmActive = revision.id === llmActiveId;
+                const classes = [
+                    'cm-revision',
+                    isActive ? 'active' : '',
+                    isLlmActive ? 'llm-active' : '',
+                ].filter(Boolean).join(' ');
+                const badge = source === 'llm' ? 'LLM' : 'USER';
+                return `
+                <div class="${classes}"
                      role="button" tabindex="0"
-                     onclick="cmSelectRevision('${revision.id}')"
-                     onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();cmSelectRevision('${revision.id}');}">
+                     title="${source === 'llm' ? 'LLM' : '사용자'} 리비전 R${index + 1}"
+                     onclick="cmSelectRevision('${revision.id}','${source}')"
+                     onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();cmSelectRevision('${revision.id}','${source}');}">
                     <img src="${revision.url}?v=${encodeURIComponent(revision.created_at || '')}" alt="리비전 ${index + 1}">
+                    <span class="cm-revision-badge ${source}">${badge}</span>
                     <span class="cm-revision-label">R${index + 1}</span>
-                </div>
-            `).join('');
-            if (active) {
-                const nextSrc = `${active.url}?v=${encodeURIComponent(active.created_at || '')}`;
-                if (image.getAttribute('src') !== nextSrc) image.src = nextSrc;
-                image.onerror = () => {
-                    console.error('[CHARACTER_MAKER] 활성 리비전 이미지를 표시하지 못했습니다:', active.id);
-                };
-                canvas.classList.add('has-image');
-                const index = revisions.indexOf(active) + 1;
-                if (meta) meta.textContent = `활성 리비전 R${index} · ${active.fields?.appearance?.length || 0}/${active.fields?.outfit?.length || 0}/${active.fields?.expression?.length || 0}/${active.fields?.composition?.length || 0} tags`;
-            } else {
-                image.removeAttribute('src');
-                canvas.classList.remove('has-image');
-                if (meta) meta.textContent = '활성 리비전 없음';
+                </div>`;
+            }).join('');
+
+            if (meta) {
+                if (active || llmActive) {
+                    const u = active ? `사용자 R${revisions.indexOf(active) + 1}(${active.fields?.appearance?.length || 0}/${active.fields?.outfit?.length || 0}/${active.fields?.expression?.length || 0}/${active.fields?.composition?.length || 0})` : '사용자 없음';
+                    const l = llmActive ? `LLM R${revisions.indexOf(llmActive) + 1}(${llmActive.fields?.appearance?.length || 0}/${llmActive.fields?.outfit?.length || 0}/${llmActive.fields?.expression?.length || 0}/${llmActive.fields?.composition?.length || 0})` : 'LLM 없음';
+                    meta.textContent = `${l} · ${u}`;
+                } else {
+                    meta.textContent = '활성 리비전 없음';
+                }
             }
         }
+
+        function cmRenderLlmTags() {
+            const container = document.getElementById('cm-llm-tags');
+            if (!container || !cmSession) return;
+            const llmFields = cmSession.llm_fields || {};
+            const chips = [];
+            for (const field of CM_FIELDS) {
+                for (const tag of (llmFields[field] || [])) {
+                    chips.push(`<span class="cm-llm-tag-chip">${escapeHtml(CM_FIELD_LABELS[field])}: ${escapeHtml(tag)}</span>`);
+                }
+            }
+            // title 은 항상 유지
+            const titleHtml = '<span class="cm-llm-tags-title">LLM 태그</span>';
+            container.innerHTML = chips.length
+                ? titleHtml + chips.join('')
+                : titleHtml + '<span class="cm-llm-tags-empty">아직 LLM이 수정한 태그가 없습니다.</span>';
+        }
+
+        // 하위 호환: 기존 호출 지점(cmRenderRevisions 이름)이 있을 수 있어 분할 렌더로 위임.
+        function cmRenderRevisions() { cmRenderStage(); }
 
         function cmRenderStatus() {
             if (!cmSession) return;
@@ -29024,7 +29269,8 @@
             CM_FIELDS.forEach(field => cmRenderField(field));
             cmRenderChat();
             cmRenderReferences();
-            cmRenderRevisions();
+            cmRenderStage();
+            cmRenderLlmTags();
             cmRenderStatus();
             cmRenderDiff();
             cmRenderPromptLockSummary();
@@ -29173,7 +29419,7 @@
         function cmFeedbackKeydown(event) {
             if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
                 event.preventDefault();
-                cmRevise();
+                cmRevise('user');
             }
         }
 
@@ -29182,22 +29428,30 @@
             document.getElementById('cm-busy-overlay')?.classList.toggle('visible', cmBusy);
             const busyText = document.getElementById('cm-busy-text');
             if (busyText) busyText.textContent = message;
-            ['cm-revise-btn', 'cm-generate-btn', 'cm-confirm-open-btn'].forEach(id => {
+            ['cm-revise-user-btn', 'cm-revise-llm-btn', 'cm-generate-btn', 'cm-accept-btn', 'cm-confirm-open-btn'].forEach(id => {
                 const button = document.getElementById(id);
                 if (button) button.disabled = cmBusy;
             });
         }
 
-        async function cmRevise() {
+        async function cmRevise(base) {
             if (cmBusy || !cmSession) return;
+            if (base !== 'user' && base !== 'llm') {
+                console.error('[CHARACTER_MAKER] cmRevise base 오류:', base);
+                return;
+            }
             const input = document.getElementById('cm-feedback-input');
             const message = input?.value.trim() || '';
             if (!message) {
                 showToast('LLM에게 전달할 요청이나 피드백을 입력하세요.', 'error');
                 return;
             }
-            const needsVision = !!cmSession.active_revision_id || !!(cmSession.references || []).length;
-            const routeCapability = cmSession.active_revision_id
+            const baseRevisionId = base === 'llm'
+                ? cmSession.llm_active_revision_id
+                : cmSession.active_revision_id;
+            const hasBaseImage = !!baseRevisionId;
+            const needsVision = hasBaseImage || !!(cmSession.references || []).length;
+            const routeCapability = hasBaseImage
                 ? cmCapabilities?.routes?.feedback
                 : cmCapabilities?.routes?.draft;
             const routeVisionReady = routeCapability
@@ -29207,21 +29461,57 @@
                 showToast('현재 입력에는 비전 지원 LLM 경로가 필요합니다. 외부 API 분기를 확인하세요.', 'error');
                 return;
             }
-            cmSetBusy(true, cmSession.active_revision_id ? '현재 이미지와 피드백을 함께 분석하는 중...' : '세계관에서 캐릭터 태그를 설계하는 중...');
+            const baseLabel = base === 'llm' ? 'LLM 기준' : '사용자 기준';
+            cmSetBusy(true, hasBaseImage
+                ? `${baseLabel} · 현재 이미지와 피드백을 함께 분석하는 중...`
+                : `${baseLabel} · 세계관에서 캐릭터 태그를 설계하는 중...`);
+            const sessionId = cmSession.id;
             try {
-                const data = await cmRequest(`/api/character_maker/session/${encodeURIComponent(cmSession.id)}/revise`, {
+                // 1) LLM 수정(base 에서 출발 → 결과는 llm_fields 에 저장)
+                const revisePayload = { ...cmCurrentPayload(), base, message };
+                // base=="llm" 은 사용자 fields 를 서버에 보내지 않는다(사용자 영역 보존).
+                if (base === 'llm') delete revisePayload.fields;
+                const data = await cmRequest(`/api/character_maker/session/${encodeURIComponent(sessionId)}/revise`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ ...cmCurrentPayload(), message }),
+                    body: JSON.stringify(revisePayload),
                 });
                 cmSession = data.session;
                 cmLastDiff = data.diff || null;
                 if (data.rag?.enabled) cmRagVerified = true;
-                if (input) input.value = '';
                 cmApplySettingsToUI();
                 cmRender();
+                if (input) input.value = '';
+
+                // LLM 결과(llm_fields)에 외모/복장이 없으면 그릴 수 없다.
+                const llmFields = cmSession.llm_fields || {};
+                if (!(llmFields.appearance || []).length || !(llmFields.outfit || []).length) {
+                    const ragNote = data.rag?.enabled ? ' · RAG 후보 검증 포함' : '';
+                    showToast(`LLM이 태그를 수정했지만 외모/복장이 부족해 그리지 못했습니다${ragNote}.`, 'error');
+                    return;
+                }
+
+                // 2) 즉시 다시 그리기(우측 LLM 이미지)
+                cmSetBusy(true, `${baseLabel} · ComfyUI에서 LLM 결과를 그리는 중...`);
+                const promptData = await cmBuildPromptData('llm');
+                const genPayload = {
+                    world_context: cmSession.world_context || '',
+                    locks: Object.fromEntries(CM_FIELDS.map(field => [field, !!cmSession.locks?.[field]])),
+                    settings: cmCollectSettings(),
+                    source: 'llm',
+                    positive_prompt: promptData.positive,
+                    negative_prompt: promptData.negative || '',
+                    note: `LLM(${baseLabel}) · 외모 ${(llmFields.appearance || []).length} · 복장 ${(llmFields.outfit || []).length} · 표정 ${(llmFields.expression || []).length} · 구도 ${(llmFields.composition || []).length}`,
+                };
+                const genData = await cmRequest(`/api/character_maker/session/${encodeURIComponent(sessionId)}/generate`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(genPayload),
+                });
+                cmSession = genData.session;
+                cmRender();
                 const ragNote = data.rag?.enabled ? ' · RAG 후보 검증 포함' : '';
-                showToast('LLM 공동 편집이 반영되었습니다' + ragNote, 'success');
+                showToast(`${baseLabel} LLM 수정 후 이미지를 그렸습니다${ragNote}.`, 'success');
             } catch (error) {
                 console.error('[CHARACTER_MAKER] LLM 수정 실패:', error);
                 if (cmSession?.settings?.rag_enabled) {
@@ -29234,14 +29524,39 @@
             }
         }
 
-        function cmBuildGenerationSlot() {
+        async function cmAccept() {
+            if (cmBusy || !cmSession) return;
+            if (!cmSession.llm_active_revision_id) {
+                showToast('accept 할 LLM 결과가 없습니다. 먼저 LLM 수정으로 이미지를 그려주세요.', 'error');
+                return;
+            }
+            cmSetBusy(true, 'LLM 결과를 사용자 영역으로 복사하는 중...');
+            try {
+                const data = await cmRequest(`/api/character_maker/session/${encodeURIComponent(cmSession.id)}/accept`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                });
+                cmSession = data.session;
+                cmApplySettingsToUI();
+                cmRender();
+                showToast('LLM 결과(태그+이미지)를 사용자 영역으로 복사했습니다.', 'success');
+            } catch (error) {
+                console.error('[CHARACTER_MAKER] accept 실패:', error);
+                showToast('accept 실패: ' + error.message, 'error');
+            } finally {
+                cmSetBusy(false);
+            }
+        }
+
+        function cmBuildGenerationSlot(fields = cmSession?.fields) {
             const settings = cmCollectSettings();
+            const src = fields || (cmSession?.fields);
             return {
                 asset_workflow_type: settings.asset_workflow_type,
-                raw_appearance_tags: [...(cmSession.fields.appearance || [])],
-                raw_outfit_tags: [...(cmSession.fields.outfit || [])],
-                raw_expression_tags: [...(cmSession.fields.expression || [])],
-                raw_composition_tags: [...(cmSession.fields.composition || [])],
+                raw_appearance_tags: [...(src.appearance || [])],
+                raw_outfit_tags: [...(src.outfit || [])],
+                raw_expression_tags: [...(src.expression || [])],
+                raw_composition_tags: [...(src.composition || [])],
                 quality_preset: settings.quality_preset,
                 artist_preset: settings.artist_preset,
                 negative_preset: settings.negative_preset,
@@ -29284,12 +29599,15 @@
             };
         }
 
-        async function cmBuildPromptData() {
+        async function cmBuildPromptData(source = 'user') {
             if (!assetTags) {
                 console.error('[CHARACTER_MAKER] 프롬프트 생성 실패: assetTags가 비어 있습니다.');
                 throw new Error('에셋 프리셋 데이터가 준비되지 않았습니다.');
             }
-            const promptData = await buildBatchSlotPromptData(cmBuildGenerationSlot());
+            const fields = source === 'llm'
+                ? (cmSession?.llm_fields || cmSession?.fields)
+                : (cmSession?.fields);
+            const promptData = await buildBatchSlotPromptData(cmBuildGenerationSlot(fields));
             if (!promptData?.positive) {
                 console.error('[CHARACTER_MAKER] 프롬프트 생성 결과가 비어 있습니다:', promptData);
                 throw new Error('생성 프롬프트를 만들지 못했습니다.');
@@ -29305,9 +29623,10 @@
             }
             cmSetBusy(true, 'ComfyUI에서 새 리비전을 생성하는 중...');
             try {
-                const promptData = await cmBuildPromptData();
+                const promptData = await cmBuildPromptData('user');
                 const payload = {
                     ...cmCurrentPayload(),
+                    source: 'user',
                     positive_prompt: promptData.positive,
                     negative_prompt: promptData.negative || '',
                     note: `외모 ${cmSession.fields.appearance.length} · 복장 ${cmSession.fields.outfit.length} · 표정 ${cmSession.fields.expression.length} · 구도 ${cmSession.fields.composition.length}`,
@@ -29411,19 +29730,21 @@
             }
         }
 
-        async function cmSelectRevision(revisionId) {
-            if (cmBusy || !cmSession || cmSession.active_revision_id === revisionId) return;
+        async function cmSelectRevision(revisionId, source) {
+            if (cmBusy || !cmSession) return;
+            const key = source === 'llm' ? 'llm_active_revision_id' : 'active_revision_id';
+            if (cmSession[key] === revisionId) return;
             try {
                 const data = await cmRequest(`/api/character_maker/session/${encodeURIComponent(cmSession.id)}`, {
                     method: 'PATCH',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ active_revision_id: revisionId }),
+                    body: JSON.stringify({ [key]: revisionId }),
                 });
                 cmSession = data.session;
-                cmRenderRevisions();
+                cmRenderStage();
                 cmRenderStatus();
             } catch (error) {
-                console.error('[CHARACTER_MAKER] 리비전 선택 실패:', revisionId, error);
+                console.error('[CHARACTER_MAKER] 리비전 선택 실패:', revisionId, source, error);
                 showToast('리비전 선택 실패: ' + error.message, 'error');
             }
         }

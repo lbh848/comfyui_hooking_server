@@ -286,9 +286,113 @@ async def test_revise_preserves_locked_field(monkeypatch, tmp_path):
     result = await service.revise(session["id"], {"message": "복장을 더 단정하게"})
 
     assert calls[0][0] == "character_maker_draft"
+    # LLM 수정 결과는 llm_fields 에 기록된다(사용자 fields 는 건드리지 않음).
     assert result["session"]["fields"]["appearance"] == ["blue_eyes"]
-    assert result["session"]["fields"]["outfit"] == ["tailored_coat"]
+    assert result["session"]["fields"]["outfit"] == ["old_coat"]
+    assert result["session"]["llm_fields"]["appearance"] == ["blue_eyes"]  # 잠금 보존
+    assert result["session"]["llm_fields"]["outfit"] == ["tailored_coat"]
     assert result["diff"]["appearance"] == {"added": [], "removed": []}
+
+
+@pytest.mark.asyncio
+async def test_revise_base_llm_starts_from_llm_fields(monkeypatch, tmp_path):
+    """base='llm' 은 사용자 fields 를 무시하고 llm_fields 에서 출발한다."""
+    service, _ = _service(tmp_path)
+    session = service.create_session()
+    service.update_session(
+        session["id"],
+        {
+            "fields": {
+                "appearance": ["blue_eyes"],
+                "outfit": ["user_coat"],
+                "expression": [],
+                "composition": [],
+            },
+            "llm_fields": {
+                "appearance": ["silver_hair"],
+                "outfit": ["llm_coat"],
+                "expression": [],
+                "composition": [],
+            },
+        },
+    )
+
+    async def fake_call(task_key, messages, **kwargs):
+        # LLM 이 받은 current_fields 가 llm_fields 기반이어야 한다.
+        return _llm_payload(
+            appearance=["silver_hair", "green_eyes"],
+            outfit=["tailored_coat"],
+            expression=["smile"],
+            composition=["upper_body"],
+        )
+
+    monkeypatch.setattr(character_maker_module.llm_service, "callLLMTask", fake_call)
+
+    result = await service.revise(
+        session["id"], {"message": "더 차갑게", "base": "llm"}
+    )
+    # 사용자 fields 는 변경되지 않는다.
+    assert result["session"]["fields"]["outfit"] == ["user_coat"]
+    # LLM 결과는 llm_fields 에 누적되며, base 가 llm_fields 였으므로 silver_hair 가 출발점.
+    assert result["session"]["llm_fields"]["appearance"] == ["silver_hair", "green_eyes"]
+    assert result["session"]["llm_fields"]["outfit"] == ["tailored_coat"]
+
+
+def test_accept_copies_llm_result_to_user(tmp_path):
+    service, _ = _service(tmp_path)
+    session = service.create_session()
+    service.update_session(
+        session["id"],
+        {
+            "fields": {
+                "appearance": ["blue_eyes"],
+                "outfit": ["user_coat"],
+                "expression": [],
+                "composition": [],
+            },
+            "llm_fields": {
+                "appearance": ["silver_hair"],
+                "outfit": ["tailored_coat"],
+                "expression": ["smile"],
+                "composition": ["portrait"],
+            },
+        },
+    )
+    # 우측(LLM) 이미지로 쓸 리비전을 하나 올린다(source=llm).
+    image_path = (
+        Path(service.temp_root) / session["id"] / "images" / "llm_revision.webp"
+    )
+    prompt_path = image_path.with_name("llm_revision_prompt.json")
+    image_path.write_bytes(b"llm-revision-image")
+    prompt_path.write_text("{}", encoding="utf-8")
+    public = service.add_revision(
+        session["id"],
+        image_path=str(image_path),
+        prompt_path=str(prompt_path),
+        positive="positive[END]",
+        negative="negative",
+        note="llm",
+        source="llm",
+    )
+    llm_revision_id = public["llm_active_revision_id"]
+    assert llm_revision_id
+
+    accepted = service.accept(session["id"])
+    # 태그 복사
+    assert accepted["fields"]["appearance"] == ["silver_hair"]
+    assert accepted["fields"]["outfit"] == ["tailored_coat"]
+    # 이미지(리비전 id) 복사 — 좌측 활성이 우측과 동일.
+    assert accepted["active_revision_id"] == llm_revision_id
+    # llm_fields/llm_active_revision_id 은 유지(이어 편집 가능).
+    assert accepted["llm_active_revision_id"] == llm_revision_id
+    assert accepted["llm_fields"]["appearance"] == ["silver_hair"]
+
+
+def test_accept_without_llm_result_errors(tmp_path):
+    service, _ = _service(tmp_path)
+    session = service.create_session()
+    with pytest.raises(CharacterMakerError):
+        service.accept(session["id"])
 
 
 @pytest.mark.asyncio
@@ -344,7 +448,7 @@ async def test_rag_only_accepts_candidates_or_existing_user_tags(monkeypatch, tm
     monkeypatch.setattr(service, "_rag_search", fake_search)
 
     result = await service.revise(session["id"], {"message": "은발 코트 캐릭터"})
-    fields = result["session"]["fields"]
+    fields = result["session"]["llm_fields"]
 
     assert fields["appearance"] == ["user_freckles", "silver_hair"]
     assert fields["outfit"] == ["long_coat"]

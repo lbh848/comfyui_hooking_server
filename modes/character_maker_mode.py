@@ -338,12 +338,14 @@ class CharacterMakerService:
             "updated_at": now,
             "world_context": "",
             "fields": {field: [] for field in EDITABLE_FIELDS},
+            "llm_fields": {field: [] for field in EDITABLE_FIELDS},
             "locks": {field: False for field in EDITABLE_FIELDS},
             "settings": self._default_settings(),
             "chat": [],
             "references": [],
             "revisions": [],
             "active_revision_id": "",
+            "llm_active_revision_id": "",
             "finalized": None,
         }
 
@@ -376,18 +378,26 @@ class CharacterMakerService:
         # 누락된 최상위 필드 보완.
         data.setdefault("world_context", "")
         data.setdefault("fields", {field: [] for field in EDITABLE_FIELDS})
+        data.setdefault("llm_fields", {field: [] for field in EDITABLE_FIELDS})
         data.setdefault("locks", {field: False for field in EDITABLE_FIELDS})
         data.setdefault("settings", {})
         data.setdefault("chat", [])
         data.setdefault("references", [])
         data.setdefault("revisions", [])
         data.setdefault("active_revision_id", "")
+        data.setdefault("llm_active_revision_id", "")
         data.setdefault("finalized", None)
         data.setdefault("created_at", _now_iso())
         data.setdefault("updated_at", _now_iso())
         for field in EDITABLE_FIELDS:
             data["fields"].setdefault(field, [])
+            data["llm_fields"].setdefault(field, [])
             data["locks"].setdefault(field, False)
+        # 과거 리비전은 사용자 생성(source 없음 → "user")으로 표시한다.
+        for item in data["revisions"]:
+            if not isinstance(item, dict):
+                continue
+            item.setdefault("source", "user")
         # 새 설정 키가 추가되어도 기본값으로 채운다(사용자 값은 보존).
         defaults = self._default_settings()
         for key, value in defaults.items():
@@ -428,6 +438,16 @@ class CharacterMakerService:
         ):
             print(f"[CHARACTER_MAKER] 로드 시 활성 리비전이 없어 해제: id={active_id}")
             data["active_revision_id"] = ""
+
+        # LLM(우측) 활성 리비전이 정리 중에 사라졌으면 해제.
+        llm_active_id = data.get("llm_active_revision_id", "")
+        if llm_active_id and not any(
+            item.get("id") == llm_active_id for item in data["revisions"]
+        ):
+            print(
+                f"[CHARACTER_MAKER] 로드 시 LLM 활성 리비전이 없어 해제: id={llm_active_id}"
+            )
+            data["llm_active_revision_id"] = ""
 
         session_dir = self._session_dir()
         os.makedirs(os.path.join(session_dir, "references"), exist_ok=True)
@@ -510,6 +530,7 @@ class CharacterMakerService:
     def public_session(self, session_id: str) -> dict[str, Any]:
         session = self._session(session_id)
         active_revision_id = session.get("active_revision_id", "")
+        llm_active_revision_id = session.get("llm_active_revision_id", "")
         references = [
             {
                 "id": item["id"],
@@ -525,8 +546,10 @@ class CharacterMakerService:
                 "created_at": item["created_at"],
                 "fields": copy.deepcopy(item["fields"]),
                 "note": item.get("note", ""),
+                "source": item.get("source", "user"),
                 "url": f"/api/character_maker/session/{session_id}/image/{item['id']}",
                 "active": item["id"] == active_revision_id,
+                "llm_active": item["id"] == llm_active_revision_id,
             }
             for item in session["revisions"]
         ]
@@ -537,12 +560,14 @@ class CharacterMakerService:
             "updated_at": session["updated_at"],
             "world_context": session["world_context"],
             "fields": copy.deepcopy(session["fields"]),
+            "llm_fields": copy.deepcopy(session["llm_fields"]),
             "locks": copy.deepcopy(session["locks"]),
             "settings": copy.deepcopy(session["settings"]),
             "chat": copy.deepcopy(session["chat"]),
             "references": references,
             "revisions": revisions,
             "active_revision_id": active_revision_id,
+            "llm_active_revision_id": llm_active_revision_id,
             "finalized": copy.deepcopy(session.get("finalized")),
         }
         # 워크플로우 타입은 CM 세션 스냅샷이 아닌 전역 config의 live 값을 따른다.
@@ -572,6 +597,8 @@ class CharacterMakerService:
             session["world_context"] = world_context[:20000]
         if "fields" in payload:
             session["fields"] = _normalize_fields(payload.get("fields"))
+        if "llm_fields" in payload:
+            session["llm_fields"] = _normalize_fields(payload.get("llm_fields"))
         if "locks" in payload:
             session["locks"] = _normalize_locks(payload.get("locks"))
         if "settings" in payload:
@@ -583,6 +610,13 @@ class CharacterMakerService:
             ):
                 raise CharacterMakerError("선택한 리비전을 찾을 수 없습니다.")
             session["active_revision_id"] = revision_id
+        if "llm_active_revision_id" in payload:
+            revision_id = str(payload.get("llm_active_revision_id") or "")
+            if revision_id and not any(
+                item["id"] == revision_id for item in session["revisions"]
+            ):
+                raise CharacterMakerError("선택한 LLM 리비전을 찾을 수 없습니다.")
+            session["llm_active_revision_id"] = revision_id
         session["updated_at"] = _now_iso()
         self._persist_session(session)
         return self.public_session(session_id)
@@ -769,9 +803,26 @@ class CharacterMakerService:
             None,
         )
 
-    def _vision_sheet(self, session: dict[str, Any]) -> tuple[str, str] | None:
+    def _active_revision_for(
+        self, session: dict[str, Any], base: str
+    ) -> dict[str, Any] | None:
+        """base 가 'llm' 이면 우측(LLM) 활성 리비전, 그 외는 좌측(사용자) 활성 리비전."""
+        if base == "llm":
+            active_id = session.get("llm_active_revision_id", "")
+        else:
+            active_id = session.get("active_revision_id", "")
+        if not active_id:
+            return None
+        return next(
+            (item for item in session["revisions"] if item["id"] == active_id),
+            None,
+        )
+
+    def _vision_sheet(
+        self, session: dict[str, Any], *, base: str = "user"
+    ) -> tuple[str, str] | None:
         sources: list[tuple[str, str]] = []
-        active = self._active_revision(session)
+        active = self._active_revision_for(session, base)
         if active and os.path.isfile(active["image_path"]):
             sources.append(("CURRENT", active["image_path"]))
         for index, item in enumerate(
@@ -814,7 +865,12 @@ class CharacterMakerService:
             raise CharacterMakerError("비전 입력 이미지를 준비하지 못했습니다.") from exc
 
     def _revision_messages(
-        self, session: dict[str, Any], feedback: str, *, rag_enabled: bool
+        self,
+        session: dict[str, Any],
+        feedback: str,
+        *,
+        rag_enabled: bool,
+        base: str = "user",
     ) -> list[dict[str, str]]:
         system = (
             "You are a collaborative character-design editor for an image-generation UI. "
@@ -829,10 +885,13 @@ class CharacterMakerService:
             f"Danbooru RAG is {'enabled' if rag_enabled else 'disabled'}."
         )
         history = session["chat"][:-1][-12:]
+        base_fields = (
+            session["llm_fields"] if base == "llm" else session["fields"]
+        )
         user_payload = {
             "world_context": session["world_context"],
             "feedback": feedback,
-            "current_fields": session["fields"],
+            "current_fields": base_fields,
             "locks": session["locks"],
             "read_only_settings": session["settings"],
             "recent_conversation": history,
@@ -972,7 +1031,11 @@ class CharacterMakerService:
         session: dict[str, Any],
         draft: dict[str, Any],
         config: dict[str, Any],
+        base: str = "user",
     ) -> tuple[dict[str, list[str]], dict[str, Any]]:
+        base_fields = (
+            session["llm_fields"] if base == "llm" else session["fields"]
+        )
         jobs: list[tuple[str, str]] = []
         for field in EDITABLE_FIELDS:
             if session["locks"][field]:
@@ -987,7 +1050,7 @@ class CharacterMakerService:
                 f"[CHARACTER_MAKER_RAG] 검색 단위 없음: session={session['id']}, "
                 "현재 필드를 유지합니다."
             )
-            return copy.deepcopy(session["fields"]), {"queries": [], "candidates": {}}
+            return copy.deepcopy(base_fields), {"queries": [], "candidates": {}}
 
         unique_queries = list(dict.fromkeys(query for _, query in jobs))
         semaphore = asyncio.Semaphore(4)
@@ -1004,13 +1067,13 @@ class CharacterMakerService:
             field: [] for field in EDITABLE_FIELDS
         }
         for field in EDITABLE_FIELDS:
-            for tag in session["fields"][field]:
+            for tag in base_fields[field]:
                 candidates[field].append(
                     {
-                        "query": "(current user value)",
+                        "query": "(current base value)",
                         "tag": tag,
                         "score": None,
-                        "definition": "User-authored current tag; trusted for preservation.",
+                        "definition": "Base tag currently in context; trusted for preservation.",
                         "aliases": [],
                     }
                 )
@@ -1045,7 +1108,7 @@ class CharacterMakerService:
                 "content": json.dumps(
                     {
                         "world_context": session["world_context"],
-                        "current_fields": session["fields"],
+                        "current_fields": base_fields,
                         "locks": session["locks"],
                         "draft_intent": draft,
                         "candidate_pool": candidates,
@@ -1063,7 +1126,7 @@ class CharacterMakerService:
         dropped: dict[str, list[str]] = {}
         for field in EDITABLE_FIELDS:
             if session["locks"][field]:
-                final_fields[field] = list(session["fields"][field])
+                final_fields[field] = list(base_fields[field])
                 dropped[field] = []
                 continue
             allowed = {
@@ -1072,7 +1135,7 @@ class CharacterMakerService:
                 if str(item.get("tag") or "").strip()
             }
             if not allowed:
-                final_fields[field] = list(session["fields"][field])
+                final_fields[field] = list(base_fields[field])
                 dropped[field] = list(selected["fields"][field])
                 print(
                     f"[CHARACTER_MAKER_RAG] 후보 없음으로 현재값 유지: "
@@ -1108,19 +1171,26 @@ class CharacterMakerService:
         if not isinstance(payload, dict):
             raise CharacterMakerError("수정 요청은 객체여야 합니다.")
         session = self._session(session_id)
+        base = str(payload.get("base") or "user")
+        if base not in ("user", "llm"):
+            raise CharacterMakerError("base 는 user 또는 llm 이어야 합니다.")
+        # base=="user" 일 때만 사용자 fields 를 동기화한다.
+        # base=="llm" 은 사용자 fields 를 건드리지 않고 LLM 작업 영역(llm_fields)에서 출발한다.
+        sync_keys = ("world_context", "locks", "settings")
+        if base == "user":
+            sync_keys = sync_keys + ("fields",)
         self.update_session(
             session_id,
-            {
-                key: payload[key]
-                for key in ("world_context", "fields", "locks", "settings")
-                if key in payload
-            },
+            {key: payload[key] for key in sync_keys if key in payload},
         )
         feedback = payload.get("message")
         if not isinstance(feedback, str) or not feedback.strip():
             raise CharacterMakerError("LLM에게 전달할 요청이나 피드백을 입력하세요.")
         feedback = feedback.strip()[:8000]
-        before = copy.deepcopy(session["fields"])
+        base_fields = (
+            session["llm_fields"] if base == "llm" else session["fields"]
+        )
+        before = copy.deepcopy(base_fields)
         session["chat"].append(
             {"id": uuid.uuid4().hex, "role": "user", "content": feedback, "at": _now_iso()}
         )
@@ -1128,10 +1198,12 @@ class CharacterMakerService:
 
         config = self.config_getter() or {}
         rag_enabled = bool(session["settings"].get("rag_enabled", False))
-        active = self._active_revision(session)
+        active = self._active_revision_for(session, base)
         task_key = "character_maker_feedback" if active else "character_maker_draft"
-        vision = self._vision_sheet(session)
-        messages = self._revision_messages(session, feedback, rag_enabled=rag_enabled)
+        vision = self._vision_sheet(session, base=base)
+        messages = self._revision_messages(
+            session, feedback, rag_enabled=rag_enabled, base=base
+        )
         draft = await self._call_revision_llm(
             task_key, messages, vision, require_queries=True
         )
@@ -1147,6 +1219,7 @@ class CharacterMakerService:
                 session=session,
                 draft=draft,
                 config=config,
+                base=base,
             )
             final_fields = refined_fields
             rag_meta = {"enabled": True, **rag_details}
@@ -1156,7 +1229,9 @@ class CharacterMakerService:
         for field in EDITABLE_FIELDS:
             if session["locks"][field]:
                 final_fields[field] = list(before[field])
-        session["fields"] = _normalize_fields(final_fields)
+        # LLM 수정 결과는 항상 LLM 작업 영역(llm_fields)에 기록한다.
+        # 사용자 영역(fields)은 accept 로만 갱신된다.
+        session["llm_fields"] = _normalize_fields(final_fields)
         assistant_message = draft["assistant_message"]
         session["chat"].append(
             {
@@ -1176,7 +1251,7 @@ class CharacterMakerService:
         return {
             "success": True,
             "session": self.public_session(session_id),
-            "diff": _tag_diff(before, session["fields"]),
+            "diff": _tag_diff(before, session["llm_fields"]),
             "rag": rag_meta,
         }
 
@@ -1189,17 +1264,26 @@ class CharacterMakerService:
         positive: str,
         negative: str,
         note: str = "",
+        source: str = "user",
     ) -> dict[str, Any]:
+        if source not in ("user", "llm"):
+            raise CharacterMakerError("source 는 user 또는 llm 이어야 합니다.")
         session = self._session(session_id)
         _assert_within(self.temp_root, image_path)
         _assert_within(self.temp_root, prompt_path)
         if not os.path.isfile(image_path):
             raise CharacterMakerError("생성된 임시 이미지 파일을 찾을 수 없습니다.")
         revision_id = uuid.uuid4().hex
+        fields_snapshot = (
+            copy.deepcopy(session["llm_fields"])
+            if source == "llm"
+            else copy.deepcopy(session["fields"])
+        )
         item = {
             "id": revision_id,
             "created_at": _now_iso(),
-            "fields": copy.deepcopy(session["fields"]),
+            "source": source,
+            "fields": fields_snapshot,
             "settings": copy.deepcopy(session["settings"]),
             "image_path": image_path,
             "prompt_path": prompt_path,
@@ -1208,7 +1292,10 @@ class CharacterMakerService:
             "note": str(note or "")[:1000],
         }
         session["revisions"].append(item)
-        session["active_revision_id"] = revision_id
+        if source == "llm":
+            session["llm_active_revision_id"] = revision_id
+        else:
+            session["active_revision_id"] = revision_id
         while len(session["revisions"]) > MAX_REVISIONS:
             removed = session["revisions"].pop(0)
             for key in ("image_path", "prompt_path"):
@@ -1223,10 +1310,29 @@ class CharacterMakerService:
                             f"session={session_id}, path={path}, error={exc}"
                         )
                         traceback.print_exc()
+        # 정리로 활성/LLM 활성 리비전이 사라졌으면 해제한다.
+        if session["active_revision_id"] and not any(
+            item.get("id") == session["active_revision_id"]
+            for item in session["revisions"]
+        ):
+            print(
+                f"[CHARACTER_MAKER] 활성 리비전 정리로 해제: "
+                f"session={session_id}"
+            )
+            session["active_revision_id"] = ""
+        if session["llm_active_revision_id"] and not any(
+            item.get("id") == session["llm_active_revision_id"]
+            for item in session["revisions"]
+        ):
+            print(
+                f"[CHARACTER_MAKER] LLM 활성 리비전 정리로 해제: "
+                f"session={session_id}"
+            )
+            session["llm_active_revision_id"] = ""
         session["updated_at"] = _now_iso()
         print(
             f"[CHARACTER_MAKER] 리비전 추가: session={session_id}, "
-            f"revision={revision_id}, count={len(session['revisions'])}"
+            f"revision={revision_id}, source={source}, count={len(session['revisions'])}"
         )
         self._persist_session(session)
         return self.public_session(session_id)
@@ -1252,6 +1358,35 @@ class CharacterMakerService:
             ".jpeg": "image/jpeg",
         }.get(ext, "application/octet-stream")
         return item["image_path"], mime
+
+    def accept(self, session_id: str) -> dict[str, Any]:
+        """LLM(우측) 작업 결과를 사용자(좌측) 영역으로 복사한다.
+
+        - llm_fields → fields (태그 복사)
+        - llm_active_revision_id → active_revision_id (이미지 복사, 리비전은 복제하지 않고 id 공유)
+        - llm_fields / llm_active_revision_id 는 유지하여 이어 편집 가능
+        """
+        session = self._session(session_id)
+        llm_revision_id = session.get("llm_active_revision_id", "")
+        llm_fields = session.get("llm_fields")
+        if not llm_revision_id or not any(
+            item.get("id") == llm_revision_id for item in session["revisions"]
+        ):
+            raise CharacterMakerError("accept 할 LLM 결과 이미지가 없습니다.")
+        has_tags = bool(llm_fields) and any(
+            (llm_fields.get(field) or []) for field in EDITABLE_FIELDS
+        )
+        if not has_tags:
+            raise CharacterMakerError("LLM 결과에 복사할 태그가 없습니다.")
+        session["fields"] = copy.deepcopy(llm_fields)
+        session["active_revision_id"] = llm_revision_id
+        session["updated_at"] = _now_iso()
+        print(
+            f"[CHARACTER_MAKER] accept: LLM 결과를 사용자 영역으로 복사: "
+            f"session={session_id}, revision={llm_revision_id}"
+        )
+        self._persist_session(session)
+        return self.public_session(session_id)
 
     async def test_rag(
         self, query: str = "", config_override: dict[str, Any] | None = None
