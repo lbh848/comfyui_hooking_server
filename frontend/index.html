@@ -13053,9 +13053,10 @@
                                 <input type="file" id="llm-test-image" accept="image/*" style="display: none;" onchange="_onLlmTestImagePick(this)">
                             </label>
                             <label id="llm-test-ref-image-label" style="display: none; align-items: center; gap: 4px; font-size: .8rem; color: var(--text2); cursor: pointer; padding: 4px 10px; border: 1px dashed var(--border); border-radius: 6px;" title="REF: CURRENT 와 함께 보낼 참고 이미지(여러 장 가능). 1장 이상 선택 시 CURRENT+REF 다중 비전으로 전송 — 캐릭터 메이커 revise 비전과 동일 경로. 단발/스트리밍 모두 가능.">
-                                🖼 REF <span id="llm-test-ref-image-name">REF (선택, 여러 장)</span>
+                                🖼 REF <span id="llm-test-ref-image-name">(선택, 여러 장)</span>
                                 <input type="file" id="llm-test-ref-image" accept="image/*" multiple style="display: none;" onchange="_onLlmTestRefImagePick(this)">
                             </label>
+                            <button id="llm-test-ref-clear-btn" type="button" onclick="event.stopPropagation(); _clearLlmTestRefImages()" style="display: none; padding: 2px 7px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text2); cursor: pointer; font-size: .75rem; line-height: 1;" title="REF 비우기: 단일 비전(CURRENT만)으로 전환">✕</button>
                             <button id="llm-test-send-btn" onclick="sendLlmTest()"
                                     style="padding: 6px 14px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); cursor: pointer;">전송</button>
                             <button onclick="clearLlmTest()"
@@ -19121,23 +19122,39 @@
             const checked = document.getElementById('llm-test-vision').checked;
             const label = document.getElementById('llm-test-image-label');
             const refLabel = document.getElementById('llm-test-ref-image-label');
+            const refClearBtn = document.getElementById('llm-test-ref-clear-btn');
             if (checked) {
                 if (label) label.style.display = 'flex';
                 if (refLabel) refLabel.style.display = 'flex';
+                if (refClearBtn) refClearBtn.style.display = 'inline-block';
                 if (!_llmTestImage.b64) {
                     await _loadDefaultTestImage();
+                }
+                // REF 기본 1장 자동 채우기(매번 업로드하는 수고 생략).
+                // 단일 비전(CURRENT만)으로 테스트하려면 ✕ 버튼으로 REF를 비우면 된다.
+                if (_llmTestImage.b64 && _llmTestRefImages.length === 0) {
+                    _setRefImages([{ b64: _llmTestImage.b64, mime: _llmTestImage.mime, source: '기본(test_img.webp)' }]);
                 }
             } else {
                 if (label) label.style.display = 'none';
                 if (refLabel) refLabel.style.display = 'none';
+                if (refClearBtn) refClearBtn.style.display = 'none';
                 _clearLlmTestRefImages();
             }
         }
 
-        function _clearLlmTestRefImages() {
-            _llmTestRefImages = [];
+        function _setRefImages(imgs) {
+            _llmTestRefImages = Array.isArray(imgs) ? imgs : [];
             const nameEl = document.getElementById('llm-test-ref-image-name');
-            if (nameEl) nameEl.textContent = 'REF (선택, 여러 장)';
+            if (nameEl) {
+                nameEl.textContent = _llmTestRefImages.length
+                    ? `${_llmTestRefImages.length}장 (${_llmTestRefImages.map(i => i.source).join(', ')})`
+                    : '(선택, 여러 장)';
+            }
+        }
+
+        function _clearLlmTestRefImages() {
+            _setRefImages([]);
             const input = document.getElementById('llm-test-ref-image');
             if (input) input.value = '';
         }
@@ -19159,23 +19176,14 @@
                     }
                     processed += 1;
                     if (processed === total) {
-                        _llmTestRefImages = picked;
-                        const nameEl = document.getElementById('llm-test-ref-image-name');
-                        if (nameEl) {
-                            if (picked.length) {
-                                const names = picked.map(p => p.source).join(', ');
-                                nameEl.textContent = `REF ${picked.length}장 (${names})`;
-                            } else {
-                                nameEl.textContent = 'REF (선택, 여러 장)';
-                            }
-                        }
+                        _setRefImages(picked);
                     }
                 };
                 reader.onerror = () => {
                     showToast(`REF 이미지 읽기 실패: ${file.name}`, 'error');
                     processed += 1;
                     if (processed === total) {
-                        _llmTestRefImages = picked;
+                        _setRefImages(picked);
                     }
                 };
                 reader.readAsDataURL(file);
