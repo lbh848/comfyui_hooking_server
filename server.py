@@ -348,6 +348,23 @@ DEFAULT_CONFIG = {
     },
 }
 
+# LLM 슬롯 4..N 의 config 기본값을 단일 소스(llm_service.LLM_SLOT_COUNT)에서 자동 생성.
+# DEFAULT_CONFIG 는 저장 화이트리스트의 진실 소스이므로, 여기에 키가 있어야 프론트에서
+# 보낸 llm_service4/llm_model4 ... 값이 config.json 에 저장된다. (슬롯 1~3 은 위 리터럴에 명시.)
+for _slot_n in range(4, llm_service.LLM_SLOT_COUNT + 1):
+    _suffix = str(_slot_n)
+    DEFAULT_CONFIG.update({
+        f"llm_service{_suffix}": "",
+        f"llm_model{_suffix}": "",
+        f"llm_url{_suffix}": "",
+        f"llm_custom_body{_suffix}": "",
+        f"llm_reasoning_preset{_suffix}": "auto",
+        f"llm_reasoning_effort{_suffix}": "",
+        f"llm_stream{_suffix}": False,
+        f"llm_stream_idle_timeout_seconds{_suffix}": 90.0,
+        f"llm_max_concurrency{_suffix}": 1,
+    })
+
 # 워크플로우 백업 최대 보관 수 (기본값, config에서 덮어씀)
 DEFAULT_MAX_BACKUP_IMAGES = 500
 
@@ -488,14 +505,14 @@ def _normalize_llm_routing_for_save(raw_routing) -> dict:
     normalized = {}
     for task_key, entry in candidate.items():
         primary = entry.get("primary", "llm1")
-        if primary not in ("llm1", "llm2", "llm3"):
+        if primary not in llm_service.LLM_SLOT_IDS:
             raise ValueError(f"llm_routing.{task_key}.primary 값이 유효하지 않습니다: {primary!r}")
 
         fallback = entry.get("fallback", False)
         if not isinstance(fallback, bool):
             raise ValueError(f"llm_routing.{task_key}.fallback은 true/false여야 합니다.")
         fallback_target = entry.get("fallback_target")
-        if fallback_target is not None and fallback_target not in ("llm1", "llm2", "llm3"):
+        if fallback_target is not None and fallback_target not in llm_service.LLM_SLOT_IDS:
             raise ValueError(
                 f"llm_routing.{task_key}.fallback_target 값이 유효하지 않습니다: "
                 f"{fallback_target!r}"
@@ -4701,9 +4718,12 @@ async def handle_api_llm_keys(request: web.Request) -> web.Response:
     try:
         if request.method == "POST":
             body = await request.json()
-            key1 = (body.get("llm_api_key") or "").strip()
-            key2 = (body.get("llm_api_key2") or "").strip()
-            key3 = (body.get("llm_api_key3") or "").strip()
+            # 슬롯별 키 읽기(빈 문자열이면 삭제). llm_service.LLM_SLOT_COUNT 에서 파생.
+            from modes.llm_service import _current_config as _ls_cfg
+            slot_keys = {}
+            for _n in range(1, llm_service.LLM_SLOT_COUNT + 1):
+                _k = "llm_api_key" if _n == 1 else f"llm_api_key{_n}"
+                slot_keys[_k] = (body.get(_k) or "").strip()
             # 기존 파일 보존하면서 병합 (한쪽만 업데이트 허용)
             existing = {}
             if _os.path.exists(keys_path):
@@ -4713,18 +4733,11 @@ async def handle_api_llm_keys(request: web.Request) -> web.Response:
                 except Exception:
                     existing = {}
             # 빈 문자열이 오면 삭제 (사용자가 지웠다는 의미)
-            if key1:
-                existing["llm_api_key"] = key1
-            else:
-                existing.pop("llm_api_key", None)
-            if key2:
-                existing["llm_api_key2"] = key2
-            else:
-                existing.pop("llm_api_key2", None)
-            if key3:
-                existing["llm_api_key3"] = key3
-            else:
-                existing.pop("llm_api_key3", None)
+            for _k, _val in slot_keys.items():
+                if _val:
+                    existing[_k] = _val
+                else:
+                    existing.pop(_k, None)
 
             _os.makedirs(KEY_DIR_LOCAL, exist_ok=True)
             if _os.path.exists(keys_path):
@@ -4736,21 +4749,18 @@ async def handle_api_llm_keys(request: web.Request) -> web.Response:
                 json.dump(existing, f, ensure_ascii=False, indent=2)
 
             # 런타임 config 동기화
-            from modes.llm_service import _current_config as _ls_cfg
-            _ls_cfg["llm_api_key"] = key1
-            _ls_cfg["llm_api_key2"] = key2
-            _ls_cfg["llm_api_key3"] = key3
+            for _k, _val in slot_keys.items():
+                _ls_cfg[_k] = _val
 
-            print(f"[LLM_KEY] keys saved: key1={'set' if key1 else 'empty'}, key2={'set' if key2 else 'empty'}, key3={'set' if key3 else 'empty'}")
-            return web.json_response({
-                "status": "ok",
-                "set1": bool(key1),
-                "set2": bool(key2),
-                "set3": bool(key3),
-                "llm_api_key": key1,
-                "llm_api_key2": key2,
-                "llm_api_key3": key3,
-            })
+            _saved_response = {"status": "ok"}
+            for _k, _val in slot_keys.items():
+                _saved_response[_k] = _val
+                _set_suffix = "1" if _k == "llm_api_key" else _k[len("llm_api_key"):]
+                _saved_response["set" + _set_suffix] = bool(_val)
+            print("[LLM_KEY] keys saved: " + ", ".join(
+                f"{_k}={'set' if _v else 'empty'}" for _k, _v in slot_keys.items()
+            ))
+            return web.json_response(_saved_response)
 
         if request.method == "DELETE":
             if _os.path.exists(keys_path):
@@ -4760,9 +4770,9 @@ async def handle_api_llm_keys(request: web.Request) -> web.Response:
                 shutil.copy2(keys_path, _os.path.join(requirements_dir, f"llm_keys_before_delete_{stamp}.json"))
                 _os.remove(keys_path)
             from modes.llm_service import _current_config as _ls_cfg
-            _ls_cfg["llm_api_key"] = ""
-            _ls_cfg["llm_api_key2"] = ""
-            _ls_cfg["llm_api_key3"] = ""
+            for _n in range(1, llm_service.LLM_SLOT_COUNT + 1):
+                _k = "llm_api_key" if _n == 1 else f"llm_api_key{_n}"
+                _ls_cfg[_k] = ""
             print("[LLM_KEY] keys deleted")
             return web.json_response({"status": "ok"})
 
@@ -4774,14 +4784,14 @@ async def handle_api_llm_keys(request: web.Request) -> web.Response:
                     existing = json.load(f)
             except Exception:
                 existing = {}
-        return web.json_response({
-            "llm_api_key": existing.get("llm_api_key", ""),
-            "llm_api_key2": existing.get("llm_api_key2", ""),
-            "llm_api_key3": existing.get("llm_api_key3", ""),
-            "set1": bool(existing.get("llm_api_key")),
-            "set2": bool(existing.get("llm_api_key2")),
-            "set3": bool(existing.get("llm_api_key3")),
-        })
+        _get_response = {}
+        for _n in range(1, llm_service.LLM_SLOT_COUNT + 1):
+            _k = "llm_api_key" if _n == 1 else f"llm_api_key{_n}"
+            _val = existing.get(_k, "")
+            _get_response[_k] = _val
+            _set_suffix = "1" if _k == "llm_api_key" else _k[len("llm_api_key"):]
+            _get_response["set" + _set_suffix] = bool(_val)
+        return web.json_response(_get_response)
     except Exception as e:
         tb = traceback.format_exc()
         print(f"[LLM_KEY] error: {e}\n{tb}")
@@ -4989,32 +4999,22 @@ async def handle_api_llm_test_stream(request: web.Request) -> web.StreamResponse
             print(f"[LLM_TEST_STREAM] images 무시: 항목 파싱 실패 (len={len(raw_images)}), 단일 image_b64 로 폴백")
     use_json = bool(body.get("json_mode", False))
     target = (body.get("target") or "llm1").strip().lower()
-    if target not in ("llm1", "llm2", "llm3"):
+    if target not in llm_service.LLM_SLOT_IDS:
         target = "llm1"
 
-    # target 에 따른 서비스/모델/함수 선택
+    # target(slot) 에 따른 서비스/모델/함수 선택. 슬롯별 호출 함수 매핑.
+    _slot_fns = {
+        "llm1": (llm_service.callLLMStream, llm_service.callLLMVisionStream, llm_service.callLLM, llm_service.callLLMVision),
+        "llm2": (llm_service.callLLM2Stream, llm_service.callLLMVision2Stream, llm_service.callLLM2, llm_service.callLLMVision2),
+        "llm3": (llm_service.callLLM3Stream, llm_service.callLLMVision3Stream, llm_service.callLLM3, llm_service.callLLMVision3),
+        "llm4": (llm_service.callLLM4Stream, llm_service.callLLMVision4Stream, llm_service.callLLM4, llm_service.callLLMVision4),
+        "llm5": (llm_service.callLLM5Stream, llm_service.callLLMVision5Stream, llm_service.callLLM5, llm_service.callLLMVision5),
+    }
     cfg = llm_service.get_config()
-    if target == "llm3":
-        cur_service = cfg.get("llm_service3") or cfg.get("llm_service", "")
-        cur_model_key = "llm_model3"
-        fn_stream = llm_service.callLLM3Stream
-        fn_vision_stream = llm_service.callLLMVision3Stream
-        fn_single = llm_service.callLLM3
-        fn_vision_single = llm_service.callLLMVision3
-    elif target == "llm2":
-        cur_service = cfg.get("llm_service2") or cfg.get("llm_service", "")
-        cur_model_key = "llm_model2"
-        fn_stream = llm_service.callLLM2Stream
-        fn_vision_stream = llm_service.callLLMVision2Stream
-        fn_single = llm_service.callLLM2
-        fn_vision_single = llm_service.callLLMVision2
-    else:
-        cur_service = cfg.get("llm_service", "")
-        cur_model_key = "llm_model"
-        fn_stream = llm_service.callLLMStream
-        fn_vision_stream = llm_service.callLLMVisionStream
-        fn_single = llm_service.callLLM
-        fn_vision_single = llm_service.callLLMVision
+    _suffix = "" if target == "llm1" else target[-1]
+    cur_service = cfg.get(f"llm_service{_suffix}") or cfg.get("llm_service", "")
+    cur_model_key = f"llm_model{_suffix}"
+    fn_stream, fn_vision_stream, fn_single, fn_vision_single = _slot_fns.get(target, _slot_fns["llm1"])
 
     resp = web.StreamResponse(status=200, headers={
         "Content-Type": "text/event-stream",
@@ -5123,13 +5123,13 @@ def _load_llm_keys_into_config():
         with open(keys_path, "r", encoding="utf-8") as f:
             data = json.load(f)
         from modes.llm_service import _current_config as _ls_cfg
-        if data.get("llm_api_key"):
-            _ls_cfg["llm_api_key"] = data["llm_api_key"]
-        if data.get("llm_api_key2"):
-            _ls_cfg["llm_api_key2"] = data["llm_api_key2"]
-        if data.get("llm_api_key3"):
-            _ls_cfg["llm_api_key3"] = data["llm_api_key3"]
-        print(f"[LLM_KEY] loaded from key/llm_keys.json: key1={'set' if data.get('llm_api_key') else 'empty'}, key2={'set' if data.get('llm_api_key2') else 'empty'}, key3={'set' if data.get('llm_api_key3') else 'empty'}")
+        _loaded_summary = []
+        for _n in range(1, llm_service.LLM_SLOT_COUNT + 1):
+            _k = "llm_api_key" if _n == 1 else f"llm_api_key{_n}"
+            if data.get(_k):
+                _ls_cfg[_k] = data[_k]
+            _loaded_summary.append(f"key{_n}={'set' if data.get(_k) else 'empty'}")
+        print(f"[LLM_KEY] loaded from key/llm_keys.json: " + ", ".join(_loaded_summary))
     except Exception as e:
         print(f"[LLM_KEY] load failed: {e}")
         traceback.print_exc()
@@ -9312,7 +9312,8 @@ async def handle_api_config(request: web.Request) -> web.Response:
         try:
             body = await request.json()
 
-            for custom_body_key in ("llm_custom_body", "llm_custom_body2", "llm_custom_body3"):
+            for _slot_n in range(1, llm_service.LLM_SLOT_COUNT + 1):
+                custom_body_key = "llm_custom_body" if _slot_n == 1 else f"llm_custom_body{_slot_n}"
                 if custom_body_key not in body:
                     continue
                 raw_custom_body = body.get(custom_body_key) or ""
@@ -13279,11 +13280,9 @@ async def handle_api_character_maker_capabilities(
         def _route_capability(task_key: str) -> dict[str, Any]:
             route = routing.get(task_key, {}) or {}
             slot = route.get("primary", "llm1")
-            service_key = {
-                "llm1": "llm_service",
-                "llm2": "llm_service2",
-                "llm3": "llm_service3",
-            }.get(slot, "llm_service")
+            # slot(llm1..llmN) -> llm_service{N} 키. LLM_SLOT_IDS 외 값은 llm_service 로 폴백.
+            _slot_suffix = "" if slot == "llm1" else (slot[-1] if slot in llm_service.LLM_SLOT_IDS else "")
+            service_key = f"llm_service{_slot_suffix}"
             service_name = str(
                 llm_config.get(service_key)
                 or llm_config.get("llm_service")
@@ -17445,40 +17444,36 @@ async def on_startup(app):
         print(f"[WARN] 초기 워크플로우 로드 실패: {e}")
     # 자동완성 CSV 로드
     autocomplete_service.load_all_csv()
-    # LLM 서비스 설정 초기화
-    llm_service.update_config({
+    # LLM 서비스 설정 초기화. 슬롯 1 + 공통 키는 리터럴로, 슬롯 2..N 은 단일 소스에서 자동 생성.
+    _llm_cfg = {
         "llm_service": app_config.get("llm_service", "copilot"),
         "llm_model": app_config.get("llm_model", "gpt-4.1"),
-        "llm_service2": app_config.get("llm_service2", ""),
-        "llm_model2": app_config.get("llm_model2", ""),
-        "llm_service3": app_config.get("llm_service3", ""),
-        "llm_model3": app_config.get("llm_model3", ""),
         "llm_url": app_config.get("llm_url", ""),
-        "llm_url2": app_config.get("llm_url2", ""),
-        "llm_url3": app_config.get("llm_url3", ""),
         "llm_reasoning_preset": app_config.get("llm_reasoning_preset", "auto"),
         "llm_reasoning_effort": app_config.get("llm_reasoning_effort", ""),
-        "llm_reasoning_preset2": app_config.get("llm_reasoning_preset2", "auto"),
-        "llm_reasoning_effort2": app_config.get("llm_reasoning_effort2", ""),
-        "llm_reasoning_preset3": app_config.get("llm_reasoning_preset3", "auto"),
-        "llm_reasoning_effort3": app_config.get("llm_reasoning_effort3", ""),
         "llm_custom_body": app_config.get("llm_custom_body", ""),
-        "llm_custom_body2": app_config.get("llm_custom_body2", ""),
-        "llm_custom_body3": app_config.get("llm_custom_body3", ""),
         "llm_reasoning_budget_tokens": app_config.get("llm_reasoning_budget_tokens", 0),
         "llm_temperature": app_config.get("llm_temperature", 1.0),
         "llm_max_tokens": app_config.get("llm_max_tokens", 0),
         "llm_stream": app_config.get("llm_stream", False),
-        "llm_stream2": app_config.get("llm_stream2", False),
-        "llm_stream3": app_config.get("llm_stream3", False),
         "llm_max_concurrency": app_config.get("llm_max_concurrency", 1),
-        "llm_max_concurrency2": app_config.get("llm_max_concurrency2", 1),
-        "llm_max_concurrency3": app_config.get("llm_max_concurrency3", 1),
         "llm_stream_idle_timeout_seconds": app_config.get("llm_stream_idle_timeout_seconds", 90.0),
-        "llm_stream_idle_timeout_seconds2": app_config.get("llm_stream_idle_timeout_seconds2", 90.0),
-        "llm_stream_idle_timeout_seconds3": app_config.get("llm_stream_idle_timeout_seconds3", 90.0),
-        "llm_routing": app_config.get("llm_routing", {}),
-    })
+    }
+    for _n in range(2, llm_service.LLM_SLOT_COUNT + 1):
+        _s = str(_n)
+        _llm_cfg.update({
+            f"llm_service{_s}": app_config.get(f"llm_service{_s}", ""),
+            f"llm_model{_s}": app_config.get(f"llm_model{_s}", ""),
+            f"llm_url{_s}": app_config.get(f"llm_url{_s}", ""),
+            f"llm_reasoning_preset{_s}": app_config.get(f"llm_reasoning_preset{_s}", "auto"),
+            f"llm_reasoning_effort{_s}": app_config.get(f"llm_reasoning_effort{_s}", ""),
+            f"llm_custom_body{_s}": app_config.get(f"llm_custom_body{_s}", ""),
+            f"llm_stream{_s}": app_config.get(f"llm_stream{_s}", False),
+            f"llm_max_concurrency{_s}": app_config.get(f"llm_max_concurrency{_s}", 1),
+            f"llm_stream_idle_timeout_seconds{_s}": app_config.get(f"llm_stream_idle_timeout_seconds{_s}", 90.0),
+        })
+    _llm_cfg["llm_routing"] = app_config.get("llm_routing", {})
+    llm_service.update_config(_llm_cfg)
     # API 키는 config.json 이 아닌 key/llm_keys.json 에서 로드
     _load_llm_keys_into_config()
     # 챈섭 키도 config.json과 분리된 key/chansub_key.json에서 로드

@@ -1312,6 +1312,41 @@
             border-bottom: 1px solid var(--border);
         }
         .external-api-group .setting-row { padding-left: 12px; padding-right: 12px; }
+
+        /* LLM 슬롯별 연결 설정 그룹 접기/펼치기(<details> 네이티브). */
+        details.llm-group {
+            margin: 14px 0 0;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: color-mix(in srgb, var(--surface2) 18%, transparent);
+            overflow: hidden;
+        }
+        details.llm-group > summary {
+            list-style: none;
+            cursor: pointer;
+            user-select: none;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            margin: 0;
+            padding: 9px 12px;
+            border-left: 3px solid #00BCD4;
+            background: rgba(0, 188, 212, .08);
+            font-size: .82rem;
+            font-weight: 700;
+            color: var(--text);
+        }
+        details.llm-group > summary::-webkit-details-marker { display: none; }
+        details.llm-group > summary::after {
+            content: '▾';
+            font-size: .7rem;
+            opacity: .7;
+            transition: transform .15s ease;
+        }
+        details.llm-group:not([open]) > summary::after { transform: rotate(-90deg); }
+        details.llm-group[open] > summary { border-bottom: 1px solid var(--border); }
+        details.llm-group .setting-row { padding-left: 12px; padding-right: 12px; }
         .llm-route-header,
         .llm-route-main {
             display: grid;
@@ -12807,7 +12842,8 @@
                 <div class="settings-tab-panel" id="settings-tab-api">
                     <div class="external-api-group">
                         <div class="external-api-group-title">LLM</div>
-                    <div style="margin:16px 0 8px; padding:8px 10px; border-left:3px solid #00BCD4; background:rgba(0,188,212,.08); font-size:.82rem; font-weight:700;">LLM1 연결 설정</div>
+                    <details class="llm-group" open>
+                        <summary>LLM1 연결 설정</summary>
                     <!-- LLM 설정 -->
                     <div class="setting-row">
                         <div class="setting-label">
@@ -12954,8 +12990,10 @@
                                   style="width: 100%; min-height: 120px; padding: 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-family: monospace; font-size: .8rem;"></textarea>
                         <div id="vertex-key-status" style="margin-top: 6px; font-size: .75rem; color: var(--text2);"></div>
                     </div>
+                    </details>
 
-                    <div style="margin:16px 0 8px; padding:8px 10px; border-left:3px solid #00BCD4; background:rgba(0,188,212,.08); font-size:.82rem; font-weight:700;">LLM2 연결 설정</div>
+                    <details class="llm-group">
+                        <summary>LLM2 연결 설정</summary>
                     <div class="setting-row">
                         <div class="setting-label">
                             <div class="title">LLM2 서비스 선택</div>
@@ -13086,8 +13124,10 @@
                                   style="width: 100%; min-height: 120px; padding: 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-family: monospace; font-size: .8rem;"></textarea>
                         <div id="llm-custom-body2-status" style="margin-top:6px; font-size:.75rem; color:var(--text2);"></div>
                     </div>
+                    </details>
 
-                    <div style="margin:16px 0 8px; padding:8px 10px; border-left:3px solid #00BCD4; background:rgba(0,188,212,.08); font-size:.82rem; font-weight:700;">LLM3 연결 설정</div>
+                    <details class="llm-group">
+                        <summary>LLM3 연결 설정</summary>
                     <div class="setting-row"><div class="setting-label"><div class="title">LLM3 서비스 선택</div><div class="desc">비워두면 LLM1 서비스 사용</div></div><div class="setting-control"><select id="setting-llm-service3" onchange="onLlmServiceChange()" style="padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);"><option value="">(LLM1과 동일)</option><option value="copilot">Copilot</option><option value="vertex">Vertex Gemini</option><option value="vertex-openai">Vertex OpenAI</option><option value="openai">OpenAI</option><option value="openrouter">OpenRouter</option><option value="gemini">Gemini (AI Studio)</option><option value="claude">Claude</option><option value="lmstudio">LM Studio (로컬)</option><option value="ollama">Ollama (로컬)</option><option value="ollama-cloud">Ollama Cloud</option></select></div></div>
                     <div class="setting-row"><div class="setting-label"><div class="title">LLM3 모델명</div><div class="desc">LLM3로 사용할 모델명</div></div><div class="setting-control"><input id="setting-llm-model3" type="text" placeholder="예: gpt-4.1" oninput="renderReasoningControls(3)" style="width:220px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);"></div></div>
                     <div class="setting-row" id="llm-api-key3-row" style="display:none;"><div class="setting-label"><div class="title">LLM3 API 키 (옵션)</div><div class="desc">비워두면 LLM1 키 재사용</div></div><div class="setting-control"><input id="setting-llm-api-key3" type="text" placeholder="sk-..." style="width:300px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-family:monospace;"></div></div>
@@ -13133,6 +13173,259 @@
                         <textarea id="setting-llm-custom-body3" placeholder="{ ... }" style="width:100%;min-height:120px;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-family:monospace;"></textarea>
                         <div id="llm-custom-body3-status" style="margin-top:6px;font-size:.75rem;color:var(--text2);"></div>
                     </div>
+                    </details>
+
+                    <details class="llm-group">
+                        <summary>LLM4 연결 설정</summary>
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="title">LLM4 서비스 선택</div>
+                                <div class="desc">비워두면 LLM1 서비스 사용</div>
+                            </div>
+                            <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                                <select id="setting-llm-service4" onchange="onLlmServiceChange()"
+                                        style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: .85rem;">
+                                    <option value="">(LLM1과 동일)</option>
+                                    <option value="copilot">Copilot</option>
+                                    <option value="vertex">Vertex Gemini</option>
+                                    <option value="vertex-openai">Vertex OpenAI</option>
+                                    <option value="openai">OpenAI</option>
+                                    <option value="openrouter">OpenRouter</option>
+                                    <option value="gemini">Gemini (AI Studio)</option>
+                                    <option value="claude">Claude</option>
+                                    <option value="lmstudio">LM Studio (로컬)</option>
+                                    <option value="ollama">Ollama (로컬)</option>
+                                    <option value="ollama-cloud">Ollama Cloud</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="title">LLM4 모델명</div>
+                                <div class="desc">LLM4로 사용할 모델명</div>
+                            </div>
+                            <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                                <input type="text" id="setting-llm-model4" placeholder="예: gpt-4.1" oninput="renderReasoningControls(4)"
+                                       style="width: 220px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text);">
+                            </div>
+                        </div>
+                        <div class="setting-row" id="llm-api-key4-row" style="display: none;">
+                            <div class="setting-label">
+                                <div class="title">LLM4 API 키 (옵션)</div>
+                                <div class="desc">비워두면 LLM1 키 재사용</div>
+                            </div>
+                            <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                                <input type="text" id="setting-llm-api-key4" placeholder="sk-..."
+                                       style="width: 300px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-family: monospace;">
+                            </div>
+                        </div>
+                        <div class="setting-row" id="llm-url4-row" style="display: none;">
+                            <div class="setting-label">
+                                <div class="title">LLM4 베이스 URL (옵션)</div>
+                                <div class="desc">비워두면 LLM1 URL 또는 선택한 서비스의 기본 URL 사용</div>
+                            </div>
+                            <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                                <input type="text" id="setting-llm-url4" placeholder="https://..."
+                                       style="width: 300px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text);">
+                            </div>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="title">LLM4 스트리밍</div>
+                                <div class="desc">LLM4 요청을 실제 chunk 스트림으로 받고 LLM로그창에 실시간 표시합니다.</div>
+                            </div>
+                            <div class="setting-control" style="display:flex; align-items:center; gap:8px;">
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="setting-llm-stream4" onchange="updateLlmStreamStatus(4, this.checked)">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                                <span id="setting-llm-stream4-status" class="toggle-status off">OFF</span>
+                            </div>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="title">LLM4 동시 요청 수</div>
+                                <div class="desc">LLM4에서 동시에 실행할 실제 API 요청 상한입니다. 다른 슬롯과 독립적으로 적용됩니다.</div>
+                            </div>
+                            <div class="setting-control">
+                                <input type="number" id="setting-llm-max-concurrency4" min="1" max="20" step="1"
+                                       style="width:80px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:.85rem;">
+                            </div>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="title">LLM4 스트림 무응답 제한(초)</div>
+                                <div class="desc">LLM4 스트림에만 적용됩니다. 0은 비활성화, 그 외에는 10~3600초입니다.</div>
+                            </div>
+                            <div class="setting-control">
+                                <input type="number" id="setting-llm-stream-idle-timeout4" min="0" max="3600" step="1"
+                                       style="width:92px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:.85rem;">
+                            </div>
+                        </div>
+                        <div class="setting-row" id="llm-reasoning4-row" style="display: flex;">
+                            <div class="setting-label">
+                                <div class="title">LLM4 Reasoning 설정</div>
+                                <div class="desc">비워두면 LLM1 reasoning 설정을 재사용합니다.</div>
+                            </div>
+                            <div class="setting-control" style="display: flex; flex-direction: column; align-items: stretch; gap: 8px; min-width: 360px;">
+                                <select id="setting-llm-reasoning-preset4" onchange="onReasoningPreset4Change()"
+                                        style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: .85rem;">
+                                    <option value="">(LLM1과 동일)</option>
+                                    <option value="auto">auto</option>
+                                    <option value="none">none</option>
+                                    <option value="gpt">gpt</option>
+                                    <option value="glm">glm</option>
+                                    <option value="deepseek">deepseek</option>
+                                    <option value="kimi">kimi</option>
+                                    <option value="claude">claude</option>
+                                    <option value="gemini">gemini</option>
+                                    <option value="custom">custom</option>
+                                </select>
+                                <div id="llm-reasoning4-dynamic"></div>
+                            </div>
+                        </div>
+                        <div class="setting-row" id="llm-custom-body4-row" style="display: flex; flex-direction: column; align-items: stretch;">
+                            <div style="display:flex; justify-content:space-between; gap:10px; align-items:flex-start; margin-bottom:8px;">
+                                <div class="setting-label">
+                                    <div class="title">LLM4 Custom Body (JSON)</div>
+                                    <div class="desc">비어 있으면 LLM1 BODY를 재사용하며, 값이 있으면 LLM4 요청에 재귀 병합합니다.</div>
+                                </div>
+                                <div style="display:flex; gap:6px; flex-shrink:0;">
+                                    <button type="button" onclick="buildReasoningBody(4)" style="padding:6px 10px; border-radius:6px; border:1px solid #00BCD4; background:rgba(0,188,212,.14); color:var(--text); cursor:pointer;">BODY 빌드</button>
+                                    <button type="button" onclick="formatCustomBody(4)" style="padding:6px 10px; border-radius:6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); cursor:pointer;">JSON 정리</button>
+                                </div>
+                            </div>
+                            <textarea id="setting-llm-custom-body4" placeholder="{ ... }"
+                                      style="width: 100%; min-height: 120px; padding: 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-family: monospace; font-size: .8rem;"></textarea>
+                            <div id="llm-custom-body4-status" style="margin-top:6px; font-size:.75rem; color:var(--text2);"></div>
+                        </div>
+                    </details>
+
+                    <details class="llm-group">
+                        <summary>LLM5 연결 설정</summary>
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="title">LLM5 서비스 선택</div>
+                                <div class="desc">비워두면 LLM1 서비스 사용</div>
+                            </div>
+                            <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                                <select id="setting-llm-service5" onchange="onLlmServiceChange()"
+                                        style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: .85rem;">
+                                    <option value="">(LLM1과 동일)</option>
+                                    <option value="copilot">Copilot</option>
+                                    <option value="vertex">Vertex Gemini</option>
+                                    <option value="vertex-openai">Vertex OpenAI</option>
+                                    <option value="openai">OpenAI</option>
+                                    <option value="openrouter">OpenRouter</option>
+                                    <option value="gemini">Gemini (AI Studio)</option>
+                                    <option value="claude">Claude</option>
+                                    <option value="lmstudio">LM Studio (로컬)</option>
+                                    <option value="ollama">Ollama (로컬)</option>
+                                    <option value="ollama-cloud">Ollama Cloud</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="title">LLM5 모델명</div>
+                                <div class="desc">LLM5로 사용할 모델명</div>
+                            </div>
+                            <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                                <input type="text" id="setting-llm-model5" placeholder="예: gpt-4.1" oninput="renderReasoningControls(5)"
+                                       style="width: 220px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text);">
+                            </div>
+                        </div>
+                        <div class="setting-row" id="llm-api-key5-row" style="display: none;">
+                            <div class="setting-label">
+                                <div class="title">LLM5 API 키 (옵션)</div>
+                                <div class="desc">비워두면 LLM1 키 재사용</div>
+                            </div>
+                            <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                                <input type="text" id="setting-llm-api-key5" placeholder="sk-..."
+                                       style="width: 300px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-family: monospace;">
+                            </div>
+                        </div>
+                        <div class="setting-row" id="llm-url5-row" style="display: none;">
+                            <div class="setting-label">
+                                <div class="title">LLM5 베이스 URL (옵션)</div>
+                                <div class="desc">비워두면 LLM1 URL 또는 선택한 서비스의 기본 URL 사용</div>
+                            </div>
+                            <div class="setting-control" style="display: flex; align-items: center; gap: 10px;">
+                                <input type="text" id="setting-llm-url5" placeholder="https://..."
+                                       style="width: 300px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text);">
+                            </div>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="title">LLM5 스트리밍</div>
+                                <div class="desc">LLM5 요청을 실제 chunk 스트림으로 받고 LLM로그창에 실시간 표시합니다.</div>
+                            </div>
+                            <div class="setting-control" style="display:flex; align-items:center; gap:8px;">
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="setting-llm-stream5" onchange="updateLlmStreamStatus(5, this.checked)">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                                <span id="setting-llm-stream5-status" class="toggle-status off">OFF</span>
+                            </div>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="title">LLM5 동시 요청 수</div>
+                                <div class="desc">LLM5에서 동시에 실행할 실제 API 요청 상한입니다. 다른 슬롯과 독립적으로 적용됩니다.</div>
+                            </div>
+                            <div class="setting-control">
+                                <input type="number" id="setting-llm-max-concurrency5" min="1" max="20" step="1"
+                                       style="width:80px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:.85rem;">
+                            </div>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="title">LLM5 스트림 무응답 제한(초)</div>
+                                <div class="desc">LLM5 스트림에만 적용됩니다. 0은 비활성화, 그 외에는 10~3600초입니다.</div>
+                            </div>
+                            <div class="setting-control">
+                                <input type="number" id="setting-llm-stream-idle-timeout5" min="0" max="3600" step="1"
+                                       style="width:92px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:.85rem;">
+                            </div>
+                        </div>
+                        <div class="setting-row" id="llm-reasoning5-row" style="display: flex;">
+                            <div class="setting-label">
+                                <div class="title">LLM5 Reasoning 설정</div>
+                                <div class="desc">비워두면 LLM1 reasoning 설정을 재사용합니다.</div>
+                            </div>
+                            <div class="setting-control" style="display: flex; flex-direction: column; align-items: stretch; gap: 8px; min-width: 360px;">
+                                <select id="setting-llm-reasoning-preset5" onchange="onReasoningPreset5Change()"
+                                        style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-size: .85rem;">
+                                    <option value="">(LLM1과 동일)</option>
+                                    <option value="auto">auto</option>
+                                    <option value="none">none</option>
+                                    <option value="gpt">gpt</option>
+                                    <option value="glm">glm</option>
+                                    <option value="deepseek">deepseek</option>
+                                    <option value="kimi">kimi</option>
+                                    <option value="claude">claude</option>
+                                    <option value="gemini">gemini</option>
+                                    <option value="custom">custom</option>
+                                </select>
+                                <div id="llm-reasoning5-dynamic"></div>
+                            </div>
+                        </div>
+                        <div class="setting-row" id="llm-custom-body5-row" style="display: flex; flex-direction: column; align-items: stretch;">
+                            <div style="display:flex; justify-content:space-between; gap:10px; align-items:flex-start; margin-bottom:8px;">
+                                <div class="setting-label">
+                                    <div class="title">LLM5 Custom Body (JSON)</div>
+                                    <div class="desc">비어 있으면 LLM1 BODY를 재사용하며, 값이 있으면 LLM5 요청에 재귀 병합합니다.</div>
+                                </div>
+                                <div style="display:flex; gap:6px; flex-shrink:0;">
+                                    <button type="button" onclick="buildReasoningBody(5)" style="padding:6px 10px; border-radius:6px; border:1px solid #00BCD4; background:rgba(0,188,212,.14); color:var(--text); cursor:pointer;">BODY 빌드</button>
+                                    <button type="button" onclick="formatCustomBody(5)" style="padding:6px 10px; border-radius:6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); cursor:pointer;">JSON 정리</button>
+                                </div>
+                            </div>
+                            <textarea id="setting-llm-custom-body5" placeholder="{ ... }"
+                                      style="width: 100%; min-height: 120px; padding: 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-family: monospace; font-size: .8rem;"></textarea>
+                            <div id="llm-custom-body5-status" style="margin-top:6px; font-size:.75rem; color:var(--text2);"></div>
+                        </div>
+                    </details>
 
                     </div>
 
@@ -13150,6 +13443,8 @@
                                         <option value="llm1">LLM1</option>
                                         <option value="llm2">LLM2</option>
                                         <option value="llm3">LLM3</option>
+                                        <option value="llm4">LLM4</option>
+                                        <option value="llm5">LLM5</option>
                                     </select>
                                 </label>
                             </div>
@@ -17556,9 +17851,34 @@
             document.getElementById('setting-llm-model2').value = currentConfig.llm_model2 || '';
             document.getElementById('setting-llm-service3').value = currentConfig.llm_service3 || '';
             document.getElementById('setting-llm-model3').value = currentConfig.llm_model3 || '';
-            onReasoningPresetChange();
-            onReasoningPreset2Change();
-            onReasoningPreset3Change();
+            // 슬롯 4/5(및 이후) 공통 필드 적용. 2/3 은 위에서 이미 채웠으므로 스킵.
+            for (const slot of LLM_SLOTS) {
+                if (slot <= 3) continue;
+                const suffix = llmSlotSuffix(slot);
+                const el = id => document.getElementById(id);
+                const streamEl = el(`setting-llm-stream${suffix}`);
+                if (streamEl) streamEl.checked = !!currentConfig[`llm_stream${suffix}`];
+                updateLlmStreamStatus(slot, !!currentConfig[`llm_stream${suffix}`]);
+                const urlEl = el(`setting-llm-url${suffix}`);
+                if (urlEl) urlEl.value = currentConfig[`llm_url${suffix}`] || '';
+                const concEl = el(`setting-llm-max-concurrency${suffix}`);
+                if (concEl) concEl.value = (currentConfig[`llm_max_concurrency${suffix}`] ?? 1);
+                const idleEl = el(`setting-llm-stream-idle-timeout${suffix}`);
+                if (idleEl) idleEl.value = (currentConfig[`llm_stream_idle_timeout_seconds${suffix}`] ?? 90);
+                const presetEl = el(`setting-llm-reasoning-preset${suffix}`);
+                if (presetEl) presetEl.value = currentConfig[`llm_reasoning_preset${suffix}`] || '';
+                const effortEl = el(`setting-llm-reasoning-effort${suffix}`);
+                if (effortEl) effortEl.value = currentConfig[`llm_reasoning_effort${suffix}`] || '';
+                const bodyEl = el(`setting-llm-custom-body${suffix}`);
+                if (bodyEl) bodyEl.value = currentConfig[`llm_custom_body${suffix}`] || '';
+                const svcEl = el(`setting-llm-service${suffix}`);
+                if (svcEl) svcEl.value = currentConfig[`llm_service${suffix}`] || '';
+                const modelEl = el(`setting-llm-model${suffix}`);
+                if (modelEl) modelEl.value = currentConfig[`llm_model${suffix}`] || '';
+            }
+            for (const slot of LLM_SLOTS) {
+                renderReasoningControls(slot);
+            }
             onLlmServiceChange();
 
             // LLM API 키 별도 로드 (key/llm_keys.json)
@@ -18169,12 +18489,20 @@
                 llm_model: 'LLM 모델',
                 llm_service2: 'LLM2 서비스',
                 llm_model2: 'LLM2 모델',
+                llm_service4: 'LLM4 서비스',
+                llm_model4: 'LLM4 모델',
+                llm_service5: 'LLM5 서비스',
+                llm_model5: 'LLM5 모델',
                 llm_max_concurrency: 'LLM1 동시 요청 수',
                 llm_max_concurrency2: 'LLM2 동시 요청 수',
                 llm_max_concurrency3: 'LLM3 동시 요청 수',
+                llm_max_concurrency4: 'LLM4 동시 요청 수',
+                llm_max_concurrency5: 'LLM5 동시 요청 수',
                 llm_stream_idle_timeout_seconds: 'LLM1 스트림 무응답 제한',
                 llm_stream_idle_timeout_seconds2: 'LLM2 스트림 무응답 제한',
                 llm_stream_idle_timeout_seconds3: 'LLM3 스트림 무응답 제한',
+                llm_stream_idle_timeout_seconds4: 'LLM4 스트림 무응답 제한',
+                llm_stream_idle_timeout_seconds5: 'LLM5 스트림 무응답 제한',
                 embedding_provider: '임베딩 프로바이더',
                 embedding_url: '임베딩 URL',
                 embedding_api_key: '임베딩 API Key',
@@ -18400,7 +18728,7 @@
 
         async function saveSettings() {
             persistIllustrationWorkflowPaths();
-            for (const slot of [1, 2, 3]) {
+            for (const slot of LLM_SLOTS) {
                 const suffix = llmSlotSuffix(slot);
                 const textarea = document.getElementById(`setting-llm-custom-body${suffix}`);
                 const raw = textarea?.value.trim() || '';
@@ -18518,6 +18846,23 @@
                 llm_stream_idle_timeout_seconds2: Number(document.getElementById('setting-llm-stream-idle-timeout2').value),
                 llm_stream_idle_timeout_seconds3: Number(document.getElementById('setting-llm-stream-idle-timeout3').value),
             };
+
+            // LLM 슬롯 2..N 의 설정을 단일 소스(LLM_SLOTS)에서 config 객체에 병합한다.
+            // (슬롯 2/3 는 위 리터럴에도 있지만 동일 값으로 덮어쓰므로 무해하다.)
+            for (const slot of LLM_SLOTS) {
+                if (slot === 1) continue;
+                const suffix = llmSlotSuffix(slot);
+                const el = id => document.getElementById(id);
+                config[`llm_service${suffix}`] = (el(`setting-llm-service${suffix}`) || {}).value ?? '';
+                config[`llm_model${suffix}`] = (el(`setting-llm-model${suffix}`) || {}).value || '';
+                config[`llm_stream${suffix}`] = !!(el(`setting-llm-stream${suffix}`) || {}).checked;
+                config[`llm_url${suffix}`] = (el(`setting-llm-url${suffix}`) || {}).value || '';
+                config[`llm_reasoning_preset${suffix}`] = (el(`setting-llm-reasoning-preset${suffix}`) || {}).value || '';
+                config[`llm_reasoning_effort${suffix}`] = (el(`setting-llm-reasoning-effort${suffix}`) || {}).value || '';
+                config[`llm_custom_body${suffix}`] = (el(`setting-llm-custom-body${suffix}`) || {}).value || '';
+                config[`llm_max_concurrency${suffix}`] = parseInt((el(`setting-llm-max-concurrency${suffix}`) || {}).value) || 1;
+                config[`llm_stream_idle_timeout_seconds${suffix}`] = Number((el(`setting-llm-stream-idle-timeout${suffix}`) || {}).value);
+            }
 
             try {
                 const result = await fetchJSON('/api/config', {
@@ -19493,7 +19838,8 @@
 
             const payload = {messages, stream: useStream};
             const targetSel = document.getElementById('llm-test-target');
-            const targetVal = (targetSel && ['llm1', 'llm2', 'llm3'].includes(targetSel.value)) ? targetSel.value : 'llm1';
+            const _TEST_TARGETS = LLM_SLOTS.map(s => 'llm' + s);
+            const targetVal = (targetSel && _TEST_TARGETS.includes(targetSel.value)) ? targetSel.value : 'llm1';
             payload.target = targetVal;
             try { localStorage.setItem('llm-test-target', targetVal); } catch (_) {}
             if (useJson) payload.json_mode = true;
@@ -20245,6 +20591,10 @@
         let llmServiceCatalog = [];
         let llmServiceCatalogPromise = null;
 
+        // LLM 슬롯 목록(프론트 단일 소스). 슬롯 추가 시 이 배열만 늘리면
+        // 카탈로그 로드/서비스 변경 토글/설정 저장/라우팅 드롭다운이 자동 확장된다.
+        const LLM_SLOTS = [1, 2, 3, 4, 5];
+
         function llmSlotSuffix(slot) {
             return slot === 1 ? '' : String(slot);
         }
@@ -20260,7 +20610,7 @@
                         throw new Error('서비스 목록이 비어 있습니다.');
                     }
                     llmServiceCatalog = data.services;
-                    for (const slot of [1, 2, 3]) {
+                    for (const slot of LLM_SLOTS) {
                         const suffix = llmSlotSuffix(slot);
                         const select = document.getElementById(`setting-llm-service${suffix}`);
                         if (!select) continue;
@@ -20332,7 +20682,7 @@
         }
 
         function onLlmServiceChange() {
-            for (const slot of [1, 2, 3]) {
+            for (const slot of LLM_SLOTS) {
                 const suffix = llmSlotSuffix(slot);
                 const selected = document.getElementById(`setting-llm-service${suffix}`)?.value || '';
                 const meta = getLlmServiceMeta(getEffectiveLlmService(slot));
@@ -20614,6 +20964,8 @@
 
         function onReasoningPresetChange() { renderReasoningControls(1); }
         function onReasoningPreset2Change() { renderReasoningControls(2); }
+        function onReasoningPreset4Change() { renderReasoningControls(4); }
+        function onReasoningPreset5Change() { renderReasoningControls(5); }
 
         // ─── 외부 API 분기: 작업별 LLM1/LLM2 라우팅 테이블 ───
         // task_key 목록과 표시명. DEFAULT_CONFIG(server.py) 와 일치해야 함.
@@ -20661,11 +21013,14 @@
             const container = document.getElementById('llm-routing-table');
             if (!container) return;
             const routing = (currentConfig && currentConfig.llm_routing) || {};
-            // LLM2/LLM3 설정 여부 안내용
-            const llm2Model = (currentConfig && currentConfig.llm_model2) || '';
-            const llm2Ready = !!llm2Model;
-            const llm3Model = (currentConfig && currentConfig.llm_model3) || '';
-            const llm3Ready = !!llm3Model;
+            // 슬롯별 모델명 설정 여부(라우팅 드롭다운 활성화 판단). LLM1 은 항상 사용 가능.
+            const slotReady = {};
+            for (const s of LLM_SLOTS) {
+                if (s === 1) { slotReady['llm1'] = true; continue; }
+                const suffix = llmSlotSuffix(s);
+                slotReady['llm' + s] = !!((currentConfig && currentConfig[`llm_model${suffix}`]) || '');
+            }
+            const VALID_ROUTE_SLOTS = LLM_SLOTS.map(s => 'llm' + s);
 
             // 각 작업은 라우팅 1줄 + 메인/폴백 재시도 설정 1줄로 표시한다.
             let html = '';
@@ -20674,15 +21029,16 @@
             html += '</div>';
 
             // 레거시 fallback(bool) → 폴백 대상 매핑(_routing_for 의 하위호환 매핑과 동일).
+            // 신규 슬롯(4/5)에 레거시 폴백 bool 이 켜져 있으면 llm1 으로 폴백.
             const legacyFallback = { llm1: 'llm2', llm2: 'llm1', llm3: 'llm1' };
 
             for (const t of LLM_ROUTING_TASKS) {
                 const entry = routing[t.key] || {};
-                const primary = (entry.primary === 'llm2' || entry.primary === 'llm3') ? entry.primary : 'llm1';
+                const primary = VALID_ROUTE_SLOTS.includes(entry.primary) ? entry.primary : 'llm1';
                 // 폴백 대상 결정: fallback_target 우선, 없으면 레거시 fallback(bool) 해석, 그 외는 '없음'.
                 let fbTarget = entry.fallback_target;
-                if (fbTarget !== 'llm1' && fbTarget !== 'llm2' && fbTarget !== 'llm3') {
-                    fbTarget = entry.fallback ? (legacyFallback[primary] || 'none') : 'none';
+                if (!VALID_ROUTE_SLOTS.includes(fbTarget)) {
+                    fbTarget = entry.fallback ? (legacyFallback[primary] || 'llm1') : 'none';
                 }
                 // 구조화 응답 작업은 JSON response_format 토글을 제공한다.
                 const supportsJson = !!t.json
@@ -20700,15 +21056,18 @@
                 html += `<div style="font-size: 13px;">${t.label}</div>`;
                 html += `<div style="font-size: 12px; color: var(--text-dim);">${t.kind}</div>`;
                 html += `<div><select data-route-key="${t.key}" data-route-field="primary" style="padding: 4px 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text);">`;
-                html += `<option value="llm1"${primary === 'llm1' ? ' selected' : ''}>LLM1</option>`;
-                html += `<option value="llm2"${primary === 'llm2' ? ' selected' : ''}${llm2Ready ? '' : ' disabled'}>LLM2${llm2Ready ? '' : ' (미설정)'}</option>`;
-                html += `<option value="llm3"${primary === 'llm3' ? ' selected' : ''}${llm3Ready ? '' : ' disabled'}>LLM3${llm3Ready ? '' : ' (미설정)'}</option>`;
+                for (const s of LLM_SLOTS) {
+                    const slotId = 'llm' + s;
+                    const ready = slotReady[slotId];
+                    html += `<option value="${slotId}"${primary === slotId ? ' selected' : ''}${ready ? '' : ' disabled'}>LLM${s}${ready ? '' : ' (미설정)'}</option>`;
+                }
                 html += '</select></div>';
                 html += `<div style="text-align: center;"><select data-route-key="${t.key}" data-route-field="fallback_target" onchange="updateLlmRouteFallbackState('${t.key}')" style="padding: 4px 6px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text);">`;
                 html += `<option value="none"${fbTarget === 'none' ? ' selected' : ''}>없음</option>`;
-                html += `<option value="llm1"${fbTarget === 'llm1' ? ' selected' : ''}>LLM1</option>`;
-                html += `<option value="llm2"${fbTarget === 'llm2' ? ' selected' : ''}${llm2Ready ? '' : ' disabled'}>LLM2${llm2Ready ? '' : ' (미설정)'}</option>`;
-                html += `<option value="llm3"${fbTarget === 'llm3' ? ' selected' : ''}${llm3Ready ? '' : ' disabled'}>LLM3${llm3Ready ? '' : ' (미설정)'}</option>`;
+                for (const s of LLM_SLOTS) {
+                    const slotId = 'llm' + s;
+                    html += `<option value="${slotId}"${fbTarget === slotId ? ' selected' : ''}>LLM${s}</option>`;
+                }
                 html += '</select></div>';
                 if (supportsJson) {
                     html += `<div style="text-align: center;"><input type="checkbox" data-route-key="${t.key}" data-route-field="json_mode"${jsonMode ? ' checked' : ''} title="JSON 포맷 강제(response_format=json_object). Cerebras/Gemma 등에서 반복 루프가 나면 꺼보세요."></div>`;
@@ -20725,11 +21084,11 @@
                 html += '</div>';
             }
 
-            if (!llm2Ready) {
-                html += '<div style="margin-top: 6px; font-size: 12px; color: #d89a3a;">⚠ 외부 API 탭에서 LLM2 모델명을 설정해야 LLM2(메인/폴백) 선택지가 활성화됩니다.</div>';
-            }
-            if (!llm3Ready) {
-                html += '<div style="margin-top: 6px; font-size: 12px; color: #d89a3a;">⚠ 외부 API 탭에서 LLM3 모델명을 설정해야 LLM3(메인/폴백) 선택지가 활성화됩니다.</div>';
+            for (const s of LLM_SLOTS) {
+                if (s === 1) continue;
+                if (!slotReady['llm' + s]) {
+                    html += `<div style="margin-top: 6px; font-size: 12px; color: #d89a3a;">⚠ 외부 API 탭에서 LLM${s} 모델명을 설정해야 LLM${s}(메인/폴백) 선택지가 활성화됩니다.</div>`;
+                }
             }
             html += '<div style="margin-top: 6px; font-size: 11px; color: var(--text-dim);">💡 메인 재시도를 모두 소진한 뒤 폴백으로 넘어갑니다. JSON 작업은 서비스 호환성 문제가 있을 때 포맷 강제를 끌 수 있습니다.</div>';
             container.innerHTML = html;
@@ -20738,6 +21097,7 @@
         function collectLlmRouting() {
             const routing = {};
             const prevRouting = (currentConfig && currentConfig.llm_routing) || {};
+            const ROUTE_SLOTS = LLM_SLOTS.map(s => 'llm' + s);
             for (const t of LLM_ROUTING_TASKS) {
                 // 잠긴 항목은 UI에서 편집 불가하므로 기존 설정값을 그대로 보존
                 if (t.locked) {
@@ -20746,7 +21106,7 @@
                 }
                 const sel = document.querySelector(`select[data-route-key="${t.key}"][data-route-field="primary"]`);
                 const fbSel = document.querySelector(`select[data-route-key="${t.key}"][data-route-field="fallback_target"]`);
-                const primary = (sel && (sel.value === 'llm2' || sel.value === 'llm3')) ? sel.value : 'llm1';
+                const primary = (sel && ROUTE_SLOTS.includes(sel.value)) ? sel.value : 'llm1';
                 const fbVal = fbSel ? fbSel.value : 'none';
                 const entry = { primary };
                 const retryDelayInput = document.querySelector(`input[data-route-key="${t.key}"][data-route-field="retry_delay_sec"]`);
@@ -20758,7 +21118,7 @@
                 entry.fallback_retry_delay_sec = llmRouteNumber(fallbackRetryDelayInput?.value, 0);
                 entry.fallback_max_retries = llmRouteNumber(fallbackMaxRetriesInput?.value, 0, true);
                 // 폴백 대상은 fallback_target 으로 저장. '없음'이면 폴백 미사용(false).
-                if (fbVal === 'llm1' || fbVal === 'llm2' || fbVal === 'llm3') {
+                if (ROUTE_SLOTS.includes(fbVal)) {
                     entry.fallback_target = fbVal;
                     entry.fallback = true;
                 } else {
@@ -20779,26 +21139,27 @@
             try {
                 const resp = await fetch('/api/llm/keys');
                 const data = await resp.json();
-                const k1 = document.getElementById('setting-llm-api-key');
-                if (k1) k1.value = data.llm_api_key || '';
-                const k2 = document.getElementById('setting-llm-api-key2');
-                if (k2) k2.value = data.llm_api_key2 || '';
-                const k3 = document.getElementById('setting-llm-api-key3');
-                if (k3) k3.value = data.llm_api_key3 || '';
+                for (const slot of LLM_SLOTS) {
+                    const suffix = llmSlotSuffix(slot);
+                    const el = document.getElementById(`setting-llm-api-key${suffix}`);
+                    if (el) el.value = data[`llm_api_key${suffix}`] || '';
+                }
             } catch (e) {
                 console.error('load LLM keys:', e);
             }
         }
 
         async function saveLlmKeys() {
-            const k1 = (document.getElementById('setting-llm-api-key') || {}).value || '';
-            const k2 = (document.getElementById('setting-llm-api-key2') || {}).value || '';
-            const k3 = (document.getElementById('setting-llm-api-key3') || {}).value || '';
+            const payload = {};
+            for (const slot of LLM_SLOTS) {
+                const suffix = llmSlotSuffix(slot);
+                payload[`llm_api_key${suffix}`] = (document.getElementById(`setting-llm-api-key${suffix}`) || {}).value || '';
+            }
             try {
                 await fetch('/api/llm/keys', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ llm_api_key: k1, llm_api_key2: k2, llm_api_key3: k3 }),
+                    body: JSON.stringify(payload),
                 });
             } catch (e) {
                 console.error('save LLM keys:', e);

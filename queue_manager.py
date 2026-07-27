@@ -16,6 +16,8 @@ import uuid
 from dataclasses import dataclass, field, asdict
 from typing import Optional
 
+from modes import llm_service
+
 
 # LLM계열 큐 아이템 타입 — GPU/ComfyUI 자원을 쓰지 않고 네트워크(LLM API)만 사용하므로
 # 별도 워커풀(설정된 LLM 슬롯별 동시 요청 상한의 합)에서 처리한다.
@@ -829,12 +831,14 @@ class QueueManager:
         """설정된 LLM 슬롯의 실제 요청 상한 합만큼 큐 producer를 유지한다."""
         config = self.get_config() if self.get_config else {}
         total = 0
-        for slot, model_key, concurrency_key in (
-            ("LLM1", "llm_model", "llm_max_concurrency"),
-            ("LLM2", "llm_model2", "llm_max_concurrency2"),
-            ("LLM3", "llm_model3", "llm_max_concurrency3"),
-        ):
-            if slot != "LLM1" and not str(config.get(model_key, "") or "").strip():
+        # 슬롯별 (표시명, 모델 키, 동시요청 키)는 llm_service.LLM_SLOT_COUNT 에서 파생.
+        # LLM1 은 모델명 유무와 무관하게 항상 합산에 포함(기본 슬롯).
+        for n in range(1, llm_service.LLM_SLOT_COUNT + 1):
+            suffix = "" if n == 1 else str(n)
+            slot = f"LLM{n}"
+            model_key = f"llm_model{suffix}"
+            concurrency_key = f"llm_max_concurrency{suffix}"
+            if n != 1 and not str(config.get(model_key, "") or "").strip():
                 continue
             raw = config.get(concurrency_key, 1)
             try:

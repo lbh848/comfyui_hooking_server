@@ -177,6 +177,18 @@ def test_frontend_has_independent_controls_for_all_slots():
         Path(__file__).resolve().parents[1] / "frontend" / "index.html"
     ).read_text(encoding="utf-8")
 
-    for suffix in ("", "2", "3"):
+    # 슬롯 수는 백엔드 단일 소스(llm_service.LLM_SLOT_COUNT)와 같아야 한다.
+    for n in range(1, llm_service.LLM_SLOT_COUNT + 1):
+        suffix = "" if n == 1 else str(n)
         assert html.count(f'id="setting-llm-max-concurrency{suffix}"') == 1
         assert html.count(f'id="setting-llm-stream-idle-timeout{suffix}"') == 1
+
+
+def test_llm_slot_count_and_ids_match_backend():
+    # 슬롯 단일 소스가 프론트/백엔드/큐 매니저에서 일관되게 5개인지 확인.
+    assert llm_service.LLM_SLOT_COUNT == 5
+    assert llm_service.LLM_SLOT_IDS == ("llm1", "llm2", "llm3", "llm4", "llm5")
+    html = (
+        Path(__file__).resolve().parents[1] / "frontend" / "index.html"
+    ).read_text(encoding="utf-8")
+    assert "const LLM_SLOTS = [1, 2, 3, 4, 5];" in html

@@ -142,11 +142,20 @@ def _get_vertex_key_path() -> Optional[str]:
 COPILOT_KEY = _load_copilot_key()
 
 
+# ─── LLM 슬롯 단일 소스 ─────────────────────────────────────
+# 슬롯 수. 슬롯별 config 키(llm_service{N}, llm_model{N}, ...)·라우팅 화이트리스트·
+# 마스킹 키·워커 수 산정이 모두 이 값에서 파생된다. 슬롯을 추가하려면 이 값만 올리면
+# 각 설정 경로가 range() 로 자동 확장된다.
+LLM_SLOT_COUNT = 5
+LLM_SLOT_IDS = tuple(f"llm{i}" for i in range(1, LLM_SLOT_COUNT + 1))
+
+
 # ─── 로깅 ──────────────────────────────────────────────────
 
 # API 키는 메모리에만 존재해야 하므로 로그(파일/stdout)에 절대 평문 노출 금지.
 _REDACTED_KEYS = {
-    "llm_api_key", "llm_api_key2", "llm_api_key3", "api_key", "apikey",
+    *(f"llm_api_key{n}" for n in range(1, LLM_SLOT_COUNT + 1)),
+    "api_key", "apikey",
     "token", "access_token", "authorization", "x-api-key",
     "key", "secret", "password",
 }
@@ -184,8 +193,8 @@ def _redact_in_text(msg):
     redacted = msg
     candidates = []
     try:
-        for k in ("llm_api_key", "llm_api_key2", "llm_api_key3"):
-            v = _current_config.get(k, "")
+        for n in range(1, LLM_SLOT_COUNT + 1):
+            v = _current_config.get(f"llm_api_key{n}", "")
             if isinstance(v, str) and len(v) >= 8:
                 candidates.append(v)
     except Exception:
@@ -477,6 +486,23 @@ _current_config = _ContextConfig({
     "llm_routing": {},
 })
 
+# LLM 슬롯 4..N 기본값은 단일 소스(LLM_SLOT_COUNT)에서 자동 생성한다.
+# (슬롯 1~3 은 위 리터럴에 명시되어 있으므로 중복 생성하지 않는다.)
+for _slot_n in range(4, LLM_SLOT_COUNT + 1):
+    _suffix = str(_slot_n)
+    _current_config.update({
+        f"llm_service{_suffix}": "",
+        f"llm_model{_suffix}": "",
+        f"llm_api_key{_suffix}": "",
+        f"llm_url{_suffix}": "",
+        f"llm_reasoning_preset{_suffix}": "auto",
+        f"llm_reasoning_effort{_suffix}": "",
+        f"llm_custom_body{_suffix}": "",
+        f"llm_stream{_suffix}": False,
+        f"llm_max_concurrency{_suffix}": 1,
+        f"llm_stream_idle_timeout_seconds{_suffix}": 90.0,
+    })
+
 
 def migrate_config(config: dict) -> dict:
     """레거시 서비스 스키마를 현재 스키마로 변환 (in-place + 반환).
@@ -486,11 +512,10 @@ def migrate_config(config: dict) -> dict:
       기존 엔드포인트가 끊기지 않게 한다.
     부분 dict (UI 저장 등) 도 안전하게 처리: 키가 없으면 건드리지 않는다.
     """
-    for svc_key, url_key, legacy_url_key in (
-        ("llm_service", "llm_url", "custom_api_url"),
-        ("llm_service2", "llm_url2", "custom_api_url2"),
-        ("llm_service3", "llm_url3", "custom_api_url3"),
-    ):
+    for n in range(1, LLM_SLOT_COUNT + 1):
+        svc_key = "llm_service" if n == 1 else f"llm_service{n}"
+        url_key = "llm_url" if n == 1 else f"llm_url{n}"
+        legacy_url_key = "custom_api_url" if n == 1 else f"custom_api_url{n}"
         if config.get(svc_key) in ("openai-compat", "customapi"):
             old = config.get(svc_key)
             config[svc_key] = "openai"
@@ -509,12 +534,8 @@ def update_config(config: dict):
     global _current_config
     migrate_config(config)
     concurrency_changed = any(
-        key in config
-        for key in (
-            "llm_max_concurrency",
-            "llm_max_concurrency2",
-            "llm_max_concurrency3",
-        )
+        f"llm_max_concurrency{'' if n == 1 else n}" in config
+        for n in range(1, LLM_SLOT_COUNT + 1)
     )
     for key, value in config.items():
         if key in _current_config:
@@ -530,7 +551,7 @@ def get_config() -> dict:
 
 def _normalize_llm_slot(slot: str | None) -> str:
     normalized = str(slot or "llm1").strip().lower()
-    if normalized not in ("llm1", "llm2", "llm3"):
+    if normalized not in LLM_SLOT_IDS:
         print(f"[LLM_LIMIT] 알 수 없는 슬롯, LLM1 사용: slot={slot!r}")
         return "llm1"
     return normalized
@@ -1810,17 +1831,18 @@ def _is_llm_failed(result) -> bool:
 
 def _routing_for(task_key: str):
     """task_key 의 (primary, fallback_target) 반환. 미설정 시 (llm1, None).
-    primary 는 llm1/llm2/llm3 중 하나.
-    fallback_target 은 폴백 대상(llm1/llm2/llm3) 또는 None(폴백 없음).
+    primary/fallback_target 은 LLM_SLOT_IDS(llm1..llm{N}) 중 하나.
+    fallback_target 은 None 이면 폴백 없음.
 
     하위호환: fallback_target 이 지정되어 있지 않고 기존 fallback(bool)이 True 이면
-    과거 하드코딩 매핑(llm1→llm2, llm2→llm1, llm3→llm1)을 적용한다."""
+    과거 하드코딩 매핑(llm1→llm2, llm2→llm1, llm3→llm1)을 적용한다.
+    (슬롯 4 이상은 신규라 레거시 매핑이 없다 → fallback_target 명시 필요.)"""
     entry = (_current_config.get("llm_routing") or {}).get(task_key, {}) or {}
     primary = entry.get("primary", "llm1")
-    if primary not in ("llm1", "llm2", "llm3"):
+    if primary not in LLM_SLOT_IDS:
         primary = "llm1"
     fb = entry.get("fallback_target")
-    if fb not in ("llm1", "llm2", "llm3"):
+    if fb not in LLM_SLOT_IDS:
         fb = None
     if fb is None and bool(entry.get("fallback", False)):
         # 레거시 bool 폴백 → 기존 하드코딩 대상.
@@ -1975,24 +1997,26 @@ async def _invoke_routed_with_retry(
 
 def routing_primary_service(task_key: str) -> str:
     """task_key 의 primary LLM 서비스명 반환. 라우팅 미설정/llm1 이면 LLM1 서비스.
-    primary=llm2 인데 llm_service2 가 비어 있으면 LLM1 서비스를 재사용(callLLM2 와 동일).
-    primary=llm3 인데 llm_service3 가 비어 있어도 LLM1 서비스를 재사용(callLLM3 와 동일)."""
+    primary 가 llm2..N 인데 해당 슬롯의 llm_service{N} 이 비어 있으면 LLM1 서비스를
+    재사용한다(callLLM{N} 의 상속 동작과 동일)."""
     primary, _ = _routing_for(task_key)
-    if primary == "llm2":
-        return _current_config.get("llm_service2") or _current_config["llm_service"]
-    if primary == "llm3":
-        return _current_config.get("llm_service3") or _current_config["llm_service"]
+    suffix = _slot_suffix(primary)
+    if suffix:
+        own = _current_config.get(f"llm_service{suffix}") or ""
+        if own:
+            return own
     return _current_config["llm_service"]
 
 
 def routing_primary_model(task_key: str) -> str:
     """task_key 의 primary LLM 모델명 반환(스트림 통계/로그 표시용).
-    각 primary 의 전용 모델(llm_model2/3)이 비어 있으면 LLM1 모델로 폴백."""
+    각 primary 의 전용 모델(llm_model{N})이 비어 있으면 LLM1 모델로 폴백."""
     primary, _ = _routing_for(task_key)
-    if primary == "llm2":
-        return _current_config.get("llm_model2") or _current_config.get("llm_model") or ""
-    if primary == "llm3":
-        return _current_config.get("llm_model3") or _current_config.get("llm_model") or ""
+    suffix = _slot_suffix(primary)
+    if suffix:
+        own = _current_config.get(f"llm_model{suffix}") or ""
+        if own:
+            return own
     return _current_config.get("llm_model") or ""
 
 
@@ -2006,7 +2030,7 @@ async def _call_routed_text_slot(
     if slot == "llm1":
         return await callLLM(messages, model=model, json_mode=json_mode)
 
-    suffix = "2" if slot == "llm2" else "3"
+    suffix = _slot_suffix(slot)
     service = _base_config_get(f"llm_service{suffix}") or _base_config_get("llm_service")
     use_model = model or _base_config_get(f"llm_model{suffix}")
     if not use_model:
@@ -2241,7 +2265,13 @@ async def callLLMVisionTask(
     entry = (_current_config.get("llm_routing") or {}).get(task_key, {}) or {}
     rj = entry.get("json_mode", None)
     eff_json = (bool(rj) if rj is not None else json_mode)
-    _vision_funcs = {"llm1": callLLMVision, "llm2": callLLMVision2, "llm3": callLLMVision3}
+    _vision_funcs = {
+        "llm1": callLLMVision,
+        "llm2": callLLMVision2,
+        "llm3": callLLMVision3,
+        "llm4": callLLMVision4,
+        "llm5": callLLMVision5,
+    }
 
     async def _invoke(slot: str) -> str:
         func = _vision_funcs.get(slot, callLLMVision)
@@ -3615,4 +3645,210 @@ async def callLLMVision3Stream(messages: list, image_b64: str = None, image_mime
 
     _llm_log(f"callLLMVision3Stream: service={service} model={use_model} mime={log_mime} img_b64_len={log_len} json_mode={json_mode}")
     async for ev in callLLM3Stream(new_messages, model=use_model, log_history=log_history, json_mode=json_mode):
+        yield ev
+
+
+# ─── LLM 슬롯 일반화 헬퍼(LLM4/5 및 이후 슬롯) ───────────────
+#
+# callLLM2/3(및 Stream/Vision 변형)는 기존 호출처와 테스트를 위해 그대로 둔다.
+# 신규 슬롯(4, 5, ...)은 아래 단일 슬롯 헬퍼로 수렴시켜 슬롯별 함수 복제를 막는다.
+# llm_service{N} 이 비어 있으면 LLM1 서비스/키/URL 을 재사용하는 상속 규칙은
+# _slot_config_overrides 와 동일하다.
+
+
+async def _call_llm_slot_text(slot, messages, model=None, json_mode=False):
+    """슬롯 번호로 텍스트 LLM 호출(callLLM2/3 패턴의 일반화). callLLM4/5 가 사용."""
+    slot = _normalize_llm_slot(slot)
+    suffix = _slot_suffix(slot)
+    service = _base_config_get(f"llm_service{suffix}") or _base_config_get("llm_service")
+    use_model = model or _base_config_get(f"llm_model{suffix}")
+    if not use_model:
+        return f"[LLM 실패] LLM{slot[-1]} 모델명이 설정되지 않았습니다"
+    config_token = _request_config_override_ctx.set(_slot_config_overrides(slot))
+    slot_token = _llm_slot_ctx.set(slot)
+    token = _response_format_ctx.set({"type": "json_object"}) if json_mode else None
+    try:
+        if bool(_base_config_get(f"llm_stream{suffix}", False)):
+            return await _stream_call_to_text(messages, service, use_model, slot)
+        return await _dispatch(messages, service, use_model)
+    finally:
+        if token is not None:
+            _response_format_ctx.reset(token)
+        _llm_slot_ctx.reset(slot_token)
+        _request_config_override_ctx.reset(config_token)
+
+
+async def _call_llm_slot_text_stream(slot, messages, model=None, log_history=True,
+                                     json_mode=False):
+    """슬롯 번호로 텍스트 스트리밍 LLM 호출(callLLM2Stream/3Stream 일반화)."""
+    slot = _normalize_llm_slot(slot)
+    suffix = _slot_suffix(slot)
+    service = _base_config_get(f"llm_service{suffix}") or _base_config_get("llm_service")
+    use_model = model or _base_config_get(f"llm_model{suffix}")
+    if not use_model:
+        yield {"type": "error", "error": f"[LLM 실패] LLM{slot[-1]} 모델명이 설정되지 않았습니다"}
+        return
+
+    final_text = ""
+    final_tokens = 0
+    final_prompt_tokens = 0
+    final_elapsed = 0.0
+    final_tps = 0.0
+    final_ttft = None
+    error_msg = ""
+
+    config_token = _request_config_override_ctx.set(_slot_config_overrides(slot))
+    slot_token = _llm_slot_ctx.set(slot)
+    token = _response_format_ctx.set({"type": "json_object"}) if json_mode else None
+    try:
+        async for ev in _dispatch_stream(messages, service, use_model):
+            if ev["type"] == "done":
+                final_text = ev.get("text", "")
+                final_tokens = ev.get("completion_tokens", 0)
+                final_prompt_tokens = ev.get("prompt_tokens", 0)
+                final_elapsed = ev.get("elapsed", 0.0)
+                final_tps = ev.get("tps", 0.0)
+                final_ttft = ev.get("ttft")
+            elif ev["type"] == "error":
+                error_msg = ev.get("error", "")
+            yield ev
+
+        if log_history:
+            _log_history(
+                service=service, model=use_model, messages=messages,
+                output=final_text, completion_tokens=final_tokens,
+                elapsed=final_elapsed, tps=final_tps, ttft=final_ttft,
+                error=error_msg, prompt_tokens=final_prompt_tokens,
+            )
+    finally:
+        if token is not None:
+            _response_format_ctx.reset(token)
+        _llm_slot_ctx.reset(slot_token)
+        _request_config_override_ctx.reset(config_token)
+
+
+async def _call_llm_slot_vision(slot, messages, image_b64=None, image_mime="image/webp",
+                                model=None, json_mode=False, images=None):
+    """슬롯 번호로 비전 LLM 호출(callLLMVision2/3 일반화). callLLMVision4/5 가 사용."""
+    slot = _normalize_llm_slot(slot)
+    suffix = _slot_suffix(slot)
+    service = _base_config_get(f"llm_service{suffix}") or _base_config_get("llm_service")
+    if not supports_vision(service):
+        return (f"[LLM 실패] LLM{slot[-1]} 서비스({service})가 비전(이미지 입력)을 지원하지 않습니다. "
+                "OpenAI 호환/Gemini/Claude 등 비전 지원 서비스를 선택하세요.")
+
+    use_model = model or _base_config_get(f"llm_model{suffix}")
+    if not use_model:
+        return f"[LLM 실패] LLM{slot[-1]} 모델명이 설정되지 않았습니다"
+
+    try:
+        new_messages, log_mime, log_len = _prepare_vision_messages(
+            messages, image_b64, image_mime, images
+        )
+    except ValueError as e:
+        return f"[LLM 실패] {e}"
+
+    _llm_log(f"callLLMVision{slot[-1]}: service={service} model={use_model} mime={log_mime} img_b64_len={log_len} json_mode={json_mode}")
+    config_token = _request_config_override_ctx.set(_slot_config_overrides(slot))
+    slot_token = _llm_slot_ctx.set(slot)
+    token = _response_format_ctx.set({"type": "json_object"}) if json_mode else None
+    try:
+        if bool(_base_config_get(f"llm_stream{suffix}", False)):
+            return await _stream_call_to_text(new_messages, service, use_model, slot)
+        return await _dispatch(new_messages, service, use_model)
+    finally:
+        if token is not None:
+            _response_format_ctx.reset(token)
+        _llm_slot_ctx.reset(slot_token)
+        _request_config_override_ctx.reset(config_token)
+
+
+async def _call_llm_slot_vision_stream(slot, messages, image_b64=None, image_mime="image/webp",
+                                       model=None, log_history=True, json_mode=False, images=None):
+    """슬롯 번호로 비전 스트리밍 LLM 호출(callLLMVision2Stream/3Stream 일반화).
+    비전 messages 빌드 후 _call_llm_slot_text_stream 으로 위임한다."""
+    slot = _normalize_llm_slot(slot)
+    suffix = _slot_suffix(slot)
+    service = _base_config_get(f"llm_service{suffix}") or _base_config_get("llm_service")
+    if not supports_vision(service):
+        yield {"type": "error", "error": f"[LLM 실패] LLM{slot[-1]} 서비스({service})가 비전(이미지 입력)을 지원하지 않습니다. "
+                                          "OpenAI 호환/Gemini/Claude 등 비전 지원 서비스를 선택하세요."}
+        return
+    use_model = model or _base_config_get(f"llm_model{suffix}")
+    if not use_model:
+        yield {"type": "error", "error": f"[LLM 실패] LLM{slot[-1]} 모델명이 설정되지 않았습니다"}
+        return
+    if not images and not image_b64:
+        yield {"type": "error", "error": f"callLLMVision{slot[-1]}Stream: image_b64 가 비어 있습니다."}
+        return
+
+    try:
+        new_messages, log_mime, log_len = _prepare_vision_messages(
+            messages, image_b64, image_mime, images
+        )
+    except ValueError as e:
+        yield {"type": "error", "error": str(e)}
+        return
+
+    _llm_log(f"callLLMVision{slot[-1]}Stream: service={service} model={use_model} mime={log_mime} img_b64_len={log_len} json_mode={json_mode}")
+    async for ev in _call_llm_slot_text_stream(slot, new_messages, model=use_model, log_history=log_history, json_mode=json_mode):
+        yield ev
+
+
+# ─── LLM4 / LLM5 공개 진입점(얇은 래퍼) ──────────────────────
+
+
+async def callLLM4(messages: list, model: str = None, json_mode: bool = False) -> str:
+    """LLM4 텍스트 호출. llm_service4 가 비어 있으면 LLM1 서비스/키/URL 재사용."""
+    return await _call_llm_slot_text("llm4", messages, model=model, json_mode=json_mode)
+
+
+async def callLLM5(messages: list, model: str = None, json_mode: bool = False) -> str:
+    """LLM5 텍스트 호출. llm_service5 가 비어 있으면 LLM1 서비스/키/URL 재사용."""
+    return await _call_llm_slot_text("llm5", messages, model=model, json_mode=json_mode)
+
+
+async def callLLM4Stream(messages: list, model: str = None, log_history: bool = True,
+                         json_mode: bool = False):
+    """LLM4 스트리밍 호출. delta/done/error 이벤트를 yield한다."""
+    async for ev in _call_llm_slot_text_stream("llm4", messages, model=model, log_history=log_history, json_mode=json_mode):
+        yield ev
+
+
+async def callLLM5Stream(messages: list, model: str = None, log_history: bool = True,
+                         json_mode: bool = False):
+    """LLM5 스트리밍 호출. delta/done/error 이벤트를 yield한다."""
+    async for ev in _call_llm_slot_text_stream("llm5", messages, model=model, log_history=log_history, json_mode=json_mode):
+        yield ev
+
+
+async def callLLMVision4(messages: list, image_b64: str = None, image_mime: str = "image/webp",
+                         model: str = None, json_mode: bool = False, images: list = None) -> str:
+    """LLM4 비전(이미지 입력) 호출. images(다중) 지원."""
+    return await _call_llm_slot_vision("llm4", messages, image_b64, image_mime,
+                                       model=model, json_mode=json_mode, images=images)
+
+
+async def callLLMVision5(messages: list, image_b64: str = None, image_mime: str = "image/webp",
+                         model: str = None, json_mode: bool = False, images: list = None) -> str:
+    """LLM5 비전(이미지 입력) 호출. images(다중) 지원."""
+    return await _call_llm_slot_vision("llm5", messages, image_b64, image_mime,
+                                       model=model, json_mode=json_mode, images=images)
+
+
+async def callLLMVision4Stream(messages: list, image_b64: str = None, image_mime: str = "image/webp",
+                                model: str = None, log_history: bool = True,
+                                json_mode: bool = False, images: list = None):
+    """LLM4 비전 스트리밍 호출. delta/done/error 이벤트를 yield한다."""
+    async for ev in _call_llm_slot_vision_stream("llm4", messages, image_b64, image_mime,
+                                                 model=model, log_history=log_history, json_mode=json_mode, images=images):
+        yield ev
+
+
+async def callLLMVision5Stream(messages: list, image_b64: str = None, image_mime: str = "image/webp",
+                                model: str = None, log_history: bool = True,
+                                json_mode: bool = False, images: list = None):
+    """LLM5 비전 스트리밍 호출. delta/done/error 이벤트를 yield한다."""
+    async for ev in _call_llm_slot_vision_stream("llm5", messages, image_b64, image_mime,
+                                                 model=model, log_history=log_history, json_mode=json_mode, images=images):
         yield ev
