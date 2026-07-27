@@ -1127,6 +1127,36 @@ class CharacterMakerService:
         # callLLMTask/VisionTask 가 스트림 usage 토큰을 채워 돌려줄 싱크.
         # 스트리밍 경로에선 진짜 usage, 비스트리밍/실패 시엔 근사치 또는 0.
         sink: dict = {}
+
+        def _on_attempt_fail(info: dict) -> None:
+            """재시도 중 각 실패 시도를 자세히(lighbd_history.jsonl)에 개별 기록한다.
+            최종 결과(성공/파싱실패)는 _log_cm_history 가 별도로 남기고, 여기는 중간
+            실패 가시성용. sink 는 시도 간 공유/덮어쓰기되므로 호출 시점에 스냅샷한다."""
+            try:
+                from modes.lighbd_service import _log_lighbd_history
+
+                snap = dict(sink or {})
+                _log_lighbd_history({
+                    "ts": datetime.datetime.now().isoformat(timespec="seconds"),
+                    "prompt_id": task_key,
+                    "call_name": "캐릭터 메이커",
+                    "input": messages,
+                    "output": str(info.get("result") or ""),
+                    "completion_tokens": int(snap.get("completion_tokens") or 0),
+                    "prompt_tokens": int(snap.get("prompt_tokens") or 0),
+                    "elapsed": 0.0,
+                    "tps": 0.0,
+                    "status": "error",
+                    "error": (
+                        f"[재시도 {info.get('phase')} {info.get('slot')} "
+                        f"{info.get('attempt')}/{info.get('total_attempts')}] "
+                        f"{info.get('reason')}"
+                    ),
+                })
+            except Exception:
+                print("[CHARACTER_MAKER] per-attempt LIGHBD 기록 실패")
+                traceback.print_exc()
+
         try:
             if images:
                 # 다중 비전: CURRENT(활성 리비전) + REF(참고 이미지) 각각 별도 이미지로 전송.
@@ -1137,6 +1167,7 @@ class CharacterMakerService:
                     json_mode=True,
                     result_validator=validator,
                     metadata_sink=sink,
+                    on_attempt_failure=_on_attempt_fail,
                 )
             else:
                 raw = await llm_service.callLLMTask(
@@ -1145,6 +1176,7 @@ class CharacterMakerService:
                     json_mode=True,
                     result_validator=validator,
                     metadata_sink=sink,
+                    on_attempt_failure=_on_attempt_fail,
                 )
         except Exception as exc:
             self._log_cm_history(

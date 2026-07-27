@@ -1970,6 +1970,7 @@ async def _invoke_routed_with_retry(
     retry_delay_sec: float,
     invoke,
     result_validator=None,
+    on_attempt_failure=None,
 ):
     """한 LLM 슬롯을 설정 횟수만큼 호출하며 결과와 성공 여부를 반환한다."""
     total_attempts = max_retries + 1
@@ -2006,6 +2007,26 @@ async def _invoke_routed_with_retry(
             f"[LLM_ROUTE] 호출 실패: task={task_key}, phase={phase}, slot={slot}, "
             f"attempt={attempt}/{total_attempts}, reason={last_reason}"
         )
+        # 상위 호출자가 per-attempt history 콜백을 걸어두었으면 각 실패 시도를 자세히에
+        # 개별 기록하도록 알린다(messages/sink는 호출자 클로저가 캡처). 로깅이 라우팅 흐름을
+        # 망가뜨리지 않도록 예외는 삼킨다.
+        if on_attempt_failure is not None:
+            try:
+                _cb_res = on_attempt_failure({
+                    "task_key": task_key,
+                    "phase": phase,
+                    "slot": slot,
+                    "attempt": attempt,
+                    "total_attempts": total_attempts,
+                    "reason": last_reason,
+                    "result": last_result,
+                    "exception": last_exception,
+                })
+                if inspect.isawaitable(_cb_res):
+                    await _cb_res
+            except Exception:
+                print("[LLM_ROUTE] per-attempt history 콜백 실패")
+                traceback.print_exc()
         if attempt < total_attempts:
             _llm_log(
                 f"[LLM_ROUTE] 재시도 대기: task={task_key}, phase={phase}, slot={slot}, "
@@ -2084,6 +2105,7 @@ async def callLLMTask(
     result_validator=None,
     stream_observer=None,
     metadata_sink: dict | None = None,
+    on_attempt_failure=None,
 ) -> str:
     """
     작업별 라우팅 텍스트 LLM 호출.
@@ -2140,6 +2162,7 @@ async def callLLMTask(
         retry_policy["retry_delay_sec"],
         _invoke,
         result_validator,
+        on_attempt_failure=on_attempt_failure,
     )
     final_phase = "primary"
     if fb_target is not None and not accepted:
@@ -2155,6 +2178,7 @@ async def callLLMTask(
             retry_policy["fallback_retry_delay_sec"],
             _invoke,
             result_validator,
+            on_attempt_failure=on_attempt_failure,
         )
         final_phase = "fallback"
     if not accepted and last_exception is not None:
@@ -2270,6 +2294,7 @@ async def callLLMVisionTask(
     result_validator=None,
     images: list = None,
     metadata_sink: dict | None = None,
+    on_attempt_failure=None,
 ) -> str:
     """
     작업별 라우팅 비전 LLM 호출.
@@ -2330,6 +2355,7 @@ async def callLLMVisionTask(
         retry_policy["retry_delay_sec"],
         _invoke,
         result_validator,
+        on_attempt_failure=on_attempt_failure,
     )
     final_phase = "primary"
     if fb_target in _vision_funcs and not accepted:
@@ -2345,6 +2371,7 @@ async def callLLMVisionTask(
             retry_policy["fallback_retry_delay_sec"],
             _invoke,
             result_validator,
+            on_attempt_failure=on_attempt_failure,
         )
         final_phase = "fallback"
     if not accepted and last_exception is not None:
