@@ -4687,15 +4687,414 @@
             inset: 0;
             width: 100%;
             height: 100%;
+            z-index: 2;
             cursor: crosshair;
             opacity: 0.64;
             touch-action: none;
+        }
+        .qwen-mask-canvas-wrap > img {
+            position: relative;
+            z-index: 0;
+        }
+        .qwen-composite-layer {
+            position: absolute;
+            inset: 0;
+            z-index: 1;
+            overflow: hidden;
+            pointer-events: none;
+        }
+        .qwen-composite-layer.interactive {
+            overflow: visible;
+            pointer-events: auto;
+        }
+        .qwen-composite-item {
+            position: absolute;
+            box-sizing: border-box;
+            transform-origin: center;
+            line-height: 0;
+            pointer-events: none;
+            touch-action: none;
+            user-select: none;
+        }
+        .qwen-composite-layer.interactive .qwen-composite-item {
+            pointer-events: auto;
+            cursor: move;
+        }
+        .qwen-composite-item > img {
+            display: block;
+            width: 100%;
+            height: 100%;
+            object-fit: fill;
+            pointer-events: none;
+            filter: drop-shadow(0 0 1px rgba(0, 0, 0, 0.32));
+        }
+        .qwen-composite-item.selected::after {
+            content: "";
+            position: absolute;
+            inset: -2px;
+            border: 2px solid #38bdf8;
+            pointer-events: none;
+        }
+        .qwen-composite-handle {
+            position: absolute;
+            z-index: 4;
+            display: none;
+            width: 12px;
+            height: 12px;
+            box-sizing: border-box;
+            border: 2px solid #0369a1;
+            border-radius: 2px;
+            background: #e0f2fe;
+            box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+            pointer-events: auto;
+        }
+        .qwen-composite-item.selected .qwen-composite-handle { display: block; }
+        .qwen-composite-handle.nw {
+            left: -7px;
+            top: -7px;
+            cursor: nwse-resize;
+        }
+        .qwen-composite-handle.ne {
+            right: -7px;
+            top: -7px;
+            cursor: nesw-resize;
+        }
+        .qwen-composite-handle.sw {
+            left: -7px;
+            bottom: -7px;
+            cursor: nesw-resize;
+        }
+        .qwen-composite-handle.se {
+            right: -7px;
+            bottom: -7px;
+            cursor: nwse-resize;
+        }
+        .qwen-composite-rotate-line {
+            position: absolute;
+            left: calc(50% - 1px);
+            top: -27px;
+            display: none;
+            width: 2px;
+            height: 25px;
+            background: #38bdf8;
+            pointer-events: none;
+        }
+        .qwen-composite-item.selected .qwen-composite-rotate-line {
+            display: block;
+        }
+        .qwen-composite-handle.rotate {
+            left: calc(50% - 7px);
+            top: -39px;
+            display: none;
+            border-radius: 50%;
+            cursor: grab;
+        }
+        .qwen-composite-item.selected .qwen-composite-handle.rotate {
+            display: block;
+        }
+        .qwen-mask-canvas-wrap.composite-mode canvas {
+            pointer-events: none;
+        }
+        .qwen-mask-toolbar button.danger {
+            border-color: rgba(248, 113, 113, 0.48);
+            color: #fca5a5;
+        }
+        .qwen-mask-toolbar button:disabled {
+            cursor: not-allowed;
+            opacity: 0.45;
         }
         .qwen-mask-help {
             padding-top: 8px;
             color: var(--text3);
             font-size: 0.72rem;
             text-align: center;
+        }
+        .qwen-composite-modal {
+            position: fixed;
+            inset: 0;
+            z-index: 10090;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            padding: 24px;
+            background: rgba(2, 6, 12, 0.86);
+            backdrop-filter: blur(7px);
+        }
+        .qwen-composite-modal.visible { display: flex; }
+        .qwen-composite-panel {
+            width: min(1240px, 96vw);
+            height: min(820px, 92vh);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            border: 1px solid rgba(56, 189, 248, 0.4);
+            border-radius: 14px;
+            background: var(--surface);
+            box-shadow: 0 30px 100px rgba(0, 0, 0, 0.68);
+        }
+        .qwen-composite-header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 13px 16px;
+            border-bottom: 1px solid var(--border);
+            background: linear-gradient(90deg, rgba(14, 165, 233, 0.18), transparent);
+        }
+        .qwen-composite-header h3 {
+            margin: 0;
+            font-size: 1rem;
+        }
+        .qwen-composite-header span {
+            color: var(--text3);
+            font-size: 0.72rem;
+        }
+        .qwen-composite-close {
+            margin-left: auto;
+            border: 0;
+            background: transparent;
+            color: var(--text2);
+            font-size: 1.35rem;
+            cursor: pointer;
+        }
+        .qwen-composite-body {
+            min-height: 0;
+            flex: 1;
+            display: grid;
+            grid-template-columns: minmax(480px, 1.25fr) minmax(320px, 0.75fr);
+        }
+        .qwen-item-editor {
+            min-width: 0;
+            min-height: 0;
+            display: flex;
+            flex-direction: column;
+            padding: 13px;
+            border-right: 1px solid var(--border);
+        }
+        .qwen-item-toolbar {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 7px;
+            padding-bottom: 10px;
+        }
+        .qwen-item-toolbar button,
+        .qwen-item-library button,
+        .qwen-composite-footer button {
+            padding: 7px 10px;
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            background: var(--surface2);
+            color: var(--text);
+            cursor: pointer;
+            font-size: 0.76rem;
+        }
+        .qwen-item-toolbar button.active {
+            border-color: #38bdf8;
+            background: rgba(14, 165, 233, 0.2);
+            color: #bae6fd;
+        }
+        .qwen-item-toolbar button:disabled,
+        .qwen-composite-footer button:disabled {
+            cursor: wait;
+            opacity: 0.45;
+        }
+        .qwen-item-toolbar label {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            color: var(--text2);
+            font-size: 0.72rem;
+        }
+        .qwen-item-toolbar input[type="range"] { width: 90px; }
+        .qwen-item-edit-stage {
+            position: relative;
+            min-height: 260px;
+            flex: 1;
+            overflow: hidden;
+            border: 1px solid var(--border);
+            border-radius: 9px;
+            background-color: #17202b;
+            background-image:
+                linear-gradient(45deg, #263443 25%, transparent 25%),
+                linear-gradient(-45deg, #263443 25%, transparent 25%),
+                linear-gradient(45deg, transparent 75%, #263443 75%),
+                linear-gradient(-45deg, transparent 75%, #263443 75%);
+            background-size: 22px 22px;
+            background-position: 0 0, 0 11px, 11px -11px, -11px 0;
+            touch-action: none;
+        }
+        .qwen-item-edit-wrap {
+            position: absolute;
+            left: 0;
+            top: 0;
+            line-height: 0;
+            transform-origin: 0 0;
+            box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+            will-change: transform;
+        }
+        .qwen-item-edit-wrap canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            max-width: none;
+            max-height: none;
+            touch-action: none;
+        }
+        .qwen-item-crop-box {
+            position: absolute;
+            z-index: 3;
+            display: none;
+            box-sizing: border-box;
+            border: 2px solid #facc15;
+            background: rgba(250, 204, 21, 0.12);
+            box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.42);
+            pointer-events: none;
+        }
+        .qwen-item-crop-box.visible { display: block; }
+        .qwen-item-editor-empty {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 22px;
+            color: var(--text3);
+            font-size: 0.78rem;
+            line-height: 1.6;
+            text-align: center;
+            pointer-events: none;
+        }
+        .qwen-item-editor-empty.hidden { display: none; }
+        .qwen-item-editor-status {
+            min-height: 18px;
+            padding-top: 8px;
+            color: var(--text3);
+            font-size: 0.72rem;
+        }
+        .qwen-item-library {
+            min-width: 0;
+            min-height: 0;
+            display: flex;
+            flex-direction: column;
+            padding: 13px;
+        }
+        .qwen-item-library-head {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding-bottom: 10px;
+        }
+        .qwen-item-library-head strong {
+            flex: 1;
+            font-size: 0.82rem;
+        }
+        .qwen-item-library-grid {
+            min-height: 0;
+            flex: 1;
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            align-content: start;
+            gap: 9px;
+            overflow-y: auto;
+            padding-right: 3px;
+        }
+        .qwen-item-card {
+            min-width: 0;
+            overflow: hidden;
+            border: 1px solid var(--border);
+            border-radius: 9px;
+            background: var(--surface2);
+        }
+        .qwen-item-card-preview {
+            height: 130px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 7px;
+            background-color: #17202b;
+            background-image:
+                linear-gradient(45deg, #263443 25%, transparent 25%),
+                linear-gradient(-45deg, #263443 25%, transparent 25%),
+                linear-gradient(45deg, transparent 75%, #263443 75%),
+                linear-gradient(-45deg, transparent 75%, #263443 75%);
+            background-size: 18px 18px;
+            background-position: 0 0, 0 9px, 9px -9px, -9px 0;
+        }
+        .qwen-item-card-preview img {
+            display: block;
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+        }
+        .qwen-item-card-info {
+            min-width: 0;
+            padding: 7px 8px 4px;
+        }
+        .qwen-item-card-name {
+            overflow: hidden;
+            color: var(--text);
+            font-size: 0.74rem;
+            font-weight: 650;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .qwen-item-card-meta {
+            padding-top: 3px;
+            color: var(--text3);
+            font-size: 0.66rem;
+        }
+        .qwen-item-card-actions {
+            display: flex;
+            gap: 5px;
+            padding: 5px 8px 8px;
+        }
+        .qwen-item-card-actions button {
+            min-width: 0;
+            flex: 1;
+            padding: 5px 6px;
+            font-size: 0.69rem;
+        }
+        .qwen-item-card-actions button.delete {
+            border-color: rgba(248, 113, 113, 0.45);
+            color: #fca5a5;
+        }
+        .qwen-item-library-empty {
+            grid-column: 1 / -1;
+            padding: 36px 12px;
+            color: var(--text3);
+            font-size: 0.75rem;
+            line-height: 1.6;
+            text-align: center;
+        }
+        .qwen-composite-footer {
+            display: flex;
+            align-items: center;
+            gap: 9px;
+            padding: 11px 14px;
+            border-top: 1px solid var(--border);
+        }
+        .qwen-composite-footer label {
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            min-width: 0;
+            flex: 1;
+            color: var(--text2);
+            font-size: 0.76rem;
+        }
+        .qwen-composite-footer input[type="text"] {
+            width: min(300px, 45vw);
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            background: var(--surface2);
+            color: var(--text);
+            padding: 7px 9px;
+        }
+        .qwen-composite-footer .add {
+            border-color: #0ea5e9;
+            background: #0284c7;
+            color: #fff;
+            font-weight: 700;
         }
         .qwen-prompt-pane {
             min-height: 0;
@@ -4829,6 +5228,16 @@
                 border-bottom: 1px solid var(--border);
             }
             .qwen-prompt-pane { overflow: visible; }
+            .qwen-composite-body {
+                overflow-y: auto;
+                grid-template-columns: 1fr;
+            }
+            .qwen-item-editor {
+                min-height: 55vh;
+                border-right: 0;
+                border-bottom: 1px solid var(--border);
+            }
+            .qwen-item-library { min-height: 45vh; }
         }
 
         .asset-sidebar select,
@@ -55537,6 +55946,9 @@
                                 <button type="button" id="au-qwen-brush-btn" class="active">브러시</button>
                                 <button type="button" id="au-qwen-eraser-btn">지우개</button>
                                 <button type="button" id="au-qwen-move-btn" title="이동 툴: 드래그로 화면 이동, 휠로 확대/축소">이동</button>
+                                <button type="button" id="au-qwen-composite-add-btn">합성 아이템 추가</button>
+                                <button type="button" id="au-qwen-composite-tool-btn" title="아이템을 선택해 이동·확대·축소·회전합니다.">합성 아이템 조작</button>
+                                <button type="button" id="au-qwen-composite-remove-btn" class="danger" disabled>선택 삭제</button>
                                 <label>크기
                                     <input type="range" id="au-qwen-brush-size" min="4" max="240" step="1" value="48">
                                     <span id="au-qwen-brush-size-label">48</span>
@@ -55557,10 +55969,11 @@
                             <div class="qwen-mask-stage">
                                 <div class="qwen-mask-canvas-wrap">
                                     <img id="au-qwen-source-image" alt="Qwen Edit 원본">
+                                    <div id="au-qwen-composite-layer" class="qwen-composite-layer"></div>
                                     <canvas id="au-qwen-mask-canvas"></canvas>
                                 </div>
                             </div>
-                            <div class="qwen-mask-help">반투명 파란색으로 칠한 영역만 Qwen latent 샘플링 마스크로 전달됩니다.</div>
+                            <div class="qwen-mask-help">반투명 파란색으로 칠한 영역과 합성 아이템 영역을 합쳐 Qwen latent 샘플링 마스크로 전달합니다.</div>
                         </section>
                         <section class="qwen-prompt-pane">
                             <div class="qwen-field">
@@ -55627,6 +56040,7 @@
             const brushButton = modal.querySelector('#au-qwen-brush-btn');
             const eraserButton = modal.querySelector('#au-qwen-eraser-btn');
             const moveButton = modal.querySelector('#au-qwen-move-btn');
+            const compositeToolButton = modal.querySelector('#au-qwen-composite-tool-btn');
             const brushSize = modal.querySelector('#au-qwen-brush-size');
             const maskOpacity = modal.querySelector('#au-qwen-mask-opacity');
             const maskVisible = modal.querySelector('#au-qwen-mask-visible');
@@ -55636,14 +56050,22 @@
                 brushButton.classList.toggle('active', tool === 'brush');
                 eraserButton.classList.toggle('active', tool === 'eraser');
                 moveButton.classList.toggle('active', tool === 'move');
+                compositeToolButton.classList.toggle('active', tool === 'composite');
                 canvas.style.cursor =
                     tool === 'move' ? 'grab'
                     : tool === 'eraser' ? 'cell'
+                    : tool === 'composite' ? 'default'
                     : 'crosshair';
+                auQwenSetCompositeInteraction(tool === 'composite');
             };
             brushButton.addEventListener('click', () => setTool('brush'));
             eraserButton.addEventListener('click', () => setTool('eraser'));
             moveButton.addEventListener('click', () => setTool('move'));
+            compositeToolButton.addEventListener('click', () => setTool('composite'));
+            modal.querySelector('#au-qwen-composite-add-btn')
+                .addEventListener('click', auOpenQwenCompositeLibrary);
+            modal.querySelector('#au-qwen-composite-remove-btn')
+                .addEventListener('click', auQwenRemoveSelectedComposite);
             brushSize.addEventListener('input', () => {
                 modal.querySelector('#au-qwen-brush-size-label').textContent = brushSize.value;
             });
@@ -55672,6 +56094,7 @@
             modal.addEventListener('click', (event) => {
                 if (event.target === modal) auCloseQwenEdit();
             });
+            document.addEventListener('keydown', auQwenHandleCompositeKeydown);
 
             const pointerPoint = (event) => {
                 const rect = canvas.getBoundingClientRect();
@@ -55798,6 +56221,1347 @@
                 window.addEventListener('resize', auQwenFitMaskCanvas);
             }
             return modal;
+        }
+
+        function auQwenSetCompositeInteraction(enabled) {
+            const state = auQwenEditState;
+            if (!state) return;
+            const layer = state.compositeLayer
+                || document.getElementById('au-qwen-composite-layer');
+            const wrap = state.canvas?.closest('.qwen-mask-canvas-wrap');
+            if (!layer || !wrap) {
+                console.error('[QWEN_COMPOSITE] 조작 레이어를 찾지 못했습니다:', {
+                    hasLayer: Boolean(layer),
+                    hasWrap: Boolean(wrap),
+                });
+                return;
+            }
+            layer.classList.toggle('interactive', enabled);
+            wrap.classList.toggle('composite-mode', enabled);
+            if (!enabled) state.selectedCompositeId = null;
+            auQwenRefreshCompositeSelection();
+        }
+
+        function auQwenRefreshCompositeSelection() {
+            const state = auQwenEditState;
+            const modal = document.getElementById('au-qwen-edit-modal');
+            if (!state || !modal) return;
+            const selectedId = state.tool === 'composite'
+                ? state.selectedCompositeId
+                : null;
+            for (const item of state.compositeItems || []) {
+                item.element?.classList.toggle('selected', item.id === selectedId);
+            }
+            const removeButton = modal.querySelector('#au-qwen-composite-remove-btn');
+            if (removeButton) {
+                removeButton.disabled = !selectedId || state.busy;
+            }
+        }
+
+        function auQwenSelectCompositeItem(itemId) {
+            const state = auQwenEditState;
+            if (!state || state.tool !== 'composite') return;
+            state.selectedCompositeId = itemId;
+            auQwenRefreshCompositeSelection();
+        }
+
+        function auQwenRemoveSelectedComposite() {
+            const state = auQwenEditState;
+            if (!state || state.busy || !state.selectedCompositeId) return;
+            const index = (state.compositeItems || []).findIndex(
+                (item) => item.id === state.selectedCompositeId,
+            );
+            if (index < 0) {
+                console.error(
+                    '[QWEN_COMPOSITE] 선택 삭제 실패: 아이템을 찾을 수 없습니다.',
+                    state.selectedCompositeId,
+                );
+                state.selectedCompositeId = null;
+                auQwenRefreshCompositeSelection();
+                return;
+            }
+            const [removed] = state.compositeItems.splice(index, 1);
+            removed.element?.remove();
+            state.selectedCompositeId = null;
+            auQwenRefreshCompositeSelection();
+            const status = document.getElementById('au-qwen-run-status');
+            if (status) {
+                status.textContent =
+                    `합성 아이템 ${state.compositeItems.length}개 · 직접 마스크를 추가로 칠할 수 있습니다.`;
+            }
+        }
+
+        function auQwenCompositeSourcePoint(event) {
+            const state = auQwenEditState;
+            const rect = state?.canvas?.getBoundingClientRect();
+            if (
+                !state?.canvas?.width
+                || !rect
+                || !rect.width
+                || !rect.height
+            ) {
+                console.error('[QWEN_COMPOSITE] 원본 좌표 계산 실패:', {
+                    hasCanvas: Boolean(state?.canvas),
+                    rect,
+                });
+                return null;
+            }
+            return {
+                x: (event.clientX - rect.left) * state.canvas.width / rect.width,
+                y: (event.clientY - rect.top) * state.canvas.height / rect.height,
+            };
+        }
+
+        function auQwenApplyCompositeElement(item) {
+            const state = auQwenEditState;
+            const width = state?.canvas?.width || 0;
+            const height = state?.canvas?.height || 0;
+            if (!item?.element || !width || !height) return;
+            item.element.style.left = `${item.x / width * 100}%`;
+            item.element.style.top = `${item.y / height * 100}%`;
+            item.element.style.width = `${item.width / width * 100}%`;
+            item.element.style.height = `${item.height / height * 100}%`;
+            item.element.style.transform =
+                `translate(-50%, -50%) rotate(${item.rotation || 0}deg)`;
+        }
+
+        function auQwenBeginCompositeGesture(event, item, gesture) {
+            const state = auQwenEditState;
+            if (!state || state.busy || state.tool !== 'composite') return;
+            const startPoint = auQwenCompositeSourcePoint(event);
+            if (!startPoint) return;
+            event.preventDefault();
+            event.stopPropagation();
+            auQwenSelectCompositeItem(item.id);
+
+            const start = {
+                x: item.x,
+                y: item.y,
+                width: item.width,
+                height: item.height,
+                rotation: item.rotation || 0,
+                pointerX: startPoint.x,
+                pointerY: startPoint.y,
+                distance: Math.max(
+                    1,
+                    Math.hypot(startPoint.x - item.x, startPoint.y - item.y),
+                ),
+                angle: Math.atan2(
+                    startPoint.y - item.y,
+                    startPoint.x - item.x,
+                ),
+            };
+            const move = (moveEvent) => {
+                if (auQwenEditState !== state) return;
+                const point = auQwenCompositeSourcePoint(moveEvent);
+                if (!point) return;
+                moveEvent.preventDefault();
+                if (gesture === 'move') {
+                    const minVisible = 12;
+                    item.x = Math.max(
+                        -item.width / 2 + minVisible,
+                        Math.min(
+                            state.canvas.width + item.width / 2 - minVisible,
+                            start.x + point.x - start.pointerX,
+                        ),
+                    );
+                    item.y = Math.max(
+                        -item.height / 2 + minVisible,
+                        Math.min(
+                            state.canvas.height + item.height / 2 - minVisible,
+                            start.y + point.y - start.pointerY,
+                        ),
+                    );
+                } else if (gesture === 'resize') {
+                    const distance = Math.max(
+                        1,
+                        Math.hypot(point.x - item.x, point.y - item.y),
+                    );
+                    const maximum = Math.max(
+                        state.canvas.width,
+                        state.canvas.height,
+                    ) * 4;
+                    const scale = Math.max(
+                        8 / Math.max(start.width, start.height),
+                        Math.min(
+                            maximum / Math.max(start.width, start.height),
+                            distance / start.distance,
+                        ),
+                    );
+                    item.width = Math.max(8, start.width * scale);
+                    item.height = Math.max(8, start.height * scale);
+                } else if (gesture === 'rotate') {
+                    const angle = Math.atan2(
+                        point.y - item.y,
+                        point.x - item.x,
+                    );
+                    item.rotation =
+                        start.rotation + (angle - start.angle) * 180 / Math.PI;
+                }
+                auQwenApplyCompositeElement(item);
+            };
+            const finish = () => {
+                window.removeEventListener('pointermove', move);
+                window.removeEventListener('pointerup', finish);
+                window.removeEventListener('pointercancel', finish);
+            };
+            window.addEventListener('pointermove', move, {passive: false});
+            window.addEventListener('pointerup', finish, {once: true});
+            window.addEventListener('pointercancel', finish, {once: true});
+        }
+
+        function auQwenRenderCompositeItems() {
+            const state = auQwenEditState;
+            const layer = state?.compositeLayer;
+            if (!state || !layer) return;
+            layer.replaceChildren();
+            for (const item of state.compositeItems || []) {
+                const element = document.createElement('div');
+                element.className = 'qwen-composite-item';
+                element.dataset.itemId = item.id;
+                const image = document.createElement('img');
+                image.alt = item.name || '합성 아이템';
+                image.draggable = false;
+                image.src = item.url;
+                element.appendChild(image);
+                const rotateLine = document.createElement('span');
+                rotateLine.className = 'qwen-composite-rotate-line';
+                element.appendChild(rotateLine);
+                for (const handleName of ['nw', 'ne', 'sw', 'se', 'rotate']) {
+                    const handle = document.createElement('span');
+                    handle.className = `qwen-composite-handle ${handleName}`;
+                    handle.addEventListener('pointerdown', (event) => {
+                        auQwenBeginCompositeGesture(
+                            event,
+                            item,
+                            handleName === 'rotate' ? 'rotate' : 'resize',
+                        );
+                    });
+                    element.appendChild(handle);
+                }
+                element.addEventListener('pointerdown', (event) => {
+                    if (event.target.closest('.qwen-composite-handle')) return;
+                    auQwenBeginCompositeGesture(event, item, 'move');
+                });
+                item.element = element;
+                layer.appendChild(element);
+                auQwenApplyCompositeElement(item);
+            }
+            auQwenRefreshCompositeSelection();
+        }
+
+        function auQwenLoadImage(url, label = '이미지') {
+            return new Promise((resolve, reject) => {
+                const image = new Image();
+                image.decoding = 'async';
+                image.onload = () => {
+                    if (!image.naturalWidth || !image.naturalHeight) {
+                        const error = new Error(`${label} 크기가 0입니다`);
+                        console.error('[QWEN_COMPOSITE] 이미지 크기 오류:', url);
+                        reject(error);
+                        return;
+                    }
+                    resolve(image);
+                };
+                image.onerror = (event) => {
+                    console.error('[QWEN_COMPOSITE] 이미지 로드 실패:', url, event);
+                    reject(new Error(`${label}을 불러오지 못했습니다`));
+                };
+                image.src = url;
+            });
+        }
+
+        async function auQwenAddLibraryItemToStage(record) {
+            const state = auQwenEditState;
+            if (auQwenCompositeEditorState?.busy) {
+                showToast('현재 아이템 편집 작업이 끝난 뒤 추가하세요', 'error');
+                return;
+            }
+            if (!state?.canvas?.width || state.busy) {
+                console.error(
+                    '[QWEN_COMPOSITE] 아이템 배치 실패: Qwen 원본이 준비되지 않았습니다.',
+                    record,
+                );
+                showToast('Qwen 원본 이미지가 아직 준비되지 않았습니다', 'error');
+                return;
+            }
+            try {
+                const versionedUrl = `${record.url}${
+                    record.url.includes('?') ? '&' : '?'
+                }v=${record.modified_at || Date.now()}`;
+                const image = await auQwenLoadImage(
+                    versionedUrl,
+                    record.name || '합성 아이템',
+                );
+                const targetWidth = state.canvas.width * 0.34;
+                const targetHeight = state.canvas.height * 0.34;
+                const scale = Math.max(
+                    0.05,
+                    Math.min(
+                        2,
+                        targetWidth / image.naturalWidth,
+                        targetHeight / image.naturalHeight,
+                    ),
+                );
+                const item = {
+                    id: `qci-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+                    filename: record.filename,
+                    name: record.name || record.filename,
+                    url: versionedUrl,
+                    image,
+                    x: state.canvas.width / 2,
+                    y: state.canvas.height / 2,
+                    width: image.naturalWidth * scale,
+                    height: image.naturalHeight * scale,
+                    rotation: 0,
+                    element: null,
+                };
+                state.compositeItems.push(item);
+                state.selectedCompositeId = item.id;
+                auQwenRenderCompositeItems();
+                document.getElementById('au-qwen-composite-tool-btn')?.click();
+                const status = document.getElementById('au-qwen-run-status');
+                if (status) {
+                    status.textContent =
+                        `합성 아이템 ${state.compositeItems.length}개 · 선택 아이템을 이동·확대·축소·회전하세요.`;
+                }
+                auCloseQwenCompositeLibrary();
+            } catch (error) {
+                console.error('[QWEN_COMPOSITE] 아이템 배치 실패:', error, record);
+                showToast(`합성 아이템 배치 실패: ${error.message}`, 'error');
+            }
+        }
+
+        function auQwenHandleCompositeKeydown(event) {
+            const modal = document.getElementById('au-qwen-edit-modal');
+            const itemModal = document.getElementById('au-qwen-composite-modal');
+            const state = auQwenEditState;
+            if (
+                !modal?.classList.contains('visible')
+                || itemModal?.classList.contains('visible')
+                || !state
+                || state.tool !== 'composite'
+            ) {
+                return;
+            }
+            const tagName = document.activeElement?.tagName?.toLowerCase();
+            if (tagName === 'input' || tagName === 'textarea') return;
+            if (event.key === 'Delete' || event.key === 'Backspace') {
+                event.preventDefault();
+                auQwenRemoveSelectedComposite();
+            } else if (event.key === 'Escape') {
+                state.selectedCompositeId = null;
+                auQwenRefreshCompositeSelection();
+            }
+        }
+
+        let auQwenCompositeEditorState = null;
+
+        function auEnsureQwenCompositeModal() {
+            let modal = document.getElementById('au-qwen-composite-modal');
+            if (modal) return modal;
+
+            modal = document.createElement('div');
+            modal.id = 'au-qwen-composite-modal';
+            modal.className = 'qwen-composite-modal';
+            modal.setAttribute('role', 'dialog');
+            modal.setAttribute('aria-modal', 'true');
+            modal.setAttribute('aria-labelledby', 'au-qwen-composite-title');
+            modal.innerHTML = `
+                <div class="qwen-composite-panel">
+                    <div class="qwen-composite-header">
+                        <h3 id="au-qwen-composite-title">합성 아이템 편집 · 전역 아이템 박스</h3>
+                        <span>PNG 파일은 asset_data/qwen_composite_items에 저장됩니다.</span>
+                        <button type="button" class="qwen-composite-close" aria-label="닫기">×</button>
+                    </div>
+                    <div class="qwen-composite-body">
+                        <section class="qwen-item-editor">
+                            <div class="qwen-item-toolbar">
+                                <input type="file" id="au-qwen-item-file" accept="image/*" hidden>
+                                <button type="button" id="au-qwen-item-upload-btn">새 이미지 업로드</button>
+                                <button type="button" id="au-qwen-item-move-btn">이동</button>
+                                <button type="button" id="au-qwen-item-eraser-btn" class="active">지우개</button>
+                                <button type="button" id="au-qwen-item-crop-btn">자르기</button>
+                                <button type="button" id="au-qwen-item-crop-apply-btn" disabled>자르기 적용</button>
+                                <button type="button" id="au-qwen-item-zoom-out-btn" title="축소">−</button>
+                                <button type="button" id="au-qwen-item-zoom-in-btn" title="확대">＋</button>
+                                <button type="button" id="au-qwen-item-fit-btn">맞춤</button>
+                                <label>지우개
+                                    <input type="range" id="au-qwen-item-brush-size" min="4" max="240" step="1" value="48">
+                                    <span id="au-qwen-item-brush-label">48</span>
+                                </label>
+                                <button type="button" id="au-qwen-item-undo-btn" disabled>실행취소</button>
+                                <button type="button" id="au-qwen-item-reset-btn" disabled>원본 복원</button>
+                                <button type="button" id="au-qwen-item-bg-remove-btn" disabled>배경 지우기 (ONNX)</button>
+                            </div>
+                            <div class="qwen-item-edit-stage" id="au-qwen-item-edit-stage">
+                                <div class="qwen-item-edit-wrap" id="au-qwen-item-edit-wrap">
+                                    <canvas id="au-qwen-item-edit-canvas"></canvas>
+                                    <div class="qwen-item-crop-box" id="au-qwen-item-crop-box"></div>
+                                </div>
+                                <div class="qwen-item-editor-empty" id="au-qwen-item-editor-empty">
+                                    새 이미지를 업로드하거나 오른쪽 아이템 박스에서 불러오세요.<br>
+                                    드래그 앤 드롭도 지원합니다.
+                                </div>
+                            </div>
+                            <div class="qwen-item-editor-status" id="au-qwen-item-editor-status">
+                                편집할 이미지를 선택하세요.
+                            </div>
+                        </section>
+                        <aside class="qwen-item-library">
+                            <div class="qwen-item-library-head">
+                                <strong>서버 전역 아이템 박스</strong>
+                                <button type="button" id="au-qwen-item-refresh-btn">새로고침</button>
+                            </div>
+                            <div class="qwen-item-library-grid" id="au-qwen-item-library-grid">
+                                <div class="qwen-item-library-empty">아이템 목록을 불러오는 중...</div>
+                            </div>
+                        </aside>
+                    </div>
+                    <div class="qwen-composite-footer">
+                        <label>아이템 이름
+                            <input type="text" id="au-qwen-item-name" maxlength="80" placeholder="예: 검은 리본">
+                        </label>
+                        <button type="button" id="au-qwen-item-editor-close-btn">닫기</button>
+                        <button type="button" id="au-qwen-item-save-add-btn" class="add" disabled>파일로 저장하고 추가</button>
+                    </div>
+                </div>`;
+            document.body.appendChild(modal);
+
+            const canvas = modal.querySelector('#au-qwen-item-edit-canvas');
+            const stage = modal.querySelector('#au-qwen-item-edit-stage');
+            const fileInput = modal.querySelector('#au-qwen-item-file');
+            modal.querySelector('#au-qwen-item-upload-btn').addEventListener('click', () => {
+                if (!auQwenCompositeEditorState?.busy) fileInput.click();
+            });
+            fileInput.addEventListener('change', () => {
+                const file = fileInput.files?.[0];
+                fileInput.value = '';
+                if (file) auQwenLoadCompositeEditorFile(file);
+            });
+            modal.querySelector('#au-qwen-item-move-btn')
+                .addEventListener('click', () => auQwenSetItemEditorTool('move'));
+            modal.querySelector('#au-qwen-item-eraser-btn')
+                .addEventListener('click', () => auQwenSetItemEditorTool('eraser'));
+            modal.querySelector('#au-qwen-item-crop-btn')
+                .addEventListener('click', () => auQwenSetItemEditorTool('crop'));
+            modal.querySelector('#au-qwen-item-crop-apply-btn')
+                .addEventListener('click', auQwenApplyItemCrop);
+            modal.querySelector('#au-qwen-item-zoom-out-btn')
+                .addEventListener('click', () => auQwenSetItemEditorZoom(
+                    (auQwenCompositeEditorState?.zoom || 1) / 1.25,
+                ));
+            modal.querySelector('#au-qwen-item-zoom-in-btn')
+                .addEventListener('click', () => auQwenSetItemEditorZoom(
+                    (auQwenCompositeEditorState?.zoom || 1) * 1.25,
+                ));
+            modal.querySelector('#au-qwen-item-fit-btn')
+                .addEventListener('click', auQwenResetItemEditorView);
+            const brush = modal.querySelector('#au-qwen-item-brush-size');
+            brush.addEventListener('input', () => {
+                modal.querySelector('#au-qwen-item-brush-label').textContent = brush.value;
+            });
+            modal.querySelector('#au-qwen-item-undo-btn')
+                .addEventListener('click', auQwenUndoItemEditor);
+            modal.querySelector('#au-qwen-item-reset-btn')
+                .addEventListener('click', auQwenRestoreItemEditorOriginal);
+            modal.querySelector('#au-qwen-item-bg-remove-btn')
+                .addEventListener('click', auQwenRemoveItemBackground);
+            modal.querySelector('#au-qwen-item-refresh-btn')
+                .addEventListener('click', auQwenLoadCompositeLibrary);
+            modal.querySelector('#au-qwen-item-save-add-btn')
+                .addEventListener('click', auQwenSaveAndAddCompositeItem);
+            modal.querySelector('#au-qwen-item-editor-close-btn')
+                .addEventListener('click', auCloseQwenCompositeLibrary);
+            modal.querySelector('.qwen-composite-close')
+                .addEventListener('click', auCloseQwenCompositeLibrary);
+            modal.addEventListener('click', (event) => {
+                if (event.target === modal) auCloseQwenCompositeLibrary();
+            });
+
+            const pointFromEvent = (event) => {
+                const state = auQwenCompositeEditorState;
+                const rect = canvas.getBoundingClientRect();
+                if (
+                    !state?.loaded
+                    || !canvas.width
+                    || !rect.width
+                    || !rect.height
+                ) {
+                    console.error('[QWEN_COMPOSITE] 아이템 편집 좌표 계산 실패:', {
+                        loaded: state?.loaded,
+                        canvasWidth: canvas.width,
+                        canvasHeight: canvas.height,
+                        rect,
+                    });
+                    return null;
+                }
+                return {
+                    x: Math.max(
+                        0,
+                        Math.min(
+                            canvas.width,
+                            (event.clientX - rect.left) * canvas.width / rect.width,
+                        ),
+                    ),
+                    y: Math.max(
+                        0,
+                        Math.min(
+                            canvas.height,
+                            (event.clientY - rect.top) * canvas.height / rect.height,
+                        ),
+                    ),
+                };
+            };
+
+            canvas.addEventListener('pointerdown', (event) => {
+                const state = auQwenCompositeEditorState;
+                if (!state?.loaded || state.busy) return;
+                const point = pointFromEvent(event);
+                if (!point) return;
+                event.preventDefault();
+                canvas.setPointerCapture(event.pointerId);
+                if (state.tool === 'move') {
+                    state.panning = true;
+                    state.panStartClientX = event.clientX;
+                    state.panStartClientY = event.clientY;
+                    state.panStartX = state.panX || 0;
+                    state.panStartY = state.panY || 0;
+                    canvas.style.cursor = 'grabbing';
+                    return;
+                }
+                if (state.tool === 'crop') {
+                    state.cropping = true;
+                    state.cropStart = point;
+                    state.cropRect = {
+                        x: point.x,
+                        y: point.y,
+                        width: 0,
+                        height: 0,
+                    };
+                    auQwenRenderItemCropBox();
+                    return;
+                }
+                state.erasing = true;
+                const context = canvas.getContext('2d', {willReadFrequently: true});
+                context.globalCompositeOperation = 'destination-out';
+                context.lineCap = 'round';
+                context.lineJoin = 'round';
+                context.lineWidth = Number(brush.value) || 48;
+                context.beginPath();
+                context.moveTo(point.x, point.y);
+                context.lineTo(point.x + 0.01, point.y + 0.01);
+                context.stroke();
+            });
+            canvas.addEventListener('pointermove', (event) => {
+                const state = auQwenCompositeEditorState;
+                if (!state) return;
+                if (state.panning) {
+                    event.preventDefault();
+                    state.panX =
+                        state.panStartX + event.clientX - state.panStartClientX;
+                    state.panY =
+                        state.panStartY + event.clientY - state.panStartClientY;
+                    auQwenApplyItemEditorTransform();
+                    return;
+                }
+                if (state.cropping) {
+                    event.preventDefault();
+                    const point = pointFromEvent(event);
+                    if (!point) return;
+                    state.cropRect = {
+                        x: Math.min(state.cropStart.x, point.x),
+                        y: Math.min(state.cropStart.y, point.y),
+                        width: Math.abs(point.x - state.cropStart.x),
+                        height: Math.abs(point.y - state.cropStart.y),
+                    };
+                    auQwenRenderItemCropBox();
+                    return;
+                }
+                if (!state.erasing) return;
+                event.preventDefault();
+                const point = pointFromEvent(event);
+                if (!point) return;
+                canvas.getContext('2d', {willReadFrequently: true})
+                    .lineTo(point.x, point.y);
+                canvas.getContext('2d', {willReadFrequently: true}).stroke();
+            });
+            const finishEditGesture = (event) => {
+                const state = auQwenCompositeEditorState;
+                if (!state) return;
+                if (state.panning) {
+                    state.panning = false;
+                    if (state.tool === 'move') canvas.style.cursor = 'grab';
+                } else if (state.cropping) {
+                    state.cropping = false;
+                    auQwenRenderItemCropBox();
+                } else if (state.erasing) {
+                    state.erasing = false;
+                    const context = canvas.getContext('2d', {willReadFrequently: true});
+                    context.closePath();
+                    context.globalCompositeOperation = 'source-over';
+                    auQwenCaptureItemEditorHistory();
+                }
+                if (canvas.hasPointerCapture(event.pointerId)) {
+                    canvas.releasePointerCapture(event.pointerId);
+                }
+            };
+            canvas.addEventListener('pointerup', finishEditGesture);
+            canvas.addEventListener('pointercancel', finishEditGesture);
+            stage.addEventListener('wheel', (event) => {
+                const state = auQwenCompositeEditorState;
+                if (!state?.loaded) return;
+                event.preventDefault();
+                const factor = event.shiftKey ? 1.3 : 1.15;
+                auQwenSetItemEditorZoom(
+                    event.deltaY < 0 ? state.zoom * factor : state.zoom / factor,
+                    event.clientX,
+                    event.clientY,
+                );
+            }, {passive: false});
+            stage.addEventListener('dragover', (event) => {
+                event.preventDefault();
+                if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+            });
+            stage.addEventListener('drop', (event) => {
+                event.preventDefault();
+                const file = event.dataTransfer?.files?.[0];
+                if (file) auQwenLoadCompositeEditorFile(file);
+                else console.error('[QWEN_COMPOSITE] 드롭된 이미지 파일이 없습니다.');
+            });
+            if (typeof ResizeObserver === 'function') {
+                const observer = new ResizeObserver(() => {
+                    if (modal.classList.contains('visible')) {
+                        requestAnimationFrame(auQwenFitItemEditor);
+                    }
+                });
+                observer.observe(stage);
+                modal._qwenCompositeResizeObserver = observer;
+            } else {
+                console.error(
+                    '[QWEN_COMPOSITE] ResizeObserver 미지원: window resize 폴백 사용',
+                );
+                window.addEventListener('resize', auQwenFitItemEditor);
+            }
+            return modal;
+        }
+
+        function auQwenSetItemEditorTool(tool) {
+            const state = auQwenCompositeEditorState;
+            if (!state || state.busy) return;
+            state.tool = tool;
+            const modal = state.modal;
+            modal.querySelector('#au-qwen-item-move-btn')
+                .classList.toggle('active', tool === 'move');
+            modal.querySelector('#au-qwen-item-eraser-btn')
+                .classList.toggle('active', tool === 'eraser');
+            modal.querySelector('#au-qwen-item-crop-btn')
+                .classList.toggle('active', tool === 'crop');
+            state.canvas.style.cursor =
+                tool === 'move' ? 'grab'
+                : tool === 'crop' ? 'crosshair'
+                : 'cell';
+        }
+
+        function auOpenQwenCompositeLibrary() {
+            const qwenState = auQwenEditState;
+            if (!qwenState?.image?.naturalWidth || qwenState.busy) {
+                console.error(
+                    '[QWEN_COMPOSITE] 편집 모달 열기 실패: 원본 미준비 또는 실행 중',
+                    {
+                        imageWidth: qwenState?.image?.naturalWidth,
+                        busy: qwenState?.busy,
+                    },
+                );
+                showToast('Qwen 원본 이미지가 준비된 뒤 아이템을 추가하세요', 'error');
+                return;
+            }
+            const modal = auEnsureQwenCompositeModal();
+            const canvas = modal.querySelector('#au-qwen-item-edit-canvas');
+            const wrap = modal.querySelector('#au-qwen-item-edit-wrap');
+            const stage = modal.querySelector('#au-qwen-item-edit-stage');
+            auQwenCompositeEditorState = {
+                modal,
+                canvas,
+                wrap,
+                stage,
+                cropBox: modal.querySelector('#au-qwen-item-crop-box'),
+                empty: modal.querySelector('#au-qwen-item-editor-empty'),
+                status: modal.querySelector('#au-qwen-item-editor-status'),
+                tool: 'eraser',
+                loaded: false,
+                busy: false,
+                erasing: false,
+                panning: false,
+                cropping: false,
+                cropStart: null,
+                cropRect: null,
+                history: [],
+                historyIndex: -1,
+                original: null,
+                sourceName: '',
+                zoom: 1,
+                panX: 0,
+                panY: 0,
+                displayW: 0,
+                displayH: 0,
+                stageW: 0,
+                stageH: 0,
+                baseLeft: 0,
+                baseTop: 0,
+            };
+            canvas.width = 1;
+            canvas.height = 1;
+            canvas.getContext('2d', {willReadFrequently: true})
+                .clearRect(0, 0, 1, 1);
+            wrap.style.width = '1px';
+            wrap.style.height = '1px';
+            wrap.style.transform = 'translate(-10000px, -10000px)';
+            modal.querySelector('#au-qwen-item-name').value = '';
+            auQwenCompositeEditorState.empty.classList.remove('hidden');
+            auQwenCompositeEditorState.status.textContent =
+                '편집할 이미지를 선택하세요.';
+            auQwenSetItemEditorTool('eraser');
+            auQwenRefreshItemEditorButtons();
+            modal.classList.add('visible');
+            auQwenLoadCompositeLibrary();
+        }
+
+        function auCloseQwenCompositeLibrary() {
+            const state = auQwenCompositeEditorState;
+            if (state?.busy) {
+                showToast('현재 아이템 작업이 끝난 뒤 닫아주세요', 'error');
+                return;
+            }
+            document.getElementById('au-qwen-composite-modal')
+                ?.classList.remove('visible');
+        }
+
+        function auQwenRefreshItemEditorButtons() {
+            const state = auQwenCompositeEditorState;
+            if (!state?.modal) return;
+            const loaded = Boolean(state.loaded);
+            const busy = Boolean(state.busy);
+            state.modal.querySelector('#au-qwen-item-undo-btn').disabled =
+                busy || !loaded || state.historyIndex <= 0;
+            state.modal.querySelector('#au-qwen-item-reset-btn').disabled =
+                busy || !loaded || !state.original;
+            state.modal.querySelector('#au-qwen-item-bg-remove-btn').disabled =
+                busy || !loaded;
+            state.modal.querySelector('#au-qwen-item-save-add-btn').disabled =
+                busy || !loaded;
+            state.modal.querySelector('#au-qwen-item-crop-apply-btn').disabled =
+                busy
+                || !loaded
+                || !state.cropRect
+                || state.cropRect.width < 2
+                || state.cropRect.height < 2;
+            for (const id of [
+                'au-qwen-item-upload-btn',
+                'au-qwen-item-move-btn',
+                'au-qwen-item-eraser-btn',
+                'au-qwen-item-crop-btn',
+                'au-qwen-item-zoom-out-btn',
+                'au-qwen-item-zoom-in-btn',
+                'au-qwen-item-fit-btn',
+            ]) {
+                const button = state.modal.querySelector(`#${id}`);
+                if (button) button.disabled = busy;
+            }
+        }
+
+        function auQwenSetItemEditorBusy(busy, statusText = '') {
+            const state = auQwenCompositeEditorState;
+            if (!state) return;
+            state.busy = Boolean(busy);
+            if (statusText) state.status.textContent = statusText;
+            auQwenRefreshItemEditorButtons();
+        }
+
+        function auQwenFitItemEditor() {
+            const state = auQwenCompositeEditorState;
+            if (!state?.loaded || !state.canvas.width || !state.canvas.height) return;
+            const stageWidth = Math.max(1, state.stage.clientWidth);
+            const stageHeight = Math.max(1, state.stage.clientHeight);
+            const availableWidth = Math.max(1, stageWidth - 16);
+            const availableHeight = Math.max(1, stageHeight - 16);
+            const scale = Math.min(
+                1,
+                availableWidth / state.canvas.width,
+                availableHeight / state.canvas.height,
+            );
+            state.stageW = stageWidth;
+            state.stageH = stageHeight;
+            state.displayW = Math.max(1, state.canvas.width * scale);
+            state.displayH = Math.max(1, state.canvas.height * scale);
+            state.baseLeft = (stageWidth - state.displayW) / 2;
+            state.baseTop = (stageHeight - state.displayH) / 2;
+            state.wrap.style.width = `${state.displayW}px`;
+            state.wrap.style.height = `${state.displayH}px`;
+            auQwenApplyItemEditorTransform();
+        }
+
+        function auQwenApplyItemEditorTransform() {
+            const state = auQwenCompositeEditorState;
+            if (!state?.loaded || !state.displayW) return;
+            const zoom = state.zoom || 1;
+            const margin = 24;
+            const minX = margin - state.baseLeft - state.displayW * zoom;
+            const maxX = state.stageW - margin - state.baseLeft;
+            const minY = margin - state.baseTop - state.displayH * zoom;
+            const maxY = state.stageH - margin - state.baseTop;
+            state.panX = Math.max(minX, Math.min(maxX, state.panX || 0));
+            state.panY = Math.max(minY, Math.min(maxY, state.panY || 0));
+            state.wrap.style.transform =
+                `translate(${state.baseLeft + state.panX}px, ${state.baseTop + state.panY}px) scale(${zoom})`;
+        }
+
+        function auQwenSetItemEditorZoom(targetZoom, clientX, clientY) {
+            const state = auQwenCompositeEditorState;
+            if (!state?.loaded) return;
+            const oldZoom = state.zoom || 1;
+            const newZoom = Math.max(0.2, Math.min(12, targetZoom));
+            if (clientX != null && clientY != null) {
+                const stageRect = state.stage.getBoundingClientRect();
+                const localX = (
+                    clientX - stageRect.left - state.baseLeft - (state.panX || 0)
+                ) / oldZoom;
+                const localY = (
+                    clientY - stageRect.top - state.baseTop - (state.panY || 0)
+                ) / oldZoom;
+                state.panX =
+                    clientX - stageRect.left - state.baseLeft - localX * newZoom;
+                state.panY =
+                    clientY - stageRect.top - state.baseTop - localY * newZoom;
+            }
+            state.zoom = newZoom;
+            auQwenApplyItemEditorTransform();
+            state.status.textContent =
+                `편집 ${state.canvas.width}×${state.canvas.height} · 줌 ${Math.round(newZoom * 100)}%`;
+        }
+
+        function auQwenResetItemEditorView() {
+            const state = auQwenCompositeEditorState;
+            if (!state?.loaded) return;
+            state.zoom = 1;
+            state.panX = 0;
+            state.panY = 0;
+            auQwenFitItemEditor();
+            state.status.textContent =
+                `편집 ${state.canvas.width}×${state.canvas.height} · 맞춤 보기`;
+        }
+
+        function auQwenCaptureItemEditorHistory() {
+            const state = auQwenCompositeEditorState;
+            if (!state?.loaded) return;
+            const context = state.canvas.getContext('2d', {willReadFrequently: true});
+            if (state.historyIndex < state.history.length - 1) {
+                state.history.splice(state.historyIndex + 1);
+            }
+            state.history.push({
+                width: state.canvas.width,
+                height: state.canvas.height,
+                imageData: context.getImageData(
+                    0,
+                    0,
+                    state.canvas.width,
+                    state.canvas.height,
+                ),
+            });
+            if (state.history.length > 8) state.history.shift();
+            state.historyIndex = state.history.length - 1;
+            auQwenRefreshItemEditorButtons();
+        }
+
+        function auQwenRestoreItemEditorSnapshot(snapshot) {
+            const state = auQwenCompositeEditorState;
+            if (!state || !snapshot) return;
+            state.canvas.width = snapshot.width;
+            state.canvas.height = snapshot.height;
+            state.canvas.getContext('2d', {willReadFrequently: true})
+                .putImageData(snapshot.imageData, 0, 0);
+            state.cropRect = null;
+            auQwenRenderItemCropBox();
+            state.zoom = 1;
+            state.panX = 0;
+            state.panY = 0;
+            requestAnimationFrame(auQwenFitItemEditor);
+        }
+
+        function auQwenUndoItemEditor() {
+            const state = auQwenCompositeEditorState;
+            if (!state?.loaded || state.busy || state.historyIndex <= 0) return;
+            state.historyIndex -= 1;
+            auQwenRestoreItemEditorSnapshot(state.history[state.historyIndex]);
+            state.status.textContent =
+                `실행취소 · 편집 ${state.canvas.width}×${state.canvas.height}`;
+            auQwenRefreshItemEditorButtons();
+        }
+
+        function auQwenRestoreItemEditorOriginal() {
+            const state = auQwenCompositeEditorState;
+            if (!state?.loaded || state.busy || !state.original) return;
+            auQwenRestoreItemEditorSnapshot(state.original);
+            state.history = [];
+            state.historyIndex = -1;
+            auQwenCaptureItemEditorHistory();
+            state.status.textContent =
+                `업로드 원본 복원 · ${state.canvas.width}×${state.canvas.height}`;
+        }
+
+        function auQwenRenderItemCropBox() {
+            const state = auQwenCompositeEditorState;
+            if (!state?.cropBox || !state.canvas.width || !state.canvas.height) return;
+            const rect = state.cropRect;
+            const visible = Boolean(rect && rect.width >= 1 && rect.height >= 1);
+            state.cropBox.classList.toggle('visible', visible);
+            if (visible) {
+                state.cropBox.style.left = `${rect.x / state.canvas.width * 100}%`;
+                state.cropBox.style.top = `${rect.y / state.canvas.height * 100}%`;
+                state.cropBox.style.width = `${rect.width / state.canvas.width * 100}%`;
+                state.cropBox.style.height = `${rect.height / state.canvas.height * 100}%`;
+            }
+            auQwenRefreshItemEditorButtons();
+        }
+
+        function auQwenApplyItemCrop() {
+            const state = auQwenCompositeEditorState;
+            const rect = state?.cropRect;
+            if (
+                !state?.loaded
+                || state.busy
+                || !rect
+                || rect.width < 2
+                || rect.height < 2
+            ) {
+                console.error('[QWEN_COMPOSITE] 자르기 적용 실패: 영역이 없습니다.', rect);
+                return;
+            }
+            const left = Math.max(0, Math.floor(rect.x));
+            const top = Math.max(0, Math.floor(rect.y));
+            const right = Math.min(
+                state.canvas.width,
+                Math.ceil(rect.x + rect.width),
+            );
+            const bottom = Math.min(
+                state.canvas.height,
+                Math.ceil(rect.y + rect.height),
+            );
+            if (right - left < 2 || bottom - top < 2) {
+                console.error('[QWEN_COMPOSITE] 자르기 영역이 너무 작습니다:', {
+                    left,
+                    top,
+                    right,
+                    bottom,
+                });
+                showToast('자르기 영역을 더 크게 선택하세요', 'error');
+                return;
+            }
+            const cropped = document.createElement('canvas');
+            cropped.width = right - left;
+            cropped.height = bottom - top;
+            cropped.getContext('2d').drawImage(
+                state.canvas,
+                left,
+                top,
+                cropped.width,
+                cropped.height,
+                0,
+                0,
+                cropped.width,
+                cropped.height,
+            );
+            state.canvas.width = cropped.width;
+            state.canvas.height = cropped.height;
+            state.canvas.getContext('2d', {willReadFrequently: true})
+                .drawImage(cropped, 0, 0);
+            state.cropRect = null;
+            auQwenRenderItemCropBox();
+            state.zoom = 1;
+            state.panX = 0;
+            state.panY = 0;
+            auQwenCaptureItemEditorHistory();
+            requestAnimationFrame(auQwenFitItemEditor);
+            state.status.textContent =
+                `자르기 완료 · ${state.canvas.width}×${state.canvas.height}`;
+        }
+
+        async function auQwenLoadCompositeEditorFile(file) {
+            const state = auQwenCompositeEditorState;
+            if (!state || state.busy) return;
+            if (!file || !String(file.type || '').startsWith('image/')) {
+                console.error('[QWEN_COMPOSITE] 업로드 파일이 이미지가 아닙니다:', file);
+                showToast('이미지 파일을 선택하세요', 'error');
+                return;
+            }
+            if (file.size > 32 * 1024 * 1024) {
+                console.error('[QWEN_COMPOSITE] 업로드 파일 크기 초과:', {
+                    name: file.name,
+                    size: file.size,
+                });
+                showToast('합성 아이템 이미지는 32MB 이하여야 합니다', 'error');
+                return;
+            }
+            auQwenSetItemEditorBusy(true, '이미지를 불러오는 중...');
+            const objectUrl = URL.createObjectURL(file);
+            try {
+                const image = await auQwenLoadImage(objectUrl, file.name);
+                const maxEdge = 2048;
+                const scale = Math.min(
+                    1,
+                    maxEdge / Math.max(image.naturalWidth, image.naturalHeight),
+                );
+                const width = Math.max(1, Math.round(image.naturalWidth * scale));
+                const height = Math.max(1, Math.round(image.naturalHeight * scale));
+                state.canvas.width = width;
+                state.canvas.height = height;
+                const context = state.canvas.getContext('2d', {willReadFrequently: true});
+                context.clearRect(0, 0, width, height);
+                context.drawImage(image, 0, 0, width, height);
+                state.loaded = true;
+                state.sourceName = String(file.name || 'item')
+                    .replace(/\.[^.]+$/, '')
+                    .slice(0, 80);
+                state.modal.querySelector('#au-qwen-item-name').value =
+                    state.sourceName;
+                state.empty.classList.add('hidden');
+                state.cropRect = null;
+                state.original = {
+                    width,
+                    height,
+                    imageData: context.getImageData(0, 0, width, height),
+                };
+                state.history = [];
+                state.historyIndex = -1;
+                state.zoom = 1;
+                state.panX = 0;
+                state.panY = 0;
+                auQwenCaptureItemEditorHistory();
+                auQwenRenderItemCropBox();
+                requestAnimationFrame(auQwenFitItemEditor);
+                state.status.textContent = scale < 1
+                    ? `업로드 완료 · ${image.naturalWidth}×${image.naturalHeight} → 편집용 ${width}×${height}`
+                    : `업로드 완료 · ${width}×${height}`;
+            } catch (error) {
+                console.error('[QWEN_COMPOSITE] 업로드 이미지 로드 실패:', error, {
+                    name: file.name,
+                    size: file.size,
+                });
+                state.status.textContent = `이미지 로드 실패: ${error.message}`;
+                showToast(`이미지 로드 실패: ${error.message}`, 'error');
+            } finally {
+                URL.revokeObjectURL(objectUrl);
+                auQwenSetItemEditorBusy(false);
+            }
+        }
+
+        function auQwenCompositeCanvasBlob(canvas, label = 'PNG') {
+            return new Promise((resolve, reject) => {
+                if (!canvas?.width || !canvas?.height) {
+                    const error = new Error(`${label} 캔버스가 비어 있습니다`);
+                    console.error('[QWEN_COMPOSITE] PNG 인코딩 실패:', error);
+                    reject(error);
+                    return;
+                }
+                canvas.toBlob((blob) => {
+                    if (blob) resolve(blob);
+                    else {
+                        const error = new Error(`${label} PNG 인코딩 결과가 비어 있습니다`);
+                        console.error('[QWEN_COMPOSITE] PNG 인코딩 실패:', error);
+                        reject(error);
+                    }
+                }, 'image/png');
+            });
+        }
+
+        async function auQwenRemoveItemBackground() {
+            const state = auQwenCompositeEditorState;
+            if (!state?.loaded || state.busy) return;
+            auQwenSetItemEditorBusy(true, 'ONNX로 배경을 지우는 중...');
+            try {
+                const imageBlob = await auQwenCompositeCanvasBlob(
+                    state.canvas,
+                    '배경 제거 입력',
+                );
+                const form = new FormData();
+                form.append('image', imageBlob, 'item.png');
+                const response = await fetch(
+                    '/api/asset_mode/qwen_edit/composite_items/background_remove',
+                    {method: 'POST', body: form},
+                );
+                if (!response.ok) {
+                    let message = `HTTP ${response.status}`;
+                    try {
+                        const body = await response.json();
+                        message = body.error || message;
+                    } catch (parseError) {
+                        console.error(
+                            '[QWEN_COMPOSITE] 배경 제거 오류 응답 파싱 실패:',
+                            parseError,
+                        );
+                    }
+                    throw new Error(message);
+                }
+                const resultBlob = await response.blob();
+                const objectUrl = URL.createObjectURL(resultBlob);
+                try {
+                    const image = await auQwenLoadImage(objectUrl, '배경 제거 결과');
+                    if (
+                        image.naturalWidth !== state.canvas.width
+                        || image.naturalHeight !== state.canvas.height
+                    ) {
+                        throw new Error(
+                            `배경 제거 결과 크기가 다릅니다: ${
+                                image.naturalWidth
+                            }×${image.naturalHeight}`,
+                        );
+                    }
+                    const context = state.canvas.getContext(
+                        '2d',
+                        {willReadFrequently: true},
+                    );
+                    context.clearRect(0, 0, state.canvas.width, state.canvas.height);
+                    context.drawImage(image, 0, 0);
+                } finally {
+                    URL.revokeObjectURL(objectUrl);
+                }
+                auQwenCaptureItemEditorHistory();
+                state.status.textContent =
+                    `ONNX 배경 제거 완료 · ${state.canvas.width}×${state.canvas.height} · 지우개로 보정하세요.`;
+            } catch (error) {
+                console.error('[QWEN_COMPOSITE] ONNX 배경 제거 실패:', error);
+                state.status.textContent = `배경 제거 실패: ${error.message}`;
+                showToast(`배경 제거 실패: ${error.message}`, 'error');
+            } finally {
+                auQwenSetItemEditorBusy(false);
+            }
+        }
+
+        function auQwenTrimTransparentItemCanvas(sourceCanvas) {
+            if (!sourceCanvas?.width || !sourceCanvas?.height) {
+                console.error('[QWEN_COMPOSITE] 자동 트리밍 실패: 캔버스가 비어 있습니다.');
+                return null;
+            }
+            const context = sourceCanvas.getContext('2d', {willReadFrequently: true});
+            const pixels = context.getImageData(
+                0,
+                0,
+                sourceCanvas.width,
+                sourceCanvas.height,
+            ).data;
+            let left = sourceCanvas.width;
+            let top = sourceCanvas.height;
+            let right = -1;
+            let bottom = -1;
+            for (let y = 0; y < sourceCanvas.height; y += 1) {
+                for (let x = 0; x < sourceCanvas.width; x += 1) {
+                    const alpha = pixels[(y * sourceCanvas.width + x) * 4 + 3];
+                    if (alpha <= 0) continue;
+                    if (x < left) left = x;
+                    if (x > right) right = x;
+                    if (y < top) top = y;
+                    if (y > bottom) bottom = y;
+                }
+            }
+            if (right < left || bottom < top) {
+                console.error(
+                    '[QWEN_COMPOSITE] 자동 트리밍 실패: 남은 불투명 픽셀이 없습니다.',
+                );
+                return null;
+            }
+            const trimmed = document.createElement('canvas');
+            trimmed.width = right - left + 1;
+            trimmed.height = bottom - top + 1;
+            trimmed.getContext('2d').drawImage(
+                sourceCanvas,
+                left,
+                top,
+                trimmed.width,
+                trimmed.height,
+                0,
+                0,
+                trimmed.width,
+                trimmed.height,
+            );
+            return trimmed;
+        }
+
+        async function auQwenSaveAndAddCompositeItem() {
+            const state = auQwenCompositeEditorState;
+            if (!state?.loaded || state.busy) return;
+            const name = state.modal.querySelector('#au-qwen-item-name').value.trim()
+                || state.sourceName
+                || 'item';
+            const trimmed = auQwenTrimTransparentItemCanvas(state.canvas);
+            if (!trimmed) {
+                showToast('저장할 아이템 픽셀이 남아 있지 않습니다', 'error');
+                return;
+            }
+            let savedRecord = null;
+            auQwenSetItemEditorBusy(
+                true,
+                `투명 영역 자동 트리밍 ${trimmed.width}×${trimmed.height} · 서버 폴더에 저장 중...`,
+            );
+            try {
+                const imageBlob = await auQwenCompositeCanvasBlob(
+                    trimmed,
+                    '합성 아이템',
+                );
+                const form = new FormData();
+                form.append('image', imageBlob, `${name}.png`);
+                form.append('name', name);
+                const response = await fetch(
+                    '/api/asset_mode/qwen_edit/composite_items',
+                    {method: 'POST', body: form},
+                );
+                const result = await response.json();
+                if (!response.ok || !result.success || !result.item) {
+                    throw new Error(result.error || `HTTP ${response.status}`);
+                }
+                savedRecord = result.item;
+                state.status.textContent =
+                    `파일 저장 완료 · ${result.item.filename} · 이미지에 추가하는 중...`;
+                showToast('합성 아이템을 서버 폴더에 저장했습니다', 'success');
+            } catch (error) {
+                console.error('[QWEN_COMPOSITE] 아이템 파일 저장 실패:', error, {
+                    name,
+                    width: trimmed.width,
+                    height: trimmed.height,
+                });
+                state.status.textContent = `파일 저장 실패: ${error.message}`;
+                showToast(`아이템 저장 실패: ${error.message}`, 'error');
+            } finally {
+                auQwenSetItemEditorBusy(false);
+            }
+            if (savedRecord) {
+                await auQwenAddLibraryItemToStage(savedRecord);
+            }
+        }
+
+        async function auQwenLoadCompositeLibrary() {
+            const modal = document.getElementById('au-qwen-composite-modal');
+            const grid = modal?.querySelector('#au-qwen-item-library-grid');
+            if (!grid) {
+                console.error('[QWEN_COMPOSITE] 아이템 박스 목록 영역이 없습니다.');
+                return;
+            }
+            grid.innerHTML =
+                '<div class="qwen-item-library-empty">아이템 목록을 불러오는 중...</div>';
+            try {
+                const response = await fetch(
+                    '/api/asset_mode/qwen_edit/composite_items',
+                    {cache: 'no-store'},
+                );
+                const result = await response.json();
+                if (!response.ok || !result.success || !Array.isArray(result.items)) {
+                    throw new Error(result.error || `HTTP ${response.status}`);
+                }
+                auQwenRenderCompositeLibrary(result.items);
+            } catch (error) {
+                console.error('[QWEN_COMPOSITE] 아이템 목록 로드 실패:', error);
+                grid.replaceChildren();
+                const empty = document.createElement('div');
+                empty.className = 'qwen-item-library-empty';
+                empty.textContent = `아이템 목록 로드 실패: ${error.message}`;
+                grid.appendChild(empty);
+            }
+        }
+
+        function auQwenRenderCompositeLibrary(items) {
+            const grid = document.getElementById('au-qwen-item-library-grid');
+            if (!grid) return;
+            grid.replaceChildren();
+            if (!items.length) {
+                const empty = document.createElement('div');
+                empty.className = 'qwen-item-library-empty';
+                empty.textContent =
+                    '저장된 아이템이 없습니다. 왼쪽에서 이미지를 편집해 첫 아이템을 추가하세요.';
+                grid.appendChild(empty);
+                return;
+            }
+            for (const item of items) {
+                const card = document.createElement('article');
+                card.className = 'qwen-item-card';
+                const preview = document.createElement('div');
+                preview.className = 'qwen-item-card-preview';
+                const image = document.createElement('img');
+                image.loading = 'lazy';
+                image.alt = item.name || item.filename;
+                image.src = `${item.url}?v=${item.modified_at || 0}`;
+                image.onerror = (event) => {
+                    console.error(
+                        '[QWEN_COMPOSITE] 아이템 미리보기 로드 실패:',
+                        item,
+                        event,
+                    );
+                };
+                preview.appendChild(image);
+                const info = document.createElement('div');
+                info.className = 'qwen-item-card-info';
+                const name = document.createElement('div');
+                name.className = 'qwen-item-card-name';
+                name.title = item.name || item.filename;
+                name.textContent = item.name || item.filename;
+                const meta = document.createElement('div');
+                meta.className = 'qwen-item-card-meta';
+                meta.textContent =
+                    `${item.width}×${item.height} · ${Math.max(
+                        1,
+                        Math.round((item.size_bytes || 0) / 1024),
+                    )}KB`;
+                info.append(name, meta);
+                const actions = document.createElement('div');
+                actions.className = 'qwen-item-card-actions';
+                const loadButton = document.createElement('button');
+                loadButton.type = 'button';
+                loadButton.textContent = '이미지에 추가';
+                loadButton.addEventListener('click', () => {
+                    auQwenAddLibraryItemToStage(item);
+                });
+                const deleteButton = document.createElement('button');
+                deleteButton.type = 'button';
+                deleteButton.className = 'delete';
+                deleteButton.textContent = '삭제';
+                deleteButton.addEventListener('click', () => {
+                    auQwenDeleteCompositeLibraryItem(item);
+                });
+                actions.append(loadButton, deleteButton);
+                card.append(preview, info, actions);
+                grid.appendChild(card);
+            }
+        }
+
+        async function auQwenDeleteCompositeLibraryItem(item) {
+            if (auQwenCompositeEditorState?.busy) {
+                showToast('현재 아이템 편집 작업이 끝난 뒤 삭제하세요', 'error');
+                return;
+            }
+            if (!item?.filename) {
+                console.error('[QWEN_COMPOSITE] 삭제할 아이템 파일명이 없습니다:', item);
+                return;
+            }
+            if (!window.confirm(
+                `"${item.name || item.filename}" 아이템을 삭제할까요?\n`
+                + '파일은 _trash 폴더로 이동되어 복구할 수 있습니다.',
+            )) {
+                return;
+            }
+            try {
+                const response = await fetch(
+                    '/api/asset_mode/qwen_edit/composite_items/'
+                    + encodeURIComponent(item.filename),
+                    {method: 'DELETE'},
+                );
+                const result = await response.json();
+                if (!response.ok || !result.success) {
+                    throw new Error(result.error || `HTTP ${response.status}`);
+                }
+                showToast('아이템을 _trash 폴더로 이동했습니다', 'success');
+                await auQwenLoadCompositeLibrary();
+            } catch (error) {
+                console.error('[QWEN_COMPOSITE] 아이템 삭제 실패:', error, item);
+                showToast(`아이템 삭제 실패: ${error.message}`, 'error');
+            }
         }
 
         function auQwenFitMaskCanvas() {
@@ -55986,6 +57750,9 @@
                 ...data,
                 canvas,
                 image,
+                compositeLayer: modal.querySelector('#au-qwen-composite-layer'),
+                compositeItems: [],
+                selectedCompositeId: null,
                 tool: 'brush',
                 drawing: false,
                 panning: false,
@@ -56023,6 +57790,8 @@
             modal.querySelector('#au-qwen-brush-btn').classList.add('active');
             modal.querySelector('#au-qwen-eraser-btn').classList.remove('active');
             modal.querySelector('#au-qwen-move-btn').classList.remove('active');
+            modal.querySelector('#au-qwen-composite-tool-btn').classList.remove('active');
+            modal.querySelector('#au-qwen-composite-remove-btn').disabled = true;
             canvas.style.cursor = 'crosshair';
             modal.querySelector('#au-qwen-mask-visible').checked = true;
             modal.querySelector('#au-qwen-mask-opacity').value = '64';
@@ -56033,6 +57802,8 @@
             auQwenSetAdvancedLocked(true);
             modal.classList.add('visible');
             document.body.classList.add('qwen-edit-open');
+            auQwenEditState.compositeLayer.replaceChildren();
+            auQwenSetCompositeInteraction(false);
 
             image.onload = () => {
                 if (!auQwenEditState || auQwenEditState.image !== image) return;
@@ -56048,6 +57819,7 @@
                 auQwenEditState.history = [];
                 auQwenEditState.historyIndex = -1;
                 auQwenCaptureHistory();
+                auQwenRenderCompositeItems();
                 requestAnimationFrame(auQwenFitMaskCanvas);
                 modal.querySelector('#au-qwen-run-status').textContent =
                     `원본 ${image.naturalWidth}×${image.naturalHeight} · 마스크를 그려주세요.`;
@@ -56062,6 +57834,10 @@
         }
 
         function auCloseQwenEdit() {
+            const itemModal = document.getElementById('au-qwen-composite-modal');
+            if (itemModal?.classList.contains('visible')) {
+                itemModal.classList.remove('visible');
+            }
             const modal = document.getElementById('au-qwen-edit-modal');
             if (modal) modal.classList.remove('visible');
             document.body.classList.remove('qwen-edit-open');
@@ -56122,6 +57898,86 @@
             });
         }
 
+        async function auQwenBuildCompositePayload(state) {
+            if (
+                !state?.canvas?.width
+                || !state?.canvas?.height
+                || !state?.image?.naturalWidth
+            ) {
+                console.error('[QWEN_COMPOSITE] 전송 이미지 생성 실패: 원본 미준비', state);
+                throw new Error('Qwen 원본 이미지가 준비되지 않았습니다');
+            }
+            const width = state.canvas.width;
+            const height = state.canvas.height;
+            const sourceCanvas = document.createElement('canvas');
+            sourceCanvas.width = width;
+            sourceCanvas.height = height;
+            const sourceContext = sourceCanvas.getContext('2d');
+            sourceContext.imageSmoothingEnabled = true;
+            sourceContext.imageSmoothingQuality = 'high';
+            sourceContext.drawImage(state.image, 0, 0, width, height);
+
+            const maskCanvas = document.createElement('canvas');
+            maskCanvas.width = width;
+            maskCanvas.height = height;
+            const maskContext = maskCanvas.getContext('2d');
+            maskContext.drawImage(state.canvas, 0, 0);
+
+            for (const item of state.compositeItems || []) {
+                if (
+                    !item.image
+                    || !item.image.complete
+                    || !item.image.naturalWidth
+                    || !Number.isFinite(item.x)
+                    || !Number.isFinite(item.y)
+                    || !Number.isFinite(item.width)
+                    || !Number.isFinite(item.height)
+                    || item.width <= 0
+                    || item.height <= 0
+                ) {
+                    console.error(
+                        '[QWEN_COMPOSITE] 전송 이미지 생성 실패: 잘못된 아이템',
+                        item,
+                    );
+                    throw new Error(
+                        `${item.name || '합성 아이템'} 이미지가 준비되지 않았습니다`,
+                    );
+                }
+                const rotation = (Number(item.rotation) || 0) * Math.PI / 180;
+                for (const context of [sourceContext, maskContext]) {
+                    context.save();
+                    context.translate(item.x, item.y);
+                    context.rotate(rotation);
+                    context.drawImage(
+                        item.image,
+                        -item.width / 2,
+                        -item.height / 2,
+                        item.width,
+                        item.height,
+                    );
+                    context.restore();
+                }
+            }
+            if (!auQwenMaskHasPixels(maskCanvas)) {
+                console.error(
+                    '[QWEN_COMPOSITE] 통합 마스크가 비어 있습니다. '
+                    + '합성 아이템이 이미지 밖에 있는지 확인하세요.',
+                );
+                throw new Error(
+                    '통합 마스크가 비어 있습니다. 합성 아이템을 이미지 안으로 이동하세요',
+                );
+            }
+            const [sourceBlob, maskBlob] = await Promise.all([
+                auQwenCompositeCanvasBlob(sourceCanvas, '합성 원본'),
+                auQwenCompositeCanvasBlob(maskCanvas, '통합 마스크'),
+            ]);
+            return {
+                sourceBlob,
+                maskBlob,
+                itemCount: (state.compositeItems || []).length,
+            };
+        }
+
         async function auQwenEnqueueEdit() {
             const state = auQwenEditState;
             const modal = document.getElementById('au-qwen-edit-modal');
@@ -56149,8 +58005,14 @@
                 modal.querySelector('#au-qwen-negative-prompt').focus();
                 return;
             }
-            if (!auQwenMaskHasPixels(state.canvas)) {
-                showToast('이미지에서 편집할 영역을 마스크로 그려주세요', 'error');
+            if (
+                !auQwenMaskHasPixels(state.canvas)
+                && !(state.compositeItems || []).length
+            ) {
+                showToast(
+                    '편집 마스크를 그리거나 합성 아이템을 추가하세요',
+                    'error',
+                );
                 return;
             }
 
@@ -56160,11 +58022,13 @@
             state.busy = true;
             runButton.disabled = true;
             translateButton.disabled = true;
-            status.textContent = '마스크 저장 및 GPU 큐 등록 중...';
+            auQwenRefreshCompositeSelection();
+            status.textContent = '합성 이미지와 통합 마스크 생성 중...';
             try {
-                const maskBlob = await auQwenCanvasBlob(state.canvas);
+                const payload = await auQwenBuildCompositePayload(state);
                 const form = new FormData();
-                form.append('mask', maskBlob, 'mask.png');
+                form.append('source', payload.sourceBlob, 'source.png');
+                form.append('mask', payload.maskBlob, 'mask.png');
                 form.append('character', state.character);
                 form.append('outfit', state.outfit);
                 form.append('expression', state.expression);
@@ -56192,7 +58056,7 @@
                     throw new Error(result.error || `HTTP ${response.status}`);
                 }
                 status.textContent =
-                    `GPU 큐 등록 완료 · ${result.width}×${result.height} · ${result.item_id}`;
+                    `GPU 큐 등록 완료 · ${result.width}×${result.height} · 합성 아이템 ${payload.itemCount}개 · ${result.item_id}`;
                 showToast('Qwen Edit가 GPU 큐에 등록되었습니다', 'success');
                 setTimeout(() => {
                     if (auQwenEditState === state) auCloseQwenEdit();
@@ -56210,6 +58074,7 @@
                 state.busy = false;
                 runButton.disabled = false;
                 translateButton.disabled = false;
+                auQwenRefreshCompositeSelection();
             }
         }
 

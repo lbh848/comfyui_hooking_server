@@ -35,6 +35,7 @@ QWEN_EDIT_INPUT_SUBDIR = "qwen_edit"
 QWEN_EDIT_MAX_PIXELS = 1_048_576
 QWEN_EDIT_MAX_EDGE = 1536
 QWEN_EDIT_DIMENSION_MULTIPLE = 16
+QWEN_EDIT_MAX_UPLOAD_BYTES = 32 * 1024 * 1024
 
 
 class QwenEditMode:
@@ -179,6 +180,62 @@ class QwenEditMode:
         return mask
 
     @staticmethod
+    def _load_request_source(
+        source_path: str,
+        source_data: bytes = b"",
+    ) -> Image.Image:
+        if source_data and len(source_data) > QWEN_EDIT_MAX_UPLOAD_BYTES:
+            print(
+                "[QWEN_EDIT] 합성 원본 크기 초과: "
+                f"bytes={len(source_data)}, limit={QWEN_EDIT_MAX_UPLOAD_BYTES}, "
+                f"source_path={source_path!r}"
+            )
+            raise ValueError("합성된 원본 이미지는 32MB 이하여야 합니다")
+        try:
+            with Image.open(source_path) as source_file:
+                source_file.load()
+                expected_size = source_file.size
+                if not source_data:
+                    return source_file.convert("RGB")
+        except Exception as exc:
+            print(
+                "[QWEN_EDIT] 원본 이미지 디코딩 실패: "
+                f"path={source_path!r}, error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            raise ValueError(f"원본 이미지를 읽을 수 없습니다: {exc}") from exc
+
+        try:
+            with Image.open(io.BytesIO(source_data)) as uploaded:
+                uploaded.load()
+                source = uploaded.convert("RGB")
+        except Exception as exc:
+            print(
+                "[QWEN_EDIT] 합성 원본 이미지 디코딩 실패: "
+                f"bytes={len(source_data)}, source_path={source_path!r}, "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            raise ValueError(
+                f"합성된 원본 이미지를 읽을 수 없습니다: {exc}"
+            ) from exc
+        if source.size != expected_size:
+            print(
+                "[QWEN_EDIT] 합성 원본 크기 불일치: "
+                f"uploaded={source.size}, expected={expected_size}, "
+                f"source_path={source_path!r}"
+            )
+            raise ValueError(
+                "합성된 원본 이미지 크기가 선택한 원본 이미지와 다릅니다"
+            )
+        print(
+            "[QWEN_EDIT] 합성 원본 이미지 적용: "
+            f"bytes={len(source_data)}, size={source.size}, "
+            f"source_path={source_path!r}"
+        )
+        return source
+
+    @staticmethod
     def _load_source_prompt(source_path: str) -> dict:
         prompt_path = os.path.splitext(source_path)[0] + "_prompt.json"
         if not os.path.isfile(prompt_path):
@@ -214,6 +271,7 @@ class QwenEditMode:
         filename: str,
         mask_data: bytes,
         edit_prompt: str,
+        source_data: bytes = b"",
         edit_prompt_original: str = "",
         negative_prompt: str = "",
         seed=-1,
@@ -275,17 +333,7 @@ class QwenEditMode:
             raise ValueError("설정의 Comfy input 폴더가 유효하지 않습니다")
 
         mask = self._extract_mask(mask_data)
-        try:
-            with Image.open(source_path) as source_file:
-                source_file.load()
-                source = source_file.convert("RGB")
-        except Exception as exc:
-            print(
-                "[QWEN_EDIT] 원본 이미지 디코딩 실패: "
-                f"path={source_path!r}, error={type(exc).__name__}: {exc}"
-            )
-            traceback.print_exc()
-            raise ValueError(f"원본 이미지를 읽을 수 없습니다: {exc}") from exc
+        source = self._load_request_source(source_path, source_data)
 
         if mask.size != source.size:
             print(
@@ -333,7 +381,8 @@ class QwenEditMode:
             "[QWEN_EDIT] 큐 메모리 입력 준비 완료: "
             f"job={job_id}, source_bytes={len(self._pending_inputs[job_id]['source'])}, "
             f"mask_bytes={len(self._pending_inputs[job_id]['mask'])}, "
-            f"size={source.size}, seed={parsed_seed}"
+            f"size={source.size}, composite_source={bool(source_data)}, "
+            f"seed={parsed_seed}"
         )
         return {
             "job_id": job_id,

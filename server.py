@@ -66,6 +66,7 @@ from modes import llm_prompt_edit
 from modes import autocomplete_service
 from modes import asset_tool_mode
 from modes.qwen_edit_mode import QwenEditMode
+from modes import qwen_composite_items
 from modes import bot_mode
 from modes.bot_mode import data_patcher
 from modes.bot_mode import handle_get_illust_settings, handle_update_illust_settings, handle_auto_group_prompt, handle_get_positive_rules, handle_save_positive_rules, handle_get_auto_face_tag_prompt, handle_set_auto_face_tag_prompt, handle_auto_classify_face_tags, handle_get_auto_face_tag_test_image, handle_llm_batch_enqueue, handle_get_lb_extra_refine_prompt, handle_set_lb_extra_refine_prompt, handle_lb_extra_refine
@@ -11668,6 +11669,7 @@ async def handle_api_qwen_edit_enqueue(request: web.Request) -> web.Response:
     """Validate a painted mask, stage input files, and enqueue local GPU editing."""
     fields = {}
     mask_data = b""
+    source_data = b""
     try:
         if not str(request.content_type or "").lower().startswith("multipart/"):
             print(
@@ -11694,6 +11696,20 @@ async def handle_api_qwen_edit_enqueue(request: web.Request) -> web.Response:
                         {
                             "success": False,
                             "error": "마스크 파일은 32MB 이하여야 합니다",
+                        },
+                        status=413,
+                    )
+            elif part.name == "source":
+                source_data = await part.read(decode=False)
+                if len(source_data) > 32 * 1024 * 1024:
+                    print(
+                        "[QWEN_EDIT_API] 합성 원본 요청 거부: "
+                        f"size={len(source_data)}, filename={part.filename!r}"
+                    )
+                    return web.json_response(
+                        {
+                            "success": False,
+                            "error": "합성된 원본 이미지는 32MB 이하여야 합니다",
                         },
                         status=413,
                     )
@@ -11732,6 +11748,7 @@ async def handle_api_qwen_edit_enqueue(request: web.Request) -> web.Response:
             filename=fields.get("filename", ""),
             mask_data=mask_data,
             edit_prompt=fields.get("edit_prompt", ""),
+            source_data=source_data,
             edit_prompt_original=fields.get("edit_prompt_original", ""),
             negative_prompt=fields.get("negative_prompt", ""),
             seed=fields.get("seed", "-1"),
@@ -11755,7 +11772,7 @@ async def handle_api_qwen_edit_enqueue(request: web.Request) -> web.Response:
             "[QWEN_EDIT_API] GPU 큐 등록 완료: "
             f"item={item.id}, job={staged['job_id']}, "
             f"source={staged['source_filename']!r}, "
-            f"mask_bytes={len(mask_data)}"
+            f"mask_bytes={len(mask_data)}, composite_source_bytes={len(source_data)}"
         )
         return web.json_response(
             {
@@ -11771,6 +11788,7 @@ async def handle_api_qwen_edit_enqueue(request: web.Request) -> web.Response:
         print(
             "[QWEN_EDIT_API] 편집 요청 검증 실패: "
             f"fields={fields!r}, mask_bytes={len(mask_data)}, "
+            f"composite_source_bytes={len(source_data)}, "
             f"error={type(e).__name__}: {e}"
         )
         traceback.print_exc()
@@ -11782,11 +11800,248 @@ async def handle_api_qwen_edit_enqueue(request: web.Request) -> web.Response:
         print(
             "[QWEN_EDIT_API] 편집 큐 등록 예외: "
             f"fields={fields!r}, mask_bytes={len(mask_data)}, "
+            f"composite_source_bytes={len(source_data)}, "
             f"error={type(e).__name__}: {e}"
         )
         traceback.print_exc()
         return web.json_response(
             {"success": False, "error": f"{type(e).__name__}: {e}"},
+            status=500,
+        )
+
+
+def _qwen_composite_item_response_record(record: dict) -> dict:
+    from urllib.parse import quote
+
+    payload = dict(record)
+    payload["url"] = (
+        "/api/asset_mode/qwen_edit/composite_items/"
+        + quote(str(record.get("filename") or ""), safe="")
+    )
+    return payload
+
+
+async def _read_qwen_composite_image_multipart(
+    request: web.Request,
+    *,
+    operation: str,
+) -> tuple[bytes, dict]:
+    if not str(request.content_type or "").lower().startswith("multipart/"):
+        print(
+            f"[QWEN_COMPOSITE_API] {operation} 요청 거부: multipart가 아님 "
+            f"content_type={request.content_type!r}"
+        )
+        raise ValueError("요청은 multipart/form-data여야 합니다")
+    image_data = b""
+    fields = {}
+    reader = await request.multipart()
+    async for part in reader:
+        if part.name == "image":
+            image_data = await part.read(decode=False)
+            if (
+                len(image_data)
+                > qwen_composite_items.QWEN_COMPOSITE_MAX_UPLOAD_BYTES
+            ):
+                print(
+                    f"[QWEN_COMPOSITE_API] {operation} 요청 거부: 이미지 크기 초과 "
+                    f"bytes={len(image_data)}, filename={part.filename!r}"
+                )
+                raise ValueError("합성 아이템 이미지는 32MB 이하여야 합니다")
+        elif part.name:
+            raw = await part.read(decode=False)
+            try:
+                fields[part.name] = raw.decode("utf-8").strip()
+            except UnicodeDecodeError as exc:
+                print(
+                    f"[QWEN_COMPOSITE_API] {operation} 필드 디코딩 실패: "
+                    f"field={part.name!r}, bytes={len(raw)}, error={exc}"
+                )
+                traceback.print_exc()
+                raise ValueError(
+                    f"{part.name} 필드가 UTF-8이 아닙니다"
+                ) from exc
+    if not image_data:
+        print(
+            f"[QWEN_COMPOSITE_API] {operation} 요청 거부: 이미지 누락 "
+            f"fields={fields!r}"
+        )
+        raise ValueError("합성 아이템 이미지가 없습니다")
+    return image_data, fields
+
+
+async def handle_api_qwen_composite_items_list(
+    request: web.Request,
+) -> web.Response:
+    try:
+        records = await asyncio.to_thread(qwen_composite_items.list_items)
+        return web.json_response(
+            {
+                "success": True,
+                "items": [
+                    _qwen_composite_item_response_record(record)
+                    for record in records
+                ],
+            }
+        )
+    except Exception as exc:
+        print(
+            "[QWEN_COMPOSITE_API] 아이템 목록 조회 예외: "
+            f"error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        return web.json_response(
+            {"success": False, "error": f"{type(exc).__name__}: {exc}"},
+            status=500,
+        )
+
+
+async def handle_api_qwen_composite_item_get(
+    request: web.Request,
+) -> web.Response:
+    filename = request.match_info.get("filename", "")
+    try:
+        path = qwen_composite_items.resolve_item_path(filename)
+        return web.FileResponse(
+            path,
+            headers={"Cache-Control": "no-cache"},
+        )
+    except (ValueError, FileNotFoundError) as exc:
+        print(
+            "[QWEN_COMPOSITE_API] 아이템 이미지 조회 실패: "
+            f"filename={filename!r}, error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        return web.json_response(
+            {"success": False, "error": str(exc)},
+            status=404 if isinstance(exc, FileNotFoundError) else 400,
+        )
+    except Exception as exc:
+        print(
+            "[QWEN_COMPOSITE_API] 아이템 이미지 조회 예외: "
+            f"filename={filename!r}, error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        return web.json_response(
+            {"success": False, "error": f"{type(exc).__name__}: {exc}"},
+            status=500,
+        )
+
+
+async def handle_api_qwen_composite_item_upload(
+    request: web.Request,
+) -> web.Response:
+    fields = {}
+    image_data = b""
+    try:
+        image_data, fields = await _read_qwen_composite_image_multipart(
+            request,
+            operation="아이템 저장",
+        )
+        record = await asyncio.to_thread(
+            qwen_composite_items.save_item,
+            image_data,
+            fields.get("name", ""),
+        )
+        return web.json_response(
+            {
+                "success": True,
+                "item": _qwen_composite_item_response_record(record),
+            },
+            status=201,
+        )
+    except ValueError as exc:
+        print(
+            "[QWEN_COMPOSITE_API] 아이템 저장 검증 실패: "
+            f"fields={fields!r}, image_bytes={len(image_data)}, error={exc}"
+        )
+        traceback.print_exc()
+        return web.json_response(
+            {"success": False, "error": str(exc)},
+            status=400,
+        )
+    except Exception as exc:
+        print(
+            "[QWEN_COMPOSITE_API] 아이템 저장 예외: "
+            f"fields={fields!r}, image_bytes={len(image_data)}, "
+            f"error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        return web.json_response(
+            {"success": False, "error": f"{type(exc).__name__}: {exc}"},
+            status=500,
+        )
+
+
+async def handle_api_qwen_composite_item_delete(
+    request: web.Request,
+) -> web.Response:
+    filename = request.match_info.get("filename", "")
+    try:
+        result = await asyncio.to_thread(
+            qwen_composite_items.trash_item,
+            filename,
+        )
+        return web.json_response({"success": True, **result})
+    except (ValueError, FileNotFoundError) as exc:
+        print(
+            "[QWEN_COMPOSITE_API] 아이템 삭제 실패: "
+            f"filename={filename!r}, error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        return web.json_response(
+            {"success": False, "error": str(exc)},
+            status=404 if isinstance(exc, FileNotFoundError) else 400,
+        )
+    except Exception as exc:
+        print(
+            "[QWEN_COMPOSITE_API] 아이템 삭제 예외: "
+            f"filename={filename!r}, error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        return web.json_response(
+            {"success": False, "error": f"{type(exc).__name__}: {exc}"},
+            status=500,
+        )
+
+
+async def handle_api_qwen_composite_background_remove(
+    request: web.Request,
+) -> web.Response:
+    image_data = b""
+    fields = {}
+    try:
+        image_data, fields = await _read_qwen_composite_image_multipart(
+            request,
+            operation="배경 제거",
+        )
+        result = await asyncio.to_thread(
+            qwen_composite_items.remove_background,
+            image_data,
+        )
+        return web.Response(
+            body=result,
+            content_type="image/png",
+            headers={"Cache-Control": "no-store"},
+        )
+    except ValueError as exc:
+        print(
+            "[QWEN_COMPOSITE_API] 배경 제거 검증 실패: "
+            f"fields={fields!r}, image_bytes={len(image_data)}, error={exc}"
+        )
+        traceback.print_exc()
+        return web.json_response(
+            {"success": False, "error": str(exc)},
+            status=400,
+        )
+    except Exception as exc:
+        print(
+            "[QWEN_COMPOSITE_API] 배경 제거 예외: "
+            f"fields={fields!r}, image_bytes={len(image_data)}, "
+            f"error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        return web.json_response(
+            {"success": False, "error": f"{type(exc).__name__}: {exc}"},
             status=500,
         )
 
@@ -13857,6 +14112,11 @@ app.router.add_post("/api/asset_mode/trace_stream", handle_api_asset_mode_trace_
 app.router.add_post("/api/asset_mode/generate", handle_api_asset_mode_generate)
 app.router.add_post("/api/asset_mode/qwen_edit/translate", handle_api_qwen_edit_translate)
 app.router.add_post("/api/asset_mode/qwen_edit/enqueue", handle_api_qwen_edit_enqueue)
+app.router.add_get("/api/asset_mode/qwen_edit/composite_items", handle_api_qwen_composite_items_list)
+app.router.add_post("/api/asset_mode/qwen_edit/composite_items", handle_api_qwen_composite_item_upload)
+app.router.add_post("/api/asset_mode/qwen_edit/composite_items/background_remove", handle_api_qwen_composite_background_remove)
+app.router.add_get("/api/asset_mode/qwen_edit/composite_items/{filename}", handle_api_qwen_composite_item_get)
+app.router.add_delete("/api/asset_mode/qwen_edit/composite_items/{filename}", handle_api_qwen_composite_item_delete)
 app.router.add_get("/api/asset_mode/characters", handle_api_asset_mode_characters)
 app.router.add_get("/api/asset_mode/characters/{character}/gallery", handle_api_asset_mode_gallery)
 app.router.add_get("/api/asset_mode/characters/{character}/outfits", handle_api_asset_mode_outfits)

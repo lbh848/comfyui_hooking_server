@@ -133,6 +133,41 @@ def test_qwen_edit_stages_matching_source_and_mask_without_touching_asset(tmp_pa
     assert list(source_path.parent.glob("*.webp")) == [source_path]
 
 
+def test_qwen_edit_uses_uploaded_composite_source_without_overwriting_asset(tmp_path):
+    mode, source_path, _input_dir = _configured_mode(tmp_path)
+    original_hash = hashlib.sha256(source_path.read_bytes()).hexdigest()
+
+    staged = mode.stage_request(
+        character="alice",
+        outfit="uniform",
+        expression="smile",
+        filename="source.webp",
+        mask_data=_mask_bytes(),
+        source_data=_png_bytes(color=(210, 20, 40, 255)),
+        edit_prompt="Integrate the composited item naturally.",
+    )
+
+    pending = mode._pending_inputs[staged["job_id"]]
+    with Image.open(io.BytesIO(pending["source"])) as source:
+        assert source.convert("RGB").getpixel((0, 0)) == (210, 20, 40)
+    assert hashlib.sha256(source_path.read_bytes()).hexdigest() == original_hash
+
+
+def test_qwen_edit_rejects_composite_source_with_wrong_dimensions(tmp_path):
+    mode, _source_path, _input_dir = _configured_mode(tmp_path)
+
+    with pytest.raises(ValueError, match="크기"):
+        mode.stage_request(
+            character="alice",
+            outfit="uniform",
+            expression="smile",
+            filename="source.webp",
+            mask_data=_mask_bytes(),
+            source_data=_png_bytes(size=(64, 64)),
+            edit_prompt="Integrate the composited item naturally.",
+        )
+
+
 def test_qwen_edit_rejects_empty_mask_with_diagnostic_input(tmp_path):
     mode, _source_path, _input_dir = _configured_mode(tmp_path)
     empty_mask = io.BytesIO()
@@ -447,8 +482,15 @@ def test_qwen_workflow_and_frontend_contracts():
     assert "function auOpenQwenEdit(data)" in frontend
     assert "function auQwenTranslatePrompt()" in frontend
     assert "function auQwenEnqueueEdit()" in frontend
+    assert "function auQwenBuildCompositePayload(state)" in frontend
+    assert 'id="au-qwen-composite-add-btn"' in frontend
+    assert 'id="au-qwen-composite-tool-btn"' in frontend
+    assert 'id="au-qwen-item-crop-btn"' in frontend
+    assert 'id="au-qwen-item-crop-apply-btn"' in frontend
+    assert "asset_data/qwen_composite_items" in frontend
     assert "/api/asset_mode/qwen_edit/translate" in frontend
     assert "/api/asset_mode/qwen_edit/enqueue" in frontend
+    assert "/api/asset_mode/qwen_edit/composite_items" in frontend
     assert "qwen_edit_translate: 'Qwen 번역'" in frontend
     assert "{types: ['qwen_edit'], label: 'Qwen 마스크 편집'}" in frontend
     assert "Qwen latent 샘플링 마스크" in frontend
@@ -481,6 +523,9 @@ def test_qwen_workflow_and_frontend_contracts():
     server_source = (ROOT / "server.py").read_text(encoding="utf-8")
     assert "handle_api_qwen_edit_translate" in server_source
     assert "handle_api_qwen_edit_enqueue" in server_source
+    assert "handle_api_qwen_composite_item_upload" in server_source
+    assert "handle_api_qwen_composite_background_remove" in server_source
+    assert "handle_api_qwen_composite_item_delete" in server_source
     assert 'queue_manager.add_item(\n            "qwen_edit"' in server_source
     assert '"qwen_edit_workflow_source_path": os.path.join(' in server_source
     assert "qwen_edit_mode.convert_workflow_func = convert_workflow_via_endpoint" in server_source
