@@ -6244,16 +6244,42 @@
             background: rgba(5,8,14,.74);
             border: 1px solid rgba(255,255,255,.08);
         }
-        /* 우측 pane 의 라벨은 오른쪽 끝에 배치. */
+        /* 우측 pane 은 오른쪽 버튼 자리를 비우고 라벨을 왼쪽에 배치. */
         .cm-pane.cm-pane--right .cm-pane-label {
-            left: auto;
-            right: 8px;
+            left: 8px;
+            right: auto;
         }
         /* 역할별 라벨 색: LLM(보라) / 사용자(기본). */
         .cm-pane.is-llm .cm-pane-label {
             color: #d7c6ff;
             background: rgba(28,16,46,.78);
         }
+        .cm-instance-lora-btn {
+            position: absolute;
+            top: 7px;
+            right: 8px;
+            z-index: 3;
+            display: none;
+            align-items: center;
+            min-height: 27px;
+            padding: 0 9px;
+            border: 1px solid rgba(255,255,255,.16);
+            border-radius: 8px;
+            color: #fff;
+            background: rgba(5,8,14,.82);
+            box-shadow: 0 4px 14px rgba(0,0,0,.24);
+            cursor: pointer;
+            font-size: .64rem;
+            font-weight: 700;
+            white-space: nowrap;
+            backdrop-filter: blur(6px);
+        }
+        .cm-pane.has-image .cm-instance-lora-btn { display: inline-flex; }
+        .cm-instance-lora-btn:hover:not(:disabled) {
+            border-color: color-mix(in srgb, var(--accent) 72%, #fff);
+            background: color-mix(in srgb, var(--accent) 58%, rgba(5,8,14,.88));
+        }
+        .cm-instance-lora-btn:disabled { opacity: .62; cursor: wait; }
         .cm-split-handle {
             flex: 0 0 7px;
             position: relative;
@@ -9404,6 +9430,11 @@
                             <div id="cm-split-handle" class="cm-split-handle" title="드래그하여 좌우 비율 조절" role="separator" aria-orientation="vertical"></div>
                             <div class="cm-pane cm-pane--right is-user" id="cm-pane-user">
                                 <img id="cm-user-image" alt="캐릭터 메이커 사용자 리비전">
+                                <button id="cm-send-instance-lora-btn" class="cm-instance-lora-btn" type="button"
+                                        onclick="cmSendUserImageToInstanceLora()"
+                                        title="현재 사용자 이미지를 업로드 이미지로 넣어 인스턴스 로라 생성 모달을 엽니다">
+                                    인스턴스 로라로 보내기
+                                </button>
                                 <div class="cm-pane-empty">
                                     <div class="cm-pane-empty-mark">✦</div>
                                     <div style="font-size:.86rem; font-weight:720; color:var(--text); margin-bottom:6px;">사용자 이미지 없음</div>
@@ -30331,6 +30362,67 @@
             }
         }
 
+        async function cmSendUserImageToInstanceLora() {
+            const button = document.getElementById('cm-send-instance-lora-btn');
+            const revisions = cmSession?.revisions || [];
+            const revision = revisions.find(item => item.id === cmSession?.active_revision_id);
+            if (!revision?.url) {
+                console.error('[CHARACTER_MAKER] 인스턴스 로라 전달 실패: 활성 사용자 이미지가 없습니다.', {
+                    active_revision_id: cmSession?.active_revision_id || '',
+                });
+                showToast('인스턴스 로라로 보낼 사용자 이미지가 없습니다.', 'error');
+                return;
+            }
+
+            const originalText = button?.textContent?.trim() || '인스턴스 로라로 보내기';
+            if (button) {
+                button.disabled = true;
+                button.textContent = '이미지 준비 중...';
+            }
+            try {
+                const response = await fetch(revision.url, { cache: 'no-store' });
+                if (!response.ok) {
+                    throw new Error(`이미지 조회 HTTP ${response.status}`);
+                }
+                const blob = await response.blob();
+                if (!blob.size) {
+                    throw new Error('이미지 응답이 비어 있습니다.');
+                }
+                const responseContentType = (blob.type || response.headers.get('Content-Type') || 'image/png')
+                    .split(';')[0]
+                    .trim()
+                    .toLowerCase();
+                const contentType = responseContentType.startsWith('image/') ? responseContentType : 'image/png';
+                const extensionByType = {
+                    'image/jpeg': 'jpg',
+                    'image/png': 'png',
+                    'image/webp': 'webp',
+                    'image/gif': 'gif',
+                    'image/bmp': 'bmp',
+                };
+                const extension = extensionByType[contentType] || 'png';
+                const safeRevisionId = String(revision.id || 'revision').replace(/[^a-zA-Z0-9_-]/g, '_');
+                const uploadFile = new File(
+                    [blob],
+                    `character-maker-${safeRevisionId}.${extension}`,
+                    { type: contentType || 'image/png', lastModified: Date.now() },
+                );
+                await showInstanceLoraCreateModal(uploadFile);
+            } catch (error) {
+                console.error('[CHARACTER_MAKER] 인스턴스 로라 전달 실패:', {
+                    revision_id: revision.id || '',
+                    image_url: revision.url,
+                    error,
+                });
+                showToast('인스턴스 로라 이미지 준비 실패: ' + (error.message || error), 'error');
+            } finally {
+                if (button) {
+                    button.disabled = false;
+                    button.textContent = originalText;
+                }
+            }
+        }
+
         function cmRenderLlmTags() {
             const container = document.getElementById('cm-llm-tags');
             if (!container || !cmSession) return;
@@ -31236,12 +31328,14 @@
         // ─── Instance LoRA ─────────────────────────────────────────
         let _instanceLoraCurrentId = null;
         let _instanceLoraPendingProfile = null;
+        let _instanceLoraSettingsLoaded = false;
+        let _instanceLoraSettingsLoadPromise = null;
 
         async function initInstanceLoraTab() {
             _instanceLoraCurrentId = null;
             closeInstanceLightbox();
             await loadInstanceLoraGrid();
-            loadInstanceLoraInlineSettings();
+            await ensureInstanceLoraSettingsLoaded(true);
             refreshInstanceTargetDropdown();
         }
 
@@ -31402,8 +31496,17 @@
         let _icBrowserSource = 'asset'; // 'asset' or 'bot'
         let _icBrowserState = { level: 'characters', character: '', outfit: '', expression: '', selected: new Set() };
 
-        async function showInstanceLoraCreateModal() {
+        async function showInstanceLoraCreateModal(initialUploadFile = null) {
+            const settingsLoaded = await ensureInstanceLoraSettingsLoaded();
+            if (!settingsLoaded) {
+                console.error('[INSTANCE_LORA] 생성 모달 열기 중단: 저장된 인스턴스 로라 설정을 불러오지 못했습니다.');
+                showToast('인스턴스 로라 설정을 불러오지 못해 생성 창을 열 수 없습니다.', 'error');
+                return false;
+            }
             document.getElementById('instance-lora-create-trigger').value = '';
+            _instanceCreateFiles.forEach(f => {
+                if (f.previewUrl && f.previewUrl.startsWith('blob:')) URL.revokeObjectURL(f.previewUrl);
+            });
             _instanceCreateFiles = [];
             _icManualEdited = false;
             const _icBadge = document.getElementById('ic-manual-edit-badge');
@@ -31436,7 +31539,16 @@
                 }
             } catch (e) { console.error('[INSTANCE_LORA] 부정 프리셋 로드 실패:', e); }
             document.getElementById('instance-lora-create-modal').style.display = 'flex';
-            switchInstanceCreateBrowser('asset');
+            switchInstanceCreateBrowser(initialUploadFile ? 'upload' : 'asset');
+            if (initialUploadFile) {
+                _instanceCreateFiles.push({
+                    type: 'upload',
+                    file: initialUploadFile,
+                    previewUrl: URL.createObjectURL(initialUploadFile),
+                });
+                renderInstanceCreatePreview();
+            }
+            return true;
         }
         function closeInstanceLoraCreateModal() {
             document.getElementById('instance-lora-create-modal').style.display = 'none';
@@ -32335,10 +32447,13 @@
             } catch (e) { posEl.value = '오류: ' + e.message; }
         }
 
-        async function loadInstanceLoraInlineSettings(loraId) {
+        async function loadInstanceLoraInlineSettings() {
             try {
                 const resp = await fetchJSON('/api/instance_lora/config');
-                if (!resp.success) return;
+                if (!resp.success) {
+                    console.error('[INSTANCE_LORA] 인라인 설정 로드 실패: API 응답 실패', resp);
+                    return false;
+                }
                 const s = resp.data || {};
                 // 드롭박스 복원
                 const profileEl = document.getElementById('instance-lora-train-profile');
@@ -32351,7 +32466,24 @@
                     if (ps[key] !== undefined) el.value = ps[key];
                 });
                 onInstanceProfileChange();
-            } catch (e) { console.error('[INSTANCE_LORA] 인라인 설정 로드 실패:', e); }
+                _instanceLoraSettingsLoaded = true;
+                return true;
+            } catch (e) {
+                console.error('[INSTANCE_LORA] 인라인 설정 로드 실패:', e);
+                return false;
+            }
+        }
+
+        async function ensureInstanceLoraSettingsLoaded(forceReload = false) {
+            if (_instanceLoraSettingsLoaded && !forceReload) return true;
+            if (_instanceLoraSettingsLoadPromise) return await _instanceLoraSettingsLoadPromise;
+
+            _instanceLoraSettingsLoadPromise = loadInstanceLoraInlineSettings();
+            try {
+                return await _instanceLoraSettingsLoadPromise;
+            } finally {
+                _instanceLoraSettingsLoadPromise = null;
+            }
         }
 
         async function saveInstanceLoraInlineSettings() {
@@ -32378,9 +32510,17 @@
                     method: 'POST', headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify(existingSettings)
                 })).json();
-                if (resp.success) showToast('설정 저장됨', 'success');
-                else showToast(resp.error || '저장 실패', 'error');
-            } catch (e) { showToast('저장 실패', 'error'); }
+                if (resp.success) {
+                    _instanceLoraSettingsLoaded = true;
+                    showToast('설정 저장됨', 'success');
+                } else {
+                    console.error('[INSTANCE_LORA] 인라인 설정 저장 실패: API 응답 실패', resp);
+                    showToast(resp.error || '저장 실패', 'error');
+                }
+            } catch (e) {
+                console.error('[INSTANCE_LORA] 인라인 설정 저장 실패:', e);
+                showToast('저장 실패', 'error');
+            }
         }
 
         // ─── Instance LoRA 학습 ────────────────────────────────────

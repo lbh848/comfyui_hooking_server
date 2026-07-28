@@ -33,6 +33,46 @@ def test_character_maker_has_at_a_glance_three_rail_workflow():
     assert 'id="cm-settings-wall" class="cm-settings-wall collapsed"' in html
 
 
+def test_user_image_can_open_instance_lora_modal_as_an_uploaded_file():
+    html = _html()
+    user_pane_start = html.index('id="cm-pane-user"')
+    user_pane_end = html.index('id="cm-busy-overlay"', user_pane_start)
+    user_pane = html[user_pane_start:user_pane_end]
+
+    assert 'id="cm-send-instance-lora-btn"' in user_pane
+    assert "cmSendUserImageToInstanceLora()" in user_pane
+    assert "인스턴스 로라로 보내기" in user_pane
+    assert ".cm-pane.has-image .cm-instance-lora-btn { display: inline-flex; }" in html
+
+    transfer_start = html.index("async function cmSendUserImageToInstanceLora()")
+    transfer_end = html.index("function cmRenderLlmTags()", transfer_start)
+    transfer = html[transfer_start:transfer_end]
+    assert "cmSession?.active_revision_id" in transfer
+    assert "await response.blob()" in transfer
+    assert "new File(" in transfer
+    assert "await showInstanceLoraCreateModal(uploadFile)" in transfer
+    assert "console.error('[CHARACTER_MAKER] 인스턴스 로라 전달 실패:" in transfer
+
+    modal_start = html.index("async function showInstanceLoraCreateModal(initialUploadFile = null)")
+    modal_end = html.index("function closeInstanceLoraCreateModal()", modal_start)
+    modal = html[modal_start:modal_end]
+    assert "const settingsLoaded = await ensureInstanceLoraSettingsLoaded()" in modal
+    assert "if (!settingsLoaded)" in modal
+    assert modal.index("await ensureInstanceLoraSettingsLoaded()") < modal.index(
+        "instance-lora-create-modal"
+    )
+    assert "switchInstanceCreateBrowser(initialUploadFile ? 'upload' : 'asset')" in modal
+    assert "type: 'upload'" in modal
+    assert "file: initialUploadFile" in modal
+    assert "previewUrl: URL.createObjectURL(initialUploadFile)" in modal
+    assert "return true;" in modal
+
+    assert "let _instanceLoraSettingsLoaded = false;" in html
+    assert "let _instanceLoraSettingsLoadPromise = null;" in html
+    assert "async function ensureInstanceLoraSettingsLoaded(forceReload = false)" in html
+    assert "await ensureInstanceLoraSettingsLoaded(true)" in html
+
+
 def test_character_maker_marks_chat_branch_scope_and_accept_checkpoint():
     html = _html()
 
