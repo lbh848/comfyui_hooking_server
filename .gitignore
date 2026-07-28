@@ -65,3 +65,6 @@ fonts/
 # 임시 작업/검증 산출물 (스크립트 추출물, 스크린샷 등)
 .work/
 
+# Windows 전용 ComfyUI 설치기가 만드는 독립 런타임(모델/.venv 포함)
+comfy/
+

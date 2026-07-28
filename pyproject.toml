@@ -26,6 +26,7 @@ dependencies = [
     "sentence-transformers>=5.6.1",
     "ultralytics>=8.4.95",
     "dill>=0.4.1",
+    "argon2-cffi>=25.1.0",
 ]
 
 [tool.uv]

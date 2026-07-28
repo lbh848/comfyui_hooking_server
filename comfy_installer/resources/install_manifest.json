@@ -1,0 +1,465 @@
+{
+  "schema_version": 1,
+  "comfy": {
+    "version": "0.20.1",
+    "repository": "https://github.com/comfyanonymous/ComfyUI.git",
+    "ref": "64b8457f55cd7fb54ca7a956d9c73b505e903e0c"
+  },
+  "python": {
+    "version": "3.12.11",
+    "compatibility_packages": [
+      "numpy==1.26.4",
+      "scipy==1.14.1",
+      "tifffile==2024.9.20",
+      "opencv-python==4.10.0.84",
+      "opencv-python-headless==4.10.0.84",
+      "opencv-contrib-python==4.10.0.84"
+    ],
+    "preinstall_wheels": [
+      {
+        "id": "insightface-0.7.3-win-py312",
+        "url": "https://raw.githubusercontent.com/Gourieff/Assets/606558ed08f16b99a29ef30b0df0b4622164c524/Insightface/insightface-0.7.3-cp312-cp312-win_amd64.whl",
+        "filename": "insightface-0.7.3-cp312-cp312-win_amd64.whl",
+        "size": 872768,
+        "sha256": "4e58a504433ba5a500d48328689e7d6c69873165653ded7553ce804beb8723db"
+      }
+    ],
+    "gpu_profiles": [
+      {
+        "id": "nvidia-cu130",
+        "kind": "nvidia",
+        "minimum_driver_cuda": "13.0",
+        "packages": [
+          "torch==2.10.0+cu130",
+          "torchvision==0.25.0+cu130",
+          "torchaudio==2.10.0+cu130"
+        ],
+        "index_url": "https://download.pytorch.org/whl/cu130",
+        "triton_package": "triton-windows==3.6.0.post25",
+        "sageattention": {
+          "url": "https://github.com/woct0rdho/SageAttention/releases/download/v2.2.0-windows.post4/sageattention-2.2.0%2Bcu130torch2.9.0andhigher.post4-cp39-abi3-win_amd64.whl",
+          "size": 12321863,
+          "sha256": "f7261c53a1d46202059daff6b8feac5ee806274d47e3e7fb7abf8c5f6d410c92"
+        }
+      },
+      {
+        "id": "cpu",
+        "kind": "cpu",
+        "packages": [
+          "torch==2.10.0",
+          "torchvision==0.25.0",
+          "torchaudio==2.10.0"
+        ],
+        "index_url": "https://download.pytorch.org/whl/cpu"
+      }
+    ]
+  },
+  "custom_nodes": [
+    {
+      "name": "comfyui_controlnet_aux",
+      "source_type": "archive",
+      "version": "1.1.3",
+      "url": "https://cdn.comfy.org/fannovel16/comfyui_controlnet_aux/1.1.3/node.zip",
+      "size": 39778177,
+      "sha256": "7da61afd7f0c3dfc251b79d71eb6b8841770d9aff2056044f5741e1033bb0827"
+    },
+    {
+      "name": "comfyui_ipadapter_plus",
+      "source_type": "archive",
+      "version": "2.0.0",
+      "url": "https://cdn.comfy.org/matteo/comfyui_ipadapter_plus/2.0.0/node.tar.gz",
+      "size": 283479,
+      "sha256": "ba5a0bee431175f3389bdc25e28b5e9d4f44811f2f82236e849ec2ef962842a9"
+    },
+    {
+      "name": "comfyui-custom-scripts",
+      "source_type": "archive",
+      "version": "1.2.5",
+      "url": "https://cdn.comfy.org/pythongosssss/comfyui-custom-scripts/1.2.5/node.zip",
+      "size": 162699,
+      "sha256": "d01092bf97a983dd85dd3f7268893383ea036347c27005dedd9a758a953dc5fe"
+    },
+    {
+      "name": "ComfyUI-DCW",
+      "source_type": "git",
+      "repository": "https://github.com/namemechan/ComfyUI-DCW.git",
+      "ref": "dd7ebc2148cfc1a8b2e22343ae5bd657f283f462"
+    },
+    {
+      "name": "comfyui-easy-use",
+      "source_type": "archive",
+      "version": "1.3.6",
+      "url": "https://cdn.comfy.org/yolain/comfyui-easy-use/1.3.6/node.zip",
+      "size": 1920042,
+      "sha256": "2a80ae5517780aaed5e3a013f986a6f956970f9a3bad941f35a5615c135caeb7"
+    },
+    {
+      "name": "comfyui-impact-pack",
+      "source_type": "archive",
+      "version": "8.28.2",
+      "url": "https://cdn.comfy.org/drltdata/comfyui-impact-pack/8.28.2/node.zip",
+      "size": 2641425,
+      "sha256": "f907b19880b3847d3ada2f86949cc5b4bc72f9e7b0ba5fea8beaa6dad718d28e"
+    },
+    {
+      "name": "comfyui-impact-subpack",
+      "source_type": "archive",
+      "version": "1.3.5",
+      "url": "https://cdn.comfy.org/drltdata/comfyui-impact-subpack/1.3.5/node.zip",
+      "size": 24730,
+      "sha256": "c5ce17312ed348d4cd4a250ef2e158d330220f12ed278a861b0596a5714a14fa"
+    },
+    {
+      "name": "comfyui-instant-lora_v_soya",
+      "source_type": "git",
+      "repository": "https://github.com/lbh848/comfyui-instant-lora_v_soya.git",
+      "ref": "c22595bd9a2ced6b8849e83c97e82bdbc71ea369"
+    },
+    {
+      "name": "comfyui-kjnodes",
+      "source_type": "archive",
+      "version": "1.3.2",
+      "url": "https://cdn.comfy.org/kijai/comfyui-kjnodes/1.3.2/node.zip",
+      "size": 24760279,
+      "sha256": "5b1b354e52bc983833e84c0aa7531fc2e8a78cd5b22ab666351830e9124d88de"
+    },
+    {
+      "name": "comfyui-post-processing-nodes",
+      "source_type": "archive",
+      "version": "1.0.1",
+      "url": "https://cdn.comfy.org/ellangok/comfyui-post-processing-nodes/1.0.1/node.tar.gz",
+      "size": 1931375,
+      "sha256": "4d991094a378725e3b2ef6afa6cb491df2ae48efae4cbc2739c5681ba2f64203"
+    },
+    {
+      "name": "comfyui-spectrum-ksampler",
+      "source_type": "git",
+      "repository": "https://github.com/sorryhyun/ComfyUI-Spectrum-KSampler.git",
+      "ref": "c806917566ee1c149575cd90da9e4c2e543de019"
+    },
+    {
+      "name": "comfyui-soya-custom-nodes",
+      "source_type": "git",
+      "repository": "https://github.com/lbh848/Comfyui-soya-custom-nodes.git",
+      "ref": "eacfc54d998692085eb8adeeea07771d78107105"
+    },
+    {
+      "name": "rgthree-comfy",
+      "source_type": "git",
+      "repository": "https://github.com/rgthree/rgthree-comfy.git",
+      "ref": "8ff50e4521881eca1fe26aec9615fc9362474931"
+    },
+    {
+      "name": "comfyui-workflow-to-api-converter-endpoint",
+      "source_type": "git",
+      "repository": "https://github.com/lbh848/comfyui-workflow-to-api-converter-endpoint.git",
+      "ref": "f02fb172b30fe87495b1cf3c9ac0b307c9c30385"
+    }
+  ],
+  "models": [
+    {
+      "id": "illustrious-xl-v1",
+      "url": "https://civitai.com/api/download/models/1389133",
+      "auth": "civitai",
+      "relative_path": "models/checkpoints/illustriousXL10_v10.safetensors",
+      "size": 6938040736,
+      "sha256": "735cf3fefcbdc4f7817f53247e38b836ffd27c7641af6d8daa21d245242cb4bd"
+    },
+    {
+      "id": "illustrious-xl-v1-vae",
+      "url": "https://civitai.com/api/download/models/1916060",
+      "auth": "civitai",
+      "relative_path": "models/vae/illustriousXLV10_v10.safetensors",
+      "size": 167333134,
+      "sha256": "3cc3b7f04550109b453ff14dc0f91da4aed05f0b90bbc5bbb573c5eabf5161f0"
+    },
+    {
+      "id": "rin-anim8draw-v3.1",
+      "url": "https://civitai.com/api/download/models/2622009",
+      "auth": "civitai",
+      "relative_path": "models/checkpoints/rinAnim8drawIllustrious_v31.safetensors",
+      "size": 6938041594,
+      "sha256": "7d744d7dc54fc11e7645c6f219748ba59ae4a31ec8a1f666fe88feea877f8078"
+    },
+    {
+      "id": "rin-flanime-v3",
+      "url": "https://civitai.com/api/download/models/2710976",
+      "auth": "civitai",
+      "relative_path": "models/checkpoints/rinFlanimeIllustrious_v30.safetensors",
+      "size": 6938042346,
+      "sha256": "50ea33bae7b499cee2fad3d04b4152270427f3ffab6776910b439bc4974c5ab3"
+    },
+    {
+      "id": "anima-base-v1",
+      "url": "https://huggingface.co/circlestone-labs/Anima/resolve/f7382c4bf9d7ffe4ceea593a0adbb470c56dd79b/split_files/diffusion_models/anima-base-v1.0.safetensors",
+      "relative_path": "models/diffusion_models/anima_baseV10.safetensors",
+      "size": 4182218328,
+      "sha256": "bd43b7cffe1ed1153d9c41e7beb2f18cb1273eafbaa3af3edd6a173dc90a006e",
+      "license": "CircleStone Labs Non-Commercial License"
+    },
+    {
+      "id": "anima-aesthetic-v1.1",
+      "url": "https://huggingface.co/circlestone-labs/Anima/resolve/f7382c4bf9d7ffe4ceea593a0adbb470c56dd79b/split_files/diffusion_models/anima-aesthetic-v1.1.safetensors",
+      "relative_path": "models/diffusion_models/anima_aestheticV11.safetensors",
+      "size": 4182230656,
+      "sha256": "3c1868387a3a1ff504bbb87c33678321965ead381fcf87afbd0264daa600c082",
+      "license": "CircleStone Labs Non-Commercial License"
+    },
+    {
+      "id": "anima-text-encoder",
+      "url": "https://huggingface.co/circlestone-labs/Anima/resolve/f7382c4bf9d7ffe4ceea593a0adbb470c56dd79b/split_files/text_encoders/qwen_3_06b_base.safetensors",
+      "relative_path": "models/text_encoders/qwen_3_06b_base.safetensors",
+      "size": 1192135096,
+      "sha256": "cd2a512003e2f9f3cd3c32a9c3573f820bb28c940f73c57b1ddaa983d9223eba",
+      "license": "CircleStone Labs Non-Commercial License"
+    },
+    {
+      "id": "anima-vae",
+      "url": "https://huggingface.co/circlestone-labs/Anima/resolve/f7382c4bf9d7ffe4ceea593a0adbb470c56dd79b/split_files/vae/qwen_image_vae.safetensors",
+      "relative_path": "models/vae/qwen_image_vae.safetensors",
+      "size": 253806246,
+      "sha256": "a70580f0213e67967ee9c95f05bb400e8fb08307e017a924bf3441223e023d1f",
+      "license": "CircleStone Labs Non-Commercial License"
+    },
+    {
+      "id": "anima-yume-v0.2",
+      "url": "https://civitai.com/api/download/models/2753918",
+      "auth": "civitai",
+      "relative_path": "models/diffusion_models/animayume_v02.safetensors",
+      "size": 4182218328,
+      "sha256": "81c5319674ba6f4e35284885215fd97ab9d5742f3d9c3f5f07e61b797f1b0231"
+    },
+    {
+      "id": "fcomic-illustrious-v2",
+      "url": "https://civitai.com/api/download/models/2166652",
+      "auth": "civitai",
+      "relative_path": "models/loras/FComic_1to1000_IL_V2.safetensors",
+      "size": 228468204,
+      "sha256": "668c7242b2120947d3f8612614122d8168f4ab7d3df6ca52d2c065f09c98f642"
+    },
+    {
+      "id": "anima-turbo-lora-v0.2",
+      "url": "https://civitai.com/api/download/models/2979642",
+      "auth": "civitai",
+      "relative_path": "models/loras/anima-turbo-lora-v0.2.safetensors",
+      "size": 148902616,
+      "sha256": "1b55e40bdb1d0e5a78cb498f245fccfdaae97823265db957d2aabdcf4cd3caf1"
+    },
+    {
+      "id": "anima-quality-slider",
+      "url": "https://civitai.com/api/download/models/2945328",
+      "auth": "civitai",
+      "relative_path": "models/loras/anima_base_slider_step800.safetensors",
+      "size": 55131384,
+      "sha256": "4a0dc474d26f9ebbae8bf9315da0ae9488f6428f696e21fe8f9db7f970246c82"
+    },
+    {
+      "id": "anima-ci10ranko",
+      "url": "https://civitai.com/api/download/models/2972611",
+      "auth": "civitai",
+      "relative_path": "models/loras/anima_ci10ranko_v1.1-epoch28.safetensors",
+      "size": 275357376,
+      "sha256": "e9448087f414b514ca815b4a24e8f10bdbe02b7095d0eed0e19dbfa2379052f5"
+    },
+    {
+      "id": "anima-detail-tweaker",
+      "url": "https://civitai.com/api/download/models/2945421",
+      "auth": "civitai",
+      "relative_path": "models/loras/anima_context_detailer_base10.safetensors",
+      "size": 91851400,
+      "sha256": "aaaca6107e97bf98d03482464583a0d89fbf14acec8e01685682f11a02915d22"
+    },
+    {
+      "id": "anima-n4t4r4p1su",
+      "url": "https://civitai.com/api/download/models/2975701",
+      "auth": "civitai",
+      "relative_path": "models/loras/anima_n4t4r4p1su_v1.0-epoch10.safetensors",
+      "size": 183606592,
+      "sha256": "f1694a00b220fdb9a4e406be37ac59f25ef2d58f93684ec5629937cf5cde6f87"
+    },
+    {
+      "id": "rdbt-anima",
+      "url": "https://civitai.com/api/download/models/2700939",
+      "auth": "civitai",
+      "relative_path": "models/loras/anima_preview_rdbt_finetuned_cfg_distilled_v0.12.safetensors",
+      "size": 92628408,
+      "sha256": "d2da7239e65e11a7a5c35d8384055b9dfad53324526141e1189cc2cb92e4d6d9"
+    },
+    {
+      "id": "atomsphere-style",
+      "url": "https://civitai.com/api/download/models/3064694",
+      "auth": "civitai",
+      "relative_path": "models/loras/atomsphere_style_v1.2-anima-e20.safetensors",
+      "size": 91929784,
+      "sha256": "9726c61539ff365747b535715e95f45fc0df6321fdaf25cc3d5f4e829fcc3be9"
+    },
+    {
+      "id": "dmd2-speed-lora",
+      "url": "https://civitai.com/api/download/models/1820705",
+      "auth": "civitai",
+      "relative_path": "models/loras/dmd2_sdxl_4step_lora.safetensors",
+      "size": 787359616,
+      "sha256": "a374289e9446d7f14d2037c4b3770756b7b52c292142a691377c3c755010a1bb"
+    },
+    {
+      "id": "kieed-style",
+      "url": "https://civitai.com/api/download/models/2680198",
+      "auth": "civitai",
+      "relative_path": "models/loras/kieed-anima-lokr-000018.safetensors",
+      "size": 233044432,
+      "sha256": "5ce40595eff3cb21ade9427df19e5ef2c15f5e61ddbf341971a36824b8919115"
+    },
+    {
+      "id": "small-head-anima",
+      "url": "https://civitai.com/api/download/models/2852579",
+      "auth": "civitai",
+      "relative_path": "models/loras/small_head_anima.safetensors",
+      "size": 69557944,
+      "sha256": "c783d043848b9bd85db6545243b13e490070f0ea357b304d3c3fdca21e061917"
+    },
+    {
+      "id": "suujiniku-style",
+      "url": "https://civitai.com/api/download/models/1798353",
+      "auth": "civitai",
+      "relative_path": "models/loras/suujiniku.safetensors",
+      "size": 228478868,
+      "sha256": "85f5879c5da59ec40cd03d23236f6a8d40a786db8acaf11c354ac67eda4ce718"
+    },
+    {
+      "id": "anima-m4me-v1.2",
+      "url": "https://civitai.com/api/download/models/2955581",
+      "auth": "civitai",
+      "relative_path": "models/loras/anima_m4me_v1.2-epoch16.safetensors",
+      "size": 183606432,
+      "sha256": "235aa544a63643a38d12449250842592ec2d16a94a1497c90280ce37dd90c9fa"
+    },
+    {
+      "id": "clip-vision-bigg-ipadapter",
+      "url": "https://huggingface.co/h94/IP-Adapter/resolve/018e402774aeeddd60609b4ecdb7e298259dc729/sdxl_models/image_encoder/model.safetensors",
+      "relative_path": "models/clip_vision/CLIP-ViT-bigG-14-laion2B-39B-b160k.safetensors",
+      "size": 3689912664,
+      "sha256": "657723e09f46a7c3957df651601029f66b1748afb12b419816330f16ed45d64d"
+    },
+    {
+      "id": "noob-ipa-mark1",
+      "url": "https://civitai.com/api/download/models/1121145",
+      "auth": "civitai",
+      "relative_path": "models/ipadapter/noobIPAMARK1_mark1.safetensors",
+      "size": 1405172056,
+      "sha256": "5cdb6a00be1b12579745b5bed0c7b83f0869073d8a864fa8cd50a9356601919a"
+    },
+    {
+      "id": "illustrious-openpose-controlnet",
+      "url": "https://civitai.com/api/download/models/1536174",
+      "auth": "civitai",
+      "relative_path": "models/controlnet/illustriousXL_v10_openpose.safetensors",
+      "size": 2502140008,
+      "sha256": "0d8bacf24534dc6f2716f5d0ffa6085571928776f8687565ef290a17d9f3615c"
+    },
+    {
+      "id": "noobai-canny-controlnet",
+      "url": "https://civitai.com/api/download/models/1040650",
+      "auth": "civitai",
+      "relative_path": "models/controlnet/noobaiXLControlnet_epsCanny.safetensors",
+      "size": 5004167832,
+      "sha256": "7cab92c629146b8bb4c7511d1dd4fec74e825022b932913c8bd5ced2694c7826"
+    },
+    {
+      "id": "anima-lllite-inpainting-v2",
+      "url": "https://huggingface.co/kohya-ss/Anima-LLLite/resolve/10bbc6686d3b094917e15b9737aaa52275202004/anima-lllite-inpainting-v2.safetensors",
+      "relative_path": "models/controlnet/anima-lllite-inpainting-v2.safetensors",
+      "size": 65772872,
+      "sha256": "5242e677d2be34ee70ca7c97c3b14ff5ee49838c03fc1e60ac4852a180db6ef5"
+    },
+    {
+      "id": "anime-sharp-v4-upscaler",
+      "url": "https://huggingface.co/Kim2091/2x-AnimeSharpV4/resolve/1a9339b5c308ab3990f6233be2c1169a75772878/2x-AnimeSharpV4_Fast_RCAN_PU.safetensors",
+      "relative_path": "models/upscale_models/2x-AnimeSharpV4_Fast_RCAN_PU.safetensors",
+      "size": 31359158,
+      "sha256": "b641c9eb10b43f26538177aa8f0fef8b9fc2a153afd1431d0a062a84c49ce6d0"
+    },
+    {
+      "id": "clip-vit-l14",
+      "url": "https://huggingface.co/licyk/controlnet_v1.1_annotator/resolve/7879a67f36c63eebeb683b7baaffeecef89c3935/clip_vision/clip_vitl.pth",
+      "relative_path": "models/clip_vision/ViT-L14.bin",
+      "size": 1710671599,
+      "sha256": "f1a17cdbe0f36fec524f5cafb1c261ea3bbbc13e346e0f74fc9eb0460dedd0d3"
+    },
+    {
+      "id": "face-yolov8n",
+      "url": "https://huggingface.co/Bingsu/adetailer/resolve/53cc19de382014514d9d4038601d261a7faa9b7b/face_yolov8n.pt",
+      "relative_path": "models/ultralytics/bbox/face_yolov8n.pt",
+      "size": 6230011,
+      "sha256": "70b640f8f60b1cf0dcc72f30caf3da9495eb2fb6509da48c53374ad6806e6a9c"
+    },
+    {
+      "id": "face-yolov8m",
+      "url": "https://huggingface.co/Bingsu/adetailer/resolve/53cc19de382014514d9d4038601d261a7faa9b7b/face_yolov8m.pt",
+      "relative_path": "models/ultralytics/bbox/face_yolov8m.pt",
+      "size": 52026019,
+      "sha256": "717923c19b3f4bbf5250b728f1fa6b2cb72a33aed1d236ea9caf0e21ad943e5f"
+    },
+    {
+      "id": "hand-yolov8s",
+      "url": "https://huggingface.co/Bingsu/adetailer/resolve/53cc19de382014514d9d4038601d261a7faa9b7b/hand_yolov8s.pt",
+      "relative_path": "models/ultralytics/bbox/hand_yolov8s.pt",
+      "size": 22507643,
+      "sha256": "70b540063fbc385736d8258970744a4afbc4cbf7932134bae3b24cdadeadec06"
+    },
+    {
+      "id": "eye-segmentation-v2",
+      "url": "https://huggingface.co/byung-hyun/eye_segmentation_model/resolve/eac8bbddb65447dfe07bbf09d79035c466d20849/eye_seg_v2.ckpt",
+      "relative_path": "models/soya_seg/eye_seg_v2.ckpt",
+      "size": 529353537,
+      "sha256": "57bd5d5ea34bc7877c0134a84637a540e31d2dd316b097a91dc31c2be9dde279"
+    },
+    {
+      "id": "eyebrow-segmentation",
+      "url": "https://huggingface.co/byung-hyun/eye_segmentation_model/resolve/eac8bbddb65447dfe07bbf09d79035c466d20849/eyebrow_seg.ckpt",
+      "relative_path": "models/soya_seg/eyebrow_seg.ckpt",
+      "size": 529353537,
+      "sha256": "d1925aa36ccfced935051b22ad368abdfe55a5782188e74a8f9ac2826e5e7b5d"
+    },
+    {
+      "id": "qwen-image-edit-rapid-v19",
+      "url": "https://huggingface.co/Phr00t/Qwen-Image-Edit-Rapid-AIO/resolve/691024f438640508f8aa86414863fc15edfb8a84/v19/Qwen-Rapid-AIO-NSFW-v19.safetensors",
+      "relative_path": "models/checkpoints/v19/Qwen-Rapid-AIO-NSFW-v19.safetensors",
+      "size": 28431843583,
+      "sha256": "ba71575515709c9912560d1176b2386eaa49294fedc6ce57b9734aa57e91e5ac"
+    },
+    {
+      "id": "lazypos-embedding",
+      "url": "https://civitai.com/api/download/models/1833157",
+      "auth": "civitai",
+      "relative_path": "models/embeddings/lazypos.safetensors",
+      "size": 180376,
+      "sha256": "30866692653cb0063484dec240bc7971adc5767753b0cbbe072e2ddd7ff16b81"
+    }
+  ],
+  "workflows": {
+    "expected_count": 17,
+    "required_bindings": [
+      "comfy_workflow_source_path",
+      "illustration_workflow_source_paths.v1",
+      "illustration_workflow_source_paths.v3",
+      "illustration_workflow_source_paths.v3_anima",
+      "utility_workflow_source_path",
+      "asset_workflow_source_path",
+      "anima_asset_workflow_source_path",
+      "anima_only_asset_workflow_source_path",
+      "qwen_edit_workflow_source_path",
+      "anima_inpainting_workflow_source_path",
+      "tag_analysis_workflow_source_path",
+      "asset_tag_analysis_workflow_source_path",
+      "lora_training_workflow_source_paths.anima",
+      "lora_training_workflow_source_paths.sdxl",
+      "style_lora_training_workflow_source_paths.anima",
+      "style_lora_training_workflow_source_paths.sdxl",
+      "face_extract_workflow_source_path",
+      "debug_workflow_source_path"
+    ],
+    "excluded_filenames": [
+      "캐릭터복장추적_v1.json"
+    ]
+  }
+}

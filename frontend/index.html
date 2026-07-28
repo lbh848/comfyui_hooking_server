@@ -3149,6 +3149,163 @@
         .settings-tab-panel { display: none; }
         .settings-tab-panel.active { display: block; }
 
+        /* ComfyUI Windows 설치기 */
+        .comfy-installer-page {
+            display: grid;
+            gap: 12px;
+            color: var(--text);
+        }
+        .comfy-installer-hero,
+        .comfy-installer-card {
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            background: var(--surface1);
+            padding: 14px;
+        }
+        .comfy-installer-hero {
+            background:
+                linear-gradient(135deg, rgba(102, 126, 234, .14), rgba(118, 75, 162, .08)),
+                var(--surface1);
+        }
+        .comfy-installer-title {
+            margin: 0 0 6px;
+            font-size: 1rem;
+            color: var(--text);
+        }
+        .comfy-installer-copy,
+        .comfy-installer-note {
+            margin: 0;
+            color: var(--text2);
+            font-size: .78rem;
+            line-height: 1.55;
+        }
+        .comfy-installer-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 10px;
+        }
+        .comfy-installer-field {
+            display: grid;
+            gap: 6px;
+        }
+        .comfy-installer-field.full { grid-column: 1 / -1; }
+        .comfy-installer-field label {
+            font-size: .77rem;
+            font-weight: 650;
+            color: var(--text);
+        }
+        .comfy-installer-field input {
+            width: 100%;
+            box-sizing: border-box;
+            padding: 8px 10px;
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            background: var(--surface2);
+            color: var(--text);
+            font-size: .8rem;
+        }
+        .comfy-installer-field input[type="file"] { padding: 6px; }
+        .comfy-installer-actions {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 8px;
+        }
+        .comfy-installer-btn {
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            background: var(--surface2);
+            color: var(--text);
+            padding: 8px 13px;
+            font-size: .78rem;
+            font-weight: 650;
+            cursor: pointer;
+        }
+        .comfy-installer-btn.primary {
+            border-color: var(--accent);
+            background: var(--accent);
+            color: #fff;
+        }
+        .comfy-installer-btn.danger {
+            border-color: #b94a58;
+            color: #ff9aa7;
+        }
+        .comfy-installer-btn:disabled {
+            cursor: default;
+            opacity: .45;
+        }
+        .comfy-installer-status-grid {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 7px;
+            margin-bottom: 10px;
+        }
+        .comfy-installer-metric {
+            min-width: 0;
+            padding: 8px;
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            background: rgba(0,0,0,.1);
+        }
+        .comfy-installer-metric small {
+            display: block;
+            color: var(--text2);
+            font-size: .65rem;
+            margin-bottom: 3px;
+        }
+        .comfy-installer-metric strong {
+            display: block;
+            color: var(--text);
+            font-size: .76rem;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .comfy-installer-progress {
+            height: 9px;
+            overflow: hidden;
+            border-radius: 999px;
+            background: rgba(255,255,255,.08);
+            border: 1px solid var(--border);
+        }
+        .comfy-installer-progress > span {
+            display: block;
+            height: 100%;
+            width: 0;
+            background: linear-gradient(90deg, var(--accent), #8d70ff);
+            transition: width .25s ease;
+        }
+        .comfy-installer-log {
+            box-sizing: border-box;
+            width: 100%;
+            height: 230px;
+            margin: 8px 0 0;
+            padding: 10px;
+            overflow: auto;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: #101014;
+            color: #d7d7df;
+            font: 11px/1.5 Consolas, "Cascadia Mono", monospace;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+        .comfy-installer-error {
+            display: none;
+            margin-top: 8px;
+            padding: 8px 10px;
+            border-radius: 7px;
+            background: rgba(185, 74, 88, .18);
+            color: #ffadb7;
+            font-size: .76rem;
+            white-space: pre-wrap;
+        }
+        @media (max-width: 720px) {
+            .comfy-installer-grid { grid-template-columns: 1fr; }
+            .comfy-installer-field.full { grid-column: auto; }
+            .comfy-installer-status-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        }
+
         /* 캐릭터 메이커 설정 */
         .settings-modal.character-maker-layout .modal-content {
             width: min(920px, calc(100vw - 28px));
@@ -13763,6 +13920,7 @@
                         <button class="settings-tab-btn" onclick="switchSettingsTab('asset')">에셋</button>
                         <button class="settings-tab-btn" onclick="switchSettingsTab('character_maker')">단부르 RAG</button>
                         <button class="settings-tab-btn" onclick="switchSettingsTab('lora')">로라</button>
+                        <button class="settings-tab-btn" onclick="switchSettingsTab('comfy_install')">Comfy 설치</button>
                         <button class="settings-tab-btn" onclick="switchSettingsTab('queue')">큐</button>
                         <button class="settings-tab-btn" onclick="switchSettingsTab('debug')">디버그</button>
                     </div>
@@ -15465,6 +15623,87 @@
                         </div>
                         <button onclick="scanUntrackedLoras()" style="margin-top: 6px; padding: 6px 14px; font-size: 12px; background: var(--bg-tertiary, #2a2a3e); border: 1px solid var(--border-color, #3a3a4e); border-radius: 6px; color: var(--text-secondary, #aaa); cursor: pointer;">비추적 로라 제거</button>
                         <button onclick="openLoraFolder()" style="margin-top: 6px; padding: 6px 14px; font-size: 12px; background: var(--bg-tertiary, #2a2a3e); border: 1px solid var(--border-color, #3a3a4e); border-radius: 6px; color: var(--text-secondary, #aaa); cursor: pointer;">📁 폴더 열기</button>
+                    </div>
+                </div>
+
+                <!-- Tab: ComfyUI Windows 설치 -->
+                <div class="settings-tab-panel" id="settings-tab-comfy_install">
+                    <div class="comfy-installer-page">
+                        <section class="comfy-installer-hero">
+                            <h3 class="comfy-installer-title">ComfyUI v0.20.1 독립 설치</h3>
+                            <p class="comfy-installer-copy">
+                                Windows 전용입니다. 프로젝트의 <code>comfy</code> 폴더에 Python 3.12.11
+                                <code>.venv</code>를 따로 만들고 PyTorch, Triton, SageAttention, 커스텀 노드,
+                                고정 모델과 17개 워크플로우를 설치합니다. 전역 Python/CUDA 패키지는 사용하지 않습니다.
+                            </p>
+                        </section>
+
+                        <section class="comfy-installer-card">
+                            <h3 class="comfy-installer-title">1. 시스템 검사</h3>
+                            <div class="comfy-installer-status-grid">
+                                <div class="comfy-installer-metric"><small>설치 위치</small><strong id="comfy-installer-root">확인 전</strong></div>
+                                <div class="comfy-installer-metric"><small>GPU 프로필</small><strong id="comfy-installer-gpu">확인 전</strong></div>
+                                <div class="comfy-installer-metric"><small>남은 공간</small><strong id="comfy-installer-disk">확인 전</strong></div>
+                                <div class="comfy-installer-metric"><small>배포 규모</small><strong id="comfy-installer-size">36 모델 · 약 76 GiB</strong></div>
+                            </div>
+                            <div class="comfy-installer-actions">
+                                <button type="button" class="comfy-installer-btn" id="comfy-installer-preflight-btn" onclick="comfyInstallerRunPreflight()">다시 검사</button>
+                                <span class="comfy-installer-note" id="comfy-installer-preflight-note">NVIDIA 드라이버, uv, Git과 최소 110 GiB 여유 공간을 검사합니다.</span>
+                            </div>
+                        </section>
+
+                        <section class="comfy-installer-card">
+                            <h3 class="comfy-installer-title">2. 인증 및 워크플로우 팩</h3>
+                            <div class="comfy-installer-grid">
+                                <div class="comfy-installer-field">
+                                    <label for="comfy-installer-civitai-key">Civitai API 키</label>
+                                    <input type="password" id="comfy-installer-civitai-key" autocomplete="new-password" spellcheck="false" placeholder="화면/메모리에서만 사용, config.json에 저장하지 않음">
+                                </div>
+                                <div class="comfy-installer-field">
+                                    <label for="comfy-installer-workflow-key">워크플로우 팩 키</label>
+                                    <input type="password" id="comfy-installer-workflow-key" autocomplete="new-password" spellcheck="false" placeholder="암호화 팩 복원 키">
+                                </div>
+                                <div class="comfy-installer-field full">
+                                    <label for="comfy-installer-pack">암호화 워크플로우 팩 (.soyawfp)</label>
+                                    <input type="file" id="comfy-installer-pack" accept=".soyawfp,application/octet-stream">
+                                    <span class="comfy-installer-note" id="comfy-installer-upload-note">키가 틀리거나 팩이 변조되면 큰 모델을 받기 전에 중단합니다.</span>
+                                </div>
+                            </div>
+                            <p class="comfy-installer-note" style="margin-top:10px;">
+                                이 잠금은 무단 재배포를 어렵게 하는 수준이며 DRM은 아닙니다. 설치 후 ComfyUI가 쓰려면
+                                워크플로우 JSON은 평문으로 복원됩니다. Civitai 키와 워크플로우 키는 저장하지 않습니다.
+                            </p>
+                        </section>
+
+                        <section class="comfy-installer-card">
+                            <h3 class="comfy-installer-title">3. 설치 및 17개 실제 E2E</h3>
+                            <div class="comfy-installer-actions">
+                                <button type="button" class="comfy-installer-btn primary" id="comfy-installer-start-btn" onclick="comfyInstallerStart()">설치 시작</button>
+                                <button type="button" class="comfy-installer-btn danger" id="comfy-installer-cancel-btn" onclick="comfyInstallerCancel()" disabled>안전하게 중단</button>
+                                <button type="button" class="comfy-installer-btn" id="comfy-installer-restore-btn" onclick="comfyInstallerRestoreConfig()" disabled>설치 전 config 복원</button>
+                            </div>
+                            <label class="comfy-installer-note" style="display:flex;align-items:center;gap:8px;margin-top:10px;cursor:pointer;">
+                                <input type="checkbox" id="comfy-installer-restore-after-success" checked>
+                                이번 검증 성공 후 기존 <code>config.json</code>을 자동 복원하고 백업은 유지
+                            </label>
+                            <p class="comfy-installer-note" style="margin-top:9px;">
+                                중단 후 재시도하면 검증된 다운로드와 정확히 일치하는 설치를 재사용합니다.
+                                모든 모델 SHA-256 검증, 노드 로드, 변환 검증에 더해 17개 워크플로우를 실제 큐에서 실행하므로 오래 걸릴 수 있습니다.
+                            </p>
+                        </section>
+
+                        <section class="comfy-installer-card">
+                            <div class="comfy-installer-status-grid">
+                                <div class="comfy-installer-metric"><small>상태</small><strong id="comfy-installer-state">대기</strong></div>
+                                <div class="comfy-installer-metric"><small>단계</small><strong id="comfy-installer-phase">0 / 15</strong></div>
+                                <div class="comfy-installer-metric"><small>현재 항목</small><strong id="comfy-installer-item">-</strong></div>
+                                <div class="comfy-installer-metric"><small>E2E</small><strong id="comfy-installer-e2e">0 / 17</strong></div>
+                            </div>
+                            <div class="comfy-installer-progress" aria-label="ComfyUI 설치 진행률"><span id="comfy-installer-progress-bar"></span></div>
+                            <p class="comfy-installer-note" id="comfy-installer-progress-note" style="margin-top:7px;">설치 대기 중</p>
+                            <div class="comfy-installer-error" id="comfy-installer-error"></div>
+                            <pre class="comfy-installer-log" id="comfy-installer-log" role="log" aria-live="polite">설치 로그가 여기에 표시됩니다.</pre>
+                        </section>
                     </div>
                 </div>
 
@@ -18774,6 +19013,283 @@
             }
         }
 
+        // ─── ComfyUI Windows 설치기 ───
+        let comfyInstallerLastLogSeq = 0;
+        let comfyInstallerPollTimer = null;
+        let comfyInstallerStatusBusy = false;
+        let comfyInstallerPreflightLoaded = false;
+        let comfyInstallerLastBackup = '';
+
+        function comfyInstallerFormatBytes(value) {
+            const bytes = Number(value);
+            if (!Number.isFinite(bytes) || bytes < 0) return '-';
+            const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
+            let size = bytes;
+            let unit = 0;
+            while (size >= 1024 && unit < units.length - 1) {
+                size /= 1024;
+                unit += 1;
+            }
+            return `${size.toFixed(unit >= 3 ? 2 : 1)} ${units[unit]}`;
+        }
+
+        function comfyInstallerSetError(message) {
+            const box = document.getElementById('comfy-installer-error');
+            if (!box) return;
+            const text = String(message || '').trim();
+            box.textContent = text;
+            box.style.display = text ? 'block' : 'none';
+        }
+
+        async function comfyInstallerRunPreflight(silent = false) {
+            const button = document.getElementById('comfy-installer-preflight-btn');
+            const note = document.getElementById('comfy-installer-preflight-note');
+            if (button) button.disabled = true;
+            if (note) note.textContent = 'Windows, GPU, 드라이버, uv, Git과 디스크를 확인하는 중…';
+            try {
+                const data = await fetchJSON('/api/comfy-installer/preflight', { method: 'POST' });
+                const probe = data.preflight || {};
+                const gpus = ((probe.nvidia || {}).gpus || []).map(gpu => gpu.name).filter(Boolean);
+                const profile = probe.gpu_profile || '알 수 없음';
+                const driverCuda = (probe.nvidia || {}).driver_cuda;
+                document.getElementById('comfy-installer-root').textContent = probe.install_root || '-';
+                document.getElementById('comfy-installer-gpu').textContent =
+                    `${profile}${gpus.length ? ` · ${gpus.join(', ')}` : ''}`;
+                document.getElementById('comfy-installer-disk').textContent =
+                    `${comfyInstallerFormatBytes((probe.disk || {}).free)} 남음`;
+                const manifest = probe.manifest || {};
+                document.getElementById('comfy-installer-size').textContent =
+                    `${manifest.model_count || 36} 모델 · ${comfyInstallerFormatBytes(manifest.model_bytes || 0)}`;
+                if (note) {
+                    note.textContent =
+                        `검사 통과 · 드라이버 CUDA 상한 ${driverCuda || '-'} · ${probe.uv || 'uv 확인'} · ${probe.git || 'Git 확인'}`;
+                }
+                comfyInstallerPreflightLoaded = true;
+                comfyInstallerSetError('');
+                if (!silent) showToast('ComfyUI 설치 사전 검사를 통과했습니다', 'success');
+                return true;
+            } catch (error) {
+                console.error('[COMFY_INSTALL] 사전 검사 실패:', error);
+                if (note) note.textContent = `검사 실패 · ${error.message || error}`;
+                comfyInstallerSetError(error.message || error);
+                if (!silent) showToast(`ComfyUI 설치 검사 실패: ${error.message || error}`, 'error');
+                return false;
+            } finally {
+                if (button) button.disabled = false;
+            }
+        }
+
+        function comfyInstallerRenderStatus(data) {
+            const stateLabels = {
+                idle: '대기',
+                running: '설치 중',
+                succeeded: '성공',
+                failed: '실패',
+                cancelled: '중단됨',
+            };
+            const state = data.state || 'idle';
+            const phaseIndex = Number(data.phase_index || 0);
+            const phaseCount = Number(data.phase_count || 15);
+            const progress = data.progress || {};
+            const startButton = document.getElementById('comfy-installer-start-btn');
+            const cancelButton = document.getElementById('comfy-installer-cancel-btn');
+            document.getElementById('comfy-installer-state').textContent = stateLabels[state] || state;
+            document.getElementById('comfy-installer-phase').textContent =
+                `${phaseIndex} / ${phaseCount} · ${data.phase_label || '-'}`;
+
+            const item = progress.item || progress.filename ||
+                (progress.path ? String(progress.path).split(/[\\/]/).pop() : '') || '-';
+            document.getElementById('comfy-installer-item').textContent = item;
+
+            let subProgress = 0;
+            if (Number(progress.overall_total) > 0) {
+                subProgress = Math.min(1, Number(progress.overall_downloaded || 0) / Number(progress.overall_total));
+            } else if (Number(progress.total) > 0 && Number(progress.current) >= 0) {
+                subProgress = Math.min(1, Number(progress.current || 0) / Number(progress.total));
+            }
+            let percent = phaseCount > 0
+                ? Math.max(0, Math.min(100, ((Math.max(phaseIndex, 1) - 1 + subProgress) / phaseCount) * 100))
+                : 0;
+            if (state === 'succeeded') percent = 100;
+            document.getElementById('comfy-installer-progress-bar').style.width = `${percent.toFixed(2)}%`;
+
+            let progressText = data.phase_label || '설치 대기 중';
+            if (Number(progress.overall_total) > 0) {
+                progressText += ` · ${comfyInstallerFormatBytes(progress.overall_downloaded || 0)} / ${comfyInstallerFormatBytes(progress.overall_total)}`;
+            } else if (Number(progress.total) > 0) {
+                progressText += ` · ${progress.current || 0} / ${progress.total}`;
+            }
+            if (Number(progress.bytes_per_second) > 0) {
+                progressText += ` · ${comfyInstallerFormatBytes(progress.bytes_per_second)}/s`;
+            }
+            document.getElementById('comfy-installer-progress-note').textContent = progressText;
+
+            let e2eCurrent = 0;
+            if (progress.event === 'workflow_execution') e2eCurrent = Number(progress.current || 0);
+            if (state === 'succeeded') e2eCurrent = 17;
+            if (data.result && Array.isArray(data.result.workflow_runtime)) {
+                e2eCurrent = data.result.workflow_runtime.length;
+            }
+            document.getElementById('comfy-installer-e2e').textContent = `${e2eCurrent} / 17`;
+
+            if (data.error) comfyInstallerSetError(data.error);
+            else if (state !== 'failed') comfyInstallerSetError('');
+
+            const logBox = document.getElementById('comfy-installer-log');
+            const logs = Array.isArray(data.logs) ? data.logs : [];
+            if (logs.length && logBox) {
+                const wasNearBottom = logBox.scrollHeight - logBox.scrollTop - logBox.clientHeight < 50;
+                if (comfyInstallerLastLogSeq === 0 || logBox.textContent === '설치 로그가 여기에 표시됩니다.') {
+                    logBox.textContent = '';
+                }
+                const lines = logs.map(entry => {
+                    const timePart = String(entry.time || '').split('T')[1]?.slice(0, 8) || '--:--:--';
+                    return `[${timePart}] [${String(entry.level || 'info').toUpperCase()}] ${entry.message || ''}`;
+                });
+                logBox.textContent += `${logBox.textContent ? '\n' : ''}${lines.join('\n')}`;
+                if (logBox.textContent.length > 160000) {
+                    logBox.textContent = logBox.textContent.slice(-120000);
+                }
+                if (wasNearBottom) logBox.scrollTop = logBox.scrollHeight;
+            }
+            comfyInstallerLastLogSeq = Number(data.last_log_seq || comfyInstallerLastLogSeq);
+
+            const running = state === 'running';
+            if (startButton) startButton.disabled = running;
+            if (cancelButton) cancelButton.disabled = !running;
+
+            const resultConfig = data.result && data.result.config;
+            if (resultConfig && resultConfig.backup_path) {
+                comfyInstallerLastBackup = resultConfig.backup_path;
+            }
+            const restoreButton = document.getElementById('comfy-installer-restore-btn');
+            if (restoreButton) restoreButton.disabled = running || !comfyInstallerLastBackup;
+            if (data.install_root) document.getElementById('comfy-installer-root').textContent = data.install_root;
+        }
+
+        async function comfyInstallerRefreshStatus(resetLogs = false) {
+            if (comfyInstallerStatusBusy) return;
+            comfyInstallerStatusBusy = true;
+            if (resetLogs) {
+                comfyInstallerLastLogSeq = 0;
+                const logBox = document.getElementById('comfy-installer-log');
+                if (logBox) logBox.textContent = '설치 로그가 여기에 표시됩니다.';
+            }
+            try {
+                const data = await fetchJSON(`/api/comfy-installer/status?since=${comfyInstallerLastLogSeq}`);
+                comfyInstallerRenderStatus(data);
+                if (data.state === 'running') {
+                    clearTimeout(comfyInstallerPollTimer);
+                    comfyInstallerPollTimer = setTimeout(() => comfyInstallerRefreshStatus(false), 1000);
+                } else {
+                    clearTimeout(comfyInstallerPollTimer);
+                    comfyInstallerPollTimer = null;
+                }
+            } catch (error) {
+                console.error('[COMFY_INSTALL] 상태 갱신 실패:', error);
+                comfyInstallerSetError(`설치 상태 조회 실패: ${error.message || error}`);
+            } finally {
+                comfyInstallerStatusBusy = false;
+            }
+        }
+
+        async function comfyInstallerStart() {
+            const packInput = document.getElementById('comfy-installer-pack');
+            const workflowKeyInput = document.getElementById('comfy-installer-workflow-key');
+            const civitaiKeyInput = document.getElementById('comfy-installer-civitai-key');
+            const restoreAfterSuccessInput = document.getElementById('comfy-installer-restore-after-success');
+            const pack = packInput?.files?.[0];
+            if (!pack) {
+                showToast('암호화 워크플로우 팩을 선택하세요', 'warning');
+                return;
+            }
+            if (!workflowKeyInput?.value) {
+                showToast('워크플로우 팩 키를 입력하세요', 'warning');
+                return;
+            }
+            if (!civitaiKeyInput?.value) {
+                showToast('Civitai API 키를 입력하세요', 'warning');
+                return;
+            }
+            if (!comfyInstallerPreflightLoaded && !(await comfyInstallerRunPreflight(true))) return;
+
+            const startButton = document.getElementById('comfy-installer-start-btn');
+            const uploadNote = document.getElementById('comfy-installer-upload-note');
+            let accepted = false;
+            if (startButton) startButton.disabled = true;
+            comfyInstallerSetError('');
+            try {
+                if (uploadNote) uploadNote.textContent = '암호화 팩 업로드 중…';
+                const form = new FormData();
+                form.append('pack', pack, pack.name);
+                const uploaded = await fetchJSON('/api/comfy-installer/workflow-pack', {
+                    method: 'POST',
+                    body: form,
+                });
+                if (uploadNote) {
+                    uploadNote.textContent =
+                        `업로드 완료 · ${uploaded.filename || pack.name} · ${comfyInstallerFormatBytes(uploaded.size || pack.size)}`;
+                }
+                comfyInstallerLastLogSeq = 0;
+                document.getElementById('comfy-installer-log').textContent = '';
+                const started = await fetchJSON('/api/comfy-installer/start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        upload_id: uploaded.upload_id,
+                        workflow_key: workflowKeyInput.value,
+                        civitai_key: civitaiKeyInput.value,
+                        restore_config_after_success: Boolean(restoreAfterSuccessInput?.checked),
+                    }),
+                });
+                workflowKeyInput.value = '';
+                civitaiKeyInput.value = '';
+                accepted = true;
+                comfyInstallerRenderStatus(started);
+                showToast('ComfyUI 설치를 시작했습니다', 'success');
+                clearTimeout(comfyInstallerPollTimer);
+                comfyInstallerPollTimer = setTimeout(() => comfyInstallerRefreshStatus(false), 500);
+            } catch (error) {
+                console.error('[COMFY_INSTALL] 설치 시작 실패:', error);
+                comfyInstallerSetError(error.message || error);
+                showToast(`ComfyUI 설치 시작 실패: ${error.message || error}`, 'error');
+            } finally {
+                if (startButton && !accepted) startButton.disabled = false;
+            }
+        }
+
+        async function comfyInstallerCancel() {
+            if (!window.confirm('현재 명령/다운로드를 안전하게 중단할까요? 받은 .part 파일은 재시도에 사용됩니다.')) return;
+            try {
+                const data = await fetchJSON('/api/comfy-installer/cancel', { method: 'POST' });
+                comfyInstallerRenderStatus(data);
+                showToast('설치 중단을 요청했습니다', 'warning');
+            } catch (error) {
+                console.error('[COMFY_INSTALL] 중단 요청 실패:', error);
+                comfyInstallerSetError(error.message || error);
+            }
+        }
+
+        async function comfyInstallerRestoreConfig() {
+            if (!comfyInstallerLastBackup) {
+                showToast('복원 가능한 설치 전 config 백업이 없습니다', 'warning');
+                return;
+            }
+            if (!window.confirm(`설치 전 config.json으로 복원할까요?\n${comfyInstallerLastBackup}`)) return;
+            try {
+                await fetchJSON('/api/comfy-installer/restore-config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ backup_path: comfyInstallerLastBackup }),
+                });
+                showToast('설치 전 config.json을 복원했습니다', 'success');
+            } catch (error) {
+                console.error('[COMFY_INSTALL] config 복원 실패:', error);
+                comfyInstallerSetError(error.message || error);
+                showToast(`config 복원 실패: ${error.message || error}`, 'error');
+            }
+        }
+
         // ─── 설정 모달 탭 전환 ───
         function switchSettingsTab(tabName) {
             document.querySelectorAll('.settings-tab-btn').forEach(btn => btn.classList.remove('active'));
@@ -18788,6 +19304,12 @@
             if (tabName === 'character_maker') {
                 void cmRefreshRagArtifactStatus(false);
                 void cmRefreshRagRuntimeStatus(false);
+            }
+            if (tabName === 'comfy_install') {
+                void comfyInstallerRefreshStatus(true);
+                if (!comfyInstallerPreflightLoaded) {
+                    void comfyInstallerRunPreflight(true);
+                }
             }
             // 활성 탭이 보이도록 최소 스크롤.
             // 이전에는 활성 탭을 우측 끝으로 밀어붙이는(scrollTo right) 로직 때문에,

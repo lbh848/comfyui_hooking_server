@@ -104,6 +104,7 @@ from modes.danbooru_rag import (
 from modes.asset_mode import CHARACTER_MAKER_TEMP_DIR
 import workflow_profiles
 import importlib.util
+from comfy_installer.http_api import register_comfy_installer_routes
 
 # ─── 설정 ───────────────────────────────────────────────
 HOST = "0.0.0.0"
@@ -10906,6 +10907,12 @@ app.router.add_get("/api/workflow_test/list", handle_api_workflow_test_list)
 app.router.add_post("/api/workflow_test/start", handle_api_workflow_test_start)
 app.router.add_post("/api/workflow_test/stop", handle_api_workflow_test_stop)
 app.router.add_get("/api/workflow_test/status", handle_api_workflow_test_status)
+register_comfy_installer_routes(
+    app,
+    project_root=BASE_DIR,
+    config_path=CONFIG_FILE,
+    requirements_dir=os.path.join(BASE_DIR, "요구사항"),
+)
 # ─── 디버그 워크플로우 실행 API ──────────────────────────────
 async def handle_api_debug_workflow(request: web.Request) -> web.Response:
     """설정에서 선택한 워크플로우 파일을 ComfyUI로 직접 전송"""
