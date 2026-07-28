@@ -367,8 +367,17 @@ async def test_qwen_edit_uses_gpu_queue_and_translation_uses_llm_queue():
                 await progress_callback(6, 6)
             return {"success": True, "filename": "edited.webp"}
 
-        async def translate_prompt(self, text, queue_item_id=""):
-            calls.append(("translate", text, queue_item_id))
+        async def translate_prompt(
+            self,
+            text,
+            queue_item_id="",
+            *,
+            edit_tool="qwen",
+            source_prompt="",
+        ):
+            calls.append(
+                ("translate", text, queue_item_id, edit_tool, source_prompt)
+            )
             return {"success": True, "translated_prompt": "Change the jacket."}
 
         def cleanup_staged_request(self, params):
@@ -394,7 +403,13 @@ async def test_qwen_edit_uses_gpu_queue_and_translation_uses_llm_queue():
     assert translated["translated_prompt"] == "Change the jacket."
     assert calls[0][0] == "edit"
     assert calls[1] == ("cleanup", "job")
-    assert calls[2] == ("translate", "재킷을 바꿔줘", "qwen-translate-1")
+    assert calls[2] == (
+        "translate",
+        "재킷을 바꿔줘",
+        "qwen-translate-1",
+        "qwen",
+        "",
+    )
 
 
 def test_qwen_parser_node_contract_and_errors():
@@ -494,9 +509,9 @@ def test_qwen_workflow_and_frontend_contracts():
     assert "/api/asset_mode/qwen_edit/translate" in frontend
     assert "/api/asset_mode/qwen_edit/enqueue" in frontend
     assert "/api/asset_mode/qwen_edit/composite_items" in frontend
-    assert "qwen_edit_translate: 'Qwen 번역'" in frontend
-    assert "{types: ['qwen_edit'], label: 'Qwen 마스크 편집'}" in frontend
-    assert "Qwen latent 샘플링 마스크" in frontend
+    assert "qwen_edit_translate: 'EDIT 번역'" in frontend
+    assert "{types: ['qwen_edit'], label: 'EDIT 툴 마스크 편집'}" in frontend
+    assert "선택된 EDIT 툴의 latent 샘플링 마스크" in frontend
     assert "반투명 파란색으로 칠한 영역" in frontend
     assert "function auQwenFitMaskCanvas()" in frontend
     assert "ctx.strokeStyle = '#168cff'" in frontend
@@ -508,7 +523,14 @@ def test_qwen_workflow_and_frontend_contracts():
     ]
     assert 'id="setting-qwen-edit-workflow-filename"' in frontend
     assert 'id="setting-qwen-edit-workflow-source-path"' in frontend
+    assert 'id="setting-asset-edit-tool"' in frontend
+    assert 'value="anima_inpainting"' in frontend
+    assert 'id="setting-anima-inpainting-workflow-filename"' in frontend
+    assert 'id="setting-anima-inpainting-workflow-source-path"' in frontend
+    assert "배포_ANIMA_inpainting_v1.json" in frontend
     assert "qwen_edit_workflow_source_path:" in frontend
+    assert "anima_inpainting_workflow_source_path:" in frontend
+    assert "asset_edit_tool:" in frontend
     upload_lv2 = frontend[
         frontend.index("async function auRenderImages("):
         frontend.index("let auQwenEditState")
@@ -517,8 +539,8 @@ def test_qwen_workflow_and_frontend_contracts():
         frontend.index("async function loadAssetImages()"):
         frontend.index("async function setAssetRepresentative(")
     ]
-    assert "QWEN EDIT" in upload_lv2
-    assert "QWEN EDIT" in asset_generation_lv2
+    assert "EDIT 툴 호출" in upload_lv2
+    assert "EDIT 툴 호출" in asset_generation_lv2
     assert "auOpenQwenEdit({" in asset_generation_lv2
     assert "EDIT됨" in asset_generation_lv2
     assert "<b>Edit:</b>" in asset_generation_lv2

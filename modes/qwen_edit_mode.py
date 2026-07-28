@@ -1,4 +1,4 @@
-"""Qwen Image Edit staging, translation, workflow injection, and result storage."""
+"""Shared asset edit staging, translation, workflow injection, and result storage."""
 
 from __future__ import annotations
 
@@ -27,19 +27,32 @@ QWEN_EDIT_WORKFLOW_PATH = os.path.join(
     "mode_workflow",
     "배포_qwen_edit_v1.json",
 )
+ANIMA_INPAINTING_WORKFLOW_PATH = os.path.join(
+    BASE_DIR,
+    "mode_workflow",
+    "배포_ANIMA_inpainting_v1.json",
+)
 QWEN_EDIT_CHECKPOINT_RELATIVE = os.path.join(
     "v19",
     "Qwen-Rapid-AIO-NSFW-v19.safetensors",
 )
+ANIMA_INPAINTING_LLLITE_FILENAME = (
+    "anima-lllite-inpainting-v2.safetensors"
+)
+EDIT_TOOL_QWEN = "qwen"
+EDIT_TOOL_ANIMA_INPAINTING = "anima_inpainting"
+EDIT_TOOLS = (EDIT_TOOL_QWEN, EDIT_TOOL_ANIMA_INPAINTING)
 QWEN_EDIT_INPUT_SUBDIR = "qwen_edit"
 QWEN_EDIT_MAX_PIXELS = 1_048_576
 QWEN_EDIT_MAX_EDGE = 1536
+ANIMA_INPAINTING_MAX_PIXELS = 1536 * 1536
+ANIMA_INPAINTING_MAX_EDGE = 3072
 QWEN_EDIT_DIMENSION_MULTIPLE = 16
 QWEN_EDIT_MAX_UPLOAD_BYTES = 32 * 1024 * 1024
 
 
 class QwenEditMode:
-    """Owns the Qwen Edit workflow without mutating existing asset images."""
+    """Owns selectable Qwen/Anima edit workflows without mutating source assets."""
 
     def __init__(self, asset_mode=None):
         self.asset_mode = asset_mode
@@ -67,6 +80,33 @@ class QwenEditMode:
             )
             raise ValueError(f"{name} 값은 {minimum}~{maximum} 범위여야 합니다")
         return value
+
+    @staticmethod
+    def normalize_edit_tool(raw) -> str:
+        value = str(raw or "").strip().lower()
+        if not value:
+            return EDIT_TOOL_QWEN
+        if value not in EDIT_TOOLS:
+            print(
+                "[EDIT_TOOL] 지원하지 않는 전역 편집 도구: "
+                f"value={raw!r}, supported={EDIT_TOOLS!r}"
+            )
+            raise ValueError(f"지원하지 않는 EDIT 툴입니다: {raw!r}")
+        return value
+
+    @staticmethod
+    def edit_tool_label(edit_tool: str) -> str:
+        normalized = QwenEditMode.normalize_edit_tool(edit_tool)
+        if normalized == EDIT_TOOL_ANIMA_INPAINTING:
+            return "ANIMA Inpainting"
+        return "QWEN Edit"
+
+    @staticmethod
+    def _size_limits(edit_tool: str) -> tuple[int, int]:
+        normalized = QwenEditMode.normalize_edit_tool(edit_tool)
+        if normalized == EDIT_TOOL_ANIMA_INPAINTING:
+            return ANIMA_INPAINTING_MAX_PIXELS, ANIMA_INPAINTING_MAX_EDGE
+        return QWEN_EDIT_MAX_PIXELS, QWEN_EDIT_MAX_EDGE
 
     def _require_config(self) -> dict:
         if not callable(self.get_config):
@@ -119,7 +159,13 @@ class QwenEditMode:
         return os.path.realpath(source_path)
 
     @staticmethod
-    def _target_size(width: int, height: int) -> tuple[int, int]:
+    def _target_size(
+        width: int,
+        height: int,
+        *,
+        max_pixels: int = QWEN_EDIT_MAX_PIXELS,
+        max_edge: int = QWEN_EDIT_MAX_EDGE,
+    ) -> tuple[int, int]:
         if width <= 0 or height <= 0:
             print(
                 "[QWEN_EDIT] 원본 크기 오류: "
@@ -127,14 +173,14 @@ class QwenEditMode:
             )
             raise ValueError("원본 이미지 크기가 올바르지 않습니다")
 
-        pixel_scale = math.sqrt(QWEN_EDIT_MAX_PIXELS / float(width * height))
-        edge_scale = QWEN_EDIT_MAX_EDGE / float(max(width, height))
+        pixel_scale = math.sqrt(max_pixels / float(width * height))
+        edge_scale = max_edge / float(max(width, height))
         scale = min(1.0, pixel_scale, edge_scale)
         multiple = QWEN_EDIT_DIMENSION_MULTIPLE
         target_w = max(multiple, int(round(width * scale / multiple)) * multiple)
         target_h = max(multiple, int(round(height * scale / multiple)) * multiple)
 
-        while target_w * target_h > QWEN_EDIT_MAX_PIXELS:
+        while target_w * target_h > max_pixels:
             if target_w >= target_h and target_w > multiple:
                 target_w -= multiple
             elif target_h > multiple:
@@ -314,6 +360,9 @@ class QwenEditMode:
             filename,
         )
         config = self._require_config()
+        edit_tool = self.normalize_edit_tool(
+            config.get("asset_edit_tool", EDIT_TOOL_QWEN)
+        )
         configured_input_dir = str(
             config.get("comfy_input_dir") or ""
         ).strip()
@@ -342,11 +391,18 @@ class QwenEditMode:
             )
             mask = mask.resize(source.size, Image.Resampling.BILINEAR)
 
-        target_size = self._target_size(*source.size)
+        max_pixels, max_edge = self._size_limits(edit_tool)
+        target_size = self._target_size(
+            *source.size,
+            max_pixels=max_pixels,
+            max_edge=max_edge,
+        )
         if target_size != source.size:
             print(
                 "[QWEN_EDIT] 입력 크기 정규화: "
-                f"source={source.size}, target={target_size}"
+                f"tool={edit_tool}, source={source.size}, "
+                f"target={target_size}, max_pixels={max_pixels}, "
+                f"max_edge={max_edge}"
             )
             source = source.resize(target_size, Image.Resampling.LANCZOS)
             mask = mask.resize(target_size, Image.Resampling.BILINEAR)
@@ -382,10 +438,11 @@ class QwenEditMode:
             f"job={job_id}, source_bytes={len(self._pending_inputs[job_id]['source'])}, "
             f"mask_bytes={len(self._pending_inputs[job_id]['mask'])}, "
             f"size={source.size}, composite_source={bool(source_data)}, "
-            f"seed={parsed_seed}"
+            f"seed={parsed_seed}, tool={edit_tool}"
         )
         return {
             "job_id": job_id,
+            "edit_tool": edit_tool,
             "character": character,
             "outfit": outfit,
             "expression": expression,
@@ -550,8 +607,17 @@ class QwenEditMode:
             )
             traceback.print_exc()
 
-    async def translate_prompt(self, text: str, queue_item_id: str = "") -> dict:
+    async def translate_prompt(
+        self,
+        text: str,
+        queue_item_id: str = "",
+        *,
+        edit_tool: str = EDIT_TOOL_QWEN,
+        source_prompt: str = "",
+    ) -> dict:
         source_text = str(text or "").strip()
+        edit_tool = self.normalize_edit_tool(edit_tool)
+        source_prompt = str(source_prompt or "").strip()
         if not source_text:
             print(
                 "[QWEN_EDIT_TRANSLATE] 번역 실패: 입력 프롬프트가 비어 있음 "
@@ -565,18 +631,54 @@ class QwenEditMode:
             )
             raise ValueError("번역할 프롬프트는 8,000자 이하여야 합니다")
 
-        messages = [
-            {
-                "role": "system",
-                "content": (
-                    "Translate the user's image-editing instruction into precise, "
-                    "natural English for Qwen Image Edit. Preserve every requested "
-                    "attribute, relationship, and constraint. Return only the English "
-                    "translation without commentary, labels, markdown, or quotation marks."
-                ),
-            },
-            {"role": "user", "content": source_text},
-        ]
+        if edit_tool == EDIT_TOOL_ANIMA_INPAINTING:
+            if not source_prompt:
+                print(
+                    "[EDIT_TRANSLATE] ANIMA 원본 프롬프트 없이 변환 계속: "
+                    f"item={queue_item_id!r}, input_len={len(source_text)}"
+                )
+            messages = [
+                {
+                    "role": "system",
+                    "content": (
+                        "Rewrite the source image prompt and the user's edit instruction "
+                        "as one complete English positive prompt for the final image "
+                        "generated by the Anima text-to-image model. Describe the entire "
+                        "intended image, not only the masked region and not an editing "
+                        "command. Preserve the source subject, identity, composition, pose, "
+                        "background, lighting, and visual style unless the user explicitly "
+                        "changes them. Apply the requested change precisely and replace "
+                        "conflicting source attributes instead of listing both versions. "
+                        "Treat workflow controls, serialized settings, and other non-visual "
+                        "metadata in the source prompt as context noise; do not reproduce "
+                        "them. Keep useful visual and quality tags. Return only the final "
+                        "English positive prompt without commentary, labels, markdown, or "
+                        "quotation marks."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"Source image prompt:\n{source_prompt or '(unavailable)'}\n\n"
+                        f"Edit instruction:\n{source_text}"
+                    ),
+                },
+            ]
+            call_label = "ANIMA Inpainting 프롬프트 변환"
+        else:
+            messages = [
+                {
+                    "role": "system",
+                    "content": (
+                        "Translate the user's image-editing instruction into precise, "
+                        "natural English for Qwen Image Edit. Preserve every requested "
+                        "attribute, relationship, and constraint. Return only the English "
+                        "translation without commentary, labels, markdown, or quotation marks."
+                    ),
+                },
+                {"role": "user", "content": source_text},
+            ]
+            call_label = "Qwen Edit 프롬프트 영어 번역"
         prompt_id = f"qwen_edit_translate:{queue_item_id or uuid.uuid4().hex[:12]}"
         metadata = {}
         started = time.time()
@@ -584,7 +686,7 @@ class QwenEditMode:
             "lighbd_llm_stream",
             {
                 "type": "start",
-                "model": "Qwen Edit 프롬프트 영어 번역",
+                "model": call_label,
                 "prompt_id": prompt_id,
             },
         )
@@ -634,7 +736,7 @@ class QwenEditMode:
             _log_lighbd_history(
                 {
                     "prompt_id": prompt_id,
-                    "call_name": "Qwen Edit 프롬프트 영어 번역",
+                    "call_name": call_label,
                     "task_key": "qwen_edit_translate",
                     "input": messages,
                     "output": translated,
@@ -652,6 +754,7 @@ class QwenEditMode:
             )
             return {
                 "success": True,
+                "edit_tool": edit_tool,
                 "translated_prompt": translated,
                 "original_prompt": source_text,
                 "prompt_id": prompt_id,
@@ -676,7 +779,7 @@ class QwenEditMode:
             _log_lighbd_history(
                 {
                     "prompt_id": prompt_id,
-                    "call_name": "Qwen Edit 프롬프트 영어 번역",
+                    "call_name": call_label,
                     "task_key": "qwen_edit_translate",
                     "input": messages,
                     "output": "",
@@ -689,6 +792,14 @@ class QwenEditMode:
 
     @staticmethod
     def _build_parser_payload(params: dict) -> str:
+        edit_tool = QwenEditMode.normalize_edit_tool(
+            params.get("edit_tool", EDIT_TOOL_QWEN)
+        )
+        output_root = (
+            "anima_inpainting"
+            if edit_tool == EDIT_TOOL_ANIMA_INPAINTING
+            else "qwen_edit"
+        )
         fields = (
             ("EDIT_PROMPT", params["edit_prompt"]),
             ("NEGATIVE_PROMPT", params.get("negative_prompt", "")),
@@ -702,45 +813,62 @@ class QwenEditMode:
             ("MASK_BLUR", params["mask_blur"]),
             (
                 "FILENAME_PREFIX",
-                f"qwen_edit/{params['job_id']}/output",
+                f"{output_root}/{params['job_id']}/output",
             ),
             ("WIDTH", params["width"]),
             ("HEIGHT", params["height"]),
         )
         return "\n".join(f"[{key}]\n{value}" for key, value in fields)
 
-    async def _load_workflow(self, config: dict) -> tuple[dict, str]:
+    async def _load_workflow(
+        self,
+        config: dict,
+        edit_tool: str = EDIT_TOOL_QWEN,
+    ) -> tuple[dict, str]:
+        edit_tool = self.normalize_edit_tool(edit_tool)
+        if edit_tool == EDIT_TOOL_ANIMA_INPAINTING:
+            config_key = "anima_inpainting_workflow_source_path"
+            fallback_path = ANIMA_INPAINTING_WORKFLOW_PATH
+            workflow_label = "ANIMA Inpainting"
+        else:
+            config_key = "qwen_edit_workflow_source_path"
+            fallback_path = QWEN_EDIT_WORKFLOW_PATH
+            workflow_label = "Qwen Edit"
         configured_path = str(
-            config.get("qwen_edit_workflow_source_path") or ""
+            config.get(config_key) or ""
         ).strip()
         workflow_path = os.path.realpath(
-            configured_path or QWEN_EDIT_WORKFLOW_PATH
+            configured_path or fallback_path
         )
         if not os.path.isfile(workflow_path):
             print(
-                "[QWEN_EDIT] 워크플로우 로드 실패: 파일 없음 "
+                "[EDIT_TOOL] 워크플로우 로드 실패: 파일 없음 "
+                f"tool={edit_tool}, config_key={config_key!r}, "
                 f"configured={configured_path!r}, path={workflow_path!r}"
             )
             raise FileNotFoundError(
-                f"Qwen Edit 워크플로우가 없습니다: {workflow_path}"
+                f"{workflow_label} 워크플로우가 없습니다: {workflow_path}"
             )
         try:
             with open(workflow_path, "r", encoding="utf-8") as workflow_file:
                 workflow = json.load(workflow_file)
         except Exception as exc:
             print(
-                "[QWEN_EDIT] 워크플로우 JSON 로드 실패: "
-                f"path={workflow_path!r}, "
+                "[EDIT_TOOL] 워크플로우 JSON 로드 실패: "
+                f"tool={edit_tool}, path={workflow_path!r}, "
                 f"error={type(exc).__name__}: {exc}"
             )
             traceback.print_exc()
             raise
         if not isinstance(workflow, dict) or not workflow:
             print(
-                "[QWEN_EDIT] 워크플로우 형식 오류: "
-                f"type={type(workflow).__name__}, value={workflow!r}"
+                "[EDIT_TOOL] 워크플로우 형식 오류: "
+                f"tool={edit_tool}, type={type(workflow).__name__}, "
+                f"value={workflow!r}"
             )
-            raise ValueError("Qwen Edit 워크플로우가 비어 있거나 객체가 아닙니다")
+            raise ValueError(
+                f"{workflow_label} 워크플로우가 비어 있거나 객체가 아닙니다"
+            )
 
         is_ui_workflow = (
             isinstance(workflow.get("nodes"), list)
@@ -749,35 +877,38 @@ class QwenEditMode:
         if is_ui_workflow:
             if not callable(self.convert_workflow_func):
                 print(
-                    "[QWEN_EDIT] UI 워크플로우 변환 실패: "
-                    f"변환 콜백 없음, path={workflow_path!r}"
+                    "[EDIT_TOOL] UI 워크플로우 변환 실패: "
+                    f"tool={edit_tool}, 변환 콜백 없음, path={workflow_path!r}"
                 )
                 raise RuntimeError(
-                    "Qwen Edit UI 워크플로우 변환 콜백이 없습니다"
+                    f"{workflow_label} UI 워크플로우 변환 콜백이 없습니다"
                 )
             try:
                 api_workflow, error = await self.convert_workflow_func(workflow)
             except Exception as exc:
                 print(
-                    "[QWEN_EDIT] UI 워크플로우 변환 예외: "
-                    f"path={workflow_path!r}, "
+                    "[EDIT_TOOL] UI 워크플로우 변환 예외: "
+                    f"tool={edit_tool}, path={workflow_path!r}, "
                     f"error={type(exc).__name__}: {exc}"
                 )
                 traceback.print_exc()
                 raise
             if not isinstance(api_workflow, dict) or not api_workflow:
                 print(
-                    "[QWEN_EDIT] UI 워크플로우 변환 실패: "
-                    f"path={workflow_path!r}, error={error!r}, "
+                    "[EDIT_TOOL] UI 워크플로우 변환 실패: "
+                    f"tool={edit_tool}, path={workflow_path!r}, "
+                    f"error={error!r}, "
                     f"result_type={type(api_workflow).__name__}"
                 )
                 raise RuntimeError(
-                    f"Qwen Edit 워크플로우 API 변환 실패: {error or '빈 결과'}"
+                    f"{workflow_label} 워크플로우 API 변환 실패: "
+                    f"{error or '빈 결과'}"
                 )
             workflow = api_workflow
             print(
-                "[QWEN_EDIT] 설정 UI 워크플로우 API 변환 완료: "
-                f"path={workflow_path!r}, nodes={len(workflow)}"
+                "[EDIT_TOOL] 설정 UI 워크플로우 API 변환 완료: "
+                f"tool={edit_tool}, path={workflow_path!r}, "
+                f"nodes={len(workflow)}"
             )
         else:
             is_api_workflow = any(
@@ -786,32 +917,43 @@ class QwenEditMode:
             )
             if not is_api_workflow:
                 print(
-                    "[QWEN_EDIT] 워크플로우 형식 판별 실패: "
-                    f"path={workflow_path!r}, keys={list(workflow)[:20]!r}"
+                    "[EDIT_TOOL] 워크플로우 형식 판별 실패: "
+                    f"tool={edit_tool}, path={workflow_path!r}, "
+                    f"keys={list(workflow)[:20]!r}"
                 )
                 raise ValueError(
-                    "Qwen Edit 워크플로우가 ComfyUI UI/API 형식이 아닙니다"
+                    f"{workflow_label} 워크플로우가 ComfyUI UI/API 형식이 아닙니다"
                 )
             print(
-                "[QWEN_EDIT] 설정 API 워크플로우 로드 완료: "
-                f"path={workflow_path!r}, nodes={len(workflow)}"
+                "[EDIT_TOOL] 설정 API 워크플로우 로드 완료: "
+                f"tool={edit_tool}, path={workflow_path!r}, "
+                f"nodes={len(workflow)}"
             )
         return workflow, workflow_path
 
     @staticmethod
-    def _checkpoint_path(config: dict) -> str:
+    def _required_model_path(config: dict, edit_tool: str) -> str:
         configured_input_dir = str(
             config.get("comfy_input_dir") or ""
         ).strip()
         if not configured_input_dir:
             print(
-                "[QWEN_EDIT] 체크포인트 경로 계산 실패: "
+                "[EDIT_TOOL] 필수 모델 경로 계산 실패: "
                 "Comfy input 설정이 비어 있음, "
+                f"tool={edit_tool!r}, "
                 f"configured={config.get('comfy_input_dir')!r}"
             )
             raise ValueError("설정의 Comfy input 폴더가 비어 있습니다")
         comfy_input_dir = os.path.realpath(configured_input_dir)
         comfy_root = os.path.dirname(comfy_input_dir)
+        normalized_tool = QwenEditMode.normalize_edit_tool(edit_tool)
+        if normalized_tool == EDIT_TOOL_ANIMA_INPAINTING:
+            return os.path.join(
+                comfy_root,
+                "models",
+                "controlnet",
+                ANIMA_INPAINTING_LLLITE_FILENAME,
+            )
         return os.path.join(
             comfy_root,
             "models",
@@ -835,8 +977,17 @@ class QwenEditMode:
             raise ValueError("Qwen Edit 결과 이미지가 비어 있습니다")
 
         save_dir = os.path.dirname(source_path)
+        edit_tool = self.normalize_edit_tool(
+            params.get("edit_tool", EDIT_TOOL_QWEN)
+        )
+        filename_marker = (
+            "anima_inpaint"
+            if edit_tool == EDIT_TOOL_ANIMA_INPAINTING
+            else "qwen_edit"
+        )
         filename = (
-            f"{int(time.time())}_qwen_edit_{uuid.uuid4().hex[:6]}.webp"
+            f"{int(time.time())}_{filename_marker}_"
+            f"{uuid.uuid4().hex[:6]}.webp"
         )
         result_path = os.path.join(save_dir, filename)
         try:
@@ -887,7 +1038,12 @@ class QwenEditMode:
                 "edit_negative_prompt": params.get("negative_prompt", ""),
                 "edit_source_filename": params.get("source_filename", ""),
                 "edit_job_id": params.get("job_id", ""),
-                "edit_model": "Phr00t/Qwen-Image-Edit-Rapid-AIO v19 NSFW",
+                "edit_tool": edit_tool,
+                "edit_model": (
+                    "anima-lllite-inpainting-v2"
+                    if edit_tool == EDIT_TOOL_ANIMA_INPAINTING
+                    else "Phr00t/Qwen-Image-Edit-Rapid-AIO v19 NSFW"
+                ),
                 "edit_seed": params.get("seed"),
                 "edit_steps": params.get("steps"),
                 "edit_cfg": params.get("cfg"),
@@ -945,6 +1101,7 @@ class QwenEditMode:
             "expression": params.get("expression", ""),
             "source_filename": params.get("source_filename", ""),
             "edit_prompt": params.get("edit_prompt", ""),
+            "edit_tool": edit_tool,
             "local_path": result_path,
         }
 
@@ -976,19 +1133,32 @@ class QwenEditMode:
             raise RuntimeError("Qwen Edit ComfyUI 제출 콜백이 없습니다")
 
         config = self._require_config()
-        checkpoint_path = self._checkpoint_path(config)
-        if not os.path.isfile(checkpoint_path):
+        edit_tool = self.normalize_edit_tool(
+            params.get("edit_tool")
+            or config.get("asset_edit_tool", EDIT_TOOL_QWEN)
+        )
+        params["edit_tool"] = edit_tool
+        required_model_path = self._required_model_path(config, edit_tool)
+        if not os.path.isfile(required_model_path):
             print(
-                "[QWEN_EDIT] 체크포인트 캐시 미스: "
-                f"expected={checkpoint_path!r}, "
+                "[EDIT_TOOL] 필수 모델 캐시 미스: "
+                f"tool={edit_tool}, expected={required_model_path!r}, "
                 f"job={params.get('job_id')!r}"
             )
+            if edit_tool == EDIT_TOOL_ANIMA_INPAINTING:
+                raise FileNotFoundError(
+                    "anima-lllite-inpainting-v2 가중치 다운로드가 "
+                    "완료되지 않았습니다"
+                )
             raise FileNotFoundError(
                 "Qwen Rapid AIO v19 체크포인트 다운로드가 완료되지 않았습니다"
             )
 
         self._prepare_shared_comfy_inputs(params, config)
-        workflow, workflow_path = await self._load_workflow(config)
+        workflow, workflow_path = await self._load_workflow(
+            config,
+            edit_tool,
+        )
         parser_nodes = [
             (node_id, node)
             for node_id, node in workflow.items()
@@ -997,10 +1167,14 @@ class QwenEditMode:
         ]
         if len(parser_nodes) != 1:
             print(
-                "[QWEN_EDIT] 파서 노드 검증 실패: "
-                f"count={len(parser_nodes)}, workflow={workflow_path!r}"
+                "[EDIT_TOOL] 파서 노드 검증 실패: "
+                f"tool={edit_tool}, count={len(parser_nodes)}, "
+                f"workflow={workflow_path!r}"
             )
-            raise ValueError("Qwen Edit 워크플로우에는 파서 노드가 정확히 하나여야 합니다")
+            raise ValueError(
+                f"{self.edit_tool_label(edit_tool)} 워크플로우에는 "
+                "파서 노드가 정확히 하나여야 합니다"
+            )
         prompt_nodes = [
             (node_id, node)
             for node_id, node in workflow.items()
@@ -1010,11 +1184,13 @@ class QwenEditMode:
         ]
         if len(prompt_nodes) != 1:
             print(
-                "[QWEN_EDIT] 긍정프롬프트 노드 검증 실패: "
-                f"count={len(prompt_nodes)}, workflow={workflow_path!r}"
+                "[EDIT_TOOL] 긍정프롬프트 노드 검증 실패: "
+                f"tool={edit_tool}, count={len(prompt_nodes)}, "
+                f"workflow={workflow_path!r}"
             )
             raise ValueError(
-                "Qwen Edit 워크플로우에는 긍정프롬프트 텍스트 노드가 정확히 하나여야 합니다"
+                f"{self.edit_tool_label(edit_tool)} 워크플로우에는 "
+                "긍정프롬프트 텍스트 노드가 정확히 하나여야 합니다"
             )
         parser_id, parser_node = parser_nodes[0]
         prompt_id, prompt_node = prompt_nodes[0]
@@ -1022,50 +1198,60 @@ class QwenEditMode:
         actual_parser_link = parser_node.get("inputs", {}).get("text")
         if actual_parser_link != expected_parser_link:
             print(
-                "[QWEN_EDIT] 긍정프롬프트→파서 링크 검증 실패: "
-                f"prompt_id={prompt_id!r}, parser_id={parser_id!r}, "
+                "[EDIT_TOOL] 긍정프롬프트→파서 링크 검증 실패: "
+                f"tool={edit_tool}, prompt_id={prompt_id!r}, "
+                f"parser_id={parser_id!r}, "
                 f"expected={expected_parser_link!r}, actual={actual_parser_link!r}"
             )
             raise ValueError(
-                "Qwen Edit 긍정프롬프트 노드가 QWEN EDIT 변수 노드에 연결되지 않았습니다"
+                "EDIT 긍정프롬프트 노드가 EDIT 변수 노드에 연결되지 않았습니다"
             )
         prompt_node.setdefault("inputs", {})["value"] = (
             self._build_parser_payload(params)
         )
 
+        expected_loader_title = (
+            "ANIMA Inpainting 입력 폴더"
+            if edit_tool == EDIT_TOOL_ANIMA_INPAINTING
+            else "Qwen Edit 입력 폴더"
+        )
         path_loader_nodes = [
             (node_id, node)
             for node_id, node in workflow.items()
             if isinstance(node, dict)
             and node.get("class_type") == "LoadImagesFromPath_mdsoya"
-            and node.get("_meta", {}).get("title") == "Qwen Edit 입력 폴더"
+            and node.get("_meta", {}).get("title") == expected_loader_title
         ]
         if len(path_loader_nodes) != 1:
             print(
-                "[QWEN_EDIT] Soya 경로 로더 검증 실패: "
+                "[EDIT_TOOL] Soya 경로 로더 검증 실패: "
+                f"tool={edit_tool}, title={expected_loader_title!r}, "
                 f"count={len(path_loader_nodes)}, "
                 f"workflow={workflow_path!r}"
             )
             raise ValueError(
-                "Qwen Edit 워크플로우에는 Load Images From Path (Soya)가 정확히 하나여야 합니다"
+                f"{self.edit_tool_label(edit_tool)} 워크플로우에는 "
+                "Load Images From Path (Soya)가 정확히 하나여야 합니다"
             )
         loader_id, loader_node = path_loader_nodes[0]
         expected_path_link = [str(parser_id), 2]
         actual_path_link = loader_node.get("inputs", {}).get("path")
         if actual_path_link != expected_path_link:
             print(
-                "[QWEN_EDIT] 파서→Soya 경로 로더 링크 검증 실패: "
-                f"parser_id={parser_id!r}, loader_id={loader_id!r}, "
+                "[EDIT_TOOL] 파서→Soya 경로 로더 링크 검증 실패: "
+                f"tool={edit_tool}, parser_id={parser_id!r}, "
+                f"loader_id={loader_id!r}, "
                 f"expected={expected_path_link!r}, actual={actual_path_link!r}"
             )
             raise ValueError(
-                "QWEN EDIT 변수의 IMAGE_PATH가 Soya 경로 로더에 연결되지 않았습니다"
+                "EDIT 변수의 IMAGE_PATH가 Soya 경로 로더에 연결되지 않았습니다"
             )
 
         await self._notify(
             "qwen_edit_started",
             {
                 "job_id": params["job_id"],
+                "edit_tool": edit_tool,
                 "character": params.get("character", ""),
                 "outfit": params.get("outfit", ""),
                 "expression": params.get("expression", ""),
@@ -1076,6 +1262,7 @@ class QwenEditMode:
         async def on_progress(value, max_value):
             data = {
                 "job_id": params["job_id"],
+                "edit_tool": edit_tool,
                 "value": value,
                 "max": max_value,
                 "character": params.get("character", ""),
@@ -1093,12 +1280,14 @@ class QwenEditMode:
             )
             if not image_bytes:
                 print(
-                    "[QWEN_EDIT] ComfyUI 결과 없음: "
-                    f"job={params['job_id']!r}, error={submit_error!r}, "
+                    "[EDIT_TOOL] ComfyUI 결과 없음: "
+                    f"tool={edit_tool}, job={params['job_id']!r}, "
+                    f"error={submit_error!r}, "
                     f"image_bytes={image_bytes!r}"
                 )
                 raise RuntimeError(
-                    f"Qwen Edit 이미지 생성 실패: {submit_error or '결과 이미지 없음'}"
+                    f"{self.edit_tool_label(edit_tool)} 이미지 생성 실패: "
+                    f"{submit_error or '결과 이미지 없음'}"
                 )
             result = self._save_result(params, image_bytes)
             await self._notify(
@@ -1111,8 +1300,8 @@ class QwenEditMode:
             return result
         except Exception as exc:
             print(
-                "[QWEN_EDIT] 실행 예외: "
-                f"job={params.get('job_id')!r}, "
+                "[EDIT_TOOL] 실행 예외: "
+                f"tool={edit_tool}, job={params.get('job_id')!r}, "
                 f"source={params.get('source_filename')!r}, "
                 f"error={type(exc).__name__}: {exc}"
             )
@@ -1122,6 +1311,7 @@ class QwenEditMode:
                 {
                     "status": "error",
                     "job_id": params.get("job_id", ""),
+                    "edit_tool": edit_tool,
                     "character": params.get("character", ""),
                     "outfit": params.get("outfit", ""),
                     "expression": params.get("expression", ""),

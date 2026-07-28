@@ -1347,6 +1347,12 @@ class QueueManager:
             )
             raise RuntimeError("Qwen Edit 모드가 큐에 주입되지 않았습니다")
         text = str((item.params or {}).get("text") or "").strip()
+        edit_tool = str(
+            (item.params or {}).get("edit_tool") or "qwen"
+        ).strip()
+        source_prompt = str(
+            (item.params or {}).get("source_prompt") or ""
+        ).strip()
         if not text:
             print(
                 "[QUEUE:QWEN_EDIT_TRANSLATE] 실행 실패: "
@@ -1361,6 +1367,8 @@ class QueueManager:
             result = await self.qwen_edit_mode.translate_prompt(
                 text,
                 queue_item_id=item.id,
+                edit_tool=edit_tool,
+                source_prompt=source_prompt,
             )
             await self._notify_progress(
                 item,

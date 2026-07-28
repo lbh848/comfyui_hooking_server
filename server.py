@@ -344,6 +344,11 @@ DEFAULT_CONFIG = {
         MODE_WORKFLOW_DIR,
         "배포_qwen_edit_v1_변환전.json",
     ),  # QWEN_EDIT UI/API 워크플로우 원본 소스 전체 경로
+    "anima_inpainting_workflow_source_path": os.path.join(
+        MODE_WORKFLOW_DIR,
+        "배포_ANIMA_inpainting_v1.json",
+    ),  # ANIMA Inpainting 변환 전 UI 워크플로우
+    "asset_edit_tool": "qwen",  # qwen | anima_inpainting
     "asset_workflow_type": workflow_profiles.ASSET_ILXL,
     "tag_analysis_workflow_source_path": "",  # 태그 분석 워크플로우 원본 소스 전체 경로
     "asset_tag_analysis_workflow_source_path": "",  # 폴백 태그 분석 워크플로우 원본 소스 전체 경로 (primary 결과가 비었을 때, 예: 얼굴 미감지)
@@ -9740,6 +9745,21 @@ async def handle_api_config(request: web.Request) -> web.Response:
                     )
                 body["asset_workflow_type"] = normalized_asset_type
 
+            if "asset_edit_tool" in body:
+                raw_edit_tool = str(
+                    body.get("asset_edit_tool") or ""
+                ).strip().lower()
+                if raw_edit_tool not in ("qwen", "anima_inpainting"):
+                    print(
+                        "[CONFIG] EDIT 툴 저장 거부: "
+                        f"value={body.get('asset_edit_tool')!r}"
+                    )
+                    return web.json_response(
+                        {"error": "지원하지 않는 EDIT 툴입니다."},
+                        status=400,
+                    )
+                body["asset_edit_tool"] = raw_edit_tool
+
             try:
                 if "character_maker_rag_enabled" in body:
                     body["character_maker_rag_enabled"] = bool(
@@ -11608,6 +11628,7 @@ async def handle_api_qwen_edit_translate(request: web.Request) -> web.Response:
     try:
         body = await request.json()
         text = str(body.get("text") or "").strip()
+        source_prompt = str(body.get("source_prompt") or "").strip()
         if not text:
             print(
                 "[QWEN_EDIT_API] 번역 요청 거부: "
@@ -11617,15 +11638,24 @@ async def handle_api_qwen_edit_translate(request: web.Request) -> web.Response:
                 {"success": False, "error": "번역할 편집 프롬프트를 입력하세요"},
                 status=400,
             )
+        edit_tool = qwen_edit_mode.normalize_edit_tool(
+            load_config().get("asset_edit_tool", "qwen")
+        )
+        tool_label = qwen_edit_mode.edit_tool_label(edit_tool)
         item = await queue_manager.add_item(
             "qwen_edit_translate",
-            "Qwen Edit 프롬프트 영어 번역",
-            {"text": text},
+            f"{tool_label} 프롬프트 영어 변환",
+            {
+                "text": text,
+                "source_prompt": source_prompt,
+                "edit_tool": edit_tool,
+            },
             priority=10,
         )
         print(
-            "[QWEN_EDIT_API] 번역 큐 등록: "
-            f"item={item.id}, input_len={len(text)}"
+            "[EDIT_TOOL_API] 번역 큐 등록: "
+            f"item={item.id}, tool={edit_tool}, "
+            f"input_len={len(text)}, source_prompt_len={len(source_prompt)}"
         )
         result = await item.completion_future
         if not isinstance(result, dict) or not result.get("success"):
@@ -11741,6 +11771,21 @@ async def handle_api_qwen_edit_enqueue(request: web.Request) -> web.Response:
                 status=400,
             )
 
+        selected_edit_tool = qwen_edit_mode.normalize_edit_tool(
+            app_config.get("asset_edit_tool", "qwen")
+        )
+        if selected_edit_tool == "anima_inpainting":
+            edit_defaults = {
+                "steps": "30",
+                "cfg": "4.0",
+                "denoise": "0.8",
+            }
+        else:
+            edit_defaults = {
+                "steps": "6",
+                "cfg": "1.0",
+                "denoise": "1.0",
+            }
         staged = qwen_edit_mode.stage_request(
             character=fields.get("character", ""),
             outfit=fields.get("outfit", ""),
@@ -11752,14 +11797,15 @@ async def handle_api_qwen_edit_enqueue(request: web.Request) -> web.Response:
             edit_prompt_original=fields.get("edit_prompt_original", ""),
             negative_prompt=fields.get("negative_prompt", ""),
             seed=fields.get("seed", "-1"),
-            steps=fields.get("steps", "6"),
-            cfg=fields.get("cfg", "1.0"),
-            denoise=fields.get("denoise", "1.0"),
+            steps=fields.get("steps", edit_defaults["steps"]),
+            cfg=fields.get("cfg", edit_defaults["cfg"]),
+            denoise=fields.get("denoise", edit_defaults["denoise"]),
             mask_grow=fields.get("mask_grow", "8"),
             mask_blur=fields.get("mask_blur", "4.0"),
         )
+        tool_label = qwen_edit_mode.edit_tool_label(staged["edit_tool"])
         label = (
-            f"Qwen Edit · {staged['character']} / "
+            f"{tool_label} · {staged['character']} / "
             f"{staged['outfit']} / {staged['expression']}"
         )
         item = await queue_manager.add_item(
@@ -11769,8 +11815,9 @@ async def handle_api_qwen_edit_enqueue(request: web.Request) -> web.Response:
             priority=10,
         )
         print(
-            "[QWEN_EDIT_API] GPU 큐 등록 완료: "
+            "[EDIT_TOOL_API] GPU 큐 등록 완료: "
             f"item={item.id}, job={staged['job_id']}, "
+            f"tool={staged['edit_tool']}, "
             f"source={staged['source_filename']!r}, "
             f"mask_bytes={len(mask_data)}, composite_source_bytes={len(source_data)}"
         )
@@ -11779,6 +11826,7 @@ async def handle_api_qwen_edit_enqueue(request: web.Request) -> web.Response:
                 "success": True,
                 "item_id": item.id,
                 "job_id": staged["job_id"],
+                "edit_tool": staged["edit_tool"],
                 "width": staged["width"],
                 "height": staged["height"],
                 "label": label,
