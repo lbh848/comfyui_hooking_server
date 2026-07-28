@@ -40,6 +40,7 @@ GPU_QUEUE_PRIORITY_TYPES = (
     "instance_lora_analysis",
     "instance_lora_training",
     "asset_generation",
+    "qwen_edit",
     "auto_match_batch",
     "data_patch_utility",
 )
@@ -47,6 +48,7 @@ LLM_QUEUE_PRIORITY_TYPES = (
     "character_maker",
     "instance_lora_prompt_refine",
     "bot_llm_face_tag_analysis",
+    "qwen_edit_translate",
     "llm_test",
 )
 
@@ -176,13 +178,14 @@ LLM_TYPES = frozenset({
     "instance_lora_prompt_refine",  # 태그 정제 / test_setup (instance·style·bot·asset 전부 LLM 호출)
     "bot_llm_face_tag_analysis",    # 비전 LLM 기반 얼굴/눈 태그 자동 분류
     "character_maker",              # 캐릭터 메이커 draft/feedback LLM 수정 (revise)
+    "qwen_edit_translate",          # Qwen Edit 지시문 영어 번역
 })
 
 
 @dataclass
 class QueueItem:
     id: str
-    type: str  # illustration | asset_generation | asset_lora_training | bot_lora_training | instance_lora_training | instance_lora_analysis | tag_analysis | auto_match_batch | data_patch_utility | instance_lora_prompt_refine
+    type: str  # illustration | asset_generation | qwen_edit | qwen_edit_translate | asset_lora_training | bot_lora_training | instance_lora_training | instance_lora_analysis | tag_analysis | auto_match_batch | data_patch_utility | instance_lora_prompt_refine
     label: str
     status: str = "pending"  # pending | processing | completed | failed | cancelled
     params: dict = field(default_factory=dict)
@@ -247,6 +250,7 @@ class QueueManager:
         self.get_config = None       # def() -> dict
         self.asset_mode = None       # AssetMode 인스턴스
         self.asset_tool = None       # AssetToolMode 인스턴스 (analyze_image용)
+        self.qwen_edit_mode = None   # QwenEditMode 인스턴스
         # 학습 실행 함수들 (server.py에서 주입)
         self.submit_to_real_comfy = None       # async def(prompt_data) -> (prompt_id, result)
         self.convert_workflow_via_endpoint = None  # async def(wf) -> (api_wf, error)
@@ -1262,6 +1266,8 @@ class QueueManager:
             "illustration_llm_build": self._handle_illustration_llm_build,
             "illustration_easy_edit": self._handle_illustration_easy_edit,
             "asset_generation": self._handle_asset_generation,
+            "qwen_edit": self._handle_qwen_edit,
+            "qwen_edit_translate": self._handle_qwen_edit_translate,
             "asset_lora_training": self._handle_asset_lora_training,
             "bot_lora_training": self._handle_bot_lora_training,
             "instance_lora_training": self._handle_instance_lora_training,
@@ -1309,6 +1315,44 @@ class QueueManager:
         result = await cm.revise(session_id, payload)
         await self._notify_progress(item, {"percentage": 100, "phase": "completed"})
         return result
+
+    async def _handle_qwen_edit_translate(self, item: QueueItem) -> dict:
+        """Translate an edit instruction in the dedicated LLM queue lane."""
+        if self.qwen_edit_mode is None:
+            print(
+                "[QUEUE:QWEN_EDIT_TRANSLATE] 실행 실패: "
+                f"QwenEditMode 미주입 item={item.id}, params={item.params!r}"
+            )
+            raise RuntimeError("Qwen Edit 모드가 큐에 주입되지 않았습니다")
+        text = str((item.params or {}).get("text") or "").strip()
+        if not text:
+            print(
+                "[QUEUE:QWEN_EDIT_TRANSLATE] 실행 실패: "
+                f"번역 입력 비어 있음 item={item.id}, params={item.params!r}"
+            )
+            raise ValueError("번역할 Qwen Edit 프롬프트가 비어 있습니다")
+        try:
+            await self._notify_progress(
+                item,
+                {"percentage": 5, "phase": "translating"},
+            )
+            result = await self.qwen_edit_mode.translate_prompt(
+                text,
+                queue_item_id=item.id,
+            )
+            await self._notify_progress(
+                item,
+                {"percentage": 100, "phase": "completed"},
+            )
+            return result
+        except Exception as e:
+            print(
+                "[QUEUE:QWEN_EDIT_TRANSLATE] 처리 실패: "
+                f"item={item.id}, input={text!r}, "
+                f"error={type(e).__name__}: {e}"
+            )
+            traceback.print_exc()
+            raise
 
     async def _handle_illustration(self, item: QueueItem) -> dict:
         """삽화 생성 (최우선, RisuAI 프롬프트 플로우)."""
@@ -1628,6 +1672,57 @@ class QueueManager:
             })
 
         return result
+
+    async def _handle_qwen_edit(self, item: QueueItem) -> dict:
+        """Run masked Qwen Image Edit in the serialized local GPU lane."""
+        if self.qwen_edit_mode is None:
+            print(
+                "[QUEUE:QWEN_EDIT] 실행 실패: "
+                f"QwenEditMode 미주입 item={item.id}, params={item.params!r}"
+            )
+            raise RuntimeError("Qwen Edit 모드가 큐에 주입되지 않았습니다")
+
+        params = item.params if isinstance(item.params, dict) else {}
+        if not params:
+            print(
+                "[QUEUE:QWEN_EDIT] 실행 실패: "
+                f"params 비어 있음 item={item.id}, raw={item.params!r}"
+            )
+            raise ValueError("Qwen Edit 큐 파라미터가 비어 있습니다")
+
+        async def _on_qwen_progress(value, max_value):
+            percentage = (
+                min(100.0, max(0.0, float(value) / float(max_value) * 100.0))
+                if max_value
+                else 0.0
+            )
+            await self._notify_progress(
+                item,
+                {
+                    "phase": "generating",
+                    "value": value,
+                    "max": max_value,
+                    "current": value,
+                    "total": max_value,
+                    "percentage": percentage,
+                    "job_id": params.get("job_id", ""),
+                },
+            )
+
+        try:
+            return await self.qwen_edit_mode.execute(
+                params,
+                progress_callback=_on_qwen_progress,
+            )
+        except Exception as e:
+            print(
+                "[QUEUE:QWEN_EDIT] 처리 실패: "
+                f"item={item.id}, job={params.get('job_id')!r}, "
+                f"source={params.get('source_filename')!r}, "
+                f"error={type(e).__name__}: {e}"
+            )
+            traceback.print_exc()
+            raise
 
     async def _handle_asset_lora_training(self, item: QueueItem) -> dict:
         """에셋 LoRA 학습 (기존 handle_api_lora_training_start 로직)."""

@@ -4454,11 +4454,27 @@
             border-radius: 4px;
             font-weight: 600;
         }
+        .asset-image-card .edit-badge {
+            position: absolute;
+            top: 8px;
+            left: 42px;
+            z-index: 2;
+            padding: 3px 8px;
+            border-radius: 999px;
+            background: rgba(14, 165, 233, 0.92);
+            color: #fff;
+            font-size: 0.68rem;
+            font-weight: 700;
+            letter-spacing: 0.02em;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+        }
         .asset-image-card .card-actions {
             padding: 8px;
             display: flex;
-            justify-content: space-between;
+            justify-content: flex-end;
             align-items: center;
+            flex-wrap: wrap;
+            gap: 6px;
         }
         .asset-image-card .card-actions button {
             background: var(--surface2);
@@ -4476,7 +4492,16 @@
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
-            max-width: 100px;
+            min-width: 0;
+            flex: 1 1 100px;
+        }
+        .asset-image-card .card-actions .qwen-edit-btn {
+            border-color: rgba(14, 165, 233, 0.65);
+            color: #7dd3fc;
+            font-weight: 700;
+        }
+        .asset-image-card .card-actions .qwen-edit-btn:hover {
+            background: rgba(14, 165, 233, 0.2);
         }
         .asset-image-card .prompt-info {
             margin: 0 8px 8px;
@@ -4517,6 +4542,246 @@
         }
         .asset-image-card .prompt-info .prompt-text b {
             color: var(--text);
+        }
+
+        .qwen-edit-modal {
+            position: fixed;
+            inset: 0;
+            z-index: 10060;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            padding: 22px;
+            background: rgba(4, 7, 12, 0.82);
+            backdrop-filter: blur(8px);
+        }
+        .qwen-edit-modal.visible { display: flex; }
+        .qwen-edit-panel {
+            width: min(1480px, 96vw);
+            height: min(920px, 94vh);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            border: 1px solid rgba(125, 211, 252, 0.28);
+            border-radius: 16px;
+            background: var(--surface);
+            box-shadow: 0 24px 90px rgba(0, 0, 0, 0.55);
+        }
+        .qwen-edit-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 14px 18px;
+            border-bottom: 1px solid var(--border);
+            background: linear-gradient(90deg, rgba(14, 165, 233, 0.14), transparent);
+        }
+        .qwen-edit-header h2 {
+            margin: 0;
+            font-size: 1.05rem;
+        }
+        .qwen-edit-header .qwen-edit-subtitle {
+            min-width: 0;
+            overflow: hidden;
+            color: var(--text2);
+            font-size: 0.78rem;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .qwen-edit-header .qwen-edit-close {
+            margin-left: auto;
+            border: 0;
+            background: transparent;
+            color: var(--text2);
+            font-size: 1.4rem;
+            cursor: pointer;
+        }
+        .qwen-edit-body {
+            min-height: 0;
+            flex: 1;
+            display: grid;
+            grid-template-columns: minmax(420px, 1.25fr) minmax(360px, 0.85fr);
+        }
+        .qwen-mask-pane {
+            min-width: 0;
+            min-height: 0;
+            display: flex;
+            flex-direction: column;
+            padding: 14px;
+            border-right: 1px solid var(--border);
+            background:
+                linear-gradient(45deg, rgba(255,255,255,0.025) 25%, transparent 25%),
+                linear-gradient(-45deg, rgba(255,255,255,0.025) 25%, transparent 25%),
+                linear-gradient(45deg, transparent 75%, rgba(255,255,255,0.025) 75%),
+                linear-gradient(-45deg, transparent 75%, rgba(255,255,255,0.025) 75%);
+            background-size: 24px 24px;
+            background-position: 0 0, 0 12px, 12px -12px, -12px 0;
+        }
+        .qwen-mask-toolbar {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 7px;
+            padding-bottom: 10px;
+        }
+        .qwen-mask-toolbar button,
+        .qwen-edit-footer button,
+        .qwen-translate-row button {
+            padding: 7px 11px;
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            background: var(--surface2);
+            color: var(--text);
+            cursor: pointer;
+            font-size: 0.78rem;
+        }
+        .qwen-mask-toolbar button.active {
+            border-color: #38bdf8;
+            background: rgba(14, 165, 233, 0.2);
+            color: #bae6fd;
+        }
+        .qwen-mask-toolbar label {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            color: var(--text2);
+            font-size: 0.75rem;
+        }
+        .qwen-mask-toolbar input[type="range"] { width: 110px; }
+        .qwen-mask-stage {
+            min-height: 0;
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: auto;
+        }
+        .qwen-mask-canvas-wrap {
+            position: relative;
+            width: fit-content;
+            max-width: 100%;
+            max-height: 100%;
+            line-height: 0;
+            user-select: none;
+            touch-action: none;
+            box-shadow: 0 8px 30px rgba(0,0,0,0.42);
+        }
+        .qwen-mask-canvas-wrap img {
+            display: block;
+            max-width: 100%;
+            max-height: calc(94vh - 190px);
+            object-fit: contain;
+            pointer-events: none;
+        }
+        .qwen-mask-canvas-wrap canvas {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            cursor: crosshair;
+            opacity: 0.58;
+            touch-action: none;
+        }
+        .qwen-mask-help {
+            padding-top: 8px;
+            color: var(--text3);
+            font-size: 0.72rem;
+            text-align: center;
+        }
+        .qwen-prompt-pane {
+            min-height: 0;
+            overflow-y: auto;
+            padding: 16px;
+        }
+        .qwen-field {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            margin-bottom: 13px;
+        }
+        .qwen-field > label {
+            color: var(--text2);
+            font-size: 0.76rem;
+            font-weight: 650;
+        }
+        .qwen-field textarea,
+        .qwen-field input {
+            width: 100%;
+            box-sizing: border-box;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface2);
+            color: var(--text);
+            padding: 9px 10px;
+            font: inherit;
+            font-size: 0.8rem;
+            line-height: 1.45;
+        }
+        .qwen-field textarea {
+            min-height: 90px;
+            resize: vertical;
+        }
+        .qwen-field textarea[readonly] {
+            min-height: 64px;
+            color: var(--text2);
+            opacity: 0.82;
+        }
+        .qwen-translate-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin: -4px 0 12px;
+        }
+        .qwen-translate-row button {
+            border-color: rgba(14, 165, 233, 0.55);
+            color: #7dd3fc;
+            font-weight: 700;
+        }
+        .qwen-translate-row .status {
+            min-width: 0;
+            color: var(--text3);
+            font-size: 0.72rem;
+        }
+        .qwen-advanced-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 9px;
+        }
+        .qwen-edit-footer {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 12px 16px;
+            border-top: 1px solid var(--border);
+        }
+        .qwen-edit-footer .status {
+            min-width: 0;
+            flex: 1;
+            color: var(--text2);
+            font-size: 0.76rem;
+        }
+        .qwen-edit-footer .run {
+            border-color: #0ea5e9;
+            background: #0284c7;
+            color: #fff;
+            font-weight: 750;
+        }
+        .qwen-edit-footer button:disabled,
+        .qwen-translate-row button:disabled {
+            cursor: wait;
+            opacity: 0.48;
+        }
+        @media (max-width: 980px) {
+            .qwen-edit-panel { height: 96vh; }
+            .qwen-edit-body {
+                overflow-y: auto;
+                grid-template-columns: 1fr;
+            }
+            .qwen-mask-pane {
+                min-height: 55vh;
+                border-right: 0;
+                border-bottom: 1px solid var(--border);
+            }
+            .qwen-prompt-pane { overflow: visible; }
         }
 
         .asset-sidebar select,
@@ -15892,6 +16157,11 @@
                         case 'asset_generation_completed':
                             handleAssetWsEvent(msg.type, msg.data);
                             break;
+                        case 'qwen_edit_started':
+                        case 'qwen_edit_progress':
+                        case 'qwen_edit_completed':
+                            handleQwenEditWsEvent(msg.type, msg.data);
+                            break;
                         // 통합 큐 이벤트
                         case 'queue_updated':
                             handleQueueUpdated(msg.data);
@@ -18345,6 +18615,7 @@
                         label: '인스턴스 LoRA 분석 및 학습',
                     },
                     {types: ['asset_generation'], label: '에셋 이미지 생성'},
+                    {types: ['qwen_edit'], label: 'Qwen 마스크 편집'},
                     {types: ['auto_match_batch'], label: '배치 매칭'},
                     {types: ['data_patch_utility'], label: '데이터 패치'},
                 ],
@@ -18356,6 +18627,7 @@
                     {types: ['character_maker'], label: '캐릭터 메이커'},
                     {types: ['instance_lora_prompt_refine'], label: 'LoRA 프롬프트 정제'},
                     {types: ['bot_llm_face_tag_analysis'], label: 'LLM 얼굴/눈 태그 분석'},
+                    {types: ['qwen_edit_translate'], label: 'Qwen Edit 영어 번역'},
                     {types: ['llm_test'], label: 'LLM 연결 테스트'},
                 ],
             },
@@ -21332,6 +21604,7 @@
             { key: 'asset_name_mapping_auto_fix', label: '에셋 이름 자동 수정', kind: 'JSON', json: true },
             { key: 'asset_name_mapping_full',  label: '에셋 이름 전체 매핑', kind: 'JSON', json: true },
             { key: 'edit_illustration_prompt', label: '삽화 편하게 수정', kind: '비전/JSON' },
+            { key: 'qwen_edit_translate',      label: 'Qwen Edit 영어 번역', kind: '텍스트' },
             { key: 'character_maker_draft',    label: '캐릭터 메이커 초안', kind: '텍스트/JSON', json: true },
             { key: 'character_maker_feedback', label: '캐릭터 메이커 이미지 피드백', kind: '비전/JSON', json: true },
             { key: 'illustration_call1_backtranslate', label: '삽화 CALL1 역번역',               kind: '텍스트' },
@@ -55079,10 +55352,11 @@
                     card.className = 'asset-image-card';
                     card.dataset.imgUrl = imgUrl;
                     card.dataset.filename = img.filename;
-                    const hasPrompt = img.has_prompt || img.positive || img.negative;
+                    const hasPrompt = img.has_prompt || img.positive || img.negative || img.edit_prompt;
                     card.innerHTML = `
                         <div class="au-select-check" onclick="event.stopPropagation(); auToggleSelect(this, '${imgUrl}')" title="선택">☐</div>
                         ${img.is_representative ? '<div class="rep-badge">대표</div>' : ''}
+                        ${img.is_edited ? '<div class="edit-badge">EDIT됨</div>' : ''}
                         <img src="${imgUrl}" onclick="openLightbox(this.src)" loading="lazy">
                         <div class="card-actions">
                             <span class="filename">${escapeHtml(img.filename)}</span>
@@ -55091,6 +55365,7 @@
                             </button>
                             <button onclick="deleteAssetImage('${enc(charName)}','${enc(outfit)}','${enc(expression)}','${enc(img.filename)}'); auRenderImages('${escapeHtml(charName)}','${escapeHtml(outfit)}','${escapeHtml(expression)}')" style="color:var(--error);">삭제</button>
                             <button onclick="sendAssetToPoseEditor('${imgUrl}','${enc(img.filename)}')">포즈 편집</button>
+                            <button type="button" class="qwen-edit-btn">QWEN EDIT</button>
                         </div>
                         ${hasPrompt ? `
                         <div class="prompt-info">
@@ -55098,14 +55373,507 @@
                             <div class="prompt-text">
                                 ${img.positive ? `<b>긍정:</b> ${escapeHtml(img.positive).replace(/\n/g, '<br>')}` : '<span style="color:var(--text3)">긍정: (비어있음)</span>'}
                                 ${img.negative ? `<br><b>부정:</b> ${escapeHtml(img.negative).replace(/\n/g, '<br>')}` : ''}
+                                ${img.edit_prompt ? `<br><b>Edit:</b> ${escapeHtml(img.edit_prompt).replace(/\n/g, '<br>')}` : ''}
+                                ${img.edit_prompt_original && img.edit_prompt_original !== img.edit_prompt ? `<br><b>Edit 원문:</b> ${escapeHtml(img.edit_prompt_original).replace(/\n/g, '<br>')}` : ''}
+                                ${img.edit_negative_prompt ? `<br><b>Edit 부정:</b> ${escapeHtml(img.edit_negative_prompt).replace(/\n/g, '<br>')}` : ''}
+                                ${img.edit_source_filename ? `<br><b>Edit 원본:</b> ${escapeHtml(img.edit_source_filename)}` : ''}
                                 ${img.prompt_character || img.prompt_outfit || img.prompt_expression ? `<br><b>메타:</b> ${[img.prompt_character, img.prompt_outfit, img.prompt_expression].filter(Boolean).map(escapeHtml).join(' / ')}` : ''}
                             </div>
                         </div>` : ''}`;
+                    const qwenButton = card.querySelector('.qwen-edit-btn');
+                    if (qwenButton) {
+                        qwenButton.addEventListener('click', (event) => {
+                            event.stopPropagation();
+                            auOpenQwenEdit({
+                                character: charName,
+                                outfit,
+                                expression,
+                                filename: img.filename,
+                                imageUrl: imgUrl,
+                                positive: img.positive || '',
+                                negative: img.edit_negative_prompt || img.negative || '',
+                            });
+                        });
+                    } else {
+                        console.error('[QWEN_EDIT] 카드 버튼 생성 실패:', img.filename);
+                    }
                     grid.appendChild(card);
                 });
             } catch (e) {
                 console.error('[AU] 이미지 로드 실패:', e);
                 auShowView('empty');
+            }
+        }
+
+        let auQwenEditState = null;
+
+        function auEnsureQwenEditModal() {
+            let modal = document.getElementById('au-qwen-edit-modal');
+            if (modal) return modal;
+
+            modal = document.createElement('div');
+            modal.id = 'au-qwen-edit-modal';
+            modal.className = 'qwen-edit-modal';
+            modal.setAttribute('role', 'dialog');
+            modal.setAttribute('aria-modal', 'true');
+            modal.setAttribute('aria-labelledby', 'au-qwen-edit-title');
+            modal.innerHTML = `
+                <div class="qwen-edit-panel">
+                    <div class="qwen-edit-header">
+                        <h2 id="au-qwen-edit-title">QWEN MASK EDIT</h2>
+                        <div class="qwen-edit-subtitle" id="au-qwen-edit-subtitle"></div>
+                        <button type="button" class="qwen-edit-close" aria-label="닫기">×</button>
+                    </div>
+                    <div class="qwen-edit-body">
+                        <section class="qwen-mask-pane">
+                            <div class="qwen-mask-toolbar">
+                                <button type="button" id="au-qwen-brush-btn" class="active">브러시</button>
+                                <button type="button" id="au-qwen-eraser-btn">지우개</button>
+                                <label>크기
+                                    <input type="range" id="au-qwen-brush-size" min="4" max="240" step="1" value="48">
+                                    <span id="au-qwen-brush-size-label">48</span>
+                                </label>
+                                <button type="button" id="au-qwen-undo-btn">실행취소</button>
+                                <button type="button" id="au-qwen-redo-btn">다시실행</button>
+                                <button type="button" id="au-qwen-clear-btn">초기화</button>
+                                <button type="button" id="au-qwen-invert-btn">반전</button>
+                                <label><input type="checkbox" id="au-qwen-mask-visible" checked> 마스크 표시</label>
+                            </div>
+                            <div class="qwen-mask-stage">
+                                <div class="qwen-mask-canvas-wrap">
+                                    <img id="au-qwen-source-image" alt="Qwen Edit 원본">
+                                    <canvas id="au-qwen-mask-canvas"></canvas>
+                                </div>
+                            </div>
+                            <div class="qwen-mask-help">Qwen이 만든 편집안 중 흰 오버레이로 칠한 영역만 원본 이미지에 합성됩니다.</div>
+                        </section>
+                        <section class="qwen-prompt-pane">
+                            <div class="qwen-field">
+                                <label for="au-qwen-source-positive">원본 이미지 긍정 프롬프트</label>
+                                <textarea id="au-qwen-source-positive" readonly></textarea>
+                            </div>
+                            <div class="qwen-field">
+                                <label for="au-qwen-original-prompt">편집 지시 원문</label>
+                                <textarea id="au-qwen-original-prompt" placeholder="예: 마스크 영역의 재킷을 검은 가죽 재킷으로 바꾸고 나머지는 그대로 유지"></textarea>
+                            </div>
+                            <div class="qwen-translate-row">
+                                <button type="button" id="au-qwen-translate-btn">영어로 번역</button>
+                                <span class="status" id="au-qwen-translate-status">LLM 큐에서 번역한 뒤 아래 칸을 채웁니다.</span>
+                            </div>
+                            <div class="qwen-field">
+                                <label for="au-qwen-english-prompt">Qwen Edit Prompt (English)</label>
+                                <textarea id="au-qwen-english-prompt" placeholder="번역 결과를 검토하거나 직접 영어 지시를 입력하세요."></textarea>
+                            </div>
+                            <div class="qwen-field">
+                                <label for="au-qwen-negative-prompt">부정 프롬프트</label>
+                                <textarea id="au-qwen-negative-prompt" placeholder="blurry, low quality, distorted anatomy, text, watermark"></textarea>
+                            </div>
+                            <div class="qwen-advanced-grid">
+                                <div class="qwen-field">
+                                    <label for="au-qwen-mask-grow">Mask Grow</label>
+                                    <input type="number" id="au-qwen-mask-grow" min="-512" max="512" step="1" value="8">
+                                </div>
+                                <div class="qwen-field">
+                                    <label for="au-qwen-mask-blur">Mask Blur</label>
+                                    <input type="number" id="au-qwen-mask-blur" min="0" max="100" step="0.5" value="4">
+                                </div>
+                                <div class="qwen-field">
+                                    <label for="au-qwen-seed">Seed (-1 랜덤)</label>
+                                    <input type="number" id="au-qwen-seed" min="-1" step="1" value="-1">
+                                </div>
+                                <div class="qwen-field">
+                                    <label for="au-qwen-steps">Steps</label>
+                                    <input type="number" id="au-qwen-steps" min="1" max="100" step="1" value="6">
+                                </div>
+                                <div class="qwen-field">
+                                    <label for="au-qwen-cfg">CFG</label>
+                                    <input type="number" id="au-qwen-cfg" min="0" max="100" step="0.1" value="1">
+                                </div>
+                                <div class="qwen-field">
+                                    <label for="au-qwen-denoise">Denoise</label>
+                                    <input type="number" id="au-qwen-denoise" min="0" max="1" step="0.05" value="1">
+                                </div>
+                            </div>
+                        </section>
+                    </div>
+                    <div class="qwen-edit-footer">
+                        <span class="status" id="au-qwen-run-status">마스크와 편집 지시를 준비하세요.</span>
+                        <button type="button" id="au-qwen-cancel-btn">닫기</button>
+                        <button type="button" id="au-qwen-run-btn" class="run">GPU 큐에 EDIT 등록</button>
+                    </div>
+                </div>`;
+            document.body.appendChild(modal);
+
+            const canvas = modal.querySelector('#au-qwen-mask-canvas');
+            const brushButton = modal.querySelector('#au-qwen-brush-btn');
+            const eraserButton = modal.querySelector('#au-qwen-eraser-btn');
+            const brushSize = modal.querySelector('#au-qwen-brush-size');
+            const setTool = (tool) => {
+                if (!auQwenEditState) return;
+                auQwenEditState.tool = tool;
+                brushButton.classList.toggle('active', tool === 'brush');
+                eraserButton.classList.toggle('active', tool === 'eraser');
+                canvas.style.cursor = tool === 'eraser' ? 'cell' : 'crosshair';
+            };
+            brushButton.addEventListener('click', () => setTool('brush'));
+            eraserButton.addEventListener('click', () => setTool('eraser'));
+            brushSize.addEventListener('input', () => {
+                modal.querySelector('#au-qwen-brush-size-label').textContent = brushSize.value;
+            });
+            modal.querySelector('#au-qwen-mask-visible').addEventListener('change', (event) => {
+                canvas.style.opacity = event.target.checked ? '0.58' : '0';
+            });
+            modal.querySelector('#au-qwen-clear-btn').addEventListener('click', auQwenClearMask);
+            modal.querySelector('#au-qwen-invert-btn').addEventListener('click', auQwenInvertMask);
+            modal.querySelector('#au-qwen-undo-btn').addEventListener('click', () => auQwenHistoryMove(-1));
+            modal.querySelector('#au-qwen-redo-btn').addEventListener('click', () => auQwenHistoryMove(1));
+            modal.querySelector('#au-qwen-translate-btn').addEventListener('click', auQwenTranslatePrompt);
+            modal.querySelector('#au-qwen-run-btn').addEventListener('click', auQwenEnqueueEdit);
+            modal.querySelector('#au-qwen-cancel-btn').addEventListener('click', auCloseQwenEdit);
+            modal.querySelector('.qwen-edit-close').addEventListener('click', auCloseQwenEdit);
+            modal.addEventListener('click', (event) => {
+                if (event.target === modal) auCloseQwenEdit();
+            });
+
+            const pointerPoint = (event) => {
+                const rect = canvas.getBoundingClientRect();
+                return {
+                    x: (event.clientX - rect.left) * canvas.width / rect.width,
+                    y: (event.clientY - rect.top) * canvas.height / rect.height,
+                };
+            };
+            canvas.addEventListener('pointerdown', (event) => {
+                if (!auQwenEditState || !canvas.width || auQwenEditState.busy) return;
+                event.preventDefault();
+                canvas.setPointerCapture(event.pointerId);
+                const ctx = canvas.getContext('2d', {willReadFrequently: true});
+                const point = pointerPoint(event);
+                auQwenEditState.drawing = true;
+                ctx.lineCap = 'round';
+                ctx.lineJoin = 'round';
+                ctx.lineWidth = Number(brushSize.value) || 48;
+                ctx.globalCompositeOperation = auQwenEditState.tool === 'eraser'
+                    ? 'destination-out'
+                    : 'source-over';
+                ctx.strokeStyle = '#ffffff';
+                ctx.beginPath();
+                ctx.moveTo(point.x, point.y);
+                ctx.lineTo(point.x + 0.01, point.y + 0.01);
+                ctx.stroke();
+            });
+            canvas.addEventListener('pointermove', (event) => {
+                if (!auQwenEditState?.drawing) return;
+                event.preventDefault();
+                const point = pointerPoint(event);
+                const ctx = canvas.getContext('2d', {willReadFrequently: true});
+                ctx.lineTo(point.x, point.y);
+                ctx.stroke();
+            });
+            const finishStroke = (event) => {
+                if (!auQwenEditState?.drawing) return;
+                auQwenEditState.drawing = false;
+                const ctx = canvas.getContext('2d', {willReadFrequently: true});
+                ctx.closePath();
+                ctx.globalCompositeOperation = 'source-over';
+                if (canvas.hasPointerCapture(event.pointerId)) {
+                    canvas.releasePointerCapture(event.pointerId);
+                }
+                auQwenCaptureHistory();
+            };
+            canvas.addEventListener('pointerup', finishStroke);
+            canvas.addEventListener('pointercancel', finishStroke);
+            return modal;
+        }
+
+        function auQwenCaptureHistory() {
+            const state = auQwenEditState;
+            if (!state?.canvas?.width) return;
+            const ctx = state.canvas.getContext('2d', {willReadFrequently: true});
+            if (state.historyIndex < state.history.length - 1) {
+                state.history.splice(state.historyIndex + 1);
+            }
+            state.history.push(ctx.getImageData(0, 0, state.canvas.width, state.canvas.height));
+            if (state.history.length > 12) state.history.shift();
+            state.historyIndex = state.history.length - 1;
+            auQwenUpdateHistoryButtons();
+        }
+
+        function auQwenUpdateHistoryButtons() {
+            const modal = document.getElementById('au-qwen-edit-modal');
+            const state = auQwenEditState;
+            if (!modal || !state) return;
+            modal.querySelector('#au-qwen-undo-btn').disabled = state.historyIndex <= 0;
+            modal.querySelector('#au-qwen-redo-btn').disabled =
+                state.historyIndex >= state.history.length - 1;
+        }
+
+        function auQwenHistoryMove(delta) {
+            const state = auQwenEditState;
+            if (!state || state.busy) return;
+            const next = state.historyIndex + delta;
+            if (next < 0 || next >= state.history.length) return;
+            state.historyIndex = next;
+            state.canvas.getContext('2d', {willReadFrequently: true})
+                .putImageData(state.history[next], 0, 0);
+            auQwenUpdateHistoryButtons();
+        }
+
+        function auQwenClearMask() {
+            const state = auQwenEditState;
+            if (!state || state.busy) return;
+            state.canvas.getContext('2d', {willReadFrequently: true})
+                .clearRect(0, 0, state.canvas.width, state.canvas.height);
+            auQwenCaptureHistory();
+        }
+
+        function auQwenInvertMask() {
+            const state = auQwenEditState;
+            if (!state || state.busy) return;
+            const ctx = state.canvas.getContext('2d', {willReadFrequently: true});
+            const imageData = ctx.getImageData(0, 0, state.canvas.width, state.canvas.height);
+            for (let i = 0; i < imageData.data.length; i += 4) {
+                imageData.data[i] = 255;
+                imageData.data[i + 1] = 255;
+                imageData.data[i + 2] = 255;
+                imageData.data[i + 3] = 255 - imageData.data[i + 3];
+            }
+            ctx.putImageData(imageData, 0, 0);
+            auQwenCaptureHistory();
+        }
+
+        async function auOpenQwenEdit(data) {
+            if (!data?.imageUrl || !data?.filename) {
+                console.error('[QWEN_EDIT] 모달 열기 실패: 이미지 식별자 누락', data);
+                showToast('Qwen Edit 원본 이미지 정보가 없습니다', 'error');
+                return;
+            }
+            const modal = auEnsureQwenEditModal();
+            const canvas = modal.querySelector('#au-qwen-mask-canvas');
+            const image = modal.querySelector('#au-qwen-source-image');
+            auQwenEditState = {
+                ...data,
+                canvas,
+                image,
+                tool: 'brush',
+                drawing: false,
+                busy: false,
+                history: [],
+                historyIndex: -1,
+            };
+            modal.querySelector('#au-qwen-edit-subtitle').textContent =
+                `${data.character} / ${data.outfit} / ${data.expression} / ${data.filename}`;
+            modal.querySelector('#au-qwen-source-positive').value = data.positive || '';
+            modal.querySelector('#au-qwen-original-prompt').value = '';
+            modal.querySelector('#au-qwen-english-prompt').value = '';
+            modal.querySelector('#au-qwen-negative-prompt').value = data.negative || '';
+            modal.querySelector('#au-qwen-mask-grow').value = '8';
+            modal.querySelector('#au-qwen-mask-blur').value = '4';
+            modal.querySelector('#au-qwen-seed').value = '-1';
+            modal.querySelector('#au-qwen-steps').value = '6';
+            modal.querySelector('#au-qwen-cfg').value = '1';
+            modal.querySelector('#au-qwen-denoise').value = '1';
+            modal.querySelector('#au-qwen-translate-status').textContent =
+                'LLM 큐에서 번역한 뒤 아래 칸을 채웁니다.';
+            modal.querySelector('#au-qwen-run-status').textContent =
+                '마스크와 편집 지시를 준비하세요.';
+            modal.querySelector('#au-qwen-run-btn').disabled = false;
+            modal.querySelector('#au-qwen-translate-btn').disabled = false;
+            modal.querySelector('#au-qwen-brush-btn').classList.add('active');
+            modal.querySelector('#au-qwen-eraser-btn').classList.remove('active');
+            modal.classList.add('visible');
+
+            image.onload = () => {
+                if (!auQwenEditState || auQwenEditState.image !== image) return;
+                if (!image.naturalWidth || !image.naturalHeight) {
+                    console.error('[QWEN_EDIT] 원본 이미지 크기가 0입니다:', data);
+                    showToast('Qwen Edit 원본 이미지 크기를 읽지 못했습니다', 'error');
+                    return;
+                }
+                canvas.width = image.naturalWidth;
+                canvas.height = image.naturalHeight;
+                canvas.getContext('2d', {willReadFrequently: true})
+                    .clearRect(0, 0, canvas.width, canvas.height);
+                auQwenEditState.history = [];
+                auQwenEditState.historyIndex = -1;
+                auQwenCaptureHistory();
+                modal.querySelector('#au-qwen-run-status').textContent =
+                    `원본 ${image.naturalWidth}×${image.naturalHeight} · 마스크를 그려주세요.`;
+            };
+            image.onerror = (event) => {
+                console.error('[QWEN_EDIT] 원본 이미지 로드 실패:', data.imageUrl, event);
+                modal.querySelector('#au-qwen-run-status').textContent =
+                    '원본 이미지 로드에 실패했습니다.';
+                showToast('Qwen Edit 원본 이미지 로드 실패', 'error');
+            };
+            image.src = data.imageUrl;
+        }
+
+        function auCloseQwenEdit() {
+            const modal = document.getElementById('au-qwen-edit-modal');
+            if (modal) modal.classList.remove('visible');
+        }
+
+        async function auQwenTranslatePrompt() {
+            const state = auQwenEditState;
+            const modal = document.getElementById('au-qwen-edit-modal');
+            if (!state || !modal || state.busy) return;
+            const original = modal.querySelector('#au-qwen-original-prompt').value.trim();
+            if (!original) {
+                showToast('번역할 편집 지시 원문을 입력하세요', 'error');
+                return;
+            }
+            const button = modal.querySelector('#au-qwen-translate-btn');
+            const status = modal.querySelector('#au-qwen-translate-status');
+            button.disabled = true;
+            status.textContent = 'LLM 큐 대기 및 번역 중...';
+            try {
+                const response = await fetch('/api/asset_mode/qwen_edit/translate', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({text: original}),
+                });
+                const result = await response.json();
+                if (!response.ok || !result.success || !result.translated_prompt) {
+                    throw new Error(result.error || `HTTP ${response.status}`);
+                }
+                modal.querySelector('#au-qwen-english-prompt').value =
+                    result.translated_prompt;
+                status.textContent = `번역 완료 · 큐 ${result.item_id || ''}`;
+                showToast('Qwen Edit 프롬프트 번역 완료', 'success');
+            } catch (error) {
+                console.error('[QWEN_EDIT] 프롬프트 번역 실패:', error, {original});
+                status.textContent = `번역 실패: ${error.message}`;
+                showToast(`Qwen Edit 번역 실패: ${error.message}`, 'error');
+            } finally {
+                button.disabled = false;
+            }
+        }
+
+        function auQwenMaskHasPixels(canvas) {
+            if (!canvas?.width || !canvas?.height) return false;
+            const data = canvas.getContext('2d', {willReadFrequently: true})
+                .getImageData(0, 0, canvas.width, canvas.height).data;
+            for (let index = 3; index < data.length; index += 4) {
+                if (data[index] > 0) return true;
+            }
+            return false;
+        }
+
+        function auQwenCanvasBlob(canvas) {
+            return new Promise((resolve, reject) => {
+                canvas.toBlob((blob) => {
+                    if (blob) resolve(blob);
+                    else reject(new Error('마스크 PNG 인코딩 결과가 비어 있습니다'));
+                }, 'image/png');
+            });
+        }
+
+        async function auQwenEnqueueEdit() {
+            const state = auQwenEditState;
+            const modal = document.getElementById('au-qwen-edit-modal');
+            if (!state || !modal || state.busy) return;
+            const originalPrompt =
+                modal.querySelector('#au-qwen-original-prompt').value.trim();
+            const englishPrompt =
+                modal.querySelector('#au-qwen-english-prompt').value.trim();
+            const editPrompt = englishPrompt || originalPrompt;
+            if (!editPrompt) {
+                showToast('편집 지시를 입력하세요', 'error');
+                return;
+            }
+            if (!auQwenMaskHasPixels(state.canvas)) {
+                showToast('이미지에서 편집할 영역을 마스크로 그려주세요', 'error');
+                return;
+            }
+
+            const runButton = modal.querySelector('#au-qwen-run-btn');
+            const translateButton = modal.querySelector('#au-qwen-translate-btn');
+            const status = modal.querySelector('#au-qwen-run-status');
+            state.busy = true;
+            runButton.disabled = true;
+            translateButton.disabled = true;
+            status.textContent = '마스크 저장 및 GPU 큐 등록 중...';
+            try {
+                const maskBlob = await auQwenCanvasBlob(state.canvas);
+                const form = new FormData();
+                form.append('mask', maskBlob, 'mask.png');
+                form.append('character', state.character);
+                form.append('outfit', state.outfit);
+                form.append('expression', state.expression);
+                form.append('filename', state.filename);
+                form.append('edit_prompt', editPrompt);
+                form.append('edit_prompt_original', originalPrompt || editPrompt);
+                form.append(
+                    'negative_prompt',
+                    modal.querySelector('#au-qwen-negative-prompt').value.trim(),
+                );
+                for (const [field, elementId] of [
+                    ['mask_grow', 'au-qwen-mask-grow'],
+                    ['mask_blur', 'au-qwen-mask-blur'],
+                    ['seed', 'au-qwen-seed'],
+                    ['steps', 'au-qwen-steps'],
+                    ['cfg', 'au-qwen-cfg'],
+                    ['denoise', 'au-qwen-denoise'],
+                ]) {
+                    form.append(field, modal.querySelector(`#${elementId}`).value);
+                }
+
+                const response = await fetch('/api/asset_mode/qwen_edit/enqueue', {
+                    method: 'POST',
+                    body: form,
+                });
+                const result = await response.json();
+                if (!response.ok || !result.success) {
+                    throw new Error(result.error || `HTTP ${response.status}`);
+                }
+                status.textContent =
+                    `GPU 큐 등록 완료 · ${result.width}×${result.height} · ${result.item_id}`;
+                showToast('Qwen Edit가 GPU 큐에 등록되었습니다', 'success');
+                setTimeout(() => {
+                    if (auQwenEditState === state) auCloseQwenEdit();
+                }, 450);
+            } catch (error) {
+                console.error('[QWEN_EDIT] GPU 큐 등록 실패:', error, {
+                    character: state.character,
+                    outfit: state.outfit,
+                    expression: state.expression,
+                    filename: state.filename,
+                });
+                status.textContent = `등록 실패: ${error.message}`;
+                showToast(`Qwen Edit 등록 실패: ${error.message}`, 'error');
+            } finally {
+                state.busy = false;
+                runButton.disabled = false;
+                translateButton.disabled = false;
+            }
+        }
+
+        function handleQwenEditWsEvent(eventType, data) {
+            const payload = data || {};
+            if (eventType === 'qwen_edit_started') {
+                showToast(`Qwen Edit 시작: ${payload.source_filename || ''}`, 'info');
+                return;
+            }
+            if (eventType === 'qwen_edit_progress') {
+                updateTopProgress(payload.value || 0, payload.max || 0);
+                return;
+            }
+            if (eventType !== 'qwen_edit_completed') return;
+            hideTopProgress();
+            if (payload.status === 'success') {
+                showToast(`Qwen Edit 완료: ${payload.filename || ''}`, 'success');
+                if (
+                    typeof auNavLevel !== 'undefined'
+                    && auNavLevel === 2
+                    && auNavCharacter === payload.character
+                    && auNavOutfit === payload.outfit
+                    && auNavExpression === payload.expression
+                ) {
+                    auRenderImages(auNavCharacter, auNavOutfit, auNavExpression);
+                }
+            } else {
+                console.error('[QWEN_EDIT] 생성 실패 이벤트:', payload);
+                showToast(`Qwen Edit 실패: ${payload.error || '알 수 없는 오류'}`, 'error');
             }
         }
 
@@ -57161,6 +57929,7 @@
 
         const _queueTypeLabels = {
             illustration: '삽화', asset_generation: '에셋',
+            qwen_edit: 'Qwen Edit',
             illustration_llm_build: '삽화 LLM',
             illustration_easy_edit: '삽화 편집',
             llm_test: 'LLM 테스트',
@@ -57170,6 +57939,7 @@
             instance_lora_analysis: '인스턴스분석',
             instance_lora_prompt_refine: '프롬프트 정제',
             bot_llm_face_tag_analysis: 'LLM 얼굴분석',
+            qwen_edit_translate: 'Qwen 번역',
             character_maker: '캐릭터 메이커',
             tag_analysis: '태그분석',
             auto_match_batch: '배치매칭',

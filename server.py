@@ -65,6 +65,7 @@ from modes import lighbd_service
 from modes import llm_prompt_edit
 from modes import autocomplete_service
 from modes import asset_tool_mode
+from modes.qwen_edit_mode import QwenEditMode
 from modes import bot_mode
 from modes.bot_mode import data_patcher
 from modes.bot_mode import handle_get_illust_settings, handle_update_illust_settings, handle_auto_group_prompt, handle_get_positive_rules, handle_save_positive_rules, handle_get_auto_face_tag_prompt, handle_set_auto_face_tag_prompt, handle_auto_classify_face_tags, handle_get_auto_face_tag_test_image, handle_llm_batch_enqueue, handle_get_lb_extra_refine_prompt, handle_set_lb_extra_refine_prompt, handle_lb_extra_refine
@@ -307,6 +308,7 @@ DEFAULT_CONFIG = {
             max_retries=1, fallback_max_retries=1, json_mode=True
         ),
         "edit_illustration_prompt":_llm_route_defaults(json_mode=True),  # 끄면 response_format 미전송(Cerebras/Gemma 루프 회피)
+        "qwen_edit_translate":     _llm_route_defaults(max_retries=1),
         # 삽화 컨텍스트 파이프라인 역번역/CALL1/2/2-FIX/3. 메인 LLM/폴백은 외부 API 분기 탭에서 드롭박스로 선택.
         # 폴백 없음(fallback_target 미지정)이 기본.
         "illustration_call1_backtranslate": _llm_route_defaults(max_retries=1, retry_delay_sec=0.0, fallback_max_retries=1, fallback_retry_delay_sec=0.0),
@@ -628,6 +630,11 @@ asset_mode.workflow_type = workflow_profiles.normalize_asset_workflow_type(
 asset_mode.mode_log_func = mode_logger.log
 asset_mode.load_tags()
 print(f"[ASSET_MODE] 초기화: source={asset_mode.workflow_source_path}, characters={len(asset_mode.list_characters())}")
+
+# ─── Qwen 마스크 편집 모드 초기화 ───
+qwen_edit_mode = QwenEditMode(asset_mode=asset_mode)
+qwen_edit_mode.get_config = lambda: load_config()
+print("[QWEN_EDIT] 초기화: workflow=mode_workflow/배포_qwen_edit_v1.json")
 
 # ─── 캐릭터 메이커 (단일 영속 세션, 배포 제외 디렉터리) ───
 character_maker = CharacterMakerService(
@@ -2319,6 +2326,7 @@ def init_queue_manager():
     queue_manager.get_config = lambda: load_config()
     queue_manager.asset_mode = asset_mode
     queue_manager.asset_tool = asset_tool
+    queue_manager.qwen_edit_mode = qwen_edit_mode
     queue_manager.submit_to_real_comfy = submit_to_real_comfy
     queue_manager.convert_workflow_via_endpoint = convert_workflow_via_endpoint
     queue_manager.build_lora_training_text = _build_lora_training_text
@@ -2397,6 +2405,9 @@ asset_mode.convert_workflow_func = convert_workflow_via_endpoint
 asset_mode.compute_hash_func = compute_file_hash
 asset_mode.submit_workflow_func = submit_workflow_to_comfy
 asset_mode.build_prompt_with_workflow_func = build_prompt_with_workflow
+# Qwen 편집 모드 함수 의존성 설정
+qwen_edit_mode.submit_workflow_func = submit_workflow_to_comfy
+qwen_edit_mode.notify_frontend_func = notify_frontend
 # 에셋툴 모드 함수 의존성 설정
 asset_tool.convert_workflow_func = convert_workflow_via_endpoint
 asset_tool.compute_hash_func = compute_file_hash
@@ -11582,6 +11593,196 @@ async def handle_api_asset_mode_generate(request: web.Request) -> web.Response:
         print(f"[ASSET] 에셋 생성 핸들러 예외: {type(e).__name__}: {e}")
         return web.json_response({"success": False, "error": f"{type(e).__name__}: {e}"}, status=500)
 
+
+async def handle_api_qwen_edit_translate(request: web.Request) -> web.Response:
+    """Queue an English translation and wait for the LLM-lane result."""
+    try:
+        body = await request.json()
+        text = str(body.get("text") or "").strip()
+        if not text:
+            print(
+                "[QWEN_EDIT_API] 번역 요청 거부: "
+                f"입력 비어 있음 body={body!r}"
+            )
+            return web.json_response(
+                {"success": False, "error": "번역할 편집 프롬프트를 입력하세요"},
+                status=400,
+            )
+        item = await queue_manager.add_item(
+            "qwen_edit_translate",
+            "Qwen Edit 프롬프트 영어 번역",
+            {"text": text},
+            priority=10,
+        )
+        print(
+            "[QWEN_EDIT_API] 번역 큐 등록: "
+            f"item={item.id}, input_len={len(text)}"
+        )
+        result = await item.completion_future
+        if not isinstance(result, dict) or not result.get("success"):
+            print(
+                "[QWEN_EDIT_API] 번역 큐 결과 오류: "
+                f"item={item.id}, result={result!r}"
+            )
+            return web.json_response(
+                {
+                    "success": False,
+                    "error": (
+                        result.get("error", "번역에 실패했습니다")
+                        if isinstance(result, dict)
+                        else "번역 결과 형식이 올바르지 않습니다"
+                    ),
+                    "item_id": item.id,
+                },
+                status=500,
+            )
+        return web.json_response({"item_id": item.id, **result})
+    except json.JSONDecodeError as e:
+        print(f"[QWEN_EDIT_API] 번역 JSON 파싱 실패: {e}")
+        traceback.print_exc()
+        return web.json_response(
+            {"success": False, "error": f"잘못된 JSON 요청: {e}"},
+            status=400,
+        )
+    except Exception as e:
+        print(
+            "[QWEN_EDIT_API] 번역 요청 예외: "
+            f"error={type(e).__name__}: {e}"
+        )
+        traceback.print_exc()
+        return web.json_response(
+            {"success": False, "error": f"{type(e).__name__}: {e}"},
+            status=500,
+        )
+
+
+async def handle_api_qwen_edit_enqueue(request: web.Request) -> web.Response:
+    """Validate a painted mask, stage input files, and enqueue local GPU editing."""
+    fields = {}
+    mask_data = b""
+    try:
+        if not str(request.content_type or "").lower().startswith("multipart/"):
+            print(
+                "[QWEN_EDIT_API] 편집 요청 거부: multipart가 아님 "
+                f"content_type={request.content_type!r}"
+            )
+            return web.json_response(
+                {
+                    "success": False,
+                    "error": "Qwen Edit 요청은 multipart/form-data여야 합니다",
+                },
+                status=400,
+            )
+        reader = await request.multipart()
+        async for part in reader:
+            if part.name == "mask":
+                mask_data = await part.read(decode=False)
+                if len(mask_data) > 32 * 1024 * 1024:
+                    print(
+                        "[QWEN_EDIT_API] 마스크 요청 거부: "
+                        f"size={len(mask_data)}, filename={part.filename!r}"
+                    )
+                    return web.json_response(
+                        {
+                            "success": False,
+                            "error": "마스크 파일은 32MB 이하여야 합니다",
+                        },
+                        status=413,
+                    )
+            elif part.name:
+                raw = await part.read(decode=False)
+                try:
+                    fields[part.name] = raw.decode("utf-8").strip()
+                except UnicodeDecodeError as e:
+                    print(
+                        "[QWEN_EDIT_API] 필드 UTF-8 디코딩 실패: "
+                        f"field={part.name!r}, bytes={len(raw)}, error={e}"
+                    )
+                    traceback.print_exc()
+                    return web.json_response(
+                        {
+                            "success": False,
+                            "error": f"{part.name} 필드가 UTF-8이 아닙니다",
+                        },
+                        status=400,
+                    )
+
+        if not mask_data:
+            print(
+                "[QWEN_EDIT_API] 편집 요청 거부: 마스크 누락 "
+                f"fields={fields!r}"
+            )
+            return web.json_response(
+                {"success": False, "error": "그린 마스크가 없습니다"},
+                status=400,
+            )
+
+        staged = qwen_edit_mode.stage_request(
+            character=fields.get("character", ""),
+            outfit=fields.get("outfit", ""),
+            expression=fields.get("expression", ""),
+            filename=fields.get("filename", ""),
+            mask_data=mask_data,
+            edit_prompt=fields.get("edit_prompt", ""),
+            edit_prompt_original=fields.get("edit_prompt_original", ""),
+            negative_prompt=fields.get("negative_prompt", ""),
+            seed=fields.get("seed", "-1"),
+            steps=fields.get("steps", "6"),
+            cfg=fields.get("cfg", "1.0"),
+            denoise=fields.get("denoise", "1.0"),
+            mask_grow=fields.get("mask_grow", "8"),
+            mask_blur=fields.get("mask_blur", "4.0"),
+        )
+        label = (
+            f"Qwen Edit · {staged['character']} / "
+            f"{staged['outfit']} / {staged['expression']}"
+        )
+        item = await queue_manager.add_item(
+            "qwen_edit",
+            label,
+            staged,
+            priority=10,
+        )
+        print(
+            "[QWEN_EDIT_API] GPU 큐 등록 완료: "
+            f"item={item.id}, job={staged['job_id']}, "
+            f"source={staged['source_filename']!r}, "
+            f"mask_bytes={len(mask_data)}"
+        )
+        return web.json_response(
+            {
+                "success": True,
+                "item_id": item.id,
+                "job_id": staged["job_id"],
+                "width": staged["width"],
+                "height": staged["height"],
+                "label": label,
+            }
+        )
+    except (ValueError, FileNotFoundError) as e:
+        print(
+            "[QWEN_EDIT_API] 편집 요청 검증 실패: "
+            f"fields={fields!r}, mask_bytes={len(mask_data)}, "
+            f"error={type(e).__name__}: {e}"
+        )
+        traceback.print_exc()
+        return web.json_response(
+            {"success": False, "error": str(e)},
+            status=400,
+        )
+    except Exception as e:
+        print(
+            "[QWEN_EDIT_API] 편집 큐 등록 예외: "
+            f"fields={fields!r}, mask_bytes={len(mask_data)}, "
+            f"error={type(e).__name__}: {e}"
+        )
+        traceback.print_exc()
+        return web.json_response(
+            {"success": False, "error": f"{type(e).__name__}: {e}"},
+            status=500,
+        )
+
+
 async def handle_api_asset_mode_characters(request: web.Request) -> web.Response:
     return web.json_response({
         "characters": asset_mode.list_characters(),
@@ -13646,6 +13847,8 @@ app.router.add_get("/api/asset_mode/hidden_tags", handle_api_asset_mode_hidden_t
 app.router.add_post("/api/asset_mode/tags", handle_api_asset_mode_tags_post)
 app.router.add_post("/api/asset_mode/trace_stream", handle_api_asset_mode_trace_stream)
 app.router.add_post("/api/asset_mode/generate", handle_api_asset_mode_generate)
+app.router.add_post("/api/asset_mode/qwen_edit/translate", handle_api_qwen_edit_translate)
+app.router.add_post("/api/asset_mode/qwen_edit/enqueue", handle_api_qwen_edit_enqueue)
 app.router.add_get("/api/asset_mode/characters", handle_api_asset_mode_characters)
 app.router.add_get("/api/asset_mode/characters/{character}/gallery", handle_api_asset_mode_gallery)
 app.router.add_get("/api/asset_mode/characters/{character}/outfits", handle_api_asset_mode_outfits)
@@ -17430,7 +17633,7 @@ async def handle_api_queue_add(request):
         label = body.get("label", "")
         params = body.get("params", {})
 
-        if item_type not in ("asset_generation", "asset_lora_training", "bot_lora_training", "instance_lora_training", "instance_lora_analysis", "instance_lora_prompt_refine", "tag_analysis", "auto_match_batch", "data_patch_utility"):
+        if item_type not in ("asset_generation", "qwen_edit", "qwen_edit_translate", "asset_lora_training", "bot_lora_training", "instance_lora_training", "instance_lora_analysis", "instance_lora_prompt_refine", "tag_analysis", "auto_match_batch", "data_patch_utility"):
             print(f"[QUEUE_API] 거부: 알 수 없는 타입 item_type={item_type} label={label}")
             return web.json_response({"success": False, "error": f"알 수 없는 타입: {item_type}"}, status=400)
 

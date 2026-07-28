@@ -1834,8 +1834,12 @@ class AssetMode:
                 try:
                     with open(prompt_path, "r", encoding="utf-8") as pf:
                         prompt_data = json.load(pf)
-                except Exception:
-                    pass
+                except Exception as e:
+                    print(
+                        f"[ASSET_MODE] 이미지 프롬프트 로드 실패: "
+                        f"path={prompt_path!r}, error={type(e).__name__}: {e}"
+                    )
+                    traceback.print_exc()
 
             images.append({
                 "filename": fname,
@@ -1847,6 +1851,13 @@ class AssetMode:
                 "prompt_appearance": prompt_data.get("appearance", ""),
                 "prompt_outfit": prompt_data.get("outfit", ""),
                 "prompt_expression": prompt_data.get("expression", ""),
+                "is_edited": bool(prompt_data.get("is_edited", False)),
+                "edit_prompt": prompt_data.get("edit_prompt", ""),
+                "edit_prompt_original": prompt_data.get("edit_prompt_original", ""),
+                "edit_negative_prompt": prompt_data.get("edit_negative_prompt", ""),
+                "edit_source_filename": prompt_data.get("edit_source_filename", ""),
+                "edit_model": prompt_data.get("edit_model", ""),
+                "edited_at": prompt_data.get("edited_at", ""),
                 "local_path": fpath,
             })
         return {"images": images, "representative": representative}
