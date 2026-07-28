@@ -36,6 +36,7 @@ import re
 import math
 import aiohttp
 from aiohttp import web
+from frontend_auth import FrontendAuthController, FrontendAuthManager
 from frontend_ws_manager import FrontendWsConnectionManager
 from io import BytesIO
 from PIL import Image
@@ -109,6 +110,14 @@ WORKFLOW_BACKUP_DIR = os.path.join(BASE_DIR, "workflow_backup")
 LOG_DIR = os.path.join(BASE_DIR, "logs")
 FRONTEND_DIR = os.path.join(BASE_DIR, "frontend")
 CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
+FRONTEND_AUTH_FILE = os.path.join(BASE_DIR, "key", "frontend_auth.json")
+
+frontend_auth_manager = FrontendAuthManager(FRONTEND_AUTH_FILE)
+frontend_auth_controller = FrontendAuthController(
+    frontend_auth_manager,
+    index_file=os.path.join(FRONTEND_DIR, "index.html"),
+    login_file=os.path.join(FRONTEND_DIR, "login.html"),
+)
 
 
 MODE_WORKFLOW_DIR = os.path.join(BASE_DIR, "mode_workflow")
@@ -6313,14 +6322,6 @@ async def handle_stats(request):
     )
 
 
-# ─── 프런트엔드 / API 라우트 ─────────────────────────────
-async def handle_frontend(request: web.Request) -> web.Response:
-    html_path = os.path.join(FRONTEND_DIR, "index.html")
-    if os.path.exists(html_path):
-        return web.FileResponse(html_path, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
-    return web.Response(text="Frontend not found. frontend/index.html 필요", status=404)
-
-
 def _extract_prompts_from_backup(filepath: str) -> tuple[str, str]:
     """백업 파일에서 긍정/부정 프롬프트를 추출한다. (.json 또는 .txt)"""
     positive, negative = "", ""
@@ -10749,8 +10750,9 @@ app.router.add_post("/upload/image", handle_dummy)
 app.router.add_get("/embeddings", handle_dummy)
 app.router.add_get("/extensions", handle_dummy)
 
-# 프런트엔드 / API 라우트
-app.router.add_get("/", handle_frontend)
+# 프런트엔드 루트만 비밀번호로 보호한다.
+# ComfyUI/Soya 플러그인이 사용하는 기존 라우트에는 인증을 적용하지 않는다.
+frontend_auth_controller.register_routes(app)
 app.router.add_get("/api/backups", handle_api_backups)
 app.router.add_get("/api/backups/filters", handle_api_backups_filters)
 app.router.add_get("/api/backup_image/{filename}", handle_api_backup_image)

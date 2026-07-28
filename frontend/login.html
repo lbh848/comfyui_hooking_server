@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="ko">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <title>ComfyUI 에셋/삽화 매니저 로그인</title>
+    <style>
+        :root {
+            font-family: Inter, Pretendard, "Noto Sans KR", system-ui, sans-serif;
+            color: #f4f5f7;
+            background: #0d0f14;
+        }
+        * { box-sizing: border-box; }
+        body {
+            min-height: 100vh;
+            margin: 0;
+            display: grid;
+            place-items: center;
+            padding: 24px;
+            background:
+                radial-gradient(circle at 20% 20%, rgba(80, 105, 210, .20), transparent 34rem),
+                radial-gradient(circle at 80% 80%, rgba(69, 172, 129, .13), transparent 30rem),
+                #0d0f14;
+        }
+        .auth-card {
+            width: min(100%, 420px);
+            padding: 32px;
+            border: 1px solid rgba(255, 255, 255, .11);
+            border-radius: 18px;
+            background: rgba(24, 27, 35, .94);
+            box-shadow: 0 24px 70px rgba(0, 0, 0, .45);
+        }
+        .eyebrow {
+            margin: 0 0 8px;
+            color: #8fa5ff;
+            font-size: 12px;
+            font-weight: 800;
+            letter-spacing: .12em;
+            text-transform: uppercase;
+        }
+        h1 {
+            margin: 0;
+            font-size: 25px;
+            line-height: 1.3;
+        }
+        .description {
+            min-height: 42px;
+            margin: 10px 0 24px;
+            color: #aeb4c2;
+            font-size: 14px;
+            line-height: 1.55;
+        }
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #dce0e8;
+            font-size: 13px;
+            font-weight: 700;
+        }
+        input {
+            width: 100%;
+            height: 46px;
+            padding: 0 14px;
+            border: 1px solid #3b4150;
+            border-radius: 10px;
+            outline: none;
+            background: #11141b;
+            color: #fff;
+            font: inherit;
+        }
+        input:focus {
+            border-color: #7188ea;
+            box-shadow: 0 0 0 3px rgba(113, 136, 234, .16);
+        }
+        .confirm-row { margin-top: 16px; }
+        button {
+            width: 100%;
+            height: 46px;
+            margin-top: 20px;
+            border: 0;
+            border-radius: 10px;
+            background: linear-gradient(135deg, #6e83e1, #5470d4);
+            color: #fff;
+            font: inherit;
+            font-weight: 800;
+            cursor: pointer;
+        }
+        button:hover { filter: brightness(1.08); }
+        button:disabled { cursor: wait; opacity: .55; }
+        .message {
+            display: none;
+            margin: 16px 0 0;
+            padding: 11px 13px;
+            border-radius: 9px;
+            font-size: 13px;
+            line-height: 1.45;
+        }
+        .message.error {
+            display: block;
+            border: 1px solid rgba(232, 100, 100, .35);
+            background: rgba(180, 50, 50, .16);
+            color: #ffb8b8;
+        }
+        .message.info {
+            display: block;
+            border: 1px solid rgba(113, 136, 234, .35);
+            background: rgba(70, 90, 170, .15);
+            color: #c9d2ff;
+        }
+        .reset-note {
+            display: none;
+            margin: 20px 0 0;
+            padding-top: 18px;
+            border-top: 1px solid rgba(255, 255, 255, .08);
+            color: #858c9c;
+            font-size: 12px;
+            line-height: 1.55;
+        }
+        code { color: #bdc8ff; }
+    </style>
+</head>
+<body>
+    <main class="auth-card" id="frontend-auth-card">
+        <p class="eyebrow">Soya Frontend</p>
+        <h1 id="title">인증 상태 확인 중</h1>
+        <p class="description" id="description">잠시만 기다려주세요.</p>
+
+        <form id="auth-form" hidden>
+            <div>
+                <label for="password">비밀번호</label>
+                <input
+                    id="password"
+                    name="password"
+                    type="password"
+                    minlength="4"
+                    maxlength="256"
+                    autocomplete="current-password"
+                    required
+                    autofocus
+                >
+            </div>
+            <div class="confirm-row" id="confirm-row" hidden>
+                <label for="password-confirm">비밀번호 확인</label>
+                <input
+                    id="password-confirm"
+                    name="password-confirm"
+                    type="password"
+                    minlength="4"
+                    maxlength="256"
+                    autocomplete="new-password"
+                >
+            </div>
+            <button id="submit-button" type="submit">로그인</button>
+        </form>
+
+        <p class="message" id="message" role="alert"></p>
+        <p class="reset-note" id="reset-note">
+            비밀번호를 잊었다면 서버의 <code>key/frontend_auth.json</code>을 삭제한 뒤
+            이 페이지를 새로고침하면 새 비밀번호를 설정할 수 있습니다.
+        </p>
+    </main>
+
+    <script>
+        (() => {
+            const title = document.getElementById('title');
+            const description = document.getElementById('description');
+            const form = document.getElementById('auth-form');
+            const password = document.getElementById('password');
+            const passwordConfirm = document.getElementById('password-confirm');
+            const confirmRow = document.getElementById('confirm-row');
+            const submitButton = document.getElementById('submit-button');
+            const message = document.getElementById('message');
+            const resetNote = document.getElementById('reset-note');
+            let mode = 'login';
+
+            function showMessage(text, kind = 'error') {
+                message.textContent = text;
+                message.className = `message ${kind}`;
+            }
+
+            function applyState(state) {
+                if (state === 'setup') {
+                    mode = 'setup';
+                    title.textContent = '새 비밀번호 설정';
+                    description.textContent = '프런트엔드에 처음 접속할 때 사용할 비밀번호를 정해주세요.';
+                    confirmRow.hidden = false;
+                    password.autocomplete = 'new-password';
+                    passwordConfirm.required = true;
+                    submitButton.textContent = '비밀번호 설정';
+                    resetNote.style.display = 'none';
+                } else if (state === 'ready') {
+                    mode = 'login';
+                    title.textContent = '비밀번호 입력';
+                    description.textContent = '프런트엔드 관리 화면에 접속하려면 비밀번호를 입력해주세요.';
+                    confirmRow.hidden = true;
+                    password.autocomplete = 'current-password';
+                    passwordConfirm.required = false;
+                    submitButton.textContent = '로그인';
+                    resetNote.style.display = 'block';
+                } else {
+                    title.textContent = '인증 파일 오류';
+                    description.textContent = '인증 파일을 읽을 수 없습니다. 서버 cmd 로그를 확인해주세요.';
+                    form.hidden = true;
+                    showMessage('손상된 인증 파일은 자동 초기화하지 않습니다.');
+                    return;
+                }
+                form.hidden = false;
+                password.focus();
+            }
+
+            async function loadStatus() {
+                try {
+                    const response = await fetch('/api/frontend-auth/status', {
+                        cache: 'no-store',
+                        credentials: 'same-origin'
+                    });
+                    const data = await response.json();
+                    if (data.authenticated) {
+                        window.location.replace('/');
+                        return;
+                    }
+                    applyState(data.state);
+                } catch (error) {
+                    title.textContent = '서버 연결 실패';
+                    description.textContent = '인증 상태를 불러오지 못했습니다.';
+                    showMessage(String(error));
+                }
+            }
+
+            form.addEventListener('submit', async (event) => {
+                event.preventDefault();
+                message.className = 'message';
+                const value = password.value;
+                if (mode === 'setup' && value !== passwordConfirm.value) {
+                    showMessage('비밀번호 확인이 일치하지 않습니다.');
+                    passwordConfirm.focus();
+                    return;
+                }
+
+                submitButton.disabled = true;
+                submitButton.textContent = mode === 'setup' ? '설정 중…' : '확인 중…';
+                try {
+                    const endpoint = mode === 'setup'
+                        ? '/api/frontend-auth/setup'
+                        : '/api/frontend-auth/login';
+                    const response = await fetch(endpoint, {
+                        method: 'POST',
+                        credentials: 'same-origin',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({password: value})
+                    });
+                    const data = await response.json();
+                    if (!response.ok || !data.success) {
+                        throw new Error(data.error || `요청 실패 (${response.status})`);
+                    }
+                    showMessage(
+                        mode === 'setup' ? '비밀번호 설정이 완료되었습니다.' : '로그인되었습니다.',
+                        'info'
+                    );
+                    window.location.replace('/');
+                } catch (error) {
+                    showMessage(error instanceof Error ? error.message : String(error));
+                    password.select();
+                } finally {
+                    submitButton.disabled = false;
+                    submitButton.textContent = mode === 'setup' ? '비밀번호 설정' : '로그인';
+                }
+            });
+
+            loadStatus();
+        })();
+    </script>
+</body>
+</html>
