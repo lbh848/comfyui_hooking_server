@@ -2,7 +2,13 @@ import asyncio
 
 import pytest
 
-from queue_manager import QueueItem, QueueManager
+from queue_manager import (
+    GPU_QUEUE_PRIORITY_TYPES,
+    LLM_QUEUE_PRIORITY_TYPES,
+    QueueItem,
+    QueueManager,
+    normalize_queue_priority_orders,
+)
 
 
 def _item(item_type, params=None):
@@ -523,29 +529,193 @@ async def test_multi_char_illustration_not_blocked_by_parent_llm_build():
 
 @pytest.mark.asyncio
 async def test_refine_still_blocks_training_under_priority_ten():
-    """회귀 보호: priority >= 10 의존성(refine → training)은 고순위 면제 밖이라
-    블로킹 검사가 그대로 유지돼야 한다. 면제가 10 미만에만 적용되는지 확인.
-    """
+    """같은 인스턴스의 LLM 정제가 끝나기 전에는 GPU 학습을 시작하지 않는다."""
     manager = QueueManager()
     manager.get_config = lambda: {
         "queue_type_order": {
-            "instance_lora_analysis": 4,
-            "instance_lora_training": 5,
-        }
+            "instance_lora_analysis": 14,
+            "instance_lora_training": 15,
+        },
+        "llm_queue_type_order": {
+            "instance_lora_prompt_refine": 11,
+        },
     }
 
     refine = QueueItem(
-        id="refine", type="instance_lora_prompt_refine", label="refine", priority=10
+        id="refine",
+        type="instance_lora_prompt_refine",
+        label="refine",
+        priority=10,
+        params={"source_type": "instance", "lora_id": "target"},
     )
     refine.status = "processing"
     training = QueueItem(
-        id="train", type="instance_lora_training", label="train", priority=10
+        id="train",
+        type="instance_lora_training",
+        label="train",
+        priority=10,
+        params={"id": "target", "profiles": ["anima"]},
     )
     manager.items = [refine, training]
 
     executed = await _run_process_loop_with_fake_pipeline(manager)
 
     assert executed == []
+
+
+@pytest.mark.asyncio
+async def test_unrelated_llm_work_does_not_block_gpu_lane():
+    manager = QueueManager()
+    manager.get_config = lambda: {
+        "queue_type_order": {"asset_generation": 10},
+        "llm_queue_type_order": {"character_maker": 10},
+    }
+
+    character_maker = QueueItem(
+        id="character",
+        type="character_maker",
+        label="character",
+        priority=10,
+        params={"session_id": "session", "payload": {}},
+    )
+    character_maker.status = "processing"
+    gpu_item = QueueItem(
+        id="asset",
+        type="asset_generation",
+        label="asset",
+        priority=10,
+    )
+    manager.items = [character_maker, gpu_item]
+
+    executed = await _run_process_loop_with_fake_pipeline(manager)
+
+    assert executed == ["asset"]
+
+
+@pytest.mark.asyncio
+async def test_gpu_and_llm_workers_execute_unrelated_items_concurrently(monkeypatch):
+    manager = QueueManager()
+    manager.get_config = lambda: {
+        "queue_type_order": {"asset_generation": 10},
+        "llm_queue_type_order": {"character_maker": 10},
+        "llm_max_concurrency": 1,
+    }
+    both_started = asyncio.Event()
+    release = asyncio.Event()
+    started_areas = set()
+
+    async def fake_execute(item):
+        started_areas.add(manager._item_execution_area(item)[0])
+        if started_areas == {"gpu", "llm"}:
+            both_started.set()
+        await release.wait()
+        return {"success": True}
+
+    async def no_prune(_item):
+        return None
+
+    monkeypatch.setattr(manager, "_execute_item", fake_execute)
+    monkeypatch.setattr(manager, "_deferred_prune", no_prune)
+
+    gpu_item = await manager.add_item("asset_generation", "asset", {})
+    llm_item = await manager.add_item(
+        "character_maker",
+        "character",
+        {"session_id": "session", "payload": {}},
+    )
+
+    try:
+        await asyncio.wait_for(both_started.wait(), timeout=1)
+        assert gpu_item.status == "processing"
+        assert llm_item.status == "processing"
+
+        release.set()
+        await asyncio.wait_for(
+            asyncio.gather(
+                gpu_item.completion_future,
+                llm_item.completion_future,
+            ),
+            timeout=1,
+        )
+    finally:
+        release.set()
+        worker_tasks = [
+            task
+            for task in manager._llm_worker_tasks.values()
+            if not task.done()
+        ]
+        for task in worker_tasks:
+            task.cancel()
+        if worker_tasks:
+            await asyncio.gather(*worker_tasks, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_unrelated_refine_does_not_block_other_instance_training():
+    manager = QueueManager()
+    manager.get_config = lambda: {}
+    refine = QueueItem(
+        id="refine-a",
+        type="instance_lora_prompt_refine",
+        label="refine-a",
+        params={"source_type": "instance", "lora_id": "a"},
+    )
+    refine.status = "processing"
+    training = QueueItem(
+        id="train-b",
+        type="instance_lora_training",
+        label="train-b",
+        params={"id": "b", "profiles": ["anima"]},
+    )
+    manager.items = [refine, training]
+
+    executed = await _run_process_loop_with_fake_pipeline(manager)
+
+    assert executed == ["train-b"]
+
+
+def test_llm_item_waits_for_explicit_gpu_dependency():
+    manager = QueueManager()
+    analysis = QueueItem(
+        id="analysis",
+        type="instance_lora_analysis",
+        label="analysis",
+        params={"lora_id": "target"},
+    )
+    refine = QueueItem(
+        id="refine",
+        type="instance_lora_prompt_refine",
+        label="refine",
+        params={"source_type": "instance", "lora_id": "target"},
+        depends_on=["analysis"],
+    )
+    manager.items = [analysis, refine]
+
+    assert manager._pop_next_llm_item() is None
+
+    analysis.status = "completed"
+    assert manager._pop_next_llm_item() is refine
+    assert refine.status == "processing"
+
+
+def test_queue_priority_normalization_registers_every_non_illustration_type():
+    gpu_order, llm_order = normalize_queue_priority_orders({
+        "queue_type_order": {
+            "tag_analysis": 1,
+            "asset_generation": 2,
+            "bot_llm_face_tag_analysis": 3,
+        },
+    })
+
+    assert set(gpu_order) == set(GPU_QUEUE_PRIORITY_TYPES)
+    assert set(llm_order) == set(LLM_QUEUE_PRIORITY_TYPES)
+    assert list(gpu_order.values()) == list(
+        range(10, 10 + len(GPU_QUEUE_PRIORITY_TYPES))
+    )
+    assert list(llm_order.values()) == list(
+        range(10, 10 + len(LLM_QUEUE_PRIORITY_TYPES))
+    )
+    assert llm_order["bot_llm_face_tag_analysis"] == 10
 
 
 @pytest.mark.asyncio
@@ -600,4 +770,3 @@ async def test_character_maker_handler_errors_when_instance_not_injected():
 
     with pytest.raises(RuntimeError, match="character_maker 인스턴스가 큐에 주입되지 않았습니다"):
         await manager._handle_character_maker(item)
-

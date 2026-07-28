@@ -14535,16 +14535,22 @@
                     <div class="setting-row">
                         <div class="setting-label">
                             <div class="title">작업 큐 우선순위</div>
-                            <div class="desc">큐에 여러 작업이 대기 중일 때 실행 순서를 결정합니다. 위쪽이 먼저 실행됩니다.</div>
+                            <div class="desc">GPU/로컬과 LLM 레인 안에서 각각 실행 순서를 결정합니다. 위쪽이 먼저 실행됩니다.</div>
                         </div>
                     </div>
                     <div style="margin-top: 8px; padding: 10px 14px; background: var(--bg-tertiary, #2a2a3e); border-radius: 8px; border: 1px solid var(--border-color, #3a3a4e); color: var(--text-secondary, #aaa); font-size: 0.85rem;">
-                        <span style="font-weight: 600;">삽화 생성</span> — 항상 1순위 (고정)
+                        <span style="font-weight: 600;">삽화 작업</span> — 우선순위 0~9 예약 (고정)
                     </div>
-                    <div id="queue-type-list" style="margin-top: 8px; display: flex; flex-direction: column; gap: 4px;">
+                    <div style="margin-top:12px;font-size:0.82rem;font-weight:700;color:var(--text-primary,#eee);">GPU / 로컬 작업</div>
+                    <div id="gpu-queue-type-list" style="margin-top: 6px; display: flex; flex-direction: column; gap: 4px;">
+                        <!-- JS에서 동적 렌더링 -->
+                    </div>
+                    <div style="margin-top:14px;font-size:0.82rem;font-weight:700;color:var(--text-primary,#eee);">LLM 작업</div>
+                    <div id="llm-queue-type-list" style="margin-top: 6px; display: flex; flex-direction: column; gap: 4px;">
                         <!-- JS에서 동적 렌더링 -->
                     </div>
                     <div style="margin-top: 10px; font-size: 0.78rem; color: var(--text-secondary, #aaa); line-height: 1.5;">
+                        GPU/로컬과 LLM 레인은 서로 병렬 실행됩니다. 동일 대상의 분석 → LLM 정제 → 학습처럼 선행 관계가 있는 작업만 완료 순서를 기다립니다.<br>
                         인스턴스 LoRA 분석은 항상 인스턴스 LoRA 학습보다 먼저 실행됩니다 (순서 교환 불가).
                     </div>
                 </div>
@@ -18294,94 +18300,122 @@
         }
 
         // ─── 큐 우선순위 설정 ───
-        const QUEUE_TYPE_LABELS = {
-            illustration_llm_build: '삽화 프롬프트 생성',
-            asset_lora_training: '에셋 LoRA 학습',
-            bot_lora_training: '봇 LoRA 학습',
-            instance_lora_analysis: '인스턴스 LoRA 분석 및 학습',
-            instance_lora_training: '인스턴스 LoRA 분석 및 학습',
-            tag_analysis: '태그 분석',
-            auto_match_batch: '배치 매칭',
-            data_patch_utility: '데이터 패치',
-            asset_generation: '에셋 이미지 생성',
+        const QUEUE_PRIORITY_LANES = {
+            gpu: {
+                configKey: 'queue_type_order',
+                containerId: 'gpu-queue-type-list',
+                groups: [
+                    {types: ['tag_analysis'], label: '태그 분석'},
+                    {types: ['asset_lora_training'], label: '에셋 LoRA 학습'},
+                    {types: ['bot_lora_training'], label: '봇 LoRA 학습'},
+                    {types: ['instance_lora_face_extract'], label: '인스턴스 LoRA 얼굴 추출'},
+                    {
+                        types: ['instance_lora_analysis', 'instance_lora_training'],
+                        label: '인스턴스 LoRA 분석 및 학습',
+                    },
+                    {types: ['asset_generation'], label: '에셋 이미지 생성'},
+                    {types: ['auto_match_batch'], label: '배치 매칭'},
+                    {types: ['data_patch_utility'], label: '데이터 패치'},
+                ],
+            },
+            llm: {
+                configKey: 'llm_queue_type_order',
+                containerId: 'llm-queue-type-list',
+                groups: [
+                    {types: ['character_maker'], label: '캐릭터 메이커'},
+                    {types: ['instance_lora_prompt_refine'], label: 'LoRA 프롬프트 정제'},
+                    {types: ['bot_llm_face_tag_analysis'], label: 'LLM 얼굴/눈 태그 분석'},
+                    {types: ['llm_test'], label: 'LLM 연결 테스트'},
+                ],
+            },
         };
 
-        // 독립 항목 + 묶음 항목(분석→학습 고정)으로 구성된 정렬 목록 반환
-        function getQueueGroups() {
-            const orderMap = currentConfig.queue_type_order || {};
-            const types = Object.keys(QUEUE_TYPE_LABELS);
-            types.sort((a, b) => (orderMap[a] ?? 99) - (orderMap[b] ?? 99));
-            // 분석과 학습을 하나의 그룹으로 묶음
-            const groups = [];
-            const used = new Set();
-            for (const t of types) {
-                if (used.has(t)) continue;
-                if (t === 'instance_lora_analysis') {
-                    groups.push(['instance_lora_analysis', 'instance_lora_training']);
-                    used.add('instance_lora_analysis');
-                    used.add('instance_lora_training');
-                } else if (t === 'instance_lora_training') {
-                    // 분석이 이미 처리되지 않은 경우 (비정상), 강제로 묶음
-                    groups.push(['instance_lora_analysis', 'instance_lora_training']);
-                    used.add('instance_lora_analysis');
-                    used.add('instance_lora_training');
-                } else {
-                    groups.push([t]);
-                    used.add(t);
-                }
+        // 각 레인의 독립 항목 + 고정 묶음 항목(분석→학습)을 현재 설정 순서로 반환.
+        function getQueueGroups(laneKey) {
+            const lane = QUEUE_PRIORITY_LANES[laneKey];
+            if (!lane) {
+                console.error('[QUEUE_SETTINGS] 알 수 없는 실행 레인:', laneKey);
+                return [];
             }
-            return groups;
-        }
-
-        function getSortedQueueTypes() {
-            return getQueueGroups().flat();
+            const orderMap = currentConfig[lane.configKey] || {};
+            return lane.groups
+                .map((group, defaultIndex) => ({
+                    types: [...group.types],
+                    label: group.label,
+                    defaultIndex,
+                    order: Math.min(...group.types.map(type => orderMap[type] ?? 999)),
+                }))
+                .sort((a, b) => (a.order - b.order) || (a.defaultIndex - b.defaultIndex));
         }
 
         function renderQueueTypeList() {
-            const container = document.getElementById('queue-type-list');
-            if (!container) return;
-            const groups = getQueueGroups();
+            renderQueuePriorityLane('gpu');
+            renderQueuePriorityLane('llm');
+        }
+
+        function renderQueuePriorityLane(laneKey) {
+            const lane = QUEUE_PRIORITY_LANES[laneKey];
+            const container = document.getElementById(lane?.containerId || '');
+            if (!lane || !container) {
+                console.error(
+                    '[QUEUE_SETTINGS] 우선순위 목록 렌더링 실패:',
+                    laneKey,
+                    lane?.containerId,
+                );
+                return;
+            }
+            const groups = getQueueGroups(laneKey);
             container.innerHTML = '';
-            let rank = 2; // 삽화가 1순위이므로 2부터
+            let rank = 10;
             groups.forEach((group, gIdx) => {
                 const isFirst = gIdx === 0;
                 const isLast = gIdx === groups.length - 1;
-                const displayType = group[0]; // 묶음이면 analysis로 통일
+                const rankEnd = rank + group.types.length - 1;
+                const rankLabel = rankEnd === rank ? String(rank) : `${rank}–${rankEnd}`;
 
                 const row = document.createElement('div');
                 row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:10px 14px;background:var(--bg-tertiary,#2a2a3e);border-radius:8px;border:1px solid var(--border-color,#3a3a4e);';
                 row.innerHTML = `
-                    <span style="font-weight:700;color:var(--accent);min-width:24px;text-align:center;">${rank}</span>
-                    <span style="flex:1;font-size:0.88rem;">${QUEUE_TYPE_LABELS[displayType]}</span>
-                    <button onclick="moveQueueGroupUp(${gIdx})" ${isFirst ? 'disabled' : ''} style="padding:4px 10px;font-size:0.8rem;cursor:${isFirst ? 'not-allowed' : 'pointer'};opacity:${isFirst ? '0.3' : '1'};background:var(--bg-secondary,#1e1e2e);border:1px solid var(--border-color,#3a3a4e);border-radius:4px;color:var(--text-primary,#eee);">▲</button>
-                    <button onclick="moveQueueGroupDown(${gIdx})" ${isLast ? 'disabled' : ''} style="padding:4px 10px;font-size:0.8rem;cursor:${isLast ? 'not-allowed' : 'pointer'};opacity:${isLast ? '0.3' : '1'};background:var(--bg-secondary,#1e1e2e);border:1px solid var(--border-color,#3a3a4e);border-radius:4px;color:var(--text-primary,#eee);">▼</button>
+                    <span style="font-weight:700;color:var(--accent);min-width:42px;text-align:center;">${rankLabel}</span>
+                    <span style="flex:1;font-size:0.88rem;">${group.label}</span>
+                    <button onclick="moveQueueGroupUp('${laneKey}', ${gIdx})" ${isFirst ? 'disabled' : ''} style="padding:4px 10px;font-size:0.8rem;cursor:${isFirst ? 'not-allowed' : 'pointer'};opacity:${isFirst ? '0.3' : '1'};background:var(--bg-secondary,#1e1e2e);border:1px solid var(--border-color,#3a3a4e);border-radius:4px;color:var(--text-primary,#eee);">▲</button>
+                    <button onclick="moveQueueGroupDown('${laneKey}', ${gIdx})" ${isLast ? 'disabled' : ''} style="padding:4px 10px;font-size:0.8rem;cursor:${isLast ? 'not-allowed' : 'pointer'};opacity:${isLast ? '0.3' : '1'};background:var(--bg-secondary,#1e1e2e);border:1px solid var(--border-color,#3a3a4e);border-radius:4px;color:var(--text-primary,#eee);">▼</button>
                 `;
                 container.appendChild(row);
-                rank++;
+                rank = rankEnd + 1;
             });
         }
 
 
-        function moveQueueGroupUp(gIdx) {
-            const groups = getQueueGroups();
+        function moveQueueGroupUp(laneKey, gIdx) {
+            const groups = getQueueGroups(laneKey);
             if (gIdx <= 0) return;
             [groups[gIdx - 1], groups[gIdx]] = [groups[gIdx], groups[gIdx - 1]];
-            applyQueueTypeOrder(groups.flat());
-            renderQueueTypeList();
+            applyQueueTypeOrder(laneKey, groups);
+            renderQueuePriorityLane(laneKey);
         }
 
-        function moveQueueGroupDown(gIdx) {
-            const groups = getQueueGroups();
+        function moveQueueGroupDown(laneKey, gIdx) {
+            const groups = getQueueGroups(laneKey);
             if (gIdx >= groups.length - 1) return;
             [groups[gIdx], groups[gIdx + 1]] = [groups[gIdx + 1], groups[gIdx]];
-            applyQueueTypeOrder(groups.flat());
-            renderQueueTypeList();
+            applyQueueTypeOrder(laneKey, groups);
+            renderQueuePriorityLane(laneKey);
         }
 
-        function applyQueueTypeOrder(types) {
+        function applyQueueTypeOrder(laneKey, groups) {
+            const lane = QUEUE_PRIORITY_LANES[laneKey];
+            if (!lane) {
+                console.error('[QUEUE_SETTINGS] 우선순위 저장 실패, 알 수 없는 레인:', laneKey);
+                return;
+            }
             const orderMap = {};
-            types.forEach((t, i) => { orderMap[t] = i + 1; });
-            currentConfig.queue_type_order = orderMap;
+            groups
+                .flatMap(group => group.types)
+                .forEach((type, index) => {
+                    orderMap[type] = index + 10;
+                });
+            currentConfig[lane.configKey] = orderMap;
         }
 
         // ─── 태그 분석 진행률 이벤트 처리 ───
@@ -18998,6 +19032,7 @@
                 workflow_filename: currentConfig.workflow_filename || '',
                 debug_workflow_source_path: document.getElementById('setting-debug-workflow-source-path').value,
                 queue_type_order: currentConfig.queue_type_order || {},
+                llm_queue_type_order: currentConfig.llm_queue_type_order || {},
                 llm_max_concurrency: parseInt(document.getElementById('setting-llm-max-concurrency').value) || 1,
                 llm_max_concurrency2: parseInt(document.getElementById('setting-llm-max-concurrency2').value) || 1,
                 llm_max_concurrency3: parseInt(document.getElementById('setting-llm-max-concurrency3').value) || 1,
@@ -56987,13 +57022,17 @@
         const _queueTypeLabels = {
             illustration: '삽화', asset_generation: '에셋',
             illustration_llm_build: '삽화 LLM',
+            illustration_easy_edit: '삽화 편집',
+            llm_test: 'LLM 테스트',
             asset_lora_training: '에셋로라', bot_lora_training: '봇로라',
+            instance_lora_face_extract: '얼굴추출',
             instance_lora_training: '인스턴스로라',
             instance_lora_analysis: '인스턴스분석',
             instance_lora_prompt_refine: '프롬프트 정제',
             bot_llm_face_tag_analysis: 'LLM 얼굴분석',
             character_maker: '캐릭터 메이커',
             tag_analysis: '태그분석',
+            auto_match_batch: '배치매칭',
             regenerate: '재생성',
             restore_manual: '수동 생성',
             data_patch_utility: '데이터 패치',

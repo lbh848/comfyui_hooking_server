@@ -19,6 +19,153 @@ from typing import Optional
 from modes import llm_service
 
 
+# priority 0~9는 삽화 요청에 예약한다. illustration/regenerate는 같은 GPU 줄에서
+# FIFO로 실행하고, 나머지 삽화 보조 작업도 사용자 설정 대상과 분리한다.
+QUEUE_PRIORITY_START = 10
+RESERVED_ILLUSTRATION_TYPE_ORDER = {
+    "illustration": 0,
+    "regenerate": 0,
+    "illustration_llm_build": 1,
+    "illustration_easy_edit": 2,
+    "restore_manual": 3,
+}
+
+# 전역 설정에서 사용자가 순서를 바꿀 수 있는 비삽화 큐 타입.
+# 이 순서는 설정이 없거나 새 타입이 추가됐을 때 사용하는 기본 순서이기도 하다.
+GPU_QUEUE_PRIORITY_TYPES = (
+    "tag_analysis",
+    "asset_lora_training",
+    "bot_lora_training",
+    "instance_lora_face_extract",
+    "instance_lora_analysis",
+    "instance_lora_training",
+    "asset_generation",
+    "auto_match_batch",
+    "data_patch_utility",
+)
+LLM_QUEUE_PRIORITY_TYPES = (
+    "character_maker",
+    "instance_lora_prompt_refine",
+    "bot_llm_face_tag_analysis",
+    "llm_test",
+)
+
+DEFAULT_GPU_QUEUE_TYPE_ORDER = {
+    item_type: QUEUE_PRIORITY_START + index
+    for index, item_type in enumerate(GPU_QUEUE_PRIORITY_TYPES)
+}
+DEFAULT_LLM_QUEUE_TYPE_ORDER = {
+    item_type: QUEUE_PRIORITY_START + index
+    for index, item_type in enumerate(LLM_QUEUE_PRIORITY_TYPES)
+}
+
+
+def _normalize_queue_order_map(
+    raw_order,
+    supported_types: tuple[str, ...],
+    lane_label: str,
+) -> dict[str, int]:
+    """설정된 상대 순서를 보존하면서 알려진 타입을 10부터 빠짐없이 재번호화한다."""
+    if raw_order is None:
+        raw_order = {}
+    if not isinstance(raw_order, dict):
+        try:
+            raise TypeError(
+                f"{lane_label} 큐 우선순위는 객체여야 합니다: "
+                f"type={type(raw_order).__name__}, value={raw_order!r}"
+            )
+        except TypeError as e:
+            print(f"[QUEUE:CONFIG] {e}")
+            traceback.print_exc()
+        raw_order = {}
+
+    configured = []
+    missing = []
+    for default_index, item_type in enumerate(supported_types):
+        if item_type not in raw_order:
+            missing.append((default_index, item_type))
+            continue
+        raw_rank = raw_order.get(item_type)
+        try:
+            if isinstance(raw_rank, bool):
+                raise TypeError("bool은 허용되지 않음")
+            numeric_rank = float(raw_rank)
+            if not numeric_rank.is_integer():
+                raise ValueError("정수가 아님")
+            configured.append((int(numeric_rank), default_index, item_type))
+        except (TypeError, ValueError, OverflowError) as e:
+            print(
+                f"[QUEUE:CONFIG] {lane_label} 큐 순위 읽기 실패, 기본 위치 사용: "
+                f"type={item_type}, value={raw_rank!r}, error={e}"
+            )
+            traceback.print_exc()
+            missing.append((default_index, item_type))
+
+    configured.sort(key=lambda entry: (entry[0], entry[1]))
+    ordered_types = [entry[2] for entry in configured]
+    ordered_types.extend(item_type for _, item_type in sorted(missing))
+
+    # 인스턴스 분석/학습은 UI와 백엔드 모두 하나의 고정 순서 그룹으로 취급한다.
+    if (
+        "instance_lora_analysis" in ordered_types
+        and "instance_lora_training" in ordered_types
+    ):
+        analysis_index = ordered_types.index("instance_lora_analysis")
+        training_index = ordered_types.index("instance_lora_training")
+        insert_at = min(analysis_index, training_index)
+        ordered_types = [
+            item_type
+            for item_type in ordered_types
+            if item_type
+            not in ("instance_lora_analysis", "instance_lora_training")
+        ]
+        ordered_types[insert_at:insert_at] = [
+            "instance_lora_analysis",
+            "instance_lora_training",
+        ]
+
+    return {
+        item_type: QUEUE_PRIORITY_START + index
+        for index, item_type in enumerate(ordered_types)
+    }
+
+
+def normalize_queue_priority_orders(config: dict) -> tuple[dict[str, int], dict[str, int]]:
+    """레거시 단일 맵을 GPU/로컬과 LLM 맵으로 분리해 완전한 설정을 반환한다."""
+    if not isinstance(config, dict):
+        try:
+            raise TypeError(
+                f"큐 설정 원본은 객체여야 합니다: type={type(config).__name__}"
+            )
+        except TypeError as e:
+            print(f"[QUEUE:CONFIG] {e}")
+            traceback.print_exc()
+        config = {}
+
+    legacy_order = config.get("queue_type_order")
+    llm_order = config.get("llm_queue_type_order")
+    if llm_order is None and isinstance(legacy_order, dict):
+        # 과거 queue_type_order에 들어 있던 LLM 타입의 사용자 상대 순서를 승계한다.
+        llm_order = {
+            item_type: legacy_order[item_type]
+            for item_type in LLM_QUEUE_PRIORITY_TYPES
+            if item_type in legacy_order
+        }
+
+    return (
+        _normalize_queue_order_map(
+            legacy_order,
+            GPU_QUEUE_PRIORITY_TYPES,
+            "GPU/로컬",
+        ),
+        _normalize_queue_order_map(
+            llm_order,
+            LLM_QUEUE_PRIORITY_TYPES,
+            "LLM",
+        ),
+    )
+
+
 # LLM계열 큐 아이템 타입 — GPU/ComfyUI 자원을 쓰지 않고 네트워크(LLM API)만 사용하므로
 # 별도 워커풀(설정된 LLM 슬롯별 동시 요청 상한의 합)에서 처리한다.
 # 실제 API 동시성은 llm_service의 슬롯별 게이트가 최종 제한한다.
@@ -56,6 +203,9 @@ class QueueItem:
     batch_label: Optional[str] = None
     batch_index: Optional[int] = None  # 1..batch_total
     batch_total: Optional[int] = None
+    # 이 큐 항목이 시작되기 전에 종료되어야 하는 선행 QueueItem id.
+    # 성공 여부와 무관하게 terminal 상태가 되면 다음 작업을 진행한다(기존 동작 보존).
+    depends_on: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         # completion_future 는 dataclass 필드가 아닌 일반 인스턴스 속성(add_item에서 부착)이므로
@@ -137,13 +287,33 @@ class QueueManager:
         priority: int = 10,
         skip_notify: bool = False,
         runtime_handler=None,
+        depends_on: Optional[list[str]] = None,
     ) -> QueueItem:
+        normalized_dependencies = []
+        if depends_on is not None:
+            if not isinstance(depends_on, (list, tuple, set)):
+                print(
+                    f"[QUEUE] 선행 작업 등록 실패: type={item_type}, "
+                    f"depends_on_type={type(depends_on).__name__}, "
+                    f"depends_on={depends_on!r}"
+                )
+                raise TypeError("depends_on은 작업 id 목록이어야 합니다")
+            for dependency_id in depends_on:
+                if not isinstance(dependency_id, str) or not dependency_id.strip():
+                    print(
+                        f"[QUEUE] 선행 작업 id 등록 실패: type={item_type}, "
+                        f"dependency_id={dependency_id!r}"
+                    )
+                    raise ValueError("depends_on의 작업 id는 비어 있지 않은 문자열이어야 합니다")
+                normalized_dependencies.append(dependency_id.strip())
+            normalized_dependencies = list(dict.fromkeys(normalized_dependencies))
         item = QueueItem(
             id=uuid.uuid4().hex[:12],
             type=item_type,
             label=label,
             params=params,
             priority=priority,
+            depends_on=normalized_dependencies,
         )
         if runtime_handler is not None:
             if not callable(runtime_handler):
@@ -199,6 +369,7 @@ class QueueManager:
                 params,
                 priority=priority,
                 skip_notify=True,
+                depends_on=spec.get("depends_on"),
             )
             item.batch_id = batch_id
             item.batch_label = spec.get("batch_label")
@@ -221,6 +392,9 @@ class QueueManager:
         if cancelled > 0:
             print(f"[QUEUE] 배치 취소: batch_id={batch_id}, {cancelled}개")
             await self._notify_queue_updated()
+            asyncio.ensure_future(self._process_loop())
+            self._llm_wakeup.set()
+            self._external_wakeup.set()
         return cancelled
 
     async def cancel_item(self, item_id: str) -> bool:
@@ -232,6 +406,9 @@ class QueueManager:
                     print(f"[QUEUE] 항목 취소: id={item_id}, label={item.label}")
                     self._settle_future(item)
                     await self._notify_queue_updated()
+                    asyncio.ensure_future(self._process_loop())
+                    self._llm_wakeup.set()
+                    self._external_wakeup.set()
                     return True
                 return False
         return False
@@ -266,6 +443,9 @@ class QueueManager:
         if cancelled > 0:
             print(f"[QUEUE] 대기 항목 {cancelled}개 전체 취소")
             await self._notify_queue_updated()
+            asyncio.ensure_future(self._process_loop())
+            self._llm_wakeup.set()
+            self._external_wakeup.set()
 
     def _item_execution_area(self, item: QueueItem) -> tuple[str, str]:
         """큐 실행 영역과 공급자를 반환한다. hybrid는 먼저 빈 실행 레인이 가져간다."""
@@ -399,41 +579,48 @@ class QueueManager:
     # ─── 내부 처리 ──────────────────────────────────────────
 
     def _resort_pending(self):
-        """대기 중인 항목을 config의 queue_type_order 기준으로 재정렬"""
+        """대기 중인 항목을 실행 레인별 설정 순서로 재정렬."""
         pending = [i for i in self.items if i.status == "pending"]
         other = [i for i in self.items if i.status != "pending"]
         pending.sort(key=self._sort_key)
         self.items = other + pending
 
     def _sort_key(self, item):
-        # illustration / regenerate 는 항상 최우선 그룹 (priority=0, type_order=0).
-        # 같은 그룹 내에서는 적재 순(created_at) FIFO — 일반 삽화와 재생성이 같은 줄에 선다.
-        if item.type in ("illustration", "regenerate"):
-            return (item.priority, 0, 0, item.created_at)
+        # 삽화 예약 타입은 사용자 설정(10 이상)과 분리한다.
+        if item.type in RESERVED_ILLUSTRATION_TYPE_ORDER:
+            return (
+                item.priority,
+                RESERVED_ILLUSTRATION_TYPE_ORDER[item.type],
+                0,
+                item.created_at,
+            )
 
-        # config에서 타입별 순서 읽기
-        type_order_map = {}
+        gpu_order = DEFAULT_GPU_QUEUE_TYPE_ORDER
+        llm_order = DEFAULT_LLM_QUEUE_TYPE_ORDER
         if self.get_config:
-            cfg = self.get_config()
-            type_order_map = cfg.get("queue_type_order", {})
+            try:
+                cfg = self.get_config()
+                gpu_order, llm_order = normalize_queue_priority_orders(cfg)
+            except Exception as e:
+                print(
+                    f"[QUEUE:CONFIG] 실행 순서 조회 실패, 기본 순서 사용: "
+                    f"item={item.id}, type={item.type}, error={e}"
+                )
+                traceback.print_exc()
 
-        type_order = type_order_map.get(item.type, 99)
-
-        # instance_lora_prompt_refine은 항상 analysis 직후·training 직전에 실행되어야 한다.
-        # config 누락(기본 99)이면 training보다 늦게 실행되어 "정제 안 된 태그로 학습"되는 버그가
-        # 발생하므로, 설정값과 무관하게 analysis와 training 사이로 강제 배치한다.
-        if item.type == "instance_lora_prompt_refine":
-            a = type_order_map.get("instance_lora_analysis", 4)
-            t = type_order_map.get("instance_lora_training", 5)
-            type_order = a + (t - a) / 2.0 if t > a else a + 0.5
+        type_order_map = llm_order if item.type in LLM_TYPES else gpu_order
+        type_order = type_order_map.get(item.type, 999)
 
         # tag_analysis(이미지별 분할) 중 instance_lora/style_lora 소스도 analysis 직후·training 직전에
         # 강제 배치 — 정제/학습 전 태깅이 먼저 끝나도록 보장. 동일 batch_id 내 순서는 created_at(적재 순)가 보존.
         if item.type == "tag_analysis":
             src = (item.params.get("source") or "")
             if src in ("instance_lora", "style_lora"):
-                a = type_order_map.get("instance_lora_analysis", 4)
-                t = type_order_map.get("instance_lora_training", 5)
+                a = gpu_order.get("instance_lora_analysis", QUEUE_PRIORITY_START)
+                t = gpu_order.get(
+                    "instance_lora_training",
+                    a + 1,
+                )
                 type_order = a + (t - a) / 2.0 if t > a else a + 0.5
 
         # instance_lora_training 내에서 anima > sdxl 순서 유지
@@ -444,6 +631,138 @@ class QueueManager:
             profile_order = 0 if profile == "anima" else 1
 
         return (item.priority, type_order, profile_order, item.created_at)
+
+    @staticmethod
+    def _normalized_scope(kind: str, *parts) -> Optional[tuple[str, ...]]:
+        values = [str(part or "").strip().casefold() for part in parts]
+        if not values or any(not value for value in values):
+            return None
+        return (kind, *values)
+
+    def _dependency_scope(self, item: QueueItem) -> Optional[tuple[str, ...]]:
+        """구조화된 params에서 분석/정제/학습 대상 식별자를 만든다."""
+        params = item.params if isinstance(item.params, dict) else {}
+        item_type = item.type
+
+        if item_type == "instance_lora_analysis":
+            return self._normalized_scope("instance", params.get("lora_id"))
+
+        if item_type == "tag_analysis":
+            source = str(params.get("source") or "").strip().lower()
+            image = params.get("image") if isinstance(params.get("image"), dict) else {}
+            if source == "instance_lora":
+                return self._normalized_scope(
+                    "instance",
+                    params.get("lora_id") or image.get("lora_id"),
+                )
+            if source == "style_lora":
+                return self._normalized_scope(
+                    "style",
+                    params.get("project") or image.get("project"),
+                )
+            return None
+
+        if item_type == "instance_lora_prompt_refine":
+            source = str(params.get("source_type") or "").strip().lower()
+            if source == "instance":
+                return self._normalized_scope("instance", params.get("lora_id"))
+            if source in ("style", "style_test"):
+                return self._normalized_scope("style", params.get("project"))
+            if source == "bot_lora_training":
+                return self._normalized_scope(
+                    "bot_lora",
+                    params.get("bot_name"),
+                    params.get("project_name"),
+                    params.get("char_name"),
+                )
+            if source == "training":
+                return self._normalized_scope(
+                    "asset_lora",
+                    params.get("char_name"),
+                    params.get("entry"),
+                )
+            return None
+
+        if item_type == "instance_lora_training":
+            source = str(params.get("source") or "instance").strip().lower()
+            if source == "style_lora":
+                return self._normalized_scope("style", params.get("project"))
+            return self._normalized_scope("instance", params.get("id"))
+
+        if item_type == "bot_lora_training":
+            return self._normalized_scope(
+                "bot_lora",
+                params.get("bot"),
+                params.get("project"),
+                params.get("character"),
+            )
+
+        if item_type == "asset_lora_training":
+            return self._normalized_scope(
+                "asset_lora",
+                params.get("character"),
+                params.get("entry"),
+            )
+
+        return None
+
+    def _is_implicit_dependency(
+        self,
+        blocker: QueueItem,
+        candidate: QueueItem,
+    ) -> bool:
+        """서로 다른 레인에서도 같은 대상의 분석→정제→학습 순서를 보존한다."""
+        blocker_scope = self._dependency_scope(blocker)
+        candidate_scope = self._dependency_scope(candidate)
+        if blocker_scope is None or blocker_scope != candidate_scope:
+            return False
+
+        analysis_types = {"instance_lora_analysis", "tag_analysis"}
+        training_types = {
+            "asset_lora_training",
+            "bot_lora_training",
+            "instance_lora_training",
+        }
+        if (
+            candidate.type == "instance_lora_prompt_refine"
+            and blocker.type in analysis_types
+        ):
+            return True
+        if (
+            candidate.type in training_types
+            and blocker.type
+            in analysis_types | {"instance_lora_prompt_refine"}
+        ):
+            return True
+        return False
+
+    def _dependencies_ready(self, item: QueueItem) -> bool:
+        explicit_ids = set(item.depends_on or [])
+        for blocker in self.items:
+            if blocker is item or blocker.status not in ("pending", "processing"):
+                continue
+            if blocker.id in explicit_ids:
+                return False
+            if self._is_implicit_dependency(blocker, item):
+                return False
+        return True
+
+    def _has_ready_pending(self, lane: str) -> bool:
+        for item in self.items:
+            if item.status != "pending" or not self._dependencies_ready(item):
+                continue
+            execution_area = self._item_execution_area(item)[0]
+            if lane == "llm" and item.type in LLM_TYPES:
+                return True
+            if lane == "external" and execution_area in ("external", "hybrid"):
+                return True
+            if (
+                lane == "gpu"
+                and item.type not in LLM_TYPES
+                and execution_area in ("gpu", "hybrid")
+            ):
+                return True
+        return False
 
     async def _notify_queue_updated(self):
         if self.notify_frontend:
@@ -618,31 +937,11 @@ class QueueManager:
                     i for i in pending_items
                     if i.type not in LLM_TYPES
                     and self._item_execution_area(i)[0] in ("gpu", "hybrid")
+                    and self._dependencies_ready(i)
                 ]
                 if not gpu_pending:
-                    break  # 남은 pending은 LLM/외부 계열 → 각 워커가 처리
+                    break  # 남은 pending은 타 레인 또는 선행 작업 종료 대기
                 next_item = gpu_pending[0]
-                # 순서 보존: 더 높은 우선순위 작업이 pending/processing 중이면
-                # (예: analysis → refine → training 의존성) 그것이 끝날 때까지 대기.
-                next_key = self._sort_key(next_item)
-
-                # 고순위(illustration 계열, priority < 10)끼리는 서로 블록하지 않는다.
-                # illustration_llm_build(priority 0)가 CALL3 뒤 적재한 다중 캐릭터 자식
-                # 삽화(priority 1)를 블록하면, 부모가 자식 완료를 await하는 순환 대기
-                # (교착)가 발생해 다중 캐릭터 큐가 시작 직전에 멈춘다.
-                # refine(10) → training(10) 등 priority >= 10 의존성은 면제 밖이라 유지.
-                _HIGH_TIER = 10
-
-                def _is_blocker(i):
-                    if i is next_item or i.status not in ("pending", "processing"):
-                        return False
-                    if next_item.priority < _HIGH_TIER and i.priority < _HIGH_TIER:
-                        return False
-                    return self._sort_key(i) < next_key
-
-                blocking = any(_is_blocker(i) for i in self.items)
-                if blocking:
-                    break  # 블록 해제는 완료 시 _run_item_pipeline 이 _process_loop를 재점검
                 if self._item_execution_area(next_item)[0] == "hybrid":
                     if not self._bind_hybrid_item_provider(next_item, "comfy"):
                         print(
@@ -688,6 +987,7 @@ class QueueManager:
             await self._wait_after_illustration()
         # 어떤 아이템이 완료되면 우선순위 블록이 풀렸을 수 있으니 메인 루프 재점검
         asyncio.ensure_future(self._process_loop())
+        self._llm_wakeup.set()
         self._external_wakeup.set()
 
     async def _deferred_prune(self, item: QueueItem):
@@ -785,6 +1085,7 @@ class QueueManager:
             item for item in self.items
             if item.status == "pending"
             and self._item_execution_area(item)[0] in ("external", "hybrid")
+            and self._dependencies_ready(item)
         ]
         if not pending:
             return None
@@ -821,12 +1122,7 @@ class QueueManager:
                 item = self._pop_next_external_item()
                 if item is None:
                     self._external_wakeup.clear()
-                    if any(
-                        candidate.status == "pending"
-                        and self._item_execution_area(candidate)[0]
-                        in ("external", "hybrid")
-                        for candidate in self.items
-                    ):
+                    if self._has_ready_pending("external"):
                         continue
                     await self._external_wakeup.wait()
                     continue
@@ -908,7 +1204,12 @@ class QueueManager:
 
     def _pop_next_llm_item(self) -> Optional[QueueItem]:
         """대기 중인 LLM 아이템 중 우선순위가 가장 높은 것을 꺼내 processing 으로 전환."""
-        pending = [i for i in self.items if i.status == "pending" and i.type in LLM_TYPES]
+        pending = [
+            i for i in self.items
+            if i.status == "pending"
+            and i.type in LLM_TYPES
+            and self._dependencies_ready(i)
+        ]
         if not pending:
             return None
         pending.sort(key=self._sort_key)
@@ -938,7 +1239,7 @@ class QueueManager:
                 if item is None:
                     self._llm_wakeup.clear()
                     # lost-wakeup 방지: clear 이후 새 항목이 적재됐는지 재확인
-                    if any(i.status == "pending" and i.type in LLM_TYPES for i in self.items):
+                    if self._has_ready_pending("llm"):
                         continue
                     await self._llm_wakeup.wait()
                     continue
@@ -1729,6 +2030,7 @@ class QueueManager:
         use_block_tags = params.get("use_block_tags", True)
         use_llm_refine = params.get("use_llm_refine", False)
 
+        analysis_item = None
         if is_asset_with_prompt:
             existing_prompt = params.get("existing_prompt") or {}
             pos = existing_prompt.get("positive", "")
@@ -1754,26 +2056,48 @@ class QueueManager:
                     "positive": "", "negative": negative_prompt,
                 })
             if images_now:
-                await self.add_item("instance_lora_analysis", f"프롬프트 분석: {trigger}", {
-                    "lora_id": lora_id, "negative_prompt": negative_prompt,
-                    "use_block_tags": use_block_tags,
-                })
+                analysis_item = await self.add_item(
+                    "instance_lora_analysis",
+                    f"프롬프트 분석: {trigger}",
+                    {
+                        "lora_id": lora_id,
+                        "negative_prompt": negative_prompt,
+                        "use_block_tags": use_block_tags,
+                    },
+                )
 
         # LLM 태그 정제 큐 추가 (analysis/프롬프트 저장 이후, 학습 이전)
+        refine_item = None
         if use_llm_refine and images_now:
-            await self.add_item("instance_lora_prompt_refine", f"태그 정제: {trigger}", {
-                "source_type": "instance",
-                "lora_id": lora_id,
-                "filename": images_now[0],
-            })
+            refine_item = await self.add_item(
+                "instance_lora_prompt_refine",
+                f"태그 정제: {trigger}",
+                {
+                    "source_type": "instance",
+                    "lora_id": lora_id,
+                    "filename": images_now[0],
+                },
+                depends_on=[analysis_item.id] if analysis_item else None,
+            )
 
         # 학습 큐 추가 (both → anima, sdxl 분리)
         profile = params.get("profile", "anima")
         train_profiles = ["anima", "sdxl"] if profile == "both" else [profile]
+        training_dependencies = []
+        if refine_item:
+            training_dependencies.append(refine_item.id)
+        elif analysis_item:
+            training_dependencies.append(analysis_item.id)
         for p in train_profiles:
-            await self.add_item("instance_lora_training", f"[인스턴스] {lora_id} ({p})", {
-                "id": lora_id, "profiles": [p],
-            })
+            await self.add_item(
+                "instance_lora_training",
+                f"[인스턴스] {lora_id} ({p})",
+                {
+                    "id": lora_id,
+                    "profiles": [p],
+                },
+                depends_on=training_dependencies,
+            )
 
         if self.notify_frontend:
             await self.notify_frontend("instance_lora_face_extract_progress", {

@@ -50,7 +50,12 @@ from modes import asset_mode
 from modes import pose_mode
 from modes import chain_preset_mode
 from modes import mode_logger
-from queue_manager import queue_manager
+from queue_manager import (
+    DEFAULT_GPU_QUEUE_TYPE_ORDER,
+    DEFAULT_LLM_QUEUE_TYPE_ORDER,
+    normalize_queue_priority_orders,
+    queue_manager,
+)
 import logging
 logging.basicConfig(level=logging.INFO, format='[%(name)s] %(message)s')
 # aiohttp.access (매 요청마다 찍히는 HTTP access 로그) 도배 방지
@@ -349,16 +354,8 @@ DEFAULT_CONFIG = {
     "debug_workflow_source_path": "",  # 디버그 탭 워크플로우 원본 소스 전체 경로
     "backup_max_count": 500,  # 워크플로우 백업 최대 보관 수
     "webp_lossless": False,
-    "queue_type_order": {
-        "asset_lora_training": 1,
-        "bot_lora_training": 2,
-        "instance_lora_face_extract": 3,
-        "instance_lora_analysis": 4,
-        "instance_lora_training": 5,
-        "tag_analysis": 6,
-        "asset_generation": 7,
-        "bot_llm_face_tag_analysis": 8,
-    },
+    "queue_type_order": dict(DEFAULT_GPU_QUEUE_TYPE_ORDER),
+    "llm_queue_type_order": dict(DEFAULT_LLM_QUEUE_TYPE_ORDER),
 }
 
 # LLM 슬롯 4..N 의 config 기본값을 단일 소스(llm_service.LLM_SLOT_COUNT)에서 자동 생성.
@@ -560,6 +557,10 @@ def load_config() -> dict:
                 # 기본값과 병합 (deepcopy로 중첩 dict 오염 방지)
                 merged = copy.deepcopy(DEFAULT_CONFIG)
                 merged.update(config)
+                (
+                    merged["queue_type_order"],
+                    merged["llm_queue_type_order"],
+                ) = normalize_queue_priority_orders(config)
                 merged["llm_routing"] = _merge_llm_routing_config(config)
                 for legacy_key in _LEGACY_LLM_RETRY_KEYS:
                     merged.pop(legacy_key, None)
@@ -9990,14 +9991,12 @@ async def handle_api_config(request: web.Request) -> web.Response:
             # 삽화 모드는 항상 ON 고정 — 사용자 토글과 무관하게 True 강제
             app_config["bot_mode_enabled"] = True
 
-            # 큐 타입 순서 검증: 분석이 항상 학습보다 먼저여야 함
-            qto = app_config.get("queue_type_order", {})
-            analysis_order = qto.get("instance_lora_analysis", 99)
-            training_order = qto.get("instance_lora_training", 99)
-            if training_order <= analysis_order:
-                print(f"[CONFIG] 인스턴스 LoRA 분석/학습 순서 자동 교정: 분석={analysis_order}, 학습={training_order}")
-                qto["instance_lora_training"] = analysis_order + 1
-                app_config["queue_type_order"] = qto
+            # GPU/로컬 및 LLM 큐 설정을 10부터 독립 재번호화한다.
+            # 누락된 신규 타입도 이 단계에서 기본 상대 위치에 자동 등록된다.
+            (
+                app_config["queue_type_order"],
+                app_config["llm_queue_type_order"],
+            ) = normalize_queue_priority_orders(app_config)
 
             # ComfyUI 포트 업데이트
             global REAL_COMFY_PORT, REAL_COMFY_ILLUST_PORT
