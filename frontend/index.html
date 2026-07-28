@@ -4653,13 +4653,12 @@
             display: flex;
             align-items: center;
             justify-content: center;
-            overflow: auto;
+            overflow: hidden;
         }
         .qwen-mask-canvas-wrap {
             position: relative;
-            width: fit-content;
-            max-width: 100%;
-            max-height: 100%;
+            flex: 0 0 auto;
+            overflow: hidden;
             line-height: 0;
             user-select: none;
             touch-action: none;
@@ -4667,8 +4666,10 @@
         }
         .qwen-mask-canvas-wrap img {
             display: block;
-            max-width: 100%;
-            max-height: calc(94vh - 190px);
+            width: 100%;
+            height: 100%;
+            max-width: none;
+            max-height: none;
             object-fit: contain;
             pointer-events: none;
         }
@@ -4678,7 +4679,7 @@
             width: 100%;
             height: 100%;
             cursor: crosshair;
-            opacity: 0.58;
+            opacity: 0.64;
             touch-action: none;
         }
         .qwen-mask-help {
@@ -14464,6 +14465,7 @@
                                 </div>
                                 <input type="hidden" id="setting-anima-only-asset-workflow-source-path">
                             </section>
+
                         </div>
                     </div>
 
@@ -14507,6 +14509,24 @@
                         <div class="hint">공통설정 탭의 '베이스 경로'에서 검색됩니다</div>
                     </div>
                     <input type="hidden" id="setting-asset-tag-analysis-workflow-source-path">
+
+                    <!-- QWEN_EDIT 에셋 마스크 편집 워크플로우 -->
+                    <div class="setting-row" style="margin-top: 12px;">
+                        <div class="setting-label">
+                            <div class="title">✏️ QWEN_EDIT 워크플로우</div>
+                            <div class="desc">에셋 LV2 이미지의 마스크 편집에 사용할 독립 워크플로우 파일</div>
+                        </div>
+                    </div>
+                    <div class="form-group" style="margin-top: -8px;">
+                        <div class="autocomplete-wrapper">
+                            <input type="text" id="setting-qwen-edit-workflow-filename" placeholder="예: 배포_qwen_edit_v1_변환전.json"
+                                   oninput="onQwenEditWorkflowFilenameInput(this.value, true)"
+                                   onfocus="onQwenEditWorkflowFilenameInput(this.value, false)">
+                            <div class="autocomplete-list" id="qwen-edit-workflow-autocomplete"></div>
+                        </div>
+                        <div class="hint">공통설정 탭의 '베이스 경로'에서 검색됩니다 · UI 또는 API JSON을 사용할 수 있습니다</div>
+                    </div>
+                    <input type="hidden" id="setting-qwen-edit-workflow-source-path">
                 </div>
 
                 <!-- 캐릭터 메이커 설정 -->
@@ -18454,6 +18474,12 @@
             document.getElementById('setting-anima-only-asset-workflow-filename').value = animaOnlyAssetSplit.filename;
             document.getElementById('setting-anima-only-asset-workflow-source-path').value = animaOnlyAssetPath;
 
+            // QWEN_EDIT 에셋 편집 모드
+            const qwenEditPath = currentConfig.qwen_edit_workflow_source_path || '';
+            const qwenEditSplit = splitWorkflowPath(qwenEditPath);
+            document.getElementById('setting-qwen-edit-workflow-filename').value = qwenEditSplit.filename;
+            document.getElementById('setting-qwen-edit-workflow-source-path').value = qwenEditPath;
+
             // 워크플로우 타입
             const workflowType = normalizeAssetWorkflowType(currentConfig.asset_workflow_type);
             document.getElementById('setting-workflow-type-select').value = workflowType;
@@ -19012,6 +19038,7 @@
                 asset_workflow_source_path: 'ILXL 에셋 생성 워크플로우',
                 anima_asset_workflow_source_path: 'ANIMA+ILXL 에셋 생성 워크플로우',
                 anima_only_asset_workflow_source_path: 'ONLY ANIMA 에셋 생성 워크플로우',
+                qwen_edit_workflow_source_path: 'QWEN_EDIT 워크플로우',
                 asset_workflow_type: '에셋 워크플로우 타입',
                 character_maker_rag_enabled: '캐릭터 메이커 RAG 사용',
                 character_maker_rag_autostart: '캐릭터 메이커 RAG 자동 시작',
@@ -19314,6 +19341,7 @@
                 asset_workflow_source_path: document.getElementById('setting-asset-workflow-source-path').value,
                 anima_asset_workflow_source_path: document.getElementById('setting-anima-asset-workflow-source-path').value,
                 anima_only_asset_workflow_source_path: document.getElementById('setting-anima-only-asset-workflow-source-path').value,
+                qwen_edit_workflow_source_path: document.getElementById('setting-qwen-edit-workflow-source-path').value,
                 asset_workflow_type: document.getElementById('setting-workflow-type-select').value,
                 tag_analysis_workflow_source_path: document.getElementById('setting-tag-analysis-workflow-source-path').value,
                 asset_tag_analysis_workflow_source_path: document.getElementById('setting-asset-tag-analysis-workflow-source-path').value,
@@ -19574,6 +19602,8 @@
                         selectAnimaAssetWorkflowFile(path, filename);
                     } else if (list.id === 'anima-only-asset-workflow-autocomplete') {
                         selectAnimaOnlyAssetWorkflowFile(path, filename);
+                    } else if (list.id === 'qwen-edit-workflow-autocomplete') {
+                        selectQwenEditWorkflowFile(path, filename);
                     } else if (list.id === 'asset-tag-analysis-workflow-autocomplete') {
                         selectAssetTagAnalysisWorkflowFile(path, filename);
                     } else if (list.id === 'debug-workflow-autocomplete') {
@@ -22425,6 +22455,37 @@
             const baseDir = document.getElementById('setting-workflow-base-dir').value;
             const filename = document.getElementById('setting-anima-only-asset-workflow-filename').value;
             document.getElementById('setting-anima-only-asset-workflow-source-path').value = combineWorkflowPath(baseDir, filename);
+        }
+
+        // QWEN_EDIT 워크플로우 자동완성
+        let qwenEditWorkflowAutocompleteTimeout;
+        async function onQwenEditWorkflowFilenameInput(value, updatePath) {
+            if (updatePath) updateQwenEditWorkflowPath();
+            const list = document.getElementById('qwen-edit-workflow-autocomplete');
+            const baseDir = document.getElementById('setting-workflow-base-dir').value.trim();
+            clearTimeout(qwenEditWorkflowAutocompleteTimeout);
+            qwenEditWorkflowAutocompleteTimeout = setTimeout(async () => {
+                try {
+                    const params = new URLSearchParams({ search: value, base_dir: baseDir });
+                    const data = await fetchJSON(`/api/workflow_files?${params}`);
+                    renderAutocompleteItems(data.files, list);
+                } catch (e) {
+                    console.error('[QWEN_EDIT] 워크플로우 파일 검색 실패:', e);
+                    list.classList.remove('visible');
+                }
+            }, 300);
+        }
+
+        function selectQwenEditWorkflowFile(fullPath, filename) {
+            document.getElementById('setting-qwen-edit-workflow-filename').value = filename;
+            document.getElementById('setting-qwen-edit-workflow-source-path').value = fullPath;
+            document.getElementById('qwen-edit-workflow-autocomplete').classList.remove('visible');
+        }
+
+        function updateQwenEditWorkflowPath() {
+            const baseDir = document.getElementById('setting-workflow-base-dir').value;
+            const filename = document.getElementById('setting-qwen-edit-workflow-filename').value;
+            document.getElementById('setting-qwen-edit-workflow-source-path').value = combineWorkflowPath(baseDir, filename);
         }
 
         // 태그 분석 워크플로우 자동완성
@@ -55433,6 +55494,11 @@
                                     <input type="range" id="au-qwen-brush-size" min="4" max="240" step="1" value="48">
                                     <span id="au-qwen-brush-size-label">48</span>
                                 </label>
+                                <label title="화면에 보이는 파란 오버레이의 투명도만 조절합니다.">
+                                    알파
+                                    <input type="range" id="au-qwen-mask-opacity" min="10" max="100" step="1" value="64">
+                                    <span id="au-qwen-mask-opacity-label">64%</span>
+                                </label>
                                 <button type="button" id="au-qwen-undo-btn">실행취소</button>
                                 <button type="button" id="au-qwen-redo-btn">다시실행</button>
                                 <button type="button" id="au-qwen-clear-btn">초기화</button>
@@ -55445,7 +55511,7 @@
                                     <canvas id="au-qwen-mask-canvas"></canvas>
                                 </div>
                             </div>
-                            <div class="qwen-mask-help">흰 오버레이로 칠한 영역만 Qwen latent 샘플링 마스크로 전달됩니다.</div>
+                            <div class="qwen-mask-help">반투명 파란색으로 칠한 영역만 Qwen latent 샘플링 마스크로 전달됩니다.</div>
                         </section>
                         <section class="qwen-prompt-pane">
                             <div class="qwen-field">
@@ -55508,6 +55574,8 @@
             const brushButton = modal.querySelector('#au-qwen-brush-btn');
             const eraserButton = modal.querySelector('#au-qwen-eraser-btn');
             const brushSize = modal.querySelector('#au-qwen-brush-size');
+            const maskOpacity = modal.querySelector('#au-qwen-mask-opacity');
+            const maskVisible = modal.querySelector('#au-qwen-mask-visible');
             const setTool = (tool) => {
                 if (!auQwenEditState) return;
                 auQwenEditState.tool = tool;
@@ -55520,9 +55588,16 @@
             brushSize.addEventListener('input', () => {
                 modal.querySelector('#au-qwen-brush-size-label').textContent = brushSize.value;
             });
-            modal.querySelector('#au-qwen-mask-visible').addEventListener('change', (event) => {
-                canvas.style.opacity = event.target.checked ? '0.58' : '0';
-            });
+            const updateMaskDisplayOpacity = () => {
+                const percent = Math.max(
+                    10,
+                    Math.min(100, Number(maskOpacity.value) || 64),
+                );
+                modal.querySelector('#au-qwen-mask-opacity-label').textContent = `${percent}%`;
+                canvas.style.opacity = maskVisible.checked ? String(percent / 100) : '0';
+            };
+            maskOpacity.addEventListener('input', updateMaskDisplayOpacity);
+            maskVisible.addEventListener('change', updateMaskDisplayOpacity);
             modal.querySelector('#au-qwen-clear-btn').addEventListener('click', auQwenClearMask);
             modal.querySelector('#au-qwen-invert-btn').addEventListener('click', auQwenInvertMask);
             modal.querySelector('#au-qwen-undo-btn').addEventListener('click', () => auQwenHistoryMove(-1));
@@ -55537,9 +55612,29 @@
 
             const pointerPoint = (event) => {
                 const rect = canvas.getBoundingClientRect();
+                if (!rect.width || !rect.height || !canvas.width || !canvas.height) {
+                    console.error('[QWEN_EDIT] 포인터 좌표 계산 실패:', {
+                        rect,
+                        canvasWidth: canvas.width,
+                        canvasHeight: canvas.height,
+                    });
+                    return null;
+                }
                 return {
-                    x: (event.clientX - rect.left) * canvas.width / rect.width,
-                    y: (event.clientY - rect.top) * canvas.height / rect.height,
+                    x: Math.max(
+                        0,
+                        Math.min(
+                            canvas.width,
+                            (event.clientX - rect.left) * canvas.width / rect.width,
+                        ),
+                    ),
+                    y: Math.max(
+                        0,
+                        Math.min(
+                            canvas.height,
+                            (event.clientY - rect.top) * canvas.height / rect.height,
+                        ),
+                    ),
                 };
             };
             canvas.addEventListener('pointerdown', (event) => {
@@ -55548,6 +55643,7 @@
                 canvas.setPointerCapture(event.pointerId);
                 const ctx = canvas.getContext('2d', {willReadFrequently: true});
                 const point = pointerPoint(event);
+                if (!point) return;
                 auQwenEditState.drawing = true;
                 ctx.lineCap = 'round';
                 ctx.lineJoin = 'round';
@@ -55555,7 +55651,8 @@
                 ctx.globalCompositeOperation = auQwenEditState.tool === 'eraser'
                     ? 'destination-out'
                     : 'source-over';
-                ctx.strokeStyle = '#ffffff';
+                // PNG 전송 시 알파 채널을 마스크로 사용하므로 RGB는 표시용 파란색으로 유지한다.
+                ctx.strokeStyle = '#168cff';
                 ctx.beginPath();
                 ctx.moveTo(point.x, point.y);
                 ctx.lineTo(point.x + 0.01, point.y + 0.01);
@@ -55565,6 +55662,7 @@
                 if (!auQwenEditState?.drawing) return;
                 event.preventDefault();
                 const point = pointerPoint(event);
+                if (!point) return;
                 const ctx = canvas.getContext('2d', {willReadFrequently: true});
                 ctx.lineTo(point.x, point.y);
                 ctx.stroke();
@@ -55582,7 +55680,60 @@
             };
             canvas.addEventListener('pointerup', finishStroke);
             canvas.addEventListener('pointercancel', finishStroke);
+            const stage = modal.querySelector('.qwen-mask-stage');
+            if (typeof ResizeObserver === 'function') {
+                const resizeObserver = new ResizeObserver(() => {
+                    if (modal.classList.contains('visible')) {
+                        requestAnimationFrame(auQwenFitMaskCanvas);
+                    }
+                });
+                resizeObserver.observe(stage);
+                modal._qwenMaskResizeObserver = resizeObserver;
+            } else {
+                console.error(
+                    '[QWEN_EDIT] ResizeObserver를 지원하지 않아 window resize 폴백을 사용합니다.',
+                );
+                window.addEventListener('resize', auQwenFitMaskCanvas);
+            }
             return modal;
+        }
+
+        function auQwenFitMaskCanvas() {
+            const state = auQwenEditState;
+            if (!state?.canvas || !state?.image) return;
+            const stage = state.canvas.closest('.qwen-mask-stage');
+            const wrap = state.canvas.closest('.qwen-mask-canvas-wrap');
+            const naturalWidth = state.image.naturalWidth;
+            const naturalHeight = state.image.naturalHeight;
+            const availableWidth = Math.max(1, (stage?.clientWidth || 0) - 4);
+            const availableHeight = Math.max(1, (stage?.clientHeight || 0) - 4);
+            if (
+                !stage
+                || !wrap
+                || !naturalWidth
+                || !naturalHeight
+                || availableWidth <= 1
+                || availableHeight <= 1
+            ) {
+                console.error('[QWEN_EDIT] 마스크 캔버스 맞춤 실패:', {
+                    hasStage: Boolean(stage),
+                    hasWrap: Boolean(wrap),
+                    naturalWidth,
+                    naturalHeight,
+                    availableWidth,
+                    availableHeight,
+                });
+                return;
+            }
+            const scale = Math.min(
+                1,
+                availableWidth / naturalWidth,
+                availableHeight / naturalHeight,
+            );
+            const displayWidth = Math.max(1, Math.floor(naturalWidth * scale));
+            const displayHeight = Math.max(1, Math.floor(naturalHeight * scale));
+            wrap.style.width = `${displayWidth}px`;
+            wrap.style.height = `${displayHeight}px`;
         }
 
         function auQwenCaptureHistory() {
@@ -55632,8 +55783,8 @@
             const ctx = state.canvas.getContext('2d', {willReadFrequently: true});
             const imageData = ctx.getImageData(0, 0, state.canvas.width, state.canvas.height);
             for (let i = 0; i < imageData.data.length; i += 4) {
-                imageData.data[i] = 255;
-                imageData.data[i + 1] = 255;
+                imageData.data[i] = 22;
+                imageData.data[i + 1] = 140;
                 imageData.data[i + 2] = 255;
                 imageData.data[i + 3] = 255 - imageData.data[i + 3];
             }
@@ -55680,6 +55831,10 @@
             modal.querySelector('#au-qwen-translate-btn').disabled = false;
             modal.querySelector('#au-qwen-brush-btn').classList.add('active');
             modal.querySelector('#au-qwen-eraser-btn').classList.remove('active');
+            modal.querySelector('#au-qwen-mask-visible').checked = true;
+            modal.querySelector('#au-qwen-mask-opacity').value = '64';
+            modal.querySelector('#au-qwen-mask-opacity-label').textContent = '64%';
+            canvas.style.opacity = '0.64';
             modal.classList.add('visible');
 
             image.onload = () => {
@@ -55696,6 +55851,7 @@
                 auQwenEditState.history = [];
                 auQwenEditState.historyIndex = -1;
                 auQwenCaptureHistory();
+                requestAnimationFrame(auQwenFitMaskCanvas);
                 modal.querySelector('#au-qwen-run-status').textContent =
                     `원본 ${image.naturalWidth}×${image.naturalHeight} · 마스크를 그려주세요.`;
             };
@@ -55870,6 +56026,15 @@
                     && auNavExpression === payload.expression
                 ) {
                     auRenderImages(auNavCharacter, auNavOutfit, auNavExpression);
+                }
+                if (
+                    typeof assetNavLevel !== 'undefined'
+                    && assetNavLevel === 2
+                    && assetNavCharacter === payload.character
+                    && assetNavOutfit === payload.outfit
+                    && assetNavExpression === payload.expression
+                ) {
+                    loadAssetImages();
                 }
             } else {
                 console.error('[QWEN_EDIT] 생성 실패 이벤트:', payload);
@@ -57715,9 +57880,10 @@
                     const imgUrl = `/api/asset_mode/characters/${enc(char)}/outfits/${enc(outfit)}/expressions/${enc(expr)}/images/${enc(img.filename)}`;
                     const card = document.createElement('div');
                     card.className = 'asset-image-card';
-                    const hasPrompt = img.positive || img.negative;
+                    const hasPrompt = img.positive || img.negative || img.edit_prompt;
                     card.innerHTML = `
                         ${img.is_representative ? '<div class="rep-badge">대표</div>' : ''}
+                        ${img.is_edited ? '<div class="edit-badge">EDIT됨</div>' : ''}
                         <img src="${imgUrl}" onclick="openLightbox(this.src)" loading="lazy">
                         <div class="card-actions">
                             <span class="filename">${escapeHtml(img.filename)}</span>
@@ -57726,6 +57892,7 @@
                             </button>
                             <button onclick="deleteAssetImage('${enc(char)}','${enc(outfit)}','${enc(expr)}','${enc(img.filename)}')" style="color:var(--error);">삭제</button>
                             <button onclick="sendAssetToPoseEditor('${imgUrl}','${enc(img.filename)}')">포즈 편집</button>
+                            <button type="button" class="qwen-edit-btn">QWEN EDIT</button>
                         </div>
                         ${hasPrompt ? `
                         <div class="prompt-info">
@@ -57733,8 +57900,29 @@
                             <div class="prompt-text">
                                 ${img.positive ? `<b>긍정:</b> ${escapeHtml(img.positive).replace(/\n/g, '<br>')}` : ''}
                                 ${img.negative ? `<br><b>부정:</b> ${escapeHtml(img.negative).replace(/\n/g, '<br>')}` : ''}
+                                ${img.edit_prompt ? `<br><b>Edit:</b> ${escapeHtml(img.edit_prompt).replace(/\n/g, '<br>')}` : ''}
+                                ${img.edit_prompt_original && img.edit_prompt_original !== img.edit_prompt ? `<br><b>Edit 원문:</b> ${escapeHtml(img.edit_prompt_original).replace(/\n/g, '<br>')}` : ''}
+                                ${img.edit_negative_prompt ? `<br><b>Edit 부정:</b> ${escapeHtml(img.edit_negative_prompt).replace(/\n/g, '<br>')}` : ''}
+                                ${img.edit_source_filename ? `<br><b>Edit 원본:</b> ${escapeHtml(img.edit_source_filename)}` : ''}
                             </div>
                         </div>` : ''}`;
+                    const qwenButton = card.querySelector('.qwen-edit-btn');
+                    if (qwenButton) {
+                        qwenButton.addEventListener('click', (event) => {
+                            event.stopPropagation();
+                            auOpenQwenEdit({
+                                character: char,
+                                outfit,
+                                expression: expr,
+                                filename: img.filename,
+                                imageUrl: imgUrl,
+                                positive: img.positive || '',
+                                negative: img.edit_negative_prompt || img.negative || '',
+                            });
+                        });
+                    } else {
+                        console.error('[QWEN_EDIT] 에셋 생성 LV2 카드 버튼 생성 실패:', img.filename);
+                    }
                     grid.appendChild(card);
                 });
 

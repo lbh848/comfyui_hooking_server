@@ -43,6 +43,7 @@ class QwenEditMode:
     def __init__(self, asset_mode=None):
         self.asset_mode = asset_mode
         self.get_config: Optional[Callable[[], dict]] = None
+        self.convert_workflow_func: Optional[Callable[..., Awaitable]] = None
         self.submit_workflow_func: Optional[Callable[..., Awaitable]] = None
         self.notify_frontend_func: Optional[Callable[..., Awaitable]] = None
         self._pending_inputs: dict[str, dict[str, bytes]] = {}
@@ -659,23 +660,28 @@ class QwenEditMode:
         )
         return "\n".join(f"[{key}]\n{value}" for key, value in fields)
 
-    @staticmethod
-    def _load_workflow() -> dict:
-        if not os.path.isfile(QWEN_EDIT_WORKFLOW_PATH):
+    async def _load_workflow(self, config: dict) -> tuple[dict, str]:
+        configured_path = str(
+            config.get("qwen_edit_workflow_source_path") or ""
+        ).strip()
+        workflow_path = os.path.realpath(
+            configured_path or QWEN_EDIT_WORKFLOW_PATH
+        )
+        if not os.path.isfile(workflow_path):
             print(
                 "[QWEN_EDIT] 워크플로우 로드 실패: 파일 없음 "
-                f"path={QWEN_EDIT_WORKFLOW_PATH!r}"
+                f"configured={configured_path!r}, path={workflow_path!r}"
             )
             raise FileNotFoundError(
-                f"Qwen Edit 워크플로우가 없습니다: {QWEN_EDIT_WORKFLOW_PATH}"
+                f"Qwen Edit 워크플로우가 없습니다: {workflow_path}"
             )
         try:
-            with open(QWEN_EDIT_WORKFLOW_PATH, "r", encoding="utf-8") as workflow_file:
+            with open(workflow_path, "r", encoding="utf-8") as workflow_file:
                 workflow = json.load(workflow_file)
         except Exception as exc:
             print(
                 "[QWEN_EDIT] 워크플로우 JSON 로드 실패: "
-                f"path={QWEN_EDIT_WORKFLOW_PATH!r}, "
+                f"path={workflow_path!r}, "
                 f"error={type(exc).__name__}: {exc}"
             )
             traceback.print_exc()
@@ -686,7 +692,62 @@ class QwenEditMode:
                 f"type={type(workflow).__name__}, value={workflow!r}"
             )
             raise ValueError("Qwen Edit 워크플로우가 비어 있거나 객체가 아닙니다")
-        return workflow
+
+        is_ui_workflow = (
+            isinstance(workflow.get("nodes"), list)
+            and isinstance(workflow.get("links"), list)
+        )
+        if is_ui_workflow:
+            if not callable(self.convert_workflow_func):
+                print(
+                    "[QWEN_EDIT] UI 워크플로우 변환 실패: "
+                    f"변환 콜백 없음, path={workflow_path!r}"
+                )
+                raise RuntimeError(
+                    "Qwen Edit UI 워크플로우 변환 콜백이 없습니다"
+                )
+            try:
+                api_workflow, error = await self.convert_workflow_func(workflow)
+            except Exception as exc:
+                print(
+                    "[QWEN_EDIT] UI 워크플로우 변환 예외: "
+                    f"path={workflow_path!r}, "
+                    f"error={type(exc).__name__}: {exc}"
+                )
+                traceback.print_exc()
+                raise
+            if not isinstance(api_workflow, dict) or not api_workflow:
+                print(
+                    "[QWEN_EDIT] UI 워크플로우 변환 실패: "
+                    f"path={workflow_path!r}, error={error!r}, "
+                    f"result_type={type(api_workflow).__name__}"
+                )
+                raise RuntimeError(
+                    f"Qwen Edit 워크플로우 API 변환 실패: {error or '빈 결과'}"
+                )
+            workflow = api_workflow
+            print(
+                "[QWEN_EDIT] 설정 UI 워크플로우 API 변환 완료: "
+                f"path={workflow_path!r}, nodes={len(workflow)}"
+            )
+        else:
+            is_api_workflow = any(
+                isinstance(node, dict) and "class_type" in node
+                for node in workflow.values()
+            )
+            if not is_api_workflow:
+                print(
+                    "[QWEN_EDIT] 워크플로우 형식 판별 실패: "
+                    f"path={workflow_path!r}, keys={list(workflow)[:20]!r}"
+                )
+                raise ValueError(
+                    "Qwen Edit 워크플로우가 ComfyUI UI/API 형식이 아닙니다"
+                )
+            print(
+                "[QWEN_EDIT] 설정 API 워크플로우 로드 완료: "
+                f"path={workflow_path!r}, nodes={len(workflow)}"
+            )
+        return workflow, workflow_path
 
     @staticmethod
     def _checkpoint_path(config: dict) -> str:
@@ -878,7 +939,7 @@ class QwenEditMode:
             )
 
         self._prepare_shared_comfy_inputs(params, config)
-        workflow = self._load_workflow()
+        workflow, workflow_path = await self._load_workflow(config)
         parser_nodes = [
             (node_id, node)
             for node_id, node in workflow.items()
@@ -888,7 +949,7 @@ class QwenEditMode:
         if len(parser_nodes) != 1:
             print(
                 "[QWEN_EDIT] 파서 노드 검증 실패: "
-                f"count={len(parser_nodes)}, workflow={QWEN_EDIT_WORKFLOW_PATH!r}"
+                f"count={len(parser_nodes)}, workflow={workflow_path!r}"
             )
             raise ValueError("Qwen Edit 워크플로우에는 파서 노드가 정확히 하나여야 합니다")
         prompt_nodes = [
@@ -901,7 +962,7 @@ class QwenEditMode:
         if len(prompt_nodes) != 1:
             print(
                 "[QWEN_EDIT] 긍정프롬프트 노드 검증 실패: "
-                f"count={len(prompt_nodes)}, workflow={QWEN_EDIT_WORKFLOW_PATH!r}"
+                f"count={len(prompt_nodes)}, workflow={workflow_path!r}"
             )
             raise ValueError(
                 "Qwen Edit 워크플로우에는 긍정프롬프트 텍스트 노드가 정확히 하나여야 합니다"
@@ -934,7 +995,7 @@ class QwenEditMode:
             print(
                 "[QWEN_EDIT] Soya 경로 로더 검증 실패: "
                 f"count={len(path_loader_nodes)}, "
-                f"workflow={QWEN_EDIT_WORKFLOW_PATH!r}"
+                f"workflow={workflow_path!r}"
             )
             raise ValueError(
                 "Qwen Edit 워크플로우에는 Load Images From Path (Soya)가 정확히 하나여야 합니다"

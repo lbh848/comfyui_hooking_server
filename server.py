@@ -339,6 +339,10 @@ DEFAULT_CONFIG = {
     "asset_workflow_source_path": "",  # 에셋 생성 워크플로우 원본 소스 전체 경로
     "anima_asset_workflow_source_path": "",  # ANIMA+ILXL 에셋 생성 워크플로우 원본 소스 전체 경로
     "anima_only_asset_workflow_source_path": "",  # ONLY ANIMA 에셋 생성 워크플로우 원본 소스 전체 경로
+    "qwen_edit_workflow_source_path": os.path.join(
+        MODE_WORKFLOW_DIR,
+        "배포_qwen_edit_v1_변환전.json",
+    ),  # QWEN_EDIT UI/API 워크플로우 원본 소스 전체 경로
     "asset_workflow_type": workflow_profiles.ASSET_ILXL,
     "tag_analysis_workflow_source_path": "",  # 태그 분석 워크플로우 원본 소스 전체 경로
     "asset_tag_analysis_workflow_source_path": "",  # 폴백 태그 분석 워크플로우 원본 소스 전체 경로 (primary 결과가 비었을 때, 예: 얼굴 미감지)
@@ -634,7 +638,10 @@ print(f"[ASSET_MODE] 초기화: source={asset_mode.workflow_source_path}, charac
 # ─── Qwen 마스크 편집 모드 초기화 ───
 qwen_edit_mode = QwenEditMode(asset_mode=asset_mode)
 qwen_edit_mode.get_config = lambda: load_config()
-print("[QWEN_EDIT] 초기화: workflow=mode_workflow/배포_qwen_edit_v1.json")
+print(
+    "[QWEN_EDIT] 초기화: workflow="
+    f"{app_config.get('qwen_edit_workflow_source_path')!r}"
+)
 
 # ─── 캐릭터 메이커 (단일 영속 세션, 배포 제외 디렉터리) ───
 character_maker = CharacterMakerService(
@@ -2406,6 +2413,7 @@ asset_mode.compute_hash_func = compute_file_hash
 asset_mode.submit_workflow_func = submit_workflow_to_comfy
 asset_mode.build_prompt_with_workflow_func = build_prompt_with_workflow
 # Qwen 편집 모드 함수 의존성 설정
+qwen_edit_mode.convert_workflow_func = convert_workflow_via_endpoint
 qwen_edit_mode.submit_workflow_func = submit_workflow_to_comfy
 qwen_edit_mode.notify_frontend_func = notify_frontend
 # 에셋툴 모드 함수 의존성 설정

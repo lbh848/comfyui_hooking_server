@@ -169,6 +169,43 @@ def test_qwen_edit_rejects_blank_comfy_input_setting(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_qwen_edit_loads_selected_ui_workflow_through_converter(tmp_path):
+    mode, _source_path, _input_dir = _configured_mode(tmp_path)
+    selected_workflow = tmp_path / "selected_qwen_edit_ui.json"
+    selected_workflow.write_text(
+        json.dumps(
+            {
+                "last_node_id": 1,
+                "last_link_id": 0,
+                "nodes": [{"id": 1, "type": "TestNode"}],
+                "links": [],
+                "version": 0.4,
+            }
+        ),
+        encoding="utf-8",
+    )
+    expected_api = json.loads(
+        (ROOT / "mode_workflow" / "배포_qwen_edit_v1.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    converted = []
+
+    async def convert(workflow):
+        converted.append(workflow)
+        return expected_api, None
+
+    mode.convert_workflow_func = convert
+    workflow, workflow_path = await mode._load_workflow(
+        {"qwen_edit_workflow_source_path": str(selected_workflow)}
+    )
+
+    assert converted[0]["nodes"][0]["type"] == "TestNode"
+    assert workflow == expected_api
+    assert workflow_path == str(selected_workflow.resolve())
+
+
+@pytest.mark.asyncio
 async def test_qwen_edit_mocked_comfy_e2e_appends_result_and_metadata(tmp_path):
     mode, source_path, input_dir = _configured_mode(tmp_path)
     original_hash = hashlib.sha256(source_path.read_bytes()).hexdigest()
@@ -415,8 +452,35 @@ def test_qwen_workflow_and_frontend_contracts():
     assert "qwen_edit_translate: 'Qwen 번역'" in frontend
     assert "{types: ['qwen_edit'], label: 'Qwen 마스크 편집'}" in frontend
     assert "Qwen latent 샘플링 마스크" in frontend
+    assert "반투명 파란색으로 칠한 영역" in frontend
+    assert "function auQwenFitMaskCanvas()" in frontend
+    assert "ctx.strokeStyle = '#168cff'" in frontend
+    assert 'id="au-qwen-mask-opacity"' in frontend
+    assert "const updateMaskDisplayOpacity = () =>" in frontend
+    assert "overflow: hidden;" in frontend[
+        frontend.index(".qwen-mask-stage {"):
+        frontend.index(".qwen-mask-canvas-wrap {")
+    ]
+    assert 'id="setting-qwen-edit-workflow-filename"' in frontend
+    assert 'id="setting-qwen-edit-workflow-source-path"' in frontend
+    assert "qwen_edit_workflow_source_path:" in frontend
+    upload_lv2 = frontend[
+        frontend.index("async function auRenderImages("):
+        frontend.index("let auQwenEditState")
+    ]
+    asset_generation_lv2 = frontend[
+        frontend.index("async function loadAssetImages()"):
+        frontend.index("async function setAssetRepresentative(")
+    ]
+    assert "QWEN EDIT" in upload_lv2
+    assert "QWEN EDIT" in asset_generation_lv2
+    assert "auOpenQwenEdit({" in asset_generation_lv2
+    assert "EDIT됨" in asset_generation_lv2
+    assert "<b>Edit:</b>" in asset_generation_lv2
 
     server_source = (ROOT / "server.py").read_text(encoding="utf-8")
     assert "handle_api_qwen_edit_translate" in server_source
     assert "handle_api_qwen_edit_enqueue" in server_source
     assert 'queue_manager.add_item(\n            "qwen_edit"' in server_source
+    assert '"qwen_edit_workflow_source_path": os.path.join(' in server_source
+    assert "qwen_edit_mode.convert_workflow_func = convert_workflow_via_endpoint" in server_source
