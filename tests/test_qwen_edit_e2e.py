@@ -117,17 +117,17 @@ def test_qwen_edit_stages_matching_source_and_mask_without_touching_asset(tmp_pa
         mask_blur=4,
     )
 
-    job_dir = input_dir / "qwen_edit" / staged["job_id"]
-    source_stage = job_dir / "source.png"
-    mask_stage = job_dir / "mask.png"
-    assert source_stage.is_file()
-    assert mask_stage.is_file()
-    with Image.open(source_stage) as source, Image.open(mask_stage) as mask:
+    assert not (input_dir / "qwen_edit").exists()
+    pending = mode._pending_inputs[staged["job_id"]]
+    with (
+        Image.open(io.BytesIO(pending["source"])) as source,
+        Image.open(io.BytesIO(pending["mask"])) as mask,
+    ):
         assert source.size == mask.size
         assert source.size == (staged["width"], staged["height"])
         assert mask.convert("L").getbbox() is not None
-    assert staged["image_path"].endswith("/source.png")
-    assert staged["mask_path"].endswith("/mask.png")
+    assert staged["image_path"] == "qwen_edit"
+    assert staged["mask_path"] == "qwen_edit"
     assert staged["source_prompt"]["positive"].startswith("1girl")
     assert hashlib.sha256(source_path.read_bytes()).hexdigest() == original_hash
     assert list(source_path.parent.glob("*.webp")) == [source_path]
@@ -170,8 +170,14 @@ def test_qwen_edit_rejects_blank_comfy_input_setting(tmp_path):
 
 @pytest.mark.asyncio
 async def test_qwen_edit_mocked_comfy_e2e_appends_result_and_metadata(tmp_path):
-    mode, source_path, _input_dir = _configured_mode(tmp_path)
+    mode, source_path, input_dir = _configured_mode(tmp_path)
     original_hash = hashlib.sha256(source_path.read_bytes()).hexdigest()
+    qwen_input = input_dir / "qwen_edit"
+    qwen_input.mkdir()
+    (qwen_input / "stale.png").write_bytes(_png_bytes())
+    stale_dir = qwen_input / "old_job"
+    stale_dir.mkdir()
+    (stale_dir / "old.png").write_bytes(_png_bytes())
     staged = mode.stage_request(
         character="alice",
         outfit="uniform",
@@ -188,23 +194,37 @@ async def test_qwen_edit_mocked_comfy_e2e_appends_result_and_metadata(tmp_path):
         mask_grow=8,
         mask_blur=4,
     )
+    assert (qwen_input / "stale.png").is_file()
+    assert stale_dir.is_dir()
     submitted = {}
     notifications = []
 
     async def submit(workflow, progress_callback=None):
         submitted.update(workflow)
-        parser = next(
+        prompt_node = next(
             node
             for node in workflow.values()
-            if node.get("class_type") == "SoyaQwenEditPromptParser_mdsoya"
+            if node.get("class_type") == "PrimitiveStringMultiline"
+            and node.get("_meta", {}).get("title") == "긍정프롬프트"
         )
-        assert "[EDIT_PROMPT]\nReplace the jacket" in parser["inputs"]["text"]
-        assert f"[IMAGE_PATH]\n{staged['image_path']}" in parser["inputs"]["text"]
-        assert f"[MASK_PATH]\n{staged['mask_path']}" in parser["inputs"]["text"]
-        assert f"[WIDTH]\n{staged['width']}" in parser["inputs"]["text"]
-        assert f"[HEIGHT]\n{staged['height']}" in parser["inputs"]["text"]
-        assert workflow["3"]["inputs"]["image"] == staged["image_path"]
-        assert workflow["4"]["inputs"]["image"] == staged["mask_path"]
+        payload = prompt_node["inputs"]["value"]
+        assert "[EDIT_PROMPT]\nReplace the jacket" in payload
+        assert f"[IMAGE_PATH]\n{staged['image_path']}" in payload
+        assert f"[MASK_PATH]\n{staged['mask_path']}" in payload
+        assert f"[WIDTH]\n{staged['width']}" in payload
+        assert f"[HEIGHT]\n{staged['height']}" in payload
+        assert workflow["2"]["inputs"]["text"] == ["1", 0]
+        assert workflow["4"]["inputs"]["path"] == ["2", 2]
+        assert sorted(path.name for path in qwen_input.iterdir()) == [
+            "mask.png",
+            "source.png",
+        ]
+        with (
+            Image.open(qwen_input / "source.png") as source,
+            Image.open(qwen_input / "mask.png") as mask,
+        ):
+            assert source.size == mask.size
+            assert mask.convert("L").getbbox() is not None
         if progress_callback:
             await progress_callback(3, 6)
             await progress_callback(6, 6)
@@ -235,19 +255,27 @@ async def test_qwen_edit_mocked_comfy_e2e_appends_result_and_metadata(tmp_path):
     assert record["edit_prompt_original"].startswith("재킷")
     assert record["edit_source_filename"] == "source.webp"
     assert record["edit_seed"] == 123
-    assert submitted["8"]["class_type"] == "ImageCompositeMasked"
-    assert submitted["8"]["inputs"]["destination"] == ["3", 0]
-    assert submitted["8"]["inputs"]["source"] == ["12", 0]
-    assert submitted["8"]["inputs"]["mask"] == ["6", 0]
-    assert submitted["9"]["class_type"] == "SoyaQwenEditConditioning_mdsoya"
-    assert submitted["7"]["class_type"] == "EmptyLatentImage"
-    assert submitted["7"]["inputs"]["width"] == ["1", 11]
-    assert submitted["7"]["inputs"]["height"] == ["1", 12]
-    assert submitted["9"]["inputs"]["target_latent"] == ["7", 0]
-    assert submitted["11"]["inputs"]["latent_image"] == ["7", 0]
-    assert submitted["11"]["inputs"]["sampler_name"] == "er_sde"
-    assert submitted["11"]["inputs"]["scheduler"] == "beta"
+    assert not any(
+        node["class_type"] in {"ImageCompositeMasked", "EmptyLatentImage"}
+        for node in submitted.values()
+    )
+    assert submitted["4"]["class_type"] == "LoadImagesFromPath_mdsoya"
+    assert submitted["5"]["class_type"] == "ImageFromBatch"
+    assert submitted["5"]["inputs"]["batch_index"] == 1
+    assert submitted["6"]["inputs"]["batch_index"] == 0
+    assert submitted["9"]["class_type"] == "VAEEncode"
+    assert submitted["10"]["class_type"] == "SetLatentNoiseMask"
+    assert submitted["10"]["inputs"]["samples"] == ["9", 0]
+    assert submitted["10"]["inputs"]["mask"] == ["8", 0]
+    assert submitted["11"]["class_type"] == "SoyaQwenEditConditioning_mdsoya"
+    assert submitted["11"]["inputs"]["target_latent"] == ["10", 0]
+    assert submitted["13"]["inputs"]["latent_image"] == ["10", 0]
+    assert submitted["13"]["inputs"]["sampler_name"] == "er_sde"
+    assert submitted["13"]["inputs"]["scheduler"] == "beta"
+    assert submitted["15"]["inputs"]["images"] == ["14", 0]
     assert any(event == "qwen_edit_completed" for event, _data in notifications)
+    mode.cleanup_staged_request(staged)
+    assert staged["job_id"] not in mode._pending_inputs
 
 
 @pytest.mark.asyncio
@@ -271,6 +299,9 @@ async def test_qwen_edit_uses_gpu_queue_and_translation_uses_llm_queue():
             calls.append(("translate", text, queue_item_id))
             return {"success": True, "translated_prompt": "Change the jacket."}
 
+        def cleanup_staged_request(self, params):
+            calls.append(("cleanup", params.get("job_id")))
+
     manager.qwen_edit_mode = FakeQwenMode()
     manager.notify_frontend = lambda *_args, **_kwargs: asyncio.sleep(0)
     edit_item = QueueItem(
@@ -290,7 +321,8 @@ async def test_qwen_edit_uses_gpu_queue_and_translation_uses_llm_queue():
     translated = await manager._handle_qwen_edit_translate(translate_item)
     assert translated["translated_prompt"] == "Change the jacket."
     assert calls[0][0] == "edit"
-    assert calls[1] == ("translate", "재킷을 바꿔줘", "qwen-translate-1")
+    assert calls[1] == ("cleanup", "job")
+    assert calls[2] == ("translate", "재킷을 바꿔줘", "qwen-translate-1")
 
 
 def test_qwen_parser_node_contract_and_errors():
@@ -334,18 +366,43 @@ def test_qwen_workflow_and_frontend_contracts():
             encoding="utf-8"
         )
     )
-    assert workflow["2"]["inputs"]["ckpt_name"].endswith(
+    assert workflow["3"]["inputs"]["ckpt_name"].endswith(
         "Qwen-Rapid-AIO-NSFW-v19.safetensors"
     )
-    assert workflow["8"]["class_type"] == "ImageCompositeMasked"
-    assert workflow["7"]["class_type"] == "EmptyLatentImage"
-    assert workflow["9"]["class_type"] == "SoyaQwenEditConditioning_mdsoya"
-    assert workflow["9"]["inputs"]["target_latent"] == ["7", 0]
-    assert workflow["13"]["inputs"]["images"] == ["8", 0]
-    assert workflow["11"]["inputs"]["steps"] == ["1", 5]
-    assert workflow["11"]["inputs"]["cfg"] == ["1", 6]
-    assert "[WIDTH]\n1024" in workflow["1"]["inputs"]["text"]
-    assert "[HEIGHT]\n1024" in workflow["1"]["inputs"]["text"]
+    assert workflow["1"]["class_type"] == "PrimitiveStringMultiline"
+    assert workflow["1"]["_meta"]["title"] == "긍정프롬프트"
+    assert workflow["2"]["inputs"]["text"] == ["1", 0]
+    assert workflow["4"]["class_type"] == "LoadImagesFromPath_mdsoya"
+    assert workflow["4"]["inputs"]["path"] == ["2", 2]
+    assert workflow["5"]["inputs"]["batch_index"] == 1
+    assert workflow["6"]["inputs"]["batch_index"] == 0
+    assert workflow["9"]["class_type"] == "VAEEncode"
+    assert workflow["10"]["class_type"] == "SetLatentNoiseMask"
+    assert workflow["11"]["class_type"] == "SoyaQwenEditConditioning_mdsoya"
+    assert workflow["11"]["inputs"]["target_latent"] == ["10", 0]
+    assert workflow["13"]["inputs"]["latent_image"] == ["10", 0]
+    assert workflow["15"]["inputs"]["images"] == ["14", 0]
+    assert workflow["13"]["inputs"]["steps"] == ["2", 5]
+    assert workflow["13"]["inputs"]["cfg"] == ["2", 6]
+    assert not any(
+        node["class_type"] in {"ImageCompositeMasked", "EmptyLatentImage"}
+        for node in workflow.values()
+    )
+    assert "[WIDTH]\n1024" in workflow["1"]["inputs"]["value"]
+    assert "[HEIGHT]\n1024" in workflow["1"]["inputs"]["value"]
+
+    ui_workflow = json.loads(
+        (ROOT / "mode_workflow" / "배포_qwen_edit_v1_변환전.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert isinstance(ui_workflow["nodes"], list)
+    assert isinstance(ui_workflow["links"], list)
+    assert len(ui_workflow["nodes"]) == 15
+    ui_by_id = {str(node["id"]): node for node in ui_workflow["nodes"]}
+    assert ui_by_id["1"]["title"] == "긍정프롬프트"
+    assert ui_by_id["4"]["type"] == "LoadImagesFromPath_mdsoya"
+    assert ui_by_id["10"]["type"] == "SetLatentNoiseMask"
 
     frontend = (ROOT / "frontend" / "index.html").read_text(encoding="utf-8")
     assert "QWEN EDIT" in frontend
@@ -357,6 +414,7 @@ def test_qwen_workflow_and_frontend_contracts():
     assert "/api/asset_mode/qwen_edit/enqueue" in frontend
     assert "qwen_edit_translate: 'Qwen 번역'" in frontend
     assert "{types: ['qwen_edit'], label: 'Qwen 마스크 편집'}" in frontend
+    assert "Qwen latent 샘플링 마스크" in frontend
 
     server_source = (ROOT / "server.py").read_text(encoding="utf-8")
     assert "handle_api_qwen_edit_translate" in server_source

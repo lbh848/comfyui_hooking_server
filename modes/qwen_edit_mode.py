@@ -9,6 +9,7 @@ import json
 import math
 import os
 import random
+import shutil
 import time
 import traceback
 import uuid
@@ -44,6 +45,7 @@ class QwenEditMode:
         self.get_config: Optional[Callable[[], dict]] = None
         self.submit_workflow_func: Optional[Callable[..., Awaitable]] = None
         self.notify_frontend_func: Optional[Callable[..., Awaitable]] = None
+        self._pending_inputs: dict[str, dict[str, bytes]] = {}
 
     @staticmethod
     def _safe_number(raw, name: str, cast, minimum, maximum):
@@ -308,43 +310,29 @@ class QwenEditMode:
             raise ValueError("리사이즈 후 편집 마스크가 비어 있습니다")
 
         job_id = uuid.uuid4().hex
-        qwen_root = os.path.realpath(
-            os.path.join(comfy_input_dir, QWEN_EDIT_INPUT_SUBDIR)
-        )
-        if os.path.commonpath((comfy_input_dir, qwen_root)) != comfy_input_dir:
-            print(
-                "[QWEN_EDIT] 입력 루트 검증 실패: "
-                f"input={comfy_input_dir!r}, qwen_root={qwen_root!r}"
-            )
-            raise RuntimeError("Qwen Edit 입력 폴더가 Comfy input 밖을 가리킵니다")
-        job_dir = os.path.realpath(os.path.join(qwen_root, job_id))
-        if os.path.commonpath((qwen_root, job_dir)) != qwen_root:
-            print(
-                "[QWEN_EDIT] 작업 폴더 검증 실패: "
-                f"qwen_root={qwen_root!r}, job_dir={job_dir!r}"
-            )
-            raise RuntimeError("Qwen Edit 작업 폴더가 입력 루트 밖을 가리킵니다")
-
-        os.makedirs(job_dir, exist_ok=False)
-        source_stage_path = os.path.join(job_dir, "source.png")
-        mask_stage_path = os.path.join(job_dir, "mask.png")
         try:
-            source.save(source_stage_path, format="PNG", optimize=True)
-            mask.convert("L").save(mask_stage_path, format="PNG", optimize=True)
+            source_buffer = io.BytesIO()
+            mask_buffer = io.BytesIO()
+            source.save(source_buffer, format="PNG", optimize=True)
+            mask.convert("L").save(mask_buffer, format="PNG", optimize=True)
+            self._pending_inputs[job_id] = {
+                "source": source_buffer.getvalue(),
+                "mask": mask_buffer.getvalue(),
+            }
         except Exception as exc:
             print(
-                "[QWEN_EDIT] 입력 파일 저장 실패: "
-                f"job={job_id}, dir={job_dir!r}, "
-                f"error={type(exc).__name__}: {exc}"
+                "[QWEN_EDIT] 큐 메모리 입력 준비 실패: "
+                f"job={job_id}, error={type(exc).__name__}: {exc}"
             )
             traceback.print_exc()
             raise
 
         source_prompt = self._load_source_prompt(source_path)
         print(
-            "[QWEN_EDIT] 입력 스테이징 완료: "
-            f"job={job_id}, source={source_stage_path!r}, "
-            f"mask={mask_stage_path!r}, size={source.size}, seed={parsed_seed}"
+            "[QWEN_EDIT] 큐 메모리 입력 준비 완료: "
+            f"job={job_id}, source_bytes={len(self._pending_inputs[job_id]['source'])}, "
+            f"mask_bytes={len(self._pending_inputs[job_id]['mask'])}, "
+            f"size={source.size}, seed={parsed_seed}"
         )
         return {
             "job_id": job_id,
@@ -354,12 +342,8 @@ class QwenEditMode:
             "source_filename": filename,
             "source_path": source_path,
             "source_prompt": source_prompt,
-            "image_path": (
-                f"{QWEN_EDIT_INPUT_SUBDIR}/{job_id}/source.png"
-            ),
-            "mask_path": (
-                f"{QWEN_EDIT_INPUT_SUBDIR}/{job_id}/mask.png"
-            ),
+            "image_path": QWEN_EDIT_INPUT_SUBDIR,
+            "mask_path": QWEN_EDIT_INPUT_SUBDIR,
             "edit_prompt": edit_prompt,
             "edit_prompt_original": edit_prompt_original or edit_prompt,
             "negative_prompt": negative_prompt,
@@ -372,6 +356,133 @@ class QwenEditMode:
             "width": source.width,
             "height": source.height,
         }
+
+    @staticmethod
+    def _reset_shared_input_dir(target_dir: str, comfy_input_dir: str) -> None:
+        resolved_target = os.path.realpath(target_dir)
+        resolved_input = os.path.realpath(comfy_input_dir)
+        if (
+            os.path.commonpath((resolved_input, resolved_target)) != resolved_input
+            or os.path.dirname(resolved_target) != resolved_input
+            or os.path.basename(resolved_target) != QWEN_EDIT_INPUT_SUBDIR
+        ):
+            print(
+                "[QWEN_EDIT] 공유 입력 폴더 초기화 경로 거부: "
+                f"input={resolved_input!r}, target={resolved_target!r}"
+            )
+            raise RuntimeError("Qwen Edit 공유 입력 폴더 경로가 올바르지 않습니다")
+        if os.path.exists(resolved_target) and not os.path.isdir(resolved_target):
+            print(
+                "[QWEN_EDIT] 공유 입력 폴더 초기화 실패: 디렉터리가 아님 "
+                f"target={resolved_target!r}"
+            )
+            raise RuntimeError("Qwen Edit 입력 경로가 폴더가 아닙니다")
+
+        os.makedirs(resolved_target, exist_ok=True)
+        try:
+            for name in os.listdir(resolved_target):
+                entry = os.path.realpath(os.path.join(resolved_target, name))
+                if (
+                    os.path.commonpath((resolved_target, entry))
+                    != resolved_target
+                ):
+                    print(
+                        "[QWEN_EDIT] 공유 입력 폴더 항목 경로 거부: "
+                        f"target={resolved_target!r}, entry={entry!r}"
+                    )
+                    raise RuntimeError("Qwen Edit 공유 입력 항목이 폴더 밖을 가리킵니다")
+                if os.path.isdir(entry) and not os.path.islink(entry):
+                    shutil.rmtree(entry)
+                else:
+                    os.remove(entry)
+        except Exception as exc:
+            print(
+                "[QWEN_EDIT] 공유 입력 폴더 비우기 실패: "
+                f"target={resolved_target!r}, "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            raise
+
+    def _prepare_shared_comfy_inputs(self, params: dict, config: dict) -> None:
+        configured_input_dir = str(
+            config.get("comfy_input_dir") or ""
+        ).strip()
+        if not configured_input_dir:
+            print(
+                "[QWEN_EDIT] 실행 직전 입력 배치 실패: Comfy input 설정 비어 있음 "
+                f"configured={config.get('comfy_input_dir')!r}"
+            )
+            raise ValueError("설정의 Comfy input 폴더가 비어 있습니다")
+        comfy_input_dir = os.path.realpath(configured_input_dir)
+        if not os.path.isdir(comfy_input_dir):
+            print(
+                "[QWEN_EDIT] 실행 직전 입력 배치 실패: Comfy input 폴더 없음 "
+                f"configured={configured_input_dir!r}, "
+                f"resolved={comfy_input_dir!r}"
+            )
+            raise ValueError("설정의 Comfy input 폴더가 유효하지 않습니다")
+
+        job_id = str(params.get("job_id") or "")
+        pending = self._pending_inputs.get(job_id)
+        if (
+            not job_id
+            or not isinstance(pending, dict)
+            or not pending.get("source")
+            or not pending.get("mask")
+        ):
+            print(
+                "[QWEN_EDIT] 실행 직전 큐 메모리 입력 검증 실패: "
+                f"job={job_id!r}, pending_type={type(pending).__name__}, "
+                f"keys={list(pending.keys()) if isinstance(pending, dict) else []}"
+            )
+            raise FileNotFoundError("Qwen Edit 큐 메모리 입력을 찾을 수 없습니다")
+
+        qwen_root = os.path.realpath(
+            os.path.join(comfy_input_dir, QWEN_EDIT_INPUT_SUBDIR)
+        )
+        if os.path.commonpath((comfy_input_dir, qwen_root)) != comfy_input_dir:
+            print(
+                "[QWEN_EDIT] 공유 입력 루트 검증 실패: "
+                f"input={comfy_input_dir!r}, qwen_root={qwen_root!r}"
+            )
+            raise RuntimeError("Qwen Edit 입력 폴더가 Comfy input 밖을 가리킵니다")
+        self._reset_shared_input_dir(qwen_root, comfy_input_dir)
+        source_target = os.path.join(qwen_root, "source.png")
+        mask_target = os.path.join(qwen_root, "mask.png")
+        try:
+            with open(source_target, "wb") as source_file:
+                source_file.write(pending["source"])
+            with open(mask_target, "wb") as mask_file:
+                mask_file.write(pending["mask"])
+        except Exception as exc:
+            print(
+                "[QWEN_EDIT] 실행 직전 공유 입력 채우기 실패: "
+                f"job={job_id!r}, source={source_target!r}, mask={mask_target!r}, "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            raise
+        print(
+            "[QWEN_EDIT] GPU 큐 실행 직전 공유 입력 배치 완료: "
+            f"job={job_id}, folder={qwen_root!r}, "
+            "files=['mask.png', 'source.png']"
+        )
+
+    def cleanup_staged_request(self, params: dict) -> None:
+        job_id = str((params or {}).get("job_id") or "")
+        removed = self._pending_inputs.pop(job_id, None) if job_id else None
+        if removed is None:
+            print(
+                "[QWEN_EDIT] 큐 메모리 입력 정리 스킵: 항목 없음 "
+                f"job={job_id!r}"
+            )
+            return
+        print(
+            "[QWEN_EDIT] 큐 메모리 입력 정리 완료: "
+            f"job={job_id}, source_bytes={len(removed.get('source', b''))}, "
+            f"mask_bytes={len(removed.get('mask', b''))}"
+        )
 
     async def _notify(self, event_type: str, data: dict):
         if not callable(self.notify_frontend_func):
@@ -766,10 +877,11 @@ class QwenEditMode:
                 "Qwen Rapid AIO v19 체크포인트 다운로드가 완료되지 않았습니다"
             )
 
+        self._prepare_shared_comfy_inputs(params, config)
         workflow = self._load_workflow()
         parser_nodes = [
-            node
-            for node in workflow.values()
+            (node_id, node)
+            for node_id, node in workflow.items()
             if isinstance(node, dict)
             and node.get("class_type") == "SoyaQwenEditPromptParser_mdsoya"
         ]
@@ -779,37 +891,66 @@ class QwenEditMode:
                 f"count={len(parser_nodes)}, workflow={QWEN_EDIT_WORKFLOW_PATH!r}"
             )
             raise ValueError("Qwen Edit 워크플로우에는 파서 노드가 정확히 하나여야 합니다")
-        parser_nodes[0].setdefault("inputs", {})["text"] = (
+        prompt_nodes = [
+            (node_id, node)
+            for node_id, node in workflow.items()
+            if isinstance(node, dict)
+            and node.get("class_type") == "PrimitiveStringMultiline"
+            and node.get("_meta", {}).get("title") == "긍정프롬프트"
+        ]
+        if len(prompt_nodes) != 1:
+            print(
+                "[QWEN_EDIT] 긍정프롬프트 노드 검증 실패: "
+                f"count={len(prompt_nodes)}, workflow={QWEN_EDIT_WORKFLOW_PATH!r}"
+            )
+            raise ValueError(
+                "Qwen Edit 워크플로우에는 긍정프롬프트 텍스트 노드가 정확히 하나여야 합니다"
+            )
+        parser_id, parser_node = parser_nodes[0]
+        prompt_id, prompt_node = prompt_nodes[0]
+        expected_parser_link = [str(prompt_id), 0]
+        actual_parser_link = parser_node.get("inputs", {}).get("text")
+        if actual_parser_link != expected_parser_link:
+            print(
+                "[QWEN_EDIT] 긍정프롬프트→파서 링크 검증 실패: "
+                f"prompt_id={prompt_id!r}, parser_id={parser_id!r}, "
+                f"expected={expected_parser_link!r}, actual={actual_parser_link!r}"
+            )
+            raise ValueError(
+                "Qwen Edit 긍정프롬프트 노드가 QWEN EDIT 변수 노드에 연결되지 않았습니다"
+            )
+        prompt_node.setdefault("inputs", {})["value"] = (
             self._build_parser_payload(params)
         )
-        source_nodes = [
-            node
-            for node in workflow.values()
+
+        path_loader_nodes = [
+            (node_id, node)
+            for node_id, node in workflow.items()
             if isinstance(node, dict)
-            and node.get("class_type") == "LoadImage"
-            and node.get("_meta", {}).get("title") == "편집 원본 이미지"
+            and node.get("class_type") == "LoadImagesFromPath_mdsoya"
+            and node.get("_meta", {}).get("title") == "Qwen Edit 입력 폴더"
         ]
-        mask_nodes = [
-            node
-            for node in workflow.values()
-            if isinstance(node, dict)
-            and node.get("class_type") == "LoadImage"
-            and node.get("_meta", {}).get("title") == "사용자 마스크"
-        ]
-        if len(source_nodes) != 1 or len(mask_nodes) != 1:
+        if len(path_loader_nodes) != 1:
             print(
-                "[QWEN_EDIT] 입력 이미지 노드 검증 실패: "
-                f"source_count={len(source_nodes)}, mask_count={len(mask_nodes)}, "
+                "[QWEN_EDIT] Soya 경로 로더 검증 실패: "
+                f"count={len(path_loader_nodes)}, "
                 f"workflow={QWEN_EDIT_WORKFLOW_PATH!r}"
             )
             raise ValueError(
-                "Qwen Edit 워크플로우의 원본/마스크 LoadImage 노드가 올바르지 않습니다"
+                "Qwen Edit 워크플로우에는 Load Images From Path (Soya)가 정확히 하나여야 합니다"
             )
-        # LoadImage의 combo 문자열 입력은 이 ComfyUI 버전에서 동적 STRING 링크를
-        # inner validation 중 None으로 평가한다. 서버에서 검증·스테이징한 상대 경로를
-        # 직접 주입해 파일 존재 검증과 좌표 일치를 모두 유지한다.
-        source_nodes[0].setdefault("inputs", {})["image"] = params["image_path"]
-        mask_nodes[0].setdefault("inputs", {})["image"] = params["mask_path"]
+        loader_id, loader_node = path_loader_nodes[0]
+        expected_path_link = [str(parser_id), 2]
+        actual_path_link = loader_node.get("inputs", {}).get("path")
+        if actual_path_link != expected_path_link:
+            print(
+                "[QWEN_EDIT] 파서→Soya 경로 로더 링크 검증 실패: "
+                f"parser_id={parser_id!r}, loader_id={loader_id!r}, "
+                f"expected={expected_path_link!r}, actual={actual_path_link!r}"
+            )
+            raise ValueError(
+                "QWEN EDIT 변수의 IMAGE_PATH가 Soya 경로 로더에 연결되지 않았습니다"
+            )
 
         await self._notify(
             "qwen_edit_started",

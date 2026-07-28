@@ -283,6 +283,25 @@ class QueueManager:
         elif item.status == "cancelled":
             fut.set_exception(RuntimeError("큐 항목이 취소되었습니다"))
 
+    def _cleanup_item_resources(self, item: QueueItem) -> None:
+        if item.type != "qwen_edit":
+            return
+        if self.qwen_edit_mode is None:
+            print(
+                "[QUEUE:QWEN_EDIT] 취소 리소스 정리 스킵: "
+                f"QwenEditMode 미주입 item={item.id}"
+            )
+            return
+        try:
+            self.qwen_edit_mode.cleanup_staged_request(item.params)
+        except Exception as exc:
+            print(
+                "[QUEUE:QWEN_EDIT] 취소 리소스 정리 실패: "
+                f"item={item.id}, job={(item.params or {}).get('job_id')!r}, "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+
     async def add_item(
         self,
         item_type: str,
@@ -391,6 +410,7 @@ class QueueManager:
             if item.batch_id == batch_id and item.status == "pending":
                 item.status = "cancelled"
                 item.completed_at = time.time()
+                self._cleanup_item_resources(item)
                 self._settle_future(item)
                 cancelled += 1
         if cancelled > 0:
@@ -408,6 +428,7 @@ class QueueManager:
                     item.status = "cancelled"
                     item.completed_at = time.time()
                     print(f"[QUEUE] 항목 취소: id={item_id}, label={item.label}")
+                    self._cleanup_item_resources(item)
                     self._settle_future(item)
                     await self._notify_queue_updated()
                     asyncio.ensure_future(self._process_loop())
@@ -442,6 +463,7 @@ class QueueManager:
             if item.status == "pending":
                 item.status = "cancelled"
                 item.completed_at = time.time()
+                self._cleanup_item_resources(item)
                 self._settle_future(item)
                 cancelled += 1
         if cancelled > 0:
@@ -1723,6 +1745,16 @@ class QueueManager:
             )
             traceback.print_exc()
             raise
+        finally:
+            try:
+                self.qwen_edit_mode.cleanup_staged_request(params)
+            except Exception as cleanup_error:
+                print(
+                    "[QUEUE:QWEN_EDIT] 큐 메모리 입력 정리 실패: "
+                    f"item={item.id}, job={params.get('job_id')!r}, "
+                    f"error={type(cleanup_error).__name__}: {cleanup_error}"
+                )
+                traceback.print_exc()
 
     async def _handle_asset_lora_training(self, item: QueueItem) -> dict:
         """에셋 LoRA 학습 (기존 handle_api_lora_training_start 로직)."""
