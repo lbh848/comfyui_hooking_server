@@ -487,6 +487,9 @@ def test_qwen_workflow_and_frontend_contracts():
     assert 'id="au-qwen-composite-tool-btn"' in frontend
     assert 'id="au-qwen-item-crop-btn"' in frontend
     assert 'id="au-qwen-item-crop-apply-btn"' in frontend
+    assert frontend.count("event.button !== 1") >= 2
+    assert "middlePanning" in frontend
+    assert "마우스 휠 버튼 드래그로 화면을 이동" in frontend
     assert "asset_data/qwen_composite_items" in frontend
     assert "/api/asset_mode/qwen_edit/translate" in frontend
     assert "/api/asset_mode/qwen_edit/enqueue" in frontend

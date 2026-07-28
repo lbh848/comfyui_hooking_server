@@ -55962,7 +55962,7 @@
                             <div class="qwen-mask-toolbar">
                                 <button type="button" id="au-qwen-brush-btn" class="active">브러시</button>
                                 <button type="button" id="au-qwen-eraser-btn">지우개</button>
-                                <button type="button" id="au-qwen-move-btn" title="이동 툴: 드래그로 화면 이동, 휠로 확대/축소">이동</button>
+                                <button type="button" id="au-qwen-move-btn" title="이동 툴: 드래그로 화면 이동, 휠로 확대/축소. 어느 도구에서나 가운데 버튼 드래그로 이동할 수 있습니다.">이동</button>
                                 <button type="button" id="au-qwen-composite-add-btn">합성 아이템 추가</button>
                                 <button type="button" id="au-qwen-composite-tool-btn" title="아이템을 선택해 이동·확대·축소·회전합니다.">합성 아이템 조작</button>
                                 <button type="button" id="au-qwen-composite-remove-btn" class="danger" disabled>선택 삭제</button>
@@ -55991,7 +55991,7 @@
                                 </div>
                                 <div class="qwen-brush-cursor" id="au-qwen-brush-cursor"></div>
                             </div>
-                            <div class="qwen-mask-help">반투명 파란색으로 칠한 영역과 합성 아이템 영역을 합쳐 Qwen latent 샘플링 마스크로 전달합니다.</div>
+                            <div class="qwen-mask-help">반투명 파란색으로 칠한 영역과 합성 아이템 영역을 합쳐 Qwen latent 샘플링 마스크로 전달합니다. 마우스 휠 버튼 드래그로 화면을 이동할 수 있습니다.</div>
                         </section>
                         <section class="qwen-prompt-pane">
                             <div class="qwen-field">
@@ -56236,6 +56236,63 @@
                 auQwenRefreshBrushCursor();
             });
             const stage = modal.querySelector('.qwen-mask-stage');
+            stage.addEventListener('pointerdown', (event) => {
+                if (event.button !== 1 || !auQwenEditState || auQwenEditState.busy) {
+                    return;
+                }
+                event.preventDefault();
+                event.stopPropagation();
+                const state = auQwenEditState;
+                state.middlePanning = true;
+                state.panning = true;
+                state.panStartClientX = event.clientX;
+                state.panStartClientY = event.clientY;
+                state.panStartPanX = state.panX || 0;
+                state.panStartPanY = state.panY || 0;
+                stage.setPointerCapture(event.pointerId);
+                stage.style.cursor = 'grabbing';
+                canvas.style.cursor = 'grabbing';
+                state.cursorInside = false;
+                auQwenRefreshBrushCursor();
+            }, {capture: true});
+            stage.addEventListener('pointermove', (event) => {
+                const state = auQwenEditState;
+                if (!state?.middlePanning) return;
+                event.preventDefault();
+                event.stopPropagation();
+                state.panX =
+                    (state.panStartPanX || 0)
+                    + event.clientX
+                    - state.panStartClientX;
+                state.panY =
+                    (state.panStartPanY || 0)
+                    + event.clientY
+                    - state.panStartClientY;
+                auQwenApplyTransform();
+            }, {capture: true});
+            const finishMiddlePan = (event) => {
+                const state = auQwenEditState;
+                if (!state?.middlePanning) return;
+                event.preventDefault();
+                event.stopPropagation();
+                state.middlePanning = false;
+                state.panning = false;
+                if (stage.hasPointerCapture(event.pointerId)) {
+                    stage.releasePointerCapture(event.pointerId);
+                }
+                stage.style.cursor = '';
+                canvas.style.cursor =
+                    state.tool === 'move' ? 'grab'
+                    : state.tool === 'eraser' ? 'cell'
+                    : state.tool === 'composite' ? 'default'
+                    : 'crosshair';
+            };
+            stage.addEventListener('pointerup', finishMiddlePan, {capture: true});
+            stage.addEventListener('pointercancel', finishMiddlePan, {capture: true});
+            stage.addEventListener('lostpointercapture', finishMiddlePan);
+            stage.addEventListener('auxclick', (event) => {
+                if (event.button === 1) event.preventDefault();
+            });
             stage.addEventListener('wheel', (event) => {
                 event.preventDefault();
                 if (!auQwenEditState) return;
@@ -56619,7 +56676,7 @@
                             <div class="qwen-item-toolbar">
                                 <input type="file" id="au-qwen-item-file" accept="image/*" hidden>
                                 <button type="button" id="au-qwen-item-upload-btn">새 이미지 업로드</button>
-                                <button type="button" id="au-qwen-item-move-btn">이동</button>
+                                <button type="button" id="au-qwen-item-move-btn" title="어느 도구에서나 마우스 휠 버튼을 누르고 드래그하면 화면을 이동합니다.">이동</button>
                                 <button type="button" id="au-qwen-item-eraser-btn" class="active">지우개</button>
                                 <button type="button" id="au-qwen-item-crop-btn">자르기</button>
                                 <button type="button" id="au-qwen-item-crop-apply-btn" disabled>자르기 적용</button>
@@ -56870,6 +56927,60 @@
                 if (state) state.cursorInside = false;
                 auQwenRefreshItemBrushCursor();
             });
+            stage.addEventListener('pointerdown', (event) => {
+                const state = auQwenCompositeEditorState;
+                if (event.button !== 1 || !state?.loaded || state.busy) return;
+                event.preventDefault();
+                event.stopPropagation();
+                state.middlePanning = true;
+                state.panning = true;
+                state.panStartClientX = event.clientX;
+                state.panStartClientY = event.clientY;
+                state.panStartX = state.panX || 0;
+                state.panStartY = state.panY || 0;
+                stage.setPointerCapture(event.pointerId);
+                stage.style.cursor = 'grabbing';
+                canvas.style.cursor = 'grabbing';
+                state.cursorInside = false;
+                auQwenRefreshItemBrushCursor();
+            }, {capture: true});
+            stage.addEventListener('pointermove', (event) => {
+                const state = auQwenCompositeEditorState;
+                if (!state?.middlePanning) return;
+                event.preventDefault();
+                event.stopPropagation();
+                state.panX =
+                    (state.panStartX || 0)
+                    + event.clientX
+                    - state.panStartClientX;
+                state.panY =
+                    (state.panStartY || 0)
+                    + event.clientY
+                    - state.panStartClientY;
+                auQwenApplyItemEditorTransform();
+            }, {capture: true});
+            const finishItemMiddlePan = (event) => {
+                const state = auQwenCompositeEditorState;
+                if (!state?.middlePanning) return;
+                event.preventDefault();
+                event.stopPropagation();
+                state.middlePanning = false;
+                state.panning = false;
+                if (stage.hasPointerCapture(event.pointerId)) {
+                    stage.releasePointerCapture(event.pointerId);
+                }
+                stage.style.cursor = '';
+                canvas.style.cursor =
+                    state.tool === 'move' ? 'grab'
+                    : state.tool === 'crop' ? 'crosshair'
+                    : 'cell';
+            };
+            stage.addEventListener('pointerup', finishItemMiddlePan, {capture: true});
+            stage.addEventListener('pointercancel', finishItemMiddlePan, {capture: true});
+            stage.addEventListener('lostpointercapture', finishItemMiddlePan);
+            stage.addEventListener('auxclick', (event) => {
+                if (event.button === 1) event.preventDefault();
+            });
             stage.addEventListener('wheel', (event) => {
                 const state = auQwenCompositeEditorState;
                 if (!state?.loaded) return;
@@ -56956,6 +57067,7 @@
                 busy: false,
                 erasing: false,
                 panning: false,
+                middlePanning: false,
                 cropping: false,
                 cropStart: null,
                 cropRect: null,
@@ -57885,6 +57997,7 @@
                 tool: 'brush',
                 drawing: false,
                 panning: false,
+                middlePanning: false,
                 busy: false,
                 history: [],
                 historyIndex: -1,
