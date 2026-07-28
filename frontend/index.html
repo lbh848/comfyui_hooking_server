@@ -3718,9 +3718,118 @@
             color: var(--text2);
         }
 
+        /* 전역 EDIT 툴 선택 (에셋 워크플로우 선택과 동일 디자인) */
+        .edit-tool-config {
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+            margin-top: 18px;
+            margin-bottom: 18px;
+        }
+        .edit-tool-selector {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) minmax(220px, 280px);
+            align-items: center;
+            gap: 18px;
+            padding: 14px 16px;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            background: color-mix(in srgb, var(--surface2) 55%, var(--surface));
+        }
+        .edit-tool-selector-copy .title {
+            margin-bottom: 3px;
+            font-size: 0.9rem;
+            font-weight: 700;
+        }
+        .edit-tool-selector-copy .desc {
+            color: var(--text2);
+            font-size: 0.75rem;
+            line-height: 1.45;
+        }
+        .edit-tool-type-select {
+            width: 100%;
+            min-height: 40px;
+            padding: 8px 34px 8px 12px;
+            border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+            border-radius: 8px;
+            background: var(--surface);
+            color: var(--text);
+            font-size: 0.84rem;
+            font-weight: 650;
+            cursor: pointer;
+            outline: none;
+        }
+        .edit-tool-type-select:focus {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
+        }
+        .edit-tool-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 12px;
+        }
+        .edit-tool-card {
+            position: relative;
+            min-width: 0;
+            padding: 14px;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            background: var(--surface);
+            transition: border-color 0.18s, background 0.18s, opacity 0.18s, box-shadow 0.18s;
+        }
+        .edit-tool-card.active {
+            border-color: color-mix(in srgb, var(--accent) 68%, var(--border));
+            background: color-mix(in srgb, var(--accent) 7%, var(--surface));
+            box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 15%, transparent);
+        }
+        .edit-tool-card.inactive {
+            opacity: 0.5;
+            background: color-mix(in srgb, var(--surface2) 45%, var(--surface));
+        }
+        .edit-tool-card-head {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 10px;
+            margin-bottom: 12px;
+        }
+        .edit-tool-card-title {
+            font-size: 0.84rem;
+            font-weight: 700;
+        }
+        .edit-tool-card-desc {
+            margin-top: 3px;
+            color: var(--text2);
+            font-size: 0.7rem;
+            line-height: 1.4;
+        }
+        .edit-tool-status {
+            flex: 0 0 auto;
+            padding: 3px 7px;
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            color: var(--text2);
+            background: var(--surface2);
+            font-size: 0.64rem;
+            font-weight: 700;
+            letter-spacing: 0.02em;
+        }
+        .edit-tool-card.active .edit-tool-status {
+            border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+            color: var(--accent);
+            background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+        }
+        .edit-tool-card .form-group { margin-bottom: 0; }
+        .edit-tool-card input:disabled {
+            cursor: not-allowed;
+            color: var(--text2);
+        }
+
         @media (max-width: 760px) {
             .asset-workflow-selector,
-            .asset-workflow-grid { grid-template-columns: 1fr; }
+            .asset-workflow-grid,
+            .edit-tool-selector,
+            .edit-tool-grid { grid-template-columns: 1fr; }
         }
 
         /* 슬라이더 */
@@ -14983,52 +15092,62 @@
                     <input type="hidden" id="setting-asset-tag-analysis-workflow-source-path">
 
                     <!-- 전역 EDIT 툴 및 도구별 마스크 편집 워크플로우 -->
-                    <div class="setting-row" style="margin-top: 12px;">
-                        <div class="setting-label">
-                            <div class="title">✏️ EDIT 툴</div>
-                            <div class="desc">에셋 LV2의 동일한 편집 UI에서 호출할 전역 이미지 편집 엔진</div>
+                    <div class="edit-tool-config">
+                        <div class="edit-tool-selector">
+                            <div class="edit-tool-selector-copy">
+                                <div class="title">✏️ EDIT 툴</div>
+                                <div class="desc">에셋 LV2의 동일한 편집 UI에서 호출할 전역 이미지 편집 엔진. 선택한 엔진의 카드만 활성화됩니다.</div>
+                            </div>
+                            <select id="setting-asset-edit-tool" class="edit-tool-type-select"
+                                    onchange="onAssetEditToolChange(this.value)" aria-label="전역 EDIT 툴 선택">
+                                <option value="qwen">QWEN EDIT</option>
+                                <option value="anima_inpainting">ANIMA Inpainting</option>
+                            </select>
                         </div>
-                        <select id="setting-asset-edit-tool"
-                                onchange="onAssetEditToolChange(this.value)"
-                                style="min-width: 230px;">
-                            <option value="qwen">QWEN EDIT</option>
-                            <option value="anima_inpainting">ANIMA Inpainting</option>
-                        </select>
-                    </div>
-                    <div class="setting-row" style="margin-top: 8px;">
-                        <div class="setting-label">
-                            <div class="title">QWEN EDIT 워크플로우</div>
-                            <div class="desc">QWEN을 선택했을 때 사용할 UI 또는 API 워크플로우</div>
-                        </div>
-                    </div>
-                    <div class="form-group" style="margin-top: -8px;">
-                        <div class="autocomplete-wrapper">
-                            <input type="text" id="setting-qwen-edit-workflow-filename" placeholder="예: 배포_qwen_edit_v1_변환전.json"
-                                   oninput="onQwenEditWorkflowFilenameInput(this.value, true)"
-                                   onfocus="onQwenEditWorkflowFilenameInput(this.value, false)">
-                            <div class="autocomplete-list" id="qwen-edit-workflow-autocomplete"></div>
-                        </div>
-                        <div class="hint">공통설정 탭의 '베이스 경로'에서 검색됩니다 · UI 또는 API JSON을 사용할 수 있습니다</div>
-                    </div>
-                    <input type="hidden" id="setting-qwen-edit-workflow-source-path">
 
-                    <div class="setting-row" style="margin-top: 8px;">
-                        <div class="setting-label">
-                            <div class="title">ANIMA Inpainting 워크플로우</div>
-                            <div class="desc">ANIMA Inpainting을 선택했을 때 사용할 변환 전 UI 워크플로우</div>
+                        <div class="edit-tool-grid">
+                            <section class="edit-tool-card active" id="setting-qwen-edit-tool-card">
+                                <div class="edit-tool-card-head">
+                                    <div>
+                                        <div class="edit-tool-card-title">🟢 QWEN EDIT 워크플로우</div>
+                                        <div class="edit-tool-card-desc">QWEN을 선택했을 때 사용할 UI 또는 API 워크플로우</div>
+                                    </div>
+                                    <span class="edit-tool-status" id="setting-qwen-edit-tool-status">현재 사용</span>
+                                </div>
+                                <div class="form-group">
+                                    <div class="autocomplete-wrapper">
+                                        <input type="text" id="setting-qwen-edit-workflow-filename" placeholder="예: 배포_qwen_edit_v1_변환전.json"
+                                               oninput="onQwenEditWorkflowFilenameInput(this.value, true)"
+                                               onfocus="onQwenEditWorkflowFilenameInput(this.value, false)">
+                                        <div class="autocomplete-list" id="qwen-edit-workflow-autocomplete"></div>
+                                    </div>
+                                    <div class="hint">공통설정 탭의 '베이스 경로'에서 검색됩니다 · UI 또는 API JSON을 사용할 수 있습니다</div>
+                                </div>
+                                <input type="hidden" id="setting-qwen-edit-workflow-source-path">
+                            </section>
+
+                            <section class="edit-tool-card inactive" id="setting-anima-inpainting-tool-card">
+                                <div class="edit-tool-card-head">
+                                    <div>
+                                        <div class="edit-tool-card-title">🟣 ANIMA Inpainting 워크플로우</div>
+                                        <div class="edit-tool-card-desc">ANIMA Inpainting을 선택했을 때 사용할 변환 전 UI 워크플로우</div>
+                                    </div>
+                                    <span class="edit-tool-status" id="setting-anima-inpainting-tool-status">비활성</span>
+                                </div>
+                                <div class="form-group">
+                                    <div class="autocomplete-wrapper">
+                                        <input type="text" id="setting-anima-inpainting-workflow-filename"
+                                               placeholder="예: 배포_ANIMA_inpainting_v1.json"
+                                               oninput="onAnimaInpaintingWorkflowFilenameInput(this.value, true)"
+                                               onfocus="onAnimaInpaintingWorkflowFilenameInput(this.value, false)" disabled>
+                                        <div class="autocomplete-list" id="anima-inpainting-workflow-autocomplete"></div>
+                                    </div>
+                                    <div class="hint">공통설정 탭의 '베이스 경로'에서 검색됩니다</div>
+                                </div>
+                                <input type="hidden" id="setting-anima-inpainting-workflow-source-path">
+                            </section>
                         </div>
                     </div>
-                    <div class="form-group" style="margin-top: -8px;">
-                        <div class="autocomplete-wrapper">
-                            <input type="text" id="setting-anima-inpainting-workflow-filename"
-                                   placeholder="예: 배포_ANIMA_inpainting_v1.json"
-                                   oninput="onAnimaInpaintingWorkflowFilenameInput(this.value, true)"
-                                   onfocus="onAnimaInpaintingWorkflowFilenameInput(this.value, false)">
-                            <div class="autocomplete-list" id="anima-inpainting-workflow-autocomplete"></div>
-                        </div>
-                        <div class="hint">공통설정 탭의 '베이스 경로'에서 검색됩니다 · 전역 EDIT 툴 선택과 독립적으로 경로를 저장합니다</div>
-                    </div>
-                    <input type="hidden" id="setting-anima-inpainting-workflow-source-path">
                 </div>
 
                 <!-- 캐릭터 메이커 설정 -->
@@ -23015,6 +23134,26 @@
             if (value && value !== normalized) {
                 console.error('[EDIT_TOOL] 지원하지 않는 전역 EDIT 툴:', value);
             }
+            // 에셋 워크플로우 카드와 동일하게 활성/비활성 토글
+            const qwenCard = document.getElementById('setting-qwen-edit-tool-card');
+            const qwenInput = document.getElementById('setting-qwen-edit-workflow-filename');
+            const qwenStatus = document.getElementById('setting-qwen-edit-tool-status');
+            const animaCard = document.getElementById('setting-anima-inpainting-tool-card');
+            const animaInput = document.getElementById('setting-anima-inpainting-workflow-filename');
+            const animaStatus = document.getElementById('setting-anima-inpainting-tool-status');
+            const states = [
+                [qwenCard, qwenInput, qwenStatus, normalized === 'qwen'],
+                [animaCard, animaInput, animaStatus, normalized === 'anima_inpainting'],
+            ];
+            states.forEach(([card, input, status, active]) => {
+                card?.classList.toggle('active', active);
+                card?.classList.toggle('inactive', !active);
+                if (input) input.disabled = !active;
+                if (status) status.textContent = active ? '현재 사용' : '비활성';
+            });
+            document.getElementById('qwen-edit-workflow-autocomplete')?.classList.remove('visible');
+            document.getElementById('anima-inpainting-workflow-autocomplete')?.classList.remove('visible');
+            if (currentConfig) currentConfig.asset_edit_tool = normalized;
         }
 
         // ANIMA Inpainting 워크플로우 자동완성
