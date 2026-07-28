@@ -4696,6 +4696,23 @@
             position: relative;
             z-index: 0;
         }
+        .qwen-brush-cursor {
+            position: absolute;
+            z-index: 6;
+            border-radius: 50%;
+            border: 1.5px solid #38bdf8;
+            box-sizing: border-box;
+            pointer-events: none;
+            transform: translate(-50%, -50%);
+            /* 밝/어두운 배경 모두에서 테두리가 보이도록 바깥 어두운 링 추가 */
+            box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.55);
+            display: none;
+        }
+        .qwen-brush-cursor.visible { display: block; }
+        .qwen-brush-cursor.eraser {
+            border-color: #fbbf24;
+            border-style: dashed;
+        }
         .qwen-composite-layer {
             position: absolute;
             inset: 0;
@@ -55972,6 +55989,7 @@
                                     <div id="au-qwen-composite-layer" class="qwen-composite-layer"></div>
                                     <canvas id="au-qwen-mask-canvas"></canvas>
                                 </div>
+                                <div class="qwen-brush-cursor" id="au-qwen-brush-cursor"></div>
                             </div>
                             <div class="qwen-mask-help">반투명 파란색으로 칠한 영역과 합성 아이템 영역을 합쳐 Qwen latent 샘플링 마스크로 전달합니다.</div>
                         </section>
@@ -56057,6 +56075,7 @@
                     : tool === 'composite' ? 'default'
                     : 'crosshair';
                 auQwenSetCompositeInteraction(tool === 'composite');
+                auQwenRefreshBrushCursor();
             };
             brushButton.addEventListener('click', () => setTool('brush'));
             eraserButton.addEventListener('click', () => setTool('eraser'));
@@ -56068,6 +56087,7 @@
                 .addEventListener('click', auQwenRemoveSelectedComposite);
             brushSize.addEventListener('input', () => {
                 modal.querySelector('#au-qwen-brush-size-label').textContent = brushSize.value;
+                auQwenRefreshBrushCursor();
             });
             const updateMaskDisplayOpacity = () => {
                 const percent = Math.max(
@@ -56155,6 +56175,11 @@
                 ctx.stroke();
             });
             canvas.addEventListener('pointermove', (event) => {
+                if (auQwenEditState) {
+                    auQwenEditState.cursorClientX = event.clientX;
+                    auQwenEditState.cursorClientY = event.clientY;
+                }
+                auQwenRefreshBrushCursor();
                 if (auQwenEditState?.panning) {
                     event.preventDefault();
                     auQwenEditState.panX =
@@ -56195,10 +56220,25 @@
             };
             canvas.addEventListener('pointerup', finishStroke);
             canvas.addEventListener('pointercancel', finishStroke);
+            canvas.addEventListener('pointerenter', (event) => {
+                if (auQwenEditState) {
+                    auQwenEditState.cursorInside = true;
+                    auQwenEditState.cursorClientX = event.clientX;
+                    auQwenEditState.cursorClientY = event.clientY;
+                }
+                auQwenRefreshBrushCursor();
+            });
+            canvas.addEventListener('pointerleave', () => {
+                const s = auQwenEditState;
+                // 드로우/팬 중(포인터 캡처)에는 커서가 벗어나도 숨기지 않는다.
+                if (s && (s.drawing || s.panning)) return;
+                if (s) s.cursorInside = false;
+                auQwenRefreshBrushCursor();
+            });
             const stage = modal.querySelector('.qwen-mask-stage');
             stage.addEventListener('wheel', (event) => {
                 event.preventDefault();
-                if (!auQwenEditState || auQwenEditState.tool !== 'move') return;
+                if (!auQwenEditState) return;
                 const direction = event.deltaY < 0 ? 1 : -1;
                 const factor = event.shiftKey ? 1.25 : 1.12;
                 const target = direction > 0
@@ -56599,6 +56639,7 @@
                                     <canvas id="au-qwen-item-edit-canvas"></canvas>
                                     <div class="qwen-item-crop-box" id="au-qwen-item-crop-box"></div>
                                 </div>
+                                <div class="qwen-brush-cursor eraser" id="au-qwen-item-brush-cursor"></div>
                                 <div class="qwen-item-editor-empty" id="au-qwen-item-editor-empty">
                                     새 이미지를 업로드하거나 오른쪽 아이템 박스에서 불러오세요.<br>
                                     드래그 앤 드롭도 지원합니다.
@@ -56660,6 +56701,7 @@
             const brush = modal.querySelector('#au-qwen-item-brush-size');
             brush.addEventListener('input', () => {
                 modal.querySelector('#au-qwen-item-brush-label').textContent = brush.value;
+                auQwenRefreshItemBrushCursor();
             });
             modal.querySelector('#au-qwen-item-undo-btn')
                 .addEventListener('click', auQwenUndoItemEditor);
@@ -56756,6 +56798,10 @@
             canvas.addEventListener('pointermove', (event) => {
                 const state = auQwenCompositeEditorState;
                 if (!state) return;
+                state.cursorInside = true;
+                state.cursorClientX = event.clientX;
+                state.cursorClientY = event.clientY;
+                auQwenRefreshItemBrushCursor();
                 if (state.panning) {
                     event.preventDefault();
                     state.panX =
@@ -56808,6 +56854,22 @@
             };
             canvas.addEventListener('pointerup', finishEditGesture);
             canvas.addEventListener('pointercancel', finishEditGesture);
+            canvas.addEventListener('pointerenter', (event) => {
+                const state = auQwenCompositeEditorState;
+                if (state) {
+                    state.cursorInside = true;
+                    state.cursorClientX = event.clientX;
+                    state.cursorClientY = event.clientY;
+                }
+                auQwenRefreshItemBrushCursor();
+            });
+            canvas.addEventListener('pointerleave', () => {
+                const state = auQwenCompositeEditorState;
+                // 지우기/팬/자르기 중(포인터 캡처)에는 커서가 벗어나도 숨기지 않는다.
+                if (state && (state.erasing || state.panning || state.cropping)) return;
+                if (state) state.cursorInside = false;
+                auQwenRefreshItemBrushCursor();
+            });
             stage.addEventListener('wheel', (event) => {
                 const state = auQwenCompositeEditorState;
                 if (!state?.loaded) return;
@@ -56861,6 +56923,7 @@
                 tool === 'move' ? 'grab'
                 : tool === 'crop' ? 'crosshair'
                 : 'cell';
+            auQwenRefreshItemBrushCursor();
         }
 
         function auOpenQwenCompositeLibrary() {
@@ -57049,6 +57112,37 @@
             auQwenFitItemEditor();
             state.status.textContent =
                 `편집 ${state.canvas.width}×${state.canvas.height} · 맞춤 보기`;
+        }
+
+        // 합성 아이템 에디터의 지우개 작업 영향 범위를 속이 빈 원으로 미리 표시.
+        function auQwenRefreshItemBrushCursor() {
+            const s = auQwenCompositeEditorState;
+            const cursor = s?.modal?.querySelector('#au-qwen-item-brush-cursor');
+            if (!cursor) return;
+            if (
+                !s
+                || !s.cursorInside
+                || s.tool !== 'eraser'
+                || !s.loaded
+                || !s.canvas
+                || !s.canvas.width
+            ) {
+                cursor.classList.remove('visible');
+                return;
+            }
+            const rect = s.canvas.getBoundingClientRect();
+            if (!rect.width || !rect.height) {
+                cursor.classList.remove('visible');
+                return;
+            }
+            const brushInput = s.modal.querySelector('#au-qwen-item-brush-size');
+            const diameter = (Number(brushInput?.value) || 48) / s.canvas.width * rect.width;
+            const stageRect = s.stage.getBoundingClientRect();
+            cursor.style.width = `${diameter}px`;
+            cursor.style.height = `${diameter}px`;
+            cursor.style.left = `${(s.cursorClientX || 0) - stageRect.left}px`;
+            cursor.style.top = `${(s.cursorClientY || 0) - stageRect.top}px`;
+            cursor.classList.add('visible');
         }
 
         function auQwenCaptureItemEditorHistory() {
@@ -57655,6 +57749,41 @@
             state.panX = 0;
             state.panY = 0;
             auQwenApplyTransform();
+        }
+
+        // 브러시/지우개 작업 영향 범위를 속이 빈 원으로 미리 표시.
+        // canvas.getBoundingClientRect()가 줌을 반영하므로 지름 = brushSize / canvas.width * 화면 폭.
+        function auQwenRefreshBrushCursor() {
+            const s = auQwenEditState;
+            const canvasEl = s?.canvas;
+            const modalEl = canvasEl?.closest('.qwen-edit-modal');
+            const cursor = modalEl?.querySelector('#au-qwen-brush-cursor');
+            if (!cursor) return;
+            if (
+                !s
+                || !s.cursorInside
+                || (s.tool !== 'brush' && s.tool !== 'eraser')
+                || !canvasEl
+                || !canvasEl.width
+            ) {
+                cursor.classList.remove('visible');
+                return;
+            }
+            const rect = canvasEl.getBoundingClientRect();
+            if (!rect.width || !rect.height) {
+                cursor.classList.remove('visible');
+                return;
+            }
+            const brushInput = modalEl.querySelector('#au-qwen-brush-size');
+            const stageEl = canvasEl.closest('.qwen-mask-stage');
+            const diameter = (Number(brushInput?.value) || 48) / canvasEl.width * rect.width;
+            const stageRect = stageEl.getBoundingClientRect();
+            cursor.style.width = `${diameter}px`;
+            cursor.style.height = `${diameter}px`;
+            cursor.style.left = `${(s.cursorClientX || 0) - stageRect.left}px`;
+            cursor.style.top = `${(s.cursorClientY || 0) - stageRect.top}px`;
+            cursor.classList.toggle('eraser', s.tool === 'eraser');
+            cursor.classList.add('visible');
         }
 
         const AU_QWEN_ADVANCED_IDS = [
