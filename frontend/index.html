@@ -4563,10 +4563,11 @@
             border-radius: 4px;
             font-weight: 600;
         }
+        .asset-img-frame { position: relative; }
         .asset-image-card .edit-badge {
             position: absolute;
-            top: 8px;
-            left: 42px;
+            bottom: 8px;
+            right: 8px;
             z-index: 2;
             padding: 3px 8px;
             border-radius: 999px;
@@ -56120,8 +56121,10 @@
                     card.innerHTML = `
                         <div class="au-select-check" onclick="event.stopPropagation(); auToggleSelect(this, '${imgUrl}')" title="선택">☐</div>
                         ${img.is_representative ? '<div class="rep-badge">대표</div>' : ''}
-                        ${img.is_edited ? '<div class="edit-badge">EDIT됨</div>' : ''}
-                        <img src="${imgUrl}" onclick="openLightbox(this.src)" loading="lazy">
+                        <div class="asset-img-frame">
+                            <img src="${imgUrl}" onclick="openLightbox(this.src)" loading="lazy">
+                            ${img.is_edited ? '<div class="edit-badge">EDIT됨</div>' : ''}
+                        </div>
                         <div class="card-actions">
                             <span class="filename">${escapeHtml(img.filename)}</span>
                             <button onclick="setAssetRepresentative('${enc(charName)}','${enc(outfit)}','${enc(expression)}','${enc(img.filename)}'); auRenderImages('${escapeHtml(charName)}','${escapeHtml(outfit)}','${escapeHtml(expression)}')">
@@ -60469,8 +60472,10 @@
                     const hasPrompt = img.positive || img.negative || img.edit_prompt;
                     card.innerHTML = `
                         ${img.is_representative ? '<div class="rep-badge">대표</div>' : ''}
-                        ${img.is_edited ? '<div class="edit-badge">EDIT됨</div>' : ''}
-                        <img src="${imgUrl}" onclick="openLightbox(this.src)" loading="lazy">
+                        <div class="asset-img-frame">
+                            <img src="${imgUrl}" onclick="openLightbox(this.src)" loading="lazy">
+                            ${img.is_edited ? '<div class="edit-badge">EDIT됨</div>' : ''}
+                        </div>
                         <div class="card-actions">
                             <span class="filename">${escapeHtml(img.filename)}</span>
                             <button onclick="setAssetRepresentative('${enc(char)}','${enc(outfit)}','${enc(expr)}','${enc(img.filename)}')">
