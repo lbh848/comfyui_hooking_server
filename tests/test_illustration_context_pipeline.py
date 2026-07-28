@@ -3265,11 +3265,13 @@ async def test_multi_char_layout_rejects_unseparated_prompt(monkeypatch):
 async def test_pipeline_llm_records_success_in_lighbd_history(monkeypatch):
     records = []
     events = []
+    call_kwargs = {}
     messages = [{"role": "user", "content": "scene"}]
 
-    async def fake_call(task_key, actual_messages, **_kwargs):
+    async def fake_call(task_key, actual_messages, **kwargs):
         assert task_key == "illustration_call1"
         assert actual_messages == messages
+        call_kwargs.update(kwargs)
         return "completed output"
 
     async def fake_notify(event):
@@ -3288,6 +3290,13 @@ async def test_pipeline_llm_records_success_in_lighbd_history(monkeypatch):
     assert records[0]["input"] == messages
     assert records[0]["output"] == "completed output"
     assert records[0]["status"] == "ok"
+    assert records[0]["execution_id"]
+    assert records[0]["history_id"] == records[0]["execution_id"]
+    assert call_kwargs["execution_id"] == records[0]["execution_id"]
+    assert callable(call_kwargs["execution_observer"])
+    assert {event["execution_id"] for event in events} == {
+        records[0]["execution_id"]
+    }
 
 
 @pytest.mark.asyncio

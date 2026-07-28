@@ -20809,6 +20809,16 @@
 채택 스트림 ID: ${escapeHtml(record.winner_stream_id || '(없음)')}</pre>
                         </section>`
                 : '';
+            const executionSectionHtml = record.execution_id
+                ? `<section class="lighbd-detail-section">
+                            <div class="lighbd-detail-section-title">LLM 실행 연결 정보</div>
+                            <pre class="lighbd-detail-content">실행 ID: ${escapeHtml(record.execution_id)}
+부모 실행 ID: ${escapeHtml(record.parent_execution_id || '(없음)')}
+시도 ID: ${escapeHtml(record.attempt_id || '(최종 결과)')}
+라우팅: ${escapeHtml(record.phase || '-')} / ${escapeHtml(record.llm_slot || '-')}
+시도: ${escapeHtml(record.attempt ? `${record.attempt}/${record.total_attempts || '?'}` : '-')}</pre>
+                        </section>`
+                : '';
 
             const overlay = document.createElement('div');
             overlay.id = 'lighbd-history-detail-overlay';
@@ -20836,6 +20846,7 @@
                             <div class="lighbd-detail-section-title">입력 전체</div>
                             <pre class="lighbd-detail-content">${escapeHtml(inputText)}</pre>
                         </section>
+                        ${executionSectionHtml}
                         ${raceSectionHtml}
                         ${outputSectionHtml}
                     </div>

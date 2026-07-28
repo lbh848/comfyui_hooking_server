@@ -23,9 +23,10 @@ import uuid
 import weakref
 from contextlib import asynccontextmanager, suppress
 from contextvars import ContextVar
+from dataclasses import dataclass, field
 import aiohttp
 import httpx
-from typing import Optional
+from typing import Any, Optional
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 KEY_DIR = os.path.join(BASE_DIR, "key")
@@ -1119,6 +1120,166 @@ _stream_notify_func = None
 _manual_parallel_history_func = None
 
 
+@dataclass(frozen=True)
+class LLMExecutionContext:
+    """하나의 논리 LLM 실행을 재시도·폴백·상위 파이프라인까지 연결하는 식별자."""
+
+    execution_id: str
+    parent_execution_id: str
+    task_key: str
+    call_name: str
+    json_mode: bool
+    started_at: float
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "execution_id": self.execution_id,
+            "parent_execution_id": self.parent_execution_id,
+            "task_key": self.task_key,
+            "call_name": self.call_name,
+            "json_mode": self.json_mode,
+            "started_at": self.started_at,
+            "metadata": dict(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class LLMAttemptEvent:
+    """라우팅 계층이 만드는 공급자 호출 1회의 정규화된 이벤트."""
+
+    event_type: str
+    context: LLMExecutionContext
+    phase: str
+    slot: str
+    attempt: int
+    total_attempts: int
+    attempt_id: str
+    accepted: bool | None = None
+    reason: str = ""
+    raw_response: Any = None
+    error: str = ""
+    elapsed: float = 0.0
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "type": self.event_type,
+            "execution_id": self.context.execution_id,
+            "parent_execution_id": self.context.parent_execution_id,
+            "task_key": self.context.task_key,
+            "call_name": self.context.call_name,
+            "phase": self.phase,
+            "slot": self.slot,
+            "llm_slot": self.slot,
+            "attempt": self.attempt,
+            "total_attempts": self.total_attempts,
+            "attempt_id": self.attempt_id,
+            "accepted": self.accepted,
+            "reason": self.reason,
+            "raw_response": self.raw_response,
+            # 기존 on_attempt_failure 소비자와의 호환 필드.
+            "result": self.raw_response,
+            "error": self.error,
+            "exception": self.error or None,
+            "elapsed": round(float(self.elapsed), 6),
+        }
+
+
+@dataclass
+class LLMExecutionResult:
+    """문자열 공개 계약 아래에서 사용하는 공통 최종 실행 결과."""
+
+    context: LLMExecutionContext
+    accepted: bool
+    text: str
+    raw_response: Any
+    reason: str
+    final_phase: str
+    final_slot: str
+    exception: BaseException | None = None
+    events: list[dict[str, Any]] = field(default_factory=list)
+
+    def to_legacy(self) -> str:
+        """기존 callLLMTask/callLLMVisionTask의 str-or-raise 계약으로 변환한다."""
+        if not self.accepted and self.exception is not None:
+            raise self.exception
+        return self.text
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "execution": self.context.to_dict(),
+            "accepted": self.accepted,
+            "text": self.text,
+            "raw_response": self.raw_response,
+            "reason": self.reason,
+            "final_phase": self.final_phase,
+            "final_slot": self.final_slot,
+            "error": (
+                f"{type(self.exception).__name__}: {self.exception}"
+                if self.exception is not None
+                else ""
+            ),
+            "events": [dict(event) for event in self.events],
+        }
+
+
+def create_llm_execution_context(
+    task_key: str,
+    *,
+    call_name: str = "",
+    json_mode: bool = False,
+    execution_id: str = "",
+    parent_execution_id: str = "",
+    metadata: dict | None = None,
+) -> LLMExecutionContext:
+    """현재 ContextVar 메타데이터를 상속해 요청별 실행 컨텍스트를 만든다."""
+    inherited = dict(_stream_metadata_ctx.get() or {})
+    supplied = dict(metadata or {})
+    merged = {**inherited, **supplied}
+    resolved_execution_id = str(
+        execution_id
+        or merged.get("execution_id")
+        or merged.get("history_id")
+        or uuid.uuid4().hex
+    )
+    resolved_parent_id = str(
+        parent_execution_id
+        or merged.get("parent_execution_id")
+        or ""
+    )
+    resolved_call_name = str(
+        call_name
+        or merged.get("call_name")
+        or task_key
+    )
+    return LLMExecutionContext(
+        execution_id=resolved_execution_id,
+        parent_execution_id=resolved_parent_id,
+        task_key=str(task_key),
+        call_name=resolved_call_name,
+        json_mode=bool(json_mode),
+        started_at=time.time(),
+        metadata=merged,
+    )
+
+
+async def _emit_execution_observer(observer, event: dict) -> None:
+    """실행 관찰자 오류가 실제 LLM 라우팅을 깨지 않도록 격리한다."""
+    if observer is None:
+        return
+    try:
+        result = observer(dict(event))
+        if inspect.isawaitable(result):
+            await result
+    except Exception as e:
+        print(
+            f"[LLM_EXECUTION] 실행 관찰자 실패: "
+            f"error={type(e).__name__}: {e}, event_type={event.get('type')!r}, "
+            f"execution_id={event.get('execution_id')!r}"
+        )
+        traceback.print_exc()
+
+
 async def _emit_request_stream_observer(event: dict) -> None:
     """현재 요청에 등록된 스트림 관찰자에게 이벤트를 안전하게 전달한다."""
     observer = _stream_observer_ctx.get()
@@ -2022,13 +2183,33 @@ async def _invoke_routed_with_retry(
     invoke,
     result_validator=None,
     on_attempt_failure=None,
+    execution_context: LLMExecutionContext | None = None,
+    execution_observer=None,
+    attempt_events: list[dict] | None = None,
 ):
     """한 LLM 슬롯을 설정 횟수만큼 호출하며 결과와 성공 여부를 반환한다."""
+    context = execution_context or create_llm_execution_context(task_key)
     total_attempts = max_retries + 1
     last_result = None
     last_reason = "호출되지 않음"
     last_exception = None
     for attempt in range(1, total_attempts + 1):
+        attempt_started = time.monotonic()
+        attempt_id = (
+            f"{context.execution_id}:{phase}:{slot}:{attempt}"
+        )
+        start_event = LLMAttemptEvent(
+            event_type="attempt_start",
+            context=context,
+            phase=phase,
+            slot=slot,
+            attempt=attempt,
+            total_attempts=total_attempts,
+            attempt_id=attempt_id,
+        ).to_dict()
+        if attempt_events is not None:
+            attempt_events.append(start_event)
+        await _emit_execution_observer(execution_observer, start_event)
         try:
             last_result = await invoke(slot)
             last_exception = None
@@ -2047,6 +2228,21 @@ async def _invoke_routed_with_retry(
             traceback.print_exc()
 
         if accepted:
+            success_event = LLMAttemptEvent(
+                event_type="attempt_success",
+                context=context,
+                phase=phase,
+                slot=slot,
+                attempt=attempt,
+                total_attempts=total_attempts,
+                attempt_id=attempt_id,
+                accepted=True,
+                raw_response=last_result,
+                elapsed=time.monotonic() - attempt_started,
+            ).to_dict()
+            if attempt_events is not None:
+                attempt_events.append(success_event)
+            await _emit_execution_observer(execution_observer, success_event)
             if attempt > 1:
                 _llm_log(
                     f"callLLMTask[{task_key}]: {phase} 재시도 성공 "
@@ -2058,21 +2254,35 @@ async def _invoke_routed_with_retry(
             f"[LLM_ROUTE] 호출 실패: task={task_key}, phase={phase}, slot={slot}, "
             f"attempt={attempt}/{total_attempts}, reason={last_reason}"
         )
+        failure_event = LLMAttemptEvent(
+            event_type="attempt_failure",
+            context=context,
+            phase=phase,
+            slot=slot,
+            attempt=attempt,
+            total_attempts=total_attempts,
+            attempt_id=attempt_id,
+            accepted=False,
+            reason=last_reason,
+            raw_response=last_result,
+            error=(
+                f"{type(last_exception).__name__}: {last_exception}"
+                if last_exception is not None
+                else ""
+            ),
+            elapsed=time.monotonic() - attempt_started,
+        ).to_dict()
+        if attempt_events is not None:
+            attempt_events.append(failure_event)
+        await _emit_execution_observer(execution_observer, failure_event)
         # 상위 호출자가 per-attempt history 콜백을 걸어두었으면 각 실패 시도를 자세히에
         # 개별 기록하도록 알린다(messages/sink는 호출자 클로저가 캡처). 로깅이 라우팅 흐름을
         # 망가뜨리지 않도록 예외는 삼킨다.
         if on_attempt_failure is not None:
             try:
-                _cb_res = on_attempt_failure({
-                    "task_key": task_key,
-                    "phase": phase,
-                    "slot": slot,
-                    "attempt": attempt,
-                    "total_attempts": total_attempts,
-                    "reason": last_reason,
-                    "result": last_result,
-                    "exception": last_exception,
-                })
+                legacy_failure_event = dict(failure_event)
+                legacy_failure_event["exception"] = last_exception
+                _cb_res = on_attempt_failure(legacy_failure_event)
                 if inspect.isawaitable(_cb_res):
                     await _cb_res
             except Exception:
@@ -2148,7 +2358,7 @@ async def _call_routed_text_slot(
         _request_config_override_ctx.reset(config_token)
 
 
-async def callLLMTask(
+async def callLLMTaskResult(
     task_key: str,
     messages: list,
     model: str = None,
@@ -2157,9 +2367,13 @@ async def callLLMTask(
     stream_observer=None,
     metadata_sink: dict | None = None,
     on_attempt_failure=None,
-) -> str:
+    execution_context: LLMExecutionContext | None = None,
+    execution_id: str = "",
+    parent_execution_id: str = "",
+    execution_observer=None,
+) -> LLMExecutionResult:
     """
-    작업별 라우팅 텍스트 LLM 호출.
+    작업별 라우팅 텍스트 LLM 호출의 공통 내부 결과를 반환한다.
 
     config["llm_routing"][task_key] 의 primary(llm1/llm2/llm3) 에 따라 메인 LLM 호출 후,
     작업별 설정에 따라 메인 LLM을 재시도한 뒤, 실패하면 폴백 LLM도 별도 정책으로
@@ -2171,12 +2385,30 @@ async def callLLMTask(
     entry = (_current_config.get("llm_routing") or {}).get(task_key, {}) or {}
     rj = entry.get("json_mode", None)
     eff_json = (bool(rj) if rj is not None else json_mode)
+    context = execution_context or create_llm_execution_context(
+        task_key,
+        json_mode=eff_json,
+        execution_id=execution_id,
+        parent_execution_id=parent_execution_id,
+    )
+    attempt_events: list[dict] = []
+
     async def _invoke(slot: str) -> str:
         parent_metadata = dict(_stream_metadata_ctx.get() or {})
         meta_token = _stream_metadata_ctx.set({
             "task_key": task_key,
-            "call_name": str(parent_metadata.get("call_name") or task_key),
+            "call_name": context.call_name,
             "llm_slot": slot,
+            "execution_id": context.execution_id,
+            "parent_execution_id": context.parent_execution_id,
+            **{
+                key: value
+                for key, value in parent_metadata.items()
+                if key not in {
+                    "task_key", "call_name", "llm_slot",
+                    "execution_id", "parent_execution_id",
+                }
+            },
         })
         observer_token = _stream_observer_ctx.set(stream_observer)
         sink_token = _usage_sink_ctx.set(metadata_sink) if metadata_sink is not None else None
@@ -2214,8 +2446,12 @@ async def callLLMTask(
         _invoke,
         result_validator,
         on_attempt_failure=on_attempt_failure,
+        execution_context=context,
+        execution_observer=execution_observer,
+        attempt_events=attempt_events,
     )
     final_phase = "primary"
+    final_slot = primary
     if fb_target is not None and not accepted:
         _llm_log(
             f"callLLMTask[{task_key}]: primary 소진→폴백 시도 "
@@ -2230,26 +2466,94 @@ async def callLLMTask(
             _invoke,
             result_validator,
             on_attempt_failure=on_attempt_failure,
+            execution_context=context,
+            execution_observer=execution_observer,
+            attempt_events=attempt_events,
         )
         final_phase = "fallback"
-    if not accepted and last_exception is not None:
-        raise last_exception
+        final_slot = fb_target
+
     if not accepted:
         if isinstance(result, str) and result.strip().startswith("[LLM 실패]"):
-            _fill_usage_sink_fallback(metadata_sink, result, messages)
-            return result
-        _llm_log(
-            f"[LLM_ROUTE] 최종 검증 실패: task={task_key}, "
-            f"phase={final_phase}, reason={reason}, "
-            f"raw={str(result or '')[:300]!r}"
-        )
-        failure = (
-            f"[LLM 실패] {task_key} {final_phase} 재시도 소진: {reason}"
-        )
-        _fill_usage_sink_fallback(metadata_sink, failure, messages)
-        return failure
-    _fill_usage_sink_fallback(metadata_sink, result, messages)
-    return result
+            final_text = result
+        else:
+            _llm_log(
+                f"[LLM_ROUTE] 최종 검증 실패: task={task_key}, "
+                f"phase={final_phase}, reason={reason}, "
+                f"raw={str(result or '')[:300]!r}"
+            )
+            final_text = (
+                f"[LLM 실패] {task_key} {final_phase} 재시도 소진: {reason}"
+            )
+    else:
+        final_text = result if isinstance(result, str) else str(result or "")
+
+    _fill_usage_sink_fallback(metadata_sink, final_text, messages)
+    complete_event = {
+        "type": "execution_complete",
+        "execution_id": context.execution_id,
+        "parent_execution_id": context.parent_execution_id,
+        "task_key": context.task_key,
+        "call_name": context.call_name,
+        "accepted": accepted,
+        "phase": final_phase,
+        "slot": final_slot,
+        "llm_slot": final_slot,
+        "reason": reason if not accepted else "",
+        "raw_response": result,
+        "text": final_text,
+        "error": (
+            f"{type(last_exception).__name__}: {last_exception}"
+            if last_exception is not None
+            else ""
+        ),
+        "elapsed": round(time.time() - context.started_at, 6),
+    }
+    attempt_events.append(complete_event)
+    await _emit_execution_observer(execution_observer, complete_event)
+    return LLMExecutionResult(
+        context=context,
+        accepted=accepted,
+        text=final_text,
+        raw_response=result,
+        reason=reason if not accepted else "",
+        final_phase=final_phase,
+        final_slot=final_slot,
+        exception=last_exception if not accepted else None,
+        events=attempt_events,
+    )
+
+
+async def callLLMTask(
+    task_key: str,
+    messages: list,
+    model: str = None,
+    json_mode: bool = False,
+    result_validator=None,
+    stream_observer=None,
+    metadata_sink: dict | None = None,
+    on_attempt_failure=None,
+    execution_context: LLMExecutionContext | None = None,
+    execution_id: str = "",
+    parent_execution_id: str = "",
+    execution_observer=None,
+) -> str:
+    """기존 문자열 계약을 유지하는 작업별 텍스트 LLM 공개 함수."""
+    execution_result = await callLLMTaskResult(
+        task_key,
+        messages,
+        model=model,
+        json_mode=json_mode,
+        result_validator=result_validator,
+        stream_observer=stream_observer,
+        metadata_sink=metadata_sink,
+        on_attempt_failure=on_attempt_failure,
+        execution_context=execution_context,
+        execution_id=execution_id,
+        parent_execution_id=parent_execution_id,
+        execution_observer=execution_observer,
+    )
+    return execution_result.to_legacy()
 
 
 async def callLLMVision2(messages: list, image_b64: str = None, image_mime: str = "image/webp",
@@ -2340,7 +2644,7 @@ async def callLLMVision3(messages: list, image_b64: str = None, image_mime: str 
         _request_config_override_ctx.reset(config_token)
 
 
-async def callLLMVisionTask(
+async def callLLMVisionTaskResult(
     task_key: str,
     messages: list,
     image_b64: str = None,
@@ -2351,9 +2655,14 @@ async def callLLMVisionTask(
     images: list = None,
     metadata_sink: dict | None = None,
     on_attempt_failure=None,
-) -> str:
+    stream_observer=None,
+    execution_context: LLMExecutionContext | None = None,
+    execution_id: str = "",
+    parent_execution_id: str = "",
+    execution_observer=None,
+) -> LLMExecutionResult:
     """
-    작업별 라우팅 비전 LLM 호출.
+    작업별 라우팅 비전 LLM 호출의 공통 내부 결과를 반환한다.
 
     config["llm_routing"][task_key] 의 primary(llm1/llm2/llm3) 에 따라 메인 비전 LLM 호출 후,
     작업별 설정에 따라 메인 비전 LLM을 재시도한 뒤, 실패하면 폴백 비전 LLM도 별도
@@ -2367,6 +2676,13 @@ async def callLLMVisionTask(
     entry = (_current_config.get("llm_routing") or {}).get(task_key, {}) or {}
     rj = entry.get("json_mode", None)
     eff_json = (bool(rj) if rj is not None else json_mode)
+    context = execution_context or create_llm_execution_context(
+        task_key,
+        json_mode=eff_json,
+        execution_id=execution_id,
+        parent_execution_id=parent_execution_id,
+    )
+    attempt_events: list[dict] = []
     _vision_funcs = {
         "llm1": callLLMVision,
         "llm2": callLLMVision2,
@@ -2377,13 +2693,32 @@ async def callLLMVisionTask(
 
     async def _invoke(slot: str) -> str:
         func = _vision_funcs.get(slot, callLLMVision)
+        parent_metadata = dict(_stream_metadata_ctx.get() or {})
         meta_token = _stream_metadata_ctx.set({
             "task_key": task_key,
-            "call_name": task_key,
+            "call_name": context.call_name,
             "llm_slot": slot,
+            "execution_id": context.execution_id,
+            "parent_execution_id": context.parent_execution_id,
+            **{
+                key: value
+                for key, value in parent_metadata.items()
+                if key not in {
+                    "task_key", "call_name", "llm_slot",
+                    "execution_id", "parent_execution_id",
+                }
+            },
         })
+        observer_token = _stream_observer_ctx.set(stream_observer)
         sink_token = _usage_sink_ctx.set(metadata_sink) if metadata_sink is not None else None
         try:
+            stream_key = "llm_stream" if slot == "llm1" else f"llm_stream{slot[-1]}"
+            await _emit_request_stream_observer({
+                "type": "request_mode",
+                "task_key": task_key,
+                "llm_slot": slot,
+                "streaming": bool(_base_config_get(stream_key, False)),
+            })
             if images:
                 # 다중 이미지: 단일 image_b64 자리는 무시하고 images 로 전송.
                 return await func(
@@ -2396,6 +2731,7 @@ async def callLLMVisionTask(
         finally:
             if sink_token is not None:
                 _usage_sink_ctx.reset(sink_token)
+            _stream_observer_ctx.reset(observer_token)
             _stream_metadata_ctx.reset(meta_token)
 
     retry_policy = _routing_retry_policy(task_key)
@@ -2412,8 +2748,12 @@ async def callLLMVisionTask(
         _invoke,
         result_validator,
         on_attempt_failure=on_attempt_failure,
+        execution_context=context,
+        execution_observer=execution_observer,
+        attempt_events=attempt_events,
     )
     final_phase = "primary"
+    final_slot = primary
     if fb_target in _vision_funcs and not accepted:
         _llm_log(
             f"callLLMVisionTask[{task_key}]: primary 소진→폴백 시도 "
@@ -2428,26 +2768,100 @@ async def callLLMVisionTask(
             _invoke,
             result_validator,
             on_attempt_failure=on_attempt_failure,
+            execution_context=context,
+            execution_observer=execution_observer,
+            attempt_events=attempt_events,
         )
         final_phase = "fallback"
-    if not accepted and last_exception is not None:
-        raise last_exception
+        final_slot = fb_target
+
     if not accepted:
         if isinstance(result, str) and result.strip().startswith("[LLM 실패]"):
-            _fill_usage_sink_fallback(metadata_sink, result, messages)
-            return result
-        _llm_log(
-            f"[LLM_ROUTE] 최종 검증 실패: task={task_key}, "
-            f"phase={final_phase}, reason={reason}, "
-            f"raw={str(result or '')[:300]!r}"
-        )
-        failure = (
-            f"[LLM 실패] {task_key} {final_phase} 재시도 소진: {reason}"
-        )
-        _fill_usage_sink_fallback(metadata_sink, failure, messages)
-        return failure
-    _fill_usage_sink_fallback(metadata_sink, result, messages)
-    return result
+            final_text = result
+        else:
+            _llm_log(
+                f"[LLM_ROUTE] 최종 검증 실패: task={task_key}, "
+                f"phase={final_phase}, reason={reason}, "
+                f"raw={str(result or '')[:300]!r}"
+            )
+            final_text = (
+                f"[LLM 실패] {task_key} {final_phase} 재시도 소진: {reason}"
+            )
+    else:
+        final_text = result if isinstance(result, str) else str(result or "")
+
+    _fill_usage_sink_fallback(metadata_sink, final_text, messages)
+    complete_event = {
+        "type": "execution_complete",
+        "execution_id": context.execution_id,
+        "parent_execution_id": context.parent_execution_id,
+        "task_key": context.task_key,
+        "call_name": context.call_name,
+        "accepted": accepted,
+        "phase": final_phase,
+        "slot": final_slot,
+        "llm_slot": final_slot,
+        "reason": reason if not accepted else "",
+        "raw_response": result,
+        "text": final_text,
+        "error": (
+            f"{type(last_exception).__name__}: {last_exception}"
+            if last_exception is not None
+            else ""
+        ),
+        "elapsed": round(time.time() - context.started_at, 6),
+    }
+    attempt_events.append(complete_event)
+    await _emit_execution_observer(execution_observer, complete_event)
+    return LLMExecutionResult(
+        context=context,
+        accepted=accepted,
+        text=final_text,
+        raw_response=result,
+        reason=reason if not accepted else "",
+        final_phase=final_phase,
+        final_slot=final_slot,
+        exception=last_exception if not accepted else None,
+        events=attempt_events,
+    )
+
+
+async def callLLMVisionTask(
+    task_key: str,
+    messages: list,
+    image_b64: str = None,
+    image_mime: str = "image/webp",
+    model: str = None,
+    json_mode: bool = False,
+    result_validator=None,
+    images: list = None,
+    metadata_sink: dict | None = None,
+    on_attempt_failure=None,
+    stream_observer=None,
+    execution_context: LLMExecutionContext | None = None,
+    execution_id: str = "",
+    parent_execution_id: str = "",
+    execution_observer=None,
+) -> str:
+    """기존 문자열 계약을 유지하는 작업별 비전 LLM 공개 함수."""
+    execution_result = await callLLMVisionTaskResult(
+        task_key,
+        messages,
+        image_b64=image_b64,
+        image_mime=image_mime,
+        model=model,
+        json_mode=json_mode,
+        result_validator=result_validator,
+        images=images,
+        stream_observer=stream_observer,
+        metadata_sink=metadata_sink,
+        on_attempt_failure=on_attempt_failure,
+        execution_context=execution_context,
+        execution_id=execution_id,
+        parent_execution_id=parent_execution_id,
+        execution_observer=execution_observer,
+    )
+    return execution_result.to_legacy()
 
 
 # ─── 스트리밍 (callLLMStream) ────────────────────────────────

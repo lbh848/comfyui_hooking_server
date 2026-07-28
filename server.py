@@ -5050,12 +5050,21 @@ async def handle_api_llm_test_stream(request: web.Request) -> web.StreamResponse
     fn_stream, fn_vision_stream, fn_single, fn_vision_single = _slot_fns.get(target, _slot_fns["llm1"])
 
     use_model_resolved = use_model or cfg.get(cur_model_key, "")
-    prompt_id = f"llm_test:{uuid.uuid4().hex[:12]}"
+    execution_context = llm_service.create_llm_execution_context(
+        "llm_test",
+        call_name="LLM TEST",
+        json_mode=use_json,
+    )
+    execution_id = execution_context.execution_id
+    prompt_id = f"llm_test:{execution_id[:12]}"
     history_record = {
         "ts": datetime.datetime.now().isoformat(timespec="seconds"),
         "prompt_id": prompt_id,
         "call_name": "LLM TEST",
         "task_key": "llm_test",
+        "history_id": execution_id,
+        "execution_id": execution_id,
+        "parent_execution_id": execution_context.parent_execution_id,
         "llm_slot": target,
         "service": cur_service,
         "model": use_model_resolved,
@@ -5147,6 +5156,8 @@ async def handle_api_llm_test_stream(request: web.Request) -> web.StreamResponse
             "call_name": "LLM TEST",
             "task_key": "llm_test",
             "llm_slot": target,
+            "execution_id": execution_id,
+            "parent_execution_id": execution_context.parent_execution_id,
         })
         ws_event.setdefault("service", cur_service)
         ws_event.setdefault("model", use_model_resolved)
@@ -5330,6 +5341,7 @@ async def handle_api_llm_test_stream(request: web.Request) -> web.StreamResponse
             "model": use_model_resolved,
             "status": "ok",
             "prompt_id": prompt_id,
+            "execution_id": execution_id,
         }
 
     try:
@@ -5343,6 +5355,7 @@ async def handle_api_llm_test_stream(request: web.Request) -> web.StreamResponse
                 "json_mode": use_json,
                 "vision": bool(image_b64 or images),
                 "prompt_id": prompt_id,
+                "execution_id": execution_id,
             },
             priority=10,
             runtime_handler=run_queued_test,

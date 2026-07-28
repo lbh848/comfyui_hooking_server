@@ -3908,6 +3908,7 @@ async def _call_pipeline_llm(
     json_mode: bool = False,
     stream_observer=None,
     history_id: str = "",
+    parent_execution_id: str = "",
 ) -> str:
     """삽화 CALL1/2/3 의 LLM 호출. 외부 API 분기(illustration_callN task_key)를 경유한다.
 
@@ -3933,6 +3934,8 @@ async def _call_pipeline_llm(
             "illustration_call2 라우팅 사용"
         )
         task_key = "illustration_call2"
+    execution_id = str(history_id or uuid.uuid4().hex)
+    parent_execution_id = str(parent_execution_id or "")
     model = (
         llm_service.routing_primary_model(task_key)
         or llm_service._current_config.get("llm_model3")
@@ -3950,9 +3953,10 @@ async def _call_pipeline_llm(
         "completion_tokens": 0,
         "elapsed": 0.0,
         "tps": 0.0,
+        "history_id": execution_id,
+        "execution_id": execution_id,
+        "parent_execution_id": parent_execution_id,
     }
-    if history_id:
-        history_record["history_id"] = str(history_id)
     history_logged = False
     terminal_notified = False
 
@@ -3961,6 +3965,8 @@ async def _call_pipeline_llm(
         # 역번역/다중캐릭터마스크 wrapper가 이미 queue_subtask를 넣은 경우 유지한다.
         if not stream_notify:
             return
+        event.setdefault("execution_id", execution_id)
+        event.setdefault("parent_execution_id", parent_execution_id)
         if "queue_subtask" not in event:
             base = call_name.split()[0] if call_name else ""
             grp = _CALL_QUEUE_SUBTASK_GROUPS.get(base)
@@ -3973,19 +3979,24 @@ async def _call_pipeline_llm(
                 }
         await stream_notify(event)
 
-    async def _record_attempt_failure(event: dict) -> None:
+    async def _record_execution_event(event: dict) -> None:
         """라우팅 재시도에서 버려지는 실패 응답도 LB 자세히 이력에 남긴다."""
-        raw_result = event.get("result")
-        attempt_exception = event.get("exception")
+        if str(event.get("type") or "") != "attempt_failure":
+            return
+        raw_result = event.get("raw_response", event.get("result"))
+        attempt_exception = event.get("error") or event.get("exception")
         raw_output = "" if raw_result is None else str(raw_result)
         if not raw_output and attempt_exception is not None:
-            raw_output = f"{type(attempt_exception).__name__}: {attempt_exception}"
+            raw_output = str(attempt_exception)
         reason = str(event.get("reason") or raw_output or "LLM 시도 실패")
         failure_record = dict(history_record)
         failure_record.update({
             "ts": datetime.datetime.now().isoformat(timespec="seconds"),
             "history_id": uuid.uuid4().hex,
-            "parent_history_id": str(history_id or ""),
+            "parent_history_id": execution_id,
+            "execution_id": execution_id,
+            "parent_execution_id": parent_execution_id,
+            "attempt_id": str(event.get("attempt_id") or ""),
             "phase": str(event.get("phase") or ""),
             "llm_slot": str(event.get("slot") or ""),
             "attempt": int(event.get("attempt") or 0),
@@ -4009,7 +4020,9 @@ async def _call_pipeline_llm(
                 "type": "start", "call_name": call_name, "model": model, "text": "",
             })
         call_kwargs = {}
-        call_kwargs["on_attempt_failure"] = _record_attempt_failure
+        call_kwargs["execution_id"] = execution_id
+        call_kwargs["parent_execution_id"] = parent_execution_id
+        call_kwargs["execution_observer"] = _record_execution_event
         if result_validator is not None:
             call_kwargs["result_validator"] = result_validator
         if json_mode:
@@ -4019,6 +4032,8 @@ async def _call_pipeline_llm(
         stream_metadata_token = llm_service._stream_metadata_ctx.set({
             "task_key": task_key,
             "call_name": call_name,
+            "execution_id": execution_id,
+            "parent_execution_id": parent_execution_id,
         })
         try:
             result = await llm_service.callLLMTask(task_key, messages, **call_kwargs)
@@ -4073,7 +4088,7 @@ async def _call_pipeline_llm(
                     f"{notify_error}"
                 )
                 traceback.print_exc()
-        if history_id and not history_logged:
+        if execution_id and not history_logged:
             elapsed = time.time() - started
             history_record.update({
                 "elapsed": round(elapsed, 3),
@@ -4084,7 +4099,7 @@ async def _call_pipeline_llm(
             history_logged = True
         print(
             f"[ILLUST_CONTEXT:{call_name}] LLM 호출 취소: "
-            f"history_id={history_id or '(none)'}"
+            f"history_id={execution_id}"
         )
         raise
     except Exception as e:
@@ -4174,6 +4189,7 @@ async def _run_parallel_pipeline_jobs(
             "failure_reasons": [],
             "attempt_outcomes": {},
             "race_result": None,
+            "execution_group_id": uuid.uuid4().hex if hedge_active else "",
             "history_ids": {
                 "primary": uuid.uuid4().hex if hedge_active else "",
                 "duplicate": "",
@@ -4462,6 +4478,7 @@ async def _run_parallel_pipeline_jobs(
                     "call_name": f"{group_label} {index}/{len(jobs)} [{role_label} · 승리]",
                     "status": "race_won",
                     "race_outcome": "winner",
+                    "parent_execution_id": state["execution_group_id"],
                 }
             elif race and attempt_kind == race["loser"]:
                 history_updates[history_id] = {
@@ -4471,11 +4488,13 @@ async def _run_parallel_pipeline_jobs(
                     "race_progress": float(race["loser_progress"]),
                     "race_streaming": bool(race["loser_streaming"]),
                     "race_elapsed": round(float(race["loser_elapsed"]), 3),
+                    "parent_execution_id": state["execution_group_id"],
                 }
             else:
                 history_updates[history_id] = {
                     "call_name": f"{group_label} {index}/{len(jobs)} [{role_label} · 경주 실패]",
                     "race_outcome": "failed",
+                    "parent_execution_id": state["execution_group_id"],
                 }
     if history_updates:
         lighbd_service._update_lighbd_history_records(history_updates)
@@ -5007,6 +5026,7 @@ async def backtranslate_current_context(
             "failure_attempts": 0,
             "attempt_outcomes": {},
             "race_result": None,
+            "execution_group_id": uuid.uuid4().hex if slow_retry_active else "",
             "history_ids": {
                 "primary": uuid.uuid4().hex if slow_retry_active else "",
                 "duplicate": "",
@@ -5475,6 +5495,7 @@ async def backtranslate_current_context(
                         "call_name": f"{base_call_name} [{role_label} · 승리]",
                         "status": "race_won",
                         "race_outcome": "winner",
+                        "parent_execution_id": state["execution_group_id"],
                     }
                 elif attempt_kind == loser_kind:
                     if loser_streaming:
@@ -5490,6 +5511,7 @@ async def backtranslate_current_context(
                         "race_outcome": "loser",
                         "race_progress": loser_progress,
                         "race_streaming": loser_streaming,
+                        "parent_execution_id": state["execution_group_id"],
                     }
         else:
             for attempt_kind, role_label in (
@@ -5501,6 +5523,7 @@ async def backtranslate_current_context(
                     history_updates[attempt_history_id] = {
                         "call_name": f"{base_call_name} [{role_label} · 경주 실패]",
                         "race_outcome": "failed",
+                        "parent_execution_id": state["execution_group_id"],
                     }
     if history_updates:
         lighbd_service._update_lighbd_history_records(history_updates)

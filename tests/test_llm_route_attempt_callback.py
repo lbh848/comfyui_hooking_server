@@ -7,7 +7,11 @@
 """
 import pytest
 
-from modes.llm_service import _invoke_routed_with_retry
+from modes import llm_service
+from modes.llm_service import (
+    _invoke_routed_with_retry,
+    create_llm_execution_context,
+)
 
 
 async def _always_fails(slot):
@@ -86,3 +90,133 @@ async def test_on_attempt_failure_exception_is_swallowed():
     )
 
     assert accepted is False
+
+
+@pytest.mark.asyncio
+async def test_execution_events_share_one_id_across_primary_and_fallback(monkeypatch):
+    """전역 재시도/폴백의 모든 시도가 하나의 논리 실행 ID로 묶인다."""
+    monkeypatch.setattr(llm_service, "_current_config", {"llm_routing": {}})
+    monkeypatch.setattr(llm_service, "_routing_for", lambda _task: ("llm1", "llm2"))
+    monkeypatch.setattr(
+        llm_service,
+        "_routing_retry_policy",
+        lambda _task: {
+            "max_retries": 0,
+            "retry_delay_sec": 0.0,
+            "fallback_max_retries": 0,
+            "fallback_retry_delay_sec": 0.0,
+        },
+    )
+
+    async def routed_slot(slot, *_args, **_kwargs):
+        return "invalid primary" if slot == "llm1" else "valid fallback"
+
+    monkeypatch.setattr(llm_service, "_call_routed_text_slot", routed_slot)
+    observed = []
+    context = create_llm_execution_context(
+        "integration_task",
+        call_name="통합 테스트",
+        execution_id="exec-fixed",
+        parent_execution_id="parent-fixed",
+    )
+
+    result = await llm_service.callLLMTaskResult(
+        "integration_task",
+        [{"role": "user", "content": "hello"}],
+        result_validator=lambda value: (
+            value == "valid fallback",
+            "expected valid fallback",
+        ),
+        execution_context=context,
+        execution_observer=observed.append,
+    )
+
+    assert result.accepted is True
+    assert result.text == "valid fallback"
+    assert result.final_phase == "fallback"
+    assert result.final_slot == "llm2"
+    assert [event["type"] for event in observed] == [
+        "attempt_start",
+        "attempt_failure",
+        "attempt_start",
+        "attempt_success",
+        "execution_complete",
+    ]
+    assert {event["execution_id"] for event in observed} == {"exec-fixed"}
+    assert {event["parent_execution_id"] for event in observed} == {"parent-fixed"}
+    failed = observed[1]
+    assert failed["raw_response"] == "invalid primary"
+    assert failed["reason"] == "expected valid fallback"
+
+
+@pytest.mark.asyncio
+async def test_execution_result_and_legacy_wrapper_keep_exception_contract(monkeypatch):
+    """내부 결과는 실패 원인을 보존하고 기존 공개 함수는 같은 예외를 다시 던진다."""
+    monkeypatch.setattr(llm_service, "_current_config", {"llm_routing": {}})
+    monkeypatch.setattr(llm_service, "_routing_for", lambda _task: ("llm1", None))
+    monkeypatch.setattr(
+        llm_service,
+        "_routing_retry_policy",
+        lambda _task: {
+            "max_retries": 0,
+            "retry_delay_sec": 0.0,
+            "fallback_max_retries": 0,
+            "fallback_retry_delay_sec": 0.0,
+        },
+    )
+
+    async def raises(*_args, **_kwargs):
+        raise TimeoutError("provider timeout body")
+
+    monkeypatch.setattr(llm_service, "_call_routed_text_slot", raises)
+    internal = await llm_service.callLLMTaskResult(
+        "exception_task",
+        [{"role": "user", "content": "hello"}],
+    )
+
+    assert internal.accepted is False
+    assert isinstance(internal.exception, TimeoutError)
+    assert "provider timeout body" in internal.reason
+    with pytest.raises(TimeoutError, match="provider timeout body"):
+        await llm_service.callLLMTask(
+            "exception_task",
+            [{"role": "user", "content": "hello"}],
+        )
+
+
+@pytest.mark.asyncio
+async def test_vision_uses_same_execution_result_shape(monkeypatch):
+    monkeypatch.setattr(llm_service, "_current_config", {"llm_routing": {}})
+    monkeypatch.setattr(llm_service, "_routing_for", lambda _task: ("llm1", None))
+    monkeypatch.setattr(
+        llm_service,
+        "_routing_retry_policy",
+        lambda _task: {
+            "max_retries": 0,
+            "retry_delay_sec": 0.0,
+            "fallback_max_retries": 0,
+            "fallback_retry_delay_sec": 0.0,
+        },
+    )
+
+    async def vision(*_args, **_kwargs):
+        return "vision ok"
+
+    monkeypatch.setattr(llm_service, "callLLMVision", vision)
+    observed = []
+    result = await llm_service.callLLMVisionTaskResult(
+        "vision_task",
+        [{"role": "user", "content": "look"}],
+        image_b64="AA==",
+        execution_id="vision-exec",
+        execution_observer=observed.append,
+    )
+
+    assert result.accepted is True
+    assert result.text == "vision ok"
+    assert result.context.execution_id == "vision-exec"
+    assert [event["type"] for event in observed] == [
+        "attempt_start",
+        "attempt_success",
+        "execution_complete",
+    ]

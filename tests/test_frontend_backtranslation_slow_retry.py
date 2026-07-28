@@ -71,6 +71,13 @@ def test_lighbd_history_distinguishes_slow_retry_winner_and_loser():
     assert "illust-setting-tooltip-bubble" in FRONTEND
 
 
+def test_lighbd_detail_shows_internal_execution_links_when_present():
+    assert "LLM 실행 연결 정보" in FRONTEND
+    assert "record.execution_id" in FRONTEND
+    assert "record.parent_execution_id" in FRONTEND
+    assert "record.attempt_id" in FRONTEND
+
+
 def test_lighbd_live_uses_only_real_stream_ids_and_prunes_legacy_ghosts():
     assert ".filter(s => s.active && s.id !== 'legacy')" in FRONTEND
     assert "if (state.active && !serverIds.has(id))" in FRONTEND

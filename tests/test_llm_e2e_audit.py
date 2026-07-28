@@ -530,6 +530,7 @@ async def test_llm_test_endpoint_registers_queue_item(monkeypatch):
     assert queue_probe.added[0]["item_type"] == "llm_test"
     assert queue_probe.added[0]["item_type"] in queue_manager_module.LLM_TYPES
     assert callable(queue_probe.added[0]["runtime_handler"])
+    assert queue_probe.added[0]["params"]["execution_id"]
 
 
 @pytest.mark.asyncio
@@ -567,6 +568,8 @@ async def test_llm_test_endpoint_records_lb_detail(monkeypatch):
 
     assert history_records
     assert history_records[-1]["output"] == "history-ok"
+    assert history_records[-1]["execution_id"]
+    assert history_records[-1]["history_id"] == history_records[-1]["execution_id"]
 
 
 @pytest.mark.asyncio
@@ -628,6 +631,58 @@ async def test_validator_exhaustion_is_an_explicit_failure(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_fenced_json_recovery_composes_with_execution_result(monkeypatch):
+    """복구 가능한 fenced JSON은 공통 실행 계층에서 실패/재시도로 오판되지 않는다."""
+    raw = '설명\n```json\n{"ok": true, "value": 7}\n```\n끝'
+    calls = 0
+
+    async def routed_slot(
+        _slot,
+        _messages,
+        model=None,
+        json_mode=False,
+    ):
+        nonlocal calls
+        calls += 1
+        return raw
+
+    cfg = _isolated_config(
+        llm_stream=False,
+        llm_routing={
+            "json_recovery": {
+                "primary": "llm1",
+                "fallback": False,
+                "max_retries": 1,
+                "retry_delay_sec": 0,
+            }
+        },
+    )
+    monkeypatch.setattr(llm_service, "_current_config", cfg)
+    monkeypatch.setattr(llm_service, "_call_routed_text_slot", routed_slot)
+
+    result = await llm_service.callLLMTaskResult(
+        "json_recovery",
+        [{"role": "user", "content": "return JSON"}],
+        json_mode=True,
+        result_validator=lambda value: (
+            illustration_context_pipeline._json_object_from_text(value)
+            == {"ok": True, "value": 7},
+            "JSON 복구 실패",
+        ),
+    )
+
+    assert result.accepted is True
+    assert result.text == raw
+    assert result.raw_response == raw
+    assert calls == 1
+    assert [event["type"] for event in result.events] == [
+        "attempt_start",
+        "attempt_success",
+        "execution_complete",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_pipeline_retry_attempt_failure_keeps_raw_response_in_lb_detail(
     monkeypatch,
 ):
@@ -681,6 +736,12 @@ async def test_pipeline_retry_attempt_failure_keeps_raw_response_in_lb_detail(
     assert failure_records
     assert failure_records[0]["output"] == "RAW_INVALID_ATTEMPT"
     assert "synthetic validation failure" in failure_records[0]["error"]
+    final_record = next(
+        record for record in history_records if record.get("status") == "ok"
+    )
+    assert failure_records[0]["execution_id"] == final_record["execution_id"]
+    assert failure_records[0]["parent_history_id"] == final_record["history_id"]
+    assert failure_records[0]["attempt_id"].endswith(":primary:llm1:1")
 
 
 def test_embedding_config_log_masks_api_key(monkeypatch):
@@ -841,3 +902,14 @@ async def test_slow_retry_duplicate_still_honors_global_route_retry(monkeypatch)
     assert len(attempt_names) == 4
     assert history_records
     assert history_updates
+    linked_updates = [
+        update
+        for batch in history_updates
+        for update in batch.values()
+        if update.get("parent_execution_id")
+    ]
+    assert len(linked_updates) >= 2
+    assert len({
+        update["parent_execution_id"]
+        for update in linked_updates
+    }) == 1
