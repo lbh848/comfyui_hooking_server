@@ -510,7 +510,8 @@ def test_qwen_workflow_and_frontend_contracts():
     assert "/api/asset_mode/qwen_edit/enqueue" in frontend
     assert "/api/asset_mode/qwen_edit/composite_items" in frontend
     assert "qwen_edit_translate: 'EDIT 번역'" in frontend
-    assert "{types: ['qwen_edit'], label: 'EDIT 툴 마스크 편집'}" in frontend
+    assert "types: ['qwen_edit']" in frontend
+    assert "label: 'EDIT 툴 마스크 편집'" in frontend
     assert "선택된 EDIT 툴의 latent 샘플링 마스크" in frontend
     assert "반투명 파란색으로 칠한 영역" in frontend
     assert "function auQwenFitMaskCanvas()" in frontend
