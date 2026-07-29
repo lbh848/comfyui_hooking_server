@@ -213,7 +213,7 @@ async def test_preflight_without_body_keeps_general_probe(
         config_path=config,
         requirements_dir=tmp_path / "requirements",
     )
-    monkeypatch.setattr(service, "preflight", lambda: {"mode": "general"})
+    monkeypatch.setattr(service, "preflight", lambda **kwargs: {"mode": "general"})
     client = TestClient(TestServer(app))
     await client.start_server()
     try:

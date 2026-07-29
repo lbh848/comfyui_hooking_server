@@ -17087,7 +17087,7 @@
                             </div>
                             <div class="comfy-installer-actions">
                                 <button type="button" class="comfy-installer-btn" id="comfy-installer-preflight-btn" onclick="comfyInstallerRunPreflight()">다시 검사</button>
-                                <span class="comfy-installer-note" id="comfy-installer-preflight-note">NVIDIA 드라이버, uv, Git과 최소 110 GiB 여유 공간을 검사합니다.</span>
+                                <span class="comfy-installer-note" id="comfy-installer-preflight-note">NVIDIA 드라이버·uv·Git과 여유 공간(런타임 최소 30 GiB)을 검사합니다. 상세 요구량은 선택 워크플로우 기준으로 설치 시 재검사합니다.</span>
                             </div>
                         </section>
 
@@ -21241,9 +21241,13 @@
                 document.getElementById('comfy-installer-size').textContent = selection
                     ? `${Number((selection.model_ids || []).length)} 선택 모델 · ${comfyInstallerFormatBytes(selection.model_bytes || 0)}`
                     : `${manifest.model_count || 36} 전체 모델 · ${comfyInstallerFormatBytes(manifest.model_bytes || 0)}`;
+                const diskEnough = (probe.disk || {}).enough;
                 if (note) {
-                    note.textContent =
-                        `검사 통과 · 드라이버 CUDA 상한 ${driverCuda || '-'} · ${probe.uv || 'uv 확인'} · ${probe.git || 'Git 확인'}`;
+                    const probeCommon =
+                        `드라이버 CUDA 상한 ${driverCuda || '-'} · ${probe.uv || 'uv 확인'} · ${probe.git || 'Git 확인'}`;
+                    note.textContent = diskEnough === false
+                        ? `여유 공간 런타임 최소치(30 GiB) 미만 · 선택 워크플로우 기준은 설치 시 재검사 · ${probeCommon}`
+                        : `검사 통과 · ${probeCommon}`;
                 }
                 comfyInstallerPreflightLoaded = true;
                 comfyInstallerSetError('');

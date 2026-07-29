@@ -244,17 +244,21 @@ class ComfyInstallerService:
             snapshot["install_root"] = str(self.comfy_root)
             return snapshot
 
-    def preflight(self, *, selected_model_bytes: int | None = None) -> dict:
-        required_bytes = None
-        if selected_model_bytes is not None:
-            runtime_and_buffer = 30 * 1024**3
-            required_bytes = runtime_and_buffer + max(
-                int(selected_model_bytes), 0
-            )
+    def preflight(
+        self,
+        *,
+        selected_model_bytes: int | None = None,
+        require_disk: bool = True,
+    ) -> dict:
+        runtime_and_buffer = 30 * 1024**3
+        required_bytes = runtime_and_buffer + max(
+            int(selected_model_bytes or 0), 0
+        )
         result = probe_system(
             self.comfy_root,
             self.manifest,
             required_bytes=required_bytes,
+            require_disk=require_disk,
         )
         return {
             **result,
@@ -1183,7 +1187,7 @@ class ComfyInstallerService:
             "[COMFY_INSTALL][UPDATE] 설치 결과에서 GPU 프로필을 찾지 못해 "
             "시스템 검사를 다시 실행합니다."
         )
-        return str(self.preflight()["gpu_profile"])
+        return str(self.preflight(require_disk=False)["gpu_profile"])
 
     def _run_update(self) -> None:
         process: ComfyProcess | None = None

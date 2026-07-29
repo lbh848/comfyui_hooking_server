@@ -145,6 +145,7 @@ def probe_system(
     manifest: InstallManifest,
     *,
     required_bytes: int | None = None,
+    require_disk: bool = True,
 ) -> dict[str, Any]:
     try:
         if platform.system() != "Windows":
@@ -183,7 +184,7 @@ def probe_system(
             "uv": _tool_version(["uv", "--version"]),
             "git": _tool_version(["git", "--version"]),
         }
-        if not result["disk"]["enough"]:
+        if not result["disk"]["enough"] and require_disk:
             raise SystemProbeError(
                 "ComfyUI 설치 공간이 부족합니다: "
                 f"free={disk.free / 1024**3:.2f} GiB, "

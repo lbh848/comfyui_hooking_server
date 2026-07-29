@@ -62,7 +62,9 @@ async def handle_preflight(request: web.Request) -> web.Response:
         release_version = body.get("release_version")
         selected_item_ids = body.get("selected_item_ids")
         if release_version is None and selected_item_ids is None:
-            result = await asyncio.to_thread(service.preflight)
+            result = await asyncio.to_thread(
+                service.preflight, require_disk=False
+            )
         else:
             if not isinstance(release_version, str) or not isinstance(
                 selected_item_ids, list
