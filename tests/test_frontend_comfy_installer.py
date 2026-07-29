@@ -22,6 +22,8 @@ def test_settings_has_comfy_installer_tab_and_key_inputs() -> None:
     assert 'id="comfy-installer-unpack-btn"' in FRONTEND
     assert 'id="comfy-installer-update-btn"' in FRONTEND
     assert 'id="comfy-installer-migrate-btn"' in FRONTEND
+    assert "이사하기(V4 사용자용)" in FRONTEND
+    assert "config.json</code>을 <code>요구사항/</code>에 먼저 백업" in FRONTEND
     assert 'id="comfy-installer-restore-after-success"' not in FRONTEND
     assert "절대 자동 덮어쓰기 안 함" in FRONTEND
 
@@ -54,6 +56,12 @@ def test_frontend_uses_dedicated_installer_apis_and_does_not_persist_keys() -> N
     assert "selected_item_ids: selectedItemIds" in FRONTEND
     assert "restore_config_after_success" not in FRONTEND
     assert "workflowKeyInput.value = ''" in FRONTEND
+
+
+def test_v4_migration_reports_config_path_retargeting() -> None:
+    assert "result.config?.updated_paths" in FRONTEND
+    assert "result.config?.missing_targets" in FRONTEND
+    assert "설정 경로를 모두 전환합니다" in FRONTEND
 
 
 def test_comfy_installer_tab_is_right_of_debug() -> None:

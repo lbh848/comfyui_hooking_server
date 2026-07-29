@@ -6,6 +6,8 @@ import pytest
 from comfy_installer.configurator import (
     ConfigUpdateError,
     apply_installed_config,
+    backup_current_config,
+    retarget_config_to_embedded_comfy,
     restore_config_backup,
 )
 
@@ -92,6 +94,89 @@ def test_config_apply_rejects_workflow_outside_installed_root(tmp_path):
         )
 
     assert not (tmp_path / "요구사항").exists()
+
+
+def test_v4_migration_retargets_all_nested_paths_after_verified_backup(tmp_path):
+    config_path = tmp_path / "config.json"
+    requirements = tmp_path / "요구사항"
+    old_comfy = tmp_path / "old-comfy"
+    new_comfy = tmp_path / "comfy"
+    (old_comfy / "input").mkdir(parents=True)
+    (old_comfy / "user" / "default" / "workflows").mkdir(parents=True)
+    (new_comfy / ".git").mkdir(parents=True)
+    (new_comfy / "input").mkdir(parents=True)
+    original = {
+        "comfy_input_dir": str(old_comfy / "input"),
+        "nested": {
+            "workflow": str(
+                old_comfy / "user" / "default" / "workflows" / "v4.json"
+            ),
+            "unrelated": str(tmp_path / "elsewhere"),
+        },
+        "path_list": [str(old_comfy / "models" / "loras"), "keep"],
+        "url": "https://example.com/ComfyUI/info",
+    }
+    _write_json(config_path, original)
+    backup = backup_current_config(
+        config_path=config_path,
+        backup_dir=requirements,
+        reason="comfy_v4_migrate",
+    )
+
+    result = retarget_config_to_embedded_comfy(
+        config_path=config_path,
+        requirements_dir=requirements,
+        backup_path=backup["backup_path"],
+        old_comfy_root=old_comfy,
+        new_comfy_root=new_comfy,
+    )
+
+    updated = json.loads(config_path.read_text(encoding="utf-8"))
+    assert json.loads(result.backup_path.read_text(encoding="utf-8")) == original
+    assert updated["comfy_input_dir"] == str(new_comfy / "input")
+    assert updated["nested"]["workflow"] == str(
+        new_comfy / "user" / "default" / "workflows" / "v4.json"
+    )
+    assert updated["path_list"][0] == str(new_comfy / "models" / "loras")
+    assert updated["nested"]["unrelated"] == str(tmp_path / "elsewhere")
+    assert updated["url"] == "https://example.com/ComfyUI/info"
+    assert result.updated_paths == (
+        "$.comfy_input_dir",
+        "$.nested.workflow",
+        "$.path_list[0]",
+    )
+    assert {setting for setting, _target in result.missing_targets} == {
+        "$.nested.workflow",
+        "$.path_list[0]",
+    }
+
+
+def test_v4_migration_rejects_stale_backup_without_overwrite(tmp_path):
+    config_path = tmp_path / "config.json"
+    requirements = tmp_path / "요구사항"
+    old_comfy = tmp_path / "old-comfy"
+    new_comfy = tmp_path / "comfy"
+    old_comfy.mkdir()
+    (new_comfy / ".git").mkdir(parents=True)
+    _write_json(config_path, {"path": str(old_comfy / "input")})
+    backup = backup_current_config(
+        config_path=config_path,
+        backup_dir=requirements,
+        reason="comfy_v4_migrate",
+    )
+    changed = {"path": str(old_comfy / "changed")}
+    _write_json(config_path, changed)
+
+    with pytest.raises(ConfigUpdateError, match="동시 설정 변경"):
+        retarget_config_to_embedded_comfy(
+            config_path=config_path,
+            requirements_dir=requirements,
+            backup_path=backup["backup_path"],
+            old_comfy_root=old_comfy,
+            new_comfy_root=new_comfy,
+        )
+
+    assert json.loads(config_path.read_text(encoding="utf-8")) == changed
 
 
 def test_restore_rejects_arbitrary_file_outside_requirements(tmp_path):

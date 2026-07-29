@@ -17,6 +17,7 @@ from .configurator import (
     ConfigUpdateResult,
     apply_installed_config,
     backup_current_config,
+    retarget_config_to_embedded_comfy,
     restore_config_backup,
 )
 from .credentials import load_civitai_key, save_civitai_key
@@ -322,11 +323,52 @@ class ComfyInstallerService:
                 raise InstallerServiceError(
                     "설치 또는 업데이트 중에는 사용자 데이터를 이사할 수 없습니다."
                 )
-        return migrate_user_data(
-            old_comfy_root=old_comfy_root,
-            new_comfy_root=self.comfy_root,
-            log=self._log,
-        )
+        try:
+            config_backup = backup_current_config(
+                config_path=self.config_path,
+                backup_dir=self.requirements_dir,
+                reason="comfy_v4_migrate",
+            )
+            self._log(
+                "[이사] config.json 백업 완료: "
+                f"{config_backup['backup_path']}"
+            )
+            migration = migrate_user_data(
+                old_comfy_root=old_comfy_root,
+                new_comfy_root=self.comfy_root,
+                log=self._log,
+            )
+            config_update = retarget_config_to_embedded_comfy(
+                config_path=self.config_path,
+                requirements_dir=self.requirements_dir,
+                backup_path=config_backup["backup_path"],
+                old_comfy_root=old_comfy_root,
+                new_comfy_root=self.comfy_root,
+            )
+            self._log(
+                "[이사] config.json 내장 Comfy 경로 전환 완료: "
+                f"{len(config_update.updated_paths)}개"
+            )
+            return {
+                **migration,
+                "config": {
+                    "backup_path": str(config_update.backup_path),
+                    "before_sha256": config_update.before_sha256,
+                    "after_sha256": config_update.after_sha256,
+                    "updated_paths": list(config_update.updated_paths),
+                    "missing_targets": [
+                        {"setting": setting, "target": target}
+                        for setting, target in config_update.missing_targets
+                    ],
+                },
+            }
+        except Exception as exc:
+            print(f"[COMFY_INSTALL][SERVICE] V4 사용자 이사 실패: {exc}")
+            traceback.print_exc()
+            self._log(f"[이사 실패] {exc}", "error")
+            if isinstance(exc, InstallerServiceError):
+                raise
+            raise InstallerServiceError(f"V4 사용자 이사 실패: {exc}") from exc
 
     def _validate_civitai_access(
         self, civitai_key: str, models: list[dict] | None = None

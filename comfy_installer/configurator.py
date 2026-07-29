@@ -9,7 +9,7 @@ import shutil
 import traceback
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Mapping
+from typing import Any, Iterable, Mapping
 
 
 class ConfigUpdateError(RuntimeError):
@@ -23,6 +23,16 @@ class ConfigUpdateResult:
     before_sha256: str
     after_sha256: str
     updated_keys: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ConfigRetargetResult:
+    config_path: Path
+    backup_path: Path
+    before_sha256: str
+    after_sha256: str
+    updated_paths: tuple[str, ...]
+    missing_targets: tuple[tuple[str, str], ...]
 
 
 def backup_current_config(
@@ -143,6 +153,176 @@ def _set_dotted(config: dict, dotted_key: str, value: str) -> None:
             )
         cursor = existing
     cursor[parts[-1]] = value
+
+
+def _json_child_path(parent: str, key: str) -> str:
+    if key.isidentifier():
+        return f"{parent}.{key}"
+    return f"{parent}[{json.dumps(key, ensure_ascii=False)}]"
+
+
+def _retarget_descendant_paths(
+    value: Any,
+    *,
+    json_path: str,
+    old_root: Path,
+    new_root: Path,
+    updated_paths: list[str],
+    missing_targets: list[tuple[str, str]],
+) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: _retarget_descendant_paths(
+                child,
+                json_path=_json_child_path(json_path, str(key)),
+                old_root=old_root,
+                new_root=new_root,
+                updated_paths=updated_paths,
+                missing_targets=missing_targets,
+            )
+            for key, child in value.items()
+        }
+    if isinstance(value, list):
+        return [
+            _retarget_descendant_paths(
+                child,
+                json_path=f"{json_path}[{index}]",
+                old_root=old_root,
+                new_root=new_root,
+                updated_paths=updated_paths,
+                missing_targets=missing_targets,
+            )
+            for index, child in enumerate(value)
+        ]
+    if not isinstance(value, str) or not value.strip():
+        return value
+
+    try:
+        candidate = Path(value.strip())
+        if not candidate.is_absolute():
+            return value
+        relative = candidate.resolve().relative_to(old_root)
+    except ValueError:
+        return value
+    except (OSError, RuntimeError) as exc:
+        print(
+            "[COMFY_INSTALL][CONFIG][V4_MIGRATE] 설정 경로 해석 실패; "
+            f"원래 값을 유지합니다: setting={json_path}, error={exc}"
+        )
+        return value
+
+    try:
+        target = (new_root / relative).resolve()
+    except (OSError, RuntimeError) as exc:
+        print(
+            "[COMFY_INSTALL][CONFIG][V4_MIGRATE] 대상 경로 해석 실패; "
+            f"원래 값을 유지합니다: setting={json_path}, error={exc}"
+        )
+        return value
+    updated_paths.append(json_path)
+    if not target.exists():
+        missing_targets.append((json_path, str(target)))
+        print(
+            "[COMFY_INSTALL][CONFIG][V4_MIGRATE] 대상 경로 없음; "
+            f"설정 경로는 전환합니다: setting={json_path}, target={target}"
+        )
+    return str(target)
+
+
+def retarget_config_to_embedded_comfy(
+    *,
+    config_path: str | os.PathLike[str],
+    requirements_dir: str | os.PathLike[str],
+    backup_path: str | os.PathLike[str],
+    old_comfy_root: str | os.PathLike[str],
+    new_comfy_root: str | os.PathLike[str],
+) -> ConfigRetargetResult:
+    config_file = Path(config_path).resolve()
+    backup_root = Path(requirements_dir).resolve()
+    backup_file = Path(backup_path).resolve()
+    old_root = Path(old_comfy_root).resolve()
+    new_root = Path(new_comfy_root).resolve()
+    try:
+        if not config_file.is_file():
+            raise ConfigUpdateError(f"수정할 config.json이 없습니다: {config_file}")
+        if not old_root.is_dir():
+            raise ConfigUpdateError(f"기존 ComfyUI 폴더가 없습니다: {old_root}")
+        if old_root == new_root:
+            raise ConfigUpdateError("기존 ComfyUI와 내장 ComfyUI 경로가 같습니다.")
+        if not new_root.is_dir() or not (new_root / ".git").is_dir():
+            raise ConfigUpdateError(
+                "경로를 전환할 내장 ComfyUI가 설치되지 않았습니다: "
+                f"{new_root}"
+            )
+
+        try:
+            backup_file.relative_to(backup_root)
+        except ValueError as exc:
+            raise ConfigUpdateError(
+                f"요구사항 폴더 밖의 설정 백업은 사용할 수 없습니다: {backup_file}"
+            ) from exc
+        if not backup_file.is_file() or not backup_file.name.startswith(
+            "config_before_comfy_v4_migrate_"
+        ):
+            raise ConfigUpdateError(
+                f"유효한 V4 이사 설정 백업이 아닙니다: {backup_file}"
+            )
+
+        before_hash = _sha256_file(config_file)
+        backup_hash = _sha256_file(backup_file)
+        if backup_hash != before_hash:
+            raise ConfigUpdateError(
+                "V4 이사 설정 백업과 현재 config.json이 다릅니다. "
+                "동시 설정 변경 가능성이 있어 덮어쓰지 않습니다."
+            )
+
+        config = _read_json_object(config_file, "현재 설정")
+        updated_paths: list[str] = []
+        missing_targets: list[tuple[str, str]] = []
+        updated = _retarget_descendant_paths(
+            config,
+            json_path="$",
+            old_root=old_root,
+            new_root=new_root,
+            updated_paths=updated_paths,
+            missing_targets=missing_targets,
+        )
+        if not updated_paths:
+            print(
+                "[COMFY_INSTALL][CONFIG][V4_MIGRATE] 전환할 설정 경로 없음: "
+                f"old_root={old_root}"
+            )
+            raise ConfigUpdateError(
+                "config.json에서 기존 ComfyUI 아래의 경로를 찾지 못했습니다: "
+                f"{old_root}"
+            )
+
+        _write_json_atomic(config_file, updated)
+        reloaded = _read_json_object(config_file, "V4 이사 갱신 설정")
+        if reloaded != updated:
+            raise ConfigUpdateError(
+                "V4 이사 config.json 저장 후 재검증 값이 일치하지 않습니다."
+            )
+        after_hash = _sha256_file(config_file)
+        print(
+            "[COMFY_INSTALL][CONFIG][V4_MIGRATE] 내장 Comfy 경로 전환 완료: "
+            f"backup={backup_file}, updated={len(updated_paths)}, "
+            f"missing={len(missing_targets)}"
+        )
+        return ConfigRetargetResult(
+            config_path=config_file,
+            backup_path=backup_file,
+            before_sha256=before_hash,
+            after_sha256=after_hash,
+            updated_paths=tuple(updated_paths),
+            missing_targets=tuple(missing_targets),
+        )
+    except Exception as exc:
+        print(f"[COMFY_INSTALL][CONFIG][V4_MIGRATE] 설정 경로 전환 실패: {exc}")
+        traceback.print_exc()
+        if isinstance(exc, ConfigUpdateError):
+            raise
+        raise ConfigUpdateError(f"V4 이사 설정 경로 전환 실패: {exc}") from exc
 
 
 def apply_installed_config(

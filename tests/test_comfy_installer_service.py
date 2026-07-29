@@ -27,6 +27,62 @@ def test_service_status_never_contains_credentials(tmp_path: Path) -> None:
     assert service.comfy_root == tmp_path / "comfy"
 
 
+def test_v4_migration_backs_up_copies_and_retargets_config(tmp_path: Path) -> None:
+    config = tmp_path / "config.json"
+    requirements = tmp_path / "요구사항"
+    old_comfy = tmp_path / "old-comfy"
+    embedded_comfy = tmp_path / "comfy"
+    old_lora = (
+        old_comfy
+        / "models"
+        / "loras"
+        / "SOYA_CHAR_LORA"
+        / "character.safetensors"
+    )
+    old_lora.parent.mkdir(parents=True)
+    old_lora.write_bytes(b"lora")
+    (embedded_comfy / ".git").mkdir(parents=True)
+    original = {
+        "comfy_input_dir": str(old_comfy / "input"),
+        "nested": {
+            "lora": str(
+                old_comfy / "models" / "loras" / "SOYA_CHAR_LORA"
+            )
+        },
+    }
+    config.write_text(
+        json.dumps(original, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    service = ComfyInstallerService(
+        project_root=tmp_path,
+        config_path=config,
+        requirements_dir=requirements,
+    )
+
+    result = service.migrate_from_existing_comfy(old_comfy)
+
+    backup = Path(result["config"]["backup_path"])
+    assert backup.parent == requirements
+    assert json.loads(backup.read_text(encoding="utf-8")) == original
+    updated = json.loads(config.read_text(encoding="utf-8"))
+    assert updated["comfy_input_dir"] == str(embedded_comfy / "input")
+    assert updated["nested"]["lora"] == str(
+        embedded_comfy / "models" / "loras" / "SOYA_CHAR_LORA"
+    )
+    assert (
+        embedded_comfy
+        / "models"
+        / "loras"
+        / "SOYA_CHAR_LORA"
+        / "character.safetensors"
+    ).read_bytes() == b"lora"
+    assert result["config"]["updated_paths"] == [
+        "$.comfy_input_dir",
+        "$.nested.lora",
+    ]
+
+
 def test_comfy_warning_is_visible_in_status_without_console_echo(
     tmp_path: Path,
     capsys,
@@ -148,7 +204,18 @@ def test_manifest_has_fully_pinned_windows_runtime_and_assets() -> None:
     assert nvidia["id"] == "nvidia-cu130"
     assert nvidia["sageattention"]["size"] == 12321863
     assert len(nvidia["sageattention"]["sha256"]) == 64
-    assert len(manifest.custom_nodes) == 14
+    assert len(manifest.custom_nodes) == 15
+    lora_manager = next(
+        node
+        for node in manifest.custom_nodes
+        if node["name"] == "comfyui-lora-manager"
+    )
+    assert lora_manager["repository"] == (
+        "https://github.com/willmiao/ComfyUI-Lora-Manager.git"
+    )
+    assert lora_manager["ref"] == (
+        "0d8805cdee93d1a7347a813f4ec271ba6bcb55f5"
+    )
     spectrum = next(
         node
         for node in manifest.custom_nodes

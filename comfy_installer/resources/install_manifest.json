@@ -124,6 +124,12 @@
       "sha256": "5b1b354e52bc983833e84c0aa7531fc2e8a78cd5b22ab666351830e9124d88de"
     },
     {
+      "name": "comfyui-lora-manager",
+      "source_type": "git",
+      "repository": "https://github.com/willmiao/ComfyUI-Lora-Manager.git",
+      "ref": "0d8805cdee93d1a7347a813f4ec271ba6bcb55f5"
+    },
+    {
       "name": "comfyui-post-processing-nodes",
       "source_type": "archive",
       "version": "1.0.1",

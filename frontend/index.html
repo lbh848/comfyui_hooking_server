@@ -16558,8 +16558,8 @@
                             <div class="comfy-installer-section-head">
                                 <span class="comfy-installer-step" aria-hidden="true">05</span>
                                 <div class="comfy-installer-section-heading">
-                                    <h3 class="comfy-installer-title">기존 사용자 데이터 이사 <span class="comfy-installer-optional">선택 사항</span></h3>
-                                    <p class="comfy-installer-section-copy">기존 ComfyUI의 LoRA와 입력 캐시를 내장 설치로 안전하게 복사합니다.</p>
+                                    <h3 class="comfy-installer-title">기존 사용자 데이터 이사 <span class="comfy-installer-optional">V4 사용자용</span></h3>
+                                    <p class="comfy-installer-section-copy">기존 ComfyUI의 LoRA와 입력 캐시를 복사하고 설정 경로를 내장 Comfy로 전환합니다.</p>
                                 </div>
                             </div>
                             <div class="comfy-installer-grid">
@@ -16569,8 +16569,8 @@
                                 </div>
                             </div>
                             <div class="comfy-installer-actions">
-                                <button type="button" class="comfy-installer-btn" id="comfy-installer-migrate-btn" onclick="comfyInstallerMigrate()">이사하기</button>
-                                <span class="comfy-installer-note">내장 설치 완료 후 사용하세요. 실제 LoRA와 <code>input/soya_bot</code> 캐시를 복사하며 원본과 기존 대상 파일은 삭제·덮어쓰기하지 않습니다.</span>
+                                <button type="button" class="comfy-installer-btn" id="comfy-installer-migrate-btn" onclick="comfyInstallerMigrate()">이사하기(V4 사용자용)</button>
+                                <span class="comfy-installer-note">내장 설치 완료 후 사용하세요. <code>config.json</code>을 <code>요구사항/</code>에 먼저 백업하고 기존 Comfy 하위의 모든 설정 경로를 내장 Comfy로 전환합니다. LoRA와 <code>input/soya_bot</code> 원본 및 기존 대상 파일은 삭제·덮어쓰기하지 않습니다.</span>
                             </div>
                         </section>
 
@@ -20753,7 +20753,7 @@
             const input = document.getElementById('comfy-installer-old-root');
             const oldRoot = input?.value.trim() || '';
             if (!oldRoot) { showToast('기존 ComfyUI 폴더를 입력하세요', 'warning'); return; }
-            if (!window.confirm(`기존 LoRA와 input/soya_bot 캐시를 내장 Comfy로 복사할까요?\n원본과 대상의 기존 파일은 유지됩니다.\n\n${oldRoot}`)) return;
+            if (!window.confirm(`V4 설정을 내장 Comfy로 이사할까요?\nconfig.json을 요구사항/에 먼저 백업한 뒤, 기존 LoRA와 input/soya_bot 캐시를 복사하고 기존 Comfy 하위의 설정 경로를 모두 전환합니다.\n원본과 대상의 기존 파일은 유지됩니다.\n\n${oldRoot}`)) return;
             const button = document.getElementById('comfy-installer-migrate-btn');
             if (button) button.disabled = true;
             try {
@@ -20764,7 +20764,10 @@
                 });
                 const result = data.migration || {};
                 await comfyInstallerRefreshStatus(false);
-                showToast(`이사 완료 · 복사 ${Number((result.copied || []).length)}개 · 기존 유지 ${Number((result.skipped || []).length)}개`, 'success');
+                const updatedPathCount = Number((result.config?.updated_paths || []).length);
+                const missingTargetCount = Number((result.config?.missing_targets || []).length);
+                const missingLabel = missingTargetCount ? ` · 대상 없음 ${missingTargetCount}개(로그 확인)` : '';
+                showToast(`이사 완료 · 설정 ${updatedPathCount}개 전환 · 복사 ${Number((result.copied || []).length)}개 · 기존 유지 ${Number((result.skipped || []).length)}개${missingLabel}`, 'success');
             } catch (error) {
                 console.error('[COMFY_INSTALL] 사용자 데이터 이사 실패:', error);
                 await comfyInstallerRefreshStatus(false);
