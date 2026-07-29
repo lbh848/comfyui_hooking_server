@@ -21,6 +21,21 @@ from comfy_installer.python_runtime import (
 )
 
 
+def test_manager_bootstrap_installs_missing_system_git_before_uv_sync() -> None:
+    source = (
+        Path(__file__).resolve().parents[1] / "run_en.bat"
+    ).read_text(encoding="utf-8")
+
+    assert "call :ensure_git" in source
+    assert "where git.exe >nul 2>&1" in source
+    assert "winget install --id Git.Git --exact --source winget" in source
+    assert "--accept-package-agreements" in source
+    assert "--accept-source-agreements" in source
+    assert "%LOCALAPPDATA%\\Programs\\Git\\cmd\\git.exe" in source
+    assert "%ProgramFiles%\\Git\\cmd\\git.exe" in source
+    assert source.index("call :ensure_git") < source.index('"%UV_EXE%" sync')
+
+
 def test_managed_python_install_is_forced_into_comfy_directory(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
