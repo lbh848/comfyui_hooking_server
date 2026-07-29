@@ -193,9 +193,56 @@ async def test_preflight_uses_selected_workflow_model_size(
         assert received == {
             "release_version": "v1",
             "selected_item_ids": ["qwen_edit_workflow_source_path"],
+            "install_mode": "standard",
         }
         payload = await response.json()
         assert payload["preflight"]["selection"]["model_bytes"] == 123
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_installer_api_passes_nvidia_compatibility_mode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = tmp_path / "config.json"
+    config.write_text("{}\n", encoding="utf-8")
+    app = web.Application()
+    service = register_comfy_installer_routes(
+        app,
+        project_root=tmp_path,
+        config_path=config,
+        requirements_dir=tmp_path / "requirements",
+    )
+    received = {}
+
+    def fake_start_install(**kwargs):
+        received.update(kwargs)
+        return {
+            "state": "running",
+            "operation": "install",
+            "install_mode": kwargs["install_mode"],
+            "logs": [],
+        }
+
+    monkeypatch.setattr(service, "start_install", fake_start_install)
+    client = TestClient(TestServer(app))
+    await client.start_server()
+    try:
+        response = await client.post(
+            "/api/comfy-installer/start",
+            json={
+                "release_version": "v1",
+                "selected_item_ids": ["qwen_edit_workflow_source_path"],
+                "install_mode": "nvidia_compatibility",
+            },
+        )
+        assert response.status == 200
+        assert received == {
+            "release_version": "v1",
+            "selected_item_ids": ["qwen_edit_workflow_source_path"],
+            "install_mode": "nvidia_compatibility",
+        }
     finally:
         await client.close()
 

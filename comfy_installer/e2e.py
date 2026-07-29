@@ -895,6 +895,86 @@ def make_e2e_prompt(
     return prompt
 
 
+_SAGEATTENTION_BYPASS_CLASS_TYPES = frozenset(
+    {"PathchSageAttentionKJ"}
+)
+
+
+def bypass_sageattention_nodes(
+    prompt: dict,
+    *,
+    filename: str,
+) -> tuple[dict, list[dict[str, str]]]:
+    """호환 설치 E2E 사본에서만 SageAttention model pass-through를 우회한다."""
+
+    result = copy.deepcopy(prompt)
+    replacements: dict[str, list] = {}
+    bypassed: list[dict[str, str]] = []
+    for raw_node_id, node in result.items():
+        node_id = str(raw_node_id)
+        if not isinstance(node, dict) or node.get("class_type") not in (
+            _SAGEATTENTION_BYPASS_CLASS_TYPES
+        ):
+            continue
+        inputs = node.get("inputs")
+        model_link = inputs.get("model") if isinstance(inputs, dict) else None
+        if not _is_link(model_link):
+            message = (
+                "SageAttention 호환 우회에 필요한 model 연결이 없습니다: "
+                f"filename={filename}, node={node_id}"
+            )
+            print(f"[COMFY_INSTALL][E2E] {message}")
+            raise ComfyE2EError(message)
+        replacements[node_id] = copy.deepcopy(model_link)
+        bypassed.append(
+            {
+                "node_id": node_id,
+                "class_type": str(node["class_type"]),
+            }
+        )
+
+    def resolve_link(link: list) -> list:
+        resolved = copy.deepcopy(link)
+        visited: set[str] = set()
+        while str(resolved[0]) in replacements:
+            source_id = str(resolved[0])
+            if source_id in visited:
+                message = (
+                    "SageAttention 호환 우회 연결에 순환이 있습니다: "
+                    f"filename={filename}, node={source_id}"
+                )
+                print(f"[COMFY_INSTALL][E2E] {message}")
+                raise ComfyE2EError(message)
+            if int(resolved[1]) != 0:
+                message = (
+                    "SageAttention 호환 우회가 지원하지 않는 출력입니다: "
+                    f"filename={filename}, link={resolved!r}"
+                )
+                print(f"[COMFY_INSTALL][E2E] {message}")
+                raise ComfyE2EError(message)
+            visited.add(source_id)
+            resolved = copy.deepcopy(replacements[source_id])
+        return resolved
+
+    if not replacements:
+        return result, bypassed
+
+    for raw_node_id, node in result.items():
+        if str(raw_node_id) in replacements or not isinstance(node, dict):
+            continue
+        inputs = node.get("inputs")
+        if not isinstance(inputs, dict):
+            continue
+        for input_name, value in tuple(inputs.items()):
+            if _is_link(value) and str(value[0]) in replacements:
+                inputs[input_name] = resolve_link(value)
+
+    for raw_node_id in tuple(result):
+        if str(raw_node_id) in replacements:
+            del result[raw_node_id]
+    return result, bypassed
+
+
 def _fixture_destinations(comfy_root: Path) -> dict[str, Path]:
     input_root = comfy_root / "input"
     fixture_root = input_root / "comfy-installer-e2e"

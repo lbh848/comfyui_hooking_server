@@ -18,6 +18,11 @@ from typing import Any, Callable
 
 from aiohttp import web
 
+from comfy_installer.python_runtime import (
+    ManagedPythonError,
+    repair_relocated_managed_venv,
+)
+
 
 VALID_VRAM_MODES = {"auto", "highvram", "normalvram", "lowvram", "novram"}
 DEFAULT_COMFY_LAUNCH_PROFILE: dict[str, Any] = {
@@ -383,6 +388,25 @@ class ComfyRuntimeManager:
         state = self._states[parsed_instance]
 
         with self._manager_lock:
+            try:
+                repaired = repair_relocated_managed_venv(
+                    comfy_root=self.comfy_root,
+                    requirements_dir=self.project_root / "요구사항",
+                )
+                if repaired:
+                    print(
+                        "[COMFY_RUNTIME] 프로젝트 이동 후 내부 Python 경로를 "
+                        f"자동 복구했습니다: {self.comfy_root}"
+                    )
+            except ManagedPythonError as exc:
+                print(
+                    "[COMFY_RUNTIME] 프로젝트 내부 Python 경로 복구 실패: "
+                    f"comfy_root={self.comfy_root}, error={exc}"
+                )
+                traceback.print_exc()
+                raise ComfyRuntimeError(
+                    f"ComfyUI 전용 Python 경로를 복구하지 못했습니다: {exc}"
+                ) from exc
             with state.lock:
                 if state.process is not None and state.process.poll() is None:
                     message = (

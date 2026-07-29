@@ -11,10 +11,60 @@ from comfy_installer.e2e import (
     WorkflowValidation,
     _build_prompt_request,
     _validate_prompt_structure,
+    bypass_sageattention_nodes,
     make_e2e_prompt,
     prepare_e2e_fixtures,
     protected_e2e_fixtures,
 )
+
+
+def test_compatibility_e2e_bypasses_sageattention_without_mutating_prompt() -> None:
+    prompt = {
+        "1": {"class_type": "CheckpointLoaderSimple", "inputs": {}},
+        "2": {
+            "class_type": "PathchSageAttentionKJ",
+            "inputs": {"model": ["1", 0], "sage_attention": "auto"},
+        },
+        "3": {
+            "class_type": "KSampler",
+            "inputs": {"model": ["2", 0]},
+        },
+    }
+
+    compatible, bypassed = bypass_sageattention_nodes(
+        prompt,
+        filename="fixture.json",
+    )
+
+    assert "2" not in compatible
+    assert compatible["3"]["inputs"]["model"] == ["1", 0]
+    assert bypassed == [
+        {"node_id": "2", "class_type": "PathchSageAttentionKJ"}
+    ]
+    assert prompt["3"]["inputs"]["model"] == ["2", 0]
+
+
+def test_compatibility_e2e_bypasses_chained_sageattention_nodes() -> None:
+    prompt = {
+        "1": {"class_type": "CheckpointLoaderSimple", "inputs": {}},
+        "2": {
+            "class_type": "PathchSageAttentionKJ",
+            "inputs": {"model": ["1", 0]},
+        },
+        "3": {
+            "class_type": "PathchSageAttentionKJ",
+            "inputs": {"model": ["2", 0]},
+        },
+        "4": {"class_type": "KSampler", "inputs": {"model": ["3", 0]}},
+    }
+
+    compatible, bypassed = bypass_sageattention_nodes(
+        prompt,
+        filename="chained.json",
+    )
+
+    assert compatible["4"]["inputs"]["model"] == ["1", 0]
+    assert {item["node_id"] for item in bypassed} == {"2", "3"}
 
 
 def test_comfy_output_aggregates_repeated_lora_warnings(

@@ -106,12 +106,44 @@ def _validate_manifest(data: dict[str, Any]) -> None:
         if profile_id in profile_ids:
             raise ManifestError(f"GPU 프로필 ID가 중복됩니다: {profile_id}")
         profile_ids.add(profile_id)
+        kind = _require_string(profile, "kind", context)
+        if kind not in {"nvidia", "cpu"}:
+            raise ManifestError(f"{context}.kind 값이 유효하지 않습니다: {kind!r}")
         packages = profile.get("packages")
         if not isinstance(packages, list) or not all(
             isinstance(item, str) and item for item in packages
         ):
             raise ManifestError(f"{context}.packages가 문자열 배열이 아닙니다.")
+        _require_string(profile, "index_url", context)
+        if kind == "nvidia":
+            minimum_driver = _require_string(
+                profile, "minimum_driver_version", context
+            )
+            if not re.fullmatch(r"[0-9]+(?:\.[0-9]+){1,3}", minimum_driver):
+                raise ManifestError(
+                    f"{context}.minimum_driver_version 형식이 유효하지 않습니다: "
+                    f"{minimum_driver!r}"
+                )
+            minimum_compute = _require_string(
+                profile, "minimum_compute_capability", context
+            )
+            if not re.fullmatch(r"[0-9]+\.[0-9]+", minimum_compute):
+                raise ManifestError(
+                    f"{context}.minimum_compute_capability 형식이 유효하지 "
+                    f"않습니다: {minimum_compute!r}"
+                )
+            torch_cuda = _require_string(profile, "torch_cuda", context)
+            if not re.fullmatch(r"[0-9]+\.[0-9]+", torch_cuda):
+                raise ManifestError(
+                    f"{context}.torch_cuda 형식이 유효하지 않습니다: "
+                    f"{torch_cuda!r}"
+                )
+            _require_string(profile, "triton_package", context)
         sageattention = profile.get("sageattention")
+        if kind == "nvidia" and sageattention is None:
+            raise ManifestError(
+                f"{context}.sageattention이 NVIDIA 프로필에 없습니다."
+            )
         if sageattention is not None:
             if not isinstance(sageattention, dict):
                 raise ManifestError(f"{context}.sageattention이 객체가 아닙니다.")
@@ -128,6 +160,10 @@ def _validate_manifest(data: dict[str, Any]) -> None:
                 raise ManifestError(
                     f"{context}.sageattention.size가 양의 정수가 아닙니다."
                 )
+    if not any(profile.get("kind") == "nvidia" for profile in gpu_profiles):
+        raise ManifestError("NVIDIA GPU 프로필이 없습니다.")
+    if sum(profile.get("kind") == "cpu" for profile in gpu_profiles) != 1:
+        raise ManifestError("CPU 프로필은 정확히 하나여야 합니다.")
 
     custom_nodes = data.get("custom_nodes")
     if not isinstance(custom_nodes, list) or not custom_nodes:

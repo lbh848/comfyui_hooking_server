@@ -28,7 +28,9 @@
       {
         "id": "nvidia-cu130",
         "kind": "nvidia",
-        "minimum_driver_cuda": "13.0",
+        "minimum_driver_version": "580.00",
+        "minimum_compute_capability": "8.0",
+        "torch_cuda": "13.0",
         "packages": [
           "torch==2.10.0+cu130",
           "torchvision==0.25.0+cu130",
@@ -40,6 +42,25 @@
           "url": "https://github.com/woct0rdho/SageAttention/releases/download/v2.2.0-windows.post4/sageattention-2.2.0%2Bcu130torch2.9.0andhigher.post4-cp39-abi3-win_amd64.whl",
           "size": 12321863,
           "sha256": "f7261c53a1d46202059daff6b8feac5ee806274d47e3e7fb7abf8c5f6d410c92"
+        }
+      },
+      {
+        "id": "nvidia-cu128",
+        "kind": "nvidia",
+        "minimum_driver_version": "570.65",
+        "minimum_compute_capability": "8.0",
+        "torch_cuda": "12.8",
+        "packages": [
+          "torch==2.10.0+cu128",
+          "torchvision==0.25.0+cu128",
+          "torchaudio==2.10.0+cu128"
+        ],
+        "index_url": "https://download.pytorch.org/whl/cu128",
+        "triton_package": "triton-windows==3.6.0.post25",
+        "sageattention": {
+          "url": "https://github.com/woct0rdho/SageAttention/releases/download/v2.2.0-windows.post4/sageattention-2.2.0%2Bcu128torch2.9.0andhigher.post4-cp39-abi3-win_amd64.whl",
+          "size": 12252026,
+          "sha256": "b8b3134d00dfbdae5c10cc34cc8508891d9420adaa182502fa30a496428531ed"
         }
       },
       {

@@ -61,9 +61,14 @@ async def handle_preflight(request: web.Request) -> web.Response:
         body = await _read_json_object(request) if request.can_read_body else {}
         release_version = body.get("release_version")
         selected_item_ids = body.get("selected_item_ids")
+        install_mode = body.get("install_mode", "standard")
+        if not isinstance(install_mode, str):
+            raise InstallerServiceError("install_mode는 문자열이어야 합니다.")
         if release_version is None and selected_item_ids is None:
             result = await asyncio.to_thread(
-                service.preflight, require_disk=False
+                service.preflight,
+                require_disk=False,
+                install_mode=install_mode,
             )
         else:
             if not isinstance(release_version, str) or not isinstance(
@@ -77,6 +82,7 @@ async def handle_preflight(request: web.Request) -> web.Response:
                 service.preflight_selection,
                 release_version=release_version,
                 selected_item_ids=selected_item_ids,
+                install_mode=install_mode,
             )
         return web.json_response({"ok": True, "preflight": result})
     except Exception as exc:
@@ -182,15 +188,19 @@ async def handle_start(request: web.Request) -> web.Response:
         body = await _read_json_object(request)
         release_version = body.get("release_version")
         selected_item_ids = body.get("selected_item_ids")
+        install_mode = body.get("install_mode", "standard")
         if not isinstance(release_version, str):
             raise InstallerServiceError("release_version은 문자열이어야 합니다.")
         if not isinstance(selected_item_ids, list) or not all(
             isinstance(value, str) for value in selected_item_ids
         ):
             raise InstallerServiceError("selected_item_ids는 문자열 배열이어야 합니다.")
+        if not isinstance(install_mode, str):
+            raise InstallerServiceError("install_mode는 문자열이어야 합니다.")
         result = service.start_install(
             release_version=release_version,
             selected_item_ids=selected_item_ids,
+            install_mode=install_mode,
         )
         return web.json_response({"ok": True, **result})
     except InstallerServiceError as exc:

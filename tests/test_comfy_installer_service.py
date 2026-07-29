@@ -28,6 +28,30 @@ def test_service_status_never_contains_credentials(tmp_path: Path) -> None:
     assert service.comfy_root == tmp_path / "comfy"
 
 
+def test_installed_compatibility_mode_is_reused_for_updates(tmp_path: Path) -> None:
+    config = tmp_path / "config.json"
+    config.write_text("{}\n", encoding="utf-8")
+    service = ComfyInstallerService(
+        project_root=tmp_path,
+        config_path=config,
+        requirements_dir=tmp_path / "requirements",
+    )
+    state_root = tmp_path / "comfy" / ".installer-state"
+    state_root.mkdir(parents=True)
+    (state_root / "install-result-20260730_120000_000001.json").write_text(
+        json.dumps(
+            {
+                "operation": "install",
+                "install_mode": "nvidia_compatibility",
+                "python": {"profile": "nvidia-cu128"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert service._installed_install_mode() == "nvidia_compatibility"
+
+
 def test_v4_migration_backs_up_copies_and_retargets_config(tmp_path: Path) -> None:
     config = tmp_path / "config.json"
     requirements = tmp_path / "요구사항"
@@ -268,14 +292,27 @@ def test_manifest_has_fully_pinned_windows_runtime_and_assets() -> None:
         "opencv-python-headless==4.10.0.84",
         "opencv-contrib-python==4.10.0.84",
     ]
-    nvidia = next(
-        profile
+    nvidia = {
+        profile["id"]: profile
         for profile in manifest.python["gpu_profiles"]
         if profile["kind"] == "nvidia"
+    }
+    assert set(nvidia) == {"nvidia-cu128", "nvidia-cu130"}
+    assert nvidia["nvidia-cu128"]["minimum_driver_version"] == "570.65"
+    assert nvidia["nvidia-cu128"]["minimum_compute_capability"] == "8.0"
+    assert nvidia["nvidia-cu128"]["torch_cuda"] == "12.8"
+    assert nvidia["nvidia-cu128"]["sageattention"]["size"] == 12252026
+    assert nvidia["nvidia-cu128"]["sageattention"]["sha256"] == (
+        "b8b3134d00dfbdae5c10cc34cc8508891d9420adaa182502fa30a496428531ed"
     )
-    assert nvidia["id"] == "nvidia-cu130"
-    assert nvidia["sageattention"]["size"] == 12321863
-    assert len(nvidia["sageattention"]["sha256"]) == 64
+    assert nvidia["nvidia-cu130"]["minimum_driver_version"] == "580.00"
+    assert nvidia["nvidia-cu130"]["minimum_compute_capability"] == "8.0"
+    assert nvidia["nvidia-cu130"]["torch_cuda"] == "13.0"
+    assert nvidia["nvidia-cu130"]["sageattention"]["size"] == 12321863
+    assert all(
+        len(profile["sageattention"]["sha256"]) == 64
+        for profile in nvidia.values()
+    )
     assert len(manifest.custom_nodes) == 15
     lora_manager = next(
         node

@@ -21,6 +21,7 @@ def test_settings_has_comfy_installer_tab_and_key_inputs() -> None:
     assert 'id="comfy-installer-pack"' in FRONTEND
     assert 'id="comfy-installer-unpack-btn"' in FRONTEND
     assert 'id="comfy-installer-update-btn"' in FRONTEND
+    assert 'id="comfy-installer-compat-start-btn"' in FRONTEND
     assert 'id="comfy-installer-migrate-btn"' in FRONTEND
     assert "이사하기(V4 사용자용)" in FRONTEND
     assert "config.json</code>을 <code>요구사항/</code>에 먼저 백업" in FRONTEND
@@ -55,8 +56,18 @@ def test_frontend_uses_dedicated_installer_apis_and_does_not_persist_keys() -> N
     assert "api_key: input?.value || ''" in FRONTEND
     assert "release_version: releaseVersion" in FRONTEND
     assert "selected_item_ids: selectedItemIds" in FRONTEND
+    assert "install_mode: installMode" in FRONTEND
     assert "restore_config_after_success" not in FRONTEND
     assert "workflowKeyInput.value = ''" in FRONTEND
+
+
+def test_nvidia_compatibility_install_warns_about_sageattention_workflows() -> None:
+    assert "comfyInstallerStart('nvidia_compatibility')" in FRONTEND
+    assert "RTX 2070/2080 같은 Turing(sm75)" in FRONTEND
+    assert "SageAttention과 전용 Triton을 제외합니다" in FRONTEND
+    assert "SageAttention 노드를 제거하거나" in FRONTEND
+    assert "disabled로 설정" in FRONTEND
+    assert "compatibility_warning" in FRONTEND
 
 
 def test_successful_update_shows_restart_message_then_requests_shutdown() -> None:

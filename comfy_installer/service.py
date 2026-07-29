@@ -30,6 +30,7 @@ from .dependency_installer import (
 )
 from .downloader import DownloadCancelled, ResumableDownloader
 from .e2e import (
+    bypass_sageattention_nodes,
     ComfyE2ECancelled,
     ComfyE2EError,
     ComfyProcess,
@@ -38,6 +39,13 @@ from .e2e import (
     protected_e2e_fixtures,
     promote_generated_fixture,
     validate_all_workflows,
+)
+from .install_modes import (
+    INSTALL_MODE_NVIDIA_COMPATIBILITY,
+    INSTALL_MODE_STANDARD,
+    compatibility_warning,
+    effective_gpu_profile,
+    normalize_install_mode,
 )
 from .manifest import InstallManifest, load_install_manifest
 from .input_patcher import patch_comfy_input
@@ -67,7 +75,7 @@ _INSTALL_PHASES = (
     ("workflows", "선택 워크플로우 사용자 사본 생성"),
     ("credentials", "Civitai 인증 사전 검증"),
     ("venv", "comfy/.venv Python 3.12.11 생성"),
-    ("core_dependencies", "PyTorch/Triton/SageAttention/Comfy 의존성 설치"),
+    ("core_dependencies", "PyTorch 및 선택 가속/Comfy 의존성 설치"),
     ("custom_nodes", "고정 커스텀 노드 설치"),
     ("node_dependencies", "커스텀 노드 Python 의존성 설치"),
     ("runtime_isolation", "GPU 및 독립 환경 검증"),
@@ -84,8 +92,9 @@ _UPDATE_PHASES = (
     ("config_backup", "config.json 업데이트 전 백업"),
     ("hooking_server", "후킹 서버 origin/main 수동 업데이트"),
     ("manifest", "새 설치 매니페스트 로드"),
+    ("venv", "프로젝트 내부 ComfyUI Python 검증"),
     ("source", "변경된 ComfyUI 고정 소스 업데이트"),
-    ("core_dependencies", "변경된 ComfyUI Python 의존성 적용"),
+    ("core_dependencies", "변경된 ComfyUI Python/선택 가속 의존성 적용"),
     ("custom_nodes", "변경된 커스텀 노드 업데이트"),
     ("node_dependencies", "변경된 노드 Python 의존성 적용"),
     ("runtime_isolation", "독립 Python/GPU 빠른 검증"),
@@ -146,6 +155,7 @@ class ComfyInstallerService:
         self._state: dict[str, Any] = {
             "state": "idle",
             "operation": None,
+            "install_mode": None,
             "phase": None,
             "phase_index": 0,
             "phase_count": len(self._phases),
@@ -249,7 +259,12 @@ class ComfyInstallerService:
         *,
         selected_model_bytes: int | None = None,
         require_disk: bool = True,
+        install_mode: str = INSTALL_MODE_STANDARD,
     ) -> dict:
+        try:
+            mode = normalize_install_mode(install_mode)
+        except ValueError as exc:
+            raise InstallerServiceError(str(exc)) from exc
         runtime_and_buffer = 30 * 1024**3
         required_bytes = runtime_and_buffer + max(
             int(selected_model_bytes or 0), 0
@@ -259,6 +274,7 @@ class ComfyInstallerService:
             self.manifest,
             required_bytes=required_bytes,
             require_disk=require_disk,
+            install_mode=mode,
         )
         return {
             **result,
@@ -270,6 +286,7 @@ class ComfyInstallerService:
         *,
         release_version: str,
         selected_item_ids: list[str],
+        install_mode: str = INSTALL_MODE_STANDARD,
     ) -> dict:
         requirements = selection_requirements(
             library_root=self.workflow_library_root,
@@ -278,7 +295,8 @@ class ComfyInstallerService:
         )
         return {
             **self.preflight(
-                selected_model_bytes=int(requirements["model_bytes"])
+                selected_model_bytes=int(requirements["model_bytes"]),
+                install_mode=install_mode,
             ),
             "selection": requirements,
         }
@@ -554,6 +572,7 @@ class ComfyInstallerService:
         *,
         process: ComfyProcess,
         validations: list,
+        bypass_sageattention: bool = False,
     ) -> list[dict]:
         results: list[dict] = []
         failures: list[dict[str, str]] = []
@@ -591,6 +610,18 @@ class ComfyInstallerService:
                 )
                 try:
                     prompt = make_e2e_prompt(validation)
+                    bypassed_nodes: list[dict[str, str]] = []
+                    if bypass_sageattention:
+                        prompt, bypassed_nodes = bypass_sageattention_nodes(
+                            prompt,
+                            filename=validation.filename,
+                        )
+                        if bypassed_nodes:
+                            self._log(
+                                "[E2E 호환] SageAttention 노드를 검증 사본에서 "
+                                f"우회: filename={validation.filename}, "
+                                f"count={len(bypassed_nodes)}"
+                            )
                     timeout = (
                         7200
                         if any(
@@ -608,6 +639,8 @@ class ComfyInstallerService:
                         log=self._log,
                         timeout=timeout,
                     )
+                    if bypassed_nodes:
+                        result["compatibility_bypassed_nodes"] = bypassed_nodes
                 except ComfyE2ECancelled:
                     raise
                 except ComfyE2EError as exc:
@@ -704,6 +737,7 @@ class ComfyInstallerService:
                 {
                     "state": "running",
                     "operation": operation,
+                    "install_mode": kwargs.get("install_mode"),
                     "phase": None,
                     "phase_index": 0,
                     "phase_count": len(phases),
@@ -729,11 +763,16 @@ class ComfyInstallerService:
         *,
         release_version: str,
         selected_item_ids: list[str],
+        install_mode: str = INSTALL_MODE_STANDARD,
     ) -> dict:
         if not isinstance(release_version, str) or not release_version:
             raise InstallerServiceError("설치할 워크플로우 팩 버전이 비어 있습니다.")
         if not isinstance(selected_item_ids, list) or not selected_item_ids:
             raise InstallerServiceError("설치할 워크플로우를 하나 이상 선택하세요.")
+        try:
+            mode = normalize_install_mode(install_mode)
+        except ValueError as exc:
+            raise InstallerServiceError(str(exc)) from exc
         return self._start_operation(
             operation="install",
             phases=_INSTALL_PHASES,
@@ -741,6 +780,7 @@ class ComfyInstallerService:
             kwargs={
                 "release_version": release_version,
                 "selected_item_ids": [str(value) for value in selected_item_ids],
+                "install_mode": mode,
             },
         )
 
@@ -750,11 +790,12 @@ class ComfyInstallerService:
             raise InstallerServiceError(
                 f"내장 ComfyUI가 설치되지 않았습니다. 먼저 설치하기를 사용하세요: {python}"
             )
+        install_mode = self._installed_install_mode()
         return self._start_operation(
             operation="update",
             phases=_UPDATE_PHASES,
             target=self._run_update,
-            kwargs={},
+            kwargs={"install_mode": install_mode},
         )
 
     def start_migration(
@@ -880,6 +921,7 @@ class ComfyInstallerService:
         *,
         release_version: str,
         selected_item_ids: list[str],
+        install_mode: str,
     ) -> None:
         process: ComfyProcess | None = None
         config_update: ConfigUpdateResult | None = None
@@ -887,6 +929,9 @@ class ComfyInstallerService:
         civitai_key = ""
         started_monotonic = time.monotonic()
         try:
+            warning = compatibility_warning(install_mode)
+            if warning:
+                self._log(f"[호환 설치 안내] {warning}", "warning")
             selection_info = selection_requirements(
                 library_root=self.workflow_library_root,
                 release_version=release_version,
@@ -894,7 +939,8 @@ class ComfyInstallerService:
             )
             self._set_phase("preflight")
             system = self.preflight(
-                selected_model_bytes=int(selection_info["model_bytes"])
+                selected_model_bytes=int(selection_info["model_bytes"]),
+                install_mode=install_mode,
             )
             self._log(
                 "[검사] GPU 프로필 선택: "
@@ -954,13 +1000,15 @@ class ComfyInstallerService:
                 python_version=str(self.manifest.python["version"]),
                 cancel_event=self._cancel,
                 log=self._log,
+                requirements_dir=self.requirements_dir,
             )
 
-            profile = next(
+            base_profile = next(
                 profile
                 for profile in self.manifest.python["gpu_profiles"]
                 if profile["id"] == system["gpu_profile"]
             )
+            profile = effective_gpu_profile(base_profile, install_mode)
             self._set_phase("core_dependencies")
             python_result = install_python_dependencies(
                 comfy_root=self.comfy_root,
@@ -1056,6 +1104,9 @@ class ComfyInstallerService:
             runtime_e2e = self._run_runtime_e2e(
                 process=process,
                 validations=validations,
+                bypass_sageattention=(
+                    install_mode == INSTALL_MODE_NVIDIA_COMPATIBILITY
+                ),
             )
             process.stop()
             process = None
@@ -1078,6 +1129,9 @@ class ComfyInstallerService:
 
             self._set_phase("complete")
             result = {
+                "operation": "install",
+                "install_mode": install_mode,
+                "compatibility_warning": warning,
                 "completed_at": _now_iso(),
                 "duration_seconds": round(
                     time.monotonic() - started_monotonic, 3
@@ -1129,6 +1183,8 @@ class ComfyInstallerService:
                 f"{len(selection.selected_item_ids)}개, "
                 f"{result_path}"
             )
+            if warning:
+                self._log(f"[호환 설치 완료 안내] {warning}", "warning")
         except (
             ComfyE2ECancelled,
             DownloadCancelled,
@@ -1159,7 +1215,11 @@ class ComfyInstallerService:
                 process.stop()
             civitai_key = ""
 
-    def _installed_gpu_profile_id(self) -> str:
+    def _installed_gpu_profile_id(
+        self,
+        *,
+        install_mode: str = INSTALL_MODE_STANDARD,
+    ) -> str:
         state_root = self.comfy_root / ".installer-state"
         if state_root.is_dir():
             for path in sorted(
@@ -1187,13 +1247,56 @@ class ComfyInstallerService:
             "[COMFY_INSTALL][UPDATE] 설치 결과에서 GPU 프로필을 찾지 못해 "
             "시스템 검사를 다시 실행합니다."
         )
-        return str(self.preflight(require_disk=False)["gpu_profile"])
+        return str(
+            self.preflight(
+                require_disk=False,
+                install_mode=install_mode,
+            )["gpu_profile"]
+        )
 
-    def _run_update(self) -> None:
+    def _installed_install_mode(self) -> str:
+        state_root = self.comfy_root / ".installer-state"
+        if state_root.is_dir():
+            for path in sorted(
+                state_root.glob("install-result-*.json"), reverse=True
+            ):
+                try:
+                    value = json.loads(path.read_text(encoding="utf-8"))
+                    if not isinstance(value, dict):
+                        print(
+                            "[COMFY_INSTALL][UPDATE] 설치 결과가 객체가 "
+                            f"아닙니다: path={path}"
+                        )
+                        continue
+                    raw_mode = value.get("install_mode")
+                    if raw_mode is None:
+                        return INSTALL_MODE_STANDARD
+                    return normalize_install_mode(raw_mode)
+                except Exception as exc:
+                    print(
+                        "[COMFY_INSTALL][UPDATE] 기존 설치 모드 읽기 실패: "
+                        f"path={path}, error={exc}"
+                    )
+                    traceback.print_exc()
+        print(
+            "[COMFY_INSTALL][UPDATE] 설치 결과에서 설치 모드를 찾지 못해 "
+            "표준 설치 모드를 사용합니다."
+        )
+        return INSTALL_MODE_STANDARD
+
+    def _run_update(self, *, install_mode: str) -> None:
         process: ComfyProcess | None = None
         started_monotonic = time.monotonic()
         old_manifest = self.manifest
         try:
+            mode = normalize_install_mode(install_mode)
+            warning = compatibility_warning(mode)
+            if warning:
+                self._log(
+                    "[업데이트][호환 설치 유지] SageAttention을 다시 "
+                    f"설치하지 않습니다. {warning}",
+                    "warning",
+                )
             self._set_phase("config_backup")
             config_backup = backup_current_config(
                 config_path=self.config_path,
@@ -1234,13 +1337,24 @@ class ComfyInstallerService:
                 f"nodes={nodes_changed}"
             )
 
-            python = uv_python_path(self.comfy_root / ".venv")
-            if not python.is_file():
-                raise InstallerServiceError(
-                    f"내장 ComfyUI Python이 없습니다. 먼저 설치하세요: {python}"
-                )
-            profile_id = self._installed_gpu_profile_id()
-            profile = next(
+            self._set_phase("venv")
+            python = create_comfy_venv(
+                comfy_root=self.comfy_root,
+                python_version=str(new_manifest.python["version"]),
+                cancel_event=self._cancel,
+                log=self._log,
+                requirements_dir=self.requirements_dir,
+            )
+            installed_profile_id = self._installed_gpu_profile_id(
+                install_mode=mode
+            )
+            current_system = self.preflight(
+                require_disk=False,
+                install_mode=mode,
+            )
+            profile_id = str(current_system["gpu_profile"])
+            profile_changed = profile_id != installed_profile_id
+            base_profile = next(
                 (
                     value
                     for value in new_manifest.python["gpu_profiles"]
@@ -1248,10 +1362,17 @@ class ComfyInstallerService:
                 ),
                 None,
             )
-            if profile is None:
+            if base_profile is None:
                 raise InstallerServiceError(
-                    f"설치된 GPU 프로필이 새 매니페스트에 없습니다: {profile_id}"
+                    f"현재 시스템용 GPU 프로필이 새 매니페스트에 없습니다: "
+                    f"{profile_id}"
                 )
+            profile = effective_gpu_profile(base_profile, mode)
+            self._log(
+                "[업데이트] 현재 PC 기준 GPU 프로필: "
+                f"installed={installed_profile_id}, selected={profile_id}, "
+                f"changed={profile_changed}"
+            )
 
             self._set_phase("source")
             update_comfy_source(
@@ -1264,7 +1385,7 @@ class ComfyInstallerService:
 
             self._set_phase("core_dependencies")
             python_result = None
-            if source_changed or python_changed:
+            if source_changed or python_changed or profile_changed:
                 python_result = install_python_dependencies(
                     comfy_root=self.comfy_root,
                     python=python,
@@ -1278,6 +1399,18 @@ class ComfyInstallerService:
                 )
             else:
                 self._log("[업데이트] Comfy/Python 변경 없음: 핵심 의존성 생략")
+                python_result = {
+                    "python": str(python),
+                    "profile": profile_id,
+                    "reused": True,
+                    "preinstall_wheels": [],
+                    "sageattention_wheel": None,
+                    "excluded_acceleration_packages": (
+                        ["sageattention", "triton-windows", "triton"]
+                        if mode == INSTALL_MODE_NVIDIA_COMPATIBILITY
+                        else []
+                    ),
+                }
 
             self._set_phase("custom_nodes")
             updated_node_names: list[str] = []
@@ -1350,6 +1483,8 @@ class ComfyInstallerService:
             self._set_phase("complete")
             result = {
                 "operation": "update",
+                "install_mode": mode,
+                "compatibility_warning": warning,
                 "completed_at": _now_iso(),
                 "duration_seconds": round(
                     time.monotonic() - started_monotonic, 3
@@ -1360,8 +1495,10 @@ class ComfyInstallerService:
                 "changes": {
                     "comfy": source_changed,
                     "python": python_changed,
+                    "gpu_profile": profile_changed,
                     "custom_nodes": bool(nodes_changed or updated_node_names),
                 },
+                "system": current_system,
                 "updated_custom_nodes": updated_node_names,
                 "python": python_result,
                 "runtime": runtime,

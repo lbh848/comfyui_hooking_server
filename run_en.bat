@@ -3,26 +3,33 @@ setlocal
 cd /d %~dp0
 chcp 65001 >nul 2>&1
 
-echo [1/5] Checking uv...
-where uv >nul 2>&1
-if errorlevel 1 (
-    echo       uv not found. Installing automatically...
-    powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+set "UV_VERSION=0.11.8"
+set "UV_TOOL_DIR=%CD%\.tools\uv-%UV_VERSION%"
+set "UV_EXE=%UV_TOOL_DIR%\uv.exe"
+
+echo [1/5] Checking project-local uv %UV_VERSION%...
+if not exist "%UV_EXE%" (
+    echo       Project-local uv not found. Installing pinned version...
+    set "UV_INSTALL_DIR=%UV_TOOL_DIR%"
+    set "UV_NO_MODIFY_PATH=1"
+    powershell -NoProfile -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/%UV_VERSION%/install.ps1 | iex"
     if errorlevel 1 (
-        echo [ERROR] Failed to install uv.
-        echo         Manual install: https://docs.astral.sh/uv/getting-started/installation/
+        echo [ERROR] Failed to install project-local uv %UV_VERSION%.
+        echo         Check the network connection and PowerShell policy.
         goto :end
     )
-    echo       uv installed.
-    set "PATH=%USERPROFILE%\.local\bin;%PATH%"
-    where uv >nul 2>&1
-    if errorlevel 1 (
-        echo [ERROR] uv not found in PATH. Close this terminal and retry.
+    if not exist "%UV_EXE%" (
+        echo [ERROR] uv installer completed but uv.exe is missing:
+        echo         %UV_EXE%
         goto :end
     )
+    echo       Project-local uv installed.
 ) else (
-    echo       uv OK.
+    echo       Project-local uv OK.
 )
+set "UV_INSTALL_DIR="
+set "UV_NO_MODIFY_PATH="
+set "PATH=%UV_TOOL_DIR%;%PATH%"
 
 :: Cleanup legacy venv (one-time)
 if exist "venv" (
@@ -32,7 +39,7 @@ if exist "venv" (
 
 :: Python 3.12 + packages
 echo [2/5] Setting up Python 3.12 environment...
-uv sync
+"%UV_EXE%" sync
 if errorlevel 1 (
     echo [ERROR] Failed to set up environment. Check network connection.
     goto :end
@@ -43,7 +50,7 @@ if errorlevel 1 (
 :: 별도 runtime 설치 분기는 의존성 충돌(onnxruntime vs -directml)을 유발해 제거.
 
 echo [3/5] Checking model files...
-uv run --no-sync python ensure_models.py
+"%UV_EXE%" run --no-sync python ensure_models.py
 if errorlevel 1 (
     echo [ERROR] Failed to prepare model files. Check the messages above and network connection.
     goto :end
@@ -71,7 +78,7 @@ echo   ComfyUI Proxy Server Start (port 8189)
 echo   Frontend: http://127.0.0.1:8189/
 echo ============================================
 echo.
-uv run --no-sync python server.py
+"%UV_EXE%" run --no-sync python server.py
 
 :end
 pause
