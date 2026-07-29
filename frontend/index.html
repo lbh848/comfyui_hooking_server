@@ -1347,67 +1347,223 @@
         details.llm-group:not([open]) > summary::after { transform: rotate(-90deg); }
         details.llm-group[open] > summary { border-bottom: 1px solid var(--border); }
         details.llm-group .setting-row { padding-left: 12px; padding-right: 12px; }
-        .llm-route-header,
-        .llm-route-main {
-            display: grid;
-            grid-template-columns: 1.5fr 0.7fr 0.7fr 0.9fr 0.5fr;
-            gap: 8px;
+        .llm-routing-table {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+        .llm-route-group {
+            overflow: hidden;
+            border: 1px solid color-mix(in srgb, var(--route-group-color) 34%, var(--border));
+            border-radius: 10px;
+            background: color-mix(in srgb, var(--surface2) 16%, transparent);
+        }
+        .llm-route-group-header {
+            display: flex;
             align-items: center;
+            gap: 10px;
+            padding: 10px 12px;
+            border-bottom: 1px solid color-mix(in srgb, var(--route-group-color) 28%, var(--border));
+            border-left: 4px solid var(--route-group-color);
+            background: color-mix(in srgb, var(--route-group-color) 10%, var(--surface));
+        }
+        .llm-route-group-number {
+            display: grid;
+            flex: 0 0 auto;
+            width: 27px;
+            height: 27px;
+            place-items: center;
+            border: 1px solid color-mix(in srgb, var(--route-group-color) 55%, transparent);
+            border-radius: 8px;
+            background: color-mix(in srgb, var(--route-group-color) 18%, transparent);
+            color: color-mix(in srgb, var(--route-group-color) 82%, white);
+            font-size: 0.68rem;
+            font-weight: 800;
+        }
+        .llm-route-group-heading {
+            min-width: 0;
+            flex: 1;
+        }
+        .llm-route-group-title {
+            font-size: 0.86rem;
+            font-weight: 750;
+            color: var(--text);
+        }
+        .llm-route-group-description {
+            margin-top: 2px;
+            color: var(--text2);
+            font-size: 0.7rem;
+            line-height: 1.35;
+        }
+        .llm-route-group-count {
+            flex: 0 0 auto;
+            padding: 3px 8px;
+            border-radius: 999px;
+            background: color-mix(in srgb, var(--route-group-color) 14%, var(--surface2));
+            color: var(--text2);
+            font-size: 0.68rem;
+            white-space: nowrap;
+        }
+        .llm-route-group-body {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            padding: 9px;
         }
         .llm-route-card {
-            padding: 6px 8px;
-            background: var(--surface2);
-            border-radius: 6px;
+            padding: 10px;
+            border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+            border-radius: 8px;
+            background: color-mix(in srgb, var(--surface2) 70%, var(--surface));
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
         }
-        .llm-route-retry-grid {
+        .llm-route-task-header {
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            min-width: 0;
+            margin-bottom: 8px;
+        }
+        .llm-route-task-title {
+            min-width: 0;
+            flex: 1;
+            font-size: 0.8rem;
+            font-weight: 700;
+            color: var(--text);
+        }
+        .llm-route-kind {
+            flex: 0 0 auto;
+            padding: 2px 7px;
+            border: 1px solid color-mix(in srgb, #62b8d9 34%, transparent);
+            border-radius: 999px;
+            background: rgba(39, 125, 157, 0.14);
+            color: #a9d9e9;
+            font-size: 0.64rem;
+            white-space: nowrap;
+        }
+        .llm-route-lock-badge {
+            flex: 0 0 auto;
+            color: var(--text2);
+            font-size: 0.64rem;
+        }
+        .llm-route-json-toggle {
+            display: flex;
+            flex: 0 0 auto;
+            align-items: center;
+            gap: 5px;
+            color: var(--text2);
+            font-size: 0.66rem;
+            white-space: nowrap;
+            cursor: pointer;
+        }
+        .llm-route-json-toggle input { accent-color: #9c7fe8; }
+        .llm-route-path-grid {
             display: grid;
-            grid-template-columns: repeat(4, minmax(0, 1fr));
+            grid-template-columns: repeat(2, minmax(0, 1fr));
             gap: 8px;
-            margin-top: 7px;
-            padding: 7px 8px;
-            border-top: 1px solid #2C6683;
-            background: #173C58;
-            border-radius: 0 0 6px 6px;
         }
-        .llm-route-retry-grid .llm-route-retry-field span {
-            color: #8FC3D6;
+        .llm-route-path-panel {
+            min-width: 0;
+            padding: 8px;
+            border: 1px solid var(--route-path-border);
+            border-radius: 7px;
+            background: var(--route-path-background);
+            transition: opacity 0.15s, border-color 0.15s;
         }
-        .llm-route-retry-grid .llm-route-retry-field input {
-            background: #172640;
-            border-color: #3C7392;
-            color: #F2F6FA;
+        .llm-route-path-panel.primary {
+            --route-path-border: rgba(54, 182, 139, 0.38);
+            --route-path-background: rgba(32, 116, 91, 0.13);
+            --route-path-accent: #68d9b3;
+        }
+        .llm-route-path-panel.fallback {
+            --route-path-border: rgba(226, 154, 68, 0.42);
+            --route-path-background: rgba(153, 91, 25, 0.13);
+            --route-path-accent: #f0b46c;
+        }
+        .llm-route-path-panel.fallback.is-disabled {
+            opacity: 0.54;
+            --route-path-border: rgba(140, 140, 150, 0.30);
+            --route-path-background: rgba(80, 80, 90, 0.10);
+            --route-path-accent: var(--text2);
+        }
+        .llm-route-path-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+        .llm-route-path-title {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            color: var(--route-path-accent);
+            font-size: 0.7rem;
+            font-weight: 750;
+            white-space: nowrap;
+        }
+        .llm-route-path-title::before {
+            content: '';
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: currentColor;
+            box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 18%, transparent);
+        }
+        .llm-route-path-head select {
+            min-width: 86px;
+            padding: 4px 7px;
+            border: 1px solid color-mix(in srgb, var(--route-path-accent) 38%, var(--border));
+            border-radius: 6px;
+            background: var(--surface);
+            color: var(--text);
+            font-size: 0.72rem;
+        }
+        .llm-route-path-fields {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 6px;
         }
         .llm-route-retry-field {
             display: flex;
             align-items: center;
-            justify-content: flex-end;
-            gap: 6px;
+            justify-content: space-between;
+            gap: 5px;
             min-width: 0;
-            font-size: 11px;
-            color: var(--text-dim);
+            color: var(--text2);
+            font-size: 0.64rem;
             white-space: nowrap;
         }
         .llm-route-retry-field input {
-            width: 70px;
+            width: 58px;
             min-width: 0;
-            padding: 4px 6px;
+            padding: 4px 5px;
+            border: 1px solid color-mix(in srgb, var(--route-path-accent) 30%, var(--border));
             border-radius: 6px;
-            border: 1px solid var(--border);
-            background: var(--surface);
+            background: color-mix(in srgb, var(--surface) 82%, black);
             color: var(--text);
+            font-size: 0.7rem;
         }
         .llm-route-retry-field input:disabled {
             opacity: 0.45;
             cursor: not-allowed;
         }
-        @media (max-width: 760px) {
-            .llm-route-header,
-            .llm-route-main {
-                grid-template-columns: 1.25fr 0.65fr 0.8fr 0.9fr 0.45fr;
-                gap: 5px;
-            }
-            .llm-route-retry-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-            .llm-route-retry-field { justify-content: space-between; }
+        .llm-route-notice,
+        .llm-route-tip {
+            padding: 0 3px;
+            font-size: 0.7rem;
+            line-height: 1.45;
+        }
+        .llm-route-notice { color: #d89a3a; }
+        .llm-route-tip { color: var(--text2); }
+        @media (max-width: 620px) {
+            .llm-route-path-grid { grid-template-columns: 1fr; }
+            .llm-route-group-description { display: none; }
+            .llm-route-task-header { flex-wrap: wrap; }
+            .llm-route-task-title { flex-basis: 100%; }
+        }
+        @media (max-width: 400px) {
+            .llm-route-path-fields { grid-template-columns: 1fr; }
         }
 
         .illust-workflow-option {
@@ -15643,7 +15799,7 @@
                             폴백을 <b>없음</b>으로 두면 폴백 호출만 비활성화됩니다. 빈 응답과 공백만 있는 응답도 실패로 처리합니다.
                             LLM2/LLM3 설정은 <b>외부 API</b> 탭에서 먼저 구성하세요(모델명이 비어있으면 해당 LLM 선택지가 비활성화됩니다).
                         </div>
-                        <div id="llm-routing-table" style="display: flex; flex-direction: column; gap: 6px;"></div>
+                        <div id="llm-routing-table" class="llm-routing-table"></div>
                     </div>
                 </div>
 
@@ -24374,26 +24530,59 @@
 
         // ─── 외부 API 분기: 작업별 LLM1/LLM2 라우팅 테이블 ───
         // task_key 목록과 표시명. DEFAULT_CONFIG(server.py) 와 일치해야 함.
+        const LLM_ROUTING_GROUPS = [
+            {
+                key: 'outfit_workflow',
+                label: '복장 · 워크플로우',
+                description: '복장 추출·정제와 수동 워크플로우 복원 작업',
+                color: '#8b7ce8',
+            },
+            {
+                key: 'asset_management',
+                label: 'LoRA · 에셋 관리',
+                description: '태그 분류·정제, 테스트 이미지 세팅과 에셋 이름 매핑',
+                color: '#39a8d0',
+            },
+            {
+                key: 'image_editing',
+                label: '이미지 · 삽화 편집',
+                description: '삽화 수정 프롬프트와 EDIT 지시 번역',
+                color: '#e08070',
+            },
+            {
+                key: 'character_maker',
+                label: '캐릭터 메이커',
+                description: '캐릭터 초안 작성과 생성 이미지 피드백',
+                color: '#d18bd8',
+            },
+            {
+                key: 'illustration_pipeline',
+                label: '삽화 생성 파이프라인',
+                description: '삽화 컨텍스트 전처리부터 본문·대사·마스크 생성까지의 호출 단계',
+                color: '#5fbd8b',
+            },
+        ];
+
         const LLM_ROUTING_TASKS = [
-            { key: 'extract_outfit',           label: '복장 추출',          kind: '텍스트', locked: true },
-            { key: 'enhance_outfit',           label: '복장 정제',          kind: '텍스트', locked: true },
-            { key: 'restore_workflow',         label: '수동 그리기/복원(LLM)', kind: '텍스트' },
-            { key: 'classify_face_tags',       label: '얼굴/눈 태그 분류',  kind: '비전' },
-            { key: 'refine_lb_extra',          label: '외모/복장 태그 정제',kind: '비전' },
-            { key: 'refine_lora_prompt',       label: 'LoRA/에셋/스타일 정제', kind: '비전' },
-            { key: 'refine_lora_test_setup',   label: '테스트 이미지 일괄 세팅(봇/에셋)',kind: '텍스트' },
-            { key: 'asset_name_mapping_auto_fix', label: '에셋 이름 자동 수정', kind: 'JSON', json: true },
-            { key: 'asset_name_mapping_full',  label: '에셋 이름 전체 매핑', kind: 'JSON', json: true },
-            { key: 'edit_illustration_prompt', label: '삽화 편하게 수정', kind: '비전/JSON' },
-            { key: 'qwen_edit_translate',      label: 'EDIT 지시 영어 번역', kind: '텍스트' },
-            { key: 'character_maker_draft',    label: '캐릭터 메이커 초안', kind: '텍스트/JSON', json: true },
-            { key: 'character_maker_feedback', label: '캐릭터 메이커 이미지 피드백', kind: '비전/JSON', json: true },
-            { key: 'illustration_call1_backtranslate', label: '삽화 CALL1 역번역',               kind: '텍스트' },
-            { key: 'illustration_call1',       label: '삽화 CALL1 (전처리)',           kind: '텍스트' },
-            { key: 'illustration_call2',       label: '삽화 CALL2 (본문)',             kind: '텍스트' },
-            { key: 'illustration_call2_fix',   label: '삽화 CALL2-FIX (TOON 교정)',    kind: '텍스트' },
-            { key: 'illustration_call3',       label: '삽화 CALL3 (대사 생성)',         kind: '텍스트' },
-            { key: 'illustration_multi_char_mask', label: '삽화 다중 캐릭터 마스크',    kind: 'JSON' },
+            { key: 'extract_outfit',           label: '복장 추출',          kind: '텍스트', group: 'outfit_workflow', locked: true },
+            { key: 'enhance_outfit',           label: '복장 정제',          kind: '텍스트', group: 'outfit_workflow', locked: true },
+            { key: 'restore_workflow',         label: '수동 그리기/복원(LLM)', kind: '텍스트', group: 'outfit_workflow' },
+            { key: 'classify_face_tags',       label: '얼굴/눈 태그 분류',  kind: '비전', group: 'asset_management' },
+            { key: 'refine_lb_extra',          label: '외모/복장 태그 정제',kind: '비전', group: 'asset_management' },
+            { key: 'refine_lora_prompt',       label: 'LoRA/에셋/스타일 정제', kind: '비전', group: 'asset_management' },
+            { key: 'refine_lora_test_setup',   label: '테스트 이미지 일괄 세팅(봇/에셋)',kind: '텍스트', group: 'asset_management' },
+            { key: 'asset_name_mapping_auto_fix', label: '에셋 이름 자동 수정', kind: 'JSON', group: 'asset_management', json: true },
+            { key: 'asset_name_mapping_full',  label: '에셋 이름 전체 매핑', kind: 'JSON', group: 'asset_management', json: true },
+            { key: 'edit_illustration_prompt', label: '삽화 편하게 수정', kind: '비전/JSON', group: 'image_editing' },
+            { key: 'qwen_edit_translate',      label: 'EDIT 지시 영어 번역', kind: '텍스트', group: 'image_editing' },
+            { key: 'character_maker_draft',    label: '캐릭터 메이커 초안', kind: '텍스트/JSON', group: 'character_maker', json: true },
+            { key: 'character_maker_feedback', label: '캐릭터 메이커 이미지 피드백', kind: '비전/JSON', group: 'character_maker', json: true },
+            { key: 'illustration_call1_backtranslate', label: '삽화 CALL1 역번역',               kind: '텍스트', group: 'illustration_pipeline' },
+            { key: 'illustration_call1',       label: '삽화 CALL1 (전처리)',           kind: '텍스트', group: 'illustration_pipeline' },
+            { key: 'illustration_call2',       label: '삽화 CALL2 (본문)',             kind: '텍스트', group: 'illustration_pipeline' },
+            { key: 'illustration_call2_fix',   label: '삽화 CALL2-FIX (TOON 교정)',    kind: '텍스트', group: 'illustration_pipeline' },
+            { key: 'illustration_call3',       label: '삽화 CALL3 (대사 생성)',         kind: '텍스트', group: 'illustration_pipeline' },
+            { key: 'illustration_multi_char_mask', label: '삽화 다중 캐릭터 마스크',    kind: 'JSON', group: 'illustration_pipeline' },
         ];
 
         function llmRouteNumber(value, fallback, integer = false) {
@@ -24407,6 +24596,10 @@
                 `select[data-route-key="${taskKey}"][data-route-field="fallback_target"]`
             );
             const disabled = !fallbackSelect || fallbackSelect.value === 'none';
+            const fallbackPanel = document.querySelector(
+                `[data-route-key="${taskKey}"][data-route-role="fallback-panel"]`
+            );
+            if (fallbackPanel) fallbackPanel.classList.toggle('is-disabled', disabled);
             for (const field of ['fallback_retry_delay_sec', 'fallback_max_retries']) {
                 const input = document.querySelector(
                     `input[data-route-key="${taskKey}"][data-route-field="${field}"]`
@@ -24428,75 +24621,91 @@
             }
             const VALID_ROUTE_SLOTS = LLM_SLOTS.map(s => 'llm' + s);
 
-            // 각 작업은 라우팅 1줄 + 메인/폴백 재시도 설정 1줄로 표시한다.
+            // 작업 카테고리 안에서 메인 경로와 폴백 경로를 독립 패널로 표시한다.
             let html = '';
-            html += '<div class="llm-route-header" style="padding: 4px 8px; font-size: 12px; color: var(--text-dim); border-bottom: 1px solid var(--border);">';
-            html += '<div>작업</div><div>형태</div><div>메인 LLM</div><div style="text-align: center;">폴백</div><div style="text-align: center;" title="response_format: json_object 강제 여부. 일부 서버(Cerebras/Gemma 등)에서 반복 루프가 나면 끄세요.">JSON</div>';
-            html += '</div>';
 
             // 레거시 fallback(bool) → 폴백 대상 매핑(_routing_for 의 하위호환 매핑과 동일).
             // 신규 슬롯(4/5)에 레거시 폴백 bool 이 켜져 있으면 llm1 으로 폴백.
             const legacyFallback = { llm1: 'llm2', llm2: 'llm1', llm3: 'llm1' };
 
-            for (const t of LLM_ROUTING_TASKS) {
-                const entry = routing[t.key] || {};
-                const primary = VALID_ROUTE_SLOTS.includes(entry.primary) ? entry.primary : 'llm1';
-                // 폴백 대상 결정: fallback_target 우선, 없으면 레거시 fallback(bool) 해석, 그 외는 '없음'.
-                let fbTarget = entry.fallback_target;
-                if (!VALID_ROUTE_SLOTS.includes(fbTarget)) {
-                    fbTarget = entry.fallback ? (legacyFallback[primary] || 'llm1') : 'none';
-                }
-                // 구조화 응답 작업은 JSON response_format 토글을 제공한다.
-                const supportsJson = !!t.json
-                    || t.key === 'edit_illustration_prompt'
-                    || t.key === 'illustration_multi_char_mask';
-                const jsonMode = supportsJson ? (entry.json_mode !== undefined ? !!entry.json_mode : true) : null;
-                const retryDelay = llmRouteNumber(entry.retry_delay_sec, 0);
-                const maxRetries = llmRouteNumber(entry.max_retries, 0, true);
-                const fallbackRetryDelay = llmRouteNumber(entry.fallback_retry_delay_sec, 0);
-                const fallbackMaxRetries = llmRouteNumber(entry.fallback_max_retries, 0, true);
-                const fallbackDisabled = fbTarget === 'none' ? ' disabled' : '';
+            for (const [groupIndex, group] of LLM_ROUTING_GROUPS.entries()) {
+                const groupTasks = LLM_ROUTING_TASKS.filter(task => task.group === group.key);
+                html += `<section class="llm-route-group" style="--route-group-color: ${group.color};" aria-labelledby="llm-route-group-${group.key}">`;
+                html += '<header class="llm-route-group-header">';
+                html += `<span class="llm-route-group-number">${String(groupIndex + 1).padStart(2, '0')}</span>`;
+                html += '<div class="llm-route-group-heading">';
+                html += `<div class="llm-route-group-title" id="llm-route-group-${group.key}">${group.label}</div>`;
+                html += `<div class="llm-route-group-description">${group.description}</div>`;
+                html += '</div>';
+                html += `<span class="llm-route-group-count">${groupTasks.length}개 작업</span>`;
+                html += '</header><div class="llm-route-group-body">';
 
-                html += `<div class="llm-route-card ${t.locked ? 'ui-locked' : ''}"${t.locked ? ' data-lock-reason="현재 미사용으로 일시 잠금" title="현재 미사용으로 일시 잠금"' : ''}>`;
-                html += '<div class="llm-route-main">';
-                html += `<div style="font-size: 13px;">${t.label}</div>`;
-                html += `<div style="font-size: 12px; color: var(--text-dim);">${t.kind}</div>`;
-                html += `<div><select data-route-key="${t.key}" data-route-field="primary" style="padding: 4px 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text);">`;
-                for (const s of LLM_SLOTS) {
-                    const slotId = 'llm' + s;
-                    const ready = slotReady[slotId];
-                    html += `<option value="${slotId}"${primary === slotId ? ' selected' : ''}${ready ? '' : ' disabled'}>LLM${s}${ready ? '' : ' (미설정)'}</option>`;
+                for (const t of groupTasks) {
+                    const entry = routing[t.key] || {};
+                    const primary = VALID_ROUTE_SLOTS.includes(entry.primary) ? entry.primary : 'llm1';
+                    // 폴백 대상 결정: fallback_target 우선, 없으면 레거시 fallback(bool) 해석, 그 외는 '없음'.
+                    let fbTarget = entry.fallback_target;
+                    if (!VALID_ROUTE_SLOTS.includes(fbTarget)) {
+                        fbTarget = entry.fallback ? (legacyFallback[primary] || 'llm1') : 'none';
+                    }
+                    // 구조화 응답 작업은 JSON response_format 토글을 제공한다.
+                    const supportsJson = !!t.json
+                        || t.key === 'edit_illustration_prompt'
+                        || t.key === 'illustration_multi_char_mask';
+                    const jsonMode = supportsJson ? (entry.json_mode !== undefined ? !!entry.json_mode : true) : null;
+                    const retryDelay = llmRouteNumber(entry.retry_delay_sec, 0);
+                    const maxRetries = llmRouteNumber(entry.max_retries, 0, true);
+                    const fallbackRetryDelay = llmRouteNumber(entry.fallback_retry_delay_sec, 0);
+                    const fallbackMaxRetries = llmRouteNumber(entry.fallback_max_retries, 0, true);
+                    const fallbackDisabled = fbTarget === 'none' ? ' disabled' : '';
+
+                    html += `<article class="llm-route-card ${t.locked ? 'ui-locked' : ''}"${t.locked ? ' data-lock-reason="현재 미사용으로 일시 잠금" title="현재 미사용으로 일시 잠금"' : ''}>`;
+                    html += '<div class="llm-route-task-header">';
+                    html += `<div class="llm-route-task-title">${t.label}</div>`;
+                    html += `<span class="llm-route-kind">${t.kind}</span>`;
+                    if (t.locked) html += '<span class="llm-route-lock-badge">잠금</span>';
+                    if (supportsJson) {
+                        html += `<label class="llm-route-json-toggle" title="JSON 포맷 강제(response_format=json_object). Cerebras/Gemma 등에서 반복 루프가 나면 꺼보세요."><input type="checkbox" data-route-key="${t.key}" data-route-field="json_mode"${jsonMode ? ' checked' : ''}><span>JSON 강제</span></label>`;
+                    }
+                    html += '</div><div class="llm-route-path-grid">';
+
+                    html += '<section class="llm-route-path-panel primary">';
+                    html += '<div class="llm-route-path-head"><span class="llm-route-path-title">메인 경로</span>';
+                    html += `<select data-route-key="${t.key}" data-route-field="primary" aria-label="${t.label} 메인 LLM">`;
+                    for (const s of LLM_SLOTS) {
+                        const slotId = 'llm' + s;
+                        const ready = slotReady[slotId];
+                        html += `<option value="${slotId}"${primary === slotId ? ' selected' : ''}${ready ? '' : ' disabled'}>LLM${s}${ready ? '' : ' (미설정)'}</option>`;
+                    }
+                    html += '</select></div><div class="llm-route-path-fields">';
+                    html += `<label class="llm-route-retry-field"><span>대기(초)</span><input type="number" min="0" max="300" step="0.5" value="${retryDelay}" data-route-key="${t.key}" data-route-field="retry_delay_sec" aria-label="${t.label} 메인 재시도 대기초"></label>`;
+                    html += `<label class="llm-route-retry-field"><span>추가 횟수</span><input type="number" min="0" max="10" step="1" value="${maxRetries}" data-route-key="${t.key}" data-route-field="max_retries" aria-label="${t.label} 메인 재시도 횟수"></label>`;
+                    html += '</div></section>';
+
+                    html += `<section class="llm-route-path-panel fallback${fbTarget === 'none' ? ' is-disabled' : ''}" data-route-key="${t.key}" data-route-role="fallback-panel">`;
+                    html += '<div class="llm-route-path-head"><span class="llm-route-path-title">폴백 경로</span>';
+                    html += `<select data-route-key="${t.key}" data-route-field="fallback_target" onchange="updateLlmRouteFallbackState('${t.key}')" aria-label="${t.label} 폴백 LLM">`;
+                    html += `<option value="none"${fbTarget === 'none' ? ' selected' : ''}>없음</option>`;
+                    for (const s of LLM_SLOTS) {
+                        const slotId = 'llm' + s;
+                        html += `<option value="${slotId}"${fbTarget === slotId ? ' selected' : ''}>LLM${s}</option>`;
+                    }
+                    html += '</select></div><div class="llm-route-path-fields">';
+                    html += `<label class="llm-route-retry-field"><span>대기(초)</span><input type="number" min="0" max="300" step="0.5" value="${fallbackRetryDelay}" data-route-key="${t.key}" data-route-field="fallback_retry_delay_sec" aria-label="${t.label} 폴백 재시도 대기초"${fallbackDisabled}></label>`;
+                    html += `<label class="llm-route-retry-field"><span>추가 횟수</span><input type="number" min="0" max="10" step="1" value="${fallbackMaxRetries}" data-route-key="${t.key}" data-route-field="fallback_max_retries" aria-label="${t.label} 폴백 재시도 횟수"${fallbackDisabled}></label>`;
+                    html += '</div></section>';
+                    html += '</div></article>';
                 }
-                html += '</select></div>';
-                html += `<div style="text-align: center;"><select data-route-key="${t.key}" data-route-field="fallback_target" onchange="updateLlmRouteFallbackState('${t.key}')" style="padding: 4px 6px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text);">`;
-                html += `<option value="none"${fbTarget === 'none' ? ' selected' : ''}>없음</option>`;
-                for (const s of LLM_SLOTS) {
-                    const slotId = 'llm' + s;
-                    html += `<option value="${slotId}"${fbTarget === slotId ? ' selected' : ''}>LLM${s}</option>`;
-                }
-                html += '</select></div>';
-                if (supportsJson) {
-                    html += `<div style="text-align: center;"><input type="checkbox" data-route-key="${t.key}" data-route-field="json_mode"${jsonMode ? ' checked' : ''} title="JSON 포맷 강제(response_format=json_object). Cerebras/Gemma 등에서 반복 루프가 나면 꺼보세요."></div>`;
-                } else {
-                    html += '<div></div>';
-                }
-                html += '</div>';
-                html += '<div class="llm-route-retry-grid">';
-                html += `<label class="llm-route-retry-field"><span>재시도 대기초</span><input type="number" min="0" max="300" step="0.5" value="${retryDelay}" data-route-key="${t.key}" data-route-field="retry_delay_sec" aria-label="${t.label} 재시도 대기초"></label>`;
-                html += `<label class="llm-route-retry-field"><span>재시도 횟수</span><input type="number" min="0" max="10" step="1" value="${maxRetries}" data-route-key="${t.key}" data-route-field="max_retries" aria-label="${t.label} 재시도 횟수"></label>`;
-                html += `<label class="llm-route-retry-field"><span>폴백 재시도 대기초</span><input type="number" min="0" max="300" step="0.5" value="${fallbackRetryDelay}" data-route-key="${t.key}" data-route-field="fallback_retry_delay_sec" aria-label="${t.label} 폴백 재시도 대기초"${fallbackDisabled}></label>`;
-                html += `<label class="llm-route-retry-field"><span>폴백 재시도 횟수</span><input type="number" min="0" max="10" step="1" value="${fallbackMaxRetries}" data-route-key="${t.key}" data-route-field="fallback_max_retries" aria-label="${t.label} 폴백 재시도 횟수"${fallbackDisabled}></label>`;
-                html += '</div>';
-                html += '</div>';
+                html += '</div></section>';
             }
 
             for (const s of LLM_SLOTS) {
                 if (s === 1) continue;
                 if (!slotReady['llm' + s]) {
-                    html += `<div style="margin-top: 6px; font-size: 12px; color: #d89a3a;">⚠ 외부 API 탭에서 LLM${s} 모델명을 설정해야 LLM${s}(메인/폴백) 선택지가 활성화됩니다.</div>`;
+                    html += `<div class="llm-route-notice">⚠ 외부 API 탭에서 LLM${s} 모델명을 설정해야 LLM${s}(메인/폴백) 선택지가 활성화됩니다.</div>`;
                 }
             }
-            html += '<div style="margin-top: 6px; font-size: 11px; color: var(--text-dim);">💡 메인 재시도를 모두 소진한 뒤 폴백으로 넘어갑니다. JSON 작업은 서비스 호환성 문제가 있을 때 포맷 강제를 끌 수 있습니다.</div>';
+            html += '<div class="llm-route-tip">💡 메인 재시도를 모두 소진한 뒤 폴백으로 넘어갑니다. JSON 작업은 서비스 호환성 문제가 있을 때 포맷 강제를 끌 수 있습니다.</div>';
             container.innerHTML = html;
         }
 
