@@ -13991,23 +13991,43 @@ async def handle_api_character_maker_generate(request: web.Request) -> web.Respo
             "FACE_ID_DIR",
             "soya_char_ref/fallback",
         )
-        result = await asset_mode.generate(
-            character=f"maker-{session_id[:8]}",
-            appearance="character-maker-temporary",
-            outfit="character-maker-temporary",
-            expression="character-maker-temporary",
-            face_id_enabled=False,
-            reference_subfolder="",
-            asset_workflow_type=settings.get("asset_workflow_type"),
-            positive_prompt=positive,
-            negative_prompt=negative,
-            storage_group="character_maker",
-            storage_session=session_id,
+        queue_body = {
+            "character": f"maker-{session_id[:8]}",
+            "appearance": "character-maker-temporary",
+            "outfit": "character-maker-temporary",
+            "expression": "character-maker-temporary",
+            "face_id_enabled": False,
+            "asset_workflow_type": settings.get("asset_workflow_type"),
+            "positive_prompt": positive,
+            "negative_prompt": negative,
+            "storage_group": "character_maker",
+            "storage_session": session_id,
+        }
+        item = await queue_manager.add_item(
+            "asset_generation",
+            label=(
+                "캐릭터 메이커 사용자 이미지 생성"
+                if source == "user"
+                else "캐릭터 메이커 LLM 이미지 생성"
+            ),
+            params={"body": queue_body},
         )
+        print(
+            f"[CHARACTER_MAKER] 이미지 생성 큐 등록: "
+            f"session={session_id}, source={source}, item={item.id}"
+        )
+        result = await item.completion_future
+        if not isinstance(result, dict):
+            print(
+                f"[CHARACTER_MAKER] 이미지 생성 큐 결과 형식 오류: "
+                f"session={session_id}, item={item.id}, "
+                f"result_type={type(result).__name__}, result={result!r}"
+            )
+            raise RuntimeError("이미지 생성 큐 결과가 올바르지 않습니다.")
         if not result.get("success"):
             print(
                 f"[CHARACTER_MAKER] 이미지 생성 실패: "
-                f"session={session_id}, result={result}"
+                f"session={session_id}, item={item.id}, result={result}"
             )
             return web.json_response(result, status=500)
         local_path = result.get("local_path", "")
