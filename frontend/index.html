@@ -7650,7 +7650,10 @@
         }
         .cm-tag-chip span { overflow: hidden; text-overflow: ellipsis; }
         .cm-tag-chip button { padding: 0 2px; border: 0; color: var(--text2); background: transparent; cursor: pointer; }
-        .cm-tag-add { display: flex; gap: 5px; margin-top: 6px; }
+        .cm-tag-add { display: flex; gap: 5px; margin-top: 6px; position: relative; }
+        /* Text 모드 자동완성: textarea + 드롭다운을 묶는 relative 컨테이너 */
+        .cm-text-wrap { position: relative; }
+        .cm-text-wrap .tag-autocomplete-dropdown { top: 100%; }
         .cm-tag-add input,
         .cm-tag-textarea {
             width: 100%;
@@ -10575,14 +10578,18 @@
                                     <div class="cm-chip-editor">
                                         <div class="cm-chip-list" data-chips></div>
                                         <div class="cm-tag-add">
-                                            <input data-add-input placeholder="태그 추가 · 쉼표 구분"
+                                            <input id="cm-input-appearance" data-add-input placeholder="태그 추가 · 쉼표 구분"
                                                    onkeydown="cmTagInputKeydown(event, 'appearance')">
                                             <button class="cm-btn" onclick="cmAddTags('appearance')">＋</button>
+                                            <div class="tag-autocomplete-dropdown" id="ac-cm-appearance"></div>
                                         </div>
                                     </div>
-                                    <textarea class="cm-tag-textarea cm-text-editor" data-text
-                                              placeholder="comma, separated, tags"
-                                              oninput="cmTextFieldInput('appearance', this.value)"></textarea>
+                                    <div class="cm-text-wrap">
+                                        <textarea id="cm-text-appearance" class="cm-tag-textarea cm-text-editor" data-text
+                                                  placeholder="comma, separated, tags"
+                                                  oninput="cmTextFieldInput('appearance', this.value)"></textarea>
+                                        <div class="tag-autocomplete-dropdown" id="ac-cm-text-appearance"></div>
+                                    </div>
                                 </div>
                             </section>
 
@@ -10601,14 +10608,18 @@
                                     <div class="cm-chip-editor">
                                         <div class="cm-chip-list" data-chips></div>
                                         <div class="cm-tag-add">
-                                            <input data-add-input placeholder="태그 추가 · 쉼표 구분"
+                                            <input id="cm-input-outfit" data-add-input placeholder="태그 추가 · 쉼표 구분"
                                                    onkeydown="cmTagInputKeydown(event, 'outfit')">
                                             <button class="cm-btn" onclick="cmAddTags('outfit')">＋</button>
+                                            <div class="tag-autocomplete-dropdown" id="ac-cm-outfit"></div>
                                         </div>
                                     </div>
-                                    <textarea class="cm-tag-textarea cm-text-editor" data-text
-                                              placeholder="comma, separated, tags"
-                                              oninput="cmTextFieldInput('outfit', this.value)"></textarea>
+                                    <div class="cm-text-wrap">
+                                        <textarea id="cm-text-outfit" class="cm-tag-textarea cm-text-editor" data-text
+                                                  placeholder="comma, separated, tags"
+                                                  oninput="cmTextFieldInput('outfit', this.value)"></textarea>
+                                        <div class="tag-autocomplete-dropdown" id="ac-cm-text-outfit"></div>
+                                    </div>
                                 </div>
                             </section>
 
@@ -10627,14 +10638,18 @@
                                     <div class="cm-chip-editor">
                                         <div class="cm-chip-list" data-chips></div>
                                         <div class="cm-tag-add">
-                                            <input data-add-input placeholder="태그 추가 · 쉼표 구분"
+                                            <input id="cm-input-expression" data-add-input placeholder="태그 추가 · 쉼표 구분"
                                                    onkeydown="cmTagInputKeydown(event, 'expression')">
                                             <button class="cm-btn" onclick="cmAddTags('expression')">＋</button>
+                                            <div class="tag-autocomplete-dropdown" id="ac-cm-expression"></div>
                                         </div>
                                     </div>
-                                    <textarea class="cm-tag-textarea cm-text-editor" data-text
-                                              placeholder="comma, separated, tags"
-                                              oninput="cmTextFieldInput('expression', this.value)"></textarea>
+                                    <div class="cm-text-wrap">
+                                        <textarea id="cm-text-expression" class="cm-tag-textarea cm-text-editor" data-text
+                                                  placeholder="comma, separated, tags"
+                                                  oninput="cmTextFieldInput('expression', this.value)"></textarea>
+                                        <div class="tag-autocomplete-dropdown" id="ac-cm-text-expression"></div>
+                                    </div>
                                 </div>
                             </section>
 
@@ -10653,14 +10668,18 @@
                                     <div class="cm-chip-editor">
                                         <div class="cm-chip-list" data-chips></div>
                                         <div class="cm-tag-add">
-                                            <input data-add-input placeholder="태그 추가 · 쉼표 구분"
+                                            <input id="cm-input-composition" data-add-input placeholder="태그 추가 · 쉼표 구분"
                                                    onkeydown="cmTagInputKeydown(event, 'composition')">
                                             <button class="cm-btn" onclick="cmAddTags('composition')">＋</button>
+                                            <div class="tag-autocomplete-dropdown" id="ac-cm-composition"></div>
                                         </div>
                                     </div>
-                                    <textarea class="cm-tag-textarea cm-text-editor" data-text
-                                              placeholder="comma, separated, tags"
-                                              oninput="cmTextFieldInput('composition', this.value)"></textarea>
+                                    <div class="cm-text-wrap">
+                                        <textarea id="cm-text-composition" class="cm-tag-textarea cm-text-editor" data-text
+                                                  placeholder="comma, separated, tags"
+                                                  oninput="cmTextFieldInput('composition', this.value)"></textarea>
+                                        <div class="tag-autocomplete-dropdown" id="ac-cm-text-composition"></div>
+                                    </div>
                                 </div>
                             </section>
 
@@ -31997,6 +32016,8 @@
             wall?.classList.toggle('text-mode', normalized === 'text');
             document.getElementById('cm-mode-chip')?.classList.toggle('active', normalized === 'chip');
             document.getElementById('cm-mode-text')?.classList.toggle('active', normalized === 'text');
+            // 모드 전환 시 열려 있던 자동완성 드롭다운을 닫아 이전 모드의 잔상이 남지 않게 한다.
+            wall?.querySelectorAll('.tag-autocomplete-dropdown').forEach(d => d.classList.remove('visible'));
             if (persist) sessionStorage.setItem('characterMakerEditorMode', normalized);
         }
 
@@ -32015,6 +32036,11 @@
                 if (!tags.length) {
                     chipList.innerHTML = '<span class="cm-hint">아직 태그가 없습니다.</span>';
                 }
+                // 칩 hover 설명 툴팁 (에셋 생성과 동일: _lookupTagDescription → #ac-tooltip).
+                // innerHTML로 생성한 칩은 이벤트가 없으므로 렌더 직후 바인딩한다.
+                chipList.querySelectorAll('.cm-tag-chip').forEach((chip, index) => {
+                    _attachTagChipTooltip(chip, tags[index]);
+                });
             }
             const textarea = card.querySelector('[data-text]');
             if (textarea && (!preserveActiveText || document.activeElement !== textarea)) {
@@ -32484,6 +32510,13 @@
 
         function cmTagInputKeydown(event, field) {
             if (event.key === 'Enter') {
+                // 자동완성 드롭다운이 열려 있고 포커스된 항목이 있으면 태그 추가를 건너뛰고
+                // 자동완성 선택(TagAutocomplete의 keydown 리스너)에 맡긴다.
+                const card = document.querySelector(`.cm-field-card[data-field="${field}"]`);
+                const dropdown = card?.querySelector('.cm-tag-add > .tag-autocomplete-dropdown');
+                if (dropdown?.classList.contains('visible') && dropdown.querySelector('.ac-item.focused')) {
+                    return;
+                }
                 event.preventDefault();
                 cmAddTags(field);
             }
@@ -62330,7 +62363,10 @@
         };
 
         document.addEventListener('click', (e) => {
-            if (!e.target.closest('.inline-add') && !e.target.closest('.form-group')) {
+            if (!e.target.closest('.inline-add')
+                && !e.target.closest('.form-group')
+                && !e.target.closest('.cm-tag-add')
+                && !e.target.closest('.cm-text-wrap')) {
                 document.querySelectorAll('.tag-autocomplete-dropdown').forEach(d => d.classList.remove('visible'));
             }
         });
@@ -62346,6 +62382,17 @@
         TagAutocomplete.attach('anima-new-negative-tag', 'ac-anima-negative-tag', 'input');
         TagAutocomplete.attach('modal-positive', 'ac-modal-positive', 'textarea');
         TagAutocomplete.attach('modal-negative', 'ac-modal-negative', 'textarea');
+
+        // 캐릭터 메이커 자유편집 — Chip 모드 입력창 4종 + Text 모드 textarea 4종 모두 태그 자동완성.
+        // 'textarea' 모드(커서 위치의 현재 단어를 치환)로 동작시켜 쉼표 구분 다중 입력을 지원한다.
+        TagAutocomplete.attach('cm-input-appearance', 'ac-cm-appearance', 'textarea');
+        TagAutocomplete.attach('cm-input-outfit', 'ac-cm-outfit', 'textarea');
+        TagAutocomplete.attach('cm-input-expression', 'ac-cm-expression', 'textarea');
+        TagAutocomplete.attach('cm-input-composition', 'ac-cm-composition', 'textarea');
+        TagAutocomplete.attach('cm-text-appearance', 'ac-cm-text-appearance', 'textarea');
+        TagAutocomplete.attach('cm-text-outfit', 'ac-cm-text-outfit', 'textarea');
+        TagAutocomplete.attach('cm-text-expression', 'ac-cm-text-expression', 'textarea');
+        TagAutocomplete.attach('cm-text-composition', 'ac-cm-text-composition', 'textarea');
 
         // ─── Pose 편집기 ────────────────────────────────────────
         const BODY_CONNECTIONS = [[0,1],[1,2],[2,3],[3,4],[1,5],[5,6],[6,7],[1,8],[8,9],[9,10],[1,11],[11,12],[12,13],[0,14],[14,16],[0,15],[15,17]];
