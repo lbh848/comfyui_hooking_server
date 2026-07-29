@@ -55,12 +55,40 @@ async def handle_status(request: web.Request) -> web.Response:
 async def handle_preflight(request: web.Request) -> web.Response:
     service = request.app[APP_SERVICE_KEY]
     try:
-        result = await asyncio.to_thread(service.preflight)
+        body = await _read_json_object(request) if request.can_read_body else {}
+        release_version = body.get("release_version")
+        selected_item_ids = body.get("selected_item_ids")
+        if release_version is None and selected_item_ids is None:
+            result = await asyncio.to_thread(service.preflight)
+        else:
+            if not isinstance(release_version, str) or not isinstance(
+                selected_item_ids, list
+            ) or not all(isinstance(value, str) for value in selected_item_ids):
+                raise InstallerServiceError(
+                    "선택 검사는 release_version 문자열과 "
+                    "selected_item_ids 문자열 배열이 필요합니다."
+                )
+            result = await asyncio.to_thread(
+                service.preflight_selection,
+                release_version=release_version,
+                selected_item_ids=selected_item_ids,
+            )
         return web.json_response({"ok": True, "preflight": result})
     except Exception as exc:
         print(f"[COMFY_INSTALL][API] 사전 검사 실패: {exc}")
         traceback.print_exc()
         return _json_error(str(exc), status=400)
+
+
+async def handle_workflow_library(request: web.Request) -> web.Response:
+    service = request.app[APP_SERVICE_KEY]
+    try:
+        result = await asyncio.to_thread(service.workflow_library_status)
+        return web.json_response({"ok": True, "library": result})
+    except Exception as exc:
+        print(f"[COMFY_INSTALL][API] 워크플로우 라이브러리 조회 실패: {exc}")
+        traceback.print_exc()
+        return _json_error(str(exc), status=500)
 
 
 async def handle_pack_upload(request: web.Request) -> web.Response:
@@ -145,26 +173,19 @@ async def _read_json_object(request: web.Request) -> dict:
 
 async def handle_start(request: web.Request) -> web.Response:
     service = request.app[APP_SERVICE_KEY]
-    workflow_key = ""
-    civitai_key = ""
     try:
         body = await _read_json_object(request)
-        upload_id = str(body.get("upload_id", ""))
-        workflow_key = str(body.get("workflow_key", ""))
-        civitai_key = str(body.get("civitai_key", ""))
-        restore_after_success = body.get(
-            "restore_config_after_success", False
-        )
-        if not isinstance(restore_after_success, bool):
-            raise InstallerServiceError(
-                "restore_config_after_success는 boolean이어야 합니다."
-            )
-        pack = _pack_path(service, upload_id)
-        result = service.start(
-            workflow_pack=pack,
-            workflow_key=workflow_key,
-            civitai_key=civitai_key,
-            restore_config_after_success=restore_after_success,
+        release_version = body.get("release_version")
+        selected_item_ids = body.get("selected_item_ids")
+        if not isinstance(release_version, str):
+            raise InstallerServiceError("release_version은 문자열이어야 합니다.")
+        if not isinstance(selected_item_ids, list) or not all(
+            isinstance(value, str) for value in selected_item_ids
+        ):
+            raise InstallerServiceError("selected_item_ids는 문자열 배열이어야 합니다.")
+        result = service.start_install(
+            release_version=release_version,
+            selected_item_ids=selected_item_ids,
         )
         return web.json_response({"ok": True, **result})
     except InstallerServiceError as exc:
@@ -175,9 +196,87 @@ async def handle_start(request: web.Request) -> web.Response:
         print(f"[COMFY_INSTALL][API] 설치 시작 실패: {exc}")
         traceback.print_exc()
         return _json_error(str(exc), status=500)
+
+
+async def handle_unpack_workflow_pack(request: web.Request) -> web.Response:
+    service = request.app[APP_SERVICE_KEY]
+    workflow_key = ""
+    try:
+        body = await _read_json_object(request)
+        upload_id = str(body.get("upload_id", ""))
+        workflow_key = str(body.get("workflow_key", ""))
+        pack = _pack_path(service, upload_id)
+        result = await asyncio.to_thread(
+            service.unpack_workflow_pack,
+            workflow_pack=pack,
+            workflow_key=workflow_key,
+        )
+        return web.json_response({"ok": True, **result})
+    except InstallerServiceError as exc:
+        print(f"[COMFY_INSTALL][API] 워크플로우 팩 풀기 거부: {exc}")
+        traceback.print_exc()
+        return _json_error(str(exc), status=409)
+    except Exception as exc:
+        print(f"[COMFY_INSTALL][API] 워크플로우 팩 풀기 실패: {exc}")
+        traceback.print_exc()
+        return _json_error(str(exc), status=400)
     finally:
         workflow_key = ""
-        civitai_key = ""
+
+
+async def handle_civitai_key(request: web.Request) -> web.Response:
+    service = request.app[APP_SERVICE_KEY]
+    try:
+        if request.method == "POST":
+            body = await _read_json_object(request)
+            api_key = body.get("api_key", "")
+            if not isinstance(api_key, str):
+                raise InstallerServiceError("api_key는 문자열이어야 합니다.")
+            result = await asyncio.to_thread(service.set_civitai_key, api_key)
+            return web.json_response({"ok": True, **result})
+        api_key = await asyncio.to_thread(service.get_civitai_key)
+        return web.json_response({"ok": True, "api_key": api_key})
+    except InstallerServiceError as exc:
+        return _json_error(str(exc), status=400)
+    except Exception as exc:
+        print(f"[COMFY_INSTALL][API] Civitai 키 처리 실패: {exc}")
+        traceback.print_exc()
+        return _json_error(str(exc), status=500)
+
+
+async def handle_update(request: web.Request) -> web.Response:
+    service = request.app[APP_SERVICE_KEY]
+    try:
+        result = service.start_update()
+        return web.json_response({"ok": True, **result})
+    except InstallerServiceError as exc:
+        print(f"[COMFY_INSTALL][API] 업데이트 시작 거부: {exc}")
+        traceback.print_exc()
+        return _json_error(str(exc), status=409)
+    except Exception as exc:
+        print(f"[COMFY_INSTALL][API] 업데이트 시작 실패: {exc}")
+        traceback.print_exc()
+        return _json_error(str(exc), status=500)
+
+
+async def handle_migrate(request: web.Request) -> web.Response:
+    service = request.app[APP_SERVICE_KEY]
+    try:
+        body = await _read_json_object(request)
+        old_comfy_root = body.get("old_comfy_root")
+        if not isinstance(old_comfy_root, str) or not old_comfy_root.strip():
+            raise InstallerServiceError("기존 ComfyUI 경로가 비어 있습니다.")
+        result = await asyncio.to_thread(
+            service.migrate_from_existing_comfy,
+            old_comfy_root,
+        )
+        return web.json_response({"ok": True, "migration": result})
+    except InstallerServiceError as exc:
+        return _json_error(str(exc), status=400)
+    except Exception as exc:
+        print(f"[COMFY_INSTALL][API] 사용자 데이터 이사 실패: {exc}")
+        traceback.print_exc()
+        return _json_error(str(exc), status=500)
 
 
 async def handle_cancel(request: web.Request) -> web.Response:
@@ -224,10 +323,21 @@ def register_comfy_installer_routes(
     app[APP_SERVICE_KEY] = service
     app.router.add_get("/api/comfy-installer/status", handle_status)
     app.router.add_post("/api/comfy-installer/preflight", handle_preflight)
+    app.router.add_get(
+        "/api/comfy-installer/workflow-library", handle_workflow_library
+    )
     app.router.add_post(
         "/api/comfy-installer/workflow-pack", handle_pack_upload
     )
     app.router.add_post("/api/comfy-installer/start", handle_start)
+    app.router.add_post(
+        "/api/comfy-installer/unpack-workflow-pack",
+        handle_unpack_workflow_pack,
+    )
+    app.router.add_get("/api/comfy-installer/civitai-key", handle_civitai_key)
+    app.router.add_post("/api/comfy-installer/civitai-key", handle_civitai_key)
+    app.router.add_post("/api/comfy-installer/update", handle_update)
+    app.router.add_post("/api/comfy-installer/migrate", handle_migrate)
     app.router.add_post("/api/comfy-installer/cancel", handle_cancel)
     app.router.add_post(
         "/api/comfy-installer/restore-config", handle_restore_config

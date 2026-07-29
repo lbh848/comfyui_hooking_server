@@ -143,6 +143,8 @@ def select_gpu_profile(
 def probe_system(
     install_root: str | os.PathLike[str],
     manifest: InstallManifest,
+    *,
+    required_bytes: int | None = None,
 ) -> dict[str, Any]:
     try:
         if platform.system() != "Windows":
@@ -154,7 +156,15 @@ def probe_system(
         while not disk_anchor.exists() and disk_anchor != disk_anchor.parent:
             disk_anchor = disk_anchor.parent
         disk = shutil.disk_usage(disk_anchor)
-        required_bytes = 110 * 1024**3
+        required_bytes = (
+            int(required_bytes)
+            if required_bytes is not None
+            else 110 * 1024**3
+        )
+        if required_bytes <= 0:
+            raise SystemProbeError(
+                f"필요 디스크 크기가 유효하지 않습니다: {required_bytes}"
+            )
         nvidia = _probe_nvidia()
         profile = select_gpu_profile(manifest, nvidia)
         result = {

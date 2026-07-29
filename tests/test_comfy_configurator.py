@@ -100,7 +100,7 @@ def test_restore_rejects_arbitrary_file_outside_requirements(tmp_path):
     outside = tmp_path / "outside.json"
     _write_json(outside, {"safe": False})
 
-    with pytest.raises(ConfigUpdateError, match="요구사항 폴더 밖"):
+    with pytest.raises(ConfigUpdateError, match="설정 백업 폴더 밖"):
         restore_config_backup(
             config_path=config_path,
             requirements_dir=tmp_path / "요구사항",

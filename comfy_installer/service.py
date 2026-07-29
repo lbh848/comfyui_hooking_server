@@ -16,9 +16,11 @@ import httpx
 from .configurator import (
     ConfigUpdateResult,
     apply_installed_config,
+    backup_current_config,
     restore_config_backup,
 )
-from .crypto import ExtractedWorkflowPack, extract_workflow_pack
+from .credentials import load_civitai_key, save_civitai_key
+from .crypto import ExtractedWorkflowPack
 from .dependency_installer import (
     create_comfy_venv,
     install_node_dependencies,
@@ -37,32 +39,57 @@ from .e2e import (
     validate_all_workflows,
 )
 from .manifest import InstallManifest, load_install_manifest
+from .input_patcher import patch_comfy_input
+from .migration import migrate_user_data
 from .model_installer import install_models
-from .node_installer import install_custom_nodes
-from .source_installer import install_comfy_source
+from .node_installer import install_custom_nodes, update_custom_nodes
+from .operations import uv_python_path
+from .source_installer import install_comfy_source, update_comfy_source
 from .system_probe import probe_system
+from .updater import update_hooking_server_main
+from .workflow_library import (
+    WorkflowSelection,
+    import_user_copies,
+    library_status,
+    selection_requirements,
+    unpack_to_library,
+)
 
 
 class InstallerServiceError(RuntimeError):
     """설치 서비스 상태 또는 입력 검증 실패."""
 
 
-_PHASES = (
+_INSTALL_PHASES = (
     ("preflight", "Windows/GPU/디스크/도구 검사"),
-    ("credentials", "워크플로우 팩·Civitai 인증 사전 검증"),
     ("source", "ComfyUI v0.20.1 고정 소스 설치"),
-    ("workflows", "암호화 워크플로우 17개 복원"),
+    ("workflows", "선택 워크플로우 사용자 사본 생성"),
+    ("credentials", "Civitai 인증 사전 검증"),
     ("venv", "comfy/.venv Python 3.12.11 생성"),
     ("core_dependencies", "PyTorch/Triton/SageAttention/Comfy 의존성 설치"),
     ("custom_nodes", "고정 커스텀 노드 설치"),
     ("node_dependencies", "커스텀 노드 Python 의존성 설치"),
     ("runtime_isolation", "GPU 및 독립 환경 검증"),
-    ("models", "고정 모델 다운로드·SHA-256 검증"),
+    ("models", "선택 워크플로우 모델 다운로드·검증"),
     ("startup", "독립 ComfyUI 기동·노드 로드 확인"),
-    ("e2e_static", "17개 워크플로우 변환·구조 검증"),
-    ("e2e_runtime", "17개 워크플로우 실제 실행"),
+    ("e2e_static", "선택 워크플로우 변환·구조 검증"),
+    ("e2e_runtime", "선택 워크플로우 실제 실행"),
     ("config", "config.json 백업·설치 경로 적용"),
+    ("repatch", "Comfy input 설치 리패치"),
     ("complete", "설치 결과 기록"),
+)
+
+_UPDATE_PHASES = (
+    ("config_backup", "config.json 업데이트 전 백업"),
+    ("hooking_server", "후킹 서버 origin/main 수동 업데이트"),
+    ("manifest", "새 설치 매니페스트 로드"),
+    ("source", "변경된 ComfyUI 고정 소스 업데이트"),
+    ("core_dependencies", "변경된 ComfyUI Python 의존성 적용"),
+    ("custom_nodes", "변경된 커스텀 노드 업데이트"),
+    ("node_dependencies", "변경된 노드 Python 의존성 적용"),
+    ("runtime_isolation", "독립 Python/GPU 빠른 검증"),
+    ("startup", "ComfyUI 기동·노드 로드 확인"),
+    ("complete", "업데이트 결과 기록"),
 )
 
 
@@ -94,6 +121,12 @@ class ComfyInstallerService:
         )
         self.work_root = self.project_root / ".work" / "comfy-installer"
         self.upload_root = self.work_root / "uploads"
+        self.workflow_library_root = (
+            self.project_root / "comfy_workflow_library"
+        )
+        self.config_backup_dir = (
+            self.comfy_root / ".installer-state" / "backups" / "config"
+        )
         self.manifest = manifest or load_install_manifest()
         self.downloader = downloader or ResumableDownloader(max_retries=4)
         self._lock = RLock()
@@ -101,11 +134,13 @@ class ComfyInstallerService:
         self._thread: threading.Thread | None = None
         self._log_sequence = 0
         self._logs: deque[dict[str, Any]] = deque(maxlen=5000)
+        self._phases = _INSTALL_PHASES
         self._state: dict[str, Any] = {
             "state": "idle",
+            "operation": None,
             "phase": None,
             "phase_index": 0,
-            "phase_count": len(_PHASES),
+            "phase_count": len(self._phases),
             "phase_label": "",
             "started_at": None,
             "finished_at": None,
@@ -157,7 +192,7 @@ class ComfyInstallerService:
         self._log(clean_message, level, echo=False)
 
     def _set_phase(self, phase_id: str) -> None:
-        for index, (candidate_id, label) in enumerate(_PHASES, 1):
+        for index, (candidate_id, label) in enumerate(self._phases, 1):
             if candidate_id == phase_id:
                 with self._lock:
                     self._state.update(
@@ -169,7 +204,7 @@ class ComfyInstallerService:
                         }
                     )
                 self._log(
-                    f"[단계 {index}/{len(_PHASES)}] {label}"
+                    f"[단계 {index}/{len(self._phases)}] {label}"
                 )
                 return
         raise InstallerServiceError(
@@ -201,18 +236,106 @@ class ComfyInstallerService:
             snapshot["install_root"] = str(self.comfy_root)
             return snapshot
 
-    def preflight(self) -> dict:
-        result = probe_system(self.comfy_root, self.manifest)
+    def preflight(self, *, selected_model_bytes: int | None = None) -> dict:
+        required_bytes = None
+        if selected_model_bytes is not None:
+            runtime_and_buffer = 30 * 1024**3
+            required_bytes = runtime_and_buffer + max(
+                int(selected_model_bytes), 0
+            )
+        result = probe_system(
+            self.comfy_root,
+            self.manifest,
+            required_bytes=required_bytes,
+        )
         return {
             **result,
             "manifest": dict(self._state["manifest"]),
         }
 
-    def _validate_civitai_access(self, civitai_key: str) -> None:
+    def preflight_selection(
+        self,
+        *,
+        release_version: str,
+        selected_item_ids: list[str],
+    ) -> dict:
+        requirements = selection_requirements(
+            library_root=self.workflow_library_root,
+            release_version=release_version,
+            selected_item_ids=selected_item_ids,
+        )
+        return {
+            **self.preflight(
+                selected_model_bytes=int(requirements["model_bytes"])
+            ),
+            "selection": requirements,
+        }
+
+    def workflow_library_status(self) -> dict:
+        return library_status(
+            self.comfy_root,
+            self.workflow_library_root,
+        )
+
+    def unpack_workflow_pack(
+        self,
+        *,
+        workflow_pack: str | os.PathLike[str],
+        workflow_key: str,
+    ) -> dict:
+        with self._lock:
+            if self._thread is not None and self._thread.is_alive():
+                raise InstallerServiceError(
+                    "설치 또는 업데이트 중에는 워크플로우 팩을 풀 수 없습니다."
+                )
+        if not workflow_key:
+            raise InstallerServiceError("워크플로우 팩 키가 비어 있습니다.")
+        result = unpack_to_library(
+            pack_path=workflow_pack,
+            passphrase=workflow_key,
+            library_root=self.workflow_library_root,
+            work_root=self.work_root,
+            manifest=self.manifest,
+            validate=self._validate_extracted_pack,
+            log=self._log,
+        )
+        return {
+            "unpacked": result,
+            "library": self.workflow_library_status(),
+        }
+
+    def get_civitai_key(self) -> str:
+        return load_civitai_key(self.project_root)
+
+    def set_civitai_key(self, api_key: str) -> dict:
+        return save_civitai_key(
+            self.project_root,
+            self.requirements_dir,
+            api_key,
+        )
+
+    def migrate_from_existing_comfy(
+        self, old_comfy_root: str | os.PathLike[str]
+    ) -> dict:
+        with self._lock:
+            if self._thread is not None and self._thread.is_alive():
+                raise InstallerServiceError(
+                    "설치 또는 업데이트 중에는 사용자 데이터를 이사할 수 없습니다."
+                )
+        return migrate_user_data(
+            old_comfy_root=old_comfy_root,
+            new_comfy_root=self.comfy_root,
+            log=self._log,
+        )
+
+    def _validate_civitai_access(
+        self, civitai_key: str, models: list[dict] | None = None
+    ) -> None:
+        candidates = models if models is not None else self.manifest.models
         sample = next(
             (
                 model
-                for model in self.manifest.models
+                for model in candidates
                 if model.get("auth") == "civitai"
             ),
             None,
@@ -333,7 +456,12 @@ class ComfyInstallerService:
         ordered = sorted(validations, key=self._runtime_order)
         with protected_e2e_fixtures(
             comfy_root=self.comfy_root,
-            requirements_dir=self.requirements_dir,
+            requirements_dir=(
+                self.comfy_root
+                / ".installer-state"
+                / "backups"
+                / "e2e-fixtures"
+            ),
         ) as fixtures:
             self._log(
                 "[E2E] 설치기 전용 입력 픽스처 준비: "
@@ -443,39 +571,37 @@ class ComfyInstallerService:
                 f"실패 파일={failed_names}. "
                 "각 파일의 상세 원인은 E2E 실패 로그를 확인하세요."
             )
-        if len(results) != int(self.manifest.workflows["expected_count"]):
+        if len(results) != len(validations):
             raise ComfyE2EError(
-                "실제 E2E 성공 수가 17개가 아닙니다: "
-                f"actual={len(results)}"
+                "선택 워크플로우 실제 E2E 성공 수가 다릅니다: "
+                f"expected={len(validations)}, actual={len(results)}"
             )
         return results
 
-    def start(
+    def _start_operation(
         self,
         *,
-        workflow_pack: str | os.PathLike[str],
-        workflow_key: str,
-        civitai_key: str,
-        restore_config_after_success: bool = False,
+        operation: str,
+        phases: tuple[tuple[str, str], ...],
+        target,
+        kwargs: dict,
     ) -> dict:
-        pack_path = Path(workflow_pack).resolve()
-        if not pack_path.is_file():
-            raise InstallerServiceError(
-                f"업로드된 워크플로우 팩이 없습니다: {pack_path}"
-            )
-        if not workflow_key:
-            raise InstallerServiceError("워크플로우 팩 키가 비어 있습니다.")
         with self._lock:
             if self._thread is not None and self._thread.is_alive():
-                raise InstallerServiceError("ComfyUI 설치가 이미 진행 중입니다.")
+                raise InstallerServiceError(
+                    "ComfyUI 설치 또는 업데이트가 이미 진행 중입니다."
+                )
             self._cancel = Event()
             self._logs.clear()
             self._log_sequence = 0
+            self._phases = phases
             self._state.update(
                 {
                     "state": "running",
+                    "operation": operation,
                     "phase": None,
                     "phase_index": 0,
+                    "phase_count": len(phases),
                     "phase_label": "",
                     "started_at": _now_iso(),
                     "finished_at": None,
@@ -485,29 +611,55 @@ class ComfyInstallerService:
                 }
             )
             self._thread = threading.Thread(
-                target=self._run_install,
-                kwargs={
-                    "pack_path": pack_path,
-                    "workflow_key": workflow_key,
-                    "civitai_key": civitai_key,
-                    "restore_config_after_success": bool(
-                        restore_config_after_success
-                    ),
-                },
-                name="comfy-installer",
+                target=target,
+                kwargs=kwargs,
+                name=f"comfy-{operation}",
                 daemon=True,
             )
             self._thread.start()
         return self.status()
+
+    def start_install(
+        self,
+        *,
+        release_version: str,
+        selected_item_ids: list[str],
+    ) -> dict:
+        if not isinstance(release_version, str) or not release_version:
+            raise InstallerServiceError("설치할 워크플로우 팩 버전이 비어 있습니다.")
+        if not isinstance(selected_item_ids, list) or not selected_item_ids:
+            raise InstallerServiceError("설치할 워크플로우를 하나 이상 선택하세요.")
+        return self._start_operation(
+            operation="install",
+            phases=_INSTALL_PHASES,
+            target=self._run_install,
+            kwargs={
+                "release_version": release_version,
+                "selected_item_ids": [str(value) for value in selected_item_ids],
+            },
+        )
+
+    def start_update(self) -> dict:
+        python = uv_python_path(self.comfy_root / ".venv")
+        if not python.is_file():
+            raise InstallerServiceError(
+                f"내장 ComfyUI가 설치되지 않았습니다. 먼저 설치하기를 사용하세요: {python}"
+            )
+        return self._start_operation(
+            operation="update",
+            phases=_UPDATE_PHASES,
+            target=self._run_update,
+            kwargs={},
+        )
 
     def cancel(self) -> dict:
         with self._lock:
             if self._thread is None or not self._thread.is_alive():
                 print(
                     "[COMFY_INSTALL][SERVICE] 중단 요청을 받았지만 진행 중인 "
-                    "설치가 없습니다."
+                    "설치 또는 업데이트가 없습니다."
                 )
-                raise InstallerServiceError("진행 중인 설치가 없습니다.")
+                raise InstallerServiceError("진행 중인 설치 또는 업데이트가 없습니다.")
             self._cancel.set()
         self._log("[중단] 안전한 중단을 요청했습니다.", "warning")
         return self.status()
@@ -541,25 +693,31 @@ class ComfyInstallerService:
     def _run_install(
         self,
         *,
-        pack_path: Path,
-        workflow_key: str,
-        civitai_key: str,
-        restore_config_after_success: bool,
+        release_version: str,
+        selected_item_ids: list[str],
     ) -> None:
         process: ComfyProcess | None = None
         config_update: ConfigUpdateResult | None = None
+        selection: WorkflowSelection | None = None
+        civitai_key = ""
         started_monotonic = time.monotonic()
         try:
+            selection_info = selection_requirements(
+                library_root=self.workflow_library_root,
+                release_version=release_version,
+                selected_item_ids=selected_item_ids,
+            )
             self._set_phase("preflight")
-            system = self.preflight()
+            system = self.preflight(
+                selected_model_bytes=int(selection_info["model_bytes"])
+            )
             self._log(
                 "[검사] GPU 프로필 선택: "
                 f"{system['gpu_profile']}, "
-                f"free={system['disk']['free'] / 1024**3:.2f} GiB"
+                f"free={system['disk']['free'] / 1024**3:.2f} GiB, "
+                f"selected_models={len(selection_info['model_ids'])}, "
+                f"required={system['disk']['required'] / 1024**3:.2f} GiB"
             )
-
-            self._set_phase("credentials")
-            self._validate_civitai_access(civitai_key)
 
             self._set_phase("source")
             install_comfy_source(
@@ -571,19 +729,39 @@ class ComfyInstallerService:
             )
 
             self._set_phase("workflows")
-            workflows_root = (
-                self.comfy_root / "user" / "default" / "workflows"
+            selection = import_user_copies(
+                comfy_root=self.comfy_root,
+                library_root=self.workflow_library_root,
+                release_version=release_version,
+                selected_item_ids=selected_item_ids,
+                log=self._log,
             )
-            extracted = extract_workflow_pack(
-                pack_path,
-                workflows_root,
-                workflow_key,
-            )
-            self._validate_extracted_pack(extracted)
             self._log(
-                "[워크플로우] 복호화·해시 검증 완료: "
-                f"17개, pack_sha256={extracted.pack_sha256}"
+                "[워크플로우] 사용자 사본 준비 완료: "
+                f"release={selection.release_version}, "
+                f"selected={len(selection.selected_item_ids)}"
             )
+
+            models_by_id = {
+                str(model["id"]): model for model in self.manifest.models
+            }
+            missing_model_ids = [
+                model_id
+                for model_id in selection.model_ids
+                if model_id not in models_by_id
+            ]
+            if missing_model_ids:
+                raise InstallerServiceError(
+                    "선택 워크플로우 모델이 설치 매니페스트에 없습니다: "
+                    + ", ".join(missing_model_ids)
+                )
+            selected_models = [
+                models_by_id[model_id] for model_id in selection.model_ids
+            ]
+
+            self._set_phase("credentials")
+            civitai_key = self.get_civitai_key()
+            self._validate_civitai_access(civitai_key, selected_models)
 
             self._set_phase("venv")
             python = create_comfy_venv(
@@ -644,7 +822,7 @@ class ComfyInstallerService:
 
             self._set_phase("models")
             model_results = install_models(
-                models=self.manifest.models,
+                models=selected_models,
                 comfy_root=self.comfy_root,
                 downloader=self.downloader,
                 civitai_key=civitai_key,
@@ -679,10 +857,8 @@ class ComfyInstallerService:
             self._set_phase("e2e_static")
             validations, _ = validate_all_workflows(
                 base_url=process.base_url,
-                workflow_bindings=extracted.workflow_bindings,
-                expected_count=int(
-                    self.manifest.workflows["expected_count"]
-                ),
+                workflow_bindings=selection.workflow_bindings,
+                expected_count=len(selection.selected_item_ids),
                 excluded_filenames=list(
                     self.manifest.workflows["excluded_filenames"]
                 ),
@@ -702,24 +878,18 @@ class ComfyInstallerService:
             self._set_phase("config")
             config_update = apply_installed_config(
                 config_path=self.config_path,
-                requirements_dir=self.requirements_dir,
+                requirements_dir=self.config_backup_dir,
                 comfy_root=self.comfy_root,
-                workflow_bindings=extracted.workflow_bindings,
-                required_bindings=self.manifest.workflows[
-                    "required_bindings"
-                ],
+                workflow_bindings=selection.workflow_bindings,
+                required_bindings=selection.workflow_bindings.keys(),
             )
-            restore_result = None
-            if restore_config_after_success:
-                restore_result = restore_config_backup(
-                    config_path=self.config_path,
-                    requirements_dir=self.requirements_dir,
-                    backup_path=config_update.backup_path,
-                )
-                self._log(
-                    "[설정] 설치 성공 검증 후 요청대로 기존 config.json을 "
-                    "복원했습니다."
-                )
+
+            self._set_phase("repatch")
+            repatch = patch_comfy_input(
+                comfy_input_dir=self.comfy_root / "input",
+                fallback_source=self.project_root / "modes" / "fallback_img",
+                log=self._log,
+            )
 
             self._set_phase("complete")
             result = {
@@ -736,7 +906,10 @@ class ComfyInstallerService:
                 "custom_nodes": [str(path) for path in node_paths],
                 "node_requirements": node_requirements,
                 "models": model_results,
-                "workflow_pack_sha256": extracted.pack_sha256,
+                "workflow_release_version": selection.release_version,
+                "selected_workflow_ids": list(selection.selected_item_ids),
+                "selected_model_ids": list(selection.model_ids),
+                "user_workflow_files": list(selection.user_files),
                 "workflow_static": [
                     validation.public_result()
                     for validation in validations
@@ -746,9 +919,9 @@ class ComfyInstallerService:
                     "backup_path": str(config_update.backup_path),
                     "before_sha256": config_update.before_sha256,
                     "after_sha256": config_update.after_sha256,
-                    "restored_after_success": restore_config_after_success,
-                    "restore": restore_result,
+                    "restored_after_success": False,
                 },
+                "repatch": repatch,
             }
             result_path = self._write_result(result)
             result["result_path"] = str(result_path)
@@ -759,15 +932,16 @@ class ComfyInstallerService:
                         "finished_at": _now_iso(),
                         "progress": {
                             "event": "complete",
-                            "current": 17,
-                            "total": 17,
+                            "current": len(selection.selected_item_ids),
+                            "total": len(selection.selected_item_ids),
                         },
                         "error": None,
                         "result": result,
                     }
                 )
             self._log(
-                "[완료] ComfyUI 설치 및 17/17 실제 E2E 성공: "
+                "[완료] ComfyUI 설치 및 선택 워크플로우 E2E 성공: "
+                f"{len(selection.selected_item_ids)}개, "
                 f"{result_path}"
             )
         except (
@@ -798,18 +972,264 @@ class ComfyInstallerService:
         finally:
             if process is not None:
                 process.stop()
-            workflow_key = ""
             civitai_key = ""
+
+    def _installed_gpu_profile_id(self) -> str:
+        state_root = self.comfy_root / ".installer-state"
+        if state_root.is_dir():
+            for path in sorted(
+                state_root.glob("install-result-*.json"), reverse=True
+            ):
+                try:
+                    value = json.loads(path.read_text(encoding="utf-8"))
+                    python_result = (
+                        value.get("python") if isinstance(value, dict) else None
+                    )
+                    profile_id = (
+                        python_result.get("profile")
+                        if isinstance(python_result, dict)
+                        else None
+                    )
+                    if isinstance(profile_id, str) and profile_id:
+                        return profile_id
+                except Exception as exc:
+                    print(
+                        "[COMFY_INSTALL][UPDATE] 기존 설치 결과 읽기 실패: "
+                        f"path={path}, error={exc}"
+                    )
+                    traceback.print_exc()
+        print(
+            "[COMFY_INSTALL][UPDATE] 설치 결과에서 GPU 프로필을 찾지 못해 "
+            "시스템 검사를 다시 실행합니다."
+        )
+        return str(self.preflight()["gpu_profile"])
+
+    def _run_update(self) -> None:
+        process: ComfyProcess | None = None
+        started_monotonic = time.monotonic()
+        old_manifest = self.manifest
+        try:
+            self._set_phase("config_backup")
+            config_backup = backup_current_config(
+                config_path=self.config_path,
+                backup_dir=self.config_backup_dir,
+                reason="hooking_update",
+            )
+
+            self._set_phase("hooking_server")
+            hooking_result = update_hooking_server_main(
+                project_root=self.project_root,
+                config_path=self.config_path,
+                backup_dir=self.config_backup_dir,
+                cancel_event=self._cancel,
+                log=self._log,
+                config_backup=config_backup,
+            )
+
+            self._set_phase("manifest")
+            new_manifest = load_install_manifest()
+            self.manifest = new_manifest
+            with self._lock:
+                self._state["manifest"] = {
+                    "sha256": new_manifest.sha256,
+                    "comfy_version": new_manifest.comfy["version"],
+                    "model_count": len(new_manifest.models),
+                    "model_bytes": sum(
+                        int(model["size"]) for model in new_manifest.models
+                    ),
+                    "custom_node_count": len(new_manifest.custom_nodes),
+                    "workflow_count": new_manifest.workflows["expected_count"],
+                }
+            source_changed = old_manifest.comfy != new_manifest.comfy
+            python_changed = old_manifest.python != new_manifest.python
+            nodes_changed = old_manifest.custom_nodes != new_manifest.custom_nodes
+            self._log(
+                "[업데이트] 매니페스트 변경 요약: "
+                f"comfy={source_changed}, python={python_changed}, "
+                f"nodes={nodes_changed}"
+            )
+
+            python = uv_python_path(self.comfy_root / ".venv")
+            if not python.is_file():
+                raise InstallerServiceError(
+                    f"내장 ComfyUI Python이 없습니다. 먼저 설치하세요: {python}"
+                )
+            profile_id = self._installed_gpu_profile_id()
+            profile = next(
+                (
+                    value
+                    for value in new_manifest.python["gpu_profiles"]
+                    if value["id"] == profile_id
+                ),
+                None,
+            )
+            if profile is None:
+                raise InstallerServiceError(
+                    f"설치된 GPU 프로필이 새 매니페스트에 없습니다: {profile_id}"
+                )
+
+            self._set_phase("source")
+            update_comfy_source(
+                destination=self.comfy_root,
+                repository=str(new_manifest.comfy["repository"]),
+                ref=str(new_manifest.comfy["ref"]),
+                cancel_event=self._cancel,
+                log=self._log,
+            )
+
+            self._set_phase("core_dependencies")
+            python_result = None
+            if source_changed or python_changed:
+                python_result = install_python_dependencies(
+                    comfy_root=self.comfy_root,
+                    python=python,
+                    python_manifest=new_manifest.python,
+                    gpu_profile=profile,
+                    downloader=self.downloader,
+                    cancel_event=self._cancel,
+                    cache_root=self.comfy_root / ".installer-cache",
+                    log=self._log,
+                    progress=self._set_progress,
+                )
+            else:
+                self._log("[업데이트] Comfy/Python 변경 없음: 핵심 의존성 생략")
+
+            self._set_phase("custom_nodes")
+            node_paths = update_custom_nodes(
+                nodes=new_manifest.custom_nodes,
+                comfy_root=self.comfy_root,
+                downloader=self.downloader,
+                cancel_event=self._cancel,
+                log=self._log,
+                progress=self._set_progress,
+            )
+
+            self._set_phase("node_dependencies")
+            node_requirements: list[str] = []
+            if source_changed or python_changed or nodes_changed:
+                node_requirements = install_node_dependencies(
+                    comfy_root=self.comfy_root,
+                    python=python,
+                    node_paths=node_paths,
+                    compatibility_packages=list(
+                        new_manifest.python["compatibility_packages"]
+                    ),
+                    cancel_event=self._cancel,
+                    log=self._log,
+                )
+            else:
+                self._log("[업데이트] 노드 변경 없음: Python 의존성 설치 생략")
+
+            self._set_phase("runtime_isolation")
+            runtime = verify_isolated_runtime(
+                comfy_root=self.comfy_root,
+                python=python,
+                gpu_profile=profile,
+                cancel_event=self._cancel,
+                log=self._log,
+            )
+
+            self._set_phase("startup")
+            process = ComfyProcess(
+                comfy_root=self.comfy_root,
+                python=python,
+                cancel_event=self._cancel,
+                log=self._log_comfy,
+            )
+            stats = process.start(timeout=900)
+            actual_version = (
+                stats.get("system", {}).get("comfyui_version")
+                if isinstance(stats, dict)
+                else None
+            )
+            if actual_version != new_manifest.comfy["version"]:
+                raise ComfyE2EError(
+                    "업데이트 후 ComfyUI 버전이 매니페스트와 다릅니다: "
+                    f"expected={new_manifest.comfy['version']}, actual={actual_version}"
+                )
+            process.stop()
+            process = None
+
+            self._set_phase("complete")
+            result = {
+                "operation": "update",
+                "completed_at": _now_iso(),
+                "duration_seconds": round(
+                    time.monotonic() - started_monotonic, 3
+                ),
+                "hooking_server": hooking_result,
+                "manifest_before": old_manifest.sha256,
+                "manifest_after": new_manifest.sha256,
+                "changes": {
+                    "comfy": source_changed,
+                    "python": python_changed,
+                    "custom_nodes": nodes_changed,
+                },
+                "python": python_result,
+                "runtime": runtime,
+                "node_requirements": node_requirements,
+                "comfy_version": actual_version,
+                "repatch": None,
+                "workflow_e2e": None,
+                "restart_required": bool(
+                    hooking_result.get("restart_required")
+                ),
+            }
+            result_path = self._write_result(result)
+            result["result_path"] = str(result_path)
+            with self._lock:
+                self._state.update(
+                    {
+                        "state": "succeeded",
+                        "finished_at": _now_iso(),
+                        "progress": {
+                            "event": "complete",
+                            "current": 1,
+                            "total": 1,
+                        },
+                        "error": None,
+                        "result": result,
+                    }
+                )
+            self._log(
+                "[완료] 빠른 업데이트 성공 (리패치/E2E 생략): "
+                f"{result_path}"
+            )
+        except DownloadCancelled as exc:
+            self._log(f"[중단] {exc}", "warning")
+            with self._lock:
+                self._state.update(
+                    {
+                        "state": "cancelled",
+                        "finished_at": _now_iso(),
+                        "error": str(exc),
+                    }
+                )
+        except Exception as exc:
+            print(f"[COMFY_INSTALL][SERVICE] 업데이트 실패: {exc}")
+            traceback.print_exc()
+            self._log(f"[실패] {exc}", "error")
+            with self._lock:
+                self._state.update(
+                    {
+                        "state": "failed",
+                        "finished_at": _now_iso(),
+                        "error": str(exc),
+                    }
+                )
+        finally:
+            if process is not None:
+                process.stop()
 
     def restore_backup(self, backup_path: str | os.PathLike[str]) -> dict:
         with self._lock:
             if self._thread is not None and self._thread.is_alive():
                 raise InstallerServiceError(
-                    "설치 진행 중에는 config.json을 복원할 수 없습니다."
+                    "설치 또는 업데이트 중에는 config.json을 복원할 수 없습니다."
                 )
         result = restore_config_backup(
             config_path=self.config_path,
-            requirements_dir=self.requirements_dir,
+            requirements_dir=self.config_backup_dir,
             backup_path=backup_path,
         )
         self._log(

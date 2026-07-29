@@ -98,7 +98,7 @@ async def test_installer_rejects_non_pack_upload(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_installer_start_rejects_non_boolean_restore_option(
+async def test_installer_start_rejects_invalid_selected_item_ids(
     tmp_path: Path,
 ) -> None:
     config = tmp_path / "config.json"
@@ -116,15 +116,109 @@ async def test_installer_start_rejects_non_boolean_restore_option(
         response = await client.post(
             "/api/comfy-installer/start",
             json={
-                "upload_id": "0" * 32,
-                "workflow_key": "secret",
-                "civitai_key": "secret",
-                "restore_config_after_success": "true",
+                "release_version": "v1",
+                "selected_item_ids": "not-a-list",
             },
         )
         assert response.status == 409
         payload = await response.json()
         assert payload["ok"] is False
-        assert "boolean" in payload["error"]
+        assert "문자열 배열" in payload["error"]
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_civitai_key_api_returns_plain_saved_value(tmp_path: Path) -> None:
+    config = tmp_path / "config.json"
+    config.write_text("{}\n", encoding="utf-8")
+    app = web.Application()
+    register_comfy_installer_routes(
+        app,
+        project_root=tmp_path,
+        config_path=config,
+        requirements_dir=tmp_path / "requirements",
+    )
+    client = TestClient(TestServer(app))
+    await client.start_server()
+    try:
+        response = await client.post(
+            "/api/comfy-installer/civitai-key",
+            json={"api_key": "plain-civitai-key"},
+        )
+        assert response.status == 200
+        assert (await response.json())["api_key"] == "plain-civitai-key"
+
+        response = await client.get("/api/comfy-installer/civitai-key")
+        assert response.status == 200
+        assert (await response.json())["api_key"] == "plain-civitai-key"
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_preflight_uses_selected_workflow_model_size(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = tmp_path / "config.json"
+    config.write_text("{}\n", encoding="utf-8")
+    app = web.Application()
+    service = register_comfy_installer_routes(
+        app,
+        project_root=tmp_path,
+        config_path=config,
+        requirements_dir=tmp_path / "requirements",
+    )
+    received = {}
+
+    def fake_preflight_selection(**kwargs):
+        received.update(kwargs)
+        return {
+            "selection": {"model_ids": ["fixed-model"], "model_bytes": 123},
+            "disk": {"free": 999, "required": 123, "enough": True},
+        }
+
+    monkeypatch.setattr(service, "preflight_selection", fake_preflight_selection)
+    client = TestClient(TestServer(app))
+    await client.start_server()
+    try:
+        response = await client.post(
+            "/api/comfy-installer/preflight",
+            json={
+                "release_version": "v1",
+                "selected_item_ids": ["qwen_edit_workflow_source_path"],
+            },
+        )
+        assert response.status == 200
+        assert received == {
+            "release_version": "v1",
+            "selected_item_ids": ["qwen_edit_workflow_source_path"],
+        }
+        payload = await response.json()
+        assert payload["preflight"]["selection"]["model_bytes"] == 123
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_preflight_without_body_keeps_general_probe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = tmp_path / "config.json"
+    config.write_text("{}\n", encoding="utf-8")
+    app = web.Application()
+    service = register_comfy_installer_routes(
+        app,
+        project_root=tmp_path,
+        config_path=config,
+        requirements_dir=tmp_path / "requirements",
+    )
+    monkeypatch.setattr(service, "preflight", lambda: {"mode": "general"})
+    client = TestClient(TestServer(app))
+    await client.start_server()
+    try:
+        response = await client.post("/api/comfy-installer/preflight")
+        assert response.status == 200
+        assert (await response.json())["preflight"] == {"mode": "general"}
     finally:
         await client.close()

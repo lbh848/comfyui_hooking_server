@@ -58,6 +58,38 @@ def test_workflow_pack_round_trip_preserves_bindings_and_hashes(tmp_path):
     ).read_bytes() == first.read_bytes()
     assert len(extracted.workflow_hashes) == 2
     assert extracted.pack_sha256 == created["sha256"]
+    assert extracted.release_version == "v1"
+    assert len(extracted.workflow_items) == 2
+
+
+def test_workflow_pack_records_release_version(tmp_path):
+    workflow = tmp_path / "workflow.json"
+    _write_workflow(workflow, "1")
+    pack = tmp_path / "workflows-v2.soyawfp"
+
+    created = create_workflow_pack(
+        {"comfy_workflow_source_path": workflow},
+        pack,
+        "right",
+        release_version="v2",
+        workflow_items=[
+            {
+                "id": "comfy_workflow_source_path",
+                "name": workflow.name,
+                "archive_name": f"workflows/{workflow.name}",
+                "bindings": ["comfy_workflow_source_path"],
+                "model_ids": ["fixed-model-b", "fixed-model-a"],
+            }
+        ],
+    )
+    extracted = extract_workflow_pack(pack, tmp_path / "restored-v2", "right")
+
+    assert created["release_version"] == "v2"
+    assert extracted.release_version == "v2"
+    assert extracted.workflow_items[0]["model_ids"] == [
+        "fixed-model-a",
+        "fixed-model-b",
+    ]
 
 
 def test_workflow_pack_rejects_wrong_key_without_writing_files(tmp_path):

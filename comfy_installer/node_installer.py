@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 import json
 import os
 import re
@@ -301,3 +302,214 @@ def install_custom_nodes(
             )
         installed.append(path)
     return installed
+
+
+def update_archive_node(
+    *,
+    node: dict,
+    comfy_root: Path,
+    downloader: ResumableDownloader,
+    cancel_event: Event,
+    log: LogCallback | None,
+    progress: ProgressCallback | None,
+) -> Path:
+    name = str(node["name"])
+    _validate_node_name(name)
+    custom_root = comfy_root / "custom_nodes"
+    cache_root = comfy_root / ".installer-cache" / "custom_nodes"
+    destination = custom_root / name
+    _assert_direct_child(destination, custom_root, "업데이트 대상")
+    if not destination.exists():
+        return install_archive_node(
+            node=node,
+            custom_root=custom_root,
+            cache_root=cache_root,
+            downloader=downloader,
+            cancel_event=cancel_event,
+            log=log,
+            progress=progress,
+        )
+    if not destination.is_dir():
+        raise NodeInstallError(
+            f"아카이브 노드 업데이트 대상이 폴더가 아닙니다: {destination}"
+        )
+    marker = destination / ".comfy-installer-source.json"
+    if not marker.is_file():
+        raise NodeInstallError(
+            f"관리되지 않는 기존 노드는 업데이트하지 않습니다: {destination}"
+        )
+    if _archive_marker_matches(destination, node):
+        if log:
+            log(f"[노드 업데이트] 이미 최신: {name}")
+        return destination
+
+    cache_root.mkdir(parents=True, exist_ok=True)
+    archive_name = f"{name}-{node.get('version', 'pinned')}.archive"
+    archive_path = cache_root / archive_name
+    downloader.download(
+        url=node["url"],
+        target=archive_path,
+        expected_size=int(node["size"]),
+        expected_sha256=node["sha256"],
+        cancel_event=cancel_event,
+        progress=progress,
+    )
+    staging = _prepare_staging(custom_root, name)
+    backup_root = comfy_root / ".installer-state" / "backups" / "custom_nodes"
+    stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    backup = backup_root / f"{name}-{stamp}"
+    try:
+        staging.mkdir(parents=False)
+        _extract_zip_safely(archive_path, staging)
+        marker_value = {
+            "source_type": "archive",
+            "url": node["url"],
+            "version": node.get("version"),
+            "sha256": node["sha256"],
+        }
+        (staging / ".comfy-installer-source.json").write_text(
+            json.dumps(marker_value, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        backup_root.mkdir(parents=True, exist_ok=True)
+        os.replace(destination, backup)
+        try:
+            os.replace(staging, destination)
+        except Exception:
+            print(
+                "[COMFY_INSTALL][NODE] 새 아카이브 노드 배치 실패, "
+                f"기존 폴더 복원: {backup} -> {destination}"
+            )
+            traceback.print_exc()
+            os.replace(backup, destination)
+            raise
+        if log:
+            log(f"[노드 업데이트] 완료: {name} (기존 백업: {backup})")
+        return destination
+    except Exception as exc:
+        print(
+            "[COMFY_INSTALL][NODE] 아카이브 노드 업데이트 실패: "
+            f"name={name}, error={exc}, staging={staging}"
+        )
+        traceback.print_exc()
+        if isinstance(exc, NodeInstallError):
+            raise
+        raise NodeInstallError(f"아카이브 노드 업데이트 실패: {name}") from exc
+
+
+def update_git_node(
+    *,
+    node: dict,
+    comfy_root: Path,
+    cancel_event: Event,
+    log: LogCallback | None,
+) -> Path:
+    name = str(node["name"])
+    ref = str(node["ref"]).lower()
+    repository = str(node["repository"])
+    _validate_node_name(name)
+    custom_root = comfy_root / "custom_nodes"
+    destination = custom_root / name
+    _assert_direct_child(destination, custom_root, "업데이트 대상")
+    if not destination.exists():
+        return install_git_node(
+            node=node,
+            custom_root=custom_root,
+            cancel_event=cancel_event,
+            log=log,
+        )
+    if not destination.is_dir() or not (destination / ".git").is_dir():
+        raise NodeInstallError(
+            f"관리되지 않는 기존 Git 노드는 업데이트하지 않습니다: {destination}"
+        )
+    try:
+        origin = _git_origin(destination)
+        normalized_origin = origin.rstrip("/").removesuffix(".git").casefold()
+        normalized_expected = repository.rstrip("/").removesuffix(".git").casefold()
+        if normalized_origin != normalized_expected:
+            raise NodeInstallError(
+                f"노드 원격 저장소 불일치: {name}, actual={origin}"
+            )
+        status = run_command(
+            ["git", "status", "--porcelain", "--untracked-files=no"],
+            cwd=destination,
+        )
+        if status:
+            raise NodeInstallError(
+                f"노드에 로컬 변경이 있어 업데이트하지 않습니다: {name}: "
+                + ", ".join(status[:10])
+            )
+        head = _git_head(destination).lower()
+        if head == ref:
+            if log:
+                log(f"[노드 업데이트] 이미 최신: {name} {head[:12]}")
+            return destination
+        run_command(
+            ["git", "fetch", "--depth", "1", "origin", ref],
+            cwd=destination,
+            cancel_event=cancel_event,
+            log=log,
+            timeout=600,
+        )
+        run_command(
+            ["git", "checkout", "--detach", "FETCH_HEAD"],
+            cwd=destination,
+            cancel_event=cancel_event,
+            log=log,
+        )
+        actual = _git_head(destination).lower()
+        if actual != ref:
+            raise NodeInstallError(
+                f"노드 업데이트 고정점 검증 실패: {name}, expected={ref}, actual={actual}"
+            )
+        if log:
+            log(f"[노드 업데이트] 완료: {name} {actual[:12]}")
+        return destination
+    except NodeInstallError:
+        raise
+    except Exception as exc:
+        print(
+            "[COMFY_INSTALL][NODE] Git 노드 업데이트 실패: "
+            f"name={name}, path={destination}, error={exc}"
+        )
+        traceback.print_exc()
+        raise NodeInstallError(f"Git 노드 업데이트 실패: {name}: {exc}") from exc
+
+
+def update_custom_nodes(
+    *,
+    nodes: list[dict],
+    comfy_root: Path,
+    downloader: ResumableDownloader,
+    cancel_event: Event,
+    log: LogCallback | None = None,
+    progress: ProgressCallback | None = None,
+) -> list[Path]:
+    updated: list[Path] = []
+    for index, node in enumerate(nodes, 1):
+        if cancel_event.is_set():
+            raise NodeInstallError("커스텀 노드 업데이트 중 중단 요청을 받았습니다.")
+        if log:
+            log(f"[노드 업데이트 {index}/{len(nodes)}] {node['name']}")
+        if node["source_type"] == "archive":
+            path = update_archive_node(
+                node=node,
+                comfy_root=comfy_root,
+                downloader=downloader,
+                cancel_event=cancel_event,
+                log=log,
+                progress=progress,
+            )
+        elif node["source_type"] == "git":
+            path = update_git_node(
+                node=node,
+                comfy_root=comfy_root,
+                cancel_event=cancel_event,
+                log=log,
+            )
+        else:
+            raise NodeInstallError(
+                f"지원하지 않는 노드 소스 형식: {node.get('source_type')!r}"
+            )
+        updated.append(path)
+    return updated

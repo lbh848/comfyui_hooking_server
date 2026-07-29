@@ -9,7 +9,7 @@ import traceback
 from pathlib import Path
 
 from .crypto import WorkflowPackError, create_workflow_pack
-from .manifest import load_install_manifest
+from .manifest import InstallManifest, load_install_manifest
 
 
 def _get_dotted(config: dict, dotted_key: str):
@@ -21,7 +21,10 @@ def _get_dotted(config: dict, dotted_key: str):
     return value
 
 
-def collect_workflow_bindings(config_path: Path) -> dict[str, Path]:
+def collect_workflow_bindings(
+    config_path: Path,
+    manifest: InstallManifest | None = None,
+) -> dict[str, Path]:
     try:
         config = json.loads(config_path.read_text(encoding="utf-8"))
     except Exception as exc:
@@ -34,7 +37,7 @@ def collect_workflow_bindings(config_path: Path) -> dict[str, Path]:
     if not isinstance(config, dict):
         raise WorkflowPackError("config.json 최상위 값이 객체가 아닙니다.")
 
-    manifest = load_install_manifest()
+    manifest = manifest or load_install_manifest()
     required = manifest.workflows["required_bindings"]
     excluded = {
         str(name).casefold()
@@ -66,12 +69,62 @@ def collect_workflow_bindings(config_path: Path) -> dict[str, Path]:
     return bindings
 
 
+def build_workflow_items(
+    bindings: dict[str, Path],
+    release_version: str,
+    manifest: InstallManifest,
+) -> list[dict]:
+    releases = manifest.workflows["release_dependencies"]
+    fixed_entries = releases.get(release_version)
+    if not isinstance(fixed_entries, list):
+        raise WorkflowPackError(
+            "고정 모델 목록이 등록되지 않은 워크플로우 배포 버전입니다: "
+            f"{release_version}"
+        )
+
+    grouped: dict[Path, list[str]] = {}
+    for binding_key, source in bindings.items():
+        grouped.setdefault(source.resolve(), []).append(binding_key)
+    fixed_by_bindings = {
+        frozenset(str(value) for value in entry["bindings"]): entry
+        for entry in fixed_entries
+    }
+    items: list[dict] = []
+    for source, item_bindings in grouped.items():
+        fixed = fixed_by_bindings.get(frozenset(item_bindings))
+        if fixed is None:
+            raise WorkflowPackError(
+                "워크플로우 파일 묶음과 고정 모델 명세가 일치하지 않습니다: "
+                f"bindings={sorted(item_bindings)}, file={source}"
+            )
+        items.append(
+            {
+                "id": str(fixed["id"]),
+                "name": source.name,
+                "archive_name": f"workflows/{source.name}",
+                "bindings": sorted(item_bindings),
+                "model_ids": sorted(str(value) for value in fixed["model_ids"]),
+            }
+        )
+    if len(items) != len(fixed_entries):
+        raise WorkflowPackError(
+            "워크플로우 파일 수와 고정 모델 명세 수가 다릅니다: "
+            f"files={len(items)}, fixed={len(fixed_entries)}"
+        )
+    return sorted(items, key=lambda item: item["id"])
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="현재 config.json의 17개 워크플로우를 암호화 팩으로 생성합니다."
     )
     parser.add_argument("--config", default="config.json")
     parser.add_argument("--output", required=True)
+    parser.add_argument(
+        "--release-version",
+        default="v1",
+        help="배포 버전(v1, v2 ...). 팩 내부에 기록됩니다.",
+    )
     parser.add_argument(
         "--key-env",
         default="",
@@ -80,7 +133,11 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         config_path = Path(args.config).resolve()
-        bindings = collect_workflow_bindings(config_path)
+        manifest = load_install_manifest()
+        bindings = collect_workflow_bindings(config_path, manifest)
+        workflow_items = build_workflow_items(
+            bindings, args.release_version, manifest
+        )
         if args.key_env:
             key = os.environ.get(args.key_env, "")
             if not key:
@@ -92,11 +149,18 @@ def main(argv: list[str] | None = None) -> int:
             confirmation = getpass.getpass("워크플로우 팩 키 확인: ")
             if key != confirmation:
                 raise WorkflowPackError("워크플로우 팩 키 확인 값이 다릅니다.")
-        result = create_workflow_pack(bindings, args.output, key)
+        result = create_workflow_pack(
+            bindings,
+            args.output,
+            key,
+            release_version=args.release_version,
+            workflow_items=workflow_items,
+        )
         key = ""
         print(
             "[COMFY_INSTALL][PACK] 생성 완료: "
-            f"path={result['path']}, workflows={result['workflow_count']}, "
+            f"path={result['path']}, release={result['release_version']}, "
+            f"workflows={result['workflow_count']}, "
             f"sha256={result['sha256']}"
         )
         return 0

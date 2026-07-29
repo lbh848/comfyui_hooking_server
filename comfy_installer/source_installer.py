@@ -142,3 +142,77 @@ def install_comfy_source(
         )
         traceback.print_exc()
         raise SourceInstallError(f"ComfyUI 소스 설치 실패: {exc}") from exc
+
+
+def update_comfy_source(
+    *,
+    destination: str | os.PathLike[str],
+    repository: str,
+    ref: str,
+    cancel_event: Event,
+    log: LogCallback | None = None,
+) -> Path:
+    """사용자가 명시적으로 업데이트한 경우에만 관리 중인 Comfy 소스를 갱신한다."""
+
+    target = Path(destination).resolve()
+    try:
+        if not target.is_dir() or not (target / ".git").is_dir():
+            raise SourceInstallError(
+                f"업데이트할 관리형 ComfyUI Git 폴더가 없습니다: {target}"
+            )
+        actual_origin = _git_value(target, "remote", "get-url", "origin")
+        if _normalized_git_url(actual_origin) != _normalized_git_url(repository):
+            raise SourceInstallError(
+                "ComfyUI 원격 저장소가 설치 매니페스트와 달라 업데이트하지 "
+                f"않습니다: expected={repository}, actual={actual_origin}"
+            )
+        status = run_command(
+            ["git", "status", "--porcelain", "--untracked-files=no"],
+            cwd=target,
+        )
+        if status:
+            raise SourceInstallError(
+                "ComfyUI 소스에 로컬 변경이 있어 업데이트하지 않습니다: "
+                + ", ".join(status[:10])
+            )
+        actual_ref = _git_value(target, "rev-parse", "HEAD").lower()
+        if actual_ref == ref.lower():
+            if log:
+                log(f"[ComfyUI 업데이트] 이미 최신 고정점: {actual_ref[:12]}")
+            return target
+        if log:
+            log(
+                "[ComfyUI 업데이트] 새 고정점 가져오기: "
+                f"{actual_ref[:12]} -> {ref[:12]}"
+            )
+        run_command(
+            ["git", "fetch", "--depth", "1", "origin", ref],
+            cwd=target,
+            cancel_event=cancel_event,
+            log=log,
+            timeout=900,
+        )
+        run_command(
+            ["git", "checkout", "--detach", "FETCH_HEAD"],
+            cwd=target,
+            cancel_event=cancel_event,
+            log=log,
+        )
+        updated_ref = _git_value(target, "rev-parse", "HEAD").lower()
+        if updated_ref != ref.lower():
+            raise SourceInstallError(
+                "ComfyUI 업데이트 고정점 검증 실패: "
+                f"expected={ref}, actual={updated_ref}"
+            )
+        if log:
+            log(f"[ComfyUI 업데이트] 완료: {updated_ref[:12]}")
+        return target
+    except SourceInstallError:
+        raise
+    except Exception as exc:
+        print(
+            "[COMFY_INSTALL][SOURCE] ComfyUI 업데이트 실패: "
+            f"target={target}, error={exc}"
+        )
+        traceback.print_exc()
+        raise SourceInstallError(f"ComfyUI 업데이트 실패: {exc}") from exc

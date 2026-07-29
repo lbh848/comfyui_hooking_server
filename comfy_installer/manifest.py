@@ -71,14 +71,20 @@ def _validate_manifest(data: dict[str, Any]) -> None:
         raise ManifestError("comfy 항목이 JSON 객체가 아닙니다.")
     _require_string(comfy, "repository", "comfy")
     _require_string(comfy, "ref", "comfy")
-    if comfy.get("version") != "0.20.1":
-        raise ManifestError("최초 배포 ComfyUI 버전은 0.20.1이어야 합니다.")
+    comfy_version = _require_string(comfy, "version", "comfy")
+    if not re.fullmatch(r"[0-9]+(?:\.[0-9]+){1,3}", comfy_version):
+        raise ManifestError(
+            f"comfy.version 형식이 유효하지 않습니다: {comfy_version!r}"
+        )
 
     python = data.get("python")
     if not isinstance(python, dict):
         raise ManifestError("python 항목이 JSON 객체가 아닙니다.")
-    if _require_string(python, "version", "python") != "3.12.11":
-        raise ManifestError("ComfyUI Python 버전은 3.12.11이어야 합니다.")
+    python_version = _require_string(python, "version", "python")
+    if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", python_version):
+        raise ManifestError(
+            f"python.version 형식이 유효하지 않습니다: {python_version!r}"
+        )
     compatibility_packages = python.get("compatibility_packages")
     if not isinstance(compatibility_packages, list) or not all(
         isinstance(item, str) and "==" in item
@@ -162,11 +168,15 @@ def _validate_manifest(data: dict[str, Any]) -> None:
     if not isinstance(models, list) or not models:
         raise ManifestError("models가 비어 있습니다.")
     model_paths: set[str] = set()
+    model_ids: set[str] = set()
     for index, model in enumerate(models):
         context = f"models[{index}]"
         if not isinstance(model, dict):
             raise ManifestError(f"{context}가 JSON 객체가 아닙니다.")
-        _require_string(model, "id", context)
+        model_id = _require_string(model, "id", context)
+        if model_id in model_ids:
+            raise ManifestError(f"모델 ID가 중복됩니다: {model_id}")
+        model_ids.add(model_id)
         _require_string(model, "url", context)
         relative_path = _require_string(model, "relative_path", context)
         if not _is_safe_relative_path(relative_path):
@@ -199,6 +209,96 @@ def _validate_manifest(data: dict[str, Any]) -> None:
     excluded = workflows.get("excluded_filenames")
     if not isinstance(excluded, list) or "캐릭터복장추적_v1.json" not in excluded:
         raise ManifestError("제외 워크플로우 목록에 캐릭터복장추적_v1.json이 없습니다.")
+
+    required_bindings = workflows.get("required_bindings")
+    if not isinstance(required_bindings, list) or not required_bindings:
+        raise ManifestError("workflows.required_bindings가 비어 있습니다.")
+    if not all(
+        isinstance(binding, str) and binding.strip()
+        for binding in required_bindings
+    ):
+        raise ManifestError("workflows.required_bindings가 문자열 배열이 아닙니다.")
+    if len(set(required_bindings)) != len(required_bindings):
+        raise ManifestError("workflows.required_bindings에 중복 값이 있습니다.")
+
+    release_dependencies = workflows.get("release_dependencies")
+    if not isinstance(release_dependencies, dict) or not release_dependencies:
+        raise ManifestError("workflows.release_dependencies가 비어 있습니다.")
+    if "v1" not in release_dependencies:
+        raise ManifestError("최초 배포용 workflows.release_dependencies.v1이 없습니다.")
+    required_binding_set = set(required_bindings)
+    for release_version, entries in release_dependencies.items():
+        context = f"workflows.release_dependencies.{release_version}"
+        if not isinstance(release_version, str) or not re.fullmatch(
+            r"v[1-9][0-9]*", release_version
+        ):
+            raise ManifestError(
+                f"워크플로우 배포 버전 형식이 유효하지 않습니다: {release_version!r}"
+            )
+        if not isinstance(entries, list) or len(entries) != expected_count:
+            raise ManifestError(
+                f"{context} 항목 수가 {expected_count}개가 아닙니다."
+            )
+        entry_ids: set[str] = set()
+        covered_bindings: set[str] = set()
+        for index, entry in enumerate(entries):
+            entry_context = f"{context}[{index}]"
+            if not isinstance(entry, dict):
+                raise ManifestError(f"{entry_context}가 JSON 객체가 아닙니다.")
+            entry_id = _require_string(entry, "id", entry_context)
+            if entry_id in entry_ids:
+                raise ManifestError(
+                    f"{context} 워크플로우 ID가 중복됩니다: {entry_id}"
+                )
+            entry_ids.add(entry_id)
+            bindings = entry.get("bindings")
+            if not isinstance(bindings, list) or not bindings or not all(
+                isinstance(binding, str) and binding.strip()
+                for binding in bindings
+            ):
+                raise ManifestError(
+                    f"{entry_context}.bindings가 비어 있거나 문자열 배열이 아닙니다."
+                )
+            if len(set(bindings)) != len(bindings):
+                raise ManifestError(
+                    f"{entry_context}.bindings에 중복 값이 있습니다."
+                )
+            unknown_bindings = set(bindings) - required_binding_set
+            if unknown_bindings:
+                raise ManifestError(
+                    f"{entry_context}.bindings에 알 수 없는 설정 키가 있습니다: "
+                    f"{sorted(unknown_bindings)}"
+                )
+            duplicate_bindings = covered_bindings.intersection(bindings)
+            if duplicate_bindings:
+                raise ManifestError(
+                    f"{context}에서 설정 키가 여러 워크플로우에 중복됩니다: "
+                    f"{sorted(duplicate_bindings)}"
+                )
+            covered_bindings.update(bindings)
+            dependency_ids = entry.get("model_ids")
+            if not isinstance(dependency_ids, list) or not all(
+                isinstance(model_id, str) and model_id.strip()
+                for model_id in dependency_ids
+            ):
+                raise ManifestError(
+                    f"{entry_context}.model_ids가 문자열 배열이 아닙니다."
+                )
+            if len(set(dependency_ids)) != len(dependency_ids):
+                raise ManifestError(
+                    f"{entry_context}.model_ids에 중복 값이 있습니다."
+                )
+            unknown_models = set(dependency_ids) - model_ids
+            if unknown_models:
+                raise ManifestError(
+                    f"{entry_context}.model_ids에 등록되지 않은 모델이 있습니다: "
+                    f"{sorted(unknown_models)}"
+                )
+        if covered_bindings != required_binding_set:
+            raise ManifestError(
+                f"{context}가 모든 설정 바인딩을 포함하지 않습니다: "
+                f"missing={sorted(required_binding_set - covered_bindings)}"
+            )
 
 
 def load_install_manifest(

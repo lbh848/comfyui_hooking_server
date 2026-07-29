@@ -68,3 +68,6 @@ fonts/
 # Windows 전용 ComfyUI 설치기가 만드는 독립 런타임(모델/.venv 포함)
 comfy/
 
+# 암호화 팩에서 푼 버전별 배포 워크플로우 원본
+comfy_workflow_library/
+

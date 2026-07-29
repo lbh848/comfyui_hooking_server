@@ -157,6 +157,18 @@ def test_manifest_has_fully_pinned_windows_runtime_and_assets() -> None:
     assert spectrum["ref"] == "c806917566ee1c149575cd90da9e4c2e543de019"
     assert len(manifest.models) == 36
     assert manifest.workflows["expected_count"] == 17
+    fixed_v1 = manifest.workflows["release_dependencies"]["v1"]
+    assert len(fixed_v1) == 17
+    assert {
+        binding
+        for item in fixed_v1
+        for binding in item["bindings"]
+    } == set(manifest.workflows["required_bindings"])
+    qwen = next(
+        item for item in fixed_v1
+        if item["id"] == "qwen_edit_workflow_source_path"
+    )
+    assert qwen["model_ids"] == ["qwen-image-edit-rapid-v19"]
     assert "캐릭터복장추적_v1.json" in manifest.workflows[
         "excluded_filenames"
     ]

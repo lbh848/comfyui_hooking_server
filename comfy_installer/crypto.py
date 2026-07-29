@@ -5,12 +5,13 @@ import hashlib
 import io
 import json
 import os
+import re
 import struct
 import traceback
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping
+from typing import Mapping, Sequence
 
 from argon2.low_level import Type, hash_secret_raw
 from cryptography.exceptions import InvalidTag
@@ -36,6 +37,8 @@ class ExtractedWorkflowPack:
     workflow_bindings: dict[str, str]
     workflow_hashes: dict[str, str]
     pack_sha256: str
+    release_version: str = "v1"
+    workflow_items: tuple[dict, ...] = ()
 
 
 def _canonical_json(value: object) -> bytes:
@@ -90,12 +93,24 @@ def create_workflow_pack(
     workflow_bindings: Mapping[str, str | os.PathLike[str]],
     destination: str | os.PathLike[str],
     passphrase: str,
+    *,
+    release_version: str = "v1",
+    workflow_items: Sequence[Mapping[str, object]] | None = None,
 ) -> dict:
     """워크플로우 파일을 Argon2id + AES-256-GCM 팩으로 묶는다."""
 
     try:
         if not workflow_bindings:
             raise WorkflowPackError("암호화할 워크플로우가 없습니다.")
+
+        if not isinstance(release_version, str) or not re.fullmatch(
+            r"v[1-9][0-9]*", release_version.strip()
+        ):
+            raise WorkflowPackError(
+                "워크플로우 배포 버전은 v1, v2 형식이어야 합니다: "
+                f"{release_version!r}"
+            )
+        release_version = release_version.strip()
 
         files: dict[str, Path] = {}
         bindings: dict[str, str] = {}
@@ -148,10 +163,26 @@ def create_workflow_pack(
                     "size": len(payload),
                 }
                 archive.writestr(archive_name, payload)
+            grouped_bindings: dict[str, list[str]] = {}
+            for binding_key, archive_name in bindings.items():
+                grouped_bindings.setdefault(archive_name, []).append(binding_key)
+            generated_items = [
+                {
+                    "id": sorted(item_bindings)[0],
+                    "name": Path(archive_name).name,
+                    "archive_name": archive_name,
+                    "bindings": sorted(item_bindings),
+                }
+                for archive_name, item_bindings in sorted(grouped_bindings.items())
+            ]
+            if workflow_items is not None:
+                generated_items = [dict(item) for item in workflow_items]
             inner_manifest = {
-                "schema_version": 1,
+                "schema_version": 2,
+                "release_version": release_version,
                 "workflow_bindings": bindings,
                 "files": file_manifest,
+                "workflow_items": generated_items,
             }
             archive.writestr("manifest.json", _canonical_json(inner_manifest))
 
@@ -197,6 +228,7 @@ def create_workflow_pack(
             "sha256": _sha256_file(output),
             "workflow_count": len(files),
             "binding_count": len(bindings),
+            "release_version": release_version,
         }
     except WorkflowPackError:
         raise
@@ -308,10 +340,9 @@ def extract_workflow_pack(
                     "워크플로우 팩 내부 manifest를 읽을 수 없습니다."
                 ) from exc
 
-            if (
-                not isinstance(inner_manifest, dict)
-                or inner_manifest.get("schema_version") != 1
-            ):
+            if not isinstance(inner_manifest, dict) or inner_manifest.get(
+                "schema_version"
+            ) not in {1, 2}:
                 raise WorkflowPackError("워크플로우 팩 내부 manifest 버전이 잘못되었습니다.")
             bindings = inner_manifest.get("workflow_bindings")
             files = inner_manifest.get("files")
@@ -365,6 +396,111 @@ def extract_workflow_pack(
                     )
                 clean_bindings[str(config_key)] = safe_name
 
+            release_version = inner_manifest.get("release_version", "v1")
+            if not isinstance(release_version, str) or not re.fullmatch(
+                r"v[1-9][0-9]*", release_version
+            ):
+                raise WorkflowPackError(
+                    "워크플로우 팩 배포 버전이 v1, v2 형식이 아닙니다: "
+                    f"{release_version!r}"
+                )
+            raw_items = inner_manifest.get("workflow_items")
+            if raw_items is None:
+                grouped: dict[str, list[str]] = {}
+                for binding_key, archive_name in clean_bindings.items():
+                    grouped.setdefault(archive_name, []).append(binding_key)
+                raw_items = [
+                    {
+                        "id": sorted(item_bindings)[0],
+                        "name": Path(archive_name).name,
+                        "archive_name": archive_name,
+                        "bindings": sorted(item_bindings),
+                    }
+                    for archive_name, item_bindings in sorted(grouped.items())
+                ]
+            if not isinstance(raw_items, list):
+                raise WorkflowPackError("워크플로우 팩 workflow_items가 배열이 아닙니다.")
+            clean_items: list[dict] = []
+            seen_item_ids: set[str] = set()
+            covered_bindings: set[str] = set()
+            for index, raw_item in enumerate(raw_items):
+                if not isinstance(raw_item, dict):
+                    raise WorkflowPackError(
+                        f"워크플로우 항목이 객체가 아닙니다: index={index}"
+                    )
+                item_id = str(raw_item.get("id", "")).strip()
+                name = str(raw_item.get("name", "")).strip()
+                archive_name = _validate_archive_name(
+                    str(raw_item.get("archive_name", ""))
+                )
+                item_bindings = raw_item.get("bindings")
+                if not item_id or item_id in seen_item_ids:
+                    raise WorkflowPackError(
+                        f"워크플로우 항목 ID가 비었거나 중복됩니다: {item_id!r}"
+                    )
+                if archive_name not in verified_payloads:
+                    raise WorkflowPackError(
+                        f"워크플로우 항목 파일이 팩에 없습니다: {archive_name}"
+                    )
+                if not isinstance(item_bindings, list) or not item_bindings:
+                    raise WorkflowPackError(
+                        f"워크플로우 항목 바인딩이 비어 있습니다: {item_id}"
+                    )
+                normalized_item_bindings = [str(value).strip() for value in item_bindings]
+                if any(not value for value in normalized_item_bindings):
+                    raise WorkflowPackError(
+                        f"워크플로우 항목에 빈 바인딩이 있습니다: {item_id}"
+                    )
+                if len(set(normalized_item_bindings)) != len(
+                    normalized_item_bindings
+                ):
+                    raise WorkflowPackError(
+                        f"워크플로우 항목에 중복 바인딩이 있습니다: {item_id}"
+                    )
+                duplicates = covered_bindings.intersection(normalized_item_bindings)
+                if duplicates:
+                    raise WorkflowPackError(
+                        "설정 바인딩이 여러 워크플로우 항목에 중복됩니다: "
+                        f"{sorted(duplicates)}"
+                    )
+                for binding_key in normalized_item_bindings:
+                    if clean_bindings.get(binding_key) != archive_name:
+                        raise WorkflowPackError(
+                            "워크플로우 항목 바인딩 대상이 일치하지 않습니다: "
+                            f"item={item_id}, binding={binding_key}"
+                        )
+                seen_item_ids.add(item_id)
+                covered_bindings.update(normalized_item_bindings)
+                clean_item = {
+                    "id": item_id,
+                    "name": name or Path(archive_name).name,
+                    "archive_name": archive_name,
+                    "bindings": sorted(normalized_item_bindings),
+                }
+                if "model_ids" in raw_item:
+                    raw_model_ids = raw_item.get("model_ids")
+                    if not isinstance(raw_model_ids, list) or not all(
+                        isinstance(value, str) and value.strip()
+                        for value in raw_model_ids
+                    ):
+                        raise WorkflowPackError(
+                            f"워크플로우 항목 모델 목록이 문자열 배열이 아닙니다: {item_id}"
+                        )
+                    normalized_model_ids = [
+                        value.strip() for value in raw_model_ids
+                    ]
+                    if len(set(normalized_model_ids)) != len(normalized_model_ids):
+                        raise WorkflowPackError(
+                            f"워크플로우 항목 모델 ID가 중복됩니다: {item_id}"
+                        )
+                    clean_item["model_ids"] = sorted(normalized_model_ids)
+                clean_items.append(clean_item)
+            if covered_bindings != set(clean_bindings):
+                raise WorkflowPackError(
+                    "워크플로우 항목이 모든 설정 바인딩을 포함하지 않습니다: "
+                    f"missing={sorted(set(clean_bindings) - covered_bindings)}"
+                )
+
         target.mkdir(parents=True, exist_ok=True)
         for archive_name, payload in verified_payloads.items():
             filename = Path(archive_name).name
@@ -412,6 +548,8 @@ def extract_workflow_pack(
                 for name, digest in hashes.items()
             },
             pack_sha256=_sha256_file(source),
+            release_version=release_version,
+            workflow_items=tuple(clean_items),
         )
     except WorkflowPackError:
         raise

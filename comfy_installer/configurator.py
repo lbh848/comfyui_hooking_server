@@ -25,6 +25,48 @@ class ConfigUpdateResult:
     updated_keys: tuple[str, ...]
 
 
+def backup_current_config(
+    *,
+    config_path: str | os.PathLike[str],
+    backup_dir: str | os.PathLike[str],
+    reason: str,
+) -> dict:
+    config_file = Path(config_path).resolve()
+    backup_root = Path(backup_dir).resolve()
+    safe_reason = "".join(
+        character if character.isalnum() or character in {"-", "_"} else "_"
+        for character in str(reason)
+    ).strip("_") or "operation"
+    try:
+        if not config_file.is_file():
+            raise ConfigUpdateError(f"백업할 config.json이 없습니다: {config_file}")
+        before_hash = _sha256_file(config_file)
+        backup_root.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        backup_path = backup_root / f"config_before_{safe_reason}_{stamp}.json"
+        shutil.copy2(config_file, backup_path)
+        if _sha256_file(backup_path) != before_hash:
+            raise ConfigUpdateError(
+                f"config.json 백업 SHA-256 검증에 실패했습니다: {backup_path}"
+            )
+        print(
+            "[COMFY_INSTALL][CONFIG] 설정 백업 완료: "
+            f"reason={safe_reason}, path={backup_path}"
+        )
+        return {
+            "config_path": str(config_file),
+            "backup_path": str(backup_path),
+            "sha256": before_hash,
+            "reason": safe_reason,
+        }
+    except ConfigUpdateError:
+        raise
+    except Exception as exc:
+        print(f"[COMFY_INSTALL][CONFIG] 설정 백업 실패: {exc}")
+        traceback.print_exc()
+        raise ConfigUpdateError(f"설정 백업 실패: {exc}") from exc
+
+
 def _sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -217,7 +259,7 @@ def restore_config_backup(
             source.relative_to(backup_root)
         except ValueError as exc:
             raise ConfigUpdateError(
-                f"요구사항 폴더 밖의 설정 백업은 복원할 수 없습니다: {source}"
+                f"설정 백업 폴더 밖의 파일은 복원할 수 없습니다: {source}"
             ) from exc
         if not source.is_file() or not source.name.startswith(
             "config_before_comfy_install_"

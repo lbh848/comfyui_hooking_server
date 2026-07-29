@@ -105,6 +105,7 @@ from modes.asset_mode import CHARACTER_MAKER_TEMP_DIR
 import workflow_profiles
 import importlib.util
 from comfy_installer.http_api import register_comfy_installer_routes
+from comfy_installer.input_patcher import patch_comfy_input
 
 # ─── 설정 ───────────────────────────────────────────────
 HOST = "0.0.0.0"
@@ -9530,22 +9531,6 @@ async def handle_api_mode_workflow_files(request: web.Request) -> web.Response:
 
 
 # ─── 설정 API ─────────────────────────────────────────────
-def _clear_folder(folder_path: str):
-    """폴더 내의 모든 파일과 하위 폴더를 삭제한다 (폴더 자체는 유지)."""
-    if not os.path.isdir(folder_path):
-        return
-    for item in os.listdir(folder_path):
-        item_path = os.path.join(folder_path, item)
-        try:
-            if os.path.isfile(item_path) or os.path.islink(item_path):
-                os.remove(item_path)
-            elif os.path.isdir(item_path):
-                shutil.rmtree(item_path)
-        except Exception as e:
-            print(f"[patch] 삭제 실패 {item_path}: {e}")
-            traceback.print_exc()
-
-
 async def handle_api_patch_comfy_input(request: web.Request) -> web.Response:
     """Comfy Input 폴더에 soya_* 폴더를 생성하고 fallback 이미지를 복사한다."""
     try:
@@ -9557,65 +9542,17 @@ async def handle_api_patch_comfy_input(request: web.Request) -> web.Response:
         if not os.path.isdir(comfy_input_dir):
             return web.json_response({"ok": False, "error": f"폴더가 존재하지 않습니다: {comfy_input_dir}"}, status=400)
 
-        # 생성할 폴더 목록
-        folders = [
-            os.path.join(comfy_input_dir, "soya_char_ref"),
-            os.path.join(comfy_input_dir, "soya_style_ref"),
-            os.path.join(comfy_input_dir, "soya_lora"),
-            os.path.join(comfy_input_dir, "soya_bot"),
-            os.path.join(comfy_input_dir, "soya_char_ref", "fallback"),
-            os.path.join(comfy_input_dir, "soya_style_ref", "fallback"),
-        ]
-        created = []
-        cleared = []
-        for folder in folders:
-            if not os.path.isdir(folder):
-                os.makedirs(folder, exist_ok=True)
-                created.append(folder)
-                print(f"[patch] 폴더 생성: {folder}")
-            else:
-                # soya_char_ref, soya_style_ref, soya_lora는 기존 내용물을 비운 뒤 다시 패치
-                basename = os.path.basename(folder)
-                if basename in ("soya_char_ref", "soya_style_ref", "soya_lora") or folder.endswith("fallback"):
-                    _clear_folder(folder)
-                    cleared.append(folder)
-                    print(f"[patch] 폴더 비움: {folder}")
-                else:
-                    print(f"[patch] 폴더 이미 존재: {folder}")
-
-        # fallback 이미지 복사
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        fallback_src = os.path.join(script_dir, "modes", "fallback_img")
-        copied = []
-        if os.path.isdir(fallback_src):
-            for fname in os.listdir(fallback_src):
-                src_file = os.path.join(fallback_src, fname)
-                if not os.path.isfile(src_file):
-                    continue
-                # soya_char_ref/fallback 에 복사
-                dst_char = os.path.join(comfy_input_dir, "soya_char_ref", "fallback", fname)
-                shutil.copy2(src_file, dst_char)
-                copied.append(dst_char)
-                print(f"[patch] 복사: {src_file} -> {dst_char}")
-                # soya_style_ref/fallback 에 복사
-                dst_style = os.path.join(comfy_input_dir, "soya_style_ref", "fallback", fname)
-                shutil.copy2(src_file, dst_style)
-                copied.append(dst_style)
-                print(f"[patch] 복사: {src_file} -> {dst_style}")
-        else:
-            print(f"[patch] fallback_img 소스 폴더 없음: {fallback_src}")
-
-        msg_lines = []
-        if created:
-            msg_lines.append(f"폴더 {len(created)}개 생성")
-        if cleared:
-            msg_lines.append(f"폴더 {len(cleared)}개 비움")
-        if copied:
-            msg_lines.append(f"이미지 {len(copied)}개 복사")
-        if not (created or cleared or copied):
-            msg_lines.append("변경 사항 없음")
-
-        return web.json_response({"ok": True, "message": "\n".join(msg_lines)})
+        result = await asyncio.to_thread(
+            patch_comfy_input,
+            comfy_input_dir=comfy_input_dir,
+            fallback_source=os.path.join(BASE_DIR, "modes", "fallback_img"),
+        )
+        message = (
+            f"폴더 {len(result['created'])}개 생성, "
+            f"폴더 {len(result['cleared'])}개 비움, "
+            f"이미지 {len(result['copied'])}개 복사"
+        )
+        return web.json_response({"ok": True, "message": message, **result})
     except Exception as e:
         traceback.print_exc()
         return web.json_response({"ok": False, "error": str(e)}, status=500)
