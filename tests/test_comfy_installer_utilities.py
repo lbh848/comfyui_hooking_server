@@ -7,7 +7,7 @@ from threading import Event
 import comfy_installer.updater as updater_module
 from comfy_installer.credentials import load_civitai_key, save_civitai_key
 from comfy_installer.input_patcher import patch_comfy_input
-from comfy_installer.migration import migrate_user_data
+from comfy_installer.migration import _robocopy_command, migrate_user_data
 from comfy_installer.updater import update_hooking_server_main
 
 
@@ -56,6 +56,58 @@ def test_migration_copies_loras_and_bot_cache_without_overwrite(tmp_path: Path):
     assert len(result["copied"]) == 1
     assert len(result["skipped"]) == 1
     assert old_lora.read_bytes() == b"old-lora"
+
+
+def test_migration_python_fallback_reports_copy_progress(tmp_path: Path):
+    old = tmp_path / "old"
+    new = tmp_path / "new"
+    source = (
+        old
+        / "models"
+        / "loras"
+        / "SOYA_CHAR_LORA"
+        / "character.safetensors"
+    )
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"model-data")
+    (new / ".git").mkdir(parents=True)
+    progress = []
+
+    result = migrate_user_data(
+        old_comfy_root=old,
+        new_comfy_root=new,
+        copy_engine="python",
+        progress=progress.append,
+    )
+
+    assert result["copy_engine"] == "python"
+    assert result["pending_bytes"] == len(b"model-data")
+    assert [item["event"] for item in progress][:2] == [
+        "migration_scan",
+        "migration_copy",
+    ]
+    final_copy = [
+        item for item in progress if item["event"] == "migration_copy"
+    ][-1]
+    assert final_copy["overall_downloaded"] == len(b"model-data")
+    assert final_copy["overall_total"] == len(b"model-data")
+    assert final_copy["current"] == 1
+    assert final_copy["total"] == 1
+    assert final_copy["bytes_per_second"] > 0
+
+
+def test_robocopy_command_is_parallel_and_never_moves_or_overwrites(
+    tmp_path: Path,
+):
+    command = _robocopy_command(
+        "robocopy",
+        tmp_path / "source",
+        tmp_path / "destination",
+    )
+    options = {value.upper() for value in command[4:]}
+
+    assert {"/XC", "/XN", "/XO", "/J", "/MT:8"} <= options
+    assert {"/MOV", "/MOVE", "/MIR", "/PURGE"}.isdisjoint(options)
 
 
 def test_civitai_key_is_plain_and_backed_up_before_rewrite(tmp_path: Path):

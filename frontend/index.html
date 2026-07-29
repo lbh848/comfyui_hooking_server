@@ -16570,7 +16570,7 @@
                             </div>
                             <div class="comfy-installer-actions">
                                 <button type="button" class="comfy-installer-btn" id="comfy-installer-migrate-btn" onclick="comfyInstallerMigrate()">이사하기(V4 사용자용)</button>
-                                <span class="comfy-installer-note">내장 설치 완료 후 사용하세요. <code>config.json</code>을 <code>요구사항/</code>에 먼저 백업하고 기존 Comfy 하위의 모든 설정 경로를 내장 Comfy로 전환합니다. LoRA와 <code>input/soya_bot</code> 원본 및 기존 대상 파일은 삭제·덮어쓰기하지 않습니다.</span>
+                                <span class="comfy-installer-note">내장 설치 완료 후 사용하세요. <code>config.json</code>을 <code>요구사항/</code>에 먼저 백업하고 Windows <code>robocopy</code> 병렬 복사로 진행률·속도·남은 시간을 표시합니다. 기존 Comfy 하위의 모든 설정 경로를 내장 Comfy로 전환하며, LoRA와 <code>input/soya_bot</code> 원본 및 기존 대상 파일은 삭제·덮어쓰기하지 않습니다.</span>
                             </div>
                         </section>
 
@@ -20354,6 +20354,18 @@
             return `${size.toFixed(unit >= 3 ? 2 : 1)} ${units[unit]}`;
         }
 
+        function comfyInstallerFormatDuration(value) {
+            const seconds = Math.max(0, Math.ceil(Number(value)));
+            if (!Number.isFinite(seconds)) return '-';
+            if (seconds < 60) return `${seconds}초`;
+            const minutes = Math.floor(seconds / 60);
+            const remainSeconds = seconds % 60;
+            if (minutes < 60) return `${minutes}분 ${remainSeconds}초`;
+            const hours = Math.floor(minutes / 60);
+            const remainMinutes = minutes % 60;
+            return `${hours}시간 ${remainMinutes}분`;
+        }
+
         function comfyInstallerSetError(message) {
             const box = document.getElementById('comfy-installer-error');
             if (!box) return;
@@ -20591,7 +20603,9 @@
         function comfyInstallerRenderStatus(data) {
             const stateLabels = {
                 idle: '대기',
-                running: data.operation === 'update' ? '업데이트 중' : '설치 중',
+                running: data.operation === 'update'
+                    ? '업데이트 중'
+                    : (data.operation === 'migrate' ? '이사 중' : '설치 중'),
                 succeeded: '성공',
                 failed: '실패',
                 cancelled: '중단됨',
@@ -20601,6 +20615,11 @@
                 comfyInstallerLastState === 'running' &&
                 state === 'succeeded' &&
                 data.operation === 'update'
+            );
+            const migrationJustSucceeded = (
+                comfyInstallerLastState === 'running' &&
+                state === 'succeeded' &&
+                data.operation === 'migrate'
             );
             const phaseIndex = Number(data.phase_index || 0);
             const phaseCount = Number(data.phase_count || 15);
@@ -20635,9 +20654,17 @@
                 progressText += ` · ${comfyInstallerFormatBytes(progress.overall_downloaded || 0)} / ${comfyInstallerFormatBytes(progress.overall_total)}`;
             } else if (Number(progress.total) > 0) {
                 progressText += ` · ${progress.current || 0} / ${progress.total}`;
+            } else if (progress.event === 'migration_scan' && Number(progress.current) > 0) {
+                progressText += ` · ${Number(progress.current)}개 확인`;
             }
             if (Number(progress.bytes_per_second) > 0) {
                 progressText += ` · ${comfyInstallerFormatBytes(progress.bytes_per_second)}/s`;
+            }
+            if (Number(progress.eta_seconds) > 0) {
+                progressText += ` · 남은 약 ${comfyInstallerFormatDuration(progress.eta_seconds)}`;
+            }
+            if (progress.engine === 'robocopy' && state === 'running') {
+                progressText += ' · robocopy 병렬';
             }
             document.getElementById('comfy-installer-progress-note').textContent = progressText;
 
@@ -20649,7 +20676,7 @@
                 e2eCurrent = data.result.workflow_runtime.length;
                 e2eTotal = Number((data.result.selected_workflow_ids || []).length || e2eCurrent);
             }
-            if (data.operation === 'update') e2eTotal = 0;
+            if (data.operation === 'update' || data.operation === 'migrate') e2eTotal = 0;
             document.getElementById('comfy-installer-e2e').textContent = `${e2eCurrent} / ${e2eTotal}`;
 
             if (data.error) comfyInstallerSetError(data.error);
@@ -20683,6 +20710,13 @@
             if (data.install_root) document.getElementById('comfy-installer-root').textContent = data.install_root;
             if (comfyInstallerLastState === 'running' && state === 'succeeded' && data.operation === 'install') {
                 void comfyInstallerLoadWorkflowLibrary(data.result?.workflow_release_version || '');
+            }
+            if (migrationJustSucceeded) {
+                const result = data.result || {};
+                const updatedPathCount = Number((result.config?.updated_paths || []).length);
+                const missingTargetCount = Number((result.config?.missing_targets || []).length);
+                const missingLabel = missingTargetCount ? ` · 대상 없음 ${missingTargetCount}개(로그 확인)` : '';
+                showToast(`이사 완료 · 설정 ${updatedPathCount}개 전환 · 복사 ${Number((result.copied || []).length)}개 · 기존 유지 ${Number((result.skipped || []).length)}개${missingLabel}`, 'success');
             }
             comfyInstallerLastState = state;
             if (updateJustSucceeded) void comfyInstallerShutdownAfterUpdate();
@@ -20782,31 +20816,38 @@
             if (!oldRoot) { showToast('기존 ComfyUI 폴더를 입력하세요', 'warning'); return; }
             if (!window.confirm(`V4 설정을 내장 Comfy로 이사할까요?\nconfig.json을 요구사항/에 먼저 백업한 뒤, 기존 LoRA와 input/soya_bot 캐시를 복사하고 기존 Comfy 하위의 설정 경로를 모두 전환합니다.\n원본과 대상의 기존 파일은 유지됩니다.\n\n${oldRoot}`)) return;
             const button = document.getElementById('comfy-installer-migrate-btn');
+            let accepted = false;
             if (button) button.disabled = true;
+            comfyInstallerSetError('');
             try {
-                const data = await fetchJSON('/api/comfy-installer/migrate', {
+                comfyInstallerLastLogSeq = 0;
+                document.getElementById('comfy-installer-log').textContent = '';
+                const started = await fetchJSON('/api/comfy-installer/migrate', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ old_comfy_root: oldRoot }),
                 });
-                const result = data.migration || {};
-                await comfyInstallerRefreshStatus(false);
-                const updatedPathCount = Number((result.config?.updated_paths || []).length);
-                const missingTargetCount = Number((result.config?.missing_targets || []).length);
-                const missingLabel = missingTargetCount ? ` · 대상 없음 ${missingTargetCount}개(로그 확인)` : '';
-                showToast(`이사 완료 · 설정 ${updatedPathCount}개 전환 · 복사 ${Number((result.copied || []).length)}개 · 기존 유지 ${Number((result.skipped || []).length)}개${missingLabel}`, 'success');
+                accepted = true;
+                if (started.state === 'succeeded' && started.operation === 'migrate') {
+                    comfyInstallerLastState = 'running';
+                }
+                comfyInstallerRenderStatus(started);
+                if (started.state === 'running') {
+                    showToast('사용자 데이터 이사를 시작했습니다', 'success');
+                }
+                clearTimeout(comfyInstallerPollTimer);
+                comfyInstallerPollTimer = setTimeout(() => comfyInstallerRefreshStatus(false), 500);
             } catch (error) {
                 console.error('[COMFY_INSTALL] 사용자 데이터 이사 실패:', error);
-                await comfyInstallerRefreshStatus(false);
                 comfyInstallerSetError(error.message || error);
-                showToast(`이사 실패: ${error.message || error}`, 'error');
+                showToast(`이사 시작 실패: ${error.message || error}`, 'error');
             } finally {
-                if (button) button.disabled = false;
+                if (button && !accepted) button.disabled = false;
             }
         }
 
         async function comfyInstallerCancel() {
-            if (!window.confirm('현재 명령/다운로드를 안전하게 중단할까요? 받은 .part 파일은 재시도에 사용됩니다.')) return;
+            if (!window.confirm('현재 설치·업데이트·이사 작업을 안전하게 중단할까요? 다운로드 .part 파일은 재시도에 사용하고, 이사 중 생성된 불완전 파일은 정리합니다.')) return;
             try {
                 const data = await fetchJSON('/api/comfy-installer/cancel', { method: 'POST' });
                 comfyInstallerRenderStatus(data);

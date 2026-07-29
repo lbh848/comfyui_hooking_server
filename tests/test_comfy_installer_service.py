@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from contextlib import contextmanager
 from pathlib import Path
+from threading import Event
 from types import SimpleNamespace
 
 import pytest
@@ -81,6 +82,65 @@ def test_v4_migration_backs_up_copies_and_retargets_config(tmp_path: Path) -> No
         "$.comfy_input_dir",
         "$.nested.lora",
     ]
+
+
+def test_v4_migration_runs_in_background_and_publishes_progress(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = tmp_path / "config.json"
+    config.write_text("{}\n", encoding="utf-8")
+    service = ComfyInstallerService(
+        project_root=tmp_path,
+        config_path=config,
+        requirements_dir=tmp_path / "requirements",
+    )
+    worker_started = Event()
+    allow_finish = Event()
+
+    def fake_migration(_old_comfy_root, **kwargs):
+        kwargs["set_phase"]("migration_scan")
+        kwargs["progress"](
+            {
+                "event": "migration_copy",
+                "engine": "robocopy",
+                "current": 1,
+                "total": 2,
+                "overall_downloaded": 10,
+                "overall_total": 20,
+                "bytes_per_second": 5,
+                "eta_seconds": 2,
+            }
+        )
+        worker_started.set()
+        assert allow_finish.wait(timeout=5)
+        return {
+            "copy_engine": "robocopy",
+            "pending_bytes": 20,
+            "copied": ["one", "two"],
+            "skipped": ["existing"],
+            "missing": [],
+            "failures": [],
+            "config": {"updated_paths": [], "missing_targets": []},
+        }
+
+    monkeypatch.setattr(service, "_perform_migration", fake_migration)
+
+    started = service.start_migration(str(tmp_path / "old-comfy"))
+    assert worker_started.wait(timeout=5)
+    running = service.status()
+    assert started["operation"] == "migrate"
+    assert running["state"] == "running"
+    assert running["progress"]["engine"] == "robocopy"
+    assert running["progress"]["eta_seconds"] == 2
+
+    allow_finish.set()
+    assert service._thread is not None
+    service._thread.join(timeout=5)
+    finished = service.status()
+    assert finished["state"] == "succeeded"
+    assert finished["operation"] == "migrate"
+    assert finished["result"]["copy_engine"] == "robocopy"
+    assert finished["result"]["copied"] == ["one", "two"]
 
 
 def test_comfy_warning_is_visible_in_status_without_console_echo(

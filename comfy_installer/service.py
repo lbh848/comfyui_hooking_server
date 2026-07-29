@@ -9,7 +9,7 @@ import traceback
 from collections import deque
 from pathlib import Path
 from threading import Event, RLock
-from typing import Any
+from typing import Any, Callable
 
 import httpx
 
@@ -41,7 +41,7 @@ from .e2e import (
 )
 from .manifest import InstallManifest, load_install_manifest
 from .input_patcher import patch_comfy_input
-from .migration import migrate_user_data
+from .migration import ComfyMigrationCancelled, migrate_user_data
 from .model_installer import install_models
 from .node_installer import install_custom_nodes, update_custom_nodes
 from .operations import uv_python_path
@@ -91,6 +91,13 @@ _UPDATE_PHASES = (
     ("runtime_isolation", "독립 Python/GPU 빠른 검증"),
     ("startup", "ComfyUI 기동·노드 로드 확인"),
     ("complete", "업데이트 결과 기록"),
+)
+
+_MIGRATE_PHASES = (
+    ("migration_backup", "config.json 이사 전 백업"),
+    ("migration_scan", "기존 사용자 데이터 확인"),
+    ("migration_copy", "LoRA와 봇 캐시 병렬 복사"),
+    ("migration_config", "설정 경로를 내장 Comfy로 전환"),
 )
 
 
@@ -321,9 +328,37 @@ class ComfyInstallerService:
         with self._lock:
             if self._thread is not None and self._thread.is_alive():
                 raise InstallerServiceError(
-                    "설치 또는 업데이트 중에는 사용자 데이터를 이사할 수 없습니다."
+                    "다른 ComfyUI 작업 중에는 사용자 데이터를 이사할 수 없습니다."
                 )
+        return self._perform_migration(old_comfy_root)
+
+    def _perform_migration(
+        self,
+        old_comfy_root: str | os.PathLike[str],
+        *,
+        progress: Callable[[dict], None] | None = None,
+        cancel_event: Event | None = None,
+        set_phase: Callable[[str], None] | None = None,
+    ) -> dict:
+        copy_phase_started = False
+
+        def advance(phase_id: str) -> None:
+            if set_phase is not None:
+                set_phase(phase_id)
+
+        def migration_progress(payload: dict) -> None:
+            nonlocal copy_phase_started
+            if (
+                payload.get("event") == "migration_copy"
+                and not copy_phase_started
+            ):
+                copy_phase_started = True
+                advance("migration_copy")
+            if progress is not None:
+                progress(payload)
+
         try:
+            advance("migration_backup")
             config_backup = backup_current_config(
                 config_path=self.config_path,
                 backup_dir=self.requirements_dir,
@@ -333,11 +368,29 @@ class ComfyInstallerService:
                 "[이사] config.json 백업 완료: "
                 f"{config_backup['backup_path']}"
             )
+            if cancel_event is not None and cancel_event.is_set():
+                print(
+                    "[COMFY_INSTALL][SERVICE] config 백업 후 사용자 데이터 이사 중단"
+                )
+                raise ComfyMigrationCancelled(
+                    "사용자 데이터 이사를 중단했습니다."
+                )
+            advance("migration_scan")
             migration = migrate_user_data(
                 old_comfy_root=old_comfy_root,
                 new_comfy_root=self.comfy_root,
                 log=self._log,
+                progress=migration_progress,
+                cancel_event=cancel_event,
             )
+            if cancel_event is not None and cancel_event.is_set():
+                print(
+                    "[COMFY_INSTALL][SERVICE] 설정 경로 전환 전 사용자 데이터 이사 중단"
+                )
+                raise ComfyMigrationCancelled(
+                    "사용자 데이터 이사를 중단했습니다."
+                )
+            advance("migration_config")
             config_update = retarget_config_to_embedded_comfy(
                 config_path=self.config_path,
                 requirements_dir=self.requirements_dir,
@@ -362,6 +415,8 @@ class ComfyInstallerService:
                     ],
                 },
             }
+        except ComfyMigrationCancelled:
+            raise
         except Exception as exc:
             print(f"[COMFY_INSTALL][SERVICE] V4 사용자 이사 실패: {exc}")
             traceback.print_exc()
@@ -631,7 +686,7 @@ class ComfyInstallerService:
         with self._lock:
             if self._thread is not None and self._thread.is_alive():
                 raise InstallerServiceError(
-                    "ComfyUI 설치 또는 업데이트가 이미 진행 중입니다."
+                    "ComfyUI 설치·업데이트·이사 작업이 이미 진행 중입니다."
                 )
             self._cancel = Event()
             self._logs.clear()
@@ -694,14 +749,94 @@ class ComfyInstallerService:
             kwargs={},
         )
 
+    def start_migration(
+        self, old_comfy_root: str | os.PathLike[str]
+    ) -> dict:
+        old_root = str(old_comfy_root).strip()
+        if not old_root:
+            raise InstallerServiceError("기존 ComfyUI 경로가 비어 있습니다.")
+        return self._start_operation(
+            operation="migrate",
+            phases=_MIGRATE_PHASES,
+            target=self._run_migration,
+            kwargs={"old_comfy_root": old_root},
+        )
+
+    def _run_migration(self, *, old_comfy_root: str) -> None:
+        started_monotonic = time.monotonic()
+        try:
+            migration = self._perform_migration(
+                old_comfy_root,
+                progress=self._set_progress,
+                cancel_event=self._cancel,
+                set_phase=self._set_phase,
+            )
+            result = {
+                "operation": "migrate",
+                "completed_at": _now_iso(),
+                "duration_seconds": round(
+                    time.monotonic() - started_monotonic, 3
+                ),
+                **migration,
+            }
+            copied_count = len(result.get("copied", []))
+            skipped_count = len(result.get("skipped", []))
+            copied_bytes = int(result.get("pending_bytes", 0))
+            with self._lock:
+                self._state.update(
+                    {
+                        "state": "succeeded",
+                        "finished_at": _now_iso(),
+                        "progress": {
+                            "event": "complete",
+                            "engine": result.get("copy_engine"),
+                            "current": copied_count,
+                            "total": copied_count,
+                            "overall_downloaded": copied_bytes,
+                            "overall_total": copied_bytes,
+                            "bytes_per_second": 0,
+                            "eta_seconds": 0,
+                        },
+                        "error": None,
+                        "result": result,
+                    }
+                )
+            self._log(
+                "[완료] V4 사용자 데이터 이사 성공: "
+                f"engine={result.get('copy_engine')}, "
+                f"copied={copied_count}, skipped={skipped_count}"
+            )
+        except ComfyMigrationCancelled as exc:
+            self._log(f"[중단] {exc}", "warning")
+            with self._lock:
+                self._state.update(
+                    {
+                        "state": "cancelled",
+                        "finished_at": _now_iso(),
+                        "error": str(exc),
+                    }
+                )
+        except Exception as exc:
+            print(f"[COMFY_INSTALL][SERVICE] 사용자 데이터 이사 실패: {exc}")
+            traceback.print_exc()
+            self._log(f"[실패] {exc}", "error")
+            with self._lock:
+                self._state.update(
+                    {
+                        "state": "failed",
+                        "finished_at": _now_iso(),
+                        "error": str(exc),
+                    }
+                )
+
     def cancel(self) -> dict:
         with self._lock:
             if self._thread is None or not self._thread.is_alive():
                 print(
                     "[COMFY_INSTALL][SERVICE] 중단 요청을 받았지만 진행 중인 "
-                    "설치 또는 업데이트가 없습니다."
+                    "설치·업데이트·이사 작업이 없습니다."
                 )
-                raise InstallerServiceError("진행 중인 설치 또는 업데이트가 없습니다.")
+                raise InstallerServiceError("진행 중인 ComfyUI 작업이 없습니다.")
             self._cancel.set()
         self._log("[중단] 안전한 중단을 요청했습니다.", "warning")
         return self.status()

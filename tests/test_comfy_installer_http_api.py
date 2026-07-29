@@ -225,6 +225,48 @@ async def test_preflight_without_body_keeps_general_probe(
 
 
 @pytest.mark.asyncio
+async def test_migration_api_starts_background_operation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = tmp_path / "config.json"
+    config.write_text("{}\n", encoding="utf-8")
+    app = web.Application()
+    service = register_comfy_installer_routes(
+        app,
+        project_root=tmp_path,
+        config_path=config,
+        requirements_dir=tmp_path / "requirements",
+    )
+    received = []
+
+    def fake_start(old_comfy_root):
+        received.append(old_comfy_root)
+        return {
+            "state": "running",
+            "operation": "migrate",
+            "progress": {"event": "migration_scan"},
+            "logs": [],
+        }
+
+    monkeypatch.setattr(service, "start_migration", fake_start)
+    client = TestClient(TestServer(app))
+    await client.start_server()
+    try:
+        response = await client.post(
+            "/api/comfy-installer/migrate",
+            json={"old_comfy_root": r"E:\\old-comfy"},
+        )
+        assert response.status == 200
+        payload = await response.json()
+        assert payload["ok"] is True
+        assert payload["state"] == "running"
+        assert payload["operation"] == "migrate"
+        assert received == [r"E:\\old-comfy"]
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
 async def test_shutdown_after_update_requires_successful_update(
     tmp_path: Path,
 ) -> None:

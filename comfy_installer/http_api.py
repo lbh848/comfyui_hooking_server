@@ -269,13 +269,12 @@ async def handle_migrate(request: web.Request) -> web.Response:
         old_comfy_root = body.get("old_comfy_root")
         if not isinstance(old_comfy_root, str) or not old_comfy_root.strip():
             raise InstallerServiceError("기존 ComfyUI 경로가 비어 있습니다.")
-        result = await asyncio.to_thread(
-            service.migrate_from_existing_comfy,
-            old_comfy_root,
-        )
-        return web.json_response({"ok": True, "migration": result})
+        result = service.start_migration(old_comfy_root)
+        return web.json_response({"ok": True, **result})
     except InstallerServiceError as exc:
-        return _json_error(str(exc), status=400)
+        print(f"[COMFY_INSTALL][API] 사용자 데이터 이사 시작 거부: {exc}")
+        traceback.print_exc()
+        return _json_error(str(exc), status=409)
     except Exception as exc:
         print(f"[COMFY_INSTALL][API] 사용자 데이터 이사 실패: {exc}")
         traceback.print_exc()

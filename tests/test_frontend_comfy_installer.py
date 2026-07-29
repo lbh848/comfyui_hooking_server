@@ -70,6 +70,10 @@ def test_v4_migration_reports_config_path_retargeting() -> None:
     assert "result.config?.updated_paths" in FRONTEND
     assert "result.config?.missing_targets" in FRONTEND
     assert "설정 경로를 모두 전환합니다" in FRONTEND
+    assert "data.operation === 'migrate'" in FRONTEND
+    assert "comfyInstallerFormatDuration(progress.eta_seconds)" in FRONTEND
+    assert "robocopy 병렬" in FRONTEND
+    assert "started.state === 'succeeded'" in FRONTEND
 
 
 def test_comfy_installer_tab_is_right_of_debug() -> None:
