@@ -116,6 +116,12 @@ from comfy_runtime import (
     normalize_comfy_launch_profiles,
     register_comfy_runtime_routes,
 )
+from comfy_allocation import (
+    DEFAULT_COMFY_TASK_ALLOCATIONS,
+    ComfyTaskAllocationValidationError,
+    normalize_comfy_task_allocations,
+    select_comfy_instance,
+)
 
 # ─── 설정 ───────────────────────────────────────────────
 HOST = "0.0.0.0"
@@ -171,6 +177,7 @@ DEFAULT_CONFIG = {
     "comfyui_port_2": 8187,  # 두 번째 ComfyUI 실행 포트
     "comfyui_port_illustration": None,  # 삽화 전용 포트 (null=메인 포트 사용)
     "comfy_launch_profiles": copy.deepcopy(DEFAULT_COMFY_LAUNCH_PROFILES),
+    "comfy_task_allocations": copy.deepcopy(DEFAULT_COMFY_TASK_ALLOCATIONS),
     "comfy_workflow_source_path": "",
     "data_saving_mode": False,
     "send_original": False,  # 전송 시 원본 무변환 전송
@@ -601,6 +608,22 @@ def load_config() -> dict:
                     merged["comfy_launch_profiles"] = copy.deepcopy(
                         DEFAULT_COMFY_LAUNCH_PROFILES
                     )
+                try:
+                    merged["comfy_task_allocations"] = normalize_comfy_task_allocations(
+                        config.get("comfy_task_allocations"),
+                        legacy_illustration_port=config.get(
+                            "comfyui_port_illustration"
+                        ),
+                    )
+                except ComfyTaskAllocationValidationError as e:
+                    print(
+                        "[CONFIG] Comfy 작업 배분 로드 실패, 기본값을 사용합니다: "
+                        f"{e}"
+                    )
+                    traceback.print_exc()
+                    merged["comfy_task_allocations"] = copy.deepcopy(
+                        DEFAULT_COMFY_TASK_ALLOCATIONS
+                    )
                 for legacy_key in _LEGACY_LLM_RETRY_KEYS:
                     merged.pop(legacy_key, None)
                 # 레거시 서비스(openai-compat/customapi) -> openai 마이그레이션
@@ -642,6 +665,72 @@ app_config = load_config()
 REAL_COMFY_PORT = int(app_config.get("comfyui_port", os.environ.get("REAL_COMFY_PORT", "8188")))
 # 삽화 전용 포트: None이면 메인 포트(REAL_COMFY_PORT) 사용
 REAL_COMFY_ILLUST_PORT = app_config.get("comfyui_port_illustration")  # None or int
+comfy_runtime_manager = None
+
+
+def resolve_comfy_instance(task_key: str) -> tuple[int, int]:
+    """작업 배분과 현재 실행 상태를 반영해 (인스턴스 번호, 포트)를 반환한다."""
+
+    allocations = normalize_comfy_task_allocations(
+        app_config.get("comfy_task_allocations"),
+        legacy_illustration_port=app_config.get("comfyui_port_illustration"),
+    )
+    configured = allocations.get(task_key)
+    running: dict[int, bool] = {1: False, 2: False}
+    manager = comfy_runtime_manager
+    if manager is None:
+        print(
+            "[COMFY_ALLOCATION] 런타임 매니저 초기화 전 포트 결정: "
+            f"task={task_key}, configured=Comfy #{configured}"
+        )
+    else:
+        try:
+            running = {
+                1: manager.is_running(instance_id=1),
+                2: manager.is_running(instance_id=2),
+            }
+        except Exception as e:
+            print(
+                "[COMFY_ALLOCATION] 실행 상태 확인 실패, 설정 배분을 사용합니다: "
+                f"task={task_key}, configured=Comfy #{configured}, error={e}"
+            )
+            traceback.print_exc()
+
+    selected = select_comfy_instance(allocations, task_key, running)
+    if selected != configured:
+        print(
+            "[COMFY_ALLOCATION] 선택 인스턴스 자동 폴백: "
+            f"task={task_key}, configured=Comfy #{configured}, "
+            f"resolved=Comfy #{selected}"
+        )
+
+    port_key = "comfyui_port_2" if selected == 2 else "comfyui_port"
+    fallback_port = 8187 if selected == 2 else 8188
+    try:
+        port = int(app_config.get(port_key, fallback_port))
+        if not 1 <= port <= 65535:
+            raise ValueError("포트 범위는 1~65535")
+    except (TypeError, ValueError) as e:
+        print(
+            "[COMFY_ALLOCATION] 배분 포트 검증 실패: "
+            f"task={task_key}, instance={selected}, key={port_key}, "
+            f"value={app_config.get(port_key)!r}, error={e}"
+        )
+        traceback.print_exc()
+        raise ComfyTaskAllocationValidationError(
+            f"Comfy #{selected} 포트 설정이 올바르지 않습니다."
+        ) from e
+
+    print(
+        "[COMFY_ALLOCATION] 작업 배분: "
+        f"task={task_key}, instance=Comfy #{selected}, port={port}, "
+        f"running={running}"
+    )
+    return selected, port
+
+
+def resolve_comfy_port(task_key: str) -> int:
+    return resolve_comfy_instance(task_key)[1]
 
 
 # ─── 복장 추출 모드 초기화 (함수 의존성 없는 부분만) ───
@@ -935,9 +1024,14 @@ def is_api_format(wf: dict) -> bool:
     return False
 
 
-async def convert_workflow_via_endpoint(workflow_json: dict):
+async def convert_workflow_via_endpoint(
+    workflow_json: dict,
+    *,
+    task_key: str = "utility_debug",
+):
     """ComfyUI /workflow/convert 엔드포인트로 워크플로우를 API 형식으로 변환한다."""
-    url = f"http://{REAL_COMFY_HOST}:{REAL_COMFY_PORT}/workflow/convert"
+    target_port = resolve_comfy_port(task_key)
+    url = f"http://{REAL_COMFY_HOST}:{target_port}/workflow/convert"
     print(f"[WORKFLOW] → POST {url} (변환 요청)")
     try:
         async with aiohttp.ClientSession() as session:
@@ -1024,7 +1118,10 @@ async def update_workflow_if_needed(workflow_type: str | None = None) -> bool:
         }
         print(f"[WORKFLOW] 이미 API 형식 — 변환 불필요 ({len(wf_data)} 노드)")
     else:
-        api_wf, error = await convert_workflow_via_endpoint(wf_data)
+        api_wf, error = await convert_workflow_via_endpoint(
+            wf_data,
+            task_key="illustration",
+        )
         if api_wf is None:
             current_conversion_info = {
                 "error": error,
@@ -1725,14 +1822,18 @@ def cleanup_backups():
 
 # ─── ComfyUI 프록시 ─────────────────────────────────────
 def get_illust_port():
-    """삽화 전용 포트를 반환한다. 설정되지 않으면 메인 포트를 사용한다."""
-    if REAL_COMFY_ILLUST_PORT is not None:
-        return int(REAL_COMFY_ILLUST_PORT)
-    return REAL_COMFY_PORT
+    """레거시 호출 호환용 삽화 배분 포트를 반환한다."""
+    return resolve_comfy_port("illustration")
 
 
-async def submit_to_real_comfy(prompt_data: dict, port: int | None = None, client_id: str | None = None) -> tuple[str, dict]:
-    target_port = port if port is not None else REAL_COMFY_PORT
+async def submit_to_real_comfy(
+    prompt_data: dict,
+    port: int | None = None,
+    client_id: str | None = None,
+    *,
+    task_key: str = "utility_debug",
+) -> tuple[str, dict]:
+    target_port = port if port is not None else resolve_comfy_port(task_key)
     url = f"http://{REAL_COMFY_HOST}:{target_port}/prompt"
     payload = {"prompt": prompt_data}
     if client_id is not None:
@@ -1924,8 +2025,13 @@ def extract_execution_error(status_info: dict) -> str:
     return ""
 
 
-async def fetch_real_history(real_prompt_id: str, port: int | None = None) -> dict:
-    target_port = port if port is not None else REAL_COMFY_PORT
+async def fetch_real_history(
+    real_prompt_id: str,
+    port: int | None = None,
+    *,
+    task_key: str = "utility_debug",
+) -> dict:
+    target_port = port if port is not None else resolve_comfy_port(task_key)
     url = f"http://{REAL_COMFY_HOST}:{target_port}/history/{real_prompt_id}"
     async with aiohttp.ClientSession() as session:
         async with session.get(url) as resp:
@@ -1934,9 +2040,11 @@ async def fetch_real_history(real_prompt_id: str, port: int | None = None) -> di
 
 async def fetch_real_image(
     filename: str, subfolder: str = "", img_type: str = "output",
-    port: int | None = None
+    port: int | None = None,
+    *,
+    task_key: str = "utility_debug",
 ) -> bytes:
-    target_port = port if port is not None else REAL_COMFY_PORT
+    target_port = port if port is not None else resolve_comfy_port(task_key)
     url = f"http://{REAL_COMFY_HOST}:{target_port}/view"
     params = {"filename": filename, "subfolder": subfolder, "type": img_type}
     async with aiohttp.ClientSession() as session:
@@ -1957,6 +2065,7 @@ async def generate_image_with_prompt(
     chansub_quality_tag_start: int = 0,
     chansub_quality_tag_count: int = 0,
     illustration_workflow_type: str | None = None,
+    comfy_task_key: str = "illustration",
 ):
     """선택 공급자로 이미지를 생성한다.
 
@@ -2006,7 +2115,7 @@ async def generate_image_with_prompt(
         return None, "API 워크플로우 없음"
 
     risu_prompt = build_prompt(positive, negative)
-    illust_port = get_illust_port()
+    illust_port = resolve_comfy_port(comfy_task_key)
 
     # 디버깅 모드: ComfyUI 전송 없이 프롬프트 로그만 출력
     if app_config.get("debug_mode_enabled", False):
@@ -2158,16 +2267,25 @@ def build_prompt_with_workflow(workflow_api: dict, positive: str, negative: str)
     return wf
 
 
-async def submit_workflow_to_comfy(workflow_api: dict, progress_callback=None) -> tuple[bytes | None, str | dict]:
+async def submit_workflow_to_comfy(
+    workflow_api: dict,
+    progress_callback=None,
+    *,
+    task_key: str = "asset_generation",
+) -> tuple[bytes | None, str | dict]:
     """임의의 API 워크플로우를 ComfyUI에 제출하고 이미지를 반환한다."""
+    target_port = resolve_comfy_port(task_key)
     ws_url = (
-        f"ws://{REAL_COMFY_HOST}:{REAL_COMFY_PORT}/ws"
+        f"ws://{REAL_COMFY_HOST}:{target_port}/ws"
         f"?clientId=asset_{uuid.uuid4().hex[:8]}"
     )
     try:
         async with aiohttp.ClientSession() as ws_session:
             async with ws_session.ws_connect(ws_url) as real_ws:
-                real_prompt_id, submit_result = await submit_to_real_comfy(workflow_api)
+                real_prompt_id, submit_result = await submit_to_real_comfy(
+                    workflow_api,
+                    port=target_port,
+                )
                 node_errors = submit_result.get("node_errors", {})
                 if node_errors:
                     print(f"[ASSET] node_errors: {json.dumps(node_errors, ensure_ascii=False)}")
@@ -2192,7 +2310,7 @@ async def submit_workflow_to_comfy(workflow_api: dict, progress_callback=None) -
                         return None, f"ComfyUI 생성 타임아웃/응답 없음: {detail}"
                     return None, f"생성 실패 (알 수 없는 WS 종료): {detail or error_holder}"
 
-        history = await fetch_real_history(real_prompt_id)
+        history = await fetch_real_history(real_prompt_id, port=target_port)
         real_entry = history.get(real_prompt_id, {})
         real_outputs = real_entry.get("outputs", {})
         print(f"[ASSET] history keys: {list(history.keys())}, outputs: {list(real_outputs.keys())}")
@@ -2224,6 +2342,7 @@ async def submit_workflow_to_comfy(workflow_api: dict, progress_callback=None) -
             first_img["filename"],
             first_img.get("subfolder", ""),
             first_img.get("type", "output"),
+            port=target_port,
         )
         return img_bytes, node_errors
     except Exception as e:
@@ -2288,7 +2407,11 @@ async def _run_workflow_test(file_list: list, backup_dir: str):
 
         try:
             start_time = time.time()
-            img_bytes, result_info = await generate_image_with_prompt(positive, negative)
+            img_bytes, result_info = await generate_image_with_prompt(
+                positive,
+                negative,
+                comfy_task_key="restore_regenerate",
+            )
             elapsed = time.time() - start_time
 
             if img_bytes:
@@ -2374,6 +2497,7 @@ def init_queue_manager():
     queue_manager.prepare_style_ref_folder = _prepare_style_ref_folder
     queue_manager.get_real_comfy_host = lambda: REAL_COMFY_HOST
     queue_manager.get_real_comfy_port = lambda: REAL_COMFY_PORT
+    queue_manager.get_comfy_port_for_task = resolve_comfy_port
     queue_manager.fetch_real_history = fetch_real_history
     queue_manager.fetch_real_image = fetch_real_image
     queue_manager.process_prompt_full = process_prompt
@@ -2424,7 +2548,10 @@ async def _run_data_patch_utility(bot_name: str, char_name: str) -> dict:
         if title == "긍정프롬프트":
             ninfo["inputs"]["value"] = prompt_text
 
-    img_bytes, submit_err = await submit_workflow_to_comfy(wf)
+    img_bytes, submit_err = await submit_workflow_to_comfy(
+        wf,
+        task_key="utility_debug",
+    )
     if submit_err or not img_bytes:
         raise RuntimeError(f"{char_name}: {submit_err or '이미지 없음'}")
 
@@ -2437,22 +2564,46 @@ async def _run_data_patch_utility(bot_name: str, char_name: str) -> dict:
 outfit_mode.notify_frontend_func = notify_frontend
 enhance_mode.notify_frontend_func = notify_frontend
 # 복장 추출 모드 함수 의존성 설정 (convert_workflow_via_endpoint 정의 후)
-outfit_mode.convert_workflow_func = convert_workflow_via_endpoint
+outfit_mode.convert_workflow_func = lambda workflow: convert_workflow_via_endpoint(
+    workflow,
+    task_key="outfit",
+)
 outfit_mode.compute_hash_func = compute_file_hash
 # 에셋 생성 모드 함수 의존성 설정
 asset_mode.notify_frontend_func = notify_frontend
-asset_mode.convert_workflow_func = convert_workflow_via_endpoint
+asset_mode.convert_workflow_func = lambda workflow: convert_workflow_via_endpoint(
+    workflow,
+    task_key="asset_generation",
+)
 asset_mode.compute_hash_func = compute_file_hash
-asset_mode.submit_workflow_func = submit_workflow_to_comfy
+asset_mode.submit_workflow_func = lambda workflow, progress_callback=None: submit_workflow_to_comfy(
+    workflow,
+    progress_callback=progress_callback,
+    task_key="asset_generation",
+)
 asset_mode.build_prompt_with_workflow_func = build_prompt_with_workflow
 # Qwen 편집 모드 함수 의존성 설정
-qwen_edit_mode.convert_workflow_func = convert_workflow_via_endpoint
-qwen_edit_mode.submit_workflow_func = submit_workflow_to_comfy
+qwen_edit_mode.convert_workflow_func = lambda workflow: convert_workflow_via_endpoint(
+    workflow,
+    task_key="qwen_edit",
+)
+qwen_edit_mode.submit_workflow_func = lambda workflow, progress_callback=None: submit_workflow_to_comfy(
+    workflow,
+    progress_callback=progress_callback,
+    task_key="qwen_edit",
+)
 qwen_edit_mode.notify_frontend_func = notify_frontend
 # 에셋툴 모드 함수 의존성 설정
-asset_tool.convert_workflow_func = convert_workflow_via_endpoint
+asset_tool.convert_workflow_func = lambda workflow, task_key="tag_analysis": convert_workflow_via_endpoint(
+    workflow,
+    task_key=task_key,
+)
 asset_tool.compute_hash_func = compute_file_hash
-asset_tool.submit_workflow_func = submit_workflow_to_comfy
+asset_tool.submit_workflow_func = lambda workflow, progress_callback=None: submit_workflow_to_comfy(
+    workflow,
+    progress_callback=progress_callback,
+    task_key="tag_analysis",
+)
 asset_tool.build_prompt_with_workflow_func = build_prompt_with_workflow
 # 포즈 편집 모드 함수 의존성 설정
 pose_mode.notify_frontend_func = notify_frontend
@@ -2568,6 +2719,7 @@ async def _do_restore_workflow():
             negative,
             provider=restore_provider,
             illustration_workflow_type=illustration_workflow_type,
+            comfy_task_key="restore_regenerate",
         )
         if img_bytes:
             print(f"[RESTORE] 복원 완료 (이미지 {len(img_bytes):,}B)")
@@ -7367,6 +7519,7 @@ async def handle_api_backup_image(request: web.Request) -> web.Response:
     """백업 이미지를 서빙한다. 저장된 파일을 그대로 전송."""
     filename = request.match_info.get("filename", "")
     if ".." in filename or "/" in filename or "\\" in filename:
+        print(f"[OUTFIT_MODE] 결과 이미지 요청 거부: filename={filename!r}")
         return web.Response(status=400, text="Invalid filename")
 
     backup_dir = get_backup_base_dir()
@@ -9424,12 +9577,23 @@ async def handle_api_outfit_mode_result_image(request: web.Request) -> web.Respo
 
     # ComfyUI output에서 직접 조회 시도
     try:
-        img_bytes = await fetch_real_image(filename, "", "output")
+        img_bytes = await fetch_real_image(
+            filename,
+            "",
+            "output",
+            task_key="outfit",
+        )
         if img_bytes:
             return web.Response(body=img_bytes, content_type="image/png")
-    except:
-        pass
+        print(f"[OUTFIT_MODE] 결과 이미지가 비어 있음: filename={filename!r}")
+    except Exception as e:
+        print(
+            "[OUTFIT_MODE] Comfy 결과 이미지 조회 실패: "
+            f"filename={filename!r}, error={type(e).__name__}: {e}"
+        )
+        traceback.print_exc()
 
+    print(f"[OUTFIT_MODE] 결과 이미지를 찾지 못함: filename={filename!r}")
     return web.Response(status=404)
 
 
@@ -9717,6 +9881,19 @@ async def handle_api_config(request: web.Request) -> web.Response:
                     print(
                         "[CONFIG] ComfyUI 실행 프로필 저장 거부: "
                         f"value={body.get('comfy_launch_profiles')!r}, error={e}"
+                    )
+                    traceback.print_exc()
+                    return web.json_response({"error": str(e)}, status=400)
+
+            if "comfy_task_allocations" in body:
+                try:
+                    body["comfy_task_allocations"] = normalize_comfy_task_allocations(
+                        body.get("comfy_task_allocations")
+                    )
+                except ComfyTaskAllocationValidationError as e:
+                    print(
+                        "[CONFIG] Comfy 작업 배분 저장 거부: "
+                        f"value={body.get('comfy_task_allocations')!r}, error={e}"
                     )
                     traceback.print_exc()
                     return web.json_response({"error": str(e)}, status=400)
@@ -10888,7 +11065,7 @@ register_comfy_installer_routes(
     config_path=CONFIG_FILE,
     requirements_dir=os.path.join(BASE_DIR, "요구사항"),
 )
-register_comfy_runtime_routes(
+comfy_runtime_manager = register_comfy_runtime_routes(
     app,
     project_root=BASE_DIR,
     authorize=lambda request: frontend_auth_manager.verify_session(
@@ -10936,13 +11113,17 @@ async def handle_api_debug_workflow(request: web.Request) -> web.Response:
             existing_snapshot = {k: v.get("timestamp", "") for k, v in text_outputs.items()}
 
             # WebSocket 연결 + 워크플로우 제출
+            debug_port = resolve_comfy_port("utility_debug")
             ws_url = (
-                f"ws://{REAL_COMFY_HOST}:{REAL_COMFY_PORT}/ws"
+                f"ws://{REAL_COMFY_HOST}:{debug_port}/ws"
                 f"?clientId=dbg_{uuid.uuid4().hex[:8]}"
             )
             async with aiohttp.ClientSession() as ws_session:
                 async with ws_session.ws_connect(ws_url) as ws:
-                    prompt_id, result = await submit_to_real_comfy(prompt_data)
+                    prompt_id, result = await submit_to_real_comfy(
+                        prompt_data,
+                        port=debug_port,
+                    )
                     total_steps = count_ksampler_total_steps(prompt_data)
                     ws_result = await wait_for_real_comfy(ws, prompt_id, total_steps=total_steps)
                     if ws_result is None:
@@ -15337,8 +15518,9 @@ def _build_lora_training_text(images: list, trigger: str, profile: str, step: in
 # ─── LoRA 학습 진행률 백그라운드 모니터링 ──────────────────
 async def _monitor_lora_training(prompt_id: str):
     """ComfyUI WebSocket에 연결해서 학습 진행률을 프론트엔드에 전달하는 백그라운드 태스크."""
+    lora_port = resolve_comfy_port("asset_lora_training")
     ws_url = (
-        f"ws://{REAL_COMFY_HOST}:{REAL_COMFY_PORT}/ws"
+        f"ws://{REAL_COMFY_HOST}:{lora_port}/ws"
         f"?clientId=lora_train_{uuid.uuid4().hex[:8]}"
     )
     print(f"[LORA_MONITOR] 백그라운드 모니터링 시작: prompt_id={prompt_id}")
@@ -16256,7 +16438,8 @@ async def handle_api_bot_lora_training_start(request):
 
 
 async def _monitor_bot_lora_training(prompt_id, bot_name, project_name, current_char, characters_to_train, current_idx, config, training_config, test_images):
-    ws_url = f"ws://{REAL_COMFY_HOST}:{REAL_COMFY_PORT}/ws?clientId=bot_lora_{uuid.uuid4().hex[:8]}"
+    bot_lora_port = resolve_comfy_port("bot_lora_training")
+    ws_url = f"ws://{REAL_COMFY_HOST}:{bot_lora_port}/ws?clientId=bot_lora_{uuid.uuid4().hex[:8]}"
     print(f"[BOT_LORA_MONITOR] 시작: {bot_name}/{project_name}/{current_char} ({current_idx+1}/{len(characters_to_train)}), prompt_id={prompt_id}")
     try:
         async with aiohttp.ClientSession() as ws_session:
@@ -16366,7 +16549,10 @@ async def _start_next_bot_char_training(bot_name, project_name, characters_to_tr
 
         with open(workflow_path, "r", encoding="utf-8") as f:
             original_wf = json.load(f)
-        api_wf, conv_err = await convert_workflow_via_endpoint(original_wf)
+        api_wf, conv_err = await convert_workflow_via_endpoint(
+            original_wf,
+            task_key="bot_lora_training",
+        )
         if conv_err or api_wf is None:
             await notify_frontend("bot_lora_training_progress", {"phase": "error", "bot_name": bot_name, "project_name": project_name, "character": cn, "message": f"워크플로우 변환 실패: {conv_err}"})
             return
@@ -16379,7 +16565,10 @@ async def _start_next_bot_char_training(bot_name, project_name, characters_to_tr
             if title == "긍정프롬프트": ninfo["inputs"]["value"] = positive_text
             elif title == "부정프롬프트": ninfo["inputs"]["value"] = negative_text
 
-        prompt_id, _ = await submit_to_real_comfy(wf)
+        prompt_id, _ = await submit_to_real_comfy(
+            wf,
+            task_key="bot_lora_training",
+        )
         asyncio.create_task(_monitor_bot_lora_training(prompt_id, bot_name, project_name, cn, characters_to_train, next_idx, config, training_config, test_images))
     except Exception as e:
         print(f"[BOT_LORA_TRAIN] 다음 캐릭터 실패: {cn} - {e}")
@@ -16803,8 +16992,9 @@ async def handle_api_instance_lora_prompt_get(request):
 
 
 async def _monitor_instance_lora_training(prompt_id: str, lora_id: str, profile: str):
+    instance_lora_port = resolve_comfy_port("instance_lora")
     ws_url = (
-        f"ws://{REAL_COMFY_HOST}:{REAL_COMFY_PORT}/ws"
+        f"ws://{REAL_COMFY_HOST}:{instance_lora_port}/ws"
         f"?clientId=instance_lora_{uuid.uuid4().hex[:8]}"
     )
     print(f"[INSTANCE_LORA_MONITOR] 시작: lora_id={lora_id}, prompt_id={prompt_id}")

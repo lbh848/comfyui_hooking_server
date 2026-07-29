@@ -34,9 +34,17 @@ REAL_COMFY_PORT = 8188  # 기본값, _get_port()로 실시간 조회
 
 
 def _get_port():
-    """설정에서 ComfyUI 포트를 실시간 조회한다."""
+    """복장 추출 작업에 배분된 ComfyUI 포트를 실시간 조회한다."""
     import sys as _sys
-    return getattr(_sys.modules.get('__main__'), 'REAL_COMFY_PORT', REAL_COMFY_PORT)
+    main_module = _sys.modules.get('__main__')
+    resolver = getattr(main_module, 'resolve_comfy_port', None)
+    if not callable(resolver):
+        print(
+            "[OUTFIT_MODE] Comfy 배분 함수가 없어 기본 포트를 사용합니다: "
+            f"port={REAL_COMFY_PORT}"
+        )
+        return getattr(main_module, 'REAL_COMFY_PORT', REAL_COMFY_PORT)
+    return resolver("outfit")
 
 
 def _get_host():

@@ -3213,6 +3213,13 @@
             min-height: 0;
             color: var(--text);
         }
+        .comfy-runtime-instance-panel {
+            display: flex;
+            flex: 1;
+            flex-direction: column;
+            gap: 10px;
+            min-height: 0;
+        }
         .comfy-runtime-tabs {
             display: inline-flex;
             align-self: flex-start;
@@ -3252,6 +3259,77 @@
             background: #52d47b;
             box-shadow: 0 0 0 3px rgba(82,212,123,.14), 0 0 9px rgba(82,212,123,.45);
         }
+        .comfy-runtime-allocation-panel {
+            display: none;
+            flex: 1;
+            flex-direction: column;
+            min-height: 0;
+            overflow: hidden;
+            border: 1px solid color-mix(in srgb, var(--border) 84%, var(--accent));
+            border-radius: 11px;
+            background: color-mix(in srgb, var(--surface2) 48%, var(--surface));
+        }
+        .comfy-runtime-allocation-panel.active { display: flex; }
+        .comfy-allocation-head {
+            padding: 14px 16px 12px;
+            border-bottom: 1px solid var(--border);
+        }
+        .comfy-allocation-title { font-size: .9rem; font-weight: 800; }
+        .comfy-allocation-copy {
+            margin-top: 4px;
+            color: var(--text2);
+            font-size: .68rem;
+            line-height: 1.5;
+        }
+        .comfy-allocation-runtime-state {
+            margin-top: 9px;
+            padding: 7px 10px;
+            border: 1px solid rgba(82,212,123,.28);
+            border-radius: 7px;
+            background: rgba(82,212,123,.07);
+            color: #83e6a0;
+            font-size: .65rem;
+            font-weight: 700;
+        }
+        .comfy-allocation-list {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 8px;
+            min-height: 0;
+            padding: 12px 14px 14px;
+            overflow: auto;
+        }
+        .comfy-allocation-row {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) 130px;
+            align-items: center;
+            gap: 12px;
+            min-width: 0;
+            padding: 10px 11px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: color-mix(in srgb, var(--surface) 78%, var(--bg));
+        }
+        .comfy-allocation-label { display: block; font-size: .72rem; font-weight: 780; }
+        .comfy-allocation-description {
+            display: block;
+            margin-top: 3px;
+            color: var(--text2);
+            font-size: .61rem;
+            line-height: 1.35;
+        }
+        .comfy-allocation-select {
+            width: 100%;
+            padding: 7px 8px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            outline: none;
+            background: var(--surface2);
+            color: var(--text);
+            font-size: .7rem;
+            font-weight: 700;
+        }
+        .comfy-allocation-select:focus { border-color: var(--accent); }
         .comfy-runtime-control-card {
             padding: 13px 14px;
             border: 1px solid color-mix(in srgb, var(--border) 84%, var(--accent));
@@ -3439,6 +3517,7 @@
         }
         @media (max-width: 860px) {
             .comfy-runtime-options { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .comfy-allocation-list { grid-template-columns: 1fr; }
             .settings-modal.comfy-runtime-layout .modal-content {
                 width: min(720px, calc(100vw - 18px));
             }
@@ -3449,6 +3528,7 @@
             .comfy-runtime-control-head { align-items: flex-start; }
             .comfy-runtime-actions { flex-wrap: wrap; }
             .comfy-runtime-port-pill { flex: 1 0 100%; }
+            .comfy-allocation-row { grid-template-columns: 1fr; }
         }
 
         /* ComfyUI 업데이트 및 설치 */
@@ -14598,20 +14678,6 @@
                         </div>
                     </div>
 
-                    <div class="setting-row" style="margin-top: 4px;">
-                        <div class="setting-label">
-                            <div class="title">삽화 포트 분리</div>
-                            <div class="desc">체크하면 삽화 생성을 Comfy #2 포트로 보냅니다. 체크하지 않아도 Comfy #2는 별도로 실행할 수 있습니다.</div>
-                        </div>
-                    </div>
-                    <div class="form-group" style="margin-top: 8px; display: flex; align-items: center; gap: 12px;">
-                        <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
-                            <input type="checkbox" id="setting-illust-port-enabled" style="width: 16px; height: 16px; cursor: pointer;">
-                            <span style="font-size: 0.85rem;">분리 사용</span>
-                        </label>
-                        <span style="font-size:.72rem; color:var(--text2);">삽화 → Comfy #2</span>
-                    </div>
-
                     <div class="setting-row">
                         <div class="setting-label">
                             <div class="title">워크플로우 소스 경로</div>
@@ -14662,8 +14728,12 @@
                             <button type="button" class="comfy-runtime-tab" id="comfy-runtime-tab-2" onclick="switchComfyRuntimeInstance(2)" role="tab" aria-selected="false">
                                 <span class="comfy-runtime-tab-dot"></span>Comfy #2
                             </button>
+                            <button type="button" class="comfy-runtime-tab" id="comfy-runtime-tab-allocation" onclick="switchComfyRuntimeAllocation()" role="tab" aria-selected="false">
+                                Comfy 배분 관리
+                            </button>
                         </div>
 
+                        <div class="comfy-runtime-instance-panel" id="comfy-runtime-instance-panel">
                         <section class="comfy-runtime-control-card">
                             <div class="comfy-runtime-control-head">
                                 <div>
@@ -14718,6 +14788,16 @@
                                 <span class="comfy-runtime-terminal-meta" id="comfy-runtime-terminal-meta">출력 대기</span>
                             </div>
                             <pre class="comfy-runtime-terminal" id="comfy-runtime-terminal" role="log" aria-live="polite">ComfyUI를 실행하면 원본 CMD 출력이 여기에 표시됩니다.</pre>
+                        </section>
+                        </div>
+
+                        <section class="comfy-runtime-allocation-panel" id="comfy-runtime-allocation-panel" aria-labelledby="comfy-runtime-tab-allocation">
+                            <div class="comfy-allocation-head">
+                                <div class="comfy-allocation-title">내부 Comfy 작업 배분</div>
+                                <div class="comfy-allocation-copy">각 작업을 실행할 Comfy 인스턴스를 선택합니다. 선택된 인스턴스가 꺼져 있고 다른 하나만 실행 중이면 실행 중인 인스턴스로 자동 전환됩니다.</div>
+                                <div class="comfy-allocation-runtime-state" id="comfy-allocation-runtime-state">실행 상태 확인 중…</div>
+                            </div>
+                            <div class="comfy-allocation-list" id="comfy-allocation-list"></div>
                         </section>
                     </div>
                 </div>
@@ -19828,7 +19908,21 @@
             vram_mode: 'auto',
             cuda_device: null,
         });
+        const COMFY_TASK_DEFINITIONS = Object.freeze([
+            { key: 'illustration', label: '삽화', description: '일반 삽화 생성 요청' },
+            { key: 'restore_regenerate', label: '재생성 / 수동 그리기', description: '삽화 재생성, 수동 그리기, 워크플로우 테스트' },
+            { key: 'asset_generation', label: '에셋 생성', description: '에셋 이미지 생성' },
+            { key: 'qwen_edit', label: 'EDIT', description: 'Qwen Edit 및 ANIMA Inpainting' },
+            { key: 'tag_analysis', label: '태그 분석', description: 'Comfy 워크플로우 기반 이미지 태그 분석' },
+            { key: 'outfit', label: '복장 추출', description: '복장 추출 워크플로우' },
+            { key: 'asset_lora_training', label: '에셋 LoRA', description: '에셋 LoRA 학습' },
+            { key: 'bot_lora_training', label: '봇 LoRA', description: '봇 캐릭터 LoRA 학습' },
+            { key: 'instance_lora', label: '인스턴스 / 스타일 LoRA', description: '인스턴스·스타일 LoRA 분석 및 학습' },
+            { key: 'face_extract', label: '얼굴 추출', description: '인스턴스 LoRA 얼굴 추출' },
+            { key: 'utility_debug', label: '유틸리티 / 디버그', description: '데이터 패치, 봇 유틸리티, 디버그 워크플로우' },
+        ]);
         let comfyRuntimeActiveInstance = 1;
+        let comfyRuntimeActiveView = 'instance';
         let comfyRuntimeProfilesInitialized = false;
         let comfyRuntimeProfiles = {
             1: { ...COMFY_RUNTIME_PROFILE_DEFAULTS },
@@ -19840,6 +19934,99 @@
         let comfyRuntimePollTimer = null;
         let comfyRuntimePollBusy = false;
         let comfyRuntimeActionBusy = false;
+        let comfyTaskAllocations = Object.fromEntries(
+            COMFY_TASK_DEFINITIONS.map(item => [item.key, 1]),
+        );
+
+        function comfyAllocationNormalize(raw, legacyIllustrationEnabled = false) {
+            const normalized = Object.fromEntries(
+                COMFY_TASK_DEFINITIONS.map(item => [item.key, 1]),
+            );
+            const source = raw && typeof raw === 'object' && !Array.isArray(raw)
+                ? raw
+                : null;
+            if (!source && legacyIllustrationEnabled) {
+                normalized.illustration = 2;
+                normalized.restore_regenerate = 2;
+            }
+            if (source) {
+                for (const item of COMFY_TASK_DEFINITIONS) {
+                    normalized[item.key] = Number(source[item.key]) === 2 ? 2 : 1;
+                }
+            }
+            return normalized;
+        }
+
+        function comfyAllocationRender() {
+            const list = document.getElementById('comfy-allocation-list');
+            if (!list) return;
+            list.replaceChildren();
+            for (const item of COMFY_TASK_DEFINITIONS) {
+                const row = document.createElement('label');
+                row.className = 'comfy-allocation-row';
+
+                const copy = document.createElement('span');
+                const label = document.createElement('span');
+                label.className = 'comfy-allocation-label';
+                label.textContent = item.label;
+                const description = document.createElement('span');
+                description.className = 'comfy-allocation-description';
+                description.textContent = item.description;
+                copy.append(label, description);
+
+                const select = document.createElement('select');
+                select.className = 'comfy-allocation-select';
+                select.id = `setting-comfy-allocation-${item.key}`;
+                select.setAttribute('aria-label', `${item.label} Comfy 배분`);
+                for (const instanceId of [1, 2]) {
+                    const option = document.createElement('option');
+                    option.value = String(instanceId);
+                    option.textContent = `Comfy #${instanceId}`;
+                    select.appendChild(option);
+                }
+                select.value = String(comfyTaskAllocations[item.key] || 1);
+                select.addEventListener('change', () => {
+                    comfyTaskAllocations[item.key] = Number(select.value) === 2 ? 2 : 1;
+                });
+                row.append(copy, select);
+                list.appendChild(row);
+            }
+        }
+
+        function comfyAllocationInitialize(config) {
+            comfyTaskAllocations = comfyAllocationNormalize(
+                config?.comfy_task_allocations,
+                config?.comfyui_port_illustration != null,
+            );
+            comfyAllocationRender();
+            comfyAllocationRefreshRuntimeState();
+        }
+
+        function comfyAllocationsForSave() {
+            const result = {};
+            for (const item of COMFY_TASK_DEFINITIONS) {
+                const select = document.getElementById(`setting-comfy-allocation-${item.key}`);
+                result[item.key] = Number(select?.value || comfyTaskAllocations[item.key]) === 2 ? 2 : 1;
+            }
+            comfyTaskAllocations = result;
+            return { ...result };
+        }
+
+        function comfyAllocationRefreshRuntimeState() {
+            const state = document.getElementById('comfy-allocation-runtime-state');
+            if (!state) return;
+            const running1 = !!comfyRuntimeStatuses[1]?.running;
+            const running2 = !!comfyRuntimeStatuses[2]?.running;
+            if (running1 && running2) {
+                state.textContent = 'Comfy #1과 #2 실행 중 · 작업별 선택 배분을 적용합니다.';
+            } else if (running1) {
+                state.textContent = 'Comfy #1만 실행 중 · 모든 내부 Comfy 작업은 자동으로 #1에 들어갑니다.';
+            } else if (running2) {
+                state.textContent = 'Comfy #2만 실행 중 · 모든 내부 Comfy 작업은 자동으로 #2에 들어갑니다.';
+            } else {
+                state.textContent = '실행 중인 관리 인스턴스 없음 · 각 작업은 선택된 포트로 요청됩니다.';
+            }
+        }
 
         function comfyRuntimeNormalizeProfile(raw) {
             const source = raw && typeof raw === 'object' ? raw : {};
@@ -19962,6 +20149,7 @@
                 return;
             }
             comfyRuntimeStatuses[instanceId] = payload;
+            comfyAllocationRefreshRuntimeState();
             const tab = document.getElementById(`comfy-runtime-tab-${instanceId}`);
             tab?.classList.toggle('running', !!payload.running);
 
@@ -20038,6 +20226,14 @@
             const nextInstance = Number(instanceId) === 2 ? 2 : 1;
             comfyRuntimeCaptureActiveProfile();
             comfyRuntimeActiveInstance = nextInstance;
+            comfyRuntimeActiveView = 'instance';
+            const instancePanel = document.getElementById('comfy-runtime-instance-panel');
+            const allocationPanel = document.getElementById('comfy-runtime-allocation-panel');
+            if (instancePanel) instancePanel.style.display = 'flex';
+            allocationPanel?.classList.remove('active');
+            const allocationTab = document.getElementById('comfy-runtime-tab-allocation');
+            allocationTab?.classList.remove('active');
+            allocationTab?.setAttribute('aria-selected', 'false');
             for (const id of [1, 2]) {
                 const tab = document.getElementById(`comfy-runtime-tab-${id}`);
                 tab?.classList.toggle('active', id === nextInstance);
@@ -20055,6 +20251,23 @@
                         ? `EXIT ${status.exit_code}`
                         : '출력 대기');
             }
+        }
+
+        function switchComfyRuntimeAllocation() {
+            comfyRuntimeCaptureActiveProfile();
+            comfyRuntimeActiveView = 'allocation';
+            for (const id of [1, 2]) {
+                const tab = document.getElementById(`comfy-runtime-tab-${id}`);
+                tab?.classList.remove('active');
+                tab?.setAttribute('aria-selected', 'false');
+            }
+            const allocationTab = document.getElementById('comfy-runtime-tab-allocation');
+            allocationTab?.classList.add('active');
+            allocationTab?.setAttribute('aria-selected', 'true');
+            const instancePanel = document.getElementById('comfy-runtime-instance-panel');
+            if (instancePanel) instancePanel.style.display = 'none';
+            document.getElementById('comfy-runtime-allocation-panel')?.classList.add('active');
+            comfyAllocationRefreshRuntimeState();
         }
 
         async function comfyRuntimeStart() {
@@ -20606,7 +20819,11 @@
                 }
             }
             if (tabName === 'comfy_runtime') {
-                switchComfyRuntimeInstance(comfyRuntimeActiveInstance);
+                if (comfyRuntimeActiveView === 'allocation') {
+                    switchComfyRuntimeAllocation();
+                } else {
+                    switchComfyRuntimeInstance(comfyRuntimeActiveInstance);
+                }
                 comfyRuntimeStartPolling();
             } else {
                 comfyRuntimeStopPolling();
@@ -20656,13 +20873,11 @@
 
             // 폼에 값 설정
             document.getElementById('setting-comfyui-port').value = currentConfig.comfyui_port || 8188;
-            // 삽화 포트 분리 설정
-            const illustPortEnabled = currentConfig.comfyui_port_illustration != null;
-            document.getElementById('setting-illust-port-enabled').checked = illustPortEnabled;
             document.getElementById('setting-comfyui-port-2').value = currentConfig.comfyui_port_2
                 || currentConfig.comfyui_port_illustration
                 || 8187;
             comfyRuntimeInitializeProfiles(currentConfig);
+            comfyAllocationInitialize(currentConfig);
             document.getElementById('setting-send-original').checked = currentConfig.send_original || false;
             document.getElementById('setting-webp-quality').disabled = currentConfig.send_original || false;
             document.getElementById('setting-webp-quality').value = currentConfig.webp_quality || 85;
@@ -21730,10 +21945,9 @@
                 data_saving_mode: currentConfig.data_saving_mode || false,
                 comfyui_port: parseInt(document.getElementById('setting-comfyui-port').value) || 8188,
                 comfyui_port_2: parseInt(document.getElementById('setting-comfyui-port-2').value) || 8187,
-                comfyui_port_illustration: document.getElementById('setting-illust-port-enabled').checked
-                    ? (parseInt(document.getElementById('setting-comfyui-port-2').value) || 8187)
-                    : null,
+                comfyui_port_illustration: null,
                 comfy_launch_profiles: comfyRuntimeProfilesForSave(),
+                comfy_task_allocations: comfyAllocationsForSave(),
                 send_original: document.getElementById('setting-send-original').checked,
                 webp_quality: parseInt(document.getElementById('setting-webp-quality').value) || 85,
                 backup_webp_quality: parseInt(document.getElementById('setting-backup-webp-quality').value) || 80,

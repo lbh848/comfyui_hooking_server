@@ -631,6 +631,14 @@ class ComfyRuntimeManager:
                 "log_reset": reset,
             }
 
+    def is_running(self, *, instance_id: Any) -> bool:
+        """로그 스냅샷을 만들지 않고 관리 중인 인스턴스 실행 여부만 반환한다."""
+
+        parsed_instance = self._validate_instance_id(instance_id)
+        state = self._states[parsed_instance]
+        with state.lock:
+            return state.process is not None and state.process.poll() is None
+
 
 def register_comfy_runtime_routes(
     app: web.Application,

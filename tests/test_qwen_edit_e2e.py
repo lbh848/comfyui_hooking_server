@@ -553,4 +553,5 @@ def test_qwen_workflow_and_frontend_contracts():
     assert "handle_api_qwen_composite_item_delete" in server_source
     assert 'queue_manager.add_item(\n            "qwen_edit"' in server_source
     assert '"qwen_edit_workflow_source_path": os.path.join(' in server_source
-    assert "qwen_edit_mode.convert_workflow_func = convert_workflow_via_endpoint" in server_source
+    assert "qwen_edit_mode.convert_workflow_func = lambda workflow:" in server_source
+    assert 'task_key="qwen_edit"' in server_source

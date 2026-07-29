@@ -63,7 +63,11 @@ class AssetToolMode:
         with open(filepath, "rb") as f:
             return hashlib.sha256(f.read()).hexdigest()
 
-    async def update_workflow(self, use_fallback: bool = False) -> bool:
+    async def update_workflow(
+        self,
+        use_fallback: bool = False,
+        comfy_task_key: str = "tag_analysis",
+    ) -> bool:
         # primary / fallback 슬롯 분기
         if use_fallback:
             src = self.fallback_workflow_source_path
@@ -124,7 +128,10 @@ class AssetToolMode:
         else:
             if self.convert_workflow_func:
                 try:
-                    api_wf, error = await self.convert_workflow_func(wf_data)
+                    api_wf, error = await self.convert_workflow_func(
+                        wf_data,
+                        task_key=comfy_task_key,
+                    )
                     if api_wf:
                         setattr(self, api_attr, api_wf)
                         # API 변환 결과를 디스크에 캐시
@@ -165,27 +172,49 @@ class AssetToolMode:
         return False
 
     # ─── 태그 분석 ────────────────────────────────────────
-    async def analyze_image(self, image_data: bytes, tag_category: str = "expressions",
-                            progress_callback: Optional[Callable] = None) -> dict:
+    async def analyze_image(
+        self,
+        image_data: bytes,
+        tag_category: str = "expressions",
+        progress_callback: Optional[Callable] = None,
+        *,
+        comfy_task_key: str = "tag_analysis",
+    ) -> dict:
         if self._is_analyzing:
+            print(
+                "[ASSET_TOOL] 분석 요청 거부: 이미 분석 진행 중, "
+                f"task={comfy_task_key}, category={tag_category!r}"
+            )
             return {"success": False, "error": "이미 분석이 진행 중입니다"}
 
         async with self._lock:
             self._is_analyzing = True
             try:
-                return await self._analyze_internal(image_data, tag_category, progress_callback)
+                return await self._analyze_internal(
+                    image_data,
+                    tag_category,
+                    progress_callback,
+                    comfy_task_key=comfy_task_key,
+                )
             finally:
                 self._is_analyzing = False
 
-    async def _analyze_internal(self, image_data: bytes, tag_category: str,
-                                 progress_callback: Optional[Callable] = None) -> dict:
+    async def _analyze_internal(
+        self,
+        image_data: bytes,
+        tag_category: str,
+        progress_callback: Optional[Callable] = None,
+        *,
+        comfy_task_key: str = "tag_analysis",
+    ) -> dict:
         # 0) 내장 WD Tagger 경로 (ComfyUI 미경유, 얼굴 무의존)
         if self.use_builtin_tagger:
             return await self._analyze_builtin(image_data)
 
         # 1) primary (스마트매치/얼굴) 워크플로우
         result = await self._run_comfy_workflow(image_data, use_fallback=False,
-                                                progress_callback=progress_callback)
+                                                progress_callback=progress_callback,
+                                                comfy_task_key=comfy_task_key)
         if result.get("success") and result.get("tags"):
             return result
 
@@ -193,7 +222,8 @@ class AssetToolMode:
         if self.fallback_workflow_source_path:
             print(f"[ASSET_TOOL] primary 결과 없음 → 폴백 워크플로우로 재시도 (reason={result.get('error', '태그없음')})")
             fb = await self._run_comfy_workflow(image_data, use_fallback=True,
-                                                progress_callback=progress_callback)
+                                                progress_callback=progress_callback,
+                                                comfy_task_key=comfy_task_key)
             if fb.get("success") and fb.get("tags"):
                 return fb
             return {"success": False,
@@ -228,11 +258,20 @@ class AssetToolMode:
         self._log("analysis_complete_builtin", {"tags_count": len(unique_tags)})
         return {"success": True, "tags": unique_tags}
 
-    async def _run_comfy_workflow(self, image_data: bytes, use_fallback: bool = False,
-                                   progress_callback: Optional[Callable] = None) -> dict:
+    async def _run_comfy_workflow(
+        self,
+        image_data: bytes,
+        use_fallback: bool = False,
+        progress_callback: Optional[Callable] = None,
+        *,
+        comfy_task_key: str = "tag_analysis",
+    ) -> dict:
         """ComfyUI 경유 태그 분석. use_fallback 이면 폴백 워크플로우 슬롯 사용."""
         slot_label = "fallback" if use_fallback else "primary"
-        ok = await self.update_workflow(use_fallback=use_fallback)
+        ok = await self.update_workflow(
+            use_fallback=use_fallback,
+            comfy_task_key=comfy_task_key,
+        )
         if not ok:
             return {"success": False, "error": f"태그 분석 워크플로우({slot_label})를 로드할 수 없습니다"}
 
@@ -248,12 +287,28 @@ class AssetToolMode:
             buf.seek(0)
             image_data_upload = buf.read()
         except Exception as e:
+            print(
+                f"[ASSET_TOOL] 이미지 변환 오류 ({slot_label}): "
+                f"{type(e).__name__}: {e}"
+            )
+            import traceback
+            traceback.print_exc()
             return {"success": False, "error": f"이미지 변환 오류: {e}"}
 
         import sys as _sys
         _main_mod = _sys.modules.get('__main__')
         REAL_COMFY_HOST = getattr(_main_mod, 'REAL_COMFY_HOST', '127.0.0.1')
-        REAL_COMFY_PORT = getattr(_main_mod, 'REAL_COMFY_PORT', 8188)
+        resolve_comfy_port = getattr(_main_mod, 'resolve_comfy_port', None)
+        if not callable(resolve_comfy_port):
+            print(
+                "[ASSET_TOOL] 태그 분석 Comfy 배분 실패: "
+                "resolve_comfy_port 콜백이 없습니다"
+            )
+            return {
+                "success": False,
+                "error": "태그 분석용 Comfy 배분 함수를 찾을 수 없습니다",
+            }
+        REAL_COMFY_PORT = resolve_comfy_port(comfy_task_key)
         submit_to_real_comfy = getattr(_main_mod, 'submit_to_real_comfy')
         wait_for_real_comfy = getattr(_main_mod, 'wait_for_real_comfy')
         count_ksampler_total_steps = getattr(_main_mod, 'count_ksampler_total_steps')
@@ -321,7 +376,10 @@ class AssetToolMode:
         try:
             async with aiohttp.ClientSession() as ws_session:
                 async with ws_session.ws_connect(ws_url) as real_ws:
-                    real_prompt_id, submit_result = await submit_to_real_comfy(workflow)
+                    real_prompt_id, submit_result = await submit_to_real_comfy(
+                        workflow,
+                        port=REAL_COMFY_PORT,
+                    )
                     node_errors = submit_result.get("node_errors", {})
                     if node_errors:
                         print(f"[ASSET_TOOL] 워크플로우 node_errors ({slot_label}): {json.dumps(node_errors, ensure_ascii=False)}")

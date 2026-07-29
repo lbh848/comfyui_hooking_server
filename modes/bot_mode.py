@@ -3167,7 +3167,10 @@ class BotDataPatcher:
 
             # ComfyUI에 제출
             from server import submit_workflow_to_comfy
-            img_bytes, submit_err = await submit_workflow_to_comfy(wf)
+            img_bytes, submit_err = await submit_workflow_to_comfy(
+                wf,
+                task_key="utility_debug",
+            )
             if submit_err or not img_bytes:
                 return _json_error(f"{char_name}: {submit_err or '이미지 없음'}")
 

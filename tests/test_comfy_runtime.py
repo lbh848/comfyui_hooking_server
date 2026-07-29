@@ -119,6 +119,16 @@ def test_runtime_forwards_process_stdout_without_summarizing(tmp_path: Path) -> 
     assert captured["kwargs"]["stderr"] is not None
 
 
+def test_runtime_reports_managed_process_running_state(tmp_path: Path) -> None:
+    manager = ComfyRuntimeManager(tmp_path)
+    process = _FakeProcess(b"")
+    manager._states[1].process = process
+
+    assert manager.is_running(instance_id=1) is True
+    process.returncode = 0
+    assert manager.is_running(instance_id=1) is False
+
+
 @pytest.mark.asyncio
 async def test_runtime_http_status_and_validation(tmp_path: Path) -> None:
     app = web.Application()

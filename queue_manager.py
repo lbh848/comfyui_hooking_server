@@ -259,6 +259,7 @@ class QueueManager:
         self.prepare_style_ref_folder = None   # def(images, comfy_input_dir) -> str
         self.get_real_comfy_host = None        # def() -> str
         self.get_real_comfy_port = None        # def() -> int
+        self.get_comfy_port_for_task = None    # def(task_key) -> int
         self.fetch_real_history = None         # async def(prompt_id) -> dict
         self.fetch_real_image = None           # async def(filename, subfolder, img_type) -> bytes
         # 삽화 생성 콜백 (server.py에서 주입)
@@ -1474,7 +1475,12 @@ class QueueManager:
                 "total": max_value,
             })
 
-        img_bytes, error = await self.generate_image_with_prompt(positive, negative, progress_callback=_on_restore_progress)
+        img_bytes, error = await self.generate_image_with_prompt(
+            positive,
+            negative,
+            progress_callback=_on_restore_progress,
+            comfy_task_key="restore_regenerate",
+        )
         if img_bytes and self.save_backup:
             # 비삽화모드 수동 그리기: bot_name 없음, 생성 방법 딱지로 '수동 그리기' 부여
             await self.save_backup(img_bytes, "restore_manual", positive, negative, gen_method="수동 그리기")
@@ -1566,13 +1572,18 @@ class QueueManager:
             })
 
         start_time = time.time()
+        generation_call_kwargs = {
+            "progress_callback": _on_regen_progress,
+            "provider": provider,
+            "width": generation_params.get("width"),
+            "height": generation_params.get("height"),
+        }
+        if provider == "comfy":
+            generation_call_kwargs["comfy_task_key"] = "restore_regenerate"
         img_bytes, error = await self.generate_image_with_prompt(
             positive,
             negative,
-            progress_callback=_on_regen_progress,
-            provider=provider,
-            width=generation_params.get("width"),
-            height=generation_params.get("height"),
+            **generation_call_kwargs,
         )
         elapsed_time = time.time() - start_time
 
@@ -1835,7 +1846,10 @@ class QueueManager:
 
         with open(workflow_path, "r", encoding="utf-8") as f:
             original_wf = json.load(f)
-        api_wf, conv_err = await self.convert_workflow_via_endpoint(original_wf)
+        api_wf, conv_err = await self.convert_workflow_via_endpoint(
+            original_wf,
+            task_key="asset_lora_training",
+        )
         if conv_err or api_wf is None:
             raise ValueError(f"워크플로우 변환 실패: {conv_err}")
 
@@ -1944,7 +1958,10 @@ class QueueManager:
 
         with open(workflow_path, "r", encoding="utf-8") as f:
             original_wf = json.load(f)
-        api_wf, conv_err = await self.convert_workflow_via_endpoint(original_wf)
+        api_wf, conv_err = await self.convert_workflow_via_endpoint(
+            original_wf,
+            task_key="bot_lora_training",
+        )
         if conv_err or api_wf is None:
             raise ValueError(f"워크플로우 변환 실패: {conv_err}")
 
@@ -2079,7 +2096,10 @@ class QueueManager:
         # 워크플로우 로드 & 변환 → mode_workflow에 저장
         with open(face_extract_wf_path, "r", encoding="utf-8") as f:
             wf_raw = json.load(f)
-        api_wf, conv_err = await self.convert_workflow_via_endpoint(wf_raw)
+        api_wf, conv_err = await self.convert_workflow_via_endpoint(
+            wf_raw,
+            task_key="face_extract",
+        )
         if conv_err or api_wf is None:
             raise ValueError(f"워크플로우 변환 실패: {conv_err}")
 
@@ -2102,7 +2122,7 @@ class QueueManager:
                 ninfo["inputs"]["value"] = ""
 
         # 실행 & 대기 (server.py generate_image_with_prompt 패턴 참조)
-        extract_prompt_id, _ = await self._monitor_training_ws(
+        extract_prompt_id, submit_result = await self._monitor_training_ws(
             item, wf,
             event_type="instance_lora_face_extract_progress",
             extra_data={"lora_id": lora_id},
@@ -2110,7 +2130,8 @@ class QueueManager:
         print(f"[INSTANCE_LORA:FACE_EXTRACT] 워크플로우 완료: prompt_id={extract_prompt_id}")
 
         # history에서 출력 이미지 가져오기 (server.py 라인 1033-1052 패턴)
-        history = await self.fetch_real_history(extract_prompt_id)
+        extract_port = int(submit_result.get("_comfy_port"))
+        history = await self.fetch_real_history(extract_prompt_id, port=extract_port)
         real_entry = history.get(extract_prompt_id, {})
         real_outputs = real_entry.get("outputs", {})
 
@@ -2129,6 +2150,7 @@ class QueueManager:
                         first["filename"],
                         first.get("subfolder", ""),
                         first.get("type", "output"),
+                        port=extract_port,
                     )
                     break
 
@@ -2338,7 +2360,11 @@ class QueueManager:
                     if os.path.isfile(img_path):
                         with open(img_path, "rb") as f:
                             image_data = f.read()
-                        analysis = await self.asset_tool.analyze_image(image_data, "expressions")
+                        analysis = await self.asset_tool.analyze_image(
+                            image_data,
+                            "expressions",
+                            comfy_task_key="instance_lora",
+                        )
                         if analysis.get("success"):
                             tags = analysis.get("tags", [])
                             filtered_tags = apply_block_tag_rules(tags, block_rules)
@@ -2446,7 +2472,10 @@ class QueueManager:
 
             with open(workflow_path, "r", encoding="utf-8") as f:
                 original_wf = json.load(f)
-            api_wf, conv_err = await self.convert_workflow_via_endpoint(original_wf)
+            api_wf, conv_err = await self.convert_workflow_via_endpoint(
+                original_wf,
+                task_key="instance_lora",
+            )
             if conv_err or api_wf is None:
                 raise ValueError(f"워크플로우 변환 실패: {conv_err}")
 
@@ -2533,7 +2562,11 @@ class QueueManager:
                 with open(img_path, "rb") as f:
                     image_data = f.read()
 
-                analysis = await self.asset_tool.analyze_image(image_data, "expressions")
+                analysis = await self.asset_tool.analyze_image(
+                    image_data,
+                    "expressions",
+                    comfy_task_key="instance_lora",
+                )
                 if analysis.get("success"):
                     tags = analysis.get("tags", [])
                     if use_block_tags:
@@ -2589,6 +2622,7 @@ class QueueManager:
                             return "success"
         except Exception as e:
             print(f"[QUEUE-MONITOR] history 확인 실패: {e}")
+            traceback.print_exc()
         return "unknown"
 
     async def _monitor_training_ws(
@@ -2606,7 +2640,26 @@ class QueueManager:
         """
         import aiohttp as _aiohttp
         host = self.get_real_comfy_host()
-        port = self.get_real_comfy_port()
+        task_key_by_type = {
+            "asset_lora_training": "asset_lora_training",
+            "bot_lora_training": "bot_lora_training",
+            "instance_lora_training": "instance_lora",
+            "instance_lora_face_extract": "face_extract",
+        }
+        task_key = task_key_by_type.get(item.type)
+        if not task_key:
+            print(
+                "[QUEUE-MONITOR] Comfy 작업 배분 키 결정 실패: "
+                f"item={item.id}, type={item.type}"
+            )
+            raise RuntimeError(f"Comfy 작업 배분을 지원하지 않는 큐 타입입니다: {item.type}")
+        if not callable(self.get_comfy_port_for_task):
+            print(
+                "[QUEUE-MONITOR] 작업별 Comfy 포트 콜백이 없습니다: "
+                f"item={item.id}, type={item.type}, task={task_key}"
+            )
+            raise RuntimeError("작업별 Comfy 포트 콜백이 설정되지 않았습니다")
+        port = self.get_comfy_port_for_task(task_key)
         client_id = f"queue_{uuid.uuid4().hex[:8]}"
         ws_url = f"ws://{host}:{port}/ws?clientId={client_id}"
 
@@ -2619,8 +2672,11 @@ class QueueManager:
                 async with ws_session.ws_connect(ws_url) as ws:
                     # WS 연결 후 제출 (경쟁 조건 해결)
                     prompt_id, submit_result = await self.submit_to_real_comfy(
-                        workflow, client_id=client_id
+                        workflow,
+                        port=port,
+                        client_id=client_id,
                     )
+                    submit_result["_comfy_port"] = port
                     print(f"[QUEUE-MONITOR] 시작: prompt_id={prompt_id}, type={event_type}")
 
                     async for msg in ws:
