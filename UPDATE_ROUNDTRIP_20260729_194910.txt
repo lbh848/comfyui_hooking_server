@@ -1,0 +1,4 @@
+Comfy manager updater round-trip marker
+test_id: 20260729-194910
+repository: comfyui_hooking_server
+target_branch: dev
