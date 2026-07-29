@@ -7,17 +7,20 @@
     <style>
         select option { background: var(--surface2); color: var(--text); }
         :root {
-            --bg: #1a1a2e;
-            --surface: #16213e;
-            --surface2: #0f3460;
-            --accent: #e94560;
-            --accent2: #533483;
-            --text: #eee;
-            --text2: #aaa;
-            --border: #333;
-            --success: #4caf50;
-            --warn: #ff9800;
-            --error: #f44336;
+            --bg: #0b1117;
+            --surface: #111a22;
+            --surface1: #111a22;
+            --surface2: #18252e;
+            --accent: #4de2ae;
+            --accent2: #245f50;
+            --text: #f2f7f5;
+            --text2: #91a39d;
+            --text3: #6f817b;
+            --text-secondary: #91a39d;
+            --border: #293841;
+            --success: #52d47b;
+            --warn: #f4b85f;
+            --error: #ff6277;
         }
 
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -419,12 +422,12 @@
 
         .backup-card.current-batch, .backup-card.completed-batch {
             border: 3px solid var(--success);
-            box-shadow: 0 0 15px rgba(76, 175, 80, 0.4);
+            box-shadow: 0 0 15px color-mix(in srgb, var(--success) 40%, transparent);
         }
 
         .backup-card.scheduled-batch {
             border: 3px solid var(--accent);
-            box-shadow: 0 0 15px rgba(233, 69, 96, 0.4);
+            box-shadow: 0 0 15px color-mix(in srgb, var(--accent) 40%, transparent);
         }
 
         .card-image-area {
@@ -1326,7 +1329,7 @@
             display: grid;
             place-items: center;
             border-radius: 7px;
-            background: rgba(233, 69, 96, 0.14);
+            background: color-mix(in srgb, var(--accent) 14%, transparent);
             color: var(--accent);
             font-size: 0.78rem;
             font-weight: 800;
@@ -6123,7 +6126,7 @@
             transition: border-color 0.15s;
         }
         .pose-saved-item:hover { border-color: var(--accent); }
-        .pose-saved-item.selected { border-color: var(--accent); background: rgba(66,133,244,0.12); }
+        .pose-saved-item.selected { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
         .pose-item-thumb {
             width: 100%;
             height: auto;
@@ -6150,7 +6153,7 @@
         .pose-canvas-wrap {
             flex: 1;
             position: relative;
-            background: #1a1a2e;
+            background: var(--bg);
             overflow: hidden;
         }
         .pose-canvas-wrap canvas {
@@ -7674,7 +7677,7 @@
         }
         .asset-folder-card.selected {
             border: 2px solid var(--accent);
-            background: rgba(66,133,244,0.08);
+            background: color-mix(in srgb, var(--accent) 8%, transparent);
         }
         .asset-folder-card .folder-icon {
             font-size: 3rem;
@@ -7767,14 +7770,14 @@
         }
         .gallery-group-container.gallery-group-drag-over {
             border-color: var(--accent);
-            background: rgba(66, 133, 244, 0.08);
+            background: color-mix(in srgb, var(--accent) 8%, transparent);
         }
         .asset-gallery-card.gallery-dragging {
             opacity: 0.4;
         }
         .asset-gallery-card.gallery-drag-over {
             border-color: var(--accent);
-            box-shadow: 0 0 8px rgba(66, 133, 244, 0.3);
+            box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 30%, transparent);
         }
         .gallery-group-remove-btn {
             position: absolute;
@@ -8310,7 +8313,7 @@
         .at-body { display: flex; flex: 1; min-height: 0; overflow: hidden; }
         .at-sidebar { width: 48px; display: flex; flex-direction: column; align-items: center; padding-top: 2px; background: var(--surface2); border-right: 1px solid var(--border); flex-shrink: 0; }
         .at-sidebar-btn { width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; border-radius: 6px; cursor: pointer; font-size: 1.1rem; border: none; background: transparent; color: var(--text2); transition: all 0.15s; margin-bottom: 4px; position: relative; }
-        .at-sidebar-btn:hover { background: rgba(66,133,244,0.08); color: var(--text); }
+        .at-sidebar-btn:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); color: var(--text); }
         .at-sidebar-btn.active { background: var(--accent); color: #fff; }
         .at-sidebar-btn .at-sidebar-tooltip { display: none; position: absolute; left: 44px; top: 50%; transform: translateY(-50%); background: var(--surface); border: 1px solid var(--border); padding: 4px 10px; border-radius: 4px; font-size: 0.78rem; white-space: nowrap; z-index: 10; color: var(--text); box-shadow: 0 2px 8px rgba(0,0,0,0.2); }
         .at-sidebar-btn:hover .at-sidebar-tooltip { display: block; }
@@ -8320,8 +8323,8 @@
         #at-view-result { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
         .at-canvas { display: flex; flex-direction: column; gap: 8px; padding: 4px; align-items: stretch; }
         .at-card { min-width: 180px; max-width: 280px; min-height: 0; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; display: flex; flex-direction: column; position: relative; transition: border-color 0.15s, box-shadow 0.15s; }
-        .at-card:hover { border-color: rgba(66,133,244,0.4); }
-        .at-card.selected { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(66,133,244,0.3); }
+        .at-card:hover { border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
+        .at-card.selected { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent); }
         .at-card-source { border-color: rgba(76,175,80,0.5); }
         .at-card-img { width: 100%; aspect-ratio: 3/4; background: var(--surface2); display: flex; align-items: center; justify-content: center; color: var(--text2); font-size: 0.8rem; position: relative; overflow: hidden; border-radius: 10px 10px 0 0; }
         .at-card-img img { width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -8337,11 +8340,11 @@
         .at-card-separator-line { flex: 1; height: 1px; background: var(--border); }
         .at-card-separator-label { font-size: 0.75rem; color: var(--text2); white-space: nowrap; }
         .at-dropzone { border: 2px dashed var(--border); border-radius: 8px; padding: 40px 20px; text-align: center; cursor: pointer; transition: all 0.2s; margin-bottom: 16px; }
-        .at-dropzone:hover, .at-dropzone.dragover { border-color: var(--accent); background: rgba(66,133,244,0.06); }
+        .at-dropzone:hover, .at-dropzone.dragover { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 6%, transparent); }
         .at-dropzone-icon { font-size: 2.5rem; margin-bottom: 8px; }
         .at-dropzone-text { color: var(--text2); font-size: 0.9rem; }
         #at-modal-dropzone { border: 2px dashed var(--border); border-radius: 8px; padding: 28px 16px; text-align: center; cursor: pointer; transition: all 0.2s; margin-bottom: 10px; background: var(--surface2); }
-        #at-modal-dropzone:hover, #at-modal-dropzone.at-modal-dragover { border-color: var(--accent); background: rgba(66,133,244,0.08); }
+        #at-modal-dropzone:hover, #at-modal-dropzone.at-modal-dragover { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
         .at-images { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
         .at-image-card { position: relative; width: 120px; border-radius: 6px; overflow: hidden; border: 1px solid var(--border); background: var(--surface2); }
         .at-image-card img { width: 120px; height: 120px; object-fit: cover; display: block; }
@@ -9762,14 +9765,14 @@
             width: 72px; height: 72px;
             border-radius: 50%;
             border: 2px dashed var(--accent);
-            background: rgba(66,133,244,0.08);
+            background: color-mix(in srgb, var(--accent) 8%, transparent);
             color: var(--accent);
             font-size: 2rem;
             cursor: pointer;
             transition: all 0.2s;
             display: flex; align-items: center; justify-content: center;
         }
-        .batch-add-first-btn:hover { background: rgba(66,133,244,0.18); transform: scale(1.05); }
+        .batch-add-first-btn:hover { background: color-mix(in srgb, var(--accent) 18%, transparent); transform: scale(1.05); }
         .batch-slot {
             flex: 0 0 520px;
             background: var(--surface);
@@ -9806,7 +9809,7 @@
             transition: all 0.15s;
             line-height: 1;
         }
-        .batch-slot-action-btn:hover { border-color: var(--accent); color: var(--accent); background: rgba(66,133,244,0.08); }
+        .batch-slot-action-btn:hover { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
         .batch-slot-action-btn.dup:hover { border-color: #4CAF50; color: #4CAF50; background: rgba(76,175,80,0.08); }
         .batch-slot-action-btn.remove:hover { border-color: var(--error); color: var(--error); background: color-mix(in srgb, var(--error) 9%, transparent); }
         .batch-slot-header {
@@ -9925,7 +9928,7 @@
             overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
         }
         .custom-select-option:hover { background: var(--accent); color: #fff; }
-        .custom-select-option.selected { background: rgba(66,133,244,0.15); font-weight: 600; }
+        .custom-select-option.selected { background: color-mix(in srgb, var(--accent) 15%, transparent); font-weight: 600; }
         .custom-select-option.placeholder-opt { color: var(--text-secondary); }
         .custom-select-option.hidden { display: none; }
         .batch-toggle-row {
@@ -9955,7 +9958,7 @@
             background: var(--surface2);
         }
         .batch-pose-modal-item:hover { border-color: var(--accent); }
-        .batch-pose-modal-item.selected { border-color: var(--accent); background: rgba(66,133,244,0.12); }
+        .batch-pose-modal-item.selected { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
         .batch-pose-modal-item img { width: 100%; height: auto; display: block; }
         .batch-pose-modal-item .no-img { width: 100%; aspect-ratio: 3/4; display: flex; align-items: center; justify-content: center; background: var(--surface2); color: var(--text-secondary); font-size: 0.7rem; }
         .batch-pose-modal-item .pose-name { font-size: 0.75rem; padding: 6px; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-top: 1px solid var(--border); background: var(--surface); }
@@ -9993,7 +9996,7 @@
             display: flex; align-items: center; justify-content: center;
             transition: all 0.2s;
         }
-        .batch-chain-plus:hover { border-color: var(--accent); color: var(--accent); background: rgba(66,133,244,0.08); }
+        .batch-chain-plus:hover { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
         .batch-cache-btn {
             width: 100%;
             min-height: 34px;
@@ -10174,7 +10177,7 @@
             padding: 8px 12px; background: var(--surface2);
             border-bottom: 1px solid var(--border); cursor: pointer; user-select: none;
         }
-        .ep-settings-header:hover { background: rgba(66,133,244,0.06); }
+        .ep-settings-header:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); }
         .ep-settings-body {
             padding: 12px 14px; display: flex; flex-direction: column; gap: 8px;
         }
@@ -10226,8 +10229,8 @@
             transition: border-color 0.2s, box-shadow 0.2s;
             cursor: pointer;
         }
-        .ep-card:hover { border-color: var(--accent); box-shadow: 0 2px 8px rgba(66,133,244,0.15); }
-        .ep-card.selected { border-color: var(--accent); background: rgba(66,133,244,0.06); }
+        .ep-card:hover { border-color: var(--accent); box-shadow: 0 2px 8px color-mix(in srgb, var(--accent) 15%, transparent); }
+        .ep-card.selected { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 6%, transparent); }
         .ep-card-header {
             display: flex; align-items: center; justify-content: space-between;
             padding: 6px 10px; background: var(--surface2); border-bottom: 1px solid var(--border);
@@ -10573,7 +10576,7 @@
     <!-- lighbd LLM 스트리밍 위젯: 실행 중에만 표시 (전역 — 모든 탭에서 표시) -->
     <div id="lighbd-llm-widget" style="position:fixed; right:24px; bottom:100px; z-index:9998; display:none;
             flex-direction:column; gap:6px; padding:10px 12px; width:320px; max-width:calc(100vw - 48px);
-            background:rgba(15,52,96,0.85); backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px);
+            background:rgba(11,17,23,0.88); backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px);
             border:1px solid var(--border); border-radius:12px;
             color:var(--text); font-size:0.78rem;
             box-shadow:0 6px 28px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.04) inset;">
@@ -10645,14 +10648,14 @@
             <div id="active-bot-float" onclick="toggleBotFloatPopover(event)" title="봇 목록 보기"
                 style="position:fixed; right:24px; bottom:24px; z-index:9999; cursor:pointer;
                     display:none; align-items:center; gap:12px; padding:14px 20px;
-                    background:rgba(15,52,96,0.55); backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px);
-                    border:1px solid rgba(233,69,96,0.5); border-radius:14px;
+                    background:rgba(11,17,23,0.72); backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px);
+                    border:1px solid rgba(77,226,174,0.5); border-radius:14px;
                     color:var(--text);
                     box-shadow:0 6px 28px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.04) inset;
                     transition:transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
                     user-select:none;"
-                onmouseenter="this.style.transform='translateY(-2px)'; this.style.borderColor='rgba(233,69,96,0.9)'; this.style.boxShadow='0 10px 36px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.06) inset';"
-                onmouseleave="this.style.transform='translateY(0)'; this.style.borderColor='rgba(233,69,96,0.5)'; this.style.boxShadow='0 6px 28px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.04) inset';">
+                onmouseenter="this.style.transform='translateY(-2px)'; this.style.borderColor='rgba(77,226,174,0.9)'; this.style.boxShadow='0 10px 36px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.06) inset';"
+                onmouseleave="this.style.transform='translateY(0)'; this.style.borderColor='rgba(77,226,174,0.5)'; this.style.boxShadow='0 6px 28px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.04) inset';">
                 <span style="font-size:1.5rem; line-height:1;">🤖</span>
                 <div style="display:flex; flex-direction:column; gap:2px; min-width:0;">
                     <span style="font-size:0.7rem; color:var(--text2); font-weight:500; letter-spacing:0.02em;">현재 활성화된 봇</span>
@@ -10663,8 +10666,8 @@
             <div id="active-bot-popover"
                 style="position:fixed; right:24px; bottom:92px; z-index:10000; display:none;
                     flex-direction:column; gap:4px; padding:8px; width:260px; max-height:60vh; overflow-y:auto;
-                    background:rgba(15,52,96,0.85); backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px);
-                    border:1px solid rgba(233,69,96,0.4); border-radius:14px;
+                    background:rgba(11,17,23,0.88); backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px);
+                    border:1px solid rgba(77,226,174,0.4); border-radius:14px;
                     color:var(--text);
                     box-shadow:0 10px 36px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.04) inset;
                     transform:translateY(8px); opacity:0; transition:transform 0.18s ease, opacity 0.18s ease;">
@@ -10728,7 +10731,7 @@
                     <div class="resize-handle" id="bot-sidebar-resize-handle"></div>
 
                     <!-- 봇 선택 섹션 -->
-                    <div id="bot-select-section" style="background:rgba(66,133,244,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
+                    <div id="bot-select-section" style="background:color-mix(in srgb, var(--accent) 8%, transparent); border-radius:8px; padding:10px; margin-bottom:8px;">
                         <div class="section-title">봇 선택 <span id="bot-char-count" style="font-size:0.75rem; color:var(--text2); font-weight:normal;"></span></div>
                         <select id="bot-select" onchange="onBotChange()">
                             <option value="">-- 봇 선택 --</option>
@@ -10743,7 +10746,7 @@
 
                     <!-- 캐릭터 관리 섹션 (봇 선택 시 표시) -->
                     <div id="bot-char-section" style="display:none;">
-                        <div style="background:rgba(66,133,244,0.12); border-radius:8px; padding:10px; margin-bottom:8px;">
+                        <div style="background:color-mix(in srgb, var(--accent) 12%, transparent); border-radius:8px; padding:10px; margin-bottom:8px;">
                             <div class="section-title">캐릭터</div>
                             <select id="bot-char-select" style="width:100%; margin-bottom:6px; padding:4px 6px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.8rem;">
                                 <option value="">-- 캐릭터 선택 --</option>
@@ -11004,7 +11007,7 @@
                     </div>
 
                     <!-- 캐릭터 섹션 -->
-                    <div style="background:rgba(66,133,244,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
+                    <div style="background:color-mix(in srgb, var(--accent) 8%, transparent); border-radius:8px; padding:10px; margin-bottom:8px;">
                     <div class="section-title">캐릭터</div>
                     <div style="font-size:0.7rem; color:var(--text-secondary); margin-bottom:6px; padding:4px 6px; background:rgba(0,0,0,0.05); border-radius:4px;">
                         프롬프트 조립 순서: LoRA 트리거 → 아티스트 → 품질 → 구도/기타 → 외모 → 표정 → 복장 → 자연어
@@ -11020,7 +11023,7 @@
                     </div>
 
                     <!-- 외모/복장/표정 통합 섹션 -->
-                    <div style="background:rgba(66,133,244,0.12); border-radius:8px; padding:10px; margin-bottom:8px;">
+                    <div style="background:color-mix(in srgb, var(--accent) 12%, transparent); border-radius:8px; padding:10px; margin-bottom:8px;">
                     <div class="section-title">외모 / 복장 / 표정</div>
 
                     <!-- 외모 -->
@@ -11543,7 +11546,7 @@
                     <div class="resize-handle" id="au-sidebar-resize-handle"></div>
 
                     <!-- 캐릭터 관리 섹션 -->
-                    <div style="background:rgba(66,133,244,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
+                    <div style="background:color-mix(in srgb, var(--accent) 8%, transparent); border-radius:8px; padding:10px; margin-bottom:8px;">
                         <div class="section-title">캐릭터 관리</div>
                         <select id="au-character-select" onchange="auOnCharacterChange()">
                             <option value="">-- 캐릭터 선택 --</option>
@@ -23955,7 +23958,7 @@
                 top: '50%',
                 left: '50%',
                 transform: 'translate(-50%, -50%)',
-                background: 'rgba(233, 69, 96, 0.95)',
+                background: 'var(--error)',
                 color: '#fff',
                 padding: '20px 40px',
                 borderRadius: '12px',
@@ -43169,7 +43172,7 @@
                 const charCount = (bot.characters || []).length;
                 const row = document.createElement('div');
                 row.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 10px; border-radius:8px; cursor:pointer; transition:background 0.15s ease;'
-                    + (isSelected ? ' background:rgba(233,69,96,0.18);' : '');
+                    + (isSelected ? ' background:color-mix(in srgb, var(--accent) 18%, transparent);' : '');
                 row.onmouseenter = () => { if (!isSelected) row.style.background = 'rgba(255,255,255,0.06)'; };
                 row.onmouseleave = () => { if (!isSelected) row.style.background = 'transparent'; };
                 row.innerHTML = '<div style="display:flex; flex-direction:column; gap:2px; min-width:0;">'
@@ -49386,7 +49389,7 @@
                 div.id = 'bot-char-detail-sidebar';
                 div.innerHTML = `
                     <button onclick="closeCharacterDetail()" style="width:100%; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:6px 8px; border-radius:4px; cursor:pointer; font-size:0.8rem; margin-bottom:8px;">← 캐릭터 목록으로</button>
-                    <div style="background:rgba(66,133,244,0.08); border-radius:8px; padding:10px;">
+                    <div style="background:color-mix(in srgb, var(--accent) 8%, transparent); border-radius:8px; padding:10px;">
                         <div class="section-title" id="bot-detail-title"></div>
                         <input id="bot-detail-search" type="text" placeholder="🔍 파일명 검색" autocomplete="off"
                             style="width:100%; margin-top:6px; padding:5px 8px; font-size:0.75rem; border:1px solid var(--border); border-radius:4px; background:var(--surface2); color:var(--text); box-sizing:border-box;"
@@ -65418,7 +65421,7 @@
                     const ch = f ? (f.canvas_height || 512) : 512;
                     this.cropRect = {x1: cw*0.1, y1: ch*0.1, x2: cw*0.9, y2: ch*0.9};
                     btn.textContent = '✂ Crop 취소';
-                    btn.style.background = '#e94560';
+                    btn.style.background = 'var(--error)';
                     if (actions) actions.style.display = 'flex';
                 } else {
                     this.cancelCrop();
@@ -65469,7 +65472,7 @@
             render() {
                 const ctx = this.ctx, w = this.canvas.width, h = this.canvas.height;
                 ctx.clearRect(0, 0, w, h);
-                ctx.fillStyle = '#1a1a2e';
+                ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim() || '#0b1117';
                 ctx.fillRect(0, 0, w, h);
                 if (!this.poseData && !this.bgImage) return;
                 ctx.save();
