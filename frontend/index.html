@@ -21,6 +21,25 @@
             --success: #52d47b;
             --warn: #f4b85f;
             --error: #ff6277;
+            --button-primary-bg: #16785a;
+            --button-primary-hover: #197e5f;
+            --button-primary-active: #126348;
+            --button-primary-text: #f2fbf7;
+            --button-secondary-bg: #18252e;
+            --button-secondary-hover: #21333d;
+            --button-secondary-active: #142029;
+            --button-secondary-border: #354750;
+            --button-secondary-text: #cad6d2;
+            --button-danger-bg: #bd4055;
+            --button-danger-hover: #d54d62;
+            --button-danger-text: #fff;
+            --button-success-bg: #257a52;
+            --button-success-hover: #2e9262;
+            --button-success-text: #fff;
+            --button-warning-bg: #985c0e;
+            --button-warning-hover: #b36d13;
+            --button-warning-text: #fff;
+            --button-focus-ring: rgba(77, 226, 174, 0.42);
         }
 
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -143,11 +162,6 @@
             white-space: nowrap;
         }
 
-        .brand-platform {
-            color: var(--chrome-text);
-            font-weight: 750;
-        }
-
         .brand-product {
             color: #c9d4d0;
             font-weight: 520;
@@ -156,13 +170,13 @@
         .version-badge {
             display: inline-flex;
             align-items: center;
-            height: 20px;
-            padding: 0 7px;
+            height: 24px;
+            padding: 0 9px;
             border: 1px solid rgba(77, 226, 174, 0.32);
             border-radius: 999px;
             background: var(--chrome-accent-soft);
             color: var(--chrome-accent);
-            font-size: 0.68rem;
+            font-size: 0.76rem;
             font-weight: 800;
             letter-spacing: 0.05em;
         }
@@ -342,9 +356,9 @@
             }
 
             .version-badge {
-                height: 18px;
-                padding: 0 6px;
-                font-size: 0.61rem;
+                height: 21px;
+                padding: 0 8px;
+                font-size: 0.68rem;
             }
         }
 
@@ -10469,6 +10483,267 @@
             .lighbd-live-card-actions { width: 100%; margin-left: 0; justify-content: flex-end; overflow-x: auto; }
             .lighbd-live-card-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
         }
+
+        /* ─── V5 공용 버튼 대비 시스템 ─── */
+        button {
+            border: 1px solid var(--button-secondary-border);
+            border-radius: 6px;
+            background: var(--button-secondary-bg);
+            color: var(--button-secondary-text);
+            cursor: pointer;
+            font-family: inherit;
+            transition: color 0.16s ease, background 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease, transform 0.16s ease;
+        }
+
+        button:hover:not(:disabled) {
+            border-color: color-mix(in srgb, var(--accent) 48%, var(--button-secondary-border));
+            background: var(--button-secondary-hover);
+            color: var(--text);
+        }
+
+        button:focus-visible {
+            outline: 2px solid var(--accent);
+            outline-offset: 2px;
+            box-shadow: 0 0 0 4px var(--button-focus-ring);
+        }
+
+        button:active:not(:disabled) {
+            transform: translateY(1px);
+        }
+
+        button:disabled,
+        button[aria-disabled="true"] {
+            cursor: not-allowed;
+            filter: saturate(0.6);
+        }
+
+        .card-actions button,
+        .modal-footer button.cancel,
+        .modal-footer button.confirm.secondary,
+        .share-btn,
+        .nm-btn,
+        .load-more-btn,
+        .pose-preset-btn,
+        .crop-ratio-btn,
+        .crop-btn-cancel,
+        .pose-toolbar button,
+        .asset-image-card .card-actions button,
+        .qwen-mask-toolbar button,
+        .qwen-edit-footer button,
+        .qwen-translate-row button,
+        .qwen-item-toolbar button,
+        .qwen-item-library button,
+        .qwen-composite-footer button,
+        .at-btn,
+        .at-fill-secondary-btn,
+        .at-page-btn,
+        .cm-toolbar-btn,
+        .cm-btn,
+        .cm-lock-btn,
+        .pm-filter-btn,
+        .pm-btn,
+        .batch-toolbar-btn,
+        .batch-slot-action-btn,
+        .batch-cache-btn,
+        .ep-btn,
+        .queue-priority-actions button,
+        .lighbd-live-card-actions button {
+            border-color: var(--button-secondary-border);
+            background: var(--button-secondary-bg);
+            color: var(--button-secondary-text);
+            font-weight: 650;
+            transition: color 0.16s ease, background 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease, transform 0.16s ease;
+        }
+
+        .card-actions button:hover:not(:disabled),
+        .modal-footer button.cancel:hover:not(:disabled),
+        .modal-footer button.confirm.secondary:hover:not(:disabled),
+        .share-btn:hover:not(:disabled),
+        .nm-btn:hover:not(:disabled),
+        .load-more-btn:hover:not(:disabled),
+        .pose-preset-btn:hover:not(:disabled),
+        .crop-ratio-btn:hover:not(:disabled),
+        .crop-btn-cancel:hover:not(:disabled),
+        .pose-toolbar button:hover:not(:disabled),
+        .asset-image-card .card-actions button:hover:not(:disabled),
+        .qwen-mask-toolbar button:hover:not(:disabled),
+        .qwen-edit-footer button:hover:not(:disabled),
+        .qwen-translate-row button:hover:not(:disabled),
+        .qwen-item-toolbar button:hover:not(:disabled),
+        .qwen-item-library button:hover:not(:disabled),
+        .qwen-composite-footer button:hover:not(:disabled),
+        .at-btn:hover:not(:disabled),
+        .at-fill-secondary-btn:hover:not(:disabled),
+        .at-page-btn:hover:not(:disabled),
+        .cm-toolbar-btn:hover:not(:disabled),
+        .cm-btn:hover:not(:disabled),
+        .cm-lock-btn:hover:not(:disabled),
+        .pm-filter-btn:hover:not(:disabled),
+        .pm-btn:hover:not(:disabled),
+        .batch-toolbar-btn:hover:not(:disabled),
+        .batch-slot-action-btn:hover:not(:disabled),
+        .batch-cache-btn:hover:not(:disabled),
+        .ep-btn:hover:not(:disabled),
+        .queue-priority-actions button:hover:not(:disabled),
+        .lighbd-live-card-actions button:hover:not(:disabled) {
+            border-color: color-mix(in srgb, var(--accent) 48%, var(--button-secondary-border));
+            background: var(--button-secondary-hover);
+            color: var(--text);
+        }
+
+        .card-actions button.regen-btn,
+        .btn-primary,
+        .btn-patch-comfy-input,
+        .modal-footer button.confirm,
+        .share-btn.primary,
+        .nm-btn-primary,
+        .comfy-installer-btn.primary,
+        .pose-detect-btn,
+        .pose-preset-btn.active,
+        .crop-ratio-btn.active,
+        .crop-btn-apply,
+        .asset-sidebar .inline-add button,
+        .asset-generate-btn,
+        .at-sidebar-btn.active,
+        .at-btn-primary,
+        .at-fill-start,
+        .cm-btn.primary,
+        .cm-mode-toggle button.active,
+        .pm-btn-primary,
+        .batch-toolbar-btn.primary,
+        .batch-bulk-apply-btn,
+        .ep-btn-primary {
+            border-color: var(--button-primary-bg);
+            background: var(--button-primary-bg);
+            color: var(--button-primary-text);
+            font-weight: 750;
+            box-shadow: 0 5px 14px rgba(77, 226, 174, 0.14);
+        }
+
+        .card-actions button.regen-btn:hover:not(:disabled),
+        .btn-primary:hover:not(:disabled),
+        .btn-patch-comfy-input:hover:not(:disabled),
+        .modal-footer button.confirm:hover:not(:disabled),
+        .share-btn.primary:hover:not(:disabled),
+        .nm-btn-primary:hover:not(:disabled),
+        .comfy-installer-btn.primary:hover:not(:disabled),
+        .pose-detect-btn:hover:not(:disabled),
+        .pose-preset-btn.active:hover:not(:disabled),
+        .crop-ratio-btn.active:hover:not(:disabled),
+        .crop-btn-apply:hover:not(:disabled),
+        .asset-sidebar .inline-add button:hover:not(:disabled),
+        .asset-generate-btn:hover:not(:disabled),
+        .at-sidebar-btn.active:hover:not(:disabled),
+        .at-btn-primary:hover:not(:disabled),
+        .at-fill-start:hover:not(:disabled),
+        .cm-btn.primary:hover:not(:disabled),
+        .cm-mode-toggle button.active:hover:not(:disabled),
+        .pm-btn-primary:hover:not(:disabled),
+        .batch-toolbar-btn.primary:hover:not(:disabled),
+        .batch-bulk-apply-btn:hover:not(:disabled),
+        .ep-btn-primary:hover:not(:disabled) {
+            border-color: var(--button-primary-hover);
+            background: var(--button-primary-hover);
+            color: var(--button-primary-text);
+            box-shadow: 0 7px 18px rgba(77, 226, 174, 0.2);
+            filter: none;
+            opacity: 1;
+        }
+
+        .card-actions button.reschedule-btn.scheduled,
+        .nm-btn-success,
+        .cm-btn.success {
+            border-color: color-mix(in srgb, var(--button-success-bg) 72%, white);
+            background: var(--button-success-bg);
+            color: var(--button-success-text);
+        }
+
+        .card-actions button.reschedule-btn.scheduled:hover:not(:disabled),
+        .nm-btn-success:hover:not(:disabled),
+        .cm-btn.success:hover:not(:disabled) {
+            border-color: var(--button-success-hover);
+            background: var(--button-success-hover);
+            color: var(--button-success-text);
+        }
+
+        .card-actions button.delete-backup-btn,
+        .modal-footer button.confirm.danger,
+        .cm-rag-runtime-control .btn.danger,
+        .share-btn.danger,
+        .cm-btn.danger,
+        .pm-btn-danger,
+        .batch-toolbar-btn.danger {
+            border-color: color-mix(in srgb, var(--button-danger-bg) 72%, white);
+            background: var(--button-danger-bg);
+            color: var(--button-danger-text);
+        }
+
+        .card-actions button.delete-backup-btn:hover:not(:disabled),
+        .modal-footer button.confirm.danger:hover:not(:disabled),
+        .cm-rag-runtime-control .btn.danger:hover:not(:disabled),
+        .share-btn.danger:hover:not(:disabled),
+        .cm-btn.danger:hover:not(:disabled),
+        .pm-btn-danger:hover:not(:disabled),
+        .batch-toolbar-btn.danger:hover:not(:disabled) {
+            border-color: var(--button-danger-hover);
+            background: var(--button-danger-hover);
+            color: var(--button-danger-text);
+        }
+
+        button[style*="background:var(--accent"],
+        button[style*="background: var(--accent"] {
+            border-color: var(--button-primary-bg) !important;
+            background: var(--button-primary-bg) !important;
+            color: var(--button-primary-text) !important;
+            font-weight: 700;
+        }
+
+        button[style*="background:var(--accent"]:hover:not(:disabled),
+        button[style*="background: var(--accent"]:hover:not(:disabled) {
+            border-color: var(--button-primary-hover) !important;
+            background: var(--button-primary-hover) !important;
+            color: var(--button-primary-text) !important;
+        }
+
+        button[style*="background:var(--error"],
+        button[style*="background: var(--error"],
+        button[style*="background:#e55" i],
+        button[style*="background: #e55" i] {
+            border-color: var(--button-danger-bg) !important;
+            background: var(--button-danger-bg) !important;
+            color: var(--button-danger-text) !important;
+        }
+
+        button[style*="background:#4caf50" i],
+        button[style*="background: #4caf50" i] {
+            border-color: var(--button-success-bg) !important;
+            background: var(--button-success-bg) !important;
+            color: var(--button-success-text) !important;
+        }
+
+        button[style*="background:#ff9800" i],
+        button[style*="background: #ff9800" i],
+        button[style*="background:#e65100" i],
+        button[style*="background: #e65100" i],
+        button[style*="background:#e8a317" i],
+        button[style*="background: #e8a317" i] {
+            border-color: var(--button-warning-bg) !important;
+            background: var(--button-warning-bg) !important;
+            color: var(--button-warning-text) !important;
+        }
+
+        button[style*="background:rgba(0,180,140"],
+        button[style*="background: rgba(0,180,140"] {
+            border-color: var(--button-primary-bg) !important;
+            background: var(--button-primary-bg) !important;
+            color: var(--button-primary-text) !important;
+        }
+
+        .pm-sidebar-btn.active .pm-sidebar-icon,
+        .custom-select-option:hover {
+            background: var(--button-primary-bg);
+            color: var(--button-primary-text);
+        }
     </style>
 </head>
 <body>
@@ -10481,11 +10756,10 @@
         <div class="brand-lockup">
             <span class="brand-mark" aria-hidden="true"><span class="brand-mark-core"></span></span>
             <div class="brand-copy">
-                <span class="brand-kicker">CREATIVE PIPELINE</span>
+                <span class="brand-kicker">ComfyUI</span>
                 <h1 aria-label="ComfyUI 에셋/삽화 매니저-V5">
-                    <span class="brand-platform">ComfyUI</span>
                     <span class="brand-product">에셋/삽화 매니저</span>
-                    <span class="version-badge">-V5</span>
+                    <span class="version-badge">V5</span>
                 </h1>
             </div>
         </div>
@@ -12838,7 +13112,7 @@
             </div>
             <div class="modal-footer">
                 <button class="cancel" onclick="closeSeedRegenModal()">취소</button>
-                <button class="confirm" style="background:var(--surface2);" onclick="seedRegenAsIs()">🔄 그대로 재생성</button>
+                <button class="confirm secondary" onclick="seedRegenAsIs()">🔄 그대로 재생성</button>
                 <button class="confirm" onclick="seedRegenWithNewSeed()">🎲 시드 바꿔서 재생성</button>
             </div>
         </div>
@@ -18095,7 +18369,7 @@
             </div>
             <div class="modal-footer">
                 <button class="cancel" onclick="document.getElementById('untracked-lora-modal').classList.remove('visible')">취소</button>
-                <button id="untracked-lora-delete-btn" class="confirm" onclick="removeUntrackedLoras()" style="display:none; background: #c0392b;">선택 항목 삭제</button>
+                <button id="untracked-lora-delete-btn" class="confirm danger" onclick="removeUntrackedLoras()" style="display:none;">선택 항목 삭제</button>
             </div>
         </div>
     </div>
@@ -18308,7 +18582,7 @@
             <div class="modal-footer">
                 <button class="cancel" onclick="closeWfTestModal()">닫기</button>
                 <button id="wf-test-start-btn" class="confirm" onclick="startWfTest()">▶ 테스트 시작</button>
-                <button id="wf-test-stop-btn" class="confirm" style="display:none; background:#e74c3c;" onclick="stopWfTest()">■ 중단</button>
+                <button id="wf-test-stop-btn" class="confirm danger" style="display:none;" onclick="stopWfTest()">■ 중단</button>
             </div>
         </div>
     </div>
