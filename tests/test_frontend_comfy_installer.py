@@ -10,6 +10,7 @@ FRONTEND = (
 
 def test_settings_has_comfy_installer_tab_and_key_inputs() -> None:
     assert "switchSettingsTab('comfy_install')" in FRONTEND
+    assert ">업데이트 및 설치</button>" in FRONTEND
     assert 'id="settings-tab-comfy_install"' in FRONTEND
     assert (
         'type="text" id="comfy-installer-civitai-key"' in FRONTEND
@@ -23,6 +24,14 @@ def test_settings_has_comfy_installer_tab_and_key_inputs() -> None:
     assert 'id="comfy-installer-migrate-btn"' in FRONTEND
     assert 'id="comfy-installer-restore-after-success"' not in FRONTEND
     assert "절대 자동 덮어쓰기 안 함" in FRONTEND
+
+
+def test_comfy_installer_uses_polished_step_layout() -> None:
+    assert ".settings-modal.comfy-installer-layout .modal-content" in FRONTEND
+    assert "'comfy-installer-layout'" in FRONTEND
+    assert 'class="comfy-installer-step"' in FRONTEND
+    assert 'class="comfy-installer-card comfy-installer-run-card"' in FRONTEND
+    assert 'class="comfy-installer-card comfy-installer-monitor-card"' in FRONTEND
 
 
 def test_frontend_uses_dedicated_installer_apis_and_does_not_persist_keys() -> None:

@@ -3149,153 +3149,684 @@
         .settings-tab-panel { display: none; }
         .settings-tab-panel.active { display: block; }
 
-        /* ComfyUI Windows 설치기 */
+        /* ComfyUI 실행 관리 */
+        .settings-modal.comfy-runtime-layout .modal-content {
+            width: min(1060px, calc(100vw - 28px));
+            max-width: 1060px;
+            height: min(90vh, 920px);
+            overflow: hidden;
+        }
+        .settings-modal.comfy-runtime-layout .modal-body {
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+            overflow: hidden;
+        }
+        .settings-modal.comfy-runtime-layout #settings-tab-comfy_runtime.active {
+            display: flex;
+            flex: 1;
+            min-height: 0;
+        }
+        .common-comfy-port-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 10px;
+            margin: 8px 0 14px;
+        }
+        .common-comfy-port-card {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            min-width: 0;
+            padding: 12px 14px;
+            border: 1px solid var(--border);
+            border-radius: 9px;
+            background: color-mix(in srgb, var(--surface2) 55%, var(--surface));
+        }
+        .common-comfy-port-index {
+            display: grid;
+            place-items: center;
+            width: 32px;
+            height: 32px;
+            flex: 0 0 32px;
+            border-radius: 8px;
+            background: color-mix(in srgb, var(--accent) 16%, transparent);
+            color: var(--accent);
+            font-size: .72rem;
+            font-weight: 800;
+        }
+        .common-comfy-port-field { flex: 1; min-width: 0; }
+        .common-comfy-port-field label {
+            display: block;
+            margin-bottom: 4px;
+            color: var(--text2);
+            font-size: .68rem;
+            font-weight: 700;
+        }
+        .common-comfy-port-field input { width: 100% !important; box-sizing: border-box; }
+        .comfy-runtime-page {
+            display: flex;
+            flex: 1;
+            flex-direction: column;
+            gap: 10px;
+            min-width: 0;
+            min-height: 0;
+            color: var(--text);
+        }
+        .comfy-runtime-tabs {
+            display: inline-flex;
+            align-self: flex-start;
+            gap: 4px;
+            padding: 4px;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            background: color-mix(in srgb, var(--surface2) 72%, var(--bg));
+        }
+        .comfy-runtime-tab {
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+            padding: 8px 18px;
+            border: 0;
+            border-radius: 7px;
+            background: transparent;
+            color: var(--text2);
+            cursor: pointer;
+            font-size: .78rem;
+            font-weight: 750;
+        }
+        .comfy-runtime-tab:hover { color: var(--text); }
+        .comfy-runtime-tab.active {
+            background: var(--surface);
+            color: var(--text);
+            box-shadow: 0 1px 5px rgba(0,0,0,.25);
+        }
+        .comfy-runtime-tab-dot {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: #777b87;
+            box-shadow: 0 0 0 3px rgba(119,123,135,.12);
+        }
+        .comfy-runtime-tab.running .comfy-runtime-tab-dot {
+            background: #52d47b;
+            box-shadow: 0 0 0 3px rgba(82,212,123,.14), 0 0 9px rgba(82,212,123,.45);
+        }
+        .comfy-runtime-control-card {
+            padding: 13px 14px;
+            border: 1px solid color-mix(in srgb, var(--border) 84%, var(--accent));
+            border-radius: 11px;
+            background: color-mix(in srgb, var(--surface2) 48%, var(--surface));
+        }
+        .comfy-runtime-control-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 11px;
+        }
+        .comfy-runtime-control-title {
+            font-size: .88rem;
+            font-weight: 800;
+        }
+        .comfy-runtime-control-copy {
+            margin-top: 3px;
+            color: var(--text2);
+            font-size: .66rem;
+        }
+        .comfy-runtime-state {
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+            padding: 6px 10px;
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            color: var(--text2);
+            background: var(--surface);
+            font-size: .68rem;
+            font-weight: 750;
+            white-space: nowrap;
+        }
+        .comfy-runtime-state.running {
+            border-color: rgba(82,212,123,.38);
+            color: #78e396;
+            background: rgba(82,212,123,.08);
+        }
+        .comfy-runtime-options {
+            display: grid;
+            grid-template-columns: repeat(5, minmax(0, 1fr));
+            gap: 8px;
+        }
+        .comfy-runtime-option {
+            min-width: 0;
+            padding: 9px 10px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: color-mix(in srgb, var(--surface) 78%, var(--bg));
+        }
+        .comfy-runtime-option.toggle {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+        }
+        .comfy-runtime-option input[type="checkbox"] {
+            width: 16px;
+            height: 16px;
+            flex: 0 0 16px;
+            accent-color: var(--accent);
+            cursor: pointer;
+        }
+        .comfy-runtime-option-label {
+            display: block;
+            color: var(--text);
+            font-size: .7rem;
+            font-weight: 750;
+            line-height: 1.35;
+        }
+        .comfy-runtime-option-note {
+            display: block;
+            margin-top: 2px;
+            overflow: hidden;
+            color: var(--text2);
+            font-size: .59rem;
+            line-height: 1.35;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .comfy-runtime-option select,
+        .comfy-runtime-option input[type="number"] {
+            width: 100%;
+            margin-top: 5px;
+            padding: 6px 7px;
+            box-sizing: border-box;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            outline: none;
+            background: var(--surface2);
+            color: var(--text);
+            font-size: .7rem;
+        }
+        .comfy-runtime-option select:focus,
+        .comfy-runtime-option input[type="number"]:focus { border-color: var(--accent); }
+        .comfy-runtime-fast-warning {
+            display: none;
+            margin-top: 8px;
+            padding: 7px 9px;
+            border: 1px solid rgba(244,184,95,.3);
+            border-radius: 7px;
+            background: rgba(244,184,95,.07);
+            color: #e9bd79;
+            font-size: .63rem;
+            line-height: 1.45;
+        }
+        .comfy-runtime-fast-warning.visible { display: block; }
+        .comfy-runtime-actions {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 10px;
+        }
+        .comfy-runtime-port-pill {
+            margin-right: auto;
+            color: var(--text2);
+            font: 700 .68rem/1.2 Consolas, "Cascadia Mono", monospace;
+        }
+        .comfy-runtime-btn {
+            min-width: 92px;
+            padding: 8px 15px;
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            background: var(--surface);
+            color: var(--text);
+            cursor: pointer;
+            font-size: .72rem;
+            font-weight: 800;
+        }
+        .comfy-runtime-btn.start {
+            border-color: rgba(82,212,123,.4);
+            background: rgba(82,212,123,.12);
+            color: #83e6a0;
+        }
+        .comfy-runtime-btn.stop {
+            border-color: rgba(242,99,116,.4);
+            background: rgba(242,99,116,.1);
+            color: #ff9daa;
+        }
+        .comfy-runtime-btn:hover:not(:disabled) { filter: brightness(1.14); }
+        .comfy-runtime-btn:disabled { opacity: .38; cursor: not-allowed; }
+        .comfy-runtime-terminal-card {
+            display: flex;
+            flex: 1;
+            flex-direction: column;
+            min-height: 210px;
+            overflow: hidden;
+            border: 1px solid #303442;
+            border-radius: 11px;
+            background: #090b10;
+            box-shadow: inset 0 1px 12px rgba(0,0,0,.36);
+        }
+        .comfy-runtime-terminal-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            padding: 8px 11px;
+            border-bottom: 1px solid #292d39;
+            background: #11141c;
+            color: #aeb4c2;
+            font-size: .65rem;
+            font-weight: 750;
+        }
+        .comfy-runtime-terminal-lights { display: inline-flex; gap: 5px; margin-right: 8px; }
+        .comfy-runtime-terminal-lights i { width: 8px; height: 8px; border-radius: 50%; background: #555b69; }
+        .comfy-runtime-terminal-lights i:first-child { background: #ed6a5e; }
+        .comfy-runtime-terminal-lights i:nth-child(2) { background: #f4bf4f; }
+        .comfy-runtime-terminal-lights i:last-child { background: #61c454; }
+        .comfy-runtime-terminal-meta { color: #737b8e; font-weight: 600; }
+        .comfy-runtime-terminal {
+            flex: 1;
+            min-height: 0;
+            margin: 0;
+            padding: 12px 14px;
+            overflow: auto;
+            color: #d6dae4;
+            background: transparent;
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+            tab-size: 4;
+            font: 11px/1.55 Consolas, "Cascadia Mono", monospace;
+        }
+        @media (max-width: 860px) {
+            .comfy-runtime-options { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .settings-modal.comfy-runtime-layout .modal-content {
+                width: min(720px, calc(100vw - 18px));
+            }
+        }
+        @media (max-width: 560px) {
+            .common-comfy-port-grid,
+            .comfy-runtime-options { grid-template-columns: 1fr; }
+            .comfy-runtime-control-head { align-items: flex-start; }
+            .comfy-runtime-actions { flex-wrap: wrap; }
+            .comfy-runtime-port-pill { flex: 1 0 100%; }
+        }
+
+        /* ComfyUI 업데이트 및 설치 */
+        .settings-modal.comfy-installer-layout .modal-content {
+            width: min(980px, calc(100vw - 28px));
+            max-width: 980px;
+        }
         .comfy-installer-page {
             display: grid;
-            gap: 12px;
+            gap: 14px;
             color: var(--text);
         }
         .comfy-installer-hero,
         .comfy-installer-card {
-            border: 1px solid var(--border);
-            border-radius: 10px;
-            background: var(--surface1);
-            padding: 14px;
+            position: relative;
+            overflow: hidden;
+            border: 1px solid color-mix(in srgb, var(--border) 86%, var(--text2));
+            border-radius: 14px;
+            background: color-mix(in srgb, var(--surface) 92%, var(--surface2));
+            padding: 18px;
         }
         .comfy-installer-hero {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 24px;
+            padding: 22px;
+            border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
             background:
-                linear-gradient(135deg, rgba(102, 126, 234, .14), rgba(118, 75, 162, .08)),
-                var(--surface1);
+                radial-gradient(circle at 92% 20%, color-mix(in srgb, #8d70ff 20%, transparent), transparent 28%),
+                linear-gradient(135deg, color-mix(in srgb, var(--accent) 13%, var(--surface)), var(--surface) 64%);
+        }
+        .comfy-installer-hero::after {
+            content: "";
+            position: absolute;
+            right: -46px;
+            bottom: -76px;
+            width: 180px;
+            height: 180px;
+            border: 26px solid color-mix(in srgb, var(--accent) 7%, transparent);
+            border-radius: 50%;
+            pointer-events: none;
+        }
+        .comfy-installer-hero-main {
+            position: relative;
+            z-index: 1;
+            min-width: 0;
+        }
+        .comfy-installer-eyebrow {
+            display: block;
+            margin-bottom: 6px;
+            color: color-mix(in srgb, var(--accent) 72%, var(--text));
+            font-size: .65rem;
+            font-weight: 800;
+            letter-spacing: .14em;
         }
         .comfy-installer-title {
-            margin: 0 0 6px;
-            font-size: 1rem;
+            margin: 0;
             color: var(--text);
+            font-size: 1rem;
+            line-height: 1.35;
+        }
+        .comfy-installer-hero .comfy-installer-title {
+            font-size: 1.18rem;
         }
         .comfy-installer-copy,
-        .comfy-installer-note {
+        .comfy-installer-note,
+        .comfy-installer-section-copy {
             margin: 0;
             color: var(--text2);
             font-size: .78rem;
-            line-height: 1.55;
+            line-height: 1.6;
+        }
+        .comfy-installer-copy {
+            max-width: 680px;
+            margin-top: 8px;
+        }
+        .comfy-installer-copy strong { color: var(--text); }
+        .comfy-installer-hero-badges {
+            position: relative;
+            z-index: 1;
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+            gap: 6px;
+            flex: 0 0 auto;
+        }
+        .comfy-installer-badge {
+            display: inline-flex;
+            align-items: center;
+            min-height: 26px;
+            padding: 0 9px;
+            border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--border));
+            border-radius: 999px;
+            color: color-mix(in srgb, var(--text) 84%, var(--accent));
+            background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+            font-size: .66rem;
+            font-weight: 700;
+            white-space: nowrap;
+        }
+        .comfy-installer-section-head {
+            display: flex;
+            align-items: flex-start;
+            gap: 11px;
+            margin-bottom: 15px;
+        }
+        .comfy-installer-step {
+            display: grid;
+            place-items: center;
+            flex: 0 0 32px;
+            width: 32px;
+            height: 32px;
+            border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--border));
+            border-radius: 10px;
+            color: color-mix(in srgb, var(--accent) 76%, var(--text));
+            background: color-mix(in srgb, var(--accent) 10%, var(--surface2));
+            font-size: .7rem;
+            font-weight: 850;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,.06);
+        }
+        .comfy-installer-section-heading {
+            min-width: 0;
+            padding-top: 1px;
+        }
+        .comfy-installer-section-copy {
+            margin-top: 3px;
+            font-size: .72rem;
+        }
+        .comfy-installer-optional {
+            display: inline-flex;
+            margin-left: 6px;
+            padding: 2px 6px;
+            border-radius: 999px;
+            color: var(--text2);
+            background: color-mix(in srgb, var(--surface2) 62%, transparent);
+            font-size: .58rem;
+            font-weight: 700;
+            vertical-align: 2px;
         }
         .comfy-installer-grid {
             display: grid;
             grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 10px;
+            gap: 12px;
         }
         .comfy-installer-field {
             display: grid;
-            gap: 6px;
+            align-content: start;
+            gap: 7px;
+            min-width: 0;
+            padding: 12px;
+            border: 1px solid color-mix(in srgb, var(--border) 88%, transparent);
+            border-radius: 10px;
+            background: color-mix(in srgb, var(--surface2) 22%, transparent);
         }
         .comfy-installer-field.full { grid-column: 1 / -1; }
         .comfy-installer-field label {
-            font-size: .77rem;
-            font-weight: 650;
             color: var(--text);
+            font-size: .75rem;
+            font-weight: 700;
         }
         .comfy-installer-field input {
             width: 100%;
+            min-height: 38px;
             box-sizing: border-box;
-            padding: 8px 10px;
-            border: 1px solid var(--border);
-            border-radius: 7px;
-            background: var(--surface2);
+            padding: 9px 11px;
+            border: 1px solid color-mix(in srgb, var(--border) 88%, var(--text2));
+            border-radius: 8px;
+            outline: none;
+            background: color-mix(in srgb, var(--surface) 72%, var(--bg));
             color: var(--text);
-            font-size: .8rem;
+            font-size: .79rem;
+            transition: border-color .18s ease, box-shadow .18s ease, background .18s ease;
         }
-        .comfy-installer-field input[type="file"] { padding: 6px; }
+        .comfy-installer-field input:hover {
+            border-color: color-mix(in srgb, var(--border) 58%, var(--text2));
+        }
+        .comfy-installer-field input:focus {
+            border-color: color-mix(in srgb, var(--accent) 72%, var(--border));
+            background: var(--surface);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent);
+        }
+        .comfy-installer-field input[type="file"] { padding: 5px; }
+        .comfy-installer-field input[type="file"]::file-selector-button {
+            margin-right: 9px;
+            padding: 6px 9px;
+            border: 0;
+            border-radius: 6px;
+            color: var(--text);
+            background: color-mix(in srgb, var(--surface2) 68%, var(--surface));
+            cursor: pointer;
+        }
         .comfy-installer-actions {
             display: flex;
             flex-wrap: wrap;
             align-items: center;
-            gap: 8px;
+            gap: 9px;
+        }
+        .comfy-installer-actions .comfy-installer-note {
+            flex: 1 1 260px;
         }
         .comfy-installer-btn {
-            border: 1px solid var(--border);
-            border-radius: 7px;
-            background: var(--surface2);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 36px;
+            border: 1px solid color-mix(in srgb, var(--border) 82%, var(--text2));
+            border-radius: 8px;
+            background: color-mix(in srgb, var(--surface2) 64%, var(--surface));
             color: var(--text);
             padding: 8px 13px;
-            font-size: .78rem;
-            font-weight: 650;
+            font-size: .76rem;
+            font-weight: 700;
             cursor: pointer;
+            transition: transform .16s ease, border-color .16s ease, background .16s ease, box-shadow .16s ease;
+        }
+        .comfy-installer-btn:hover:not(:disabled) {
+            transform: translateY(-1px);
+            border-color: color-mix(in srgb, var(--accent) 46%, var(--border));
+            background: color-mix(in srgb, var(--accent) 8%, var(--surface2));
         }
         .comfy-installer-btn.primary {
-            border-color: var(--accent);
-            background: var(--accent);
+            border-color: color-mix(in srgb, var(--accent) 88%, #fff);
+            background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 72%, #8d70ff));
             color: #fff;
+            box-shadow: 0 7px 18px color-mix(in srgb, var(--accent) 22%, transparent);
+        }
+        .comfy-installer-btn.primary:hover:not(:disabled) {
+            border-color: color-mix(in srgb, var(--accent) 78%, #fff);
+            background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 88%, #fff), color-mix(in srgb, var(--accent) 62%, #8d70ff));
         }
         .comfy-installer-btn.danger {
-            border-color: #b94a58;
-            color: #ff9aa7;
+            border-color: color-mix(in srgb, #e26775 55%, var(--border));
+            color: #ffacb6;
+            background: color-mix(in srgb, #b94a58 10%, var(--surface2));
         }
         .comfy-installer-btn:disabled {
             cursor: default;
-            opacity: .45;
+            opacity: .42;
+            box-shadow: none;
         }
         .comfy-installer-status-grid {
             display: grid;
             grid-template-columns: repeat(4, minmax(0, 1fr));
-            gap: 7px;
-            margin-bottom: 10px;
+            gap: 8px;
+            margin-bottom: 12px;
         }
         .comfy-installer-metric {
             min-width: 0;
-            padding: 8px;
-            border: 1px solid var(--border);
-            border-radius: 7px;
-            background: rgba(0,0,0,.1);
+            padding: 10px 11px;
+            border: 1px solid color-mix(in srgb, var(--border) 86%, transparent);
+            border-radius: 9px;
+            background: color-mix(in srgb, var(--surface2) 26%, transparent);
         }
         .comfy-installer-metric small {
             display: block;
+            margin-bottom: 4px;
             color: var(--text2);
-            font-size: .65rem;
-            margin-bottom: 3px;
+            font-size: .62rem;
+            font-weight: 650;
         }
         .comfy-installer-metric strong {
             display: block;
+            overflow: hidden;
             color: var(--text);
             font-size: .76rem;
-            overflow: hidden;
+            font-weight: 750;
             text-overflow: ellipsis;
             white-space: nowrap;
         }
+        .comfy-installer-run-card {
+            border-color: color-mix(in srgb, var(--accent) 28%, var(--border));
+            background:
+                linear-gradient(120deg, color-mix(in srgb, var(--accent) 5%, transparent), transparent 58%),
+                color-mix(in srgb, var(--surface) 94%, var(--surface2));
+        }
+        .comfy-installer-run-card .comfy-installer-actions {
+            padding: 12px;
+            border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--border));
+            border-radius: 10px;
+            background: color-mix(in srgb, var(--surface2) 22%, transparent);
+        }
+        #comfy-installer-start-btn,
+        #comfy-installer-update-btn {
+            min-width: 120px;
+        }
+        #comfy-installer-update-btn {
+            border-color: color-mix(in srgb, #8d70ff 48%, var(--border));
+            color: color-mix(in srgb, #b9a9ff 78%, var(--text));
+            background: color-mix(in srgb, #8d70ff 10%, var(--surface2));
+        }
+        .comfy-installer-monitor-card {
+            border-color: color-mix(in srgb, #8d70ff 25%, var(--border));
+            background: color-mix(in srgb, var(--surface) 96%, #8d70ff);
+        }
+        .comfy-installer-monitor-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 12px;
+        }
+        .comfy-installer-monitor-title {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin: 0;
+            font-size: .82rem;
+            font-weight: 750;
+        }
+        .comfy-installer-monitor-title::before {
+            content: "";
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: #71d59a;
+            box-shadow: 0 0 0 4px color-mix(in srgb, #71d59a 12%, transparent);
+        }
+        .comfy-installer-monitor-label {
+            color: var(--text2);
+            font-size: .63rem;
+            font-weight: 700;
+            letter-spacing: .05em;
+        }
         .comfy-installer-progress {
-            height: 9px;
+            height: 10px;
             overflow: hidden;
+            border: 1px solid color-mix(in srgb, var(--border) 78%, #8d70ff);
             border-radius: 999px;
-            background: rgba(255,255,255,.08);
-            border: 1px solid var(--border);
+            background: color-mix(in srgb, var(--bg) 70%, var(--surface));
+            box-shadow: inset 0 1px 3px rgba(0,0,0,.18);
         }
         .comfy-installer-progress > span {
             display: block;
-            height: 100%;
             width: 0;
+            height: 100%;
+            border-radius: inherit;
             background: linear-gradient(90deg, var(--accent), #8d70ff);
+            box-shadow: 0 0 12px color-mix(in srgb, #8d70ff 42%, transparent);
             transition: width .25s ease;
+        }
+        .comfy-installer-log-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            margin-top: 13px;
+            color: var(--text2);
+            font-size: .66rem;
+            font-weight: 700;
+        }
+        .comfy-installer-log-head span:last-child {
+            font-family: Consolas, "Cascadia Mono", monospace;
+            font-size: .6rem;
+            font-weight: 500;
         }
         .comfy-installer-log {
             box-sizing: border-box;
             width: 100%;
-            height: 230px;
-            margin: 8px 0 0;
-            padding: 10px;
+            height: 240px;
+            margin: 7px 0 0;
+            padding: 12px 13px;
             overflow: auto;
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            background: #101014;
-            color: #d7d7df;
-            font: 11px/1.5 Consolas, "Cascadia Mono", monospace;
+            border: 1px solid color-mix(in srgb, var(--border) 76%, #8d70ff);
+            border-radius: 10px;
+            background: #0d0e14;
+            color: #d9dbe7;
+            font: 11px/1.55 Consolas, "Cascadia Mono", monospace;
             white-space: pre-wrap;
             word-break: break-word;
+            box-shadow: inset 0 1px 8px rgba(0,0,0,.28);
         }
         .comfy-installer-error {
             display: none;
-            margin-top: 8px;
-            padding: 8px 10px;
-            border-radius: 7px;
-            background: rgba(185, 74, 88, .18);
+            margin-top: 9px;
+            padding: 9px 11px;
+            border: 1px solid color-mix(in srgb, #e26775 36%, transparent);
+            border-radius: 8px;
+            background: color-mix(in srgb, #b94a58 17%, transparent);
             color: #ffadb7;
             font-size: .76rem;
             white-space: pre-wrap;
@@ -3305,15 +3836,24 @@
             flex-wrap: wrap;
             align-items: center;
             gap: 8px;
-            margin-bottom: 9px;
+            margin-bottom: 10px;
+            padding: 9px 10px;
+            border: 1px solid color-mix(in srgb, var(--border) 84%, transparent);
+            border-radius: 10px;
+            background: color-mix(in srgb, var(--surface2) 20%, transparent);
         }
         .comfy-workflow-toolbar select {
-            min-width: 110px;
-            padding: 7px 9px;
-            border: 1px solid var(--border);
-            border-radius: 7px;
-            background: var(--surface2);
+            min-width: 120px;
+            padding: 8px 10px;
+            border: 1px solid color-mix(in srgb, var(--border) 82%, var(--text2));
+            border-radius: 8px;
+            outline: none;
+            background: color-mix(in srgb, var(--surface) 72%, var(--bg));
             color: var(--text);
+        }
+        .comfy-workflow-toolbar select:focus {
+            border-color: color-mix(in srgb, var(--accent) 72%, var(--border));
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent);
         }
         .comfy-workflow-columns {
             display: grid;
@@ -3322,16 +3862,17 @@
         }
         .comfy-workflow-pane {
             min-width: 0;
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            background: rgba(0,0,0,.1);
             overflow: hidden;
+            border: 1px solid color-mix(in srgb, var(--border) 86%, transparent);
+            border-radius: 10px;
+            background: color-mix(in srgb, var(--surface2) 18%, transparent);
         }
         .comfy-workflow-pane > header {
-            padding: 8px 10px;
+            padding: 10px 11px;
             border-bottom: 1px solid var(--border);
-            font-size: .77rem;
-            font-weight: 700;
+            background: color-mix(in srgb, var(--surface2) 25%, transparent);
+            font-size: .74rem;
+            font-weight: 750;
         }
         .comfy-workflow-list {
             max-height: 310px;
@@ -3342,9 +3883,10 @@
             display: grid;
             grid-template-columns: auto minmax(0, 1fr);
             gap: 8px;
-            padding: 7px;
-            border-radius: 6px;
+            padding: 8px;
+            border-radius: 7px;
             font-size: .75rem;
+            transition: background .15s ease;
         }
         .comfy-workflow-item:hover { background: rgba(255,255,255,.045); }
         .comfy-workflow-item strong,
@@ -3360,21 +3902,34 @@
             font-size: .66rem;
         }
         .comfy-workflow-user-file {
-            padding: 7px;
-            border-radius: 6px;
+            padding: 8px;
+            border-radius: 7px;
             font-size: .75rem;
         }
         .comfy-workflow-empty {
-            padding: 18px 10px;
+            padding: 22px 10px;
             color: var(--text2);
             text-align: center;
-            font-size: .75rem;
+            font-size: .73rem;
         }
-        @media (max-width: 720px) {
+        @media (max-width: 760px) {
+            .settings-modal.comfy-installer-layout .modal-content {
+                width: min(680px, calc(100vw - 18px));
+            }
+            .comfy-installer-hero { display: block; }
+            .comfy-installer-hero-badges { justify-content: flex-start; margin-top: 14px; }
             .comfy-installer-grid { grid-template-columns: 1fr; }
             .comfy-installer-field.full { grid-column: auto; }
             .comfy-installer-status-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
             .comfy-workflow-columns { grid-template-columns: 1fr; }
+        }
+        @media (max-width: 520px) {
+            .comfy-installer-hero,
+            .comfy-installer-card { padding: 14px; border-radius: 11px; }
+            .comfy-installer-actions .comfy-installer-btn { flex: 1 1 auto; }
+            #comfy-installer-start-btn,
+            #comfy-installer-update-btn { min-width: calc(50% - 5px); }
+            .comfy-installer-log { height: 200px; }
         }
 
         /* 캐릭터 메이커 설정 */
@@ -14004,6 +14559,7 @@
                     <button class="settings-tab-arrow" id="settings-tab-prev" onclick="scrollSettingsTabs(-1)" title="이전">‹</button>
                     <div class="settings-tab-scroll" id="settings-tab-scroll" onscroll="updateSettingsTabArrows()">
                         <button class="settings-tab-btn active" onclick="switchSettingsTab('common')">공통설정</button>
+                        <button class="settings-tab-btn" onclick="switchSettingsTab('comfy_runtime')">Comfy 실행 관리</button>
                         <button class="settings-tab-btn" onclick="switchSettingsTab('api')">외부 API</button>
                         <button class="settings-tab-btn" onclick="switchSettingsTab('api_route')">외부 API 분기</button>
                         <button class="settings-tab-btn" onclick="switchSettingsTab('illustration')">삽화</button>
@@ -14012,7 +14568,7 @@
                         <button class="settings-tab-btn" onclick="switchSettingsTab('lora')">로라</button>
                         <button class="settings-tab-btn" onclick="switchSettingsTab('queue')">큐</button>
                         <button class="settings-tab-btn" onclick="switchSettingsTab('debug')">디버그</button>
-                        <button class="settings-tab-btn" onclick="switchSettingsTab('comfy_install')">Comfy 설치</button>
+                        <button class="settings-tab-btn" onclick="switchSettingsTab('comfy_install')">업데이트 및 설치</button>
                     </div>
                     <button class="settings-tab-arrow" id="settings-tab-next" onclick="scrollSettingsTabs(1)" title="다음">›</button>
                 </div>
@@ -14021,18 +14577,31 @@
                 <div class="settings-tab-panel active" id="settings-tab-common">
                     <div class="setting-row">
                         <div class="setting-label">
-                            <div class="title">ComfyUI 포트</div>
-                            <div class="desc">ComfyUI 서버가 실행 중인 포트 번호 (기본값: 8188)</div>
+                            <div class="title">ComfyUI 인스턴스 포트</div>
+                            <div class="desc">두 ComfyUI 실행 인스턴스가 각각 사용할 포트입니다.</div>
                         </div>
                     </div>
-                    <div class="form-group" style="margin-top: 8px;">
-                        <input type="number" id="setting-comfyui-port" placeholder="8188" min="1" max="65535" style="width: 120px;">
+                    <div class="common-comfy-port-grid">
+                        <div class="common-comfy-port-card">
+                            <span class="common-comfy-port-index">#1</span>
+                            <div class="common-comfy-port-field">
+                                <label for="setting-comfyui-port">Comfy #1 · 기본 요청</label>
+                                <input type="number" id="setting-comfyui-port" placeholder="8188" min="1" max="65535" oninput="comfyRuntimeRefreshActiveChrome()">
+                            </div>
+                        </div>
+                        <div class="common-comfy-port-card">
+                            <span class="common-comfy-port-index">#2</span>
+                            <div class="common-comfy-port-field">
+                                <label for="setting-comfyui-port-2">Comfy #2 · 보조 실행</label>
+                                <input type="number" id="setting-comfyui-port-2" placeholder="8187" min="1" max="65535" oninput="comfyRuntimeRefreshActiveChrome()">
+                            </div>
+                        </div>
                     </div>
 
-                    <div class="setting-row" style="margin-top: 12px;">
+                    <div class="setting-row" style="margin-top: 4px;">
                         <div class="setting-label">
                             <div class="title">삽화 포트 분리</div>
-                            <div class="desc">삽화 생성을 별도 ComfyUI 인스턴스로 라우팅합니다. 듀얼 GPU 환경에서 유용합니다.</div>
+                            <div class="desc">체크하면 삽화 생성을 Comfy #2 포트로 보냅니다. 체크하지 않아도 Comfy #2는 별도로 실행할 수 있습니다.</div>
                         </div>
                     </div>
                     <div class="form-group" style="margin-top: 8px; display: flex; align-items: center; gap: 12px;">
@@ -14040,7 +14609,7 @@
                             <input type="checkbox" id="setting-illust-port-enabled" style="width: 16px; height: 16px; cursor: pointer;">
                             <span style="font-size: 0.85rem;">분리 사용</span>
                         </label>
-                        <input type="number" id="setting-comfyui-port-illustration" placeholder="8187" min="1" max="65535" style="width: 120px;" disabled>
+                        <span style="font-size:.72rem; color:var(--text2);">삽화 → Comfy #2</span>
                     </div>
 
                     <div class="setting-row">
@@ -14080,6 +14649,76 @@
                     <div class="form-group" style="margin-top: -8px;">
                         <input type="text" id="setting-backup-dir" placeholder="예: D:\backups\comfyui">
                         <div class="hint">절대 경로를 입력하세요</div>
+                    </div>
+                </div>
+
+                <!-- Tab: ComfyUI 실행 관리 -->
+                <div class="settings-tab-panel" id="settings-tab-comfy_runtime">
+                    <div class="comfy-runtime-page">
+                        <div class="comfy-runtime-tabs" role="tablist" aria-label="ComfyUI 실행 인스턴스">
+                            <button type="button" class="comfy-runtime-tab active" id="comfy-runtime-tab-1" onclick="switchComfyRuntimeInstance(1)" role="tab" aria-selected="true">
+                                <span class="comfy-runtime-tab-dot"></span>Comfy #1
+                            </button>
+                            <button type="button" class="comfy-runtime-tab" id="comfy-runtime-tab-2" onclick="switchComfyRuntimeInstance(2)" role="tab" aria-selected="false">
+                                <span class="comfy-runtime-tab-dot"></span>Comfy #2
+                            </button>
+                        </div>
+
+                        <section class="comfy-runtime-control-card">
+                            <div class="comfy-runtime-control-head">
+                                <div>
+                                    <div class="comfy-runtime-control-title" id="comfy-runtime-title">Comfy #1 실행 옵션</div>
+                                    <div class="comfy-runtime-control-copy">변경한 값은 다음 실행에 적용되며, 아래 창에는 ComfyUI 원본 출력이 표시됩니다.</div>
+                                </div>
+                                <span class="comfy-runtime-state" id="comfy-runtime-state">● 중지됨</span>
+                            </div>
+
+                            <div class="comfy-runtime-options">
+                                <label class="comfy-runtime-option toggle" title="--enable-cors-header *">
+                                    <input type="checkbox" id="comfy-runtime-enable-cors" checked>
+                                    <span><span class="comfy-runtime-option-label">CORS 전체 허용</span><span class="comfy-runtime-option-note">--enable-cors-header *</span></span>
+                                </label>
+                                <label class="comfy-runtime-option toggle" title="--listen 0.0.0.0">
+                                    <input type="checkbox" id="comfy-runtime-listen-all" checked>
+                                    <span><span class="comfy-runtime-option-label">외부 접속 허용</span><span class="comfy-runtime-option-note">--listen 0.0.0.0</span></span>
+                                </label>
+                                <label class="comfy-runtime-option toggle" title="실험적 최적화를 모두 활성화합니다.">
+                                    <input type="checkbox" id="comfy-runtime-fast" onchange="comfyRuntimeUpdateFastWarning()">
+                                    <span><span class="comfy-runtime-option-label">Fast 모드</span><span class="comfy-runtime-option-note">--fast · 실험적</span></span>
+                                </label>
+                                <label class="comfy-runtime-option" for="comfy-runtime-vram-mode">
+                                    <span class="comfy-runtime-option-label">VRAM 모드</span>
+                                    <select id="comfy-runtime-vram-mode">
+                                        <option value="auto">자동 (권장)</option>
+                                        <option value="highvram">High VRAM</option>
+                                        <option value="normalvram">Normal VRAM</option>
+                                        <option value="lowvram">Low VRAM</option>
+                                        <option value="novram">No VRAM</option>
+                                    </select>
+                                </label>
+                                <label class="comfy-runtime-option" for="comfy-runtime-cuda-device">
+                                    <span class="comfy-runtime-option-label">GPU 번호</span>
+                                    <input type="number" id="comfy-runtime-cuda-device" min="0" step="1" placeholder="자동">
+                                </label>
+                            </div>
+                            <div class="comfy-runtime-fast-warning" id="comfy-runtime-fast-warning">
+                                ComfyUI가 실험적이며 품질을 저하시킬 수 있는 최적화를 모두 활성화합니다. 충돌이나 결과 변화가 있으면 해제하세요.
+                            </div>
+
+                            <div class="comfy-runtime-actions">
+                                <span class="comfy-runtime-port-pill" id="comfy-runtime-port">127.0.0.1:8188</span>
+                                <button type="button" class="comfy-runtime-btn start" id="comfy-runtime-start" onclick="comfyRuntimeStart()">▶ 실행</button>
+                                <button type="button" class="comfy-runtime-btn stop" id="comfy-runtime-stop" onclick="comfyRuntimeStop()" disabled>■ 종료</button>
+                            </div>
+                        </section>
+
+                        <section class="comfy-runtime-terminal-card">
+                            <div class="comfy-runtime-terminal-head">
+                                <span><span class="comfy-runtime-terminal-lights"><i></i><i></i><i></i></span>ComfyUI CMD 출력</span>
+                                <span class="comfy-runtime-terminal-meta" id="comfy-runtime-terminal-meta">출력 대기</span>
+                            </div>
+                            <pre class="comfy-runtime-terminal" id="comfy-runtime-terminal" role="log" aria-live="polite">ComfyUI를 실행하면 원본 CMD 출력이 여기에 표시됩니다.</pre>
+                        </section>
                     </div>
                 </div>
 
@@ -15720,16 +16359,29 @@
                 <div class="settings-tab-panel" id="settings-tab-comfy_install">
                     <div class="comfy-installer-page">
                         <section class="comfy-installer-hero">
-                            <h3 class="comfy-installer-title">ComfyUI 내장 설치 및 업데이트</h3>
-                            <p class="comfy-installer-copy">
-                                <strong>설치하기</strong>는 독립 Python 환경과 선택한 워크플로우·모델을 전체 검증하고 마지막에 리패치합니다.
-                                <strong>업데이트</strong>는 사용자가 눌렀을 때만 <code>origin/main</code>과 변경된 Comfy 구성요소를 갱신하며
-                                리패치와 워크플로우 E2E는 실행하지 않습니다.
-                            </p>
+                            <div class="comfy-installer-hero-main">
+                                <span class="comfy-installer-eyebrow">COMFYUI MANAGER</span>
+                                <h3 class="comfy-installer-title">ComfyUI 업데이트 및 설치</h3>
+                                <p class="comfy-installer-copy">
+                                    <strong>새로 설치</strong>는 독립 Python 환경과 선택한 워크플로우·모델을 전체 검증하고 마지막에 리패치합니다.
+                                    <strong>빠른 업데이트</strong>는 요청한 경우에만 <code>origin/main</code>과 변경된 구성요소를 갱신합니다.
+                                </p>
+                            </div>
+                            <div class="comfy-installer-hero-badges" aria-label="설치 방식">
+                                <span class="comfy-installer-badge">Windows 전용</span>
+                                <span class="comfy-installer-badge">독립 환경</span>
+                                <span class="comfy-installer-badge">수동 실행</span>
+                            </div>
                         </section>
 
                         <section class="comfy-installer-card">
-                            <h3 class="comfy-installer-title">1. 시스템 검사</h3>
+                            <div class="comfy-installer-section-head">
+                                <span class="comfy-installer-step" aria-hidden="true">01</span>
+                                <div class="comfy-installer-section-heading">
+                                    <h3 class="comfy-installer-title">시스템 검사</h3>
+                                    <p class="comfy-installer-section-copy">설치 전에 GPU, 필수 도구와 저장 공간을 확인합니다.</p>
+                                </div>
+                            </div>
                             <div class="comfy-installer-status-grid">
                                 <div class="comfy-installer-metric"><small>설치 위치</small><strong id="comfy-installer-root">확인 전</strong></div>
                                 <div class="comfy-installer-metric"><small>GPU 프로필</small><strong id="comfy-installer-gpu">확인 전</strong></div>
@@ -15743,7 +16395,13 @@
                         </section>
 
                         <section class="comfy-installer-card">
-                            <h3 class="comfy-installer-title">2. 인증 및 워크플로우 팩</h3>
+                            <div class="comfy-installer-section-head">
+                                <span class="comfy-installer-step" aria-hidden="true">02</span>
+                                <div class="comfy-installer-section-heading">
+                                    <h3 class="comfy-installer-title">인증 및 워크플로우 팩</h3>
+                                    <p class="comfy-installer-section-copy">모델 다운로드 권한을 저장하고 암호화된 워크플로우 팩을 준비합니다.</p>
+                                </div>
+                            </div>
                             <div class="comfy-installer-grid">
                                 <div class="comfy-installer-field">
                                     <label for="comfy-installer-civitai-key">Civitai API 키</label>
@@ -15761,13 +16419,19 @@
                                 </div>
                             </div>
                             <div class="comfy-installer-actions" style="margin-top:10px;">
-                                <button type="button" class="comfy-installer-btn primary" id="comfy-installer-unpack-btn" onclick="comfyInstallerUnpackPack()">풀기</button>
+                                <button type="button" class="comfy-installer-btn primary" id="comfy-installer-unpack-btn" onclick="comfyInstallerUnpackPack()">워크플로우 팩 풀기</button>
                                 <span class="comfy-installer-note">Civitai 키는 평문으로 저장하고 다시 표시합니다. 워크플로우 팩 키만 임시로 사용합니다.</span>
                             </div>
                         </section>
 
                         <section class="comfy-installer-card">
-                            <h3 class="comfy-installer-title">3. 가져올 워크플로우 선택</h3>
+                            <div class="comfy-installer-section-head">
+                                <span class="comfy-installer-step" aria-hidden="true">03</span>
+                                <div class="comfy-installer-section-heading">
+                                    <h3 class="comfy-installer-title">가져올 워크플로우 선택</h3>
+                                    <p class="comfy-installer-section-copy">배포 버전과 설치할 워크플로우를 선택합니다. 사용자 사본은 보존됩니다.</p>
+                                </div>
+                            </div>
                             <div class="comfy-workflow-toolbar">
                                 <label class="comfy-installer-note" for="comfy-installer-release-select">배포 버전</label>
                                 <select id="comfy-installer-release-select" onchange="comfyInstallerRenderWorkflowLibrary()"></select>
@@ -15791,11 +16455,17 @@
                             </p>
                         </section>
 
-                        <section class="comfy-installer-card">
-                            <h3 class="comfy-installer-title">4. 설치 또는 빠른 업데이트</h3>
+                        <section class="comfy-installer-card comfy-installer-run-card">
+                            <div class="comfy-installer-section-head">
+                                <span class="comfy-installer-step" aria-hidden="true">04</span>
+                                <div class="comfy-installer-section-heading">
+                                    <h3 class="comfy-installer-title">설치 및 업데이트 실행</h3>
+                                    <p class="comfy-installer-section-copy">새 환경을 구성하거나 기존 내장 설치를 빠르게 갱신합니다.</p>
+                                </div>
+                            </div>
                             <div class="comfy-installer-actions">
-                                <button type="button" class="comfy-installer-btn primary" id="comfy-installer-start-btn" onclick="comfyInstallerStart()">설치하기</button>
-                                <button type="button" class="comfy-installer-btn" id="comfy-installer-update-btn" onclick="comfyInstallerStartUpdate()">업데이트</button>
+                                <button type="button" class="comfy-installer-btn primary" id="comfy-installer-start-btn" onclick="comfyInstallerStart()">새로 설치</button>
+                                <button type="button" class="comfy-installer-btn" id="comfy-installer-update-btn" onclick="comfyInstallerStartUpdate()">빠른 업데이트</button>
                                 <button type="button" class="comfy-installer-btn danger" id="comfy-installer-cancel-btn" onclick="comfyInstallerCancel()" disabled>안전하게 중단</button>
                             </div>
                             <p class="comfy-installer-note" style="margin-top:9px;">
@@ -15805,7 +16475,13 @@
                         </section>
 
                         <section class="comfy-installer-card">
-                            <h3 class="comfy-installer-title">5. 기존 ComfyUI 사용자 데이터 이사</h3>
+                            <div class="comfy-installer-section-head">
+                                <span class="comfy-installer-step" aria-hidden="true">05</span>
+                                <div class="comfy-installer-section-heading">
+                                    <h3 class="comfy-installer-title">기존 사용자 데이터 이사 <span class="comfy-installer-optional">선택 사항</span></h3>
+                                    <p class="comfy-installer-section-copy">기존 ComfyUI의 LoRA와 입력 캐시를 내장 설치로 안전하게 복사합니다.</p>
+                                </div>
+                            </div>
                             <div class="comfy-installer-grid">
                                 <div class="comfy-installer-field full">
                                     <label for="comfy-installer-old-root">기존 ComfyUI 폴더</label>
@@ -15818,7 +16494,11 @@
                             </div>
                         </section>
 
-                        <section class="comfy-installer-card">
+                        <section class="comfy-installer-card comfy-installer-monitor-card">
+                            <div class="comfy-installer-monitor-head">
+                                <h3 class="comfy-installer-monitor-title">실행 상태</h3>
+                                <span class="comfy-installer-monitor-label">LIVE MONITOR</span>
+                            </div>
                             <div class="comfy-installer-status-grid">
                                 <div class="comfy-installer-metric"><small>상태</small><strong id="comfy-installer-state">대기</strong></div>
                                 <div class="comfy-installer-metric"><small>단계</small><strong id="comfy-installer-phase">0 / 16</strong></div>
@@ -15828,6 +16508,7 @@
                             <div class="comfy-installer-progress" aria-label="ComfyUI 설치 진행률"><span id="comfy-installer-progress-bar"></span></div>
                             <p class="comfy-installer-note" id="comfy-installer-progress-note" style="margin-top:7px;">설치 대기 중</p>
                             <div class="comfy-installer-error" id="comfy-installer-error"></div>
+                            <div class="comfy-installer-log-head"><span>실행 로그</span><span>COMFY INSTALLER</span></div>
                             <pre class="comfy-installer-log" id="comfy-installer-log" role="log" aria-live="polite">설치 로그가 여기에 표시됩니다.</pre>
                         </section>
                     </div>
@@ -19139,6 +19820,305 @@
             }
         }
 
+        // ─── ComfyUI 실행 관리 ───
+        const COMFY_RUNTIME_PROFILE_DEFAULTS = Object.freeze({
+            enable_cors: true,
+            listen_all: true,
+            fast: false,
+            vram_mode: 'auto',
+            cuda_device: null,
+        });
+        let comfyRuntimeActiveInstance = 1;
+        let comfyRuntimeProfilesInitialized = false;
+        let comfyRuntimeProfiles = {
+            1: { ...COMFY_RUNTIME_PROFILE_DEFAULTS },
+            2: { ...COMFY_RUNTIME_PROFILE_DEFAULTS },
+        };
+        let comfyRuntimeLogSeq = { 1: 0, 2: 0 };
+        let comfyRuntimeLogText = { 1: '', 2: '' };
+        let comfyRuntimeStatuses = { 1: null, 2: null };
+        let comfyRuntimePollTimer = null;
+        let comfyRuntimePollBusy = false;
+        let comfyRuntimeActionBusy = false;
+
+        function comfyRuntimeNormalizeProfile(raw) {
+            const source = raw && typeof raw === 'object' ? raw : {};
+            const cudaNumber = source.cuda_device === null || source.cuda_device === '' || source.cuda_device === undefined
+                ? null
+                : Number.parseInt(source.cuda_device, 10);
+            const vramMode = ['auto', 'highvram', 'normalvram', 'lowvram', 'novram'].includes(source.vram_mode)
+                ? source.vram_mode
+                : 'auto';
+            return {
+                enable_cors: source.enable_cors === undefined ? true : source.enable_cors === true,
+                listen_all: source.listen_all === undefined ? true : source.listen_all === true,
+                fast: source.fast === true,
+                vram_mode: vramMode,
+                cuda_device: Number.isInteger(cudaNumber) && cudaNumber >= 0 ? cudaNumber : null,
+            };
+        }
+
+        function comfyRuntimeInitializeProfiles(config) {
+            const stored = config?.comfy_launch_profiles || {};
+            comfyRuntimeProfiles = {
+                1: comfyRuntimeNormalizeProfile(stored['1']),
+                2: comfyRuntimeNormalizeProfile(stored['2']),
+            };
+            comfyRuntimeProfilesInitialized = true;
+            comfyRuntimeApplyActiveProfile();
+            comfyRuntimeRefreshActiveChrome();
+        }
+
+        function comfyRuntimeCaptureActiveProfile() {
+            if (!comfyRuntimeProfilesInitialized) return;
+            const cudaRaw = document.getElementById('comfy-runtime-cuda-device')?.value.trim() || '';
+            comfyRuntimeProfiles[comfyRuntimeActiveInstance] = comfyRuntimeNormalizeProfile({
+                enable_cors: !!document.getElementById('comfy-runtime-enable-cors')?.checked,
+                listen_all: !!document.getElementById('comfy-runtime-listen-all')?.checked,
+                fast: !!document.getElementById('comfy-runtime-fast')?.checked,
+                vram_mode: document.getElementById('comfy-runtime-vram-mode')?.value || 'auto',
+                cuda_device: cudaRaw,
+            });
+        }
+
+        function comfyRuntimeApplyActiveProfile() {
+            const profile = comfyRuntimeProfiles[comfyRuntimeActiveInstance]
+                || { ...COMFY_RUNTIME_PROFILE_DEFAULTS };
+            const cors = document.getElementById('comfy-runtime-enable-cors');
+            const listen = document.getElementById('comfy-runtime-listen-all');
+            const fast = document.getElementById('comfy-runtime-fast');
+            const vram = document.getElementById('comfy-runtime-vram-mode');
+            const cuda = document.getElementById('comfy-runtime-cuda-device');
+            if (cors) cors.checked = profile.enable_cors;
+            if (listen) listen.checked = profile.listen_all;
+            if (fast) fast.checked = profile.fast;
+            if (vram) vram.value = profile.vram_mode;
+            if (cuda) cuda.value = profile.cuda_device === null ? '' : String(profile.cuda_device);
+            comfyRuntimeUpdateFastWarning();
+        }
+
+        function comfyRuntimeProfilesForSave() {
+            comfyRuntimeCaptureActiveProfile();
+            return {
+                '1': comfyRuntimeNormalizeProfile(comfyRuntimeProfiles[1]),
+                '2': comfyRuntimeNormalizeProfile(comfyRuntimeProfiles[2]),
+            };
+        }
+
+        function comfyRuntimePort(instanceId) {
+            const inputId = Number(instanceId) === 2 ? 'setting-comfyui-port-2' : 'setting-comfyui-port';
+            const fallback = Number(instanceId) === 2 ? 8187 : 8188;
+            return Number.parseInt(document.getElementById(inputId)?.value, 10) || fallback;
+        }
+
+        function comfyRuntimeUpdateFastWarning() {
+            const warning = document.getElementById('comfy-runtime-fast-warning');
+            warning?.classList.toggle('visible', !!document.getElementById('comfy-runtime-fast')?.checked);
+        }
+
+        function comfyRuntimeStateLabel(status) {
+            if (!status) return '● 상태 확인 중';
+            if (status.running) return `● 실행 중${status.pid ? ` · PID ${status.pid}` : ''}`;
+            if (status.state === 'starting') return '● 시작 중';
+            if (status.state === 'stopping') return '● 종료 중';
+            if (status.state === 'exited') {
+                return `● 종료됨${status.exit_code !== null ? ` · 코드 ${status.exit_code}` : ''}`;
+            }
+            return '● 중지됨';
+        }
+
+        function comfyRuntimeRefreshActiveChrome() {
+            const instanceId = comfyRuntimeActiveInstance;
+            const status = comfyRuntimeStatuses[instanceId];
+            const title = document.getElementById('comfy-runtime-title');
+            const port = document.getElementById('comfy-runtime-port');
+            const state = document.getElementById('comfy-runtime-state');
+            const start = document.getElementById('comfy-runtime-start');
+            const stop = document.getElementById('comfy-runtime-stop');
+            const profile = comfyRuntimeProfiles[instanceId] || COMFY_RUNTIME_PROFILE_DEFAULTS;
+            if (title) title.textContent = `Comfy #${instanceId} 실행 옵션`;
+            if (port) port.textContent = `${profile.listen_all ? '0.0.0.0' : '127.0.0.1'}:${comfyRuntimePort(instanceId)}`;
+            if (state) {
+                state.textContent = comfyRuntimeStateLabel(status);
+                state.classList.toggle('running', !!status?.running);
+            }
+            if (start) start.disabled = comfyRuntimeActionBusy || !!status?.running;
+            if (stop) stop.disabled = comfyRuntimeActionBusy || !status?.running;
+        }
+
+        function comfyRuntimeRenderTerminal(instanceId) {
+            if (Number(instanceId) !== comfyRuntimeActiveInstance) return;
+            const terminal = document.getElementById('comfy-runtime-terminal');
+            if (!terminal) return;
+            terminal.textContent = comfyRuntimeLogText[instanceId]
+                || 'ComfyUI를 실행하면 원본 CMD 출력이 여기에 표시됩니다.';
+            terminal.scrollTop = terminal.scrollHeight;
+        }
+
+        function comfyRuntimeApplyStatus(payload) {
+            const instanceId = Number(payload?.instance_id);
+            if (![1, 2].includes(instanceId)) {
+                console.error('[COMFY_RUNTIME] 잘못된 상태 응답:', payload);
+                return;
+            }
+            comfyRuntimeStatuses[instanceId] = payload;
+            const tab = document.getElementById(`comfy-runtime-tab-${instanceId}`);
+            tab?.classList.toggle('running', !!payload.running);
+
+            if (payload.log_reset) comfyRuntimeLogText[instanceId] = '';
+            const chunks = Array.isArray(payload.logs) ? payload.logs : [];
+            if (chunks.length) {
+                comfyRuntimeLogText[instanceId] += chunks.map(item => String(item?.text || '')).join('');
+                if (comfyRuntimeLogText[instanceId].length > 1500000) {
+                    comfyRuntimeLogText[instanceId] = comfyRuntimeLogText[instanceId].slice(-1200000);
+                }
+            }
+            comfyRuntimeLogSeq[instanceId] = Number(payload.log_seq) || 0;
+
+            if (instanceId === comfyRuntimeActiveInstance) {
+                const terminal = document.getElementById('comfy-runtime-terminal');
+                const wasAtBottom = !terminal
+                    || terminal.scrollHeight - terminal.scrollTop - terminal.clientHeight < 70;
+                if (terminal && (chunks.length || payload.log_reset)) {
+                    terminal.textContent = comfyRuntimeLogText[instanceId]
+                        || 'ComfyUI를 실행하면 원본 CMD 출력이 여기에 표시됩니다.';
+                    if (wasAtBottom) terminal.scrollTop = terminal.scrollHeight;
+                }
+                const meta = document.getElementById('comfy-runtime-terminal-meta');
+                if (meta) {
+                    meta.textContent = payload.running
+                        ? `PID ${payload.pid} · PORT ${payload.port}`
+                        : (payload.exit_code !== null && payload.exit_code !== undefined
+                            ? `EXIT ${payload.exit_code}`
+                            : '출력 대기');
+                }
+                comfyRuntimeRefreshActiveChrome();
+            }
+        }
+
+        async function comfyRuntimePollOne(instanceId) {
+            const params = new URLSearchParams({
+                instance: String(instanceId),
+                after: String(comfyRuntimeLogSeq[instanceId] || 0),
+            });
+            const payload = await fetchJSON(`/api/comfy-runtime/status?${params}`);
+            comfyRuntimeApplyStatus(payload);
+        }
+
+        async function comfyRuntimePollAll() {
+            if (comfyRuntimePollBusy) return;
+            comfyRuntimePollBusy = true;
+            try {
+                await Promise.all([comfyRuntimePollOne(1), comfyRuntimePollOne(2)]);
+            } catch (error) {
+                console.error('[COMFY_RUNTIME] 상태/로그 조회 실패:', error);
+                const meta = document.getElementById('comfy-runtime-terminal-meta');
+                if (meta) meta.textContent = '상태 조회 실패';
+            } finally {
+                comfyRuntimePollBusy = false;
+                if (document.getElementById('settings-tab-comfy_runtime')?.classList.contains('active')) {
+                    comfyRuntimePollTimer = window.setTimeout(comfyRuntimePollAll, 800);
+                }
+            }
+        }
+
+        function comfyRuntimeStartPolling() {
+            comfyRuntimeStopPolling();
+            void comfyRuntimePollAll();
+        }
+
+        function comfyRuntimeStopPolling() {
+            if (comfyRuntimePollTimer !== null) {
+                window.clearTimeout(comfyRuntimePollTimer);
+                comfyRuntimePollTimer = null;
+            }
+        }
+
+        function switchComfyRuntimeInstance(instanceId) {
+            const nextInstance = Number(instanceId) === 2 ? 2 : 1;
+            comfyRuntimeCaptureActiveProfile();
+            comfyRuntimeActiveInstance = nextInstance;
+            for (const id of [1, 2]) {
+                const tab = document.getElementById(`comfy-runtime-tab-${id}`);
+                tab?.classList.toggle('active', id === nextInstance);
+                tab?.setAttribute('aria-selected', id === nextInstance ? 'true' : 'false');
+            }
+            comfyRuntimeApplyActiveProfile();
+            comfyRuntimeRenderTerminal(nextInstance);
+            comfyRuntimeRefreshActiveChrome();
+            const status = comfyRuntimeStatuses[nextInstance];
+            const meta = document.getElementById('comfy-runtime-terminal-meta');
+            if (meta) {
+                meta.textContent = status?.running
+                    ? `PID ${status.pid} · PORT ${status.port}`
+                    : (status?.exit_code !== null && status?.exit_code !== undefined
+                        ? `EXIT ${status.exit_code}`
+                        : '출력 대기');
+            }
+        }
+
+        async function comfyRuntimeStart() {
+            comfyRuntimeCaptureActiveProfile();
+            const instanceId = comfyRuntimeActiveInstance;
+            const port = comfyRuntimePort(instanceId);
+            if (!Number.isInteger(port) || port < 1 || port > 65535) {
+                console.error('[COMFY_RUNTIME] 실행 포트 검증 실패:', { instanceId, port });
+                showToast('ComfyUI 포트는 1~65535 사이여야 합니다.', 'error');
+                return;
+            }
+            comfyRuntimeActionBusy = true;
+            comfyRuntimeRefreshActiveChrome();
+            comfyRuntimeLogSeq[instanceId] = 0;
+            comfyRuntimeLogText[instanceId] = '';
+            comfyRuntimeRenderTerminal(instanceId);
+            try {
+                const payload = await fetchJSON('/api/comfy-runtime/start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        instance_id: instanceId,
+                        port,
+                        profile: comfyRuntimeProfiles[instanceId],
+                    }),
+                });
+                comfyRuntimeApplyStatus(payload);
+                showToast(`Comfy #${instanceId} 실행을 시작했습니다.`, 'success');
+            } catch (error) {
+                console.error(`[COMFY_RUNTIME] Comfy #${instanceId} 실행 실패:`, error);
+                showToast(`Comfy #${instanceId} 실행 실패: ${error.message || error}`, 'error');
+                await comfyRuntimePollOne(instanceId).catch(pollError => {
+                    console.error('[COMFY_RUNTIME] 실행 실패 후 상태 조회 실패:', pollError);
+                });
+            } finally {
+                comfyRuntimeActionBusy = false;
+                comfyRuntimeRefreshActiveChrome();
+            }
+        }
+
+        async function comfyRuntimeStop() {
+            const instanceId = comfyRuntimeActiveInstance;
+            comfyRuntimeActionBusy = true;
+            comfyRuntimeRefreshActiveChrome();
+            try {
+                const payload = await fetchJSON('/api/comfy-runtime/stop', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ instance_id: instanceId }),
+                });
+                comfyRuntimeApplyStatus(payload);
+                showToast(`Comfy #${instanceId}를 종료했습니다.`, 'success');
+            } catch (error) {
+                console.error(`[COMFY_RUNTIME] Comfy #${instanceId} 종료 실패:`, error);
+                showToast(`Comfy #${instanceId} 종료 실패: ${error.message || error}`, 'error');
+            } finally {
+                comfyRuntimeActionBusy = false;
+                comfyRuntimeRefreshActiveChrome();
+                await comfyRuntimePollOne(instanceId).catch(pollError => {
+                    console.error('[COMFY_RUNTIME] 종료 후 상태 조회 실패:', pollError);
+                });
+            }
+        }
+
         // ─── ComfyUI Windows 설치기 ───
         let comfyInstallerLastLogSeq = 0;
         let comfyInstallerPollTimer = null;
@@ -19605,6 +20585,14 @@
                 'character-maker-layout',
                 tabName === 'character_maker',
             );
+            document.getElementById('settings-modal')?.classList.toggle(
+                'comfy-installer-layout',
+                tabName === 'comfy_install',
+            );
+            document.getElementById('settings-modal')?.classList.toggle(
+                'comfy-runtime-layout',
+                tabName === 'comfy_runtime',
+            );
             if (tabName === 'character_maker') {
                 void cmRefreshRagArtifactStatus(false);
                 void cmRefreshRagRuntimeStatus(false);
@@ -19616,6 +20604,12 @@
                 if (!comfyInstallerPreflightLoaded) {
                     void comfyInstallerRunPreflight(true);
                 }
+            }
+            if (tabName === 'comfy_runtime') {
+                switchComfyRuntimeInstance(comfyRuntimeActiveInstance);
+                comfyRuntimeStartPolling();
+            } else {
+                comfyRuntimeStopPolling();
             }
             // 활성 탭이 보이도록 최소 스크롤.
             // 이전에는 활성 탭을 우측 끝으로 밀어붙이는(scrollTo right) 로직 때문에,
@@ -19665,12 +20659,10 @@
             // 삽화 포트 분리 설정
             const illustPortEnabled = currentConfig.comfyui_port_illustration != null;
             document.getElementById('setting-illust-port-enabled').checked = illustPortEnabled;
-            document.getElementById('setting-comfyui-port-illustration').value = currentConfig.comfyui_port_illustration || 8187;
-            document.getElementById('setting-comfyui-port-illustration').disabled = !illustPortEnabled;
-            // 삽화 포트 토글 이벤트
-            document.getElementById('setting-illust-port-enabled').addEventListener('change', function() {
-                document.getElementById('setting-comfyui-port-illustration').disabled = !this.checked;
-            });
+            document.getElementById('setting-comfyui-port-2').value = currentConfig.comfyui_port_2
+                || currentConfig.comfyui_port_illustration
+                || 8187;
+            comfyRuntimeInitializeProfiles(currentConfig);
             document.getElementById('setting-send-original').checked = currentConfig.send_original || false;
             document.getElementById('setting-webp-quality').disabled = currentConfig.send_original || false;
             document.getElementById('setting-webp-quality').value = currentConfig.webp_quality || 85;
@@ -20436,6 +21428,7 @@
         }
 
         function closeSettingsModal() {
+            comfyRuntimeStopPolling();
             document.getElementById('settings-modal').classList.remove('visible');
             // 모든 자동완성 닫기
             document.querySelectorAll('.autocomplete-list').forEach(list => list.classList.remove('visible'));
@@ -20736,9 +21729,11 @@
             const config = {
                 data_saving_mode: currentConfig.data_saving_mode || false,
                 comfyui_port: parseInt(document.getElementById('setting-comfyui-port').value) || 8188,
+                comfyui_port_2: parseInt(document.getElementById('setting-comfyui-port-2').value) || 8187,
                 comfyui_port_illustration: document.getElementById('setting-illust-port-enabled').checked
-                    ? (parseInt(document.getElementById('setting-comfyui-port-illustration').value) || 8187)
+                    ? (parseInt(document.getElementById('setting-comfyui-port-2').value) || 8187)
                     : null,
+                comfy_launch_profiles: comfyRuntimeProfilesForSave(),
                 send_original: document.getElementById('setting-send-original').checked,
                 webp_quality: parseInt(document.getElementById('setting-webp-quality').value) || 85,
                 backup_webp_quality: parseInt(document.getElementById('setting-backup-webp-quality').value) || 80,

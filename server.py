@@ -36,7 +36,11 @@ import re
 import math
 import aiohttp
 from aiohttp import web
-from frontend_auth import FrontendAuthController, FrontendAuthManager
+from frontend_auth import (
+    SESSION_COOKIE_NAME,
+    FrontendAuthController,
+    FrontendAuthManager,
+)
 from frontend_ws_manager import FrontendWsConnectionManager
 from io import BytesIO
 from PIL import Image
@@ -106,6 +110,12 @@ import workflow_profiles
 import importlib.util
 from comfy_installer.http_api import register_comfy_installer_routes
 from comfy_installer.input_patcher import patch_comfy_input
+from comfy_runtime import (
+    DEFAULT_COMFY_LAUNCH_PROFILES,
+    ComfyRuntimeValidationError,
+    normalize_comfy_launch_profiles,
+    register_comfy_runtime_routes,
+)
 
 # ─── 설정 ───────────────────────────────────────────────
 HOST = "0.0.0.0"
@@ -158,7 +168,9 @@ def _llm_route_defaults(
 # 기본 설정값
 DEFAULT_CONFIG = {
     "comfyui_port": 8188,  # ComfyUI 서버 포트
+    "comfyui_port_2": 8187,  # 두 번째 ComfyUI 실행 포트
     "comfyui_port_illustration": None,  # 삽화 전용 포트 (null=메인 포트 사용)
+    "comfy_launch_profiles": copy.deepcopy(DEFAULT_COMFY_LAUNCH_PROFILES),
     "comfy_workflow_source_path": "",
     "data_saving_mode": False,
     "send_original": False,  # 전송 시 원본 무변환 전송
@@ -576,6 +588,19 @@ def load_config() -> dict:
                     merged["llm_queue_type_order"],
                 ) = normalize_queue_priority_orders(config)
                 merged["llm_routing"] = _merge_llm_routing_config(config)
+                try:
+                    merged["comfy_launch_profiles"] = normalize_comfy_launch_profiles(
+                        config.get("comfy_launch_profiles")
+                    )
+                except ComfyRuntimeValidationError as e:
+                    print(
+                        "[CONFIG] ComfyUI 실행 프로필 로드 실패, 기본값을 사용합니다: "
+                        f"value={config.get('comfy_launch_profiles')!r}, error={e}"
+                    )
+                    traceback.print_exc()
+                    merged["comfy_launch_profiles"] = copy.deepcopy(
+                        DEFAULT_COMFY_LAUNCH_PROFILES
+                    )
                 for legacy_key in _LEGACY_LLM_RETRY_KEYS:
                     merged.pop(legacy_key, None)
                 # 레거시 서비스(openai-compat/customapi) -> openai 마이그레이션
@@ -9683,6 +9708,19 @@ async def handle_api_config(request: web.Request) -> web.Response:
                     )
                 body["asset_workflow_type"] = normalized_asset_type
 
+            if "comfy_launch_profiles" in body:
+                try:
+                    body["comfy_launch_profiles"] = normalize_comfy_launch_profiles(
+                        body.get("comfy_launch_profiles")
+                    )
+                except ComfyRuntimeValidationError as e:
+                    print(
+                        "[CONFIG] ComfyUI 실행 프로필 저장 거부: "
+                        f"value={body.get('comfy_launch_profiles')!r}, error={e}"
+                    )
+                    traceback.print_exc()
+                    return web.json_response({"error": str(e)}, status=400)
+
             if "asset_edit_tool" in body:
                 raw_edit_tool = str(
                     body.get("asset_edit_tool") or ""
@@ -10849,6 +10887,13 @@ register_comfy_installer_routes(
     project_root=BASE_DIR,
     config_path=CONFIG_FILE,
     requirements_dir=os.path.join(BASE_DIR, "요구사항"),
+)
+register_comfy_runtime_routes(
+    app,
+    project_root=BASE_DIR,
+    authorize=lambda request: frontend_auth_manager.verify_session(
+        request.cookies.get(SESSION_COOKIE_NAME)
+    ),
 )
 # ─── 디버그 워크플로우 실행 API ──────────────────────────────
 async def handle_api_debug_workflow(request: web.Request) -> web.Response:
