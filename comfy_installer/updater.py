@@ -11,13 +11,12 @@ from .operations import CommandError, run_command
 
 
 class HookingServerUpdateError(RuntimeError):
-    """후킹 서버 수동 업데이트 실패."""
+    """후킹 서버 main 브랜치 수동 업데이트 실패."""
 
 
 LogCallback = Callable[[str], None]
 HOOKING_REPOSITORY = "https://github.com/lbh848/comfyui_hooking_server"
-HOOKING_LOCAL_BRANCH = "main"
-HOOKING_REMOTE_BRANCH = "dev"
+HOOKING_BRANCH = "main"
 
 
 def _git_value(root: Path, *arguments: str) -> str:
@@ -38,7 +37,7 @@ def update_hooking_server_main(
     log: LogCallback | None = None,
     config_backup: dict | None = None,
 ) -> dict:
-    """버튼을 누른 경우에만 원격 추적 브랜치를 fast-forward로 가져온다."""
+    """버튼을 누른 경우에만 origin/main을 fast-forward 방식으로 가져온다."""
 
     root = Path(project_root).resolve()
     try:
@@ -47,9 +46,9 @@ def update_hooking_server_main(
                 f"후킹 서버가 Git 설치가 아니어서 업데이트할 수 없습니다: {root}"
             )
         branch = _git_value(root, "branch", "--show-current")
-        if branch != HOOKING_LOCAL_BRANCH:
+        if branch != HOOKING_BRANCH:
             raise HookingServerUpdateError(
-                f"배포 업데이터는 {HOOKING_LOCAL_BRANCH} 브랜치에서만 동작합니다: "
+                "배포 업데이터는 main 브랜치에서만 동작합니다: "
                 f"current={branch or '(detached)'}"
             )
         origin = _git_value(root, "remote", "get-url", "origin")
@@ -75,12 +74,11 @@ def update_hooking_server_main(
             )
         if log:
             log(
-                "[후킹 서버 업데이트] 사용자가 요청하여 "
-                f"origin/{HOOKING_REMOTE_BRANCH} 업데이트 시작: "
+                "[후킹 서버 업데이트] 사용자가 요청하여 origin/main 업데이트 시작: "
                 f"현재={before[:12]}"
             )
         run_command(
-            ["git", "pull", "--ff-only", "origin", HOOKING_REMOTE_BRANCH],
+            ["git", "pull", "--ff-only", "origin", HOOKING_BRANCH],
             cwd=root,
             cancel_event=cancel_event,
             log=log,
@@ -92,12 +90,11 @@ def update_hooking_server_main(
                 log(f"[후킹 서버 업데이트] 이미 최신: {after[:12]}")
             else:
                 log(
-                    f"[후킹 서버 업데이트] {HOOKING_REMOTE_BRANCH} 적용 완료: "
+                    "[후킹 서버 업데이트] main 적용 완료: "
                     f"{before[:12]} -> {after[:12]}"
                 )
         return {
-            "local_branch": HOOKING_LOCAL_BRANCH,
-            "branch": HOOKING_REMOTE_BRANCH,
+            "branch": HOOKING_BRANCH,
             "before": before,
             "after": after,
             "changed": before != after,

@@ -82,7 +82,7 @@ _INSTALL_PHASES = (
 
 _UPDATE_PHASES = (
     ("config_backup", "config.json 업데이트 전 백업"),
-    ("hooking_server", "후킹 서버 origin/dev 수동 업데이트"),
+    ("hooking_server", "후킹 서버 origin/main 수동 업데이트"),
     ("manifest", "새 설치 매니페스트 로드"),
     ("source", "변경된 ComfyUI 고정 소스 업데이트"),
     ("core_dependencies", "변경된 ComfyUI Python 의존성 적용"),

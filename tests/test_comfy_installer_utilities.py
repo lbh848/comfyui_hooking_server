@@ -69,9 +69,7 @@ def test_civitai_key_is_plain_and_backed_up_before_rewrite(tmp_path: Path):
     assert Path(result["backup_path"]).is_file()
 
 
-def test_hooking_updater_keeps_local_main_and_pulls_remote_dev(
-    tmp_path: Path, monkeypatch
-):
+def test_hooking_updater_uses_main_only_after_explicit_call(tmp_path: Path, monkeypatch):
     (tmp_path / ".git").mkdir()
     config = tmp_path / "config.json"
     config.write_text("{}\n", encoding="utf-8")
@@ -103,6 +101,5 @@ def test_hooking_updater_keeps_local_main_and_pulls_remote_dev(
     )
 
     assert result["changed"] is True
-    assert result["local_branch"] == "main"
-    assert result["branch"] == "dev"
-    assert ["git", "pull", "--ff-only", "origin", "dev"] in commands
+    assert ["git", "pull", "--ff-only", "origin", "main"] in commands
+    assert all("dev" not in command for command in commands)
