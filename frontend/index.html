@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ComfyUI 에셋/삽화 매니저-V4</title>
+    <title>ComfyUI 에셋/삽화 매니저-V5</title>
     <style>
         select option { background: var(--surface2); color: var(--text); }
         :root {
@@ -29,41 +29,320 @@
             min-height: 100vh;
         }
 
-        header {
-            background: var(--surface);
-            padding: 16px 24px;
-            border-bottom: 1px solid var(--border);
+        header.app-header {
+            --chrome-bg: #0b1117;
+            --chrome-panel: #111a22;
+            --chrome-panel-hover: #18252e;
+            --chrome-border: rgba(174, 204, 194, 0.15);
+            --chrome-border-strong: rgba(77, 226, 174, 0.35);
+            --chrome-accent: #4de2ae;
+            --chrome-accent-soft: rgba(77, 226, 174, 0.12);
+            --chrome-text: #f2f7f5;
+            --chrome-muted: #91a39d;
+            position: relative;
+            background:
+                radial-gradient(circle at 8% -80%, rgba(77, 226, 174, 0.14), transparent 34%),
+                linear-gradient(135deg, #0b1117 0%, #0e171e 54%, #0a1117 100%);
+            padding: 14px 20px;
+            border-bottom: 1px solid var(--chrome-border);
             display: flex;
             align-items: center;
             justify-content: space-between;
             flex-wrap: wrap;
-            gap: 12px;
+            gap: 14px 24px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+            isolation: isolate;
         }
 
-        header h1 {
-            font-size: 1.3rem;
-            font-weight: 600;
+        header.app-header::after {
+            content: '';
+            position: absolute;
+            right: 0;
+            bottom: -1px;
+            left: 0;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, rgba(77, 226, 174, 0.58) 18%, rgba(77, 226, 174, 0.08) 62%, transparent);
+            pointer-events: none;
         }
 
-        header .controls {
+        .brand-lockup {
             display: flex;
-            gap: 10px;
             align-items: center;
+            gap: 12px;
+            flex: 0 0 auto;
         }
 
-        header .controls button {
-            background: var(--surface2);
-            color: var(--text);
-            border: 1px solid var(--border);
-            padding: 6px 14px;
-            border-radius: 6px;
+        .brand-mark {
+            position: relative;
+            display: grid;
+            width: 40px;
+            height: 40px;
+            place-items: center;
+            overflow: hidden;
+            border: 1px solid var(--chrome-border-strong);
+            border-radius: 12px;
+            background: linear-gradient(145deg, rgba(77, 226, 174, 0.18), rgba(77, 226, 174, 0.03));
+            box-shadow: 0 0 24px rgba(77, 226, 174, 0.08), inset 0 1px rgba(255, 255, 255, 0.06);
+        }
+
+        .brand-mark::before,
+        .brand-mark::after,
+        .brand-mark-core {
+            content: '';
+            position: absolute;
+            border: 1px solid var(--chrome-accent);
+            transform: rotate(45deg);
+        }
+
+        .brand-mark::before {
+            width: 16px;
+            height: 16px;
+            opacity: 0.9;
+        }
+
+        .brand-mark::after {
+            width: 7px;
+            height: 7px;
+            background: var(--chrome-accent);
+            box-shadow: 0 0 12px rgba(77, 226, 174, 0.65);
+        }
+
+        .brand-mark-core {
+            width: 25px;
+            height: 25px;
+            border-color: rgba(77, 226, 174, 0.18);
+        }
+
+        .brand-copy {
+            display: flex;
+            min-width: 0;
+            flex-direction: column;
+            gap: 3px;
+        }
+
+        .brand-kicker {
+            color: var(--chrome-accent);
+            font-size: 0.61rem;
+            font-weight: 700;
+            letter-spacing: 0.16em;
+            line-height: 1;
+        }
+
+        header.app-header h1 {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            color: var(--chrome-text);
+            font-size: 1.06rem;
+            font-weight: 650;
+            letter-spacing: -0.025em;
+            line-height: 1.25;
+            white-space: nowrap;
+        }
+
+        .brand-platform {
+            color: var(--chrome-text);
+            font-weight: 750;
+        }
+
+        .brand-product {
+            color: #c9d4d0;
+            font-weight: 520;
+        }
+
+        .version-badge {
+            display: inline-flex;
+            align-items: center;
+            height: 20px;
+            padding: 0 7px;
+            border: 1px solid rgba(77, 226, 174, 0.32);
+            border-radius: 999px;
+            background: var(--chrome-accent-soft);
+            color: var(--chrome-accent);
+            font-size: 0.68rem;
+            font-weight: 800;
+            letter-spacing: 0.05em;
+        }
+
+        header.app-header .controls {
+            display: flex;
+            min-width: 0;
+            flex: 1 1 720px;
+            align-items: center;
+            justify-content: flex-end;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .control-group {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 4px;
+            border: 1px solid var(--chrome-border);
+            border-radius: 11px;
+            background: rgba(255, 255, 255, 0.025);
+            box-shadow: inset 0 1px rgba(255, 255, 255, 0.025);
+        }
+
+        header.app-header .control-btn {
+            position: relative;
+            display: inline-flex;
+            min-height: 34px;
+            align-items: center;
+            justify-content: center;
+            gap: 7px;
+            padding: 7px 10px;
+            border: 1px solid transparent;
+            border-radius: 8px;
+            background: transparent;
+            color: #b7c4c0;
             cursor: pointer;
-            font-size: 0.85rem;
-            transition: background 0.2s;
+            font-family: inherit;
+            font-size: 0.76rem;
+            font-weight: 600;
+            line-height: 1;
+            white-space: nowrap;
+            transition: color 0.18s ease, background 0.18s ease, border-color 0.18s ease, transform 0.18s ease;
         }
 
-        header .controls button:hover {
-            background: var(--accent2);
+        header.app-header .control-btn:hover {
+            border-color: var(--chrome-border);
+            background: var(--chrome-panel-hover);
+            color: var(--chrome-text);
+        }
+
+        header.app-header .control-btn:active {
+            transform: translateY(1px);
+        }
+
+        header.app-header .control-btn:focus-visible,
+        .tab-btn:focus-visible {
+            outline: 2px solid var(--chrome-accent, #4de2ae);
+            outline-offset: 2px;
+        }
+
+        header.app-header .control-btn:disabled {
+            cursor: wait;
+            opacity: 0.55;
+            transform: none;
+        }
+
+        header.app-header .control-btn--icon {
+            width: 34px;
+            padding-right: 0;
+            padding-left: 0;
+        }
+
+        header.app-header .control-btn--primary {
+            border-color: rgba(77, 226, 174, 0.24);
+            background: var(--chrome-accent-soft);
+            color: #baf6df;
+        }
+
+        header.app-header .control-btn--primary:hover {
+            border-color: rgba(77, 226, 174, 0.42);
+            background: rgba(77, 226, 174, 0.18);
+            color: #e1fff4;
+        }
+
+        .ui-icon {
+            width: 15px;
+            height: 15px;
+            flex: 0 0 auto;
+            fill: none;
+            stroke: currentColor;
+            stroke-width: 1.8;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+        }
+
+        .header-dot-badge,
+        .header-count-badge {
+            position: absolute;
+            z-index: 1;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            color: #06120e;
+            font-weight: 800;
+            box-shadow: 0 0 0 2px var(--chrome-bg);
+        }
+
+        .header-dot-badge {
+            top: 6px;
+            right: 6px;
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: #ff6277;
+        }
+
+        .header-count-badge {
+            top: -5px;
+            right: -5px;
+            min-width: 17px;
+            height: 17px;
+            padding: 0 4px;
+            border-radius: 999px;
+            background: var(--chrome-accent);
+            font-size: 0.58rem;
+        }
+
+        #lighbd-window-badge {
+            background: #63d9f5;
+        }
+
+        .ws-status-led {
+            width: 8px;
+            height: 8px;
+            flex: 0 0 auto;
+            border-radius: 50%;
+            background: #e53935;
+            box-shadow: 0 0 0 3px rgba(229, 57, 53, 0.12), 0 0 7px rgba(229, 57, 53, 0.6);
+            transition: background 0.2s, box-shadow 0.2s;
+        }
+
+        @media (max-width: 1180px) {
+            header.app-header .controls {
+                flex-basis: 100%;
+                justify-content: flex-start;
+                flex-wrap: nowrap;
+                overflow-x: auto;
+                padding: 1px 0 4px;
+                scrollbar-width: thin;
+            }
+
+            .control-group {
+                flex: 0 0 auto;
+            }
+        }
+
+        @media (max-width: 620px) {
+            header.app-header {
+                padding: 12px;
+                gap: 11px;
+            }
+
+            .brand-mark {
+                width: 36px;
+                height: 36px;
+                border-radius: 10px;
+            }
+
+            header.app-header h1 {
+                font-size: 0.94rem;
+            }
+
+            .brand-kicker {
+                font-size: 0.55rem;
+            }
+
+            .version-badge {
+                height: 18px;
+                padding: 0 6px;
+                font-size: 0.61rem;
+            }
         }
 
         .status-bar {
@@ -5447,60 +5726,116 @@
         .tab-bar {
             display: flex;
             align-items: center;
-            background: var(--surface);
-            border-bottom: 2px solid var(--border);
-            padding: 6px 24px;
+            gap: 8px;
+            padding: 9px 20px 10px;
+            border-bottom: 1px solid rgba(174, 204, 194, 0.12);
+            background: linear-gradient(180deg, #0d151c 0%, #0b1218 100%);
             overflow-x: auto;
+            scrollbar-width: thin;
+            scrollbar-color: rgba(77, 226, 174, 0.3) transparent;
+        }
+        .tab-bar::-webkit-scrollbar {
+            height: 5px;
+        }
+        .tab-bar::-webkit-scrollbar-thumb {
+            border-radius: 999px;
+            background: rgba(77, 226, 174, 0.3);
+        }
+        .tab-group {
+            display: inline-flex;
+            flex: 0 0 auto;
+            align-items: center;
+            gap: 3px;
+            min-height: 48px;
+            padding: 4px;
+            border: 1px solid rgba(174, 204, 194, 0.12);
+            border-radius: 12px;
+            background: rgba(255, 255, 255, 0.025);
+            box-shadow: inset 0 1px rgba(255, 255, 255, 0.025);
+        }
+        .tab-group-label {
+            display: inline-flex;
+            align-items: center;
+            align-self: stretch;
+            padding: 0 8px 0 7px;
+            border-right: 1px solid rgba(174, 204, 194, 0.12);
+            color: #769087;
+            font-size: 0.58rem;
+            font-weight: 800;
+            letter-spacing: 0.12em;
+            writing-mode: vertical-rl;
+            user-select: none;
+        }
+        .tab-group--asset .tab-group-label {
+            color: #72b6c9;
+        }
+        .tab-group--manage .tab-group-label {
+            color: #a391c2;
         }
         .tab-btn {
-            background: transparent;
-            color: var(--text2);
-            border: none;
-            padding: 12px 24px;
-            font-size: 0.9rem;
-            cursor: pointer;
-            border-bottom: 2px solid transparent;
-            flex: 0 0 auto;
-            transition: all 0.2s;
-        }
-        .tab-btn:hover { color: var(--text); }
-        .tab-btn.active {
-            color: var(--accent);
-            border-bottom-color: var(--accent);
-            font-weight: 600;
-        }
-        #tab-btn-backup {
-            background: var(--surface2);
-            border-radius: 6px;
-        }
-        #tab-btn-bot {
-            background: var(--surface2);
-            border-radius: 6px;
-            border: 1px solid var(--border);
-            border-bottom: 2px solid transparent;
-            min-width: 248px;
-            padding: 7px 14px 6px;
-            display: flex;
-            flex-direction: column;
+            position: relative;
+            display: inline-flex;
+            min-height: 38px;
             align-items: center;
             justify-content: center;
-            gap: 4px;
+            gap: 8px;
+            flex: 0 0 auto;
+            padding: 8px 13px;
+            border: 1px solid transparent;
+            border-radius: 8px;
+            background: transparent;
+            color: #96a6a1;
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 0.79rem;
+            font-weight: 600;
+            line-height: 1;
+            white-space: nowrap;
+            transition: color 0.18s ease, background 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
         }
-        #tab-btn-bot.active {
-            color: var(--text);
-            border-color: var(--accent);
-            border-bottom-color: var(--accent);
+        .tab-btn:hover {
+            border-color: rgba(174, 204, 194, 0.1);
+            background: rgba(255, 255, 255, 0.045);
+            color: #eef6f3;
+        }
+        .tab-btn.active {
+            border-color: rgba(77, 226, 174, 0.34);
+            background: linear-gradient(180deg, rgba(77, 226, 174, 0.16), rgba(77, 226, 174, 0.1));
+            color: #d9fff1;
+            box-shadow: 0 0 0 1px rgba(77, 226, 174, 0.04), inset 0 1px rgba(255, 255, 255, 0.05), 0 4px 14px rgba(0, 0, 0, 0.14);
+            font-weight: 700;
+        }
+        .tab-btn.active::after {
+            content: '';
+            position: absolute;
+            right: 10px;
+            bottom: -5px;
+            left: 10px;
+            height: 2px;
+            border-radius: 999px;
+            background: #4de2ae;
+            box-shadow: 0 0 8px rgba(77, 226, 174, 0.72);
+        }
+        #tab-btn-bot {
+            min-width: 302px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
         }
         .tab-title {
-            font-weight: 600;
-            line-height: 1.2;
+            flex: 0 0 auto;
+            font-weight: 700;
+            line-height: 1;
         }
-        /* 삽화 모드 상태 표시 (카드 하단) */
+        /* 삽화 모드 상태 표시 */
         .tab-status-badges {
             display: flex;
             align-items: center;
             justify-content: center;
-            gap: 10px;
+            gap: 7px;
+            padding-left: 11px;
+            border-left: 1px solid rgba(174, 204, 194, 0.14);
             pointer-events: none;
             white-space: nowrap;
         }
@@ -5508,61 +5843,46 @@
             display: inline-flex;
             align-items: center;
             gap: 3px;
-            font-size: 0.6rem;
-            font-weight: 500;
+            font-size: 0.57rem;
+            font-weight: 600;
             line-height: 1.4;
-            color: var(--text2);
+            color: #71827c;
         }
         .status-chip::before {
             content: '';
-            width: 5px;
-            height: 5px;
+            width: 4px;
+            height: 4px;
             border-radius: 50%;
-            background: #777;
+            background: #64716d;
             flex: 0 0 auto;
         }
         .status-chip-value {
-            color: #888;
+            color: #7e8d88;
             font-weight: 700;
         }
         .status-chip.on::before {
-            background: var(--success);
-            box-shadow: 0 0 5px rgba(76, 175, 80, 0.55);
+            background: #4de2ae;
+            box-shadow: 0 0 5px rgba(77, 226, 174, 0.6);
         }
         .status-chip.on .status-chip-value {
-            color: var(--success);
+            color: #55e7b4;
         }
-        .tab-btn[onclick*="'asset'"],
-        .tab-btn[onclick*="'asset-upload'"],
-        .tab-btn[onclick*="'pose'"],
-        .tab-btn[onclick*="'batch'"],
-        #tab-btn-smart-asset,
-        #tab-btn-character-maker {
-            background: rgba(80, 200, 120, 0.12);
-            border-radius: 6px;
-        }
-        #tab-btn-preset-mgmt {
-            background: rgba(180, 130, 220, 0.15);
-            border-radius: 6px;
-        }
-        #tab-btn-lora {
-            background: rgba(180, 130, 220, 0.15);
-            border-radius: 6px;
-        }
-        .tab-divider {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            align-self: stretch;
-            margin: 0 8px;
-            color: var(--text2);
-            font-size: 1.25rem;
-            font-weight: 300;
-            line-height: 1;
-            opacity: 0.45;
-        }
-        .tab-divider::before {
-            content: '|';
+        @media (max-width: 720px) {
+            .tab-bar {
+                padding-right: 12px;
+                padding-left: 12px;
+            }
+
+            .tab-group-label {
+                padding-right: 6px;
+                padding-left: 5px;
+                font-size: 0.52rem;
+            }
+
+            .tab-btn {
+                padding-right: 11px;
+                padding-left: 11px;
+            }
         }
         .tab-content { display: none; }
         .tab-content.active { display: block; }
@@ -10154,54 +10474,98 @@
         <div class="top-progress-inner" id="top-progress-inner"></div>
         <span class="top-progress-label" id="top-progress-label"></span>
     </div>
-    <header>
-        <h1>ComfyUI 에셋/삽화 매니저-<span style="color:#4caf50;">V4</span></h1>
-        <div class="controls">
-            <button id="notification-bell" onclick="openNotificationBoard()" style="position:relative; background:transparent; border:none; color:var(--text2); font-size:1.2rem; cursor:pointer; padding:6px 10px; transition:color 0.2s;" onmouseenter="this.style.color='var(--text)'" onmouseleave="this.style.color='var(--text2)'">
-                &#x1F514;
-                <span id="notification-badge" style="position:absolute; top:4px; right:4px; width:8px; height:8px; background:var(--error); border-radius:50%; display:none;"></span>
-            </button>
-            <button id="queue-toggle-btn" onclick="toggleQueueModal()" style="position:relative;">📋 작업 큐
-                <span id="queue-badge" style="position:absolute; top:-2px; right:-4px; min-width:14px; height:14px; background:var(--accent); border-radius:7px; font-size:0.6rem; color:#fff; display:none; align-items:center; justify-content:center; padding:0 3px;"></span>
-            </button>
-            <button id="lighbd-window-btn" onclick="toggleLighbdLlmWidget()" title="LLM로그창 열기/닫기" style="position:relative;">LLM로그창
-                <span id="lighbd-window-badge" style="position:absolute; top:-2px; right:-4px; min-width:14px; height:14px; background:#00bcd4; border-radius:7px; font-size:0.6rem; color:#fff; display:none; align-items:center; justify-content:center; padding:0 3px;"></span>
-            </button>
-            <button onclick="openSettingsModal()">⚙️ 설정</button>
-            <button id="tunnel-btn" onclick="openShareModal()">🔗 공유</button>
-            <button onclick="reloadWorkflow()">📂 삽화 워크플로우 가져오기</button>
-            <button onclick="manualRestoreDraw()" id="restore-manual-btn" style="display:none;">🖌️ 삽화 수동 그리기</button>
-            <button onclick="reconnectFrontendWs()" id="ws-reconnect-btn" title="WS 재연결" style="display:inline-flex; align-items:center; gap:6px;">
-                <span id="ws-status-led" title="WS 미연결" style="width:9px; height:9px; border-radius:50%; background:#e53935; box-shadow:0 0 4px rgba(229,57,53,0.7); flex:0 0 auto; transition:background .2s, box-shadow .2s;"></span>
-                🔌 WS 재연결
-            </button>
-            <button onclick="openModeLogModal()">📋 모드 로그</button>
+    <header class="app-header">
+        <div class="brand-lockup">
+            <span class="brand-mark" aria-hidden="true"><span class="brand-mark-core"></span></span>
+            <div class="brand-copy">
+                <span class="brand-kicker">CREATIVE PIPELINE</span>
+                <h1 aria-label="ComfyUI 에셋/삽화 매니저-V5">
+                    <span class="brand-platform">ComfyUI</span>
+                    <span class="brand-product">에셋/삽화 매니저</span>
+                    <span class="version-badge">-V5</span>
+                </h1>
+            </div>
+        </div>
 
+        <div class="controls">
+            <div class="control-group" role="group" aria-label="상태 및 로그">
+                <button type="button" id="notification-bell" class="control-btn control-btn--icon" onclick="openNotificationBoard()" title="알림" aria-label="알림 열기">
+                    <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"></path><path d="M10 21h4"></path></svg>
+                    <span id="notification-badge" class="header-dot-badge"></span>
+                </button>
+                <button type="button" id="queue-toggle-btn" class="control-btn" onclick="toggleQueueModal()">
+                    <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M8 9h8M8 13h8M8 17h5"></path></svg>
+                    <span class="control-label">작업 큐</span>
+                    <span id="queue-badge" class="header-count-badge"></span>
+                </button>
+                <button type="button" id="lighbd-window-btn" class="control-btn" onclick="toggleLighbdLlmWidget()" title="LLM 로그창 열기/닫기">
+                    <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 17l4-4-4-4M11 17h9"></path><rect x="2" y="3" width="20" height="18" rx="2"></rect></svg>
+                    <span class="control-label">LLM 로그</span>
+                    <span id="lighbd-window-badge" class="header-count-badge"></span>
+                </button>
+                <button type="button" class="control-btn" onclick="openModeLogModal()">
+                    <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5h11M9 12h11M9 19h11"></path><path d="M4 5h.01M4 12h.01M4 19h.01"></path></svg>
+                    <span class="control-label">모드 로그</span>
+                </button>
+            </div>
+
+            <div class="control-group" role="group" aria-label="도구 및 실행">
+                <button type="button" class="control-btn" onclick="openSettingsModal()">
+                    <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V21h-4v-.09A1.7 1.7 0 0 0 8.94 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15 1.7 1.7 0 0 0 3.09 14H3v-4h.09A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.34-1.88L4.2 7.06l2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6 1.7 1.7 0 0 0 10 3.09V3h4v.09A1.7 1.7 0 0 0 15 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9 1.7 1.7 0 0 0 20.91 10H21v4h-.09A1.7 1.7 0 0 0 19.4 15z"></path></svg>
+                    <span class="control-label">설정</span>
+                </button>
+                <button type="button" id="tunnel-btn" class="control-btn" onclick="openShareModal()">
+                    <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle><path d="m8.6 10.5 6.8-4M8.6 13.5l6.8 4"></path></svg>
+                    <span class="control-label">공유</span>
+                </button>
+                <button type="button" class="control-btn control-btn--primary" onclick="reloadWorkflow()">
+                    <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h7l2 2h9v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><path d="M12 12v6M9 15l3 3 3-3"></path></svg>
+                    <span class="control-label">삽화 워크플로우 가져오기</span>
+                </button>
+                <button type="button" id="restore-manual-btn" class="control-btn control-btn--primary" onclick="manualRestoreDraw()" style="display:none;">
+                    <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m14.5 4.5 5 5L8 21H3v-5zM12 7l5 5"></path></svg>
+                    <span class="control-label">삽화 수동 그리기</span>
+                </button>
+            </div>
+
+            <div class="control-group" role="group" aria-label="연결 상태">
+                <button type="button" id="ws-reconnect-btn" class="control-btn" onclick="reconnectFrontendWs()" title="WebSocket 재연결">
+                    <span id="ws-status-led" class="ws-status-led" title="WS 미연결"></span>
+                    <span class="control-label">WS 재연결</span>
+                </button>
+            </div>
         </div>
     </header>
 
     <!-- 탭 바 -->
-    <div class="tab-bar">
-        <button id="tab-btn-backup" class="tab-btn active" onclick="switchTab('backup')">삽화 백업</button>
-        <button id="tab-btn-bot" class="tab-btn" onclick="switchTab('bot')">
-            <span class="tab-title">삽화 모드</span>
-            <span class="tab-status-badges">
-                <span id="bot-mode-chip" class="status-chip off">포맷 <span class="status-chip-value">V3</span></span>
-                <span id="postprocess-chip" class="status-chip off">후처리 <span class="status-chip-value">OFF</span></span>
-                <span id="debug-mode-chip" class="status-chip off">디버그 <span class="status-chip-value">OFF</span></span>
-            </span>
-        </button>
-        <span class="tab-divider"></span>
-        <button class="tab-btn" onclick="switchTab('asset')">에셋 생성</button>
-        <button class="tab-btn" onclick="switchTab('asset-upload')">에셋 업로드</button>
-        <button class="tab-btn" onclick="switchTab('pose')">에셋 Pose 편집</button>
-        <button class="tab-btn" onclick="switchTab('batch')">에셋 일괄 생성</button>
-        <button id="tab-btn-smart-asset" class="tab-btn" onclick="switchTab('smart-asset')">오토매치</button>
-        <button id="tab-btn-character-maker" class="tab-btn" onclick="switchTab('character-maker')">캐릭터 메이커</button>
-        <span class="tab-divider"></span>
-        <button id="tab-btn-preset-mgmt" class="tab-btn" onclick="switchTab('preset-mgmt')">프리셋매니징</button>
-        <button id="tab-btn-lora" class="tab-btn" onclick="switchTab('lora')">로라매니징</button>
-    </div>
+    <nav class="tab-bar" aria-label="주요 기능">
+        <div class="tab-group tab-group--illustration" role="group" aria-label="삽화 기능">
+            <span class="tab-group-label" aria-hidden="true">삽화</span>
+            <button type="button" id="tab-btn-backup" class="tab-btn active" onclick="switchTab('backup')">삽화 백업</button>
+            <button type="button" id="tab-btn-bot" class="tab-btn" onclick="switchTab('bot')">
+                <span class="tab-title">삽화 모드</span>
+                <span class="tab-status-badges">
+                    <span id="bot-mode-chip" class="status-chip off">포맷 <span class="status-chip-value">V3</span></span>
+                    <span id="postprocess-chip" class="status-chip off">후처리 <span class="status-chip-value">OFF</span></span>
+                    <span id="debug-mode-chip" class="status-chip off">디버그 <span class="status-chip-value">OFF</span></span>
+                </span>
+            </button>
+        </div>
+        <div class="tab-group tab-group--asset" role="group" aria-label="에셋 기능">
+            <span class="tab-group-label" aria-hidden="true">에셋</span>
+            <button type="button" class="tab-btn" onclick="switchTab('asset')">에셋 생성</button>
+            <button type="button" class="tab-btn" onclick="switchTab('asset-upload')">에셋 업로드</button>
+            <button type="button" class="tab-btn" onclick="switchTab('pose')">에셋 Pose 편집</button>
+            <button type="button" class="tab-btn" onclick="switchTab('batch')">에셋 일괄 생성</button>
+            <button type="button" id="tab-btn-smart-asset" class="tab-btn" onclick="switchTab('smart-asset')">오토매치</button>
+            <button type="button" id="tab-btn-character-maker" class="tab-btn" onclick="switchTab('character-maker')">캐릭터 메이커</button>
+        </div>
+        <div class="tab-group tab-group--manage" role="group" aria-label="관리 기능">
+            <span class="tab-group-label" aria-hidden="true">관리</span>
+            <button type="button" id="tab-btn-preset-mgmt" class="tab-btn" onclick="switchTab('preset-mgmt')">프리셋매니징</button>
+            <button type="button" id="tab-btn-lora" class="tab-btn" onclick="switchTab('lora')">로라매니징</button>
+        </div>
+    </nav>
 
     <!-- 토스트 알림 -->
     <div id="toast" class="toast"></div>
@@ -23623,26 +23987,30 @@
             if (restoreManualBtn) restoreManualBtn.style.display = restoreManualOn ? '' : 'none';
         }
 
+        function _setHeaderControlLabel(btn, label) {
+            if (!btn) {
+                console.error('[HEADER] 라벨을 갱신할 버튼을 찾지 못했습니다:', label);
+                return;
+            }
+            let labelEl = btn.querySelector('.control-label');
+            if (!labelEl) {
+                console.error('[HEADER] 버튼 라벨 요소가 없어 새로 생성합니다:', btn.id || '(no id)');
+                labelEl = document.createElement('span');
+                labelEl.className = 'control-label';
+                btn.appendChild(labelEl);
+            }
+            labelEl.textContent = label;
+        }
+
         function _setWsReconnectBtnLabel(label) {
             const btn = document.getElementById('ws-reconnect-btn');
-            if (!btn) return;
-            // LED span은 첫 번째 자식으로 유지하고 텍스트 라벨만 교체
-            const led = btn.querySelector('#ws-status-led');
-            btn.textContent = '';
-            if (led) btn.appendChild(led);
-            else {
-                const fresh = document.createElement('span');
-                fresh.id = 'ws-status-led';
-                fresh.style.cssText = 'width:9px; height:9px; border-radius:50%; background:#e53935; box-shadow:0 0 4px rgba(229,57,53,0.7); flex:0 0 auto; transition:background .2s, box-shadow .2s;';
-                btn.appendChild(fresh);
-            }
-            btn.appendChild(document.createTextNode(' ' + label));
+            _setHeaderControlLabel(btn, label);
             updateWsStatusLed();
         }
         async function reconnectFrontendWs() {
             const btn = document.getElementById('ws-reconnect-btn');
             btn.disabled = true;
-            _setWsReconnectBtnLabel('🔌 연결 중...');
+            _setWsReconnectBtnLabel('연결 중...');
             try {
                 const requestedSocket = connectFrontendWs();
                 const healthy = requestedSocket
@@ -23659,7 +24027,7 @@
                 showToast(`WS 재연결 오류: ${e.message}`, 'error');
             } finally {
                 btn.disabled = false;
-                _setWsReconnectBtnLabel('🔌 WS 재연결');
+                _setWsReconnectBtnLabel('WS 재연결');
             }
         }
 
@@ -23871,7 +24239,7 @@
 
             const btn = document.getElementById('restore-manual-btn');
             btn.disabled = true;
-            btn.textContent = '🖌️ 큐 등록 중...';
+            _setHeaderControlLabel(btn, '큐 등록 중...');
             try {
                 const resp = await fetch('/api/restore_manual_draw', {
                     method: 'POST',
@@ -23895,7 +24263,7 @@
                 showToast(`수동 그리기 오류: ${e.message}`, 'error');
             } finally {
                 btn.disabled = false;
-                btn.textContent = '🖌️ 삽화 수동 그리기';
+                _setHeaderControlLabel(btn, '삽화 수동 그리기');
             }
         }
 
