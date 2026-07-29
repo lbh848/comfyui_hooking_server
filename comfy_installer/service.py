@@ -398,10 +398,13 @@ class ComfyInstallerService:
                 old_comfy_root=old_comfy_root,
                 new_comfy_root=self.comfy_root,
             )
-            self._log(
-                "[이사] config.json 내장 Comfy 경로 전환 완료: "
-                f"{len(config_update.updated_paths)}개"
-            )
+            if config_update.already_retargeted:
+                self._log("[이사] config.json은 이미 내장 Comfy 경로입니다.")
+            else:
+                self._log(
+                    "[이사] config.json 내장 Comfy 경로 전환 완료: "
+                    f"{len(config_update.updated_paths)}개"
+                )
             return {
                 **migration,
                 "config": {
@@ -409,6 +412,7 @@ class ComfyInstallerService:
                     "before_sha256": config_update.before_sha256,
                     "after_sha256": config_update.after_sha256,
                     "updated_paths": list(config_update.updated_paths),
+                    "already_retargeted": config_update.already_retargeted,
                     "missing_targets": [
                         {"setting": setting, "target": target}
                         for setting, target in config_update.missing_targets

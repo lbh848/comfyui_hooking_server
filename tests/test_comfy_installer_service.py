@@ -82,6 +82,14 @@ def test_v4_migration_backs_up_copies_and_retargets_config(tmp_path: Path) -> No
         "$.comfy_input_dir",
         "$.nested.lora",
     ]
+    assert result["config"]["already_retargeted"] is False
+
+    repeated = service.migrate_from_existing_comfy(old_comfy)
+
+    assert repeated["copied"] == []
+    assert len(repeated["skipped"]) == 1
+    assert repeated["config"]["updated_paths"] == []
+    assert repeated["config"]["already_retargeted"] is True
 
 
 def test_v4_migration_runs_in_background_and_publishes_progress(
@@ -120,7 +128,11 @@ def test_v4_migration_runs_in_background_and_publishes_progress(
             "skipped": ["existing"],
             "missing": [],
             "failures": [],
-            "config": {"updated_paths": [], "missing_targets": []},
+            "config": {
+                "updated_paths": [],
+                "missing_targets": [],
+                "already_retargeted": True,
+            },
         }
 
     monkeypatch.setattr(service, "_perform_migration", fake_migration)

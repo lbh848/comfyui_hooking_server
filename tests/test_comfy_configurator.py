@@ -149,6 +149,68 @@ def test_v4_migration_retargets_all_nested_paths_after_verified_backup(tmp_path)
         "$.nested.workflow",
         "$.path_list[0]",
     }
+    assert result.already_retargeted is False
+
+
+def test_v4_migration_accepts_config_already_retargeted_to_embedded_comfy(
+    tmp_path,
+):
+    config_path = tmp_path / "config.json"
+    requirements = tmp_path / "요구사항"
+    old_comfy = tmp_path / "old-comfy"
+    new_comfy = tmp_path / "comfy"
+    old_comfy.mkdir()
+    (new_comfy / ".git").mkdir(parents=True)
+    (new_comfy / "input").mkdir()
+    original = {
+        "comfy_input_dir": str(new_comfy / "input"),
+        "nested": {"unrelated": str(tmp_path / "elsewhere")},
+    }
+    _write_json(config_path, original)
+    original_bytes = config_path.read_bytes()
+    backup = backup_current_config(
+        config_path=config_path,
+        backup_dir=requirements,
+        reason="comfy_v4_migrate",
+    )
+
+    result = retarget_config_to_embedded_comfy(
+        config_path=config_path,
+        requirements_dir=requirements,
+        backup_path=backup["backup_path"],
+        old_comfy_root=old_comfy,
+        new_comfy_root=new_comfy,
+    )
+
+    assert result.already_retargeted is True
+    assert result.updated_paths == ()
+    assert result.missing_targets == ()
+    assert result.before_sha256 == result.after_sha256
+    assert config_path.read_bytes() == original_bytes
+
+
+def test_v4_migration_still_rejects_unrelated_config_paths(tmp_path):
+    config_path = tmp_path / "config.json"
+    requirements = tmp_path / "요구사항"
+    old_comfy = tmp_path / "old-comfy"
+    new_comfy = tmp_path / "comfy"
+    old_comfy.mkdir()
+    (new_comfy / ".git").mkdir(parents=True)
+    _write_json(config_path, {"path": str(tmp_path / "elsewhere")})
+    backup = backup_current_config(
+        config_path=config_path,
+        backup_dir=requirements,
+        reason="comfy_v4_migrate",
+    )
+
+    with pytest.raises(ConfigUpdateError, match="기존 ComfyUI 아래의 경로"):
+        retarget_config_to_embedded_comfy(
+            config_path=config_path,
+            requirements_dir=requirements,
+            backup_path=backup["backup_path"],
+            old_comfy_root=old_comfy,
+            new_comfy_root=new_comfy,
+        )
 
 
 def test_v4_migration_rejects_stale_backup_without_overwrite(tmp_path):

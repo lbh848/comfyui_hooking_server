@@ -20714,9 +20714,12 @@
             if (migrationJustSucceeded) {
                 const result = data.result || {};
                 const updatedPathCount = Number((result.config?.updated_paths || []).length);
+                const configLabel = result.config?.already_retargeted
+                    ? '설정 이미 전환됨'
+                    : `설정 ${updatedPathCount}개 전환`;
                 const missingTargetCount = Number((result.config?.missing_targets || []).length);
                 const missingLabel = missingTargetCount ? ` · 대상 없음 ${missingTargetCount}개(로그 확인)` : '';
-                showToast(`이사 완료 · 설정 ${updatedPathCount}개 전환 · 복사 ${Number((result.copied || []).length)}개 · 기존 유지 ${Number((result.skipped || []).length)}개${missingLabel}`, 'success');
+                showToast(`이사 완료 · ${configLabel} · 복사 ${Number((result.copied || []).length)}개 · 기존 유지 ${Number((result.skipped || []).length)}개${missingLabel}`, 'success');
             }
             comfyInstallerLastState = state;
             if (updateJustSucceeded) void comfyInstallerShutdownAfterUpdate();

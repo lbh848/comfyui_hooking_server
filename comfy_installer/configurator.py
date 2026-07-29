@@ -33,6 +33,7 @@ class ConfigRetargetResult:
     after_sha256: str
     updated_paths: tuple[str, ...]
     missing_targets: tuple[tuple[str, str], ...]
+    already_retargeted: bool
 
 
 def backup_current_config(
@@ -229,6 +230,51 @@ def _retarget_descendant_paths(
     return str(target)
 
 
+def _collect_descendant_paths(
+    value: Any,
+    *,
+    json_path: str,
+    root: Path,
+    matches: list[str],
+) -> None:
+    if isinstance(value, dict):
+        for key, child in value.items():
+            _collect_descendant_paths(
+                child,
+                json_path=_json_child_path(json_path, str(key)),
+                root=root,
+                matches=matches,
+            )
+        return
+    if isinstance(value, list):
+        for index, child in enumerate(value):
+            _collect_descendant_paths(
+                child,
+                json_path=f"{json_path}[{index}]",
+                root=root,
+                matches=matches,
+            )
+        return
+    if not isinstance(value, str) or not value.strip():
+        return
+
+    try:
+        candidate = Path(value.strip())
+        if not candidate.is_absolute():
+            return
+        candidate.resolve().relative_to(root)
+    except ValueError:
+        return
+    except (OSError, RuntimeError) as exc:
+        print(
+            "[COMFY_INSTALL][CONFIG][V4_MIGRATE] 내장 경로 확인 실패; "
+            f"setting={json_path}, value={value!r}, error={exc}"
+        )
+        traceback.print_exc()
+        return
+    matches.append(json_path)
+
+
 def retarget_config_to_embedded_comfy(
     *,
     config_path: str | os.PathLike[str],
@@ -288,9 +334,31 @@ def retarget_config_to_embedded_comfy(
             missing_targets=missing_targets,
         )
         if not updated_paths:
+            embedded_paths: list[str] = []
+            _collect_descendant_paths(
+                config,
+                json_path="$",
+                root=new_root,
+                matches=embedded_paths,
+            )
+            if embedded_paths:
+                print(
+                    "[COMFY_INSTALL][CONFIG][V4_MIGRATE] 이미 내장 Comfy로 "
+                    "전환된 설정 확인: "
+                    f"new_root={new_root}, matched={len(embedded_paths)}"
+                )
+                return ConfigRetargetResult(
+                    config_path=config_file,
+                    backup_path=backup_file,
+                    before_sha256=before_hash,
+                    after_sha256=before_hash,
+                    updated_paths=(),
+                    missing_targets=(),
+                    already_retargeted=True,
+                )
             print(
                 "[COMFY_INSTALL][CONFIG][V4_MIGRATE] 전환할 설정 경로 없음: "
-                f"old_root={old_root}"
+                f"old_root={old_root}, new_root={new_root}"
             )
             raise ConfigUpdateError(
                 "config.json에서 기존 ComfyUI 아래의 경로를 찾지 못했습니다: "
@@ -316,6 +384,7 @@ def retarget_config_to_embedded_comfy(
             after_sha256=after_hash,
             updated_paths=tuple(updated_paths),
             missing_targets=tuple(missing_targets),
+            already_retargeted=False,
         )
     except Exception as exc:
         print(f"[COMFY_INSTALL][CONFIG][V4_MIGRATE] 설정 경로 전환 실패: {exc}")

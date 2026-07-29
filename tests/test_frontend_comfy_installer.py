@@ -74,6 +74,8 @@ def test_v4_migration_reports_config_path_retargeting() -> None:
     assert "comfyInstallerFormatDuration(progress.eta_seconds)" in FRONTEND
     assert "robocopy 병렬" in FRONTEND
     assert "started.state === 'succeeded'" in FRONTEND
+    assert "result.config?.already_retargeted" in FRONTEND
+    assert "설정 이미 전환됨" in FRONTEND
 
 
 def test_comfy_installer_tab_is_right_of_debug() -> None:
