@@ -1799,6 +1799,54 @@ class AssetMode:
         safe = "".join(c for c in name if c.isalnum() or c in (' ', '_', '-', '.')).strip()
         return safe or f"unknown_{hash(name) % 10000}"
 
+    @staticmethod
+    def update_prompt_negative_metadata(
+        prompt_path: str,
+        negative_prompt: str,
+    ) -> dict:
+        """이미지 프롬프트 메타데이터의 현재 부정 프롬프트를 갱신한다."""
+        existing = {}
+        if os.path.isfile(prompt_path):
+            try:
+                with open(prompt_path, "r", encoding="utf-8") as prompt_file:
+                    existing = json.load(prompt_file)
+            except Exception as exc:
+                print(
+                    "[ASSET_MODE] 부정 프롬프트 적용 전 메타데이터 로드 실패: "
+                    f"path={prompt_path!r}, error={type(exc).__name__}: {exc}"
+                )
+                traceback.print_exc()
+                raise
+            if not isinstance(existing, dict):
+                print(
+                    "[ASSET_MODE] 부정 프롬프트 적용 실패: 메타데이터가 객체가 아님 "
+                    f"path={prompt_path!r}, type={type(existing).__name__}"
+                )
+                raise ValueError("이미지 프롬프트 메타데이터 형식이 올바르지 않습니다")
+        else:
+            print(
+                "[ASSET_MODE] 부정 프롬프트 메타데이터 신규 생성: "
+                f"path={prompt_path!r}"
+            )
+
+        existing["negative"] = negative_prompt
+        # EDIT 결과는 직전 EDIT용 부정 프롬프트를 우선 표시한다. 일괄 적용 후에도
+        # 이전 값이 모달을 가리지 않도록 EDIT 메타데이터도 같은 값으로 맞춘다.
+        if existing.get("is_edited") or "edit_negative_prompt" in existing:
+            existing["edit_negative_prompt"] = negative_prompt
+
+        try:
+            with open(prompt_path, "w", encoding="utf-8") as prompt_file:
+                json.dump(existing, prompt_file, ensure_ascii=False, indent=2)
+        except Exception as exc:
+            print(
+                "[ASSET_MODE] 부정 프롬프트 메타데이터 저장 실패: "
+                f"path={prompt_path!r}, error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            raise
+        return existing
+
     def list_images(self, character: str, outfit: str, expression: str) -> dict:
         img_dir = os.path.join(
             ASSET_DIR,

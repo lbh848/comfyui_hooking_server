@@ -91,3 +91,10 @@ def test_lighbd_live_exposes_manual_parallel_retry_race():
     assert "병렬 경쟁 ${activeRaces.size}" in FRONTEND
     assert "raceRoleLabels = { original: '원본', parallel: '병렬 재시도' }" in FRONTEND
     assert "병렬 재시도 기록" in FRONTEND
+
+
+def test_lighbd_live_reenables_parallel_retry_after_a_contender_stops():
+    assert "data.parallel_retry_available !== undefined" in FRONTEND
+    assert "const hasActiveRacePeer = !!state.raceId" in FRONTEND
+    assert "|| hasActiveRacePeer;" in FRONTEND
+    assert "취소되거나 실패한 병렬 시도를 같은 요청으로 다시 실행" in FRONTEND

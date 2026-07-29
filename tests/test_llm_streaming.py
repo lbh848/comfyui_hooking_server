@@ -579,6 +579,15 @@ async def _wait_for_active_stream(predicate=lambda _stream: True):
     raise AssertionError("활성 스트림이 제한 시간 안에 등록되지 않음")
 
 
+async def _wait_for_active_streams(predicate):
+    for _ in range(200):
+        streams = llm_service.get_active_streams()
+        if predicate(streams):
+            return streams
+        await asyncio.sleep(0)
+    raise AssertionError("활성 스트림 목록이 제한 시간 안에 기대 상태가 되지 않음")
+
+
 @pytest.mark.asyncio
 async def test_active_stream_snapshot_tracks_partial_text_and_cleans_up(monkeypatch):
     config = _test_config()
@@ -769,6 +778,104 @@ async def test_manual_parallel_retry_keeps_original_and_uses_faster_success(monk
         "original",
         "parallel",
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancel_role", ["original", "parallel"])
+async def test_manual_parallel_retry_can_replace_a_cancelled_attempt(
+    monkeypatch, cancel_role
+):
+    config = _test_config()
+    config["llm_stream"] = True
+    config["llm_max_concurrency"] = 2
+    monkeypatch.setattr(llm_service, "_current_config", config)
+    llm_service._active_streams.clear()
+    calls = 0
+    frontend_events = []
+    history_events = []
+
+    async def replaceable_stream(messages, service, model):
+        nonlocal calls
+        calls += 1
+        attempt = calls
+        yield {"type": "start", "service": service, "model": model}
+        yield {
+            "type": "delta",
+            "text": f"시도 {attempt}",
+            "elapsed": 0.1,
+            "ttft": 0.1,
+        }
+        if attempt < 3:
+            await asyncio.Future()
+        yield {
+            "type": "done",
+            "text": "대체 병렬 완료",
+            "completion_tokens": 4,
+            "prompt_tokens": 7,
+            "elapsed": 0.2,
+            "tps": 20.0,
+            "ttft": 0.1,
+        }
+
+    async def notify(event):
+        frontend_events.append(event)
+
+    async def record_history(event):
+        history_events.append(event)
+
+    monkeypatch.setattr(
+        llm_service,
+        "_dispatch_stream_unlimited",
+        replaceable_stream,
+    )
+    monkeypatch.setattr(llm_service, "_stream_notify_func", notify)
+    monkeypatch.setattr(
+        llm_service,
+        "_manual_parallel_history_func",
+        record_history,
+    )
+
+    task = asyncio.create_task(
+        llm_service.callLLM([{"role": "user", "content": "hello"}])
+    )
+    original = await _wait_for_active_stream(lambda stream: stream["text"] == "시도 1")
+    assert llm_service.request_stream_control(
+        original["stream_id"], "parallel_retry"
+    ) == (True, "parallel_retry")
+
+    racing = await _wait_for_active_streams(
+        lambda streams: len(streams) == 2
+        and {stream["race_role"] for stream in streams} == {"original", "parallel"}
+    )
+    race_id = racing[0]["race_id"]
+    cancelled = next(stream for stream in racing if stream["race_role"] == cancel_role)
+    assert llm_service.request_stream_control(cancelled["stream_id"], "cancel") == (
+        True,
+        "cancel",
+    )
+
+    survivors = await _wait_for_active_streams(
+        lambda streams: len(streams) == 1
+        and streams[0]["race_id"] == race_id
+        and streams[0]["parallel_retry_available"] is True
+    )
+    survivor = survivors[0]
+    assert survivor["race_role"] != cancel_role
+    assert llm_service.request_stream_control(
+        survivor["stream_id"], "parallel_retry"
+    ) == (True, "parallel_retry")
+
+    assert await task == "대체 병렬 완료"
+    assert calls == 3
+    assert llm_service.get_active_streams() == []
+    assert any(
+        event["type"] == "cancelled"
+        and event["stream_id"] == cancelled["stream_id"]
+        and event["reason"] == "cancel"
+        for event in frontend_events
+    )
+    assert len(history_events) == 1
+    assert len(history_events[0]["attempts"]) == 3
 
 
 @pytest.mark.asyncio

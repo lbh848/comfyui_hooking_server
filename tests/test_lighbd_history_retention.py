@@ -86,7 +86,7 @@ async def test_manual_parallel_race_records_winner_and_discarded_without_ok_dupl
         "model": "model-1",
         "llm_slot": "llm1",
         "input": [{"role": "user", "content": "hello"}],
-        "winner_stream_id": "parallel-id",
+        "winner_stream_id": "replacement-id",
         "attempts": [
             {
                 "stream_id": "original-id",
@@ -101,6 +101,17 @@ async def test_manual_parallel_race_records_winner_and_discarded_without_ok_dupl
             },
             {
                 "stream_id": "parallel-id",
+                "race_role": "parallel",
+                "outcome_kind": "cancelled",
+                "text": "취소된 병렬 부분",
+                "completion_tokens": 2,
+                "prompt_tokens": 4,
+                "elapsed": 0.5,
+                "tps": 4.0,
+                "error": "사용자 중지",
+            },
+            {
+                "stream_id": "replacement-id",
                 "race_role": "parallel",
                 "outcome_kind": "success",
                 "text": "빠른 완료",
@@ -119,12 +130,15 @@ async def test_manual_parallel_race_records_winner_and_discarded_without_ok_dupl
     })
 
     saved = lighbd_service._load_lighbd_history(limit=10)
-    assert len(saved) == 2
+    assert len(saved) == 3
     assert [record["status"] for record in saved] == [
         "race_lost",
+        "cancelled",
         "race_won",
     ]
     assert saved[0]["race_role"] == "original"
     assert saved[1]["race_role"] == "parallel"
-    assert saved[1]["winner_stream_id"] == "parallel-id"
+    assert saved[2]["race_role"] == "parallel"
+    assert saved[2]["winner_stream_id"] == "replacement-id"
+    assert len({record["history_id"] for record in saved}) == 3
     assert (tmp_path / "요구사항" / "lighbd_history.jsonl.bak").is_file()

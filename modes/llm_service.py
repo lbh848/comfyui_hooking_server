@@ -2935,8 +2935,9 @@ def _public_stream_state(record: dict) -> dict:
         try:
             state["parallel_retry_available"] = bool(
                 record.get("active")
-                and not coordinator.parallel_started
-                and coordinator.capacity_available_now()
+                and coordinator.capacity_available_now(
+                    str(record.get("stream_id") or "")
+                )
             )
         except Exception as e:
             print(
@@ -2983,13 +2984,21 @@ def request_stream_control(stream_id: str, action: str) -> tuple[bool, str]:
         )
         return False, "스트림 경쟁 제어 상태가 손상되었습니다."
     if normalized == "parallel_retry":
-        if coordinator.parallel_started:
+        if coordinator.resolved:
             print(
-                f"[LLM_STREAM] 병렬 재시도 중복 요청 거부: "
+                f"[LLM_STREAM] 종료된 병렬 경쟁 재요청 거부: "
                 f"stream_id={stream_id}, race_id={coordinator.race_id}"
             )
-            return False, "이미 이 요청의 병렬 재시도가 실행 중이거나 실행되었습니다."
-        if not coordinator.capacity_available_now():
+            return False, "이미 결과가 확정된 요청입니다."
+        active_peers = coordinator.active_attempt_ids(exclude_stream_id=stream_id)
+        if active_peers:
+            print(
+                f"[LLM_STREAM] 병렬 재시도 중복 요청 거부: "
+                f"stream_id={stream_id}, race_id={coordinator.race_id}, "
+                f"active_peers={active_peers}"
+            )
+            return False, "이미 이 요청의 다른 병렬 시도가 실행 중입니다."
+        if not coordinator.capacity_available_now(stream_id):
             gate = _request_gate(str(record.get("llm_slot") or "llm1"))
             limit = _llm_max_concurrency(str(record.get("llm_slot") or "llm1"))
             print(
@@ -3131,6 +3140,22 @@ def _history_safe_stream_messages(messages: list) -> list:
 
 
 def _stream_record_event_fields(record: dict) -> dict:
+    parallel_retry_available = False
+    coordinator = record.get("_race_coordinator")
+    if coordinator is not None:
+        try:
+            parallel_retry_available = bool(
+                record.get("active")
+                and coordinator.capacity_available_now(
+                    str(record.get("stream_id") or "")
+                )
+            )
+        except Exception as e:
+            print(
+                f"[LLM_STREAM] 이벤트 병렬 재시도 상태 계산 실패: "
+                f"stream_id={record.get('stream_id')}, error={e}"
+            )
+            traceback.print_exc()
     return {
         "race_id": str(record.get("race_id") or ""),
         "race_role": str(record.get("race_role") or ""),
@@ -3138,6 +3163,7 @@ def _stream_record_event_fields(record: dict) -> dict:
         "parallel_retry_supported": bool(
             record.get("parallel_retry_supported", False)
         ),
+        "parallel_retry_available": parallel_retry_available,
     }
 
 
@@ -3183,9 +3209,26 @@ class _ManualParallelStreamRace:
         owner_task = asyncio.current_task()
         self.owner_task_id = id(owner_task) if owner_task is not None else 0
 
-    def capacity_available_now(self) -> bool:
-        if self.parallel_started:
+    def active_attempt_ids(self, exclude_stream_id: str = "") -> list[str]:
+        """현재 실제로 실행 중인 시도 ID를 반환한다."""
+        return [
+            stream_id
+            for stream_id, task in self.tasks.items()
+            if stream_id != exclude_stream_id
+            and not task.done()
+            and bool((_active_streams.get(stream_id) or {}).get("active"))
+        ]
+
+    def capacity_available_now(self, source_stream_id: str = "") -> bool:
+        """살아 있는 단일 시도에서 병렬 대체 요청을 즉시 시작할 수 있는지 본다."""
+        if self.resolved:
             return False
+        if source_stream_id:
+            source_record = _active_streams.get(source_stream_id)
+            if source_record is None or not source_record.get("active"):
+                return False
+            if self.active_attempt_ids(exclude_stream_id=source_stream_id):
+                return False
         if _llm_max_concurrency(self.llm_slot) <= 1:
             return False
         return _request_gate(self.llm_slot).has_capacity_now()
@@ -3240,11 +3283,30 @@ class _ManualParallelStreamRace:
         return stream_id
 
     async def request_parallel(self, source_stream_id: str) -> tuple[bool, str]:
-        if self.parallel_started:
-            message = "이미 이 요청의 병렬 재시도가 실행 중이거나 실행되었습니다."
+        if self.resolved:
+            message = "이미 결과가 확정된 요청입니다."
             print(
                 f"[LLM_STREAM] 병렬 재시도 시작 거부: "
                 f"source={source_stream_id}, reason={message}"
+            )
+            return False, message
+
+        source_record = _active_streams.get(source_stream_id)
+        if source_record is None or not source_record.get("active"):
+            message = "원본 스트림이 이미 종료되어 병렬 재시도를 시작할 수 없습니다."
+            print(
+                f"[LLM_STREAM] 병렬 재시도 원본 소실: "
+                f"source={source_stream_id}, race_id={self.race_id}"
+            )
+            return False, message
+
+        active_peers = self.active_attempt_ids(exclude_stream_id=source_stream_id)
+        if active_peers:
+            message = "이미 이 요청의 다른 병렬 시도가 실행 중입니다."
+            print(
+                f"[LLM_STREAM] 병렬 재시도 중복 실행 거부: "
+                f"source={source_stream_id}, race_id={self.race_id}, "
+                f"active_peers={active_peers}"
             )
             return False, message
 
@@ -3261,27 +3323,16 @@ class _ManualParallelStreamRace:
             )
             return False, message
 
-        self.parallel_started = True
-        self.race_id = uuid.uuid4().hex
+        first_parallel = not self.parallel_started
+        if first_parallel:
+            self.parallel_started = True
+            self.race_id = uuid.uuid4().hex
+            self.race_attempt_ids = [source_stream_id]
         parallel_stream_id = uuid.uuid4().hex
-        self.race_attempt_ids = [source_stream_id, parallel_stream_id]
-
-        source_record = _active_streams.get(source_stream_id)
-        if source_record is None:
-            await gate.release()
-            self.parallel_started = False
-            self.race_id = ""
-            self.race_attempt_ids = []
-            message = "원본 스트림이 이미 종료되어 병렬 재시도를 시작할 수 없습니다."
-            print(
-                f"[LLM_STREAM] 병렬 재시도 원본 소실: "
-                f"source={source_stream_id}, race_id={self.race_id}"
-            )
-            return False, message
-
+        source_role = str(source_record.get("race_role") or "original")
         source_record.update({
             "race_id": self.race_id,
-            "race_role": "original",
+            "race_role": source_role,
             "race_status": "racing",
         })
         self.snapshots[source_stream_id] = _public_stream_state(source_record)
@@ -3293,20 +3344,23 @@ class _ManualParallelStreamRace:
             )
         except Exception as e:
             await gate.release()
-            self.parallel_started = False
-            self.race_id = ""
-            self.race_attempt_ids = []
-            source_record.update({
-                "race_id": "",
-                "race_role": "",
-                "race_status": "",
-            })
+            if first_parallel:
+                self.parallel_started = False
+                self.race_id = ""
+                self.race_attempt_ids = []
+                source_record.update({
+                    "race_id": "",
+                    "race_role": "",
+                    "race_status": "",
+                })
             print(
                 f"[LLM_STREAM] 병렬 재시도 task 생성 실패: "
                 f"source={source_stream_id}, error={type(e).__name__}: {e}"
             )
             traceback.print_exc()
             return False, f"병렬 재시도 task 생성 실패: {e}"
+
+        self.race_attempt_ids.append(parallel_stream_id)
 
         await _emit_stream_event({
             **self.metadata,
@@ -3316,10 +3370,11 @@ class _ManualParallelStreamRace:
             "stream_id": source_stream_id,
             "llm_slot": self.llm_slot,
             "race_id": self.race_id,
-            "race_role": "original",
+            "race_role": source_role,
             "race_status": "racing",
             "peer_stream_id": parallel_stream_id,
             "parallel_retry_supported": True,
+            "parallel_retry_available": False,
         })
         await _emit_stream_event({
             **self.metadata,
@@ -3333,11 +3388,13 @@ class _ManualParallelStreamRace:
             "race_status": "racing",
             "peer_stream_id": source_stream_id,
             "parallel_retry_supported": True,
+            "parallel_retry_available": False,
         })
         print(
             f"[LLM_STREAM] 수동 병렬 재시도 시작: race_id={self.race_id}, "
-            f"original={source_stream_id}, parallel={parallel_stream_id}, "
-            f"slot={self.llm_slot}, gate={gate.active}/{_llm_max_concurrency(self.llm_slot)}"
+            f"source={source_stream_id}, parallel={parallel_stream_id}, "
+            f"slot={self.llm_slot}, attempt_count={len(self.race_attempt_ids)}, "
+            f"gate={gate.active}/{_llm_max_concurrency(self.llm_slot)}"
         )
         return True, parallel_stream_id
 

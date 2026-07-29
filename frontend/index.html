@@ -14041,8 +14041,8 @@
     <div class="modal" id="lora-trained-session-modal" style="z-index:1450;">
         <div class="modal-content" style="max-width:1400px; width:96vw; max-height:94vh; height:94vh; overflow:hidden;">
             <div class="modal-header" style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
-                <!-- 기존 #lora-breadcrumb 가 이 슬롯으로 이동함 -->
-                <div id="lora-trained-session-bc" style="flex:1; min-width:200px;"></div>
+                <!-- 페이지 breadcrumb는 그대로 두고, 모달 전용 breadcrumb를 별도로 렌더링한다. -->
+                <div class="asset-breadcrumb" id="lora-trained-session-breadcrumb" style="flex:1; min-width:200px; padding:0; border-bottom:none; background:transparent;"></div>
                 <button class="modal-close" onclick="closeTrainedSessionModalAndRefresh()" title="닫기">&times;</button>
             </div>
             <div class="modal-body" id="lora-trained-session-body" style="flex:1; overflow-y:auto; padding:16px;">
@@ -25149,6 +25149,9 @@
             if (data.parallel_retry_supported !== undefined) {
                 state.parallelRetrySupported = !!data.parallel_retry_supported;
             }
+            if (data.parallel_retry_available !== undefined) {
+                state.parallelRetryAvailable = !!data.parallel_retry_available;
+            }
             // API 키 누락처럼 provider가 start 없이 곧바로 error를 내는 경로도 창에 표시한다.
             if (isNewStream && t !== 'start') _lighbdSelectedStreamId = streamId;
 
@@ -25436,16 +25439,21 @@
                 card.root.classList.toggle('is-active', !!state.active);
                 card.root.classList.toggle('is-error', !state.active && !!(state.status && state.status.includes('오류')));
                 const controlsDisabled = !state.active || state.id === 'legacy';
+                const hasActiveRacePeer = !!state.raceId && streaming.some(peer =>
+                    peer.id !== state.id && peer.raceId === state.raceId
+                );
                 card.retry.disabled = controlsDisabled || !!state.raceId;
                 card.parallelRetry.disabled = controlsDisabled
                     || !state.parallelRetrySupported
-                    || !!state.raceId;
+                    || hasActiveRacePeer;
                 card.cancel.disabled = controlsDisabled;
                 card.partial.disabled = controlsDisabled || !state.output;
                 if (!state.parallelRetrySupported) {
                     card.parallelRetry.title = '이 LLM 슬롯의 동시 요청 상한이 1이라 병렬 실행할 수 없습니다.';
-                } else if (state.raceId) {
+                } else if (hasActiveRacePeer) {
                     card.parallelRetry.title = '이미 이 요청이 병렬 경쟁 중입니다.';
+                } else if (state.raceId) {
+                    card.parallelRetry.title = '취소되거나 실패한 병렬 시도를 같은 요청으로 다시 실행';
                 } else {
                     card.parallelRetry.title = '원본을 유지한 채 같은 요청을 하나 더 실행하고 먼저 완료된 응답을 사용';
                 }
@@ -31772,8 +31780,10 @@
         let loraCurrentTrainedSession = '';
         let loraCurrentTrainedStep = '';
         let loraEntryRepresentative = '';
+        let _loraTrainedSessionRequestId = 0;
+        let _loraTrainedStepRequestId = 0;
 
-        // ─── 학습 세션 STEP 보기 모달 (세션 카드 클릭 → 모달화, 방법 B: 노드 이동) ───
+        // ─── 학습 세션 STEP 보기 모달 (세션 카드 클릭 → 모달화, 본문 노드 이동) ───
         // 이동한 노드들의 원래 위치를 기억해 닫을 때 복원한다.
         let _loraTrainedSessionMoved = []; // [{node, parent, next}]
         const _loraTrainedSessionBodyIds = ['lora-loss-chart-container', 'lora-trained-steps', 'lora-trained-previews', 'lora-trained-empty'];
@@ -31782,32 +31792,120 @@
             const el = document.getElementById(id);
             if (!el) { console.warn('[LORA_SESSION_MODAL] 이동할 요소를 찾을 수 없음:', id); return; }
             _loraTrainedSessionMoved.push({ node: el, parent: el.parentElement, next: el.nextSibling });
-            el.style.display = '';
             host.appendChild(el);
         }
 
-        // 세션 STEP 보기 모달을 연다. 이미 열려 있으면(재진입) 노드 이동은 생략 — 데이터만 다시 로드.
-        function openTrainedSessionModal() {
+        function _renderLoraTrainedSessionBreadcrumb(session, stepName = '') {
+            const breadcrumb = document.getElementById('lora-trained-session-breadcrumb');
+            if (!breadcrumb) {
+                console.error('[LORA_SESSION_MODAL] 모달 breadcrumb 요소 없음');
+                return;
+            }
+            const sessionSegment = stepName
+                ? `<span style="cursor:pointer;" onclick="enterTrainedSession('${escapeHtml(session)}')">${escapeHtml(session)}</span> / <span>${escapeHtml(stepName)}</span>`
+                : `<span>${escapeHtml(session)}</span>`;
+            breadcrumb.innerHTML =
+                `<span style="cursor:pointer;" onclick="initLoraTab()">로라매니징</span> / ` +
+                `<span style="cursor:pointer;" onclick="enterLoraCharacter('${escapeHtml(loraCurrentCharacter)}')">${escapeHtml(loraCurrentCharacter)}</span> / ` +
+                `<span style="cursor:pointer;" onclick="enterLoraEntry('${escapeHtml(loraCurrentEntry)}')">${escapeHtml(loraCurrentEntry)}</span> / ` +
+                sessionSegment;
+        }
+
+        function _setLoraTrainedSessionBusy(isBusy) {
+            const body = document.getElementById('lora-trained-session-body');
+            if (!body) {
+                console.error('[LORA_SESSION_MODAL] busy 상태를 적용할 본문 요소 없음:', isBusy);
+                return;
+            }
+            if (isBusy) body.setAttribute('aria-busy', 'true');
+            else body.removeAttribute('aria-busy');
+        }
+
+        function _resetLoraTrainedSessionContent() {
+            if (window._loraLossChart) {
+                window._loraLossChart.destroy();
+                window._loraLossChart = null;
+            }
+
+            for (const id of _loraTrainedSessionBodyIds) {
+                const el = document.getElementById(id);
+                if (!el) {
+                    console.error('[LORA_SESSION_MODAL] 초기화할 요소 없음:', id);
+                    continue;
+                }
+                el.style.display = 'none';
+            }
+
+            const stepsEl = document.getElementById('lora-trained-steps');
+            const previewsEl = document.getElementById('lora-trained-previews');
+            const emptyEl = document.getElementById('lora-trained-empty');
+            const lossCanvas = document.getElementById('lora-loss-chart');
+            const lossNoData = document.getElementById('lora-loss-nodata');
+            const tomlBtn = document.getElementById('lora-toml-preview-btn');
+            if (stepsEl) stepsEl.innerHTML = '';
+            else console.error('[LORA_SESSION_MODAL] STEP 목록 요소 없음');
+            if (previewsEl) previewsEl.innerHTML = '';
+            else console.error('[LORA_SESSION_MODAL] 프리뷰 목록 요소 없음');
+            if (emptyEl) emptyEl.textContent = '학습된 LoRA가 없습니다.';
+            else console.error('[LORA_SESSION_MODAL] 빈 상태 요소 없음');
+            if (lossCanvas) lossCanvas.style.display = 'none';
+            else console.error('[LORA_SESSION_MODAL] Loss canvas 요소 없음');
+            if (lossNoData) lossNoData.style.display = 'none';
+            else console.error('[LORA_SESSION_MODAL] Loss 빈 상태 요소 없음');
+            if (tomlBtn) tomlBtn.style.display = 'none';
+            else console.error('[LORA_SESSION_MODAL] TOML 버튼 요소 없음');
+        }
+
+        function _isLoraTrainedSessionRequestCurrent(requestId, session) {
             const modal = document.getElementById('lora-trained-session-modal');
-            if (!modal) { console.error('[LORA_SESSION_MODAL] 모달 요소 없음'); return; }
+            return requestId === _loraTrainedSessionRequestId
+                && loraCurrentTrainedSession === session
+                && !!modal
+                && modal.classList.contains('visible');
+        }
+
+        function _isLoraTrainedStepRequestCurrent(requestId, session, stepName) {
+            return requestId === _loraTrainedStepRequestId
+                && loraCurrentTrainedSession === session
+                && loraCurrentTrainedStep === stepName
+                && _isLoraTrainedSessionRequestCurrent(_loraTrainedSessionRequestId, session);
+        }
+
+        // 세션 STEP 보기 모달을 연다. 페이지 breadcrumb는 고정하고 본문 노드만 모달로 이동한다.
+        // 이미 열려 있으면(재진입) 노드 이동은 생략 — breadcrumb와 데이터만 다시 갱신한다.
+        function openTrainedSessionModal(session) {
+            const modal = document.getElementById('lora-trained-session-modal');
+            if (!modal) { console.error('[LORA_SESSION_MODAL] 모달 요소 없음'); return false; }
 
             if (_loraTrainedSessionMoved.length === 0) {
                 const bodyHost = document.getElementById('lora-trained-session-body');
-                const bcHost = document.getElementById('lora-trained-session-bc');
-                if (!bodyHost) { console.error('[LORA_SESSION_MODAL] 본문 호스트 없음'); return; }
+                if (!bodyHost) { console.error('[LORA_SESSION_MODAL] 본문 호스트 없음'); return false; }
                 for (const id of _loraTrainedSessionBodyIds) _loraTrainedMoveTo(bodyHost, id);
-                if (bcHost) _loraTrainedMoveTo(bcHost, 'lora-breadcrumb');
             }
 
+            _resetLoraTrainedSessionContent();
+            const sessionsEl = document.getElementById('lora-trained-sessions');
+            const repEl = document.getElementById('lora-representative');
+            if (sessionsEl) sessionsEl.style.display = 'none';
+            else console.error('[LORA_SESSION_MODAL] 숨길 세션 폴더 목록 요소 없음');
+            if (repEl) repEl.style.display = 'none';
+            else console.error('[LORA_SESSION_MODAL] 숨길 대표 LoRA 요소 없음');
+            _renderLoraTrainedSessionBreadcrumb(session);
+            _setLoraTrainedSessionBusy(true);
             modal.classList.add('visible');
+            return true;
         }
 
         function closeTrainedSessionModal() {
+            _loraTrainedSessionRequestId += 1;
+            _loraTrainedStepRequestId += 1;
             const modal = document.getElementById('lora-trained-session-modal');
             if (_loraTrainedSessionMoved.length === 0) {
                 if (modal) modal.classList.remove('visible');
                 return;
             }
+            _setLoraTrainedSessionBusy(false);
+            _resetLoraTrainedSessionContent();
             // 노드들을 원래 부모/순서로 복원
             for (const { node, parent, next } of _loraTrainedSessionMoved) {
                 if (!parent) continue;
@@ -31964,53 +32062,148 @@
         }
 
         async function enterTrainedSession(session) {
+            const requestId = ++_loraTrainedSessionRequestId;
+            _loraTrainedStepRequestId += 1;
             loraCurrentTrainedSession = session;
-            const loadingEl = document.getElementById('lora-loading');
-            loadingEl.style.display = 'flex';
 
-            // STEP 보기를 모달로 띄운다 (loss chart / steps / previews + breadcrumb 이동).
-            openTrainedSessionModal();
+            // 페이지 로딩 표시는 사용하지 않는다. 모달 본문을 비운 뒤 데이터가 완성되면 한 번에 표시한다.
+            if (!openTrainedSessionModal(session)) {
+                console.error('[LORA_TRAINED] 세션 모달 열기 실패:', {
+                    character: loraCurrentCharacter,
+                    entry: loraCurrentEntry,
+                    session,
+                });
+                return;
+            }
 
-            // breadcrumb 업데이트
-            document.getElementById('lora-breadcrumb').innerHTML =
-                `<span style="cursor:pointer;" onclick="initLoraTab()">로라매니징</span> / ` +
-                `<span style="cursor:pointer;" onclick="enterLoraCharacter('${escapeHtml(loraCurrentCharacter)}')">${escapeHtml(loraCurrentCharacter)}</span> / ` +
-                `<span style="cursor:pointer;" onclick="enterLoraEntry('${escapeHtml(loraCurrentEntry)}')">${escapeHtml(loraCurrentEntry)}</span> / ` +
-                `<span>${escapeHtml(session)}</span>`;
-
-            const sessionsEl = document.getElementById('lora-trained-sessions');
             const stepsEl = document.getElementById('lora-trained-steps');
-            const previewsEl = document.getElementById('lora-trained-previews');
             const emptyEl = document.getElementById('lora-trained-empty');
             const lossChartEl = document.getElementById('lora-loss-chart-container');
-
-            sessionsEl.style.display = 'none';
-            document.getElementById('lora-representative').style.display = 'none';
-            previewsEl.style.display = 'none';
-            emptyEl.style.display = 'none';
-
-            // 기존 loss chart 인스턴스 제거
-            if (window._loraLossChart) { window._loraLossChart.destroy(); window._loraLossChart = null; }
+            if (!stepsEl || !emptyEl || !lossChartEl) {
+                console.error('[LORA_TRAINED] 세션 렌더링 요소 누락:', {
+                    steps: !!stepsEl,
+                    empty: !!emptyEl,
+                    lossChart: !!lossChartEl,
+                    session,
+                });
+                _setLoraTrainedSessionBusy(false);
+                return;
+            }
 
             try {
                 const enc = encodeURIComponent;
                 const resp = await fetchJSON(`/api/lora/trained/steps?character=${enc(loraCurrentCharacter)}&entry=${enc(loraCurrentEntry)}&session=${enc(session)}`);
+                if (!_isLoraTrainedSessionRequestCurrent(requestId, session)) {
+                    console.info('[LORA_TRAINED] 만료된 세션 STEP 응답 무시:', {
+                        requestId,
+                        currentRequestId: _loraTrainedSessionRequestId,
+                        session,
+                        currentSession: loraCurrentTrainedSession,
+                    });
+                    return;
+                }
                 if (!resp.success) {
+                    console.error('[LORA_TRAINED] 세션 STEP API 실패:', {
+                        character: loraCurrentCharacter,
+                        entry: loraCurrentEntry,
+                        session,
+                        response: resp,
+                    });
                     showToast(resp.error || 'step 로드 실패', 'error');
+                    emptyEl.textContent = resp.error || 'step 로드에 실패했습니다.';
+                    emptyEl.style.display = '';
                     return;
                 }
                 const steps = resp.steps || [];
                 if (steps.length === 0) {
+                    console.warn('[LORA_TRAINED] 세션 STEP 파일 없음:', {
+                        character: loraCurrentCharacter,
+                        entry: loraCurrentEntry,
+                        session,
+                    });
                     emptyEl.style.display = '';
                     emptyEl.textContent = 'step 파일이 없습니다.';
                     return;
                 }
-                stepsEl.style.display = '';
+
+                // 대표 safetensors 파일명 추출
+                let repSafetensors = '';
+                if (loraEntryRepresentative) {
+                    try { repSafetensors = JSON.parse(loraEntryRepresentative).safetensors || ''; }
+                    catch (e) {
+                        console.error('[LORA_TRAINED] 엔트리 대표 정보 파싱 실패:', {
+                            session,
+                            representative: loraEntryRepresentative,
+                            error: e,
+                        });
+                    }
+                }
+
+                // 세션 대표 정보까지 로드된 뒤에만 STEP/Loss를 표시한다.
+                let sessionRepSafetensors = '';
+                try {
+                    const sessResp = await fetchJSON(`/api/lora/trained/sessions?character=${enc(loraCurrentCharacter)}&entry=${enc(loraCurrentEntry)}`);
+                    if (!_isLoraTrainedSessionRequestCurrent(requestId, session)) {
+                        console.info('[LORA_TRAINED] 만료된 세션 대표 응답 무시:', {
+                            requestId,
+                            currentRequestId: _loraTrainedSessionRequestId,
+                            session,
+                            currentSession: loraCurrentTrainedSession,
+                        });
+                        return;
+                    }
+                    if (sessResp.success) {
+                        const sess = (sessResp.sessions || []).find(x => x.name === session);
+                        if (sess && sess.representative) {
+                            try {
+                                sessionRepSafetensors = JSON.parse(sess.representative).safetensors || '';
+                            } catch (e) {
+                                console.error('[LORA_TRAINED] 세션 대표 정보 파싱 실패:', {
+                                    session,
+                                    representative: sess.representative,
+                                    error: e,
+                                });
+                            }
+                        }
+                    } else {
+                        console.error('[LORA_TRAINED] 세션 대표 API 실패:', {
+                            character: loraCurrentCharacter,
+                            entry: loraCurrentEntry,
+                            session,
+                            response: sessResp,
+                        });
+                    }
+                } catch (e) {
+                    console.error('[LORA_TRAINED] 세션 대표 조회 실패:', {
+                        character: loraCurrentCharacter,
+                        entry: loraCurrentEntry,
+                        session,
+                        error: e,
+                    });
+                }
+
+                if (!_isLoraTrainedSessionRequestCurrent(requestId, session)) {
+                    console.info('[LORA_TRAINED] 렌더링 전 만료된 세션 요청 무시:', {
+                        requestId,
+                        currentRequestId: _loraTrainedSessionRequestId,
+                        session,
+                        currentSession: loraCurrentTrainedSession,
+                    });
+                    return;
+                }
 
                 // Loss 차트 렌더링 (avr_loss가 있는 경우)
                 const lossSteps = steps.filter(s => s.avr_loss != null);
                 const lossCanvas = document.getElementById('lora-loss-chart');
                 const lossNoData = document.getElementById('lora-loss-nodata');
+                if (!lossCanvas || !lossNoData) {
+                    console.error('[LORA_TRAINED] Loss 렌더링 요소 누락:', {
+                        canvas: !!lossCanvas,
+                        noData: !!lossNoData,
+                        session,
+                    });
+                    throw new Error('Loss 렌더링 요소가 없습니다.');
+                }
                 if (lossSteps.length >= 2) {
                     const labels = lossSteps.map(s => {
                         const m = s.name.match(/step(\d+)/);
@@ -32069,23 +32262,8 @@
                 }
                 // TOML 미리보기 버튼: step이 있으면 표시
                 const tomlBtn = document.getElementById('lora-toml-preview-btn');
-                tomlBtn.style.display = steps.length > 0 ? '' : 'none';
-                // 대표 safetensors 파일명 추출
-                let repSafetensors = '';
-                if (loraEntryRepresentative) {
-                    try { repSafetensors = JSON.parse(loraEntryRepresentative).safetensors || ''; } catch (_) {}
-                }
-                // 세션 대표 safetensors 파일명
-                let sessionRepSafetensors = '';
-                try {
-                    const sessResp = await fetchJSON(`/api/lora/trained/sessions?character=${enc(loraCurrentCharacter)}&entry=${enc(loraCurrentEntry)}`);
-                    if (sessResp.success) {
-                        const sess = (sessResp.sessions || []).find(x => x.name === session);
-                        if (sess && sess.representative) {
-                            sessionRepSafetensors = JSON.parse(sess.representative).safetensors || '';
-                        }
-                    }
-                } catch (_) {}
+                if (tomlBtn) tomlBtn.style.display = '';
+                else console.error('[LORA_TRAINED] TOML 버튼 요소 없음:', { session });
                 stepsEl.innerHTML = `<div style="margin-bottom:10px; font-size:0.82rem; color:var(--text-secondary);">step 파일을 클릭하면 프리뷰 이미지를 볼 수 있습니다.</div>` +
                     `<div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(340px, 1fr)); gap:12px;">` +
                     steps.map(s => {
@@ -32114,11 +32292,20 @@
                                     class="trained-delete-btn">삭제</button>
                         </div>`;
                     }).join('') + '</div>';
+                stepsEl.style.display = '';
             } catch (e) {
                 console.error('[LORA_TRAINED] step 로드 실패:', e);
-                showToast('step 로드 실패', 'error');
+                if (_isLoraTrainedSessionRequestCurrent(requestId, session)) {
+                    _resetLoraTrainedSessionContent();
+                    showToast('step 로드 실패', 'error');
+                    emptyEl.textContent = 'step 로드에 실패했습니다.';
+                    emptyEl.style.display = '';
+                }
+            } finally {
+                if (_isLoraTrainedSessionRequestCurrent(requestId, session)) {
+                    _setLoraTrainedSessionBusy(false);
+                }
             }
-            loadingEl.style.display = 'none';
         }
 
         async function setTrainedRepresentative(safetensorsPath, previewUrl) {
@@ -32309,51 +32496,155 @@
         }
 
         async function enterTrainedStep(stepName) {
+            const session = loraCurrentTrainedSession;
+            if (!session) {
+                console.error('[LORA_TRAINED] STEP 진입 실패: 현재 세션이 비어 있음', {
+                    character: loraCurrentCharacter,
+                    entry: loraCurrentEntry,
+                    stepName,
+                });
+                return;
+            }
+            const requestId = ++_loraTrainedStepRequestId;
             loraCurrentTrainedStep = stepName;
-            // breadcrumb 업데이트
-            document.getElementById('lora-breadcrumb').innerHTML =
-                `<span style="cursor:pointer;" onclick="initLoraTab()">로라매니징</span> / ` +
-                `<span style="cursor:pointer;" onclick="enterLoraCharacter('${escapeHtml(loraCurrentCharacter)}')">${escapeHtml(loraCurrentCharacter)}</span> / ` +
-                `<span style="cursor:pointer;" onclick="enterLoraEntry('${escapeHtml(loraCurrentEntry)}')">${escapeHtml(loraCurrentEntry)}</span> / ` +
-                `<span style="cursor:pointer;" onclick="enterTrainedSession('${escapeHtml(loraCurrentTrainedSession)}')">${escapeHtml(loraCurrentTrainedSession)}</span> / ` +
-                `<span>${escapeHtml(stepName)}</span>`;
+            if (!_isLoraTrainedStepRequestCurrent(requestId, session, stepName)) {
+                console.error('[LORA_TRAINED] STEP 진입 실패: 세션 모달이 활성 상태가 아님', {
+                    session,
+                    stepName,
+                    requestId,
+                    sessionRequestId: _loraTrainedSessionRequestId,
+                });
+                return;
+            }
+            _renderLoraTrainedSessionBreadcrumb(session, stepName);
+            _setLoraTrainedSessionBusy(true);
 
             const stepsEl = document.getElementById('lora-trained-steps');
             const previewsEl = document.getElementById('lora-trained-previews');
+            if (!stepsEl || !previewsEl) {
+                console.error('[LORA_TRAINED] STEP 프리뷰 렌더링 요소 누락:', {
+                    steps: !!stepsEl,
+                    previews: !!previewsEl,
+                    session,
+                    stepName,
+                });
+                _setLoraTrainedSessionBusy(false);
+                return;
+            }
             stepsEl.style.display = 'none';
+            previewsEl.style.display = 'none';
+            previewsEl.innerHTML = '';
 
-            // 이미 로드된 step 데이터에서 찾기 (재요청 없이)
             const enc = encodeURIComponent;
             try {
-                const resp = await fetchJSON(`/api/lora/trained/steps?character=${enc(loraCurrentCharacter)}&entry=${enc(loraCurrentEntry)}&session=${enc(loraCurrentTrainedSession)}`);
-                if (!resp.success) return;
+                const resp = await fetchJSON(`/api/lora/trained/steps?character=${enc(loraCurrentCharacter)}&entry=${enc(loraCurrentEntry)}&session=${enc(session)}`);
+                if (!_isLoraTrainedStepRequestCurrent(requestId, session, stepName)) {
+                    console.info('[LORA_TRAINED] 만료된 STEP 프리뷰 응답 무시:', {
+                        requestId,
+                        currentRequestId: _loraTrainedStepRequestId,
+                        session,
+                        stepName,
+                        currentStep: loraCurrentTrainedStep,
+                    });
+                    return;
+                }
+                if (!resp.success) {
+                    console.error('[LORA_TRAINED] STEP 프리뷰 API 실패:', {
+                        character: loraCurrentCharacter,
+                        entry: loraCurrentEntry,
+                        session,
+                        stepName,
+                        response: resp,
+                    });
+                    previewsEl.style.display = '';
+                    previewsEl.innerHTML = `<div style="text-align:center; padding:32px; color:var(--text-secondary);">${escapeHtml(resp.error || '프리뷰 로드에 실패했습니다.')}</div>`;
+                    return;
+                }
                 const step = (resp.steps || []).find(s => s.name === stepName);
                 if (!step || !step.previews || step.previews.length === 0) {
+                    console.warn('[LORA_TRAINED] STEP 프리뷰 이미지 없음:', {
+                        character: loraCurrentCharacter,
+                        entry: loraCurrentEntry,
+                        session,
+                        stepName,
+                        stepFound: !!step,
+                    });
                     previewsEl.style.display = '';
                     previewsEl.innerHTML = '<div style="text-align:center; padding:32px; color:var(--text-secondary);">프리뷰 이미지가 없습니다.</div>';
                     return;
                 }
-                previewsEl.style.display = '';
                 const safetensorsPath = step.safetensors;
                 // 대표 상태 확인
                 let isEntryRep = false, isSessionRep = false, sessionRepPreviewUrl = '';
                 try {
                     const rep = loraEntryRepresentative ? JSON.parse(loraEntryRepresentative) : null;
                     if (rep && rep.safetensors === safetensorsPath) isEntryRep = true;
-                } catch (_) {}
+                } catch (e) {
+                    console.error('[LORA_TRAINED] STEP 엔트리 대표 정보 파싱 실패:', {
+                        session,
+                        stepName,
+                        representative: loraEntryRepresentative,
+                        error: e,
+                    });
+                }
                 try {
                     const sessResp = await fetchJSON(`/api/lora/trained/sessions?character=${enc(loraCurrentCharacter)}&entry=${enc(loraCurrentEntry)}`);
+                    if (!_isLoraTrainedStepRequestCurrent(requestId, session, stepName)) {
+                        console.info('[LORA_TRAINED] 만료된 STEP 대표 응답 무시:', {
+                            requestId,
+                            currentRequestId: _loraTrainedStepRequestId,
+                            session,
+                            stepName,
+                            currentStep: loraCurrentTrainedStep,
+                        });
+                        return;
+                    }
                     if (sessResp.success) {
-                        const sess = (sessResp.sessions || []).find(x => x.name === loraCurrentTrainedSession);
+                        const sess = (sessResp.sessions || []).find(x => x.name === session);
                         if (sess && sess.representative) {
-                            const sr = JSON.parse(sess.representative);
-                            if (sr.safetensors === safetensorsPath) {
-                                isSessionRep = true;
-                                sessionRepPreviewUrl = sr.preview || '';
+                            try {
+                                const sr = JSON.parse(sess.representative);
+                                if (sr.safetensors === safetensorsPath) {
+                                    isSessionRep = true;
+                                    sessionRepPreviewUrl = sr.preview || '';
+                                }
+                            } catch (e) {
+                                console.error('[LORA_TRAINED] STEP 세션 대표 정보 파싱 실패:', {
+                                    session,
+                                    stepName,
+                                    representative: sess.representative,
+                                    error: e,
+                                });
                             }
                         }
+                    } else {
+                        console.error('[LORA_TRAINED] STEP 세션 대표 API 실패:', {
+                            character: loraCurrentCharacter,
+                            entry: loraCurrentEntry,
+                            session,
+                            stepName,
+                            response: sessResp,
+                        });
                     }
-                } catch (_) {}
+                } catch (e) {
+                    console.error('[LORA_TRAINED] STEP 세션 대표 조회 실패:', {
+                        character: loraCurrentCharacter,
+                        entry: loraCurrentEntry,
+                        session,
+                        stepName,
+                        error: e,
+                    });
+                }
+                if (!_isLoraTrainedStepRequestCurrent(requestId, session, stepName)) {
+                    console.info('[LORA_TRAINED] 렌더링 전 만료된 STEP 요청 무시:', {
+                        requestId,
+                        currentRequestId: _loraTrainedStepRequestId,
+                        session,
+                        stepName,
+                        currentStep: loraCurrentTrainedStep,
+                    });
+                    return;
+                }
                 let badgeHtml = '';
                 if (isEntryRep) badgeHtml += '<span style="background:rgba(0,120,215,0.95); color:#fff; font-size:0.7rem; font-weight:700; padding:2px 8px; border-radius:4px;">엔트리 대표</span>';
                 if (isSessionRep) badgeHtml += '<span style="background:rgba(255,193,7,0.95); color:#000; font-size:0.7rem; font-weight:700; padding:2px 8px; border-radius:4px;">세션 대표</span>';
@@ -32363,13 +32654,13 @@
                     </div>` +
                     `<div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(400px, 1fr)); gap:12px;">` +
                     step.previews.map(p => {
-                        const url = `/api/lora/trained/preview/${enc(loraCurrentCharacter)}/${enc(loraCurrentEntry)}/${enc(loraCurrentTrainedSession)}/${enc(p)}`;
+                        const url = `/api/lora/trained/preview/${enc(loraCurrentCharacter)}/${enc(loraCurrentEntry)}/${enc(session)}/${enc(p)}`;
                         const isRepImage = isSessionRep && sessionRepPreviewUrl === url;
                         return `<div style="position:relative;">
                             <img src="${url}" style="width:100%; border-radius:10px; cursor:pointer; display:block;" onclick="openLightbox('${url}')">
                             ${isRepImage ? '<div style="position:absolute; top:10px; left:10px; z-index:5; background:rgba(255,193,7,0.95); color:#000; font-size:0.75rem; font-weight:700; padding:4px 10px; border-radius:6px;">현재 세션 대표 이미지</div>' : ''}
                             <div style="position:absolute; bottom:10px; right:10px; display:flex; gap:6px;">
-                            <button onclick="setSessionRepresentative('${escapeHtml(loraCurrentTrainedSession)}', '${escapeHtml(safetensorsPath)}', '${escapeHtml(url)}')"
+                            <button onclick="setSessionRepresentative('${escapeHtml(session)}', '${escapeHtml(safetensorsPath)}', '${escapeHtml(url)}')"
                                     style="background:rgba(0,0,0,0.7); color:#fff; border:1px solid rgba(255,255,255,0.3); border-radius:8px; padding:6px 12px; font-size:0.78rem; cursor:pointer; backdrop-filter:blur(4px); transition:background 0.2s;"
                                     onmouseover="this.style.background='rgba(0,160,80,0.85)'" onmouseout="this.style.background='rgba(0,0,0,0.7)'">
                                 세션 대표로 설정
@@ -32377,8 +32668,17 @@
                             </div>
                         </div>`;
                     }).join('') + '</div>';
+                previewsEl.style.display = '';
             } catch (e) {
                 console.error('[LORA_TRAINED] 프리뷰 로드 실패:', e);
+                if (_isLoraTrainedStepRequestCurrent(requestId, session, stepName)) {
+                    previewsEl.style.display = '';
+                    previewsEl.innerHTML = '<div style="text-align:center; padding:32px; color:var(--text-secondary);">프리뷰 로드에 실패했습니다.</div>';
+                }
+            } finally {
+                if (_isLoraTrainedStepRequestCurrent(requestId, session, stepName)) {
+                    _setLoraTrainedSessionBusy(false);
+                }
             }
         }
 
@@ -60050,6 +60350,8 @@
         }
 
         let auQwenEditState = null;
+        let auQwenEditOpenRequestId = 0;
+        const auPendingNegativePromptApplyRequests = new Set();
 
         function auEnsureQwenEditModal() {
             let modal = document.getElementById('au-qwen-edit-modal');
@@ -62089,10 +62391,83 @@
             auQwenCaptureHistory();
         }
 
+        async function auLoadLatestEditSourceData(data) {
+            const enc = encodeURIComponent;
+            const metadataUrl =
+                `/api/asset_mode/characters/${enc(data.character)}`
+                + `/outfits/${enc(data.outfit)}`
+                + `/expressions/${enc(data.expression)}/images`;
+            let response;
+            try {
+                response = await fetch(metadataUrl, { cache: 'no-store' });
+            } catch (error) {
+                console.error(
+                    '[EDIT_TOOL] 최신 이미지 메타데이터 요청 실패:',
+                    { data, metadataUrl, error },
+                );
+                throw new Error('최신 이미지 정보를 불러오지 못했습니다');
+            }
+            if (!response.ok) {
+                console.error(
+                    '[EDIT_TOOL] 최신 이미지 메타데이터 응답 실패:',
+                    { data, metadataUrl, status: response.status },
+                );
+                throw new Error(`최신 이미지 조회 실패 (HTTP ${response.status})`);
+            }
+
+            let payload;
+            try {
+                payload = await response.json();
+            } catch (error) {
+                console.error(
+                    '[EDIT_TOOL] 최신 이미지 메타데이터 JSON 파싱 실패:',
+                    { data, metadataUrl, error },
+                );
+                throw new Error('최신 이미지 응답을 해석하지 못했습니다');
+            }
+            if (!payload || !Array.isArray(payload.images)) {
+                console.error(
+                    '[EDIT_TOOL] 최신 이미지 목록 형식 오류:',
+                    { data, metadataUrl, payload },
+                );
+                throw new Error('최신 이미지 목록 형식이 올바르지 않습니다');
+            }
+            const latest = payload.images.find(item => item.filename === data.filename);
+            if (!latest) {
+                console.error(
+                    '[EDIT_TOOL] 최신 이미지 메타데이터에서 원본을 찾지 못함:',
+                    { data, metadataUrl, imageCount: payload.images.length },
+                );
+                throw new Error('선택한 이미지의 최신 정보를 찾지 못했습니다');
+            }
+            return {
+                ...data,
+                positive: latest.positive || '',
+                negative: latest.edit_negative_prompt || latest.negative || '',
+            };
+        }
+
         async function auOpenQwenEdit(data) {
             if (!data?.imageUrl || !data?.filename) {
                 console.error('[QWEN_EDIT] 모달 열기 실패: 이미지 식별자 누락', data);
                 showToast('EDIT 툴 원본 이미지 정보가 없습니다', 'error');
+                return;
+            }
+            const openRequestId = ++auQwenEditOpenRequestId;
+            try {
+                await auWaitForPendingNegativePromptApplies();
+                data = await auLoadLatestEditSourceData(data);
+            } catch (error) {
+                if (openRequestId !== auQwenEditOpenRequestId) return;
+                console.error('[EDIT_TOOL] 최신 프롬프트 동기화 실패:', { data, error });
+                showToast(error.message || '최신 프롬프트를 불러오지 못했습니다', 'error');
+                return;
+            }
+            if (openRequestId !== auQwenEditOpenRequestId) {
+                console.info(
+                    '[EDIT_TOOL] 더 최신 모달 열기 요청이 있어 이전 응답 무시:',
+                    { openRequestId, currentRequestId: auQwenEditOpenRequestId },
+                );
                 return;
             }
             const editTool =
@@ -62202,6 +62577,7 @@
         }
 
         function auCloseQwenEdit() {
+            auQwenEditOpenRequestId += 1;
             const itemModal = document.getElementById('au-qwen-composite-modal');
             if (itemModal?.classList.contains('visible')) {
                 itemModal.classList.remove('visible');
@@ -62756,6 +63132,68 @@
             });
         }
 
+        async function auRequestNegativePromptApply(payload, label) {
+            const request = (async () => {
+                let response;
+                try {
+                    response = await fetch('/api/asset_mode/batch_set_negative', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload),
+                    });
+                } catch (error) {
+                    console.error(`[AU] ${label} 부정 프롬프트 요청 실패:`, { payload, error });
+                    throw new Error('부정 프롬프트 적용 요청에 실패했습니다');
+                }
+
+                let data;
+                try {
+                    data = await response.json();
+                } catch (error) {
+                    console.error(
+                        `[AU] ${label} 부정 프롬프트 응답 파싱 실패:`,
+                        { payload, status: response.status, error },
+                    );
+                    throw new Error('부정 프롬프트 적용 응답을 해석하지 못했습니다');
+                }
+                if (!data || typeof data !== 'object') {
+                    console.error(
+                        `[AU] ${label} 부정 프롬프트 응답 형식 오류:`,
+                        { payload, status: response.status, data },
+                    );
+                    throw new Error('부정 프롬프트 적용 응답 형식이 올바르지 않습니다');
+                }
+                if (!response.ok || !data.success) {
+                    console.error(
+                        `[AU] ${label} 부정 프롬프트 적용 실패:`,
+                        { payload, status: response.status, data },
+                    );
+                    throw new Error(data.error || `부정 프롬프트 적용 실패 (HTTP ${response.status})`);
+                }
+                return data;
+            })();
+            auPendingNegativePromptApplyRequests.add(request);
+            try {
+                return await request;
+            } finally {
+                auPendingNegativePromptApplyRequests.delete(request);
+            }
+        }
+
+        async function auWaitForPendingNegativePromptApplies() {
+            const pending = [...auPendingNegativePromptApplyRequests];
+            if (pending.length === 0) return;
+            const results = await Promise.allSettled(pending);
+            const failure = results.find(result => result.status === 'rejected');
+            if (failure) {
+                console.error(
+                    '[EDIT_TOOL] 대기 중인 부정 프롬프트 적용 실패:',
+                    failure.reason,
+                );
+                throw new Error('부정 프롬프트 적용이 실패해 EDIT를 열지 못했습니다');
+            }
+        }
+
         async function auBatchSetNegative() {
             if (auNavLevel < 1 || !auNavCharacter) {
                 showToast('캐릭터를 먼저 선택하세요', 'error');
@@ -62774,22 +63212,17 @@
                 return;
             }
             const negativeTags = presetTags.join(', ');
+            const targetCharacter = auNavCharacter;
             if (!confirm(`대표이미지에 부정 프롬프트를 일괄 적용하시겠습니까?\n기존 부정 프롬프트가 덮어씌워집니다.`)) return;
 
             const btn = document.getElementById('au-batch-negative-btn');
             btn.disabled = true;
             btn.textContent = '적용 중...';
             try {
-                const resp = await fetch('/api/asset_mode/batch_set_negative', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ character: auNavCharacter, negative_tags: negativeTags }),
-                });
-                const data = await resp.json();
-                if (!data.success) {
-                    showToast(data.error || '적용 실패', 'error');
-                    return;
-                }
+                const data = await auRequestNegativePromptApply(
+                    { character: targetCharacter, negative_tags: negativeTags },
+                    '대표 이미지',
+                );
                 const total = data.total || 0;
                 const ok = data.success_count || 0;
                 const fail = data.fail_count || 0;
@@ -62797,7 +63230,9 @@
                     `${ok}장에 부정 프롬프트 적용 완료` + (fail > 0 ? `, ${fail}건 실패` : ''),
                     fail > 0 ? 'warning' : 'success'
                 );
+                await auRefreshPromptViews(targetCharacter);
             } catch (e) {
+                console.error('[AU] 대표 이미지 부정 프롬프트 적용 오류:', e);
                 showToast('부정 프롬프트 적용 오류: ' + e.message, 'error');
             } finally {
                 btn.disabled = false;
@@ -62824,11 +63259,14 @@
                 return;
             }
             const negativeTags = presetTags.join(', ');
+            const targetCharacter = auNavCharacter;
+            const targetOutfit = auNavOutfit;
+            const targetExpression = auNavExpression;
             // URL → {outfit, expression, filename} 추출 (auAnalyzeSelectedImages 와 동일 패턴)
             const images = [...auSelectedImages].map(url => {
                 const parts = url.split('/images/');
                 const filename = parts.length > 1 ? decodeURIComponent(parts[parts.length - 1]) : '';
-                return { outfit: auNavOutfit, expression: auNavExpression, filename };
+                return { outfit: targetOutfit, expression: targetExpression, filename };
             }).filter(img => img.filename);
             if (images.length === 0) { showToast('유효한 이미지가 없습니다', 'error'); return; }
             if (!confirm(`선택한 ${images.length}장 이미지에 부정 프롬프트를 적용하시겠습니까?\n기존 부정 프롬프트가 덮어씌워집니다.`)) return;
@@ -62838,28 +63276,60 @@
             const origText = btn.textContent;
             btn.textContent = '적용 중...';
             try {
-                const resp = await fetch('/api/asset_mode/batch_set_negative', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ character: auNavCharacter, negative_tags: negativeTags, images }),
-                });
-                const data = await resp.json();
-                if (!data.success) {
-                    showToast(data.error || '적용 실패', 'error');
-                    return;
-                }
+                const data = await auRequestNegativePromptApply(
+                    {
+                        character: targetCharacter,
+                        negative_tags: negativeTags,
+                        images,
+                    },
+                    '선택 이미지',
+                );
                 const ok = data.success_count || 0;
                 const fail = data.fail_count || 0;
                 showToast(
                     `선택 ${ok}장에 부정 프롬프트 적용 완료` + (fail > 0 ? `, ${fail}건 실패` : ''),
                     fail > 0 ? 'warning' : 'success'
                 );
+                await auRefreshPromptViews(
+                    targetCharacter,
+                    targetOutfit,
+                    targetExpression,
+                );
             } catch (e) {
+                console.error('[AU] 선택 이미지 부정 프롬프트 적용 오류:', e);
                 showToast('부정 프롬프트 적용 오류: ' + e.message, 'error');
             } finally {
                 btn.disabled = auSelectedImages.size === 0;
                 btn.textContent = origText;
             }
+        }
+
+        async function auRefreshPromptViews(character, outfit = '', expression = '') {
+            const refreshes = [];
+            if (
+                auNavLevel === 2
+                && auNavCharacter === character
+                && (!outfit || auNavOutfit === outfit)
+                && (!expression || auNavExpression === expression)
+            ) {
+                auSelectedImages.clear();
+                auUpdateAnalyzeBtn();
+                auUpdateUploadBtn();
+                refreshes.push(
+                    auRenderImages(auNavCharacter, auNavOutfit, auNavExpression),
+                );
+            }
+            if (
+                typeof assetNavLevel !== 'undefined'
+                && assetNavLevel === 2
+                && assetNavCharacter === character
+                && (!outfit || assetNavOutfit === outfit)
+                && (!expression || assetNavExpression === expression)
+            ) {
+                refreshes.push(loadAssetImages());
+            }
+            if (refreshes.length === 0) return;
+            await Promise.all(refreshes);
         }
 
         function auUpdateBreadcrumb() {

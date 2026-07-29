@@ -333,7 +333,7 @@ def _log_lighbd_history(record: dict) -> None:
 
 
 def _log_manual_parallel_race(event: dict) -> None:
-    """수동 병렬 재시도의 두 시도를 승리/폐기 상태로 자세히에 기록한다."""
+    """수동 병렬 재시도의 모든 시도를 승리/폐기 상태로 자세히에 기록한다."""
     race_id = str(event.get("race_id") or "")
     attempts = event.get("attempts")
     if not race_id:
@@ -369,6 +369,12 @@ def _log_manual_parallel_race(event: dict) -> None:
             )
             continue
         stream_id = str(attempt.get("stream_id") or "")
+        if not stream_id:
+            print(
+                f"[LIGHBD] 병렬 경쟁 시도 기록 실패: stream_id 없음 "
+                f"race_id={race_id}, attempt={attempt!r}"
+            )
+            continue
         role = str(attempt.get("race_role") or "")
         role_label = "병렬 재시도" if role == "parallel" else "원본"
         outcome_kind = str(attempt.get("outcome_kind") or "")
@@ -400,7 +406,7 @@ def _log_manual_parallel_race(event: dict) -> None:
 
         record = {
             "ts": datetime.datetime.now().isoformat(timespec="seconds"),
-            "history_id": f"{race_id}:{role or stream_id}",
+            "history_id": f"{race_id}:{stream_id}",
             "prompt_id": str(event.get("task_key") or race_id),
             "call_name": f"{base_call_name} · {role_label}",
             "task_key": str(event.get("task_key") or ""),

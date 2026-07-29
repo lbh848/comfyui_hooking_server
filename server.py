@@ -13647,7 +13647,17 @@ async def handle_api_asset_mode_batch_set_negative(request: web.Request) -> web.
         negative_tags = body.get("negative_tags", "")
         images = body.get("images", [])  # [{outfit, expression, filename}, ...] — 선택 이미지 적용 시
         if not character:
+            print("[ASSET_MODE] 부정 프롬프트 적용 실패: character가 비어 있음")
             return web.json_response({"success": False, "error": "character 필수"}, status=400)
+        if not isinstance(negative_tags, str):
+            print(
+                "[ASSET_MODE] 부정 프롬프트 적용 실패: negative_tags 형식 오류 "
+                f"type={type(negative_tags).__name__}, value={negative_tags!r}"
+            )
+            return web.json_response(
+                {"success": False, "error": "negative_tags는 문자열이어야 합니다"},
+                status=400,
+            )
 
         # 대상 파일 목록 결정:
         # - images 가 주어지면: 선택한 개별 이미지들만 (LV2 선택 적용)
@@ -13660,6 +13670,10 @@ async def handle_api_asset_mode_batch_set_negative(request: web.Request) -> web.
                 expression = img_info.get("expression", "")
                 filename = img_info.get("filename", "")
                 if not filename:
+                    print(
+                        "[ASSET_MODE] 부정 프롬프트 적용 대상 스킵: filename이 비어 있음 "
+                        f"character={character!r}, image={img_info!r}"
+                    )
                     continue
                 img_dir = os.path.join(ASSET_DIR,
                     asset_mode._safe_dirname(character),
@@ -13677,6 +13691,10 @@ async def handle_api_asset_mode_batch_set_negative(request: web.Request) -> web.
                 })
 
         if not targets:
+            print(
+                "[ASSET_MODE] 부정 프롬프트 적용 대상 없음: "
+                f"character={character!r}, requested_images={len(images)}"
+            )
             return web.json_response({"success": True, "total": 0, "success_count": 0, "fail_count": 0})
 
         success_count = 0
@@ -13684,16 +13702,10 @@ async def handle_api_asset_mode_batch_set_negative(request: web.Request) -> web.
         for tgt in targets:
             try:
                 prompt_path = os.path.join(tgt["img_dir"], f"{tgt['base']}_prompt.json")
-                existing = {}
-                if os.path.isfile(prompt_path):
-                    try:
-                        with open(prompt_path, "r", encoding="utf-8") as pf:
-                            existing = json.load(pf)
-                    except Exception:
-                        pass
-                existing["negative"] = negative_tags
-                with open(prompt_path, "w", encoding="utf-8") as pf:
-                    json.dump(existing, pf, ensure_ascii=False, indent=2)
+                asset_mode.update_prompt_negative_metadata(
+                    prompt_path,
+                    negative_tags,
+                )
                 success_count += 1
                 print(f"[ASSET_MODE] 부정 프롬프트 적용 완료: {tgt['filename']}")
             except Exception as e:
