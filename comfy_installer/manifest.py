@@ -12,6 +12,7 @@ from typing import Any
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _GIT_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+_GIT_BRANCH_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*$")
 
 
 class ManifestError(RuntimeError):
@@ -143,14 +144,34 @@ def _validate_manifest(data: dict[str, Any]) -> None:
         source_type = node.get("source_type")
         if source_type == "git":
             _require_string(node, "repository", context)
-            ref = _require_string(node, "ref", context)
-            if not (
-                _GIT_SHA_RE.fullmatch(ref)
-                or re.fullmatch(r"[A-Za-z0-9._/+:-]+", ref)
-            ):
+            ref = node.get("ref")
+            tracking_branch = node.get("tracking_branch")
+            if (ref is None) == (tracking_branch is None):
                 raise ManifestError(
-                    f"{context}.ref 형식이 유효하지 않습니다: {ref!r}"
+                    f"{context}는 ref 또는 tracking_branch 중 하나만 가져야 합니다."
                 )
+            if tracking_branch is not None:
+                branch = _require_string(node, "tracking_branch", context)
+                if (
+                    not _GIT_BRANCH_RE.fullmatch(branch)
+                    or ".." in branch
+                    or "//" in branch
+                    or branch.endswith(("/", "."))
+                    or branch.casefold().endswith(".lock")
+                ):
+                    raise ManifestError(
+                        f"{context}.tracking_branch 형식이 유효하지 않습니다: "
+                        f"{branch!r}"
+                    )
+            else:
+                pinned_ref = _require_string(node, "ref", context)
+                if not (
+                    _GIT_SHA_RE.fullmatch(pinned_ref)
+                    or re.fullmatch(r"[A-Za-z0-9._/+:-]+", pinned_ref)
+                ):
+                    raise ManifestError(
+                        f"{context}.ref 형식이 유효하지 않습니다: {pinned_ref!r}"
+                    )
         elif source_type == "archive":
             _require_string(node, "url", context)
             sha256 = _require_string(node, "sha256", context).lower()

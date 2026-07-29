@@ -1137,6 +1137,7 @@ class ComfyInstallerService:
                 self._log("[업데이트] Comfy/Python 변경 없음: 핵심 의존성 생략")
 
             self._set_phase("custom_nodes")
+            updated_node_names: list[str] = []
             node_paths = update_custom_nodes(
                 nodes=new_manifest.custom_nodes,
                 comfy_root=self.comfy_root,
@@ -1144,11 +1145,22 @@ class ComfyInstallerService:
                 cancel_event=self._cancel,
                 log=self._log,
                 progress=self._set_progress,
+                changed_nodes=updated_node_names,
             )
+            if updated_node_names:
+                self._log(
+                    "[업데이트] 실제 변경된 커스텀 노드: "
+                    + ", ".join(updated_node_names)
+                )
 
             self._set_phase("node_dependencies")
             node_requirements: list[str] = []
-            if source_changed or python_changed or nodes_changed:
+            if (
+                source_changed
+                or python_changed
+                or nodes_changed
+                or updated_node_names
+            ):
                 node_requirements = install_node_dependencies(
                     comfy_root=self.comfy_root,
                     python=python,
@@ -1205,8 +1217,9 @@ class ComfyInstallerService:
                 "changes": {
                     "comfy": source_changed,
                     "python": python_changed,
-                    "custom_nodes": nodes_changed,
+                    "custom_nodes": bool(nodes_changed or updated_node_names),
                 },
+                "updated_custom_nodes": updated_node_names,
                 "python": python_result,
                 "runtime": runtime,
                 "node_requirements": node_requirements,

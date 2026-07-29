@@ -222,3 +222,83 @@ async def test_preflight_without_body_keeps_general_probe(
         assert (await response.json())["preflight"] == {"mode": "general"}
     finally:
         await client.close()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_after_update_requires_successful_update(
+    tmp_path: Path,
+) -> None:
+    config = tmp_path / "config.json"
+    config.write_text("{}\n", encoding="utf-8")
+    shutdown_calls = []
+
+    async def shutdown_after_update():
+        shutdown_calls.append(True)
+        return {"manager_shutdown_scheduled": True}
+
+    app = web.Application()
+    register_comfy_installer_routes(
+        app,
+        project_root=tmp_path,
+        config_path=config,
+        requirements_dir=tmp_path / "requirements",
+        shutdown_after_update=shutdown_after_update,
+    )
+    client = TestClient(TestServer(app))
+    await client.start_server()
+    try:
+        response = await client.post(
+            "/api/comfy-installer/shutdown-after-update"
+        )
+        assert response.status == 409
+        assert shutdown_calls == []
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_after_update_runs_once_after_success(
+    tmp_path: Path,
+) -> None:
+    config = tmp_path / "config.json"
+    config.write_text("{}\n", encoding="utf-8")
+    shutdown_calls = []
+
+    async def shutdown_after_update():
+        shutdown_calls.append(True)
+        return {
+            "managed_comfy_instances": [1, 2],
+            "manager_shutdown_scheduled": True,
+        }
+
+    app = web.Application()
+    service = register_comfy_installer_routes(
+        app,
+        project_root=tmp_path,
+        config_path=config,
+        requirements_dir=tmp_path / "requirements",
+        shutdown_after_update=shutdown_after_update,
+    )
+    with service._lock:
+        service._state.update({"state": "succeeded", "operation": "update"})
+
+    client = TestClient(TestServer(app))
+    await client.start_server()
+    try:
+        response = await client.post(
+            "/api/comfy-installer/shutdown-after-update"
+        )
+        assert response.status == 200
+        payload = await response.json()
+        assert payload["ok"] is True
+        assert payload["shutdown"]["managed_comfy_instances"] == [1, 2]
+        assert "재시작해주세요" in payload["message"]
+        assert shutdown_calls == [True]
+
+        duplicate = await client.post(
+            "/api/comfy-installer/shutdown-after-update"
+        )
+        assert duplicate.status == 409
+        assert shutdown_calls == [True]
+    finally:
+        await client.close()

@@ -222,6 +222,21 @@ def test_manifest_has_fully_pinned_windows_runtime_and_assets() -> None:
         if node["name"] == "comfyui-spectrum-ksampler"
     )
     assert spectrum["ref"] == "c806917566ee1c149575cd90da9e4c2e543de019"
+    tracking_main_names = {
+        node["name"]
+        for node in manifest.custom_nodes
+        if node.get("tracking_branch") == "main"
+    }
+    assert tracking_main_names == {
+        "comfyui-instant-lora_v_soya",
+        "comfyui-soya-custom-nodes",
+        "comfyui-workflow-to-api-converter-endpoint",
+    }
+    assert all(
+        "ref" not in node
+        for node in manifest.custom_nodes
+        if node["name"] in tracking_main_names
+    )
     assert len(manifest.models) == 36
     assert manifest.workflows["expected_count"] == 17
     fixed_v1 = manifest.workflows["release_dependencies"]["v1"]

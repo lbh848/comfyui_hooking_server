@@ -6,7 +6,9 @@ import os
 import re
 import traceback
 import uuid
+from collections.abc import Awaitable, Callable
 from pathlib import Path
+from typing import Any
 
 from aiohttp import web
 
@@ -19,6 +21,7 @@ _UPLOAD_ID = re.compile(r"^[0-9a-f]{32}$")
 APP_SERVICE_KEY = web.AppKey(
     "comfy_installer_service", ComfyInstallerService
 )
+ShutdownAfterUpdateCallback = Callable[[], Awaitable[dict[str, Any]]]
 
 
 def _json_error(message: str, *, status: int = 400) -> web.Response:
@@ -314,6 +317,8 @@ def register_comfy_installer_routes(
     project_root: str | os.PathLike[str],
     config_path: str | os.PathLike[str],
     requirements_dir: str | os.PathLike[str],
+    authorize_shutdown: Callable[[web.Request], bool] | None = None,
+    shutdown_after_update: ShutdownAfterUpdateCallback | None = None,
 ) -> ComfyInstallerService:
     service = ComfyInstallerService(
         project_root=project_root,
@@ -321,6 +326,66 @@ def register_comfy_installer_routes(
         requirements_dir=requirements_dir,
     )
     app[APP_SERVICE_KEY] = service
+    shutdown_requested = False
+
+    async def handle_shutdown_after_update(
+        request: web.Request,
+    ) -> web.Response:
+        nonlocal shutdown_requested
+        if authorize_shutdown is not None:
+            try:
+                authorized = bool(authorize_shutdown(request))
+            except Exception as exc:
+                print(
+                    "[COMFY_INSTALL][API] 업데이트 후 종료 인증 확인 실패: "
+                    f"remote={request.remote}, error={type(exc).__name__}: {exc}"
+                )
+                traceback.print_exc()
+                return _json_error(
+                    "업데이트 후 종료 인증을 확인하지 못했습니다.", status=500
+                )
+            if not authorized:
+                print(
+                    "[COMFY_INSTALL][API] 인증되지 않은 업데이트 후 종료 요청 거부: "
+                    f"remote={request.remote}"
+                )
+                return _json_error("대시보드 로그인이 필요합니다.", status=401)
+
+        status = service.status()
+        if status.get("state") != "succeeded" or status.get("operation") != "update":
+            return _json_error(
+                "성공한 빠른 업데이트를 확인한 뒤에만 종료할 수 있습니다.",
+                status=409,
+            )
+        if shutdown_after_update is None:
+            return _json_error(
+                "업데이트 후 종료 기능이 연결되지 않았습니다.", status=503
+            )
+        if shutdown_requested:
+            return _json_error("업데이트 후 종료가 이미 요청되었습니다.", status=409)
+
+        shutdown_requested = True
+        try:
+            shutdown_result = await shutdown_after_update()
+            return web.json_response(
+                {
+                    "ok": True,
+                    "message": (
+                        "업데이트가 완료되었습니다. "
+                        "매니저를 재시작해주세요."
+                    ),
+                    "shutdown": shutdown_result,
+                }
+            )
+        except Exception as exc:
+            shutdown_requested = False
+            print(
+                "[COMFY_INSTALL][API] 업데이트 후 종료 실패: "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            return _json_error(str(exc), status=500)
+
     app.router.add_get("/api/comfy-installer/status", handle_status)
     app.router.add_post("/api/comfy-installer/preflight", handle_preflight)
     app.router.add_get(
@@ -337,6 +402,10 @@ def register_comfy_installer_routes(
     app.router.add_get("/api/comfy-installer/civitai-key", handle_civitai_key)
     app.router.add_post("/api/comfy-installer/civitai-key", handle_civitai_key)
     app.router.add_post("/api/comfy-installer/update", handle_update)
+    app.router.add_post(
+        "/api/comfy-installer/shutdown-after-update",
+        handle_shutdown_after_update,
+    )
     app.router.add_post("/api/comfy-installer/migrate", handle_migrate)
     app.router.add_post("/api/comfy-installer/cancel", handle_cancel)
     app.router.add_post(

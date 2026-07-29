@@ -178,6 +178,45 @@ def _git_head(path: Path) -> str:
     return lines[-1].strip() if lines else ""
 
 
+def _git_source_target(node: dict) -> tuple[str, bool]:
+    tracking_branch = node.get("tracking_branch")
+    if isinstance(tracking_branch, str) and tracking_branch.strip():
+        return tracking_branch.strip(), True
+    return str(node["ref"]).lower(), False
+
+
+def _fetch_git_target(
+    *,
+    path: Path,
+    target: str,
+    cancel_event: Event,
+    log: LogCallback | None,
+) -> str:
+    run_command(
+        ["git", "fetch", "--depth", "1", "origin", target],
+        cwd=path,
+        cancel_event=cancel_event,
+        log=log,
+        timeout=600,
+    )
+    lines = run_command(["git", "rev-parse", "FETCH_HEAD"], cwd=path)
+    fetched = lines[-1].strip().lower() if lines else ""
+    if not re.fullmatch(r"[0-9a-f]{40}", fetched):
+        raise NodeInstallError(
+            f"Git fetch 결과 커밋을 확인하지 못했습니다: target={target!r}, "
+            f"actual={fetched!r}"
+        )
+    return fetched
+
+
+def _verify_pinned_fetch(*, target: str, fetched: str, name: str) -> None:
+    if re.fullmatch(r"[0-9a-fA-F]{40}", target) and fetched != target.lower():
+        raise NodeInstallError(
+            f"Git 노드 고정점 fetch 검증 실패: name={name}, "
+            f"expected={target.lower()}, actual={fetched}"
+        )
+
+
 def install_git_node(
     *,
     node: dict,
@@ -186,7 +225,7 @@ def install_git_node(
     log: LogCallback | None,
 ) -> Path:
     name = str(node["name"])
-    ref = str(node["ref"]).lower()
+    target, tracks_branch = _git_source_target(node)
     repository = str(node["repository"])
     _validate_node_name(name)
     custom_root.mkdir(parents=True, exist_ok=True)
@@ -205,16 +244,55 @@ def install_git_node(
             raise NodeInstallError(
                 f"기존 커스텀 노드 Git 상태를 확인하지 못했습니다: {destination}"
             ) from exc
-        if head == ref and origin.rstrip("/").removesuffix(".git").casefold() == (
+        origin_matches = origin.rstrip("/").removesuffix(".git").casefold() == (
             repository.rstrip("/").removesuffix(".git").casefold()
-        ):
-            if log:
-                log(f"[노드] 기존 Git 설치 재사용: {name} {ref[:12]}")
-            return destination
-        raise NodeInstallError(
-            "기존 Git 커스텀 노드가 고정점과 달라 덮어쓰지 않습니다: "
-            f"name={name}, expected={ref}, actual={head}, origin={origin}"
         )
+        if not origin_matches:
+            raise NodeInstallError(
+                "기존 Git 커스텀 노드의 원격 저장소가 다릅니다: "
+                f"name={name}, expected={repository}, actual={origin}"
+            )
+        if not tracks_branch:
+            if head == target.lower():
+                if log:
+                    log(f"[노드] 기존 Git 설치 재사용: {name} {target[:12]}")
+                return destination
+            raise NodeInstallError(
+                "기존 Git 커스텀 노드가 고정점과 달라 덮어쓰지 않습니다: "
+                f"name={name}, expected={target}, actual={head}, origin={origin}"
+            )
+
+        status = run_command(
+            ["git", "status", "--porcelain", "--untracked-files=no"],
+            cwd=destination,
+        )
+        if status:
+            raise NodeInstallError(
+                f"노드에 로컬 변경이 있어 업데이트하지 않습니다: {name}: "
+                + ", ".join(status[:10])
+            )
+        fetched = _fetch_git_target(
+            path=destination,
+            target=target,
+            cancel_event=cancel_event,
+            log=log,
+        )
+        if head != fetched:
+            run_command(
+                ["git", "checkout", "--detach", "FETCH_HEAD"],
+                cwd=destination,
+                cancel_event=cancel_event,
+                log=log,
+            )
+            actual = _git_head(destination).lower()
+            if actual != fetched:
+                raise NodeInstallError(
+                    f"Git 노드 브랜치 검증 실패: name={name}, "
+                    f"branch={target}, expected={fetched}, actual={actual}"
+                )
+        if log:
+            log(f"[노드] 기존 Git 설치 갱신: {name} origin/{target} {fetched[:12]}")
+        return destination
 
     staging = _prepare_staging(custom_root, name)
     try:
@@ -231,13 +309,14 @@ def install_git_node(
             cancel_event=cancel_event,
             log=log,
         )
-        run_command(
-            ["git", "fetch", "--depth", "1", "origin", ref],
-            cwd=staging,
+        fetched = _fetch_git_target(
+            path=staging,
+            target=target,
             cancel_event=cancel_event,
             log=log,
-            timeout=600,
         )
+        if not tracks_branch:
+            _verify_pinned_fetch(target=target, fetched=fetched, name=name)
         run_command(
             ["git", "checkout", "--detach", "FETCH_HEAD"],
             cwd=staging,
@@ -245,14 +324,15 @@ def install_git_node(
             log=log,
         )
         actual = _git_head(staging).lower()
-        if actual != ref:
+        if actual != fetched:
             raise NodeInstallError(
-                f"Git 노드 고정점 검증 실패: name={name}, "
-                f"expected={ref}, actual={actual}"
+                f"Git 노드 설치 커밋 검증 실패: name={name}, "
+                f"expected={fetched}, actual={actual}"
             )
         os.replace(staging, destination)
         if log:
-            log(f"[노드] Git 설치 완료: {name} {ref[:12]}")
+            source_label = f"origin/{target}" if tracks_branch else target[:12]
+            log(f"[노드] Git 설치 완료: {name} {source_label} {actual[:12]}")
         return destination
     except Exception:
         print(
@@ -312,6 +392,7 @@ def update_archive_node(
     cancel_event: Event,
     log: LogCallback | None,
     progress: ProgressCallback | None,
+    changed_nodes: list[str] | None = None,
 ) -> Path:
     name = str(node["name"])
     _validate_node_name(name)
@@ -320,7 +401,7 @@ def update_archive_node(
     destination = custom_root / name
     _assert_direct_child(destination, custom_root, "업데이트 대상")
     if not destination.exists():
-        return install_archive_node(
+        installed = install_archive_node(
             node=node,
             custom_root=custom_root,
             cache_root=cache_root,
@@ -329,6 +410,9 @@ def update_archive_node(
             log=log,
             progress=progress,
         )
+        if changed_nodes is not None:
+            changed_nodes.append(name)
+        return installed
     if not destination.is_dir():
         raise NodeInstallError(
             f"아카이브 노드 업데이트 대상이 폴더가 아닙니다: {destination}"
@@ -385,6 +469,8 @@ def update_archive_node(
             raise
         if log:
             log(f"[노드 업데이트] 완료: {name} (기존 백업: {backup})")
+        if changed_nodes is not None:
+            changed_nodes.append(name)
         return destination
     except Exception as exc:
         print(
@@ -403,21 +489,25 @@ def update_git_node(
     comfy_root: Path,
     cancel_event: Event,
     log: LogCallback | None,
+    changed_nodes: list[str] | None = None,
 ) -> Path:
     name = str(node["name"])
-    ref = str(node["ref"]).lower()
+    target, tracks_branch = _git_source_target(node)
     repository = str(node["repository"])
     _validate_node_name(name)
     custom_root = comfy_root / "custom_nodes"
     destination = custom_root / name
     _assert_direct_child(destination, custom_root, "업데이트 대상")
     if not destination.exists():
-        return install_git_node(
+        installed = install_git_node(
             node=node,
             custom_root=custom_root,
             cancel_event=cancel_event,
             log=log,
         )
+        if changed_nodes is not None:
+            changed_nodes.append(name)
+        return installed
     if not destination.is_dir() or not (destination / ".git").is_dir():
         raise NodeInstallError(
             f"관리되지 않는 기존 Git 노드는 업데이트하지 않습니다: {destination}"
@@ -440,17 +530,23 @@ def update_git_node(
                 + ", ".join(status[:10])
             )
         head = _git_head(destination).lower()
-        if head == ref:
+        if not tracks_branch and head == target.lower():
             if log:
                 log(f"[노드 업데이트] 이미 최신: {name} {head[:12]}")
             return destination
-        run_command(
-            ["git", "fetch", "--depth", "1", "origin", ref],
-            cwd=destination,
+        fetched = _fetch_git_target(
+            path=destination,
+            target=target,
             cancel_event=cancel_event,
             log=log,
-            timeout=600,
         )
+        if not tracks_branch:
+            _verify_pinned_fetch(target=target, fetched=fetched, name=name)
+        if head == fetched:
+            if log:
+                source_label = f"origin/{target}" if tracks_branch else target[:12]
+                log(f"[노드 업데이트] 이미 최신: {name} {source_label} {head[:12]}")
+            return destination
         run_command(
             ["git", "checkout", "--detach", "FETCH_HEAD"],
             cwd=destination,
@@ -458,12 +554,16 @@ def update_git_node(
             log=log,
         )
         actual = _git_head(destination).lower()
-        if actual != ref:
+        if actual != fetched:
             raise NodeInstallError(
-                f"노드 업데이트 고정점 검증 실패: {name}, expected={ref}, actual={actual}"
+                f"노드 업데이트 커밋 검증 실패: {name}, "
+                f"expected={fetched}, actual={actual}"
             )
         if log:
-            log(f"[노드 업데이트] 완료: {name} {actual[:12]}")
+            source_label = f"origin/{target}" if tracks_branch else target[:12]
+            log(f"[노드 업데이트] 완료: {name} {source_label} {actual[:12]}")
+        if changed_nodes is not None:
+            changed_nodes.append(name)
         return destination
     except NodeInstallError:
         raise
@@ -484,6 +584,7 @@ def update_custom_nodes(
     cancel_event: Event,
     log: LogCallback | None = None,
     progress: ProgressCallback | None = None,
+    changed_nodes: list[str] | None = None,
 ) -> list[Path]:
     updated: list[Path] = []
     for index, node in enumerate(nodes, 1):
@@ -499,6 +600,7 @@ def update_custom_nodes(
                 cancel_event=cancel_event,
                 log=log,
                 progress=progress,
+                changed_nodes=changed_nodes,
             )
         elif node["source_type"] == "git":
             path = update_git_node(
@@ -506,6 +608,7 @@ def update_custom_nodes(
                 comfy_root=comfy_root,
                 cancel_event=cancel_event,
                 log=log,
+                changed_nodes=changed_nodes,
             )
         else:
             raise NodeInstallError(

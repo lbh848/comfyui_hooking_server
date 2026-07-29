@@ -20339,6 +20339,7 @@
         let comfyInstallerPreflightLoaded = false;
         let comfyInstallerLibrary = { releases: [], user_files: [] };
         let comfyInstallerLastState = 'idle';
+        let comfyInstallerShutdownRequested = false;
 
         function comfyInstallerFormatBytes(value) {
             const bytes = Number(value);
@@ -20359,6 +20360,25 @@
             const text = String(message || '').trim();
             box.textContent = text;
             box.style.display = text ? 'block' : 'none';
+        }
+
+        async function comfyInstallerShutdownAfterUpdate() {
+            if (comfyInstallerShutdownRequested) return;
+            comfyInstallerShutdownRequested = true;
+            const message = '업데이트가 완료되었습니다. 매니저를 재시작해주세요.';
+            const progressNote = document.getElementById('comfy-installer-progress-note');
+            if (progressNote) progressNote.textContent = message;
+            showToast(message, 'success');
+            try {
+                await fetchJSON('/api/comfy-installer/shutdown-after-update', {
+                    method: 'POST',
+                });
+            } catch (error) {
+                comfyInstallerShutdownRequested = false;
+                console.error('[COMFY_INSTALL] 업데이트 후 종료 실패:', error);
+                comfyInstallerSetError(`업데이트 후 자동 종료 실패: ${error.message || error}`);
+                showToast(`업데이트 후 자동 종료 실패: ${error.message || error}`, 'error');
+            }
         }
 
         async function comfyInstallerLoadCivitaiKey() {
@@ -20577,6 +20597,11 @@
                 cancelled: '중단됨',
             };
             const state = data.state || 'idle';
+            const updateJustSucceeded = (
+                comfyInstallerLastState === 'running' &&
+                state === 'succeeded' &&
+                data.operation === 'update'
+            );
             const phaseIndex = Number(data.phase_index || 0);
             const phaseCount = Number(data.phase_count || 15);
             const progress = data.progress || {};
@@ -20660,6 +20685,7 @@
                 void comfyInstallerLoadWorkflowLibrary(data.result?.workflow_release_version || '');
             }
             comfyInstallerLastState = state;
+            if (updateJustSucceeded) void comfyInstallerShutdownAfterUpdate();
         }
 
         async function comfyInstallerRefreshStatus(resetLogs = false) {
@@ -20732,6 +20758,7 @@
             if (button) button.disabled = true;
             comfyInstallerSetError('');
             try {
+                comfyInstallerShutdownRequested = false;
                 comfyInstallerLastLogSeq = 0;
                 document.getElementById('comfy-installer-log').textContent = '';
                 const started = await fetchJSON('/api/comfy-installer/update', { method: 'POST' });

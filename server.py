@@ -11059,18 +11059,67 @@ app.router.add_get("/api/workflow_test/list", handle_api_workflow_test_list)
 app.router.add_post("/api/workflow_test/start", handle_api_workflow_test_start)
 app.router.add_post("/api/workflow_test/stop", handle_api_workflow_test_stop)
 app.router.add_get("/api/workflow_test/status", handle_api_workflow_test_status)
-register_comfy_installer_routes(
-    app,
-    project_root=BASE_DIR,
-    config_path=CONFIG_FILE,
-    requirements_dir=os.path.join(BASE_DIR, "요구사항"),
-)
 comfy_runtime_manager = register_comfy_runtime_routes(
     app,
     project_root=BASE_DIR,
     authorize=lambda request: frontend_auth_manager.verify_session(
         request.cookies.get(SESSION_COOKIE_NAME)
     ),
+)
+
+
+async def _shutdown_after_successful_comfy_update() -> dict[str, Any]:
+    """관리 중인 Comfy를 모두 끈 뒤 응답 전달 후 서버를 정상 종료한다."""
+
+    print(
+        "[COMFY_INSTALL][SHUTDOWN] 빠른 업데이트 완료: "
+        "관리 중인 Comfy #1, #2 종료 시작"
+    )
+    try:
+        await asyncio.to_thread(comfy_runtime_manager.stop_all)
+        remaining = [
+            instance_id
+            for instance_id in (1, 2)
+            if comfy_runtime_manager.is_running(instance_id=instance_id)
+        ]
+        if remaining:
+            raise RuntimeError(
+                "관리 중인 Comfy 인스턴스를 종료하지 못했습니다: "
+                + ", ".join(f"#{value}" for value in remaining)
+            )
+    except Exception as exc:
+        print(
+            "[COMFY_INSTALL][SHUTDOWN] 관리 중인 Comfy 종료 실패: "
+            f"error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        raise
+
+    loop = asyncio.get_running_loop()
+
+    def stop_manager_server() -> None:
+        print(
+            "[COMFY_INSTALL][SHUTDOWN] 완료 응답 전달 후 "
+            "후킹 서버를 종료합니다."
+        )
+        raise web.GracefulExit()
+
+    loop.call_later(1.0, stop_manager_server)
+    return {
+        "managed_comfy_instances": [1, 2],
+        "manager_shutdown_scheduled": True,
+    }
+
+
+register_comfy_installer_routes(
+    app,
+    project_root=BASE_DIR,
+    config_path=CONFIG_FILE,
+    requirements_dir=os.path.join(BASE_DIR, "요구사항"),
+    authorize_shutdown=lambda request: frontend_auth_manager.verify_session(
+        request.cookies.get(SESSION_COOKIE_NAME)
+    ),
+    shutdown_after_update=_shutdown_after_successful_comfy_update,
 )
 # ─── 디버그 워크플로우 실행 API ──────────────────────────────
 async def handle_api_debug_workflow(request: web.Request) -> web.Response:

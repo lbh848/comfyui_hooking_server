@@ -42,6 +42,7 @@ def test_frontend_uses_dedicated_installer_apis_and_does_not_persist_keys() -> N
         "/api/comfy-installer/workflow-pack",
         "/api/comfy-installer/start",
         "/api/comfy-installer/update",
+        "/api/comfy-installer/shutdown-after-update",
         "/api/comfy-installer/status",
         "/api/comfy-installer/cancel",
         "/api/comfy-installer/unpack-workflow-pack",
@@ -56,6 +57,13 @@ def test_frontend_uses_dedicated_installer_apis_and_does_not_persist_keys() -> N
     assert "selected_item_ids: selectedItemIds" in FRONTEND
     assert "restore_config_after_success" not in FRONTEND
     assert "workflowKeyInput.value = ''" in FRONTEND
+
+
+def test_successful_update_shows_restart_message_then_requests_shutdown() -> None:
+    assert "comfyInstallerLastState === 'running'" in FRONTEND
+    assert "data.operation === 'update'" in FRONTEND
+    assert "업데이트가 완료되었습니다. 매니저를 재시작해주세요." in FRONTEND
+    assert "comfyInstallerShutdownAfterUpdate()" in FRONTEND
 
 
 def test_v4_migration_reports_config_path_retargeting() -> None:

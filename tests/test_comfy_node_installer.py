@@ -1,5 +1,6 @@
 import hashlib
 import json
+import subprocess
 import zipfile
 from pathlib import Path
 from threading import Event
@@ -7,8 +8,14 @@ from threading import Event
 import httpx
 import pytest
 
+import comfy_installer.node_installer as node_installer_module
 from comfy_installer.downloader import ResumableDownloader
-from comfy_installer.node_installer import NodeInstallError, install_archive_node
+from comfy_installer.node_installer import (
+    NodeInstallError,
+    install_archive_node,
+    install_git_node,
+    update_git_node,
+)
 
 
 def _sha(data: bytes) -> str:
@@ -132,3 +139,169 @@ def test_archive_node_refuses_unmanaged_existing_directory(tmp_path):
         )
 
     assert (existing / "user.py").read_text(encoding="utf-8") == "mine"
+
+
+def test_tracking_git_node_fetches_main_and_checks_out_latest(
+    tmp_path, monkeypatch
+):
+    old_head = "1" * 40
+    latest_head = "2" * 40
+    repository = "https://example.test/owned-node.git"
+    comfy_root = tmp_path / "comfy"
+    destination = comfy_root / "custom_nodes" / "owned-node"
+    (destination / ".git").mkdir(parents=True)
+    commands = []
+    changed_nodes = []
+    head_values = iter((old_head, latest_head))
+
+    monkeypatch.setattr(
+        node_installer_module,
+        "_git_origin",
+        lambda _path: repository,
+    )
+    monkeypatch.setattr(
+        node_installer_module,
+        "_git_head",
+        lambda _path: next(head_values),
+    )
+
+    def fake_run(command, **_kwargs):
+        commands.append(command)
+        if command == ["git", "status", "--porcelain", "--untracked-files=no"]:
+            return []
+        if command == ["git", "rev-parse", "FETCH_HEAD"]:
+            return [latest_head]
+        return []
+
+    monkeypatch.setattr(node_installer_module, "run_command", fake_run)
+
+    updated = update_git_node(
+        node={
+            "name": "owned-node",
+            "source_type": "git",
+            "repository": repository,
+            "tracking_branch": "main",
+        },
+        comfy_root=comfy_root,
+        cancel_event=Event(),
+        log=None,
+        changed_nodes=changed_nodes,
+    )
+
+    assert updated == destination
+    assert changed_nodes == ["owned-node"]
+    assert ["git", "fetch", "--depth", "1", "origin", "main"] in commands
+    assert ["git", "checkout", "--detach", "FETCH_HEAD"] in commands
+
+
+def test_tracking_git_node_fetches_even_when_already_latest(
+    tmp_path, monkeypatch
+):
+    latest_head = "3" * 40
+    repository = "https://example.test/owned-node.git"
+    comfy_root = tmp_path / "comfy"
+    destination = comfy_root / "custom_nodes" / "owned-node"
+    (destination / ".git").mkdir(parents=True)
+    commands = []
+    changed_nodes = []
+
+    monkeypatch.setattr(
+        node_installer_module,
+        "_git_origin",
+        lambda _path: repository,
+    )
+    monkeypatch.setattr(
+        node_installer_module,
+        "_git_head",
+        lambda _path: latest_head,
+    )
+
+    def fake_run(command, **_kwargs):
+        commands.append(command)
+        if command == ["git", "status", "--porcelain", "--untracked-files=no"]:
+            return []
+        if command == ["git", "rev-parse", "FETCH_HEAD"]:
+            return [latest_head]
+        return []
+
+    monkeypatch.setattr(node_installer_module, "run_command", fake_run)
+
+    update_git_node(
+        node={
+            "name": "owned-node",
+            "source_type": "git",
+            "repository": repository,
+            "tracking_branch": "main",
+        },
+        comfy_root=comfy_root,
+        cancel_event=Event(),
+        log=None,
+        changed_nodes=changed_nodes,
+    )
+
+    assert changed_nodes == []
+    assert ["git", "fetch", "--depth", "1", "origin", "main"] in commands
+    assert ["git", "checkout", "--detach", "FETCH_HEAD"] not in commands
+
+
+def test_tracking_git_node_follows_real_main_branch(tmp_path):
+    source = tmp_path / "source"
+    remote = tmp_path / "remote.git"
+    source.mkdir()
+
+    def git(cwd, *arguments):
+        return subprocess.run(
+            ["git", *arguments],
+            cwd=cwd,
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        ).stdout.strip()
+
+    git(source, "init", "-b", "main")
+    git(source, "config", "user.name", "Comfy Installer Test")
+    git(source, "config", "user.email", "comfy-installer@example.test")
+    (source / "node.py").write_text("VERSION = 1\n", encoding="utf-8")
+    git(source, "add", "node.py")
+    git(source, "commit", "-m", "first")
+    git(tmp_path, "init", "--bare", str(remote))
+    git(source, "remote", "add", "origin", str(remote))
+    git(source, "push", "-u", "origin", "main")
+
+    node = {
+        "name": "owned-node",
+        "source_type": "git",
+        "repository": str(remote),
+        "tracking_branch": "main",
+    }
+    custom_root = tmp_path / "comfy" / "custom_nodes"
+    installed = install_git_node(
+        node=node,
+        custom_root=custom_root,
+        cancel_event=Event(),
+        log=None,
+    )
+    first_head = git(installed, "rev-parse", "HEAD")
+    assert (installed / "node.py").read_text(encoding="utf-8") == "VERSION = 1\n"
+
+    (source / "node.py").write_text("VERSION = 2\n", encoding="utf-8")
+    git(source, "add", "node.py")
+    git(source, "commit", "-m", "second")
+    git(source, "push", "origin", "main")
+    latest_head = git(source, "rev-parse", "HEAD")
+    changed_nodes = []
+
+    update_git_node(
+        node=node,
+        comfy_root=tmp_path / "comfy",
+        cancel_event=Event(),
+        log=None,
+        changed_nodes=changed_nodes,
+    )
+
+    assert first_head != latest_head
+    assert git(installed, "rev-parse", "HEAD") == latest_head
+    assert git(installed, "branch", "--show-current") == ""
+    assert (installed / "node.py").read_text(encoding="utf-8") == "VERSION = 2\n"
+    assert changed_nodes == ["owned-node"]
