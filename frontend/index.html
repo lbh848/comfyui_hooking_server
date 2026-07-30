@@ -18351,6 +18351,11 @@
                                 <button type="button" class="comfy-installer-btn" id="comfy-installer-migrate-btn" onclick="comfyInstallerMigrate()">이사하기(V4 사용자용)</button>
                                 <span class="comfy-installer-note">내장 설치 완료 후 사용하세요. <code>config.json</code>을 <code>요구사항/</code>에 먼저 백업하고 Windows <code>robocopy</code> 병렬 복사로 진행률·속도·남은 시간을 표시합니다. 기존 Comfy 하위의 모든 설정 경로를 내장 Comfy로 전환하며, LoRA와 <code>input/soya_bot</code> 원본 및 기존 대상 파일은 삭제·덮어쓰기하지 않습니다.</span>
                             </div>
+                            <div class="comfy-installer-actions" style="margin-top:10px;">
+                                <input type="file" id="comfy-installer-patch-file" accept=".soyapatch,application/octet-stream" hidden onchange="comfyInstallerImportPatch(this)">
+                                <button type="button" class="comfy-installer-btn" id="comfy-installer-patch-btn" onclick="comfyInstallerChoosePatch()">패치파일 가져오기</button>
+                                <span class="comfy-installer-note" id="comfy-installer-patch-note">V5 첫 설치용 <code>.soyapatch</code>를 가져옵니다. 프리셋·체인 충돌은 <code>_conflict</code> 이름으로 숨김 처리하고, 같은 Pose와 기존 nikke 봇은 건너뜁니다. 적용 직전에 주요 JSON을 <code>asset_data/backup</code>에 추가 백업합니다.</span>
+                            </div>
                         </section>
 
                         <section class="comfy-installer-card comfy-installer-monitor-card">
@@ -23127,6 +23132,137 @@
                 showToast(`이사 시작 실패: ${error.message || error}`, 'error');
             } finally {
                 if (button && !accepted) button.disabled = false;
+            }
+        }
+
+        function comfyInstallerChoosePatch() {
+            const input = document.getElementById('comfy-installer-patch-file');
+            if (!input) {
+                console.error('[PATCH_IMPORT] 패치 파일 입력 요소를 찾지 못했습니다');
+                showToast('패치 파일 입력을 찾지 못했습니다', 'error');
+                return;
+            }
+            input.value = '';
+            input.click();
+        }
+
+        function comfyInstallerPatchResultText(data) {
+            const summary = data?.summary || {};
+            const characters = summary.characters || {};
+            const presets = summary.presets || {};
+            const chains = summary.chains || {};
+            const poses = summary.poses || {};
+            const assets = summary.assets || {};
+            const backups = summary.illustration_backups || {};
+            const bot = summary.bot || {};
+            return [
+                `캐릭터 ${Number(characters.added || 0)}개`,
+                `프리셋 ${Number(presets.added || 0)}개`,
+                `프리셋 충돌 ${Number(presets.conflicts_hidden || 0)}개`,
+                `체인 ${Number(chains.added || 0)}개`,
+                `체인 충돌 ${Number(chains.conflicts_hidden || 0)}개`,
+                `Pose ${Number(poses.added_names || 0)}개`,
+                `에셋 파일 ${Number(assets.added_files || 0)}개`,
+                `삽화 백업 ${Number(backups.added_ids || 0)}건`,
+                bot.added ? 'nikke 추가' : 'nikke 건너뜀',
+            ].join(' · ');
+        }
+
+        async function comfyInstallerImportPatch(input) {
+            const file = input?.files?.[0];
+            if (!file) {
+                console.error('[PATCH_IMPORT] 선택된 패치 파일이 없습니다');
+                return;
+            }
+            input.value = '';
+            if (!String(file.name || '').toLowerCase().endsWith('.soyapatch')) {
+                console.error('[PATCH_IMPORT] 지원하지 않는 파일 확장자:', file.name);
+                showToast('.soyapatch 파일을 선택해주세요', 'warning');
+                return;
+            }
+            if (!window.confirm(
+                `V5 첫 설치 패치를 가져올까요?\n` +
+                `파일: ${file.name}\n크기: ${comfyInstallerFormatBytes(file.size)}\n\n` +
+                `적용 직전에 tags.json, hidden_tags.json, bot.json을 asset_data/backup에 백업합니다.`
+            )) return;
+
+            const button = document.getElementById('comfy-installer-patch-btn');
+            const note = document.getElementById('comfy-installer-patch-note');
+            if (button) button.disabled = true;
+            comfyInstallerSetError('');
+            let uploadId = '';
+            let importCompleted = false;
+            try {
+                if (note) note.textContent = '패치 분할 업로드 준비 중…';
+                const started = await fetchJSON('/api/patch-import/upload/start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        filename: file.name,
+                        file_size: file.size,
+                    }),
+                });
+                uploadId = String(started.upload_id || '');
+                const chunkSize = Number(started.chunk_size || (16 * 1024 * 1024));
+                if (!uploadId || !Number.isFinite(chunkSize) || chunkSize <= 0) {
+                    throw new Error('서버가 올바른 패치 업로드 정보를 반환하지 않았습니다');
+                }
+
+                let offset = 0;
+                while (offset < file.size) {
+                    const chunk = file.slice(offset, Math.min(offset + chunkSize, file.size));
+                    const response = await fetch(
+                        `/api/patch-import/upload/chunk?upload_id=${encodeURIComponent(uploadId)}&offset=${offset}`,
+                        {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/octet-stream' },
+                            body: chunk,
+                        },
+                    );
+                    const chunkResult = await response.json().catch(() => ({}));
+                    if (!response.ok || chunkResult.ok === false) {
+                        throw new Error(chunkResult.error || `패치 청크 업로드 실패 (${response.status})`);
+                    }
+                    offset = Number(chunkResult.received || (offset + chunk.size));
+                    const percent = Math.min(100, Math.floor((offset / file.size) * 100));
+                    if (note) {
+                        note.textContent =
+                            `패치 업로드 ${percent}% · ` +
+                            `${comfyInstallerFormatBytes(offset)} / ${comfyInstallerFormatBytes(file.size)}`;
+                    }
+                }
+
+                if (note) {
+                    note.textContent = '업로드 완료 · 무결성 검사와 데이터 가져오기 진행 중…';
+                }
+                const result = await fetchJSON('/api/patch-import/upload/complete', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ upload_id: uploadId }),
+                });
+                const resultText = comfyInstallerPatchResultText(result);
+                if (note) note.textContent = `패치 가져오기 완료 · ${resultText}`;
+                showToast(`패치 가져오기 완료: ${resultText}`, 'success');
+                importCompleted = true;
+            } catch (error) {
+                console.error('[PATCH_IMPORT] 패치 가져오기 실패:', error);
+                const message = error?.message || String(error);
+                if (note) note.textContent = `패치 가져오기 실패 · ${message}`;
+                comfyInstallerSetError(message);
+                showToast(`패치 가져오기 실패: ${message}`, 'error');
+            } finally {
+                if (uploadId && !importCompleted) {
+                    try {
+                        await fetchJSON('/api/patch-import/upload/abort', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ upload_id: uploadId }),
+                        });
+                    } catch (cleanupError) {
+                        console.error('[PATCH_IMPORT] 미완료 업로드 정리 실패:', cleanupError);
+                    }
+                }
+                if (button) button.disabled = false;
             }
         }
 

@@ -110,6 +110,7 @@ import workflow_profiles
 import importlib.util
 from comfy_installer.http_api import register_comfy_installer_routes
 from comfy_installer.input_patcher import patch_comfy_input
+from comfy_installer.patch_importer import register_patch_import_routes
 from comfy_runtime import (
     DEFAULT_COMFY_LAUNCH_PROFILES,
     ComfyRuntimeValidationError,
@@ -11627,7 +11628,7 @@ async def _shutdown_after_successful_comfy_update() -> dict[str, Any]:
     }
 
 
-register_comfy_installer_routes(
+comfy_installer_service = register_comfy_installer_routes(
     app,
     project_root=BASE_DIR,
     config_path=CONFIG_FILE,
@@ -11636,6 +11637,12 @@ register_comfy_installer_routes(
         request.cookies.get(SESSION_COOKIE_NAME)
     ),
     shutdown_after_update=_shutdown_after_successful_comfy_update,
+)
+register_patch_import_routes(
+    app,
+    project_root=BASE_DIR,
+    reload_asset_tags=asset_mode.load_tags,
+    installer_status=comfy_installer_service.status,
 )
 # ─── 디버그 워크플로우 실행 API ──────────────────────────────
 async def handle_api_debug_workflow(request: web.Request) -> web.Response:
