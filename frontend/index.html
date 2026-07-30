@@ -37790,6 +37790,13 @@
         // 페이지(서버)를 처음 열 때만 확장 상태로 시작하며, 이후 사용자 선택은 유지한다.
         let assetQueueExpanded = true;
 
+        // ─── 큐 실패 토스트 (ComfyUI 미실행 등 조용한 실패 방지) ───
+        // failed 상태가 된 큐 항목을 토스트로 알린다. 같은 에러 메시지는 최근
+        // 10초 내 중복 표시를 억제해 배치 일괄 실패(예: 1000장 태깅) 시 토스트가 폭주하지 않게 한다.
+        const QUEUE_FAIL_TOAST_RECENT_MS = 10000;
+        const _queueFailToastedIds = new Set(); // 이미 토스트한 item id (재알림 방지)
+        let _queueFailRecentMsgs = [];          // [{msg, ts}] 동일 메시지 중복 억제용
+
         function isAssetGenerating() {
             return assetQueue.some(q => q.status === 'processing' || q.status === 'pending');
         }
@@ -67021,6 +67028,26 @@
                 batch_index: item.batch_index || null,
                 batch_total: item.batch_total || null,
             }));
+
+            // failed 큐 항목 → 토스트 알림 (ComfyUI 미실행 등 조용한 실패 방지).
+            // 항목은 실패 후 약 2초 뒤 서버에서 프룬되므로 이 창 안에 알림을 띄운다.
+            const _nowFail = Date.now();
+            _queueFailRecentMsgs = _queueFailRecentMsgs.filter(r => _nowFail - r.ts < QUEUE_FAIL_TOAST_RECENT_MS);
+            data.items.forEach(item => {
+                if (!item || item.status !== 'failed') return;
+                if (_queueFailToastedIds.has(item.id)) return; // 항목별 1회 알림
+                _queueFailToastedIds.add(item.id);
+                const failMsg = String(item.error || '큐 작업 실패').trim();
+                if (_queueFailRecentMsgs.some(r => r.msg === failMsg)) return; // 동일 메시지 중복 억제
+                _queueFailRecentMsgs.push({ msg: failMsg, ts: _nowFail });
+                showToast(failMsg, 'error');
+            });
+            // 사라진 항목 id는 정리 (세션 장기화 시 Set 무한 증가 방지)
+            const _liveQueueIds = new Set(data.items.map(i => i && i.id));
+            for (const _id of Array.from(_queueFailToastedIds)) {
+                if (!_liveQueueIds.has(_id)) _queueFailToastedIds.delete(_id);
+            }
+
             assetQueueProcessing = data.processing;
             assetCurrentQueueId = data.current ? data.current.id : null;
             renderAssetQueueUI();

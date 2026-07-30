@@ -1828,6 +1828,19 @@ def get_illust_port():
     return resolve_comfy_port("illustration")
 
 
+def _comfy_connection_error_message(host: str, port: int, exc: BaseException | None = None) -> str:
+    """ComfyUI 연결 실패(미실행/연결거부)를 사용자에게 알리는 메시지를 반환한다.
+
+    aiohttp 예외를 그대로 노출하면 "Cannot connect to host ..." 같은 영문 원문이
+    토스트에 뜨므로 host:port와 점검 안내를 포함한 한국어 메시지로 바꾼다.
+    토스트/큐 에러 표시에 그대로 쓰인다."""
+    detail = f" ({type(exc).__name__})" if exc is not None else ""
+    return (
+        f"ComfyUI 서버에 연결할 수 없습니다 ({host}:{port}). "
+        f"ComfyUI가 실행 중인지 확인하세요." + detail
+    )
+
+
 async def submit_to_real_comfy(
     prompt_data: dict,
     port: int | None = None,
@@ -1841,32 +1854,42 @@ async def submit_to_real_comfy(
     if client_id is not None:
         payload["client_id"] = client_id
     print(f"[PROXY] → POST {url}")
-    async with aiohttp.ClientSession() as session:
-        async with session.post(url, json=payload) as resp:
-            raw = await resp.text()
-            try:
-                result = json.loads(raw)
-            except json.JSONDecodeError:
-                print(f"[PROXY] ← status={resp.status}, non-JSON response: {raw}")
-                raise RuntimeError(
-                    f"ComfyUI returned non-JSON (status={resp.status}, "
-                    f"content-type={resp.content_type}): {raw[:300]}"
-                )
-            pid = result.get("prompt_id", "?")
-            print(f"[PROXY] ← status={resp.status}, prompt_id={pid}")
-            if result.get("node_errors"):
-                print(
-                    f"[PROXY] ⚠ node_errors: "
-                    f"{json.dumps(result['node_errors'], ensure_ascii=False)[:300]}"
-                )
-            if resp.status != 200 or "prompt_id" not in result:
-                error_msg = result.get("error_message", "") or result.get("error", "")
-                node_errors = result.get("node_errors", {})
-                raise RuntimeError(
-                    f"ComfyUI reject (status={resp.status}): "
-                    f"{error_msg} | node_errors={json.dumps(node_errors, ensure_ascii=False)[:500]}"
-                )
-            return result["prompt_id"], result
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json=payload) as resp:
+                raw = await resp.text()
+                try:
+                    result = json.loads(raw)
+                except json.JSONDecodeError:
+                    print(f"[PROXY] ← status={resp.status}, non-JSON response: {raw}")
+                    raise RuntimeError(
+                        f"ComfyUI returned non-JSON (status={resp.status}, "
+                        f"content-type={resp.content_type}): {raw[:300]}"
+                    )
+                pid = result.get("prompt_id", "?")
+                print(f"[PROXY] ← status={resp.status}, prompt_id={pid}")
+                if result.get("node_errors"):
+                    print(
+                        f"[PROXY] ⚠ node_errors: "
+                        f"{json.dumps(result['node_errors'], ensure_ascii=False)[:300]}"
+                    )
+                if resp.status != 200 or "prompt_id" not in result:
+                    error_msg = result.get("error_message", "") or result.get("error", "")
+                    node_errors = result.get("node_errors", {})
+                    raise RuntimeError(
+                        f"ComfyUI reject (status={resp.status}): "
+                        f"{error_msg} | node_errors={json.dumps(node_errors, ensure_ascii=False)[:500]}"
+                    )
+                return result["prompt_id"], result
+    except aiohttp.ClientError as e:
+        # ComfyUI가 켜져 있지 않으면 응답 자체를 받지 못하고 ClientConnectorError 발생.
+        # 영문 원문 대신 host:port와 점검 안내를 포함한 메시지로 바꿔 토스트에 그대로 노출한다.
+        print(
+            f"[PROXY] ComfyUI 연결 실패: {url}, "
+            f"error={type(e).__name__}: {e}"
+        )
+        traceback.print_exc()
+        raise RuntimeError(_comfy_connection_error_message(REAL_COMFY_HOST, target_port, e)) from e
 
 
 def count_ksampler_total_steps(workflow: dict) -> int:
@@ -2149,29 +2172,37 @@ async def generate_image_with_prompt(
         f"ws://{REAL_COMFY_HOST}:{illust_port}/ws"
         f"?clientId=gen_{uuid.uuid4().hex[:8]}"
     )
-    async with aiohttp.ClientSession() as ws_session:
-        async with ws_session.ws_connect(ws_url) as real_ws:
-            real_prompt_id, submit_result = await submit_to_real_comfy(risu_prompt, port=illust_port)
-            node_errors = submit_result.get("node_errors", {})
+    try:
+        async with aiohttp.ClientSession() as ws_session:
+            async with ws_session.ws_connect(ws_url) as real_ws:
+                real_prompt_id, submit_result = await submit_to_real_comfy(risu_prompt, port=illust_port)
+                node_errors = submit_result.get("node_errors", {})
 
-            total_steps = count_ksampler_total_steps(current_api_workflow)
-            error_holder = {}
-            ws_result = await wait_for_real_comfy(real_ws, real_prompt_id, progress_callback=_on_gen_progress, total_steps=total_steps, error_holder=error_holder)
-            if ws_result is None:
-                err_type = error_holder.get("error", "unknown")
-                detail = error_holder.get("detail", "")
-                if err_type == "execution_error" and isinstance(detail, dict):
-                    node_id = detail.get("node_id") or detail.get("node") or "?"
-                    node_type = detail.get("node_type", "?")
-                    exc_msg = detail.get("exception_message") or detail.get("exception_type") or json.dumps(detail, ensure_ascii=False)
-                    return None, f"ComfyUI 실행 에러: 노드 {node_id} ({node_type}) — {exc_msg}"
-                elif err_type == "ws_exception":
-                    return None, f"ComfyUI WebSocket 연결 예외: {detail}"
-                elif err_type == "ws_closed":
-                    return None, f"ComfyUI WebSocket 연결 종료: {detail}"
-                elif err_type == "timeout":
-                    return None, f"ComfyUI 생성 타임아웃/응답 없음: {detail}"
-                return None, f"생성 실패 (알 수 없는 WS 종료): {detail or error_holder}"
+                total_steps = count_ksampler_total_steps(current_api_workflow)
+                error_holder = {}
+                ws_result = await wait_for_real_comfy(real_ws, real_prompt_id, progress_callback=_on_gen_progress, total_steps=total_steps, error_holder=error_holder)
+                if ws_result is None:
+                    err_type = error_holder.get("error", "unknown")
+                    detail = error_holder.get("detail", "")
+                    if err_type == "execution_error" and isinstance(detail, dict):
+                        node_id = detail.get("node_id") or detail.get("node") or "?"
+                        node_type = detail.get("node_type", "?")
+                        exc_msg = detail.get("exception_message") or detail.get("exception_type") or json.dumps(detail, ensure_ascii=False)
+                        return None, f"ComfyUI 실행 에러: 노드 {node_id} ({node_type}) — {exc_msg}"
+                    elif err_type == "ws_exception":
+                        return None, f"ComfyUI WebSocket 연결 예외: {detail}"
+                    elif err_type == "ws_closed":
+                        return None, f"ComfyUI WebSocket 연결 종료: {detail}"
+                    elif err_type == "timeout":
+                        return None, f"ComfyUI 생성 타임아웃/응답 없음: {detail}"
+                    return None, f"생성 실패 (알 수 없는 WS 종료): {detail or error_holder}"
+    except aiohttp.ClientError as e:
+        # ComfyUI가 켜져 있지 않으면 ws_connect(제출보다 먼저 실행)에서 연결 실패.
+        # 명확한 한국어 메시지로 바꿔 (None, msg) 반환 → 상위(process_prompt 등)가
+        # RuntimeError로 전환해 큐 실패 → 프론트 토스트로 이어진다.
+        print(f"[GEN] ComfyUI 연결 실패: {ws_url}, error={type(e).__name__}: {e}")
+        traceback.print_exc()
+        return None, _comfy_connection_error_message(REAL_COMFY_HOST, illust_port, e)
 
     history = await fetch_real_history(real_prompt_id, port=illust_port)
     real_entry = history.get(real_prompt_id, {})
@@ -2347,6 +2378,11 @@ async def submit_workflow_to_comfy(
             port=target_port,
         )
         return img_bytes, node_errors
+    except aiohttp.ClientError as e:
+        # ComfyUI가 켜져 있지 않으면 ws_connect(제출보다 먼저 실행)에서 연결 실패.
+        print(f"[ASSET] ComfyUI 연결 실패: error={type(e).__name__}: {e}")
+        traceback.print_exc()
+        return None, _comfy_connection_error_message(REAL_COMFY_HOST, target_port, e)
     except Exception as e:
         print(f"[ASSET] ComfyUI 제출 예외: {type(e).__name__}: {e}")
         return None, str(e)
