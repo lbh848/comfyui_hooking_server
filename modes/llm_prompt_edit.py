@@ -73,15 +73,27 @@ DEFAULT_USER_V3_TEMPLATE = (
     "2. Adjust scene_setup/scene_char/scene_supplement to match the user's edit direction.\n"
     "3. Preserve the character's core identity (key appearance traits); focus changes on scene/mood/pose/outfit.\n"
     "4. Keep original tags for any part that does not need changing (avoid unnecessary edits).\n"
-    "5. scene_supplement is NOT applied to the SDXL block, so only put SDXL-absent auxiliary descriptions there.\n"
-    "6. Keep using English danbooru-style tags separated by comma+space (\", \").\n"
-    "7. Write the \"plan\" field in Korean; write scene_* tags in English.\n\n"
+    "5. scene_supplement is applied only to the ANIMA blocks and is NOT applied to the SDXL block. "
+    "Use it only for visual details that tags cannot express well, such as detailed composition, "
+    "framing, character actions or interactions, atmosphere, and lighting.\n"
+    "6. Write scene_setup and scene_char as English Danbooru-style tags separated by comma+space "
+    "(\", \").\n"
+    "7. Write scene_supplement in concise, minimal English natural language. Use objective, "
+    "telegraphic visual description, preferably one short sentence. Do NOT write it as a "
+    "comma-separated tag list. Return an empty string when tags already express the scene "
+    "sufficiently.\n"
+    "8. Do not include character names in scene_supplement. Refer to people by gender, visible "
+    "appearance, or relative position (for example, \"the girl with blue hair\" or \"the girl on "
+    "the left\"). Unusual framing and vantage points may be described directly, such as being "
+    "viewed through, reflected in, or framed behind something.\n"
+    "9. Write the \"plan\" field in Korean; write all scene_* fields in English.\n\n"
     "## Output (JSON schema - return ONLY a JSON object in this form)\n"
     "{\n"
     '  "plan": "edit plan - briefly explain why and which tags to add/remove (write in Korean)",\n'
     '  "scene_setup": "background/location/lighting/weather/mood tags, comma+space separated",\n'
     '  "scene_char": "character appearance/pose/expression/outfit tags, comma+space separated",\n'
-    '  "scene_supplement": "extra auxiliary tags, or empty string \\"\\"\n"'
+    '  "scene_supplement": "concise objective natural-language visual description for ANIMA-only '
+    'details, preferably one short sentence, or empty string \\"\\"\n"'
     "}"
 )
 
@@ -588,6 +600,12 @@ def bind_scene_characters(
     scene = _coerce_scene_fields(parsed)
     names = [str(name or "").strip() for name in character_names]
     blocks = _split_char_blocks(scene.get("scene_char", ""))
+    if len(names) == 1 and len(blocks) > 1:
+        print(
+            "[LLM_EDIT:IDENTITY] 단일 캐릭터 scene_char의 잘못된 블록 구분자를 "
+            f"자동 복구합니다: blocks={len(blocks)}, character={names[0]!r}"
+        )
+        blocks = [_join_tags(*blocks)]
     if len(blocks) != len(names):
         raise ValueError(
             "선택 캐릭터 수와 LLM scene_char 블록 수가 다릅니다: "

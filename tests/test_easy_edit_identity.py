@@ -325,6 +325,28 @@ def test_character_selection_rejects_duplicates_and_non_bot_names():
         raise AssertionError(f"invalid selection accepted: {invalid}")
 
 
+def test_single_character_binding_recovers_accidental_pipe_separator(capsys):
+    parsed = llm_prompt_edit.bind_scene_characters({
+        "plan": "우주선을 둥글게 변경",
+        "scene_setup": "night, outdoors, round spaceship",
+        "scene_char": "sua | 1girl, short hair, blue hair, smiling",
+        "scene_supplement": "",
+    }, ["sua"])
+
+    assert parsed["scene_char"] == "sua, 1girl, short hair, blue hair, smiling"
+    assert "단일 캐릭터 scene_char의 잘못된 블록 구분자를 자동 복구" in capsys.readouterr().out
+
+
+def test_two_character_binding_still_rejects_extra_pipe_block():
+    with pytest.raises(
+        ValueError,
+        match=r"characters=2, blocks=3",
+    ):
+        llm_prompt_edit.bind_scene_characters({
+            "scene_char": "Left, smiling | Right, waving | unexpected",
+        }, ["Left", "Right"])
+
+
 @pytest.mark.asyncio
 async def test_modified_regenerate_uses_active_bot_and_remapped_two_character_snapshot(
     tmp_path,
