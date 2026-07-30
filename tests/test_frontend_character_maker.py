@@ -12,9 +12,13 @@ def test_character_maker_tab_is_immediately_after_automatch():
     html = _html()
     automatch = html.index('id="tab-btn-smart-asset"')
     maker = html.index('id="tab-btn-character-maker"')
-    divider = html.index('<span class="tab-divider"></span>', maker)
+    automatch_end = html.index("</button>", automatch) + len("</button>")
+    maker_start = html.rfind("<button", automatch_end, maker)
+    asset_group_end = html.index("</div>", maker)
+    manage_group = html.index('class="tab-group tab-group--manage"', maker)
 
-    assert automatch < maker < divider
+    assert "<button" not in html[automatch_end:maker_start]
+    assert automatch < maker < asset_group_end < manage_group
     assert "switchTab('character-maker')" in html
     assert 'id="tab-character-maker-content"' in html
 
@@ -279,6 +283,18 @@ def test_character_maker_apis_and_optional_confirmation_modes_are_wired():
     assert '<option value="new">새 표정 프리셋 등록</option>' in html
     assert "appearance_name" in html
     assert "outfit_name" in html
+
+
+def test_character_maker_can_add_presets_to_an_existing_character():
+    html = _html()
+
+    assert 'id="cm-confirm-registration-mode"' in html
+    assert '<option value="existing">기존 캐릭터에 외모·복장 추가</option>' in html
+    assert 'id="cm-confirm-existing-character"' in html
+    assert "function cmUpdateConfirmRegistrationMode()" in html
+    assert "registration_mode: registrationMode" in html
+    assert "assetTags?.characters" in html
+    assert "현재 기본값 유지" in html
 
 
 def test_rag_settings_test_and_external_llm_routes_are_visible():

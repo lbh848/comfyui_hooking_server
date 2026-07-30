@@ -981,6 +981,116 @@ def test_confirm_can_promote_revision_and_optional_presets(monkeypatch, tmp_path
     assert result["finalized"]["promoted_image"] is True
 
 
+def test_confirm_adds_presets_to_existing_character_without_changing_defaults(
+    monkeypatch, tmp_path
+):
+    tags = _empty_tags()
+    tags["appearances"]["루멘 기본 외모"] = ["black_hair"]
+    tags["outfits"]["루멘 기본 복장"] = ["school_uniform"]
+    tags["characters"]["루멘"] = {
+        "appearance": "루멘 기본 외모",
+        "outfit": "루멘 기본 복장",
+        "expression": "기존 표정",
+    }
+    service, manager = _service(tmp_path, tags=tags)
+    tags_file = tmp_path / "asset_data" / "tags.json"
+    asset_root = tmp_path / "asset"
+    backup_root = tmp_path / "요구사항"
+    existing_destination = asset_root / "루멘" / "루멘 기본 복장" / "기존 표정"
+    existing_destination.mkdir(parents=True)
+    (existing_destination / "keep.webp").write_bytes(b"keep")
+    tags_file.parent.mkdir(parents=True)
+    tags_file.write_text(
+        json.dumps(manager.get_tags(), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(asset_mode_module, "TAGS_FILE", str(tags_file))
+    monkeypatch.setattr(asset_mode_module, "ASSET_DIR", str(asset_root))
+    monkeypatch.setattr(asset_mode_module, "NAME_MAPPING_BACKUP_DIR", str(backup_root))
+
+    session = service.create_session()
+    service.update_session(
+        session["id"],
+        {
+            "fields": {
+                "appearance": ["silver_hair", "blue_eyes"],
+                "outfit": ["summer_dress"],
+                "expression": ["smile"],
+                "composition": [],
+            }
+        },
+    )
+    image_path = (
+        Path(service.temp_root) / session["id"] / "images" / "revision.webp"
+    )
+    prompt_path = image_path.with_name("revision_prompt.json")
+    image_path.write_bytes(b"revision-image")
+    prompt_path.write_text("{}", encoding="utf-8")
+    state = service.add_revision(
+        session["id"],
+        image_path=str(image_path),
+        prompt_path=str(prompt_path),
+        positive="positive",
+        negative="negative",
+    )
+
+    result = service.confirm(
+        session["id"],
+        {
+            "registration_mode": "existing",
+            "character_name": "루멘",
+            "appearance_name": "루멘 여름 외모",
+            "outfit_name": "루멘 여름 복장",
+            "expression_mode": "existing",
+            "expression_name": "기존 표정",
+            "composition_mode": "none",
+            "revision_id": state["active_revision_id"],
+        },
+    )
+
+    saved = json.loads(tags_file.read_text(encoding="utf-8"))
+    assert saved["appearances"]["루멘 여름 외모"] == ["silver_hair", "blue_eyes"]
+    assert saved["outfits"]["루멘 여름 복장"] == ["summer_dress"]
+    assert saved["characters"]["루멘"] == {
+        "appearance": "루멘 기본 외모",
+        "outfit": "루멘 기본 복장",
+        "expression": "기존 표정",
+    }
+    new_destination = asset_root / "루멘" / "루멘 여름 복장" / "기존 표정"
+    assert (new_destination / "revision.webp").read_bytes() == b"revision-image"
+    assert (existing_destination / "keep.webp").read_bytes() == b"keep"
+    assert result["finalized"]["registration_mode"] == "existing"
+    assert result["finalized"]["promoted_image"] is True
+    assert list(backup_root.glob("tags_before_character_maker_*.json"))
+
+
+def test_confirm_existing_mode_rejects_unknown_character(tmp_path):
+    service, _ = _service(tmp_path)
+    session = service.create_session()
+    service.update_session(
+        session["id"],
+        {
+            "fields": {
+                "appearance": ["silver_hair"],
+                "outfit": ["summer_dress"],
+                "expression": [],
+                "composition": [],
+            }
+        },
+    )
+
+    with pytest.raises(CharacterMakerError, match="기존 캐릭터 '없는 캐릭터'"):
+        service.confirm(
+            session["id"],
+            {
+                "registration_mode": "existing",
+                "character_name": "없는 캐릭터",
+                "appearance_name": "새 외모",
+                "outfit_name": "새 복장",
+            },
+        )
+
+
 def test_confirm_rejects_empty_required_field_tags(tmp_path):
     service, _ = _service(tmp_path)
     session = service.create_session()

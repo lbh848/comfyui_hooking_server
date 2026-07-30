@@ -9438,7 +9438,7 @@
         }
         .cm-maker-lora-item {
             display: grid;
-            grid-template-columns: minmax(0, 1fr) 78px 24px;
+            grid-template-columns: minmax(0, 1fr) 104px 24px;
             gap: 6px;
             align-items: center;
             padding: 7px;
@@ -9473,12 +9473,37 @@
         }
         .cm-maker-lora-strength {
             display: grid;
-            gap: 2px;
+            gap: 4px;
             color: var(--text2);
             font-size: .55rem;
             text-align: center;
         }
-        .cm-maker-lora-strength input { width: 100%; accent-color: var(--accent); }
+        .cm-maker-lora-strength-row {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            justify-content: center;
+        }
+        .cm-maker-lora-strength-num {
+            width: 100%;
+            min-width: 0;
+            padding: 1px 3px;
+            box-sizing: border-box;
+            border: 1px solid var(--border);
+            border-radius: 5px;
+            background: var(--surface2);
+            color: var(--text);
+            font-size: .62rem;
+            text-align: center;
+        }
+        /* LoRA 강도는 0~1 step 0.01이라 스피너로 0.01씩만 움직여 무의미 → 직접 타이핑 위해 숨김 */
+        .cm-maker-lora-strength-num::-webkit-outer-spin-button,
+        .cm-maker-lora-strength-num::-webkit-inner-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+        .cm-maker-lora-strength-num { -moz-appearance: textfield; }
+        .cm-maker-lora-strength input[type="range"] { width: 100%; accent-color: var(--accent); }
         .cm-maker-lora-remove {
             width: 24px;
             height: 24px;
@@ -12786,8 +12811,19 @@
                     <div class="cm-modal-body">
                         <div class="cm-confirm-grid">
                             <div class="cm-confirm-field wide">
+                                <label for="cm-confirm-registration-mode">등록 대상</label>
+                                <select id="cm-confirm-registration-mode" onchange="cmUpdateConfirmRegistrationMode()">
+                                    <option value="new">새 캐릭터 등록</option>
+                                    <option value="existing">기존 캐릭터에 외모·복장 추가</option>
+                                </select>
+                            </div>
+                            <div id="cm-confirm-new-character-field" class="cm-confirm-field wide">
                                 <label for="cm-confirm-character">캐릭터 이름 · 신규</label>
                                 <input id="cm-confirm-character" placeholder="예: 에이라">
+                            </div>
+                            <div id="cm-confirm-existing-character-field" class="cm-confirm-field wide" style="display:none;">
+                                <label for="cm-confirm-existing-character">기존 캐릭터</label>
+                                <select id="cm-confirm-existing-character" onchange="cmUpdateConfirmSummary()"></select>
                             </div>
                             <div class="cm-confirm-field">
                                 <label for="cm-confirm-appearance">외모 프리셋 이름 · 필수</label>
@@ -34783,6 +34819,7 @@
             cmFillPresetSelect('cm-setting-anima-negative', assetTags?.negative_presets, '사용 안 함');
             cmFillPresetSelect('cm-setting-char-negative', assetTags?.character_negative_presets, '사용 안 함');
             cmFillPresetSelect('cm-confirm-expression', assetTags?.expressions, '표정 선택');
+            cmFillPresetSelect('cm-confirm-existing-character', assetTags?.characters, '기존 캐릭터 선택');
             cmRenderFieldPresetSelects();
         }
 
@@ -35182,11 +35219,18 @@
                                    onchange="cmUpdateLoraSetting('${kind}', ${index}, 'trigger', this.value)">
                         </div>
                         <label class="cm-maker-lora-strength">
-                            <span>강도 <b>${strength.toFixed(2)}</b></span>
+                            <span class="cm-maker-lora-strength-row">
+                                <span>강도</span>
+                                <input type="number" class="cm-maker-lora-strength-num"
+                                       min="0" max="1" step="0.01"
+                                       value="${strength.toFixed(2)}"
+                                       oninput="cmLoraStrengthDrag('${kind}', ${index}, this)"
+                                       onchange="cmLoraStrengthCommit('${kind}', ${index}, this)">
+                            </span>
                             <input type="range" min="0" max="1" step="0.01"
                                    value="${strength}"
-                                   oninput="this.previousElementSibling.querySelector('b').textContent=Number(this.value).toFixed(2)"
-                                   onchange="cmUpdateLoraSetting('${kind}', ${index}, 'strength', Number(this.value))">
+                                   oninput="cmLoraStrengthDrag('${kind}', ${index}, this)"
+                                   onchange="cmLoraStrengthCommit('${kind}', ${index}, this)">
                         </label>
                         <button type="button" class="cm-maker-lora-remove"
                                 onclick="cmRemoveLoraSetting('${kind}', ${index})"
@@ -35217,6 +35261,42 @@
                 return;
             }
             list[index][key] = value;
+            cmQueueSync();
+        }
+
+        // 슬라이더 드래그 / 숫자 타이핑 중: 표시만 양방향 동기화 (저장은 onchange에서)
+        function cmLoraStrengthDrag(kind, index, el) {
+            const wrap = el.closest('.cm-maker-lora-strength');
+            if (!wrap) return;
+            const range = wrap.querySelector('input[type="range"]');
+            const num = wrap.querySelector('.cm-maker-lora-strength-num');
+            const v = Number(el.value);
+            if (el.type === 'range') {
+                if (num) num.value = v.toFixed(2);
+            } else if (Number.isFinite(v)) {
+                if (range) range.value = Math.min(1, Math.max(0, v));
+            }
+        }
+
+        // 값 확정(포커스 아웃/엔터): 0~1 클램프 + 데이터 저장 + 양쪽 동기화
+        function cmLoraStrengthCommit(kind, index, el) {
+            const cfg = CM_LORA_KINDS[kind];
+            const list = cfg && cmSession?.settings?.[cfg.listKey];
+            if (!Array.isArray(list) || !list[index]) {
+                console.error('[CHARACTER_MAKER_LORA] 강도를 저장할 LoRA를 찾지 못했습니다:', kind, index);
+                return;
+            }
+            let v = Number(el.value);
+            if (!Number.isFinite(v)) v = 0.5;
+            v = Math.min(1, Math.max(0, v));
+            list[index].strength = v;
+            const wrap = el.closest('.cm-maker-lora-strength');
+            if (wrap) {
+                const range = wrap.querySelector('input[type="range"]');
+                const num = wrap.querySelector('.cm-maker-lora-strength-num');
+                if (range) range.value = v;
+                if (num) num.value = v.toFixed(2);
+            }
             cmQueueSync();
         }
 
@@ -35879,6 +35959,9 @@
             }
             tags.splice(index, 1);
             cmSession.fields[field] = tags;
+            // 칩이 innerHTML 재생성으로 통째로 교체되면 mouseleave가 발생하지 않아
+            // 떠 있던 설명 호버가 남으므로 명시적으로 숨긴다.
+            _hideTagChipTooltip();
             cmRenderField(field);
             cmQueueSync();
         }
@@ -36252,6 +36335,14 @@
             }
             document.getElementById('cm-confirm-expression-mode').value = 'none';
             document.getElementById('cm-confirm-composition-mode').value = 'none';
+            const targetSelect = document.getElementById('cm-confirm-registration-mode');
+            const existingTarget = targetSelect?.querySelector('option[value="existing"]');
+            const hasExistingCharacters = Object.keys(assetTags?.characters || {}).length > 0;
+            if (existingTarget) existingTarget.disabled = !hasExistingCharacters;
+            if (targetSelect?.value === 'existing' && !hasExistingCharacters) {
+                targetSelect.value = 'new';
+            }
+            cmUpdateConfirmRegistrationMode();
             cmUpdateConfirmMode();
             cmUpdateConfirmSummary();
             document.getElementById('cm-confirm-modal')?.classList.add('visible');
@@ -36259,6 +36350,16 @@
 
         function cmCloseConfirm() {
             document.getElementById('cm-confirm-modal')?.classList.remove('visible');
+        }
+
+        function cmUpdateConfirmRegistrationMode() {
+            const registrationMode = document.getElementById('cm-confirm-registration-mode')?.value || 'new';
+            const existing = registrationMode === 'existing';
+            const newField = document.getElementById('cm-confirm-new-character-field');
+            const existingField = document.getElementById('cm-confirm-existing-character-field');
+            if (newField) newField.style.display = existing ? 'none' : '';
+            if (existingField) existingField.style.display = existing ? '' : 'none';
+            cmUpdateConfirmSummary();
         }
 
         function cmUpdateConfirmMode() {
@@ -36287,9 +36388,14 @@
         function cmUpdateConfirmSummary() {
             const summary = document.getElementById('cm-confirm-summary');
             if (!summary || !cmSession) return;
+            const registrationMode = document.getElementById('cm-confirm-registration-mode')?.value || 'new';
+            const existingCharacter = document.getElementById('cm-confirm-existing-character')?.value || '';
             const expressionMode = document.getElementById('cm-confirm-expression-mode')?.value || 'none';
             const compositionMode = document.getElementById('cm-confirm-composition-mode')?.value || 'none';
             summary.innerHTML = `
+                <b>등록 대상</b> · ${registrationMode === 'existing'
+                    ? `기존 캐릭터 ${escapeHtml(existingCharacter || '(선택 필요)')} · 현재 기본값 유지`
+                    : '새 캐릭터'}<br>
                 <b>영구 등록</b> · 외모 ${cmSession.fields.appearance.length} tags / 복장 ${cmSession.fields.outfit.length} tags<br>
                 <b>선택 등록</b> · 표정 ${expressionMode === 'none' ? '등록 안 함' : cmSession.fields.expression.length + ' tags'}
                 / 구도 ${compositionMode === 'none' ? '등록 안 함' : cmSession.fields.composition.length + ' tags'}<br>
@@ -36300,13 +36406,18 @@
 
         async function cmConfirmCharacter() {
             if (cmBusy || !cmSession) return;
+            const registrationMode = document.getElementById('cm-confirm-registration-mode')?.value || 'new';
             const expressionMode = document.getElementById('cm-confirm-expression-mode')?.value || 'none';
             const compositionMode = document.getElementById('cm-confirm-composition-mode')?.value || 'none';
             const expressionName = expressionMode === 'new'
                 ? document.getElementById('cm-confirm-expression-new')?.value.trim()
                 : (expressionMode === 'existing' ? document.getElementById('cm-confirm-expression')?.value : '');
+            const characterName = registrationMode === 'existing'
+                ? (document.getElementById('cm-confirm-existing-character')?.value || '')
+                : (document.getElementById('cm-confirm-character')?.value.trim() || '');
             const payload = {
-                character_name: document.getElementById('cm-confirm-character')?.value.trim() || '',
+                registration_mode: registrationMode,
+                character_name: characterName,
                 appearance_name: document.getElementById('cm-confirm-appearance')?.value.trim() || '',
                 outfit_name: document.getElementById('cm-confirm-outfit')?.value.trim() || '',
                 expression_mode: expressionMode,
@@ -36318,7 +36429,12 @@
                 revision_id: document.getElementById('cm-confirm-revision')?.value || '',
             };
             if (!payload.character_name || !payload.appearance_name || !payload.outfit_name) {
-                showToast('캐릭터, 외모 프리셋, 복장 프리셋 이름을 모두 입력하세요.', 'error');
+                showToast(
+                    registrationMode === 'existing'
+                        ? '기존 캐릭터를 선택하고 외모·복장 프리셋 이름을 모두 입력하세요.'
+                        : '캐릭터, 외모 프리셋, 복장 프리셋 이름을 모두 입력하세요.',
+                    'error',
+                );
                 return;
             }
             if (expressionMode !== 'none' && !payload.expression_name) {
@@ -36330,7 +36446,12 @@
                 return;
             }
 
-            cmSetBusy(true, '태그를 백업하고 캐릭터 프리셋을 등록하는 중...');
+            cmSetBusy(
+                true,
+                registrationMode === 'existing'
+                    ? '태그를 백업하고 기존 캐릭터에 외모·복장을 추가하는 중...'
+                    : '태그를 백업하고 캐릭터 프리셋을 등록하는 중...',
+            );
             const submit = document.getElementById('cm-confirm-submit');
             if (submit) submit.disabled = true;
             try {
@@ -36347,7 +36468,13 @@
                 } catch (reloadError) {
                     console.error('[CHARACTER_MAKER] 확정 후 에셋 프리셋 다시 읽기 실패:', reloadError);
                 }
-                showToast(`캐릭터 '${data.finalized.character_name}' 등록을 완료했습니다.`, 'success', 7000);
+                showToast(
+                    data.finalized.registration_mode === 'existing'
+                        ? `기존 캐릭터 '${data.finalized.character_name}'에 새 외모·복장을 추가했습니다.`
+                        : `캐릭터 '${data.finalized.character_name}' 등록을 완료했습니다.`,
+                    'success',
+                    7000,
+                );
             } catch (error) {
                 console.error('[CHARACTER_MAKER] 캐릭터 확정 실패:', payload, error);
                 showToast('캐릭터 확정 실패: ' + error.message, 'error', 7000);
@@ -56107,8 +56234,33 @@
             return desc;
         }
 
+        // ──────────────────────────────────────────────────────────────────
+        // 태그칩 설명 호버 툴팁(#ac-tooltip) 숨김 — 공용 헬퍼
+        // ──────────────────────────────────────────────────────────────────
+        // [버그 패턴] _attachTagChipTooltip 은 mouseenter 로 툴팁을 띄우고
+        //   mouseleave 로 숨긴다. 그런데 칩이 innerHTML 재생성/parent.remove() 등으로
+        //   DOM 에서 통째로 사라지면 브라우저가 mouseleave 를 발생시키지 않는다.
+        //   결과적으로 "칩 위에 호버 → 그 칩 삭제" 시 설명 호버가 화면에 남는 버그 발생.
+        //
+        // [언제 호출하나] 칩을 파괴/재생성(re-render) 하는 삭제·초기화 경로에서
+        //   다시 그리기 직전에 한 번 호출하면 잔류 툴팁이 즉시 사라진다.
+        //   예) cmRemoveTag(), renderTagChips() 의 removeFn 경로 등.
+        //
+        // [재사용 안내] 같은 증상(태그/칩 제거 후 설명 호버가 안 사라짐)을
+        //   다른 기능(에셋 모드·LB추가·포커스편집 등 _attachTagChipTooltip 사용처)에서
+        //   발견하면, 해당 칩의 제거/재렌더 직전에 이 함수를 호출하면 된다.
+        //   툴팁 요소는 페이지 전체에 1개(#ac-tooltip)이므로 부작용 없이 재사용 가능.
+        function _hideTagChipTooltip() {
+            const tooltip = document.getElementById('ac-tooltip');
+            if (tooltip) tooltip.style.display = 'none';
+        }
+
         function _attachTagChipTooltip(chip, tagName, preloadedDesc, gateFn) {
             if (!chip || !tagName) return;
+            // 주의: mouseenter/mouseleave 기반이다. 칩이 DOM 에서 제거될 때는
+            //   mouseleave 가 발생하지 않아 툴팁이 남을 수 있다.
+            //   따라서 칩을 파괴/재생성하는 경로(삭제·재렌더)에서는
+            //   반드시 _hideTagChipTooltip() 을 직접 호출해야 한다. (위 헬퍼 주석 참고)
             chip.addEventListener('mouseenter', async () => {
                 // gateFn(예: "설명" 토글)이 닫혀 있으면 툴팁을 띄우지 않는다
                 if (gateFn && !gateFn()) return;
@@ -56128,8 +56280,7 @@
                 tooltip.style.top = (rect.bottom + 4) + 'px';
             });
             chip.addEventListener('mouseleave', () => {
-                const tooltip = document.getElementById('ac-tooltip');
-                if (tooltip) tooltip.style.display = 'none';
+                _hideTagChipTooltip();
             });
         }
 

@@ -1988,6 +1988,13 @@ class CharacterMakerService:
         if not isinstance(payload, dict):
             raise CharacterMakerError("확정 요청은 객체여야 합니다.")
         session = self._session(session_id)
+        registration_mode = str(payload.get("registration_mode") or "new").strip()
+        if registration_mode not in ("new", "existing"):
+            print(
+                f"[CHARACTER_MAKER] 확정 등록 방식 오류: session={session_id}, "
+                f"registration_mode={registration_mode!r}"
+            )
+            raise CharacterMakerError("등록 방식은 new 또는 existing 이어야 합니다.")
         character_name = _safe_registration_name(payload.get("character_name"), "캐릭터명")
         appearance_name = _safe_registration_name(payload.get("appearance_name"), "외모 프리셋명")
         outfit_name = _safe_registration_name(payload.get("outfit_name"), "복장 프리셋명")
@@ -2030,8 +2037,21 @@ class CharacterMakerService:
         new_tags = copy.deepcopy(old_tags)
 
         collisions: list[str] = []
-        if character_name in new_tags.get("characters", {}):
+        characters = new_tags.get("characters", {})
+        if not isinstance(characters, dict):
+            print(
+                f"[CHARACTER_MAKER] 캐릭터 태그 구조 오류: session={session_id}, "
+                f"type={type(characters).__name__}"
+            )
+            raise CharacterMakerError("캐릭터 태그 데이터 구조가 올바르지 않습니다.")
+        if registration_mode == "new" and character_name in characters:
             collisions.append(f"캐릭터 '{character_name}'")
+        if registration_mode == "existing" and character_name not in characters:
+            print(
+                f"[CHARACTER_MAKER] 기존 캐릭터 추가 실패: session={session_id}, "
+                f"character={character_name!r}, reason=not_found"
+            )
+            raise CharacterMakerError(f"기존 캐릭터 '{character_name}'을 찾을 수 없습니다.")
         if appearance_name in new_tags.get("appearances", {}):
             collisions.append(f"외모 '{appearance_name}'")
         if outfit_name in new_tags.get("outfits", {}):
@@ -2066,11 +2086,12 @@ class CharacterMakerService:
             new_tags.setdefault("composition_presets", {})[composition_name] = list(
                 session["fields"]["composition"]
             )
-        new_tags.setdefault("characters", {})[character_name] = {
-            "appearance": appearance_name,
-            "outfit": outfit_name,
-            "expression": expression_name,
-        }
+        if registration_mode == "new":
+            new_tags.setdefault("characters", {})[character_name] = {
+                "appearance": appearance_name,
+                "outfit": outfit_name,
+                "expression": expression_name,
+            }
 
         revision_id = (
             str(payload.get("revision_id") or "")
@@ -2116,9 +2137,30 @@ class CharacterMakerService:
 
         char_dir = os.path.join(asset_dir, self.asset_manager._safe_dirname(character_name))
         char_dir_existed = os.path.exists(char_dir)
-        if char_dir_existed:
+        if registration_mode == "new" and char_dir_existed:
+            print(
+                f"[CHARACTER_MAKER] 신규 캐릭터 폴더 충돌: session={session_id}, "
+                f"character={character_name!r}, path={char_dir}"
+            )
             raise CharacterMakerError(
                 "동일한 저장 폴더가 이미 존재합니다. 다른 캐릭터명을 사용하세요."
+            )
+        promotion_outfit_dir = os.path.join(
+            char_dir, self.asset_manager._safe_dirname(outfit_name)
+        )
+        promotion_outfit_dir_existed = os.path.exists(promotion_outfit_dir)
+        if (
+            registration_mode == "existing"
+            and promote_revision is not None
+            and promotion_outfit_dir_existed
+        ):
+            print(
+                f"[CHARACTER_MAKER] 기존 캐릭터 복장 폴더 충돌: session={session_id}, "
+                f"character={character_name!r}, outfit={outfit_name!r}, "
+                f"path={promotion_outfit_dir}"
+            )
+            raise CharacterMakerError(
+                "동일한 복장 저장 폴더가 이미 존재합니다. 다른 복장 프리셋명을 사용하세요."
             )
 
         promoted_image = ""
@@ -2129,8 +2171,7 @@ class CharacterMakerService:
 
             if promote_revision is not None:
                 destination = os.path.join(
-                    char_dir,
-                    self.asset_manager._safe_dirname(outfit_name),
+                    promotion_outfit_dir,
                     self.asset_manager._safe_dirname(expression_name),
                 )
                 os.makedirs(destination, exist_ok=True)
@@ -2189,10 +2230,32 @@ class CharacterMakerService:
                         f"path={char_dir}, error={cleanup_exc}"
                     )
                     traceback.print_exc()
+            elif (
+                registration_mode == "existing"
+                and promote_revision is not None
+                and not promotion_outfit_dir_existed
+                and os.path.isdir(promotion_outfit_dir)
+            ):
+                try:
+                    asset_root_real = os.path.realpath(asset_dir)
+                    outfit_real = os.path.realpath(promotion_outfit_dir)
+                    if (
+                        os.path.commonpath([asset_root_real, outfit_real])
+                        == asset_root_real
+                        and outfit_real != asset_root_real
+                    ):
+                        shutil.rmtree(outfit_real)
+                except Exception as cleanup_exc:
+                    print(
+                        f"[CHARACTER_MAKER] 실패한 기존 캐릭터 복장 폴더 정리 실패: "
+                        f"path={promotion_outfit_dir}, error={cleanup_exc}"
+                    )
+                    traceback.print_exc()
             raise CharacterMakerError(f"캐릭터 확정 저장 실패: {exc}") from exc
 
         finalized = {
             "at": _now_iso(),
+            "registration_mode": registration_mode,
             "character_name": character_name,
             "appearance_name": appearance_name,
             "outfit_name": outfit_name,
@@ -2206,7 +2269,8 @@ class CharacterMakerService:
         session["updated_at"] = _now_iso()
         print(
             f"[CHARACTER_MAKER] 캐릭터 확정 완료: session={session_id}, "
-            f"character={character_name!r}, image={bool(promoted_image)}"
+            f"registration_mode={registration_mode}, character={character_name!r}, "
+            f"image={bool(promoted_image)}"
         )
         self._persist_session(session)
         return {
