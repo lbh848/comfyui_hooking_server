@@ -7821,6 +7821,182 @@
             color: var(--accent);
         }
 
+        /* ─── 서버 실행 중 임시 메모장 ─── */
+        .memo-launcher {
+            position: fixed;
+            left: 0;
+            bottom: 18px;
+            z-index: 2147483647;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            width: min(180px, calc(100vw - 36px));
+            min-height: 46px;
+            box-sizing: border-box;
+            padding: 9px 12px 9px 14px;
+            border: 1px solid color-mix(in srgb, var(--border) 72%, #f59e0b);
+            border-left: 0;
+            border-radius: 0 12px 12px 0;
+            background: color-mix(in srgb, var(--surface) 95%, #f59e0b 5%);
+            color: var(--text);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.44), 0 1px 0 rgba(255,255,255,0.05) inset;
+            cursor: pointer;
+            font: inherit;
+            transition: bottom 0.22s ease, border-color 0.16s, background 0.16s, transform 0.16s;
+        }
+        .memo-launcher[hidden] {
+            display: none !important;
+        }
+        .memo-launcher:hover {
+            border-color: color-mix(in srgb, #f59e0b 72%, var(--border));
+            background: color-mix(in srgb, var(--surface2) 90%, #f59e0b 10%);
+            transform: translateY(-1px);
+        }
+        .memo-launcher:focus-visible,
+        .memo-close-btn:focus-visible,
+        .memo-textarea:focus-visible {
+            outline: 2px solid #f59e0b;
+            outline-offset: 2px;
+        }
+        .memo-launcher-label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            min-width: 0;
+            font-size: 0.84rem;
+            font-weight: 800;
+        }
+        .memo-launcher-action {
+            color: var(--text2);
+            font-size: 0.7rem;
+            font-weight: 700;
+            white-space: nowrap;
+        }
+        .memo-overlay {
+            position: fixed;
+            inset: 0;
+            z-index: 2147483646;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            box-sizing: border-box;
+            background: rgba(3, 7, 18, 0.72);
+            backdrop-filter: blur(4px);
+        }
+        .memo-overlay[hidden] {
+            display: none !important;
+        }
+        .memo-dialog {
+            display: flex;
+            flex-direction: column;
+            width: min(720px, calc(100vw - 32px));
+            height: min(68vh, 680px);
+            min-height: 320px;
+            overflow: hidden;
+            border: 1px solid color-mix(in srgb, var(--border) 68%, #f59e0b);
+            border-radius: 16px;
+            background: color-mix(in srgb, var(--surface) 97%, #111827);
+            box-shadow: 0 28px 80px rgba(0,0,0,0.62), 0 1px 0 rgba(255,255,255,0.06) inset;
+        }
+        .memo-dialog-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 14px 14px 13px 18px;
+            border-bottom: 1px solid var(--border);
+            background: linear-gradient(180deg, rgba(245,158,11,0.09), transparent);
+        }
+        .memo-dialog-title {
+            display: flex;
+            flex-direction: column;
+            gap: 3px;
+            min-width: 0;
+        }
+        .memo-dialog-title strong {
+            color: var(--text);
+            font-size: 1rem;
+        }
+        .memo-dialog-title span {
+            color: var(--text2);
+            font-size: 0.72rem;
+        }
+        .memo-close-btn {
+            display: grid;
+            place-items: center;
+            width: 34px;
+            height: 34px;
+            flex: 0 0 auto;
+            padding: 0;
+            border: 1px solid var(--border);
+            border-radius: 9px;
+            background: var(--surface2);
+            color: var(--text2);
+            cursor: pointer;
+            font-size: 1rem;
+        }
+        .memo-close-btn:hover {
+            color: var(--text);
+            border-color: color-mix(in srgb, #f59e0b 62%, var(--border));
+            background: var(--surface3);
+        }
+        .memo-dialog-body {
+            display: flex;
+            flex: 1;
+            min-height: 0;
+            padding: 14px;
+        }
+        .memo-textarea {
+            flex: 1;
+            width: 100%;
+            min-height: 0;
+            resize: none;
+            box-sizing: border-box;
+            padding: 14px;
+            border: 1px solid var(--border);
+            border-radius: 11px;
+            background: color-mix(in srgb, var(--surface2) 92%, #111827);
+            color: var(--text);
+            font: 0.9rem/1.65 var(--font, sans-serif);
+            tab-size: 4;
+        }
+        .memo-textarea::placeholder {
+            color: var(--text3);
+        }
+        .memo-dialog-footer {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            min-height: 42px;
+            padding: 8px 16px;
+            border-top: 1px solid var(--border);
+            color: var(--text2);
+            font-size: 0.7rem;
+        }
+        .memo-save-status[data-state="saved"] {
+            color: var(--success);
+        }
+        .memo-save-status[data-state="error"] {
+            color: var(--danger, #ef4444);
+        }
+        @media (max-width: 520px) {
+            .memo-launcher {
+                bottom: 10px;
+                width: 156px;
+            }
+            .memo-overlay {
+                padding: 10px;
+            }
+            .memo-dialog {
+                width: calc(100vw - 20px);
+                height: min(76vh, 680px);
+                min-height: 280px;
+            }
+        }
+
         /* ─── 좌측 하단 작업 큐 UI ─── */
         .asset-queue-container {
             position: fixed;
@@ -13109,6 +13285,38 @@
         </div>
     </div>
 
+    <!-- 서버가 실행되는 동안만 내용을 유지하는 전역 메모장 -->
+    <button type="button" class="memo-launcher" id="memo-launcher" hidden
+            aria-controls="memo-overlay" aria-expanded="false"
+            onclick="toggleMemoPad()" title="메모장 펼치기">
+        <span class="memo-launcher-label"><span aria-hidden="true">📝</span>메모장</span>
+        <span class="memo-launcher-action" id="memo-launcher-action">펼치기</span>
+    </button>
+    <div class="memo-overlay" id="memo-overlay" hidden
+         onclick="handleMemoOverlayClick(event)">
+        <section class="memo-dialog" role="dialog" aria-modal="true"
+                 aria-labelledby="memo-dialog-heading">
+            <div class="memo-dialog-header">
+                <div class="memo-dialog-title">
+                    <strong id="memo-dialog-heading">📝 메모장</strong>
+                    <span>새로고침해도 유지되며 서버를 다시 시작하면 초기화됩니다.</span>
+                </div>
+                <button type="button" class="memo-close-btn" onclick="closeMemoPad()"
+                        title="메모장 접기" aria-label="메모장 접기">✕</button>
+            </div>
+            <div class="memo-dialog-body">
+                <textarea class="memo-textarea" id="memo-textarea"
+                          maxlength="100000" spellcheck="false"
+                          placeholder="서버가 실행되는 동안 기억할 내용을 입력하세요."></textarea>
+            </div>
+            <div class="memo-dialog-footer">
+                <span>서버 메모리에 자동 저장 · 파일에는 저장하지 않음</span>
+                <span class="memo-save-status" id="memo-save-status"
+                      data-state="idle" role="status" aria-live="polite">불러오기 전</span>
+            </div>
+        </section>
+    </div>
+
     <!-- 좌측 하단 작업 큐 UI -->
     <div class="asset-queue-container" id="asset-queue-container" style="display:none;">
         <!-- 확장 패널 -->
@@ -16154,6 +16362,21 @@
                 <div class="settings-tab-panel active" id="settings-tab-common">
                     <div class="setting-row">
                         <div class="setting-label">
+                            <div class="title">메모장 기능</div>
+                            <div class="desc">작업 큐 위의 메모 버튼으로 화면 중앙 메모장을 엽니다. 내용은 새로고침해도 유지되지만 서버를 다시 시작하면 초기화됩니다.</div>
+                        </div>
+                        <div class="setting-control" style="display:flex; align-items:center; gap:10px;">
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="setting-memo-enabled"
+                                       onchange="updateMemoSettingStatus(this.checked)">
+                                <span class="toggle-slider"></span>
+                            </label>
+                            <span id="memo-setting-status" class="toggle-status off">OFF</span>
+                        </div>
+                    </div>
+
+                    <div class="setting-row">
+                        <div class="setting-label">
                             <div class="title">ComfyUI 인스턴스 포트</div>
                             <div class="desc">두 ComfyUI 실행 인스턴스가 각각 사용할 포트입니다.</div>
                         </div>
@@ -18928,6 +19151,397 @@
         // 설정 상태
         let currentConfig = {};
         let currentConfigLoadPromise = null;
+        let memoFeatureEnabled = false;
+        let memoDirty = false;
+        let memoSaveTimer = null;
+        let memoSaveRevision = 0;
+        let memoSaveChain = Promise.resolve();
+        let memoServerInstanceId = null;
+        let memoPositionFrame = null;
+        let memoQueueResizeObserver = null;
+        let memoQueueMutationObserver = null;
+
+        function setMemoSaveStatus(message, state = 'idle') {
+            const status = document.getElementById('memo-save-status');
+            if (!status) {
+                console.error('[MEMO] 저장 상태 요소를 찾지 못했습니다:', { message, state });
+                return;
+            }
+            status.textContent = message;
+            status.dataset.state = state;
+        }
+
+        function updateMemoSettingStatus(checked) {
+            const status = document.getElementById('memo-setting-status');
+            if (!status) {
+                console.error('[MEMO] 설정 상태 요소를 찾지 못했습니다:', { checked });
+                return;
+            }
+            status.textContent = checked ? 'ON' : 'OFF';
+            status.className = 'toggle-status ' + (checked ? 'on' : 'off');
+        }
+
+        function syncMemoLauncherPosition() {
+            memoPositionFrame = null;
+            const launcher = document.getElementById('memo-launcher');
+            if (!launcher) {
+                console.error('[MEMO] 위치를 조정할 메모장 버튼이 없습니다.');
+                return;
+            }
+            if (launcher.hidden) return;
+
+            const mobile = window.matchMedia('(max-width: 520px)').matches;
+            const fallbackBottom = mobile ? 10 : 18;
+            let bottom = fallbackBottom;
+            const queueContainer = document.getElementById('asset-queue-container');
+            if (queueContainer && getComputedStyle(queueContainer).display !== 'none') {
+                let anchor = queueContainer;
+                if (queueContainer.classList.contains('collapsed')) {
+                    const wallTab = document.getElementById('asset-queue-wall-tab');
+                    if (wallTab && getComputedStyle(wallTab).visibility !== 'hidden') {
+                        anchor = wallTab;
+                    } else {
+                        console.error('[MEMO] 접힌 작업 큐의 위치 기준 탭을 찾지 못했습니다.');
+                    }
+                }
+                const rect = anchor.getBoundingClientRect();
+                if (rect.height > 0) {
+                    bottom = Math.max(
+                        fallbackBottom,
+                        Math.ceil(window.innerHeight - rect.top + 8)
+                    );
+                } else {
+                    console.error('[MEMO] 작업 큐 위치 계산 실패:', {
+                        width: rect.width,
+                        height: rect.height,
+                    });
+                }
+            }
+            launcher.style.bottom = `${bottom}px`;
+        }
+
+        function scheduleMemoLauncherPositionSync() {
+            if (memoPositionFrame !== null) {
+                cancelAnimationFrame(memoPositionFrame);
+            }
+            memoPositionFrame = requestAnimationFrame(syncMemoLauncherPosition);
+        }
+
+        function applyMemoFeatureEnabled(enabled) {
+            memoFeatureEnabled = Boolean(enabled);
+            const launcher = document.getElementById('memo-launcher');
+            if (!launcher) {
+                console.error('[MEMO] 기능 상태를 적용할 메모장 버튼이 없습니다:', {
+                    enabled: memoFeatureEnabled,
+                });
+                return;
+            }
+            launcher.hidden = !memoFeatureEnabled;
+            if (!memoFeatureEnabled) {
+                closeMemoPad(false);
+            } else {
+                scheduleMemoLauncherPositionSync();
+            }
+        }
+
+        async function loadMemoFromServer() {
+            if (!memoFeatureEnabled) {
+                console.error('[MEMO] 비활성 상태에서 메모 불러오기를 요청했습니다.');
+                return false;
+            }
+            const textarea = document.getElementById('memo-textarea');
+            if (!textarea) {
+                console.error('[MEMO] 내용을 불러올 textarea가 없습니다.');
+                return false;
+            }
+
+            await memoSaveChain;
+            const pendingMemo = textarea.value;
+            const hadUnsavedMemo = memoDirty;
+            const previousInstanceId = memoServerInstanceId;
+            textarea.disabled = true;
+            setMemoSaveStatus('불러오는 중...', 'idle');
+            try {
+                const result = await fetchJSON('/api/memo');
+                if (
+                    !result
+                    || result.success !== true
+                    || typeof result.memo !== 'string'
+                    || typeof result.instance_id !== 'string'
+                    || !result.instance_id
+                ) {
+                    console.error('[MEMO] 불러오기 응답 형식 오류:', result);
+                    throw new Error('메모 응답 형식이 올바르지 않습니다.');
+                }
+                memoServerInstanceId = result.instance_id;
+                const serverRestarted = Boolean(
+                    previousInstanceId && previousInstanceId !== result.instance_id
+                );
+                if (hadUnsavedMemo && !serverRestarted) {
+                    textarea.value = pendingMemo;
+                    memoDirty = true;
+                    setMemoSaveStatus('미저장 내용 재전송 중...', 'idle');
+                    void saveMemoToServer();
+                } else {
+                    textarea.value = result.memo;
+                    memoDirty = false;
+                    setMemoSaveStatus(
+                        serverRestarted ? '서버 재시작으로 초기화됨' : '서버에서 불러옴',
+                        'saved'
+                    );
+                }
+                return true;
+            } catch (error) {
+                console.error('[MEMO] 서버 메모 불러오기 실패:', error);
+                setMemoSaveStatus('불러오기 실패', 'error');
+                return false;
+            } finally {
+                textarea.disabled = false;
+            }
+        }
+
+        function saveMemoToServer() {
+            if (memoSaveTimer !== null) {
+                clearTimeout(memoSaveTimer);
+                memoSaveTimer = null;
+            }
+            if (!memoDirty) return memoSaveChain;
+
+            const textarea = document.getElementById('memo-textarea');
+            if (!textarea) {
+                console.error('[MEMO] 저장할 textarea가 없습니다.');
+                return memoSaveChain;
+            }
+            if (!memoServerInstanceId) {
+                console.error('[MEMO] 서버 실행 식별자가 없어 메모를 저장할 수 없습니다.');
+                setMemoSaveStatus('다시 열어 불러오세요', 'error');
+                return memoSaveChain;
+            }
+            const memo = textarea.value;
+            const instanceId = memoServerInstanceId;
+            const revision = ++memoSaveRevision;
+            setMemoSaveStatus('저장 중...', 'idle');
+            memoSaveChain = memoSaveChain.then(async () => {
+                try {
+                    const result = await fetchJSON('/api/memo', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ memo, instance_id: instanceId }),
+                    });
+                    if (
+                        !result
+                        || result.success !== true
+                        || typeof result.instance_id !== 'string'
+                    ) {
+                        console.error('[MEMO] 저장 응답 형식 오류:', result);
+                        throw new Error((result && result.error) || '메모 저장 응답이 올바르지 않습니다.');
+                    }
+                    memoServerInstanceId = result.instance_id;
+                    if (textarea.value === memo) {
+                        memoDirty = false;
+                    }
+                    if (revision === memoSaveRevision) {
+                        setMemoSaveStatus('자동 저장됨', 'saved');
+                    }
+                } catch (error) {
+                    if (String(error && error.message || error).startsWith('HTTP 409')) {
+                        try {
+                            const reset = await fetchJSON('/api/memo');
+                            if (
+                                !reset
+                                || reset.success !== true
+                                || typeof reset.memo !== 'string'
+                                || typeof reset.instance_id !== 'string'
+                                || !reset.instance_id
+                            ) {
+                                console.error('[MEMO] 재시작 후 초기화 응답 형식 오류:', reset);
+                                throw new Error('초기화된 메모 응답이 올바르지 않습니다.');
+                            }
+                            textarea.value = reset.memo;
+                            memoServerInstanceId = reset.instance_id;
+                            memoDirty = false;
+                            setMemoSaveStatus('서버 재시작으로 초기화됨', 'saved');
+                            return;
+                        } catch (resetError) {
+                            console.error('[MEMO] 서버 재시작 후 메모 초기화 동기화 실패:', resetError);
+                        }
+                    }
+                    console.error('[MEMO] 서버 메모 저장 실패:', error, {
+                        length: memo.length,
+                    });
+                    if (revision === memoSaveRevision) {
+                        setMemoSaveStatus('저장 실패', 'error');
+                    }
+                }
+            });
+            return memoSaveChain;
+        }
+
+        function queueMemoSave() {
+            if (!memoFeatureEnabled) {
+                console.error('[MEMO] 비활성 상태에서 메모 저장이 요청되었습니다.');
+                return;
+            }
+            memoDirty = true;
+            setMemoSaveStatus('저장 대기...', 'idle');
+            if (memoSaveTimer !== null) {
+                clearTimeout(memoSaveTimer);
+            }
+            memoSaveTimer = window.setTimeout(() => {
+                memoSaveTimer = null;
+                void saveMemoToServer();
+            }, 300);
+        }
+
+        async function openMemoPad() {
+            if (!memoFeatureEnabled) {
+                console.error('[MEMO] 비활성 상태에서 메모장 열기를 요청했습니다.');
+                return;
+            }
+            const overlay = document.getElementById('memo-overlay');
+            const launcher = document.getElementById('memo-launcher');
+            if (!overlay || !launcher) {
+                console.error('[MEMO] 메모장 열기 UI 요소 누락:', {
+                    overlay: !!overlay,
+                    launcher: !!launcher,
+                });
+                return;
+            }
+            overlay.hidden = false;
+            launcher.setAttribute('aria-expanded', 'true');
+            launcher.title = '메모장 접기';
+            const action = document.getElementById('memo-launcher-action');
+            if (action) {
+                action.textContent = '접기';
+            } else {
+                console.error('[MEMO] 메모장 버튼 상태 라벨이 없습니다.');
+            }
+
+            const loaded = await loadMemoFromServer();
+            if (overlay.hidden) return;
+            const textarea = document.getElementById('memo-textarea');
+            if (textarea) {
+                textarea.focus();
+                if (loaded) {
+                    textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+                }
+            } else {
+                console.error('[MEMO] 포커스를 이동할 textarea가 없습니다.');
+            }
+        }
+
+        function closeMemoPad(restoreFocus = true) {
+            const overlay = document.getElementById('memo-overlay');
+            const launcher = document.getElementById('memo-launcher');
+            if (!overlay || !launcher) {
+                console.error('[MEMO] 메모장 닫기 UI 요소 누락:', {
+                    overlay: !!overlay,
+                    launcher: !!launcher,
+                });
+                return;
+            }
+            overlay.hidden = true;
+            launcher.setAttribute('aria-expanded', 'false');
+            launcher.title = '메모장 펼치기';
+            const action = document.getElementById('memo-launcher-action');
+            if (action) {
+                action.textContent = '펼치기';
+            } else {
+                console.error('[MEMO] 메모장 버튼 상태 라벨이 없습니다.');
+            }
+            if (memoDirty) {
+                void saveMemoToServer();
+            }
+            if (restoreFocus && !launcher.hidden) {
+                launcher.focus();
+            }
+        }
+
+        function toggleMemoPad() {
+            const overlay = document.getElementById('memo-overlay');
+            if (!overlay) {
+                console.error('[MEMO] 토글할 메모장 overlay가 없습니다.');
+                return;
+            }
+            if (overlay.hidden) {
+                void openMemoPad();
+            } else {
+                closeMemoPad();
+            }
+        }
+
+        function handleMemoOverlayClick(event) {
+            if (event.target === event.currentTarget) {
+                closeMemoPad();
+            }
+        }
+
+        function flushMemoWithBeacon() {
+            if (!memoDirty) return;
+            const textarea = document.getElementById('memo-textarea');
+            if (!textarea) {
+                console.error('[MEMO] 종료 직전 저장할 textarea가 없습니다.');
+                return;
+            }
+            if (!memoServerInstanceId) {
+                console.error('[MEMO] 종료 직전 저장에 필요한 서버 실행 식별자가 없습니다.');
+                return;
+            }
+            if (memoSaveTimer !== null) {
+                clearTimeout(memoSaveTimer);
+                memoSaveTimer = null;
+            }
+            const payload = new Blob(
+                [JSON.stringify({
+                    memo: textarea.value,
+                    instance_id: memoServerInstanceId,
+                })],
+                { type: 'application/json' }
+            );
+            if (!navigator.sendBeacon('/api/memo', payload)) {
+                console.error('[MEMO] 종료 직전 sendBeacon 저장 요청 실패:', {
+                    length: textarea.value.length,
+                });
+            }
+        }
+
+        function initializeMemoPadUi() {
+            const textarea = document.getElementById('memo-textarea');
+            const queueContainer = document.getElementById('asset-queue-container');
+            if (!textarea || !queueContainer) {
+                console.error('[MEMO] 초기화 UI 요소 누락:', {
+                    textarea: !!textarea,
+                    queueContainer: !!queueContainer,
+                });
+                return;
+            }
+            textarea.addEventListener('input', queueMemoSave);
+            document.addEventListener('keydown', event => {
+                if (event.key !== 'Escape') return;
+                const overlay = document.getElementById('memo-overlay');
+                if (overlay && !overlay.hidden) {
+                    event.preventDefault();
+                    closeMemoPad();
+                }
+            });
+            window.addEventListener('resize', scheduleMemoLauncherPositionSync);
+            window.addEventListener('beforeunload', flushMemoWithBeacon);
+
+            memoQueueMutationObserver = new MutationObserver(scheduleMemoLauncherPositionSync);
+            memoQueueMutationObserver.observe(queueContainer, {
+                attributes: true,
+                attributeFilter: ['class', 'style'],
+            });
+            if (typeof ResizeObserver === 'function') {
+                memoQueueResizeObserver = new ResizeObserver(scheduleMemoLauncherPositionSync);
+                memoQueueResizeObserver.observe(queueContainer);
+            } else {
+                console.error('[MEMO] ResizeObserver를 지원하지 않아 큐 높이 자동 추적을 생략합니다.');
+            }
+            scheduleMemoLauncherPositionSync();
+        }
+
+        document.addEventListener('DOMContentLoaded', initializeMemoPadUi);
 
         function loadCurrentConfig(forceRefresh = false) {
             if (!forceRefresh && currentConfigLoadPromise) {
@@ -18957,7 +19571,9 @@
 
         // 페이지 스크립트가 준비되는 즉시 설정 로드를 시작한다. 삽화 탭과 설정 모달은
         // 이 Promise를 공유하므로 시작 직후 탭을 눌러도 동일 요청의 완료를 기다린다.
-        loadCurrentConfig().catch(() => {});
+        loadCurrentConfig()
+            .then(config => applyMemoFeatureEnabled(config.memo_enabled !== false))
+            .catch(error => console.error('[MEMO] 초기 기능 설정 적용 실패:', error));
 
         // ─── 터널 공유 (공유 모달) ──────────────────────────
         let tunnelActive = false;
@@ -22534,6 +23150,9 @@
             document.getElementById('setting-comfyui-port-2').value = currentConfig.comfyui_port_2
                 || currentConfig.comfyui_port_illustration
                 || 8187;
+            const memoEnabled = currentConfig.memo_enabled !== false;
+            document.getElementById('setting-memo-enabled').checked = memoEnabled;
+            updateMemoSettingStatus(memoEnabled);
             comfyRuntimeInitializeProfiles(currentConfig);
             comfyAllocationInitialize(currentConfig);
             document.getElementById('setting-send-original').checked = currentConfig.send_original || false;
@@ -23944,6 +24563,7 @@
             }
             const config = {
                 data_saving_mode: currentConfig.data_saving_mode || false,
+                memo_enabled: document.getElementById('setting-memo-enabled').checked,
                 comfyui_port: parseInt(document.getElementById('setting-comfyui-port').value) || 8188,
                 comfyui_port_2: parseInt(document.getElementById('setting-comfyui-port-2').value) || 8187,
                 comfyui_port_illustration: null,
@@ -24081,6 +24701,7 @@
                     currentConfig = result.config;
                     currentConfigLoadPromise = Promise.resolve(currentConfig);
                     applyIllustrationProviderConfig(currentConfig);
+                    applyMemoFeatureEnabled(currentConfig.memo_enabled !== false);
                     // ANIMA UI 가시성 업데이트
                     updateAnimaUIVisibility();
                     // 버튼 가시성 업데이트

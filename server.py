@@ -216,6 +216,7 @@ DEFAULT_CONFIG = {
     },
     "bot_selected": "",  # 삽화 모드에서 선택된 봇 이름
     "notification_enabled": True,  # 배치 완료 알림
+    "memo_enabled": True,  # 서버 실행 중에만 유지되는 전역 메모장
     "clamp_enabled": False,  # 프롬프트 가중치 클램프 활성화 여부
     "clamp_value": 1.2,  # 가중치 클램프 최대값
     "outfit_mode_enabled": False,  # 복장 추출 모드 활성화 여부
@@ -9949,6 +9950,17 @@ async def handle_api_config(request: web.Request) -> web.Response:
                 traceback.print_exc()
                 return web.json_response({"error": str(e)}, status=400)
 
+            if "memo_enabled" in body and not isinstance(body.get("memo_enabled"), bool):
+                print(
+                    "[CONFIG] 메모장 기능 설정 저장 거부: "
+                    f"value={body.get('memo_enabled')!r}, "
+                    f"type={type(body.get('memo_enabled')).__name__}"
+                )
+                return web.json_response(
+                    {"error": "메모장 기능 설정은 true/false여야 합니다."},
+                    status=400,
+                )
+
             candidate_config = copy.deepcopy(app_config)
             for key, value in body.items():
                 if key in DEFAULT_CONFIG:
@@ -10346,6 +10358,112 @@ async def handle_api_config(request: web.Request) -> web.Response:
             print(f"[ERROR] 설정 저장 실패: {e}")
             traceback.print_exc()
             return web.json_response({"error": str(e)}, status=500)
+
+
+_SERVER_MEMO_MAX_LENGTH = 100_000
+_server_memo_text = ""
+_server_memo_instance_id = uuid.uuid4().hex
+
+
+async def handle_api_memo(request: web.Request) -> web.Response:
+    """서버 프로세스가 살아 있는 동안에만 메모 내용을 보관한다."""
+    global _server_memo_text
+
+    if request.method == "GET":
+        return web.json_response(
+            {
+                "success": True,
+                "memo": _server_memo_text,
+                "instance_id": _server_memo_instance_id,
+            }
+        )
+
+    if request.method != "POST":
+        print(f"[MEMO] 지원하지 않는 요청 메서드: {request.method}")
+        return web.json_response(
+            {"success": False, "error": "지원하지 않는 요청입니다."},
+            status=405,
+        )
+
+    try:
+        body = await request.json()
+    except Exception as e:
+        print(f"[MEMO] 요청 JSON 해석 실패: {e}")
+        traceback.print_exc()
+        return web.json_response(
+            {"success": False, "error": "메모 요청 형식이 올바르지 않습니다."},
+            status=400,
+        )
+
+    if not isinstance(body, dict):
+        print(f"[MEMO] 요청 본문 형식 오류: type={type(body).__name__}")
+        return web.json_response(
+            {"success": False, "error": "메모 요청은 JSON 객체여야 합니다."},
+            status=400,
+        )
+
+    instance_id = body.get("instance_id")
+    if not isinstance(instance_id, str) or not instance_id:
+        print(
+            "[MEMO] 서버 실행 식별자 누락 또는 형식 오류: "
+            f"value={instance_id!r}, type={type(instance_id).__name__}"
+        )
+        return web.json_response(
+            {
+                "success": False,
+                "error": "메모를 먼저 다시 불러온 뒤 저장해 주세요.",
+            },
+            status=400,
+        )
+    if instance_id != _server_memo_instance_id:
+        print(
+            "[MEMO] 이전 서버 실행의 저장 요청 거부: "
+            f"client_instance={instance_id!r}, "
+            f"server_instance={_server_memo_instance_id!r}"
+        )
+        return web.json_response(
+            {
+                "success": False,
+                "error": "서버가 다시 시작되어 메모가 초기화되었습니다.",
+                "reset": True,
+                "memo": _server_memo_text,
+                "instance_id": _server_memo_instance_id,
+            },
+            status=409,
+        )
+
+    memo = body.get("memo")
+    if not isinstance(memo, str):
+        print(
+            "[MEMO] 메모 저장 거부: "
+            f"value={memo!r}, type={type(memo).__name__}"
+        )
+        return web.json_response(
+            {"success": False, "error": "메모 내용은 문자열이어야 합니다."},
+            status=400,
+        )
+    if len(memo) > _SERVER_MEMO_MAX_LENGTH:
+        print(
+            "[MEMO] 메모 저장 거부: "
+            f"length={len(memo)}, max={_SERVER_MEMO_MAX_LENGTH}"
+        )
+        return web.json_response(
+            {
+                "success": False,
+                "error": f"메모는 {_SERVER_MEMO_MAX_LENGTH:,}자까지 저장할 수 있습니다.",
+            },
+            status=400,
+        )
+
+    _server_memo_text = memo
+    print(f"[MEMO] 서버 메모 갱신 완료: length={len(memo)}")
+    return web.json_response(
+        {
+            "success": True,
+            "length": len(_server_memo_text),
+            "instance_id": _server_memo_instance_id,
+        }
+    )
 
 
 # ─── 워크플로우 복원 수동 그리기 ─────────────────────────────
@@ -11052,6 +11170,8 @@ app.router.add_get("/api/restore_manual/characters", handle_api_restore_manual_c
 app.router.add_get("/api/frontend_ws", handle_frontend_ws)
 app.router.add_get("/api/config", handle_api_config)
 app.router.add_post("/api/config", handle_api_config)
+app.router.add_get("/api/memo", handle_api_memo)
+app.router.add_post("/api/memo", handle_api_memo)
 app.router.add_post("/api/patch-comfy-input", handle_api_patch_comfy_input)
 app.router.add_get("/api/workflow_files", handle_api_workflow_files)
 # 워크플로우 능력 테스트 API
