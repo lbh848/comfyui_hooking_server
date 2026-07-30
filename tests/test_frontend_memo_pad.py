@@ -36,8 +36,9 @@ def test_memo_dialog_is_centered_accessible_and_closable() -> None:
     assert 'role="dialog" aria-modal="true"' in FRONTEND
     assert 'id="memo-textarea"' in FRONTEND
     assert 'maxlength="100000"' in FRONTEND
-    assert "handleMemoOverlayClick(event)" in FRONTEND
-    assert "event.key !== 'Escape'" in FRONTEND
+    assert 'onclick="closeMemoPad()"' in FRONTEND  # ✕ 버튼으로 닫힘
+    assert "handleMemoOverlayClick" not in FRONTEND  # 바깥 클릭으로 닫히지 않음
+    assert "event.key !== 'Escape'" not in FRONTEND  # ESC로 닫히지 않음
     assert "align-items: center;" in FRONTEND
     assert "justify-content: center;" in FRONTEND
 

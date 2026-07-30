@@ -13292,8 +13292,7 @@
         <span class="memo-launcher-icon" aria-hidden="true">📝</span>
         <span class="memo-launcher-action" id="memo-launcher-action" aria-hidden="true">›</span>
     </button>
-    <div class="memo-overlay" id="memo-overlay" hidden
-         onclick="handleMemoOverlayClick(event)">
+    <div class="memo-overlay" id="memo-overlay" hidden>
         <section class="memo-dialog" role="dialog" aria-modal="true"
                  aria-labelledby="memo-dialog-heading">
             <div class="memo-dialog-header">
@@ -19513,12 +19512,6 @@
             }
         }
 
-        function handleMemoOverlayClick(event) {
-            if (event.target === event.currentTarget) {
-                closeMemoPad();
-            }
-        }
-
         function flushMemoWithBeacon() {
             if (!memoDirty) return;
             const textarea = document.getElementById('memo-textarea');
@@ -19559,14 +19552,6 @@
                 return;
             }
             textarea.addEventListener('input', queueMemoSave);
-            document.addEventListener('keydown', event => {
-                if (event.key !== 'Escape') return;
-                const overlay = document.getElementById('memo-overlay');
-                if (overlay && !overlay.hidden) {
-                    event.preventDefault();
-                    closeMemoPad();
-                }
-            });
             window.addEventListener('resize', scheduleMemoLauncherPositionSync);
             window.addEventListener('beforeunload', flushMemoWithBeacon);
 
