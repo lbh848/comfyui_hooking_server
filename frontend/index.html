@@ -62017,9 +62017,8 @@
             modal.querySelector('#au-qwen-run-btn').addEventListener('click', auQwenEnqueueEdit);
             modal.querySelector('#au-qwen-cancel-btn').addEventListener('click', auCloseQwenEdit);
             modal.querySelector('.qwen-edit-close').addEventListener('click', auCloseQwenEdit);
-            modal.addEventListener('click', (event) => {
-                if (event.target === modal) auCloseQwenEdit();
-            });
+            // 주의: 모달 바깥 클릭으로 닫기 분기는 넣지 않는다(CLAUDE.md 모달 규칙).
+            // ✕ / 취소 버튼을 통해서만 닫히도록 하여 실수로 입력 중인 내용을 잃지 않게 한다.
             document.addEventListener('keydown', auQwenHandleCompositeKeydown);
 
             const pointerPoint = (event) => {
