@@ -1001,7 +1001,9 @@ def test_confirm_new_character_creates_folder_card_and_snapshot_presets(
         session["id"],
         {
             "character_name": "루멘",
+            "appearance_mode": "new",
             "appearance_name": "루멘 외모",
+            "outfit_mode": "new",
             "outfit_name": "루멘 코트",
             "expression_mode": "new",
             "expression_name": "루멘 미소",
@@ -1124,7 +1126,9 @@ def test_confirm_adds_presets_to_existing_character_without_changing_defaults(
         {
             "registration_mode": "existing",
             "character_name": "루멘",
+            "appearance_mode": "new",
             "appearance_name": "루멘 여름 외모",
+            "outfit_mode": "new",
             "outfit_name": "루멘 여름 복장",
             "expression_mode": "existing",
             "expression_name": "기존 표정",
@@ -1157,6 +1161,241 @@ def test_confirm_adds_presets_to_existing_character_without_changing_defaults(
     assert result["finalized"]["registration_mode"] == "existing"
     assert result["finalized"]["promoted_image"] is True
     assert list(backup_root.glob("tags_before_character_maker_*.json"))
+
+
+def test_confirm_reuses_existing_presets_and_preserves_existing_representative(
+    monkeypatch, tmp_path
+):
+    tags = _empty_tags()
+    tags["appearances"]["루멘 외모"] = ["silver_hair"]
+    tags["outfits"]["루멘 코트"] = ["long_coat"]
+    tags["expressions"]["기존 표정"] = ["neutral"]
+    tags["characters"]["루멘"] = {
+        "appearance": "루멘 외모",
+        "outfit": "루멘 코트",
+        "expression": "기존 표정",
+    }
+    service, manager = _service(tmp_path, tags=tags)
+    tags_file = tmp_path / "asset_data" / "tags.json"
+    asset_root = tmp_path / "asset"
+    backup_root = tmp_path / "요구사항"
+    destination = asset_root / "루멘" / "루멘 코트" / "기존 표정"
+    destination.mkdir(parents=True)
+    (destination / "old.webp").write_bytes(b"old-image")
+    (destination / "_representative.json").write_text(
+        json.dumps({"filename": "old.webp"}),
+        encoding="utf-8",
+    )
+    tags_file.parent.mkdir(parents=True)
+    tags_file.write_text(
+        json.dumps(manager.get_tags(), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(asset_mode_module, "TAGS_FILE", str(tags_file))
+    monkeypatch.setattr(asset_mode_module, "ASSET_DIR", str(asset_root))
+    monkeypatch.setattr(asset_mode_module, "NAME_MAPPING_BACKUP_DIR", str(backup_root))
+
+    session = service.create_session()
+    image_path = (
+        Path(service.temp_root) / session["id"] / "images" / "revision.webp"
+    )
+    prompt_path = image_path.with_name("revision_prompt.json")
+    image_path.write_bytes(b"new-image")
+    prompt_path.write_text(
+        json.dumps({"positive": "used positive", "negative": "used negative"}),
+        encoding="utf-8",
+    )
+    state = service.add_revision(
+        session["id"],
+        image_path=str(image_path),
+        prompt_path=str(prompt_path),
+        positive="fallback positive",
+        negative="fallback negative",
+    )
+
+    result = service.confirm(
+        session["id"],
+        {
+            "registration_mode": "existing",
+            "character_name": "루멘",
+            "appearance_mode": "existing",
+            "appearance_name": "루멘 외모",
+            "outfit_mode": "existing",
+            "outfit_name": "루멘 코트",
+            "expression_mode": "existing",
+            "expression_name": "기존 표정",
+            "set_representative": False,
+            "revision_id": state["active_revision_id"],
+        },
+    )
+
+    assert json.loads(tags_file.read_text(encoding="utf-8")) == tags
+    assert not list(backup_root.glob("tags_before_character_maker_*.json"))
+    assert (destination / "old.webp").read_bytes() == b"old-image"
+    assert (destination / "revision.webp").read_bytes() == b"new-image"
+    assert json.loads(
+        (destination / "_representative.json").read_text(encoding="utf-8")
+    ) == {"filename": "old.webp"}
+    prompt = json.loads(
+        (destination / "revision_prompt.json").read_text(encoding="utf-8")
+    )
+    assert prompt["appearance"] == "루멘 외모"
+    assert prompt["outfit"] == "루멘 코트"
+    assert prompt["positive"] == "used positive"
+    assert result["finalized"]["appearance_mode"] == "existing"
+    assert result["finalized"]["outfit_mode"] == "existing"
+    assert result["finalized"]["representative_updated"] is False
+    assert result["finalized"]["representative_update_reason"] == "preserved"
+
+
+def test_confirm_new_character_can_use_existing_appearance_and_outfit(
+    monkeypatch, tmp_path
+):
+    tags = _empty_tags()
+    tags["appearances"]["공용 외모"] = ["silver_hair"]
+    tags["outfits"]["공용 코트"] = ["long_coat"]
+    tags["expressions"]["기본 표정"] = ["neutral"]
+    service, manager = _service(tmp_path, tags=tags)
+    tags_file = tmp_path / "asset_data" / "tags.json"
+    asset_root = tmp_path / "asset"
+    backup_root = tmp_path / "요구사항"
+    tags_file.parent.mkdir(parents=True)
+    tags_file.write_text(
+        json.dumps(manager.get_tags(), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(asset_mode_module, "TAGS_FILE", str(tags_file))
+    monkeypatch.setattr(asset_mode_module, "ASSET_DIR", str(asset_root))
+    monkeypatch.setattr(asset_mode_module, "NAME_MAPPING_BACKUP_DIR", str(backup_root))
+
+    session = service.create_session()
+    image_path = (
+        Path(service.temp_root) / session["id"] / "images" / "revision.webp"
+    )
+    prompt_path = image_path.with_name("revision_prompt.json")
+    image_path.write_bytes(b"new-character-image")
+    prompt_path.write_text("{}", encoding="utf-8")
+    state = service.add_revision(
+        session["id"],
+        image_path=str(image_path),
+        prompt_path=str(prompt_path),
+        positive="positive",
+        negative="negative",
+    )
+
+    result = service.confirm(
+        session["id"],
+        {
+            "registration_mode": "new",
+            "character_name": "노바",
+            "appearance_mode": "existing",
+            "appearance_name": "공용 외모",
+            "outfit_mode": "existing",
+            "outfit_name": "공용 코트",
+            "expression_mode": "existing",
+            "expression_name": "기본 표정",
+            "revision_id": state["active_revision_id"],
+        },
+    )
+
+    destination = asset_root / "노바" / "공용 코트" / "기본 표정"
+    saved = json.loads(tags_file.read_text(encoding="utf-8"))
+    assert saved["characters"]["노바"] == {
+        "appearance": "공용 외모",
+        "outfit": "공용 코트",
+        "expression": "기본 표정",
+    }
+    assert saved["appearances"] == tags["appearances"]
+    assert saved["outfits"] == tags["outfits"]
+    assert (destination / "revision.webp").read_bytes() == b"new-character-image"
+    assert json.loads(
+        (destination / "_representative.json").read_text(encoding="utf-8")
+    ) == {"filename": "revision.webp"}
+    assert result["finalized"]["representative_update_reason"] == "missing"
+    assert list(backup_root.glob("tags_before_character_maker_*.json"))
+
+
+def test_confirm_avoids_card_filename_overwrite_and_can_replace_representative(
+    monkeypatch, tmp_path
+):
+    tags = _empty_tags()
+    tags["appearances"]["외모"] = ["silver_hair"]
+    tags["outfits"]["복장"] = ["coat"]
+    tags["expressions"]["표정"] = ["neutral"]
+    tags["characters"]["캐릭터"] = {
+        "appearance": "외모",
+        "outfit": "복장",
+        "expression": "표정",
+    }
+    service, manager = _service(tmp_path, tags=tags)
+    tags_file = tmp_path / "asset_data" / "tags.json"
+    asset_root = tmp_path / "asset"
+    backup_root = tmp_path / "요구사항"
+    destination = asset_root / "캐릭터" / "복장" / "표정"
+    destination.mkdir(parents=True)
+    (destination / "revision.webp").write_bytes(b"do-not-overwrite")
+    (destination / "revision_prompt.json").write_text(
+        json.dumps({"positive": "old"}),
+        encoding="utf-8",
+    )
+    (destination / "_representative.json").write_text(
+        json.dumps({"filename": "revision.webp"}),
+        encoding="utf-8",
+    )
+    tags_file.parent.mkdir(parents=True)
+    tags_file.write_text(json.dumps(tags, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(asset_mode_module, "TAGS_FILE", str(tags_file))
+    monkeypatch.setattr(asset_mode_module, "ASSET_DIR", str(asset_root))
+    monkeypatch.setattr(asset_mode_module, "NAME_MAPPING_BACKUP_DIR", str(backup_root))
+
+    session = service.create_session()
+    image_path = (
+        Path(service.temp_root) / session["id"] / "images" / "revision.webp"
+    )
+    prompt_path = image_path.with_name("revision_prompt.json")
+    image_path.write_bytes(b"new-card")
+    prompt_path.write_text(
+        json.dumps({"positive": "new", "negative": ""}),
+        encoding="utf-8",
+    )
+    state = service.add_revision(
+        session["id"],
+        image_path=str(image_path),
+        prompt_path=str(prompt_path),
+        positive="new",
+        negative="",
+    )
+
+    result = service.confirm(
+        session["id"],
+        {
+            "registration_mode": "existing",
+            "character_name": "캐릭터",
+            "appearance_mode": "existing",
+            "appearance_name": "외모",
+            "outfit_mode": "existing",
+            "outfit_name": "복장",
+            "expression_mode": "existing",
+            "expression_name": "표정",
+            "set_representative": True,
+            "revision_id": state["active_revision_id"],
+        },
+    )
+
+    assert (destination / "revision.webp").read_bytes() == b"do-not-overwrite"
+    assert (destination / "revision_2.webp").read_bytes() == b"new-card"
+    assert json.loads(
+        (destination / "_representative.json").read_text(encoding="utf-8")
+    ) == {"filename": "revision_2.webp"}
+    assert result["finalized"]["promoted_filename"] == "revision_2.webp"
+    assert result["finalized"]["representative_update_reason"] == "requested"
+    representative_backups = list(
+        backup_root.glob("representative_before_character_maker_*.json")
+    )
+    assert len(representative_backups) == 1
+    assert json.loads(representative_backups[0].read_text(encoding="utf-8")) == {
+        "filename": "revision.webp"
+    }
 
 
 def test_confirm_existing_mode_rejects_unknown_character(tmp_path):

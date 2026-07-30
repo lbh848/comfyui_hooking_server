@@ -278,8 +278,8 @@ def test_character_maker_apis_and_required_card_confirmation_are_wired():
     ):
         assert fragment in html
 
-    assert '<option value="existing">기존 표정 프리셋 사용</option>' in html
-    assert '<option value="new">새 표정 프리셋 등록</option>' in html
+    assert '<option value="existing">기존 표정 사용</option>' in html
+    assert '<option value="new">새 표정 등록</option>' in html
     assert "appearance_name" in html
     assert "outfit_name" in html
     confirm_start = html.index('id="cm-confirm-modal"')
@@ -290,6 +290,9 @@ def test_character_maker_apis_and_required_card_confirmation_are_wired():
     assert 'value="none"' not in confirm_markup[expression_start:expression_end]
     assert 'id="cm-confirm-revision" readonly' in confirm_markup
     assert "캐릭터 카드 이미지 · 현재 사용자 선택" in confirm_markup
+    assert 'id="cm-confirm-preview-image"' in confirm_markup
+    assert 'id="cm-confirm-path"' in confirm_markup
+    assert 'id="cm-confirm-set-representative"' in confirm_markup
     assert "function cmGetActiveUserRevision()" in html
     assert "revision_id: activeRevision.id" in html
     assert "실제 생성 프롬프트" in html
@@ -299,13 +302,31 @@ def test_character_maker_can_add_presets_to_an_existing_character():
     html = _html()
 
     assert 'id="cm-confirm-registration-mode"' in html
-    assert '<option value="existing">기존 캐릭터에 외모·복장 추가</option>' in html
+    assert '<option value="existing">기존 캐릭터에 카드 추가</option>' in html
     assert 'id="cm-confirm-existing-character"' in html
     assert "function cmUpdateConfirmRegistrationMode()" in html
     assert "registration_mode: registrationMode" in html
     assert "assetTags?.characters" in html
     assert "현재 기본값 유지" in html
     assert "새 캐릭터 폴더와 이미지 카드를 등록하는 중" in html
+
+
+def test_character_maker_confirmation_selects_existing_or_new_appearance_and_outfit():
+    html = _html()
+
+    for kind, label in (("appearance", "외모"), ("outfit", "복장")):
+        assert f'id="cm-confirm-{kind}-mode"' in html
+        assert f'id="cm-confirm-{kind}-existing"' in html
+        assert f'id="cm-confirm-{kind}-new"' in html
+        assert f"assetTags?.{kind}s" in html
+        assert f"{kind}_mode:" in html
+        assert f"{label} <span>" in html
+
+    assert "function cmGetConfirmPresetSelection(kind)" in html
+    assert "function cmUseCharacterDefaultsForExistingPresets(force = false)" in html
+    assert "set_representative:" in html
+    assert "기존 대표 유지 · 대표가 없으면 자동 지정" in html
+    assert "asset / ${displayPart(characterName)} / ${displayPart(outfit.name)} / ${displayPart(expression.name)}" in html
 
 
 def test_rag_settings_test_and_external_llm_routes_are_visible():

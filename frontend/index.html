@@ -9541,6 +9541,41 @@
         .cm-modal-title { font-size: .92rem; font-weight: 750; }
         .cm-modal-close { border: 0; color: var(--text2); background: transparent; cursor: pointer; font-size: 1.1rem; }
         .cm-modal-body { padding: 14px 16px; overflow-y: auto; }
+        .cm-confirm-shell { width: min(780px, 94vw); }
+        .cm-confirm-flow { display: grid; gap: 12px; }
+        .cm-confirm-section {
+            padding: 12px;
+            border: 1px solid var(--border);
+            border-radius: 11px;
+            background: color-mix(in srgb, var(--surface2) 72%, transparent);
+        }
+        .cm-confirm-section-head {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 10px;
+            color: var(--text);
+            font-size: .76rem;
+            font-weight: 700;
+        }
+        .cm-confirm-step {
+            display: inline-grid;
+            place-items: center;
+            width: 22px;
+            height: 22px;
+            flex: 0 0 22px;
+            border-radius: 50%;
+            color: #1b1205;
+            background: var(--accent, #f4b85f);
+            font-size: .66rem;
+            font-weight: 850;
+        }
+        .cm-confirm-section-note {
+            margin-left: auto;
+            color: var(--text2);
+            font-size: .64rem;
+            font-weight: 500;
+        }
         .cm-confirm-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
         .cm-confirm-field.wide { grid-column: 1 / -1; }
         .cm-confirm-field label { display: block; margin-bottom: 4px; color: var(--text2); font-size: .68rem; }
@@ -9556,8 +9591,80 @@
             background: var(--surface2);
             font-size: .73rem;
         }
+        .cm-confirm-source {
+            display: grid;
+            grid-template-columns: 116px minmax(0, 1fr);
+            gap: 12px;
+            align-items: center;
+        }
+        .cm-confirm-preview-frame {
+            width: 116px;
+            aspect-ratio: 1;
+            overflow: hidden;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            background: var(--surface2);
+        }
+        .cm-confirm-preview-frame img {
+            width: 100%;
+            height: 100%;
+            display: block;
+            object-fit: cover;
+        }
+        .cm-confirm-source-copy { min-width: 0; }
+        .cm-confirm-source-copy .cm-hint { margin-top: 7px; line-height: 1.55; }
+        .cm-confirm-preset-list { display: grid; gap: 9px; }
+        .cm-confirm-preset-row {
+            display: grid;
+            grid-template-columns: 170px minmax(0, 1fr);
+            gap: 9px;
+            padding: 10px;
+            border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
+            border-radius: 9px;
+            background: var(--surface);
+        }
+        .cm-confirm-preset-title {
+            grid-column: 1 / -1;
+            display: flex;
+            align-items: baseline;
+            gap: 7px;
+            color: var(--text);
+            font-size: .71rem;
+            font-weight: 700;
+        }
+        .cm-confirm-preset-title span {
+            color: var(--text2);
+            font-size: .62rem;
+            font-weight: 500;
+        }
+        .cm-confirm-path {
+            padding: 10px 11px;
+            overflow-wrap: anywhere;
+            border: 1px solid rgba(95, 190, 244, .26);
+            border-radius: 9px;
+            color: var(--text);
+            background: rgba(95, 190, 244, .06);
+            font-size: .72rem;
+            line-height: 1.55;
+        }
+        .cm-confirm-path-label {
+            display: block;
+            margin-bottom: 2px;
+            color: var(--text2);
+            font-size: .63rem;
+        }
+        .cm-confirm-representative {
+            display: flex;
+            gap: 8px;
+            align-items: flex-start;
+            margin-top: 9px;
+            color: var(--text2);
+            font-size: .68rem;
+            line-height: 1.45;
+            cursor: pointer;
+        }
+        .cm-confirm-representative input { margin-top: 2px; accent-color: var(--accent, #f4b85f); }
         .cm-confirm-summary {
-            margin-top: 12px;
             padding: 10px;
             border: 1px solid rgba(244,184,95,.28);
             border-radius: 9px;
@@ -9584,6 +9691,11 @@
             .cm-stage-action-side.llm { justify-content: stretch; }
             .cm-stage-action-side.llm .cm-stage-action-label { display: none; }
             .cm-stage-action-side.llm .cm-btn { width: 100%; }
+            .cm-confirm-grid,
+            .cm-confirm-source,
+            .cm-confirm-preset-row { grid-template-columns: 1fr; }
+            .cm-confirm-preview-frame { width: 100%; max-height: 220px; aspect-ratio: 16 / 9; }
+            .cm-confirm-section-note { display: none; }
             .cm-stage-action-side.user { justify-content: stretch; }
             .cm-stage-action-side.user .cm-btn { flex: 1 1 120px; }
             .cm-stage-meta { grid-column: 1; text-align: left; }
@@ -12800,72 +12912,156 @@
             </div>
 
             <div id="cm-confirm-modal" class="cm-modal" onclick="if(event.target===this)cmCloseConfirm()">
-                <div class="cm-modal-shell">
+                <div class="cm-modal-shell cm-confirm-shell">
                     <div class="cm-modal-head">
                         <div>
-                            <div class="cm-modal-title">캐릭터 확정 · 프리셋 등록</div>
-                            <div class="cm-hint" style="margin-top:3px;">현재 사용자 이미지와 생성 프롬프트를 캐릭터 카드로 저장하고 외모·복장을 영구 등록합니다.</div>
+                            <div class="cm-modal-title">캐릭터 카드 저장</div>
+                            <div class="cm-hint" style="margin-top:3px;">현재 사용자 이미지와 실제 생성 프롬프트를 선택한 캐릭터·복장·표정 폴더에 저장합니다.</div>
                         </div>
                         <button class="cm-modal-close" onclick="cmCloseConfirm()">✕</button>
                     </div>
                     <div class="cm-modal-body">
-                        <div class="cm-confirm-grid">
-                            <div class="cm-confirm-field wide">
-                                <label for="cm-confirm-registration-mode">등록 대상</label>
-                                <select id="cm-confirm-registration-mode" onchange="cmUpdateConfirmRegistrationMode()">
-                                    <option value="new">새 캐릭터 등록</option>
-                                    <option value="existing">기존 캐릭터에 외모·복장 추가</option>
-                                </select>
-                            </div>
-                            <div id="cm-confirm-new-character-field" class="cm-confirm-field wide">
-                                <label for="cm-confirm-character">캐릭터 이름 · 신규</label>
-                                <input id="cm-confirm-character" placeholder="예: 에이라">
-                            </div>
-                            <div id="cm-confirm-existing-character-field" class="cm-confirm-field wide" style="display:none;">
-                                <label for="cm-confirm-existing-character">기존 캐릭터</label>
-                                <select id="cm-confirm-existing-character" onchange="cmUpdateConfirmSummary()"></select>
-                            </div>
-                            <div class="cm-confirm-field">
-                                <label for="cm-confirm-appearance">외모 프리셋 이름 · 필수</label>
-                                <input id="cm-confirm-appearance" value="기본 외모">
-                            </div>
-                            <div class="cm-confirm-field">
-                                <label for="cm-confirm-outfit">복장 프리셋 이름 · 필수</label>
-                                <input id="cm-confirm-outfit" value="기본 복장">
-                            </div>
-                            <div class="cm-confirm-field">
-                                <label for="cm-confirm-expression-mode">카드 표정 · 필수</label>
-                                <select id="cm-confirm-expression-mode" onchange="cmUpdateConfirmMode()">
-                                    <option value="existing">기존 표정 프리셋 사용</option>
-                                    <option value="new">새 표정 프리셋 등록</option>
-                                </select>
-                            </div>
-                            <div class="cm-confirm-field">
-                                <label for="cm-confirm-expression">표정 프리셋</label>
-                                <select id="cm-confirm-expression"></select>
-                                <input id="cm-confirm-expression-new" placeholder="새 표정 이름" style="display:none;">
-                            </div>
-                            <div class="cm-confirm-field">
-                                <label for="cm-confirm-composition-mode">구도 / 기타 등록</label>
-                                <select id="cm-confirm-composition-mode" onchange="cmUpdateConfirmMode()">
-                                    <option value="none">등록하지 않음</option>
-                                    <option value="new">새 구도 프리셋 등록</option>
-                                </select>
-                            </div>
-                            <div class="cm-confirm-field">
-                                <label for="cm-confirm-composition">구도 프리셋 이름</label>
-                                <input id="cm-confirm-composition" placeholder="예: 캐릭터 시트" disabled>
-                            </div>
-                            <div class="cm-confirm-field wide">
-                                <label for="cm-confirm-revision">캐릭터 카드 이미지 · 현재 사용자 선택</label>
-                                <input id="cm-confirm-revision" readonly>
-                            </div>
+                        <div class="cm-confirm-flow">
+                            <section class="cm-confirm-section">
+                                <div class="cm-confirm-section-head">
+                                    <span class="cm-confirm-step">1</span>
+                                    저장할 캐릭터 선택
+                                </div>
+                                <div class="cm-confirm-grid">
+                                    <div class="cm-confirm-field">
+                                        <label for="cm-confirm-registration-mode">캐릭터 등록 방식</label>
+                                        <select id="cm-confirm-registration-mode" onchange="cmUpdateConfirmRegistrationMode()">
+                                            <option value="new">새 캐릭터 만들기</option>
+                                            <option value="existing">기존 캐릭터에 카드 추가</option>
+                                        </select>
+                                    </div>
+                                    <div id="cm-confirm-new-character-field" class="cm-confirm-field">
+                                        <label for="cm-confirm-character">새 캐릭터 이름</label>
+                                        <input id="cm-confirm-character" placeholder="예: 에이라" oninput="cmUpdateConfirmSummary()">
+                                    </div>
+                                    <div id="cm-confirm-existing-character-field" class="cm-confirm-field" style="display:none;">
+                                        <label for="cm-confirm-existing-character">기존 캐릭터</label>
+                                        <select id="cm-confirm-existing-character" onchange="cmConfirmExistingCharacterChanged()"></select>
+                                    </div>
+                                </div>
+                            </section>
+
+                            <section class="cm-confirm-section">
+                                <div class="cm-confirm-section-head">
+                                    <span class="cm-confirm-step">2</span>
+                                    캐릭터 카드 이미지 확인
+                                    <span class="cm-confirm-section-note">현재 사용자 이미지 기준</span>
+                                </div>
+                                <div class="cm-confirm-source">
+                                    <div class="cm-confirm-preview-frame">
+                                        <img id="cm-confirm-preview-image" alt="저장할 캐릭터 카드 이미지">
+                                    </div>
+                                    <div class="cm-confirm-source-copy">
+                                        <div class="cm-confirm-field">
+                                            <label for="cm-confirm-revision">캐릭터 카드 이미지 · 현재 사용자 선택</label>
+                                            <input id="cm-confirm-revision" readonly>
+                                        </div>
+                                        <div class="cm-hint">이 이미지를 만들 때 실제로 사용된 긍정·부정 프롬프트와 생성 당시 태그 스냅샷이 함께 저장됩니다.</div>
+                                    </div>
+                                </div>
+                            </section>
+
+                            <section class="cm-confirm-section">
+                                <div class="cm-confirm-section-head">
+                                    <span class="cm-confirm-step">3</span>
+                                    외모·복장·표정 연결
+                                    <span class="cm-confirm-section-note">각 항목을 기존 사용 또는 신규 등록</span>
+                                </div>
+                                <div class="cm-confirm-preset-list">
+                                    <div class="cm-confirm-preset-row">
+                                        <div class="cm-confirm-preset-title">외모 <span>카드 메타데이터와 캐릭터 기본값에 사용</span></div>
+                                        <div class="cm-confirm-field">
+                                            <label for="cm-confirm-appearance-mode">선택 방식</label>
+                                            <select id="cm-confirm-appearance-mode" onchange="cmUpdateConfirmMode()">
+                                                <option value="new">새 외모 등록</option>
+                                                <option value="existing">기존 외모 사용</option>
+                                            </select>
+                                        </div>
+                                        <div id="cm-confirm-appearance-existing-field" class="cm-confirm-field" style="display:none;">
+                                            <label for="cm-confirm-appearance-existing">기존 외모 프리셋</label>
+                                            <select id="cm-confirm-appearance-existing" onchange="cmUpdateConfirmSummary()"></select>
+                                        </div>
+                                        <div id="cm-confirm-appearance-new-field" class="cm-confirm-field">
+                                            <label for="cm-confirm-appearance-new">새 외모 프리셋 이름</label>
+                                            <input id="cm-confirm-appearance-new" value="기본 외모" oninput="cmUpdateConfirmSummary()">
+                                        </div>
+                                    </div>
+
+                                    <div class="cm-confirm-preset-row">
+                                        <div class="cm-confirm-preset-title">복장 <span>실제 카드 폴더의 두 번째 경로</span></div>
+                                        <div class="cm-confirm-field">
+                                            <label for="cm-confirm-outfit-mode">선택 방식</label>
+                                            <select id="cm-confirm-outfit-mode" onchange="cmUpdateConfirmMode()">
+                                                <option value="new">새 복장 등록</option>
+                                                <option value="existing">기존 복장 사용</option>
+                                            </select>
+                                        </div>
+                                        <div id="cm-confirm-outfit-existing-field" class="cm-confirm-field" style="display:none;">
+                                            <label for="cm-confirm-outfit-existing">기존 복장 프리셋</label>
+                                            <select id="cm-confirm-outfit-existing" onchange="cmUpdateConfirmSummary()"></select>
+                                        </div>
+                                        <div id="cm-confirm-outfit-new-field" class="cm-confirm-field">
+                                            <label for="cm-confirm-outfit-new">새 복장 프리셋 이름</label>
+                                            <input id="cm-confirm-outfit-new" value="기본 복장" oninput="cmUpdateConfirmSummary()">
+                                        </div>
+                                    </div>
+
+                                    <div class="cm-confirm-preset-row">
+                                        <div class="cm-confirm-preset-title">표정 <span>실제 카드 폴더의 세 번째 경로</span></div>
+                                        <div class="cm-confirm-field">
+                                            <label for="cm-confirm-expression-mode">선택 방식</label>
+                                            <select id="cm-confirm-expression-mode" onchange="cmUpdateConfirmMode()">
+                                                <option value="existing">기존 표정 사용</option>
+                                                <option value="new">새 표정 등록</option>
+                                            </select>
+                                        </div>
+                                        <div id="cm-confirm-expression-existing-field" class="cm-confirm-field">
+                                            <label for="cm-confirm-expression-existing">기존 표정 프리셋</label>
+                                            <select id="cm-confirm-expression-existing" onchange="cmUpdateConfirmSummary()"></select>
+                                        </div>
+                                        <div id="cm-confirm-expression-new-field" class="cm-confirm-field" style="display:none;">
+                                            <label for="cm-confirm-expression-new">새 표정 프리셋 이름</label>
+                                            <input id="cm-confirm-expression-new" placeholder="예: 기본 표정" oninput="cmUpdateConfirmSummary()">
+                                        </div>
+                                    </div>
+                                </div>
+                            </section>
+
+                            <section class="cm-confirm-section">
+                                <div class="cm-confirm-section-head">
+                                    <span class="cm-confirm-step">4</span>
+                                    저장 위치와 옵션 확인
+                                </div>
+                                <div id="cm-confirm-path" class="cm-confirm-path"></div>
+                                <label class="cm-confirm-representative">
+                                    <input id="cm-confirm-set-representative" type="checkbox" onchange="cmUpdateConfirmSummary()">
+                                    <span>기존 대표 이미지가 있으면 이 카드로 교체합니다. 체크하지 않으면 기존 대표를 유지하며, 새 폴더이거나 대표 이미지가 없을 때는 자동으로 이 카드가 대표가 됩니다.</span>
+                                </label>
+                                <div class="cm-confirm-grid" style="margin-top:10px;">
+                                    <div class="cm-confirm-field">
+                                        <label for="cm-confirm-composition-mode">구도 / 기타 프리셋</label>
+                                        <select id="cm-confirm-composition-mode" onchange="cmUpdateConfirmMode()">
+                                            <option value="none">등록하지 않음</option>
+                                            <option value="new">새 구도 등록</option>
+                                        </select>
+                                    </div>
+                                    <div class="cm-confirm-field">
+                                        <label for="cm-confirm-composition">새 구도 프리셋 이름</label>
+                                        <input id="cm-confirm-composition" placeholder="예: 캐릭터 시트" disabled oninput="cmUpdateConfirmSummary()">
+                                    </div>
+                                </div>
+                            </section>
+                            <div id="cm-confirm-summary" class="cm-confirm-summary"></div>
                         </div>
-                        <div id="cm-confirm-summary" class="cm-confirm-summary"></div>
                     </div>
                     <div class="cm-modal-actions">
                         <button class="cm-btn" onclick="cmCloseConfirm()">취소</button>
-                        <button id="cm-confirm-submit" class="cm-btn success" onclick="cmConfirmCharacter()">영구 등록하고 확정</button>
+                        <button id="cm-confirm-submit" class="cm-btn success" onclick="cmConfirmCharacter()">카드와 프리셋 저장</button>
                     </div>
                 </div>
             </div>
@@ -34817,7 +35013,9 @@
             cmFillPresetSelect('cm-setting-negative', assetTags?.negative_presets, '사용 안 함');
             cmFillPresetSelect('cm-setting-anima-negative', assetTags?.negative_presets, '사용 안 함');
             cmFillPresetSelect('cm-setting-char-negative', assetTags?.character_negative_presets, '사용 안 함');
-            cmFillPresetSelect('cm-confirm-expression', assetTags?.expressions, '표정 선택');
+            cmFillPresetSelect('cm-confirm-appearance-existing', assetTags?.appearances, '기존 외모 선택');
+            cmFillPresetSelect('cm-confirm-outfit-existing', assetTags?.outfits, '기존 복장 선택');
+            cmFillPresetSelect('cm-confirm-expression-existing', assetTags?.expressions, '표정 선택');
             cmFillPresetSelect('cm-confirm-existing-character', assetTags?.characters, '기존 캐릭터 선택');
             cmRenderFieldPresetSelects();
         }
@@ -36332,15 +36530,6 @@
                 showToast('확정 전에 사용자 이미지를 생성하거나 사용자 영역에 적용하세요.', 'error');
                 return;
             }
-            const revisionFields = activeRevision.fields || {};
-            if (!(revisionFields.appearance || []).length || !(revisionFields.outfit || []).length) {
-                console.error('[CHARACTER_MAKER] 확정창 열기 실패: 사용자 이미지 태그 스냅샷이 부족합니다.', {
-                    revision_id: activeRevision.id,
-                    fields: revisionFields,
-                });
-                showToast('현재 사용자 이미지의 외모와 복장 태그가 부족해 확정할 수 없습니다.', 'error');
-                return;
-            }
             cmPopulatePresetOptions();
             const revisionInput = document.getElementById('cm-confirm-revision');
             if (revisionInput) {
@@ -36348,9 +36537,34 @@
                     revision => revision.id === activeRevision.id,
                 );
                 const sourceLabel = activeRevision.source === 'llm' ? 'LLM 적용본' : 'USER 생성본';
-                revisionInput.value = `사용자 R${revisionIndex + 1} · ${sourceLabel} · 자동 대표 등록`;
+                revisionInput.value = `사용자 R${revisionIndex + 1} · ${sourceLabel}`;
                 revisionInput.dataset.revisionId = activeRevision.id;
             }
+            const previewImage = document.getElementById('cm-confirm-preview-image');
+            if (previewImage) {
+                previewImage.src = `${activeRevision.url}?v=${encodeURIComponent(activeRevision.created_at || '')}`;
+                previewImage.onclick = () => openLightbox(previewImage.src);
+                previewImage.onerror = () => {
+                    console.error('[CHARACTER_MAKER] 확정 이미지 미리보기 실패:', {
+                        revision_id: activeRevision.id,
+                        url: activeRevision.url,
+                    });
+                };
+            }
+            const presetSources = {
+                appearance: assetTags?.appearances || {},
+                outfit: assetTags?.outfits || {},
+                expression: assetTags?.expressions || {},
+            };
+            Object.entries(presetSources).forEach(([kind, values]) => {
+                const modeSelect = document.getElementById(`cm-confirm-${kind}-mode`);
+                const existingOption = modeSelect?.querySelector('option[value="existing"]');
+                const hasExisting = Object.keys(values).length > 0;
+                if (existingOption) existingOption.disabled = !hasExisting;
+                if (modeSelect?.value === 'existing' && !hasExisting) {
+                    modeSelect.value = 'new';
+                }
+            });
             const expressionMode = document.getElementById('cm-confirm-expression-mode');
             if (expressionMode) {
                 expressionMode.value = Object.keys(assetTags?.expressions || {}).length
@@ -36358,6 +36572,8 @@
                     : 'new';
             }
             document.getElementById('cm-confirm-composition-mode').value = 'none';
+            const representativeCheckbox = document.getElementById('cm-confirm-set-representative');
+            if (representativeCheckbox) representativeCheckbox.checked = false;
             const targetSelect = document.getElementById('cm-confirm-registration-mode');
             const existingTarget = targetSelect?.querySelector('option[value="existing"]');
             const hasExistingCharacters = Object.keys(assetTags?.characters || {}).length > 0;
@@ -36382,15 +36598,64 @@
             const existingField = document.getElementById('cm-confirm-existing-character-field');
             if (newField) newField.style.display = existing ? 'none' : '';
             if (existingField) existingField.style.display = existing ? '' : 'none';
+            cmUpdateConfirmMode();
+        }
+
+        function cmGetConfirmCharacterName() {
+            const registrationMode = document.getElementById('cm-confirm-registration-mode')?.value || 'new';
+            return registrationMode === 'existing'
+                ? (document.getElementById('cm-confirm-existing-character')?.value || '')
+                : (document.getElementById('cm-confirm-character')?.value.trim() || '');
+        }
+
+        function cmGetConfirmPresetSelection(kind) {
+            const mode = document.getElementById(`cm-confirm-${kind}-mode`)?.value || 'new';
+            const valueElement = document.getElementById(
+                mode === 'existing'
+                    ? `cm-confirm-${kind}-existing`
+                    : `cm-confirm-${kind}-new`,
+            );
+            return {
+                mode,
+                name: valueElement?.value?.trim() || '',
+            };
+        }
+
+        function cmUseCharacterDefaultsForExistingPresets(force = false) {
+            const registrationMode = document.getElementById('cm-confirm-registration-mode')?.value || 'new';
+            if (registrationMode !== 'existing') return;
+            const characterName = document.getElementById('cm-confirm-existing-character')?.value || '';
+            const character = assetTags?.characters?.[characterName];
+            if (!character || typeof character !== 'object') return;
+            ['appearance', 'outfit', 'expression'].forEach(kind => {
+                const mode = document.getElementById(`cm-confirm-${kind}-mode`)?.value;
+                const select = document.getElementById(`cm-confirm-${kind}-existing`);
+                const defaultName = character[kind];
+                if (
+                    mode === 'existing'
+                    && select
+                    && (force || !select.value)
+                    && [...select.options].some(option => option.value === defaultName)
+                ) {
+                    select.value = defaultName;
+                }
+            });
+        }
+
+        function cmConfirmExistingCharacterChanged() {
+            cmUseCharacterDefaultsForExistingPresets(true);
             cmUpdateConfirmSummary();
         }
 
         function cmUpdateConfirmMode() {
-            const expressionMode = document.getElementById('cm-confirm-expression-mode')?.value || 'existing';
-            const expressionSelect = document.getElementById('cm-confirm-expression');
-            const expressionNew = document.getElementById('cm-confirm-expression-new');
-            if (expressionSelect) expressionSelect.style.display = expressionMode === 'existing' ? '' : 'none';
-            if (expressionNew) expressionNew.style.display = expressionMode === 'new' ? '' : 'none';
+            ['appearance', 'outfit', 'expression'].forEach(kind => {
+                const mode = document.getElementById(`cm-confirm-${kind}-mode`)?.value || 'new';
+                const existingField = document.getElementById(`cm-confirm-${kind}-existing-field`);
+                const newField = document.getElementById(`cm-confirm-${kind}-new-field`);
+                if (existingField) existingField.style.display = mode === 'existing' ? '' : 'none';
+                if (newField) newField.style.display = mode === 'new' ? '' : 'none';
+            });
+            cmUseCharacterDefaultsForExistingPresets();
 
             const compositionMode = document.getElementById('cm-confirm-composition-mode')?.value || 'none';
             const composition = document.getElementById('cm-confirm-composition');
@@ -36402,22 +36667,39 @@
             const summary = document.getElementById('cm-confirm-summary');
             if (!summary || !cmSession) return;
             const registrationMode = document.getElementById('cm-confirm-registration-mode')?.value || 'new';
-            const existingCharacter = document.getElementById('cm-confirm-existing-character')?.value || '';
             const activeRevision = cmGetActiveUserRevision();
             const revisionFields = activeRevision?.fields || {};
-            const expressionMode = document.getElementById('cm-confirm-expression-mode')?.value || 'existing';
+            const characterName = cmGetConfirmCharacterName();
+            const appearance = cmGetConfirmPresetSelection('appearance');
+            const outfit = cmGetConfirmPresetSelection('outfit');
+            const expression = cmGetConfirmPresetSelection('expression');
             const compositionMode = document.getElementById('cm-confirm-composition-mode')?.value || 'none';
+            const setRepresentative = document.getElementById('cm-confirm-set-representative')?.checked || false;
+            const displayPart = value => escapeHtml(value || '(선택 필요)');
+            const selectionLabel = (selection, fieldName) => selection.mode === 'existing'
+                ? `기존 '${displayPart(selection.name)}'`
+                : `새로 등록 '${displayPart(selection.name)}' · ${(revisionFields[fieldName] || []).length} tags`;
+            const path = document.getElementById('cm-confirm-path');
+            if (path) {
+                path.innerHTML = `
+                    <span class="cm-confirm-path-label">실제 카드 저장 폴더</span>
+                    <code>asset / ${displayPart(characterName)} / ${displayPart(outfit.name)} / ${displayPart(expression.name)}</code>
+                `;
+            }
             summary.innerHTML = `
                 <b>등록 대상</b> · ${registrationMode === 'existing'
-                    ? `기존 캐릭터 ${escapeHtml(existingCharacter || '(선택 필요)')} · 현재 기본값 유지`
-                    : '새 캐릭터'}<br>
-                <b>이미지 기준 등록</b> · 외모 ${(revisionFields.appearance || []).length} tags / 복장 ${(revisionFields.outfit || []).length} tags<br>
-                <b>카드 저장</b> · 현재 사용자 이미지 + 실제 생성 프롬프트 + 자동 대표 설정<br>
-                <b>표정</b> · ${expressionMode === 'new'
-                    ? `새 프리셋 ${(revisionFields.expression || []).length} tags`
-                    : '기존 프리셋 사용'}
-                / 구도 ${compositionMode === 'none' ? '등록 안 함' : (revisionFields.composition || []).length + ' tags'}<br>
-                태그 데이터 저장 전 <code>요구사항/</code>에 자동 백업합니다.
+                    ? `기존 캐릭터 ${displayPart(characterName)} · 현재 기본값 유지`
+                    : `새 캐릭터 ${displayPart(characterName)}`}<br>
+                <b>외모</b> · ${selectionLabel(appearance, 'appearance')}<br>
+                <b>복장</b> · ${selectionLabel(outfit, 'outfit')}<br>
+                <b>표정</b> · ${selectionLabel(expression, 'expression')}<br>
+                <b>대표 이미지</b> · ${setRepresentative
+                    ? '이 카드로 교체'
+                    : '기존 대표 유지 · 대표가 없으면 자동 지정'}<br>
+                <b>구도</b> · ${compositionMode === 'none'
+                    ? '등록 안 함'
+                    : `새로 등록 · ${(revisionFields.composition || []).length} tags`}<br>
+                새 프리셋이나 캐릭터 정보를 저장할 때는 먼저 <code>요구사항/</code>에 태그 데이터를 백업합니다.
             `;
         }
 
@@ -36432,49 +36714,77 @@
                 return;
             }
             const registrationMode = document.getElementById('cm-confirm-registration-mode')?.value || 'new';
-            const expressionMode = document.getElementById('cm-confirm-expression-mode')?.value || 'existing';
+            const appearance = cmGetConfirmPresetSelection('appearance');
+            const outfit = cmGetConfirmPresetSelection('outfit');
+            const expression = cmGetConfirmPresetSelection('expression');
             const compositionMode = document.getElementById('cm-confirm-composition-mode')?.value || 'none';
-            const expressionName = expressionMode === 'new'
-                ? document.getElementById('cm-confirm-expression-new')?.value.trim()
-                : document.getElementById('cm-confirm-expression')?.value;
-            const characterName = registrationMode === 'existing'
-                ? (document.getElementById('cm-confirm-existing-character')?.value || '')
-                : (document.getElementById('cm-confirm-character')?.value.trim() || '');
+            const characterName = cmGetConfirmCharacterName();
             const payload = {
                 registration_mode: registrationMode,
                 character_name: characterName,
-                appearance_name: document.getElementById('cm-confirm-appearance')?.value.trim() || '',
-                outfit_name: document.getElementById('cm-confirm-outfit')?.value.trim() || '',
-                expression_mode: expressionMode,
-                expression_name: expressionName || '',
+                appearance_mode: appearance.mode,
+                appearance_name: appearance.name,
+                outfit_mode: outfit.mode,
+                outfit_name: outfit.name,
+                expression_mode: expression.mode,
+                expression_name: expression.name,
                 composition_mode: compositionMode,
                 composition_name: compositionMode === 'new'
                     ? (document.getElementById('cm-confirm-composition')?.value.trim() || '')
                     : '',
+                set_representative: document.getElementById('cm-confirm-set-representative')?.checked || false,
                 revision_id: activeRevision.id,
             };
             if (!payload.character_name || !payload.appearance_name || !payload.outfit_name) {
+                console.error('[CHARACTER_MAKER] 확정 입력 누락:', payload);
                 showToast(
                     registrationMode === 'existing'
-                        ? '기존 캐릭터를 선택하고 외모·복장 프리셋 이름을 모두 입력하세요.'
-                        : '캐릭터, 외모 프리셋, 복장 프리셋 이름을 모두 입력하세요.',
+                        ? '기존 캐릭터와 외모·복장을 모두 선택하세요.'
+                        : '새 캐릭터 이름과 외모·복장을 모두 입력하거나 선택하세요.',
                     'error',
                 );
                 return;
             }
             if (!payload.expression_name) {
+                console.error('[CHARACTER_MAKER] 확정 표정 누락:', payload);
                 showToast('등록하거나 사용할 표정 프리셋을 선택하세요.', 'error');
                 return;
             }
+            const revisionFields = activeRevision.fields || {};
+            for (const [selection, fieldName, label] of [
+                [appearance, 'appearance', '외모'],
+                [outfit, 'outfit', '복장'],
+                [expression, 'expression', '표정'],
+            ]) {
+                if (selection.mode === 'new' && !(revisionFields[fieldName] || []).length) {
+                    console.error(`[CHARACTER_MAKER] 새 ${label} 프리셋 태그 누락:`, {
+                        revision_id: activeRevision.id,
+                        field: fieldName,
+                    });
+                    showToast(`새 ${label} 프리셋으로 등록할 이미지 생성 당시 태그가 없습니다.`, 'error');
+                    return;
+                }
+            }
             if (compositionMode === 'new' && !payload.composition_name) {
+                console.error('[CHARACTER_MAKER] 새 구도 이름 누락:', payload);
                 showToast('새 구도 프리셋 이름을 입력하세요.', 'error');
+                return;
+            }
+            if (
+                compositionMode === 'new'
+                && !(revisionFields.composition || []).length
+            ) {
+                console.error('[CHARACTER_MAKER] 새 구도 프리셋 태그 누락:', {
+                    revision_id: activeRevision.id,
+                });
+                showToast('새 구도로 등록할 이미지 생성 당시 태그가 없습니다.', 'error');
                 return;
             }
 
             cmSetBusy(
                 true,
                 registrationMode === 'existing'
-                    ? '기존 캐릭터에 외모·복장과 이미지 카드를 추가하는 중...'
+                    ? '기존 캐릭터 폴더에 이미지 카드와 프롬프트를 추가하는 중...'
                     : '새 캐릭터 폴더와 이미지 카드를 등록하는 중...',
             );
             const submit = document.getElementById('cm-confirm-submit');
@@ -36493,10 +36803,19 @@
                 } catch (reloadError) {
                     console.error('[CHARACTER_MAKER] 확정 후 에셋 프리셋 다시 읽기 실패:', reloadError);
                 }
+                const newPresetLabels = [
+                    data.finalized.appearance_mode === 'new' ? '외모' : '',
+                    data.finalized.outfit_mode === 'new' ? '복장' : '',
+                    payload.expression_mode === 'new' ? '표정' : '',
+                    payload.composition_mode === 'new' ? '구도' : '',
+                ].filter(Boolean);
+                const representativeLabel = data.finalized.representative_updated
+                    ? '대표 이미지도 반영했습니다.'
+                    : '기존 대표 이미지는 유지했습니다.';
                 showToast(
                     data.finalized.registration_mode === 'existing'
-                        ? `기존 캐릭터 '${data.finalized.character_name}'에 새 외모·복장과 이미지 카드를 추가했습니다.`
-                        : `캐릭터 '${data.finalized.character_name}'과 이미지 카드를 등록했습니다.`,
+                        ? `기존 캐릭터 '${data.finalized.character_name}'에 이미지 카드를 추가했습니다. ${newPresetLabels.length ? `새 프리셋: ${newPresetLabels.join('·')}. ` : ''}${representativeLabel}`
+                        : `캐릭터 '${data.finalized.character_name}'과 이미지 카드를 등록했습니다. ${representativeLabel}`,
                     'success',
                     7000,
                 );

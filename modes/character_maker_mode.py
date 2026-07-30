@@ -1995,9 +1995,44 @@ class CharacterMakerService:
                 f"registration_mode={registration_mode!r}"
             )
             raise CharacterMakerError("등록 방식은 new 또는 existing 이어야 합니다.")
-        character_name = _safe_registration_name(payload.get("character_name"), "캐릭터명")
-        appearance_name = _safe_registration_name(payload.get("appearance_name"), "외모 프리셋명")
-        outfit_name = _safe_registration_name(payload.get("outfit_name"), "복장 프리셋명")
+        appearance_mode = str(payload.get("appearance_mode") or "new").strip()
+        if appearance_mode not in ("new", "existing"):
+            print(
+                f"[CHARACTER_MAKER] 확정 외모 방식 오류: session={session_id}, "
+                f"appearance_mode={appearance_mode!r}"
+            )
+            raise CharacterMakerError("외모 등록 방식은 new 또는 existing 이어야 합니다.")
+        outfit_mode = str(payload.get("outfit_mode") or "new").strip()
+        if outfit_mode not in ("new", "existing"):
+            print(
+                f"[CHARACTER_MAKER] 확정 복장 방식 오류: session={session_id}, "
+                f"outfit_mode={outfit_mode!r}"
+            )
+            raise CharacterMakerError("복장 등록 방식은 new 또는 existing 이어야 합니다.")
+        set_representative = payload.get("set_representative", False)
+        if not isinstance(set_representative, bool):
+            print(
+                f"[CHARACTER_MAKER] 대표 이미지 설정값 오류: session={session_id}, "
+                f"value={set_representative!r}"
+            )
+            raise CharacterMakerError("대표 이미지 설정값은 true 또는 false 여야 합니다.")
+
+        def registration_name(raw_value: Any, label: str) -> str:
+            try:
+                return _safe_registration_name(raw_value, label)
+            except CharacterMakerError as exc:
+                print(
+                    f"[CHARACTER_MAKER] 확정 이름 검증 실패: session={session_id}, "
+                    f"label={label}, value={raw_value!r}, error={exc}"
+                )
+                traceback.print_exc()
+                raise
+
+        character_name = registration_name(payload.get("character_name"), "캐릭터명")
+        appearance_name = registration_name(
+            payload.get("appearance_name"), "외모 프리셋명"
+        )
+        outfit_name = registration_name(payload.get("outfit_name"), "복장 프리셋명")
 
         revision_id = str(session.get("active_revision_id") or "")
         requested_revision_id = str(payload.get("revision_id") or "")
@@ -2046,18 +2081,22 @@ class CharacterMakerService:
             raise CharacterMakerError(
                 f"사용자 이미지의 태그 스냅샷이 올바르지 않습니다: {exc}"
             ) from exc
-        if not revision_fields["appearance"]:
+        if appearance_mode == "new" and not revision_fields["appearance"]:
             print(
                 f"[CHARACTER_MAKER] 확정 거부: session={session_id}, "
                 f"revision={revision_id}, 외모 태그 비어 있음"
             )
-            raise CharacterMakerError("사용자 이미지의 외모 태그가 비어 있습니다.")
-        if not revision_fields["outfit"]:
+            raise CharacterMakerError(
+                "새 외모 프리셋을 등록하려면 사용자 이미지의 외모 태그가 필요합니다."
+            )
+        if outfit_mode == "new" and not revision_fields["outfit"]:
             print(
                 f"[CHARACTER_MAKER] 확정 거부: session={session_id}, "
                 f"revision={revision_id}, 복장 태그 비어 있음"
             )
-            raise CharacterMakerError("사용자 이미지의 복장 태그가 비어 있습니다.")
+            raise CharacterMakerError(
+                "새 복장 프리셋을 등록하려면 사용자 이미지의 복장 태그가 필요합니다."
+            )
 
         expression_mode = str(payload.get("expression_mode") or "")
         if expression_mode not in ("existing", "new"):
@@ -2068,7 +2107,7 @@ class CharacterMakerService:
             raise CharacterMakerError(
                 "캐릭터 카드를 등록하려면 기존 또는 새 표정 프리셋을 선택하세요."
             )
-        expression_name = _safe_registration_name(
+        expression_name = registration_name(
             payload.get("expression_name"), "표정 프리셋명"
         )
         if expression_mode == "new" and not revision_fields["expression"]:
@@ -2089,7 +2128,7 @@ class CharacterMakerService:
             raise CharacterMakerError("구도 등록 방식이 올바르지 않습니다.")
         composition_name = ""
         if composition_mode == "new":
-            composition_name = _safe_registration_name(
+            composition_name = registration_name(
                 payload.get("composition_name"), "구도 프리셋명"
             )
             if not revision_fields["composition"]:
@@ -2116,6 +2155,34 @@ class CharacterMakerService:
                 f"type={type(characters).__name__}"
             )
             raise CharacterMakerError("캐릭터 태그 데이터 구조가 올바르지 않습니다.")
+        appearances = new_tags.setdefault("appearances", {})
+        if not isinstance(appearances, dict):
+            print(
+                f"[CHARACTER_MAKER] 외모 태그 구조 오류: session={session_id}, "
+                f"type={type(appearances).__name__}"
+            )
+            raise CharacterMakerError("외모 태그 데이터 구조가 올바르지 않습니다.")
+        outfits = new_tags.setdefault("outfits", {})
+        if not isinstance(outfits, dict):
+            print(
+                f"[CHARACTER_MAKER] 복장 태그 구조 오류: session={session_id}, "
+                f"type={type(outfits).__name__}"
+            )
+            raise CharacterMakerError("복장 태그 데이터 구조가 올바르지 않습니다.")
+        expressions = new_tags.setdefault("expressions", {})
+        if not isinstance(expressions, dict):
+            print(
+                f"[CHARACTER_MAKER] 표정 태그 구조 오류: session={session_id}, "
+                f"type={type(expressions).__name__}"
+            )
+            raise CharacterMakerError("표정 태그 데이터 구조가 올바르지 않습니다.")
+        composition_presets = new_tags.setdefault("composition_presets", {})
+        if not isinstance(composition_presets, dict):
+            print(
+                f"[CHARACTER_MAKER] 구도 태그 구조 오류: session={session_id}, "
+                f"type={type(composition_presets).__name__}"
+            )
+            raise CharacterMakerError("구도 태그 데이터 구조가 올바르지 않습니다.")
         if registration_mode == "new" and character_name in characters:
             collisions.append(f"캐릭터 '{character_name}'")
         if registration_mode == "existing" and character_name not in characters:
@@ -2124,13 +2191,29 @@ class CharacterMakerService:
                 f"character={character_name!r}, reason=not_found"
             )
             raise CharacterMakerError(f"기존 캐릭터 '{character_name}'을 찾을 수 없습니다.")
-        if appearance_name in new_tags.get("appearances", {}):
+        if appearance_mode == "new" and appearance_name in appearances:
             collisions.append(f"외모 '{appearance_name}'")
-        if outfit_name in new_tags.get("outfits", {}):
+        if appearance_mode == "existing" and appearance_name not in appearances:
+            print(
+                f"[CHARACTER_MAKER] 기존 외모 조회 실패: session={session_id}, "
+                f"appearance={appearance_name!r}"
+            )
+            raise CharacterMakerError(
+                f"기존 외모 프리셋 '{appearance_name}'을 찾을 수 없습니다."
+            )
+        if outfit_mode == "new" and outfit_name in outfits:
             collisions.append(f"복장 '{outfit_name}'")
-        if expression_mode == "new" and expression_name in new_tags.get("expressions", {}):
+        if outfit_mode == "existing" and outfit_name not in outfits:
+            print(
+                f"[CHARACTER_MAKER] 기존 복장 조회 실패: session={session_id}, "
+                f"outfit={outfit_name!r}"
+            )
+            raise CharacterMakerError(
+                f"기존 복장 프리셋 '{outfit_name}'을 찾을 수 없습니다."
+            )
+        if expression_mode == "new" and expression_name in expressions:
             collisions.append(f"표정 '{expression_name}'")
-        if expression_mode == "existing" and expression_name not in new_tags.get("expressions", {}):
+        if expression_mode == "existing" and expression_name not in expressions:
             print(
                 f"[CHARACTER_MAKER] 기존 표정 조회 실패: session={session_id}, "
                 f"expression={expression_name!r}"
@@ -2138,7 +2221,7 @@ class CharacterMakerService:
             raise CharacterMakerError(f"기존 표정 프리셋 '{expression_name}'을 찾을 수 없습니다.")
         if (
             composition_mode == "new"
-            and composition_name in new_tags.get("composition_presets", {})
+            and composition_name in composition_presets
         ):
             collisions.append(f"구도 '{composition_name}'")
         if collisions:
@@ -2148,20 +2231,14 @@ class CharacterMakerService:
             )
             raise CharacterMakerError("이미 존재하는 이름입니다: " + ", ".join(collisions))
 
-        new_tags.setdefault("appearances", {})[appearance_name] = list(
-            revision_fields["appearance"]
-        )
-        new_tags.setdefault("outfits", {})[outfit_name] = list(
-            revision_fields["outfit"]
-        )
+        if appearance_mode == "new":
+            appearances[appearance_name] = list(revision_fields["appearance"])
+        if outfit_mode == "new":
+            outfits[outfit_name] = list(revision_fields["outfit"])
         if expression_mode == "new":
-            new_tags.setdefault("expressions", {})[expression_name] = list(
-                revision_fields["expression"]
-            )
+            expressions[expression_name] = list(revision_fields["expression"])
         if composition_mode == "new":
-            new_tags.setdefault("composition_presets", {})[composition_name] = list(
-                revision_fields["composition"]
-            )
+            composition_presets[composition_name] = list(revision_fields["composition"])
         if registration_mode == "new":
             new_tags.setdefault("characters", {})[character_name] = {
                 "appearance": appearance_name,
@@ -2183,56 +2260,81 @@ class CharacterMakerService:
             char_dir, self.asset_manager._safe_dirname(outfit_name)
         )
         promotion_outfit_dir_existed = os.path.exists(promotion_outfit_dir)
-        if (
-            registration_mode == "existing"
-            and promotion_outfit_dir_existed
-        ):
-            print(
-                f"[CHARACTER_MAKER] 기존 캐릭터 복장 폴더 충돌: session={session_id}, "
-                f"character={character_name!r}, outfit={outfit_name!r}, "
-                f"path={promotion_outfit_dir}"
-            )
-            raise CharacterMakerError(
-                "동일한 복장 저장 폴더가 이미 존재합니다. 다른 복장 프리셋명을 사용하세요."
-            )
 
-        stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-        os.makedirs(requirements_dir, exist_ok=True)
-        backup_path = os.path.join(
-            requirements_dir, f"tags_before_character_maker_{stamp}.json"
+        destination = os.path.join(
+            promotion_outfit_dir,
+            self.asset_manager._safe_dirname(expression_name),
         )
-        if os.path.isfile(tags_file):
-            shutil.copy2(tags_file, backup_path)
-            print(
-                f"[CHARACTER_MAKER] tags.json 백업 완료: "
-                f"session={session_id}, backup={backup_path}"
-            )
-        else:
-            with open(backup_path, "w", encoding="utf-8") as handle:
-                json.dump(old_tags, handle, ensure_ascii=False, indent=2)
-            print(
-                f"[CHARACTER_MAKER] 메모리 태그 백업 완료: "
-                f"session={session_id}, backup={backup_path}"
-            )
-
+        destination_existed = os.path.isdir(destination)
+        stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        tags_changed = new_tags != old_tags
+        backup_path = ""
+        representative_backup_path = ""
         promoted_image = ""
+        image_target = ""
+        prompt_target = ""
+        image_created = False
+        prompt_created = False
+        representative_path = os.path.join(destination, "_representative.json")
+        representative_file_existed = False
+        representative_changed = False
+        representative_update_reason = "preserved"
+        tags_written = False
         try:
-            self._atomic_write_json(tags_file, new_tags)
-            self.asset_manager._tags = copy.deepcopy(new_tags)
-            self.asset_manager._tags_loaded = True
+            if tags_changed:
+                os.makedirs(requirements_dir, exist_ok=True)
+                backup_path = os.path.join(
+                    requirements_dir, f"tags_before_character_maker_{stamp}.json"
+                )
+                if os.path.isfile(tags_file):
+                    shutil.copy2(tags_file, backup_path)
+                    print(
+                        f"[CHARACTER_MAKER] tags.json 백업 완료: "
+                        f"session={session_id}, backup={backup_path}"
+                    )
+                else:
+                    with open(backup_path, "w", encoding="utf-8") as handle:
+                        json.dump(old_tags, handle, ensure_ascii=False, indent=2)
+                    print(
+                        f"[CHARACTER_MAKER] 메모리 태그 백업 완료: "
+                        f"session={session_id}, backup={backup_path}"
+                    )
+                self._atomic_write_json(tags_file, new_tags)
+                tags_written = True
+                self.asset_manager._tags = copy.deepcopy(new_tags)
+                self.asset_manager._tags_loaded = True
+            else:
+                print(
+                    f"[CHARACTER_MAKER] 기존 프리셋만 사용하여 태그 저장 생략: "
+                    f"session={session_id}, character={character_name!r}"
+                )
 
-            destination = os.path.join(
-                promotion_outfit_dir,
-                self.asset_manager._safe_dirname(expression_name),
-            )
             os.makedirs(destination, exist_ok=True)
             source_prompt = str(promote_revision.get("prompt_path") or "")
-            image_name = os.path.basename(source_image)
-            image_base = os.path.splitext(image_name)[0]
-            prompt_name = f"{image_base}_prompt.json"
-            image_target = os.path.join(destination, image_name)
-            prompt_target = os.path.join(destination, prompt_name)
-            shutil.copy2(source_image, image_target)
+            original_image_name = os.path.basename(source_image)
+            original_image_base, image_extension = os.path.splitext(original_image_name)
+            image_name = original_image_name
+            image_base = original_image_base
+            suffix = 2
+            while True:
+                prompt_name = f"{image_base}_prompt.json"
+                image_target = os.path.join(destination, image_name)
+                prompt_target = os.path.join(destination, prompt_name)
+                if not os.path.exists(image_target) and not os.path.exists(prompt_target):
+                    break
+                image_base = f"{original_image_base}_{suffix}"
+                image_name = f"{image_base}{image_extension}"
+                suffix += 1
+            if image_name != original_image_name:
+                print(
+                    f"[CHARACTER_MAKER] 카드 파일명 충돌 회피: session={session_id}, "
+                    f"original={original_image_name!r}, selected={image_name!r}"
+                )
+            with open(source_image, "rb") as source_handle, open(
+                image_target, "xb"
+            ) as target_handle:
+                image_created = True
+                shutil.copyfileobj(source_handle, target_handle)
 
             prompt_payload: dict[str, Any] = {}
             if source_prompt and os.path.isfile(source_prompt):
@@ -2301,61 +2403,159 @@ class CharacterMakerService:
                     ),
                 }
             )
-            self._atomic_write_json(prompt_target, prompt_payload)
-            self._atomic_write_json(
-                os.path.join(destination, "_representative.json"),
-                {"filename": image_name},
-            )
+            with open(prompt_target, "x", encoding="utf-8") as prompt_handle:
+                prompt_created = True
+                json.dump(
+                    prompt_payload,
+                    prompt_handle,
+                    ensure_ascii=False,
+                    indent=2,
+                )
+                prompt_handle.flush()
+                os.fsync(prompt_handle.fileno())
+
+            representative_file_existed = os.path.isfile(representative_path)
+            valid_representative = False
+            if representative_file_existed:
+                try:
+                    with open(representative_path, "r", encoding="utf-8") as handle:
+                        representative_payload = json.load(handle)
+                    representative_filename = (
+                        representative_payload.get("filename", "")
+                        if isinstance(representative_payload, dict)
+                        else ""
+                    )
+                    valid_representative = (
+                        isinstance(representative_filename, str)
+                        and representative_filename == os.path.basename(
+                            representative_filename
+                        )
+                        and bool(representative_filename)
+                        and os.path.isfile(
+                            os.path.join(destination, representative_filename)
+                        )
+                    )
+                    if not valid_representative:
+                        print(
+                            f"[CHARACTER_MAKER] 기존 대표 이미지 기록이 유효하지 않아 "
+                            f"새 카드로 자동 복구: session={session_id}, "
+                            f"path={representative_path}"
+                        )
+                except Exception as representative_exc:
+                    print(
+                        f"[CHARACTER_MAKER] 기존 대표 이미지 기록 확인 실패, "
+                        f"새 카드로 자동 복구: session={session_id}, "
+                        f"path={representative_path}, "
+                        f"error={type(representative_exc).__name__}: "
+                        f"{representative_exc}"
+                    )
+                    traceback.print_exc()
+
+            if set_representative or not valid_representative:
+                if representative_file_existed:
+                    os.makedirs(requirements_dir, exist_ok=True)
+                    representative_backup_path = os.path.join(
+                        requirements_dir,
+                        "representative_before_character_maker_"
+                        f"{stamp}_{uuid.uuid4().hex[:8]}.json",
+                    )
+                    shutil.copy2(representative_path, representative_backup_path)
+                    print(
+                        f"[CHARACTER_MAKER] 대표 이미지 기록 백업 완료: "
+                        f"session={session_id}, backup={representative_backup_path}"
+                    )
+                self._atomic_write_json(
+                    representative_path,
+                    {"filename": image_name},
+                )
+                representative_changed = True
+                representative_update_reason = (
+                    "requested" if set_representative else "missing"
+                )
+            else:
+                print(
+                    f"[CHARACTER_MAKER] 기존 대표 이미지 유지: "
+                    f"session={session_id}, path={representative_path}"
+                )
             promoted_image = image_target
         except Exception as exc:
             print(
-                f"[CHARACTER_MAKER] 확정 저장 실패, 태그 롤백: "
+                f"[CHARACTER_MAKER] 확정 저장 실패, 롤백 시작: "
                 f"session={session_id}, error={type(exc).__name__}: {exc}"
             )
             traceback.print_exc()
-            try:
-                self._atomic_write_json(tags_file, old_tags)
-                self.asset_manager._tags = copy.deepcopy(old_tags)
-                self.asset_manager._tags_loaded = True
-            except Exception as rollback_exc:
-                print(
-                    f"[CHARACTER_MAKER] tags.json 롤백 실패: "
-                    f"session={session_id}, error={rollback_exc}, backup={backup_path}"
-                )
-                traceback.print_exc()
-            if not char_dir_existed and os.path.isdir(char_dir):
+            if tags_written:
                 try:
-                    asset_root_real = os.path.realpath(asset_dir)
-                    char_real = os.path.realpath(char_dir)
-                    if (
-                        os.path.commonpath([asset_root_real, char_real]) == asset_root_real
-                        and char_real != asset_root_real
-                    ):
-                        shutil.rmtree(char_real)
-                except Exception as cleanup_exc:
+                    self._atomic_write_json(tags_file, old_tags)
+                    self.asset_manager._tags = copy.deepcopy(old_tags)
+                    self.asset_manager._tags_loaded = True
+                except Exception as rollback_exc:
                     print(
-                        f"[CHARACTER_MAKER] 실패한 승격 폴더 정리 실패: "
-                        f"path={char_dir}, error={cleanup_exc}"
+                        f"[CHARACTER_MAKER] tags.json 롤백 실패: "
+                        f"session={session_id}, error={rollback_exc}, "
+                        f"backup={backup_path}"
                     )
                     traceback.print_exc()
+            if representative_changed:
+                try:
+                    if representative_backup_path and os.path.isfile(
+                        representative_backup_path
+                    ):
+                        shutil.copy2(representative_backup_path, representative_path)
+                    elif not representative_file_existed and os.path.isfile(
+                        representative_path
+                    ):
+                        os.remove(representative_path)
+                except Exception as rollback_exc:
+                    print(
+                        f"[CHARACTER_MAKER] 대표 이미지 기록 롤백 실패: "
+                        f"session={session_id}, path={representative_path}, "
+                        f"error={rollback_exc}"
+                    )
+                    traceback.print_exc()
+            for created_path, was_created in (
+                (prompt_target, prompt_created),
+                (image_target, image_created),
+            ):
+                if was_created and created_path and os.path.isfile(created_path):
+                    try:
+                        os.remove(created_path)
+                    except Exception as cleanup_exc:
+                        print(
+                            f"[CHARACTER_MAKER] 실패한 카드 파일 정리 실패: "
+                            f"path={created_path}, error={cleanup_exc}"
+                        )
+                        traceback.print_exc()
+
+            cleanup_dir = ""
+            if not char_dir_existed and os.path.isdir(char_dir):
+                cleanup_dir = char_dir
             elif (
-                registration_mode == "existing"
-                and not promotion_outfit_dir_existed
+                not promotion_outfit_dir_existed
                 and os.path.isdir(promotion_outfit_dir)
             ):
+                cleanup_dir = promotion_outfit_dir
+            elif not destination_existed and os.path.isdir(destination):
+                cleanup_dir = destination
+            if cleanup_dir:
                 try:
                     asset_root_real = os.path.realpath(asset_dir)
-                    outfit_real = os.path.realpath(promotion_outfit_dir)
+                    cleanup_real = os.path.realpath(cleanup_dir)
                     if (
-                        os.path.commonpath([asset_root_real, outfit_real])
+                        os.path.commonpath([asset_root_real, cleanup_real])
                         == asset_root_real
-                        and outfit_real != asset_root_real
+                        and cleanup_real != asset_root_real
                     ):
-                        shutil.rmtree(outfit_real)
+                        shutil.rmtree(cleanup_real)
+                    else:
+                        print(
+                            f"[CHARACTER_MAKER] 실패한 폴더 정리 거부: "
+                            f"path={cleanup_dir}, asset_root={asset_dir}"
+                        )
                 except Exception as cleanup_exc:
                     print(
-                        f"[CHARACTER_MAKER] 실패한 기존 캐릭터 복장 폴더 정리 실패: "
-                        f"path={promotion_outfit_dir}, error={cleanup_exc}"
+                        f"[CHARACTER_MAKER] 실패한 카드 폴더 정리 실패: "
+                        f"path={cleanup_dir}, error={cleanup_exc}"
                     )
                     traceback.print_exc()
             raise CharacterMakerError(f"캐릭터 확정 저장 실패: {exc}") from exc
@@ -2364,20 +2564,28 @@ class CharacterMakerService:
             "at": _now_iso(),
             "registration_mode": registration_mode,
             "character_name": character_name,
+            "appearance_mode": appearance_mode,
             "appearance_name": appearance_name,
+            "outfit_mode": outfit_mode,
             "outfit_name": outfit_name,
             "expression_name": expression_name,
             "composition_name": composition_name,
             "revision_id": revision_id,
             "promoted_image": bool(promoted_image),
+            "promoted_filename": os.path.basename(promoted_image),
+            "representative_updated": representative_changed,
+            "representative_update_reason": representative_update_reason,
             "backup_path": backup_path,
+            "representative_backup_path": representative_backup_path,
         }
         session["finalized"] = finalized
         session["updated_at"] = _now_iso()
         print(
             f"[CHARACTER_MAKER] 캐릭터 확정 완료: session={session_id}, "
             f"registration_mode={registration_mode}, character={character_name!r}, "
-            f"image={bool(promoted_image)}"
+            f"appearance_mode={appearance_mode}, outfit_mode={outfit_mode}, "
+            f"image={bool(promoted_image)}, "
+            f"representative={representative_update_reason}"
         )
         self._persist_session(session)
         return {
