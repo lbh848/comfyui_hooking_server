@@ -24,8 +24,8 @@ def test_memo_launcher_is_independent_and_above_the_queue() -> None:
     assert "z-index: 2147483646;" in FRONTEND
     assert "syncMemoLauncherPosition()" in FRONTEND
     assert "queueContainer.classList.contains('collapsed')" in FRONTEND
-    assert "width: 42px;" in FRONTEND
-    assert "min-height: 92px;" in FRONTEND
+    assert "width: 30px;" in FRONTEND
+    assert "min-height: 84px;" in FRONTEND
     assert "window.innerHeight - rect.top + 10" in FRONTEND
     assert "memoQueueTransitionTimer" in FRONTEND
     assert "}, 260);" in FRONTEND

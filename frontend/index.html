@@ -7832,13 +7832,13 @@
             align-items: center;
             justify-content: center;
             gap: 5px;
-            width: 42px;
-            min-height: 92px;
+            width: 30px;
+            min-height: 84px;
             box-sizing: border-box;
-            padding: 10px 5px;
+            padding: 10px 3px;
             border: 1px solid color-mix(in srgb, var(--border) 72%, #f59e0b);
             border-left: 0;
-            border-radius: 0 12px 12px 0;
+            border-radius: 0 10px 10px 0;
             background: color-mix(in srgb, var(--surface) 95%, #f59e0b 5%);
             color: var(--text);
             box-shadow: 0 10px 30px rgba(0,0,0,0.44), 0 1px 0 rgba(255,255,255,0.05) inset;
@@ -7862,11 +7862,6 @@
         .memo-textarea:focus-visible {
             outline: 2px solid #f59e0b;
             outline-offset: 2px;
-        }
-        .memo-launcher-label {
-            font-size: 0.8rem;
-            font-weight: 800;
-            line-height: 1;
         }
         .memo-launcher-icon {
             font-size: 0.9rem;
@@ -7990,7 +7985,7 @@
         @media (max-width: 520px) {
             .memo-launcher {
                 bottom: 10px;
-                width: 42px;
+                width: 30px;
             }
             .memo-overlay {
                 padding: 10px;
@@ -13295,7 +13290,6 @@
             aria-controls="memo-overlay" aria-expanded="false"
             onclick="toggleMemoPad()" title="메모장 펼치기">
         <span class="memo-launcher-icon" aria-hidden="true">📝</span>
-        <span class="memo-launcher-label">메모</span>
         <span class="memo-launcher-action" id="memo-launcher-action" aria-hidden="true">›</span>
     </button>
     <div class="memo-overlay" id="memo-overlay" hidden
