@@ -12804,7 +12804,7 @@
                     <div class="cm-modal-head">
                         <div>
                             <div class="cm-modal-title">캐릭터 확정 · 프리셋 등록</div>
-                            <div class="cm-hint" style="margin-top:3px;">확정 시 외모·복장을 영구 프리셋에 등록합니다.</div>
+                            <div class="cm-hint" style="margin-top:3px;">현재 사용자 이미지와 생성 프롬프트를 캐릭터 카드로 저장하고 외모·복장을 영구 등록합니다.</div>
                         </div>
                         <button class="cm-modal-close" onclick="cmCloseConfirm()">✕</button>
                     </div>
@@ -12834,9 +12834,8 @@
                                 <input id="cm-confirm-outfit" value="기본 복장">
                             </div>
                             <div class="cm-confirm-field">
-                                <label for="cm-confirm-expression-mode">표정 등록</label>
+                                <label for="cm-confirm-expression-mode">카드 표정 · 필수</label>
                                 <select id="cm-confirm-expression-mode" onchange="cmUpdateConfirmMode()">
-                                    <option value="none">등록하지 않음</option>
                                     <option value="existing">기존 표정 프리셋 사용</option>
                                     <option value="new">새 표정 프리셋 등록</option>
                                 </select>
@@ -12858,8 +12857,8 @@
                                 <input id="cm-confirm-composition" placeholder="예: 캐릭터 시트" disabled>
                             </div>
                             <div class="cm-confirm-field wide">
-                                <label for="cm-confirm-revision">대표 이미지 리비전 · 선택</label>
-                                <select id="cm-confirm-revision"></select>
+                                <label for="cm-confirm-revision">캐릭터 카드 이미지 · 현재 사용자 선택</label>
+                                <input id="cm-confirm-revision" readonly>
                             </div>
                         </div>
                         <div id="cm-confirm-summary" class="cm-confirm-summary"></div>
@@ -36316,24 +36315,48 @@
             }
         }
 
+        function cmGetActiveUserRevision() {
+            if (!cmSession?.active_revision_id) return null;
+            return (cmSession.revisions || []).find(
+                revision => revision.id === cmSession.active_revision_id,
+            ) || null;
+        }
+
         function cmOpenConfirm() {
             if (!cmSession) return;
-            if (!(cmSession.fields.appearance || []).length || !(cmSession.fields.outfit || []).length) {
-                showToast('확정 전에 외모와 복장 태그를 각각 하나 이상 준비하세요.', 'error');
+            const activeRevision = cmGetActiveUserRevision();
+            if (!activeRevision) {
+                console.error('[CHARACTER_MAKER] 확정창 열기 실패: 현재 사용자 이미지가 없습니다.', {
+                    active_revision_id: cmSession.active_revision_id || '',
+                });
+                showToast('확정 전에 사용자 이미지를 생성하거나 사용자 영역에 적용하세요.', 'error');
+                return;
+            }
+            const revisionFields = activeRevision.fields || {};
+            if (!(revisionFields.appearance || []).length || !(revisionFields.outfit || []).length) {
+                console.error('[CHARACTER_MAKER] 확정창 열기 실패: 사용자 이미지 태그 스냅샷이 부족합니다.', {
+                    revision_id: activeRevision.id,
+                    fields: revisionFields,
+                });
+                showToast('현재 사용자 이미지의 외모와 복장 태그가 부족해 확정할 수 없습니다.', 'error');
                 return;
             }
             cmPopulatePresetOptions();
-            const revisionSelect = document.getElementById('cm-confirm-revision');
-            if (revisionSelect) {
-                revisionSelect.innerHTML = '<option value="">대표 이미지는 등록하지 않음</option>';
-                (cmSession.revisions || []).forEach((revision, index) => {
-                    const option = document.createElement('option');
-                    option.value = revision.id;
-                    option.textContent = `R${index + 1}${revision.id === cmSession.active_revision_id ? ' · 현재 선택' : ''}`;
-                    revisionSelect.appendChild(option);
-                });
+            const revisionInput = document.getElementById('cm-confirm-revision');
+            if (revisionInput) {
+                const revisionIndex = (cmSession.revisions || []).findIndex(
+                    revision => revision.id === activeRevision.id,
+                );
+                const sourceLabel = activeRevision.source === 'llm' ? 'LLM 적용본' : 'USER 생성본';
+                revisionInput.value = `사용자 R${revisionIndex + 1} · ${sourceLabel} · 자동 대표 등록`;
+                revisionInput.dataset.revisionId = activeRevision.id;
             }
-            document.getElementById('cm-confirm-expression-mode').value = 'none';
+            const expressionMode = document.getElementById('cm-confirm-expression-mode');
+            if (expressionMode) {
+                expressionMode.value = Object.keys(assetTags?.expressions || {}).length
+                    ? 'existing'
+                    : 'new';
+            }
             document.getElementById('cm-confirm-composition-mode').value = 'none';
             const targetSelect = document.getElementById('cm-confirm-registration-mode');
             const existingTarget = targetSelect?.querySelector('option[value="existing"]');
@@ -36363,7 +36386,7 @@
         }
 
         function cmUpdateConfirmMode() {
-            const expressionMode = document.getElementById('cm-confirm-expression-mode')?.value || 'none';
+            const expressionMode = document.getElementById('cm-confirm-expression-mode')?.value || 'existing';
             const expressionSelect = document.getElementById('cm-confirm-expression');
             const expressionNew = document.getElementById('cm-confirm-expression-new');
             if (expressionSelect) expressionSelect.style.display = expressionMode === 'existing' ? '' : 'none';
@@ -36372,16 +36395,6 @@
             const compositionMode = document.getElementById('cm-confirm-composition-mode')?.value || 'none';
             const composition = document.getElementById('cm-confirm-composition');
             if (composition) composition.disabled = compositionMode !== 'new';
-
-            const revision = document.getElementById('cm-confirm-revision');
-            if (revision) {
-                revision.disabled = expressionMode === 'none';
-                if (expressionMode === 'none') {
-                    revision.value = '';
-                } else if (!revision.value && cmSession?.active_revision_id) {
-                    revision.value = cmSession.active_revision_id;
-                }
-            }
             cmUpdateConfirmSummary();
         }
 
@@ -36390,28 +36403,40 @@
             if (!summary || !cmSession) return;
             const registrationMode = document.getElementById('cm-confirm-registration-mode')?.value || 'new';
             const existingCharacter = document.getElementById('cm-confirm-existing-character')?.value || '';
-            const expressionMode = document.getElementById('cm-confirm-expression-mode')?.value || 'none';
+            const activeRevision = cmGetActiveUserRevision();
+            const revisionFields = activeRevision?.fields || {};
+            const expressionMode = document.getElementById('cm-confirm-expression-mode')?.value || 'existing';
             const compositionMode = document.getElementById('cm-confirm-composition-mode')?.value || 'none';
             summary.innerHTML = `
                 <b>등록 대상</b> · ${registrationMode === 'existing'
                     ? `기존 캐릭터 ${escapeHtml(existingCharacter || '(선택 필요)')} · 현재 기본값 유지`
                     : '새 캐릭터'}<br>
-                <b>영구 등록</b> · 외모 ${cmSession.fields.appearance.length} tags / 복장 ${cmSession.fields.outfit.length} tags<br>
-                <b>선택 등록</b> · 표정 ${expressionMode === 'none' ? '등록 안 함' : cmSession.fields.expression.length + ' tags'}
-                / 구도 ${compositionMode === 'none' ? '등록 안 함' : cmSession.fields.composition.length + ' tags'}<br>
+                <b>이미지 기준 등록</b> · 외모 ${(revisionFields.appearance || []).length} tags / 복장 ${(revisionFields.outfit || []).length} tags<br>
+                <b>카드 저장</b> · 현재 사용자 이미지 + 실제 생성 프롬프트 + 자동 대표 설정<br>
+                <b>표정</b> · ${expressionMode === 'new'
+                    ? `새 프리셋 ${(revisionFields.expression || []).length} tags`
+                    : '기존 프리셋 사용'}
+                / 구도 ${compositionMode === 'none' ? '등록 안 함' : (revisionFields.composition || []).length + ' tags'}<br>
                 태그 데이터 저장 전 <code>요구사항/</code>에 자동 백업합니다.
-                ${expressionMode === 'none' ? '<br>표정을 등록하지 않으면 현재 이미지는 대표 에셋으로 승격하지 않습니다.' : ''}
             `;
         }
 
         async function cmConfirmCharacter() {
             if (cmBusy || !cmSession) return;
+            const activeRevision = cmGetActiveUserRevision();
+            if (!activeRevision) {
+                console.error('[CHARACTER_MAKER] 확정 실패: 현재 사용자 이미지가 없습니다.', {
+                    active_revision_id: cmSession.active_revision_id || '',
+                });
+                showToast('등록할 현재 사용자 이미지가 없습니다.', 'error');
+                return;
+            }
             const registrationMode = document.getElementById('cm-confirm-registration-mode')?.value || 'new';
-            const expressionMode = document.getElementById('cm-confirm-expression-mode')?.value || 'none';
+            const expressionMode = document.getElementById('cm-confirm-expression-mode')?.value || 'existing';
             const compositionMode = document.getElementById('cm-confirm-composition-mode')?.value || 'none';
             const expressionName = expressionMode === 'new'
                 ? document.getElementById('cm-confirm-expression-new')?.value.trim()
-                : (expressionMode === 'existing' ? document.getElementById('cm-confirm-expression')?.value : '');
+                : document.getElementById('cm-confirm-expression')?.value;
             const characterName = registrationMode === 'existing'
                 ? (document.getElementById('cm-confirm-existing-character')?.value || '')
                 : (document.getElementById('cm-confirm-character')?.value.trim() || '');
@@ -36426,7 +36451,7 @@
                 composition_name: compositionMode === 'new'
                     ? (document.getElementById('cm-confirm-composition')?.value.trim() || '')
                     : '',
-                revision_id: document.getElementById('cm-confirm-revision')?.value || '',
+                revision_id: activeRevision.id,
             };
             if (!payload.character_name || !payload.appearance_name || !payload.outfit_name) {
                 showToast(
@@ -36437,7 +36462,7 @@
                 );
                 return;
             }
-            if (expressionMode !== 'none' && !payload.expression_name) {
+            if (!payload.expression_name) {
                 showToast('등록하거나 사용할 표정 프리셋을 선택하세요.', 'error');
                 return;
             }
@@ -36449,8 +36474,8 @@
             cmSetBusy(
                 true,
                 registrationMode === 'existing'
-                    ? '태그를 백업하고 기존 캐릭터에 외모·복장을 추가하는 중...'
-                    : '태그를 백업하고 캐릭터 프리셋을 등록하는 중...',
+                    ? '기존 캐릭터에 외모·복장과 이미지 카드를 추가하는 중...'
+                    : '새 캐릭터 폴더와 이미지 카드를 등록하는 중...',
             );
             const submit = document.getElementById('cm-confirm-submit');
             if (submit) submit.disabled = true;
@@ -36470,8 +36495,8 @@
                 }
                 showToast(
                     data.finalized.registration_mode === 'existing'
-                        ? `기존 캐릭터 '${data.finalized.character_name}'에 새 외모·복장을 추가했습니다.`
-                        : `캐릭터 '${data.finalized.character_name}' 등록을 완료했습니다.`,
+                        ? `기존 캐릭터 '${data.finalized.character_name}'에 새 외모·복장과 이미지 카드를 추가했습니다.`
+                        : `캐릭터 '${data.finalized.character_name}'과 이미지 카드를 등록했습니다.`,
                     'success',
                     7000,
                 );

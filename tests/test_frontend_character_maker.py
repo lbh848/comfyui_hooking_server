@@ -265,7 +265,7 @@ def test_browser_uses_single_persistent_session_and_persists_settings():
     assert "cmMergePersistedSettings()" in html
 
 
-def test_character_maker_apis_and_optional_confirmation_modes_are_wired():
+def test_character_maker_apis_and_required_card_confirmation_are_wired():
     html = _html()
 
     for fragment in (
@@ -278,11 +278,21 @@ def test_character_maker_apis_and_optional_confirmation_modes_are_wired():
     ):
         assert fragment in html
 
-    assert '<option value="none">등록하지 않음</option>' in html
     assert '<option value="existing">기존 표정 프리셋 사용</option>' in html
     assert '<option value="new">새 표정 프리셋 등록</option>' in html
     assert "appearance_name" in html
     assert "outfit_name" in html
+    confirm_start = html.index('id="cm-confirm-modal"')
+    confirm_end = html.index("</main>", confirm_start)
+    confirm_markup = html[confirm_start:confirm_end]
+    expression_start = confirm_markup.index('id="cm-confirm-expression-mode"')
+    expression_end = confirm_markup.index("</select>", expression_start)
+    assert 'value="none"' not in confirm_markup[expression_start:expression_end]
+    assert 'id="cm-confirm-revision" readonly' in confirm_markup
+    assert "캐릭터 카드 이미지 · 현재 사용자 선택" in confirm_markup
+    assert "function cmGetActiveUserRevision()" in html
+    assert "revision_id: activeRevision.id" in html
+    assert "실제 생성 프롬프트" in html
 
 
 def test_character_maker_can_add_presets_to_an_existing_character():
@@ -295,6 +305,7 @@ def test_character_maker_can_add_presets_to_an_existing_character():
     assert "registration_mode: registrationMode" in html
     assert "assetTags?.characters" in html
     assert "현재 기본값 유지" in html
+    assert "새 캐릭터 폴더와 이미지 카드를 등록하는 중" in html
 
 
 def test_rag_settings_test_and_external_llm_routes_are_visible():

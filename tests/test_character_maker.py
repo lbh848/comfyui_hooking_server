@@ -864,22 +864,8 @@ async def test_rag_only_accepts_candidates_or_existing_user_tags(monkeypatch, tm
     assert llm_calls["count"] == 2
 
 
-def test_confirm_backs_up_and_registers_required_presets_without_image(
-    monkeypatch, tmp_path
-):
-    service, manager = _service(tmp_path)
-    tags_file = tmp_path / "asset_data" / "tags.json"
-    asset_root = tmp_path / "asset"
-    backup_root = tmp_path / "요구사항"
-    tags_file.parent.mkdir(parents=True)
-    tags_file.write_text(
-        json.dumps(manager.get_tags(), ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(asset_mode_module, "TAGS_FILE", str(tags_file))
-    monkeypatch.setattr(asset_mode_module, "ASSET_DIR", str(asset_root))
-    monkeypatch.setattr(asset_mode_module, "NAME_MAPPING_BACKUP_DIR", str(backup_root))
-
+def test_confirm_requires_current_user_image(tmp_path):
+    service, _ = _service(tmp_path)
     session = service.create_session()
     service.update_session(
         session["id"],
@@ -892,28 +878,64 @@ def test_confirm_backs_up_and_registers_required_presets_without_image(
             }
         },
     )
-    result = service.confirm(
+
+    with pytest.raises(CharacterMakerError, match="현재 사용자 이미지"):
+        service.confirm(
+            session["id"],
+            {
+                "character_name": "에이라",
+                "appearance_name": "에이라 기본 외모",
+                "outfit_name": "에이라 기본 복장",
+                "expression_mode": "existing",
+                "expression_name": "기존 표정",
+            },
+        )
+
+
+def test_confirm_requires_expression_for_character_card(tmp_path):
+    service, _ = _service(tmp_path)
+    session = service.create_session()
+    service.update_session(
         session["id"],
         {
-            "character_name": "에이라",
-            "appearance_name": "에이라 기본 외모",
-            "outfit_name": "에이라 기본 복장",
-            "expression_mode": "none",
-            "composition_mode": "none",
-            "revision_id": "",
+            "fields": {
+                "appearance": ["silver_hair"],
+                "outfit": ["long_coat"],
+                "expression": ["smile"],
+                "composition": [],
+            }
         },
     )
+    image_path = (
+        Path(service.temp_root) / session["id"] / "images" / "revision.webp"
+    )
+    prompt_path = image_path.with_name("revision_prompt.json")
+    image_path.write_bytes(b"revision-image")
+    prompt_path.write_text("{}", encoding="utf-8")
+    state = service.add_revision(
+        session["id"],
+        image_path=str(image_path),
+        prompt_path=str(prompt_path),
+        positive="positive",
+        negative="negative",
+    )
 
-    saved = json.loads(tags_file.read_text(encoding="utf-8"))
-    assert saved["appearances"]["에이라 기본 외모"] == ["silver_hair", "blue_eyes"]
-    assert saved["outfits"]["에이라 기본 복장"] == ["long_coat"]
-    assert saved["characters"]["에이라"]["expression"] == ""
-    assert list(backup_root.glob("tags_before_character_maker_*.json"))
-    assert result["finalized"]["promoted_image"] is False
-    assert not asset_root.exists()
+    with pytest.raises(CharacterMakerError, match="기존 또는 새 표정"):
+        service.confirm(
+            session["id"],
+            {
+                "character_name": "에이라",
+                "appearance_name": "에이라 외모",
+                "outfit_name": "에이라 복장",
+                "expression_mode": "none",
+                "revision_id": state["active_revision_id"],
+            },
+        )
 
 
-def test_confirm_can_promote_revision_and_optional_presets(monkeypatch, tmp_path):
+def test_confirm_new_character_creates_folder_card_and_snapshot_presets(
+    monkeypatch, tmp_path
+):
     service, manager = _service(tmp_path)
     tags_file = tmp_path / "asset_data" / "tags.json"
     asset_root = tmp_path / "asset"
@@ -944,7 +966,16 @@ def test_confirm_can_promote_revision_and_optional_presets(monkeypatch, tmp_path
     )
     prompt_path = image_path.with_name("revision_prompt.json")
     image_path.write_bytes(b"revision-image")
-    prompt_path.write_text("{}", encoding="utf-8")
+    prompt_path.write_text(
+        json.dumps(
+            {
+                "workflow_marker": "new-character-record",
+                "positive": "workflow-final-positive",
+                "negative": "workflow-final-negative",
+            }
+        ),
+        encoding="utf-8",
+    )
     state = service.add_revision(
         session["id"],
         image_path=str(image_path),
@@ -953,6 +984,18 @@ def test_confirm_can_promote_revision_and_optional_presets(monkeypatch, tmp_path
         negative="negative",
     )
     revision_id = state["active_revision_id"]
+    # 확정 직전에 편집값이 바뀌어도 카드/프리셋은 이미지 생성 당시 스냅샷을 사용한다.
+    service.update_session(
+        session["id"],
+        {
+            "fields": {
+                "appearance": ["changed_after_generation"],
+                "outfit": ["changed_outfit_after_generation"],
+                "expression": ["changed_expression_after_generation"],
+                "composition": ["changed_composition_after_generation"],
+            }
+        },
+    )
 
     result = service.confirm(
         session["id"],
@@ -977,8 +1020,41 @@ def test_confirm_can_promote_revision_and_optional_presets(monkeypatch, tmp_path
     promoted_prompt = json.loads(
         (destination / "revision_prompt.json").read_text(encoding="utf-8")
     )
+    saved = json.loads(tags_file.read_text(encoding="utf-8"))
+    assert saved["appearances"]["루멘 외모"] == ["silver_hair"]
+    assert saved["outfits"]["루멘 코트"] == ["long_coat"]
+    assert saved["expressions"]["루멘 미소"] == ["gentle_smile"]
+    assert saved["composition_presets"]["루멘 시트 구도"] == ["cowboy_shot"]
+    assert saved["characters"]["루멘"] == {
+        "appearance": "루멘 외모",
+        "outfit": "루멘 코트",
+        "expression": "루멘 미소",
+    }
+    assert promoted_prompt["positive"] == "workflow-final-positive"
+    assert promoted_prompt["negative"] == "workflow-final-negative"
+    assert promoted_prompt["workflow_marker"] == "new-character-record"
+    assert promoted_prompt["character"] == "루멘"
+    assert promoted_prompt["appearance"] == "루멘 외모"
+    assert promoted_prompt["outfit"] == "루멘 코트"
+    assert promoted_prompt["expression"] == "루멘 미소"
+    assert promoted_prompt["character_maker_fields"]["appearance"] == ["silver_hair"]
     assert promoted_prompt["composition_preset"] == "루멘 시트 구도"
+    asset_listing = AssetMode().list_images("루멘", "루멘 코트", "루멘 미소")
+    assert asset_listing["representative"] == "revision.webp"
+    assert asset_listing["images"][0]["filename"] == "revision.webp"
+    assert asset_listing["images"][0]["positive"] == "workflow-final-positive"
+    assert asset_listing["images"][0]["negative"] == "workflow-final-negative"
+    assert AssetMode().list_character_gallery("루멘") == [
+        {
+            "outfit": "루멘 코트",
+            "expression": "루멘 미소",
+            "representative": "revision.webp",
+            "image_count": 1,
+            "local_path": str(destination / "revision.webp"),
+        }
+    ]
     assert result["finalized"]["promoted_image"] is True
+    assert list(backup_root.glob("tags_before_character_maker_*.json"))
 
 
 def test_confirm_adds_presets_to_existing_character_without_changing_defaults(
@@ -1025,7 +1101,16 @@ def test_confirm_adds_presets_to_existing_character_without_changing_defaults(
     )
     prompt_path = image_path.with_name("revision_prompt.json")
     image_path.write_bytes(b"revision-image")
-    prompt_path.write_text("{}", encoding="utf-8")
+    prompt_path.write_text(
+        json.dumps(
+            {
+                "workflow_marker": "existing-character-record",
+                "positive": "existing-workflow-positive",
+                "negative": "existing-workflow-negative",
+            }
+        ),
+        encoding="utf-8",
+    )
     state = service.add_revision(
         session["id"],
         image_path=str(image_path),
@@ -1059,6 +1144,16 @@ def test_confirm_adds_presets_to_existing_character_without_changing_defaults(
     new_destination = asset_root / "루멘" / "루멘 여름 복장" / "기존 표정"
     assert (new_destination / "revision.webp").read_bytes() == b"revision-image"
     assert (existing_destination / "keep.webp").read_bytes() == b"keep"
+    promoted_prompt = json.loads(
+        (new_destination / "revision_prompt.json").read_text(encoding="utf-8")
+    )
+    assert promoted_prompt["positive"] == "existing-workflow-positive"
+    assert promoted_prompt["negative"] == "existing-workflow-negative"
+    assert promoted_prompt["workflow_marker"] == "existing-character-record"
+    assert promoted_prompt["character"] == "루멘"
+    assert promoted_prompt["appearance"] == "루멘 여름 외모"
+    assert promoted_prompt["outfit"] == "루멘 여름 복장"
+    assert promoted_prompt["expression"] == "기존 표정"
     assert result["finalized"]["registration_mode"] == "existing"
     assert result["finalized"]["promoted_image"] is True
     assert list(backup_root.glob("tags_before_character_maker_*.json"))
@@ -1078,6 +1173,19 @@ def test_confirm_existing_mode_rejects_unknown_character(tmp_path):
             }
         },
     )
+    image_path = (
+        Path(service.temp_root) / session["id"] / "images" / "revision.webp"
+    )
+    prompt_path = image_path.with_name("revision_prompt.json")
+    image_path.write_bytes(b"revision-image")
+    prompt_path.write_text("{}", encoding="utf-8")
+    state = service.add_revision(
+        session["id"],
+        image_path=str(image_path),
+        prompt_path=str(prompt_path),
+        positive="positive",
+        negative="negative",
+    )
 
     with pytest.raises(CharacterMakerError, match="기존 캐릭터 '없는 캐릭터'"):
         service.confirm(
@@ -1087,6 +1195,9 @@ def test_confirm_existing_mode_rejects_unknown_character(tmp_path):
                 "character_name": "없는 캐릭터",
                 "appearance_name": "새 외모",
                 "outfit_name": "새 복장",
+                "expression_mode": "existing",
+                "expression_name": "기존 표정",
+                "revision_id": state["active_revision_id"],
             },
         )
 
@@ -1105,6 +1216,19 @@ def test_confirm_rejects_empty_required_field_tags(tmp_path):
             }
         },
     )
+    image_path = (
+        Path(service.temp_root) / session["id"] / "images" / "revision.webp"
+    )
+    prompt_path = image_path.with_name("revision_prompt.json")
+    image_path.write_bytes(b"revision-image")
+    prompt_path.write_text("{}", encoding="utf-8")
+    state = service.add_revision(
+        session["id"],
+        image_path=str(image_path),
+        prompt_path=str(prompt_path),
+        positive="positive",
+        negative="negative",
+    )
 
     with pytest.raises(CharacterMakerError, match="외모 태그"):
         service.confirm(
@@ -1113,6 +1237,9 @@ def test_confirm_rejects_empty_required_field_tags(tmp_path):
                 "character_name": "빈 외모",
                 "appearance_name": "빈 외모 프리셋",
                 "outfit_name": "복장",
+                "expression_mode": "existing",
+                "expression_name": "기존 표정",
+                "revision_id": state["active_revision_id"],
             },
         )
 
