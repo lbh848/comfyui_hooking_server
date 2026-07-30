@@ -7828,13 +7828,14 @@
             bottom: 18px;
             z-index: 2147483647;
             display: flex;
+            flex-direction: column;
             align-items: center;
-            justify-content: space-between;
-            gap: 12px;
-            width: min(180px, calc(100vw - 36px));
-            min-height: 46px;
+            justify-content: center;
+            gap: 5px;
+            width: 42px;
+            min-height: 92px;
             box-sizing: border-box;
-            padding: 9px 12px 9px 14px;
+            padding: 10px 5px;
             border: 1px solid color-mix(in srgb, var(--border) 72%, #f59e0b);
             border-left: 0;
             border-radius: 0 12px 12px 0;
@@ -7845,13 +7846,16 @@
             font: inherit;
             transition: bottom 0.22s ease, border-color 0.16s, background 0.16s, transform 0.16s;
         }
+        .memo-launcher.memo-position-immediate {
+            transition: border-color 0.16s, background 0.16s, transform 0.16s;
+        }
         .memo-launcher[hidden] {
             display: none !important;
         }
         .memo-launcher:hover {
             border-color: color-mix(in srgb, #f59e0b 72%, var(--border));
             background: color-mix(in srgb, var(--surface2) 90%, #f59e0b 10%);
-            transform: translateY(-1px);
+            transform: translateX(1px);
         }
         .memo-launcher:focus-visible,
         .memo-close-btn:focus-visible,
@@ -7860,18 +7864,19 @@
             outline-offset: 2px;
         }
         .memo-launcher-label {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            min-width: 0;
-            font-size: 0.84rem;
+            font-size: 0.8rem;
             font-weight: 800;
+            line-height: 1;
+        }
+        .memo-launcher-icon {
+            font-size: 0.9rem;
+            line-height: 1;
         }
         .memo-launcher-action {
             color: var(--text2);
-            font-size: 0.7rem;
-            font-weight: 700;
-            white-space: nowrap;
+            font-size: 1.05rem;
+            font-weight: 800;
+            line-height: 0.8;
         }
         .memo-overlay {
             position: fixed;
@@ -7985,7 +7990,7 @@
         @media (max-width: 520px) {
             .memo-launcher {
                 bottom: 10px;
-                width: 156px;
+                width: 42px;
             }
             .memo-overlay {
                 padding: 10px;
@@ -13289,8 +13294,9 @@
     <button type="button" class="memo-launcher" id="memo-launcher" hidden
             aria-controls="memo-overlay" aria-expanded="false"
             onclick="toggleMemoPad()" title="메모장 펼치기">
-        <span class="memo-launcher-label"><span aria-hidden="true">📝</span>메모장</span>
-        <span class="memo-launcher-action" id="memo-launcher-action">펼치기</span>
+        <span class="memo-launcher-icon" aria-hidden="true">📝</span>
+        <span class="memo-launcher-label">메모</span>
+        <span class="memo-launcher-action" id="memo-launcher-action" aria-hidden="true">›</span>
     </button>
     <div class="memo-overlay" id="memo-overlay" hidden
          onclick="handleMemoOverlayClick(event)">
@@ -19158,6 +19164,9 @@
         let memoSaveChain = Promise.resolve();
         let memoServerInstanceId = null;
         let memoPositionFrame = null;
+        let memoQueueTransitionTimer = null;
+        let memoLastQueueVisible = false;
+        let memoLastQueueCollapsed = false;
         let memoQueueResizeObserver = null;
         let memoQueueMutationObserver = null;
 
@@ -19208,7 +19217,7 @@
                 if (rect.height > 0) {
                     bottom = Math.max(
                         fallbackBottom,
-                        Math.ceil(window.innerHeight - rect.top + 8)
+                        Math.ceil(window.innerHeight - rect.top + 10)
                     );
                 } else {
                     console.error('[MEMO] 작업 큐 위치 계산 실패:', {
@@ -19217,7 +19226,16 @@
                     });
                 }
             }
-            launcher.style.bottom = `${bottom}px`;
+            const currentBottom = Number.parseFloat(getComputedStyle(launcher).bottom);
+            if (Number.isFinite(currentBottom) && bottom > currentBottom) {
+                launcher.classList.add('memo-position-immediate');
+                launcher.style.bottom = `${bottom}px`;
+                requestAnimationFrame(() => {
+                    launcher.classList.remove('memo-position-immediate');
+                });
+            } else {
+                launcher.style.bottom = `${bottom}px`;
+            }
         }
 
         function scheduleMemoLauncherPositionSync() {
@@ -19225,6 +19243,37 @@
                 cancelAnimationFrame(memoPositionFrame);
             }
             memoPositionFrame = requestAnimationFrame(syncMemoLauncherPosition);
+        }
+
+        function handleMemoQueueLayoutMutation() {
+            const queueContainer = document.getElementById('asset-queue-container');
+            if (!queueContainer) {
+                console.error('[MEMO] 큐 위치 변경을 처리할 컨테이너가 없습니다.');
+                return;
+            }
+            const queueVisible = getComputedStyle(queueContainer).display !== 'none';
+            const queueCollapsed = queueContainer.classList.contains('collapsed');
+            const startedCollapsing = (
+                queueVisible
+                && memoLastQueueVisible
+                && queueCollapsed
+                && !memoLastQueueCollapsed
+            );
+            memoLastQueueVisible = queueVisible;
+            memoLastQueueCollapsed = queueCollapsed;
+
+            if (memoQueueTransitionTimer !== null) {
+                clearTimeout(memoQueueTransitionTimer);
+                memoQueueTransitionTimer = null;
+            }
+            if (startedCollapsing) {
+                memoQueueTransitionTimer = window.setTimeout(() => {
+                    memoQueueTransitionTimer = null;
+                    scheduleMemoLauncherPositionSync();
+                }, 260);
+                return;
+            }
+            scheduleMemoLauncherPositionSync();
         }
 
         function applyMemoFeatureEnabled(enabled) {
@@ -19412,7 +19461,7 @@
             launcher.title = '메모장 접기';
             const action = document.getElementById('memo-launcher-action');
             if (action) {
-                action.textContent = '접기';
+                action.textContent = '‹';
             } else {
                 console.error('[MEMO] 메모장 버튼 상태 라벨이 없습니다.');
             }
@@ -19445,7 +19494,7 @@
             launcher.title = '메모장 펼치기';
             const action = document.getElementById('memo-launcher-action');
             if (action) {
-                action.textContent = '펼치기';
+                action.textContent = '›';
             } else {
                 console.error('[MEMO] 메모장 버튼 상태 라벨이 없습니다.');
             }
@@ -19527,7 +19576,9 @@
             window.addEventListener('resize', scheduleMemoLauncherPositionSync);
             window.addEventListener('beforeunload', flushMemoWithBeacon);
 
-            memoQueueMutationObserver = new MutationObserver(scheduleMemoLauncherPositionSync);
+            memoLastQueueVisible = getComputedStyle(queueContainer).display !== 'none';
+            memoLastQueueCollapsed = queueContainer.classList.contains('collapsed');
+            memoQueueMutationObserver = new MutationObserver(handleMemoQueueLayoutMutation);
             memoQueueMutationObserver.observe(queueContainer, {
                 attributes: true,
                 attributeFilter: ['class', 'style'],
