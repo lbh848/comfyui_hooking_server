@@ -2140,6 +2140,40 @@ class CharacterMakerService:
                     "새 구도 프리셋을 등록하려면 사용자 이미지의 구도/기타 태그가 필요합니다."
                 )
 
+        natural_language_mode = str(
+            payload.get("natural_language_mode") or "none"
+        ).strip()
+        if natural_language_mode not in ("none", "new"):
+            print(
+                f"[CHARACTER_MAKER] 확정 자연어 방식 오류: session={session_id}, "
+                f"natural_language_mode={natural_language_mode!r}"
+            )
+            raise CharacterMakerError("자연어 등록 방식이 올바르지 않습니다.")
+        revision_natural_language = promote_revision.get("natural_language", "")
+        if not isinstance(revision_natural_language, str):
+            print(
+                f"[CHARACTER_MAKER] 리비전 자연어 스냅샷 형식 오류: "
+                f"session={session_id}, revision={revision_id}, "
+                f"type={type(revision_natural_language).__name__}"
+            )
+            raise CharacterMakerError(
+                "사용자 이미지의 자연어 스냅샷이 올바르지 않습니다."
+            )
+        natural_language_text = revision_natural_language.strip()
+        natural_language_name = ""
+        if natural_language_mode == "new":
+            natural_language_name = registration_name(
+                payload.get("natural_language_name"), "자연어 프리셋명"
+            )
+            if not natural_language_text:
+                print(
+                    f"[CHARACTER_MAKER] 새 자연어 프리셋 등록 거부: "
+                    f"session={session_id}, revision={revision_id}, 자연어 비어 있음"
+                )
+                raise CharacterMakerError(
+                    "자연어 프리셋을 등록하려면 사용자 이미지 생성 당시 자연어가 필요합니다."
+                )
+
         asset_mode_module = importlib.import_module("modes.asset_mode")
         tags_file = asset_mode_module.TAGS_FILE
         asset_dir = asset_mode_module.ASSET_DIR
@@ -2183,6 +2217,15 @@ class CharacterMakerService:
                 f"type={type(composition_presets).__name__}"
             )
             raise CharacterMakerError("구도 태그 데이터 구조가 올바르지 않습니다.")
+        natural_language_presets = new_tags.setdefault(
+            "natural_language_presets", {}
+        )
+        if not isinstance(natural_language_presets, dict):
+            print(
+                f"[CHARACTER_MAKER] 자연어 프리셋 구조 오류: session={session_id}, "
+                f"type={type(natural_language_presets).__name__}"
+            )
+            raise CharacterMakerError("자연어 프리셋 데이터 구조가 올바르지 않습니다.")
         if registration_mode == "new" and character_name in characters:
             collisions.append(f"캐릭터 '{character_name}'")
         if registration_mode == "existing" and character_name not in characters:
@@ -2224,6 +2267,11 @@ class CharacterMakerService:
             and composition_name in composition_presets
         ):
             collisions.append(f"구도 '{composition_name}'")
+        if (
+            natural_language_mode == "new"
+            and natural_language_name in natural_language_presets
+        ):
+            collisions.append(f"자연어 '{natural_language_name}'")
         if collisions:
             print(
                 f"[CHARACTER_MAKER] 확정 충돌: session={session_id}, "
@@ -2239,6 +2287,8 @@ class CharacterMakerService:
             expressions[expression_name] = list(revision_fields["expression"])
         if composition_mode == "new":
             composition_presets[composition_name] = list(revision_fields["composition"])
+        if natural_language_mode == "new":
+            natural_language_presets[natural_language_name] = natural_language_text
         if registration_mode == "new":
             new_tags.setdefault("characters", {})[character_name] = {
                 "appearance": appearance_name,
@@ -2570,6 +2620,8 @@ class CharacterMakerService:
             "outfit_name": outfit_name,
             "expression_name": expression_name,
             "composition_name": composition_name,
+            "natural_language_mode": natural_language_mode,
+            "natural_language_name": natural_language_name,
             "revision_id": revision_id,
             "promoted_image": bool(promoted_image),
             "promoted_filename": os.path.basename(promoted_image),
@@ -2584,6 +2636,7 @@ class CharacterMakerService:
             f"[CHARACTER_MAKER] 캐릭터 확정 완료: session={session_id}, "
             f"registration_mode={registration_mode}, character={character_name!r}, "
             f"appearance_mode={appearance_mode}, outfit_mode={outfit_mode}, "
+            f"natural_language_mode={natural_language_mode}, "
             f"image={bool(promoted_image)}, "
             f"representative={representative_update_reason}"
         )

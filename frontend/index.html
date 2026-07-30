@@ -13231,6 +13231,20 @@
                                         <input id="cm-confirm-composition" placeholder="예: 캐릭터 시트" disabled oninput="cmUpdateConfirmSummary()">
                                     </div>
                                 </div>
+                                <label class="cm-confirm-representative" style="margin-top:10px;">
+                                    <input id="cm-confirm-save-natural-language" type="checkbox" onchange="cmUpdateConfirmMode()">
+                                    <span>선택 이미지 생성 당시 자연어를 재사용 가능한 자연어 프리셋으로도 저장합니다. 체크하지 않아도 카드의 프롬프트 기록에는 자연어가 보존됩니다.</span>
+                                </label>
+                                <div class="cm-confirm-grid" style="margin-top:10px;">
+                                    <div class="cm-confirm-field">
+                                        <label for="cm-confirm-natural-language-name">새 자연어 프리셋 이름</label>
+                                        <input id="cm-confirm-natural-language-name" placeholder="예: 에이라 기본 자연어" disabled oninput="cmUpdateConfirmSummary()">
+                                    </div>
+                                    <div class="cm-confirm-field">
+                                        <label>저장할 이미지 생성 당시 자연어</label>
+                                        <div id="cm-confirm-natural-language-preview" class="cm-hint"></div>
+                                    </div>
+                                </div>
                             </section>
                             <div id="cm-confirm-summary" class="cm-confirm-summary"></div>
                         </div>
@@ -37225,6 +37239,17 @@
             document.getElementById('cm-confirm-composition-mode').value = 'none';
             const representativeCheckbox = document.getElementById('cm-confirm-set-representative');
             if (representativeCheckbox) representativeCheckbox.checked = false;
+            const naturalLanguageCheckbox = document.getElementById('cm-confirm-save-natural-language');
+            if (naturalLanguageCheckbox) naturalLanguageCheckbox.checked = false;
+            const naturalLanguageName = document.getElementById('cm-confirm-natural-language-name');
+            if (naturalLanguageName) naturalLanguageName.value = '';
+            const naturalLanguagePreview = document.getElementById('cm-confirm-natural-language-preview');
+            if (naturalLanguagePreview) {
+                const naturalLanguage = String(activeRevision.natural_language || '').trim();
+                naturalLanguagePreview.textContent = naturalLanguage
+                    ? `${naturalLanguage.length}자 · ${naturalLanguage}`
+                    : '선택 이미지에는 저장할 자연어가 없습니다.';
+            }
             const targetSelect = document.getElementById('cm-confirm-registration-mode');
             const existingTarget = targetSelect?.querySelector('option[value="existing"]');
             const hasExistingCharacters = Object.keys(assetTags?.characters || {}).length > 0;
@@ -37311,6 +37336,9 @@
             const compositionMode = document.getElementById('cm-confirm-composition-mode')?.value || 'none';
             const composition = document.getElementById('cm-confirm-composition');
             if (composition) composition.disabled = compositionMode !== 'new';
+            const saveNaturalLanguage = document.getElementById('cm-confirm-save-natural-language')?.checked || false;
+            const naturalLanguageName = document.getElementById('cm-confirm-natural-language-name');
+            if (naturalLanguageName) naturalLanguageName.disabled = !saveNaturalLanguage;
             cmUpdateConfirmSummary();
         }
 
@@ -37326,6 +37354,9 @@
             const expression = cmGetConfirmPresetSelection('expression');
             const compositionMode = document.getElementById('cm-confirm-composition-mode')?.value || 'none';
             const setRepresentative = document.getElementById('cm-confirm-set-representative')?.checked || false;
+            const saveNaturalLanguage = document.getElementById('cm-confirm-save-natural-language')?.checked || false;
+            const naturalLanguageName = document.getElementById('cm-confirm-natural-language-name')?.value.trim() || '';
+            const revisionNaturalLanguage = String(activeRevision?.natural_language || '').trim();
             const displayPart = value => escapeHtml(value || '(선택 필요)');
             const selectionLabel = (selection, fieldName) => selection.mode === 'existing'
                 ? `기존 '${displayPart(selection.name)}'`
@@ -37350,6 +37381,9 @@
                 <b>구도</b> · ${compositionMode === 'none'
                     ? '등록 안 함'
                     : `새로 등록 · ${(revisionFields.composition || []).length} tags`}<br>
+                <b>자연어</b> · ${saveNaturalLanguage
+                    ? `새로 등록 '${displayPart(naturalLanguageName)}' · ${revisionNaturalLanguage.length}자`
+                    : '프리셋 등록 안 함 · 카드 기록에는 보존'}<br>
                 새 프리셋이나 캐릭터 정보를 저장할 때는 먼저 <code>요구사항/</code>에 태그 데이터를 백업합니다.
             `;
         }
@@ -37369,6 +37403,7 @@
             const outfit = cmGetConfirmPresetSelection('outfit');
             const expression = cmGetConfirmPresetSelection('expression');
             const compositionMode = document.getElementById('cm-confirm-composition-mode')?.value || 'none';
+            const saveNaturalLanguage = document.getElementById('cm-confirm-save-natural-language')?.checked || false;
             const characterName = cmGetConfirmCharacterName();
             const payload = {
                 registration_mode: registrationMode,
@@ -37382,6 +37417,10 @@
                 composition_mode: compositionMode,
                 composition_name: compositionMode === 'new'
                     ? (document.getElementById('cm-confirm-composition')?.value.trim() || '')
+                    : '',
+                natural_language_mode: saveNaturalLanguage ? 'new' : 'none',
+                natural_language_name: saveNaturalLanguage
+                    ? (document.getElementById('cm-confirm-natural-language-name')?.value.trim() || '')
                     : '',
                 set_representative: document.getElementById('cm-confirm-set-representative')?.checked || false,
                 revision_id: activeRevision.id,
@@ -37431,6 +37470,18 @@
                 showToast('새 구도로 등록할 이미지 생성 당시 태그가 없습니다.', 'error');
                 return;
             }
+            if (saveNaturalLanguage && !payload.natural_language_name) {
+                console.error('[CHARACTER_MAKER] 새 자연어 프리셋 이름 누락:', payload);
+                showToast('새 자연어 프리셋 이름을 입력하세요.', 'error');
+                return;
+            }
+            if (saveNaturalLanguage && !String(activeRevision.natural_language || '').trim()) {
+                console.error('[CHARACTER_MAKER] 새 자연어 프리셋 원문 누락:', {
+                    revision_id: activeRevision.id,
+                });
+                showToast('선택 이미지 생성 당시 저장된 자연어가 없습니다.', 'error');
+                return;
+            }
 
             cmSetBusy(
                 true,
@@ -37459,6 +37510,7 @@
                     data.finalized.outfit_mode === 'new' ? '복장' : '',
                     payload.expression_mode === 'new' ? '표정' : '',
                     payload.composition_mode === 'new' ? '구도' : '',
+                    data.finalized.natural_language_mode === 'new' ? '자연어' : '',
                 ].filter(Boolean);
                 const representativeLabel = data.finalized.representative_updated
                     ? '대표 이미지도 반영했습니다.'
@@ -46132,14 +46184,14 @@
                         <div style="flex:1; padding-left:12px;">
                             <div style="font-size:0.75rem; color:var(--text2); margin-bottom:4px; font-weight:600;">-Appearance</div>
                             <div style="position:relative; margin-bottom:4px;">
-                                <input type="text" id="lb-extra-add-app-${ci}" placeholder="태그 추가..." style="width:calc(100% - 32px); padding:3px 8px; border:1px solid var(--border); border-radius:4px; font-size:0.75rem; background:var(--surface); color:var(--text);" onkeydown="if(event.key==='Enter'){event.preventDefault();_addLbExtraTagFromInput(${ci},'appearance',this);}">
+                                <input type="text" id="lb-extra-add-app-${ci}" placeholder="태그 추가 (쉼표로 여러 개)..." style="width:calc(100% - 32px); padding:3px 8px; border:1px solid var(--border); border-radius:4px; font-size:0.75rem; background:var(--surface); color:var(--text);" onkeydown="if(event.key==='Enter'){event.preventDefault();_addLbExtraTagFromInput(${ci},'appearance',this);}">
                                 <button onclick="_addLbExtraTagFromInput(${ci},'appearance',document.getElementById('lb-extra-add-app-${ci}'))" style="margin-left:4px; padding:3px 8px; border-radius:4px; border:none; background:var(--accent); color:#fff; cursor:pointer; font-size:0.8rem; font-weight:600;">+</button>
                                 <div class="tag-autocomplete-dropdown" id="lb-extra-ac-app-${ci}"></div>
                             </div>
                             <div class="lb-extra-drop" data-dci="${ci}" data-dgrp="appearance" style="display:flex; flex-wrap:wrap; gap:4px; margin-bottom:8px; min-height:24px; border-radius:4px; padding:2px; transition:background 0.15s;">${_buildEditTags(ci, 'appearance')}</div>
                             <div style="font-size:0.75rem; color:var(--text2); margin-bottom:4px; font-weight:600;">-default_outfit</div>
                             <div style="position:relative; margin-bottom:4px;">
-                                <input type="text" id="lb-extra-add-out-${ci}" placeholder="태그 추가..." style="width:calc(100% - 32px); padding:3px 8px; border:1px solid var(--border); border-radius:4px; font-size:0.75rem; background:var(--surface); color:var(--text);" onkeydown="if(event.key==='Enter'){event.preventDefault();_addLbExtraTagFromInput(${ci},'outfit',this);}">
+                                <input type="text" id="lb-extra-add-out-${ci}" placeholder="태그 추가 (쉼표로 여러 개)..." style="width:calc(100% - 32px); padding:3px 8px; border:1px solid var(--border); border-radius:4px; font-size:0.75rem; background:var(--surface); color:var(--text);" onkeydown="if(event.key==='Enter'){event.preventDefault();_addLbExtraTagFromInput(${ci},'outfit',this);}">
                                 <button onclick="_addLbExtraTagFromInput(${ci},'outfit',document.getElementById('lb-extra-add-out-${ci}'))" style="margin-left:4px; padding:3px 8px; border-radius:4px; border:none; background:var(--accent); color:#fff; cursor:pointer; font-size:0.8rem; font-weight:600;">+</button>
                                 <div class="tag-autocomplete-dropdown" id="lb-extra-ac-out-${ci}"></div>
                             </div>
@@ -46257,24 +46309,107 @@
             _renderLbExtraContent();
         }
 
-        function _addLbExtraTagFromInput(ci, group, inputEl) {
-            const val = (inputEl.value || '').trim();
-            if (!val) return;
-            if (group === 'appearance') {
-                const gt = _getCharGenderTag(_lbExtraEdited[ci].name).toLowerCase();
-                if (val.toLowerCase() === gt) {
-                    showToast(`'${gt}'는 성별 태그라 자동 고정됩니다`, 'info');
-                    inputEl.value = '';
-                    return;
+        function _splitLbExtraTagInput(rawValue) {
+            const tags = [];
+            let current = '';
+            let parenthesisDepth = 0;
+
+            for (const char of String(rawValue || '')) {
+                if (char === '(') {
+                    parenthesisDepth += 1;
+                    current += char;
+                    continue;
                 }
+                if (char === ')') {
+                    if (parenthesisDepth > 0) parenthesisDepth -= 1;
+                    current += char;
+                    continue;
+                }
+                if (char === ',' && parenthesisDepth === 0) {
+                    const tag = current.trim();
+                    if (tag) tags.push(tag);
+                    current = '';
+                    continue;
+                }
+                current += char;
             }
-            if (_lbExtraEdited[ci][group].some(t => t.tag.toLowerCase() === val.toLowerCase())) {
-                showToast('이미 있는 태그입니다', 'error');
-                inputEl.value = '';
+
+            const tail = current.trim();
+            if (tail) tags.push(tail);
+            return tags;
+        }
+
+        function _appendLbExtraTagsFromInput(ci, group, inputEl) {
+            if (!inputEl) {
+                console.error('[LB_EXTRA] 태그 추가 실패: 입력 요소가 없습니다', { ci, group });
+                return null;
+            }
+
+            const values = _splitLbExtraTagInput(inputEl.value);
+            if (values.length === 0) {
+                console.error('[LB_EXTRA] 태그 추가 실패: 유효한 태그 입력이 없습니다', {
+                    ci,
+                    group,
+                    value: inputEl.value,
+                });
+                return { added: 0, duplicates: 0, fixedGender: 0 };
+            }
+
+            const target = _lbExtraEdited[ci]?.[group];
+            if (!Array.isArray(target)) {
+                console.error('[LB_EXTRA] 태그 추가 실패: 편집 대상이 없습니다', { ci, group });
+                showToast('태그를 추가할 편집 대상을 찾지 못했습니다', 'error');
+                return null;
+            }
+
+            const existing = new Set(target.map(item => String(item.tag || '').trim().toLowerCase()));
+            const genderTag = group === 'appearance'
+                ? _getCharGenderTag(_lbExtraEdited[ci].name).toLowerCase()
+                : '';
+            let added = 0;
+            let duplicates = 0;
+            let fixedGender = 0;
+
+            for (const tag of values) {
+                const normalized = tag.toLowerCase();
+                if (genderTag && normalized === genderTag) {
+                    fixedGender += 1;
+                    continue;
+                }
+                if (existing.has(normalized)) {
+                    duplicates += 1;
+                    continue;
+                }
+                target.push({ tag, desc: '' });
+                existing.add(normalized);
+                added += 1;
+            }
+
+            if (duplicates > 0 || fixedGender > 0) {
+                console.info('[LB_EXTRA] 중복 또는 고정 성별 태그 건너뜀', {
+                    ci,
+                    group,
+                    duplicates,
+                    fixedGender,
+                });
+            }
+            inputEl.value = '';
+            return { added, duplicates, fixedGender };
+        }
+
+        function _addLbExtraTagFromInput(ci, group, inputEl) {
+            const result = _appendLbExtraTagsFromInput(ci, group, inputEl);
+            if (!result) return;
+            if (result.added === 0 && result.fixedGender > 0 && result.duplicates === 0) {
+                const gt = _getCharGenderTag(_lbExtraEdited[ci].name).toLowerCase();
+                showToast(`'${gt}'는 성별 태그라 자동 고정됩니다`, 'info');
                 return;
             }
-            _lbExtraEdited[ci][group].push({tag: val, desc: ''});
-            inputEl.value = '';
+            if (result.added === 0 && result.duplicates > 0) {
+                showToast('이미 있는 태그입니다', 'error');
+                return;
+            }
+            if (result.added === 0) return;
             _renderLbExtraContent();
         }
 
@@ -47007,7 +47142,7 @@
                     <div style="margin-bottom:14px;">
                         <div style="font-size:0.78rem; color:var(--text2); margin-bottom:4px; font-weight:600;">-Appearance</div>
                         <div style="position:relative; margin-bottom:6px;">
-                            <input type="text" id="fe-add-app" placeholder="태그 추가..." style="width:calc(100% - 36px); padding:4px 8px; border:1px solid var(--border); border-radius:4px; font-size:0.8rem; background:var(--surface); color:var(--text);" onkeydown="if(event.key==='Enter'){event.preventDefault();_focusEditAddFromInput(${ci},'appearance',this);}">
+                            <input type="text" id="fe-add-app" placeholder="태그 추가 (쉼표로 여러 개)..." style="width:calc(100% - 36px); padding:4px 8px; border:1px solid var(--border); border-radius:4px; font-size:0.8rem; background:var(--surface); color:var(--text);" onkeydown="if(event.key==='Enter'){event.preventDefault();_focusEditAddFromInput(${ci},'appearance',this);}">
                             <button onclick="_focusEditAddFromInput(${ci},'appearance',document.getElementById('fe-add-app'))" style="margin-left:4px; padding:4px 10px; border-radius:4px; border:none; background:var(--accent); color:#fff; cursor:pointer; font-size:0.8rem; font-weight:600;">+</button>
                             <div class="tag-autocomplete-dropdown" id="fe-ac-app"></div>
                         </div>
@@ -47016,7 +47151,7 @@
                     <div>
                         <div style="font-size:0.78rem; color:var(--text2); margin-bottom:4px; font-weight:600;">-default_outfit</div>
                         <div style="position:relative; margin-bottom:6px;">
-                            <input type="text" id="fe-add-out" placeholder="태그 추가..." style="width:calc(100% - 36px); padding:4px 8px; border:1px solid var(--border); border-radius:4px; font-size:0.8rem; background:var(--surface); color:var(--text);" onkeydown="if(event.key==='Enter'){event.preventDefault();_focusEditAddFromInput(${ci},'outfit',this);}">
+                            <input type="text" id="fe-add-out" placeholder="태그 추가 (쉼표로 여러 개)..." style="width:calc(100% - 36px); padding:4px 8px; border:1px solid var(--border); border-radius:4px; font-size:0.8rem; background:var(--surface); color:var(--text);" onkeydown="if(event.key==='Enter'){event.preventDefault();_focusEditAddFromInput(${ci},'outfit',this);}">
                             <button onclick="_focusEditAddFromInput(${ci},'outfit',document.getElementById('fe-add-out'))" style="margin-left:4px; padding:4px 10px; border-radius:4px; border:none; background:var(--accent); color:#fff; cursor:pointer; font-size:0.8rem; font-weight:600;">+</button>
                             <div class="tag-autocomplete-dropdown" id="fe-ac-out"></div>
                         </div>
@@ -47108,23 +47243,18 @@
         }
 
         function _focusEditAddFromInput(ci, group, inputEl) {
-            const val = (inputEl.value || '').trim();
-            if (!val) return;
-            if (group === 'appearance') {
+            const result = _appendLbExtraTagsFromInput(ci, group, inputEl);
+            if (!result) return;
+            if (result.added === 0 && result.fixedGender > 0 && result.duplicates === 0) {
                 const gt = _getCharGenderTag(_lbExtraEdited[ci].name).toLowerCase();
-                if (val.toLowerCase() === gt) {
-                    showToast(`'${gt}'는 성별 태그라 자동 고정됩니다`, 'info');
-                    inputEl.value = '';
-                    return;
-                }
-            }
-            if (_lbExtraEdited[ci][group].some(t => t.tag.toLowerCase() === val.toLowerCase())) {
-                showToast('이미 있는 태그입니다', 'error');
-                inputEl.value = '';
+                showToast(`'${gt}'는 성별 태그라 자동 고정됩니다`, 'info');
                 return;
             }
-            _lbExtraEdited[ci][group].push({tag: val, desc: ''});
-            inputEl.value = '';
+            if (result.added === 0 && result.duplicates > 0) {
+                showToast('이미 있는 태그입니다', 'error');
+                return;
+            }
+            if (result.added === 0) return;
             _renderFocusEditContent();
         }
 

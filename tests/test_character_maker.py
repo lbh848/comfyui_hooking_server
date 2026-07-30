@@ -953,6 +953,7 @@ def test_confirm_new_character_creates_folder_card_and_snapshot_presets(
     service.update_session(
         session["id"],
         {
+            "natural_language": "A silver-haired traveler waits beneath a blue moon.",
             "fields": {
                 "appearance": ["silver_hair"],
                 "outfit": ["long_coat"],
@@ -988,6 +989,7 @@ def test_confirm_new_character_creates_folder_card_and_snapshot_presets(
     service.update_session(
         session["id"],
         {
+            "natural_language": "Changed after generation.",
             "fields": {
                 "appearance": ["changed_after_generation"],
                 "outfit": ["changed_outfit_after_generation"],
@@ -1009,6 +1011,8 @@ def test_confirm_new_character_creates_folder_card_and_snapshot_presets(
             "expression_name": "루멘 미소",
             "composition_mode": "new",
             "composition_name": "루멘 시트 구도",
+            "natural_language_mode": "new",
+            "natural_language_name": "루멘 기본 자연어",
             "revision_id": revision_id,
         },
     )
@@ -1027,6 +1031,10 @@ def test_confirm_new_character_creates_folder_card_and_snapshot_presets(
     assert saved["outfits"]["루멘 코트"] == ["long_coat"]
     assert saved["expressions"]["루멘 미소"] == ["gentle_smile"]
     assert saved["composition_presets"]["루멘 시트 구도"] == ["cowboy_shot"]
+    assert (
+        saved["natural_language_presets"]["루멘 기본 자연어"]
+        == "A silver-haired traveler waits beneath a blue moon."
+    )
     assert saved["characters"]["루멘"] == {
         "appearance": "루멘 외모",
         "outfit": "루멘 코트",
@@ -1040,6 +1048,10 @@ def test_confirm_new_character_creates_folder_card_and_snapshot_presets(
     assert promoted_prompt["outfit"] == "루멘 코트"
     assert promoted_prompt["expression"] == "루멘 미소"
     assert promoted_prompt["character_maker_fields"]["appearance"] == ["silver_hair"]
+    assert (
+        promoted_prompt["character_maker_natural_language"]
+        == "A silver-haired traveler waits beneath a blue moon."
+    )
     assert promoted_prompt["composition_preset"] == "루멘 시트 구도"
     asset_listing = AssetMode().list_images("루멘", "루멘 코트", "루멘 미소")
     assert asset_listing["representative"] == "revision.webp"
@@ -1056,6 +1068,8 @@ def test_confirm_new_character_creates_folder_card_and_snapshot_presets(
         }
     ]
     assert result["finalized"]["promoted_image"] is True
+    assert result["finalized"]["natural_language_mode"] == "new"
+    assert result["finalized"]["natural_language_name"] == "루멘 기본 자연어"
     assert list(backup_root.glob("tags_before_character_maker_*.json"))
 
 

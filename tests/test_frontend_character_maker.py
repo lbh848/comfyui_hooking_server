@@ -293,8 +293,14 @@ def test_character_maker_apis_and_required_card_confirmation_are_wired():
     assert 'id="cm-confirm-preview-image"' in confirm_markup
     assert 'id="cm-confirm-path"' in confirm_markup
     assert 'id="cm-confirm-set-representative"' in confirm_markup
+    assert 'id="cm-confirm-save-natural-language"' in confirm_markup
+    assert 'id="cm-confirm-natural-language-name"' in confirm_markup
+    assert 'id="cm-confirm-natural-language-preview"' in confirm_markup
     assert "function cmGetActiveUserRevision()" in html
     assert "revision_id: activeRevision.id" in html
+    assert "natural_language_mode: saveNaturalLanguage ? 'new' : 'none'" in html
+    assert "natural_language_name: saveNaturalLanguage" in html
+    assert "선택 이미지 생성 당시 자연어" in confirm_markup
     assert "실제 생성 프롬프트" in html
 
 
