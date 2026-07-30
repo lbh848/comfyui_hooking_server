@@ -13855,7 +13855,21 @@ async def handle_api_pose_mode_delete(request: web.Request) -> web.Response:
 
 # ─── 체인 프리셋 API 핸들러 ──────────────────────────────
 async def handle_api_chain_presets_list(request: web.Request) -> web.Response:
-    return web.json_response({"presets": chain_preset_mode.list_presets()})
+    try:
+        return web.json_response({"presets": chain_preset_mode.list_presets()})
+    except Exception as e:
+        print(f"[CHAIN_PRESET_API] 활성 목록 조회 예외: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_chain_presets_manage(request: web.Request) -> web.Response:
+    try:
+        return web.json_response(chain_preset_mode.get_management_presets())
+    except Exception as e:
+        print(f"[CHAIN_PRESET_API] 숨김 관리 목록 조회 예외: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
 
 async def handle_api_chain_presets_save(request: web.Request) -> web.Response:
     try:
@@ -13867,14 +13881,44 @@ async def handle_api_chain_presets_save(request: web.Request) -> web.Response:
         )
         return web.json_response(result)
     except Exception as e:
+        print(f"[CHAIN_PRESET_API] 저장 요청 처리 예외: {e}")
+        traceback.print_exc()
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
 async def handle_api_chain_presets_load(request: web.Request) -> web.Response:
     name = request.match_info.get("name", "")
-    result = chain_preset_mode.load_preset(name)
-    if result is None:
-        return web.json_response({"error": "프리셋을 찾을 수 없습니다."}, status=404)
-    return web.json_response(result)
+    try:
+        result = chain_preset_mode.load_preset(name)
+        if result is None:
+            print(f"[CHAIN_PRESET_API] 로드 실패: 활성 프리셋 없음 (name={name!r})")
+            return web.json_response({"error": "프리셋을 찾을 수 없습니다."}, status=404)
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[CHAIN_PRESET_API] 로드 요청 처리 예외 (name={name!r}): {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_chain_presets_hide(request: web.Request) -> web.Response:
+    try:
+        body = await request.json()
+        result = chain_preset_mode.hide_presets_batch(body.get("names", []))
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[CHAIN_PRESET_API] 일괄 숨김 요청 처리 예외: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_api_chain_presets_restore(request: web.Request) -> web.Response:
+    try:
+        body = await request.json()
+        result = chain_preset_mode.restore_presets_batch(body.get("names", []))
+        return web.json_response(result)
+    except Exception as e:
+        print(f"[CHAIN_PRESET_API] 일괄 복원 요청 처리 예외: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
 
 async def handle_api_chain_presets_delete(request: web.Request) -> web.Response:
     try:
@@ -13882,6 +13926,8 @@ async def handle_api_chain_presets_delete(request: web.Request) -> web.Response:
         result = chain_preset_mode.delete_preset(body.get("name", ""))
         return web.json_response(result)
     except Exception as e:
+        print(f"[CHAIN_PRESET_API] 삭제 요청 처리 예외: {e}")
+        traceback.print_exc()
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
 async def handle_api_pose_mode_image(request: web.Request) -> web.Response:
@@ -15527,6 +15573,9 @@ app.router.add_post("/api/pose_mode/poses/delete", handle_api_pose_mode_delete)
 # 체인 프리셋 API 라우트
 app.router.add_get("/api/chain_presets", handle_api_chain_presets_list)
 app.router.add_post("/api/chain_presets/save", handle_api_chain_presets_save)
+app.router.add_get("/api/chain_presets/manage", handle_api_chain_presets_manage)
+app.router.add_post("/api/chain_presets/hide", handle_api_chain_presets_hide)
+app.router.add_post("/api/chain_presets/restore", handle_api_chain_presets_restore)
 app.router.add_get("/api/chain_presets/{name}", handle_api_chain_presets_load)
 app.router.add_post("/api/chain_presets/delete", handle_api_chain_presets_delete)
 # 터널 API 라우트

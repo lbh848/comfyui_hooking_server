@@ -72654,6 +72654,11 @@
             character_negative_presets: '캐릭터 네거티브',
             negative_presets: '네거티브 프리셋',
         };
+        const PM_CHAIN_CATEGORY = 'chain_presets';
+        const PM_HIDE_CATEGORIES = {
+            ...PM_CATEGORIES,
+            [PM_CHAIN_CATEGORY]: '체인 프리셋',
+        };
 
         function pmEscapeHtml(value) {
             const node = document.createElement('div');
@@ -72690,7 +72695,15 @@
             return category === 'natural_language_presets';
         }
 
+        function pmIsChainPreset(category = pmCurrentCategory) {
+            return category === PM_CHAIN_CATEGORY;
+        }
+
         function pmValueToText(value, category = pmManagerCategory) {
+            if (pmIsChainPreset(category)) {
+                if (!value || typeof value !== 'object') return '';
+                return `${value.slot_count || 0}슬롯 ${value.repeat || 1}회 반복 ${value.saved_at || ''}`;
+            }
             if (pmIsNaturalLanguage(category)) {
                 return typeof value === 'string' ? value : (Array.isArray(value) ? value.join(', ') : '');
             }
@@ -72698,6 +72711,10 @@
         }
 
         function pmValueCount(value, category = pmManagerCategory) {
+            if (pmIsChainPreset(category)) {
+                const count = Number(value && value.slot_count);
+                return Number.isFinite(count) ? count : 0;
+            }
             if (pmIsNaturalLanguage(category)) return pmValueToText(value, category).length;
             if (Array.isArray(value)) return value.length;
             return value ? 1 : 0;
@@ -72705,6 +72722,10 @@
 
         function pmValueCountLabel(value, category = pmManagerCategory) {
             const count = pmValueCount(value, category);
+            if (pmIsChainPreset(category)) {
+                const repeat = Number(value && value.repeat);
+                return `${count}슬롯 · ${Number.isFinite(repeat) && repeat > 0 ? repeat : 1}회 반복`;
+            }
             return pmIsNaturalLanguage(category) ? `${count}자` : `${count}개 태그`;
         }
 
@@ -72749,9 +72770,14 @@
                 libraryList.innerHTML = '<div class="pm-empty">프리셋 데이터를 불러오는 중...</div>';
             }
             try {
-                const response = await fetch('/api/asset_mode/hidden_tags');
+                const [response, chainResponse] = await Promise.all([
+                    fetch('/api/asset_mode/hidden_tags'),
+                    fetch('/api/chain_presets/manage'),
+                ]);
                 if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                if (!chainResponse.ok) throw new Error(`체인 프리셋 HTTP ${chainResponse.status}`);
                 const payload = await response.json();
+                const chainPayload = await chainResponse.json();
                 const active = {};
                 const hidden = {};
                 for (const category of Object.keys(PM_CATEGORIES)) {
@@ -72759,6 +72785,25 @@
                     const hiddenValue = payload.hidden && payload.hidden[category];
                     active[category] = activeValue && typeof activeValue === 'object' && !Array.isArray(activeValue) ? activeValue : {};
                     hidden[category] = hiddenValue && typeof hiddenValue === 'object' && !Array.isArray(hiddenValue) ? hiddenValue : {};
+                }
+                active[PM_CHAIN_CATEGORY] = {};
+                hidden[PM_CHAIN_CATEGORY] = {};
+                for (const [state, target] of [
+                    ['active', active[PM_CHAIN_CATEGORY]],
+                    ['hidden', hidden[PM_CHAIN_CATEGORY]],
+                ]) {
+                    const chainItems = chainPayload && chainPayload[state];
+                    if (!Array.isArray(chainItems)) {
+                        console.error('[PM] 체인 프리셋 목록 형식 오류:', { state, value: chainItems });
+                        continue;
+                    }
+                    for (const item of chainItems) {
+                        if (!item || typeof item.name !== 'string' || !item.name.trim()) {
+                            console.error('[PM] 잘못된 체인 프리셋 목록 항목 건너뜀:', { state, item });
+                            continue;
+                        }
+                        target[item.name] = item;
+                    }
                 }
                 pmData = { active, hidden };
                 pmRenderLibraryCategoryTabs();
@@ -72809,7 +72854,7 @@
             if (!pmData) return;
             let activeCount = 0;
             let hiddenCount = 0;
-            for (const category of Object.keys(PM_CATEGORIES)) {
+            for (const category of Object.keys(PM_HIDE_CATEGORIES)) {
                 activeCount += Object.keys(pmData.active[category] || {}).length;
                 hiddenCount += Object.keys(pmData.hidden[category] || {}).length;
             }
@@ -73257,7 +73302,7 @@
             if (!pmData) return;
             const categoryTabs = document.getElementById('pm-hide-categories');
             categoryTabs.replaceChildren();
-            for (const [category, label] of Object.entries(PM_CATEGORIES)) {
+            for (const [category, label] of Object.entries(PM_HIDE_CATEGORIES)) {
                 const button = document.createElement('button');
                 button.className = `pm-category-tab${category === pmCurrentCategory ? ' active' : ''}`;
                 button.textContent = label;
@@ -73335,11 +73380,14 @@
         async function pmBatchHide() {
             if (pmSelectedActive.size === 0) return;
             const names = Array.from(pmSelectedActive);
+            const isChainPreset = pmIsChainPreset(pmCurrentCategory);
             try {
-                const response = await fetch('/api/asset_mode/tags', {
+                const response = await fetch(isChainPreset ? '/api/chain_presets/hide' : '/api/asset_mode/tags', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ action: 'hide_presets_batch', category: pmCurrentCategory, names }),
+                    body: JSON.stringify(isChainPreset
+                        ? { names }
+                        : { action: 'hide_presets_batch', category: pmCurrentCategory, names }),
                 });
                 const data = await response.json();
                 if (!response.ok || !data.success) {
@@ -73351,7 +73399,8 @@
                 showToast(failed.length ? `${names.length - failed.length}개 숨김 · ${failed.length}개 실패` : `${names.length}개 프리셋 숨김 처리`, failed.length ? 'error' : 'success');
                 pmSelectedActive.clear();
                 await pmLoadData();
-                if (assetTags) loadAssetData();
+                if (isChainPreset) await refreshBatchPresetSelect();
+                else if (assetTags) loadAssetData();
             } catch (error) {
                 console.error('[PM] 숨김 처리 중 오류:', error);
                 showToast('숨김 처리 중 오류가 발생했습니다', 'error');
@@ -73361,11 +73410,14 @@
         async function pmBatchRestore() {
             if (pmSelectedHidden.size === 0) return;
             const names = Array.from(pmSelectedHidden);
+            const isChainPreset = pmIsChainPreset(pmCurrentCategory);
             try {
-                const response = await fetch('/api/asset_mode/tags', {
+                const response = await fetch(isChainPreset ? '/api/chain_presets/restore' : '/api/asset_mode/tags', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ action: 'restore_presets_batch', category: pmCurrentCategory, names }),
+                    body: JSON.stringify(isChainPreset
+                        ? { names }
+                        : { action: 'restore_presets_batch', category: pmCurrentCategory, names }),
                 });
                 const data = await response.json();
                 if (!response.ok || !data.success) {
@@ -73377,7 +73429,8 @@
                 showToast(failed.length ? `${names.length - failed.length}개 복원 · ${failed.length}개 실패` : `${names.length}개 프리셋 복원`, failed.length ? 'error' : 'success');
                 pmSelectedHidden.clear();
                 await pmLoadData();
-                if (assetTags) loadAssetData();
+                if (isChainPreset) await refreshBatchPresetSelect();
+                else if (assetTags) loadAssetData();
             } catch (error) {
                 console.error('[PM] 복원 처리 중 오류:', error);
                 showToast('복원 중 오류가 발생했습니다', 'error');
