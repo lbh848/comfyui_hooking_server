@@ -3961,6 +3961,159 @@ async def _stream_call_to_text(messages: list, service: str, model: str, llm_slo
         raise
 
 
+async def callLLMTrackedStream(
+    messages: list,
+    *,
+    slot: str = "llm1",
+    model: str = None,
+    json_mode: bool = False,
+    image_b64: str = None,
+    image_mime: str = "image/webp",
+    images: list = None,
+    stream_observer=None,
+    metadata_sink: dict | None = None,
+    execution_context: LLMExecutionContext | None = None,
+) -> str:
+    """고유 stream_id와 라이브 제어를 제공하는 단일 슬롯 강제 스트리밍 호출.
+
+    설정의 ``llm_stream*`` 토글과 무관하게 추적 가능한 실제 스트림을 시작한다.
+    LLM 테스트처럼 사용자가 명시적으로 스트리밍을 요청하고, 라이브 창에서
+    중지·재시도·병렬 재시도·현재 내용 사용을 제공해야 하는 호출에 사용한다.
+
+    ``stream_observer``는 원본·수동 재시도·병렬 시도를 포함한 요청 로컬 이벤트를
+    모두 받는다. 전역 라이브 알림은 기존 추적 계층이 별도로 한 번만 전송한다.
+    """
+    normalized_slot = str(slot or "").strip().lower()
+    if normalized_slot not in LLM_SLOT_IDS:
+        print(
+            f"[LLM_TRACKED_STREAM] 호출 실패: 알 수 없는 슬롯 "
+            f"slot={slot!r}, allowed={LLM_SLOT_IDS}"
+        )
+        raise ValueError(
+            f"slot은 {', '.join(LLM_SLOT_IDS)} 중 하나여야 합니다"
+        )
+
+    suffix = _slot_suffix(normalized_slot)
+    service = (
+        _base_config_get(f"llm_service{suffix}")
+        if suffix
+        else _base_config_get("llm_service")
+    ) or _base_config_get("llm_service", "")
+    use_model = model or _base_config_get(
+        f"llm_model{suffix}" if suffix else "llm_model",
+        "",
+    )
+    if not use_model:
+        error = f"{normalized_slot.upper()} 모델명이 설정되지 않았습니다"
+        print(
+            f"[LLM_TRACKED_STREAM] 호출 실패: slot={normalized_slot}, "
+            f"service={service!r}, error={error}"
+        )
+        return f"[LLM 실패] {error}"
+
+    context = execution_context or create_llm_execution_context(
+        "tracked_stream",
+        call_name="TRACKED STREAM",
+        json_mode=json_mode,
+    )
+    inherited_metadata = dict(_stream_metadata_ctx.get() or {})
+    metadata = {
+        **inherited_metadata,
+        **dict(context.metadata),
+        "task_key": context.task_key,
+        "call_name": context.call_name,
+        "llm_slot": normalized_slot,
+        "execution_id": context.execution_id,
+        "parent_execution_id": context.parent_execution_id,
+    }
+
+    config_token = None
+    if suffix:
+        config_token = _request_config_override_ctx.set(
+            _slot_config_overrides(normalized_slot)
+        )
+    slot_token = _llm_slot_ctx.set(normalized_slot)
+    format_token = (
+        _response_format_ctx.set({"type": "json_object"})
+        if json_mode
+        else None
+    )
+    metadata_token = _stream_metadata_ctx.set(metadata)
+    observer_token = _stream_observer_ctx.set(stream_observer)
+    sink_token = (
+        _usage_sink_ctx.set(metadata_sink)
+        if metadata_sink is not None
+        else None
+    )
+    try:
+        prepared_messages = messages
+        if images or image_b64:
+            if not supports_vision(service):
+                error = (
+                    f"현재 LLM 서비스({service})는 비전(이미지 입력)을 "
+                    "지원하지 않습니다."
+                )
+                print(
+                    f"[LLM_TRACKED_STREAM] 비전 호출 실패: "
+                    f"slot={normalized_slot}, service={service!r}, error={error}"
+                )
+                return f"[LLM 실패] {error}"
+            try:
+                prepared_messages, log_mime, log_len = _prepare_vision_messages(
+                    messages,
+                    image_b64,
+                    image_mime,
+                    images,
+                )
+            except ValueError as e:
+                print(
+                    f"[LLM_TRACKED_STREAM] 비전 입력 준비 실패: "
+                    f"slot={normalized_slot}, error={e}"
+                )
+                traceback.print_exc()
+                return f"[LLM 실패] {e}"
+            _llm_log(
+                f"callLLMTrackedStream: slot={normalized_slot} "
+                f"service={service} model={use_model} "
+                f"mime={log_mime} img_b64_len={log_len} json_mode={json_mode}"
+            )
+        else:
+            _llm_log(
+                f"callLLMTrackedStream: slot={normalized_slot} "
+                f"service={service} model={use_model} json_mode={json_mode}"
+            )
+        return await _stream_call_to_text(
+            prepared_messages,
+            service,
+            use_model,
+            normalized_slot,
+        )
+    except asyncio.CancelledError:
+        print(
+            f"[LLM_TRACKED_STREAM] 상위 호출 취소: "
+            f"slot={normalized_slot}, service={service}, model={use_model}"
+        )
+        raise
+    except Exception as e:
+        print(
+            f"[LLM_TRACKED_STREAM] 호출 예외: slot={normalized_slot}, "
+            f"service={service}, model={use_model}, "
+            f"error={type(e).__name__}: {e}"
+        )
+        traceback.print_exc()
+        return f"[LLM 실패] {type(e).__name__}: {e}"
+    finally:
+        if sink_token is not None:
+            _usage_sink_ctx.reset(sink_token)
+        _stream_observer_ctx.reset(observer_token)
+        _stream_metadata_ctx.reset(metadata_token)
+        if format_token is not None:
+            _response_format_ctx.reset(format_token)
+        _llm_slot_ctx.reset(slot_token)
+        if config_token is not None:
+            _request_config_override_ctx.reset(config_token)
+
+
 def _approx_tokens(text: str) -> int:
     """usage 정보가 없을 때 휴리스틱 (영어 4자 = 1토큰, 한글은 더 크게)."""
     if not text:

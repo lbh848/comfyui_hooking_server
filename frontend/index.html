@@ -25815,6 +25815,10 @@
                             outEl.textContent += (outEl.textContent ? '\n' : '') + '[ERROR] ' + errMsg;
                             if (useJson) _setLlmTestJsonBadge('error');
                             showToast('LLM 오류: ' + errMsg, 'error');
+                        } else if (eventType === 'cancelled') {
+                            if (data.partial_text) outEl.textContent = data.partial_text;
+                            if (useJson) _setLlmTestJsonBadge('off');
+                            showToast('LLM 테스트를 중지했습니다.', 'info');
                         }
                     }
                 }

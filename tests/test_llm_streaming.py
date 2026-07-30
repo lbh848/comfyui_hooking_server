@@ -589,6 +589,71 @@ async def _wait_for_active_streams(predicate):
 
 
 @pytest.mark.asyncio
+async def test_tracked_stream_forces_live_registration_and_accepts_cancel(
+    monkeypatch,
+):
+    config = _test_config()
+    config["llm_stream"] = False
+    config["llm_max_concurrency"] = 2
+    monkeypatch.setattr(llm_service, "_current_config", config)
+    llm_service._active_streams.clear()
+    frontend_events = []
+    observed_events = []
+
+    async def controlled_stream(messages, service, model):
+        assert messages == [{"role": "user", "content": "hello"}]
+        yield {"type": "start", "service": service, "model": model}
+        yield {
+            "type": "delta",
+            "text": "테스트 부분",
+            "elapsed": 0.1,
+            "ttft": 0.1,
+        }
+        await asyncio.Future()
+
+    async def notify(event):
+        frontend_events.append(event)
+
+    monkeypatch.setattr(llm_service, "_dispatch_stream", controlled_stream)
+    monkeypatch.setattr(llm_service, "_stream_notify_func", notify)
+    execution_context = llm_service.create_llm_execution_context(
+        "llm_test",
+        call_name="LLM TEST",
+    )
+    task = asyncio.create_task(
+        llm_service.callLLMTrackedStream(
+            [{"role": "user", "content": "hello"}],
+            slot="llm1",
+            stream_observer=observed_events.append,
+            execution_context=execution_context,
+        )
+    )
+    snapshot = await _wait_for_active_stream(
+        lambda stream: stream["text"] == "테스트 부분"
+    )
+
+    assert snapshot["stream_id"]
+    assert snapshot["task_key"] == "llm_test"
+    assert snapshot["call_name"] == "LLM TEST"
+    assert snapshot["llm_slot"] == "llm1"
+    assert llm_service.request_stream_control(
+        snapshot["stream_id"],
+        "cancel",
+    ) == (True, "cancel")
+
+    result = await task
+    assert isinstance(result, llm_service.ManualCancelledText)
+    assert llm_service.get_active_streams() == []
+    assert observed_events[0]["type"] == "stream_open"
+    assert observed_events[0]["stream_id"] == snapshot["stream_id"]
+    assert any(
+        event["type"] == "cancelled"
+        and event["stream_id"] == snapshot["stream_id"]
+        for event in frontend_events
+    )
+
+
+@pytest.mark.asyncio
 async def test_active_stream_snapshot_tracks_partial_text_and_cleans_up(monkeypatch):
     config = _test_config()
     config["llm_stream"] = True

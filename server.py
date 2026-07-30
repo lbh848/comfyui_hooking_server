@@ -5252,17 +5252,20 @@ async def handle_api_llm_test_stream(request: web.Request) -> web.StreamResponse
 
     # target(slot) 에 따른 서비스/모델/함수 선택. 슬롯별 호출 함수 매핑.
     _slot_fns = {
-        "llm1": (llm_service.callLLMStream, llm_service.callLLMVisionStream, llm_service.callLLM, llm_service.callLLMVision),
-        "llm2": (llm_service.callLLM2Stream, llm_service.callLLMVision2Stream, llm_service.callLLM2, llm_service.callLLMVision2),
-        "llm3": (llm_service.callLLM3Stream, llm_service.callLLMVision3Stream, llm_service.callLLM3, llm_service.callLLMVision3),
-        "llm4": (llm_service.callLLM4Stream, llm_service.callLLMVision4Stream, llm_service.callLLM4, llm_service.callLLMVision4),
-        "llm5": (llm_service.callLLM5Stream, llm_service.callLLMVision5Stream, llm_service.callLLM5, llm_service.callLLMVision5),
+        "llm1": (llm_service.callLLM, llm_service.callLLMVision),
+        "llm2": (llm_service.callLLM2, llm_service.callLLMVision2),
+        "llm3": (llm_service.callLLM3, llm_service.callLLMVision3),
+        "llm4": (llm_service.callLLM4, llm_service.callLLMVision4),
+        "llm5": (llm_service.callLLM5, llm_service.callLLMVision5),
     }
     cfg = llm_service.get_config()
     _suffix = "" if target == "llm1" else target[-1]
     cur_service = cfg.get(f"llm_service{_suffix}") or cfg.get("llm_service", "")
     cur_model_key = f"llm_model{_suffix}"
-    fn_stream, fn_vision_stream, fn_single, fn_vision_single = _slot_fns.get(target, _slot_fns["llm1"])
+    fn_single, fn_vision_single = _slot_fns.get(
+        target,
+        _slot_fns["llm1"],
+    )
 
     use_model_resolved = use_model or cfg.get(cur_model_key, "")
     execution_context = llm_service.create_llm_execution_context(
@@ -5314,7 +5317,12 @@ async def handle_api_llm_test_stream(request: web.Request) -> web.StreamResponse
             f"event: {event_type}\ndata: {payload}\n\n".encode("utf-8")
         )
 
-    async def publish_event(event_type: str, data: dict) -> None:
+    async def publish_event(
+        event_type: str,
+        data: dict,
+        *,
+        notify_live: bool = True,
+    ) -> None:
         """SSE·LB 실시간 창·상세 이력에 같은 이벤트를 반영한다."""
         nonlocal terminal_error
         event_data = dict(data or {})
@@ -5376,21 +5384,124 @@ async def handle_api_llm_test_stream(request: web.Request) -> web.StreamResponse
         })
         ws_event.setdefault("service", cur_service)
         ws_event.setdefault("model", use_model_resolved)
-        try:
-            await notify_frontend("lighbd_llm_stream", ws_event)
-        except Exception as notify_error:
-            print(
-                f"[LLM_TEST_STREAM] LB 실시간 알림 실패: "
-                f"{type(notify_error).__name__}: {notify_error}"
-            )
-            traceback.print_exc()
+        if notify_live:
+            try:
+                await notify_frontend("lighbd_llm_stream", ws_event)
+            except Exception as notify_error:
+                print(
+                    f"[LLM_TEST_STREAM] LB 실시간 알림 실패: "
+                    f"{type(notify_error).__name__}: {notify_error}"
+                )
+                traceback.print_exc()
         await write_event(event_type, event_data)
 
     async def run_queued_test(_queue_item) -> dict:
         nonlocal response_finished, history_logged, terminal_error
         started = time.time()
         try:
-            if image_b64 or images:
+            if use_stream:
+                tracked_sse_stream_id = ""
+                tracked_usage: dict = {}
+
+                async def relay_tracked_event(event: dict) -> None:
+                    """추적 스트림 중 현재 원본 계열의 delta만 테스트 SSE에 중계한다.
+
+                    전역 라이브 창 알림은 llm_service 추적 계층이 stream_id와 함께
+                    이미 전송하므로 여기서는 브라우저의 테스트 출력만 갱신한다.
+                    병렬 재시도 결과는 최종 채택 텍스트로 마지막 done에서 교체된다.
+                    """
+                    nonlocal tracked_sse_stream_id
+                    event_type = str(event.get("type") or "")
+                    stream_id = str(event.get("stream_id") or "")
+                    if event_type == "stream_open":
+                        if not tracked_sse_stream_id:
+                            tracked_sse_stream_id = stream_id
+                        return
+                    if (
+                        event_type == "cancelled"
+                        and stream_id == tracked_sse_stream_id
+                        and str(event.get("reason") or "") == "retry"
+                    ):
+                        tracked_sse_stream_id = ""
+                        return
+                    if (
+                        event_type == "delta"
+                        and stream_id
+                        and stream_id == tracked_sse_stream_id
+                    ):
+                        await publish_event(
+                            "delta",
+                            event,
+                            notify_live=False,
+                        )
+
+                await publish_event(
+                    "start",
+                    {
+                        "service": cur_service,
+                        "model": use_model_resolved,
+                    },
+                    notify_live=False,
+                )
+                text = await llm_service.callLLMTrackedStream(
+                    messages,
+                    slot=target,
+                    model=use_model,
+                    json_mode=use_json,
+                    image_b64=image_b64 or None,
+                    image_mime=image_mime,
+                    images=images,
+                    stream_observer=relay_tracked_event,
+                    metadata_sink=tracked_usage,
+                    execution_context=execution_context,
+                )
+                elapsed = float(
+                    tracked_usage.get("elapsed")
+                    or (time.time() - started)
+                )
+                if isinstance(text, llm_service.ManualCancelledText):
+                    await publish_event(
+                        "cancelled",
+                        {
+                            "reason": "cancel",
+                            "error": str(text),
+                            "partial_text": history_record.get("output") or "",
+                            "elapsed": elapsed,
+                        },
+                        notify_live=False,
+                    )
+                elif isinstance(text, str) and text.startswith("[LLM 실패]"):
+                    await publish_event(
+                        "error",
+                        {"error": text},
+                        notify_live=False,
+                    )
+                else:
+                    tokens = int(
+                        tracked_usage.get("completion_tokens")
+                        or max(1, len(text) // 3)
+                    )
+                    prompt_tokens = int(
+                        tracked_usage.get("prompt_tokens")
+                        or history_record["prompt_tokens"]
+                    )
+                    tps = float(
+                        tracked_usage.get("tps")
+                        or ((tokens / elapsed) if elapsed > 0 else 0.0)
+                    )
+                    await publish_event(
+                        "done",
+                        {
+                            "text": text,
+                            "completion_tokens": tokens,
+                            "prompt_tokens": prompt_tokens,
+                            "elapsed": elapsed,
+                            "tps": tps,
+                            "ttft": tracked_usage.get("ttft"),
+                        },
+                        notify_live=False,
+                    )
+            elif image_b64 or images:
                 if not llm_service.supports_vision(cur_service):
                     await publish_event(
                         "error",
@@ -5401,24 +5512,6 @@ async def handle_api_llm_test_stream(request: web.Request) -> web.StreamResponse
                             )
                         },
                     )
-                elif use_stream:
-                    await publish_event(
-                        "start",
-                        {
-                            "service": cur_service,
-                            "model": use_model_resolved,
-                        },
-                    )
-                    async for ev in fn_vision_stream(
-                        messages,
-                        image_b64=image_b64,
-                        image_mime=image_mime,
-                        model=use_model,
-                        log_history=False,
-                        json_mode=use_json,
-                        images=images,
-                    ):
-                        await publish_event(ev.get("type", "message"), ev)
                 else:
                     await publish_event(
                         "start",
@@ -5449,14 +5542,6 @@ async def handle_api_llm_test_stream(request: web.Request) -> web.StreamResponse
                                 "tps": tps,
                                 "ttft": None,
                             })
-            elif use_stream:
-                async for ev in fn_stream(
-                    messages,
-                    model=use_model,
-                    log_history=False,
-                    json_mode=use_json,
-                ):
-                    await publish_event(ev.get("type", "message"), ev)
             else:
                 await publish_event(
                     "start",

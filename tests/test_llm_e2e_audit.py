@@ -336,6 +336,47 @@ async def test_llm_test_sse_endpoint_dispatches_all_five_targets(monkeypatch):
     cfg = _isolated_config()
     monkeypatch.setattr(llm_service, "get_config", lambda: cfg.copy())
 
+    async def tracked_stream(
+        messages,
+        *,
+        slot,
+        stream_observer,
+        metadata_sink,
+        json_mode=False,
+        **_kwargs,
+    ):
+        assert messages == [{"role": "user", "content": "endpoint smoke"}]
+        assert json_mode is True
+        slot_number = int(slot[-1])
+        stream_id = f"tracked-{slot}"
+        await stream_observer({
+            "type": "stream_open",
+            "stream_id": stream_id,
+            "llm_slot": slot,
+        })
+        await stream_observer({
+            "type": "delta",
+            "stream_id": stream_id,
+            "llm_slot": slot,
+            "text": f"stream:{slot_number}",
+            "elapsed": 0.01,
+            "ttft": 0.01,
+        })
+        metadata_sink.update({
+            "completion_tokens": 1,
+            "prompt_tokens": 1,
+            "elapsed": 0.02,
+            "tps": 50.0,
+            "ttft": 0.01,
+        })
+        return f"stream:{slot_number}"
+
+    monkeypatch.setattr(
+        llm_service,
+        "callLLMTrackedStream",
+        tracked_stream,
+    )
+
     for slot in range(1, llm_service.LLM_SLOT_COUNT + 1):
         suffix = "" if slot == 1 else str(slot)
 
@@ -349,40 +390,8 @@ async def test_llm_test_sse_endpoint_dispatches_all_five_targets(monkeypatch):
             assert messages == [{"role": "user", "content": "endpoint smoke"}]
             return f"single:{_slot}:json={json_mode}"
 
-        async def stream(
-            messages,
-            model=None,
-            log_history=True,
-            json_mode=False,
-            _slot=slot,
-            **_kwargs,
-        ):
-            assert messages == [{"role": "user", "content": "endpoint smoke"}]
-            yield {
-                "type": "start",
-                "service": "openai",
-                "model": f"slot-{_slot}",
-            }
-            yield {
-                "type": "delta",
-                "text": f"stream:{_slot}",
-                "elapsed": 0.01,
-                "ttft": 0.01,
-            }
-            yield {
-                "type": "done",
-                "text": f"stream:{_slot}",
-                "completion_tokens": 1,
-                "prompt_tokens": 1,
-                "elapsed": 0.02,
-                "tps": 50.0,
-                "ttft": 0.01,
-            }
-
         monkeypatch.setattr(llm_service, f"callLLM{suffix}", single)
-        monkeypatch.setattr(llm_service, f"callLLM{suffix}Stream", stream)
         monkeypatch.setattr(llm_service, f"callLLMVision{suffix}", single)
-        monkeypatch.setattr(llm_service, f"callLLMVision{suffix}Stream", stream)
 
     app = web.Application()
     app.router.add_post("/api/llm/test_stream", server.handle_api_llm_test_stream)
@@ -448,13 +457,10 @@ async def test_llm_test_endpoint_surfaces_stream_and_single_failures(monkeypatch
         return "[LLM 실패] provider single body"
 
     async def failed_stream(*_args, **_kwargs):
-        yield {
-            "type": "error",
-            "error": "[LLM 실패] provider stream body",
-        }
+        return "[LLM 실패] provider stream body"
 
     monkeypatch.setattr(llm_service, "callLLM", failed_single)
-    monkeypatch.setattr(llm_service, "callLLMStream", failed_stream)
+    monkeypatch.setattr(llm_service, "callLLMTrackedStream", failed_stream)
 
     app = web.Application()
     app.router.add_post("/api/llm/test_stream", server.handle_api_llm_test_stream)
@@ -484,10 +490,7 @@ async def test_llm_test_endpoint_surfaces_stream_and_single_failures(monkeypatch
     )
     assert stream_events[-1] == (
         "error",
-        {
-            "type": "error",
-            "error": "[LLM 실패] provider stream body",
-        },
+        {"error": "[LLM 실패] provider stream body"},
     )
     assert [record["status"] for record in history_records] == [
         "error",
@@ -502,11 +505,11 @@ async def test_llm_test_endpoint_surfaces_stream_and_single_failures(monkeypatch
 @pytest.mark.asyncio
 async def test_llm_test_endpoint_registers_queue_item(monkeypatch):
     async def stream(*_args, **_kwargs):
-        yield {"type": "done", "text": "ok"}
+        return "ok"
 
     queue_probe = server.queue_manager
     cfg = _isolated_config()
-    monkeypatch.setattr(llm_service, "callLLMStream", stream)
+    monkeypatch.setattr(llm_service, "callLLMTrackedStream", stream)
     monkeypatch.setattr(
         llm_service,
         "get_config",
@@ -539,9 +542,9 @@ async def test_llm_test_endpoint_records_lb_detail(monkeypatch):
     cfg = _isolated_config()
 
     async def stream(*_args, **_kwargs):
-        yield {"type": "done", "text": "history-ok"}
+        return "history-ok"
 
-    monkeypatch.setattr(llm_service, "callLLMStream", stream)
+    monkeypatch.setattr(llm_service, "callLLMTrackedStream", stream)
     monkeypatch.setattr(
         llm_service,
         "get_config",
@@ -570,6 +573,86 @@ async def test_llm_test_endpoint_records_lb_detail(monkeypatch):
     assert history_records[-1]["output"] == "history-ok"
     assert history_records[-1]["execution_id"]
     assert history_records[-1]["history_id"] == history_records[-1]["execution_id"]
+
+
+@pytest.mark.asyncio
+async def test_llm_test_live_stream_has_id_and_can_be_stopped(monkeypatch):
+    cfg = _isolated_config(llm_stream=False, llm_max_concurrency=2)
+    monkeypatch.setattr(llm_service, "_current_config", cfg)
+    frontend_events: list[dict] = []
+
+    async def controlled_stream(messages, service, model):
+        assert messages == [{"role": "user", "content": "stop me"}]
+        yield {"type": "start", "service": service, "model": model}
+        yield {
+            "type": "delta",
+            "text": "partial",
+            "elapsed": 0.01,
+            "ttft": 0.01,
+        }
+        await asyncio.Future()
+
+    async def capture_stream(event):
+        frontend_events.append(dict(event))
+
+    monkeypatch.setattr(
+        llm_service,
+        "_dispatch_stream",
+        controlled_stream,
+    )
+    monkeypatch.setattr(
+        llm_service,
+        "_stream_notify_func",
+        capture_stream,
+    )
+
+    app = web.Application()
+    app.router.add_post(
+        "/api/llm/test_stream",
+        server.handle_api_llm_test_stream,
+    )
+    app.router.add_post(
+        "/api/llm/streams/{stream_id}/control",
+        server.handle_api_llm_stream_control,
+    )
+    async with _running_app(app) as base_url, ClientSession() as client:
+        response = await client.post(
+            f"{base_url}/api/llm/test_stream",
+            json={
+                "messages": [{"role": "user", "content": "stop me"}],
+                "target": "llm1",
+                "stream": True,
+            },
+        )
+        snapshot = None
+        for _ in range(200):
+            streams = llm_service.get_active_streams()
+            if streams and streams[0].get("text") == "partial":
+                snapshot = streams[0]
+                break
+            await asyncio.sleep(0)
+        assert snapshot is not None
+        assert snapshot["stream_id"]
+        assert snapshot["task_key"] == "llm_test"
+        assert snapshot["call_name"] == "LLM TEST"
+
+        control_response = await client.post(
+            (
+                f"{base_url}/api/llm/streams/"
+                f"{snapshot['stream_id']}/control"
+            ),
+            json={"action": "cancel"},
+        )
+        assert control_response.status == 200
+        assert (await control_response.json())["success"] is True
+        events = _parse_sse(await response.text())
+
+    assert events[-1][0] == "cancelled"
+    assert events[-1][1]["partial_text"] == "partial"
+    assert llm_service.get_active_streams() == []
+    assert frontend_events
+    assert all(event.get("stream_id") for event in frontend_events)
+    assert all(event.get("task_key") == "llm_test" for event in frontend_events)
 
 
 @pytest.mark.asyncio
