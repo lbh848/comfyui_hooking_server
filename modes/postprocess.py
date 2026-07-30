@@ -2864,16 +2864,23 @@ def _load_bot_vn(bot_name: str) -> dict:
     return _default_vn()
 
 
-def get_vn_settings(config: dict, bot_name: str = "") -> Optional[dict]:
+def get_vn_settings(
+    config: dict,
+    bot_name: str = "",
+    *,
+    force: bool = False,
+) -> Optional[dict]:
     """활성 시 vn 설정(플랫 딕셔너리) 반환, 비활성 시 None.
 
     bot_name이 주어지면 bot.json의 해당 봇 postprocess_vn에서 읽는다(봇별 설정).
     마스터 토글(postprocess_enabled) + 봇별 vn.enabled 모두 켜져 있어야 활성.
+    force=True는 수동 그리기 1회성 후처리 테스트에서 저장값을 변경하지 않고
+    활성 토글만 우회한다.
     """
-    if not is_postprocess_active(config):
+    if not force and not is_postprocess_active(config):
         return None
     vn = _load_bot_vn(bot_name) if bot_name else _default_vn()
-    if not bool(vn.get("enabled", False)):
+    if not force and not bool(vn.get("enabled", False)):
         return None
     from modes.onnx_execution import normalize_cpu_threads, normalize_device_key
     return {
@@ -2913,15 +2920,22 @@ def get_vn_settings(config: dict, bot_name: str = "") -> Optional[dict]:
     }
 
 
-def get_bubble_settings(config: dict, bot_name: str = "") -> Optional[dict]:
+def get_bubble_settings(
+    config: dict,
+    bot_name: str = "",
+    *,
+    force: bool = False,
+) -> Optional[dict]:
     """활성 시 bubble 설정(플랫 딕셔너리) 반환, 비활성 시 None.
 
     마스터 토글(postprocess_enabled) + 봇별 bubble.enabled 모두 켜져 있어야 활성.
+    force=True는 수동 그리기 1회성 후처리 테스트에서 저장값을 변경하지 않고
+    활성 토글만 우회한다.
     """
-    if not is_postprocess_active(config):
+    if not force and not is_postprocess_active(config):
         return None
     bb = _load_bot_bubble(bot_name) if bot_name else _default_bubble()
-    if not bool(bb.get("enabled", False)):
+    if not force and not bool(bb.get("enabled", False)):
         return None
     from modes.onnx_execution import normalize_cpu_threads, normalize_device_key
     face_crop_top = 2.5

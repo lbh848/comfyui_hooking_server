@@ -13455,44 +13455,85 @@
         </div>
     </div>
 
-    <!-- 수동 그리기 2단계 모달 (restore_workflow_prompt_llm_solo 전용)
-         1단계: 캐릭터(🎲 랜덤/지정)  2단계: 상황(🎲 랜덤/직접 입력) -->
+    <!-- LLM 수동 그리기 설정 모달 (restore_workflow_prompt_llm 전용) -->
     <div class="modal" id="restore-char-select-modal">
-        <div class="modal-content" style="max-width:560px;">
+        <div class="modal-content" style="max-width:640px;">
             <div class="modal-header">
-                <h2>🖌️ 수동 그리기 <span id="restore-draw-step-indicator" style="font-size:0.8rem; color:var(--text2); font-weight:600;">1/2 · 캐릭터</span></h2>
+                <h2>🖌️ LLM 수동 그리기</h2>
                 <button class="modal-close" onclick="closeRestoreCharSelectModal()">&times;</button>
             </div>
             <div class="modal-body">
-                <!-- 1단계: 캐릭터 선택 -->
-                <div id="restore-draw-step1">
-                    <div id="restore-char-select-status" style="margin-bottom:10px; font-size:0.82rem; color:var(--text-secondary);">
-                        캐릭터 목록을 불러오는 중...
-                    </div>
-                    <div id="restore-char-select-grid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(120px, 1fr)); gap:10px;"></div>
+                <div id="restore-char-select-status" style="margin-bottom:12px; font-size:0.82rem; color:var(--text-secondary);">
+                    캐릭터 목록을 불러오는 중...
                 </div>
-                <!-- 2단계: 상황 입력 -->
-                <div id="restore-draw-step2" style="display:none;">
-                    <div id="restore-draw-selected-char" style="margin-bottom:10px; padding:6px 10px; border-radius:6px; background:var(--surface2); font-size:0.8rem; color:var(--text);"></div>
-                    <div style="margin-bottom:10px; font-size:0.8rem; color:var(--text-secondary);">
-                        상황을 어떻게 정할까요?<br>
-                        🎲 랜덤 = LLM이 자동 생성 · ✍️ 직접 입력 = LLM이 그 지시를 준수하며 나머지는 자유 작성
+
+                <div style="padding:12px; margin-bottom:12px; border:1px solid var(--border); border-radius:8px; background:var(--surface2);">
+                    <div style="font-size:0.84rem; font-weight:700; margin-bottom:8px;">인원</div>
+                    <div style="display:flex; gap:18px; font-size:0.85rem;">
+                        <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                            <input type="radio" name="restore-character-count" value="1" checked onchange="onRestoreCharacterCountChange()"> 1인
+                        </label>
+                        <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                            <input type="radio" name="restore-character-count" value="2" onchange="onRestoreCharacterCountChange()"> 2인
+                        </label>
                     </div>
-                    <div style="display:flex; gap:14px; margin-bottom:10px; font-size:0.85rem;">
+                </div>
+
+                <div style="padding:12px; margin-bottom:12px; border:1px solid var(--border); border-radius:8px;">
+                    <div style="font-size:0.84rem; font-weight:700; margin-bottom:8px;">캐릭터</div>
+                    <div style="display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:10px;">
+                        <label style="display:flex; flex-direction:column; gap:5px; font-size:0.78rem; color:var(--text-secondary);">
+                            첫 번째 캐릭터
+                            <select id="restore-character-select-1" class="select" onchange="onRestoreCharacterSelectionChange()"></select>
+                        </label>
+                        <label id="restore-character-select-2-wrap" style="display:none; flex-direction:column; gap:5px; font-size:0.78rem; color:var(--text-secondary);">
+                            두 번째 캐릭터
+                            <select id="restore-character-select-2" class="select" onchange="onRestoreCharacterSelectionChange()"></select>
+                        </label>
+                    </div>
+                    <div id="restore-provider-note" style="margin-top:8px; font-size:0.75rem; color:var(--text-secondary);"></div>
+                </div>
+
+                <div style="padding:12px; margin-bottom:12px; border:1px solid var(--border); border-radius:8px;">
+                    <div style="font-size:0.84rem; font-weight:700; margin-bottom:8px;">상황</div>
+                    <div style="display:flex; gap:16px; margin-bottom:9px; font-size:0.85rem;">
                         <label style="display:flex; align-items:center; gap:5px; cursor:pointer;">
-                            <input type="radio" name="restore-situation-mode" value="random" checked onchange="onRestoreSituationModeChange()"> 🎲 랜덤
+                            <input type="radio" name="restore-situation-mode" value="llm" checked onchange="onRestoreSituationModeChange()"> ✨ LLM에게 맡겨본다
                         </label>
                         <label style="display:flex; align-items:center; gap:5px; cursor:pointer;">
                             <input type="radio" name="restore-situation-mode" value="custom" onchange="onRestoreSituationModeChange()"> ✍️ 직접 입력
                         </label>
                     </div>
-                    <textarea id="restore-situation-input" rows="5" placeholder="예: 카페 창가에 앉아 커피를 마시는 장면 / 해변에서 검을 들고 있는 장면 ..." style="display:none; width:100%; box-sizing:border-box; padding:8px; border:1px solid var(--border); border-radius:6px; background:var(--surface1); color:var(--text); font-family:inherit; font-size:0.85rem; resize:vertical;"></textarea>
+                    <textarea id="restore-situation-input" rows="4" disabled placeholder="예: 카페 창가에서 두 사람이 마주 앉아 대화하는 장면" style="width:100%; box-sizing:border-box; padding:8px; border:1px solid var(--border); border-radius:6px; background:var(--surface1); color:var(--text); font-family:inherit; font-size:0.85rem; resize:vertical;"></textarea>
+                </div>
+
+                <div style="padding:12px; border:1px solid var(--border); border-radius:8px;">
+                    <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+                        <div>
+                            <div style="font-size:0.84rem; font-weight:700;">후처리 테스트</div>
+                            <div style="margin-top:2px; font-size:0.74rem; color:var(--text-secondary);">현재 봇의 VN/말풍선 설정을 이번 그림에만 적용합니다.</div>
+                        </div>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="restore-postprocess-test-toggle" onchange="onRestorePostprocessToggle()">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div id="restore-postprocess-controls" style="display:none; margin-top:12px;">
+                        <div style="display:flex; gap:16px; margin-bottom:9px; font-size:0.85rem;">
+                            <label style="display:flex; align-items:center; gap:5px; cursor:pointer;">
+                                <input type="radio" name="restore-postprocess-text-mode" value="llm" checked onchange="onRestorePostprocessTextModeChange()"> ✨ LLM에게 맡겨본다
+                            </label>
+                            <label style="display:flex; align-items:center; gap:5px; cursor:pointer;">
+                                <input type="radio" name="restore-postprocess-text-mode" value="custom" onchange="onRestorePostprocessTextModeChange()"> ✍️ 직접 입력
+                            </label>
+                        </div>
+                        <textarea id="restore-postprocess-text-input" rows="4" disabled placeholder="1인: 대사만 입력 가능&#10;2인: 캐릭터명: &quot;대사&quot; 형식으로 한 줄씩 입력" style="width:100%; box-sizing:border-box; padding:8px; border:1px solid var(--border); border-radius:6px; background:var(--surface1); color:var(--text); font-family:inherit; font-size:0.85rem; resize:vertical;"></textarea>
+                    </div>
                 </div>
             </div>
             <div class="modal-footer">
                 <button class="cancel" onclick="closeRestoreCharSelectModal()">취소</button>
-                <button id="restore-draw-back-btn" onclick="restoreDrawGoStep1()" style="display:none; padding:8px 14px; border:1px solid var(--border); border-radius:6px; background:var(--surface2); color:var(--text); cursor:pointer;">이전</button>
-                <button id="restore-draw-next-btn" onclick="restoreDrawConfirm()" style="display:none; padding:8px 16px; border:none; border-radius:6px; background:var(--accent); color:#fff; font-weight:600; cursor:pointer;">그리기</button>
+                <button id="restore-draw-confirm-btn" class="confirm" onclick="restoreDrawConfirm()">그리기</button>
             </div>
         </div>
     </div>
@@ -25205,15 +25246,11 @@
             }
         }
 
-        // ─── 수동 그리기 (2단계 모달) ───
-        // restore_workflow_prompt_llm_solo 일 때만 모달을 띄운다.
-        //   1단계: 캐릭터 (🎲 랜덤 / 지정 캐릭터)
-        //   2단계: 상황  (🎲 랜덤 = LLM 자동 / ✍️ 직접 입력 = LLM이 준수하며 자유 작성)
-        // openRestoreDrawModal() 은 Promise 를 반환:
-        //   null                    → 사용자 취소(그리기 중단)
-        //   {char_name, situation}  → char_name: ''=랜덤/'이름', situation: ''=랜덤/'텍스트'
+        // ─── LLM 수동 그리기 설정 모달 ───
+        // restore_workflow_prompt_llm.py 전용:
+        //   인원(1/2), 캐릭터 드롭다운, 상황(LLM/직접), 1회성 후처리(LLM/직접)
         let _restoreDrawResolve = null;
-        let _restoreDrawState = { selectedChar: '', charLabel: '' };
+        let _restoreDrawState = { characters: [] };
 
         function closeRestoreCharSelectModal() {
             const modal = document.getElementById('restore-char-select-modal');
@@ -25224,140 +25261,177 @@
             }
         }
 
-        function _restoreDrawShowStep(step) {
-            const s1 = document.getElementById('restore-draw-step1');
-            const s2 = document.getElementById('restore-draw-step2');
-            const ind = document.getElementById('restore-draw-step-indicator');
-            const backBtn = document.getElementById('restore-draw-back-btn');
-            const nextBtn = document.getElementById('restore-draw-next-btn');
-            if (step === 1) {
-                s1.style.display = '';
-                s2.style.display = 'none';
-                ind.textContent = '1/2 · 캐릭터';
-                backBtn.style.display = 'none';
-                nextBtn.style.display = 'none';
-            } else {
-                s1.style.display = 'none';
-                s2.style.display = '';
-                ind.textContent = '2/2 · 상황';
-                backBtn.style.display = '';
-                nextBtn.style.display = '';
-                nextBtn.textContent = '그리기';
+        function _restoreSelectedCharacterCount() {
+            const selected = document.querySelector('input[name="restore-character-count"]:checked');
+            return selected ? Number(selected.value) : 1;
+        }
+
+        function onRestoreCharacterCountChange() {
+            const count = _restoreSelectedCharacterCount();
+            const secondWrap = document.getElementById('restore-character-select-2-wrap');
+            const firstWrap = document.getElementById('restore-character-select-1').parentElement;
+            secondWrap.style.display = count === 2 ? 'flex' : 'none';
+            firstWrap.style.gridColumn = count === 1 ? '1 / -1' : '';
+            onRestoreCharacterSelectionChange();
+        }
+
+        function onRestoreCharacterSelectionChange() {
+            const statusEl = document.getElementById('restore-char-select-status');
+            const count = _restoreSelectedCharacterCount();
+            const first = document.getElementById('restore-character-select-1').value;
+            const second = document.getElementById('restore-character-select-2').value;
+            if (count === 2 && first && first === second) {
+                statusEl.textContent = '2인 생성에서는 서로 다른 캐릭터를 선택하세요.';
+                statusEl.style.color = 'var(--danger, #e53935)';
+                return;
             }
+            statusEl.textContent = `${_restoreDrawState.characters.length}명 중 ${count}명을 선택해 그립니다.`;
+            statusEl.style.color = 'var(--text-secondary)';
         }
 
         function onRestoreSituationModeChange() {
             const mode = document.querySelector('input[name="restore-situation-mode"]:checked').value;
             const ta = document.getElementById('restore-situation-input');
-            ta.style.display = (mode === 'custom') ? '' : 'none';
+            ta.disabled = mode !== 'custom';
         }
 
-        function restoreDrawGoStep1() {
-            _restoreDrawShowStep(1);
+        function onRestorePostprocessToggle() {
+            const enabled = document.getElementById('restore-postprocess-test-toggle').checked;
+            document.getElementById('restore-postprocess-controls').style.display = enabled ? '' : 'none';
+            onRestorePostprocessTextModeChange();
+        }
+
+        function onRestorePostprocessTextModeChange() {
+            const enabled = document.getElementById('restore-postprocess-test-toggle').checked;
+            const selected = document.querySelector('input[name="restore-postprocess-text-mode"]:checked');
+            const mode = selected ? selected.value : 'llm';
+            document.getElementById('restore-postprocess-text-input').disabled = !enabled || mode !== 'custom';
         }
 
         function restoreDrawConfirm() {
             const modal = document.getElementById('restore-char-select-modal');
-            const mode = document.querySelector('input[name="restore-situation-mode"]:checked').value;
+            const characterCount = _restoreSelectedCharacterCount();
+            const charNames = [
+                document.getElementById('restore-character-select-1').value,
+            ];
+            if (characterCount === 2) {
+                charNames.push(document.getElementById('restore-character-select-2').value);
+            }
+            if (charNames.some(name => !name)) {
+                showToast('캐릭터를 선택하세요', 'warning');
+                return;
+            }
+            if (new Set(charNames).size !== charNames.length) {
+                showToast('2인 생성에서는 서로 다른 캐릭터를 선택하세요', 'warning');
+                return;
+            }
+
+            const situationMode = document.querySelector('input[name="restore-situation-mode"]:checked').value;
             let situation = '';
-            if (mode === 'custom') {
+            if (situationMode === 'custom') {
                 situation = (document.getElementById('restore-situation-input').value || '').trim();
                 if (!situation) {
-                    showToast('상황을 입력하거나 🎲 랜덤을 선택하세요', 'warning');
+                    showToast('상황을 입력하거나 LLM에게 맡겨보기를 선택하세요', 'warning');
                     return;
                 }
             }
+
+            const postprocessTest = document.getElementById('restore-postprocess-test-toggle').checked;
+            const textModeSelected = document.querySelector('input[name="restore-postprocess-text-mode"]:checked');
+            const postprocessTextMode = textModeSelected ? textModeSelected.value : 'llm';
+            let postprocessText = '';
+            if (postprocessTest && postprocessTextMode === 'custom') {
+                postprocessText = (document.getElementById('restore-postprocess-text-input').value || '').trim();
+                if (!postprocessText) {
+                    showToast('후처리 텍스트를 입력하거나 LLM에게 맡겨보기를 선택하세요', 'warning');
+                    return;
+                }
+            }
+
             if (modal) modal.classList.remove('visible');
             if (_restoreDrawResolve) {
-                _restoreDrawResolve({ char_name: _restoreDrawState.selectedChar, situation });
+                _restoreDrawResolve({
+                    character_count: characterCount,
+                    char_names: charNames,
+                    situation_mode: situationMode,
+                    situation,
+                    postprocess_test: postprocessTest,
+                    postprocess_text_mode: postprocessTextMode,
+                    postprocess_text: postprocessText,
+                });
                 _restoreDrawResolve = null;
             }
         }
 
-        function _restoreDrawPickChar(charName, charLabel) {
-            _restoreDrawState.selectedChar = charName; // '' = 랜덤
-            _restoreDrawState.charLabel = charLabel;
-            const sel = document.getElementById('restore-draw-selected-char');
-            sel.textContent = `선택 캐릭터: ${charLabel}`;
-            // 상황 단계 초기화
-            document.querySelector('input[name="restore-situation-mode"][value="random"]').checked = true;
-            document.getElementById('restore-situation-input').value = '';
-            document.getElementById('restore-situation-input').style.display = 'none';
-            _restoreDrawShowStep(2);
+        function _fillRestoreCharacterSelect(select, characters) {
+            select.innerHTML = '';
+            characters.forEach(character => {
+                const option = document.createElement('option');
+                option.value = character.name || '';
+                option.textContent = `${character.name || '(이름 없음)'}${character.gender_tag ? ` · ${character.gender_tag}` : ''}`;
+                select.appendChild(option);
+            });
         }
 
         async function openRestoreDrawModal() {
             const modal = document.getElementById('restore-char-select-modal');
             const statusEl = document.getElementById('restore-char-select-status');
-            const grid = document.getElementById('restore-char-select-grid');
-            grid.innerHTML = '';
+            const confirmBtn = document.getElementById('restore-draw-confirm-btn');
+            const pendingChoice = new Promise(resolve => { _restoreDrawResolve = resolve; });
+
             statusEl.textContent = '캐릭터 목록을 불러오는 중...';
             statusEl.style.color = 'var(--text-secondary)';
-            _restoreDrawState = { selectedChar: '', charLabel: '' };
-            _restoreDrawShowStep(1);
+            confirmBtn.disabled = true;
+            _restoreDrawState = { characters: [] };
+            document.querySelector('input[name="restore-character-count"][value="1"]').checked = true;
+            document.querySelector('input[name="restore-situation-mode"][value="llm"]').checked = true;
+            document.querySelector('input[name="restore-postprocess-text-mode"][value="llm"]').checked = true;
+            document.getElementById('restore-situation-input').value = '';
+            document.getElementById('restore-postprocess-test-toggle').checked = false;
+            document.getElementById('restore-postprocess-text-input').value = '';
+            onRestoreCharacterCountChange();
+            onRestoreSituationModeChange();
+            onRestorePostprocessToggle();
+
+            const workflowType = currentConfig.illustration_workflow_type || 'v3';
+            const providerNote = document.getElementById('restore-provider-note');
+            if (workflowType === 'chansub') {
+                providerNote.textContent = '챈섭: 캐릭터 LoRA와 Regional 마스크 없이 외모·복장 태그로 생성합니다.';
+            } else {
+                providerNote.textContent = '로컬 V3: 2인 선택 시 Regional RGB 마스크로 캐릭터 영역을 분리합니다.';
+            }
             modal.classList.add('visible');
 
-            // 캐릭터 목록 로드
-            let characters = [];
             try {
                 const resp = await fetch('/api/restore_manual/characters');
                 const data = await resp.json();
-                if (data.error) {
-                    statusEl.textContent = `캐릭터 목록 로드 실패: ${data.error}`;
-                    statusEl.style.color = 'var(--danger, #e53935)';
-                    return null;
+                if (!resp.ok || data.error) {
+                    throw new Error(data.error || `HTTP ${resp.status}`);
                 }
-                characters = data.characters || [];
+                const characters = (data.characters || []).filter(character => character && character.name);
+                if (characters.length === 0) {
+                    throw new Error('선택된 봇에 캐릭터가 없습니다. 먼저 봇/캐릭터를 설정하세요.');
+                }
+                _restoreDrawState.characters = characters;
+                const select1 = document.getElementById('restore-character-select-1');
+                const select2 = document.getElementById('restore-character-select-2');
+                _fillRestoreCharacterSelect(select1, characters);
+                _fillRestoreCharacterSelect(select2, characters);
+                select1.selectedIndex = 0;
+                select2.selectedIndex = characters.length > 1 ? 1 : 0;
+
+                const twoRadio = document.querySelector('input[name="restore-character-count"][value="2"]');
+                twoRadio.disabled = characters.length < 2;
+                twoRadio.title = characters.length < 2 ? '서로 다른 캐릭터가 2명 이상 필요합니다.' : '';
+                confirmBtn.disabled = false;
+                onRestoreCharacterSelectionChange();
             } catch (e) {
+                console.error('[수동 그리기] 캐릭터 목록 로드 실패:', e);
                 statusEl.textContent = `캐릭터 목록 로드 오류: ${e.message}`;
                 statusEl.style.color = 'var(--danger, #e53935)';
-                return null;
+                confirmBtn.disabled = true;
             }
-
-            if (characters.length === 0) {
-                statusEl.textContent = '선택된 봇에 캐릭터가 없습니다. 먼저 봇/캐릭터를 설정하세요.';
-                statusEl.style.color = 'var(--danger, #e53935)';
-                return null;
-            }
-            statusEl.textContent = `${characters.length}명 중 하나를 선택하거나 🎲 랜덤으로 그리세요.`;
-
-            // 🎲 랜덤 카드 (캐릭터 무작위)
-            const randomCard = document.createElement('div');
-            randomCard.style.cursor = 'pointer';
-            randomCard.style.textAlign = 'center';
-            randomCard.style.padding = '10px 6px';
-            randomCard.style.border = '1px solid var(--border)';
-            randomCard.style.borderRadius = '8px';
-            randomCard.style.background = 'var(--surface2)';
-            randomCard.innerHTML = `
-                <div style="width:96px; height:96px; margin:0 auto 6px; display:flex; align-items:center; justify-content:center; font-size:2.6rem; background:var(--surface1); border-radius:6px;">🎲</div>
-                <div style="font-weight:700; font-size:0.85rem;">랜덤</div>
-                <div style="font-size:0.72rem; color:var(--text-secondary);">무작위 캐릭터</div>`;
-            randomCard.onclick = () => _restoreDrawPickChar('', '🎲 랜덤');
-            grid.appendChild(randomCard);
-
-            // 캐릭터 카드들
-            characters.forEach(ch => {
-                const card = document.createElement('div');
-                card.style.cursor = 'pointer';
-                card.style.textAlign = 'center';
-                card.style.padding = '10px 6px';
-                card.style.border = '1px solid var(--border)';
-                card.style.borderRadius = '8px';
-                card.style.background = 'var(--surface1)';
-                const imgHtml = ch.rep_url
-                    ? `<img src="${ch.rep_url}" alt="" style="width:96px; height:96px; object-fit:cover; border-radius:6px; display:block; margin:0 auto 6px;">`
-                    : `<div style="width:96px; height:96px; margin:0 auto 6px; background:var(--surface2); border-radius:6px; display:flex; align-items:center; justify-content:center; color:var(--text-secondary); font-size:0.7rem;">이미지 없음</div>`;
-                card.innerHTML = `
-                    ${imgHtml}
-                    <div style="font-weight:700; font-size:0.85rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${ch.name}</div>
-                    <div style="font-size:0.72rem; color:var(--text-secondary);">${ch.gender_tag || ''}</div>`;
-                card.onclick = () => _restoreDrawPickChar(ch.name, ch.name);
-                grid.appendChild(card);
-            });
-
-            // Promise 대기 (취소=null, 확정={char_name, situation})
-            return new Promise(resolve => { _restoreDrawResolve = resolve; });
+            return pendingChoice;
         }
 
         async function manualRestoreDraw() {
@@ -25395,20 +25469,15 @@
                 }
             }
 
-            // restore_workflow_prompt_llm_solo 일 때 2단계 모달(캐릭터 → 상황)
-            // 결과: null=취소, {char_name, situation}=확정
-            //   char_name: ''=랜덤 / '이름'=지정
-            //   situation: ''=랜덤(LLM 자동) / '텍스트'=LLM이 준수하며 자유 작성
-            let charName = '';
-            let situation = '';
-            if ((currentConfig.restore_prompt_file || '') === 'restore_workflow_prompt_llm_solo.py') {
+            // restore_workflow_prompt_llm.py 일 때 인원/캐릭터/상황/후처리 모달 사용
+            let requestBody = {};
+            if ((currentConfig.restore_prompt_file || '') === 'restore_workflow_prompt_llm.py') {
                 const choice = await openRestoreDrawModal();
                 if (choice === null) {
                     console.log('[수동 그리기] 모달 취소로 중단');
                     return;
                 }
-                charName = choice.char_name || '';
-                situation = choice.situation || '';
+                requestBody = choice;
             }
 
             const btn = document.getElementById('restore-manual-btn');
@@ -25418,7 +25487,7 @@
                 const resp = await fetch('/api/restore_manual_draw', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ char_name: charName || '', situation: situation || '' }),
+                    body: JSON.stringify(requestBody),
                 });
                 const data = await resp.json();
                 if (data.success && data.queued) {

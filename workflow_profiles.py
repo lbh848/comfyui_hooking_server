@@ -61,11 +61,28 @@ _LEGACY_ASSET_TYPES = {
 RESTORE_PROMPT_COMPATIBILITY = {
     "restore_workflow_prompt_nikke_style_v2.py": frozenset({"v1"}),
     "restore_workflow_prompt_terminater_style.py": frozenset({"v1"}),
-    "restore_workflow_prompt_llm_solo.py": frozenset({"v3", "chansub"}),
+    # 같은 V3 RAW 섹션을 만들고 실제 공급자에 따라 로컬 V3 또는 챈섭 빌더가
+    # 후속 조립한다. 로컬만 2인 Regional RGB 마스크를 사용한다.
+    "restore_workflow_prompt_llm.py": frozenset({"v3", "chansub"}),
     # 이 파일은 설정의 자동 prompt_format을 읽어 V1에서는 [ILXL]/[UPSCALE],
     # V3/챈섭에서는 삽화 섹션 형식을 내보내므로 세 계열 모두 호환된다.
     "restore_workflow_prompt_nikke_style_v3.py": frozenset({"v1", "v3", "chansub"}),
 }
+
+LEGACY_RESTORE_PROMPT_FILES = {
+    "restore_workflow_prompt_llm_solo.py": "restore_workflow_prompt_llm.py",
+}
+
+
+def normalize_restore_prompt_file(value) -> str:
+    filename = str(value or "").strip()
+    migrated = LEGACY_RESTORE_PROMPT_FILES.get(filename, filename)
+    if migrated != filename:
+        print(
+            f"[WORKFLOW_PROFILE] 레거시 복원 프롬프트 이름 이관: "
+            f"{filename!r} -> {migrated!r}"
+        )
+    return migrated
 
 
 def normalize_illustration_workflow_type(value, *, fallback: str = ILLUST_V3) -> str:
@@ -251,10 +268,13 @@ def restore_family(workflow_type: str) -> str:
 def compatible_restore_prompt_files(workflow_type: str, files: Iterable[str]) -> list[str]:
     required_families = frozenset(restore_families(workflow_type))
     return [
-        str(filename)
+        normalize_restore_prompt_file(filename)
         for filename in files
         if required_families.issubset(
-            RESTORE_PROMPT_COMPATIBILITY.get(str(filename), frozenset())
+            RESTORE_PROMPT_COMPATIBILITY.get(
+                normalize_restore_prompt_file(filename),
+                frozenset(),
+            )
         )
     ]
 
@@ -262,7 +282,8 @@ def compatible_restore_prompt_files(workflow_type: str, files: Iterable[str]) ->
 def is_restore_prompt_compatible(filename: str, workflow_type: str) -> bool:
     if not str(filename or "").strip():
         return True
-    return str(filename) in compatible_restore_prompt_files(workflow_type, [str(filename)])
+    normalized = normalize_restore_prompt_file(filename)
+    return normalized in compatible_restore_prompt_files(workflow_type, [normalized])
 
 
 def _default_illustration_source_paths(config: dict) -> dict:
@@ -294,6 +315,9 @@ def normalize_workflow_config(config: dict) -> dict:
     config["illustration_workflow_type"] = illustration_type
     config["illustration_workflow_source_paths"] = _default_illustration_source_paths(config)
     config["illustration_provider"] = illustration_provider_mode(illustration_type)
+    config["restore_prompt_file"] = normalize_restore_prompt_file(
+        config.get("restore_prompt_file")
+    )
 
     if illustration_type == ILLUST_CHANSUB_V3_ANIMA:
         config["chansub_workflow_type"] = "anima"

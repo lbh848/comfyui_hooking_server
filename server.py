@@ -2804,22 +2804,50 @@ async def complete_prompt_from_reschedule(prompt_id: str, save_node_id: str, fil
         prompts[prompt_id]["outputs"] = {"images": []}
 
 
-def _get_illustration_postprocess_settings(bot_name: str) -> dict | None:
-    """봇별 후처리 설정을 현재 모드에 맞게 스냅샷으로 반환한다."""
+def _get_illustration_postprocess_settings(
+    bot_name: str,
+    *,
+    force: bool = False,
+) -> dict | None:
+    """봇별 후처리 설정을 현재 모드에 맞게 스냅샷으로 반환한다.
+
+    force=True면 수동 그리기 1회성 테스트를 위해 전역/봇 활성 토글을
+    저장하지 않고 우회한다.
+    """
     try:
         from modes.postprocess import get_vn_settings, get_bubble_settings
         from modes.bot_mode import _get_postprocess_mode
 
         postprocess_mode = _get_postprocess_mode(bot_name)
         if postprocess_mode == "bubble":
-            bubble_settings = get_bubble_settings(app_config, bot_name=bot_name)
+            bubble_settings = get_bubble_settings(
+                app_config,
+                bot_name=bot_name,
+                force=force,
+            )
             if bubble_settings:
                 return {"_mode": "bubble", **bubble_settings}
-            print(f"[BACKUP] 말풍선 후처리 설정이 비어 있음: bot={bot_name!r}")
+            print(
+                f"[BACKUP] 말풍선 후처리 설정이 비어 있음: "
+                f"bot={bot_name!r}, force={force}"
+            )
             return None
-        return get_vn_settings(app_config, bot_name=bot_name)
+        settings = get_vn_settings(
+            app_config,
+            bot_name=bot_name,
+            force=force,
+        )
+        if not settings:
+            print(
+                f"[BACKUP] VN 후처리 설정이 비어 있음: "
+                f"bot={bot_name!r}, force={force}"
+            )
+        return settings
     except Exception as e:
-        print(f"[BACKUP] ⚠ 후처리 설정 조회 실패: bot={bot_name!r}, error={e}")
+        print(
+            f"[BACKUP] ⚠ 후처리 설정 조회 실패: "
+            f"bot={bot_name!r}, force={force}, error={e}"
+        )
         traceback.print_exc()
         return None
 
@@ -3513,7 +3541,19 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
 
         # 후처리([SPEAK] 합성): 활성 시 설정 스냅샷 + 이번 생성의 SPEAK 원문 전달
         # 봇의 postprocess_mode(vn|bubble) 에 따라 어느 합성 빌더를 쓸지 결정.
-        _pp_settings = _get_illustration_postprocess_settings(_backup_bot_name)
+        _force_postprocess = bool(
+            raw_body.get("illustration_force_postprocess", False)
+        )
+        _pp_settings = _get_illustration_postprocess_settings(
+            _backup_bot_name,
+            force=_force_postprocess,
+        )
+        if _force_postprocess and not _pp_settings:
+            print(
+                f"[ILLUST:POSTPROCESS] 1회성 후처리 설정을 만들지 못함: "
+                f"prompt={prompt_id}, bot={_backup_bot_name!r}"
+            )
+            raise RuntimeError("수동 그리기 후처리 테스트 설정을 불러오지 못했습니다")
         _backup_name, img_bytes = await save_backup(
             img_bytes,
             prompt_id,
@@ -10552,10 +10592,144 @@ async def handle_api_memo(request: web.Request) -> web.Response:
 
 
 # ─── 워크플로우 복원 수동 그리기 ─────────────────────────────
+RESTORE_WORKFLOW_PROMPT_LLM = "restore_workflow_prompt_llm.py"
+
+
+def _normalize_restore_manual_speak_text(
+    speak_text: str,
+    character_names: list[str],
+) -> str:
+    """수동 입력 [SPEAK] 본문을 검증하고 1인 무기명 입력에는 이름을 붙인다."""
+    source = str(speak_text or "").strip()
+    if not source:
+        raise ValueError("후처리 테스트 텍스트가 비어 있습니다")
+    from modes.postprocess import parse_speak
+
+    segments = parse_speak(source, strip_emotion=True)
+    if not segments:
+        raise ValueError("후처리 테스트 텍스트를 대사/생각으로 해석하지 못했습니다")
+    canonical_names = {
+        str(name or "").strip().casefold(): str(name or "").strip()
+        for name in character_names
+        if str(name or "").strip()
+    }
+    if not canonical_names:
+        raise ValueError("후처리 테스트의 선택 캐릭터가 비어 있습니다")
+
+    has_unnamed = any(not str(segment.get("speaker") or "").strip() for segment in segments)
+    for segment in segments:
+        speaker = str(segment.get("speaker") or "").strip()
+        if speaker and speaker.casefold() not in canonical_names:
+            raise ValueError(
+                f"후처리 대사 발화자가 선택 캐릭터가 아닙니다: {speaker!r}"
+            )
+    if not has_unnamed:
+        return source
+    if len(canonical_names) != 1:
+        raise ValueError(
+            "2인 후처리 텍스트는 각 줄을 '캐릭터명: \"대사\"' 형식으로 입력해야 합니다"
+        )
+
+    only_name = next(iter(canonical_names.values()))
+    normalized_lines: list[str] = []
+    for segment in segments:
+        speaker = str(segment.get("speaker") or "").strip() or only_name
+        speaker = canonical_names.get(speaker.casefold(), speaker)
+        text = str(segment.get("text") or "").strip()
+        if not text:
+            print(
+                f"[RESTORE_MANUAL] 비어 있는 후처리 텍스트 세그먼트 건너뜀: "
+                f"segment={segment!r}"
+            )
+            continue
+        suffix = ""
+        if segment.get("balloon_type"):
+            suffix = f" #{segment['balloon_type']}"
+        elif segment.get("emotion"):
+            emotion = str(segment["emotion"])
+            suffix = " " + (emotion if emotion.startswith("#") else f"#{emotion}")
+        if segment.get("type") == "thought":
+            normalized_lines.append(f"{speaker}: ({text}){suffix}")
+        else:
+            normalized_lines.append(
+                f'{speaker}: "{text.replace(chr(34), chr(39))}"{suffix}'
+            )
+    if not normalized_lines:
+        raise ValueError("정규화할 후처리 텍스트가 없습니다")
+    return "\n".join(normalized_lines)
+
+
+async def _build_restore_manual_multi_char_context(result: dict) -> dict:
+    """LLM 복원 결과로 기존 V3 Regional RGB 마스크 큐 컨텍스트를 만든다."""
+    characters = [
+        copy.deepcopy(character)
+        for character in (result.get("characters") or [])
+        if isinstance(character, dict)
+        and str(character.get("name") or "").strip()
+    ]
+    if len(characters) != 2:
+        raise ValueError(
+            f"수동 그리기 Regional 마스크는 정확히 2인이 필요합니다: "
+            f"actual={len(characters)}"
+        )
+    descriptor = {
+        "slot": 1,
+        "camera": "",
+        "scene": str(result.get("setup") or "").strip(),
+        "supplement": str(result.get("supplement") or "").strip(),
+        "speak": str(result.get("speak_text") or "").strip(),
+        "characters": characters,
+    }
+    prompts_for_layout = illustration_context_pipeline.load_prompt_files()
+    layout_prompt = str(prompts_for_layout.get("multi_char_mask") or "").strip()
+    if not layout_prompt:
+        print("[RESTORE_MANUAL:MULTI_CHAR] multi_char_mask 프롬프트가 비어 있습니다")
+        raise RuntimeError("2인 Regional 마스크 프롬프트를 불러오지 못했습니다")
+
+    await illustration_context_pipeline.calculate_multi_char_layouts(
+        [descriptor],
+        layout_prompt,
+    )
+    layout = descriptor.get("multi_char_layout")
+    if not isinstance(layout, dict):
+        error = str(
+            descriptor.get("multi_char_layout_error")
+            or "Regional 마스크 레이아웃 결과가 없습니다"
+        )
+        print(
+            f"[RESTORE_MANUAL:MULTI_CHAR] 레이아웃 생성 실패: "
+            f"characters={[item.get('name') for item in characters]}, error={error}"
+        )
+        raise RuntimeError(error)
+
+    ordered_characters = [
+        copy.deepcopy(character)
+        for character in (descriptor.get("characters") or [])
+        if isinstance(character, dict)
+    ]
+    context = {
+        "enable": True,
+        "char_num": len(ordered_characters),
+        "characters": ordered_characters,
+        "character_order": list(layout.get("character_order") or []),
+        "background_prompt": str(layout.get("background_prompt") or "").strip(),
+        "composition_prompt": str(layout.get("composition_prompt") or "").strip(),
+        "layout": copy.deepcopy(layout),
+        "mask_location": "region_mask",
+    }
+    print(
+        f"[RESTORE_MANUAL:MULTI_CHAR] 로컬 V3 Regional 컨텍스트 생성 완료: "
+        f"order={context['character_order']}"
+    )
+    return context
+
+
 async def handle_api_restore_manual_draw(request: web.Request) -> web.Response:
     """수동 그리기: 복원 프롬프트 파일로 프롬프트를 만들어 그림을 그린다.
     bot이 선택되어 있으면(삽화 모드는 항상 ON) illustration 큐로 들어가 동일한 파이프라인을 탄다."""
-    prompt_file = app_config.get("restore_prompt_file", "")
+    prompt_file = workflow_profiles.normalize_restore_prompt_file(
+        app_config.get("restore_prompt_file", "")
+    )
     if not prompt_file:
         print("[RESTORE_MANUAL] 복원 프롬프트 파일이 지정되지 않음")
         return web.json_response({"error": "복원 프롬프트 파일이 지정되지 않았습니다"}, status=400)
@@ -10578,35 +10752,140 @@ async def handle_api_restore_manual_draw(request: web.Request) -> web.Response:
 
     filepath = os.path.join(CUSTOMPROMPT_DIR, prompt_file)
     if not os.path.isfile(filepath):
+        print(f"[RESTORE_MANUAL] 복원 프롬프트 파일 없음: path={filepath!r}")
         return web.json_response({"error": f"복원 프롬프트 파일 없음: {prompt_file}"}, status=400)
 
-    # 수동 그리기 캐릭터/상황 지정 (선택 모달에서 고른 경우).
-    # restore_workflow_prompt_llm_solo 처럼 run(char_name=..., situation=...) 시그니처를
-    # 지원하는 프롬프트 파일에만 전달되고, 그렇지 않은 파일은 무시한다.
+    body = {}
+    try:
+        parsed_body = await request.json()
+        if not isinstance(parsed_body, dict):
+            print(
+                f"[RESTORE_MANUAL] 요청 JSON 루트가 object가 아님: "
+                f"type={type(parsed_body).__name__}"
+            )
+            return web.json_response({"error": "요청 형식이 올바르지 않습니다"}, status=400)
+        body = parsed_body
+    except Exception as e:
+        print(f"[RESTORE_MANUAL] 요청 JSON 파싱 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"error": "요청 JSON을 읽지 못했습니다"}, status=400)
+
     char_name = None
     situation = None
-    try:
-        body = await request.json()
-        if isinstance(body, dict):
-            char_name = (body.get("char_name") or "").strip() or None
-            situation = (body.get("situation") or "").strip() or None
-    except Exception:
-        char_name = None
-        situation = None
+    char_names: list[str] = []
+    postprocess_test = False
+    speak_text = ""
+    postprocess_mode = "vn"
+    bot_name = str(app_config.get("bot_selected") or "").strip()
+    restore_provider = (
+        workflow_profiles.illustration_providers(illustration_workflow_type)[0]
+        if bot_name
+        else "comfy"
+    )
+
+    if prompt_file == RESTORE_WORKFLOW_PROMPT_LLM:
+        try:
+            if not bot_name:
+                raise ValueError("LLM 수동 그리기는 선택된 봇이 필요합니다")
+            raw_count = body.get("character_count")
+            if isinstance(raw_count, bool):
+                raise ValueError("character_count는 1 또는 2여야 합니다")
+            character_count = int(raw_count)
+            if character_count not in (1, 2):
+                raise ValueError("character_count는 1 또는 2여야 합니다")
+            raw_names = body.get("char_names")
+            if not isinstance(raw_names, list):
+                raise ValueError("char_names는 배열이어야 합니다")
+            char_names = [
+                str(name or "").strip()
+                for name in raw_names
+                if str(name or "").strip()
+            ]
+            if len(char_names) != character_count:
+                raise ValueError(
+                    f"선택 인원과 캐릭터 수가 다릅니다: "
+                    f"count={character_count}, names={char_names}"
+                )
+            if len({name.casefold() for name in char_names}) != len(char_names):
+                raise ValueError("같은 캐릭터를 중복 선택할 수 없습니다")
+
+            situation_mode = str(body.get("situation_mode") or "llm").strip().lower()
+            if situation_mode not in ("llm", "custom"):
+                raise ValueError(f"알 수 없는 상황 입력 방식입니다: {situation_mode!r}")
+            situation = str(body.get("situation") or "").strip()
+            if situation_mode == "custom" and not situation:
+                raise ValueError("직접 입력할 상황이 비어 있습니다")
+            if situation_mode == "llm":
+                situation = None
+
+            raw_postprocess_test = body.get("postprocess_test", False)
+            if not isinstance(raw_postprocess_test, bool):
+                raise ValueError("postprocess_test는 boolean이어야 합니다")
+            postprocess_test = raw_postprocess_test
+            if postprocess_test:
+                text_mode = str(
+                    body.get("postprocess_text_mode") or "llm"
+                ).strip().lower()
+                if text_mode not in ("llm", "custom"):
+                    raise ValueError(
+                        f"알 수 없는 후처리 텍스트 방식입니다: {text_mode!r}"
+                    )
+                if text_mode == "custom":
+                    speak_text = _normalize_restore_manual_speak_text(
+                        str(body.get("postprocess_text") or ""),
+                        char_names,
+                    )
+                from modes.bot_mode import _get_postprocess_mode
+
+                postprocess_mode = _get_postprocess_mode(bot_name)
+            print(
+                f"[RESTORE_MANUAL] LLM 모달 입력 검증 완료: "
+                f"provider={restore_provider}, characters={char_names}, "
+                f"situation={'custom' if situation else 'llm'}, "
+                f"postprocess={postprocess_test}, "
+                f"speak={'custom' if speak_text else ('llm' if postprocess_test else 'off')}"
+            )
+        except Exception as e:
+            print(f"[RESTORE_MANUAL] LLM 모달 입력 오류: {e}, body={body!r}")
+            traceback.print_exc()
+            return web.json_response({"error": str(e)}, status=400)
+    else:
+        char_name = str(body.get("char_name") or "").strip() or None
+        situation = str(body.get("situation") or "").strip() or None
 
     try:
         spec = importlib.util.spec_from_file_location("restore_prompt_manual", filepath)
+        if spec is None or spec.loader is None:
+            print(f"[RESTORE_MANUAL] 프롬프트 모듈 spec 생성 실패: path={filepath!r}")
+            return web.json_response(
+                {"error": f"복원 프롬프트 모듈을 불러오지 못했습니다: {prompt_file}"},
+                status=500,
+            )
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
 
         if not hasattr(module, "run"):
+            print(f"[RESTORE_MANUAL] run() 함수 없음: prompt={prompt_file!r}")
             return web.json_response({"error": f"run() 함수 없음: {prompt_file}"}, status=400)
 
         # run() 시그니처에서 지원하는 키워드 인자만 골라 전달
         import inspect
         run_params = inspect.signature(module.run).parameters
         kwargs = {}
-        if char_name and "char_name" in run_params:
+        if prompt_file == RESTORE_WORKFLOW_PROMPT_LLM:
+            if "char_names" in run_params:
+                kwargs["char_names"] = char_names
+            else:
+                raise RuntimeError("새 LLM 복원 프롬프트가 char_names 인자를 지원하지 않습니다")
+            if "situation" in run_params:
+                kwargs["situation"] = situation
+            if "postprocess_test" in run_params:
+                kwargs["postprocess_test"] = postprocess_test
+            if "speak_text" in run_params:
+                kwargs["speak_text"] = speak_text
+            if "postprocess_mode" in run_params:
+                kwargs["postprocess_mode"] = postprocess_mode
+        elif char_name and "char_name" in run_params:
             kwargs["char_name"] = char_name
             print(f"[RESTORE_MANUAL] 지정 캐릭터로 그리기: {char_name!r}")
         elif char_name:
@@ -10614,10 +10893,10 @@ async def handle_api_restore_manual_draw(request: web.Request) -> web.Response:
                 f"[RESTORE_MANUAL] 이 프롬프트({prompt_file})는 char_name 을 지원하지 않아 "
                 "랜덤으로 그립니다."
             )
-        if situation and "situation" in run_params:
+        if prompt_file != RESTORE_WORKFLOW_PROMPT_LLM and situation and "situation" in run_params:
             kwargs["situation"] = situation
             print(f"[RESTORE_MANUAL] 상황 지시 전달({len(situation)}자)")
-        elif situation:
+        elif prompt_file != RESTORE_WORKFLOW_PROMPT_LLM and situation:
             print(
                 f"[RESTORE_MANUAL] 이 프롬프트({prompt_file})는 situation 을 지원하지 않아 무시합니다."
             )
@@ -10626,15 +10905,46 @@ async def handle_api_restore_manual_draw(request: web.Request) -> web.Response:
         negative = result.get("negative", "") if isinstance(result, dict) else ""
 
         if not positive:
+            print(
+                f"[RESTORE_MANUAL] 프롬프트 실행 결과 positive가 비어 있음: "
+                f"prompt={prompt_file!r}, result_type={type(result).__name__}"
+            )
             return web.json_response({"error": "빈 프롬프트 - 실행 불가"}, status=400)
-
-        bot_name = app_config.get("bot_selected", "")
 
         # 삽화 모드(항상 ON): bot 선택 시 illustration 큐로 동일 파이프라인 타기
         if bot_name:
-            restore_provider = workflow_profiles.illustration_providers(
-                illustration_workflow_type
-            )[0]
+            raw_body = {
+                "illustration_provider": restore_provider,
+                "illustration_gen_method": "수동 복원",
+            }
+            result_characters = (
+                result.get("characters") if isinstance(result, dict) else []
+            ) or []
+            if (
+                prompt_file == RESTORE_WORKFLOW_PROMPT_LLM
+                and len(result_characters) == 2
+            ):
+                prompt_format = workflow_profiles.illustration_prompt_format(
+                    illustration_workflow_type,
+                    restore_provider,
+                )
+                if restore_provider == "comfy" and prompt_format == "v3":
+                    raw_body["illustration_multi_char"] = (
+                        await _build_restore_manual_multi_char_context(result)
+                    )
+                elif restore_provider == "chansub":
+                    print(
+                        "[RESTORE_MANUAL:MULTI_CHAR] 챈섭 2인 생성: "
+                        "LoRA/Regional 마스크 없이 태그 프롬프트 경로 사용"
+                    )
+                else:
+                    raise RuntimeError(
+                        "현재 공급자/프롬프트 형식은 2인 수동 그리기를 지원하지 않습니다: "
+                        f"provider={restore_provider}, format={prompt_format}"
+                    )
+            if postprocess_test:
+                raw_body["illustration_force_postprocess"] = True
+
             prompt_id = f"manual-{uuid.uuid4().hex[:8]}"
             prompt_data = {
                 "manual_pos": {
@@ -10666,10 +10976,7 @@ async def handle_api_restore_manual_draw(request: web.Request) -> web.Response:
                 {
                     "prompt_id": prompt_id,
                     "prompt_data": prompt_data,
-                    "raw_body": {
-                        "illustration_provider": restore_provider,
-                        "illustration_gen_method": "수동 복원",
-                    },
+                    "raw_body": raw_body,
                 },
                 priority=0,
             ))
@@ -10693,6 +11000,7 @@ async def handle_api_restore_manual_characters(request: web.Request) -> web.Resp
     """수동 그리기 캐릭터 선택 모달용: 선택된 봇의 캐릭터 목록(name/gender/대표이미지) 반환."""
     bot_name = app_config.get("bot_selected", "")
     if not bot_name:
+        print("[RESTORE_MANUAL_CHARS] bot_selected가 없어 캐릭터 목록을 반환할 수 없음")
         return web.json_response(
             {"error": "bot_selected 가 지정되지 않았습니다"}, status=400
         )
@@ -10706,6 +11014,7 @@ async def handle_api_restore_manual_characters(request: web.Request) -> web.Resp
 
     bot = next((b for b in data.get("bots", []) if b.get("name") == bot_name), None)
     if not bot:
+        print(f"[RESTORE_MANUAL_CHARS] 선택된 봇을 찾을 수 없음: bot={bot_name!r}")
         return web.json_response(
             {"error": f"봇을 찾을 수 없습니다: {bot_name}"}, status=404
         )
@@ -10722,6 +11031,8 @@ async def handle_api_restore_manual_characters(request: web.Request) -> web.Resp
             "rep_url": rep_url,
         })
 
+    if not characters:
+        print(f"[RESTORE_MANUAL_CHARS] 선택된 봇의 캐릭터 목록이 비어 있음: bot={bot_name!r}")
     print(f"[RESTORE_MANUAL_CHARS] 봇={bot_name!r} 캐릭터 {len(characters)}명")
     return web.json_response({"bot_name": bot_name, "characters": characters})
 

@@ -77,15 +77,30 @@ def test_restore_prompt_compatibility_matrix_covers_v1_v3_and_chansub():
         "restore_workflow_prompt_nikke_style_v3.py",
     ]
     assert workflow_profiles.compatible_restore_prompt_files("v3_anima", files) == [
-        "restore_workflow_prompt_llm_solo.py",
+        "restore_workflow_prompt_llm.py",
         "restore_workflow_prompt_nikke_style_v3.py",
     ]
     assert workflow_profiles.compatible_restore_prompt_files(
         "chansub_v3_anima", files
     ) == [
-        "restore_workflow_prompt_llm_solo.py",
+        "restore_workflow_prompt_llm.py",
         "restore_workflow_prompt_nikke_style_v3.py",
     ]
+
+
+def test_legacy_restore_llm_solo_filename_migrates_without_exposing_old_file():
+    config = {
+        "illustration_workflow_type": "v3",
+        "restore_prompt_file": "restore_workflow_prompt_llm_solo.py",
+    }
+
+    workflow_profiles.normalize_workflow_config(config)
+
+    assert config["restore_prompt_file"] == "restore_workflow_prompt_llm.py"
+    assert workflow_profiles.is_restore_prompt_compatible(
+        config["restore_prompt_file"],
+        "v3",
+    )
     assert not workflow_profiles.is_restore_prompt_compatible(
         "restore_workflow_prompt_nikke_style_v2.py", "v3"
     )
