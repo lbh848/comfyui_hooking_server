@@ -10464,6 +10464,24 @@
             background: color-mix(in srgb, var(--surface2) 62%, var(--surface));
         }
         .batch-bulk-footer-note { color: var(--text2); font-size: 0.7rem; }
+        .batch-bulk-footer-actions {
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 8px;
+        }
+        .batch-bulk-load-btn {
+            min-height: 38px;
+            padding: 7px 14px;
+            border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+            border-radius: 8px;
+            background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+            color: var(--text);
+            cursor: pointer;
+            font-size: 0.73rem;
+            font-weight: 650;
+        }
+        .batch-bulk-load-btn:hover { border-color: var(--accent); color: var(--accent); }
         .batch-bulk-apply-btn {
             min-width: 160px;
             min-height: 38px;
@@ -10487,6 +10505,8 @@
             .batch-bulk-overlay { padding: 8px; }
             .batch-bulk-dialog { width: calc(100vw - 16px); max-height: 94vh; }
             .batch-bulk-footer-note { display: none; }
+            .batch-bulk-footer-actions { width: 100%; display: grid; grid-template-columns: 1fr 1fr; }
+            .batch-bulk-load-btn,
             .batch-bulk-apply-btn { width: 100%; }
         }
 
@@ -69083,7 +69103,10 @@
 
                     <div class="batch-bulk-footer">
                         <span class="batch-bulk-footer-note">활성화한 값만 기존 슬롯 설정을 덮어씁니다.</span>
-                        <button class="batch-bulk-apply-btn" onclick="applyBatchBulkEdit()">${batchChains.length}개 슬롯에 적용</button>
+                        <div class="batch-bulk-footer-actions">
+                            <button type="button" class="batch-bulk-load-btn" onclick="loadAssetSettingsIntoBatchBulkEdit()">에셋 생성의 저장된 설정 불러오기</button>
+                            <button type="button" class="batch-bulk-apply-btn" onclick="applyBatchBulkEdit()">${batchChains.length}개 슬롯에 적용</button>
+                        </div>
                     </div>
                 </div>`;
             document.body.appendChild(overlay);
@@ -69242,6 +69265,223 @@
                     });
                 });
             });
+        }
+
+        function loadAssetSettingsIntoBatchBulkEdit() {
+            const overlay = document.getElementById('batch-bulk-overlay');
+            if (!overlay) {
+                console.error('[BATCH] 저장 설정 불러오기 실패: 일괄 설정 모달을 찾지 못했습니다');
+                showToast('일괄 설정 모달을 찾지 못했습니다', 'error');
+                return;
+            }
+
+            let raw;
+            try {
+                raw = localStorage.getItem('assetModeSettings');
+            } catch (e) {
+                console.error('[BATCH] 저장 설정 불러오기 실패: 캐시 접근 오류', e);
+                showToast('저장 설정 불러오기 실패', 'error');
+                return;
+            }
+            if (!raw) {
+                console.error('[BATCH] 저장 설정 불러오기 실패: 저장된 에셋 설정 캐시 없음');
+                showToast('저장된 에셋 설정이 없습니다', 'error');
+                return;
+            }
+
+            let s;
+            try {
+                s = JSON.parse(raw);
+            } catch (e) {
+                console.error('[BATCH] 저장 설정 불러오기 실패: 캐시 JSON 파싱 오류', e);
+                showToast('저장 설정 불러오기 실패', 'error');
+                return;
+            }
+            if (!s || typeof s !== 'object' || Array.isArray(s)) {
+                console.error('[BATCH] 저장 설정 불러오기 실패: 캐시 형식 오류', s);
+                showToast('저장 설정 형식이 올바르지 않습니다', 'error');
+                return;
+            }
+
+            try {
+                const capabilities = getAssetWorkflowCapabilities();
+                const failures = [];
+                let loadedCount = 0;
+                const recordFailure = (label, reason, value) => {
+                    failures.push(label);
+                    console.error(`[BATCH] 저장 설정 항목 불러오기 실패: ${label} - ${reason}`, value);
+                };
+                const findControl = (id, label) => {
+                    const control = overlay.querySelector(`#${id}`);
+                    if (!control) recordFailure(label, '컨트롤 없음', id);
+                    return control;
+                };
+                const setBulkDropdown = (field, value, label, available = true) => {
+                    if (!available || value === undefined || value === null || value === '') return;
+                    const customSelect = overlay.querySelector(`.custom-select[data-field="${field}"]`);
+                    if (!customSelect) {
+                        recordFailure(label, '드롭다운 없음', field);
+                        return;
+                    }
+                    const normalizedValue = String(value);
+                    const options = customSelect.querySelectorAll('.custom-select-option');
+                    const option = Array.from(options).find(item => item.dataset.value === normalizedValue);
+                    if (!option) {
+                        recordFailure(label, '저장값과 일치하는 옵션 없음', normalizedValue);
+                        return;
+                    }
+                    bulkDropdownValues[field] = normalizedValue;
+                    const valueElement = customSelect.querySelector('.custom-select-value');
+                    if (!valueElement) {
+                        recordFailure(label, '선택값 표시 영역 없음', field);
+                        return;
+                    }
+                    valueElement.textContent = option.textContent;
+                    options.forEach(item => item.classList.toggle('selected', item === option));
+                    loadedCount++;
+                };
+                const setBulkAction = (id, value, label, available = true) => {
+                    if (!available || value === undefined) return;
+                    if (typeof value !== 'boolean') {
+                        recordFailure(label, 'ON/OFF 값 형식 오류', value);
+                        return;
+                    }
+                    const control = findControl(id, label);
+                    if (!control) return;
+                    control.value = value ? 'on' : 'off';
+                    loadedCount++;
+                };
+                const setBulkNumber = (id, value, label, checkId = '', available = true) => {
+                    if (!available || value === undefined || value === null) return;
+                    const normalizedValue = Number(value);
+                    if (!Number.isFinite(normalizedValue)) {
+                        recordFailure(label, '숫자 값 형식 오류', value);
+                        return;
+                    }
+                    const control = findControl(id, label);
+                    if (!control) return;
+                    control.value = normalizedValue;
+                    if (checkId) {
+                        const checkbox = findControl(checkId, `${label} 적용`);
+                        if (!checkbox) return;
+                        checkbox.checked = true;
+                        checkbox.dispatchEvent(new Event('change'));
+                    }
+                    control.dispatchEvent(new Event('input'));
+                    loadedCount++;
+                };
+                const cloneLoraList = (key, label, available = true) => {
+                    if (!available || s[key] === undefined) return null;
+                    if (!Array.isArray(s[key])) {
+                        recordFailure(label, '목록 형식 오류', s[key]);
+                        return null;
+                    }
+                    const invalidIndex = s[key].findIndex(item => {
+                        return !item || typeof item !== 'object' || Array.isArray(item)
+                            || !Number.isFinite(Number(item.strength));
+                    });
+                    if (invalidIndex >= 0) {
+                        recordFailure(label, `목록 ${invalidIndex + 1}번 항목 형식 오류`, s[key][invalidIndex]);
+                        return null;
+                    }
+                    loadedCount++;
+                    return s[key].map(item => ({...item, strength: Number(item.strength)}));
+                };
+
+                [
+                    ['character', '캐릭터', true],
+                    ['appearance', '외모', true],
+                    ['outfit', '복장', true],
+                    ['expression', '표정', true],
+                    ['composition_preset', '구도/기타 태그', true],
+                    ['quality_preset', 'ILXL 품질 태그 프리셋', capabilities.ilxl],
+                    ['character_negative_preset', '캐릭터 부정 프리셋', true],
+                    ['negative_preset', 'ILXL 부정 태그 프리셋', capabilities.ilxl],
+                    ['artist_preset', 'ILXL 아티스트 프리셋', capabilities.ilxl],
+                    ['anima_artist_preset', 'ANIMA 아티스트 프리셋', capabilities.anima],
+                    ['anima_quality_preset', 'ANIMA 품질 프리셋', capabilities.anima],
+                    ['anima_negative_preset', 'ANIMA 부정 태그 프리셋', capabilities.anima],
+                    ['natural_language_preset', '자연어 프리셋', true],
+                ].forEach(([field, label, available]) => {
+                    setBulkDropdown(field, s[field], label, available);
+                });
+
+                setBulkAction('bulk-ref-action', s.ref_enabled, 'FACE-IPAdapter 사용 상태', capabilities.ipadapter);
+                setBulkNumber('bulk-ref-strength', s.ref_strength, 'FACE-IPAdapter 강도', 'bulk-ref-strength-check', capabilities.ipadapter);
+                setBulkAction('bulk-style-ref-action', s.style_ref_enabled, 'IPAdapter 사용 상태', capabilities.ipadapter);
+                setBulkNumber('bulk-style-ref-strength', s.style_ref_strength, 'IPAdapter 강도', 'bulk-style-ref-strength-check', capabilities.ipadapter);
+
+                setBulkAction('bulk-lora-action', s.lora_enabled, 'LoRA 사용 상태');
+                const cachedLoras = cloneLoraList('lora_list', 'LoRA 목록');
+                if (cachedLoras !== null) bulkLoraList = cachedLoras;
+                setBulkAction('bulk-style-lora-action', s.style_lora_enabled, 'Style LoRA 사용 상태');
+                const cachedStyleLoras = cloneLoraList('style_lora_list', 'Style LoRA 목록');
+                if (cachedStyleLoras !== null) bulkStyleLoraList = cachedStyleLoras;
+
+                setBulkNumber('bulk-img-w', s.img_w, '이미지 너비', 'bulk-img-size-check');
+                setBulkNumber('bulk-img-h', s.img_h, '이미지 높이', 'bulk-img-size-check');
+                setBulkAction('bulk-hrf-sdxl-action', s.hrf_sdxl, 'HRF ILXL', capabilities.ilxl);
+                setBulkAction('bulk-hrf-anima-action', s.hrf_anima, 'HRF ANIMA', capabilities.anima);
+                setBulkNumber('bulk-hrf-size', s.hrf_size, 'HRF 업스케일링 비율', 'bulk-hrf-size-check');
+                setBulkAction('bulk-hrf-restore-size-action', s.hrf_restore_size, 'HRF RESTORE SIZE');
+                setBulkAction('bulk-hrf-control-net-action', s.hrf_control_net, 'HRF CONTROL NET');
+                setBulkAction('bulk-sdxl-fd-action', s.sdxl_fd, 'ILXL FD', capabilities.ilxl);
+                setBulkAction('bulk-sdxl-hd-action', s.sdxl_hd, 'ILXL HD', capabilities.ilxl);
+                setBulkAction('bulk-sdxl-ed-action', s.sdxl_ed, 'ILXL ED', capabilities.ilxl);
+                setBulkAction('bulk-anima-fd-action', s.anima_fd, 'ANIMA FD', capabilities.anima);
+                setBulkAction('bulk-anima-hd-action', s.anima_hd, 'ANIMA HD', capabilities.anima);
+                setBulkAction('bulk-anima-ed-action', s.anima_ed, 'ANIMA ED', capabilities.anima);
+
+                setBulkAction('bulk-face-lora-action', s.face_lora_enabled, 'Face LoRA 사용 상태', capabilities.anima);
+                const cachedFaceLoras = cloneLoraList('face_lora_list', 'Face LoRA 목록', capabilities.anima);
+                if (cachedFaceLoras !== null) bulkFaceLoraList = cachedFaceLoras;
+                setBulkNumber('bulk-face-crop-top', s.face_crop_top, 'FACE_CROP TOP', 'bulk-face-crop-check', capabilities.anima);
+                setBulkNumber('bulk-face-crop-bottom', s.face_crop_bottom, 'FACE_CROP BOTTOM', 'bulk-face-crop-check', capabilities.anima);
+
+                if (capabilities.anima && s.face_lora_upscale_size !== undefined) {
+                    const upscale = findControl('bulk-face-lora-upscale', 'Face LoRA 고정 사이즈');
+                    const upscaleCheck = findControl('bulk-face-lora-upscale-check', 'Face LoRA 고정 사이즈 적용');
+                    if (upscale && upscaleCheck) {
+                        upscale.value = s.face_lora_upscale_size ?? '';
+                        upscaleCheck.checked = true;
+                        loadedCount++;
+                    }
+                }
+                if (capabilities.anima && typeof s.face_tags === 'string' && s.face_tags.trim()) {
+                    bulkFaceTagsArray = s.face_tags.split(',').map(tag => tag.trim()).filter(Boolean);
+                    renderBulkFaceTagChips();
+                    syncBulkFaceTagsInput();
+                    loadedCount++;
+                }
+                if (capabilities.anima && typeof s.eye_tags === 'string' && s.eye_tags.trim()) {
+                    const eyeTags = findControl('bulk-eye-tags', 'EYE_TAGS');
+                    if (eyeTags) {
+                        eyeTags.value = s.eye_tags;
+                        loadedCount++;
+                    }
+                }
+                setBulkNumber('bulk-seed', s.seed, 'Seed', 'bulk-seed-check', capabilities.anima);
+
+                renderBulkLoraList();
+                renderBulkStyleLoraList();
+                renderBulkFaceLoraList();
+
+                if (loadedCount === 0) {
+                    console.error('[BATCH] 저장 설정 불러오기 실패: 일괄 설정에서 지원하는 저장 항목 없음', s);
+                    showToast('불러올 수 있는 저장 설정이 없습니다', 'error');
+                    return;
+                }
+                if (failures.length) {
+                    const uniqueFailures = [...new Set(failures)];
+                    console.error('[BATCH] 저장 설정 일부 불러오기 실패:', uniqueFailures);
+                    showToast(`일부 저장 설정을 불러오지 못했습니다: ${uniqueFailures.join(', ')}`, 'error');
+                    return;
+                }
+                showToast('저장 설정을 일괄 설정 폼에 불러왔습니다', 'success');
+            } catch (e) {
+                console.error('[BATCH] 저장 설정 불러오기 예외:', e);
+                showToast('저장 설정 불러오기 실패: ' + e.message, 'error');
+            }
         }
 
         // ─── 일괄 설정용 에셋 FACE-IPAdapter 선택 ──
@@ -69667,6 +69907,7 @@
                     slot.face_lora_list = bulkFaceLoraList.map(l => ({...l}));
                     slot.face_lora_enabled = true;
                 }
+                if (faceLoraAction === 'off') slot.face_lora_enabled = false;
                 if (faceCropCheck) { slot.face_crop_top = faceCropTop; slot.face_crop_bottom = faceCropBottom; }
                 if (faceLoraUpscaleCheck) slot.face_lora_upscale_size = faceLoraUpscale;
                 if (bulkFaceTags) slot.face_tags = bulkFaceTags;

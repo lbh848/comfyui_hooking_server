@@ -86,6 +86,65 @@ def test_asset_settings_wait_for_lightweight_preset_requests():
     assert "console.error(`[ASSET] 태그 프리셋 적용 예외:" in modify_tags
 
 
+def test_batch_bulk_edit_loads_saved_asset_settings_into_form_before_apply():
+    source = _frontend_source()
+    load_bulk_settings = _function_source(
+        source,
+        "loadAssetSettingsIntoBatchBulkEdit()",
+        "openBulkRefGalleryPicker(mode)",
+    )
+
+    assert (
+        'class="batch-bulk-load-btn" '
+        'onclick="loadAssetSettingsIntoBatchBulkEdit()"'
+    ) in source
+    assert "localStorage.getItem('assetModeSettings')" in load_bulk_settings
+    assert "bulkDropdownValues[field] = normalizedValue;" in load_bulk_settings
+    assert (
+        "setBulkAction('bulk-ref-action', s.ref_enabled"
+        in load_bulk_settings
+    )
+    assert (
+        "setBulkAction('bulk-style-lora-action', s.style_lora_enabled"
+        in load_bulk_settings
+    )
+    assert (
+        "setBulkNumber('bulk-img-w', s.img_w, '이미지 너비', "
+        "'bulk-img-size-check')"
+        in load_bulk_settings
+    )
+    assert "bulkLoraList = cachedLoras;" in load_bulk_settings
+    assert "bulkStyleLoraList = cachedStyleLoras;" in load_bulk_settings
+    assert "bulkFaceLoraList = cachedFaceLoras;" in load_bulk_settings
+    assert "console.error('[BATCH] 저장 설정 불러오기 실패:" in load_bulk_settings
+    assert "console.error('[BATCH] 저장 설정 불러오기 예외:'" in load_bulk_settings
+
+    # 불러오기 단계는 모달 값만 변경하고, 실제 슬롯 적용은 별도 버튼에 남겨둔다.
+    assert "batchChains.forEach" not in load_bulk_settings
+    assert "renderBatchChain()" not in load_bulk_settings
+
+
+def test_batch_bulk_saved_disabled_face_lora_remains_disabled_on_apply():
+    source = _frontend_source()
+    apply_bulk_settings = _function_source(
+        source,
+        "applyBatchBulkEdit()",
+        "duplicateBatchSlot(idx)",
+    )
+
+    list_apply = (
+        "if (bulkFaceLoraList.length > 0) {\n"
+        "                    slot.face_lora_list = bulkFaceLoraList.map(l => ({...l}));\n"
+        "                    slot.face_lora_enabled = true;\n"
+        "                }"
+    )
+    assert list_apply in apply_bulk_settings
+    assert apply_bulk_settings.index(list_apply) < apply_bulk_settings.index(
+        "if (faceLoraAction === 'off') slot.face_lora_enabled = false;",
+        apply_bulk_settings.index(list_apply),
+    )
+
+
 def test_asset_generation_options_are_shared_across_workflows():
     source = _frontend_source()
     build_prompt = _function_source(
