@@ -169,3 +169,88 @@ def test_generation_rejects_unknown_storage_group_before_workflow(monkeypatch, t
     assert result["success"] is False
     assert calls["workflow"] == 0
     assert "지원하지 않는 에셋 저장 분류" in capsys.readouterr().out
+
+
+def test_asset_gallery_hides_automatch_default_bucket(monkeypatch, tmp_path):
+    mode = _mode_with_expressions(monkeypatch, tmp_path)
+    _write_image(tmp_path, "alice", AUTOMATCH_DEFAULT_OUTFIT_DIR, "smile", "default.webp")
+    _write_image(tmp_path, "alice", "uniform", "smile", "normal.webp")
+
+    gallery = mode.list_character_gallery("alice")
+
+    assert gallery == [{
+        "outfit": "uniform",
+        "expression": "smile",
+        "representative": "",
+        "image_count": 1,
+        "local_path": "",
+    }]
+
+
+def test_automatch_manager_lists_all_default_images(monkeypatch, tmp_path):
+    mode = _mode_with_expressions(monkeypatch, tmp_path)
+    _write_image(tmp_path, "alice", AUTOMATCH_DEFAULT_OUTFIT_DIR, "smile", "first.webp")
+    _write_image(tmp_path, "alice", AUTOMATCH_DEFAULT_OUTFIT_DIR, "smile", "second.png")
+    _write_image(tmp_path, "alice", AUTOMATCH_DEFAULT_OUTFIT_DIR, "sad", "sad.webp")
+    _write_image(tmp_path, "alice", "uniform", "angry", "normal.webp")
+
+    result = mode.list_automatch_default_images("alice")
+
+    assert result["success"] is True
+    assert result["image_count"] == 3
+    assert result["expression_count"] == 2
+    assert {
+        (item["expression"], item["filename"])
+        for item in result["images"]
+    } == {
+        ("smile", "first.webp"),
+        ("smile", "second.png"),
+        ("sad", "sad.webp"),
+    }
+    assert all(item["modified_at"] > 0 for item in result["images"])
+
+
+def test_automatch_manager_delete_is_limited_to_default_bucket(monkeypatch, tmp_path):
+    mode = _mode_with_expressions(monkeypatch, tmp_path)
+    _write_image(tmp_path, "alice", AUTOMATCH_DEFAULT_OUTFIT_DIR, "smile", "same.webp")
+    _write_image(tmp_path, "alice", "uniform", "smile", "same.webp")
+    prompt_path = (
+        tmp_path / "alice" / AUTOMATCH_DEFAULT_OUTFIT_DIR / "smile" / "same_prompt.json"
+    )
+    prompt_path.write_text("{}", encoding="utf-8")
+
+    result = mode.delete_automatch_default_image("alice", "smile", "same.webp")
+
+    assert result["success"] is True
+    assert not (
+        tmp_path / "alice" / AUTOMATCH_DEFAULT_OUTFIT_DIR / "smile" / "same.webp"
+    ).exists()
+    assert not prompt_path.exists()
+    assert (tmp_path / "alice" / "uniform" / "smile" / "same.webp").is_file()
+
+
+def test_automatch_manager_rejects_unsafe_delete_filename(monkeypatch, tmp_path, capsys):
+    mode = _mode_with_expressions(monkeypatch, tmp_path)
+    _write_image(tmp_path, "alice", AUTOMATCH_DEFAULT_OUTFIT_DIR, "smile", "safe.webp")
+
+    result = mode.delete_automatch_default_image("alice", "smile", "../safe.webp")
+
+    assert result["success"] is False
+    assert "유효하지 않은 파일명" in result["error"]
+    assert (tmp_path / "alice" / AUTOMATCH_DEFAULT_OUTFIT_DIR / "smile" / "safe.webp").is_file()
+    assert "안전하지 않은 파일명" in capsys.readouterr().out
+
+
+def test_automatch_manager_rejects_storage_path_escape(monkeypatch, tmp_path, capsys):
+    mode = _mode_with_expressions(monkeypatch, tmp_path)
+    _write_image(tmp_path, "alice", AUTOMATCH_DEFAULT_OUTFIT_DIR, "smile", "safe.webp")
+
+    delete_result = mode.delete_automatch_default_image("alice", "..", "safe.webp")
+    list_result = mode.list_automatch_default_images("..")
+
+    assert delete_result["success"] is False
+    assert list_result["success"] is False
+    assert (tmp_path / "alice" / AUTOMATCH_DEFAULT_OUTFIT_DIR / "smile" / "safe.webp").is_file()
+    output = capsys.readouterr().out
+    assert "이미지 삭제 거부" in output
+    assert "이미지 목록 조회 거부" in output

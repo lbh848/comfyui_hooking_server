@@ -8624,6 +8624,21 @@
         .at-source-badge.direct { background: rgba(37, 145, 92, 0.88); }
         .at-source-badge.existing_asset { background: rgba(12, 126, 141, 0.9); }
         .at-source-badge.generated_default { background: rgba(76, 92, 184, 0.9); }
+        .at-manager-toolbar { display: flex; align-items: end; justify-content: space-between; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
+        .at-manager-character { min-width: 240px; }
+        .at-manager-character label { display: block; margin-bottom: 5px; color: var(--text2); font-size: 0.72rem; font-weight: 700; }
+        .at-manager-character select { width: 100%; min-height: 36px; padding: 6px 9px; border: 1px solid var(--border); border-radius: 7px; color: var(--text); background: var(--surface2); }
+        .at-manager-summary { color: var(--text2); font-size: 0.75rem; }
+        .at-manager-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; }
+        .at-manager-card { min-width: 0; overflow: hidden; border: 1px solid var(--border); border-radius: 9px; background: var(--surface2); }
+        .at-manager-card img { width: 100%; aspect-ratio: 3 / 4; display: block; object-fit: cover; cursor: zoom-in; background: var(--surface); }
+        .at-manager-card-body { display: grid; gap: 7px; padding: 9px; }
+        .at-manager-card-expression { overflow-wrap: anywhere; color: var(--text); font-size: 0.82rem; font-weight: 750; }
+        .at-manager-card-meta { overflow: hidden; color: var(--text2); font-size: 0.62rem; text-overflow: ellipsis; white-space: nowrap; }
+        .at-manager-delete { width: 100%; min-height: 30px; border: 1px solid color-mix(in srgb, var(--error) 55%, var(--border)); border-radius: 6px; color: var(--error); background: color-mix(in srgb, var(--error) 7%, var(--surface)); cursor: pointer; font-size: 0.72rem; font-weight: 700; }
+        .at-manager-delete:hover:not(:disabled) { color: #fff; background: var(--error); }
+        .at-manager-delete:disabled { opacity: 0.45; cursor: wait; }
+        .at-manager-message { grid-column: 1 / -1; padding: 54px 20px; color: var(--text2); text-align: center; line-height: 1.6; }
         .at-card.is-empty { border-style: dashed; }
         .at-card-empty-visual { width: 100%; height: 100%; display: grid; place-items: center; padding: 14px; color: var(--text2); text-align: center; font-size: 0.72rem; line-height: 1.45; }
         .at-ref-preview-strip { display: none; grid-template-columns: repeat(3, 1fr); gap: 5px; margin-top: 6px; }
@@ -12334,6 +12349,7 @@
                         <button class="at-btn" id="at-stop-btn" onclick="atStopAnalysis()" style="display:none; background:#e55; color:#fff; border-color:#e55;">중지</button>
                     </div>
                     <div class="at-toolbar-actions">
+                        <button class="at-btn" onclick="atOpenImageManager()">생성 이미지 관리</button>
                         <button class="at-btn" onclick="atExportNameMapping()">이름 치환 내보내기</button>
                         <button class="at-btn" onclick="atExportChain()">체인 내보내기</button>
                     </div>
@@ -12449,7 +12465,7 @@
                                                         <div class="batch-field-group at-model-control" data-at-availability="anima"><div class="batch-field-label">ANIMA 아티스트 <span class="at-model-reason">ANIMA 전용</span></div><select class="at-fill-select" id="at-fill-anima-artist" data-at-fill-field="anima_artist_preset" onchange="atOnFillFieldChange(this)"><option value="">-- ANIMA 아티스트 --</option></select></div>
                                                         <div class="batch-field-group at-model-control" data-at-availability="anima"><div class="batch-field-label">ANIMA 품질 태그 <span class="at-model-reason">ANIMA 전용</span></div><select class="at-fill-select" id="at-fill-anima-quality" data-at-fill-field="anima_quality_preset" onchange="atOnFillFieldChange(this)"><option value="">-- ANIMA 품질 프리셋 --</option></select></div>
                                                         <div class="batch-field-group at-model-control" data-at-availability="anima"><div class="batch-field-label">ANIMA 부정 태그 <span class="at-model-reason">ANIMA 전용</span></div><select class="at-fill-select" id="at-fill-anima-negative" data-at-fill-field="anima_negative_preset" onchange="atOnFillFieldChange(this)"><option value="">-- ANIMA 부정 프리셋 --</option></select></div>
-                                                        <div class="batch-field-group"><div class="batch-field-label">자연어</div><select class="at-fill-select" id="at-fill-natural-language" data-at-fill-field="natural_language_preset" onchange="atOnFillFieldChange(this)"><option value="">-- 자연어 프리셋 --</option></select></div>
+                                                        <div class="batch-field-group"><div class="batch-field-label">자연어</div><select class="at-fill-select" id="at-fill-natural-language" data-at-fill-field="natural_language_preset" onchange="atOnFillFieldChange(this)"><option value="">-- 자연어 프리셋 --</option></select><input class="at-fill-select" type="text" id="at-fill-natural-language-text" placeholder="직접 입력" style="margin-top:5px;" onchange="atOnFillText('natural_language', this.value)"></div>
                                                     </div>
                                                 </section>
                                                 <section class="batch-slot-section at-model-control" data-at-availability="ipadapter">
@@ -12512,9 +12528,10 @@
                                                 </section>
                                             </div>
                                         </div>
-                                    </div>
-                                    <div class="at-fill-footer">
-                                        <div class="at-fill-existing"><label><input type="checkbox" id="at-fill-use-existing" checked onchange="atOnUseExistingAssetsChange(this.checked)"> 이미 존재하는 에셋에서 불러오기</label><div class="at-fill-existing-note">선택 캐릭터의 모든 일반 복장을 탐색하고 외모·복장은 무시한 채 표정 이름만 일치하면 사용합니다.</div></div>
+                                     </div>
+                                     <div class="at-fill-footer">
+                                        <button class="at-fill-secondary-btn" style="margin-top:0;" onclick="atLoadAssetSettings()">에셋 생성의 저장된 설정 불러오기</button>
+                                         <div class="at-fill-existing"><label><input type="checkbox" id="at-fill-use-existing" checked onchange="atOnUseExistingAssetsChange(this.checked)"> 이미 존재하는 에셋에서 불러오기</label><div class="at-fill-existing-note">선택 캐릭터의 모든 일반 복장을 탐색하고 외모·복장은 무시한 채 표정 이름만 일치하면 사용합니다.</div></div>
                                         <div class="at-fill-top-row"><div class="at-fill-top-label"><strong style="color:var(--text);">빈 슬롯 채우기</strong><br>이미지별 상위 후보 중 몇 위까지 확인할지 선택합니다.</div><input class="at-fill-top-input" type="number" id="at-fill-top-n" value="3" min="1" max="12" onchange="atUpdateFillAvailability()"></div>
                                         <div class="at-fill-progress" id="at-fill-progress"><div id="at-fill-progress-inner"></div></div>
                                         <div class="at-fill-status" id="at-fill-status"></div>
@@ -12672,6 +12689,35 @@
                             </div>
                         </div>
                     </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="modal" id="at-image-manager-modal" onclick="if (event.target === this) atCloseImageManager()">
+            <div class="modal-content" style="max-width:1100px; width:min(1100px, 96vw); max-height:90vh; overflow:hidden;">
+                <div class="modal-header">
+                    <div>
+                        <h2>오토매치 생성 이미지 관리</h2>
+                        <div style="margin-top:4px; color:var(--text2); font-size:0.72rem;">매칭 전용 저장 구역의 이미지만 표시합니다.</div>
+                    </div>
+                    <button class="modal-close" onclick="atCloseImageManager()">&times;</button>
+                </div>
+                <div class="modal-body" style="min-height:320px; overflow-y:auto;">
+                    <div class="at-manager-toolbar">
+                        <div class="at-manager-character">
+                            <label for="at-manager-character">캐릭터</label>
+                            <select id="at-manager-character" onchange="atLoadManagedImages()">
+                                <option value="">-- 캐릭터 --</option>
+                            </select>
+                        </div>
+                        <div class="at-manager-summary" id="at-manager-summary">캐릭터를 선택하세요.</div>
+                    </div>
+                    <div class="at-manager-grid" id="at-manager-grid">
+                        <div class="at-manager-message">캐릭터를 선택하면 생성된 오토매치 이미지를 확인할 수 있습니다.</div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="confirm" onclick="atCloseImageManager()">닫기</button>
                 </div>
             </div>
         </div>
@@ -30126,9 +30172,12 @@
         const AT_MATCH_PAGE_SIZE = 4;
         const atMatchPages = { embedding: {}, tag: {} };
         let atFillRunning = false;
+        let atFillQueueing = false;
         let atFillPendingExpressions = new Set();
+        let atFillQueueItems = new Map();
         let atFillCompleted = 0;
         let atFillFailed = 0;
+        let atFillCancelled = 0;
         let atFillTotal = 0;
 
         _atLoadState();
@@ -30274,6 +30323,7 @@
                 if (element) element.style.display = visible ? 'block' : 'none';
             });
             const textValues = {
+                'at-fill-natural-language-text': atFillSlot.natural_language || '',
                 'at-fill-face-tags': atFillSlot.face_tags || '',
                 'at-fill-eye-tags': atFillSlot.eye_tags || '',
             };
@@ -30281,6 +30331,10 @@
                 const element = document.getElementById(id);
                 if (element) element.value = value;
             });
+            const refStrengthValue = document.getElementById('at-fill-ref-strength-value');
+            if (refStrengthValue) refStrengthValue.textContent = Number(atFillSlot.ref_strength ?? 0.55).toFixed(2);
+            const styleRefStrengthValue = document.getElementById('at-fill-style-ref-strength-value');
+            if (styleRefStrengthValue) styleRefStrengthValue.textContent = Number(atFillSlot.style_ref_strength ?? 0.55).toFixed(2);
             const hrfSizeValue = document.getElementById('at-fill-hrf-size-value');
             if (hrfSizeValue) hrfSizeValue.textContent = Number(atFillSlot.hrf_size || 2).toFixed(2);
             atRenderFillLoraList('lora');
@@ -30288,6 +30342,217 @@
             atRenderFillLoraList('face_lora');
             atUpdateFillPoseDisplay();
             atUpdateFillAvailability();
+        }
+
+        async function atLoadAssetSettings() {
+            let raw;
+            try {
+                raw = localStorage.getItem('assetModeSettings');
+            } catch (e) {
+                console.error('[AUTOMATCH] 에셋 생성 설정 불러오기 실패: 캐시 접근 오류', e);
+                showToast('에셋 생성 설정 불러오기 실패', 'error');
+                return;
+            }
+            if (!raw) {
+                console.error('[AUTOMATCH] 에셋 생성 설정 불러오기 실패: 저장된 캐시 없음');
+                showToast('에셋 생성에 저장된 설정이 없습니다', 'error');
+                return;
+            }
+
+            let settings;
+            try {
+                settings = JSON.parse(raw);
+            } catch (e) {
+                console.error('[AUTOMATCH] 에셋 생성 설정 불러오기 실패: 캐시 JSON 파싱 오류', e);
+                showToast('저장된 설정 형식이 올바르지 않습니다', 'error');
+                return;
+            }
+            if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
+                console.error('[AUTOMATCH] 에셋 생성 설정 불러오기 실패: 캐시 형식 오류', settings);
+                showToast('저장된 설정 형식이 올바르지 않습니다', 'error');
+                return;
+            }
+
+            try {
+                if (!assetTags) {
+                    const response = await fetch('/api/asset_mode/tags');
+                    if (!response.ok) throw new Error(`태그 데이터 HTTP ${response.status}`);
+                    assetTags = await response.json();
+                }
+                if (!assetTags || typeof assetTags !== 'object') {
+                    throw new Error('에셋 태그 데이터가 준비되지 않았습니다');
+                }
+
+                const capabilities = getAssetWorkflowCapabilities();
+                const failures = [];
+                let loadedCount = 0;
+                const recordFailure = (label, reason, value) => {
+                    failures.push(label);
+                    console.error(`[AUTOMATCH] 에셋 생성 설정 항목 불러오기 실패: ${label} - ${reason}`, value);
+                };
+                const setSelect = (target, sourceKey, label, available = true) => {
+                    if (!available || settings[sourceKey] === undefined) return;
+                    const value = settings[sourceKey] === null ? '' : String(settings[sourceKey]);
+                    const optionSourceKey = sourceKey.startsWith('anima_') ? sourceKey.slice('anima_'.length) : sourceKey;
+                    const options = assetTags[optionSourceKey === 'character' ? 'characters' : optionSourceKey === 'appearance' ? 'appearances'
+                        : optionSourceKey === 'outfit' ? 'outfits' : `${optionSourceKey.replace(/_preset$/, '')}_presets`] || {};
+                    if (value && !Object.prototype.hasOwnProperty.call(options, value)) {
+                        recordFailure(label, '저장값과 일치하는 옵션 없음', value);
+                        return;
+                    }
+                    atFillSlot[target] = value;
+                    loadedCount++;
+                };
+                const setBoolean = (target, sourceKey, label, available = true) => {
+                    if (!available || settings[sourceKey] === undefined) return;
+                    if (typeof settings[sourceKey] !== 'boolean') {
+                        recordFailure(label, 'ON/OFF 값 형식 오류', settings[sourceKey]);
+                        return;
+                    }
+                    atFillSlot[target] = settings[sourceKey];
+                    loadedCount++;
+                };
+                const setNumber = (target, sourceKey, label, available = true) => {
+                    if (!available || settings[sourceKey] === undefined || settings[sourceKey] === null) return;
+                    const value = Number(settings[sourceKey]);
+                    if (!Number.isFinite(value)) {
+                        recordFailure(label, '숫자 값 형식 오류', settings[sourceKey]);
+                        return;
+                    }
+                    atFillSlot[target] = value;
+                    loadedCount++;
+                };
+                const setString = (target, sourceKey, label, available = true) => {
+                    if (!available || settings[sourceKey] === undefined || settings[sourceKey] === null) return;
+                    if (typeof settings[sourceKey] !== 'string' && typeof settings[sourceKey] !== 'number') {
+                        recordFailure(label, '문자열 값 형식 오류', settings[sourceKey]);
+                        return;
+                    }
+                    atFillSlot[target] = String(settings[sourceKey]);
+                    loadedCount++;
+                };
+                const setLoraList = (target, sourceKey, label, available = true) => {
+                    if (!available || settings[sourceKey] === undefined) return;
+                    if (!Array.isArray(settings[sourceKey])) {
+                        recordFailure(label, '목록 형식 오류', settings[sourceKey]);
+                        return;
+                    }
+                    const invalidIndex = settings[sourceKey].findIndex(item => {
+                        return !item || typeof item !== 'object' || Array.isArray(item)
+                            || !Number.isFinite(Number(item.strength));
+                    });
+                    if (invalidIndex >= 0) {
+                        recordFailure(label, `목록 ${invalidIndex + 1}번 항목 형식 오류`, settings[sourceKey][invalidIndex]);
+                        return;
+                    }
+                    const clonedItems = settings[sourceKey].map(item => ({ ...item, strength: Number(item.strength) }));
+                    const compatibleItems = filterAssetLorasForCapabilities(clonedItems, capabilities);
+                    if (compatibleItems.length !== clonedItems.length) {
+                        console.warn(
+                            `[AUTOMATCH] ${label}에서 현재 워크플로와 호환되지 않는 항목을 제외했습니다:`,
+                            clonedItems.filter(item => !compatibleItems.includes(item)),
+                        );
+                    }
+                    atFillSlot[target] = compatibleItems;
+                    loadedCount++;
+                };
+
+                setSelect('character', 'character', '캐릭터');
+                setSelect('appearance', 'appearance', '외모');
+                setSelect('outfit', 'outfit', '복장');
+                setSelect('composition_preset', 'composition_preset', '구도 프리셋');
+                setSelect('character_negative_preset', 'character_negative_preset', '캐릭터 부정 프리셋');
+                setSelect('natural_language_preset', 'natural_language_preset', '자연어 프리셋');
+                setSelect('quality_preset', 'quality_preset', 'ILXL 품질 프리셋', capabilities.ilxl);
+                setSelect('negative_preset', 'negative_preset', 'ILXL 부정 프리셋', capabilities.ilxl);
+                setSelect('artist_preset', 'artist_preset', 'ILXL 아티스트 프리셋', capabilities.ilxl);
+                setSelect('anima_artist_preset', 'anima_artist_preset', 'ANIMA 아티스트 프리셋', capabilities.anima);
+                setSelect('anima_quality_preset', 'anima_quality_preset', 'ANIMA 품질 프리셋', capabilities.anima);
+                setSelect('anima_negative_preset', 'anima_negative_preset', 'ANIMA 부정 프리셋', capabilities.anima);
+
+                // 표정은 매칭 결과별로 자동 결정되므로 에셋 생성의 저장 표정은 적용하지 않는다.
+                setString('natural_language', 'natural_language_text', '자연어 직접 입력');
+                setBoolean('ref_enabled', 'ref_enabled', 'FACE-IPAdapter 사용 상태', capabilities.ipadapter);
+                setNumber('ref_strength', 'ref_strength', 'FACE-IPAdapter 강도', capabilities.ipadapter);
+                setString('ref_dir', 'ref_dir', 'FACE-IPAdapter 저장 폴더', capabilities.ipadapter);
+                setBoolean('style_ref_enabled', 'style_ref_enabled', 'IPAdapter 사용 상태', capabilities.ipadapter);
+                setNumber('style_ref_strength', 'style_ref_strength', 'IPAdapter 강도', capabilities.ipadapter);
+                setString('style_ref_dir', 'style_ref_dir', 'IPAdapter 저장 폴더', capabilities.ipadapter);
+                setBoolean('lora_enabled', 'lora_enabled', 'LoRA 사용 상태');
+                setLoraList('lora_list', 'lora_list', 'LoRA 목록');
+                setBoolean('style_lora_enabled', 'style_lora_enabled', 'Style LoRA 사용 상태');
+                setLoraList('style_lora_list', 'style_lora_list', 'Style LoRA 목록');
+                setBoolean('pose_enabled', 'pose_enabled', '포즈 사용 상태', capabilities.pose);
+                setString('pose_id', 'pose_id', '포즈', capabilities.pose);
+                setNumber('img_w', 'img_w', '이미지 너비');
+                setNumber('img_h', 'img_h', '이미지 높이');
+                setBoolean('hrf_sdxl', 'hrf_sdxl', 'HRF ILXL', capabilities.ilxl);
+                setBoolean('hrf_anima', 'hrf_anima', 'HRF ANIMA', capabilities.anima);
+                setNumber('hrf_size', 'hrf_size', 'HRF 업스케일링 비율');
+                setBoolean('hrf_restore_size', 'hrf_restore_size', 'HRF RESTORE SIZE');
+                setBoolean('hrf_control_net', 'hrf_control_net', 'HRF CONTROL NET');
+                setBoolean('sdxl_fd_enabled', 'sdxl_fd', 'ILXL FD', capabilities.ilxl);
+                setBoolean('sdxl_hd_enabled', 'sdxl_hd', 'ILXL HD', capabilities.ilxl);
+                setBoolean('sdxl_ed_enabled', 'sdxl_ed', 'ILXL ED', capabilities.ilxl);
+                setBoolean('anima_fd_enabled', 'anima_fd', 'ANIMA FD', capabilities.anima);
+                setBoolean('anima_hd_enabled', 'anima_hd', 'ANIMA HD', capabilities.anima);
+                setBoolean('anima_ed_enabled', 'anima_ed', 'ANIMA ED', capabilities.anima);
+                setBoolean('face_lora_enabled', 'face_lora_enabled', 'Face LoRA 사용 상태', capabilities.anima);
+                setLoraList('face_lora_list', 'face_lora_list', 'Face LoRA 목록', capabilities.anima);
+                setNumber('face_crop_top', 'face_crop_top', 'FACE_CROP TOP', capabilities.anima);
+                setNumber('face_crop_bottom', 'face_crop_bottom', 'FACE_CROP BOTTOM', capabilities.anima);
+                setString('face_tags', 'face_tags', 'FACE_TAGS', capabilities.anima);
+                setString('eye_tags', 'eye_tags', 'EYE_TAGS', capabilities.anima);
+                setString('face_lora_upscale_size', 'face_lora_upscale_size', 'Face LoRA 고정 사이즈', capabilities.anima);
+                setNumber('seed', 'seed', 'Seed', capabilities.anima);
+
+                ['ref_images', 'style_ref_images'].forEach(key => {
+                    (atFillSlot[key] || []).forEach(image => {
+                        if (typeof image?.preview_url === 'string' && image.preview_url.startsWith('blob:')) {
+                            URL.revokeObjectURL(image.preview_url);
+                        }
+                    });
+                    atFillSlot[key] = [];
+                });
+                ['at-fill-ref-preview', 'at-fill-style-ref-preview'].forEach(id => {
+                    const preview = document.getElementById(id);
+                    if (preview) {
+                        preview.innerHTML = '';
+                        preview.style.display = 'none';
+                    }
+                });
+
+                if (loadedCount === 0) {
+                    console.error('[AUTOMATCH] 에셋 생성 설정 불러오기 실패: 지원하는 저장 항목 없음', settings);
+                    showToast('오토매치에서 불러올 수 있는 저장 설정이 없습니다', 'error');
+                    return;
+                }
+
+                atInitFillPanel();
+                const characterSelect = document.getElementById('at-compare-char');
+                if (characterSelect) {
+                    const character = atFillSlot.character || '';
+                    if (character && !Array.from(characterSelect.options).some(option => option.value === character)) {
+                        characterSelect.appendChild(new Option(character, character));
+                    }
+                    characterSelect.value = character;
+                } else {
+                    recordFailure('비교 캐릭터', '선택 컨트롤 없음', 'at-compare-char');
+                }
+                await atLoadCompareImages({ silent: true });
+                _atSaveState();
+
+                if (failures.length) {
+                    const uniqueFailures = [...new Set(failures)];
+                    console.error('[AUTOMATCH] 에셋 생성 설정 일부 불러오기 실패:', uniqueFailures);
+                    showToast(`일부 저장 설정을 불러오지 못했습니다: ${uniqueFailures.join(', ')}`, 'warning');
+                    return;
+                }
+                showToast('에셋 생성의 저장 설정을 불러왔습니다 (표정 제외)', 'success');
+            } catch (e) {
+                console.error('[AUTOMATCH] 에셋 생성 설정 불러오기 예외:', e);
+                showToast('에셋 생성 설정 불러오기 실패: ' + e.message, 'error');
+            }
         }
 
         function atApplyFillWorkflowAvailability() {
@@ -30353,6 +30618,184 @@
                 if (atFillSlot.character) await atLoadCompareImages({ silent: true });
             } catch (e) {
                 console.error('[AUTOMATCH] 캐릭터 목록 로드 오류:', e);
+            }
+        }
+
+        let atManagerLoadToken = 0;
+
+        async function atOpenImageManager() {
+            const modal = document.getElementById('at-image-manager-modal');
+            const select = document.getElementById('at-manager-character');
+            const grid = document.getElementById('at-manager-grid');
+            const summary = document.getElementById('at-manager-summary');
+            if (!modal || !select || !grid || !summary) {
+                console.error('[AUTOMATCH_MANAGE] 이미지 관리 창 요소를 찾지 못했습니다', {
+                    modal: !!modal,
+                    select: !!select,
+                    grid: !!grid,
+                    summary: !!summary,
+                });
+                showToast('오토매치 이미지 관리 창을 열 수 없습니다', 'error');
+                return;
+            }
+
+            modal.classList.add('visible');
+            select.disabled = true;
+            summary.textContent = '캐릭터 목록을 불러오는 중…';
+            grid.innerHTML = '<div class="at-manager-message">불러오는 중…</div>';
+            try {
+                const response = await fetch('/api/asset_mode/characters');
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+                const characters = data.characters || [];
+                const currentCharacter = document.getElementById('at-compare-char')?.value || atFillSlot.character || '';
+                select.innerHTML = '<option value="">-- 캐릭터 --</option>';
+                characters.forEach(character => {
+                    const option = document.createElement('option');
+                    option.value = character;
+                    option.textContent = character;
+                    select.appendChild(option);
+                });
+                if (currentCharacter && characters.includes(currentCharacter)) {
+                    select.value = currentCharacter;
+                } else if (characters.length === 1) {
+                    select.value = characters[0];
+                }
+                select.disabled = false;
+                if (select.value) {
+                    await atLoadManagedImages();
+                } else {
+                    summary.textContent = characters.length ? '캐릭터를 선택하세요.' : '등록된 캐릭터가 없습니다.';
+                    grid.innerHTML = `<div class="at-manager-message">${characters.length ? '관리할 캐릭터를 선택하세요.' : '등록된 캐릭터가 없습니다.'}</div>`;
+                }
+            } catch (e) {
+                select.disabled = false;
+                summary.textContent = '목록 로드 실패';
+                grid.innerHTML = '<div class="at-manager-message">이미지 목록을 불러오지 못했습니다.</div>';
+                console.error('[AUTOMATCH_MANAGE] 이미지 관리 창 초기화 실패:', e);
+                showToast('오토매치 이미지 관리 창 로드 실패: ' + e.message, 'error');
+            }
+        }
+
+        function atCloseImageManager() {
+            atManagerLoadToken++;
+            document.getElementById('at-image-manager-modal')?.classList.remove('visible');
+        }
+
+        async function atLoadManagedImages() {
+            const select = document.getElementById('at-manager-character');
+            const grid = document.getElementById('at-manager-grid');
+            const summary = document.getElementById('at-manager-summary');
+            if (!select || !grid || !summary) {
+                console.error('[AUTOMATCH_MANAGE] 이미지 목록 요소를 찾지 못했습니다');
+                return;
+            }
+            const character = select.value || '';
+            const loadToken = ++atManagerLoadToken;
+            if (!character) {
+                summary.textContent = '캐릭터를 선택하세요.';
+                grid.innerHTML = '<div class="at-manager-message">캐릭터를 선택하면 생성된 오토매치 이미지를 확인할 수 있습니다.</div>';
+                return;
+            }
+
+            summary.textContent = '이미지 목록을 불러오는 중…';
+            grid.innerHTML = '<div class="at-manager-message">불러오는 중…</div>';
+            try {
+                const response = await fetch(`/api/asset_mode/characters/${encodeURIComponent(character)}/automatch_defaults`);
+                const data = await response.json();
+                if (!response.ok || !data.success) throw new Error(data.error || `HTTP ${response.status}`);
+                if (loadToken !== atManagerLoadToken) return;
+                atRenderManagedImages(character, data);
+            } catch (e) {
+                if (loadToken !== atManagerLoadToken) return;
+                summary.textContent = '이미지 목록 로드 실패';
+                grid.innerHTML = '<div class="at-manager-message">이미지 목록을 불러오지 못했습니다.</div>';
+                console.error(`[AUTOMATCH_MANAGE] 이미지 목록 로드 실패: character=${character}`, e);
+                showToast('오토매치 이미지 목록 로드 실패: ' + e.message, 'error');
+            }
+        }
+
+        function atRenderManagedImages(character, data) {
+            const grid = document.getElementById('at-manager-grid');
+            const summary = document.getElementById('at-manager-summary');
+            if (!grid || !summary) {
+                console.error('[AUTOMATCH_MANAGE] 이미지 렌더링 요소를 찾지 못했습니다');
+                return;
+            }
+            const images = data.images || [];
+            summary.textContent = `${data.expression_count || 0}개 감정 · ${data.image_count || 0}장`;
+            grid.innerHTML = '';
+            if (!images.length) {
+                grid.innerHTML = '<div class="at-manager-message">이 캐릭터로 생성한 오토매치 이미지가 없습니다.</div>';
+                return;
+            }
+
+            const enc = encodeURIComponent;
+            images.forEach(item => {
+                const card = document.createElement('article');
+                card.className = 'at-manager-card';
+                const image = document.createElement('img');
+                image.src = `/api/asset_mode/characters/${enc(character)}/outfits/${enc('_automatch_defaults')}/expressions/${enc(item.expression)}/images/${enc(item.filename)}`;
+                image.alt = `${item.expression} 오토매치 이미지`;
+                image.loading = 'lazy';
+                image.addEventListener('click', () => openLightbox(image.src));
+
+                const body = document.createElement('div');
+                body.className = 'at-manager-card-body';
+                const expression = document.createElement('div');
+                expression.className = 'at-manager-card-expression';
+                expression.textContent = item.expression;
+                const meta = document.createElement('div');
+                meta.className = 'at-manager-card-meta';
+                const modified = Number(item.modified_at) > 0
+                    ? new Date(Number(item.modified_at) * 1000).toLocaleString()
+                    : '생성 시각 없음';
+                meta.textContent = `${item.filename} · ${modified}`;
+                meta.title = meta.textContent;
+                const deleteButton = document.createElement('button');
+                deleteButton.type = 'button';
+                deleteButton.className = 'at-manager-delete';
+                deleteButton.textContent = '삭제';
+                deleteButton.addEventListener('click', () => atDeleteManagedImage(
+                    character,
+                    item.expression,
+                    item.filename,
+                    deleteButton,
+                ));
+                body.append(expression, meta, deleteButton);
+                card.append(image, body);
+                grid.appendChild(card);
+            });
+        }
+
+        async function atDeleteManagedImage(character, expression, filename, button) {
+            if (!confirm(`오토매치 이미지를 삭제할까요?\n\n캐릭터: ${character}\n감정: ${expression}\n파일: ${filename}\n\n삭제한 파일은 복구할 수 없습니다.`)) return;
+            if (button) {
+                button.disabled = true;
+                button.textContent = '삭제 중…';
+            }
+            try {
+                const response = await fetch('/api/asset_mode/automatch_defaults/delete', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ character, expression, filename }),
+                });
+                const result = await response.json();
+                if (!response.ok || !result.success) throw new Error(result.error || `HTTP ${response.status}`);
+                showToast(`${expression} 오토매치 이미지 삭제 완료`, 'success');
+                await atLoadManagedImages();
+                const compareCharacter = document.getElementById('at-compare-char')?.value || '';
+                if (compareCharacter === character) await atLoadCompareImages({ silent: true });
+            } catch (e) {
+                if (button) {
+                    button.disabled = false;
+                    button.textContent = '삭제';
+                }
+                console.error(
+                    `[AUTOMATCH_MANAGE] 이미지 삭제 실패: character=${character}, expression=${expression}, filename=${filename}`,
+                    e,
+                );
+                showToast('오토매치 이미지 삭제 실패: ' + e.message, 'error');
             }
         }
 
@@ -30725,7 +31168,7 @@
             if (expression) expression.textContent = targets.length ? `${targets.length}개 빈 표정 자동 지정` : '매칭 결과에서 자동 지정';
             if (button) {
                 button.disabled = atFillRunning || !atFillSlot.character || !atFillSlot.appearance || !atFillSlot.outfit || targets.length === 0;
-                button.textContent = atFillRunning ? `생성 중 · ${atFillCompleted + atFillFailed}/${atFillTotal}` : (targets.length ? `${targets.length}개 빈 슬롯 생성하기` : '채울 빈 슬롯이 없습니다');
+                button.textContent = atFillRunning ? `생성 중 · ${atFillCompleted + atFillFailed + atFillCancelled}/${atFillTotal}` : (targets.length ? `${targets.length}개 빈 슬롯 생성하기` : '채울 빈 슬롯이 없습니다');
             }
             atUpdateFillPromptPreview();
         }
@@ -30734,7 +31177,7 @@
             const status = document.getElementById('at-fill-status');
             const progress = document.getElementById('at-fill-progress');
             const inner = document.getElementById('at-fill-progress-inner');
-            const done = atFillCompleted + atFillFailed;
+            const done = atFillCompleted + atFillFailed + atFillCancelled;
             if (status) {
                 status.style.display = 'block';
                 status.textContent = message;
@@ -30742,6 +31185,16 @@
             if (progress) progress.style.display = 'block';
             if (inner) inner.style.width = `${atFillTotal ? (done / atFillTotal) * 100 : 0}%`;
             atUpdateFillAvailability();
+        }
+
+        function atFinalizeFillRun() {
+            if (!atFillRunning || atFillQueueing || atFillQueueItems.size > 0) return false;
+            atFillRunning = false;
+            const label = atFillCancelled > 0 ? '생성 종료' : '생성 완료';
+            atSetFillProgress(`${label} · 성공 ${atFillCompleted}, 실패 ${atFillFailed}, 취소 ${atFillCancelled}`);
+            const toastType = atFillCancelled > 0 ? 'warning' : (atFillCompleted > 0 ? 'success' : 'error');
+            showToast(`오토매치 기본 이미지 · 성공 ${atFillCompleted}, 실패 ${atFillFailed}, 취소 ${atFillCancelled}`, toastType);
+            return true;
         }
 
         async function atFillEmptySlots() {
@@ -30757,9 +31210,12 @@
             }
 
             atFillRunning = true;
+            atFillQueueing = true;
             atFillPendingExpressions = new Set();
+            atFillQueueItems = new Map();
             atFillCompleted = 0;
             atFillFailed = 0;
+            atFillCancelled = 0;
             atFillTotal = targets.length;
             atSetFillProgress(`${targets.length}개 기본 이미지를 큐에 추가하는 중…`);
 
@@ -30794,17 +31250,19 @@
                         }),
                     });
                     if (!response?.success) throw new Error(response?.error || '큐 추가 실패');
+                    if (!response.item_id) throw new Error('큐 작업 ID가 비어있습니다');
                     atFillPendingExpressions.add(expression);
+                    atFillQueueItems.set(response.item_id, expression);
                 } catch (e) {
                     atFillFailed++;
                     console.error(`[AUTOMATCH] 기본 이미지 큐 추가 실패: expression=${expression}`, e);
                 }
             }
+            atFillQueueing = false;
 
             if (!atFillPendingExpressions.size) {
-                atFillRunning = false;
                 atSetFillProgress(`큐 추가 실패 · ${atFillFailed}건`);
-                showToast('기본 이미지 생성 작업을 큐에 추가하지 못했습니다', 'error');
+                atFinalizeFillRun();
                 return;
             }
             atSetFillProgress(`큐 대기 중 · 완료 0 / ${atFillTotal}, 큐 추가 실패 ${atFillFailed}`);
@@ -30817,16 +31275,50 @@
             const expression = result.expression || '';
             if (!expression || !atFillPendingExpressions.has(expression)) return;
             atFillPendingExpressions.delete(expression);
+            const itemId = data?.item_id || '';
+            if (itemId) {
+                atFillQueueItems.delete(itemId);
+            } else {
+                const fallbackEntry = Array.from(atFillQueueItems.entries()).find(([, value]) => value === expression);
+                if (fallbackEntry) atFillQueueItems.delete(fallbackEntry[0]);
+            }
             if (result.success === false || data?.status === 'error') atFillFailed++;
             else atFillCompleted++;
             await atLoadCompareImages({ silent: true });
-            const done = atFillCompleted + atFillFailed;
+            const done = atFillCompleted + atFillFailed + atFillCancelled;
             atSetFillProgress(`생성 진행 · 완료 ${atFillCompleted}, 실패 ${atFillFailed} (${done}/${atFillTotal})`);
-            if (!atFillPendingExpressions.size) {
-                atFillRunning = false;
-                atSetFillProgress(`생성 완료 · 성공 ${atFillCompleted}, 실패 ${atFillFailed}`);
-                showToast(`오토매치 기본 이미지 ${atFillCompleted}개 생성 완료`, atFillCompleted ? 'success' : 'error');
+            atFinalizeFillRun();
+        }
+
+        function atReconcileDefaultGenerationQueue(items) {
+            if (!atFillRunning || !Array.isArray(items) || atFillQueueItems.size === 0) return;
+            const itemMap = new Map(items.filter(Boolean).map(item => [item.id, item]));
+            let changed = false;
+            let completedWithoutEvent = false;
+            for (const [itemId, expression] of Array.from(atFillQueueItems.entries())) {
+                const item = itemMap.get(itemId);
+                if (!item || !['completed', 'failed', 'cancelled'].includes(item.status)) continue;
+                atFillQueueItems.delete(itemId);
+                atFillPendingExpressions.delete(expression);
+                if (item.status === 'cancelled') {
+                    atFillCancelled++;
+                } else if (item.status === 'failed' || item.result?.success === false) {
+                    atFillFailed++;
+                } else {
+                    atFillCompleted++;
+                    completedWithoutEvent = true;
+                }
+                changed = true;
             }
+            if (!changed) return;
+            if (completedWithoutEvent) {
+                atLoadCompareImages({ silent: true }).catch(e => {
+                    console.error('[AUTOMATCH] 큐 완료 보정 후 비교 이미지 갱신 실패:', e);
+                });
+            }
+            const done = atFillCompleted + atFillFailed + atFillCancelled;
+            atSetFillProgress(`생성 진행 · 완료 ${atFillCompleted}, 실패 ${atFillFailed}, 취소 ${atFillCancelled} (${done}/${atFillTotal})`);
+            atFinalizeFillRun();
         }
 
         function atClearAll() {
@@ -67038,6 +67530,9 @@
         // ─── 통합 큐 WebSocket 핸들러 ────────────────────────
         function handleQueueUpdated(data) {
             if (!data || !data.items) { console.warn('[QUEUE] handleQueueUpdated: 데이터 없음', data); return; }
+            if (typeof atReconcileDefaultGenerationQueue === 'function') {
+                atReconcileDefaultGenerationQueue(data.items);
+            }
             // 백엔드 상태를 프론트엔드 assetQueue에 동기화
             assetQueue = data.items.map(item => ({
                 id: item.id,

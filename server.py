@@ -12926,6 +12926,48 @@ async def handle_api_asset_mode_automatch_compare(request: web.Request) -> web.R
         traceback.print_exc()
         return web.json_response({"success": False, "error": str(e), "images": {}}, status=500)
 
+
+async def handle_api_asset_mode_automatch_defaults(request: web.Request) -> web.Response:
+    try:
+        character = request.match_info.get("character", "")
+        result = asset_mode.list_automatch_default_images(character)
+        status = 200 if result.get("success") else 400
+        return web.json_response(result, status=status)
+    except Exception as e:
+        print(
+            f"[AUTOMATCH_MANAGE] 이미지 목록 API 예외: "
+            f"character={request.match_info.get('character', '')!r}, "
+            f"error={type(e).__name__}: {e}"
+        )
+        traceback.print_exc()
+        return web.json_response(
+            {"success": False, "error": str(e), "images": []},
+            status=500,
+        )
+
+
+async def handle_api_asset_mode_delete_automatch_default(request: web.Request) -> web.Response:
+    try:
+        body = await request.json()
+        result = asset_mode.delete_automatch_default_image(
+            body.get("character", ""),
+            body.get("expression", ""),
+            body.get("filename", ""),
+        )
+        status = 200 if result.get("success") else 400
+        return web.json_response(result, status=status)
+    except Exception as e:
+        print(
+            f"[AUTOMATCH_MANAGE] 이미지 삭제 API 예외: "
+            f"error={type(e).__name__}: {e}"
+        )
+        traceback.print_exc()
+        return web.json_response(
+            {"success": False, "error": str(e)},
+            status=500,
+        )
+
+
 async def handle_api_asset_mode_set_representative(request: web.Request) -> web.Response:
     try:
         body = await request.json()
@@ -15027,6 +15069,8 @@ app.router.add_get("/api/asset_mode/characters/{character}/outfits", handle_api_
 app.router.add_get("/api/asset_mode/characters/{character}/expressions", handle_api_asset_mode_expressions)
 app.router.add_get("/api/asset_mode/characters/{character}/outfits/{outfit}/expressions/{expression}/images", handle_api_asset_mode_images)
 app.router.add_get("/api/asset_mode/characters/{character}/automatch_compare", handle_api_asset_mode_automatch_compare)
+app.router.add_get("/api/asset_mode/characters/{character}/automatch_defaults", handle_api_asset_mode_automatch_defaults)
+app.router.add_post("/api/asset_mode/automatch_defaults/delete", handle_api_asset_mode_delete_automatch_default)
 app.router.add_post("/api/asset_mode/set_representative", handle_api_asset_mode_set_representative)
 app.router.add_get("/api/asset_mode/characters/{character}/outfits/{outfit}/expressions/{expression}/images/{filename}", handle_api_asset_mode_image)
 app.router.add_post("/api/asset_mode/delete_combination", handle_api_asset_mode_delete_combination)

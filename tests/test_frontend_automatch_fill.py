@@ -36,6 +36,20 @@ def test_automatch_generation_uses_separate_storage_and_source_badges():
     assert "&include_existing=${includeExisting}" in source
 
 
+def test_automatch_generated_images_have_dedicated_management_modal():
+    source = _frontend_source()
+
+    assert 'onclick="atOpenImageManager()">생성 이미지 관리</button>' in source
+    assert 'id="at-image-manager-modal"' in source
+    assert 'id="at-manager-character"' in source
+    assert 'id="at-manager-grid"' in source
+    assert "function atLoadManagedImages()" in source
+    assert "/automatch_defaults`" in source
+    assert "function atDeleteManagedImage(" in source
+    assert "'/api/asset_mode/automatch_defaults/delete'" in source
+    assert "삭제한 파일은 복구할 수 없습니다." in source
+
+
 def test_fill_worker_shows_model_specific_controls_and_existing_asset_option():
     source = _frontend_source()
 
@@ -47,6 +61,50 @@ def test_fill_worker_shows_model_specific_controls_and_existing_asset_option():
     assert 'data-at-availability="ipadapter"' in source
     assert 'id="at-fill-use-existing" checked' in source
     assert "function atApplyFillWorkflowAvailability()" in source
+
+
+def test_cancelled_automatch_queue_items_unlock_the_generation_button():
+    source = _frontend_source()
+    fill_generation = source[
+        source.index("async function atFillEmptySlots()") : source.index("function atClearAll()")
+    ]
+    fill_finalize = source[
+        source.index("function atFinalizeFillRun()") : source.index("async function atFillEmptySlots()")
+    ]
+    queue_handler = source[
+        source.index("function handleQueueUpdated(data)") : source.index("function handleQueueProgress(data)")
+    ]
+
+    assert "let atFillQueueItems = new Map();" in source
+    assert "atFillQueueItems.set(response.item_id, expression);" in fill_generation
+    assert "function atReconcileDefaultGenerationQueue(items)" in fill_generation
+    assert "item.status === 'cancelled'" in fill_generation
+    assert "atFillCancelled++;" in fill_generation
+    assert "function atFinalizeFillRun()" in fill_finalize
+    assert "atFillRunning = false;" in fill_finalize
+    assert "atReconcileDefaultGenerationQueue(data.items);" in queue_handler
+
+
+def test_automatch_can_load_saved_asset_generation_settings_except_expression():
+    source = _frontend_source()
+    load_settings = source[
+        source.index("async function atLoadAssetSettings()") : source.index("function atApplyFillWorkflowAvailability()")
+    ]
+
+    assert 'onclick="atLoadAssetSettings()"' in source
+    assert 'id="at-fill-natural-language-text"' in source
+    assert "localStorage.getItem('assetModeSettings')" in load_settings
+    assert "setSelect('character', 'character', '캐릭터');" in load_settings
+    assert "setSelect('appearance', 'appearance', '외모');" in load_settings
+    assert "setSelect('outfit', 'outfit', '복장');" in load_settings
+    assert "setLoraList('lora_list', 'lora_list', 'LoRA 목록');" in load_settings
+    assert "setString('natural_language', 'natural_language_text', '자연어 직접 입력');" in load_settings
+    assert "setBoolean('hrf_sdxl', 'hrf_sdxl', 'HRF ILXL', capabilities.ilxl);" in load_settings
+    assert "setNumber('seed', 'seed', 'Seed', capabilities.anima);" in load_settings
+    assert "atFillSlot.expression =" not in load_settings
+    assert "atInitFillPanel();" in load_settings
+    assert "await atLoadCompareImages({ silent: true });" in load_settings
+    assert "_atSaveState();" in load_settings
 
 
 def test_hires_details_group_is_disabled_until_a_hires_mode_is_enabled():

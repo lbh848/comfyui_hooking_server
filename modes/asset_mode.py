@@ -2027,6 +2027,209 @@ class AssetMode:
             "images": results,
         }
 
+    def _automatch_default_storage_path(
+        self,
+        character: str,
+        expression: str = "",
+    ) -> str:
+        """오토매치 전용 경로가 asset 루트 밖으로 벗어나지 않도록 조립한다."""
+        asset_root = os.path.abspath(ASSET_DIR)
+        character_dir = os.path.abspath(os.path.join(
+            asset_root,
+            self._safe_dirname(character),
+        ))
+        if (
+            character_dir == asset_root
+            or os.path.commonpath((asset_root, character_dir)) != asset_root
+        ):
+            raise ValueError("유효하지 않은 캐릭터 경로")
+
+        default_dir = os.path.join(character_dir, AUTOMATCH_DEFAULT_OUTFIT_DIR)
+        if not expression:
+            return default_dir
+
+        expression_dir = os.path.abspath(os.path.join(
+            default_dir,
+            self._safe_dirname(expression),
+        ))
+        if (
+            expression_dir == os.path.abspath(default_dir)
+            or os.path.commonpath((os.path.abspath(default_dir), expression_dir))
+            != os.path.abspath(default_dir)
+        ):
+            raise ValueError("유효하지 않은 표정 경로")
+        return expression_dir
+
+    def list_automatch_default_images(self, character: str) -> dict:
+        """오토매치 전용 저장 구역의 모든 이미지를 관리 화면용으로 반환한다."""
+        if not character:
+            print("[AUTOMATCH_MANAGE] 이미지 목록 조회 실패: character가 비어있음")
+            return {
+                "success": False,
+                "error": "character 필수",
+                "character": "",
+                "images": [],
+                "image_count": 0,
+                "expression_count": 0,
+            }
+
+        try:
+            default_dir = self._automatch_default_storage_path(character)
+        except ValueError as e:
+            print(
+                f"[AUTOMATCH_MANAGE] 이미지 목록 조회 거부: "
+                f"character={character!r}, error={e}"
+            )
+            return {
+                "success": False,
+                "error": str(e),
+                "character": character,
+                "images": [],
+                "image_count": 0,
+                "expression_count": 0,
+            }
+        if not os.path.isdir(default_dir):
+            print(
+                f"[AUTOMATCH_MANAGE] 저장된 이미지 없음: "
+                f"character={character!r}, path={default_dir!r}"
+            )
+            return {
+                "success": True,
+                "character": character,
+                "images": [],
+                "image_count": 0,
+                "expression_count": 0,
+            }
+
+        images = []
+        expressions = set()
+        for expression in sorted(os.listdir(default_dir)):
+            expression_dir = os.path.join(default_dir, expression)
+            if not os.path.isdir(expression_dir):
+                continue
+            listing = self.list_images(
+                character,
+                AUTOMATCH_DEFAULT_OUTFIT_DIR,
+                expression,
+            )
+            for item in listing.get("images", []):
+                filename = item.get("filename", "")
+                if not filename:
+                    print(
+                        f"[AUTOMATCH_MANAGE] 이미지 항목 건너뜀: 파일명이 비어있음, "
+                        f"character={character!r}, expression={expression!r}"
+                    )
+                    continue
+                image_path = os.path.join(expression_dir, filename)
+                try:
+                    modified_at = os.path.getmtime(image_path)
+                except OSError as e:
+                    print(
+                        f"[AUTOMATCH_MANAGE] 이미지 수정시각 조회 실패: "
+                        f"path={image_path!r}, error={type(e).__name__}: {e}"
+                    )
+                    traceback.print_exc()
+                    modified_at = 0
+                expressions.add(expression)
+                images.append({
+                    "expression": expression,
+                    "filename": filename,
+                    "is_representative": bool(item.get("is_representative", False)),
+                    "has_prompt": bool(item.get("has_prompt", False)),
+                    "modified_at": modified_at,
+                })
+
+        images.sort(key=lambda item: (
+            item["expression"].casefold(),
+            -item["modified_at"],
+            item["filename"],
+        ))
+        print(
+            f"[AUTOMATCH_MANAGE] 이미지 목록 조회 완료: character={character!r}, "
+            f"expressions={len(expressions)}, images={len(images)}"
+        )
+        return {
+            "success": True,
+            "character": character,
+            "images": images,
+            "image_count": len(images),
+            "expression_count": len(expressions),
+        }
+
+    def delete_automatch_default_image(
+        self,
+        character: str,
+        expression: str,
+        filename: str,
+    ) -> dict:
+        """오토매치 전용 저장 구역의 이미지 한 장만 안전하게 삭제한다."""
+        if not character or not expression or not filename:
+            print(
+                f"[AUTOMATCH_MANAGE] 이미지 삭제 실패: 필수값 누락, "
+                f"character={character!r}, expression={expression!r}, filename={filename!r}"
+            )
+            return {"success": False, "error": "캐릭터, 표정, 파일명을 모두 지정하세요"}
+        if (
+            filename != os.path.basename(filename)
+            or "/" in filename
+            or "\\" in filename
+            or filename.startswith("_")
+            or os.path.splitext(filename)[1].lower()
+            not in (".png", ".jpg", ".jpeg", ".webp")
+        ):
+            print(
+                f"[AUTOMATCH_MANAGE] 이미지 삭제 거부: 안전하지 않은 파일명, "
+                f"character={character!r}, expression={expression!r}, filename={filename!r}"
+            )
+            return {"success": False, "error": "유효하지 않은 파일명"}
+
+        try:
+            expression_dir = self._automatch_default_storage_path(
+                character,
+                expression,
+            )
+        except ValueError as e:
+            print(
+                f"[AUTOMATCH_MANAGE] 이미지 삭제 거부: character={character!r}, "
+                f"expression={expression!r}, filename={filename!r}, error={e}"
+            )
+            return {"success": False, "error": str(e)}
+
+        result = self.delete_image(
+            character,
+            AUTOMATCH_DEFAULT_OUTFIT_DIR,
+            expression,
+            filename,
+        )
+        if not result.get("success"):
+            print(
+                f"[AUTOMATCH_MANAGE] 이미지 삭제 실패: character={character!r}, "
+                f"expression={expression!r}, filename={filename!r}, "
+                f"error={result.get('error', '알 수 없는 오류')}"
+            )
+            return result
+
+        try:
+            if os.path.isdir(expression_dir) and not os.listdir(expression_dir):
+                os.rmdir(expression_dir)
+        except OSError as e:
+            print(
+                f"[AUTOMATCH_MANAGE] 빈 표정 폴더 정리 실패: "
+                f"path={expression_dir!r}, error={type(e).__name__}: {e}"
+            )
+            traceback.print_exc()
+
+        print(
+            f"[AUTOMATCH_MANAGE] 이미지 삭제 완료: character={character!r}, "
+            f"expression={expression!r}, filename={filename!r}"
+        )
+        return {
+            "success": True,
+            "character": character,
+            "expression": expression,
+            "filename": filename,
+        }
+
     def set_representative(self, character: str, outfit: str, expression: str, filename: str) -> dict:
         img_dir = os.path.join(
             ASSET_DIR,
@@ -2173,7 +2376,7 @@ class AssetMode:
             outfit_path = os.path.join(char_dir, outfit_dir_name)
             if not os.path.isdir(outfit_path):
                 continue
-            if outfit_dir_name == "Lora":
+            if outfit_dir_name in ("Lora", AUTOMATCH_DEFAULT_OUTFIT_DIR):
                 continue
             for expr_dir_name in sorted(os.listdir(outfit_path)):
                 expr_path = os.path.join(outfit_path, expr_dir_name)
