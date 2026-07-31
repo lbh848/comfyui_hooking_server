@@ -8615,7 +8615,9 @@
         .at-fill-top-row { display: grid; grid-template-columns: minmax(0, 1fr) 82px; gap: 8px; align-items: end; }
         .at-fill-top-label { color: var(--text2); font-size: 0.68rem; line-height: 1.4; }
         .at-fill-top-input { min-height: 38px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface2); color: var(--text); font-weight: 700; text-align: center; }
+        .at-fill-start-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
         .at-fill-start { min-height: 40px; border: none; border-radius: 9px; background: linear-gradient(135deg, var(--accent), var(--accent2)); color: #fff; cursor: pointer; font-weight: 750; box-shadow: 0 7px 18px color-mix(in srgb, var(--accent) 24%, transparent); }
+        .at-fill-start.tag { background: linear-gradient(135deg, var(--success), color-mix(in srgb, var(--success) 60%, var(--accent))); }
         .at-fill-start:disabled { opacity: 0.45; cursor: not-allowed; box-shadow: none; }
         .at-fill-status { display: none; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface2); color: var(--text2); font-size: 0.7rem; line-height: 1.45; }
         .at-fill-progress { display: none; height: 5px; overflow: hidden; border-radius: 99px; background: var(--surface2); }
@@ -12535,7 +12537,10 @@
                                         <div class="at-fill-top-row"><div class="at-fill-top-label"><strong style="color:var(--text);">빈 슬롯 채우기</strong><br>이미지별 상위 후보 중 몇 위까지 확인할지 선택합니다.</div><input class="at-fill-top-input" type="number" id="at-fill-top-n" value="3" min="1" max="12" onchange="atUpdateFillAvailability()"></div>
                                         <div class="at-fill-progress" id="at-fill-progress"><div id="at-fill-progress-inner"></div></div>
                                         <div class="at-fill-status" id="at-fill-status"></div>
-                                        <button class="at-fill-start" id="at-fill-start" onclick="atFillEmptySlots()" disabled>빈 슬롯 생성하기</button>
+                                        <div class="at-fill-start-row">
+                                            <button class="at-fill-start" id="at-fill-start-embedding" onclick="atFillEmptySlots('embedding')" disabled>임베딩 빈 슬롯 생성</button>
+                                            <button class="at-fill-start tag" id="at-fill-start-tag" onclick="atFillEmptySlots('tag')" disabled>태그 빈 슬롯 생성</button>
+                                        </div>
                                     </div>
                                 </aside>
                             </div>
@@ -30171,14 +30176,25 @@
         const AT_MATCH_RESULT_LIMIT = 12;
         const AT_MATCH_PAGE_SIZE = 4;
         const atMatchPages = { embedding: {}, tag: {} };
-        let atFillRunning = false;
-        let atFillQueueing = false;
-        let atFillPendingExpressions = new Set();
-        let atFillQueueItems = new Map();
-        let atFillCompleted = 0;
-        let atFillFailed = 0;
-        let atFillCancelled = 0;
-        let atFillTotal = 0;
+        function atCreateFillRunState(matchType) {
+            return {
+                matchType,
+                running: false,
+                queueing: false,
+                pendingExpressions: new Set(),
+                queueItems: new Map(),
+                completed: 0,
+                failed: 0,
+                cancelled: 0,
+                total: 0,
+            };
+        }
+        const atFillRuns = {
+            embedding: atCreateFillRunState('embedding'),
+            tag: atCreateFillRunState('tag'),
+        };
+        const atFillReservedExpressions = new Set();
+        let atFillPreviewMatchType = 'embedding';
 
         _atLoadState();
         // 초기 업로드 화면 렌더 (이미지가 없으면 빈 상태 안내 표시)
@@ -31105,20 +31121,31 @@
             }
         }
 
-        function atCollectEmptyTopMatches() {
+        function atFillMatchTypeLabel(matchType) {
+            return matchType === 'tag' ? '태그 매칭' : '임베딩 매칭';
+        }
+
+        function atCollectEmptyTopMatches(matchType = 'embedding') {
+            if (!Object.prototype.hasOwnProperty.call(atFillRuns, matchType)) {
+                console.error('[AUTOMATCH] 빈 슬롯 수집 실패: 알 수 없는 매칭 유형', matchType);
+                return [];
+            }
             const topNInput = document.getElementById('at-fill-top-n');
             const topN = Math.max(1, Math.min(AT_MATCH_RESULT_LIMIT, Number.parseInt(topNInput?.value || '3', 10) || 3));
             if (topNInput) topNInput.value = topN;
-            const imageNames = [];
-            atState.embeddingMatches.forEach(group => { if (!imageNames.includes(group.imageName)) imageNames.push(group.imageName); });
-            atState.imageMatches.forEach(group => { if (!imageNames.includes(group.imageName)) imageNames.push(group.imageName); });
+            const groups = matchType === 'tag' ? atState.imageMatches : atState.embeddingMatches;
             const expressions = [];
-            imageNames.forEach(imageName => {
-                const embedding = atState.embeddingMatches.find(group => group.imageName === imageName);
-                const tags = atState.imageMatches.find(group => group.imageName === imageName);
-                const ranked = embedding?.matches?.length ? embedding.matches : (tags?.matches || []);
+            groups.forEach(group => {
+                const ranked = Array.isArray(group?.matches) ? group.matches : [];
                 ranked.slice(0, topN).forEach(match => {
-                    if (match?.name && !atState.compareImages[match.name] && !expressions.includes(match.name)) expressions.push(match.name);
+                    if (
+                        match?.name
+                        && !atState.compareImages[match.name]
+                        && !atFillReservedExpressions.has(match.name)
+                        && !expressions.includes(match.name)
+                    ) {
+                        expressions.push(match.name);
+                    }
                 });
             });
             return expressions;
@@ -31147,7 +31174,10 @@
                 return;
             }
 
-            const targets = atCollectEmptyTopMatches();
+            const preferredTargets = atCollectEmptyTopMatches(atFillPreviewMatchType);
+            const fallbackMatchType = atFillPreviewMatchType === 'embedding' ? 'tag' : 'embedding';
+            const targets = preferredTargets.length ? preferredTargets : atCollectEmptyTopMatches(fallbackMatchType);
+            const previewMatchType = preferredTargets.length ? atFillPreviewMatchType : fallbackMatchType;
             if (!targets.length) {
                 targetLabel.textContent = '빈 표정 없음';
                 positive.textContent = '현재 TOP 범위에 미리볼 빈 표정이 없습니다.';
@@ -31156,71 +31186,121 @@
             }
 
             const previewSlot = { ...atFillSlot, expression: targets[0] };
-            targetLabel.textContent = `기준 · ${targets[0]} (${targets.length}개 대상)`;
+            targetLabel.textContent = `${atFillMatchTypeLabel(previewMatchType)} 기준 · ${targets[0]} (${targets.length}개 대상)`;
             positive.innerHTML = previewBatchSlotPrompt(previewSlot);
             negative.textContent = previewBatchSlotNegativePrompt(previewSlot);
         }
 
         function atUpdateFillAvailability() {
-            const targets = atCollectEmptyTopMatches();
+            const targetsByType = {
+                embedding: atCollectEmptyTopMatches('embedding'),
+                tag: atCollectEmptyTopMatches('tag'),
+            };
             const expression = document.getElementById('at-fill-expression');
-            const button = document.getElementById('at-fill-start');
-            if (expression) expression.textContent = targets.length ? `${targets.length}개 빈 표정 자동 지정` : '매칭 결과에서 자동 지정';
-            if (button) {
-                button.disabled = atFillRunning || !atFillSlot.character || !atFillSlot.appearance || !atFillSlot.outfit || targets.length === 0;
-                button.textContent = atFillRunning ? `생성 중 · ${atFillCompleted + atFillFailed + atFillCancelled}/${atFillTotal}` : (targets.length ? `${targets.length}개 빈 슬롯 생성하기` : '채울 빈 슬롯이 없습니다');
+            const ready = !!atFillSlot.character && !!atFillSlot.appearance && !!atFillSlot.outfit;
+            if (expression) {
+                expression.textContent = targetsByType.embedding.length || targetsByType.tag.length
+                    ? `임베딩 ${targetsByType.embedding.length}개 · 태그 ${targetsByType.tag.length}개 자동 지정`
+                    : '매칭 결과에서 자동 지정';
             }
+            [
+                ['embedding', 'at-fill-start-embedding', '임베딩'],
+                ['tag', 'at-fill-start-tag', '태그'],
+            ].forEach(([matchType, buttonId, shortLabel]) => {
+                const button = document.getElementById(buttonId);
+                if (!button) return;
+                const run = atFillRuns[matchType];
+                const targets = targetsByType[matchType];
+                const done = run.completed + run.failed + run.cancelled;
+                button.disabled = run.running || !ready || targets.length === 0;
+                button.textContent = run.running
+                    ? `${shortLabel} 생성 중 · ${done}/${run.total}`
+                    : (targets.length ? `${shortLabel} ${targets.length}개 생성` : `${shortLabel} 빈 슬롯 없음`);
+            });
             atUpdateFillPromptPreview();
         }
 
-        function atSetFillProgress(message) {
+        function atSetFillProgress(matchType, message) {
+            const run = atFillRuns[matchType];
+            if (!run) {
+                console.error('[AUTOMATCH] 생성 진행률 표시 실패: 알 수 없는 매칭 유형', matchType);
+                return;
+            }
             const status = document.getElementById('at-fill-status');
             const progress = document.getElementById('at-fill-progress');
             const inner = document.getElementById('at-fill-progress-inner');
-            const done = atFillCompleted + atFillFailed + atFillCancelled;
+            const done = run.completed + run.failed + run.cancelled;
             if (status) {
                 status.style.display = 'block';
-                status.textContent = message;
+                status.textContent = `${atFillMatchTypeLabel(matchType)} · ${message}`;
             }
             if (progress) progress.style.display = 'block';
-            if (inner) inner.style.width = `${atFillTotal ? (done / atFillTotal) * 100 : 0}%`;
+            if (inner) inner.style.width = `${run.total ? (done / run.total) * 100 : 0}%`;
             atUpdateFillAvailability();
         }
 
-        function atFinalizeFillRun() {
-            if (!atFillRunning || atFillQueueing || atFillQueueItems.size > 0) return false;
-            atFillRunning = false;
-            const label = atFillCancelled > 0 ? '생성 종료' : '생성 완료';
-            atSetFillProgress(`${label} · 성공 ${atFillCompleted}, 실패 ${atFillFailed}, 취소 ${atFillCancelled}`);
-            const toastType = atFillCancelled > 0 ? 'warning' : (atFillCompleted > 0 ? 'success' : 'error');
-            showToast(`오토매치 기본 이미지 · 성공 ${atFillCompleted}, 실패 ${atFillFailed}, 취소 ${atFillCancelled}`, toastType);
+        function atFinalizeFillRun(matchType) {
+            const run = atFillRuns[matchType];
+            if (!run) {
+                console.error('[AUTOMATCH] 생성 종료 처리 실패: 알 수 없는 매칭 유형', matchType);
+                return false;
+            }
+            if (!run.running || run.queueing || run.queueItems.size > 0) return false;
+            run.running = false;
+            const label = run.cancelled > 0 ? '생성 종료' : '생성 완료';
+            atSetFillProgress(matchType, `${label} · 성공 ${run.completed}, 실패 ${run.failed}, 취소 ${run.cancelled}`);
+            const toastType = run.cancelled > 0 ? 'warning' : (run.completed > 0 ? 'success' : 'error');
+            showToast(`오토매치 ${atFillMatchTypeLabel(matchType)} 기본 이미지 · 성공 ${run.completed}, 실패 ${run.failed}, 취소 ${run.cancelled}`, toastType);
             return true;
         }
 
-        async function atFillEmptySlots() {
-            if (atFillRunning) return;
-            const targets = atCollectEmptyTopMatches();
+        function atSnapshotFillSlot() {
+            return {
+                ...atFillSlot,
+                ref_images: (atFillSlot.ref_images || []).map(image => ({ ...image })),
+                style_ref_images: (atFillSlot.style_ref_images || []).map(image => ({ ...image })),
+                lora_list: (atFillSlot.lora_list || []).map(item => ({ ...item })),
+                style_lora_list: (atFillSlot.style_lora_list || []).map(item => ({ ...item })),
+                face_lora_list: (atFillSlot.face_lora_list || []).map(item => ({ ...item })),
+            };
+        }
+
+        async function atFillEmptySlots(matchType) {
+            const run = atFillRuns[matchType];
+            if (!run) {
+                console.error('[AUTOMATCH] 기본 이미지 생성 시작 실패: 알 수 없는 매칭 유형', matchType);
+                showToast('알 수 없는 오토매치 생성 유형입니다', 'error');
+                return;
+            }
+            if (run.running) {
+                console.warn(`[AUTOMATCH] ${matchType} 기본 이미지 생성 건너뜀: 이미 실행 중`);
+                return;
+            }
+            atFillPreviewMatchType = matchType;
+            const targets = atCollectEmptyTopMatches(matchType);
             if (!atFillSlot.character || !atFillSlot.appearance || !atFillSlot.outfit) {
                 showToast('캐릭터, 외모, 복장을 모두 선택하세요', 'warning');
                 return;
             }
             if (!targets.length) {
-                showToast('선택한 TOP 범위에 빈 슬롯이 없습니다', 'info');
+                showToast(`선택한 TOP 범위에 ${atFillMatchTypeLabel(matchType)} 빈 슬롯이 없습니다`, 'info');
                 return;
             }
 
-            atFillRunning = true;
-            atFillQueueing = true;
-            atFillPendingExpressions = new Set();
-            atFillQueueItems = new Map();
-            atFillCompleted = 0;
-            atFillFailed = 0;
-            atFillCancelled = 0;
-            atFillTotal = targets.length;
-            atSetFillProgress(`${targets.length}개 기본 이미지를 큐에 추가하는 중…`);
+            const fillSlotSnapshot = atSnapshotFillSlot();
+            run.running = true;
+            run.queueing = true;
+            run.pendingExpressions = new Set();
+            run.queueItems = new Map();
+            run.completed = 0;
+            run.failed = 0;
+            run.cancelled = 0;
+            run.total = targets.length;
+            targets.forEach(expression => atFillReservedExpressions.add(expression));
+            atSetFillProgress(matchType, `${targets.length}개 기본 이미지를 큐에 추가하는 중…`);
 
             for (const expression of targets) {
-                const slot = { ...atFillSlot, expression };
+                const slot = { ...fillSlotSnapshot, expression };
                 try {
                     const promptData = await buildBatchSlotPromptData(slot);
                     if (!promptData) throw new Error('프롬프트 생성 결과가 비어있습니다');
@@ -31245,80 +31325,108 @@
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
                             type: 'asset_generation',
-                            label: `오토매치 기본 이미지 ${slot.character}/${expression}`,
+                            label: `오토매치 ${atFillMatchTypeLabel(matchType)} 기본 이미지 ${slot.character}/${expression}`,
                             params: { body: payload },
                         }),
                     });
                     if (!response?.success) throw new Error(response?.error || '큐 추가 실패');
                     if (!response.item_id) throw new Error('큐 작업 ID가 비어있습니다');
-                    atFillPendingExpressions.add(expression);
-                    atFillQueueItems.set(response.item_id, expression);
+                    run.pendingExpressions.add(expression);
+                    run.queueItems.set(response.item_id, expression);
                 } catch (e) {
-                    atFillFailed++;
-                    console.error(`[AUTOMATCH] 기본 이미지 큐 추가 실패: expression=${expression}`, e);
+                    run.failed++;
+                    atFillReservedExpressions.delete(expression);
+                    console.error(`[AUTOMATCH] ${matchType} 기본 이미지 큐 추가 실패: expression=${expression}`, e);
                 }
             }
-            atFillQueueing = false;
+            run.queueing = false;
 
-            if (!atFillPendingExpressions.size) {
-                atSetFillProgress(`큐 추가 실패 · ${atFillFailed}건`);
-                atFinalizeFillRun();
+            if (!run.pendingExpressions.size) {
+                atSetFillProgress(matchType, `큐 추가 실패 · ${run.failed}건`);
+                atFinalizeFillRun(matchType);
                 return;
             }
-            atSetFillProgress(`큐 대기 중 · 완료 0 / ${atFillTotal}, 큐 추가 실패 ${atFillFailed}`);
-            showToast(`${atFillPendingExpressions.size}개 기본 이미지 생성 작업을 큐에 추가했습니다`, 'success');
+            atSetFillProgress(matchType, `큐 대기 중 · 완료 0 / ${run.total}, 큐 추가 실패 ${run.failed}`);
+            showToast(`${atFillMatchTypeLabel(matchType)} ${run.pendingExpressions.size}개 기본 이미지 생성 작업을 큐에 추가했습니다`, 'success');
         }
 
         async function atHandleDefaultGenerationEvent(data) {
             const result = data?.result || data || {};
             if (result.storage_group !== 'automatch_defaults') return;
             const expression = result.expression || '';
-            if (!expression || !atFillPendingExpressions.has(expression)) return;
-            atFillPendingExpressions.delete(expression);
             const itemId = data?.item_id || '';
-            if (itemId) {
-                atFillQueueItems.delete(itemId);
-            } else {
-                const fallbackEntry = Array.from(atFillQueueItems.entries()).find(([, value]) => value === expression);
-                if (fallbackEntry) atFillQueueItems.delete(fallbackEntry[0]);
+            let run = itemId
+                ? Object.values(atFillRuns).find(candidate => candidate.queueItems.has(itemId))
+                : null;
+            if (!run && expression) {
+                run = Object.values(atFillRuns).find(candidate => candidate.pendingExpressions.has(expression)) || null;
             }
-            if (result.success === false || data?.status === 'error') atFillFailed++;
-            else atFillCompleted++;
-            await atLoadCompareImages({ silent: true });
-            const done = atFillCompleted + atFillFailed + atFillCancelled;
-            atSetFillProgress(`생성 진행 · 완료 ${atFillCompleted}, 실패 ${atFillFailed} (${done}/${atFillTotal})`);
-            atFinalizeFillRun();
+            if (!run || !expression || !run.pendingExpressions.has(expression)) return;
+
+            run.pendingExpressions.delete(expression);
+            if (itemId) {
+                run.queueItems.delete(itemId);
+            } else {
+                const fallbackEntry = Array.from(run.queueItems.entries()).find(([, value]) => value === expression);
+                if (fallbackEntry) run.queueItems.delete(fallbackEntry[0]);
+            }
+            const succeeded = result.success !== false && data?.status !== 'error';
+            if (succeeded) {
+                run.completed++;
+                try {
+                    await atLoadCompareImages({ silent: true });
+                } finally {
+                    atFillReservedExpressions.delete(expression);
+                }
+            } else {
+                run.failed++;
+                atFillReservedExpressions.delete(expression);
+            }
+            const done = run.completed + run.failed + run.cancelled;
+            atSetFillProgress(run.matchType, `생성 진행 · 완료 ${run.completed}, 실패 ${run.failed}, 취소 ${run.cancelled} (${done}/${run.total})`);
+            atFinalizeFillRun(run.matchType);
         }
 
         function atReconcileDefaultGenerationQueue(items) {
-            if (!atFillRunning || !Array.isArray(items) || atFillQueueItems.size === 0) return;
-            const itemMap = new Map(items.filter(Boolean).map(item => [item.id, item]));
-            let changed = false;
-            let completedWithoutEvent = false;
-            for (const [itemId, expression] of Array.from(atFillQueueItems.entries())) {
-                const item = itemMap.get(itemId);
-                if (!item || !['completed', 'failed', 'cancelled'].includes(item.status)) continue;
-                atFillQueueItems.delete(itemId);
-                atFillPendingExpressions.delete(expression);
-                if (item.status === 'cancelled') {
-                    atFillCancelled++;
-                } else if (item.status === 'failed' || item.result?.success === false) {
-                    atFillFailed++;
-                } else {
-                    atFillCompleted++;
-                    completedWithoutEvent = true;
-                }
-                changed = true;
+            if (!Array.isArray(items)) {
+                console.error('[AUTOMATCH] 큐 상태 보정 실패: 큐 항목이 배열이 아님', items);
+                return;
             }
-            if (!changed) return;
-            if (completedWithoutEvent) {
+            const itemMap = new Map(items.filter(Boolean).map(item => [item.id, item]));
+            const completedExpressions = [];
+            Object.values(atFillRuns).forEach(run => {
+                if (!run.running || run.queueItems.size === 0) return;
+                let changed = false;
+                for (const [itemId, expression] of Array.from(run.queueItems.entries())) {
+                    const item = itemMap.get(itemId);
+                    if (!item || !['completed', 'failed', 'cancelled'].includes(item.status)) continue;
+                    run.queueItems.delete(itemId);
+                    run.pendingExpressions.delete(expression);
+                    if (item.status === 'cancelled') {
+                        run.cancelled++;
+                        atFillReservedExpressions.delete(expression);
+                    } else if (item.status === 'failed' || item.result?.success === false) {
+                        run.failed++;
+                        atFillReservedExpressions.delete(expression);
+                    } else {
+                        run.completed++;
+                        completedExpressions.push(expression);
+                    }
+                    changed = true;
+                }
+                if (!changed) return;
+                const done = run.completed + run.failed + run.cancelled;
+                atSetFillProgress(run.matchType, `생성 진행 · 완료 ${run.completed}, 실패 ${run.failed}, 취소 ${run.cancelled} (${done}/${run.total})`);
+                atFinalizeFillRun(run.matchType);
+            });
+            if (completedExpressions.length) {
                 atLoadCompareImages({ silent: true }).catch(e => {
                     console.error('[AUTOMATCH] 큐 완료 보정 후 비교 이미지 갱신 실패:', e);
+                }).finally(() => {
+                    completedExpressions.forEach(expression => atFillReservedExpressions.delete(expression));
+                    atUpdateFillAvailability();
                 });
             }
-            const done = atFillCompleted + atFillFailed + atFillCancelled;
-            atSetFillProgress(`생성 진행 · 완료 ${atFillCompleted}, 실패 ${atFillFailed}, 취소 ${atFillCancelled} (${done}/${atFillTotal})`);
-            atFinalizeFillRun();
         }
 
         function atClearAll() {

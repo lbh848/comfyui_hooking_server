@@ -22,7 +22,27 @@ def test_matching_result_contains_locked_worker_and_top_n_fill_controls():
     assert 'id="at-fill-expression"' in source
     assert "🔒 잠금" in source
     assert 'id="at-fill-top-n" value="3" min="1" max="12"' in source
-    assert 'onclick="atFillEmptySlots()"' in source
+    assert 'id="at-fill-start-embedding" onclick="atFillEmptySlots(\'embedding\')"' in source
+    assert 'id="at-fill-start-tag" onclick="atFillEmptySlots(\'tag\')"' in source
+
+
+def test_embedding_and_tag_generation_use_independent_runs_without_duplicate_expressions():
+    source = _frontend_source()
+    collector = source[
+        source.index("function atCollectEmptyTopMatches(") : source.index("function atToggleFillPromptPreview(")
+    ]
+    availability = source[
+        source.index("function atUpdateFillAvailability()") : source.index("function atSetFillProgress(")
+    ]
+
+    assert "embedding: atCreateFillRunState('embedding')" in source
+    assert "tag: atCreateFillRunState('tag')" in source
+    assert "const atFillReservedExpressions = new Set();" in source
+    assert "matchType === 'tag' ? atState.imageMatches : atState.embeddingMatches" in collector
+    assert "!atFillReservedExpressions.has(match.name)" in collector
+    assert "targets.forEach(expression => atFillReservedExpressions.add(expression));" in source
+    assert "const run = atFillRuns[matchType];" in availability
+    assert "button.disabled = run.running || !ready || targets.length === 0;" in availability
 
 
 def test_automatch_generation_uses_separate_storage_and_source_badges():
@@ -66,22 +86,22 @@ def test_fill_worker_shows_model_specific_controls_and_existing_asset_option():
 def test_cancelled_automatch_queue_items_unlock_the_generation_button():
     source = _frontend_source()
     fill_generation = source[
-        source.index("async function atFillEmptySlots()") : source.index("function atClearAll()")
+        source.index("async function atFillEmptySlots(matchType)") : source.index("function atClearAll()")
     ]
     fill_finalize = source[
-        source.index("function atFinalizeFillRun()") : source.index("async function atFillEmptySlots()")
+        source.index("function atFinalizeFillRun(matchType)") : source.index("function atSnapshotFillSlot()")
     ]
     queue_handler = source[
         source.index("function handleQueueUpdated(data)") : source.index("function handleQueueProgress(data)")
     ]
 
-    assert "let atFillQueueItems = new Map();" in source
-    assert "atFillQueueItems.set(response.item_id, expression);" in fill_generation
+    assert "queueItems: new Map()," in source
+    assert "run.queueItems.set(response.item_id, expression);" in fill_generation
     assert "function atReconcileDefaultGenerationQueue(items)" in fill_generation
     assert "item.status === 'cancelled'" in fill_generation
-    assert "atFillCancelled++;" in fill_generation
-    assert "function atFinalizeFillRun()" in fill_finalize
-    assert "atFillRunning = false;" in fill_finalize
+    assert "run.cancelled++;" in fill_generation
+    assert "function atFinalizeFillRun(matchType)" in fill_finalize
+    assert "run.running = false;" in fill_finalize
     assert "atReconcileDefaultGenerationQueue(data.items);" in queue_handler
 
 
