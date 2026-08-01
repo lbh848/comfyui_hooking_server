@@ -19,7 +19,7 @@ from threading import Event
 from typing import Callable, Iterator, Mapping
 
 import httpx
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageOps
 
 from .operations import isolated_subprocess_env
 
@@ -1128,6 +1128,29 @@ def prepare_e2e_fixtures(comfy_root: Path) -> dict[str, str]:
     face_root = fixture_root / "face"
     edit_root = fixture_root / "edit"
     try:
+        repatched_face_root = input_root / "soya_char_ref" / "fallback"
+        if not repatched_face_root.is_dir():
+            raise ComfyE2EError(
+                "리패치된 얼굴 fallback 폴더가 없습니다: "
+                f"{repatched_face_root}"
+            )
+        face_sources = sorted(
+            (
+                path
+                for path in repatched_face_root.iterdir()
+                if path.is_file()
+                and path.suffix.casefold()
+                in {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
+            ),
+            key=lambda path: path.name.casefold(),
+        )
+        if not face_sources:
+            raise ComfyE2EError(
+                "리패치된 얼굴 fallback 이미지가 없습니다: "
+                f"{repatched_face_root}"
+            )
+        face_source = face_sources[0]
+
         for directory in (
             input_root,
             training_root,
@@ -1148,6 +1171,9 @@ def prepare_e2e_fixtures(comfy_root: Path) -> dict[str, str]:
         )
         draw.rectangle((125, 345, 387, 512), fill=(65, 95, 145))
 
+        with Image.open(face_source) as source_image:
+            face_image = ImageOps.exif_transpose(source_image).convert("RGB")
+
         mask = Image.new("L", (512, 512), 0)
         mask_draw = ImageDraw.Draw(mask)
         mask_draw.ellipse((170, 120, 342, 320), fill=255)
@@ -1161,7 +1187,7 @@ def prepare_e2e_fixtures(comfy_root: Path) -> dict[str, str]:
         )
         for key in ("training", "face", "edit_source"):
             _save_image_atomic(
-                image,
+                face_image if key == "face" else image,
                 destinations[key],
                 image_format="PNG",
             )
@@ -1170,7 +1196,9 @@ def prepare_e2e_fixtures(comfy_root: Path) -> dict[str, str]:
             destinations["edit_mask"],
             image_format="PNG",
         )
-        return {key: str(path) for key, path in destinations.items()}
+        result = {key: str(path) for key, path in destinations.items()}
+        result["face_source"] = str(face_source)
+        return result
     except Exception as exc:
         print(
             "[COMFY_INSTALL][E2E] 테스트 입력 이미지 생성 실패: "

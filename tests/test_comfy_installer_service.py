@@ -11,7 +11,16 @@ import pytest
 import comfy_installer.service as service_module
 from comfy_installer.e2e import ComfyE2EError
 from comfy_installer.manifest import load_install_manifest
-from comfy_installer.service import ComfyInstallerService
+from comfy_installer.service import ComfyInstallerService, _INSTALL_PHASES
+
+
+def test_install_repatch_runs_before_comfy_startup_and_e2e() -> None:
+    phases = [phase for phase, _label in _INSTALL_PHASES]
+
+    assert phases.index("models") < phases.index("repatch")
+    assert phases.index("repatch") < phases.index("startup")
+    assert phases.index("repatch") < phases.index("e2e_static")
+    assert phases.index("repatch") < phases.index("e2e_runtime")
 
 
 def test_service_status_never_contains_credentials(tmp_path: Path) -> None:
@@ -225,7 +234,10 @@ def test_runtime_e2e_records_failure_and_continues_remaining_workflows(
 
     @contextmanager
     def fake_fixtures(**_kwargs):
-        yield {"training": "fixture/training/sample.png"}
+        yield {
+            "training": "fixture/training/sample.png",
+            "face_source": "fixture/fallback/face.webp",
+        }
 
     def fake_execute_prompt(**kwargs):
         filename = kwargs["filename"]

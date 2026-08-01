@@ -4,6 +4,7 @@ from pathlib import Path
 from threading import Event
 
 import pytest
+from PIL import Image
 
 from comfy_installer.e2e import (
     ComfyE2EError,
@@ -388,6 +389,20 @@ def test_validate_prompt_structure_finds_missing_class_and_link() -> None:
 
 
 def test_prepare_e2e_fixtures_creates_expected_images(tmp_path: Path) -> None:
+    face_source = (
+        tmp_path
+        / "input"
+        / "soya_char_ref"
+        / "fallback"
+        / "face.webp"
+    )
+    face_source.parent.mkdir(parents=True)
+    Image.new("RGB", (96, 128), (12, 34, 56)).save(
+        face_source,
+        format="WEBP",
+        lossless=True,
+    )
+
     result = prepare_e2e_fixtures(tmp_path)
     assert set(result) == {
         "default",
@@ -395,11 +410,18 @@ def test_prepare_e2e_fixtures_creates_expected_images(tmp_path: Path) -> None:
         "face",
         "edit_source",
         "edit_mask",
+        "face_source",
     }
-    for path in result.values():
+    for key, path in result.items():
         assert Path(path).is_file()
     assert Path(result["default"]).read_bytes()[:4] == b"RIFF"
     assert Path(result["face"]).name == "representation.png"
+    assert Path(result["face_source"]) == face_source
+    with Image.open(result["face"]) as face_image:
+        assert face_image.size == (96, 128)
+        assert face_image.convert("RGB").getpixel((0, 0)) == (12, 34, 56)
+    with Image.open(result["training"]) as training_image:
+        assert training_image.size == (512, 512)
 
 
 def test_protected_e2e_fixtures_restores_existing_and_removes_created(
@@ -411,6 +433,15 @@ def test_protected_e2e_fixtures_restores_existing_and_removes_created(
     existing.parent.mkdir(parents=True)
     original = b"original-user-image"
     existing.write_bytes(original)
+    face_source = (
+        comfy_root
+        / "input"
+        / "soya_char_ref"
+        / "fallback"
+        / "face.png"
+    )
+    face_source.parent.mkdir(parents=True)
+    Image.new("RGB", (64, 80), (90, 80, 70)).save(face_source)
 
     with protected_e2e_fixtures(
         comfy_root=comfy_root,
@@ -428,3 +459,4 @@ def test_protected_e2e_fixtures_restores_existing_and_removes_created(
     )
     assert len(backups) == 1
     assert backups[0].read_bytes() == original
+    assert face_source.is_file()

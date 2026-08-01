@@ -80,11 +80,11 @@ _INSTALL_PHASES = (
     ("node_dependencies", "커스텀 노드 Python 의존성 설치"),
     ("runtime_isolation", "GPU 및 독립 환경 검증"),
     ("models", "선택 워크플로우 모델 다운로드·검증"),
+    ("repatch", "Comfy input 설치 리패치"),
     ("startup", "독립 ComfyUI 기동·노드 로드 확인"),
     ("e2e_static", "선택 워크플로우 변환·구조 검증"),
     ("e2e_runtime", "선택 워크플로우 실제 실행"),
     ("config", "config.json 백업·설치 경로 적용"),
-    ("repatch", "Comfy input 설치 리패치"),
     ("complete", "설치 결과 기록"),
 )
 
@@ -589,7 +589,8 @@ class ComfyInstallerService:
         ) as fixtures:
             self._log(
                 "[E2E] 설치기 전용 입력 픽스처 준비: "
-                f"{fixtures['training']}"
+                f"training={fixtures['training']}, "
+                f"face_source={fixtures['face_source']}"
             )
             for index, validation in enumerate(ordered, 1):
                 if self._cancel.is_set():
@@ -1064,6 +1065,13 @@ class ComfyInstallerService:
                 progress=self._set_progress,
             )
 
+            self._set_phase("repatch")
+            repatch = patch_comfy_input(
+                comfy_input_dir=self.comfy_root / "input",
+                fallback_source=self.project_root / "modes" / "fallback_img",
+                log=self._log,
+            )
+
             self._set_phase("startup")
             process = ComfyProcess(
                 comfy_root=self.comfy_root,
@@ -1118,13 +1126,6 @@ class ComfyInstallerService:
                 comfy_root=self.comfy_root,
                 workflow_bindings=selection.workflow_bindings,
                 required_bindings=selection.workflow_bindings.keys(),
-            )
-
-            self._set_phase("repatch")
-            repatch = patch_comfy_input(
-                comfy_input_dir=self.comfy_root / "input",
-                fallback_source=self.project_root / "modes" / "fallback_img",
-                log=self._log,
             )
 
             self._set_phase("complete")
