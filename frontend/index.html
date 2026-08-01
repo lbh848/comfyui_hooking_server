@@ -8602,9 +8602,17 @@
         .workflow-mode-reason { display: inline-flex; align-items: center; margin-left: 4px; padding: 1px 5px; border: 1px solid var(--border); border-radius: 999px; color: var(--text2); background: var(--surface2); font-size: 0.56rem; font-weight: 700; white-space: nowrap; }
         .workflow-mode-legend { display: flex; flex-wrap: wrap; gap: 5px; padding: 7px 8px; margin-bottom: 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface2); color: var(--text2); font-size: 0.63rem; line-height: 1.4; }
         .at-fill-lora-list { display: grid; gap: 5px; margin-top: 5px; }
-        .at-fill-lora-item { display: grid; grid-template-columns: minmax(0, 1fr) 70px 24px; gap: 5px; align-items: center; padding: 6px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface2); }
+        .at-fill-lora-item { display: grid; grid-template-columns: 48px minmax(0, 1fr) 24px; gap: 7px; align-items: center; padding: 6px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface2); }
+        .at-fill-lora-thumb { width: 48px; height: 48px; overflow: hidden; display: grid; place-items: center; padding: 0; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text2); cursor: zoom-in; }
+        .at-fill-lora-thumb.is-placeholder { cursor: default; }
+        .at-fill-lora-thumb img { width: 100%; height: 100%; display: block; object-fit: cover; }
+        .at-fill-lora-placeholder { font-size: 1.25rem; line-height: 1; }
+        .at-fill-lora-main { min-width: 0; display: grid; gap: 5px; }
         .at-fill-lora-name { min-width: 0; overflow: hidden; color: var(--text); font-size: 0.66rem; text-overflow: ellipsis; white-space: nowrap; }
+        .at-fill-lora-meta { min-width: 0; overflow: hidden; color: var(--text2); font-size: 0.57rem; text-overflow: ellipsis; white-space: nowrap; }
+        .at-fill-lora-strength-row { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) 31px; gap: 5px; align-items: center; }
         .at-fill-lora-item input[type="range"] { width: 100%; }
+        .at-fill-lora-strength-value { color: var(--text); font-size: 0.62rem; font-variant-numeric: tabular-nums; text-align: right; }
         .at-fill-lora-remove { width: 24px; height: 24px; border: none; border-radius: 5px; color: var(--error); background: transparent; cursor: pointer; }
         .at-fill-secondary-btn { width: 100%; min-height: 30px; margin-top: 5px; border: 1px dashed var(--border); border-radius: 6px; color: var(--text2); background: var(--surface); cursor: pointer; font-size: 0.68rem; }
         .at-fill-existing { display: grid; gap: 4px; padding: 9px 10px; border: 1px solid color-mix(in srgb, var(--success) 35%, var(--border)); border-radius: 9px; background: color-mix(in srgb, var(--success) 8%, var(--surface)); }
@@ -30908,9 +30916,9 @@
 
         function atGetFillLoraConfig(type) {
             const configs = {
-                lora: { field: 'lora_list', container: 'at-fill-lora-list', overlay: 'at-fill-lora-picker-overlay', title: 'LoRA 선택', showStyleTab: false },
-                style_lora: { field: 'style_lora_list', container: 'at-fill-style-lora-list', overlay: 'at-fill-style-lora-picker-overlay', title: 'Style LoRA 선택', showStyleTab: true },
-                face_lora: { field: 'face_lora_list', container: 'at-fill-face-lora-list', overlay: 'at-fill-face-lora-picker-overlay', title: 'Face LoRA 선택', showStyleTab: false },
+                lora: { field: 'lora_list', container: 'at-fill-lora-list', overlay: 'at-fill-lora-picker-overlay', title: 'LoRA 선택', showStyleTab: false, placeholder: '📦' },
+                style_lora: { field: 'style_lora_list', container: 'at-fill-style-lora-list', overlay: 'at-fill-style-lora-picker-overlay', title: 'Style LoRA 선택', showStyleTab: true, placeholder: '🎨' },
+                face_lora: { field: 'face_lora_list', container: 'at-fill-face-lora-list', overlay: 'at-fill-face-lora-picker-overlay', title: 'Face LoRA 선택', showStyleTab: false, placeholder: '👤' },
             };
             return configs[type] || null;
         }
@@ -30937,10 +30945,51 @@
                     row.style.opacity = '0.42';
                     row.title = `${baseLabel}을 지원하지 않는 현재 워크플로우에서는 적용되지 않습니다.`;
                 }
+
+                const thumbnail = document.createElement('button');
+                thumbnail.type = 'button';
+                thumbnail.className = 'at-fill-lora-thumb';
+                const renderThumbnailPlaceholder = () => {
+                    thumbnail.classList.add('is-placeholder');
+                    thumbnail.replaceChildren();
+                    thumbnail.onclick = null;
+                    thumbnail.title = '등록된 썸네일 없음';
+                    const placeholder = document.createElement('span');
+                    placeholder.className = 'at-fill-lora-placeholder';
+                    placeholder.textContent = config.placeholder;
+                    thumbnail.appendChild(placeholder);
+                };
+                const previewUrl = typeof item.preview_url === 'string' ? item.preview_url.trim() : '';
+                if (previewUrl) {
+                    const image = document.createElement('img');
+                    image.src = previewUrl;
+                    image.alt = `${item.name || 'LoRA'} 썸네일`;
+                    image.loading = 'lazy';
+                    image.addEventListener('error', () => {
+                        console.warn(`[AUTOMATCH] LoRA 썸네일 로드 실패: type=${type}, name=${item.name || ''}, url=${previewUrl}`);
+                        renderThumbnailPlaceholder();
+                    }, { once: true });
+                    thumbnail.title = '썸네일 확대';
+                    thumbnail.setAttribute('aria-label', `${item.name || 'LoRA'} 썸네일 확대`);
+                    thumbnail.onclick = () => openLightbox(previewUrl);
+                    thumbnail.appendChild(image);
+                } else {
+                    renderThumbnailPlaceholder();
+                }
+
+                const main = document.createElement('div');
+                main.className = 'at-fill-lora-main';
                 const name = document.createElement('div');
                 name.className = 'at-fill-lora-name';
-                name.textContent = `${item.name || item.lora_path || 'LoRA'} · ${baseLabel}`;
+                name.textContent = item.name || item.lora_path || 'LoRA';
                 name.title = name.textContent;
+                const sourceLabels = { asset: '에셋', bot: '봇', instance: '인스턴스', style: '스타일' };
+                const meta = document.createElement('div');
+                meta.className = 'at-fill-lora-meta';
+                meta.textContent = [sourceLabels[item.source] || 'LoRA', item.character || '', baseLabel].filter(Boolean).join(' · ');
+                meta.title = meta.textContent;
+                const strengthRow = document.createElement('div');
+                strengthRow.className = 'at-fill-lora-strength-row';
                 const strength = document.createElement('input');
                 strength.type = 'range';
                 strength.min = '0';
@@ -30949,12 +30998,18 @@
                 strength.value = Number.isFinite(Number(item.strength)) ? String(item.strength) : '0.5';
                 strength.disabled = !baseAvailable;
                 strength.title = `강도 ${Number(strength.value).toFixed(2)}`;
+                const strengthValue = document.createElement('span');
+                strengthValue.className = 'at-fill-lora-strength-value';
+                strengthValue.textContent = Number(strength.value).toFixed(2);
                 strength.oninput = () => {
                     item.strength = Number.parseFloat(strength.value);
                     strength.title = `강도 ${item.strength.toFixed(2)}`;
+                    strengthValue.textContent = item.strength.toFixed(2);
                     atUpdateFillPromptPreview();
                     _atSaveState();
                 };
+                strengthRow.append(strength, strengthValue);
+                main.append(name, meta, strengthRow);
                 const remove = document.createElement('button');
                 remove.type = 'button';
                 remove.className = 'at-fill-lora-remove';
@@ -30966,7 +31021,7 @@
                     atUpdateFillPromptPreview();
                     _atSaveState();
                 };
-                row.append(name, strength, remove);
+                row.append(thumbnail, main, remove);
                 container.appendChild(row);
             });
         }

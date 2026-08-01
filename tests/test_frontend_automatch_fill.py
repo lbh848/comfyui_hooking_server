@@ -127,6 +127,25 @@ def test_automatch_can_load_saved_asset_generation_settings_except_expression():
     assert "_atSaveState();" in load_settings
 
 
+def test_automatch_lora_rows_show_thumbnail_and_live_strength_value():
+    source = _frontend_source()
+    render_loras = source[
+        source.index("function atRenderFillLoraList(type)") : source.index("async function atOpenFillLoraPicker(type)")
+    ]
+
+    assert ".at-fill-lora-thumb" in source
+    assert ".at-fill-lora-strength-value" in source
+    assert "placeholder: '📦'" in source
+    assert "placeholder: '🎨'" in source
+    assert "placeholder: '👤'" in source
+    assert "const previewUrl = typeof item.preview_url === 'string'" in render_loras
+    assert "image.src = previewUrl;" in render_loras
+    assert "thumbnail.onclick = () => openLightbox(previewUrl);" in render_loras
+    assert "strengthValue.textContent = Number(strength.value).toFixed(2);" in render_loras
+    assert "strengthValue.textContent = item.strength.toFixed(2);" in render_loras
+    assert "row.append(thumbnail, main, remove);" in render_loras
+
+
 def test_hires_details_group_is_disabled_until_a_hires_mode_is_enabled():
     source = _frontend_source()
 
