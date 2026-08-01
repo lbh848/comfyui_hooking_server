@@ -36,6 +36,31 @@ class ConfigRetargetResult:
     already_retargeted: bool
 
 
+_EMBEDDED_DIRECT_PATHS: dict[str, tuple[str, ...]] = {
+    "$.comfy_input_dir": ("input",),
+    "$.lora_load_path": ("models", "loras", "SOYA_CHAR_LORA"),
+    "$.bot_lora_load_path": (
+        "models",
+        "loras",
+        "SOYA_CHAR_LORA",
+        "SOYA_BOT_LORA",
+    ),
+    "$.instance_lora_load_path": (
+        "models",
+        "loras",
+        "SOYA_CHAR_LORA",
+        "SOYA_INSTANCE_LORA",
+    ),
+    "$.style_lora_load_path": (
+        "models",
+        "loras",
+        "SOYA_CHAR_LORA",
+        "SOYA_STYLE_LORA",
+    ),
+}
+_WORKFLOW_RELATIVE_ROOT = ("user", "default", "workflows")
+
+
 def backup_current_config(
     *,
     config_path: str | os.PathLike[str],
@@ -162,14 +187,53 @@ def _json_child_path(parent: str, key: str) -> str:
     return f"{parent}[{json.dumps(key, ensure_ascii=False)}]"
 
 
+def _is_workflow_source_key(key: str) -> bool:
+    return (
+        key == "comfy_workflow_source_path"
+        or key.endswith("_workflow_source_path")
+        or key.endswith("_workflow_source_paths")
+    )
+
+
+def _relative_from_anchor(
+    candidate: Path, anchor_parts: tuple[str, ...]
+) -> Path | None:
+    parts = candidate.parts
+    folded = tuple(part.casefold() for part in parts)
+    anchor = tuple(part.casefold() for part in anchor_parts)
+    limit = len(parts) - len(anchor) + 1
+    for index in range(max(0, limit)):
+        if folded[index : index + len(anchor)] == anchor:
+            return Path(*parts[index:])
+    return None
+
+
+def _record_retarget(
+    *,
+    json_path: str,
+    target: Path,
+    updated_paths: list[str],
+    missing_targets: list[tuple[str, str]],
+) -> str:
+    updated_paths.append(json_path)
+    if not target.exists():
+        missing_targets.append((json_path, str(target)))
+        print(
+            "[COMFY_INSTALL][CONFIG][EMBEDDED_RETARGET] 대상 경로 없음; "
+            f"설정 경로는 전환합니다: setting={json_path}, target={target}"
+        )
+    return str(target)
+
+
 def _retarget_descendant_paths(
     value: Any,
     *,
     json_path: str,
-    old_root: Path,
+    old_root: Path | None,
     new_root: Path,
     updated_paths: list[str],
     missing_targets: list[tuple[str, str]],
+    workflow_source: bool = False,
 ) -> Any:
     if isinstance(value, dict):
         return {
@@ -180,6 +244,9 @@ def _retarget_descendant_paths(
                 new_root=new_root,
                 updated_paths=updated_paths,
                 missing_targets=missing_targets,
+                workflow_source=(
+                    workflow_source or _is_workflow_source_key(str(key))
+                ),
             )
             for key, child in value.items()
         }
@@ -192,42 +259,106 @@ def _retarget_descendant_paths(
                 new_root=new_root,
                 updated_paths=updated_paths,
                 missing_targets=missing_targets,
+                workflow_source=workflow_source,
             )
             for index, child in enumerate(value)
         ]
-    if not isinstance(value, str) or not value.strip():
+    if not isinstance(value, str):
+        return value
+
+    direct_parts = _EMBEDDED_DIRECT_PATHS.get(json_path)
+    if direct_parts is not None:
+        try:
+            target = (new_root.joinpath(*direct_parts)).resolve()
+            candidate = Path(value.strip()).resolve() if value.strip() else None
+        except (OSError, RuntimeError) as exc:
+            print(
+                "[COMFY_INSTALL][CONFIG][EMBEDDED_RETARGET] 직접 경로 해석 실패; "
+                f"원래 값을 유지합니다: setting={json_path}, error={exc}"
+            )
+            traceback.print_exc()
+            return value
+        if candidate == target:
+            return value
+        return _record_retarget(
+            json_path=json_path,
+            target=target,
+            updated_paths=updated_paths,
+            missing_targets=missing_targets,
+        )
+
+    if not value.strip():
         return value
 
     try:
         candidate = Path(value.strip())
         if not candidate.is_absolute():
             return value
-        relative = candidate.resolve().relative_to(old_root)
-    except ValueError:
-        return value
+        resolved = candidate.resolve()
     except (OSError, RuntimeError) as exc:
         print(
-            "[COMFY_INSTALL][CONFIG][V4_MIGRATE] 설정 경로 해석 실패; "
+            "[COMFY_INSTALL][CONFIG][EMBEDDED_RETARGET] 설정 경로 해석 실패; "
             f"원래 값을 유지합니다: setting={json_path}, error={exc}"
         )
+        traceback.print_exc()
         return value
 
     try:
+        resolved.relative_to(new_root)
+        return value
+    except ValueError:
+        pass
+
+    if old_root is not None:
+        try:
+            relative = resolved.relative_to(old_root)
+            target = (new_root / relative).resolve()
+            return _record_retarget(
+                json_path=json_path,
+                target=target,
+                updated_paths=updated_paths,
+                missing_targets=missing_targets,
+            )
+        except ValueError:
+            pass
+        except (OSError, RuntimeError) as exc:
+            print(
+                "[COMFY_INSTALL][CONFIG][EMBEDDED_RETARGET] 이전 Comfy 경로 "
+                f"변환 실패: setting={json_path}, error={exc}"
+            )
+            traceback.print_exc()
+            return value
+
+    if not workflow_source:
+        return value
+
+    try:
+        # mode_workflow는 현재 프로젝트가 직접 관리하는 워크플로우이므로
+        # ComfyUI 외부에 있어도 의도된 경로로 유지한다.
+        resolved.relative_to((new_root.parent / "mode_workflow").resolve())
+        return value
+    except ValueError:
+        pass
+
+    try:
+        relative = _relative_from_anchor(resolved, _WORKFLOW_RELATIVE_ROOT)
+        if relative is None:
+            relative = Path(*_WORKFLOW_RELATIVE_ROOT, resolved.name)
         target = (new_root / relative).resolve()
     except (OSError, RuntimeError) as exc:
         print(
-            "[COMFY_INSTALL][CONFIG][V4_MIGRATE] 대상 경로 해석 실패; "
+            "[COMFY_INSTALL][CONFIG][EMBEDDED_RETARGET] 워크플로우 대상 경로 "
+            "해석 실패; "
             f"원래 값을 유지합니다: setting={json_path}, error={exc}"
         )
+        traceback.print_exc()
         return value
-    updated_paths.append(json_path)
-    if not target.exists():
-        missing_targets.append((json_path, str(target)))
-        print(
-            "[COMFY_INSTALL][CONFIG][V4_MIGRATE] 대상 경로 없음; "
-            f"설정 경로는 전환합니다: setting={json_path}, target={target}"
-        )
-    return str(target)
+    return _record_retarget(
+        json_path=json_path,
+        target=target,
+        updated_paths=updated_paths,
+        missing_targets=missing_targets,
+    )
 
 
 def _collect_descendant_paths(
@@ -267,7 +398,7 @@ def _collect_descendant_paths(
         return
     except (OSError, RuntimeError) as exc:
         print(
-            "[COMFY_INSTALL][CONFIG][V4_MIGRATE] 내장 경로 확인 실패; "
+            "[COMFY_INSTALL][CONFIG][EMBEDDED_RETARGET] 내장 경로 확인 실패; "
             f"setting={json_path}, value={value!r}, error={exc}"
         )
         traceback.print_exc()
@@ -278,22 +409,26 @@ def _collect_descendant_paths(
 def retarget_config_to_embedded_comfy(
     *,
     config_path: str | os.PathLike[str],
-    requirements_dir: str | os.PathLike[str],
+    backup_dir: str | os.PathLike[str],
     backup_path: str | os.PathLike[str],
-    old_comfy_root: str | os.PathLike[str],
+    old_comfy_root: str | os.PathLike[str] | None,
     new_comfy_root: str | os.PathLike[str],
 ) -> ConfigRetargetResult:
     config_file = Path(config_path).resolve()
-    backup_root = Path(requirements_dir).resolve()
+    backup_root = Path(backup_dir).resolve()
     backup_file = Path(backup_path).resolve()
-    old_root = Path(old_comfy_root).resolve()
+    old_root = (
+        Path(old_comfy_root).resolve()
+        if old_comfy_root is not None
+        else None
+    )
     new_root = Path(new_comfy_root).resolve()
     try:
         if not config_file.is_file():
             raise ConfigUpdateError(f"수정할 config.json이 없습니다: {config_file}")
-        if not old_root.is_dir():
+        if old_root is not None and not old_root.is_dir():
             raise ConfigUpdateError(f"기존 ComfyUI 폴더가 없습니다: {old_root}")
-        if old_root == new_root:
+        if old_root is not None and old_root == new_root:
             raise ConfigUpdateError("기존 ComfyUI와 내장 ComfyUI 경로가 같습니다.")
         if not new_root.is_dir() or not (new_root / ".git").is_dir():
             raise ConfigUpdateError(
@@ -305,20 +440,25 @@ def retarget_config_to_embedded_comfy(
             backup_file.relative_to(backup_root)
         except ValueError as exc:
             raise ConfigUpdateError(
-                f"요구사항 폴더 밖의 설정 백업은 사용할 수 없습니다: {backup_file}"
+                f"설치기 백업 폴더 밖의 설정 백업은 사용할 수 없습니다: {backup_file}"
             ) from exc
-        if not backup_file.is_file() or not backup_file.name.startswith(
+        expected_prefix = (
             "config_before_comfy_v4_migrate_"
+            if old_root is not None
+            else "config_before_comfy_embedded_retarget_"
+        )
+        if not backup_file.is_file() or not backup_file.name.startswith(
+            expected_prefix
         ):
             raise ConfigUpdateError(
-                f"유효한 V4 이사 설정 백업이 아닙니다: {backup_file}"
+                f"유효한 내장 Comfy 전환 설정 백업이 아닙니다: {backup_file}"
             )
 
         before_hash = _sha256_file(config_file)
         backup_hash = _sha256_file(backup_file)
         if backup_hash != before_hash:
             raise ConfigUpdateError(
-                "V4 이사 설정 백업과 현재 config.json이 다릅니다. "
+                "내장 Comfy 전환 설정 백업과 현재 config.json이 다릅니다. "
                 "동시 설정 변경 가능성이 있어 덮어쓰지 않습니다."
             )
 
@@ -343,7 +483,7 @@ def retarget_config_to_embedded_comfy(
             )
             if embedded_paths:
                 print(
-                    "[COMFY_INSTALL][CONFIG][V4_MIGRATE] 이미 내장 Comfy로 "
+                    "[COMFY_INSTALL][CONFIG][EMBEDDED_RETARGET] 이미 내장 Comfy로 "
                     "전환된 설정 확인: "
                     f"new_root={new_root}, matched={len(embedded_paths)}"
                 )
@@ -357,23 +497,23 @@ def retarget_config_to_embedded_comfy(
                     already_retargeted=True,
                 )
             print(
-                "[COMFY_INSTALL][CONFIG][V4_MIGRATE] 전환할 설정 경로 없음: "
+                "[COMFY_INSTALL][CONFIG][EMBEDDED_RETARGET] 전환할 설정 경로 없음: "
                 f"old_root={old_root}, new_root={new_root}"
             )
             raise ConfigUpdateError(
-                "config.json에서 기존 ComfyUI 아래의 경로를 찾지 못했습니다: "
-                f"{old_root}"
+                "config.json에서 내장 Comfy로 전환할 설정 경로를 "
+                f"찾지 못했습니다: old_root={old_root}"
             )
 
         _write_json_atomic(config_file, updated)
-        reloaded = _read_json_object(config_file, "V4 이사 갱신 설정")
+        reloaded = _read_json_object(config_file, "내장 Comfy 갱신 설정")
         if reloaded != updated:
             raise ConfigUpdateError(
-                "V4 이사 config.json 저장 후 재검증 값이 일치하지 않습니다."
+                "내장 Comfy config.json 저장 후 재검증 값이 일치하지 않습니다."
             )
         after_hash = _sha256_file(config_file)
         print(
-            "[COMFY_INSTALL][CONFIG][V4_MIGRATE] 내장 Comfy 경로 전환 완료: "
+            "[COMFY_INSTALL][CONFIG][EMBEDDED_RETARGET] 내장 Comfy 경로 전환 완료: "
             f"backup={backup_file}, updated={len(updated_paths)}, "
             f"missing={len(missing_targets)}"
         )
@@ -387,11 +527,14 @@ def retarget_config_to_embedded_comfy(
             already_retargeted=False,
         )
     except Exception as exc:
-        print(f"[COMFY_INSTALL][CONFIG][V4_MIGRATE] 설정 경로 전환 실패: {exc}")
+        print(
+            "[COMFY_INSTALL][CONFIG][EMBEDDED_RETARGET] 설정 경로 전환 실패: "
+            f"{exc}"
+        )
         traceback.print_exc()
         if isinstance(exc, ConfigUpdateError):
             raise
-        raise ConfigUpdateError(f"V4 이사 설정 경로 전환 실패: {exc}") from exc
+        raise ConfigUpdateError(f"내장 Comfy 설정 경로 전환 실패: {exc}") from exc
 
 
 def apply_installed_config(

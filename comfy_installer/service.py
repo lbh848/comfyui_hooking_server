@@ -383,7 +383,7 @@ class ComfyInstallerService:
             advance("migration_backup")
             config_backup = backup_current_config(
                 config_path=self.config_path,
-                backup_dir=self.requirements_dir,
+                backup_dir=self.config_backup_dir,
                 reason="comfy_v4_migrate",
             )
             self._log(
@@ -415,7 +415,7 @@ class ComfyInstallerService:
             advance("migration_config")
             config_update = retarget_config_to_embedded_comfy(
                 config_path=self.config_path,
-                requirements_dir=self.requirements_dir,
+                backup_dir=self.config_backup_dir,
                 backup_path=config_backup["backup_path"],
                 old_comfy_root=old_comfy_root,
                 new_comfy_root=self.comfy_root,
@@ -429,17 +429,7 @@ class ComfyInstallerService:
                 )
             return {
                 **migration,
-                "config": {
-                    "backup_path": str(config_update.backup_path),
-                    "before_sha256": config_update.before_sha256,
-                    "after_sha256": config_update.after_sha256,
-                    "updated_paths": list(config_update.updated_paths),
-                    "already_retargeted": config_update.already_retargeted,
-                    "missing_targets": [
-                        {"setting": setting, "target": target}
-                        for setting, target in config_update.missing_targets
-                    ],
-                },
+                "config": self._config_retarget_payload(config_update),
             }
         except ComfyMigrationCancelled:
             raise
@@ -450,6 +440,60 @@ class ComfyInstallerService:
             if isinstance(exc, InstallerServiceError):
                 raise
             raise InstallerServiceError(f"V4 사용자 이사 실패: {exc}") from exc
+
+    @staticmethod
+    def _config_retarget_payload(config_update) -> dict:
+        return {
+            "backup_path": str(config_update.backup_path),
+            "before_sha256": config_update.before_sha256,
+            "after_sha256": config_update.after_sha256,
+            "updated_paths": list(config_update.updated_paths),
+            "already_retargeted": config_update.already_retargeted,
+            "missing_targets": [
+                {"setting": setting, "target": target}
+                for setting, target in config_update.missing_targets
+            ],
+        }
+
+    def retarget_config_to_embedded(self) -> dict:
+        with self._lock:
+            if self._thread is not None and self._thread.is_alive():
+                raise InstallerServiceError(
+                    "다른 ComfyUI 작업 중에는 config.json 경로를 변경할 수 없습니다."
+                )
+        try:
+            config_backup = backup_current_config(
+                config_path=self.config_path,
+                backup_dir=self.config_backup_dir,
+                reason="comfy_embedded_retarget",
+            )
+            config_update = retarget_config_to_embedded_comfy(
+                config_path=self.config_path,
+                backup_dir=self.config_backup_dir,
+                backup_path=config_backup["backup_path"],
+                old_comfy_root=None,
+                new_comfy_root=self.comfy_root,
+            )
+            if config_update.already_retargeted:
+                self._log("[설정] config.json은 이미 내장 Comfy 경로입니다.")
+            else:
+                self._log(
+                    "[설정] config.json 내장 Comfy 경로 전환 완료: "
+                    f"{len(config_update.updated_paths)}개"
+                )
+            return {"config": self._config_retarget_payload(config_update)}
+        except Exception as exc:
+            print(
+                "[COMFY_INSTALL][SERVICE] config.json 내장 Comfy 경로 전환 실패: "
+                f"{exc}"
+            )
+            traceback.print_exc()
+            self._log(f"[설정 전환 실패] {exc}", "error")
+            if isinstance(exc, InstallerServiceError):
+                raise
+            raise InstallerServiceError(
+                f"config.json 내장 Comfy 경로 전환 실패: {exc}"
+            ) from exc
 
     def _validate_civitai_access(
         self, civitai_key: str, models: list[dict] | None = None

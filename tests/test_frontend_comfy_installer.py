@@ -23,8 +23,10 @@ def test_settings_has_comfy_installer_tab_and_key_inputs() -> None:
     assert 'id="comfy-installer-update-btn"' in FRONTEND
     assert 'id="comfy-installer-compat-start-btn"' in FRONTEND
     assert 'id="comfy-installer-migrate-btn"' in FRONTEND
+    assert 'id="comfy-installer-retarget-config-btn"' in FRONTEND
     assert "이사하기(V4 사용자용)" in FRONTEND
-    assert "config.json</code>을 <code>요구사항/</code>에 먼저 백업" in FRONTEND
+    assert "config를 내장 Comfy로 수정" in FRONTEND
+    assert "comfy/.installer-state/backups/config" in FRONTEND
     assert 'id="comfy-installer-restore-after-success"' not in FRONTEND
     assert "절대 자동 덮어쓰기 안 함" in FRONTEND
 
@@ -50,6 +52,7 @@ def test_frontend_uses_dedicated_installer_apis_and_does_not_persist_keys() -> N
         "/api/comfy-installer/workflow-library",
         "/api/comfy-installer/civitai-key",
         "/api/comfy-installer/migrate",
+        "/api/comfy-installer/retarget-config",
     ):
         assert endpoint in FRONTEND
     assert "localStorage.setItem('comfy-installer" not in FRONTEND
@@ -80,13 +83,14 @@ def test_successful_update_shows_restart_message_then_requests_shutdown() -> Non
 def test_v4_migration_reports_config_path_retargeting() -> None:
     assert "result.config?.updated_paths" in FRONTEND
     assert "result.config?.missing_targets" in FRONTEND
-    assert "설정 경로를 모두 전환합니다" in FRONTEND
+    assert "Comfy 관련 설정 경로를 하나씩 검사" in FRONTEND
     assert "data.operation === 'migrate'" in FRONTEND
     assert "comfyInstallerFormatDuration(progress.eta_seconds)" in FRONTEND
     assert "robocopy 병렬" in FRONTEND
     assert "started.state === 'succeeded'" in FRONTEND
     assert "result.config?.already_retargeted" in FRONTEND
     assert "설정 이미 전환됨" in FRONTEND
+    assert "comfyInstallerReloadSettingsAfterConfigChange()" in FRONTEND
 
 
 def test_comfy_installer_tab_is_right_of_debug() -> None:

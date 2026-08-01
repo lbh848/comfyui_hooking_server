@@ -293,6 +293,21 @@ async def handle_migrate(request: web.Request) -> web.Response:
         return _json_error(str(exc), status=500)
 
 
+async def handle_retarget_config(request: web.Request) -> web.Response:
+    service = request.app[APP_SERVICE_KEY]
+    try:
+        result = await asyncio.to_thread(service.retarget_config_to_embedded)
+        return web.json_response({"ok": True, **result})
+    except InstallerServiceError as exc:
+        print(f"[COMFY_INSTALL][API] config.json 경로 전환 거부: {exc}")
+        traceback.print_exc()
+        return _json_error(str(exc), status=409)
+    except Exception as exc:
+        print(f"[COMFY_INSTALL][API] config.json 경로 전환 실패: {exc}")
+        traceback.print_exc()
+        return _json_error(str(exc), status=500)
+
+
 async def handle_cancel(request: web.Request) -> web.Response:
     service = request.app[APP_SERVICE_KEY]
     try:
@@ -418,6 +433,9 @@ def register_comfy_installer_routes(
         handle_shutdown_after_update,
     )
     app.router.add_post("/api/comfy-installer/migrate", handle_migrate)
+    app.router.add_post(
+        "/api/comfy-installer/retarget-config", handle_retarget_config
+    )
     app.router.add_post("/api/comfy-installer/cancel", handle_cancel)
     app.router.add_post(
         "/api/comfy-installer/restore-config", handle_restore_config

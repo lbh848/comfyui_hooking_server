@@ -314,6 +314,47 @@ async def test_migration_api_starts_background_operation(
 
 
 @pytest.mark.asyncio
+async def test_config_retarget_api_updates_without_starting_migration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = tmp_path / "config.json"
+    config.write_text("{}\n", encoding="utf-8")
+    app = web.Application()
+    service = register_comfy_installer_routes(
+        app,
+        project_root=tmp_path,
+        config_path=config,
+        requirements_dir=tmp_path / "requirements",
+    )
+    calls = []
+
+    def fake_retarget():
+        calls.append(True)
+        return {
+            "config": {
+                "updated_paths": ["$.comfy_workflow_source_path"],
+                "missing_targets": [],
+                "already_retargeted": False,
+            }
+        }
+
+    monkeypatch.setattr(service, "retarget_config_to_embedded", fake_retarget)
+    client = TestClient(TestServer(app))
+    await client.start_server()
+    try:
+        response = await client.post("/api/comfy-installer/retarget-config")
+        assert response.status == 200
+        payload = await response.json()
+        assert payload["ok"] is True
+        assert payload["config"]["updated_paths"] == [
+            "$.comfy_workflow_source_path"
+        ]
+        assert calls == [True]
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
 async def test_shutdown_after_update_requires_successful_update(
     tmp_path: Path,
 ) -> None:

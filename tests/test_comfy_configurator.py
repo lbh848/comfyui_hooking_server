@@ -125,7 +125,7 @@ def test_v4_migration_retargets_all_nested_paths_after_verified_backup(tmp_path)
 
     result = retarget_config_to_embedded_comfy(
         config_path=config_path,
-        requirements_dir=requirements,
+        backup_dir=requirements,
         backup_path=backup["backup_path"],
         old_comfy_root=old_comfy,
         new_comfy_root=new_comfy,
@@ -176,7 +176,7 @@ def test_v4_migration_accepts_config_already_retargeted_to_embedded_comfy(
 
     result = retarget_config_to_embedded_comfy(
         config_path=config_path,
-        requirements_dir=requirements,
+        backup_dir=requirements,
         backup_path=backup["backup_path"],
         old_comfy_root=old_comfy,
         new_comfy_root=new_comfy,
@@ -187,6 +187,104 @@ def test_v4_migration_accepts_config_already_retargeted_to_embedded_comfy(
     assert result.missing_targets == ()
     assert result.before_sha256 == result.after_sha256
     assert config_path.read_bytes() == original_bytes
+
+
+def test_v4_migration_retargets_external_workflows_in_mixed_config(tmp_path):
+    config_path = tmp_path / "config.json"
+    backup_dir = tmp_path / "installer-backups"
+    old_comfy = tmp_path / "old-comfy"
+    external_comfy = tmp_path / "external-comfy"
+    new_comfy = tmp_path / "comfy"
+    old_comfy.mkdir()
+    (new_comfy / ".git").mkdir(parents=True)
+    (new_comfy / "input").mkdir()
+    external_workflow = (
+        external_comfy
+        / "user"
+        / "default"
+        / "workflows"
+        / "illustration.json"
+    )
+    original = {
+        "comfy_input_dir": str(new_comfy / "input"),
+        "illustration_workflow_source_paths": {
+            "v3": str(external_workflow),
+        },
+    }
+    _write_json(config_path, original)
+    backup = backup_current_config(
+        config_path=config_path,
+        backup_dir=backup_dir,
+        reason="comfy_v4_migrate",
+    )
+
+    result = retarget_config_to_embedded_comfy(
+        config_path=config_path,
+        backup_dir=backup_dir,
+        backup_path=backup["backup_path"],
+        old_comfy_root=old_comfy,
+        new_comfy_root=new_comfy,
+    )
+
+    updated = json.loads(config_path.read_text(encoding="utf-8"))
+    assert updated["comfy_input_dir"] == str(new_comfy / "input")
+    assert updated["illustration_workflow_source_paths"]["v3"] == str(
+        new_comfy
+        / "user"
+        / "default"
+        / "workflows"
+        / "illustration.json"
+    )
+    assert result.updated_paths == (
+        "$.illustration_workflow_source_paths.v3",
+    )
+    assert result.already_retargeted is False
+
+
+def test_config_only_retarget_uses_installer_backup_and_updates_direct_paths(
+    tmp_path,
+):
+    config_path = tmp_path / "config.json"
+    backup_dir = tmp_path / "comfy" / ".installer-state" / "backups" / "config"
+    new_comfy = tmp_path / "comfy"
+    (new_comfy / ".git").mkdir(parents=True)
+    original = {
+        "comfy_input_dir": "",
+        "lora_load_path": str(tmp_path / "external" / "loras"),
+        "comfy_workflow_source_path": str(
+            tmp_path
+            / "external-comfy"
+            / "user"
+            / "default"
+            / "workflows"
+            / "main.json"
+        ),
+    }
+    _write_json(config_path, original)
+    backup = backup_current_config(
+        config_path=config_path,
+        backup_dir=backup_dir,
+        reason="comfy_embedded_retarget",
+    )
+
+    result = retarget_config_to_embedded_comfy(
+        config_path=config_path,
+        backup_dir=backup_dir,
+        backup_path=backup["backup_path"],
+        old_comfy_root=None,
+        new_comfy_root=new_comfy,
+    )
+
+    updated = json.loads(config_path.read_text(encoding="utf-8"))
+    assert result.backup_path.parent == backup_dir
+    assert updated["comfy_input_dir"] == str(new_comfy / "input")
+    assert updated["lora_load_path"] == str(
+        new_comfy / "models" / "loras" / "SOYA_CHAR_LORA"
+    )
+    assert updated["comfy_workflow_source_path"] == str(
+        new_comfy / "user" / "default" / "workflows" / "main.json"
+    )
+    assert result.already_retargeted is False
 
 
 def test_v4_migration_still_rejects_unrelated_config_paths(tmp_path):
@@ -203,10 +301,10 @@ def test_v4_migration_still_rejects_unrelated_config_paths(tmp_path):
         reason="comfy_v4_migrate",
     )
 
-    with pytest.raises(ConfigUpdateError, match="기존 ComfyUI 아래의 경로"):
+    with pytest.raises(ConfigUpdateError, match="전환할 설정 경로"):
         retarget_config_to_embedded_comfy(
             config_path=config_path,
-            requirements_dir=requirements,
+            backup_dir=requirements,
             backup_path=backup["backup_path"],
             old_comfy_root=old_comfy,
             new_comfy_root=new_comfy,
@@ -232,7 +330,7 @@ def test_v4_migration_rejects_stale_backup_without_overwrite(tmp_path):
     with pytest.raises(ConfigUpdateError, match="동시 설정 변경"):
         retarget_config_to_embedded_comfy(
             config_path=config_path,
-            requirements_dir=requirements,
+            backup_dir=requirements,
             backup_path=backup["backup_path"],
             old_comfy_root=old_comfy,
             new_comfy_root=new_comfy,

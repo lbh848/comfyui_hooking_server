@@ -96,7 +96,10 @@ def test_v4_migration_backs_up_copies_and_retargets_config(tmp_path: Path) -> No
     result = service.migrate_from_existing_comfy(old_comfy)
 
     backup = Path(result["config"]["backup_path"])
-    assert backup.parent == requirements
+    assert backup.parent == (
+        embedded_comfy / ".installer-state" / "backups" / "config"
+    )
+    assert not requirements.exists()
     assert json.loads(backup.read_text(encoding="utf-8")) == original
     updated = json.loads(config.read_text(encoding="utf-8"))
     assert updated["comfy_input_dir"] == str(embedded_comfy / "input")
@@ -122,6 +125,47 @@ def test_v4_migration_backs_up_copies_and_retargets_config(tmp_path: Path) -> No
     assert len(repeated["skipped"]) == 1
     assert repeated["config"]["updated_paths"] == []
     assert repeated["config"]["already_retargeted"] is True
+
+
+def test_config_only_retarget_uses_installer_backup_directory(tmp_path: Path) -> None:
+    config = tmp_path / "config.json"
+    requirements = tmp_path / "요구사항"
+    embedded_comfy = tmp_path / "comfy"
+    (embedded_comfy / ".git").mkdir(parents=True)
+    external_workflow = (
+        tmp_path
+        / "external-comfy"
+        / "user"
+        / "default"
+        / "workflows"
+        / "main.json"
+    )
+    config.write_text(
+        json.dumps(
+            {
+                "comfy_input_dir": "",
+                "comfy_workflow_source_path": str(external_workflow),
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    service = ComfyInstallerService(
+        project_root=tmp_path,
+        config_path=config,
+        requirements_dir=requirements,
+    )
+
+    result = service.retarget_config_to_embedded()
+
+    backup = Path(result["config"]["backup_path"])
+    assert backup.parent == service.config_backup_dir
+    assert not requirements.exists()
+    updated = json.loads(config.read_text(encoding="utf-8"))
+    assert updated["comfy_input_dir"] == str(embedded_comfy / "input")
+    assert updated["comfy_workflow_source_path"] == str(
+        embedded_comfy / "user" / "default" / "workflows" / "main.json"
+    )
 
 
 def test_v4_migration_runs_in_background_and_publishes_progress(
