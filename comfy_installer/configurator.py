@@ -187,6 +187,142 @@ def _json_child_path(parent: str, key: str) -> str:
     return f"{parent}[{json.dumps(key, ensure_ascii=False)}]"
 
 
+def retarget_legacy_workflow_paths(
+    *,
+    config_path: str | os.PathLike[str],
+    backup_dir: str | os.PathLike[str],
+    legacy_user_root: str | os.PathLike[str],
+    user_root: str | os.PathLike[str],
+    path_map: Mapping[str, str] | None = None,
+) -> dict:
+    """백업을 만든 뒤 레거시 사용자 워크플로우 경로를 ASCII 경로로 바꾼다."""
+    config_file = Path(config_path).resolve()
+    legacy_root = Path(legacy_user_root).resolve()
+    target_root = Path(user_root).resolve()
+    normalized_map: dict[str, Path] = {}
+    try:
+        if not config_file.is_file():
+            print(
+                "[COMFY_INSTALL][CONFIG][WORKFLOW_ASCII] config.json이 없어 "
+                f"경로 전환을 건너뜁니다: {config_file}"
+            )
+            return {
+                "updated": False,
+                "config_path": str(config_file),
+                "backup_path": None,
+                "updated_paths": [],
+            }
+
+        for source, destination in (path_map or {}).items():
+            source_path = Path(source).resolve()
+            destination_path = Path(destination).resolve()
+            normalized_map[os.path.normcase(str(source_path))] = destination_path
+
+        config = _read_json_object(config_file, "현재 설정")
+        updated_paths: list[str] = []
+
+        def retarget(value: Any, json_path: str) -> Any:
+            if isinstance(value, dict):
+                return {
+                    key: retarget(
+                        child,
+                        _json_child_path(json_path, str(key)),
+                    )
+                    for key, child in value.items()
+                }
+            if isinstance(value, list):
+                return [
+                    retarget(child, f"{json_path}[{index}]")
+                    for index, child in enumerate(value)
+                ]
+            if not isinstance(value, str) or not value.strip():
+                return value
+
+            try:
+                candidate = Path(value.strip())
+                if not candidate.is_absolute():
+                    return value
+                resolved = candidate.resolve()
+                relative = resolved.relative_to(legacy_root)
+            except ValueError:
+                return value
+            except (OSError, RuntimeError) as exc:
+                print(
+                    "[COMFY_INSTALL][CONFIG][WORKFLOW_ASCII] 레거시 경로 "
+                    "해석 실패; 원래 값을 유지합니다: "
+                    f"setting={json_path}, value={value!r}, error={exc}"
+                )
+                traceback.print_exc()
+                return value
+
+            mapped = normalized_map.get(os.path.normcase(str(resolved)))
+            target = (
+                mapped
+                if mapped is not None
+                else (target_root / relative).resolve()
+            )
+            if not target.exists():
+                print(
+                    "[COMFY_INSTALL][CONFIG][WORKFLOW_ASCII] 복사된 대상이 없어 "
+                    "설정 경로를 유지합니다: "
+                    f"setting={json_path}, source={resolved}, target={target}"
+                )
+                return value
+            updated_paths.append(json_path)
+            return str(target)
+
+        updated = retarget(config, "$")
+        if not updated_paths:
+            return {
+                "updated": False,
+                "config_path": str(config_file),
+                "backup_path": None,
+                "updated_paths": [],
+            }
+
+        backup = backup_current_config(
+            config_path=config_file,
+            backup_dir=backup_dir,
+            reason="workflow_ascii_migration",
+        )
+        if _sha256_file(config_file) != backup["sha256"]:
+            raise ConfigUpdateError(
+                "워크플로우 ASCII 경로 전환 전 config.json이 변경되었습니다."
+            )
+
+        _write_json_atomic(config_file, updated)
+        reloaded = _read_json_object(
+            config_file,
+            "워크플로우 ASCII 경로 전환 설정",
+        )
+        if reloaded != updated:
+            raise ConfigUpdateError(
+                "워크플로우 ASCII 경로 전환 후 config.json 재검증이 "
+                "일치하지 않습니다."
+            )
+        print(
+            "[COMFY_INSTALL][CONFIG][WORKFLOW_ASCII] 설정 경로 전환 완료: "
+            f"backup={backup['backup_path']}, updated={len(updated_paths)}"
+        )
+        return {
+            "updated": True,
+            "config_path": str(config_file),
+            "backup_path": str(backup["backup_path"]),
+            "updated_paths": updated_paths,
+        }
+    except Exception as exc:
+        print(
+            "[COMFY_INSTALL][CONFIG][WORKFLOW_ASCII] 설정 경로 전환 실패: "
+            f"{exc}"
+        )
+        traceback.print_exc()
+        if isinstance(exc, ConfigUpdateError):
+            raise
+        raise ConfigUpdateError(
+            f"워크플로우 ASCII 설정 경로 전환 실패: {exc}"
+        ) from exc
+
+
 def _is_workflow_source_key(key: str) -> bool:
     return (
         key == "comfy_workflow_source_path"

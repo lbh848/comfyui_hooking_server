@@ -111,6 +111,7 @@ import importlib.util
 from comfy_installer.http_api import register_comfy_installer_routes
 from comfy_installer.input_patcher import patch_comfy_input
 from comfy_installer.patch_importer import register_patch_import_routes
+from comfy_installer.workflow_library import migrate_legacy_workflow_layout
 from comfy_runtime import (
     DEFAULT_COMFY_LAUNCH_PROFILES,
     ComfyRuntimeValidationError,
@@ -658,6 +659,21 @@ def save_config(config: dict):
         print(f"[CONFIG] 설정 파일 저장 실패: {e}")
         traceback.print_exc()
         raise
+
+
+# 업데이트로 새 경로 규칙을 받은 기존 설치는 config.json을 읽기 전에
+# 한글 레거시 폴더를 ASCII 폴더로 비파괴 복사하고 설정 경로를 전환한다.
+try:
+    WORKFLOW_PATH_MIGRATION = migrate_legacy_workflow_layout(
+        comfy_root=os.path.join(BASE_DIR, "comfy"),
+        library_root=os.path.join(BASE_DIR, "comfy_workflow_library"),
+        config_path=CONFIG_FILE,
+        backup_dir=os.path.join(BASE_DIR, "요구사항"),
+    )
+except Exception as e:
+    print(f"[WORKFLOW_PATH_MIGRATION] 시작 전 마이그레이션 실패: {e}")
+    traceback.print_exc()
+    WORKFLOW_PATH_MIGRATION = {"error": str(e)}
 
 
 # 전역 설정 로드

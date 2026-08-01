@@ -11,6 +11,10 @@ import comfy_installer.service as service_module
 from comfy_installer.e2e import ComfyE2EError
 from comfy_installer.manifest import load_install_manifest
 from comfy_installer.service import ComfyInstallerService, _INSTALL_PHASES
+from comfy_installer.workflow_library import (
+    LEGACY_USER_WORKFLOW_DIRNAME,
+    USER_WORKFLOW_DIRNAME,
+)
 
 
 def test_install_repatch_runs_before_comfy_startup_and_e2e() -> None:
@@ -34,6 +38,60 @@ def test_service_status_never_contains_credentials(tmp_path: Path) -> None:
     assert "civitai_key" not in payload
     assert "workflow_key" not in payload
     assert service.comfy_root == tmp_path / "comfy"
+
+
+def test_service_startup_migrates_existing_workflow_paths_to_ascii(
+    tmp_path: Path,
+) -> None:
+    legacy_root = (
+        tmp_path
+        / "comfy"
+        / "user"
+        / "default"
+        / "workflows"
+        / LEGACY_USER_WORKFLOW_DIRNAME
+    )
+    legacy_root.mkdir(parents=True)
+    legacy_workflow = legacy_root / "main.json"
+    legacy_workflow.write_text('{"legacy":true}', encoding="utf-8")
+    config = tmp_path / "config.json"
+    config.write_text(
+        json.dumps(
+            {"comfy_workflow_source_path": str(legacy_workflow)},
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    requirements = tmp_path / "요구사항"
+
+    service = ComfyInstallerService(
+        project_root=tmp_path,
+        config_path=config,
+        requirements_dir=requirements,
+    )
+
+    updated = json.loads(config.read_text(encoding="utf-8"))
+    migrated = Path(updated["comfy_workflow_source_path"])
+    assert migrated.parent.name == USER_WORKFLOW_DIRNAME
+    assert migrated.read_text(encoding="utf-8") == '{"legacy":true}'
+    assert not legacy_root.exists()
+    migration = service.status()["workflow_path_migration"]
+    assert migration["config"]["updated"] is True
+    legacy_backup = Path(migration["user"]["legacy_archive"]["backup"])
+    assert (legacy_backup / "main.json").read_text(
+        encoding="utf-8"
+    ) == '{"legacy":true}'
+    assert len(
+        list(requirements.glob("config_before_workflow_ascii_migration_*.json"))
+    ) == 1
+
+
+def test_server_runs_workflow_path_migration_before_loading_config() -> None:
+    source = Path("server.py").read_text(encoding="utf-8")
+
+    assert source.index("WORKFLOW_PATH_MIGRATION = migrate_legacy_workflow_layout(") < (
+        source.index("app_config = load_config()")
+    )
 
 
 def test_installed_compatibility_mode_is_reused_for_updates(tmp_path: Path) -> None:

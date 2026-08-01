@@ -60,6 +60,7 @@ from .workflow_library import (
     WorkflowSelection,
     import_user_copies,
     library_status,
+    migrate_legacy_workflow_layout,
     selection_requirements,
     unpack_to_library,
 )
@@ -176,6 +177,24 @@ class ComfyInstallerService:
                 "workflow_count": self.manifest.workflows["expected_count"],
             },
         }
+        try:
+            self._state["workflow_path_migration"] = (
+                migrate_legacy_workflow_layout(
+                    comfy_root=self.comfy_root,
+                    library_root=self.workflow_library_root,
+                    config_path=self.config_path,
+                    backup_dir=self.requirements_dir,
+                )
+            )
+        except Exception as exc:
+            print(
+                "[COMFY_INSTALL][SERVICE] 워크플로우 ASCII 경로 "
+                f"마이그레이션 실패: {exc}"
+            )
+            traceback.print_exc()
+            self._state["workflow_path_migration"] = {
+                "error": str(exc),
+            }
 
     def _log(
         self,
