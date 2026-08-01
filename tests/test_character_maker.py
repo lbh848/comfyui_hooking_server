@@ -1180,20 +1180,26 @@ def test_confirm_adds_presets_to_existing_character_without_changing_defaults(
 def test_confirm_reuses_existing_presets_and_preserves_existing_representative(
     monkeypatch, tmp_path
 ):
+    expression_name = "SDstudio-80종공유용2/acting coy"
     tags = _empty_tags()
     tags["appearances"]["루멘 외모"] = ["silver_hair"]
     tags["outfits"]["루멘 코트"] = ["long_coat"]
-    tags["expressions"]["기존 표정"] = ["neutral"]
+    tags["expressions"][expression_name] = ["neutral"]
     tags["characters"]["루멘"] = {
         "appearance": "루멘 외모",
         "outfit": "루멘 코트",
-        "expression": "기존 표정",
+        "expression": expression_name,
     }
     service, manager = _service(tmp_path, tags=tags)
     tags_file = tmp_path / "asset_data" / "tags.json"
     asset_root = tmp_path / "asset"
     backup_root = tmp_path / "요구사항"
-    destination = asset_root / "루멘" / "루멘 코트" / "기존 표정"
+    destination = (
+        asset_root
+        / "루멘"
+        / "루멘 코트"
+        / manager._safe_dirname(expression_name)
+    )
     destination.mkdir(parents=True)
     (destination / "old.webp").write_bytes(b"old-image")
     (destination / "_representative.json").write_text(
@@ -1237,7 +1243,7 @@ def test_confirm_reuses_existing_presets_and_preserves_existing_representative(
             "outfit_mode": "existing",
             "outfit_name": "루멘 코트",
             "expression_mode": "existing",
-            "expression_name": "기존 표정",
+            "expression_name": expression_name,
             "set_representative": False,
             "revision_id": state["active_revision_id"],
         },
@@ -1255,6 +1261,7 @@ def test_confirm_reuses_existing_presets_and_preserves_existing_representative(
     )
     assert prompt["appearance"] == "루멘 외모"
     assert prompt["outfit"] == "루멘 코트"
+    assert prompt["expression"] == expression_name
     assert prompt["positive"] == "used positive"
     assert result["finalized"]["appearance_mode"] == "existing"
     assert result["finalized"]["outfit_mode"] == "existing"

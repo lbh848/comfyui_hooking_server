@@ -330,6 +330,16 @@ def _safe_registration_name(value: Any, label: str) -> str:
     return name
 
 
+def _existing_registration_name(value: Any, label: str) -> str:
+    """Return an existing preset identifier without treating it as a filename."""
+    if not isinstance(value, str):
+        raise CharacterMakerError(f"{label}은 문자열이어야 합니다.")
+    name = value.strip()
+    if not name:
+        raise CharacterMakerError(f"{label}을 선택하세요.")
+    return name
+
+
 class CharacterMakerService:
     def __init__(
         self,
@@ -2017,22 +2027,28 @@ class CharacterMakerService:
             )
             raise CharacterMakerError("대표 이미지 설정값은 true 또는 false 여야 합니다.")
 
-        def registration_name(raw_value: Any, label: str) -> str:
+        def registration_name(raw_value: Any, label: str, mode: str) -> str:
             try:
+                if mode == "existing":
+                    return _existing_registration_name(raw_value, label)
                 return _safe_registration_name(raw_value, label)
             except CharacterMakerError as exc:
                 print(
                     f"[CHARACTER_MAKER] 확정 이름 검증 실패: session={session_id}, "
-                    f"label={label}, value={raw_value!r}, error={exc}"
+                    f"label={label}, mode={mode}, value={raw_value!r}, error={exc}"
                 )
                 traceback.print_exc()
                 raise
 
-        character_name = registration_name(payload.get("character_name"), "캐릭터명")
-        appearance_name = registration_name(
-            payload.get("appearance_name"), "외모 프리셋명"
+        character_name = registration_name(
+            payload.get("character_name"), "캐릭터명", registration_mode
         )
-        outfit_name = registration_name(payload.get("outfit_name"), "복장 프리셋명")
+        appearance_name = registration_name(
+            payload.get("appearance_name"), "외모 프리셋명", appearance_mode
+        )
+        outfit_name = registration_name(
+            payload.get("outfit_name"), "복장 프리셋명", outfit_mode
+        )
 
         revision_id = str(session.get("active_revision_id") or "")
         requested_revision_id = str(payload.get("revision_id") or "")
@@ -2108,7 +2124,7 @@ class CharacterMakerService:
                 "캐릭터 카드를 등록하려면 기존 또는 새 표정 프리셋을 선택하세요."
             )
         expression_name = registration_name(
-            payload.get("expression_name"), "표정 프리셋명"
+            payload.get("expression_name"), "표정 프리셋명", expression_mode
         )
         if expression_mode == "new" and not revision_fields["expression"]:
             print(
@@ -2129,7 +2145,7 @@ class CharacterMakerService:
         composition_name = ""
         if composition_mode == "new":
             composition_name = registration_name(
-                payload.get("composition_name"), "구도 프리셋명"
+                payload.get("composition_name"), "구도 프리셋명", composition_mode
             )
             if not revision_fields["composition"]:
                 print(
@@ -2163,7 +2179,9 @@ class CharacterMakerService:
         natural_language_name = ""
         if natural_language_mode == "new":
             natural_language_name = registration_name(
-                payload.get("natural_language_name"), "자연어 프리셋명"
+                payload.get("natural_language_name"),
+                "자연어 프리셋명",
+                natural_language_mode,
             )
             if not natural_language_text:
                 print(
