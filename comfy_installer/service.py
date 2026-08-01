@@ -1067,6 +1067,7 @@ class ComfyInstallerService:
                 cancel_event=self._cancel,
                 log=self._log,
                 progress=self._set_progress,
+                requirements_dir=self.requirements_dir,
             )
 
             self._set_phase("node_dependencies")
@@ -1470,6 +1471,7 @@ class ComfyInstallerService:
                 log=self._log,
                 progress=self._set_progress,
                 changed_nodes=updated_node_names,
+                requirements_dir=self.requirements_dir,
             )
             if updated_node_names:
                 self._log(

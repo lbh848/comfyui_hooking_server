@@ -9,11 +9,17 @@ import stat
 import traceback
 import uuid
 import zipfile
+from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 from threading import Event
-from typing import Callable
+from typing import Callable, Iterator
 
 from .downloader import ResumableDownloader
+from .node_compatibility import (
+    INSTANT_LORA_NODE_NAME,
+    apply_instant_lora_python_compatibility,
+    remove_instant_lora_python_compatibility,
+)
 from .operations import CommandError, run_command
 
 
@@ -44,6 +50,82 @@ def _prepare_staging(custom_root: Path, node_name: str) -> Path:
     staging = custom_root / f".installing_{node_name}_{uuid.uuid4().hex[:8]}"
     _assert_direct_child(staging, custom_root, "스테이징")
     return staging
+
+
+@contextmanager
+def _managed_node_compatibility_update(
+    *,
+    node_name: str,
+    comfy_root: Path,
+    requirements_dir: Path | None,
+    log: LogCallback | None,
+) -> Iterator[None]:
+    if node_name != INSTANT_LORA_NODE_NAME:
+        yield
+        return
+
+    backup_root = (
+        requirements_dir.resolve()
+        if requirements_dir is not None
+        else (comfy_root.parent / "요구사항").resolve()
+    )
+    runtime_path = (
+        comfy_root
+        / "custom_nodes"
+        / INSTANT_LORA_NODE_NAME
+        / "src"
+        / "runtime.py"
+    )
+    remove_instant_lora_python_compatibility(
+        comfy_root=comfy_root,
+        requirements_dir=backup_root,
+        log=log,
+        allow_missing=True,
+    )
+    try:
+        yield
+    except Exception as operation_exc:
+        if runtime_path.is_file():
+            try:
+                apply_instant_lora_python_compatibility(
+                    comfy_root=comfy_root,
+                    requirements_dir=backup_root,
+                    log=log,
+                )
+            except Exception as restore_exc:
+                print(
+                    "[COMFY_INSTALL][NODE] 노드 작업 실패 후 Instant LoRA "
+                    "호환 패치 복구도 실패: "
+                    f"node={node_name}, operation_error={operation_exc}, "
+                    f"restore_error={restore_exc}"
+                )
+                traceback.print_exc()
+                raise NodeInstallError(
+                    "Instant LoRA 노드 작업과 관리 Python 호환 패치 복구가 "
+                    f"모두 실패했습니다: operation={operation_exc}, "
+                    f"restore={restore_exc}"
+                ) from operation_exc
+        else:
+            print(
+                "[COMFY_INSTALL][NODE] 노드 작업 실패 후 복구할 Instant LoRA "
+                f"런타임 파일이 없습니다: {runtime_path}"
+            )
+        raise
+    try:
+        apply_instant_lora_python_compatibility(
+            comfy_root=comfy_root,
+            requirements_dir=backup_root,
+            log=log,
+        )
+    except Exception as exc:
+        print(
+            "[COMFY_INSTALL][NODE] Instant LoRA 설치 후 관리 Python 호환 "
+            f"패치 실패: node={node_name}, error={exc}"
+        )
+        traceback.print_exc()
+        raise NodeInstallError(
+            f"Instant LoRA 관리 Python 호환 처리 실패: {exc}"
+        ) from exc
 
 
 def _safe_zip_member(name: str) -> PurePosixPath:
@@ -350,6 +432,7 @@ def install_custom_nodes(
     cancel_event: Event,
     log: LogCallback | None = None,
     progress: ProgressCallback | None = None,
+    requirements_dir: Path | None = None,
 ) -> list[Path]:
     custom_root = comfy_root / "custom_nodes"
     cache_root = comfy_root / ".installer-cache" / "custom_nodes"
@@ -359,27 +442,33 @@ def install_custom_nodes(
             raise NodeInstallError("커스텀 노드 설치 중 중단 요청을 받았습니다.")
         if log:
             log(f"[노드 {index}/{len(nodes)}] {node['name']} 설치")
-        if node["source_type"] == "archive":
-            path = install_archive_node(
-                node=node,
-                custom_root=custom_root,
-                cache_root=cache_root,
-                downloader=downloader,
-                cancel_event=cancel_event,
-                log=log,
-                progress=progress,
-            )
-        elif node["source_type"] == "git":
-            path = install_git_node(
-                node=node,
-                custom_root=custom_root,
-                cancel_event=cancel_event,
-                log=log,
-            )
-        else:
-            raise NodeInstallError(
-                f"지원하지 않는 노드 소스 형식: {node.get('source_type')!r}"
-            )
+        with _managed_node_compatibility_update(
+            node_name=str(node["name"]),
+            comfy_root=comfy_root,
+            requirements_dir=requirements_dir,
+            log=log,
+        ):
+            if node["source_type"] == "archive":
+                path = install_archive_node(
+                    node=node,
+                    custom_root=custom_root,
+                    cache_root=cache_root,
+                    downloader=downloader,
+                    cancel_event=cancel_event,
+                    log=log,
+                    progress=progress,
+                )
+            elif node["source_type"] == "git":
+                path = install_git_node(
+                    node=node,
+                    custom_root=custom_root,
+                    cancel_event=cancel_event,
+                    log=log,
+                )
+            else:
+                raise NodeInstallError(
+                    f"지원하지 않는 노드 소스 형식: {node.get('source_type')!r}"
+                )
         installed.append(path)
     return installed
 
@@ -585,6 +674,7 @@ def update_custom_nodes(
     log: LogCallback | None = None,
     progress: ProgressCallback | None = None,
     changed_nodes: list[str] | None = None,
+    requirements_dir: Path | None = None,
 ) -> list[Path]:
     updated: list[Path] = []
     for index, node in enumerate(nodes, 1):
@@ -592,27 +682,33 @@ def update_custom_nodes(
             raise NodeInstallError("커스텀 노드 업데이트 중 중단 요청을 받았습니다.")
         if log:
             log(f"[노드 업데이트 {index}/{len(nodes)}] {node['name']}")
-        if node["source_type"] == "archive":
-            path = update_archive_node(
-                node=node,
-                comfy_root=comfy_root,
-                downloader=downloader,
-                cancel_event=cancel_event,
-                log=log,
-                progress=progress,
-                changed_nodes=changed_nodes,
-            )
-        elif node["source_type"] == "git":
-            path = update_git_node(
-                node=node,
-                comfy_root=comfy_root,
-                cancel_event=cancel_event,
-                log=log,
-                changed_nodes=changed_nodes,
-            )
-        else:
-            raise NodeInstallError(
-                f"지원하지 않는 노드 소스 형식: {node.get('source_type')!r}"
-            )
+        with _managed_node_compatibility_update(
+            node_name=str(node["name"]),
+            comfy_root=comfy_root,
+            requirements_dir=requirements_dir,
+            log=log,
+        ):
+            if node["source_type"] == "archive":
+                path = update_archive_node(
+                    node=node,
+                    comfy_root=comfy_root,
+                    downloader=downloader,
+                    cancel_event=cancel_event,
+                    log=log,
+                    progress=progress,
+                    changed_nodes=changed_nodes,
+                )
+            elif node["source_type"] == "git":
+                path = update_git_node(
+                    node=node,
+                    comfy_root=comfy_root,
+                    cancel_event=cancel_event,
+                    log=log,
+                    changed_nodes=changed_nodes,
+                )
+            else:
+                raise NodeInstallError(
+                    f"지원하지 않는 노드 소스 형식: {node.get('source_type')!r}"
+                )
         updated.append(path)
     return updated
