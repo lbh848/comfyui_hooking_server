@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import io
 from pathlib import Path
 from threading import Event
+from types import SimpleNamespace
 
 import pytest
 from PIL import Image
 
+import comfy_installer.e2e as e2e_module
 from comfy_installer.e2e import (
     ComfyE2EError,
     ComfyProcess,
@@ -15,6 +18,7 @@ from comfy_installer.e2e import (
     bypass_sageattention_nodes,
     make_e2e_prompt,
     prepare_e2e_fixtures,
+    promote_generated_fixture,
     protected_e2e_fixtures,
 )
 
@@ -309,6 +313,33 @@ def test_make_e2e_prompt_replaces_entire_embedding_filter_value() -> None:
     assert "[1]" not in value
 
 
+def test_make_e2e_prompt_uses_immutable_face_fixture_for_face_tags() -> None:
+    validation = WorkflowValidation(
+        binding_keys=("tag_analysis_workflow_source_path",),
+        filename="face-tags.json",
+        node_count=1,
+        class_count=1,
+        classes=("SoyaRefImageLoader_mdsoya",),
+        prompt={
+            "1": {
+                "class_type": "SoyaRefImageLoader_mdsoya",
+                "inputs": {
+                    "image": "private.webp",
+                    "fallback_width": 1024,
+                    "fallback_height": 1024,
+                },
+            }
+        },
+        workflow={"nodes": []},
+    )
+
+    prompt = make_e2e_prompt(validation)
+
+    assert prompt["1"]["inputs"]["image"] == (
+        "comfy-installer-e2e-face.png"
+    )
+
+
 def test_make_e2e_prompt_selects_sdxl_profile_for_sdxl_training() -> None:
     validation = WorkflowValidation(
         binding_keys=("lora_training_workflow_source_paths.sdxl",),
@@ -388,6 +419,45 @@ def test_validate_prompt_structure_finds_missing_class_and_link() -> None:
         )
 
 
+def test_validate_prompt_structure_finds_bad_output_slot_and_type() -> None:
+    object_info = {
+        "ImageSource": {
+            "input": {"required": {}},
+            "output": ["IMAGE"],
+        },
+        "ModelTarget": {
+            "input": {"required": {"model": ["MODEL", {}]}},
+            "output": [],
+        },
+    }
+
+    with pytest.raises(ComfyE2EError, match="출력 슬롯 범위 오류"):
+        _validate_prompt_structure(
+            prompt={
+                "1": {"class_type": "ImageSource", "inputs": {}},
+                "2": {
+                    "class_type": "ModelTarget",
+                    "inputs": {"model": ["1", 1]},
+                },
+            },
+            object_info=object_info,
+            filename="bad-slot.json",
+        )
+
+    with pytest.raises(ComfyE2EError, match="연결 타입 불일치"):
+        _validate_prompt_structure(
+            prompt={
+                "1": {"class_type": "ImageSource", "inputs": {}},
+                "2": {
+                    "class_type": "ModelTarget",
+                    "inputs": {"model": ["1", 0]},
+                },
+            },
+            object_info=object_info,
+            filename="bad-type.json",
+        )
+
+
 def test_prepare_e2e_fixtures_creates_expected_images(tmp_path: Path) -> None:
     face_source = (
         tmp_path
@@ -406,6 +476,7 @@ def test_prepare_e2e_fixtures_creates_expected_images(tmp_path: Path) -> None:
     result = prepare_e2e_fixtures(tmp_path)
     assert set(result) == {
         "default",
+        "face_tag",
         "training",
         "face",
         "edit_source",
@@ -416,10 +487,12 @@ def test_prepare_e2e_fixtures_creates_expected_images(tmp_path: Path) -> None:
         assert Path(path).is_file()
     assert Path(result["default"]).read_bytes()[:4] == b"RIFF"
     assert Path(result["face"]).name == "representation.png"
+    assert Path(result["face_tag"]).name == "comfy-installer-e2e-face.png"
     assert Path(result["face_source"]) == face_source
-    with Image.open(result["face"]) as face_image:
-        assert face_image.size == (96, 128)
-        assert face_image.convert("RGB").getpixel((0, 0)) == (12, 34, 56)
+    for key in ("face", "face_tag"):
+        with Image.open(result[key]) as face_image:
+            assert face_image.size == (96, 128)
+            assert face_image.convert("RGB").getpixel((0, 0)) == (12, 34, 56)
     with Image.open(result["training"]) as training_image:
         assert training_image.size == (512, 512)
 
@@ -429,10 +502,10 @@ def test_protected_e2e_fixtures_restores_existing_and_removes_created(
 ) -> None:
     comfy_root = tmp_path / "comfy"
     requirements_dir = tmp_path / "요구사항"
-    existing = comfy_root / "input" / "eri_default.webp"
-    existing.parent.mkdir(parents=True)
-    original = b"original-user-image"
-    existing.write_bytes(original)
+    default_image = comfy_root / "input" / "eri_default.webp"
+    default_image.parent.mkdir(parents=True)
+    original_default = b"original-user-image"
+    default_image.write_bytes(original_default)
     face_source = (
         comfy_root
         / "input"
@@ -443,20 +516,139 @@ def test_protected_e2e_fixtures_restores_existing_and_removes_created(
     face_source.parent.mkdir(parents=True)
     Image.new("RGB", (64, 80), (90, 80, 70)).save(face_source)
 
+    input_workspace = comfy_root / "input" / "comfy-installer-e2e"
+    output_workspace = comfy_root / "output" / "comfy-installer-e2e"
+    lora_workspace = (
+        comfy_root
+        / "models"
+        / "loras"
+        / "SOYA_CHAR_LORA"
+        / "comfy-installer-e2e"
+    )
+    runtime_root = (
+        comfy_root
+        / "custom_nodes"
+        / "comfyui-instant-lora_v_soya"
+        / "runtime"
+    )
+    last_lora = runtime_root / "last_lora.json"
+    existing_files = {
+        input_workspace / "old.txt": b"original-input",
+        output_workspace / "old.png": b"original-output",
+        lora_workspace / "old.safetensors": b"original-lora",
+        last_lora: b'{"path":"original"}',
+    }
+    for path, payload in existing_files.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(payload)
+
+    tracked_roots = [
+        runtime_root / "cache",
+        runtime_root / "datasets",
+        runtime_root / "artifacts",
+    ]
+    for root in tracked_roots:
+        keep = root / "existing" / "keep.bin"
+        keep.parent.mkdir(parents=True)
+        keep.write_bytes(b"keep")
+
     with protected_e2e_fixtures(
         comfy_root=comfy_root,
         requirements_dir=requirements_dir,
     ) as fixtures:
-        assert existing.read_bytes() != original
+        assert default_image.read_bytes() != original_default
         assert Path(fixtures["training"]).is_file()
+        assert not (input_workspace / "old.txt").exists()
+        assert not output_workspace.exists()
+        assert not lora_workspace.exists()
 
-    assert existing.read_bytes() == original
+        (input_workspace / "face" / "cache.pt").write_bytes(b"new-cache")
+        (input_workspace / "training" / "sample.txt").write_text(
+            "generated caption",
+            encoding="utf-8",
+        )
+        output_workspace.mkdir(parents=True)
+        (output_workspace / "new.png").write_bytes(b"new-output")
+        lora_workspace.mkdir(parents=True)
+        (lora_workspace / "new.safetensors").write_bytes(b"new-lora")
+        last_lora.write_bytes(b'{"path":"generated"}')
+        for root in tracked_roots:
+            generated = root / "generated" / "artifact.bin"
+            generated.parent.mkdir(parents=True)
+            generated.write_bytes(b"generated")
+
+    assert default_image.read_bytes() == original_default
     assert not Path(fixtures["training"]).exists()
+    assert not Path(fixtures["face_tag"]).exists()
+    for path, payload in existing_files.items():
+        assert path.read_bytes() == payload
+    assert not (input_workspace / "face" / "cache.pt").exists()
+    assert not (input_workspace / "training" / "sample.txt").exists()
+    assert not (output_workspace / "new.png").exists()
+    assert not (lora_workspace / "new.safetensors").exists()
+    for root in tracked_roots:
+        assert (root / "existing" / "keep.bin").read_bytes() == b"keep"
+        assert not (root / "generated").exists()
+
     backups = list(
         requirements_dir.glob(
             "comfy_e2e_fixture_before_*/input/eri_default.webp"
         )
     )
     assert len(backups) == 1
-    assert backups[0].read_bytes() == original
+    assert backups[0].read_bytes() == original_default
+    backup_root = backups[0].parents[1]
+    assert (
+        backup_root / "input" / "comfy-installer-e2e" / "old.txt"
+    ).read_bytes() == b"original-input"
     assert face_source.is_file()
+
+
+def test_promote_generated_fixture_preserves_face_fixture(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    destinations = e2e_module._fixture_destinations(tmp_path)
+    destinations["face"].parent.mkdir(parents=True)
+    Image.new("RGB", (16, 16), (1, 2, 3)).save(destinations["face"])
+    original_face = destinations["face"].read_bytes()
+    Image.new("RGB", (16, 16), (4, 5, 6)).save(destinations["face_tag"])
+    original_face_tag = destinations["face_tag"].read_bytes()
+
+    payload_buffer = io.BytesIO()
+    Image.new("RGB", (24, 24), (100, 110, 120)).save(
+        payload_buffer,
+        format="PNG",
+    )
+    response = SimpleNamespace(
+        content=payload_buffer.getvalue(),
+        raise_for_status=lambda: None,
+    )
+    monkeypatch.setattr(e2e_module.httpx, "get", lambda *args, **kwargs: response)
+
+    promoted = promote_generated_fixture(
+        base_url="http://127.0.0.1:8188",
+        execution_result={
+            "filename": "asset.json",
+            "output_data": {
+                "10": {
+                    "images": [
+                        {
+                            "filename": "generated.png",
+                            "subfolder": "",
+                            "type": "output",
+                        }
+                    ]
+                }
+            },
+        },
+        comfy_root=tmp_path,
+    )
+
+    assert promoted == str(destinations["default"])
+    assert destinations["face"].read_bytes() == original_face
+    assert destinations["face_tag"].read_bytes() == original_face_tag
+    for key in ("default", "training", "edit_source"):
+        assert destinations[key].is_file()
+        with Image.open(destinations[key]) as image:
+            assert image.convert("RGB").getpixel((0, 0)) == (100, 110, 120)

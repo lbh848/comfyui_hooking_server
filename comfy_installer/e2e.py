@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import os
 import re
@@ -57,10 +58,26 @@ class WorkflowValidation:
 
 
 @dataclass(frozen=True)
+class E2EPathBackup:
+    target: Path
+    backup_path: Path | None
+    original_kind: str
+    clean_before_run: bool = False
+
+
+@dataclass(frozen=True)
+class E2EChildSnapshot:
+    root: Path
+    root_existed: bool
+    child_names: frozenset[str]
+
+
+@dataclass(frozen=True)
 class E2EFixtureBackup:
+    comfy_root: Path
     backup_root: Path | None
-    existing: tuple[tuple[Path, Path], ...]
-    created: tuple[Path, ...]
+    paths: tuple[E2EPathBackup, ...]
+    child_snapshots: tuple[E2EChildSnapshot, ...]
 
 
 def find_free_local_port() -> int:
@@ -300,6 +317,35 @@ def _is_link(value: object) -> bool:
     )
 
 
+def _schema_input_type(node_schema: dict, input_name: str) -> object | None:
+    sections = node_schema.get("input", {})
+    if not isinstance(sections, dict):
+        return None
+    for section_name in ("required", "optional", "hidden"):
+        section = sections.get(section_name, {})
+        if not isinstance(section, dict) or input_name not in section:
+            continue
+        descriptor = section[input_name]
+        if isinstance(descriptor, (list, tuple)) and descriptor:
+            return descriptor[0]
+        return None
+    return None
+
+
+def _link_types_compatible(received: object, expected: object) -> bool:
+    if received == "*" or expected == "*":
+        return True
+    if not isinstance(received, str) or not isinstance(expected, str):
+        return received == expected
+    received_types = {
+        value.strip() for value in received.split(",") if value.strip()
+    }
+    expected_types = {
+        value.strip() for value in expected.split(",") if value.strip()
+    }
+    return bool(received_types.intersection(expected_types))
+
+
 def _validate_prompt_structure(
     *,
     prompt: dict,
@@ -346,6 +392,50 @@ def _validate_prompt_structure(
                     problems.append(
                         f"node={node_id} input={input_name}: "
                         f"없는 연결 원본={source_id}"
+                    )
+                    continue
+                source_node = prompt.get(source_id)
+                if source_node is None:
+                    source_node = prompt.get(value[0])
+                if not isinstance(source_node, dict):
+                    problems.append(
+                        f"node={node_id} input={input_name}: "
+                        f"연결 원본 노드 형식 오류={source_id}"
+                    )
+                    continue
+                source_class = source_node.get("class_type")
+                source_schema = object_info.get(source_class)
+                outputs = (
+                    source_schema.get("output", [])
+                    if isinstance(source_schema, dict)
+                    else []
+                )
+                output_slot = value[1]
+                if (
+                    not isinstance(outputs, list)
+                    or output_slot < 0
+                    or output_slot >= len(outputs)
+                ):
+                    problems.append(
+                        f"node={node_id} input={input_name}: "
+                        f"연결 출력 슬롯 범위 오류="
+                        f"{source_id}:{output_slot}"
+                    )
+                    continue
+                expected_type = _schema_input_type(
+                    node_schema, input_name
+                )
+                received_type = outputs[output_slot]
+                if (
+                    expected_type is not None
+                    and not _link_types_compatible(
+                        received_type, expected_type
+                    )
+                ):
+                    problems.append(
+                        f"node={node_id} input={input_name}: 연결 타입 불일치 "
+                        f"received={received_type}, expected={expected_type}, "
+                        f"source={source_id}:{output_slot}"
                     )
 
     if problems:
@@ -769,6 +859,7 @@ def make_e2e_prompt(
     *,
     training_input_relative: str = "comfy-installer-e2e/training",
     face_input_relative: str = "comfy-installer-e2e/face",
+    face_tag_image_relative: str = "comfy-installer-e2e-face.png",
     edit_input_relative: str = "comfy-installer-e2e/edit",
 ) -> dict:
     """배포 워크플로우의 고정 구조를 최소 비용 E2E 입력으로 바꾼다."""
@@ -792,6 +883,9 @@ def make_e2e_prompt(
         _E2E_SDXL_TRAINING_BINDINGS.intersection(
             validation.binding_keys
         )
+    )
+    uses_face_tag_fixture = (
+        "tag_analysis_workflow_source_path" in validation.binding_keys
     )
     safe_output_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", binding_key)
     for node in prompt.values():
@@ -817,7 +911,11 @@ def make_e2e_prompt(
 
         if class_type in {"SoyaRefImageLoader_mdsoya", "LoadImage"}:
             if "image" in inputs and not _is_link(inputs["image"]):
-                inputs["image"] = "eri_default.webp"
+                inputs["image"] = (
+                    face_tag_image_relative
+                    if uses_face_tag_fixture
+                    else "eri_default.webp"
+                )
 
         value = inputs.get("value")
         if class_type != "PrimitiveStringMultiline" or not isinstance(
@@ -983,6 +1081,7 @@ def _fixture_destinations(comfy_root: Path) -> dict[str, Path]:
     edit_root = fixture_root / "edit"
     return {
         "default": input_root / "eri_default.webp",
+        "face_tag": input_root / "comfy-installer-e2e-face.png",
         "training": training_root / "sample.png",
         "face": face_root / "representation.png",
         "edit_source": edit_root / "source.png",
@@ -990,115 +1089,305 @@ def _fixture_destinations(comfy_root: Path) -> dict[str, Path]:
     }
 
 
+def _e2e_owned_path_specs(comfy_root: Path) -> tuple[tuple[Path, bool], ...]:
+    input_root = comfy_root / "input"
+    instant_lora_runtime = (
+        comfy_root
+        / "custom_nodes"
+        / "comfyui-instant-lora_v_soya"
+        / "runtime"
+    )
+    return (
+        (input_root / "eri_default.webp", False),
+        (input_root / "comfy-installer-e2e-face.png", False),
+        (input_root / "comfy-installer-e2e", True),
+        (comfy_root / "output" / "comfy-installer-e2e", True),
+        (
+            comfy_root
+            / "models"
+            / "loras"
+            / "SOYA_CHAR_LORA"
+            / "comfy-installer-e2e",
+            True,
+        ),
+        (instant_lora_runtime / "last_lora.json", False),
+    )
+
+
+def _e2e_child_snapshot_roots(comfy_root: Path) -> tuple[Path, ...]:
+    runtime_root = (
+        comfy_root
+        / "custom_nodes"
+        / "comfyui-instant-lora_v_soya"
+        / "runtime"
+    )
+    return (
+        runtime_root / "cache",
+        runtime_root / "datasets",
+        runtime_root / "artifacts",
+    )
+
+
+def _path_kind(path: Path) -> str:
+    if path.is_symlink():
+        raise ComfyE2EError(
+            f"E2E 보호 대상에 심볼릭 링크를 사용할 수 없습니다: {path}"
+        )
+    if path.is_file():
+        return "file"
+    if path.is_dir():
+        return "directory"
+    if path.exists():
+        raise ComfyE2EError(
+            f"E2E 보호 대상 형식을 지원하지 않습니다: {path}"
+        )
+    return "missing"
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        while chunk := stream.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _tree_signature(
+    root: Path,
+) -> tuple[tuple[str, ...], tuple[tuple[str, int, str], ...]]:
+    directories: list[str] = []
+    files: list[tuple[str, int, str]] = []
+    for path in sorted(root.rglob("*"), key=lambda item: item.as_posix()):
+        if path.is_symlink():
+            raise ComfyE2EError(
+                f"E2E 백업 트리에 심볼릭 링크가 있습니다: {path}"
+            )
+        relative = path.relative_to(root).as_posix()
+        if path.is_dir():
+            directories.append(relative)
+        elif path.is_file():
+            files.append((relative, path.stat().st_size, _file_sha256(path)))
+        else:
+            raise ComfyE2EError(
+                f"E2E 백업 트리 항목 형식을 지원하지 않습니다: {path}"
+            )
+    return tuple(directories), tuple(files)
+
+
+def _assert_within_comfy(path: Path, comfy_root: Path) -> None:
+    try:
+        path.resolve(strict=False).relative_to(comfy_root.resolve())
+    except ValueError as exc:
+        raise ComfyE2EError(
+            f"E2E 정리 대상이 Comfy 루트 밖입니다: {path}"
+        ) from exc
+
+
+def _remove_e2e_path(path: Path, comfy_root: Path) -> None:
+    _assert_within_comfy(path, comfy_root)
+    if path.is_symlink() or path.is_file():
+        path.unlink()
+    elif path.is_dir():
+        shutil.rmtree(path)
+    elif path.exists():
+        raise ComfyE2EError(
+            f"E2E 정리 대상 형식을 지원하지 않습니다: {path}"
+        )
+
+
 def backup_e2e_fixtures(
     *,
     comfy_root: Path,
     requirements_dir: Path,
 ) -> E2EFixtureBackup:
-    destinations = _fixture_destinations(comfy_root)
-    existing_paths: list[Path] = []
-    created_paths: list[Path] = []
-    for destination in destinations.values():
-        if destination.exists():
-            if not destination.is_file():
-                raise ComfyE2EError(
-                    "E2E 픽스처 대상이 일반 파일이 아닙니다: "
-                    f"{destination}"
-                )
-            existing_paths.append(destination)
-        else:
-            created_paths.append(destination)
-
-    if not existing_paths:
-        return E2EFixtureBackup(
-            backup_root=None,
-            existing=(),
-            created=tuple(created_paths),
+    comfy_root = comfy_root.resolve()
+    path_specs = _e2e_owned_path_specs(comfy_root)
+    kinds = [(path, clean, _path_kind(path)) for path, clean in path_specs]
+    existing = [item for item in kinds if item[2] != "missing"]
+    backup_root: Path | None = None
+    if existing:
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        backup_root = (
+            requirements_dir.resolve()
+            / f"comfy_e2e_fixture_before_{stamp}_{uuid.uuid4().hex[:8]}"
         )
 
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-    backup_root = (
-        requirements_dir.resolve()
-        / f"comfy_e2e_fixture_before_{stamp}_{uuid.uuid4().hex[:8]}"
-    )
-    copied: list[tuple[Path, Path]] = []
+    child_snapshots: list[E2EChildSnapshot] = []
     try:
-        for source in existing_paths:
-            relative = source.resolve().relative_to(comfy_root.resolve())
-            backup_path = backup_root / relative
-            backup_path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source, backup_path)
-            if source.read_bytes() != backup_path.read_bytes():
-                raise ComfyE2EError(
-                    f"E2E 픽스처 백업 검증 실패: {source}"
+        entries: list[E2EPathBackup] = []
+        for target, clean_before_run, original_kind in kinds:
+            backup_path: Path | None = None
+            if original_kind != "missing":
+                assert backup_root is not None
+                relative = target.resolve().relative_to(comfy_root)
+                backup_path = backup_root / relative
+                backup_path.parent.mkdir(parents=True, exist_ok=True)
+                if original_kind == "file":
+                    shutil.copy2(target, backup_path)
+                    if _file_sha256(target) != _file_sha256(backup_path):
+                        raise ComfyE2EError(
+                            f"E2E 파일 백업 검증 실패: {target}"
+                        )
+                else:
+                    shutil.copytree(target, backup_path)
+                    if _tree_signature(target) != _tree_signature(backup_path):
+                        raise ComfyE2EError(
+                            f"E2E 폴더 백업 검증 실패: {target}"
+                        )
+            entries.append(
+                E2EPathBackup(
+                    target=target,
+                    backup_path=backup_path,
+                    original_kind=original_kind,
+                    clean_before_run=clean_before_run,
                 )
-            copied.append((source, backup_path))
-        print(
-            "[COMFY_INSTALL][E2E] 기존 테스트 입력 백업 완료: "
-            f"count={len(copied)}, root={backup_root}"
-        )
+            )
+
+        for root in _e2e_child_snapshot_roots(comfy_root):
+            kind = _path_kind(root)
+            if kind not in {"missing", "directory"}:
+                raise ComfyE2EError(
+                    f"E2E 부산물 추적 루트가 폴더가 아닙니다: {root}"
+                )
+            child_snapshots.append(
+                E2EChildSnapshot(
+                    root=root,
+                    root_existed=(kind == "directory"),
+                    child_names=(
+                        frozenset(path.name for path in root.iterdir())
+                        if kind == "directory"
+                        else frozenset()
+                    ),
+                )
+            )
+
+        if existing:
+            print(
+                "[COMFY_INSTALL][E2E] 기존 E2E 작업공간 백업 완료: "
+                f"count={len(existing)}, root={backup_root}"
+            )
         return E2EFixtureBackup(
+            comfy_root=comfy_root,
             backup_root=backup_root,
-            existing=tuple(copied),
-            created=tuple(created_paths),
+            paths=tuple(entries),
+            child_snapshots=tuple(child_snapshots),
         )
     except Exception as exc:
         print(
-            "[COMFY_INSTALL][E2E] 기존 테스트 입력 백업 실패: "
+            "[COMFY_INSTALL][E2E] 기존 E2E 작업공간 백업 실패: "
             f"root={backup_root}, error={exc}"
         )
         traceback.print_exc()
         if isinstance(exc, ComfyE2EError):
             raise
-        raise ComfyE2EError(f"E2E 테스트 입력 백업 실패: {exc}") from exc
+        raise ComfyE2EError(f"E2E 작업공간 백업 실패: {exc}") from exc
+
+
+def _clean_e2e_workspaces(backup: E2EFixtureBackup) -> None:
+    try:
+        for entry in backup.paths:
+            if entry.clean_before_run:
+                _remove_e2e_path(entry.target, backup.comfy_root)
+    except Exception as exc:
+        print(
+            "[COMFY_INSTALL][E2E] E2E 작업공간 초기화 실패: "
+            f"error={exc}"
+        )
+        traceback.print_exc()
+        if isinstance(exc, ComfyE2EError):
+            raise
+        raise ComfyE2EError(f"E2E 작업공간 초기화 실패: {exc}") from exc
 
 
 def restore_e2e_fixtures(backup: E2EFixtureBackup) -> None:
+    failures: list[str] = []
+    restored = 0
+    removed_new = 0
     try:
-        for destination, backup_path in backup.existing:
-            if not backup_path.is_file():
-                raise ComfyE2EError(
-                    f"E2E 픽스처 백업 파일이 없습니다: {backup_path}"
-                )
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(backup_path, destination)
-            if destination.read_bytes() != backup_path.read_bytes():
-                raise ComfyE2EError(
-                    f"E2E 픽스처 원복 검증 실패: {destination}"
-                )
-        for created_path in backup.created:
-            if created_path.is_file():
-                created_path.unlink()
-            elif created_path.exists():
-                raise ComfyE2EError(
-                    "설치기가 만든 픽스처 경로가 일반 파일이 아닙니다: "
-                    f"{created_path}"
-                )
-        created_parents = sorted(
-            {path.parent for path in backup.created},
-            key=lambda path: len(path.parts),
-            reverse=True,
-        )
-        for directory in created_parents:
+        for entry in backup.paths:
             try:
-                directory.rmdir()
-            except OSError:
-                pass
-        if backup.existing:
+                _remove_e2e_path(entry.target, backup.comfy_root)
+                if entry.original_kind == "missing":
+                    continue
+                backup_path = entry.backup_path
+                if backup_path is None:
+                    raise ComfyE2EError(
+                        f"E2E 원복용 백업 경로가 없습니다: {entry.target}"
+                    )
+                entry.target.parent.mkdir(parents=True, exist_ok=True)
+                if entry.original_kind == "file":
+                    if not backup_path.is_file():
+                        raise ComfyE2EError(
+                            f"E2E 원복용 백업 파일이 없습니다: {backup_path}"
+                        )
+                    shutil.copy2(backup_path, entry.target)
+                    if _file_sha256(entry.target) != _file_sha256(backup_path):
+                        raise ComfyE2EError(
+                            f"E2E 파일 원복 검증 실패: {entry.target}"
+                        )
+                else:
+                    if not backup_path.is_dir():
+                        raise ComfyE2EError(
+                            f"E2E 원복용 백업 폴더가 없습니다: {backup_path}"
+                        )
+                    shutil.copytree(backup_path, entry.target)
+                    if _tree_signature(entry.target) != _tree_signature(
+                        backup_path
+                    ):
+                        raise ComfyE2EError(
+                            f"E2E 폴더 원복 검증 실패: {entry.target}"
+                        )
+                restored += 1
+            except Exception as exc:
+                print(
+                    "[COMFY_INSTALL][E2E] E2E 보호 경로 원복 실패: "
+                    f"target={entry.target}, error={exc}"
+                )
+                traceback.print_exc()
+                failures.append(f"{entry.target}: {exc}")
+
+        for snapshot in backup.child_snapshots:
+            try:
+                if not snapshot.root_existed:
+                    if snapshot.root.exists():
+                        _remove_e2e_path(snapshot.root, backup.comfy_root)
+                    continue
+                if not snapshot.root.is_dir():
+                    raise ComfyE2EError(
+                        f"E2E 부산물 추적 루트가 사라졌습니다: {snapshot.root}"
+                    )
+                for child in tuple(snapshot.root.iterdir()):
+                    if child.name in snapshot.child_names:
+                        continue
+                    _remove_e2e_path(child, backup.comfy_root)
+                    removed_new += 1
+            except Exception as exc:
+                print(
+                    "[COMFY_INSTALL][E2E] 새 E2E 부산물 정리 실패: "
+                    f"root={snapshot.root}, error={exc}"
+                )
+                traceback.print_exc()
+                failures.append(f"{snapshot.root}: {exc}")
+
+        if restored or removed_new:
             print(
-                "[COMFY_INSTALL][E2E] 기존 테스트 입력 원복 완료: "
-                f"count={len(backup.existing)}, "
+                "[COMFY_INSTALL][E2E] E2E 작업공간 원복 완료: "
+                f"restored={restored}, removed_new={removed_new}, "
                 f"backup={backup.backup_root}"
+            )
+        if failures:
+            raise ComfyE2EError(
+                "E2E 작업공간 원복 일부 실패: " + "; ".join(failures)
             )
     except Exception as exc:
         print(
-            "[COMFY_INSTALL][E2E] 테스트 입력 원복 실패: "
+            "[COMFY_INSTALL][E2E] E2E 작업공간 원복 실패: "
             f"backup={backup.backup_root}, error={exc}"
         )
         traceback.print_exc()
         if isinstance(exc, ComfyE2EError):
             raise
-        raise ComfyE2EError(f"E2E 테스트 입력 원복 실패: {exc}") from exc
+        raise ComfyE2EError(f"E2E 작업공간 원복 실패: {exc}") from exc
 
 
 def _save_image_atomic(
@@ -1185,9 +1474,9 @@ def prepare_e2e_fixtures(comfy_root: Path) -> dict[str, str]:
             image_format="WEBP",
             quality=95,
         )
-        for key in ("training", "face", "edit_source"):
+        for key in ("training", "face", "face_tag", "edit_source"):
             _save_image_atomic(
-                face_image if key == "face" else image,
+                face_image if key in {"face", "face_tag"} else image,
                 destinations[key],
                 image_format="PNG",
             )
@@ -1219,6 +1508,7 @@ def protected_e2e_fixtures(
         requirements_dir=requirements_dir,
     )
     try:
+        _clean_e2e_workspaces(backup)
         yield prepare_e2e_fixtures(comfy_root)
     finally:
         restore_e2e_fixtures(backup)
@@ -1275,7 +1565,6 @@ def promote_generated_fixture(
             destinations = [
                 fixture_destinations["default"],
                 fixture_destinations["training"],
-                fixture_destinations["face"],
                 fixture_destinations["edit_source"],
             ]
             for destination in destinations:

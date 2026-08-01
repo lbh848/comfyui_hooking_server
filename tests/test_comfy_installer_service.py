@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from contextlib import contextmanager
 from pathlib import Path
 from threading import Event
 from types import SimpleNamespace
@@ -232,13 +231,6 @@ def test_runtime_e2e_records_failure_and_continues_remaining_workflows(
     ]
     calls: list[str] = []
 
-    @contextmanager
-    def fake_fixtures(**_kwargs):
-        yield {
-            "training": "fixture/training/sample.png",
-            "face_source": "fixture/fallback/face.webp",
-        }
-
     def fake_execute_prompt(**kwargs):
         filename = kwargs["filename"]
         calls.append(filename)
@@ -252,11 +244,6 @@ def test_runtime_e2e_records_failure_and_continues_remaining_workflows(
             "output_data": {},
         }
 
-    monkeypatch.setattr(
-        service_module,
-        "protected_e2e_fixtures",
-        fake_fixtures,
-    )
     monkeypatch.setattr(
         service_module,
         "make_e2e_prompt",
@@ -281,6 +268,10 @@ def test_runtime_e2e_records_failure_and_continues_remaining_workflows(
         service._run_runtime_e2e(
             process=process,
             validations=validations,
+            fixtures={
+                "training": "fixture/training/sample.png",
+                "face_source": "fixture/fallback/face.webp",
+            },
         )
 
     assert calls == ["a.json", "b.json", "c.json"]

@@ -9,7 +9,7 @@ import traceback
 from collections import deque
 from pathlib import Path
 from threading import Event, RLock
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 import httpx
 
@@ -572,120 +572,112 @@ class ComfyInstallerService:
         *,
         process: ComfyProcess,
         validations: list,
+        fixtures: Mapping[str, str],
         bypass_sageattention: bool = False,
     ) -> list[dict]:
         results: list[dict] = []
         failures: list[dict[str, str]] = []
         promoted = False
         ordered = sorted(validations, key=self._runtime_order)
-        with protected_e2e_fixtures(
-            comfy_root=self.comfy_root,
-            requirements_dir=(
-                self.comfy_root
-                / ".installer-state"
-                / "backups"
-                / "e2e-fixtures"
-            ),
-        ) as fixtures:
-            self._log(
-                "[E2E] 설치기 전용 입력 픽스처 준비: "
-                f"training={fixtures['training']}, "
-                f"face_source={fixtures['face_source']}"
+        self._log(
+            "[E2E] 설치기 전용 입력 픽스처 준비: "
+            f"training={fixtures['training']}, "
+            f"face_source={fixtures['face_source']}"
+        )
+        for index, validation in enumerate(ordered, 1):
+            if self._cancel.is_set():
+                raise ComfyE2ECancelled(
+                    "실제 워크플로우 E2E 중 중단 요청을 받았습니다."
+                )
+            self._set_progress(
+                {
+                    "event": "workflow_execution",
+                    "current": index,
+                    "total": len(ordered),
+                    "filename": validation.filename,
+                }
             )
-            for index, validation in enumerate(ordered, 1):
-                if self._cancel.is_set():
-                    raise ComfyE2ECancelled(
-                        "실제 워크플로우 E2E 중 중단 요청을 받았습니다."
+            self._log(
+                f"[E2E 실행 {index}/{len(ordered)}] "
+                f"{validation.filename}"
+            )
+            try:
+                prompt = make_e2e_prompt(validation)
+                bypassed_nodes: list[dict[str, str]] = []
+                if bypass_sageattention:
+                    prompt, bypassed_nodes = bypass_sageattention_nodes(
+                        prompt,
+                        filename=validation.filename,
                     )
-                self._set_progress(
+                    if bypassed_nodes:
+                        self._log(
+                            "[E2E 호환] SageAttention 노드를 검증 사본에서 "
+                            f"우회: filename={validation.filename}, "
+                            f"count={len(bypassed_nodes)}"
+                        )
+                timeout = (
+                    7200
+                    if any(
+                        "training_workflow" in key
+                        for key in validation.binding_keys
+                    )
+                    else 3600
+                )
+                result = execute_prompt(
+                    base_url=process.base_url,
+                    prompt=prompt,
+                    workflow=validation.workflow,
+                    filename=validation.filename,
+                    cancel_event=self._cancel,
+                    log=self._log,
+                    timeout=timeout,
+                )
+                if bypassed_nodes:
+                    result["compatibility_bypassed_nodes"] = bypassed_nodes
+            except ComfyE2ECancelled:
+                raise
+            except ComfyE2EError as exc:
+                detail = str(exc)
+                if len(detail) > 4000:
+                    detail = detail[:4000] + "... (상세 오류 생략)"
+                failures.append(
                     {
-                        "event": "workflow_execution",
-                        "current": index,
-                        "total": len(ordered),
                         "filename": validation.filename,
+                        "error": detail,
                     }
                 )
                 self._log(
-                    f"[E2E 실행 {index}/{len(ordered)}] "
-                    f"{validation.filename}"
+                    "[E2E 실행] 실패 기록 후 다음 워크플로우 계속: "
+                    f"{validation.filename}: {detail}",
+                    "error",
                 )
-                try:
-                    prompt = make_e2e_prompt(validation)
-                    bypassed_nodes: list[dict[str, str]] = []
-                    if bypass_sageattention:
-                        prompt, bypassed_nodes = bypass_sageattention_nodes(
-                            prompt,
-                            filename=validation.filename,
-                        )
-                        if bypassed_nodes:
-                            self._log(
-                                "[E2E 호환] SageAttention 노드를 검증 사본에서 "
-                                f"우회: filename={validation.filename}, "
-                                f"count={len(bypassed_nodes)}"
-                            )
-                    timeout = (
-                        7200
-                        if any(
-                            "training_workflow" in key
-                            for key in validation.binding_keys
-                        )
-                        else 3600
-                    )
-                    result = execute_prompt(
-                        base_url=process.base_url,
-                        prompt=prompt,
-                        workflow=validation.workflow,
-                        filename=validation.filename,
-                        cancel_event=self._cancel,
-                        log=self._log,
-                        timeout=timeout,
-                    )
-                    if bypassed_nodes:
-                        result["compatibility_bypassed_nodes"] = bypassed_nodes
-                except ComfyE2ECancelled:
-                    raise
-                except ComfyE2EError as exc:
-                    detail = str(exc)
-                    if len(detail) > 4000:
-                        detail = detail[:4000] + "... (상세 오류 생략)"
-                    failures.append(
-                        {
-                            "filename": validation.filename,
-                            "error": detail,
-                        }
-                    )
+                child = process.process
+                if child is None or child.poll() is not None:
+                    raise ComfyE2EError(
+                        "워크플로우 실패 후 ComfyUI 프로세스가 종료되어 "
+                        "남은 E2E를 계속할 수 없습니다: "
+                        f"{validation.filename}"
+                    ) from exc
+                continue
+            results.append(
+                {
+                    key: value
+                    for key, value in result.items()
+                    if key != "output_data"
+                }
+            )
+            if not promoted:
+                promoted_path = promote_generated_fixture(
+                    base_url=process.base_url,
+                    execution_result=result,
+                    comfy_root=self.comfy_root,
+                )
+                if promoted_path:
+                    promoted = True
                     self._log(
-                        "[E2E 실행] 실패 기록 후 다음 워크플로우 계속: "
-                        f"{validation.filename}: {detail}",
-                        "error",
+                        "[E2E] 첫 생성 이미지를 후속 태그/편집/학습 "
+                        f"픽스처로 적용: {promoted_path}"
                     )
-                    child = process.process
-                    if child is None or child.poll() is not None:
-                        raise ComfyE2EError(
-                            "워크플로우 실패 후 ComfyUI 프로세스가 종료되어 "
-                            "남은 E2E를 계속할 수 없습니다: "
-                            f"{validation.filename}"
-                        ) from exc
-                    continue
-                results.append(
-                    {
-                        key: value
-                        for key, value in result.items()
-                        if key != "output_data"
-                    }
-                )
-                if not promoted:
-                    promoted_path = promote_generated_fixture(
-                        base_url=process.base_url,
-                        execution_result=result,
-                        comfy_root=self.comfy_root,
-                    )
-                    if promoted_path:
-                        promoted = True
-                        self._log(
-                            "[E2E] 첫 생성 이미지를 후속 태그/편집/학습 "
-                            f"픽스처로 적용: {promoted_path}"
-                        )
         self._set_progress(
             {
                 "event": "workflow_execution",
@@ -1073,51 +1065,62 @@ class ComfyInstallerService:
             )
 
             self._set_phase("startup")
-            process = ComfyProcess(
+            with protected_e2e_fixtures(
                 comfy_root=self.comfy_root,
-                python=python,
-                cancel_event=self._cancel,
-                log=self._log_comfy,
-            )
-            stats = process.start(timeout=900)
-            actual_version = (
-                stats.get("system", {}).get("comfyui_version")
-                if isinstance(stats, dict)
-                else None
-            )
-            if actual_version != self.manifest.comfy["version"]:
-                raise ComfyE2EError(
-                    "기동된 ComfyUI 버전이 고정값과 다릅니다: "
-                    f"expected={self.manifest.comfy['version']}, "
-                    f"actual={actual_version}"
-                )
-            self._log(
-                f"[E2E] ComfyUI 버전 확인 완료: {actual_version}"
-            )
-
-            self._set_phase("e2e_static")
-            validations, _ = validate_all_workflows(
-                base_url=process.base_url,
-                workflow_bindings=selection.workflow_bindings,
-                expected_count=len(selection.selected_item_ids),
-                excluded_filenames=list(
-                    self.manifest.workflows["excluded_filenames"]
+                requirements_dir=(
+                    self.requirements_dir / "comfy-e2e-fixtures"
                 ),
-                cancel_event=self._cancel,
-                log=self._log,
-                progress=self._set_progress,
-            )
+            ) as fixtures:
+                try:
+                    process = ComfyProcess(
+                        comfy_root=self.comfy_root,
+                        python=python,
+                        cancel_event=self._cancel,
+                        log=self._log_comfy,
+                    )
+                    stats = process.start(timeout=900)
+                    actual_version = (
+                        stats.get("system", {}).get("comfyui_version")
+                        if isinstance(stats, dict)
+                        else None
+                    )
+                    if actual_version != self.manifest.comfy["version"]:
+                        raise ComfyE2EError(
+                            "기동된 ComfyUI 버전이 고정값과 다릅니다: "
+                            f"expected={self.manifest.comfy['version']}, "
+                            f"actual={actual_version}"
+                        )
+                    self._log(
+                        f"[E2E] ComfyUI 버전 확인 완료: {actual_version}"
+                    )
 
-            self._set_phase("e2e_runtime")
-            runtime_e2e = self._run_runtime_e2e(
-                process=process,
-                validations=validations,
-                bypass_sageattention=(
-                    install_mode == INSTALL_MODE_NVIDIA_COMPATIBILITY
-                ),
-            )
-            process.stop()
-            process = None
+                    self._set_phase("e2e_static")
+                    validations, _ = validate_all_workflows(
+                        base_url=process.base_url,
+                        workflow_bindings=selection.workflow_bindings,
+                        expected_count=len(selection.selected_item_ids),
+                        excluded_filenames=list(
+                            self.manifest.workflows["excluded_filenames"]
+                        ),
+                        cancel_event=self._cancel,
+                        log=self._log,
+                        progress=self._set_progress,
+                    )
+
+                    self._set_phase("e2e_runtime")
+                    runtime_e2e = self._run_runtime_e2e(
+                        process=process,
+                        validations=validations,
+                        fixtures=fixtures,
+                        bypass_sageattention=(
+                            install_mode
+                            == INSTALL_MODE_NVIDIA_COMPATIBILITY
+                        ),
+                    )
+                finally:
+                    if process is not None:
+                        process.stop()
+                        process = None
 
             self._set_phase("config")
             config_update = apply_installed_config(
