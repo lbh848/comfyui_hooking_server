@@ -32,6 +32,15 @@ CATEGORY_LABELS = {
 ALLOWED_CATEGORIES = frozenset(CATEGORY_LABELS)
 
 
+def format_display_tag(tag: str, category: int) -> str:
+    """Convert an index tag to the prompt-ready format used by this project."""
+    spaced = str(tag or "").replace("_", " ")
+    escaped = spaced.replace("(", r"\(").replace(")", r"\)")
+    if int(category) == 3:
+        return f"(\\{escaped})\\"
+    return escaped
+
+
 class DanbooruKnowledgeError(RuntimeError):
     """Base error for the LLM-assisted Danbooru knowledge pipeline."""
 
@@ -276,7 +285,8 @@ def _answer_messages(
                 "When multiple entities share the requested name, do not silently choose one: "
                 "list the plausible matches and their works, then explain the ambiguity briefly. "
                 "In the Korean answer, render tag names with spaces instead of underscores "
-                "(for example, blonde hair rather than blonde_hair). "
+                "(for example, blonde hair rather than blonde_hair), and copy each candidate's "
+                "display_tag exactly when mentioning a prompt-ready tag. "
                 "Use exact candidate tag strings in evidence_tags. If the candidates do not "
                 "support an answer, say so and return status=not_found with an empty evidence_tags. "
                 "Return exactly one JSON object with answer, status, confidence, evidence_tags. "
@@ -592,7 +602,10 @@ class DanbooruKnowledgeAssistant:
                 aliases = item.get("aliases")
                 candidate = {
                     "tag": tag,
-                    "display_tag": tag.replace("_", " "),
+                    "display_tag": format_display_tag(
+                        tag,
+                        int(item.get("category", 0)),
+                    ),
                     "category": int(item.get("category", 0)),
                     "category_label": CATEGORY_LABELS.get(
                         int(item.get("category", 0)), "알 수 없음"
@@ -678,6 +691,11 @@ class DanbooruKnowledgeAssistant:
         evidence = [item for item in candidates if item["tag"] in evidence_set]
         evidence.sort(key=lambda item: grounded["evidence_tags"].index(item["tag"]))
         display_answer = grounded["answer"].replace("_", " ")
+        for item in sorted(evidence, key=lambda value: len(value["tag"]), reverse=True):
+            base_display = item["tag"].replace("_", " ")
+            prompt_display = item["display_tag"]
+            if prompt_display not in display_answer:
+                display_answer = display_answer.replace(base_display, prompt_display)
         return {
             "success": True,
             "question": clean_question,

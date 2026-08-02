@@ -17,6 +17,7 @@ from modes.danbooru_rag.assistant import (
     DanbooruKnowledgeAssistant,
     DanbooruKnowledgeError,
     DanbooruKnowledgeQueryError,
+    format_display_tag,
     parse_grounded_answer,
     parse_search_plan,
 )
@@ -215,6 +216,15 @@ def test_grounded_answer_rejects_a_tag_outside_candidate_pool() -> None:
     assert "RAG 후보에 없는 태그" in reason
 
 
+def test_prompt_display_format_preserves_project_character_and_copyright_syntax() -> None:
+    assert format_display_tag("blonde_hair", 0) == "blonde hair"
+    assert format_display_tag("shifty_(nikke)", 4) == r"shifty \(nikke\)"
+    assert format_display_tag(
+        "tokidoki_bosotto_roshia-go_de_dereru_tonari_no_alya-san",
+        3,
+    ) == "(\\tokidoki bosotto roshia-go de dereru tonari no alya-san)\\"
+
+
 def test_search_plan_supports_all_danbooru_knowledge_categories() -> None:
     plan, reason = parse_search_plan(
         json.dumps(
@@ -336,4 +346,5 @@ def test_memo_ui_exposes_llm_assisted_danbooru_search_tab() -> None:
     assert "fetch('/api/danbooru_rag/assist'" in frontend
     assert "LLM 질문 분석 → Danbooru RAG → LLM 근거 선별" in frontend
     assert "copyMemoKnowledgeTag" in frontend
-    assert "item.tag.replaceAll('_', ' ')" in frontend
+    assert ".replaceAll('_', ' ')" in frontend
+    assert "Number(item.category) === 3" in frontend

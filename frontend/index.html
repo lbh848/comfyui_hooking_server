@@ -19695,10 +19695,17 @@
                     console.error('[DANBOORU_KNOWLEDGE] 유효하지 않은 근거 행 스킵:', item);
                     continue;
                 }
+                const fallbackBaseTag = item.tag
+                    .replaceAll('_', ' ')
+                    .replaceAll('(', '\\(')
+                    .replaceAll(')', '\\)');
+                const fallbackDisplayTag = Number(item.category) === 3
+                    ? `(\\${fallbackBaseTag})\\`
+                    : fallbackBaseTag;
                 const displayTag = (
                     typeof item.display_tag === 'string' && item.display_tag.trim()
                         ? item.display_tag.trim()
-                        : item.tag.replaceAll('_', ' ')
+                        : fallbackDisplayTag
                 );
                 const card = document.createElement('article');
                 card.className = 'memo-evidence-card';
