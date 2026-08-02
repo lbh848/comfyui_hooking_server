@@ -80,14 +80,17 @@ def test_word_rules_expose_character_card_lookup_and_weight_disabled_state():
 
 
 def test_word_rules_modal_is_expanded_and_exposes_order_controls():
-    assert "width:min(1040px, 100%)" in FRONTEND
-    assert "height:min(88vh, 900px)" in FRONTEND
-    assert 'id="wr-rule-count"' in FRONTEND
-    assert "function moveWordReplacementRule(id, direction)" in FRONTEND
-    assert "_wrRules.splice(nextIndex, 0, rule)" in FRONTEND
-    assert "위로 이동" in FRONTEND
-    assert "아래로 이동" in FRONTEND
-    assert "순서대로 저장" in FRONTEND
+    word_rules_ui = FRONTEND.split("async function openWordReplacementsModal()", 1)[1]
+    word_rules_ui = word_rules_ui.split("// ─── 프로그램용 FACE embedding", 1)[0]
+    assert "width:min(1040px, 100%)" in word_rules_ui
+    assert "height:min(88vh, 900px)" in word_rules_ui
+    assert 'id="wr-rule-count"' in word_rules_ui
+    assert "function moveWordReplacementRule(id, direction)" in word_rules_ui
+    assert "_wrRules.splice(nextIndex, 0, rule)" in word_rules_ui
+    assert "위로 이동" in word_rules_ui
+    assert "아래로 이동" in word_rules_ui
+    assert "순서대로 저장" in word_rules_ui
+    assert "if (event.target === modal) modal.remove();" not in word_rules_ui
 
 
 def test_lighbd_history_distinguishes_slow_retry_winner_and_loser():

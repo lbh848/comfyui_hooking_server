@@ -56660,9 +56660,6 @@
                 </div>
             `;
             document.body.appendChild(modal);
-            modal.addEventListener('mousedown', event => {
-                if (event.target === modal) modal.remove();
-            });
             modal.addEventListener('keydown', event => {
                 if (event.key === 'Escape') modal.remove();
             });
