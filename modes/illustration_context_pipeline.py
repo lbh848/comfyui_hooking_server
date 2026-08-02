@@ -3771,6 +3771,61 @@ def _call3_roster_names(character_names: str) -> list[str]:
     return names
 
 
+_CALL3_SCENE_ENTRY_RE = re.compile(
+    r"^(?P<header>\s*\[Scene\s+slot\s*=\s*(?P<slot>-?\d+)\])"
+    r"(?P<spacing>\s*)(?P<tail>.*)$",
+    re.I,
+)
+
+
+def _call3_dialogue_entries(text: str) -> list[dict]:
+    """CALL3 Scene 블록에서 실제 대사/생각 엔트리와 원본 줄 위치를 반환한다."""
+    entries = []
+    current_slot = None
+    entry_index = 0
+    for line_index, raw_line in enumerate(str(text or "").splitlines()):
+        header_match = _CALL3_SCENE_ENTRY_RE.match(raw_line)
+        if header_match:
+            current_slot = int(header_match.group("slot"))
+            entry_text = header_match.group("tail").strip()
+            header_tail = bool(entry_text)
+        elif (
+            current_slot is not None
+            and raw_line.strip()
+            and not raw_line.lstrip().startswith("[")
+        ):
+            entry_text = raw_line.strip()
+            header_tail = False
+        else:
+            continue
+
+        if not entry_text:
+            continue
+        for segment in postprocess.parse_speak(entry_text, strip_emotion=True):
+            entry_index += 1
+            entries.append({
+                "entry": entry_index,
+                "line_index": line_index,
+                "slot": current_slot,
+                "header_tail": header_tail,
+                "speaker": str(segment.get("speaker") or "").strip(),
+                "text": str(segment.get("text") or ""),
+            })
+    return entries
+
+
+def _call3_leaked_roster_names(body: str, roster: list[str]) -> list[str]:
+    """대사 본문 하나에 메타데이터용 roster ID가 들어갔는지 반환한다."""
+    leaked_names = []
+    for name in roster:
+        # 뒤에 한국어 호칭이 공백 없이 붙은 ``Masachika군``도 잡되,
+        # 더 긴 영문 식별자의 일부만 일치시키지는 않는다.
+        pattern = rf"(?<![A-Za-z0-9_]){re.escape(name)}(?![A-Za-z0-9_])"
+        if re.search(pattern, body, re.I):
+            leaked_names.append(name)
+    return leaked_names
+
+
 def _call3_dialogue_roster_leaks(text: str, character_names: str) -> list[dict]:
     """따옴표/괄호 안 대사 본문으로 유출된 내부 발화자 ID를 찾는다.
 
@@ -3782,24 +3837,81 @@ def _call3_dialogue_roster_leaks(text: str, character_names: str) -> list[dict]:
     if not roster:
         return []
 
-    segments = postprocess.parse_speak(text, strip_emotion=True)
     leaks = []
-    for index, segment in enumerate(segments, start=1):
-        body = str(segment.get("text") or "")
-        leaked_names = []
-        for name in roster:
-            # 뒤에 한국어 호칭이 공백 없이 붙은 ``Masachika군``도 잡되,
-            # 더 긴 영문 식별자의 일부만 일치시키지는 않는다.
-            pattern = rf"(?<![A-Za-z0-9_]){re.escape(name)}(?![A-Za-z0-9_])"
-            if re.search(pattern, body, re.I):
-                leaked_names.append(name)
+    for entry in _call3_dialogue_entries(text):
+        leaked_names = _call3_leaked_roster_names(entry["text"], roster)
         if leaked_names:
             leaks.append({
-                "entry": index,
-                "speaker": str(segment.get("speaker") or "").strip(),
+                "entry": entry["entry"],
+                "speaker": entry["speaker"],
                 "names": leaked_names,
             })
     return leaks
+
+
+def _remove_call3_roster_leaking_dialogue_entries(
+    text: str,
+    character_names: str,
+) -> tuple[str, list[dict]]:
+    """내부 roster ID가 본문에 유출된 CALL3 엔트리만 원문에서 제거한다.
+
+    한 줄짜리 Scene header 뒤에 대사가 붙은 형식은 대사 tail만 제거하고 header는
+    보존한다. 그 결과 어떤 Scene에 대사가 하나도 남지 않으면 후속 speak_map에서
+    해당 slot은 빈 문자열이 되어 말풍선/VN 대사창 후처리를 건너뛴다.
+    """
+    source = str(text or "")
+    roster = _call3_roster_names(character_names)
+    if not roster:
+        print(
+            "[ILLUST_CONTEXT:CALL3-RECOVERY] roster가 비어 있어 유출 대사 제거 불가: "
+            f"character_names={character_names!r}"
+        )
+        return source, []
+
+    removed = []
+    leaking_lines = set()
+    header_tail_lines = set()
+    for entry in _call3_dialogue_entries(source):
+        leaked_names = _call3_leaked_roster_names(entry["text"], roster)
+        if not leaked_names:
+            continue
+        leaking_lines.add(entry["line_index"])
+        if entry["header_tail"]:
+            header_tail_lines.add(entry["line_index"])
+        removed.append({
+            "entry": entry["entry"],
+            "slot": entry["slot"],
+            "speaker": entry["speaker"],
+            "names": leaked_names,
+        })
+
+    if not removed:
+        print(
+            "[ILLUST_CONTEXT:CALL3-RECOVERY] 제거할 roster ID 유출 대사를 찾지 못함: "
+            f"character_names={character_names!r}"
+        )
+        return source, []
+
+    output_lines = []
+    for line_index, raw_line in enumerate(source.splitlines()):
+        if line_index not in leaking_lines:
+            output_lines.append(raw_line)
+            continue
+        if line_index in header_tail_lines:
+            header_match = _CALL3_SCENE_ENTRY_RE.match(raw_line)
+            if header_match:
+                output_lines.append(header_match.group("header"))
+                continue
+            print(
+                "[ILLUST_CONTEXT:CALL3-RECOVERY] Scene header tail 제거 중 header 재파싱 실패: "
+                f"line_index={line_index}, line={raw_line!r}"
+            )
+        # 일반 대사 줄이거나 header 재파싱에 실패한 유출 줄이면 줄 전체를 제거한다.
+
+    sanitized = "\n".join(output_lines)
+    if source.endswith("\n"):
+        sanitized += "\n"
+    return sanitized, removed
 
 
 def _call3_dialogue_requires_localized_names(output_language: str) -> bool:
@@ -6442,6 +6554,8 @@ async def build_from_context(
     call3_output = ""
     call3_initial_output = ""
     call3_correction_used = False
+    call3_dialogue_drop_recovery_used = False
+    call3_dropped_dialogue_entries = []
     call3_descriptors = [
         descriptor
         for descriptor in descriptors
@@ -6542,17 +6656,67 @@ async def build_from_context(
                     "Output only the corrected Scene blocks."
                 ),
             }])
-            call3_output = await _call_pipeline_llm(
-                "CALL3-CORRECTION",
-                _normalize_messages(retry_messages),
-                stream_notify,
-                result_validator=lambda result: validate_call3_output_contract(
-                    result,
+            try:
+                call3_output = await _call_pipeline_llm(
+                    "CALL3-CORRECTION",
+                    _normalize_messages(retry_messages),
+                    stream_notify,
+                    result_validator=lambda result: validate_call3_output_contract(
+                        result,
+                        selected_slots,
+                        extra_names,
+                        speak_language,
+                    ),
+                )
+            except Exception as correction_error:
+                print(
+                    "[ILLUST_CONTEXT:CALL3-RECOVERY] CALL3 교정/라우팅 폴백 소진, "
+                    "최초 결과의 유출 대사만 제거하는 부분 복구 검사: "
+                    f"slots={selected_slots}, error={type(correction_error).__name__}: "
+                    f"{correction_error}"
+                )
+                traceback.print_exc()
+                coverage_valid, coverage_reason = validate_call3_slot_coverage(
+                    call3_initial_output,
                     selected_slots,
+                )
+                initial_leaks = _call3_dialogue_roster_leaks(
+                    call3_initial_output,
                     extra_names,
-                    speak_language,
-                ),
-            )
+                )
+                if not coverage_valid or not initial_leaks:
+                    print(
+                        "[ILLUST_CONTEXT:CALL3-RECOVERY] 부분 복구 불가, 기존 실패 유지: "
+                        f"coverage_valid={coverage_valid}, coverage_reason={coverage_reason!r}, "
+                        f"leaks={initial_leaks}"
+                    )
+                    raise
+
+                sanitized_output, removed_entries = (
+                    _remove_call3_roster_leaking_dialogue_entries(
+                        call3_initial_output,
+                        extra_names,
+                    )
+                )
+                residual_leaks = _call3_dialogue_roster_leaks(
+                    sanitized_output,
+                    extra_names,
+                )
+                if not removed_entries or residual_leaks:
+                    print(
+                        "[ILLUST_CONTEXT:CALL3-RECOVERY] 유출 대사 제거 결과 검증 실패, "
+                        "기존 실패 유지: "
+                        f"removed={removed_entries}, residual_leaks={residual_leaks}"
+                    )
+                    raise
+
+                call3_output = sanitized_output
+                call3_dialogue_drop_recovery_used = True
+                call3_dropped_dialogue_entries = removed_entries
+                print(
+                    "[ILLUST_CONTEXT:CALL3-RECOVERY] 부분 복구 성공, 유출 대사만 제거하고 "
+                    f"파이프라인 계속: removed={removed_entries}"
+                )
         # CALL3가 닫는 따옴표/괄호 안 끝에 #감정을 붙여 내보낸 줄을 교정한다.
         # parse_speak_output이 #감정을 닫는 구분자 바깥에서만 인식하므로, 출력 직후
         # 무조건 한 번 훑어 안쪽 끝 #감정을 바깥으로 옮긴다(감정 토글과 무관).
@@ -6628,6 +6792,8 @@ async def build_from_context(
         "call3_output": call3_output,
         "call3_initial_output": call3_initial_output,
         "call3_correction_used": call3_correction_used,
+        "call3_dialogue_drop_recovery_used": call3_dialogue_drop_recovery_used,
+        "call3_dropped_dialogue_entries": call3_dropped_dialogue_entries,
         "character_states_after": character_states_after,
         "last_visual_by_character": last_visual_by_character,
         "history_input_hash": (

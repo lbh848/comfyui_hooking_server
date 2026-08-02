@@ -2708,6 +2708,33 @@ def test_call3_output_contract_allows_roster_ids_in_speaker_prefix_and_english_b
     assert "영어 대사 출력이므로" in capsys.readouterr().out
 
 
+def test_call3_roster_leak_recovery_removes_only_violating_entries():
+    source = """[Scene slot=44]
+Maria: "괜찮은 대사야." #normal
+Maria: "Alisa에게 이 말을 전해 줘." #normal
+[Scene slot=52] Alisa: (Alisa라면 어떻게 했을까?) #thought_cloud"""
+
+    sanitized, removed = pipeline._remove_call3_roster_leaking_dialogue_entries(
+        source,
+        "Maria, Alisa",
+    )
+
+    assert sanitized == """[Scene slot=44]
+Maria: "괜찮은 대사야." #normal
+[Scene slot=52]"""
+    assert removed == [
+        {"entry": 2, "slot": 44, "speaker": "Maria", "names": ["Alisa"]},
+        {"entry": 3, "slot": 52, "speaker": "Alisa", "names": ["Alisa"]},
+    ]
+    assert pipeline._call3_dialogue_roster_leaks(
+        sanitized,
+        "Maria, Alisa",
+    ) == []
+    speak_map = pipeline.parse_speak_output(sanitized)
+    assert speak_map[44] == 'Maria: "괜찮은 대사야." #normal'
+    assert speak_map.get(52, "") == ""
+
+
 def test_parse_speak_output_enforces_two_entry_limit_per_scene(capsys):
     parsed = pipeline.parse_speak_output(
         '''[Scene slot=3]
@@ -3103,6 +3130,100 @@ scenes[1]:
     captured = capsys.readouterr().out
     assert "대사 본문에 내부 발화자 ID 유출" in captured
     assert "출력 계약을 위반해" in captured
+
+
+@pytest.mark.asyncio
+async def test_call3_correction_exhaustion_drops_only_leaking_dialogue_and_continues(
+    monkeypatch,
+    capsys,
+):
+    call3_attempts = 0
+    history_records = []
+
+    async def fake_call(task_key, messages, **kwargs):
+        nonlocal call3_attempts
+        if task_key == "illustration_call2":
+            return """<lb-xnai>
+scenes[2]:
+  - camera: medium shot
+    characters[2]:
+      - name: Maria
+        positive: 1girl, Maria, blonde hair
+      - name: Alisa
+        positive: 1girl, Alisa, silver hair
+    scene: first conversation
+    slot: 0
+  - camera: close-up
+    characters[1]:
+      - name: Alisa
+        positive: 1girl, Alisa, silver hair
+    scene: second conversation
+    slot: 1
+</lb-xnai>"""
+
+        assert task_key == "illustration_call3"
+        call3_attempts += 1
+        if call3_attempts == 1:
+            return """[Scene slot=0]
+Maria: "괜찮은 대사야." #normal
+Maria: "Alisa에게 이 말을 전해 줘." #normal
+[Scene slot=1]
+Alisa: (Alisa라면 어떻게 했을까?) #thought_cloud"""
+
+        validator = kwargs.get("result_validator")
+        assert validator is not None
+        still_invalid = """[Scene slot=0]
+Maria: "Alisa에게 전해야 해." #normal
+[Scene slot=1]
+Alisa: (Alisa라면 어떻게 했을까?) #thought_cloud"""
+        assert validator(still_invalid)[0] is False
+        return "[LLM 실패] illustration_call3 fallback 재시도 소진"
+
+    monkeypatch.setattr(pipeline.llm_service, "callLLMTask", fake_call)
+    monkeypatch.setattr(
+        pipeline.lighbd_service,
+        "_log_lighbd_history",
+        history_records.append,
+    )
+    result = await pipeline.build_from_context(
+        {
+            "session_id": "call3_roster_leak_exhaustion_recovery_test",
+            "target_slotted": "첫 대화.\n\n[Slot 0]\n\n둘째 대화.\n\n[Slot 1]",
+            "chats": [
+                {"role": "user", "data": "계속해."},
+                {"role": "char", "data": "첫 대화.\n\n둘째 대화."},
+            ],
+        },
+        {
+            "call1_enabled": False,
+            "call3_enabled": True,
+            "speak_enabled": True,
+            "call3_prompt_mode": "manga",
+            "speak_language": "한국어",
+            "key_visual": False,
+        },
+        (
+            "### Maria\n-Appearance: 1girl, blonde hair\n\n"
+            "### Alisa\n-Appearance: 1girl, silver hair"
+        ),
+        extra_names="Maria, Alisa",
+    )
+
+    assert call3_attempts == 2
+    assert result["call3_correction_used"] is True
+    assert result["call3_dialogue_drop_recovery_used"] is True
+    assert result["call3_dropped_dialogue_entries"] == [
+        {"entry": 2, "slot": 0, "speaker": "Maria", "names": ["Alisa"]},
+        {"entry": 3, "slot": 1, "speaker": "Alisa", "names": ["Alisa"]},
+    ]
+    assert result["items"][0]["speak"] == 'Maria: "괜찮은 대사야." #normal'
+    assert result["items"][1]["speak"] == ""
+    assert "Alisa에게" not in result["call3_output"]
+    assert "Alisa라면" not in result["call3_output"]
+    captured = capsys.readouterr().out
+    assert "CALL3 교정/라우팅 폴백 소진" in captured
+    assert "부분 복구 성공" in captured
+    assert "파이프라인 계속" in captured
 
 
 @pytest.mark.asyncio
