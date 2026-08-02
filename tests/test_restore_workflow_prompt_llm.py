@@ -308,16 +308,18 @@ async def run(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("workflow_type", "expected_provider", "expects_mask"),
+    ("workflow_type", "multi_char_mask_enabled", "expected_provider", "expects_mask"),
     [
-        ("v3", "comfy", True),
-        ("chansub", "chansub", False),
+        ("v3", True, "comfy", True),
+        ("v3", False, "comfy", False),
+        ("chansub", True, "chansub", False),
     ],
 )
 async def test_manual_draw_routes_local_v3_mask_and_chansub_without_mask(
     monkeypatch,
     tmp_path,
     workflow_type,
+    multi_char_mask_enabled,
     expected_provider,
     expects_mask,
 ):
@@ -326,12 +328,20 @@ async def test_manual_draw_routes_local_v3_mask_and_chansub_without_mask(
         "illustration_workflow_type": workflow_type,
         "restore_prompt_file": "restore_workflow_prompt_llm.py",
         "bot_selected": "Example Bot",
+        "illustration_context_toggles": {
+            "multi_char_mask_enabled": multi_char_mask_enabled,
+            "prompt_format": "v3",
+        },
     }
     workflow_profiles.normalize_workflow_config(config)
     monkeypatch.setattr(server, "app_config", config)
     monkeypatch.setattr(server, "CUSTOMPROMPT_DIR", str(tmp_path))
 
+    multi_context_calls = 0
+
     async def fake_multi_context(_result):
+        nonlocal multi_context_calls
+        multi_context_calls += 1
         return {
             "enable": True,
             "char_num": 2,
@@ -374,3 +384,4 @@ async def test_manual_draw_routes_local_v3_mask_and_chansub_without_mask(
     raw_body = queued["params"]["raw_body"]
     assert raw_body["illustration_provider"] == expected_provider
     assert ("illustration_multi_char" in raw_body) is expects_mask
+    assert multi_context_calls == (1 if expects_mask else 0)

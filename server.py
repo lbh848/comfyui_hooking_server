@@ -11105,9 +11105,26 @@ async def handle_api_restore_manual_draw(request: web.Request) -> web.Response:
                     restore_provider,
                 )
                 if restore_provider == "comfy" and prompt_format == "v3":
-                    raw_body["illustration_multi_char"] = (
-                        await _build_restore_manual_multi_char_context(result)
+                    manual_illust_toggles = copy.deepcopy(
+                        app_config.get("illustration_context_toggles") or {}
                     )
+                    manual_multi_char_mask_active = (
+                        illustration_context_pipeline.should_enable_multi_char_layout(
+                            manual_illust_toggles,
+                            restore_provider,
+                        )
+                    )
+                    if manual_multi_char_mask_active:
+                        raw_body["illustration_multi_char"] = (
+                            await _build_restore_manual_multi_char_context(result)
+                        )
+                    else:
+                        print(
+                            "[RESTORE_MANUAL:MULTI_CHAR] MULTI-CHAR-MASK 비활성: "
+                            "Regional 마스크 없이 일반 2인 프롬프트로 생성합니다. "
+                            f"setting={bool(manual_illust_toggles.get('multi_char_mask_enabled', True))}, "
+                            f"provider={restore_provider!r}, prompt_format={prompt_format!r}"
+                        )
                 elif restore_provider == "chansub":
                     print(
                         "[RESTORE_MANUAL:MULTI_CHAR] 챈섭 2인 생성: "
