@@ -79,6 +79,17 @@ def test_word_rules_expose_character_card_lookup_and_weight_disabled_state():
     assert "수치가 비활성화되었습니다" in FRONTEND
 
 
+def test_word_rules_modal_is_expanded_and_exposes_order_controls():
+    assert "width:min(1040px, 100%)" in FRONTEND
+    assert "height:min(88vh, 900px)" in FRONTEND
+    assert 'id="wr-rule-count"' in FRONTEND
+    assert "function moveWordReplacementRule(id, direction)" in FRONTEND
+    assert "_wrRules.splice(nextIndex, 0, rule)" in FRONTEND
+    assert "위로 이동" in FRONTEND
+    assert "아래로 이동" in FRONTEND
+    assert "순서대로 저장" in FRONTEND
+
+
 def test_lighbd_history_distinguishes_slow_retry_winner_and_loser():
     assert "status === 'race_won'" in FRONTEND
     assert "status === 'race_lost'" in FRONTEND

@@ -27861,6 +27861,12 @@
                 color: '#d18bd8',
             },
             {
+                key: 'knowledge_search',
+                label: '지식 · 태그 검색',
+                description: '자연어 질문 분석과 Danbooru RAG 근거 선별',
+                color: '#e6a23c',
+            },
+            {
                 key: 'illustration_pipeline',
                 label: '삽화 생성 파이프라인',
                 description: '삽화 컨텍스트 전처리부터 본문·대사·마스크 생성까지의 호출 단계',
@@ -27882,6 +27888,7 @@
             { key: 'qwen_edit_translate',      label: 'EDIT 지시 영어 번역', kind: '텍스트', group: 'image_editing' },
             { key: 'character_maker_draft',    label: '캐릭터 메이커 초안', kind: '텍스트/JSON', group: 'character_maker', json: true },
             { key: 'character_maker_feedback', label: '캐릭터 메이커 이미지 피드백', kind: '비전/JSON', group: 'character_maker', json: true },
+            { key: 'danbooru_tag_search',      label: '단부르 태그 검색', kind: '텍스트/JSON · 2단계', group: 'knowledge_search', json: true },
             { key: 'illustration_call1_backtranslate', label: '삽화 CALL1 역번역',               kind: '텍스트', group: 'illustration_pipeline' },
             { key: 'illustration_call1',       label: '삽화 CALL1 (전처리)',           kind: '텍스트', group: 'illustration_pipeline' },
             { key: 'illustration_call2',       label: '삽화 CALL2 (본문)',             kind: '텍스트', group: 'illustration_pipeline' },
@@ -56615,46 +56622,93 @@
 
             const modal = document.createElement('div');
             modal.id = 'word-replacements-modal';
-            modal.style.cssText = 'position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:10000; background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:20px; min-width:520px; max-width:620px; max-height:80vh; box-shadow:0 8px 32px rgba(0,0,0,0.4); display:flex; flex-direction:column;';
+            modal.style.cssText = 'position:fixed; inset:0; z-index:10000; padding:clamp(12px, 3vw, 32px); background:rgba(0,0,0,0.58); backdrop-filter:blur(2px); display:flex; align-items:center; justify-content:center; box-sizing:border-box;';
             modal.innerHTML = `
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
-                    <div style="font-weight:700; font-size:1rem;">단어 기반 규칙 - ${escHtml(botCurrentBot)}</div>
-                    <button onclick="document.getElementById('word-replacements-modal').remove()"
-                        style="background:none; border:none; color:var(--text2); font-size:1.2rem; cursor:pointer;">✕</button>
-                </div>
-                <div style="font-size:0.72rem; color:var(--text2); margin-bottom:10px; padding:6px 8px; background:rgba(106,27,154,0.08); border-radius:4px; line-height:1.5;">
-                    삽화 모드 프롬프트의 태그를 규칙에 따라 다룁습니다. <strong>치환 모드</strong>는 지정한 단어를 다른 단어로 바꿉니다(대소문자 무관 부분 매칭). <strong>제거 모드</strong>는 trigger 단어가 감지되면 패턴(* = 임의 문자열)에 매칭되는 태그를 제거합니다. <strong>가중치 조정</strong>은 쉼표 단위로 정확히 일치하는 태그에 지정 가중치를 강제하며, 제거 토글을 켜면 가중치만 없앱니다. <strong>삽입 모드</strong>는 지정한 단어가 최종 프롬프트(ANIMA/SDXL 각각)에 없으면 품질 태그 바로 뒤에 강제로 삽입합니다(평문, 가중치·괄호 형태도 중복으로 간주해 스킵). <strong>캐릭터 눈/얼굴 제거·치환</strong>은 trigger 단어가 프롬프트(NAME/SETUP/CHAR/SUPPLEMENT)에 있으면 감지된 모든 캐릭터의 eye_tags/face_tags를 빈 값(제거) 또는 지정한 새 값(치환)으로 바꿔 빌드에 넘깁니다. 캐릭터 값 자체(bot.json)는 변경하지 않습니다.
-                </div>
-                <div style="font-size:0.7rem; color:var(--text2); margin:-4px 0 10px; line-height:1.45;">
-                    <strong>캐릭터 찾기</strong>는 이미지 태그 이름을 선택한 캐릭터 카드로 인식하되 원래 프롬프트 태그는 바꾸지 않습니다.
-                </div>
-                <button onclick="addWordReplacementRule()" style="width:100%; background:#6A1B9A; color:#fff; border:none; padding:6px 10px; border-radius:4px; cursor:pointer; font-size:0.8rem; font-weight:600; margin-bottom:10px;">+ 규칙 추가</button>
-                <div id="wr-rules-list" style="overflow-y:auto; flex:1; min-height:60px;"></div>
-                <div style="display:flex; gap:8px; margin-top:14px; justify-content:flex-end;">
-                    <button onclick="document.getElementById('word-replacements-modal').remove()"
-                        style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:6px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem;">닫기</button>
-                    <button onclick="saveWordReplacements()"
-                        style="background:var(--accent); color:#fff; border:none; padding:6px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem;">저장</button>
+                <div id="word-replacements-dialog" role="dialog" aria-modal="true" aria-labelledby="word-replacements-title" tabindex="-1"
+                    style="width:min(1040px, 100%); height:min(88vh, 900px); max-height:100%; background:var(--surface); border:1px solid var(--border); border-radius:14px; box-shadow:0 18px 60px rgba(0,0,0,0.5); display:flex; flex-direction:column; overflow:hidden;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; gap:16px; padding:16px 20px; border-bottom:1px solid var(--border); flex:none;">
+                        <div style="min-width:0;">
+                            <div id="word-replacements-title" style="font-weight:750; font-size:1.08rem;">단어 기반 규칙</div>
+                            <div style="color:var(--text2); font-size:0.76rem; margin-top:3px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">적용 봇 · ${escHtml(botCurrentBot)}</div>
+                        </div>
+                        <button onclick="document.getElementById('word-replacements-modal').remove()" aria-label="닫기" title="닫기"
+                            style="width:32px; height:32px; flex:none; background:var(--surface2); border:1px solid var(--border); border-radius:7px; color:var(--text2); font-size:1.05rem; cursor:pointer;">✕</button>
+                    </div>
+                    <div style="padding:14px 20px 0; flex:none;">
+                        <div style="display:flex; align-items:center; gap:8px; padding:9px 11px; background:rgba(106,27,154,0.1); border:1px solid rgba(156,39,176,0.24); border-radius:7px; font-size:0.76rem; line-height:1.45;">
+                            <span aria-hidden="true" style="font-size:1rem;">↧</span>
+                            <span><strong>목록 순서는 저장되며, 같은 처리 단계에서는 위에서 아래로 적용됩니다.</strong> 서로 영향을 주는 규칙은 실행 순서를 확인해 주세요.</span>
+                        </div>
+                        <details style="margin-top:9px; color:var(--text2); font-size:0.72rem; line-height:1.55;">
+                            <summary style="cursor:pointer; user-select:none; color:var(--text); font-weight:600;">규칙 유형과 작동 방식</summary>
+                            <div style="margin-top:7px; padding:9px 11px; background:var(--surface2); border-radius:7px;">
+                                삽화 모드 프롬프트의 태그를 규칙에 따라 다룹니다. <strong>치환</strong>은 지정한 단어를 다른 단어로 바꿉니다(대소문자 무관 부분 매칭). <strong>제거</strong>는 trigger 단어가 감지되면 패턴(* = 임의 문자열)에 매칭되는 태그를 제거합니다. <strong>가중치 조정</strong>은 쉼표 단위로 정확히 일치하는 태그의 가중치를 변경하거나 제거합니다. <strong>삽입</strong>은 지정한 단어가 최종 프롬프트에 없으면 품질 태그 바로 뒤에 삽입합니다. <strong>캐릭터 찾기</strong>는 이미지 태그 이름을 선택한 캐릭터 카드로 인식하되 원래 프롬프트 태그는 바꾸지 않습니다. <strong>캐릭터 눈/얼굴 제거·치환</strong>은 trigger가 감지되면 모든 감지 캐릭터의 eye_tags/face_tags를 빌드 시점에 변경하며 bot.json은 수정하지 않습니다.
+                            </div>
+                        </details>
+                        <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:12px; padding-bottom:10px;">
+                            <button onclick="addWordReplacementRule()" style="background:#6A1B9A; color:#fff; border:none; padding:7px 13px; border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:650;">+ 규칙 추가</button>
+                            <span id="wr-rule-count" style="padding:4px 9px; background:var(--surface2); border:1px solid var(--border); border-radius:999px; color:var(--text2); font-size:0.72rem; white-space:nowrap;"></span>
+                        </div>
+                    </div>
+                    <div id="wr-rules-list" style="overflow-y:auto; flex:1; min-height:80px; padding:2px 20px 14px; scrollbar-gutter:stable;"></div>
+                    <div style="display:flex; gap:8px; padding:13px 20px; justify-content:flex-end; border-top:1px solid var(--border); background:var(--surface); flex:none;">
+                        <button onclick="document.getElementById('word-replacements-modal').remove()"
+                            style="background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:7px 18px; border-radius:6px; cursor:pointer; font-size:0.85rem;">닫기</button>
+                        <button onclick="saveWordReplacements()"
+                            style="background:var(--accent); color:#fff; border:none; padding:7px 18px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:650;">순서대로 저장</button>
+                    </div>
                 </div>
             `;
             document.body.appendChild(modal);
+            modal.addEventListener('mousedown', event => {
+                if (event.target === modal) modal.remove();
+            });
+            modal.addEventListener('keydown', event => {
+                if (event.key === 'Escape') modal.remove();
+            });
             renderWordReplacementList();
+            document.getElementById('word-replacements-dialog')?.focus();
         }
 
         function addWordReplacementRule() {
-            _wrRules.push({ id: Math.random().toString(36).substr(2, 8), type: 'replace', source: '', target: '', word: '', enabled: true });
+            syncWordReplacementFromDom();
+            const newRule = { id: Math.random().toString(36).substr(2, 8), type: 'replace', source: '', target: '', word: '', enabled: true };
+            _wrRules.push(newRule);
             renderWordReplacementList();
+            requestAnimationFrame(() => {
+                const card = document.querySelector(`[data-wr-rule="${newRule.id}"]`);
+                card?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+                card?.querySelector('input')?.focus();
+            });
         }
 
         function removeWordReplacementRule(id) {
+            syncWordReplacementFromDom();
             _wrRules = _wrRules.filter(r => r.id !== id);
             renderWordReplacementList();
         }
 
         function toggleWordReplacementRule(id) {
+            syncWordReplacementFromDom();
             const rule = _wrRules.find(r => r.id === id);
             if (rule) rule.enabled = !rule.enabled;
             renderWordReplacementList();
+        }
+
+        function moveWordReplacementRule(id, direction) {
+            syncWordReplacementFromDom();
+            const currentIndex = _wrRules.findIndex(r => r.id === id);
+            const nextIndex = currentIndex + direction;
+            if (currentIndex < 0 || nextIndex < 0 || nextIndex >= _wrRules.length) {
+                console.warn('[WORD_RULE] 규칙 순서 이동 스킵:', { id, direction, currentIndex, ruleCount: _wrRules.length });
+                return;
+            }
+            const [rule] = _wrRules.splice(currentIndex, 1);
+            _wrRules.splice(nextIndex, 0, rule);
+            renderWordReplacementList();
+            requestAnimationFrame(() => {
+                document.querySelector(`[data-wr-rule="${id}"]`)?.focus({ preventScroll: true });
+            });
         }
 
         function setWordReplacementMode(id, mode) {
@@ -56685,8 +56739,11 @@
         function renderWordReplacementList() {
             const container = document.getElementById('wr-rules-list');
             if (!container) return;
+            const count = document.getElementById('wr-rule-count');
+            const enabledCount = _wrRules.filter(rule => rule.enabled).length;
+            if (count) count.textContent = `전체 ${_wrRules.length}개 · 활성 ${enabledCount}개`;
             if (_wrRules.length === 0) {
-                container.innerHTML = '<div style="text-align:center; color:var(--text2); font-size:0.8rem; padding:20px;">규칙이 없습니다. + 버튼으로 추가하세요.</div>';
+                container.innerHTML = '<div style="display:flex; min-height:150px; align-items:center; justify-content:center; text-align:center; color:var(--text2); font-size:0.82rem; border:1px dashed var(--border); border-radius:9px;">규칙이 없습니다.<br>위의 + 규칙 추가 버튼으로 시작하세요.</div>';
                 return;
             }
             const inputStyle = 'flex:1; padding:4px 6px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.8rem; min-width:0;';
@@ -56694,7 +56751,7 @@
             const characterCardNames = (selectedBot?.characters || [])
                 .map(character => String(character?.name || '').trim())
                 .filter(Boolean);
-            container.innerHTML = _wrRules.map((rule) => {
+            container.innerHTML = _wrRules.map((rule, index) => {
                 const ruleType = rule.type || 'replace';
                 const isRemove = ruleType === 'remove';
                 const isWeight = ruleType === 'weight';
@@ -56768,8 +56825,17 @@
                         style="${inputStyle}">
                 `;
                 return `
-                <div style="display:flex; flex-direction:column; gap:6px; padding:8px 0; border-bottom:1px solid var(--border); ${rule.enabled ? '' : 'opacity:0.45;'}">
-                    <div style="display:flex; align-items:center; gap:6px;">
+                <div data-wr-rule="${rule.id}" tabindex="-1" style="display:grid; grid-template-columns:auto minmax(0, 1fr) auto; align-items:center; gap:10px; margin-bottom:8px; padding:10px; border:1px solid var(--border); border-radius:9px; background:var(--surface2); box-shadow:0 1px 2px rgba(0,0,0,0.08); ${rule.enabled ? '' : 'opacity:0.48;'}">
+                    <div style="display:flex; align-items:center; gap:4px;">
+                        <span title="적용 순서" style="display:inline-flex; align-items:center; justify-content:center; min-width:26px; height:26px; padding:0 4px; border-radius:6px; background:rgba(106,27,154,0.13); color:#b77bd3; font-size:0.72rem; font-weight:700;">${index + 1}</span>
+                        <div style="display:flex; flex-direction:column; gap:2px;">
+                            <button onclick="moveWordReplacementRule('${rule.id}', -1)" ${index === 0 ? 'disabled' : ''} aria-label="${index + 1}번 규칙을 위로 이동" title="위로 이동"
+                                style="width:25px; height:20px; padding:0; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); cursor:${index === 0 ? 'not-allowed' : 'pointer'}; opacity:${index === 0 ? '0.3' : '1'}; line-height:1;">↑</button>
+                            <button onclick="moveWordReplacementRule('${rule.id}', 1)" ${index === _wrRules.length - 1 ? 'disabled' : ''} aria-label="${index + 1}번 규칙을 아래로 이동" title="아래로 이동"
+                                style="width:25px; height:20px; padding:0; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); cursor:${index === _wrRules.length - 1 ? 'not-allowed' : 'pointer'}; opacity:${index === _wrRules.length - 1 ? '0.3' : '1'}; line-height:1;">↓</button>
+                        </div>
+                    </div>
+                    <div style="display:flex; align-items:center; gap:6px; min-width:0; flex-wrap:wrap;">
                         <select data-wr-type="${rule.id}" style="padding:4px 6px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.78rem;">
                             <option value="replace" ${!isRemove && !isWeight && !isInsert && !isCharacterAlias && !isCharTagOverride ? 'selected' : ''}>치환</option>
                             <option value="remove" ${isRemove ? 'selected' : ''}>제거</option>
@@ -56782,6 +56848,8 @@
                             <option value="char_face_replace" ${isCharFaceReplace ? 'selected' : ''}>캐릭터 얼굴 치환</option>
                         </select>
                         ${body}
+                    </div>
+                    <div style="display:flex; align-items:center; gap:3px;">
                         <button onclick="toggleWordReplacementRule('${rule.id}')" title="${rule.enabled ? '비활성화' : '활성화'}"
                             style="background:none; border:1px solid var(--border); border-radius:4px; color:${rule.enabled ? 'var(--success)' : 'var(--text2)'}; padding:2px 6px; cursor:pointer; font-size:0.7rem; white-space:nowrap;">
                             ${rule.enabled ? 'ON' : 'OFF'}
