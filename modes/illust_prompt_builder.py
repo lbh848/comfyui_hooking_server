@@ -100,7 +100,12 @@ class IllustPromptBuilder:
     """삽화 모드 프롬프트 빌더"""
 
     @staticmethod
-    def parse_sections(positive: str, lb_extra: list = None, characters: list = None) -> dict:
+    def parse_sections(
+        positive: str,
+        lb_extra: list = None,
+        characters: list = None,
+        character_aliases: dict[str, str] | None = None,
+    ) -> dict:
         """긍정 프롬프트를 [Name], [SETUP], [CHAR], [SUPPLEMENT] 섹션으로 파싱.
 
         [SETUP] 앞의 텍스트는 무시한다.
@@ -159,7 +164,11 @@ class IllustPromptBuilder:
         if lb_extra is not None:
             try:
                 sections["char"] = IllustPromptBuilder._insert_character_names(
-                    sections["char"], sections["name"], lb_extra, characters
+                    sections["char"],
+                    sections["name"],
+                    lb_extra,
+                    characters,
+                    character_aliases,
                 )
             except Exception as e:
                 print(f"[ILLUST_NAME_INSERT] 이름 삽입 실패 (스킵): {e}")
@@ -170,7 +179,8 @@ class IllustPromptBuilder:
 
     @staticmethod
     def _insert_character_names(char_section: str, name_section: str,
-                                 lb_extra: list, characters: list = None) -> str:
+                                 lb_extra: list, characters: list = None,
+                                 character_aliases: dict[str, str] | None = None) -> str:
         """CHAR 섹션의 각 | 세그먼트에 캐릭터 이름 삽입.
 
         1. name_section을 쉼표로 분할 → 후보 이름
@@ -186,7 +196,7 @@ class IllustPromptBuilder:
         """
         if not char_section or not name_section:
             return char_section
-        if not lb_extra:
+        if not lb_extra and not character_aliases:
             return char_section
 
         # 1. Name에서 후보 이름 추출 (쉼표 분리)
@@ -194,13 +204,42 @@ class IllustPromptBuilder:
         if not raw_names:
             return char_section
 
-        # 2. lb_extra 정규 이름으로 필터 (대소문자 무관)
-        lb_names = [e.get("name", "") for e in lb_extra if e.get("name")]
+        # 2. lb_extra 정규 이름 또는 캐릭터 찾기 규칙으로 카드에 연결한다.
+        # 별칭으로 연결된 경우 CHAR에 삽입할 프롬프트 이름은 원래 [NAME] 값을
+        # 유지하고, 외형/absolute_tags 조회에만 카드 이름을 사용한다.
+        lb_names = [e.get("name", "") for e in (lb_extra or []) if e.get("name")]
+        lb_name_by_key = {str(name).casefold(): str(name) for name in lb_names}
+        card_name_by_key = dict(lb_name_by_key)
+        for character in characters or []:
+            card_name = str(character.get("name") or "").strip()
+            if card_name:
+                card_name_by_key.setdefault(card_name.casefold(), card_name)
+        alias_targets = {
+            str(alias).strip().casefold(): card_name_by_key.get(
+                str(target).strip().casefold(),
+                "",
+            )
+            for alias, target in (character_aliases or {}).items()
+            if str(alias).strip() and str(target).strip()
+        }
         candidates = []
+        card_name_by_candidate: dict[str, str] = {}
+        used_card_keys = set()
         for raw in raw_names:
-            match = next((n for n in lb_names if n.lower() == raw.lower()), None)
-            if match and match not in candidates:
-                candidates.append(match)
+            raw_key = raw.casefold()
+            direct_match = lb_name_by_key.get(raw_key)
+            card_name = direct_match or alias_targets.get(raw_key)
+            if not card_name or card_name.casefold() in used_card_keys:
+                continue
+            prompt_name = direct_match or raw
+            candidates.append(prompt_name)
+            card_name_by_candidate[prompt_name] = card_name
+            used_card_keys.add(card_name.casefold())
+            if not direct_match:
+                print(
+                    f"[WORD_RULE:CHARACTER_ALIAS] CHAR 삽입 이름을 카드에 연결: "
+                    f"source={raw!r}, card={card_name!r}"
+                )
         if not candidates:
             print(f"[ILLUST_NAME_INSERT] lb_extra에 등록된 이름 없음: {raw_names}")
             return char_section
@@ -208,9 +247,11 @@ class IllustPromptBuilder:
         # 3. lb_extra 캐릭터별 태그 집합 구축
         char_tag_map: dict[str, set] = {}
         for name in candidates:
-            char_data = next((e for e in lb_extra
-                              if e.get("name", "").lower() == name.lower()), None)
+            card_name = card_name_by_candidate[name]
+            char_data = next((e for e in (lb_extra or [])
+                              if e.get("name", "").casefold() == card_name.casefold()), None)
             if not char_data:
+                char_tag_map[name] = set()
                 continue
             tags = set()
             for cat in ("appearance", "outfit"):
@@ -275,8 +316,9 @@ class IllustPromptBuilder:
         # 9. 매칭된 캐릭터의 absolute_tags 주입 (이미 있으면 스킵)
         if characters:
             for seg_idx, name in assignment.items():
+                card_name = card_name_by_candidate[name]
                 char_data = next((c for c in characters
-                                  if c.get("name", "").lower() == name.lower()), None)
+                                  if c.get("name", "").casefold() == card_name.casefold()), None)
                 if not char_data:
                     continue
                 abs_raw = char_data.get("absolute_tags", "") or ""
@@ -302,7 +344,11 @@ class IllustPromptBuilder:
         return result
 
     @staticmethod
-    def detect_characters_from_name(name_section: str, char_names: list) -> list:
+    def detect_characters_from_name(
+        name_section: str,
+        char_names: list,
+        character_aliases: dict[str, str] | None = None,
+    ) -> list:
         """[Name] 섹션만 보고 대소문자 무관 완전일치로 감지.
 
         삽화 프롬프트의 [Name]은 발화자/등장인 지정 필드이므로, 여기에 적힌
@@ -315,6 +361,7 @@ class IllustPromptBuilder:
         Args:
             name_section: [Name] 섹션 원문 (쉼표로 다중 지정 가능)
             char_names: bot.json의 캐릭터 이름 리스트
+            character_aliases: 인식 이름(casefold) -> 캐릭터 카드 이름 매핑
 
         Returns:
             감지된 캐릭터 이름 리스트 (bot.json 원래 대소문자, 중복 제거)
@@ -322,15 +369,38 @@ class IllustPromptBuilder:
         if not name_section:
             return []
         raw_names = [n.strip() for n in name_section.split(",") if n.strip()]
+        canonical_by_key = {
+            str(name).strip().casefold(): str(name).strip()
+            for name in (char_names or [])
+            if str(name).strip()
+        }
+        alias_map = {
+            str(alias).strip().casefold(): canonical_by_key.get(
+                str(target).strip().casefold(),
+                "",
+            )
+            for alias, target in (character_aliases or {}).items()
+            if str(alias).strip() and str(target).strip()
+        }
         detected = []
         for raw in raw_names:
-            match = next((c for c in char_names if c.lower() == raw.lower()), None)
+            raw_key = raw.casefold()
+            match = canonical_by_key.get(raw_key) or alias_map.get(raw_key)
             if match and match not in detected:
                 detected.append(match)
+                if raw_key in alias_map:
+                    print(
+                        f"[WORD_RULE:CHARACTER_ALIAS] NAME 인식 이름으로 카드 감지: "
+                        f"source={raw!r}, card={match!r}"
+                    )
         return detected
 
     @staticmethod
-    def detect_characters(text_sections: list, char_names: list) -> list:
+    def detect_characters(
+        text_sections: list,
+        char_names: list,
+        character_aliases: dict[str, str] | None = None,
+    ) -> list:
         """모든 텍스트 섹션에서 캐릭터 이름 포함 여부로 감지 (폴백용).
 
         [Name] 섹션이 비어있는 엣지케이스용 폴백. 정상적으로 [Name]이 채워지는
@@ -344,27 +414,49 @@ class IllustPromptBuilder:
         Args:
             text_sections: 검색할 텍스트 리스트 ([setup, char, supplement])
             char_names: bot.json의 캐릭터 이름 리스트
+            character_aliases: 인식 이름(casefold) -> 캐릭터 카드 이름 매핑
 
         Returns:
             감지된 캐릭터 이름 리스트 (원래 대소문자)
         """
         detected = []
         combined = " ".join(s for s in text_sections if s)
-        tokens = set(t.lower() for t in re.split(r'[\s,]+', combined) if t)
+        combined_casefold = combined.casefold()
+        tokens = set(t.casefold() for t in re.split(r'[\s,]+', combined) if t)
+        aliases_by_card: dict[str, list[str]] = {}
+        canonical_by_key = {
+            str(name).strip().casefold(): str(name).strip()
+            for name in (char_names or [])
+            if str(name).strip()
+        }
+        for alias, target in (character_aliases or {}).items():
+            alias_text = str(alias).strip()
+            canonical_target = canonical_by_key.get(str(target).strip().casefold())
+            if alias_text and canonical_target:
+                aliases_by_card.setdefault(canonical_target.casefold(), []).append(alias_text)
 
         for name in char_names:
-            name_lower = name.lower()
-            if " " in name:
-                # 공백 포함 이름: 전체 구문이 단어 경계 안에 있는지 확인
-                pattern = r'(?<![a-zA-Z0-9])' + re.escape(name_lower) + r'(?![a-zA-Z0-9])'
-                if re.search(pattern, combined.lower()):
-                    if name not in detected:
-                        detected.append(name)
-            else:
-                # 단일 단어 이름: 기존 토큰 정확일치
-                if name_lower in tokens:
-                    if name not in detected:
-                        detected.append(name)
+            candidates = [str(name)] + aliases_by_card.get(str(name).casefold(), [])
+            matched_candidate = ""
+            for candidate in candidates:
+                candidate_key = candidate.casefold()
+                if " " in candidate:
+                    # 공백 포함 이름: 전체 구문이 단어 경계 안에 있는지 확인
+                    pattern = r'(?<![a-zA-Z0-9])' + re.escape(candidate_key) + r'(?![a-zA-Z0-9])'
+                    if re.search(pattern, combined_casefold):
+                        matched_candidate = candidate
+                        break
+                elif candidate_key in tokens:
+                    # 단일 단어 이름: 기존 토큰 정확일치
+                    matched_candidate = candidate
+                    break
+            if matched_candidate and name not in detected:
+                detected.append(name)
+                if matched_candidate.casefold() != str(name).casefold():
+                    print(
+                        f"[WORD_RULE:CHARACTER_ALIAS] 폴백 인식 이름으로 카드 감지: "
+                        f"source={matched_candidate!r}, card={name!r}"
+                    )
 
         return detected
 

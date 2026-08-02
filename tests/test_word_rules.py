@@ -14,6 +14,7 @@ from modes.word_rules import (
     apply_insert_rules,
     apply_flat_insert_rules,
     apply_char_tag_override_rules,
+    build_character_alias_map,
 )
 
 
@@ -156,6 +157,7 @@ class RawPromptWordRulesTest(unittest.TestCase):
         )
 
         self.assertEqual(get_illust_logs()[-1]["word_replaced_raw"], "[NAME]\nalice")
+
 
     def test_multi_char_block_preserves_per_region_assembly_order(self):
         bot = {
@@ -396,6 +398,93 @@ class RawPromptWordRulesTest(unittest.TestCase):
         self.assertIn("[NAME]\nAlya", transformed)
         self.assertIn("[CHAR]\n(Alya:1.2), blue eyes", transformed)
         self.assertEqual(applied, 1)
+
+
+class CharacterAliasRulesTest(unittest.TestCase):
+    def setUp(self):
+        self.rules = [{
+            "type": "character_alias",
+            "source": "alisa mikhailovna kujou",
+            "target": "Alisa",
+            "enabled": True,
+        }]
+        self.char_names = ["Alisa", "Yuki"]
+
+    def test_character_alias_detects_card_without_rewriting_prompt(self):
+        raw = (
+            "[NAME]\nAlisa Mikhailovna Kujou\n"
+            "[CHAR]\nsilver hair, blue eyes"
+        )
+
+        transformed, applied = apply_raw_prompt_rules(raw, self.rules)
+        aliases = build_character_alias_map(self.rules, self.char_names)
+        bot = {
+            "characters": [{
+                "name": "Alisa",
+                "gender_tag": "1girl",
+                "loras_solo": [{
+                    "source": "asset",
+                    "lora_path": "alisa.safetensors",
+                    "trigger": "alisa lora trigger",
+                    "strength": 0.8,
+                    "BASE": "anima",
+                }],
+            }],
+        }
+        sections = IllustPromptBuilder.parse_sections(
+            transformed,
+            lb_extra=[],
+            characters=bot["characters"],
+            character_aliases=aliases,
+        )
+        detected = IllustPromptBuilder.detect_characters_from_name(
+            sections["name"],
+            self.char_names,
+            aliases,
+        )
+        final_positive = IllustPromptBuilder().build_positive_prompt(
+            sections["setup"],
+            sections["char"],
+            sections["supplement"],
+            detected,
+            bot,
+            {},
+            {},
+            "test-bot",
+        )
+
+        self.assertEqual(transformed, raw)
+        self.assertEqual(applied, 0)
+        self.assertEqual(aliases, {"alisa mikhailovna kujou": "Alisa"})
+        self.assertEqual(detected, ["Alisa"])
+        self.assertIn("alisa mikhailovna kujou", sections["char"].casefold())
+        self.assertIn("alisa mikhailovna kujou", final_positive.casefold())
+        self.assertIn("alisa lora trigger", final_positive)
+        self.assertIn("SOYA_CHAR_LORA\\\\alisa.safetensors", final_positive)
+        self.assertIn("[CHAR_LIST]\nAlisa", final_positive)
+
+    def test_character_alias_works_in_name_missing_fallback(self):
+        aliases = build_character_alias_map(self.rules, self.char_names)
+
+        detected = IllustPromptBuilder.detect_characters(
+            ["classroom", "alisa mikhailovna kujou, silver hair", "standing"],
+            self.char_names,
+            aliases,
+        )
+
+        self.assertEqual(detected, ["Alisa"])
+
+    def test_character_alias_with_missing_card_is_ignored(self):
+        rules = [{
+            "type": "character_alias",
+            "source": "alisa mikhailovna kujou",
+            "target": "Missing Card",
+            "enabled": True,
+        }]
+
+        aliases = build_character_alias_map(rules, self.char_names)
+
+        self.assertEqual(aliases, {})
 
 
 class InsertRuleTest(unittest.TestCase):

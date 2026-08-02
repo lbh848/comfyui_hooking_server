@@ -89,6 +89,7 @@ from modes.word_rules import (
     apply_remove_rule as _apply_remove_word_rule,
     apply_insert_rules as _apply_insert_word_rules,
     apply_char_tag_override_rules as _apply_char_tag_override_rules,
+    build_character_alias_map as _build_character_alias_map,
 )
 from modes import chansub_service
 from modes import illustration_chat_history
@@ -278,6 +279,7 @@ DEFAULT_CONFIG = {
         "call2_parallel_slow_retry_condition_operator": "and",
         "call3_context_turns": 5,
         "call3_enabled": True,
+        "multi_char_mask_enabled": True,
         "speak_enabled": True,
         "call3_prompt_mode": "speak",
         "speak_language": "한국어",
@@ -3203,12 +3205,20 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
             bot_data = _load_bot_data_local()
             bot = next((b for b in bot_data["bots"] if b["name"] == bot_name), None)
             characters_for_parse = (bot.get("characters", []) if bot else [])
+            char_names = [c["name"] for c in characters_for_parse]
+            character_aliases = _build_character_alias_map(
+                word_rules_snapshot,
+                char_names,
+            )
             if illustration_provider == "chansub":
                 # 챈섭에는 로컬 LoRA 트리거/캐릭터명 자동 삽입을 하지 않는다.
                 sections = builder.parse_sections(word_replaced_raw)
             else:
                 sections = builder.parse_sections(
-                    word_replaced_raw, lb_extra=lb_extra_data, characters=characters_for_parse
+                    word_replaced_raw,
+                    lb_extra=lb_extra_data,
+                    characters=characters_for_parse,
+                    character_aliases=character_aliases,
                 )
 
             # [SPEAK]는 발화자 NAME만 치환된 결과를 후처리/말풍선 합성에 사용한다.
@@ -3223,14 +3233,21 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
             #   예) [Name]=Angel-in-us_reallife 인데 supplement에 "version of Angel-in-us,"
             #   가 적혀 Angel-in-us까지 잡히는 현상 방지.
             if bot:
-                char_names = [c["name"] for c in bot.get("characters", [])]
                 if sections.get("name"):
                     # NAME 정확매칭 (우선). 챈섭 POSITIVE에는 삽입하지 않는다.
-                    detected = builder.detect_characters_from_name(sections["name"], char_names)
+                    detected = builder.detect_characters_from_name(
+                        sections["name"],
+                        char_names,
+                        character_aliases,
+                    )
                 else:
                     # [Name] 누락 폴백: setup/char/supplement 스캔
                     detection_sections = [setup_replaced, char_replaced, supplement_replaced]
-                    detected = builder.detect_characters(detection_sections, char_names)
+                    detected = builder.detect_characters(
+                        detection_sections,
+                        char_names,
+                        character_aliases,
+                    )
                 print(f"[ILLUST] 감지된 캐릭터: {detected} (방식: {'NAME 정확매칭' if sections.get('name') else '폴백 스캔'})")
 
                 multi_char_prompt_context = None
@@ -3263,14 +3280,45 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                                 f"declared={declared_order}, layout={ordered_names}"
                             )
 
+                        canonical_order = []
+                        for raw_name in ordered_names:
+                            matched_cards = builder.detect_characters_from_name(
+                                raw_name,
+                                char_names,
+                                character_aliases,
+                            )
+                            if len(matched_cards) != 1:
+                                raise ValueError(
+                                    f"마스크 캐릭터 이름을 카드에 연결하지 못했습니다: "
+                                    f"name={raw_name!r}, matched={matched_cards}"
+                                )
+                            canonical_order.append(matched_cards[0])
+                        if len({name.casefold() for name in canonical_order}) != len(
+                            canonical_order
+                        ):
+                            raise ValueError(
+                                f"여러 마스크 캐릭터가 같은 카드로 연결되었습니다: "
+                                f"mask={ordered_names}, cards={canonical_order}"
+                            )
+                        canonical_multi_snapshot = multi_char_mask.remap_multi_char_snapshot(
+                            queued_multi_char,
+                            canonical_order,
+                        )
+
                         detected_by_name = {name.casefold(): name for name in detected}
-                        if set(detected_by_name) != {name.casefold() for name in ordered_names}:
+                        if set(detected_by_name) != {
+                            name.casefold() for name in canonical_order
+                        }:
                             raise ValueError(
                                 f"RAW 감지 캐릭터와 마스크 캐릭터가 다릅니다: "
-                                f"detected={detected}, mask={ordered_names}"
+                                f"detected={detected}, mask={ordered_names}, "
+                                f"cards={canonical_order}"
                             )
                         # 이후 CHAR_LIST/캐시/LoRA/얼굴 태그까지 모두 마스크의 왼쪽→오른쪽 순서.
-                        detected = [detected_by_name[name.casefold()] for name in ordered_names]
+                        detected = [
+                            detected_by_name[name.casefold()]
+                            for name in canonical_order
+                        ]
 
                         queued_by_name = {
                             str(character.get("name") or "").strip().casefold(): character
@@ -3313,7 +3361,7 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                         if not separated_composition_prompt:
                             raise ValueError("구도 선행 프롬프트가 단어 규칙 처리 후 비어 있습니다")
                         char_inform = []
-                        for name in ordered_names:
+                        for name, card_name in zip(ordered_names, canonical_order):
                             character = queued_by_name.get(name.casefold())
                             if character is None:
                                 raise ValueError(f"큐에서 캐릭터 태그를 찾지 못했습니다: {name!r}")
@@ -3338,19 +3386,33 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                                 per_char_replaced,
                                 lb_extra=lb_extra_data,
                                 characters=characters_for_parse,
+                                character_aliases=character_aliases,
                             )
                             tags_for_character = str(per_char_sections.get("char") or "").strip()
                             if not tags_for_character:
                                 raise ValueError(f"캐릭터별 태그가 비어 있습니다: {name!r}")
                             char_inform.append(tags_for_character)
+                            if name.casefold() != card_name.casefold():
+                                print(
+                                    f"[MULTI_CHAR:PROMPT] 인식 이름을 캐릭터 카드에 연결: "
+                                    f"source={name!r}, card={card_name!r}"
+                                )
                         multi_char_prompt_context = {
                             "enable": True,
                             "char_name_list": list(detected),
                             "char_inform": char_inform,
                             "background_prompt": separated_background_prompt,
                             "composition_prompt": separated_composition_prompt,
-                            "mask_fingerprint": multi_char_mask.layout_fingerprint(layout),
+                            "mask_fingerprint": canonical_multi_snapshot[
+                                "mask_fingerprint"
+                            ],
                         }
+                        # 마스크 픽셀 기하는 그대로 두고 백업/재생성용 이름과 지문만
+                        # 실제 카드 이름에 맞춘다. 이후 [MULTI_CHAR] 검증도 이 스냅샷을 쓴다.
+                        queued_multi_char = canonical_multi_snapshot
+                        raw_body["illustration_multi_char"] = copy.deepcopy(
+                            canonical_multi_snapshot
+                        )
                         print(
                             f"[MULTI_CHAR:PROMPT] 배경/캐릭터 분리 및 왼쪽→오른쪽 준비 완료: "
                             f"order={detected}, "
@@ -3832,6 +3894,17 @@ async def process_illustration_context_queue_item(item) -> dict:
     illust_toggles = copy.deepcopy(
         runtime_snapshot.get("illustration_context_toggles") or {}
     )
+    multi_char_mask_active = illustration_context_pipeline.should_enable_multi_char_layout(
+        illust_toggles,
+        illustration_provider_snapshot,
+    )
+    if not multi_char_mask_active:
+        print(
+            f"[ILLUST_CONTEXT:MULTI_CHAR] MULTI-CHAR-MASK 비활성: "
+            f"setting={bool(illust_toggles.get('multi_char_mask_enabled', True))}, "
+            f"provider={illustration_provider_snapshot!r}, "
+            f"prompt_format={illust_toggles.get('prompt_format')!r}"
+        )
 
     child_pairs = []
     all_child_pairs = []
@@ -3842,7 +3915,7 @@ async def process_illustration_context_queue_item(item) -> dict:
     history_finalize_attempted = False
 
     def _is_multi_char_descriptor(descriptor: dict, prompt_format: str) -> bool:
-        if illustration_provider_snapshot != "comfy":
+        if not multi_char_mask_active:
             return False
         if str(prompt_format or "").strip().lower() != "v3":
             return False
@@ -4196,10 +4269,7 @@ async def process_illustration_context_queue_item(item) -> dict:
                 extra_names=extra_names,
                 backtranslate_names=backtranslate_names,
                 history_plan=history_plan,
-                enable_multi_char_layout=(
-                    illustration_provider_snapshot == "comfy"
-                    and str(illust_toggles.get("prompt_format") or "v3").strip().lower() == "v3"
-                ),
+                enable_multi_char_layout=multi_char_mask_active,
             )
             if history_plan is not None:
                 history_finalize_attempted = True

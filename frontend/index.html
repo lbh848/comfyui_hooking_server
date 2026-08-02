@@ -55385,6 +55385,7 @@
                     {key: 'call1_backtranslate_enabled', label: 'CALL1 역번역', type: 'toggle', help: 'CALL1 컨텍스트 보강 전에 현재 응답을 영어로 역번역합니다.'},
                     {key: 'call1_enabled', label: 'CALL1 인물·복장 분석', type: 'toggle', help: '히스토리와 현재 context에서 캐릭터, 지칭 대상, 복장 변화 사건을 구조화합니다.'},
                     {key: 'call3_enabled', label: 'CALL3 대사 생성', type: 'toggle', help: 'CALL3 대사(speak/manga) 생성을 켭니다. CALL2 파싱 실패 시 CALL2-FIX 교정은 항상 동작합니다.'},
+                    {key: 'multi_char_mask_enabled', label: 'MULTI-CHAR-MASK', type: 'toggle', help: '2명 이상 장면에서 캐릭터별 Regional RGB 마스크를 계산합니다. 끄면 마스크 LLM 호출과 Regional 마스크 전달 없이 일반 다중 캐릭터 프롬프트로 생성합니다.'},
                 ],
             },
             {
@@ -56116,6 +56117,9 @@
                 <div style="font-size:0.72rem; color:var(--text2); margin-bottom:10px; padding:6px 8px; background:rgba(106,27,154,0.08); border-radius:4px; line-height:1.5;">
                     삽화 모드 프롬프트의 태그를 규칙에 따라 다룁습니다. <strong>치환 모드</strong>는 지정한 단어를 다른 단어로 바꿉니다(대소문자 무관 부분 매칭). <strong>제거 모드</strong>는 trigger 단어가 감지되면 패턴(* = 임의 문자열)에 매칭되는 태그를 제거합니다. <strong>가중치 조정</strong>은 쉼표 단위로 정확히 일치하는 태그에 지정 가중치를 강제하며, 제거 토글을 켜면 가중치만 없앱니다. <strong>삽입 모드</strong>는 지정한 단어가 최종 프롬프트(ANIMA/SDXL 각각)에 없으면 품질 태그 바로 뒤에 강제로 삽입합니다(평문, 가중치·괄호 형태도 중복으로 간주해 스킵). <strong>캐릭터 눈/얼굴 제거·치환</strong>은 trigger 단어가 프롬프트(NAME/SETUP/CHAR/SUPPLEMENT)에 있으면 감지된 모든 캐릭터의 eye_tags/face_tags를 빈 값(제거) 또는 지정한 새 값(치환)으로 바꿔 빌드에 넘깁니다. 캐릭터 값 자체(bot.json)는 변경하지 않습니다.
                 </div>
+                <div style="font-size:0.7rem; color:var(--text2); margin:-4px 0 10px; line-height:1.45;">
+                    <strong>캐릭터 찾기</strong>는 이미지 태그 이름을 선택한 캐릭터 카드로 인식하되 원래 프롬프트 태그는 바꾸지 않습니다.
+                </div>
                 <button onclick="addWordReplacementRule()" style="width:100%; background:#6A1B9A; color:#fff; border:none; padding:6px 10px; border-radius:4px; cursor:pointer; font-size:0.8rem; font-weight:600; margin-bottom:10px;">+ 규칙 추가</button>
                 <div id="wr-rules-list" style="overflow-y:auto; flex:1; min-height:60px;"></div>
                 <div style="display:flex; gap:8px; margin-top:14px; justify-content:flex-end;">
@@ -56159,6 +56163,9 @@
                 if (rule.remove_weight === undefined) rule.remove_weight = false;
             } else if (mode === 'insert') {
                 if (rule.word === undefined) rule.word = '';
+            } else if (mode === 'character_alias') {
+                if (rule.source === undefined) rule.source = '';
+                if (rule.target === undefined) rule.target = '';
             } else if (mode === 'char_eye_remove' || mode === 'char_face_remove'
                        || mode === 'char_eye_replace' || mode === 'char_face_replace') {
                 if (rule.trigger === undefined) rule.trigger = '';
@@ -56175,11 +56182,16 @@
                 return;
             }
             const inputStyle = 'flex:1; padding:4px 6px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.8rem; min-width:0;';
+            const selectedBot = (botData?.bots || []).find(bot => bot.name === botCurrentBot);
+            const characterCardNames = (selectedBot?.characters || [])
+                .map(character => String(character?.name || '').trim())
+                .filter(Boolean);
             container.innerHTML = _wrRules.map((rule) => {
                 const ruleType = rule.type || 'replace';
                 const isRemove = ruleType === 'remove';
                 const isWeight = ruleType === 'weight';
                 const isInsert = ruleType === 'insert';
+                const isCharacterAlias = ruleType === 'character_alias';
                 const isCharEyeRemove = ruleType === 'char_eye_remove';
                 const isCharEyeReplace = ruleType === 'char_eye_replace';
                 const isCharFaceRemove = ruleType === 'char_face_remove';
@@ -56187,7 +56199,23 @@
                 const isCharTagOverride = isCharEyeRemove || isCharEyeReplace || isCharFaceRemove || isCharFaceReplace;
                 const isCharTagReplace = isCharEyeReplace || isCharFaceReplace;
                 const charTagFieldLabel = (isCharEyeRemove || isCharEyeReplace) ? 'eye_tags' : 'face_tags';
-                const body = isCharTagOverride ? `
+                const selectedCard = String(rule.target || '').trim();
+                const missingSelectedCard = selectedCard && !characterCardNames.includes(selectedCard)
+                    ? `<option value="${escHtml(selectedCard)}" selected>찾을 수 없음: ${escHtml(selectedCard)}</option>`
+                    : '';
+                const characterCardOptions = `
+                    <option value="" ${selectedCard ? '' : 'selected'}>연결할 카드 선택</option>
+                    ${missingSelectedCard}
+                    ${characterCardNames.map(name => `<option value="${escHtml(name)}" ${name === selectedCard ? 'selected' : ''}>${escHtml(name)}</option>`).join('')}
+                `;
+                const body = isCharacterAlias ? `
+                    <input type="text" value="${escHtml(rule.source || '')}" data-wr-source="${rule.id}" placeholder="인식할 이미지 태그 이름"
+                        style="${inputStyle}">
+                    <span style="color:var(--text2); font-size:0.85rem;">→</span>
+                    <select data-wr-target="${rule.id}" title="연결할 캐릭터 카드" style="${inputStyle}">
+                        ${characterCardOptions}
+                    </select>
+                ` : isCharTagOverride ? `
                     <input type="text" value="${escHtml(rule.trigger || '')}" data-wr-trigger="${rule.id}" placeholder="감지할 단어 (프롬프트에 있으면 발동)"
                         style="${inputStyle}">
                     <span style="color:var(--text2); font-size:0.7rem; white-space:nowrap;">→ 감지된 모든 캐릭터 ${charTagFieldLabel} ${isCharTagReplace ? '를' : '제거'}</span>
@@ -56211,9 +56239,10 @@
                     <div style="display:flex; align-items:center; gap:6px; flex:1;">
                         <input type="text" value="${escHtml(rule.source || '')}" data-wr-source="${rule.id}" placeholder="감지할 태그"
                             style="${inputStyle}">
-                        <span style="color:var(--text2); font-size:0.7rem; white-space:nowrap;">→ 가중치</span>
+                        <span data-wr-weight-label="${rule.id}" style="color:var(--text2); font-size:0.7rem; white-space:nowrap;">→ 가중치${rule.remove_weight ? ' (비활성)' : ''}</span>
                         <input type="number" value="${escHtml(String(rule.weight ?? '1.1'))}" data-wr-weight="${rule.id}" placeholder="1.1" step="0.05" ${rule.remove_weight ? 'disabled' : ''}
-                            style="${inputStyle} max-width:82px;">
+                            title="${rule.remove_weight ? '가중치 제거가 켜져 있어 수치가 비활성화되었습니다.' : '적용할 가중치 수치'}"
+                            style="${inputStyle} max-width:82px; opacity:${rule.remove_weight ? '0.42' : '1'}; cursor:${rule.remove_weight ? 'not-allowed' : 'text'};">
                     </div>
                     <label style="display:flex; align-items:center; gap:4px; font-size:0.7rem; color:var(--text2); white-space:nowrap; cursor:pointer;">
                         <input type="checkbox" data-wr-removeweight="${rule.id}" ${rule.remove_weight ? 'checked' : ''}>
@@ -56234,10 +56263,11 @@
                 <div style="display:flex; flex-direction:column; gap:6px; padding:8px 0; border-bottom:1px solid var(--border); ${rule.enabled ? '' : 'opacity:0.45;'}">
                     <div style="display:flex; align-items:center; gap:6px;">
                         <select data-wr-type="${rule.id}" style="padding:4px 6px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.78rem;">
-                            <option value="replace" ${!isRemove && !isWeight && !isInsert && !isCharTagOverride ? 'selected' : ''}>치환</option>
+                            <option value="replace" ${!isRemove && !isWeight && !isInsert && !isCharacterAlias && !isCharTagOverride ? 'selected' : ''}>치환</option>
                             <option value="remove" ${isRemove ? 'selected' : ''}>제거</option>
                             <option value="weight" ${isWeight ? 'selected' : ''}>가중치 조정</option>
                             <option value="insert" ${isInsert ? 'selected' : ''}>삽입</option>
+                            <option value="character_alias" ${isCharacterAlias ? 'selected' : ''}>캐릭터 찾기</option>
                             <option value="char_eye_remove" ${isCharEyeRemove ? 'selected' : ''}>캐릭터 눈 제거</option>
                             <option value="char_eye_replace" ${isCharEyeReplace ? 'selected' : ''}>캐릭터 눈 치환</option>
                             <option value="char_face_remove" ${isCharFaceRemove ? 'selected' : ''}>캐릭터 얼굴 제거</option>
@@ -56286,7 +56316,16 @@
                     const rule = _wrRules.find(r => r.id === el.dataset.wrRemoveweight);
                     if (rule) rule.remove_weight = el.checked;
                     const weightInput = container.querySelector(`[data-wr-weight="${el.dataset.wrRemoveweight}"]`);
-                    if (weightInput) weightInput.disabled = el.checked;
+                    if (weightInput) {
+                        weightInput.disabled = el.checked;
+                        weightInput.style.opacity = el.checked ? '0.42' : '1';
+                        weightInput.style.cursor = el.checked ? 'not-allowed' : 'text';
+                        weightInput.title = el.checked
+                            ? '가중치 제거가 켜져 있어 수치가 비활성화되었습니다.'
+                            : '적용할 가중치 수치';
+                    }
+                    const weightLabel = container.querySelector(`[data-wr-weight-label="${el.dataset.wrRemoveweight}"]`);
+                    if (weightLabel) weightLabel.textContent = el.checked ? '→ 가중치 (비활성)' : '→ 가중치';
                 });
             });
         }

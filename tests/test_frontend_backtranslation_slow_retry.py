@@ -63,6 +63,22 @@ def test_generation_settings_are_grouped_by_pipeline_call_and_output_stage():
     assert "illust-call-stage-notes" in FRONTEND
 
 
+def test_multi_char_mask_toggle_is_exposed_in_generation_settings():
+    assert "key: 'multi_char_mask_enabled'" in FRONTEND
+    assert "label: 'MULTI-CHAR-MASK'" in FRONTEND
+    assert "마스크 LLM 호출과 Regional 마스크 전달 없이" in FRONTEND
+
+
+def test_word_rules_expose_character_card_lookup_and_weight_disabled_state():
+    assert "value=\"character_alias\"" in FRONTEND
+    assert ">캐릭터 찾기</option>" in FRONTEND
+    assert "인식할 이미지 태그 이름" in FRONTEND
+    assert "연결할 카드 선택" in FRONTEND
+    assert "원래 프롬프트 태그는 바꾸지 않습니다" in FRONTEND
+    assert "→ 가중치 (비활성)" in FRONTEND
+    assert "수치가 비활성화되었습니다" in FRONTEND
+
+
 def test_lighbd_history_distinguishes_slow_retry_winner_and_loser():
     assert "status === 'race_won'" in FRONTEND
     assert "status === 'race_lost'" in FRONTEND

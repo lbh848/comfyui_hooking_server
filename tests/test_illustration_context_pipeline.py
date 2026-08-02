@@ -3227,6 +3227,22 @@ async def test_multi_char_layout_reorders_call2_characters_left_to_right(monkeyp
     ] == ["red hair, listening", "green hair, waving"]
 
 
+def test_multi_char_mask_generation_setting_controls_layout_path():
+    assert pipeline.merged_toggles({})["multi_char_mask_enabled"] is True
+    assert pipeline.should_enable_multi_char_layout(
+        {"multi_char_mask_enabled": True, "prompt_format": "v3"},
+        "comfy",
+    ) is True
+    assert pipeline.should_enable_multi_char_layout(
+        {"multi_char_mask_enabled": False, "prompt_format": "v3"},
+        "comfy",
+    ) is False
+    assert pipeline.should_enable_multi_char_layout(
+        {"multi_char_mask_enabled": True, "prompt_format": "v3"},
+        "chansub",
+    ) is False
+
+
 @pytest.mark.asyncio
 async def test_multi_char_layout_rejects_unseparated_prompt(monkeypatch):
     descriptor = {

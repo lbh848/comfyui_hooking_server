@@ -17,6 +17,61 @@ _WEIGHTED_TAG_RE = re.compile(
     r"^\(\s*(?P<tag>.+?)\s*:\s*(?P<weight>[+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*\)$"
 )
 _WEIGHT_VALUE_RE = re.compile(r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$")
+_CHARACTER_ALIAS_RULE_TYPE = "character_alias"
+
+
+def build_character_alias_map(rules: list[dict], char_names: list[str]) -> dict[str, str]:
+    """활성 캐릭터 찾기 규칙을 ``인식 이름.casefold() -> 카드 이름``으로 만든다.
+
+    이 규칙은 프롬프트를 치환하지 않는다. target은 현재 봇에 실제로 존재하는
+    캐릭터 카드 이름이어야 하며, 같은 인식 이름이 여러 번 등록되면 목록의 첫
+    번째 유효 규칙을 사용한다.
+    """
+    canonical_names = {
+        str(name).strip().casefold(): str(name).strip()
+        for name in (char_names or [])
+        if str(name).strip()
+    }
+    aliases: dict[str, str] = {}
+    for index, rule in enumerate(rules or []):
+        if not rule.get("enabled", True):
+            continue
+        if (rule.get("type") or "replace").strip().lower() != _CHARACTER_ALIAS_RULE_TYPE:
+            continue
+
+        source = str(rule.get("source") or "").strip()
+        target = str(rule.get("target") or "").strip()
+        if not source or not target:
+            print(
+                f"[WORD_RULE:CHARACTER_ALIAS] 인식 이름 또는 카드 이름이 비어 있어 스킵: "
+                f"index={index}, source={source!r}, target={target!r}"
+            )
+            continue
+        canonical_target = canonical_names.get(target.casefold())
+        if canonical_target is None:
+            print(
+                f"[WORD_RULE:CHARACTER_ALIAS] 대상 캐릭터 카드를 찾지 못해 스킵: "
+                f"index={index}, source={source!r}, target={target!r}, "
+                f"available={list(canonical_names.values())}"
+            )
+            continue
+
+        source_key = source.casefold()
+        if source_key in canonical_names:
+            print(
+                f"[WORD_RULE:CHARACTER_ALIAS] 인식 이름이 실제 카드 이름과 충돌해 스킵: "
+                f"index={index}, source={source!r}, target={target!r}"
+            )
+            continue
+        if source_key in aliases:
+            print(
+                f"[WORD_RULE:CHARACTER_ALIAS] 중복 인식 이름 규칙을 스킵: "
+                f"index={index}, source={source!r}, kept_target={aliases[source_key]!r}, "
+                f"skipped_target={canonical_target!r}"
+            )
+            continue
+        aliases[source_key] = canonical_target
+    return aliases
 
 
 def apply_remove_rule(text: str, rule: dict) -> tuple[str, bool]:
@@ -126,7 +181,7 @@ def apply_replacement_rules(text: str, rules: list[dict]) -> tuple[str, int]:
     for rule in rules:
         if not rule.get("enabled", True):
             continue
-        if (rule.get("type") or "replace").strip().lower() in {"remove", "weight"}:
+        if (rule.get("type") or "replace").strip().lower() != "replace":
             continue
 
         source = (rule.get("source") or "").strip()
@@ -148,8 +203,8 @@ def apply_prompt_rules(positive: str, negative: str, rules: list[dict]) -> tuple
             continue
 
         rule_type = (rule.get("type") or "replace").strip().lower()
-        if rule_type == "insert":
-            # 삽입 타입은 최종 positive 후처리(apply_insert_rules)에서만 동작.
+        if rule_type in {"insert", _CHARACTER_ALIAS_RULE_TYPE} or rule_type in _CHAR_TAG_OVERRIDE_MAP:
+            # 삽입/캐릭터 찾기/캐릭터 태그 타입은 각자의 전용 단계에서만 동작.
             continue
         if rule_type == "remove":
             positive, did_positive = apply_remove_rule(positive, rule)
@@ -163,6 +218,10 @@ def apply_prompt_rules(positive: str, negative: str, rules: list[dict]) -> tuple
             negative, did_negative = apply_weight_rule(negative, rule)
             if did_positive or did_negative:
                 applied_rule_indexes.add(index)
+            continue
+
+        if rule_type != "replace":
+            print(f"[WORD_RULE] 지원하지 않는 규칙 타입을 프롬프트 처리에서 스킵: type={rule_type!r}")
             continue
 
         source = (rule.get("source") or "").strip()

@@ -90,6 +90,7 @@ DEFAULT_TOGGLES = {
     "call2_parallel_slow_retry_condition_operator": "and",
     "call3_context_turns": 5,
     "call3_enabled": True,
+    "multi_char_mask_enabled": True,
     "speak_enabled": True,
     "call3_prompt_mode": "speak",
     "speak_language": "한국어",
@@ -410,6 +411,16 @@ def merged_toggles(value: dict | None) -> dict:
     # 설정은 더 이상 사용하지 않는다. 과거 저장값이 남아 있으면 무시.
     out.pop("call1_parallel_chunk_size", None)
     return out
+
+
+def should_enable_multi_char_layout(toggles: dict | None, provider: str) -> bool:
+    """현재 생성 설정에서 Regional 다중 캐릭터 마스크를 사용할지 반환한다."""
+    normalized = merged_toggles(toggles)
+    return (
+        bool(normalized.get("multi_char_mask_enabled", True))
+        and str(provider or "").strip().lower() == "comfy"
+        and str(normalized.get("prompt_format") or "v3").strip().lower() == "v3"
+    )
 
 
 def load_prompt_files() -> dict:

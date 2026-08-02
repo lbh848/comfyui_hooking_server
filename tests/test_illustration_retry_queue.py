@@ -521,6 +521,105 @@ async def test_context_queue_defers_multi_character_scene_until_layout_is_ready(
 
 
 @pytest.mark.asyncio
+async def test_context_queue_enqueues_multi_character_scene_without_mask_when_disabled(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(pipeline, "SESSION_DIR", str(tmp_path / "sessions"))
+    session_id = "risu_" + ("b" * 64)
+    original_prompt_id = "multi-mask-disabled-original"
+    pipeline.create_session(session_id, "")
+    server.prompts[original_prompt_id] = {
+        "status": "running",
+        "prompt": {},
+        "outputs": {},
+        "filename": None,
+        "save_node_id": "9",
+        "image_bytes": None,
+    }
+    descriptor = {
+        "kind": "scene",
+        "slot": 0,
+        "characters": [
+            {"name": "Left", "positive": "left tags"},
+            {"name": "Right", "positive": "right tags"},
+        ],
+        "raw_positive": "ordinary multi-character prompt",
+        "raw_negative": "negative",
+    }
+    enqueued = []
+    child_prompt_ids = []
+
+    async def fake_build(*args, on_call2_ready=None, **kwargs):
+        assert kwargs["enable_multi_char_layout"] is False
+        await on_call2_ready({
+            "context": "context",
+            "prompt_format": "v3",
+            "items": [descriptor],
+        })
+        return {
+            "context": "context",
+            "prompt_format": "v3",
+            "items": [descriptor],
+        }
+
+    async def fake_add_item(item_type, label, params, priority=10, **kwargs):
+        child_id = params["prompt_id"]
+        child_prompt_ids.append(child_id)
+        raw = params["raw_body"]
+        enqueued.append((priority, raw.copy()))
+        future = asyncio.get_running_loop().create_future()
+        queue_item = SimpleNamespace(status="completed", completion_future=future)
+        server.prompts[child_id]["image_bytes"] = b"ordinary-multi-image"
+        future.set_result({"success": True})
+        return queue_item
+
+    async def fake_complete_prompt(prompt_id, save_node_id, filename):
+        server.prompts[prompt_id]["status"] = "completed"
+
+    async def ignore_progress(*args, **kwargs):
+        return None
+
+    monkeypatch.setitem(server.app_config, "bot_selected", "")
+    monkeypatch.setitem(server.app_config, "illustration_provider", "comfy")
+    monkeypatch.setitem(
+        server.app_config,
+        "illustration_context_toggles",
+        {"prompt_format": "v3", "multi_char_mask_enabled": False},
+    )
+    monkeypatch.setattr(pipeline, "build_from_context", fake_build)
+    monkeypatch.setattr(server.queue_manager, "add_item", fake_add_item)
+    monkeypatch.setattr(server.queue_manager, "_notify_progress", ignore_progress)
+    monkeypatch.setattr(server, "set_prompt_by_title", lambda *args, **kwargs: True)
+    monkeypatch.setattr(server, "complete_prompt_from_reschedule", fake_complete_prompt)
+    monkeypatch.setattr(server, "build_active_lb_extra", lambda *args: "")
+    monkeypatch.setattr(server, "build_lb_extra_costume", lambda *args: "")
+    monkeypatch.setattr(server, "build_lb_extra_names", lambda *args: "")
+    monkeypatch.setattr(server, "build_bot_character_names", lambda *args: "")
+
+    parent_item = SimpleNamespace(params={
+        "prompt_id": original_prompt_id,
+        "payload": {"session_id": session_id, "chats": []},
+        "prompt_data": {},
+        "raw_body": {},
+    })
+
+    try:
+        result = await server.process_illustration_context_queue_item(parent_item)
+
+        assert len(enqueued) == 1
+        assert enqueued[0][0] == 0
+        assert "illustration_multi_char" not in enqueued[0][1]
+        assert enqueued[0][1]["illustration_defer_postprocess"] is True
+        assert result["count"] == 1
+    finally:
+        pipeline._SESSIONS.pop(session_id, None)
+        pipeline._LOOKUP_KEYS.pop("b" * 24, None)
+        server.prompts.pop(original_prompt_id, None)
+        for child_prompt_id in child_prompt_ids:
+            server.prompts.pop(child_prompt_id, None)
+
+
+@pytest.mark.asyncio
 async def test_context_queue_retries_at_tail_and_returns_partial_success(
     tmp_path, monkeypatch
 ):
