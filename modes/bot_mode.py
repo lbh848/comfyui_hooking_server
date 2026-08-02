@@ -44,6 +44,23 @@ DEFAULT_BOT_DATA = {
     "system_prompt_presets": {},
 }
 
+# 삽화 모드 POSITIVE 태그 규칙 모달의 "추천 태그로 덮어쓰기" 프리셋.
+# 현재 프로젝트에서 검증해 사용하는 규칙을 서버 한 곳에서 관리한다.
+RECOMMENDED_POSITIVE_RULES = {
+    "positive_whitelist": (
+        "* expressions",
+        "* eyes",
+        "* pupils",
+        "* mouth",
+        "tears",
+        "happy",
+        "sad",
+        "smile",
+        "* expression",
+    ),
+    "positive_blacklist": (),
+}
+
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 
 TAG_FILTER_PROFILES_FILE = os.path.join(ASSET_DATA_DIR, "tag_filter_profiles.json")
@@ -3348,6 +3365,12 @@ async def handle_get_positive_rules(request):
         return _json_ok({
             "positive_whitelist": data.get("positive_whitelist", []),
             "positive_blacklist": data.get("positive_blacklist", []),
+            "recommended_positive_whitelist": list(
+                RECOMMENDED_POSITIVE_RULES["positive_whitelist"]
+            ),
+            "recommended_positive_blacklist": list(
+                RECOMMENDED_POSITIVE_RULES["positive_blacklist"]
+            ),
         })
     except Exception as e:
         print(f"[BOT_MODE] POSITIVE 규칙 조회 실패: {e}")

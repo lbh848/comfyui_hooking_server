@@ -54733,6 +54733,8 @@
         // ─── POSITIVE 화이트리스트/블랙리스트 규칙 ────────────────────
         let _positiveWhitelist = [];
         let _positiveBlacklist = [];
+        let _recommendedPositiveWhitelist = [];
+        let _recommendedPositiveBlacklist = [];
 
         function _updatePositiveRulesCount() {
             const el = document.getElementById('positive-rules-count');
@@ -54752,14 +54754,20 @@
                 if (res && !res.error) {
                     _positiveWhitelist = res.positive_whitelist || [];
                     _positiveBlacklist = res.positive_blacklist || [];
+                    _recommendedPositiveWhitelist = res.recommended_positive_whitelist || [];
+                    _recommendedPositiveBlacklist = res.recommended_positive_blacklist || [];
                 } else {
                     _positiveWhitelist = [];
                     _positiveBlacklist = [];
+                    _recommendedPositiveWhitelist = [];
+                    _recommendedPositiveBlacklist = [];
                 }
             } catch (e) {
                 console.error('[POSITIVE_RULES] 로드 실패:', e);
                 _positiveWhitelist = [];
                 _positiveBlacklist = [];
+                _recommendedPositiveWhitelist = [];
+                _recommendedPositiveBlacklist = [];
             }
             _updatePositiveRulesCount();
         }
@@ -54783,6 +54791,10 @@
                     CHAR 섹션에서 캐릭터별로 POSITIVE 태그를 추출할 때 필터링 규칙을 설정합니다.<br>
                     화이트리스트가 있으면 매칭된 태그만 포함, 블랙리스트 + FACE/EYE_TAGS는 자동 제외됩니다.<br>
                     <code style="font-size:0.7rem;">* expressions</code> (접미사), <code style="font-size:0.7rem;">smile *</code> (접두사), <code style="font-size:0.7rem;">smile</code> (정확매칭)
+                </div>
+                <div style="display:flex; justify-content:flex-end; margin-bottom:12px;">
+                    <button onclick="applyRecommendedPositiveRules()"
+                        style="background:#00695C; color:#fff; border:none; padding:6px 12px; border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:600;">추천 태그로 덮어쓰기</button>
                 </div>
                 <div style="margin-bottom:12px;">
                     <div style="font-size:0.8rem; font-weight:600; color:rgba(76,175,80,0.9); margin-bottom:6px;">화이트리스트 (매칭된 태그만 POSITIVE에 포함)</div>
@@ -54817,6 +54829,22 @@
             const blInput = document.getElementById('pr-blacklist-input');
             if (wlInput) wlInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addPositiveRule('whitelist'); } });
             if (blInput) blInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addPositiveRule('blacklist'); } });
+        }
+
+        function applyRecommendedPositiveRules() {
+            if (_recommendedPositiveWhitelist.length === 0 && _recommendedPositiveBlacklist.length === 0) {
+                console.error('[POSITIVE_RULES] 서버에서 추천 태그를 받지 못했습니다.');
+                showToast('추천 태그를 불러오지 못했습니다', 'error');
+                return;
+            }
+            if (!window.confirm('현재 편집 중인 POSITIVE 규칙을 추천 태그로 덮어쓸까요?\n저장 버튼을 눌러야 실제로 반영됩니다.')) {
+                return;
+            }
+            _positiveWhitelist = [..._recommendedPositiveWhitelist];
+            _positiveBlacklist = [..._recommendedPositiveBlacklist];
+            _renderPositiveChips('whitelist');
+            _renderPositiveChips('blacklist');
+            showToast('추천 태그를 적용했습니다. 저장 버튼을 눌러 반영하세요.', 'success');
         }
 
         function _renderPositiveChips(type) {
