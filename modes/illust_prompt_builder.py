@@ -18,6 +18,8 @@ import traceback
 from collections import deque
 import time
 
+from modes.word_rules import apply_insert_rules_to_quality_parts
+
 
 # ─── 로깅 ──────────────────────────────────────────────────
 _illust_build_logs: deque = deque(maxlen=20)
@@ -622,6 +624,7 @@ class IllustPromptBuilder:
         settings: dict,
         bot_name: str,
         multi_char_context: dict | None = None,
+        insert_rules: list[dict] | None = None,
     ) -> str:
         """최종 긍정 프롬프트 빌드.
 
@@ -776,9 +779,6 @@ class IllustPromptBuilder:
         # ANIMA_CONTENT: 트리거 + 아티스트 + setup + char + supplement
         anima_content_parts = anima_trigger_clean + anima_artist_parts + anima_content_core
 
-        # ANIMA_ALL: 트리거 → 아티스트 → 품질 → 콘텐츠
-        anima_all_parts = anima_trigger_clean + anima_artist_parts + anima_quality_parts + anima_content_core
-
         # ─── SDXL 섹션 조립 ───
         sdxl_quality_parts = [t.strip() for t in quality_tags if t.strip()]
         sdxl_artist_parts = [t.strip() for t in sdxl_artist_tags if t.strip()]
@@ -790,6 +790,32 @@ class IllustPromptBuilder:
         # 2. char (supplement 없음)
         if char.strip():
             sdxl_content_core.append(char.strip())
+
+        # ─── 품질 뒤 강제 삽입 규칙 ───
+        # 조립 전에 품질 배열에 반영해야 개별 품질 블록뿐 아니라 실제 생성에
+        # 쓰이는 ANIMA_ALL/SDXL 합본에도 같은 위치와 내용으로 포함된다.
+        anima_quality_parts, sdxl_quality_parts, applied_insert_rules = (
+            apply_insert_rules_to_quality_parts(
+                anima_quality_parts,
+                anima_trigger_clean + anima_artist_parts + anima_content_core,
+                sdxl_quality_parts,
+                sdxl_trigger_clean + sdxl_artist_parts + sdxl_content_core,
+                insert_rules or [],
+            )
+        )
+        if applied_insert_rules > 0:
+            print(
+                f"[WORD_RULE] 조립 전 삽입 규칙 적용: "
+                f"bot={bot_name}, {applied_insert_rules}개 규칙"
+            )
+
+        # ANIMA_ALL: 트리거 → 아티스트 → 품질 → 콘텐츠
+        anima_all_parts = (
+            anima_trigger_clean
+            + anima_artist_parts
+            + anima_quality_parts
+            + anima_content_core
+        )
 
         # SDXL: 트리거 → 아티스트 → 품질 → 콘텐츠
         sdxl_parts = sdxl_trigger_clean + sdxl_artist_parts + sdxl_quality_parts + sdxl_content_core

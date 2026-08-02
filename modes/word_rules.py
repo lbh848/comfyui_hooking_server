@@ -369,6 +369,60 @@ def _split_top_level_tags(text: str) -> list[str]:
     return tags
 
 
+def apply_insert_rules_to_quality_parts(
+    anima_quality_parts: list[str],
+    anima_other_parts: list[str],
+    sdxl_quality_parts: list[str],
+    sdxl_other_parts: list[str],
+    rules: list[dict],
+) -> tuple[list[str], list[str], int]:
+    """최종 섹션 조립 전에 삽입 규칙을 모델별 품질 태그에 반영한다.
+
+    품질 태그 배열에 먼저 추가하므로 이후 조립되는 ``ANIMA_QUALITY``와
+    ``ANIMA_ALL``, ``SDXL_QUALITY``와 ``SDXL``이 같은 삽입 태그를 공유한다.
+    중복 판정은 품질뿐 아니라 해당 모델의 트리거·아티스트·콘텐츠 전체를
+    대상으로 하여 기존 후처리와 동일한 의미를 유지한다.
+    """
+    anima_quality = list(anima_quality_parts or [])
+    sdxl_quality = list(sdxl_quality_parts or [])
+    anima_other = list(anima_other_parts or [])
+    sdxl_other = list(sdxl_other_parts or [])
+    applied_rule_count = 0
+
+    for rule in rules or []:
+        if not rule.get("enabled", True):
+            continue
+        if (rule.get("type") or "replace").strip().lower() != "insert":
+            continue
+
+        word = (rule.get("word") or rule.get("source") or "").strip()
+        if not word:
+            print("[WORD_RULE] 조립 전 삽입 규칙에 word가 없어 스킵합니다.")
+            continue
+
+        did_insert = False
+        anima_region = ", ".join(anima_other + anima_quality)
+        if _word_present_in_region(anima_region, word):
+            print(f"[WORD_RULE] 삽입 스킵(이미 존재): word={word!r}, 영역=ANIMA")
+        else:
+            anima_quality.append(word)
+            did_insert = True
+            print(f"[WORD_RULE] 조립 전 삽입 적용: word={word!r}, 영역=ANIMA")
+
+        sdxl_region = ", ".join(sdxl_other + sdxl_quality)
+        if _word_present_in_region(sdxl_region, word):
+            print(f"[WORD_RULE] 삽입 스킵(이미 존재): word={word!r}, 영역=SDXL")
+        else:
+            sdxl_quality.append(word)
+            did_insert = True
+            print(f"[WORD_RULE] 조립 전 삽입 적용: word={word!r}, 영역=SDXL")
+
+        if did_insert:
+            applied_rule_count += 1
+
+    return anima_quality, sdxl_quality, applied_rule_count
+
+
 def apply_flat_insert_rules(
     positive: str,
     rules: list[dict],

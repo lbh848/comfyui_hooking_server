@@ -604,6 +604,108 @@ class InsertRuleTest(unittest.TestCase):
         "alice"
     )
 
+    @staticmethod
+    def _section(positive: str, name: str) -> str:
+        return positive.split(f"[{name}]\n", 1)[1].split("\n[", 1)[0]
+
+    def test_builder_inserts_before_composite_sections_are_assembled(self):
+        tags = {
+            "artist_presets": {
+                "anima_artist": ["anima artist"],
+                "sdxl_artist": ["sdxl artist"],
+            },
+            "quality_presets": {
+                "anima_quality": ["anima quality"],
+                "sdxl_quality": ["sdxl quality"],
+            },
+        }
+        settings = {
+            "anima_artist_preset": "anima_artist",
+            "sdxl_artist_preset": "sdxl_artist",
+            "anima_quality_preset": "anima_quality",
+            "sdxl_quality_preset": "sdxl_quality",
+        }
+
+        result = IllustPromptBuilder().build_positive_prompt(
+            "scene setup",
+            "1girl, solo",
+            "scene supplement",
+            [],
+            {},
+            tags,
+            settings,
+            "test-bot",
+            insert_rules=[{
+                "type": "insert",
+                "word": "forced quality",
+                "enabled": True,
+            }],
+        )
+
+        self.assertEqual(
+            self._section(result, "ANIMA_QUALITY"),
+            "anima quality, forced quality",
+        )
+        self.assertEqual(
+            self._section(result, "ANIMA_ALL"),
+            "anima artist, anima quality, forced quality, scene setup, "
+            "1girl, solo, scene supplement",
+        )
+        self.assertEqual(
+            self._section(result, "SDXL_QUALITY"),
+            "sdxl quality, forced quality",
+        )
+        self.assertEqual(
+            self._section(result, "SDXL"),
+            "sdxl artist, sdxl quality, forced quality, scene setup, 1girl, solo",
+        )
+        self.assertNotIn("forced quality", self._section(result, "ANIMA_CONTENT"))
+
+    def test_builder_skips_weighted_existing_tag_per_model(self):
+        tags = {
+            "quality_presets": {
+                "anima_quality": ["(forced quality:1.2)"],
+                "sdxl_quality": ["sdxl quality"],
+            },
+        }
+        settings = {
+            "anima_quality_preset": "anima_quality",
+            "sdxl_quality_preset": "sdxl_quality",
+        }
+
+        result = IllustPromptBuilder().build_positive_prompt(
+            "scene setup",
+            "1girl, solo",
+            "",
+            [],
+            {},
+            tags,
+            settings,
+            "test-bot",
+            insert_rules=[{
+                "type": "insert",
+                "word": "forced quality",
+                "enabled": True,
+            }],
+        )
+
+        self.assertEqual(
+            self._section(result, "ANIMA_QUALITY"),
+            "(forced quality:1.2)",
+        )
+        self.assertEqual(
+            self._section(result, "ANIMA_ALL").count("forced quality"),
+            1,
+        )
+        self.assertEqual(
+            self._section(result, "SDXL_QUALITY"),
+            "sdxl quality, forced quality",
+        )
+        self.assertEqual(
+            self._section(result, "SDXL").count("forced quality"),
+            1,
+        )
+
     def test_inserts_after_quality_when_absent(self):
         rules = [{"type": "insert", "word": "blue eyes", "enabled": True}]
         result, applied = apply_insert_rules(self.SAMPLE, rules)

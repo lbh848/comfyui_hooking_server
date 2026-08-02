@@ -87,7 +87,6 @@ from modes.word_rules import (
     apply_prompt_rules as _apply_prompt_word_rules,
     apply_raw_prompt_rules as _apply_raw_prompt_word_rules,
     apply_remove_rule as _apply_remove_word_rule,
-    apply_insert_rules as _apply_insert_word_rules,
     apply_char_tag_override_rules as _apply_char_tag_override_rules,
     build_character_alias_map as _build_character_alias_map,
     filter_rules_for_character_count as _filter_word_rules_for_character_count,
@@ -1445,37 +1444,6 @@ def apply_raw_prompt_word_replacements(
     if applied > 0:
         print(f"[WORD_RULE] RAW 프롬프트 선처리 적용: bot={bot_name}, {applied}개 섹션별 규칙")
     return transformed
-
-
-def apply_insert_word_rules(
-    positive: str,
-    bot_name: str,
-    rules: list[dict] | None = None,
-    detected_character_count: int | None = None,
-) -> str:
-    """삽화 빌드 후 최종 positive의 품질([ANIMA_QUALITY]/[SDXL_QUALITY]) 뒤에
-    삽입 규칙(단어가 없으면 강제 삽입)을 후처리로 적용한다.
-
-    품질 태그는 RAW 선처리 시점엔 아직 조립되지 않으므로, 빌드 결과에 대해
-    별도로 실행한다. 삽입 규칙이 없으면 positive 를 그대로 반환한다.
-    """
-    if not bot_name or not positive:
-        return positive
-    if rules is None:
-        rules = _load_word_rules_snapshot(bot_name)
-    if not rules:
-        return positive
-    rules = _filter_word_rules_for_character_count(
-        rules,
-        detected_character_count,
-        context="최종 삽입",
-    )
-    if not rules:
-        return positive
-    positive, applied = _apply_insert_word_rules(positive, rules)
-    if applied > 0:
-        print(f"[WORD_RULE] 삽입 규칙 적용: bot={bot_name}, {applied}개 규칙")
-    return positive
 
 
 def apply_char_tag_override_to_bot(
@@ -3591,15 +3559,9 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                         setup_replaced, char_replaced, supplement_replaced,
                         detected, _bot_for_build, tags, settings, bot_name,
                         multi_char_context=multi_char_prompt_context,
+                        insert_rules=scene_word_rules,
                     )
                     negative = builder.build_negative_prompt(tags, settings, detected, _bot_for_build)
-                    # 품질 뒤 강제 삽입 규칙(ANIMA/SDXL) 후처리
-                    positive = apply_insert_word_rules(
-                        positive,
-                        bot_name,
-                        word_rules_snapshot,
-                        detected_character_count=scene_character_count,
-                    )
                     if multi_char_prompt_context:
                         positive = sync_multi_char_shared_tags(positive)
 
