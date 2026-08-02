@@ -247,11 +247,21 @@ def _save_bot_data(data: dict):
     """bot.json 저장."""
     try:
         os.makedirs(ASSET_DATA_DIR, exist_ok=True)
+        if os.path.isfile(BOT_DATA_FILE):
+            backup_dir = os.path.join(BASE_DIR, "요구사항")
+            os.makedirs(backup_dir, exist_ok=True)
+            stamp = time.strftime("%Y%m%d_%H%M%S")
+            backup_name = f"bot.json.bak_{stamp}_{uuid.uuid4().hex[:8]}"
+            backup_path = os.path.join(backup_dir, backup_name)
+            shutil.copy2(BOT_DATA_FILE, backup_path)
+            print(f"[BOT_MODE] bot.json 저장 전 백업 완료: {backup_path}")
         with open(BOT_DATA_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
+        print("[BOT_MODE] bot.json 저장 완료")
     except Exception as e:
         print(f"[BOT_MODE] bot.json 저장 실패: {e}")
         traceback.print_exc()
+        raise
 
 
 def copy_default() -> dict:
@@ -482,11 +492,32 @@ class BotMode:
         char = next((c for c in bot.get("characters", []) if c["name"] == char_name), None)
         if not char:
             return _json_error(f"캐릭터를 찾을 수 없음: {char_name}")
+        if "use_image_name_tag" in body and not isinstance(body["use_image_name_tag"], bool):
+            print(
+                f"[BOT_MODE] 이미지 이름 태그 사용 값 형식 오류: "
+                f"bot={bot_name!r}, char={char_name!r}, "
+                f"value={body['use_image_name_tag']!r}"
+            )
+            return _json_error("이미지 이름 태그 사용 값은 true/false여야 합니다.")
+        if "image_name_tag" in body and not isinstance(body["image_name_tag"], str):
+            print(
+                f"[BOT_MODE] 이미지 이름 태그 형식 오류: "
+                f"bot={bot_name!r}, char={char_name!r}, "
+                f"value={body['image_name_tag']!r}"
+            )
+            return _json_error("이미지 이름 태그는 문자열이어야 합니다.")
         char["face_tags"] = face_tags
         char["eye_tags"] = eye_tags
         char["absolute_tags"] = absolute_tags
+        if "use_image_name_tag" in body:
+            char["use_image_name_tag"] = body["use_image_name_tag"]
+        if "image_name_tag" in body:
+            char["image_name_tag"] = body["image_name_tag"].strip()
         _save_bot_data(data)
-        print(f"[BOT_MODE] 캐릭터 얼굴 태그 업데이트: {bot_name}/{char_name}")
+        print(
+            f"[BOT_MODE] 캐릭터 태그 설정 업데이트: {bot_name}/{char_name}, "
+            f"use_image_name_tag={char.get('use_image_name_tag', False)}"
+        )
         return _json_ok({"bots": data["bots"]})
 
     async def _update_char_loras(self, data, body):
@@ -3904,8 +3935,20 @@ async def run_auto_classify_face_tags(bot_name: str, char_name: str) -> dict:
         return {"success": False, "error": str(e)}
 
 
-def save_char_face_tags(bot_name: str, char_name: str, face_tags: str, eye_tags: str, absolute_tags: str) -> dict:
-    """캐릭터 face/eye/absolute 태그 저장 (bot.json 갱신). 반환: {"success": bool, "error"?: str}."""
+def save_char_face_tags(
+    bot_name: str,
+    char_name: str,
+    face_tags: str,
+    eye_tags: str,
+    absolute_tags: str,
+    use_image_name_tag: bool | None = None,
+    image_name_tag: str | None = None,
+) -> dict:
+    """캐릭터 태그 설정 저장 (bot.json 갱신).
+
+    이미지 이름 태그 인자가 생략되면 기존 값을 보존해, 얼굴 자동 분류 같은
+    기존 호출이 사용자가 설정한 옵션을 비활성화하지 않게 한다.
+    """
     try:
         data = _load_bot_data()
         bot = next((b for b in data.get("bots", []) if b["name"] == bot_name), None)
@@ -3917,8 +3960,20 @@ def save_char_face_tags(bot_name: str, char_name: str, face_tags: str, eye_tags:
         char["face_tags"] = face_tags
         char["eye_tags"] = eye_tags
         char["absolute_tags"] = absolute_tags
+        if use_image_name_tag is not None:
+            if not isinstance(use_image_name_tag, bool):
+                error = f"이미지 이름 태그 사용 값은 bool이어야 합니다: {use_image_name_tag!r}"
+                print(f"[BOT_MODE] save_char_face_tags 검증 실패: {error}")
+                return {"success": False, "error": error}
+            char["use_image_name_tag"] = use_image_name_tag
+        if image_name_tag is not None:
+            if not isinstance(image_name_tag, str):
+                error = f"이미지 이름 태그는 문자열이어야 합니다: {image_name_tag!r}"
+                print(f"[BOT_MODE] save_char_face_tags 검증 실패: {error}")
+                return {"success": False, "error": error}
+            char["image_name_tag"] = image_name_tag.strip()
         _save_bot_data(data)
-        print(f"[BOT_MODE] 캐릭터 얼굴 태그 업데이트: {bot_name}/{char_name}")
+        print(f"[BOT_MODE] 캐릭터 태그 설정 업데이트: {bot_name}/{char_name}")
         return {"success": True}
     except Exception as e:
         print(f"[BOT_MODE] save_char_face_tags 예외: {e}")

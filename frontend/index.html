@@ -49024,6 +49024,8 @@
         let _autoGroupEyeText = '';   // text mode eye tags
         let _autoGroupAbsoluteText = ''; // text mode absolute tags
         let _autoGroupGenderTag = ''; // 캐릭터 gender_tag (1girl/1boy/1male) - FACE_TAGS 맨 앞 고정, 편집 불가
+        let _autoGroupUseImageNameTag = false; // CHAR에서 카드 이름 대신 이미지 이름 태그 사용
+        let _autoGroupImageNameTag = ''; // 이미지 생성용 캐릭터 이름 태그
 
         async function autoGroupPrompt(charName) {
             const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
@@ -49167,6 +49169,8 @@
             const existingFaceTags = (char && char.face_tags) || '';
             const existingEyeTags = (char && char.eye_tags) || '';
             const existingAbsoluteTags = (char && char.absolute_tags) || '';
+            _autoGroupUseImageNameTag = !!(char && char.use_image_name_tag === true);
+            _autoGroupImageNameTag = (char && char.image_name_tag) || '';
             _autoGroupFaceTags = existingFaceTags ? existingFaceTags.split(',').map(t => t.trim()).filter(Boolean).filter(t => t !== _autoGroupGenderTag) : [];
             _autoGroupEyeTags = existingEyeTags ? existingEyeTags.split(',').map(t => t.trim()).filter(Boolean) : [];
             _autoGroupAbsoluteTags = existingAbsoluteTags ? existingAbsoluteTags.split(',').map(t => t.trim()).filter(Boolean) : [];
@@ -49224,6 +49228,21 @@
                             </div>
                             <div style="font-weight:600; font-size:0.9rem; margin-top:12px; margin-bottom:4px;">절대 태그 편집 <span style="font-size:0.7rem; color:var(--text2); font-weight:400;">(항상 강제로 들어가는 태그)</span></div>
                             <div id="auto-group-absolute-edit" style="min-height:40px; border:1px dashed var(--border); border-radius:6px; padding:8px; display:flex; flex-wrap:wrap; gap:4px; align-items:center;">
+                            </div>
+                            <div style="margin-top:12px; padding:10px 12px; border:1px solid var(--border); border-radius:8px; background:rgba(14,165,233,0.06);">
+                                <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+                                    <div>
+                                        <div style="font-weight:600; font-size:0.9rem;">이미지 이름 태그</div>
+                                        <div style="font-size:0.7rem; color:var(--text2); margin-top:2px;">켜면 이미지의 CHAR에서만 카드 이름을 아래 태그로 대체합니다. NAME·SPEAK에는 적용하지 않습니다.</div>
+                                    </div>
+                                    <label style="display:flex; align-items:center; gap:6px; font-size:0.78rem; color:var(--text); white-space:nowrap; cursor:pointer;">
+                                        <input id="auto-group-use-image-name-tag" type="checkbox" ${_autoGroupUseImageNameTag ? 'checked' : ''} onchange="_toggleAutoGroupImageNameTag(this.checked)">
+                                        사용
+                                    </label>
+                                </div>
+                                <input id="auto-group-image-name-tag" type="text" value="${escAttr(_autoGroupImageNameTag)}" ${_autoGroupUseImageNameTag ? '' : 'disabled'}
+                                    oninput="_autoGroupImageNameTag = this.value" placeholder="예: alisa mikhailovna kujou"
+                                    style="width:100%; box-sizing:border-box; margin-top:8px; padding:7px 9px; border:1px solid var(--border); border-radius:6px; background:var(--surface2); color:var(--text); font-size:0.82rem; opacity:${_autoGroupUseImageNameTag ? '1' : '0.5'};">
                             </div>
                             <div style="display:flex; justify-content:flex-end; margin-top:10px;">
                                 <button onclick="_saveCharFaceTags()" style="background:var(--accent); color:#fff; border:none; padding:8px 20px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">저장</button>
@@ -49397,6 +49416,15 @@
             _autoGroupAbsoluteText = input.value;
         }
 
+        function _toggleAutoGroupImageNameTag(checked) {
+            _autoGroupUseImageNameTag = !!checked;
+            const input = document.getElementById('auto-group-image-name-tag');
+            if (!input) return;
+            input.disabled = !_autoGroupUseImageNameTag;
+            input.style.opacity = _autoGroupUseImageNameTag ? '1' : '0.5';
+            if (_autoGroupUseImageNameTag) input.focus();
+        }
+
         function _renderFaceTagEditors() {
             const faceEl = document.getElementById('auto-group-face-edit');
             const eyeEl = document.getElementById('auto-group-eye-edit');
@@ -49476,6 +49504,8 @@
             let faceTags = '';
             let eyeTags = '';
             let absoluteTags = '';
+            const imageNameInput = document.getElementById('auto-group-image-name-tag');
+            _autoGroupImageNameTag = imageNameInput ? imageNameInput.value.trim() : _autoGroupImageNameTag.trim();
 
             if (_autoGroupViewMode === 'chips') {
                 faceTags = _autoGroupFaceTags.filter(t => t !== _autoGroupGenderTag).join(', ');
@@ -49497,15 +49527,18 @@
                         char_name: _autoGroupCharName,
                         face_tags: faceTags,
                         eye_tags: eyeTags,
-                        absolute_tags: absoluteTags
+                        absolute_tags: absoluteTags,
+                        use_image_name_tag: _autoGroupUseImageNameTag,
+                        image_name_tag: _autoGroupImageNameTag
                     })
                 });
                 const data = await resp.json();
+                if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
                 if (data.bots) botData.bots = data.bots;
-                showToast('얼굴 태그 저장 완료', 'success');
+                showToast('캐릭터 태그 설정 저장 완료', 'success');
             } catch (e) {
                 console.error('[AUTO_GROUP] 얼굴 태그 저장 실패:', e);
-                showToast('저장 실패', 'error');
+                showToast('저장 실패: ' + e.message, 'error');
             }
         }
 
@@ -56606,12 +56639,12 @@
         // ─── 단어 기반 규칙 ────────────────────────────────────
         let _wrRules = [];
         const WORD_REPLACEMENT_DEFAULT_RULES = Object.freeze([
-            Object.freeze({ type: 'remove', trigger: 'closed eyes', pattern: '* eyes', remove_trigger: false }),
-            Object.freeze({ type: 'remove', trigger: 'closed eyes', pattern: '* pupils', remove_trigger: false }),
-            Object.freeze({ type: 'remove', trigger: 'eyes closed', pattern: '* eyes', remove_trigger: false }),
-            Object.freeze({ type: 'remove', trigger: 'eyes closed', pattern: '* pupils', remove_trigger: false }),
-            Object.freeze({ type: 'char_eye_replace', trigger: 'eyes closed', target: 'closed eyes' }),
-            Object.freeze({ type: 'char_eye_replace', trigger: 'closed eyes', target: 'closed eyes' }),
+            Object.freeze({ type: 'remove', trigger: 'closed eyes', pattern: '* eyes', remove_trigger: false, single_character_only: true }),
+            Object.freeze({ type: 'remove', trigger: 'closed eyes', pattern: '* pupils', remove_trigger: false, single_character_only: true }),
+            Object.freeze({ type: 'remove', trigger: 'eyes closed', pattern: '* eyes', remove_trigger: false, single_character_only: true }),
+            Object.freeze({ type: 'remove', trigger: 'eyes closed', pattern: '* pupils', remove_trigger: false, single_character_only: true }),
+            Object.freeze({ type: 'char_eye_replace', trigger: 'eyes closed', target: 'closed eyes', single_character_only: true }),
+            Object.freeze({ type: 'char_eye_replace', trigger: 'closed eyes', target: 'closed eyes', single_character_only: true }),
         ]);
 
         function createWordReplacementRuleId() {
@@ -56644,7 +56677,7 @@
                 rules = data.rules || [];
             } catch (e) { console.error('[WORD_RULE] 로드 실패:', e); }
             // 기존 규칙(type 없음)은 치환 모드로 간주
-            _wrRules = rules.map(r => ({ type: 'replace', remove_trigger: false, remove_weight: false, word: '', ...r }));
+            _wrRules = rules.map(r => ({ type: 'replace', remove_trigger: false, remove_weight: false, single_character_only: false, word: '', ...r }));
 
             const modal = document.createElement('div');
             modal.id = 'word-replacements-modal';
@@ -56668,13 +56701,13 @@
                         <details style="margin-top:9px; color:var(--text2); font-size:0.72rem; line-height:1.55;">
                             <summary style="cursor:pointer; user-select:none; color:var(--text); font-weight:600;">규칙 유형과 작동 방식</summary>
                             <div style="margin-top:7px; padding:9px 11px; background:var(--surface2); border-radius:7px;">
-                                삽화 모드 프롬프트의 태그를 규칙에 따라 다룹니다. <strong>치환</strong>은 지정한 단어를 다른 단어로 바꿉니다(대소문자 무관 부분 매칭). <strong>제거</strong>는 trigger 단어가 감지되면 패턴(* = 임의 문자열)에 매칭되는 태그를 제거합니다. <strong>가중치 조정</strong>은 쉼표 단위로 정확히 일치하는 태그의 가중치를 변경하거나 제거합니다. <strong>삽입</strong>은 지정한 단어가 최종 프롬프트에 없으면 품질 태그 바로 뒤에 삽입합니다. <strong>캐릭터 찾기</strong>는 이미지 태그 이름을 선택한 캐릭터 카드로 인식하되 원래 프롬프트 태그는 바꾸지 않습니다. <strong>캐릭터 눈/얼굴 제거·치환</strong>은 trigger가 감지되면 모든 감지 캐릭터의 eye_tags/face_tags를 빌드 시점에 변경하며 bot.json은 수정하지 않습니다.
+                                삽화 모드 프롬프트의 태그를 규칙에 따라 다룹니다. <strong>치환</strong>은 지정한 단어를 다른 단어로 바꿉니다(대소문자 무관 부분 매칭). <strong>제거</strong>는 trigger 단어가 감지되면 패턴(* = 임의 문자열)에 매칭되는 태그를 제거합니다. <strong>가중치 조정</strong>은 쉼표 단위로 정확히 일치하는 태그의 가중치를 변경하거나 제거합니다. <strong>삽입</strong>은 지정한 단어가 최종 프롬프트에 없으면 품질 태그 바로 뒤에 삽입합니다. <strong>캐릭터 찾기</strong>는 이미지 태그 이름을 선택한 캐릭터 카드로 인식하되 원래 프롬프트 태그는 바꾸지 않습니다. <strong>캐릭터 눈/얼굴 제거·치환</strong>은 trigger가 감지되면 감지 캐릭터의 eye_tags/face_tags를 빌드 시점에 변경하며 bot.json은 수정하지 않습니다. <strong>캐릭터 1인 감지 시만</strong>은 정확히 한 명이 감지된 장면에서만 해당 규칙을 실행합니다. 0명 또는 2명 이상이면 건너뜁니다.
                             </div>
                         </details>
                         <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:12px; padding-bottom:10px;">
                             <div style="display:flex; align-items:center; gap:7px; flex-wrap:wrap;">
                                 <button onclick="addWordReplacementRule()" style="background:#6A1B9A; color:#fff; border:none; padding:7px 13px; border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:650;">+ 규칙 추가</button>
-                                <button onclick="setWordReplacementDefaults()" title="공용 기본 규칙 6개를 1~6번에 배치합니다. 저장 전까지 파일에는 반영되지 않습니다."
+                                <button onclick="setWordReplacementDefaults()" title="1인 전용 조건이 켜진 공용 기본 규칙 6개를 1~6번에 배치합니다. 저장 전까지 파일에는 반영되지 않습니다."
                                     style="background:rgba(106,27,154,0.1); color:#b77bd3; border:1px solid rgba(156,39,176,0.35); padding:7px 13px; border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:650;">규칙 기본값 세팅하기</button>
                             </div>
                             <span id="wr-rule-count" style="padding:4px 9px; background:var(--surface2); border:1px solid var(--border); border-radius:999px; color:var(--text2); font-size:0.72rem; white-space:nowrap;"></span>
@@ -56699,7 +56732,7 @@
 
         function addWordReplacementRule() {
             syncWordReplacementFromDom();
-            const newRule = { id: createWordReplacementRuleId(), type: 'replace', source: '', target: '', word: '', enabled: true };
+            const newRule = { id: createWordReplacementRuleId(), type: 'replace', source: '', target: '', word: '', enabled: true, single_character_only: false };
             _wrRules.push(newRule);
             renderWordReplacementList();
             requestAnimationFrame(() => {
@@ -56731,7 +56764,7 @@
             _wrRules = [...defaultRules, ...remainingRules];
             renderWordReplacementList();
             document.getElementById('wr-rules-list')?.scrollTo({ top: 0, behavior: 'smooth' });
-            showToast('공용 기본 규칙 6개를 1~6번에 세팅했습니다. 저장해야 실제 반영됩니다.', 'success');
+            showToast('1인 전용 공용 기본 규칙 6개를 1~6번에 세팅했습니다. 저장해야 실제 반영됩니다.', 'success');
         }
 
         function removeWordReplacementRule(id) {
@@ -56815,6 +56848,7 @@
                 const isCharFaceReplace = ruleType === 'char_face_replace';
                 const isCharTagOverride = isCharEyeRemove || isCharEyeReplace || isCharFaceRemove || isCharFaceReplace;
                 const isCharTagReplace = isCharEyeReplace || isCharFaceReplace;
+                const supportsSingleCharacterOnly = !isCharacterAlias;
                 const charTagFieldLabel = (isCharEyeRemove || isCharEyeReplace) ? 'eye_tags' : 'face_tags';
                 const selectedCard = String(rule.target || '').trim();
                 const missingSelectedCard = selectedCard && !characterCardNames.includes(selectedCard)
@@ -56900,6 +56934,13 @@
                             <option value="char_face_replace" ${isCharFaceReplace ? 'selected' : ''}>캐릭터 얼굴 치환</option>
                         </select>
                         ${body}
+                        ${supportsSingleCharacterOnly ? `
+                        <label title="감지된 캐릭터가 정확히 한 명일 때만 이 규칙을 실행합니다."
+                            style="display:flex; align-items:center; gap:4px; padding:3px 6px; border:1px solid rgba(14,165,233,0.28); border-radius:5px; background:rgba(14,165,233,0.08); color:var(--text2); font-size:0.7rem; white-space:nowrap; cursor:pointer;">
+                            <input type="checkbox" data-wr-singlecharacteronly="${rule.id}" ${rule.single_character_only ? 'checked' : ''}>
+                            캐릭터 1인 감지 시만
+                        </label>
+                        ` : ''}
                     </div>
                     <div style="display:flex; align-items:center; gap:3px;">
                         <button onclick="toggleWordReplacementRule('${rule.id}')" title="${rule.enabled ? '비활성화' : '활성화'}"
@@ -56956,6 +56997,12 @@
                     if (weightLabel) weightLabel.textContent = el.checked ? '→ 가중치 (비활성)' : '→ 가중치';
                 });
             });
+            container.querySelectorAll('[data-wr-singlecharacteronly]').forEach(el => {
+                el.addEventListener('change', () => {
+                    const rule = _wrRules.find(r => r.id === el.dataset.wrSinglecharacteronly);
+                    if (rule) rule.single_character_only = el.checked;
+                });
+            });
         }
 
         // 렌더 전 DOM에서 _wrRules로 값 동기화 (재렌더/저장 전 호출)
@@ -56991,6 +57038,10 @@
             document.querySelectorAll('[data-wr-removeweight]').forEach(el => {
                 const rule = _wrRules.find(r => r.id === el.dataset.wrRemoveweight);
                 if (rule) rule.remove_weight = el.checked;
+            });
+            document.querySelectorAll('[data-wr-singlecharacteronly]').forEach(el => {
+                const rule = _wrRules.find(r => r.id === el.dataset.wrSinglecharacteronly);
+                if (rule) rule.single_character_only = el.checked;
             });
         }
 

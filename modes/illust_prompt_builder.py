@@ -184,19 +184,19 @@ class IllustPromptBuilder:
         """CHAR 섹션의 각 | 세그먼트에 캐릭터 이름 삽입.
 
         1. name_section을 쉼표로 분할 → 후보 이름
-        2. lb_extra에 등록된 이름만 필터 (대소문자 무관, lb_extra 정규 이름 사용)
+        2. lb_extra/캐릭터 카드/캐릭터 찾기 규칙으로 이름을 카드에 연결
         3. char_section을 | 로 분할 → 세그먼트
         4. 각 (세그먼트, 후보) 쌍에 대해 교집합 개수 산출:
            - char_tag의 모든 단어가 세그먼트 단어 집합에 있으면 매칭
            - 다중 단어 태그("long hair")가 세그먼트의 "long red hair"에도 걸리도록
         5. 점수 내림차순 그리디 1:1 배정
-        6. 이름이 세그먼트에 없으면 맨 앞에 "name, " 삽입
+        6. 이미지 이름 태그 옵션이 켜져 있으면 카드 이름 대신 해당 태그 삽입
         7. (absolute_tags) 매칭된 캐릭터의 절대 태그 중 세그먼트에 없는 것만 삽입
         8. " | " 로 재조립
         """
         if not char_section or not name_section:
             return char_section
-        if not lb_extra and not character_aliases:
+        if not lb_extra and not character_aliases and not characters:
             return char_section
 
         # 1. Name에서 후보 이름 추출 (쉼표 분리)
@@ -204,7 +204,8 @@ class IllustPromptBuilder:
         if not raw_names:
             return char_section
 
-        # 2. lb_extra 정규 이름 또는 캐릭터 찾기 규칙으로 카드에 연결한다.
+        # 2. lb_extra 정규 이름, 캐릭터 카드 이름 또는 캐릭터 찾기 규칙으로
+        # 카드에 연결한다.
         # 별칭으로 연결된 경우 CHAR에 삽입할 프롬프트 이름은 원래 [NAME] 값을
         # 유지하고, 외형/absolute_tags 조회에만 카드 이름을 사용한다.
         lb_names = [e.get("name", "") for e in (lb_extra or []) if e.get("name")]
@@ -227,15 +228,15 @@ class IllustPromptBuilder:
         used_card_keys = set()
         for raw in raw_names:
             raw_key = raw.casefold()
-            direct_match = lb_name_by_key.get(raw_key)
-            card_name = direct_match or alias_targets.get(raw_key)
+            lb_direct_match = lb_name_by_key.get(raw_key)
+            card_name = card_name_by_key.get(raw_key) or alias_targets.get(raw_key)
             if not card_name or card_name.casefold() in used_card_keys:
                 continue
-            prompt_name = direct_match or raw
+            prompt_name = lb_direct_match or raw
             candidates.append(prompt_name)
             card_name_by_candidate[prompt_name] = card_name
             used_card_keys.add(card_name.casefold())
-            if not direct_match:
+            if raw_key in alias_targets:
                 print(
                     f"[WORD_RULE:CHARACTER_ALIAS] CHAR 삽입 이름을 카드에 연결: "
                     f"source={raw!r}, card={card_name!r}"
@@ -305,13 +306,62 @@ class IllustPromptBuilder:
             else:
                 assignment[seg_idx] = candidates[0]
 
-        # 8. 세그먼트 맨 앞에 이름 삽입 (이미 있으면 스킵)
+        # 8. 세그먼트 맨 앞에 이미지용 이름을 삽입한다. 캐릭터별 옵션이
+        # 활성화된 경우 카드 이름/NAME 값의 정확한 최상위 태그를 이미지 이름
+        # 태그로 바꾼다. NAME/SPEAK와 카드 식별자는 수정하지 않는다.
         for seg_idx, name in assignment.items():
             seg = segments[seg_idx]
-            pattern = r'(?<![a-zA-Z0-9_])' + re.escape(name.lower()) + r'(?![a-zA-Z0-9_])'
-            if re.search(pattern, seg.lower()):
+            card_name = card_name_by_candidate[name]
+            char_data = next((c for c in (characters or [])
+                              if str(c.get("name") or "").casefold() == card_name.casefold()), None)
+            use_image_name_tag = bool(
+                char_data and char_data.get("use_image_name_tag") is True
+            )
+            image_name_tag = str(
+                (char_data or {}).get("image_name_tag") or ""
+            ).strip()
+            insert_name = name
+            if use_image_name_tag:
+                if image_name_tag:
+                    insert_name = image_name_tag
+                else:
+                    print(
+                        f"[ILLUST_NAME_INSERT] 이미지 이름 태그가 비어 카드 이름 사용: "
+                        f"char={card_name!r}"
+                    )
+
+            top_level_tags = IllustPromptBuilder._split_top_level_tags(seg)
+            existing_keys = {
+                IllustPromptBuilder._top_level_tag_core(tag)
+                for tag in top_level_tags
+            }
+            replace_keys = {name.casefold(), card_name.casefold()}
+            if use_image_name_tag and image_name_tag:
+                replaced_tags = []
+                inserted = False
+                image_key = image_name_tag.casefold()
+                for tag in top_level_tags:
+                    if IllustPromptBuilder._top_level_tag_core(tag) in replace_keys:
+                        if image_key not in existing_keys and not inserted:
+                            replaced_tags.append(image_name_tag)
+                            inserted = True
+                        continue
+                    replaced_tags.append(tag)
+                if image_key not in {
+                    IllustPromptBuilder._top_level_tag_core(tag)
+                    for tag in replaced_tags
+                }:
+                    replaced_tags.insert(0, image_name_tag)
+                segments[seg_idx] = ", ".join(replaced_tags)
+                print(
+                    f"[ILLUST_NAME_INSERT] 이미지 이름 태그 적용: "
+                    f"char={card_name!r}, tag={image_name_tag!r}"
+                )
                 continue
-            segments[seg_idx] = name + ", " + seg
+
+            if insert_name.casefold() in existing_keys:
+                continue
+            segments[seg_idx] = insert_name + ", " + seg
 
         # 9. 매칭된 캐릭터의 absolute_tags 주입 (이미 있으면 스킵)
         if characters:
@@ -342,6 +392,57 @@ class IllustPromptBuilder:
         print(f"[ILLUST_NAME_INSERT] 삽입 완료: candidates={candidates}, "
               f"assignment={assignment}")
         return result
+
+    @staticmethod
+    def _split_top_level_tags(text: str) -> list[str]:
+        """괄호 내부와 이스케이프된 쉼표를 보존해 최상위 태그만 나눈다."""
+        tags = []
+        current = []
+        stack = []
+        closing_for = {"(": ")", "[": "]", "{": "}"}
+        escaped = False
+        for char in text or "":
+            if escaped:
+                current.append(char)
+                escaped = False
+                continue
+            if char == "\\":
+                current.append(char)
+                escaped = True
+                continue
+            if char in closing_for:
+                stack.append(closing_for[char])
+                current.append(char)
+                continue
+            if stack and char == stack[-1]:
+                stack.pop()
+                current.append(char)
+                continue
+            if char == "," and not stack:
+                tag = "".join(current).strip()
+                if tag:
+                    tags.append(tag)
+                current = []
+                continue
+            current.append(char)
+        tag = "".join(current).strip()
+        if tag:
+            tags.append(tag)
+        return tags
+
+    @staticmethod
+    def _top_level_tag_core(tag: str) -> str:
+        """단일 최상위 태그의 단순 괄호/가중치를 벗긴 비교용 이름."""
+        core = str(tag or "").strip()
+        weighted = re.fullmatch(
+            r"\(\s*(?P<tag>.+?)\s*:\s*[+-]?(?:\d+(?:\.\d*)?|\.\d+)\s*\)",
+            core,
+        )
+        if weighted:
+            return weighted.group("tag").strip().casefold()
+        if core.startswith("(") and core.endswith(")"):
+            return core[1:-1].strip().casefold()
+        return core.casefold()
 
     @staticmethod
     def detect_characters_from_name(

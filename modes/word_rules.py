@@ -20,6 +20,49 @@ _WEIGHT_VALUE_RE = re.compile(r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$")
 _CHARACTER_ALIAS_RULE_TYPE = "character_alias"
 
 
+def filter_rules_for_character_count(
+    rules: list[dict],
+    detected_character_count: int | None,
+    *,
+    context: str = "",
+) -> list[dict]:
+    """캐릭터 수 조건에 맞는 규칙만 반환한다.
+
+    ``single_character_only``가 명시적으로 true인 규칙은 감지된 캐릭터가
+    정확히 한 명일 때만 남긴다. 0명과 미확인(None)을 한 명으로 간주하지
+    않아, 감지 실패가 전역 캐릭터 태그 변경으로 이어지지 않게 한다.
+    원본 규칙 목록과 각 규칙 dict는 수정하지 않는다.
+    """
+    source_rules = list(rules or [])
+    if detected_character_count is not None:
+        try:
+            normalized_count = int(detected_character_count)
+        except (TypeError, ValueError) as exc:
+            print(
+                f"[WORD_RULE] 캐릭터 수 조건 판정 실패: "
+                f"count={detected_character_count!r}, context={context!r}, error={exc}"
+            )
+            normalized_count = None
+    else:
+        normalized_count = None
+
+    filtered = []
+    skipped_indexes = []
+    for index, rule in enumerate(source_rules):
+        if rule.get("single_character_only") is True and normalized_count != 1:
+            skipped_indexes.append(index + 1)
+            continue
+        filtered.append(rule)
+
+    if skipped_indexes:
+        print(
+            f"[WORD_RULE] 캐릭터 1인 전용 규칙 스킵: "
+            f"detected={normalized_count!r}, rules={skipped_indexes}, "
+            f"context={context or 'unspecified'}"
+        )
+    return filtered
+
+
 def build_character_alias_map(rules: list[dict], char_names: list[str]) -> dict[str, str]:
     """활성 캐릭터 찾기 규칙을 ``인식 이름.casefold() -> 카드 이름``으로 만든다.
 
@@ -189,7 +232,15 @@ def apply_replacement_rules(text: str, rules: list[dict]) -> tuple[str, int]:
         if not source:
             continue
 
-        result, count = re.subn(re.escape(source), target, result, flags=re.IGNORECASE)
+        # target은 UI에서 입력한 일반 문자열이다. re.sub의 replacement 템플릿으로
+        # 넘기면 끝 역슬래시나 \1 같은 텍스트가 정규식 문법으로 해석돼 실패하거나
+        # 의도치 않게 바뀌므로 콜백 반환값으로 그대로 삽입한다.
+        result, count = re.subn(
+            re.escape(source),
+            lambda _match, replacement=target: replacement,
+            result,
+            flags=re.IGNORECASE,
+        )
         if count > 0:
             applied += 1
     return result, applied
@@ -230,8 +281,13 @@ def apply_prompt_rules(positive: str, negative: str, rules: list[dict]) -> tuple
             continue
 
         pattern = re.escape(source)
-        positive, positive_count = re.subn(pattern, target, positive, flags=re.IGNORECASE)
-        negative, negative_count = re.subn(pattern, target, negative, flags=re.IGNORECASE)
+        replacement = lambda _match, value=target: value
+        positive, positive_count = re.subn(
+            pattern, replacement, positive, flags=re.IGNORECASE
+        )
+        negative, negative_count = re.subn(
+            pattern, replacement, negative, flags=re.IGNORECASE
+        )
         if positive_count or negative_count:
             applied_rule_indexes.add(index)
 

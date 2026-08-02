@@ -15,6 +15,7 @@ from modes.word_rules import (
     apply_flat_insert_rules,
     apply_char_tag_override_rules,
     build_character_alias_map,
+    filter_rules_for_character_count,
 )
 
 
@@ -72,6 +73,22 @@ class RawPromptWordRulesTest(unittest.TestCase):
         self.assertNotIn("blue eyes", transformed)
         self.assertIn("[SUPPLEMENT]\nalice near ears", transformed)
         self.assertIn("[CHAT]\nAlias and red ears stay unchanged here", transformed)
+
+    def test_replacement_target_with_trailing_backslash_is_literal(self):
+        rules = [{
+            "type": "replace",
+            "source": "series title",
+            "target": "(series title)\\",
+            "enabled": True,
+        }]
+
+        transformed, applied = apply_raw_prompt_rules(
+            "[SETUP]\nseries title, outdoors",
+            rules,
+        )
+
+        self.assertEqual(transformed, "[SETUP]\n(series title)\\, outdoors")
+        self.assertEqual(applied, 1)
 
     def test_remove_rules_do_not_affect_name_or_speak(self):
         remove_name_rule = [{
@@ -485,6 +502,83 @@ class CharacterAliasRulesTest(unittest.TestCase):
         aliases = build_character_alias_map(rules, self.char_names)
 
         self.assertEqual(aliases, {})
+
+
+class CharacterCountRuleConditionTest(unittest.TestCase):
+    def setUp(self):
+        self.rules = [
+            {"id": "single", "type": "remove", "single_character_only": True},
+            {"id": "global", "type": "replace"},
+        ]
+
+    def test_single_character_keeps_scoped_rule(self):
+        filtered = filter_rules_for_character_count(self.rules, 1, context="test")
+        self.assertEqual([rule["id"] for rule in filtered], ["single", "global"])
+
+    def test_zero_multi_and_unknown_skip_scoped_rule(self):
+        for count in (0, 2, None):
+            with self.subTest(count=count):
+                filtered = filter_rules_for_character_count(
+                    self.rules, count, context="test"
+                )
+                self.assertEqual([rule["id"] for rule in filtered], ["global"])
+
+    def test_filter_does_not_mutate_original_rules(self):
+        filtered = filter_rules_for_character_count(self.rules, 2, context="test")
+        self.assertIs(filtered[0], self.rules[1])
+        self.assertEqual(len(self.rules), 2)
+
+
+class ImageNameTagTest(unittest.TestCase):
+    def _parse(self, character, char_section="silver hair, blue eyes"):
+        return IllustPromptBuilder.parse_sections(
+            f"[NAME]\nAlisa\n[CHAR]\n{char_section}",
+            lb_extra=[],
+            characters=[character],
+            character_aliases={},
+        )
+
+    def test_disabled_option_keeps_card_name_in_char(self):
+        sections = self._parse({
+            "name": "Alisa",
+            "use_image_name_tag": False,
+            "image_name_tag": "alisa mikhailovna kujou",
+        })
+
+        self.assertEqual(sections["name"], "Alisa")
+        self.assertEqual(sections["char"].split(",", 1)[0], "Alisa")
+        self.assertNotIn("alisa mikhailovna kujou", sections["char"].casefold())
+
+    def test_enabled_option_replaces_card_name_only_in_char(self):
+        sections = self._parse({
+            "name": "Alisa",
+            "use_image_name_tag": True,
+            "image_name_tag": "alisa mikhailovna kujou",
+        }, char_section="Alisa, silver hair, blue eyes")
+
+        char_tags = [tag.strip().casefold() for tag in sections["char"].split(",")]
+        self.assertEqual(sections["name"], "Alisa")
+        self.assertIn("alisa mikhailovna kujou", char_tags)
+        self.assertNotIn("alisa", char_tags)
+
+    def test_enabled_option_removes_weighted_card_name_tag(self):
+        sections = self._parse({
+            "name": "Alisa",
+            "use_image_name_tag": True,
+            "image_name_tag": "alisa mikhailovna kujou",
+        }, char_section="(Alisa:1.2), silver hair")
+
+        self.assertIn("alisa mikhailovna kujou", sections["char"].casefold())
+        self.assertNotIn("(alisa:1.2)", sections["char"].casefold())
+
+    def test_enabled_empty_tag_falls_back_to_card_name(self):
+        sections = self._parse({
+            "name": "Alisa",
+            "use_image_name_tag": True,
+            "image_name_tag": "",
+        })
+
+        self.assertEqual(sections["char"].split(",", 1)[0], "Alisa")
 
 
 class InsertRuleTest(unittest.TestCase):

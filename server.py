@@ -90,6 +90,7 @@ from modes.word_rules import (
     apply_insert_rules as _apply_insert_word_rules,
     apply_char_tag_override_rules as _apply_char_tag_override_rules,
     build_character_alias_map as _build_character_alias_map,
+    filter_rules_for_character_count as _filter_word_rules_for_character_count,
 )
 from modes import chansub_service
 from modes import illustration_chat_history
@@ -1398,12 +1399,20 @@ def apply_word_replacements(
     negative: str,
     bot_name: str,
     rules: list[dict] | None = None,
+    detected_character_count: int | None = None,
 ) -> tuple:
     """봇의 단어 기반 규칙(치환/제거)을 프롬프트에 적용한다."""
     if not bot_name:
         return positive, negative
     if rules is None:
         rules = _load_word_rules_snapshot(bot_name)
+    if not rules:
+        return positive, negative
+    rules = _filter_word_rules_for_character_count(
+        rules,
+        detected_character_count,
+        context="최종 프롬프트 치환",
+    )
     if not rules:
         return positive, negative
     positive, negative, applied = _apply_prompt_word_rules(positive, negative, rules)
@@ -1416,12 +1425,20 @@ def apply_raw_prompt_word_replacements(
     raw_prompt: str,
     bot_name: str,
     rules: list[dict] | None = None,
+    detected_character_count: int | None = None,
 ) -> str:
     """삽화 RAW 프롬프트에 섹션 범위를 지키며 단어 규칙을 선적용한다."""
     if not bot_name:
         return raw_prompt
     if rules is None:
         rules = _load_word_rules_snapshot(bot_name)
+    if not rules:
+        return raw_prompt
+    rules = _filter_word_rules_for_character_count(
+        rules,
+        detected_character_count,
+        context="RAW 프롬프트",
+    )
     if not rules:
         return raw_prompt
     transformed, applied = _apply_raw_prompt_word_rules(raw_prompt, rules)
@@ -1434,6 +1451,7 @@ def apply_insert_word_rules(
     positive: str,
     bot_name: str,
     rules: list[dict] | None = None,
+    detected_character_count: int | None = None,
 ) -> str:
     """삽화 빌드 후 최종 positive의 품질([ANIMA_QUALITY]/[SDXL_QUALITY]) 뒤에
     삽입 규칙(단어가 없으면 강제 삽입)을 후처리로 적용한다.
@@ -1447,6 +1465,13 @@ def apply_insert_word_rules(
         rules = _load_word_rules_snapshot(bot_name)
     if not rules:
         return positive
+    rules = _filter_word_rules_for_character_count(
+        rules,
+        detected_character_count,
+        context="최종 삽입",
+    )
+    if not rules:
+        return positive
     positive, applied = _apply_insert_word_rules(positive, rules)
     if applied > 0:
         print(f"[WORD_RULE] 삽입 규칙 적용: bot={bot_name}, {applied}개 규칙")
@@ -1458,6 +1483,7 @@ def apply_char_tag_override_to_bot(
     bot_name: str,
     trigger_text: str,
     rules: list[dict] | None = None,
+    detected_character_count: int | None = None,
 ) -> dict:
     """캐릭터 눈 제거 / 얼굴 치환 특수 규칙을 빌드 직전 변수 상에서만 적용한다.
 
@@ -1470,6 +1496,13 @@ def apply_char_tag_override_to_bot(
         return bot
     if rules is None:
         rules = _load_word_rules_snapshot(bot_name)
+    if not rules:
+        return bot
+    rules = _filter_word_rules_for_character_count(
+        rules,
+        detected_character_count,
+        context="캐릭터 눈/얼굴 태그",
+    )
     if not rules:
         return bot
     characters = bot.get("characters", [])
@@ -2922,6 +2955,7 @@ def _resolve_deferred_speak_text(prompt_id: str, descriptor: dict) -> str:
     state = entry.get("_deferred_finalize") or {}
     bot_name = str(state.get("bot_name") or "")
     word_rules = state.get("word_rules")
+    word_rule_character_count = state.get("word_rule_character_count")
     if not isinstance(word_rules, list):
         print(
             f"[ILLUST_CONTEXT:POSTPROCESS] 단어 규칙 스냅샷이 없어 다시 로드: "
@@ -2932,10 +2966,14 @@ def _resolve_deferred_speak_text(prompt_id: str, descriptor: dict) -> str:
     if not bot_name or not raw_positive:
         return original_speak
     try:
+        rule_scope_kwargs = {}
+        if word_rule_character_count is not None:
+            rule_scope_kwargs["detected_character_count"] = word_rule_character_count
         transformed_raw = apply_raw_prompt_word_replacements(
             raw_positive,
             bot_name,
             word_rules,
+            **rule_scope_kwargs,
         )
         transformed_speak = str(
             IllustPromptBuilder().parse_sections(transformed_raw).get("speak") or ""
@@ -3172,6 +3210,7 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
         chansub_quality_tag_start = 0
         chansub_quality_tag_count = 0
         _speak_text = ""  # [SPEAK] 섹션 원문 (후처리 합성용)
+        word_rule_character_count = None
         queued_multi_char = raw_body.get("illustration_multi_char") or {}
         multi_char_requested = (
             isinstance(queued_multi_char, dict)
@@ -3196,15 +3235,9 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
             builder = IllustPromptBuilder()
             raw_positive = positive
 
-            # 1. 원본 섹션은 로그용으로 보존하고, 실제 처리는 규칙 적용 후 RAW만 사용한다.
+            # 1. 원본 섹션은 로그용으로 보존한다. 캐릭터 1인 전용 규칙은
+            # 규칙 적용 전의 구조화된 NAME을 우선 사용해 정확한 인원수를 정한다.
             parsed_raw_sections = builder.parse_sections(raw_positive)
-            word_replaced_raw = apply_raw_prompt_word_replacements(
-                raw_positive,
-                bot_name,
-                word_rules_snapshot,
-            )
-
-            # 2. 선처리된 RAW 파싱 (lb_extra 전달 → 치환된 NAME 기반 CHAR 이름 삽입)
             from modes.bot_mode import _load_lb_extra as _load_lb_extra_local
             from modes.bot_mode import _load_bot_data as _load_bot_data_local
             lb_extra_data = _load_lb_extra_local(bot_name) or []
@@ -3216,6 +3249,39 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                 word_rules_snapshot,
                 char_names,
             )
+            detected_before_rules = []
+            if bot:
+                if parsed_raw_sections.get("name"):
+                    detected_before_rules = builder.detect_characters_from_name(
+                        parsed_raw_sections["name"],
+                        char_names,
+                        character_aliases,
+                    )
+                else:
+                    detected_before_rules = builder.detect_characters(
+                        [
+                            parsed_raw_sections.get("setup", ""),
+                            parsed_raw_sections.get("char", ""),
+                            parsed_raw_sections.get("supplement", ""),
+                        ],
+                        char_names,
+                        character_aliases,
+                    )
+            rule_condition_character_count = len(detected_before_rules)
+            word_rule_character_count = rule_condition_character_count
+            print(
+                f"[WORD_RULE] RAW 규칙용 캐릭터 수 감지: "
+                f"count={rule_condition_character_count}, "
+                f"characters={detected_before_rules}"
+            )
+            word_replaced_raw = apply_raw_prompt_word_replacements(
+                raw_positive,
+                bot_name,
+                word_rules_snapshot,
+                detected_character_count=rule_condition_character_count,
+            )
+
+            # 2. 선처리된 RAW 파싱 (캐릭터 데이터 전달 → 치환된 NAME 기반 CHAR 이름 삽입)
             if illustration_provider == "chansub":
                 # 챈섭에는 로컬 LoRA 트리거/캐릭터명 자동 삽입을 하지 않는다.
                 sections = builder.parse_sections(word_replaced_raw)
@@ -3255,6 +3321,19 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                         character_aliases,
                     )
                 print(f"[ILLUST] 감지된 캐릭터: {detected} (방식: {'NAME 정확매칭' if sections.get('name') else '폴백 스캔'})")
+                scene_character_count = len(detected)
+                word_rule_character_count = scene_character_count
+                if scene_character_count != rule_condition_character_count:
+                    print(
+                        f"[WORD_RULE] 규칙 전후 캐릭터 수가 다름: "
+                        f"before={rule_condition_character_count}, "
+                        f"after={scene_character_count}; 이후 단계는 최종 감지 수 사용"
+                    )
+                scene_word_rules = _filter_word_rules_for_character_count(
+                    word_rules_snapshot,
+                    scene_character_count,
+                    context="삽화 장면 후속 처리",
+                )
 
                 multi_char_prompt_context = None
                 if multi_char_requested:
@@ -3341,6 +3420,7 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                             separated_background_raw,
                             bot_name,
                             word_rules_snapshot,
+                            detected_character_count=scene_character_count,
                         )
                         separated_background_sections = builder.parse_sections(
                             separated_background_replaced
@@ -3357,6 +3437,7 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                             separated_composition_raw,
                             bot_name,
                             word_rules_snapshot,
+                            detected_character_count=scene_character_count,
                         )
                         separated_composition_sections = builder.parse_sections(
                             separated_composition_replaced
@@ -3387,6 +3468,7 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                                 per_char_raw,
                                 bot_name,
                                 word_rules_snapshot,
+                                detected_character_count=scene_character_count,
                             )
                             per_char_sections = builder.parse_sections(
                                 per_char_replaced,
@@ -3455,7 +3537,7 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                         supplement_replaced,
                         tags,
                         settings,
-                        insert_rules=word_rules_snapshot,
+                        insert_rules=scene_word_rules,
                     )
                     positive = chansub_built["positive"]
                     negative = chansub_built["negative"]
@@ -3503,6 +3585,7 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                         bot_name,
                         _char_rule_trigger_text,
                         word_rules_snapshot,
+                        detected_character_count=scene_character_count,
                     )
                     positive = builder.build_positive_prompt(
                         setup_replaced, char_replaced, supplement_replaced,
@@ -3515,6 +3598,7 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                         positive,
                         bot_name,
                         word_rules_snapshot,
+                        detected_character_count=scene_character_count,
                     )
                     if multi_char_prompt_context:
                         positive = sync_multi_char_shared_tags(positive)
@@ -3642,6 +3726,7 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                 "generation_time": elapsed_time,
                 "bot_name": _backup_bot_name,
                 "word_rules": copy.deepcopy(word_rules_snapshot),
+                "word_rule_character_count": word_rule_character_count,
                 "gen_method": _gen_method,
                 "provider": illustration_provider,
                 "provider_mode": illustration_provider_mode,
