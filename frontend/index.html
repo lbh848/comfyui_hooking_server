@@ -56605,6 +56605,32 @@
 
         // ─── 단어 기반 규칙 ────────────────────────────────────
         let _wrRules = [];
+        const WORD_REPLACEMENT_DEFAULT_RULES = Object.freeze([
+            Object.freeze({ type: 'remove', trigger: 'closed eyes', pattern: '* eyes', remove_trigger: false }),
+            Object.freeze({ type: 'remove', trigger: 'closed eyes', pattern: '* pupils', remove_trigger: false }),
+            Object.freeze({ type: 'remove', trigger: 'eyes closed', pattern: '* eyes', remove_trigger: false }),
+            Object.freeze({ type: 'remove', trigger: 'eyes closed', pattern: '* pupils', remove_trigger: false }),
+            Object.freeze({ type: 'char_eye_replace', trigger: 'eyes closed', target: 'closed eyes' }),
+            Object.freeze({ type: 'char_eye_replace', trigger: 'closed eyes', target: 'closed eyes' }),
+        ]);
+
+        function createWordReplacementRuleId() {
+            return Math.random().toString(36).substr(2, 8);
+        }
+
+        function wordReplacementDefaultIdentity(rule) {
+            const type = String(rule?.type || 'replace').trim().toLowerCase();
+            const trigger = String(rule?.trigger || '').trim().toLowerCase();
+            if (type === 'remove') {
+                const pattern = String(rule?.pattern || '').trim().toLowerCase();
+                return JSON.stringify([type, trigger, pattern, Boolean(rule?.remove_trigger)]);
+            }
+            if (type === 'char_eye_replace') {
+                const target = String(rule?.target || '').trim().toLowerCase();
+                return JSON.stringify([type, trigger, target]);
+            }
+            return '';
+        }
 
         async function openWordReplacementsModal() {
             if (!botCurrentBot) { showToast('봇을 먼저 선택하세요.', 'error'); return; }
@@ -56646,7 +56672,11 @@
                             </div>
                         </details>
                         <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:12px; padding-bottom:10px;">
-                            <button onclick="addWordReplacementRule()" style="background:#6A1B9A; color:#fff; border:none; padding:7px 13px; border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:650;">+ 규칙 추가</button>
+                            <div style="display:flex; align-items:center; gap:7px; flex-wrap:wrap;">
+                                <button onclick="addWordReplacementRule()" style="background:#6A1B9A; color:#fff; border:none; padding:7px 13px; border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:650;">+ 규칙 추가</button>
+                                <button onclick="setWordReplacementDefaults()" title="공용 기본 규칙 6개를 1~6번에 배치합니다. 저장 전까지 파일에는 반영되지 않습니다."
+                                    style="background:rgba(106,27,154,0.1); color:#b77bd3; border:1px solid rgba(156,39,176,0.35); padding:7px 13px; border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:650;">규칙 기본값 세팅하기</button>
+                            </div>
                             <span id="wr-rule-count" style="padding:4px 9px; background:var(--surface2); border:1px solid var(--border); border-radius:999px; color:var(--text2); font-size:0.72rem; white-space:nowrap;"></span>
                         </div>
                     </div>
@@ -56669,7 +56699,7 @@
 
         function addWordReplacementRule() {
             syncWordReplacementFromDom();
-            const newRule = { id: Math.random().toString(36).substr(2, 8), type: 'replace', source: '', target: '', word: '', enabled: true };
+            const newRule = { id: createWordReplacementRuleId(), type: 'replace', source: '', target: '', word: '', enabled: true };
             _wrRules.push(newRule);
             renderWordReplacementList();
             requestAnimationFrame(() => {
@@ -56677,6 +56707,31 @@
                 card?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
                 card?.querySelector('input')?.focus();
             });
+        }
+
+        function setWordReplacementDefaults() {
+            syncWordReplacementFromDom();
+            const defaultRules = WORD_REPLACEMENT_DEFAULT_RULES.map(rule => ({
+                type: 'replace',
+                remove_trigger: false,
+                remove_weight: false,
+                word: '',
+                source: '',
+                target: '',
+                enabled: true,
+                ...rule,
+                id: createWordReplacementRuleId(),
+            }));
+            const defaultIdentities = new Set(
+                defaultRules.map(wordReplacementDefaultIdentity)
+            );
+            const remainingRules = _wrRules.filter(rule => (
+                !defaultIdentities.has(wordReplacementDefaultIdentity(rule))
+            ));
+            _wrRules = [...defaultRules, ...remainingRules];
+            renderWordReplacementList();
+            document.getElementById('wr-rules-list')?.scrollTo({ top: 0, behavior: 'smooth' });
+            showToast('공용 기본 규칙 6개를 1~6번에 세팅했습니다. 저장해야 실제 반영됩니다.', 'success');
         }
 
         function removeWordReplacementRule(id) {

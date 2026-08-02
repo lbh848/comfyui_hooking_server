@@ -90,7 +90,25 @@ def test_word_rules_modal_is_expanded_and_exposes_order_controls():
     assert "위로 이동" in word_rules_ui
     assert "아래로 이동" in word_rules_ui
     assert "순서대로 저장" in word_rules_ui
+    assert "규칙 기본값 세팅하기" in word_rules_ui
+    assert "const WORD_REPLACEMENT_DEFAULT_RULES" in FRONTEND
+    assert "function setWordReplacementDefaults()" in word_rules_ui
+    assert "_wrRules = [...defaultRules, ...remainingRules]" in word_rules_ui
+    assert "저장해야 실제 반영됩니다" in word_rules_ui
     assert "if (event.target === modal) modal.remove();" not in word_rules_ui
+
+
+def test_word_rule_default_preset_matches_rosidere_first_six():
+    expected_defaults = [
+        "{ type: 'remove', trigger: 'closed eyes', pattern: '* eyes', remove_trigger: false }",
+        "{ type: 'remove', trigger: 'closed eyes', pattern: '* pupils', remove_trigger: false }",
+        "{ type: 'remove', trigger: 'eyes closed', pattern: '* eyes', remove_trigger: false }",
+        "{ type: 'remove', trigger: 'eyes closed', pattern: '* pupils', remove_trigger: false }",
+        "{ type: 'char_eye_replace', trigger: 'eyes closed', target: 'closed eyes' }",
+        "{ type: 'char_eye_replace', trigger: 'closed eyes', target: 'closed eyes' }",
+    ]
+    positions = [FRONTEND.index(rule) for rule in expected_defaults]
+    assert positions == sorted(positions)
 
 
 def test_lighbd_history_distinguishes_slow_retry_winner_and_loser():
