@@ -7860,7 +7860,11 @@
         }
         .memo-launcher:focus-visible,
         .memo-close-btn:focus-visible,
-        .memo-textarea:focus-visible {
+        .memo-textarea:focus-visible,
+        .memo-tab-button:focus-visible,
+        .memo-knowledge-input:focus-visible,
+        .memo-knowledge-submit:focus-visible,
+        .memo-evidence-copy:focus-visible {
             outline: 2px solid #f59e0b;
             outline-offset: 2px;
         }
@@ -7892,8 +7896,8 @@
         .memo-dialog {
             display: flex;
             flex-direction: column;
-            width: min(720px, calc(100vw - 32px));
-            height: min(68vh, 680px);
+            width: min(820px, calc(100vw - 32px));
+            height: min(74vh, 760px);
             min-height: 320px;
             overflow: hidden;
             border: 1px solid color-mix(in srgb, var(--border) 68%, #f59e0b);
@@ -7943,11 +7947,46 @@
             border-color: color-mix(in srgb, #f59e0b 62%, var(--border));
             background: var(--surface3);
         }
+        .memo-tabs {
+            display: flex;
+            gap: 4px;
+            padding: 8px 14px 0;
+            border-bottom: 1px solid var(--border);
+            background: color-mix(in srgb, var(--surface2) 52%, transparent);
+        }
+        .memo-tab-button {
+            padding: 9px 14px 10px;
+            border: 0;
+            border-bottom: 2px solid transparent;
+            background: transparent;
+            color: var(--text2);
+            cursor: pointer;
+            font: 700 0.78rem/1 var(--font, sans-serif);
+        }
+        .memo-tab-button:hover {
+            color: var(--text);
+        }
+        .memo-tab-button[aria-selected="true"] {
+            border-bottom-color: #f59e0b;
+            color: #fbbf24;
+        }
         .memo-dialog-body {
             display: flex;
             flex: 1;
             min-height: 0;
             padding: 14px;
+        }
+        .memo-tab-panel {
+            display: flex;
+            flex: 1;
+            min-width: 0;
+            min-height: 0;
+        }
+        .memo-tab-panel[hidden] {
+            display: none !important;
+        }
+        .memo-note-panel {
+            flex-direction: column;
         }
         .memo-textarea {
             flex: 1;
@@ -7965,6 +8004,145 @@
         }
         .memo-textarea::placeholder {
             color: var(--text3);
+        }
+        .memo-knowledge-panel {
+            flex-direction: column;
+            gap: 12px;
+            overflow-y: auto;
+            padding: 1px 2px 2px;
+        }
+        .memo-knowledge-form {
+            display: flex;
+            gap: 8px;
+            flex: 0 0 auto;
+        }
+        .memo-knowledge-input {
+            flex: 1;
+            min-width: 0;
+            padding: 11px 12px;
+            border: 1px solid var(--border);
+            border-radius: 9px;
+            background: color-mix(in srgb, var(--surface2) 92%, #111827);
+            color: var(--text);
+            font: 0.85rem/1.4 var(--font, sans-serif);
+        }
+        .memo-knowledge-input::placeholder {
+            color: var(--text3);
+        }
+        .memo-knowledge-submit,
+        .memo-evidence-copy {
+            border: 1px solid color-mix(in srgb, #f59e0b 58%, var(--border));
+            border-radius: 9px;
+            background: color-mix(in srgb, var(--surface2) 84%, #f59e0b 16%);
+            color: var(--text);
+            cursor: pointer;
+            font: 700 0.76rem/1 var(--font, sans-serif);
+        }
+        .memo-knowledge-submit {
+            min-width: 74px;
+            padding: 0 14px;
+        }
+        .memo-knowledge-submit:disabled {
+            opacity: 0.58;
+            cursor: wait;
+        }
+        .memo-knowledge-help {
+            color: var(--text2);
+            font-size: 0.72rem;
+            line-height: 1.55;
+        }
+        .memo-knowledge-status {
+            min-height: 1.15rem;
+            color: var(--text2);
+            font-size: 0.74rem;
+        }
+        .memo-knowledge-status[data-state="loading"] {
+            color: #fbbf24;
+        }
+        .memo-knowledge-status[data-state="error"] {
+            color: var(--danger, #ef4444);
+        }
+        .memo-knowledge-status[data-state="done"] {
+            color: var(--success);
+        }
+        .memo-knowledge-results {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .memo-knowledge-results[hidden] {
+            display: none !important;
+        }
+        .memo-knowledge-answer {
+            padding: 13px 14px;
+            border: 1px solid color-mix(in srgb, #f59e0b 38%, var(--border));
+            border-radius: 11px;
+            background: color-mix(in srgb, var(--surface2) 89%, #f59e0b 11%);
+        }
+        .memo-knowledge-answer-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            margin-bottom: 8px;
+            color: #fbbf24;
+            font-size: 0.72rem;
+            font-weight: 800;
+        }
+        .memo-knowledge-answer-text {
+            margin: 0;
+            color: var(--text);
+            font-size: 0.84rem;
+            line-height: 1.65;
+            white-space: pre-wrap;
+        }
+        .memo-knowledge-meta {
+            color: var(--text2);
+            font-size: 0.68rem;
+            line-height: 1.55;
+        }
+        .memo-evidence-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .memo-evidence-card {
+            padding: 11px 12px;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            background: color-mix(in srgb, var(--surface2) 94%, #111827);
+        }
+        .memo-evidence-head {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .memo-evidence-tag {
+            min-width: 0;
+            overflow-wrap: anywhere;
+            color: #93c5fd;
+            font: 700 0.8rem/1.35 ui-monospace, SFMono-Regular, Consolas, monospace;
+        }
+        .memo-evidence-score {
+            margin-left: auto;
+            color: var(--text2);
+            font-size: 0.68rem;
+            white-space: nowrap;
+        }
+        .memo-evidence-copy {
+            flex: 0 0 auto;
+            padding: 6px 8px;
+        }
+        .memo-evidence-body {
+            display: grid;
+            gap: 4px;
+            margin-top: 8px;
+            color: var(--text2);
+            font-size: 0.72rem;
+            line-height: 1.5;
+        }
+        .memo-evidence-body strong {
+            color: var(--text);
         }
         .memo-dialog-footer {
             display: flex;
@@ -7993,8 +8171,14 @@
             }
             .memo-dialog {
                 width: calc(100vw - 20px);
-                height: min(76vh, 680px);
+                height: min(82vh, 760px);
                 min-height: 280px;
+            }
+            .memo-knowledge-form {
+                flex-direction: column;
+            }
+            .memo-knowledge-submit {
+                min-height: 38px;
             }
         }
 
@@ -13401,20 +13585,52 @@
             <div class="memo-dialog-header">
                 <div class="memo-dialog-title">
                     <strong id="memo-dialog-heading">📝 메모장</strong>
-                    <span>새로고침해도 유지되며 서버를 다시 시작하면 초기화됩니다.</span>
+                    <span>임시 메모와 LLM 보조 Danbooru 태그 검색을 함께 사용합니다.</span>
                 </div>
                 <button type="button" class="memo-close-btn" onclick="closeMemoPad()"
                         title="메모장 접기" aria-label="메모장 접기">✕</button>
             </div>
-            <div class="memo-dialog-body">
-                <textarea class="memo-textarea" id="memo-textarea"
-                          maxlength="100000" spellcheck="false"
-                          placeholder="서버가 실행되는 동안 기억할 내용을 입력하세요."></textarea>
+            <div class="memo-tabs" role="tablist" aria-label="메모장 기능">
+                <button type="button" class="memo-tab-button" id="memo-tab-note"
+                        role="tab" aria-selected="true" aria-controls="memo-panel-note"
+                        onclick="switchMemoTab('note')">메모</button>
+                <button type="button" class="memo-tab-button" id="memo-tab-search"
+                        role="tab" aria-selected="false" aria-controls="memo-panel-search"
+                        tabindex="-1" onclick="switchMemoTab('search')">단부르 태그 검색</button>
             </div>
-            <div class="memo-dialog-footer">
+            <div class="memo-dialog-body">
+                <section class="memo-tab-panel memo-note-panel" id="memo-panel-note"
+                         role="tabpanel" aria-labelledby="memo-tab-note">
+                    <textarea class="memo-textarea" id="memo-textarea"
+                              maxlength="100000" spellcheck="false"
+                              placeholder="서버가 실행되는 동안 기억할 내용을 입력하세요."></textarea>
+                </section>
+                <section class="memo-tab-panel memo-knowledge-panel" id="memo-panel-search"
+                         role="tabpanel" aria-labelledby="memo-tab-search" hidden>
+                    <form class="memo-knowledge-form" onsubmit="searchDanbooruKnowledge(event)">
+                        <input type="text" class="memo-knowledge-input"
+                               id="memo-knowledge-query" maxlength="1000" autocomplete="off"
+                               placeholder="예: 금발 머리를 뜻하는 태그가 뭐지?">
+                        <button type="submit" class="memo-knowledge-submit"
+                                id="memo-knowledge-submit">검색</button>
+                    </form>
+                    <div class="memo-knowledge-help">
+                        자연어 질문을 LLM이 검색 단위로 나눈 뒤 실제 RAG 후보만 근거로 답합니다.<br>
+                        예: “Alisa라는 캐릭터의 풀네임이 뭐지?”, “Alisa가 나오는 작품을 찾아줘”
+                    </div>
+                    <div class="memo-knowledge-status" id="memo-knowledge-status"
+                         data-state="idle" role="status" aria-live="polite">질문을 입력해 주세요.</div>
+                    <div class="memo-knowledge-results" id="memo-knowledge-results" hidden></div>
+                </section>
+            </div>
+            <div class="memo-dialog-footer" id="memo-note-footer">
                 <span>서버 메모리에 자동 저장 · 파일에는 저장하지 않음</span>
                 <span class="memo-save-status" id="memo-save-status"
                       data-state="idle" role="status" aria-live="polite">불러오기 전</span>
+            </div>
+            <div class="memo-dialog-footer" id="memo-search-footer" hidden>
+                <span>LLM 질문 분석 → Danbooru RAG → LLM 근거 선별</span>
+                <span>검색 결과는 파일에 저장하지 않음</span>
             </div>
         </section>
     </div>
@@ -19315,6 +19531,7 @@
         let memoLastQueueCollapsed = false;
         let memoQueueResizeObserver = null;
         let memoQueueMutationObserver = null;
+        let memoActiveTab = 'note';
 
         function setMemoSaveStatus(message, state = 'idle') {
             const status = document.getElementById('memo-save-status');
@@ -19324,6 +19541,278 @@
             }
             status.textContent = message;
             status.dataset.state = state;
+        }
+
+        function setMemoKnowledgeStatus(message, state = 'idle') {
+            const status = document.getElementById('memo-knowledge-status');
+            if (!status) {
+                console.error('[DANBOORU_KNOWLEDGE] 검색 상태 요소를 찾지 못했습니다:', {
+                    message,
+                    state,
+                });
+                return;
+            }
+            status.textContent = message;
+            status.dataset.state = state;
+        }
+
+        function switchMemoTab(tabName, focusTarget = true) {
+            const validTabs = ['note', 'search'];
+            if (!validTabs.includes(tabName)) {
+                console.error('[MEMO] 지원하지 않는 메모장 탭:', { tabName });
+                return;
+            }
+            const noteTab = document.getElementById('memo-tab-note');
+            const searchTab = document.getElementById('memo-tab-search');
+            const notePanel = document.getElementById('memo-panel-note');
+            const searchPanel = document.getElementById('memo-panel-search');
+            const noteFooter = document.getElementById('memo-note-footer');
+            const searchFooter = document.getElementById('memo-search-footer');
+            if (!noteTab || !searchTab || !notePanel || !searchPanel || !noteFooter || !searchFooter) {
+                console.error('[MEMO] 탭 전환 UI 요소 누락:', {
+                    noteTab: !!noteTab,
+                    searchTab: !!searchTab,
+                    notePanel: !!notePanel,
+                    searchPanel: !!searchPanel,
+                    noteFooter: !!noteFooter,
+                    searchFooter: !!searchFooter,
+                });
+                return;
+            }
+
+            memoActiveTab = tabName;
+            const noteActive = tabName === 'note';
+            noteTab.setAttribute('aria-selected', String(noteActive));
+            searchTab.setAttribute('aria-selected', String(!noteActive));
+            noteTab.tabIndex = noteActive ? 0 : -1;
+            searchTab.tabIndex = noteActive ? -1 : 0;
+            notePanel.hidden = !noteActive;
+            searchPanel.hidden = noteActive;
+            noteFooter.hidden = !noteActive;
+            searchFooter.hidden = noteActive;
+
+            if (!focusTarget) return;
+            const target = noteActive
+                ? document.getElementById('memo-textarea')
+                : document.getElementById('memo-knowledge-query');
+            if (target) {
+                target.focus();
+            } else {
+                console.error('[MEMO] 활성 탭의 포커스 대상을 찾지 못했습니다:', {
+                    tabName,
+                });
+            }
+        }
+
+        async function copyMemoKnowledgeTag(tag) {
+            const value = typeof tag === 'string' ? tag.trim() : '';
+            if (!value) {
+                console.error('[DANBOORU_KNOWLEDGE] 복사할 태그가 비어 있습니다:', { tag });
+                return;
+            }
+            try {
+                if (!navigator.clipboard || typeof navigator.clipboard.writeText !== 'function') {
+                    throw new Error('Clipboard API를 사용할 수 없습니다.');
+                }
+                await navigator.clipboard.writeText(value);
+                showToast(`태그 복사: ${value}`, 'success');
+            } catch (error) {
+                console.error('[DANBOORU_KNOWLEDGE] 태그 복사 실패:', error, { tag: value });
+                showToast('태그 복사에 실패했습니다.', 'error');
+            }
+        }
+
+        function appendMemoKnowledgeEvidenceField(container, label, value) {
+            if (!value) return;
+            const row = document.createElement('div');
+            const heading = document.createElement('strong');
+            heading.textContent = `${label}: `;
+            row.appendChild(heading);
+            row.appendChild(document.createTextNode(String(value)));
+            container.appendChild(row);
+        }
+
+        function renderMemoKnowledgeResult(data) {
+            const results = document.getElementById('memo-knowledge-results');
+            if (!results) {
+                console.error('[DANBOORU_KNOWLEDGE] 검색 결과 컨테이너를 찾지 못했습니다.', data);
+                return false;
+            }
+            if (!data || typeof data.answer !== 'string' || !Array.isArray(data.evidence)) {
+                console.error('[DANBOORU_KNOWLEDGE] 검색 결과 형식 오류:', data);
+                return false;
+            }
+            results.replaceChildren();
+
+            const answerCard = document.createElement('section');
+            answerCard.className = 'memo-knowledge-answer';
+            const answerHead = document.createElement('div');
+            answerHead.className = 'memo-knowledge-answer-head';
+            const statusLabels = {
+                answered: '근거 확인됨',
+                ambiguous: '복수 후보',
+                not_found: '근거 부족',
+            };
+            const confidenceLabels = { high: '높음', medium: '보통', low: '낮음' };
+            const answerLabel = document.createElement('span');
+            answerLabel.textContent = statusLabels[data.status] || '검색 답변';
+            const confidence = document.createElement('span');
+            confidence.textContent = `신뢰도 ${confidenceLabels[data.confidence] || data.confidence || '-'}`;
+            answerHead.append(answerLabel, confidence);
+            const answerText = document.createElement('p');
+            answerText.className = 'memo-knowledge-answer-text';
+            answerText.textContent = data.answer;
+            answerCard.append(answerHead, answerText);
+            results.appendChild(answerCard);
+
+            const meta = document.createElement('div');
+            meta.className = 'memo-knowledge-meta';
+            const searchQueries = Array.isArray(data.search_queries)
+                ? data.search_queries.filter(value => typeof value === 'string' && value.trim())
+                : [];
+            const lexicalTerms = Array.isArray(data.lexical_terms)
+                ? data.lexical_terms.filter(value => typeof value === 'string' && value.trim())
+                : [];
+            const categories = Array.isArray(data.categories)
+                ? data.categories.map(item => item && item.label).filter(Boolean)
+                : [];
+            const metaLines = [];
+            if (typeof data.interpretation === 'string' && data.interpretation.trim()) {
+                metaLines.push(`질문 해석: ${data.interpretation}`);
+            }
+            if (searchQueries.length) metaLines.push(`검색 단위: ${searchQueries.join(' · ')}`);
+            if (lexicalTerms.length) metaLines.push(`태그명 후보: ${lexicalTerms.join(' · ')}`);
+            if (categories.length) metaLines.push(`검색 범위: ${categories.join(' · ')}`);
+            metaLines.push(`검토 후보: ${Number(data.candidate_count || 0)}개 · ${Number(data.elapsed_ms || 0)}ms`);
+            meta.textContent = metaLines.join('\n');
+            meta.style.whiteSpace = 'pre-wrap';
+            results.appendChild(meta);
+
+            const evidenceList = document.createElement('div');
+            evidenceList.className = 'memo-evidence-list';
+            for (const item of data.evidence) {
+                if (!item || typeof item.tag !== 'string' || !item.tag.trim()) {
+                    console.error('[DANBOORU_KNOWLEDGE] 유효하지 않은 근거 행 스킵:', item);
+                    continue;
+                }
+                const displayTag = (
+                    typeof item.display_tag === 'string' && item.display_tag.trim()
+                        ? item.display_tag.trim()
+                        : item.tag.replaceAll('_', ' ')
+                );
+                const card = document.createElement('article');
+                card.className = 'memo-evidence-card';
+                const head = document.createElement('div');
+                head.className = 'memo-evidence-head';
+                const tag = document.createElement('span');
+                tag.className = 'memo-evidence-tag';
+                tag.textContent = displayTag;
+                const score = document.createElement('span');
+                score.className = 'memo-evidence-score';
+                const numericScore = Number(item.score);
+                score.textContent = Number.isFinite(numericScore)
+                    ? `유사도 ${(numericScore * 100).toFixed(1)}%`
+                    : '유사도 -';
+                const copyButton = document.createElement('button');
+                copyButton.type = 'button';
+                copyButton.className = 'memo-evidence-copy';
+                copyButton.textContent = '복사';
+                copyButton.setAttribute('aria-label', `${displayTag} 태그 복사`);
+                copyButton.addEventListener('click', () => void copyMemoKnowledgeTag(displayTag));
+                head.append(tag, score, copyButton);
+
+                const body = document.createElement('div');
+                body.className = 'memo-evidence-body';
+                appendMemoKnowledgeEvidenceField(
+                    body,
+                    '종류',
+                    [item.category_label, item.major].filter(Boolean).join(' · ')
+                );
+                appendMemoKnowledgeEvidenceField(body, '작품/하위 분류', item.minor);
+                appendMemoKnowledgeEvidenceField(body, '설명', item.definition);
+                if (Array.isArray(item.aliases) && item.aliases.length) {
+                    appendMemoKnowledgeEvidenceField(
+                        body,
+                        '별칭',
+                        item.aliases.map(value => String(value).replaceAll('_', ' ')).join(', ')
+                    );
+                }
+                card.append(head, body);
+                evidenceList.appendChild(card);
+            }
+            if (!evidenceList.childElementCount) {
+                const empty = document.createElement('div');
+                empty.className = 'memo-knowledge-help';
+                empty.textContent = '답변에 연결할 수 있는 RAG 근거 태그가 없습니다.';
+                evidenceList.appendChild(empty);
+            }
+            results.appendChild(evidenceList);
+            results.hidden = false;
+            return true;
+        }
+
+        async function searchDanbooruKnowledge(event) {
+            if (event && typeof event.preventDefault === 'function') event.preventDefault();
+            const input = document.getElementById('memo-knowledge-query');
+            const button = document.getElementById('memo-knowledge-submit');
+            const results = document.getElementById('memo-knowledge-results');
+            if (!input || !button || !results) {
+                console.error('[DANBOORU_KNOWLEDGE] 검색 UI 요소 누락:', {
+                    input: !!input,
+                    button: !!button,
+                    results: !!results,
+                });
+                return;
+            }
+            const question = input.value.trim();
+            if (!question) {
+                console.error('[DANBOORU_KNOWLEDGE] 빈 질문 검색 거부');
+                setMemoKnowledgeStatus('찾고 싶은 내용을 자연어로 입력하세요.', 'error');
+                input.focus();
+                return;
+            }
+
+            button.disabled = true;
+            button.textContent = '검색 중...';
+            results.hidden = true;
+            setMemoKnowledgeStatus(
+                'LLM이 질문을 분석하고 RAG 근거를 찾은 뒤 답을 검증하는 중입니다...',
+                'loading'
+            );
+            try {
+                const response = await fetch('/api/danbooru_rag/assist', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ question }),
+                });
+                const data = await response.json().catch(error => {
+                    console.error('[DANBOORU_KNOWLEDGE] 응답 JSON 해석 실패:', error, {
+                        status: response.status,
+                    });
+                    return null;
+                });
+                if (!response.ok || !data || data.success !== true) {
+                    console.error('[DANBOORU_KNOWLEDGE] 검색 API 실패:', {
+                        status: response.status,
+                        data,
+                        question,
+                    });
+                    throw new Error((data && data.error) || `HTTP ${response.status}`);
+                }
+                if (!renderMemoKnowledgeResult(data)) {
+                    throw new Error('검색 결과를 화면에 표시할 수 없습니다.');
+                }
+                setMemoKnowledgeStatus('RAG 근거로 답변을 만들었습니다.', 'done');
+            } catch (error) {
+                console.error('[DANBOORU_KNOWLEDGE] 자연어 태그 검색 실패:', error, {
+                    question,
+                });
+                setMemoKnowledgeStatus(`검색 실패: ${error.message || String(error)}`, 'error');
+                results.hidden = true;
+            } finally {
+                button.disabled = false;
+                button.textContent = '검색';
+            }
         }
 
         function updateMemoSettingStatus(checked) {
@@ -19615,13 +20104,20 @@
             const loaded = await loadMemoFromServer();
             if (overlay.hidden) return;
             const textarea = document.getElementById('memo-textarea');
-            if (textarea) {
+            const knowledgeInput = document.getElementById('memo-knowledge-query');
+            if (memoActiveTab === 'search' && knowledgeInput) {
+                knowledgeInput.focus();
+            } else if (memoActiveTab === 'note' && textarea) {
                 textarea.focus();
                 if (loaded) {
                     textarea.setSelectionRange(textarea.value.length, textarea.value.length);
                 }
             } else {
-                console.error('[MEMO] 포커스를 이동할 textarea가 없습니다.');
+                console.error('[MEMO] 활성 탭의 포커스 대상을 찾지 못했습니다:', {
+                    memoActiveTab,
+                    textarea: !!textarea,
+                    knowledgeInput: !!knowledgeInput,
+                });
             }
         }
 
@@ -19697,14 +20193,19 @@
         function initializeMemoPadUi() {
             const textarea = document.getElementById('memo-textarea');
             const queueContainer = document.getElementById('asset-queue-container');
-            if (!textarea || !queueContainer) {
+            const knowledgeInput = document.getElementById('memo-knowledge-query');
+            const knowledgeSubmit = document.getElementById('memo-knowledge-submit');
+            if (!textarea || !queueContainer || !knowledgeInput || !knowledgeSubmit) {
                 console.error('[MEMO] 초기화 UI 요소 누락:', {
                     textarea: !!textarea,
                     queueContainer: !!queueContainer,
+                    knowledgeInput: !!knowledgeInput,
+                    knowledgeSubmit: !!knowledgeSubmit,
                 });
                 return;
             }
             textarea.addEventListener('input', queueMemoSave);
+            switchMemoTab(memoActiveTab, false);
             window.addEventListener('resize', scheduleMemoLauncherPositionSync);
             window.addEventListener('beforeunload', flushMemoWithBeacon);
 

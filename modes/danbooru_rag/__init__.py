@@ -18,6 +18,11 @@ from .service import (
     DanbooruRagService,
     get_danbooru_rag_service,
 )
+from .assistant import (
+    DanbooruKnowledgeAssistant,
+    DanbooruKnowledgeError,
+    DanbooruKnowledgeQueryError,
+)
 
 __all__ = [
     "HF_ARCHIVE_PATH",
@@ -29,5 +34,8 @@ __all__ = [
     "DanbooruRagIndexInstaller",
     "DanbooruRagIndexNotInstalledError",
     "DanbooruRagService",
+    "DanbooruKnowledgeAssistant",
+    "DanbooruKnowledgeError",
+    "DanbooruKnowledgeQueryError",
     "get_danbooru_rag_service",
 ]

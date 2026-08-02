@@ -291,6 +291,107 @@ class DanbooruRagService:
                     f"Danbooru RAG 검색에 실패했습니다: {exc}"
                 ) from exc
 
+    def lexical_search(
+        self,
+        term: str,
+        *,
+        top_k: int = 20,
+        categories: set[int] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Find tag-name fragments supplied by the LLM retrieval planner."""
+        clean_term = str(term or "").strip().casefold().replace(" ", "_")
+        clean_term = clean_term.replace("%", "").replace("\\", "")[:200]
+        if not clean_term or not any(char.isalnum() for char in clean_term):
+            print(
+                "[DANBOORU_RAG] 유효하지 않은 문자열 검색어 거부: "
+                f"term={term!r}, normalized={clean_term!r}"
+            )
+            raise DanbooruRagError("Danbooru 태그 문자열 검색어가 올바르지 않습니다.")
+        safe_top_k = max(1, min(50, int(top_k)))
+        include_categories = (
+            {int(value) for value in categories} if categories else None
+        )
+        escaped_term = clean_term.replace("'", "''")
+        predicates = [f"tag LIKE '%{escaped_term}%'"]
+        if include_categories:
+            category_values = ", ".join(
+                str(value) for value in sorted(include_categories)
+            )
+            predicates.append(f"category IN ({category_values})")
+        where_clause = " AND ".join(f"({value})" for value in predicates)
+
+        with self._lock:
+            try:
+                table = self._get_table()
+                raw_results = (
+                    table.search()
+                    .where(where_clause)
+                    .limit(min(200, safe_top_k * 5))
+                    .to_list()
+                )
+                results: list[dict[str, Any]] = []
+                for row in raw_results:
+                    tag = str(row.get("tag") or "")
+                    if not tag:
+                        print(
+                            "[DANBOORU_RAG] 문자열 검색 행에 태그 없음: "
+                            f"term={clean_term!r}, row={row!r}"
+                        )
+                        continue
+                    folded_tag = tag.casefold()
+                    if folded_tag == clean_term:
+                        score = 1.0
+                    elif folded_tag.startswith(clean_term) or folded_tag.endswith(clean_term):
+                        score = 0.98
+                    else:
+                        score = 0.95
+                    aliases_value = row.get("aliases")
+                    results.append(
+                        {
+                            "tag": tag,
+                            "score": score,
+                            "category": int(row.get("category", 0)),
+                            "frequency": int(row.get("frequency", 0)),
+                            "major": str(row.get("major") or ""),
+                            "minor": str(row.get("minor") or ""),
+                            "definition": str(row.get("definition") or ""),
+                            "aliases": (
+                                list(aliases_value)
+                                if aliases_value is not None
+                                else []
+                            ),
+                        }
+                    )
+                results.sort(
+                    key=lambda item: (
+                        -float(item["score"]),
+                        -int(item["frequency"]),
+                        str(item["tag"]),
+                    )
+                )
+                if not results:
+                    print(
+                        "[DANBOORU_RAG] 문자열 검색 결과 없음: "
+                        f"term={clean_term!r}, categories="
+                        f"{sorted(include_categories) if include_categories else None}"
+                    )
+                self._last_error = ""
+                return results[:safe_top_k]
+            except DanbooruRagError:
+                raise
+            except Exception as exc:
+                self._last_error = f"{type(exc).__name__}: {exc}"
+                print(
+                    "[DANBOORU_RAG] 문자열 검색 실패: "
+                    f"term={clean_term!r}, categories="
+                    f"{sorted(include_categories) if include_categories else None}, "
+                    f"filter={where_clause!r}, error={self._last_error}"
+                )
+                traceback.print_exc()
+                raise DanbooruRagError(
+                    f"Danbooru 태그 문자열 검색에 실패했습니다: {exc}"
+                ) from exc
+
     def unload(self) -> dict[str, Any]:
         """Release in-process handles and model memory."""
         with self._lock:

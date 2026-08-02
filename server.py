@@ -101,6 +101,9 @@ from modes.character_maker_mode import (
     CharacterMakerService,
 )
 from modes.danbooru_rag import (
+    DanbooruKnowledgeAssistant,
+    DanbooruKnowledgeError,
+    DanbooruKnowledgeQueryError,
     DanbooruRagError,
     DanbooruRagIndexInstaller,
     DanbooruRagInstallError,
@@ -14867,6 +14870,54 @@ _character_maker_rag_install_lock = asyncio.Lock()
 _character_maker_rag_runtime_lock = asyncio.Lock()
 _character_maker_rag_service = get_danbooru_rag_service()
 _character_maker_rag_installer = DanbooruRagIndexInstaller()
+_danbooru_knowledge_assistant = DanbooruKnowledgeAssistant(
+    rag_service=_character_maker_rag_service,
+)
+
+
+async def handle_api_danbooru_knowledge_search(
+    request: web.Request,
+) -> web.Response:
+    try:
+        body = await request.json()
+        if not isinstance(body, dict):
+            print(
+                "[DANBOORU_KNOWLEDGE] 요청 본문 형식 오류: "
+                f"type={type(body).__name__}, value={body!r}"
+            )
+            raise DanbooruKnowledgeQueryError("검색 요청은 JSON 객체여야 합니다.")
+        result = await _danbooru_knowledge_assistant.answer(body.get("question"))
+        return web.json_response(result)
+    except DanbooruKnowledgeQueryError as exc:
+        print(
+            "[DANBOORU_KNOWLEDGE] 요청 거부: "
+            f"error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        return web.json_response(
+            {"success": False, "error": str(exc)},
+            status=400,
+        )
+    except DanbooruKnowledgeError as exc:
+        print(
+            "[DANBOORU_KNOWLEDGE] 검색 처리 실패: "
+            f"error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        return web.json_response(
+            {"success": False, "error": str(exc)},
+            status=500,
+        )
+    except Exception as exc:
+        print(
+            "[DANBOORU_KNOWLEDGE] 검색 처리 예외: "
+            f"error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        return web.json_response(
+            {"success": False, "error": f"Danbooru 지식 검색에 실패했습니다: {exc}"},
+            status=500,
+        )
 
 
 def _character_maker_rag_runtime_snapshot() -> dict[str, Any]:
@@ -15181,6 +15232,7 @@ app.router.add_post("/api/character_maker/session/{session_id}/accept", handle_a
 app.router.add_get("/api/character_maker/session/{session_id}/image/{revision_id}", handle_api_character_maker_image)
 app.router.add_post("/api/character_maker/session/{session_id}/confirm", handle_api_character_maker_confirm)
 app.router.add_post("/api/character_maker/rag/test", handle_api_character_maker_rag_test)
+app.router.add_post("/api/danbooru_rag/assist", handle_api_danbooru_knowledge_search)
 app.router.add_get("/api/character_maker/rag/dataset", handle_api_character_maker_rag_dataset_status)
 app.router.add_post("/api/character_maker/rag/install", handle_api_character_maker_rag_install)
 app.router.add_get(
