@@ -24,6 +24,15 @@ from modes.danbooru_rag.assistant import (
 from modes.danbooru_rag.service import DanbooruRagService
 
 
+@pytest.fixture(autouse=True)
+def lighbd_records(monkeypatch):
+    from modes import lighbd_service
+
+    records: list[dict] = []
+    monkeypatch.setattr(lighbd_service, "_log_lighbd_history", records.append)
+    return records
+
+
 class FakeRagService:
     def __init__(self, rows_by_query: dict[str, list[dict]]) -> None:
         self.rows_by_query = rows_by_query
@@ -80,7 +89,9 @@ def _row(
 
 
 @pytest.mark.asyncio
-async def test_two_pass_search_answers_general_tag_question_from_rag_only() -> None:
+async def test_two_pass_search_answers_general_tag_question_from_rag_only(
+    lighbd_records,
+) -> None:
     rag = FakeRagService(
         {
             "금발 머리 Danbooru 일반 태그": [
@@ -99,6 +110,9 @@ async def test_two_pass_search_answers_general_tag_question_from_rag_only() -> N
     async def fake_llm(task_key, messages, **kwargs):
         payload = json.loads(messages[-1]["content"])
         calls.append((task_key, payload))
+        kwargs["metadata_sink"].update(
+            {"completion_tokens": 12, "prompt_tokens": 34, "tps": 5.5}
+        )
         if len(calls) == 1:
             return json.dumps(
                 {
@@ -122,13 +136,24 @@ async def test_two_pass_search_answers_general_tag_question_from_rag_only() -> N
     assistant = DanbooruKnowledgeAssistant(rag_service=rag, llm_caller=fake_llm)
     result = await assistant.answer("금발 머리를 뜻하는 태그가 뭐지?")
 
-    assert [task for task, _ in calls] == [PLAN_TASK_KEY, ANSWER_TASK_KEY]
+    assert [task for task, _ in calls] == [
+        "danbooru_tag_search",
+        "danbooru_tag_search",
+    ]
+    assert PLAN_TASK_KEY == ANSWER_TASK_KEY == "danbooru_tag_search"
     assert rag.search_calls[0]["categories"] == {0}
     assert rag.lexical_calls[0]["term"] == "blonde hair"
     assert result["answer"].endswith("blonde hair입니다.")
     assert [item["tag"] for item in result["evidence"]] == ["blonde_hair"]
     assert result["evidence"][0]["display_tag"] == "blonde hair"
     assert calls[1][1]["candidate_pool"][0]["tag"] == "blonde_hair"
+    assert [record["call_name"] for record in lighbd_records] == [
+        "단부르 지식 검색 · 질문 분석",
+        "단부르 지식 검색 · 근거 선별",
+    ]
+    assert all(record["task_key"] == "danbooru_tag_search" for record in lighbd_records)
+    assert all(record["status"] == "ok" for record in lighbd_records)
+    assert all(record["completion_tokens"] == 12 for record in lighbd_records)
 
 
 @pytest.mark.asyncio
@@ -214,6 +239,46 @@ def test_grounded_answer_rejects_a_tag_outside_candidate_pool() -> None:
 
     assert parsed is None
     assert "RAG 후보에 없는 태그" in reason
+
+
+@pytest.mark.asyncio
+async def test_llm_retry_failure_keeps_original_response_in_details(
+    lighbd_records,
+) -> None:
+    async def fake_llm(_task_key, _messages, **kwargs):
+        kwargs["metadata_sink"].update(
+            {"completion_tokens": 7, "prompt_tokens": 11}
+        )
+        kwargs["on_attempt_failure"](
+            {
+                "phase": "primary",
+                "slot": "llm1",
+                "attempt": 1,
+                "total_attempts": 2,
+                "reason": "JSON 검증 실패",
+                "result": "원본 비정상 응답",
+            }
+        )
+        return "[LLM 실패] danbooru_tag_search primary 재시도 소진: JSON 검증 실패"
+
+    assistant = DanbooruKnowledgeAssistant(
+        rag_service=FakeRagService({}),
+        llm_caller=fake_llm,
+    )
+
+    with pytest.raises(DanbooruKnowledgeError):
+        await assistant._call_llm(
+            task_key="danbooru_tag_search",
+            call_name="단부르 지식 검색 · 질문 분석",
+            messages=[{"role": "user", "content": "질문"}],
+            validator=lambda _raw: (False, "JSON 검증 실패"),
+        )
+
+    assert len(lighbd_records) == 2
+    assert lighbd_records[0]["output"] == "원본 비정상 응답"
+    assert lighbd_records[0]["error"].startswith("[재시도 primary llm1 1/2]")
+    assert lighbd_records[1]["output"] == "원본 비정상 응답"
+    assert lighbd_records[1]["error"].startswith("[LLM 실패]")
 
 
 def test_prompt_display_format_preserves_project_character_and_copyright_syntax() -> None:
@@ -348,3 +413,17 @@ def test_memo_ui_exposes_llm_assisted_danbooru_search_tab() -> None:
     assert "copyMemoKnowledgeTag" in frontend
     assert ".replaceAll('_', ' ')" in frontend
     assert "Number(item.category) === 3" in frontend
+    assert "key: 'danbooru_tag_search'" in frontend
+    assert "label: '단부르 태그 검색'" in frontend
+
+
+def test_server_registers_one_dedicated_danbooru_llm_route() -> None:
+    import server
+
+    route = server.DEFAULT_CONFIG["llm_routing"]["danbooru_tag_search"]
+
+    assert route["primary"] == "llm1"
+    assert route["json_mode"] is True
+    assert route["max_retries"] == 1
+    assert "danbooru_tag_search_plan" not in server.DEFAULT_CONFIG["llm_routing"]
+    assert "danbooru_tag_search_answer" not in server.DEFAULT_CONFIG["llm_routing"]

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import datetime
 import json
 import time
 import traceback
@@ -13,8 +14,9 @@ from modes import llm_prompt_edit, llm_service
 from .service import DanbooruRagError, get_danbooru_rag_service
 
 
-PLAN_TASK_KEY = "character_maker_draft"
-ANSWER_TASK_KEY = "character_maker_feedback"
+DANBOORU_TAG_SEARCH_TASK_KEY = "danbooru_tag_search"
+PLAN_TASK_KEY = DANBOORU_TAG_SEARCH_TASK_KEY
+ANSWER_TASK_KEY = DANBOORU_TAG_SEARCH_TASK_KEY
 MAX_QUESTION_LENGTH = 1000
 MAX_SEARCH_QUERIES = 5
 RAG_RESULTS_PER_QUERY = 20
@@ -323,6 +325,50 @@ class DanbooruKnowledgeAssistant:
         self.rag_service = rag_service or get_danbooru_rag_service()
         self.llm_caller = llm_caller or llm_service.callLLMTask
 
+    @staticmethod
+    def _log_llm_history(
+        *,
+        task_key: str,
+        call_name: str,
+        messages: list[dict[str, str]],
+        output: Any,
+        started: float,
+        status: str,
+        error: str = "",
+        sink: dict[str, Any] | None = None,
+        llm_slot: str = "",
+    ) -> None:
+        try:
+            from modes.lighbd_service import _log_lighbd_history
+
+            usage = sink or {}
+            record = {
+                "ts": datetime.datetime.now().isoformat(timespec="seconds"),
+                "prompt_id": task_key,
+                "task_key": task_key,
+                "call_name": call_name,
+                "service": llm_service.routing_primary_service(task_key),
+                "model": llm_service.routing_primary_model(task_key),
+                "llm_slot": llm_slot,
+                "input": messages,
+                "output": output if isinstance(output, str) else str(output),
+                "completion_tokens": int(usage.get("completion_tokens") or 0),
+                "prompt_tokens": int(usage.get("prompt_tokens") or 0),
+                "elapsed": round(time.perf_counter() - started, 3),
+                "tps": float(usage.get("tps") or 0.0),
+                "status": status,
+            }
+            if error:
+                record["error"] = error
+            _log_lighbd_history(record)
+        except Exception as exc:
+            print(
+                "[DANBOORU_KNOWLEDGE] 자세히 이력 기록 실패: "
+                f"task={task_key!r}, call_name={call_name!r}, "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+
     async def _call_llm(
         self,
         *,
@@ -331,11 +377,48 @@ class DanbooruKnowledgeAssistant:
         messages: list[dict[str, str]],
         validator: Callable[[Any], tuple[bool, str]],
     ) -> str:
+        started = time.perf_counter()
+        sink: dict[str, Any] = {}
+        last_raw_result: str | None = None
         context = llm_service.create_llm_execution_context(
             task_key,
             call_name=call_name,
             json_mode=True,
         )
+
+        def on_attempt_failure(info: dict[str, Any]) -> None:
+            nonlocal last_raw_result
+            try:
+                attempt_raw = info.get("result")
+                if attempt_raw is not None:
+                    last_raw_result = str(attempt_raw)
+                phase = str(info.get("phase") or "primary")
+                slot = str(info.get("slot") or "")
+                attempt = info.get("attempt")
+                total = info.get("total_attempts")
+                failure_reason = str(info.get("reason") or "LLM 응답 검증 실패")
+                self._log_llm_history(
+                    task_key=task_key,
+                    call_name=call_name,
+                    messages=messages,
+                    output=str(attempt_raw or ""),
+                    started=started,
+                    status="error",
+                    error=(
+                        f"[재시도 {phase} {slot} {attempt}/{total}] "
+                        f"{failure_reason}"
+                    ),
+                    sink=dict(sink),
+                    llm_slot=slot,
+                )
+            except Exception as exc:
+                print(
+                    "[DANBOORU_KNOWLEDGE] 재시도 실패 이력 기록 예외: "
+                    f"stage={call_name!r}, info={info!r}, "
+                    f"error={type(exc).__name__}: {exc}"
+                )
+                traceback.print_exc()
+
         try:
             raw = await self.llm_caller(
                 task_key,
@@ -343,6 +426,8 @@ class DanbooruKnowledgeAssistant:
                 json_mode=True,
                 result_validator=validator,
                 execution_context=context,
+                metadata_sink=sink,
+                on_attempt_failure=on_attempt_failure,
             )
         except Exception as exc:
             print(
@@ -350,11 +435,31 @@ class DanbooruKnowledgeAssistant:
                 f"error={type(exc).__name__}: {exc}"
             )
             traceback.print_exc()
+            self._log_llm_history(
+                task_key=task_key,
+                call_name=call_name,
+                messages=messages,
+                output=last_raw_result or "",
+                started=started,
+                status="error",
+                error=f"{type(exc).__name__}: {exc}",
+                sink=sink,
+            )
             raise DanbooruKnowledgeError(f"{call_name} 중 LLM 호출에 실패했습니다: {exc}") from exc
         if not isinstance(raw, str) or not raw.strip():
             print(
                 f"[DANBOORU_KNOWLEDGE] LLM 빈 응답: stage={call_name!r}, "
                 f"type={type(raw).__name__}"
+            )
+            self._log_llm_history(
+                task_key=task_key,
+                call_name=call_name,
+                messages=messages,
+                output=last_raw_result or str(raw or ""),
+                started=started,
+                status="error",
+                error="LLM 응답이 비어 있습니다.",
+                sink=sink,
             )
             raise DanbooruKnowledgeError(f"{call_name} 중 LLM 응답이 비어 있습니다.")
         if raw.strip().startswith("[LLM 실패]"):
@@ -362,7 +467,26 @@ class DanbooruKnowledgeAssistant:
                 f"[DANBOORU_KNOWLEDGE] LLM 최종 실패: "
                 f"stage={call_name!r}, result={raw[:1000]!r}"
             )
+            self._log_llm_history(
+                task_key=task_key,
+                call_name=call_name,
+                messages=messages,
+                output=last_raw_result or raw,
+                started=started,
+                status="error",
+                error=raw,
+                sink=sink,
+            )
             raise DanbooruKnowledgeError(raw)
+        self._log_llm_history(
+            task_key=task_key,
+            call_name=call_name,
+            messages=messages,
+            output=raw,
+            started=started,
+            status="ok",
+            sink=sink,
+        )
         return raw
 
     async def _ensure_rag_ready(self) -> dict[str, Any]:

@@ -337,6 +337,9 @@ DEFAULT_CONFIG = {
         "character_maker_feedback": _llm_route_defaults(
             max_retries=1, fallback_max_retries=1, json_mode=True
         ),
+        "danbooru_tag_search": _llm_route_defaults(
+            max_retries=1, fallback_max_retries=1, json_mode=True
+        ),
         "edit_illustration_prompt":_llm_route_defaults(json_mode=True),  # 끄면 response_format 미전송(Cerebras/Gemma 루프 회피)
         "qwen_edit_translate":     _llm_route_defaults(max_retries=1),
         # 삽화 컨텍스트 파이프라인 역번역/CALL1/2/2-FIX/3. 메인 LLM/폴백은 외부 API 분기 탭에서 드롭박스로 선택.
