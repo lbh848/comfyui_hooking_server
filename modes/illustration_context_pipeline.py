@@ -2689,10 +2689,9 @@ def validate_complete_call2_output(
         if (
             not str(item.get("camera") or "").strip()
             or not str(item.get("scene") or "").strip()
-            or not (item.get("characters") or [])
         ):
             return fail(
-                f"{source} scene 필수 camera/scene/characters가 비어 있음: item={item!r}"
+                f"{source} scene 필수 camera/scene이 비어 있음: item={item!r}"
             )
     return descriptors, ""
 
@@ -2880,14 +2879,19 @@ def parse_call2_plan(
             }:
                 normalized_characters.append(name)
         scene_brief = str(item.get("scene_brief") or "").strip()
-        if not normalized_characters or not scene_brief:
+        if not scene_brief:
             reason = (
-                f"scene_plan[{index}] characters 또는 scene_brief가 비어 있음: "
-                f"characters={normalized_characters}, brief={scene_brief!r}"
+                f"scene_plan[{index}] scene_brief가 비어 있음: "
+                f"brief={scene_brief!r}"
             )
             if log_errors:
                 print(f"[ILLUST_CONTEXT:CALL2_PLAN] {reason}")
             return None, reason
+        if not normalized_characters and log_errors:
+            print(
+                f"[ILLUST_CONTEXT:CALL2_PLAN] 이름 있는 추적 캐릭터가 없는 장면 수용: "
+                f"plan={index}, anchor={anchor_segment!r}, brief={scene_brief!r}"
+            )
         scene_plan.append({
             "plan_id": str(item.get("plan_id") or f"S{index:03d}").strip() or f"S{index:03d}",
             "slot": slot,
@@ -3033,6 +3037,7 @@ def _parse_call2_detail_output(
     source: str,
     assigned_wardrobes_by_slot: dict[int, dict[str, dict]] | None = None,
     assigned_keyvis_plan: dict | None = None,
+    assigned_characters_by_slot: dict[int, list[str]] | None = None,
 ) -> tuple[list[dict], str]:
     local_toggles = deepcopy(toggles)
     local_toggles.update({
@@ -3078,13 +3083,30 @@ def _parse_call2_detail_output(
         if (
             not str(item.get("camera") or "").strip()
             or not str(item.get("scene") or "").strip()
-            or not (item.get("characters") or [])
         ):
-            return [], f"CALL2-DETAIL 필수 camera/scene/characters가 비어 있음: item={item!r}"
+            return [], f"CALL2-DETAIL 필수 camera/scene이 비어 있음: item={item!r}"
         try:
-            actual_slots.append(int(item.get("slot")))
+            slot = int(item.get("slot"))
         except Exception:
             return [], f"CALL2-DETAIL slot 파싱 실패: item={item!r}"
+        expected_characters = None
+        if assigned_characters_by_slot is not None:
+            expected_characters = [
+                str(name or "").strip()
+                for name in assigned_characters_by_slot.get(slot, [])
+                if str(name or "").strip()
+            ]
+        if expected_characters and not (item.get("characters") or []):
+            reason = (
+                f"CALL2-DETAIL 이름 있는 PLAN 캐릭터가 누락됨: "
+                f"slot={slot}, expected={expected_characters}"
+            )
+            print(
+                f"[ILLUST_CONTEXT:CALL2_DETAIL] {reason}: "
+                f"source={source}, item={item!r}"
+            )
+            return [], reason
+        actual_slots.append(slot)
     if len(actual_slots) != len(assigned_slots):
         return [], (
             f"CALL2-DETAIL 장면 수 불일치: assigned={assigned_slots}, actual={actual_slots}"
@@ -3240,6 +3262,10 @@ async def _run_parallel_call2_details(
             int(item["slot"]): deepcopy(item.get("wardrobe_snapshot") or {})
             for item in plans
         }
+        assigned_characters_by_slot = {
+            int(item["slot"]): list(item.get("characters") or [])
+            for item in plans
+        }
         assigned_keyvis_plan = deepcopy(keyvis_plan) if index == 1 and keyvis_plan else None
         messages = deepcopy(call2_context_messages)
         if messages and messages[0].get("role") == "system":
@@ -3254,8 +3280,11 @@ async def _run_parallel_call2_details(
                 f"scenes for assigned slots {assigned_slots}. Do not select, add, remove, or move a scene. "
                 "Copy every assigned slot exactly; the server will attach plan_id after slot validation. "
                 + keyvis_override
-                + "This shard-specific rule overrides global scene-count and "
-                "key-visual requirements above."
+                + "An assigned plan may have characters: []. That means no named tracked character is "
+                "present: output characters: [] for that scene, keep anonymous background people only "
+                "in scene/supplement, and do not invent a canonical character. This shard-specific rule "
+                "overrides any global requirement that every scene contain a key character. It also "
+                "overrides global scene-count and key-visual requirements above."
             )
         assigned_plan_payload = (
             "# ASSIGNED GLOBAL SCENE PLAN\n"
@@ -3279,6 +3308,8 @@ async def _run_parallel_call2_details(
                 "outfit_state, and supplement. wardrobe_snapshot is authoritative: copy each named "
                 "character's body_state, worn, and removed values exactly, and make visible attire tags "
                 "consistent with that snapshot. Never infer, replace, or advance wardrobe state in DETAIL. "
+                "When a plan has characters: [], preserve characters: [] and express anonymous people "
+                "only through scene tags and supplement. "
                 "Copy slot exactly into every scene object and preserve plan order. The server assigns "
                 "plan_id from the validated slot.\n\n"
                 "# OUTPUT FORMAT\n"
@@ -3297,6 +3328,7 @@ async def _run_parallel_call2_details(
                 f"CALL2-DETAIL-{index}-RETRY-CHECK",
                 assigned_wardrobes_by_slot,
                 assigned_keyvis_plan,
+                assigned_characters_by_slot,
             )
             if reason:
                 return False, reason
@@ -3325,6 +3357,7 @@ async def _run_parallel_call2_details(
             f"CALL2-DETAIL-{index}",
             assigned_wardrobes_by_slot,
             assigned_keyvis_plan,
+            assigned_characters_by_slot,
         )
         if not descriptors and str(reason).startswith("CALL2-DETAIL 권위 복장 충돌"):
             print(
@@ -3366,6 +3399,7 @@ async def _run_parallel_call2_details(
                 f"CALL2-DETAIL-{index}-WARDROBE-CORRECTION",
                 assigned_wardrobes_by_slot,
                 assigned_keyvis_plan,
+                assigned_characters_by_slot,
             )
             if reason:
                 print(
@@ -6095,8 +6129,11 @@ async def build_from_context(
                     "}\n\n"
                     "anchor_segment must be one exact Cxxx ID from the server map. The server reuses "
                     "CALL1 wardrobe events and tracked state to freeze each DETAIL outfit; do not repeat "
-                    "that data here. characters must contain every character intended to appear in that "
-                    "image, in canonical-name form.\n\n# SERVER SEGMENT MAP\n"
+                    "that data here. characters must contain every named tracked character intended to "
+                    "appear in that image, in canonical-name form. Use characters: [] when the visual beat "
+                    "contains no named tracked character; anonymous students, crowds, staff, or other "
+                    "background people belong in scene_brief and must not be given invented canonical "
+                    "names.\n\n# SERVER SEGMENT MAP\n"
                     + call2_segment_map
                 ),
             })

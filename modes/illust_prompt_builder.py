@@ -499,6 +499,59 @@ class IllustPromptBuilder:
         return detected
 
     @staticmethod
+    def resolve_multi_char_character_order(
+        ordered_names: list,
+        char_names: list,
+        character_aliases: dict[str, str] | None = None,
+    ) -> tuple[list[str], list[str | None]]:
+        """Resolve registered mask names while preserving arbitrary prompt-only names.
+
+        The first result is the canonical left-to-right order used by prompt and mask
+        metadata.  The parallel second result contains the matched card name or None
+        when the character exists only in CALL2/mask prompts.
+        """
+        resolved_order: list[str] = []
+        matched_card_order: list[str | None] = []
+        for index, value in enumerate(ordered_names or [], start=1):
+            raw_name = str(value or "").strip()
+            if not raw_name:
+                error = f"마스크 캐릭터 이름이 비어 있습니다: index={index}"
+                print(f"[MULTI_CHAR:PROMPT] {error}, ordered={ordered_names!r}")
+                raise ValueError(error)
+            matched_cards = IllustPromptBuilder.detect_characters_from_name(
+                raw_name,
+                char_names,
+                character_aliases,
+            )
+            if len(matched_cards) > 1:
+                error = (
+                    f"마스크 캐릭터 이름이 여러 카드에 연결되었습니다: "
+                    f"name={raw_name!r}, matched={matched_cards}"
+                )
+                print(f"[MULTI_CHAR:PROMPT] {error}")
+                raise ValueError(error)
+            if matched_cards:
+                resolved_order.append(matched_cards[0])
+                matched_card_order.append(matched_cards[0])
+                continue
+            resolved_order.append(raw_name)
+            matched_card_order.append(None)
+            print(
+                f"[MULTI_CHAR:PROMPT] 미등록 캐릭터를 프롬프트 전용으로 유지: "
+                f"name={raw_name!r}, card_metadata=disabled"
+            )
+
+        folded = [name.casefold() for name in resolved_order]
+        if len(set(folded)) != len(folded):
+            error = (
+                f"카드 연결 후 마스크 캐릭터 이름이 중복되었습니다: "
+                f"source={ordered_names}, resolved={resolved_order}"
+            )
+            print(f"[MULTI_CHAR:PROMPT] {error}")
+            raise ValueError(error)
+        return resolved_order, matched_card_order
+
+    @staticmethod
     def detect_characters(
         text_sections: list,
         char_names: list,
@@ -633,6 +686,24 @@ class IllustPromptBuilder:
         메타데이터: CHAR_LIST, CACHE_PATH, FACE_ID, LORA, HRF, IMG, FD/HD/ED, END
         """
         characters = bot.get("characters", [])
+        registered_character_names = {
+            str(character.get("name") or "").strip().casefold()
+            for character in characters
+            if isinstance(character, dict) and str(character.get("name") or "").strip()
+        }
+        registered_detected_chars = [
+            name for name in detected_chars
+            if str(name or "").strip().casefold() in registered_character_names
+        ]
+        prompt_only_chars = [
+            name for name in detected_chars
+            if str(name or "").strip().casefold() not in registered_character_names
+        ]
+        if prompt_only_chars:
+            print(
+                f"[MULTI_CHAR:PROMPT] 미등록 캐릭터 카드 메타데이터 제외: "
+                f"names={prompt_only_chars}, excluded=[cache, face_id, lora, face_lora]"
+            )
 
         # ─── 캐릭터 수에 따른 LoRA 프로필 선택 ───
         is_multi = len(detected_chars) >= 2
@@ -838,7 +909,7 @@ class IllustPromptBuilder:
         positive += "\n" + ",".join(detected_chars)
 
         # CACHE_PATH
-        cache_data = self.build_cache_path(detected_chars, bot_name)
+        cache_data = self.build_cache_path(registered_detected_chars, bot_name)
         positive += "\n[CACHE_PATH]"
         positive += "\n" + json.dumps(cache_data, ensure_ascii=False)
 
@@ -850,7 +921,7 @@ class IllustPromptBuilder:
         positive += f"\n[FACE_ID_STR]"
         positive += f"\n{face_id_str}"
 
-        face_id_data = self.build_face_id_dir(detected_chars, bot_name, settings)
+        face_id_data = self.build_face_id_dir(registered_detected_chars, bot_name, settings)
         positive += "\n[FACE_ID_DIR]"
         positive += "\n" + json.dumps(face_id_data, ensure_ascii=False)
 

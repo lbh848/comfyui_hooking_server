@@ -33,6 +33,19 @@ def _toon_for_slots(slots):
     return "<lb-xnai>\nscenes[%d]:\n%s\n</lb-xnai>" % (len(slots), "\n".join(rows))
 
 
+def _toon_without_named_characters(slot=0):
+    return (
+        "<lb-xnai>\n"
+        "scenes[1]:\n"
+        "  - camera: wide shot, straight-on\n"
+        "    characters: []\n"
+        "    scene: interior, classroom, students, teacher, warm afternoon light\n"
+        f"    slot: {slot}\n"
+        "    supplement: Students rise while the teacher exits through a wooden door.\n"
+        "</lb-xnai>"
+    )
+
+
 def test_context_and_result_transport_markers():
     session_id = "session_12345678"
     context_payload = {
@@ -221,6 +234,35 @@ def test_call2_plan_accepts_compact_server_derived_fields_and_keyvis_plan():
     }
 
 
+def test_call2_plan_accepts_scene_without_named_tracked_characters(capsys):
+    raw = json.dumps({
+        "scene_plan": [{
+            "anchor_segment": "C001",
+            "characters": [],
+            "scene_brief": (
+                "Wide classroom establishing shot with students rising and the teacher exiting"
+            ),
+        }],
+        "keyvis_plan": None,
+    })
+
+    plan, reason = pipeline.parse_call2_plan(
+        raw,
+        pipeline.merged_toggles({
+            "scene_min": 1,
+            "scene_max": 1,
+            "key_visual": False,
+        }),
+        "Lunch bell rings.\n\n[Slot 0]",
+        segment_slot_map={"C001": 0},
+    )
+
+    assert reason == ""
+    assert plan["scene_plan"][0]["characters"] == []
+    assert plan["scene_plan"][0]["planned_outfits"] == {}
+    assert "이름 있는 추적 캐릭터가 없는 장면 수용" in capsys.readouterr().out
+
+
 def test_scene_plan_wardrobe_snapshot_uses_plan_over_tracked_timeline():
     plans = [{
         "plan_id": "S001",
@@ -333,6 +375,36 @@ def test_call2_detail_assigns_plan_ids_from_validated_slots():
     assert reason == ""
     assert [item["slot"] for item in descriptors] == [4, 9]
     assert [item["plan_id"] for item in descriptors] == ["S021", "S022"]
+
+
+def test_call2_detail_accepts_empty_characters_for_characterless_plan():
+    descriptors, reason = pipeline._parse_call2_detail_output(
+        _toon_without_named_characters(4),
+        pipeline.merged_toggles({"key_visual": False}),
+        [4],
+        ["S021"],
+        "TEST-CALL2-DETAIL-NO-NAMED-CHARACTERS",
+        assigned_characters_by_slot={4: []},
+    )
+
+    assert reason == ""
+    assert len(descriptors) == 1
+    assert descriptors[0]["slot"] == 4
+    assert descriptors[0]["characters"] == []
+
+
+def test_call2_detail_still_requires_characters_for_named_plan():
+    descriptors, reason = pipeline._parse_call2_detail_output(
+        _toon_without_named_characters(4),
+        pipeline.merged_toggles({"key_visual": False}),
+        [4],
+        ["S021"],
+        "TEST-CALL2-DETAIL-NAMED-CHARACTER-REQUIRED",
+        assigned_characters_by_slot={4: ["Hana"]},
+    )
+
+    assert descriptors == []
+    assert "이름 있는 PLAN 캐릭터가 누락됨" in reason
 
 
 def test_call2_detail_rejects_wardrobe_different_from_plan_snapshot():
@@ -696,6 +768,70 @@ async def test_call2_pipeline_returns_empty_without_fallback_when_all_slots_disc
 
 
 @pytest.mark.asyncio
+async def test_call2_pipeline_generates_characterless_scene_without_fallback(monkeypatch):
+    call_names = []
+    detail_messages = []
+
+    async def fake_pipeline_call(call_name, messages, *args, **kwargs):
+        call_names.append(call_name)
+        if call_name == "CALL2-PLAN":
+            return json.dumps({
+                "scene_plan": [{
+                    "anchor_segment": "C001",
+                    "characters": [],
+                    "scene_brief": (
+                        "Wide classroom establishing shot with students rising and the teacher exiting"
+                    ),
+                }],
+                "keyvis_plan": None,
+            })
+        if call_name == "CALL2-DETAIL 1/1":
+            detail_messages.extend(messages)
+            return _toon_without_named_characters(0)
+        raise AssertionError(f"unexpected call: {call_name}")
+
+    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
+    result = await pipeline.build_from_context(
+        {
+            "session_id": "call2_characterless_scene_test",
+            "target_slotted": (
+                "The lunch bell rings. Students rise while the teacher exits.\n\n[Slot 0]"
+            ),
+            "chats": [
+                {"role": "user", "data": "Continue."},
+                {
+                    "role": "char",
+                    "data": "The lunch bell rings. Students rise while the teacher exits.",
+                },
+            ],
+        },
+        {
+            "call1_enabled": False,
+            "call2_parallel_enabled": True,
+            "call2_parallel_max_concurrency": 1,
+            "call2_parallel_slow_retry_enabled": False,
+            "scene_min": 1,
+            "scene_max": 1,
+            "key_visual": False,
+            "call3_enabled": False,
+            "speak_enabled": False,
+        },
+        "### Hana\n-default_outfit\nschool uniform",
+        extra_costume="### Hana\n-default_outfit\nschool uniform",
+        extra_names="Hana",
+        backtranslate_names="Hana",
+    )
+
+    assert call_names == ["CALL2-PLAN", "CALL2-DETAIL 1/1"]
+    assert len(result["items"]) == 1
+    assert result["items"][0]["characters"] == []
+    assert result["call2_fallback_stage"] == ""
+    assert "students" in result["items"][0]["scene"]
+    detail_prompt = "\n".join(str(message.get("content") or "") for message in detail_messages)
+    assert "preserve characters: []" in detail_prompt
+
+
+@pytest.mark.asyncio
 async def test_call2_detail_expands_compact_keyvis_plan_in_first_shard(monkeypatch):
     seen_messages = []
     detail_output = _toon_for_slots([4]).replace(
@@ -774,6 +910,24 @@ def test_complete_call2_validation_rejects_one_shard_as_global_fallback():
 
     assert descriptors == []
     assert "PLAN scene slot 불일치" in reason
+
+
+def test_complete_call2_validation_accepts_scene_without_named_characters():
+    descriptors, reason = pipeline.validate_complete_call2_output(
+        _toon_without_named_characters(0),
+        pipeline.merged_toggles({
+            "scene_min": 1,
+            "scene_max": 1,
+            "key_visual": False,
+        }),
+        "Lunch bell rings.\n\n[Slot 0]",
+        "TEST-CALL2-NO-NAMED-CHARACTERS",
+        [0],
+    )
+
+    assert reason == ""
+    assert len(descriptors) == 1
+    assert descriptors[0]["characters"] == []
 
 
 @pytest.mark.asyncio

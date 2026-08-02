@@ -1,4 +1,5 @@
 import asyncio
+import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -154,6 +155,132 @@ async def test_process_prompt_uses_queued_runtime_snapshot(monkeypatch):
         }
         assert "_illustration_runtime_snapshot" not in server.prompts[prompt_id]
         assert server.prompts[prompt_id]["_deferred_finalize"]["word_rules"] == []
+    finally:
+        server.prompts.pop(prompt_id, None)
+
+
+@pytest.mark.asyncio
+async def test_process_prompt_allows_unregistered_multi_char_as_prompt_only(monkeypatch):
+    import importlib
+
+    from modes import multi_char_mask
+
+    bot_mode_module = importlib.import_module("modes.bot_mode")
+
+    prompt_id = "multi-char-prompt-only-character-test"
+    captured = {}
+    registered_name = "Registered Hero"
+    prompt_only_name = "Passing Stranger"
+    bot = {
+        "name": "mixed-character-bot",
+        "characters": [{
+            "name": registered_name,
+            "gender_tag": "1girl",
+            "loras_group": [{
+                "source": "asset",
+                "lora_path": "hero.safetensors",
+                "trigger": "hero trigger",
+                "BASE": "anima",
+            }],
+        }],
+        "illust_settings_group": {},
+        "illust_settings_solo": {},
+    }
+    bot_data = {
+        "bots": [bot],
+        "positive_whitelist": [],
+        "positive_blacklist": [],
+    }
+    raw_positive = (
+        "[Positive]\n"
+        "[SETUP]\nwide shot, classroom\n"
+        "[CHAR]\ngirl, silver hair | boy, black hair\n"
+        "[SUPPLEMENT]\ntwo people standing apart\n"
+        f"[NAME]\n{registered_name}, {prompt_only_name}"
+    )
+    layout = {
+        "background_prompt": "wide shot, classroom",
+        "composition_prompt": "two people standing apart",
+        "regions": [{
+            "name": registered_name,
+            "character_prompt": "girl, silver hair, school uniform",
+            "x": 0.0,
+            "y": 0.0,
+            "width": 0.5,
+            "height": 1.0,
+        }, {
+            "name": prompt_only_name,
+            "character_prompt": "boy, black hair, black jacket",
+            "x": 0.5,
+            "y": 0.0,
+            "width": 0.5,
+            "height": 1.0,
+        }],
+    }
+    raw_body = {
+        "illustration_provider": "comfy",
+        "illustration_defer_postprocess": True,
+        "illustration_multi_char": {
+            "enable": True,
+            "characters": [
+                {"name": registered_name, "positive": "girl, silver hair"},
+                {"name": prompt_only_name, "positive": "boy, black hair"},
+            ],
+            "character_order": [registered_name, prompt_only_name],
+            "layout": layout,
+            "mask_location": multi_char_mask.DEFAULT_MASK_LOCATION,
+        },
+    }
+    server.prompts[prompt_id] = {
+        "status": "running",
+        "prompt": {},
+        "outputs": {},
+        "filename": None,
+        "save_node_id": "9",
+        "image_bytes": None,
+        "_illustration_runtime_snapshot": {
+            "bot_name": bot["name"],
+            "provider": "comfy",
+            "illustration_workflow_type": "v3",
+            "clamp_enabled": False,
+            "word_rules": [],
+        },
+    }
+
+    def fake_extract(_prompt, title):
+        return raw_positive if title == "긍정프롬프트" else "lowres"
+
+    async def fake_generate(positive, negative, **kwargs):
+        captured["positive"] = positive
+        captured["negative"] = negative
+        return b"raw-image", {}
+
+    monkeypatch.setattr(server, "extract_prompts_by_title", fake_extract)
+    monkeypatch.setattr(server, "generate_image_with_prompt", fake_generate)
+    monkeypatch.setattr(server, "log_to_file", lambda *args, **kwargs: None)
+    monkeypatch.setattr(bot_mode_module, "_load_bot_data", lambda: bot_data)
+    monkeypatch.setattr(bot_mode_module, "_load_lb_extra", lambda _bot_name: [])
+    monkeypatch.setattr(bot_mode_module, "_load_patch_settings", lambda _bot_name: {})
+    monkeypatch.setattr(server.asset_mode, "_tags", {})
+
+    try:
+        await server.process_prompt(prompt_id, {}, raw_body)
+
+        blocks = server.llm_prompt_edit.parse_blocks(captured["positive"])
+        multi_payload = json.loads(blocks["MULTI_CHAR"])
+        cache_payload = json.loads(blocks["CACHE_PATH"])
+        face_id_payload = json.loads(blocks["FACE_ID_DIR"])
+        assert blocks["CHAR_LIST"] == f"{registered_name},{prompt_only_name}"
+        assert multi_payload["enable"] is True
+        assert multi_payload["char_name_list"] == [registered_name, prompt_only_name]
+        assert multi_payload["char_inform"][1] == "boy, black hair, black jacket"
+        assert [entry["CHAR"] for entry in cache_payload["list"]] == [registered_name]
+        assert [entry["CHAR"] for entry in face_id_payload["list"]] == [registered_name]
+        assert raw_body["illustration_multi_char"]["character_order"] == [
+            registered_name,
+            prompt_only_name,
+        ]
+        assert server.prompts[prompt_id]["_deferred_finalize"]["word_rule_character_count"] == 2
     finally:
         server.prompts.pop(prompt_id, None)
 

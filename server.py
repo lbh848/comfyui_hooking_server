@@ -3184,6 +3184,19 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
             isinstance(queued_multi_char, dict)
             and bool(queued_multi_char.get("enable"))
         )
+        queued_multi_characters = [
+            character
+            for character in (
+                queued_multi_char.get("characters")
+                if isinstance(queued_multi_char, dict)
+                else []
+            ) or []
+            if isinstance(character, dict)
+        ]
+        queued_multi_character_names = [
+            str(character.get("name") or "").strip()
+            for character in queued_multi_characters
+        ]
         if multi_char_requested and (
             not bot_name
             or illustration_provider != "comfy"
@@ -3235,6 +3248,11 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                         char_names,
                         character_aliases,
                     )
+            if multi_char_requested and queued_multi_character_names:
+                # Word-rule conditions describe the actual image population.  A
+                # prompt-only character has no card, but still occupies one mask
+                # region and therefore counts as a character without name heuristics.
+                detected_before_rules = list(queued_multi_character_names)
             rule_condition_character_count = len(detected_before_rules)
             word_rule_character_count = rule_condition_character_count
             print(
@@ -3289,7 +3307,11 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                         character_aliases,
                     )
                 print(f"[ILLUST] 감지된 캐릭터: {detected} (방식: {'NAME 정확매칭' if sections.get('name') else '폴백 스캔'})")
-                scene_character_count = len(detected)
+                scene_character_count = (
+                    len(queued_multi_character_names)
+                    if multi_char_requested and queued_multi_character_names
+                    else len(detected)
+                )
                 word_rule_character_count = scene_character_count
                 if scene_character_count != rule_condition_character_count:
                     print(
@@ -3306,11 +3328,7 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                 multi_char_prompt_context = None
                 if multi_char_requested:
                     try:
-                        queued_characters = [
-                            character
-                            for character in (queued_multi_char.get("characters") or [])
-                            if isinstance(character, dict)
-                        ]
+                        queued_characters = list(queued_multi_characters)
                         queued_names = [
                             str(character.get("name") or "").strip()
                             for character in queued_characters
@@ -3333,45 +3351,33 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                                 f"declared={declared_order}, layout={ordered_names}"
                             )
 
-                        canonical_order = []
-                        for raw_name in ordered_names:
-                            matched_cards = builder.detect_characters_from_name(
-                                raw_name,
+                        canonical_order, matched_card_order = (
+                            builder.resolve_multi_char_character_order(
+                                ordered_names,
                                 char_names,
                                 character_aliases,
                             )
-                            if len(matched_cards) != 1:
-                                raise ValueError(
-                                    f"마스크 캐릭터 이름을 카드에 연결하지 못했습니다: "
-                                    f"name={raw_name!r}, matched={matched_cards}"
-                                )
-                            canonical_order.append(matched_cards[0])
-                        if len({name.casefold() for name in canonical_order}) != len(
-                            canonical_order
-                        ):
-                            raise ValueError(
-                                f"여러 마스크 캐릭터가 같은 카드로 연결되었습니다: "
-                                f"mask={ordered_names}, cards={canonical_order}"
-                            )
+                        )
                         canonical_multi_snapshot = multi_char_mask.remap_multi_char_snapshot(
                             queued_multi_char,
                             canonical_order,
                         )
 
                         detected_by_name = {name.casefold(): name for name in detected}
+                        registered_card_order = [
+                            name for name in matched_card_order if name is not None
+                        ]
                         if set(detected_by_name) != {
-                            name.casefold() for name in canonical_order
+                            name.casefold() for name in registered_card_order
                         }:
                             raise ValueError(
-                                f"RAW 감지 캐릭터와 마스크 캐릭터가 다릅니다: "
+                                f"RAW 감지 등록 캐릭터와 마스크 등록 캐릭터가 다릅니다: "
                                 f"detected={detected}, mask={ordered_names}, "
-                                f"cards={canonical_order}"
+                                f"cards={registered_card_order}"
                             )
-                        # 이후 CHAR_LIST/캐시/LoRA/얼굴 태그까지 모두 마스크의 왼쪽→오른쪽 순서.
-                        detected = [
-                            detected_by_name[name.casefold()]
-                            for name in canonical_order
-                        ]
+                        # CHAR_LIST와 regional prompt는 모든 인물을 유지한다. 카드
+                        # 전용 캐시/FaceID/LoRA는 빌더가 registered subset만 사용한다.
+                        detected = list(canonical_order)
 
                         queued_by_name = {
                             str(character.get("name") or "").strip().casefold(): character
@@ -3416,7 +3422,10 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                         if not separated_composition_prompt:
                             raise ValueError("구도 선행 프롬프트가 단어 규칙 처리 후 비어 있습니다")
                         char_inform = []
-                        for name, card_name in zip(ordered_names, canonical_order):
+                        for name, card_name in zip(
+                            ordered_names,
+                            matched_card_order,
+                        ):
                             character = queued_by_name.get(name.casefold())
                             if character is None:
                                 raise ValueError(f"큐에서 캐릭터 태그를 찾지 못했습니다: {name!r}")
@@ -3448,7 +3457,7 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                             if not tags_for_character:
                                 raise ValueError(f"캐릭터별 태그가 비어 있습니다: {name!r}")
                             char_inform.append(tags_for_character)
-                            if name.casefold() != card_name.casefold():
+                            if card_name and name.casefold() != card_name.casefold():
                                 print(
                                     f"[MULTI_CHAR:PROMPT] 인식 이름을 캐릭터 카드에 연결: "
                                     f"source={name!r}, card={card_name!r}"
@@ -3463,8 +3472,8 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                                 "mask_fingerprint"
                             ],
                         }
-                        # 마스크 픽셀 기하는 그대로 두고 백업/재생성용 이름과 지문만
-                        # 실제 카드 이름에 맞춘다. 이후 [MULTI_CHAR] 검증도 이 스냅샷을 쓴다.
+                        # 마스크 픽셀 기하는 그대로 두고 등록 인물은 카드 이름으로,
+                        # 미등록 인물은 원래 이름으로 백업/재생성 스냅샷을 유지한다.
                         queued_multi_char = canonical_multi_snapshot
                         raw_body["illustration_multi_char"] = copy.deepcopy(
                             canonical_multi_snapshot

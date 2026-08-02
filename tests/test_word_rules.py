@@ -302,6 +302,78 @@ class RawPromptWordRulesTest(unittest.TestCase):
             ],
         )
 
+    def test_multi_char_name_resolution_preserves_any_unregistered_name(self):
+        resolved, matched_cards = IllustPromptBuilder.resolve_multi_char_character_order(
+            ["Hero Alias", "Passing Stranger", "Visiting Scholar"],
+            ["Registered Hero"],
+            {"hero alias": "Registered Hero"},
+        )
+
+        self.assertEqual(
+            resolved,
+            ["Registered Hero", "Passing Stranger", "Visiting Scholar"],
+        )
+        self.assertEqual(matched_cards, ["Registered Hero", None, None])
+
+    def test_multi_char_prompt_only_character_has_no_card_metadata(self):
+        bot = {
+            "characters": [{
+                "name": "Registered Hero",
+                "gender_tag": "1girl",
+                "loras_group": [{
+                    "source": "asset",
+                    "lora_path": "hero.safetensors",
+                    "trigger": "hero trigger",
+                    "BASE": "anima",
+                }],
+            }],
+        }
+        positive = IllustPromptBuilder().build_positive_prompt(
+            "shared setup",
+            "combined character tags",
+            "shared supplement",
+            ["Registered Hero", "Passing Stranger"],
+            bot,
+            {},
+            {"face_id_activate": True},
+            "test-bot",
+            multi_char_context={
+                "enable": True,
+                "char_name_list": ["Registered Hero", "Passing Stranger"],
+                "char_inform": ["hero visual tags", "stranger visual tags"],
+                "background_prompt": "shared background",
+                "composition_prompt": "two people standing apart",
+                "mask_fingerprint": "a" * 64,
+            },
+        )
+
+        def json_block(name, next_name):
+            return json.loads(
+                positive.split(f"[{name}]\n", 1)[1].split(f"\n[{next_name}]", 1)[0]
+            )
+
+        self.assertIn("[CHAR_LIST]\nRegistered Hero,Passing Stranger", positive)
+        self.assertEqual(
+            [entry["CHAR"] for entry in json_block("CACHE_PATH", "FACE_ID_ACTIVATE")["list"]],
+            ["Registered Hero"],
+        )
+        self.assertEqual(
+            [entry["CHAR"] for entry in json_block("FACE_ID_DIR", "FACE_CROP_TOP")["list"]],
+            ["Registered Hero"],
+        )
+        self.assertEqual(
+            [entry["CHAR"] for entry in json_block("LORA_DATA", "FACE_LORA_ACTIVATE")["list"]],
+            ["Registered Hero"],
+        )
+        multi_payload = json_block("MULTI_CHAR", "HRF_ACTIVATE")
+        self.assertTrue(multi_payload["enable"])
+        self.assertEqual(
+            multi_payload["char_name_list"],
+            ["Registered Hero", "Passing Stranger"],
+        )
+        self.assertEqual(multi_payload["char_inform"][1], "stranger visual tags")
+        self.assertEqual(multi_payload["char_trigger_list"][1], [])
+
     def test_spaced_speaker_name_is_replaced_without_touching_dialogue(self):
         rules = [{
             "type": "replace",
