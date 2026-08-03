@@ -11585,6 +11585,17 @@
                             <button onclick="openBotBatchAddModal()" style="width:100%; margin-top:4px; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">일괄추가</button>
                             <button onclick="openBotAssetCharImportModal()" disabled style="width:100%; margin-top:4px; background:var(--surface2); color:var(--text2); border:1px solid var(--border); padding:4px 8px; border-radius:4px; cursor:not-allowed; font-size:0.75rem; opacity:0.5;">에셋에서 캐릭터 가져오기</button>
                         </div>
+                        <div id="bot-one-click-workflow-group" style="background:linear-gradient(145deg, rgba(14,165,233,0.10), rgba(124,58,237,0.08)); border:1px solid color-mix(in srgb, var(--accent) 35%, var(--border)); border-radius:10px; padding:10px; margin-top:8px;">
+                            <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:7px;">
+                                <div>
+                                    <div class="section-title" style="margin-bottom:2px;">삽화 데이터 준비</div>
+                                    <div style="font-size:0.67rem; color:var(--text2); line-height:1.35;">아래 작업을 선택 캐릭터에 순서대로 실행합니다.</div>
+                                </div>
+                                <span style="font-size:0.62rem; color:#38BDF8; border:1px solid rgba(56,189,248,0.35); border-radius:999px; padding:2px 6px; white-space:nowrap;">6단계</span>
+                            </div>
+                            <button id="btn-bot-one-click-settings" onclick="openBotOneClickSettings()" style="width:100%; background:linear-gradient(90deg,#0284C7,#7C3AED); color:#fff; border:none; padding:7px 10px; border-radius:6px; cursor:pointer; font-size:0.78rem; font-weight:700; box-shadow:0 3px 10px rgba(2,132,199,0.22);">원클릭 설정</button>
+                            <div id="bot-one-click-status" style="display:none; margin-top:6px; padding:6px 7px; border-radius:5px; background:rgba(15,23,42,0.28); color:var(--text2); font-size:0.68rem; line-height:1.4;"></div>
+                            <div style="border-top:1px solid color-mix(in srgb, var(--accent) 22%, var(--border)); margin-top:9px; padding-top:1px;">
                         <div style="background:rgba(76,175,80,0.08); border-radius:8px; padding:10px; margin-top:8px;">
                             <div class="section-title">태그 분석</div>
                             <button id="btn-bot-analyze-all" onclick="botAnalyzeAllChars()" style="width:100%; background:#1B5E20; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">선택 캐릭터 일괄 태그 분석</button>
@@ -11618,6 +11629,8 @@
                             <div class="section-title">LLM 기반 얼굴/눈 태그 정제</div>
                             <button id="btn-bot-llm-batch" onclick="botLlmBatchAnalyze()" style="width:100%; background:#7C3AED; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">선택 캐릭터 일괄 정제</button>
                             <div id="bot-llm-batch-status" style="font-size:0.7rem; color:var(--text2); margin-top:4px; display:none;"></div>
+                        </div>
+                            </div>
                         </div>
                         <div style="background:rgba(13,71,161,0.08); border-radius:8px; padding:10px; margin-top:8px;">
                             <div class="section-title">캐릭터 로라 자동 세팅</div>
@@ -57105,6 +57118,553 @@
             } catch (e) { el.textContent = ''; }
         }
 
+        // ─── 삽화 데이터 준비 원클릭 ────────────────────────
+        const BOT_ONE_CLICK_STAGES = [
+            ['tag_analysis', '태그 분석'],
+            ['negative', '부정 프롬프트 적용'],
+            ['data_patch', '데이터 패치'],
+            ['embedding', '프로그램용 embedding'],
+            ['face_batch', '얼굴 이미지 일괄 작업'],
+            ['llm_refine', 'LLM 얼굴/눈 태그 정제'],
+        ];
+        let _botOneClickRun = null;
+        let _botOneClickDataPatchWait = null;
+        let _botOneClickLlmWait = null;
+
+        async function _botOneClickJson(url, options) {
+            const response = await fetch(url, options);
+            const text = await response.text();
+            let data;
+            try {
+                data = text ? JSON.parse(text) : {};
+            } catch (e) {
+                console.error('[BOT_ONE_CLICK] JSON 응답 해석 실패:', url, response.status, text.slice(0, 300), e);
+                throw new Error(`응답 형식 오류 (HTTP ${response.status})`);
+            }
+            if (!response.ok || data?.error || data?.success === false) {
+                const reason = data?.error || data?.message || `HTTP ${response.status}`;
+                console.error('[BOT_ONE_CLICK] 요청 실패:', url, reason, data);
+                throw new Error(reason);
+            }
+            return data;
+        }
+
+        function _botOneClickEnsureModal() {
+            let modal = document.getElementById('bot-one-click-modal');
+            if (!modal) {
+                modal = document.createElement('div');
+                modal.id = 'bot-one-click-modal';
+                document.body.appendChild(modal);
+            }
+            modal.style.cssText = 'position:fixed; inset:0; z-index:10030; display:flex; align-items:center; justify-content:center; padding:18px; background:rgba(0,0,0,0.74); backdrop-filter:blur(3px);';
+            return modal;
+        }
+
+        function closeBotOneClickModal() {
+            const modal = document.getElementById('bot-one-click-modal');
+            if (modal) modal.remove();
+        }
+
+        async function openBotOneClickSettings() {
+            if (_botOneClickRun?.running) {
+                _botOneClickRenderProgress();
+                return;
+            }
+            if (!botCurrentBot) {
+                showToast('봇을 먼저 선택하세요.', 'error');
+                return;
+            }
+            const bot = (botData?.bots || []).find(item => item.name === botCurrentBot);
+            const characters = bot?.characters || [];
+            if (!characters.length) {
+                showToast('선택할 캐릭터가 없습니다.', 'error');
+                return;
+            }
+
+            const modal = _botOneClickEnsureModal();
+            modal.innerHTML = '<div style="padding:24px 30px; border:1px solid var(--border); border-radius:12px; background:var(--surface); color:var(--text);">원클릭 설정을 불러오는 중...</div>';
+
+            let patchSettings = {face_crop_top: 1.0, face_crop_bottom: 1.0, emb_target: '대표만'};
+            let presets = {};
+            try {
+                const [patchResult, tagsResult] = await Promise.all([
+                    _botOneClickJson(`/api/bot_mode/patch_settings?bot=${encodeURIComponent(botCurrentBot)}`),
+                    _botOneClickJson('/api/asset_mode/tags'),
+                ]);
+                patchSettings = {...patchSettings, ...(patchResult || {})};
+                presets = tagsResult?.negative_presets || {};
+                assetTags = tagsResult;
+            } catch (e) {
+                console.error('[BOT_ONE_CLICK] 설정 자료 로드 실패:', e);
+                showToast('일부 설정을 불러오지 못해 기본값으로 표시합니다.', 'warning');
+                if (assetTags?.negative_presets) presets = assetTags.negative_presets;
+            }
+
+            const eligibleCount = characters.filter(char => (char.rep_images || []).length > 0).length;
+            const presetNames = Object.keys(presets);
+            const firstPreset = presetNames[0] || '';
+            const presetOptions = presetNames.map(name =>
+                `<option value="${escAttr(name)}">${escHtml(name)} (${(presets[name] || []).length}개)</option>`
+            ).join('');
+            const rows = characters.map(char => {
+                const reps = char.rep_images || [];
+                const enabled = reps.length > 0;
+                const imageUrl = enabled
+                    ? `/api/bot_mode/image/${encodeURIComponent(botCurrentBot)}/${encodeURIComponent(char.name)}/${encodeURIComponent(reps[0])}`
+                    : '';
+                return `<label class="bot-one-click-char-card" data-name="${escAttr(char.name)}" data-enabled="${enabled ? '1' : '0'}"
+                    style="display:flex; align-items:center; gap:9px; padding:8px 9px; border:1px solid ${enabled ? 'rgba(56,189,248,0.45)' : 'var(--border)'}; border-radius:7px; background:${enabled ? 'rgba(14,165,233,0.08)' : 'var(--surface2)'}; cursor:${enabled ? 'pointer' : 'not-allowed'}; opacity:${enabled ? 1 : 0.5};">
+                    <input type="checkbox" class="bot-one-click-char-check" data-name="${escAttr(char.name)}" ${enabled ? 'checked' : 'disabled'} onchange="updateBotOneClickSelectionUi()" style="width:17px; height:17px; cursor:${enabled ? 'pointer' : 'not-allowed'};">
+                    <div style="width:48px; height:48px; flex-shrink:0; overflow:hidden; display:flex; align-items:center; justify-content:center; border:1px solid var(--border); border-radius:6px; background:var(--surface2); color:var(--text2); font-size:0.62rem;">
+                        ${imageUrl ? `<img src="${escAttr(imageUrl)}" loading="lazy" alt="" style="width:100%; height:100%; object-fit:cover;">` : '이미지 없음'}
+                    </div>
+                    <div style="min-width:0; flex:1;">
+                        <div style="font-size:0.81rem; font-weight:650; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escHtml(char.name)}</div>
+                        <div style="font-size:0.67rem; color:var(--text2); margin-top:2px;">대표 이미지 ${reps.length}장${enabled ? '' : ' · 실행 불가'}</div>
+                    </div>
+                </label>`;
+            }).join('');
+
+            modal.innerHTML = `<div style="width:min(980px,96vw); max-height:92vh; display:flex; flex-direction:column; overflow:hidden; border:1px solid color-mix(in srgb,var(--accent) 35%,var(--border)); border-radius:14px; background:var(--surface); box-shadow:0 18px 60px rgba(0,0,0,0.55);">
+                <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:14px; padding:16px 19px; border-bottom:1px solid var(--border); background:linear-gradient(90deg,rgba(2,132,199,0.11),rgba(124,58,237,0.10));">
+                    <div>
+                        <div style="font-size:1.05rem; font-weight:750;">원클릭 설정 · ${escHtml(botCurrentBot)}</div>
+                        <div style="font-size:0.72rem; color:var(--text2); margin-top:4px;">캐릭터와 두 가지 필수 설정만 고르면 6단계를 순서대로 진행합니다.</div>
+                    </div>
+                    <button onclick="closeBotOneClickModal()" aria-label="닫기" style="background:none; border:none; color:var(--text2); font-size:1.35rem; cursor:pointer;">&times;</button>
+                </div>
+                <div style="padding:15px 18px; overflow-y:auto; flex:1; display:grid; grid-template-columns:minmax(310px,1.15fr) minmax(280px,0.85fr); gap:14px;">
+                    <section style="min-width:0;">
+                        <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px;">
+                            <div>
+                                <div style="font-size:0.86rem; font-weight:700;">1. 캐릭터 선택</div>
+                                <div id="bot-one-click-selected-count" style="font-size:0.68rem; color:#38BDF8; margin-top:2px;">${eligibleCount}명 선택</div>
+                            </div>
+                            <div style="display:flex; gap:5px;">
+                                <button onclick="botOneClickSelectCharacters(true)" style="padding:3px 9px; border:1px solid var(--border); border-radius:5px; background:var(--surface2); color:var(--text); cursor:pointer; font-size:0.68rem;">전체 선택</button>
+                                <button onclick="botOneClickSelectCharacters(false)" style="padding:3px 9px; border:1px solid var(--border); border-radius:5px; background:var(--surface2); color:var(--text); cursor:pointer; font-size:0.68rem;">전체 해제</button>
+                            </div>
+                        </div>
+                        <input id="bot-one-click-char-search" type="search" placeholder="캐릭터 이름 검색" oninput="filterBotOneClickCharacters()" style="width:100%; box-sizing:border-box; margin-bottom:7px; padding:7px 9px; border:1px solid var(--border); border-radius:6px; background:var(--surface2); color:var(--text); font-size:0.76rem;">
+                        <div id="bot-one-click-char-list" style="display:grid; grid-template-columns:repeat(auto-fill,minmax(210px,1fr)); gap:6px; max-height:430px; overflow-y:auto; padding-right:2px;">${rows}</div>
+                    </section>
+                    <section style="display:flex; flex-direction:column; gap:11px; min-width:0;">
+                        <div style="padding:11px; border:1px solid rgba(156,39,176,0.32); border-radius:8px; background:rgba(156,39,176,0.07);">
+                            <div style="font-size:0.84rem; font-weight:700; margin-bottom:8px;">2. 부정 태그 설정</div>
+                            <label style="display:block; font-size:0.7rem; color:var(--text2); margin-bottom:4px;">프리셋</label>
+                            <select id="bot-one-click-negative-preset" onchange="updateBotOneClickNegativePreset()" style="width:100%; padding:7px 8px; border:1px solid var(--border); border-radius:5px; background:var(--surface2); color:var(--text); font-size:0.77rem;">
+                                ${presetOptions || '<option value="">직접 입력</option>'}
+                            </select>
+                            <label style="display:block; font-size:0.7rem; color:var(--text2); margin:8px 0 4px;">적용할 부정 태그 · 직접 수정 가능</label>
+                            <textarea id="bot-one-click-negative-tags" rows="5" placeholder="부정 태그를 입력하세요" style="width:100%; box-sizing:border-box; resize:vertical; padding:7px 8px; border:1px solid var(--border); border-radius:5px; background:var(--surface2); color:var(--text); font-size:0.74rem; line-height:1.4;">${escHtml((presets[firstPreset] || []).join(', '))}</textarea>
+                            <div style="font-size:0.65rem; color:var(--text2); margin-top:5px; line-height:1.35;">같은 값이 대표 이미지와 FACE 이미지에 적용됩니다.</div>
+                        </div>
+                        <div style="padding:11px; border:1px solid rgba(0,121,107,0.35); border-radius:8px; background:rgba(0,121,107,0.07);">
+                            <div style="font-size:0.84rem; font-weight:700; margin-bottom:8px;">3. FACE 크롭 설정</div>
+                            <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+                                <label style="display:flex; flex-direction:column; gap:4px;"><span style="font-size:0.68rem; color:var(--text2);">CROP_TOP</span><input id="bot-one-click-crop-top" type="number" min="0.1" max="10" step="0.1" value="${Number(patchSettings.face_crop_top) || 1}" style="padding:7px; border:1px solid var(--border); border-radius:5px; background:var(--surface2); color:var(--text);"></label>
+                                <label style="display:flex; flex-direction:column; gap:4px;"><span style="font-size:0.68rem; color:var(--text2);">CROP_BOTTOM</span><input id="bot-one-click-crop-bottom" type="number" min="0.1" max="10" step="0.1" value="${Number(patchSettings.face_crop_bottom) || 1}" style="padding:7px; border:1px solid var(--border); border-radius:5px; background:var(--surface2); color:var(--text);"></label>
+                                <label style="display:flex; flex-direction:column; gap:4px;"><span style="font-size:0.68rem; color:var(--text2);">검출 confidence</span><input id="bot-one-click-confidence" type="number" min="0" max="1" step="0.05" value="0.3" style="padding:7px; border:1px solid var(--border); border-radius:5px; background:var(--surface2); color:var(--text);"></label>
+                                <label style="display:flex; align-items:center; gap:7px; padding:7px 8px; border:1px solid var(--border); border-radius:5px; background:var(--surface2); cursor:pointer;"><input id="bot-one-click-overwrite" type="checkbox"><span style="font-size:0.7rem; line-height:1.25;">기존 FACE<br>새로 추출</span></label>
+                            </div>
+                            <div style="font-size:0.65rem; color:var(--text2); margin-top:6px; line-height:1.35;">이번 실행에만 적용되며 기존 패치 설정 파일은 변경하지 않습니다.</div>
+                        </div>
+                        <div style="padding:8px 10px; border-radius:7px; background:var(--surface2); color:var(--text2); font-size:0.67rem; line-height:1.45;">
+                            태그 분석 → 부정 적용 → 데이터 패치 → embedding → 얼굴 태그/부정 작업 → LLM 정제
+                        </div>
+                    </section>
+                </div>
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px 18px; border-top:1px solid var(--border);">
+                    <div id="bot-one-click-form-error" style="font-size:0.7rem; color:var(--error);"></div>
+                    <div style="display:flex; gap:7px; flex-shrink:0;"><button onclick="closeBotOneClickModal()" style="padding:7px 15px; border:1px solid var(--border); border-radius:6px; background:var(--surface2); color:var(--text); cursor:pointer;">취소</button><button id="bot-one-click-start-btn" onclick="startBotOneClick()" style="padding:8px 19px; border:none; border-radius:6px; background:linear-gradient(90deg,#0284C7,#7C3AED); color:#fff; cursor:pointer; font-weight:750;">원클릭 시작</button></div>
+                </div>
+            </div>`;
+            modal.dataset.embTarget = patchSettings.emb_target || '대표만';
+            updateBotOneClickSelectionUi();
+        }
+
+        function botOneClickSelectCharacters(checked) {
+            document.querySelectorAll('.bot-one-click-char-check:not([disabled])').forEach(input => { input.checked = checked; });
+            updateBotOneClickSelectionUi();
+        }
+
+        function updateBotOneClickSelectionUi() {
+            const checks = Array.from(document.querySelectorAll('.bot-one-click-char-check:not([disabled])'));
+            const selected = checks.filter(input => input.checked);
+            const count = document.getElementById('bot-one-click-selected-count');
+            if (count) count.textContent = `${selected.length}명 선택 / 실행 가능 ${checks.length}명`;
+            document.querySelectorAll('.bot-one-click-char-card[data-enabled="1"]').forEach(card => {
+                const input = card.querySelector('.bot-one-click-char-check');
+                card.style.borderColor = input?.checked ? 'rgba(56,189,248,0.55)' : 'var(--border)';
+                card.style.background = input?.checked ? 'rgba(14,165,233,0.08)' : 'var(--surface2)';
+            });
+        }
+
+        function filterBotOneClickCharacters() {
+            const query = (document.getElementById('bot-one-click-char-search')?.value || '').trim().toLocaleLowerCase();
+            document.querySelectorAll('.bot-one-click-char-card').forEach(card => {
+                const name = (card.dataset.name || '').toLocaleLowerCase();
+                card.style.display = !query || name.includes(query) ? 'flex' : 'none';
+            });
+        }
+
+        function updateBotOneClickNegativePreset() {
+            const select = document.getElementById('bot-one-click-negative-preset');
+            const textarea = document.getElementById('bot-one-click-negative-tags');
+            if (!select || !textarea) return;
+            const tags = assetTags?.negative_presets?.[select.value] || [];
+            textarea.value = tags.join(', ');
+        }
+
+        function _botOneClickSetSidebarStatus(text, tone) {
+            const status = document.getElementById('bot-one-click-status');
+            if (!status) return;
+            status.style.display = 'block';
+            status.textContent = text;
+            status.style.color = tone === 'error' ? 'var(--error)' : tone === 'success' ? '#22C55E' : tone === 'warning' ? '#F59E0B' : 'var(--text2)';
+        }
+
+        function _botOneClickStageEntry(key) {
+            return _botOneClickRun?.stages?.find(stage => stage.key === key);
+        }
+
+        function _botOneClickUpdateStage(key, status, detail) {
+            const stage = _botOneClickStageEntry(key);
+            if (!stage) return;
+            stage.status = status;
+            stage.detail = detail || '';
+            _botOneClickRenderProgress();
+            const index = _botOneClickRun.stages.findIndex(item => item.key === key) + 1;
+            if (status === 'running') _botOneClickSetSidebarStatus(`${index}/6 ${stage.label} 진행 중...`, 'normal');
+        }
+
+        function _botOneClickRenderProgress() {
+            if (!_botOneClickRun) return;
+            const modal = _botOneClickEnsureModal();
+            const run = _botOneClickRun;
+            const icon = {pending: '○', running: '◉', completed: '✓', warning: '!', failed: '×'};
+            const color = {pending: 'var(--text2)', running: '#38BDF8', completed: '#22C55E', warning: '#F59E0B', failed: '#EF5350'};
+            const rows = run.stages.map((stage, index) => `<div style="display:flex; align-items:flex-start; gap:10px; padding:10px 11px; border:1px solid ${stage.status === 'running' ? 'rgba(56,189,248,0.5)' : 'var(--border)'}; border-radius:7px; background:${stage.status === 'running' ? 'rgba(14,165,233,0.08)' : 'var(--surface2)'};">
+                <div style="width:24px; height:24px; display:flex; align-items:center; justify-content:center; flex-shrink:0; border-radius:50%; border:1px solid ${color[stage.status]}; color:${color[stage.status]}; font-size:0.76rem; font-weight:800;">${icon[stage.status]}</div>
+                <div style="min-width:0; flex:1;"><div style="font-size:0.8rem; font-weight:650; color:${color[stage.status]};">${index + 1}. ${escHtml(stage.label)}</div><div style="font-size:0.68rem; color:var(--text2); margin-top:3px; line-height:1.35; white-space:pre-wrap;">${escHtml(stage.detail || (stage.status === 'pending' ? '대기 중' : ''))}</div></div>
+            </div>`).join('');
+            const finished = !run.running;
+            const warnings = run.stages.filter(stage => stage.status === 'warning' || stage.status === 'failed').length;
+            modal.innerHTML = `<div style="width:min(680px,94vw); max-height:90vh; display:flex; flex-direction:column; overflow:hidden; border:1px solid var(--border); border-radius:13px; background:var(--surface); box-shadow:0 18px 60px rgba(0,0,0,0.55);">
+                <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px; padding:16px 18px; border-bottom:1px solid var(--border); background:linear-gradient(90deg,rgba(2,132,199,0.11),rgba(124,58,237,0.10));"><div><div style="font-size:1rem; font-weight:750;">${finished ? (warnings ? '원클릭 작업 완료 · 확인 필요' : '원클릭 작업 완료') : '원클릭 작업 진행 중'}</div><div style="font-size:0.7rem; color:var(--text2); margin-top:3px;">${escHtml(run.botName)} · ${run.charNames.length}명</div></div><button onclick="closeBotOneClickModal()" style="background:none; border:none; color:var(--text2); font-size:1.3rem; cursor:pointer;">&times;</button></div>
+                <div style="padding:14px 18px; overflow-y:auto; display:flex; flex-direction:column; gap:7px;">${rows}</div>
+                <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; padding:12px 18px; border-top:1px solid var(--border);"><div style="font-size:0.68rem; color:var(--text2);">${finished ? (warnings ? `경고 ${warnings}단계 · 나머지 작업은 계속 처리됨` : '모든 단계가 완료되었습니다.') : '창을 닫아도 작업은 백그라운드에서 계속됩니다.'}</div><button onclick="closeBotOneClickModal()" style="padding:7px 16px; border:none; border-radius:6px; background:${finished ? '#00796B' : 'var(--surface2)'}; color:var(--text); cursor:pointer; font-weight:650;">${finished ? '확인' : '백그라운드로'}</button></div>
+            </div>`;
+        }
+
+        async function startBotOneClick() {
+            if (_botOneClickRun?.running) {
+                showToast('이미 원클릭 작업이 진행 중입니다.', 'warning');
+                return;
+            }
+            const charNames = Array.from(document.querySelectorAll('.bot-one-click-char-check:checked')).map(input => input.dataset.name).filter(Boolean);
+            const negativeTags = (document.getElementById('bot-one-click-negative-tags')?.value || '').trim();
+            const cropTop = Number(document.getElementById('bot-one-click-crop-top')?.value);
+            const cropBottom = Number(document.getElementById('bot-one-click-crop-bottom')?.value);
+            const confidence = Number(document.getElementById('bot-one-click-confidence')?.value);
+            const overwrite = !!document.getElementById('bot-one-click-overwrite')?.checked;
+            const errorEl = document.getElementById('bot-one-click-form-error');
+            let validationError = '';
+            if (!charNames.length) validationError = '최소 한 명의 캐릭터를 선택하세요.';
+            else if (!negativeTags) validationError = '적용할 부정 태그를 선택하거나 입력하세요.';
+            else if (!Number.isFinite(cropTop) || cropTop < 0.1 || cropTop > 10) validationError = 'CROP_TOP은 0.1~10 범위여야 합니다.';
+            else if (!Number.isFinite(cropBottom) || cropBottom < 0.1 || cropBottom > 10) validationError = 'CROP_BOTTOM은 0.1~10 범위여야 합니다.';
+            else if (!Number.isFinite(confidence) || confidence < 0 || confidence > 1) validationError = 'confidence는 0~1 범위여야 합니다.';
+            if (validationError) {
+                if (errorEl) errorEl.textContent = validationError;
+                showToast(validationError, 'error');
+                return;
+            }
+
+            const modal = document.getElementById('bot-one-click-modal');
+            _botOneClickRun = {
+                running: true,
+                botName: botCurrentBot,
+                charNames,
+                negativeTags,
+                cropTop,
+                cropBottom,
+                confidence,
+                overwrite,
+                embTarget: modal?.dataset.embTarget || '대표만',
+                stages: BOT_ONE_CLICK_STAGES.map(([key, label]) => ({key, label, status: 'pending', detail: ''})),
+            };
+            const button = document.getElementById('btn-bot-one-click-settings');
+            if (button) button.textContent = '원클릭 진행 보기';
+            _botOneClickRenderProgress();
+            try {
+                await _runBotOneClickPipeline(_botOneClickRun);
+            } catch (e) {
+                console.error('[BOT_ONE_CLICK] 파이프라인 예외:', e);
+                const runningStage = _botOneClickRun.stages.find(stage => stage.status === 'running');
+                if (runningStage) {
+                    runningStage.status = 'failed';
+                    runningStage.detail = e.message || String(e);
+                }
+            } finally {
+                _botOneClickRun.running = false;
+                const warningCount = _botOneClickRun.stages.filter(stage => stage.status === 'warning' || stage.status === 'failed').length;
+                if (button) button.textContent = '원클릭 설정';
+                _botOneClickSetSidebarStatus(warningCount ? `원클릭 완료 · 확인 필요 ${warningCount}단계` : `원클릭 완료 · ${charNames.length}명`, warningCount ? 'warning' : 'success');
+                _botOneClickRenderProgress();
+                showToast(warningCount ? `원클릭 작업 완료 (${warningCount}단계 확인 필요)` : '원클릭 작업이 모두 완료되었습니다.', warningCount ? 'warning' : 'success');
+                if (botCurrentBot === _botOneClickRun.botName && typeof renderBotCharacters === 'function') renderBotCharacters();
+            }
+        }
+
+        async function _botOneClickRunStage(key, task) {
+            _botOneClickUpdateStage(key, 'running', '준비 중...');
+            try {
+                const result = await task();
+                _botOneClickUpdateStage(key, result?.warning ? 'warning' : 'completed', result?.detail || '완료');
+            } catch (e) {
+                console.error(`[BOT_ONE_CLICK:${key}] 실패:`, e);
+                _botOneClickUpdateStage(key, 'warning', `실패: ${e.message || e}\n다음 단계는 계속 진행합니다.`);
+            }
+        }
+
+        async function _runBotOneClickPipeline(run) {
+            await _botOneClickRunStage('tag_analysis', () => _runBotOneClickRepresentativeAnalysis(run));
+            await _botOneClickRunStage('negative', () => _runBotOneClickRepresentativeNegative(run));
+            await _botOneClickRunStage('data_patch', () => _runBotOneClickDataPatch(run));
+            await _botOneClickRunStage('embedding', () => _runBotOneClickEmbedding(run));
+            await _botOneClickRunStage('face_batch', () => _runBotOneClickFaceBatch(run));
+            await _botOneClickRunStage('llm_refine', () => _runBotOneClickLlmRefine(run));
+        }
+
+        function _botOneClickTrackTagBatch(batchId, label, total, source) {
+            return new Promise(resolve => {
+                let settled = false;
+                const finish = result => {
+                    if (settled) return;
+                    settled = true;
+                    clearTimeout(timer);
+                    resolve(result);
+                };
+                const timer = setTimeout(() => {
+                    console.error('[BOT_ONE_CLICK] 태그 배치 대기 시간 초과:', batchId, label);
+                    delete _tagBatches[batchId];
+                    finish({success: 0, fail: total, timeout: true});
+                }, 30 * 60 * 1000);
+                _startTagBatch(batchId, label, total, source, {finalizeFn: finish});
+            });
+        }
+
+        async function _runBotOneClickRepresentativeAnalysis(run) {
+            const preview = await _botOneClickJson(`/api/bot_mode/rep_preview?bot=${encodeURIComponent(run.botName)}&character=`);
+            const selected = new Set(run.charNames);
+            const groups = new Map(run.charNames.map(name => [name, []]));
+            (preview.images || []).forEach(image => {
+                if (selected.has(image.character)) groups.get(image.character).push(image.filename);
+            });
+            const waits = [];
+            let queued = 0;
+            for (const [charName, filenames] of groups) {
+                if (!filenames.length) continue;
+                const result = await _botOneClickJson('/api/bot_mode/batch_analyze_rep', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({bot: run.botName, character: charName, filenames}),
+                });
+                const total = Number(result.total || result.count || 0);
+                queued += total;
+                if (result.batch_id && total) waits.push(_botOneClickTrackTagBatch(result.batch_id, `원클릭 태그 분석 ${charName}`, total, 'bot_rep'));
+            }
+            if (!queued) throw new Error('분석할 대표 이미지가 없습니다.');
+            _botOneClickUpdateStage('tag_analysis', 'running', `${queued}장 큐 처리 중...`);
+            const results = await Promise.all(waits);
+            const failed = results.reduce((sum, result) => sum + Number(result.fail || 0), 0);
+            return {warning: failed > 0, detail: `${queued}장 처리 완료${failed ? ` · 실패 ${failed}장` : ''}`};
+        }
+
+        async function _runBotOneClickRepresentativeNegative(run) {
+            const preview = await _botOneClickJson(`/api/bot_mode/rep_preview?bot=${encodeURIComponent(run.botName)}&character=`);
+            const selected = new Set(run.charNames);
+            const groups = new Map(run.charNames.map(name => [name, []]));
+            (preview.images || []).forEach(image => {
+                if (selected.has(image.character)) groups.get(image.character).push(image.filename);
+            });
+            let success = 0;
+            let failed = 0;
+            for (const [charName, filenames] of groups) {
+                if (!filenames.length) continue;
+                const result = await _botOneClickJson('/api/bot_mode/batch_set_negative', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({bot: run.botName, character: charName, negative_tags: run.negativeTags, filenames}),
+                });
+                success += Number(result.success_count || 0);
+                failed += Number(result.fail_count || 0);
+                _botOneClickUpdateStage('negative', 'running', `${success}장 적용${failed ? ` · 실패 ${failed}장` : ''}`);
+            }
+            if (!success && !failed) throw new Error('부정 태그를 적용할 대표 이미지가 없습니다.');
+            return {warning: failed > 0, detail: `대표 이미지 ${success}장 적용${failed ? ` · 실패 ${failed}장` : ''}`};
+        }
+
+        function _botOneClickCreateNamedWait(kind, botName, names) {
+            const waiter = {kind, botName, pending: new Set(names), success: [], failed: [], timer: null, resolve: null};
+            waiter.promise = new Promise(resolve => { waiter.resolve = resolve; });
+            waiter.finish = () => {
+                clearTimeout(waiter.timer);
+                if (kind === 'data_patch' && _botOneClickDataPatchWait === waiter) _botOneClickDataPatchWait = null;
+                if (kind === 'llm' && _botOneClickLlmWait === waiter) _botOneClickLlmWait = null;
+                waiter.resolve({success: waiter.success, failed: waiter.failed, timeout: false});
+            };
+            waiter.mark = (name, ok, error) => {
+                if (!waiter.pending.has(name)) return;
+                waiter.pending.delete(name);
+                (ok ? waiter.success : waiter.failed).push(ok ? name : {name, error: error || ''});
+                if (!waiter.pending.size) waiter.finish();
+            };
+            waiter.timer = setTimeout(() => {
+                const pending = [...waiter.pending];
+                console.error(`[BOT_ONE_CLICK] ${kind} 완료 이벤트 대기 시간 초과:`, pending);
+                pending.forEach(name => waiter.mark(name, false, '완료 이벤트 대기 시간 초과'));
+            }, 30 * 60 * 1000);
+            if (!waiter.pending.size) waiter.finish();
+            return waiter;
+        }
+
+        function _handleBotOneClickDataPatchProgress(data) {
+            const waiter = _botOneClickDataPatchWait;
+            if (!waiter || data?.bot_name !== waiter.botName || !['completed', 'failed'].includes(data?.phase)) return;
+            waiter.mark(data.char_name, data.phase === 'completed', data.error);
+            const done = waiter.success.length + waiter.failed.length;
+            _botOneClickUpdateStage('data_patch', 'running', `${done}/${done + waiter.pending.size}명 완료${waiter.failed.length ? ` · 실패 ${waiter.failed.length}명` : ''}`);
+        }
+
+        async function _runBotOneClickDataPatch(run) {
+            const patchResult = await _botOneClickJson('/api/bot_mode/data_patch', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({bot_name: run.botName, char_names: run.charNames}),
+            });
+            const waiter = _botOneClickCreateNamedWait('data_patch', run.botName, run.charNames);
+            _botOneClickDataPatchWait = waiter;
+            for (const charName of run.charNames) {
+                try {
+                    await _botOneClickJson('/api/queue/add', {
+                        method: 'POST', headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({
+                            type: 'data_patch_utility',
+                            label: `원클릭 데이터 패치 (${charName})`,
+                            params: {
+                                bot_name: run.botName,
+                                char_name: charName,
+                                patch_settings: {face_crop_top: run.cropTop, face_crop_bottom: run.cropBottom, emb_target: run.embTarget},
+                            },
+                        }),
+                    });
+                } catch (e) {
+                    console.error('[BOT_ONE_CLICK] 데이터 패치 큐 추가 실패:', charName, e);
+                    waiter.mark(charName, false, `큐 추가 실패: ${e.message || e}`);
+                }
+            }
+            _botOneClickUpdateStage('data_patch', 'running', `${run.charNames.length}명 FACE 생성 대기 중...`);
+            const result = await waiter.promise;
+            return {warning: result.failed.length > 0, detail: `${patchResult.message || '파일 패치 완료'} · FACE 성공 ${result.success.length}명${result.failed.length ? ` · 실패 ${result.failed.length}명` : ''}`};
+        }
+
+        async function _runBotOneClickEmbedding(run) {
+            let previewId = '';
+            try {
+                const preview = await _botOneClickJson('/api/bot_mode/program_embedding/preview', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({bot_name: run.botName, char_names: run.charNames, crop_top: run.cropTop, crop_bottom: run.cropBottom, confidence: run.confidence, overwrite: run.overwrite}),
+                });
+                previewId = preview.preview_id || '';
+                if (!previewId) throw new Error('FACE 미리보기 세션이 생성되지 않았습니다.');
+                _botOneClickUpdateStage('embedding', 'running', `확정 가능 ${Number(preview.ready_count || 0)}명 · 임베딩 생성 중...`);
+                const result = await _botOneClickJson('/api/bot_mode/program_embedding/commit', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({preview_id: previewId}),
+                });
+                previewId = '';
+                const failed = Number(result.failed_count || 0);
+                return {warning: failed > 0 || !result.success, detail: `${result.message || 'embedding 완료'}${failed ? ` · 실패 ${failed}명` : ''}`};
+            } catch (e) {
+                if (previewId) {
+                    try {
+                        await _botOneClickJson('/api/bot_mode/program_embedding/cancel', {
+                            method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({preview_id: previewId}),
+                        });
+                    } catch (cancelError) {
+                        console.error('[BOT_ONE_CLICK] embedding 미리보기 정리 실패:', previewId, cancelError);
+                    }
+                }
+                throw e;
+            }
+        }
+
+        async function _runBotOneClickFaceBatch(run) {
+            const warnings = [];
+            let analyzed = 0;
+            try {
+                const result = await _botOneClickJson('/api/bot_mode/batch_analyze_utility', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({bot: run.botName, characters: run.charNames}),
+                });
+                analyzed = Number(result.total || result.count || 0);
+                if (result.batch_id && analyzed) {
+                    _botOneClickUpdateStage('face_batch', 'running', `FACE ${analyzed}장 태그 분석 중...`);
+                    const batch = await _botOneClickTrackTagBatch(result.batch_id, '원클릭 FACE 태그 분석', analyzed, 'bot_utility');
+                    if (batch.fail) warnings.push(`태그 분석 실패 ${batch.fail}장`);
+                } else {
+                    warnings.push('분석할 FACE 이미지 없음');
+                }
+            } catch (e) {
+                console.error('[BOT_ONE_CLICK] FACE 태그 분석 실패:', e);
+                warnings.push(`태그 분석 실패: ${e.message || e}`);
+            }
+
+            let negativeSuccess = 0;
+            try {
+                const negative = await _botOneClickJson('/api/bot_mode/batch_set_negative_utility', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({bot: run.botName, negative_tags: run.negativeTags, characters: run.charNames}),
+                });
+                negativeSuccess = Number(negative.success_count || 0);
+                if (negative.fail_count) warnings.push(`부정 태그 실패 ${negative.fail_count}장`);
+            } catch (e) {
+                console.error('[BOT_ONE_CLICK] FACE 부정 태그 적용 실패:', e);
+                warnings.push(`부정 태그 실패: ${e.message || e}`);
+            }
+            return {warning: warnings.length > 0, detail: `FACE 태그 분석 ${analyzed}장 · 부정 태그 ${negativeSuccess}장${warnings.length ? `\n${warnings.join(' · ')}` : ''}`};
+        }
+
+        function _handleBotOneClickLlmProgress(data) {
+            const waiter = _botOneClickLlmWait;
+            if (!waiter || data?.bot_name !== waiter.botName || !['completed', 'failed'].includes(data?.phase)) return;
+            waiter.mark(data.char_name, data.phase === 'completed', data.error);
+            const done = waiter.success.length + waiter.failed.length;
+            _botOneClickUpdateStage('llm_refine', 'running', `${done}/${done + waiter.pending.size}명 완료${waiter.failed.length ? ` · 실패 ${waiter.failed.length}명` : ''}`);
+        }
+
+        async function _runBotOneClickLlmRefine(run) {
+            const utility = await _botOneClickJson(`/api/bot_mode/utility_preview?bot=${encodeURIComponent(run.botName)}&character=`);
+            const selected = new Set(run.charNames);
+            const faceNames = [...new Set((utility.images || []).map(image => image.character).filter(name => selected.has(name)))];
+            if (!faceNames.length) throw new Error('LLM 정제에 사용할 FACE 이미지가 없습니다.');
+            const waiter = _botOneClickCreateNamedWait('llm', run.botName, faceNames);
+            _botOneClickLlmWait = waiter;
+            try {
+                const enqueue = await _botOneClickJson('/api/bot_mode/llm_batch_enqueue', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({bot: run.botName, characters: faceNames}),
+                });
+                const addedNames = new Set((enqueue.data?.added || []).map(item => item.char_name));
+                faceNames.filter(name => !addedNames.has(name)).forEach(name => waiter.mark(name, false, '큐에 추가되지 않음'));
+                _botOneClickUpdateStage('llm_refine', 'running', `${addedNames.size}명 LLM 큐 처리 중...`);
+            } catch (e) {
+                [...waiter.pending].forEach(name => waiter.mark(name, false, `큐 추가 실패: ${e.message || e}`));
+                throw e;
+            }
+            const result = await waiter.promise;
+            return {warning: result.failed.length > 0, detail: `LLM 정제 성공 ${result.success.length}명${result.failed.length ? ` · 실패 ${result.failed.length}명` : ''}`};
+        }
+
         // ─── 프로그램용 FACE embedding ──────────────────────
         let _programEmbeddingPreviewId = '';
         let _programEmbeddingFormState = null;
@@ -57687,6 +58247,10 @@
         function handleDataPatchProgress(data) {
             const phase = data.phase || '';
             const statusDiv = document.getElementById('data-patch-status');
+            _handleBotOneClickDataPatchProgress(data);
+            // 원클릭은 자체 대상 집합으로 진행률을 추적한다. 기존 수동 배치가 없으면
+            // 아래 전역 카운터를 건드리지 않아 다른 실행의 버튼 상태가 섞이지 않게 한다.
+            if (_dataPatchQueueTotal <= 0) return;
 
             if (phase === 'completed') {
                 _dataPatchQueueDone++;
@@ -58021,14 +58585,15 @@
         function _handleBotLlmFaceTagProgress(data) {
             // data: {phase: "running"|"completed"|"failed", bot_name, char_name, error?, face_count?, eye_count?}
             if (!data || !data.char_name) return;
+            _handleBotOneClickLlmProgress(data);
             if (data.phase === 'completed' || data.phase === 'failed') {
+                _refreshBotDataSilent();
+                if (_botLlmBatchTotal <= 0) return;
                 _botLlmBatchDone++;
                 if (data.phase === 'failed') {
                     _botLlmBatchFailed.push({ name: data.char_name, error: data.error || '' });
                 }
                 _updateBotLlmBatchStatus();
-                // botData 캐시가 갱신되어야 다음 캐릭터 모달 열 때 새 분류 결과가 보임
-                _refreshBotDataSilent();
             }
         }
 

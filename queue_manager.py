@@ -3100,17 +3100,28 @@ class QueueManager:
         params = item.params
         bot_name = params.get("bot_name", "")
         char_name = params.get("char_name", "")
+        patch_settings = params.get("patch_settings")
         event_type = "data_patch_progress"
 
         if not bot_name or not char_name:
             raise ValueError("bot_name, char_name이 필요합니다")
+        if patch_settings is not None and not isinstance(patch_settings, dict):
+            print(
+                "[QUEUE:DATA_PATCH] patch_settings 형식 오류: "
+                f"bot={bot_name!r}, char={char_name!r}, type={type(patch_settings).__name__}"
+            )
+            raise ValueError("patch_settings는 객체여야 합니다")
 
         await self._notify_progress(item, {"percentage": 0, "phase": "running"})
         if self.notify_frontend:
             await self.notify_frontend(event_type, {"phase": "running", "bot_name": bot_name, "char_name": char_name})
 
         try:
-            result = await self.run_data_patch_utility(bot_name, char_name)
+            result = await self.run_data_patch_utility(
+                bot_name,
+                char_name,
+                patch_settings=patch_settings,
+            )
             await self._notify_progress(item, {"percentage": 100, "phase": "completed"})
             if self.notify_frontend:
                 await self.notify_frontend(event_type, {
@@ -3956,8 +3967,12 @@ class QueueManager:
             try:
                 with open(prompt_path, "r", encoding="utf-8") as pf:
                     existing = json.load(pf)
-            except Exception:
-                pass
+            except Exception as load_exc:
+                print(
+                    "[QUEUE:TAG_ANALYSIS] 에셋 프롬프트 로드 실패: "
+                    f"path={prompt_path!r}, error={load_exc}"
+                )
+                traceback.print_exc()
         existing["positive"] = positive
         existing.setdefault("negative", "")
         existing.setdefault("character", img.get("character", ""))
@@ -3970,7 +3985,7 @@ class QueueManager:
     @staticmethod
     def _save_bot_prompt(img: dict, positive: str):
         """봇 모드 _prompt.json 저장."""
-        from modes.bot_mode import BOT_DIR
+        from modes.bot_mode import BOT_DIR, _backup_data_file_before_overwrite
         bot = img.get("bot", "")
         character = img.get("character", "")
         filename = img.get("filename", "")
@@ -3984,10 +3999,18 @@ class QueueManager:
             try:
                 with open(prompt_path, "r", encoding="utf-8") as pf:
                     existing = json.load(pf)
-            except Exception:
-                pass
+            except Exception as load_exc:
+                print(
+                    "[QUEUE:TAG_ANALYSIS] 봇 프롬프트 로드 실패: "
+                    f"path={prompt_path!r}, error={load_exc}"
+                )
+                traceback.print_exc()
         existing["prompt"] = positive
         existing.setdefault("negative", "")
+        _backup_data_file_before_overwrite(
+            prompt_path,
+            f"태그 분석 프롬프트({bot}/{character}/{filename})",
+        )
         with open(prompt_path, "w", encoding="utf-8") as pf:
             json.dump(existing, pf, ensure_ascii=False, indent=2)
 

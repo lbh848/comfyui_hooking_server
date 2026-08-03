@@ -1504,9 +1504,17 @@ class BotMode:
                         try:
                             with open(prompt_path, "r", encoding="utf-8") as pf:
                                 existing = json.load(pf)
-                        except Exception:
-                            pass
+                        except Exception as load_exc:
+                            print(
+                                "[BOT_MODE] 대표 이미지 프롬프트 로드 실패: "
+                                f"path={prompt_path!r}, error={load_exc}"
+                            )
+                            traceback.print_exc()
                     existing["negative"] = negative_tags
+                    _backup_data_file_before_overwrite(
+                        prompt_path,
+                        f"대표 이미지 부정 프롬프트({bot_name}/{rep['character']}/{rep['filename']})",
+                    )
                     with open(prompt_path, "w", encoding="utf-8") as pf:
                         json.dump(existing, pf, ensure_ascii=False, indent=2)
                     success_count += 1
@@ -1595,9 +1603,17 @@ class BotMode:
                         try:
                             with open(prompt_path, "r", encoding="utf-8") as pf:
                                 existing = json.load(pf)
-                        except Exception:
-                            pass
+                        except Exception as load_exc:
+                            print(
+                                "[BOT_MODE] FACE 프롬프트 로드 실패: "
+                                f"path={prompt_path!r}, error={load_exc}"
+                            )
+                            traceback.print_exc()
                     existing["negative"] = negative_tags
+                    _backup_data_file_before_overwrite(
+                        prompt_path,
+                        f"FACE 부정 프롬프트({bot_name}/{rep['character']}/{rep['filename']})",
+                    )
                     with open(prompt_path, "w", encoding="utf-8") as pf:
                         json.dump(existing, pf, ensure_ascii=False, indent=2)
                     success_count += 1
@@ -2146,6 +2162,27 @@ PATCH_SETTINGS_FILE = "_patch_settings.json"
 
 def _patch_settings_path(bot_name: str) -> str:
     return os.path.join(BOT_DIR, bot_name, PATCH_SETTINGS_FILE)
+
+
+def _backup_data_file_before_overwrite(path: str, label: str) -> str:
+    """기존 데이터 파일을 요구사항/에 백업하고 백업 경로를 반환한다."""
+    if not os.path.isfile(path):
+        return ""
+    backup_dir = os.path.join(
+        BASE_DIR,
+        "요구사항",
+        f"illustration_data_backup_{time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}",
+    )
+    try:
+        os.makedirs(backup_dir, exist_ok=False)
+        backup_path = os.path.join(backup_dir, os.path.basename(path))
+        shutil.copy2(path, backup_path)
+        print(f"[BOT_MODE] {label} 저장 전 백업 완료: {path} → {backup_path}")
+        return backup_path
+    except Exception as exc:
+        print(f"[BOT_MODE] {label} 저장 전 백업 실패: path={path!r}, error={exc}")
+        traceback.print_exc()
+        raise RuntimeError(f"{label} 백업에 실패하여 저장을 중단했습니다.") from exc
 
 
 def _load_patch_settings(bot_name: str) -> dict:

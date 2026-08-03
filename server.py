@@ -2572,18 +2572,21 @@ def init_queue_manager():
     print("[QUEUE] 통합 큐 매니저 초기화 완료")
 
 
-async def _run_data_patch_utility(bot_name: str, char_name: str) -> dict:
+async def _run_data_patch_utility(
+    bot_name: str,
+    char_name: str,
+    patch_settings: dict | None = None,
+) -> dict:
     """큐에서 호출하는 데이터 패치 유틸리티 실행."""
     from modes.bot_mode import _load_bot_data, _load_patch_settings, build_utility_prompt, BOT_DIR
     import copy
 
-    # 기존 결과 삭제
     char_dir = os.path.join(BOT_DIR, bot_name, char_name)
     result_path = os.path.join(char_dir, "_face_image.webp")
-    for old in ["_face_image.webp", "_face_image_prompt.json"]:
-        old_path = os.path.join(char_dir, old)
-        if os.path.isfile(old_path):
-            os.remove(old_path)
+    old_paths = [
+        os.path.join(char_dir, "_face_image.webp"),
+        os.path.join(char_dir, "_face_image_prompt.json"),
+    ]
 
     wf_api, wf_err = await data_patcher._load_utility_workflow()
     if wf_err:
@@ -2599,7 +2602,46 @@ async def _run_data_patch_utility(bot_name: str, char_name: str) -> dict:
     if not char.get("rep_images"):
         raise RuntimeError(f"대표 이미지가 없습니다: {char_name}")
 
-    settings = _load_patch_settings(bot_name)
+    settings = dict(_load_patch_settings(bot_name))
+    if patch_settings is not None:
+        if not isinstance(patch_settings, dict):
+            print(
+                "[DATA_PATCH_UTILITY] 임시 패치 설정 형식 오류: "
+                f"bot={bot_name!r}, char={char_name!r}, value={patch_settings!r}"
+            )
+            raise ValueError("patch_settings는 객체여야 합니다.")
+        try:
+            crop_top = float(patch_settings.get("face_crop_top", settings.get("face_crop_top", 1.0)))
+            crop_bottom = float(patch_settings.get("face_crop_bottom", settings.get("face_crop_bottom", 1.0)))
+        except (TypeError, ValueError) as exc:
+            print(
+                "[DATA_PATCH_UTILITY] 임시 FACE 크롭 숫자 변환 실패: "
+                f"bot={bot_name!r}, char={char_name!r}, settings={patch_settings!r}"
+            )
+            traceback.print_exc()
+            raise ValueError("FACE 크롭 값은 숫자여야 합니다.") from exc
+        if not (0.1 <= crop_top <= 10.0 and 0.1 <= crop_bottom <= 10.0):
+            print(
+                "[DATA_PATCH_UTILITY] 임시 FACE 크롭 범위 오류: "
+                f"bot={bot_name!r}, char={char_name!r}, top={crop_top}, bottom={crop_bottom}"
+            )
+            raise ValueError("FACE 크롭 값은 0.1~10 범위여야 합니다.")
+        emb_target = patch_settings.get("emb_target", settings.get("emb_target", "대표만"))
+        if emb_target not in ("대표만", "둘다"):
+            print(
+                "[DATA_PATCH_UTILITY] 임시 EMB_TARGET 오류: "
+                f"bot={bot_name!r}, char={char_name!r}, emb_target={emb_target!r}"
+            )
+            raise ValueError("EMB_TARGET은 '대표만' 또는 '둘다'여야 합니다.")
+        settings.update({
+            "face_crop_top": crop_top,
+            "face_crop_bottom": crop_bottom,
+            "emb_target": emb_target,
+        })
+        print(
+            "[DATA_PATCH_UTILITY] 저장하지 않는 임시 패치 설정 적용: "
+            f"bot={bot_name}, char={char_name}, settings={settings}"
+        )
     prompt_text = build_utility_prompt(bot_name, char_name, settings)
     print(f"[DATA_PATCH_UTILITY] 실행: {char_name} | 프롬프트: {prompt_text}")
 
@@ -2618,9 +2660,66 @@ async def _run_data_patch_utility(bot_name: str, char_name: str) -> dict:
     if submit_err or not img_bytes:
         raise RuntimeError(f"{char_name}: {submit_err or '이미지 없음'}")
 
+    # 새 결과를 같은 폴더의 임시 파일로 먼저 완성한 뒤 원자적으로 교체한다.
+    # 생성/임시 저장/백업 중 하나라도 실패하면 사용 중이던 FACE는 그대로 남는다.
     os.makedirs(os.path.dirname(result_path), exist_ok=True)
-    with open(result_path, "wb") as f:
-        f.write(img_bytes)
+    temp_result_path = f"{result_path}.tmp_{uuid.uuid4().hex}"
+    try:
+        with open(temp_result_path, "wb") as f:
+            f.write(img_bytes)
+    except Exception as exc:
+        print(
+            "[DATA_PATCH_UTILITY] 새 FACE 임시 저장 실패: "
+            f"bot={bot_name!r}, char={char_name!r}, path={temp_result_path!r}, error={exc}"
+        )
+        traceback.print_exc()
+        raise
+
+    existing_paths = [path for path in old_paths if os.path.isfile(path)]
+    if existing_paths:
+        safe_bot_name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", bot_name).strip(". ") or "_"
+        safe_char_name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", char_name).strip(". ") or "_"
+        backup_dir = os.path.join(
+            BASE_DIR,
+            "요구사항",
+            f"data_patch_backup_{time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}",
+            safe_bot_name,
+            safe_char_name,
+        )
+        try:
+            os.makedirs(backup_dir, exist_ok=False)
+            for old_path in existing_paths:
+                shutil.copy2(old_path, os.path.join(backup_dir, os.path.basename(old_path)))
+            print(f"[DATA_PATCH_UTILITY] 기존 FACE 백업 완료: {backup_dir}")
+        except Exception as exc:
+            print(
+                "[DATA_PATCH_UTILITY] 기존 FACE 백업 실패: "
+                f"bot={bot_name!r}, char={char_name!r}, backup={backup_dir!r}, error={exc}"
+            )
+            traceback.print_exc()
+            try:
+                os.remove(temp_result_path)
+            except OSError as cleanup_exc:
+                print(f"[DATA_PATCH_UTILITY] 실패한 임시 FACE 정리 실패: {temp_result_path} - {cleanup_exc}")
+            raise RuntimeError("기존 FACE 백업에 실패하여 데이터 패치를 중단했습니다.") from exc
+
+    try:
+        os.replace(temp_result_path, result_path)
+        old_prompt_path = os.path.join(char_dir, "_face_image_prompt.json")
+        if os.path.isfile(old_prompt_path):
+            os.remove(old_prompt_path)
+    except Exception as exc:
+        print(
+            "[DATA_PATCH_UTILITY] 새 FACE 교체 실패: "
+            f"bot={bot_name!r}, char={char_name!r}, path={result_path!r}, error={exc}"
+        )
+        traceback.print_exc()
+        try:
+            if os.path.isfile(temp_result_path):
+                os.remove(temp_result_path)
+        except OSError as cleanup_exc:
+            print(f"[DATA_PATCH_UTILITY] 교체 실패 임시 FACE 정리 실패: {temp_result_path} - {cleanup_exc}")
+        raise
     print(f"[DATA_PATCH_UTILITY] {char_name} 결과 저장: {len(img_bytes):,} bytes")
     return {"character": char_name, "message": f"{char_name} 완료"}
 
