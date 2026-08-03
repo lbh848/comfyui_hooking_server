@@ -181,6 +181,7 @@ def parse_grounded_answer(
     raw: Any,
     *,
     allowed_tags: set[str],
+    display_tag_aliases: dict[str, str] | None = None,
 ) -> tuple[dict[str, Any] | None, str]:
     parsed, reason = _parse_json_object(raw, stage="근거 선별")
     if parsed is None:
@@ -211,6 +212,14 @@ def parse_grounded_answer(
         return None, reason
 
     canonical_by_folded = {tag.casefold(): tag for tag in allowed_tags}
+    for alias, canonical in (display_tag_aliases or {}).items():
+        if canonical not in allowed_tags:
+            print(
+                "[DANBOORU_KNOWLEDGE] 허용 후보가 아닌 표시용 태그 변환 스킵: "
+                f"alias={alias!r}, canonical={canonical!r}"
+            )
+            continue
+        canonical_by_folded.setdefault(alias.casefold(), canonical)
     evidence_tags: list[str] = []
     for value in raw_evidence:
         if not isinstance(value, str) or not value.strip():
@@ -238,6 +247,50 @@ def parse_grounded_answer(
         "confidence": confidence,
         "evidence_tags": evidence_tags[:20],
     }, ""
+
+
+def _build_display_tag_aliases(
+    candidates: list[dict[str, Any]],
+    *,
+    allowed_tags: set[str],
+) -> dict[str, str]:
+    """Map unambiguous prompt-display tags back to their raw candidate tags."""
+    raw_by_folded = {tag.casefold(): tag for tag in allowed_tags}
+    targets_by_alias: dict[str, set[str]] = {}
+    original_aliases: dict[str, str] = {}
+    for candidate in candidates:
+        canonical = str(candidate.get("tag") or "").strip()
+        alias = str(candidate.get("display_tag") or "").strip()
+        if not canonical or canonical not in allowed_tags or not alias:
+            print(
+                "[DANBOORU_KNOWLEDGE] 표시용 태그 변환 후보 스킵: "
+                f"tag={canonical!r}, display_tag={alias!r}"
+            )
+            continue
+        folded = alias.casefold()
+        original_aliases.setdefault(folded, alias)
+        targets_by_alias.setdefault(folded, set()).add(canonical)
+
+    aliases: dict[str, str] = {}
+    for folded, targets in targets_by_alias.items():
+        exact_raw = raw_by_folded.get(folded)
+        if exact_raw is not None:
+            if targets != {exact_raw}:
+                print(
+                    "[DANBOORU_KNOWLEDGE] 원본 태그와 충돌하는 표시용 태그 변환 스킵: "
+                    f"display_tag={original_aliases[folded]!r}, "
+                    f"raw_tag={exact_raw!r}, targets={sorted(targets)!r}"
+                )
+            continue
+        if len(targets) != 1:
+            print(
+                "[DANBOORU_KNOWLEDGE] 여러 후보와 겹치는 표시용 태그 변환 스킵: "
+                f"display_tag={original_aliases[folded]!r}, "
+                f"targets={sorted(targets)!r}"
+            )
+            continue
+        aliases[folded] = next(iter(targets))
+    return aliases
 
 
 def _plan_messages(question: str) -> list[dict[str, str]]:
@@ -791,9 +844,19 @@ class DanbooruKnowledgeAssistant:
             )
 
         allowed_tags = {item["tag"] for item in candidates}
+        display_tag_aliases = _build_display_tag_aliases(
+            candidates,
+            allowed_tags=allowed_tags,
+        )
         answer_validator = lambda raw: (
             lambda parsed_reason: (parsed_reason[0] is not None, parsed_reason[1])
-        )(parse_grounded_answer(raw, allowed_tags=allowed_tags))
+        )(
+            parse_grounded_answer(
+                raw,
+                allowed_tags=allowed_tags,
+                display_tag_aliases=display_tag_aliases,
+            )
+        )
         raw_answer = await self._call_llm(
             task_key=ANSWER_TASK_KEY,
             call_name="단부르 지식 검색 · 근거 선별",
@@ -803,6 +866,7 @@ class DanbooruKnowledgeAssistant:
         grounded, reason = parse_grounded_answer(
             raw_answer,
             allowed_tags=allowed_tags,
+            display_tag_aliases=display_tag_aliases,
         )
         if grounded is None:
             print(

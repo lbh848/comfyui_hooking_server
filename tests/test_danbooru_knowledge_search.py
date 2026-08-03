@@ -128,7 +128,7 @@ async def test_two_pass_search_answers_general_tag_question_from_rag_only(
                 "answer": "금발 머리를 뜻하는 태그는 blonde_hair입니다.",
                 "status": "answered",
                 "confidence": "high",
-                "evidence_tags": ["blonde_hair"],
+                "evidence_tags": ["blonde hair"],
             },
             ensure_ascii=False,
         )
@@ -239,6 +239,25 @@ def test_grounded_answer_rejects_a_tag_outside_candidate_pool() -> None:
 
     assert parsed is None
     assert "RAG 후보에 없는 태그" in reason
+
+
+def test_grounded_answer_converts_display_tag_to_raw_candidate_tag() -> None:
+    parsed, reason = parse_grounded_answer(
+        json.dumps(
+            {
+                "answer": "공식 캐릭터 태그는 suou yuki입니다.",
+                "status": "answered",
+                "confidence": "high",
+                "evidence_tags": ["suou yuki"],
+            }
+        ),
+        allowed_tags={"suou_yuki"},
+        display_tag_aliases={"suou yuki": "suou_yuki"},
+    )
+
+    assert reason == ""
+    assert parsed is not None
+    assert parsed["evidence_tags"] == ["suou_yuki"]
 
 
 @pytest.mark.asyncio
