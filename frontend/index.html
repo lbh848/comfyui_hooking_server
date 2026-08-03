@@ -51962,6 +51962,22 @@
             const trigHit = trigTok.length > 0 && _tokensContainAll(trigTok, cn);
             return idHit || trigHit;
         }
+        function _findBestBotProjectCharacter(characters, charName) {
+            const chars = Array.isArray(characters) ? characters : [];
+            const exactName = _normCharMatch(charName);
+            if (!exactName) return null;
+
+            // 구분자와 대소문자를 정규화한 정확 일치를 배열 순서와 무관하게 최우선한다.
+            const exact = chars.find(ch => _normCharMatch(ch && ch.name) === exactName);
+            if (exact) return exact;
+
+            // 정확 일치가 없을 때만 기존의 토큰 포함 매칭을 폴백으로 사용한다.
+            const cnTok = _normTokens(charName);
+            return chars.find(ch => {
+                const chTok = _normTokens(ch && ch.name);
+                return chTok.length > 0 && _tokensContainAll(chTok, cnTok);
+            }) || null;
+        }
         function renderBclpInstanceLoras() {
             const grid = document.getElementById('bclp-grid');
             if (!grid) return;
@@ -52557,12 +52573,7 @@
                 const chars = pd.characters || [];
                 html += `<div style="font-size:0.72rem; color:var(--text2); margin-bottom:6px;">선택 프로젝트 BASE: <b>${escHtml(prof)}</b></div>`;
                 html += targets.map(cn => {
-                    // 토큰 경계 매칭(인스턴스 탭 _isInstanceLoraRecommended와 동일 방향: 타겟 토큰 ⊆ 프로젝트 캐릭터 토큰).
-                    // → "Tokkigongju_reallife" 타겟이 "Tokkigongju" 프로젝트 캐릭터에 부분문자열로 잘못 걸리는 것을 차단.
-                    const mch = chars.find(ch => {
-                        const cnTok = _normTokens(cn), chTok = _normTokens(ch.name);
-                        return cnTok.length > 0 && chTok.length > 0 && _tokensContainAll(chTok, cnTok);
-                    });
+                    const mch = _findBestBotProjectCharacter(chars, cn);
                     let body;
                     if (!mch) {
                         body = '<div style="font-size:0.7rem; color:var(--warning);">이 프로젝트에 매칭되는 캐릭터 없음</div>';
@@ -52670,12 +52681,8 @@
                     } else {
                         // 봇: 체크된 representative만
                         const chars = (botProject && botProject.characters) || [];
-                        // 토큰 경계 매칭(미리보기 _renderAutoLoraBot와 동일 로직: 타겟 토큰 ⊆ 프로젝트 캐릭터 토큰).
-                        // 미리보기와 실제 전송이 다르게 매칭되는 버그 방지(CLAUDE.md: 동일 빌더 사용).
-                        const mch = chars.find(ch => {
-                            const cnTok = _normTokens(cn), chTok = _normTokens(ch.name);
-                            return cnTok.length > 0 && chTok.length > 0 && _tokensContainAll(chTok, cnTok);
-                        });
+                        // 미리보기와 실제 전송 모두 정확 일치 우선 공통 선택기를 사용한다.
+                        const mch = _findBestBotProjectCharacter(chars, cn);
                         if (mch) {
                             const sessions = (mch.trained_sessions || []).filter(s => !!s.representative);
                             const prio = sessions.filter(s => s.priority_rank && s.priority_rank > 0).sort((a, b) => (a.priority_rank || 999) - (b.priority_rank || 999));
