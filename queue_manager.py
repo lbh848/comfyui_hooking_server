@@ -284,6 +284,26 @@ class QueueManager:
         elif item.status == "cancelled":
             fut.set_exception(RuntimeError("큐 항목이 취소되었습니다"))
 
+    @staticmethod
+    def _mark_completion_future_observed(fut: asyncio.Future) -> None:
+        """fire-and-forget 큐의 실패 Future도 asyncio 경고 없이 회수한다.
+
+        exception()을 먼저 호출해도 이후 명시적으로 await하는 소비자는 같은 예외를
+        정상적으로 전달받는다. 실제 실패와 스택은 실행 파이프라인에서 이미 출력한다.
+        """
+        if fut.cancelled():
+            return
+        try:
+            fut.exception()
+        except asyncio.CancelledError:
+            return
+        except Exception as exc:
+            print(
+                "[QUEUE] completion_future 실패 상태 회수 중 예외: "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+
     def _cleanup_item_resources(self, item: QueueItem) -> None:
         if item.type != "qwen_edit":
             return
@@ -354,6 +374,9 @@ class QueueManager:
             item.completion_future = asyncio.get_running_loop().create_future()
         except RuntimeError:
             item.completion_future = asyncio.get_event_loop().create_future()
+        item.completion_future.add_done_callback(
+            self._mark_completion_future_observed
+        )
         self.items.append(item)
         self._resort_pending()
         print(f"[QUEUE] 항목 추가: type={item_type}, label={label}, id={item.id}, priority={priority}, 대기={len([i for i in self.items if i.status == 'pending'])}")

@@ -20,6 +20,20 @@ def _item(item_type, params=None):
     )
 
 
+@pytest.mark.asyncio
+async def test_completion_future_failure_is_observed_without_swallowing_await_error():
+    manager = QueueManager()
+    future = asyncio.get_running_loop().create_future()
+    future.add_done_callback(manager._mark_completion_future_observed)
+
+    future.set_exception(RuntimeError("synthetic queue failure"))
+    await asyncio.sleep(0)
+
+    assert getattr(future, "_log_traceback", False) is False
+    with pytest.raises(RuntimeError, match="synthetic queue failure"):
+        await future
+
+
 def test_queue_status_separates_llm_gpu_and_chansub_areas():
     manager = QueueManager()
     manager.get_config = lambda: {
