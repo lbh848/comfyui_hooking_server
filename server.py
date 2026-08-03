@@ -9565,9 +9565,16 @@ async def handle_api_llm_edit_prompt(
                         identity_names,
                         previous_names,
                     )
+                    parsed["scene_char"] = (
+                        IllustPromptBuilder.apply_bound_character_identity_tags(
+                            parsed.get("scene_char", ""),
+                            identity_names,
+                            identity_bot.get("characters") or [],
+                        )
+                    )
                 except Exception as exc:
                     print(
-                        f"[LLM_EDIT:IDENTITY] LLM 캐릭터 슬롯 결속 실패: "
+                        f"[LLM_EDIT:IDENTITY] LLM 캐릭터 슬롯 결속/카드 태그 적용 실패: "
                         f"backup={backup_name}, error={exc}"
                     )
                     traceback.print_exc()
@@ -9781,14 +9788,40 @@ async def process_illustration_easy_edit_queue_item(item) -> dict:
             raise RuntimeError("편집할 원본 프롬프트 백업을 찾지 못했습니다")
         source_positive, source_negative = _extract_prompts_from_backup(prompt_path)
 
+        edit_body = {
+            "name": backup_name,
+            "positive": source_positive,
+            "negative": source_negative,
+            "direction": direction,
+        }
+        identity_capability = _llm_edit_identity_capability(backup_name)
+        if identity_capability.get("enabled"):
+            current_characters = [
+                str(name or "").strip()
+                for name in (identity_capability.get("character_names") or [])
+                if str(name or "").strip()
+            ]
+            if not current_characters:
+                print(
+                    f"[ILLUST_CONTEXT:EDIT] 캐릭터 자동 선택 실패: "
+                    f"backup={backup_name}, capability={identity_capability}"
+                )
+                raise RuntimeError("편집할 캐릭터 슬롯을 자동 선택하지 못했습니다")
+            edit_body["characters"] = current_characters
+            print(
+                f"[ILLUST_CONTEXT:EDIT] 백업 캐릭터 자동 선택: "
+                f"backup={backup_name}, characters={current_characters}"
+            )
+        else:
+            print(
+                f"[ILLUST_CONTEXT:EDIT] 캐릭터 자동 선택 미사용: "
+                f"backup={backup_name}, "
+                f"reason={identity_capability.get('reason') or '지원하지 않는 형식'}"
+            )
+
         edit_response = await handle_api_llm_edit_prompt(
             None,
-            _body={
-                "name": backup_name,
-                "positive": source_positive,
-                "negative": source_negative,
-                "direction": direction,
-            },
+            _body=edit_body,
         )
         edited = _internal_json_response_payload(edit_response, "편하게 수정")
         modified_positive = str(edited.get("positive") or "")
@@ -9842,6 +9875,11 @@ async def process_illustration_easy_edit_queue_item(item) -> dict:
             "backup_name": new_backup_name,
         }
     except Exception as exc:
+        print(
+            f"[ILLUST_CONTEXT:EDIT] 실패: session={session_id}, slot={slot}, "
+            f"prompt_id={original_prompt_id}, error={exc}"
+        )
+        traceback.print_exc()
         illustration_context_pipeline.set_session_regenerate_error(
             session_id,
             slot,

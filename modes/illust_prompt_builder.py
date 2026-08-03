@@ -308,11 +308,33 @@ class IllustPromptBuilder:
             else:
                 assignment[seg_idx] = candidates[0]
 
-        # 8. 세그먼트 맨 앞에 이미지용 이름을 삽입한다. 캐릭터별 옵션이
+        segments = IllustPromptBuilder._apply_assigned_character_identity_tags(
+            segments,
+            assignment,
+            card_name_by_candidate,
+            characters,
+        )
+
+        result = " | ".join(segments)
+        print(f"[ILLUST_NAME_INSERT] 삽입 완료: candidates={candidates}, "
+              f"assignment={assignment}")
+        return result
+
+    @staticmethod
+    def _apply_assigned_character_identity_tags(
+        segments: list[str],
+        assignment: dict[int, str],
+        card_name_by_candidate: dict[str, str],
+        characters: list | None,
+    ) -> list[str]:
+        """배정된 CHAR 세그먼트에 카드의 이미지 이름/절대 태그를 적용한다."""
+        updated_segments = list(segments)
+
+        # 세그먼트 맨 앞에 이미지용 이름을 삽입한다. 캐릭터별 옵션이
         # 활성화된 경우 카드 이름/NAME 값의 정확한 최상위 태그를 이미지 이름
         # 태그로 바꾼다. NAME/SPEAK와 카드 식별자는 수정하지 않는다.
         for seg_idx, name in assignment.items():
-            seg = segments[seg_idx]
+            seg = updated_segments[seg_idx]
             card_name = card_name_by_candidate[name]
             char_data = next((c for c in (characters or [])
                               if str(c.get("name") or "").casefold() == card_name.casefold()), None)
@@ -354,7 +376,7 @@ class IllustPromptBuilder:
                     for tag in replaced_tags
                 }:
                     replaced_tags.insert(0, image_name_tag)
-                segments[seg_idx] = ", ".join(replaced_tags)
+                updated_segments[seg_idx] = ", ".join(replaced_tags)
                 print(
                     f"[ILLUST_NAME_INSERT] 이미지 이름 태그 적용: "
                     f"char={card_name!r}, tag={image_name_tag!r}"
@@ -363,9 +385,9 @@ class IllustPromptBuilder:
 
             if insert_name.casefold() in existing_keys:
                 continue
-            segments[seg_idx] = insert_name + ", " + seg
+            updated_segments[seg_idx] = insert_name + ", " + seg
 
-        # 9. 매칭된 캐릭터의 absolute_tags 주입 (이미 있으면 스킵)
+        # 매칭된 캐릭터의 absolute_tags 주입 (이미 있으면 스킵)
         if characters:
             for seg_idx, name in assignment.items():
                 card_name = card_name_by_candidate[name]
@@ -377,7 +399,7 @@ class IllustPromptBuilder:
                 abs_tags = [t.strip() for t in abs_raw.split(",") if t.strip()]
                 if not abs_tags:
                     continue
-                seg = segments[seg_idx]
+                seg = updated_segments[seg_idx]
                 seg_lower = seg.lower()
                 to_insert = []
                 for tag in abs_tags:
@@ -386,13 +408,74 @@ class IllustPromptBuilder:
                         continue
                     to_insert.append(tag)
                 if to_insert:
-                    segments[seg_idx] = ", ".join(to_insert) + ", " + seg
+                    updated_segments[seg_idx] = ", ".join(to_insert) + ", " + seg
                     print(f"[ILLUST_NAME_INSERT] absolute_tags 삽입: "
                           f"char={name}, tags={to_insert}")
 
-        result = " | ".join(segments)
-        print(f"[ILLUST_NAME_INSERT] 삽입 완료: candidates={candidates}, "
-              f"assignment={assignment}")
+        return updated_segments
+
+    @staticmethod
+    def apply_bound_character_identity_tags(
+        char_section: str,
+        character_names: list[str],
+        characters: list | None,
+    ) -> str:
+        """이미 슬롯 순서가 확정된 CHAR에 정상 삽화와 같은 카드 태그를 적용한다.
+
+        편하게 수정은 LLM 결과를 슬롯 이름에 먼저 결속하므로 외형 점수로 다시
+        캐릭터를 추정하지 않고, 전달된 순서를 그대로 사용한다.
+        """
+        names = [str(name or "").strip() for name in (character_names or [])]
+        segments = [segment.strip() for segment in str(char_section or "").split("|")]
+        if not names or any(not name for name in names):
+            print(
+                f"[ILLUST_NAME_INSERT] 결속 CHAR 이름이 비어 있음: "
+                f"character_names={character_names!r}"
+            )
+            raise ValueError("결속 CHAR에 적용할 캐릭터 이름이 비어 있습니다")
+        if len(segments) != len(names) or any(not segment for segment in segments):
+            print(
+                f"[ILLUST_NAME_INSERT] 결속 CHAR 슬롯 수 불일치: "
+                f"characters={names}, segments={segments}"
+            )
+            raise ValueError(
+                "결속 CHAR의 캐릭터 수와 장면 블록 수가 다릅니다: "
+                f"characters={len(names)}, blocks={len(segments)}"
+            )
+
+        character_by_key = {
+            str(character.get("name") or "").strip().casefold(): character
+            for character in (characters or [])
+            if isinstance(character, dict)
+            and str(character.get("name") or "").strip()
+        }
+        missing = [name for name in names if name.casefold() not in character_by_key]
+        if missing:
+            print(
+                f"[ILLUST_NAME_INSERT] 결속 CHAR 카드 조회 실패: "
+                f"missing={missing}, available={sorted(character_by_key)}"
+            )
+            raise ValueError(
+                "결속 CHAR의 캐릭터 카드를 찾을 수 없습니다: " + ", ".join(missing)
+            )
+
+        canonical_names = [
+            str(character_by_key[name.casefold()].get("name") or "").strip()
+            for name in names
+        ]
+        assignment = {index: name for index, name in enumerate(canonical_names)}
+        card_name_by_candidate = {name: name for name in canonical_names}
+        updated = IllustPromptBuilder._apply_assigned_character_identity_tags(
+            segments,
+            assignment,
+            card_name_by_candidate,
+            list(character_by_key.values()),
+        )
+        result = " | ".join(updated)
+        print(
+            f"[ILLUST_NAME_INSERT] 결속 CHAR 카드 태그 적용 완료: "
+            f"characters={canonical_names}"
+        )
         return result
 
     @staticmethod

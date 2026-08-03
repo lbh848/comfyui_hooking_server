@@ -552,6 +552,8 @@ async def test_easy_edit_api_rebuilds_single_character_identity_from_active_bot(
 ):
     old = _character("Old", "old_trigger")
     new = _character("New", "new_trigger")
+    new["use_image_name_tag"] = True
+    new["image_name_tag"] = "new canonical character"
     bot = _bot(old, new)
     bot_root = {
         "bots": [bot],
@@ -622,6 +624,12 @@ async def test_easy_edit_api_rebuilds_single_character_identity_from_active_bot(
         "character_names": ["New"],
     }
     llm_prompt_edit.validate_v3_character_identity(payload["positive"], ["New"])
-    assert "Old" not in llm_prompt_edit.parse_blocks(payload["positive"])["ANIMA_CONTENT"]
-    assert "New" in llm_prompt_edit.parse_blocks(payload["positive"])["ANIMA_CONTENT"]
+    content_blocks = llm_prompt_edit.parse_blocks(payload["positive"])
+    assert "Old" not in content_blocks["ANIMA_CONTENT"]
+    assert "new canonical character" in content_blocks["ANIMA_CONTENT"]
+    assert "new canonical character" in content_blocks["ANIMA_ALL"]
+    assert "new canonical character" in content_blocks["SDXL"]
+    assert "New" not in [
+        tag.strip() for tag in content_blocks["ANIMA_CONTENT"].split(",")
+    ]
     assert "new-negative" in payload["negative"]
