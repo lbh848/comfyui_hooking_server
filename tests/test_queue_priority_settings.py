@@ -80,6 +80,7 @@ def test_global_settings_declares_cross_lane_sequence_set_metadata():
         [
             ("instance_lora_analysis", "gpu"),
             ("instance_lora_prompt_refine", "llm"),
+            ("lora_prompt_review", "llm"),
             ("instance_lora_training", "gpu"),
         ],
     )

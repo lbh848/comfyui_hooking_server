@@ -18404,6 +18404,20 @@
                 </div>
 
                 <div class="settings-tab-panel" id="settings-tab-lora">
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="title">LoRA 프롬프트 2차 검수</div>
+                            <div class="desc">ON이면 1차 완성 프롬프트를 이미지와 함께 다시 검수합니다. 사용할 모델·재시도·폴백은 외부 API 분기의 ‘LoRA 프롬프트 2차 검수’ 블록에서 설정합니다.</div>
+                        </div>
+                        <div class="setting-control" style="display:flex;align-items:center;gap:8px;">
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="setting-lora-prompt-review-enabled" onchange="updateLoraPromptReviewStatus(this.checked)">
+                                <span class="toggle-slider"></span>
+                            </label>
+                            <span id="lora-prompt-review-status" class="toggle-status off">OFF</span>
+                        </div>
+                    </div>
+
                     <!-- 로라 학습 워크플로우 (Anima) -->
                     <div class="setting-row">
                         <div class="setting-label">
@@ -24188,6 +24202,16 @@
             // 외부 API 분기(작업별 LLM1/LLM2 라우팅) 테이블 빌드
             renderLlmRoutingTable();
 
+            // LoRA 프롬프트 2차 검수 설정
+            const loraPromptReviewEnabled = !!currentConfig.lora_prompt_review_enabled;
+            const loraPromptReviewEnabledEl = document.getElementById('setting-lora-prompt-review-enabled');
+            if (loraPromptReviewEnabledEl) {
+                loraPromptReviewEnabledEl.checked = loraPromptReviewEnabled;
+            } else {
+                console.error('[SETTINGS] LoRA 프롬프트 2차 검수 토글 요소가 없습니다.');
+            }
+            updateLoraPromptReviewStatus(loraPromptReviewEnabled);
+
             // 캐릭터 메이커 내장 RAG 설정
             const cmRagEnabled = !!currentConfig.character_maker_rag_enabled;
             const cmRagEnabledEl = document.getElementById('setting-character-maker-rag-enabled');
@@ -24454,6 +24478,16 @@
             }
         }
 
+        function updateLoraPromptReviewStatus(checked) {
+            const statusEl = document.getElementById('lora-prompt-review-status');
+            if (!statusEl) {
+                console.error('[SETTINGS] LoRA 프롬프트 2차 검수 상태 요소가 없습니다.');
+                return;
+            }
+            statusEl.textContent = checked ? 'ON' : 'OFF';
+            statusEl.className = 'toggle-status ' + (checked ? 'on' : 'off');
+        }
+
         // ─── 큐 우선순위 설정 ───
         const QUEUE_SEQUENCE_SETS = [
             {
@@ -24542,6 +24576,13 @@
                         lane: 'llm',
                         laneLabel: 'LLM',
                         label: '태그 정제',
+                        optional: true,
+                    },
+                    {
+                        type: 'lora_prompt_review',
+                        lane: 'llm',
+                        laneLabel: 'LLM',
+                        label: '프롬프트 2차 검수',
                         optional: true,
                     },
                     {
@@ -24649,6 +24690,12 @@
                         types: ['instance_lora_prompt_refine'],
                         label: 'LoRA 프롬프트 정제',
                         description: '인스턴스 요청에서는 세트 03의 GPU 분석 뒤, GPU 학습 전에 완료',
+                        sequenceSetId: 'instance-lora',
+                    },
+                    {
+                        types: ['lora_prompt_review'],
+                        label: 'LoRA 프롬프트 2차 검수',
+                        description: '검수 토글이 켜진 경우 1차 정제 직후 이미지와 함께 다시 검수',
                         sequenceSetId: 'instance-lora',
                     },
                     {
@@ -25184,6 +25231,7 @@
                 llm_model4: 'LLM4 모델',
                 llm_service5: 'LLM5 서비스',
                 llm_model5: 'LLM5 모델',
+                lora_prompt_review_enabled: 'LoRA 프롬프트 2차 검수',
                 llm_max_concurrency: 'LLM1 동시 요청 수',
                 llm_max_concurrency2: 'LLM2 동시 요청 수',
                 llm_max_concurrency3: 'LLM3 동시 요청 수',
@@ -25493,6 +25541,7 @@
                 llm_reasoning_effort3: (document.getElementById('setting-llm-reasoning-effort3') || {}).value || '',
                 llm_custom_body3: (document.getElementById('setting-llm-custom-body3') || {}).value || '',
                 llm_routing: collectLlmRouting(),
+                lora_prompt_review_enabled: !!document.getElementById('setting-lora-prompt-review-enabled')?.checked,
                 character_maker_rag_enabled: !!document.getElementById('setting-character-maker-rag-enabled')?.checked,
                 character_maker_rag_autostart: !!document.getElementById('setting-character-maker-rag-autostart')?.checked,
                 character_maker_rag_top_k: parseInt(document.getElementById('setting-character-maker-rag-top-k')?.value, 10) || 5,
@@ -27895,6 +27944,7 @@
             { key: 'refine_lb_extra',          label: '외모/복장 태그 정제',kind: '비전', group: 'asset_management' },
             { key: 'refine_lora_prompt',       label: 'LoRA/에셋/스타일 정제', kind: '비전', group: 'asset_management' },
             { key: 'refine_lora_test_setup',   label: '테스트 이미지 일괄 세팅(봇/에셋)',kind: '텍스트', group: 'asset_management' },
+            { key: 'lora_prompt_review',       label: 'LoRA 프롬프트 2차 검수', kind: '비전/JSON', group: 'asset_management', json: true },
             { key: 'asset_name_mapping_auto_fix', label: '에셋 이름 자동 수정', kind: 'JSON', group: 'asset_management', json: true },
             { key: 'asset_name_mapping_full',  label: '에셋 이름 전체 매핑', kind: 'JSON', group: 'asset_management', json: true },
             { key: 'edit_illustration_prompt', label: '삽화 편하게 수정', kind: '비전/JSON', group: 'image_editing' },
@@ -35777,11 +35827,13 @@
                         const test_positive = _refineInputPositive();
                         if (!test_positive) { showToast('정제할 테스트 프롬프트가 비어 있습니다', 'error'); return; }
                         let card_positive = '';
+                        let card_filename = '';
                         try {
                             const enc = encodeURIComponent;
                             const r = await fetchJSON(`/api/lora/training_images?character=${enc(loraCurrentCharacter)}&entry=${enc(loraCurrentEntry)}`);
                             if (r && r.success && r.images && r.images.length) {
                                 card_positive = (r.images[0].positive || '').trim();
+                                card_filename = r.images[0].filename || '';
                             }
                         } catch (e) {
                             showToast(`카드 프롬프트 로드 실패: ${e.message}`, 'error');
@@ -35791,7 +35843,7 @@
                         _runLoraTestSetupRefine({
                             source_type: 'asset_test_setup',
                             character: loraCurrentCharacter, entry: loraCurrentEntry,
-                            card_positive, test_filename: filename, test_positive,
+                            card_filename, card_positive, test_filename: filename, test_positive,
                             btn: _assetTestLlmBtn, statusEl: document.getElementById('lora-test-refine-status'),
                         });
                     };
@@ -43404,6 +43456,7 @@
                     _runLoraTestSetupRefine({
                         source_type: 'bot_lora_char_test_setup',
                         bot: botLoraCurrentBot, project: botLoraCurrentProject, character: charName,
+                        card_filename: (_trainImg && _trainImg.filename) || '',
                         card_positive, test_filename: filename, test_positive,
                         btn: _botCharTestLlmBtn, statusEl: document.getElementById('bot-lora-char-test-refine-status'),
                     });
@@ -49863,7 +49916,7 @@
         // test_setup 정제는 card_positive(캐릭터 카드 프롬프트) + test_positive(현재 테스트 프롬프트)
         // 를 조합해 테스트 프롬프트를 재생성한다. 결과는 큐가 디스크에 자동 저장.
         function _runLoraTestSetupRefine(opts) {
-            const { source_type, bot = '', project = '', character, entry = '', card_positive, test_filename, test_positive, btn, statusEl } = opts;
+            const { source_type, bot = '', project = '', character, entry = '', card_filename = '', card_positive, test_filename, test_positive, btn, statusEl } = opts;
             if (!test_positive || !test_positive.trim()) {
                 showToast('정제할 테스트 프롬프트가 비어 있습니다', 'error');
                 return;
@@ -49877,8 +49930,8 @@
             if (btn) btn.textContent = '큐 적재 중...';
             if (statusEl) statusEl.textContent = '큐에 적재 중...';
             const payload = source_type === 'asset_test_setup'
-                ? { source_type, character, entry, card_positive, test_filename, test_positive }
-                : { source_type, bot, project, character, card_positive, test_filename, test_positive };
+                ? { source_type, character, entry, card_filename, card_positive, test_filename, test_positive }
+                : { source_type, bot, project, character, card_filename, card_positive, test_filename, test_positive };
             fetch('/api/instance_lora/auto_refine_enqueue', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -50363,6 +50416,7 @@
                             source_type: 'asset_test_setup',
                             character: loraCurrentCharacter,
                             entry: loraCurrentEntry,
+                            card_filename: _assetLoraTestCard.filename,
                             card_positive: _assetLoraTestCard.positive,
                             test_filename: t.filename,
                             test_positive: t.positive,
@@ -68603,6 +68657,7 @@
             instance_lora_training: '인스턴스로라',
             instance_lora_analysis: '인스턴스분석',
             instance_lora_prompt_refine: '프롬프트 정제',
+            lora_prompt_review: '프롬프트 2차 검수',
             bot_llm_face_tag_analysis: 'LLM 얼굴분석',
             qwen_edit_translate: 'EDIT 번역',
             character_maker: '캐릭터 메이커',

@@ -316,6 +316,7 @@ DEFAULT_CONFIG = {
     "llm_vision_compress": False,        # LLM1 비전 이미지 webp 압축 전송 (False=PNG 호환)
     "llm_vision_compress2": False,       # LLM2 비전 webp 압축
     "llm_vision_compress3": False,       # LLM3 비전 webp 압축
+    "lora_prompt_review_enabled": False, # LoRA 프롬프트 완성 후 선택적 2차 비전 검수
     # 작업별 LLM1/LLM2/LLM3 라우팅 및 메인/폴백 재시도 정책(외부 API 분기 탭).
     "llm_routing": {
         "extract_outfit":          _llm_route_defaults(fallback=True),
@@ -325,6 +326,7 @@ DEFAULT_CONFIG = {
         "refine_lb_extra":         _llm_route_defaults(max_retries=2, fallback_max_retries=2),
         "refine_lora_prompt":      _llm_route_defaults(max_retries=2, fallback_max_retries=2),
         "refine_lora_test_setup":  _llm_route_defaults(max_retries=2, fallback_max_retries=2),
+        "lora_prompt_review":      _llm_route_defaults(json_mode=True),
         "asset_name_mapping_auto_fix": _llm_route_defaults(
             max_retries=1, fallback_max_retries=1, json_mode=True
         ),
@@ -601,6 +603,20 @@ def load_config() -> dict:
                 # 기본값과 병합 (deepcopy로 중첩 dict 오염 방지)
                 merged = copy.deepcopy(DEFAULT_CONFIG)
                 merged.update(config)
+                review_enabled = merged.get("lora_prompt_review_enabled", False)
+                if not isinstance(review_enabled, bool):
+                    try:
+                        raise TypeError(
+                            "lora_prompt_review_enabled는 bool이어야 합니다: "
+                            f"value={review_enabled!r}"
+                        )
+                    except TypeError as e:
+                        print(
+                            "[CONFIG] LoRA 프롬프트 2차 검수 설정 타입 오류, "
+                            f"기본값 OFF 사용: {e}"
+                        )
+                        traceback.print_exc()
+                    merged["lora_prompt_review_enabled"] = False
                 (
                     merged["queue_type_order"],
                     merged["llm_queue_type_order"],
@@ -10408,6 +10424,20 @@ async def handle_api_config(request: web.Request) -> web.Response:
                     status=400,
                 )
 
+            if (
+                "lora_prompt_review_enabled" in body
+                and not isinstance(body.get("lora_prompt_review_enabled"), bool)
+            ):
+                print(
+                    "[CONFIG] LoRA 프롬프트 2차 검수 설정 저장 거부: "
+                    f"value={body.get('lora_prompt_review_enabled')!r}, "
+                    f"type={type(body.get('lora_prompt_review_enabled')).__name__}"
+                )
+                return web.json_response(
+                    {"error": "LoRA 프롬프트 2차 검수 설정은 true/false여야 합니다."},
+                    status=400,
+                )
+
             candidate_config = copy.deepcopy(app_config)
             for key, value in body.items():
                 if key in DEFAULT_CONFIG:
@@ -10757,6 +10787,7 @@ async def handle_api_config(request: web.Request) -> web.Response:
                 "llm_vision_compress": app_config.get("llm_vision_compress", False),
                 "llm_vision_compress2": app_config.get("llm_vision_compress2", False),
                 "llm_vision_compress3": app_config.get("llm_vision_compress3", False),
+                "lora_prompt_review_enabled": app_config.get("lora_prompt_review_enabled", False),
                 "llm_routing": app_config.get("llm_routing", {}),
             })
 
@@ -19212,7 +19243,7 @@ async def handle_api_queue_add(request):
         label = body.get("label", "")
         params = body.get("params", {})
 
-        if item_type not in ("asset_generation", "qwen_edit", "qwen_edit_translate", "asset_lora_training", "bot_lora_training", "instance_lora_training", "instance_lora_analysis", "instance_lora_prompt_refine", "tag_analysis", "auto_match_batch", "data_patch_utility"):
+        if item_type not in ("asset_generation", "qwen_edit", "qwen_edit_translate", "asset_lora_training", "bot_lora_training", "instance_lora_training", "instance_lora_analysis", "instance_lora_prompt_refine", "lora_prompt_review", "tag_analysis", "auto_match_batch", "data_patch_utility"):
             print(f"[QUEUE_API] 거부: 알 수 없는 타입 item_type={item_type} label={label}")
             return web.json_response({"success": False, "error": f"알 수 없는 타입: {item_type}"}, status=400)
 
@@ -19573,6 +19604,7 @@ async def on_startup(app):
             f"llm_stream_idle_timeout_seconds{_s}": app_config.get(f"llm_stream_idle_timeout_seconds{_s}", 90.0),
             f"llm_vision_compress{_s}": app_config.get(f"llm_vision_compress{_s}", False),
         })
+    _llm_cfg["lora_prompt_review_enabled"] = app_config.get("lora_prompt_review_enabled", False)
     _llm_cfg["llm_routing"] = app_config.get("llm_routing", {})
     llm_service.update_config(_llm_cfg)
     # API 키는 config.json 이 아닌 key/llm_keys.json 에서 로드

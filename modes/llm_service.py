@@ -485,6 +485,7 @@ _current_config = _ContextConfig({
     "llm_vision_compress": False,        # LLM1 비전 이미지 webp 압축 전송 (False=PNG 호환)
     "llm_vision_compress2": False,       # LLM2 비전 webp 압축
     "llm_vision_compress3": False,       # LLM3 비전 webp 압축
+    "lora_prompt_review_enabled": False, # LoRA 완성 프롬프트 2차 비전 검수
     # 작업별 LLM1/LLM2/LLM3 라우팅과 메인/폴백 재시도 정책(외부 API 분기).
     # 실제 기본값은 server.py 의 DEFAULT_CONFIG 에서 update_config 로 내려온다.
     "llm_routing": {},
@@ -1423,7 +1424,8 @@ def _normalize_vision_image(image_b64: str, image_mime: str) -> tuple:
 
 def _build_vision_messages_multi(messages: list, images: list) -> list:
     """텍스트 messages + 여러 이미지 → 마지막 user 메시지 content에 image_url 파트를
-    순서대로 모두 추가한 복사본 반환. images: [(b64, mime), ...] (정규화된 값).
+    순서대로 모두 추가한 복사본 반환. images는 ``(b64, mime)`` 또는 역할 라벨이
+    포함된 ``(b64, mime, label)`` 튜플이며, 라벨은 해당 이미지 바로 앞에 배치한다.
 
     각 _call_*/_stream_* 함수는 content가 list인 경우를 서비스 포맷에 맞게 변환하며,
     image_url 파트가 여러 개면 OpenAI 호환/Gemini/Claude/Vertex 모두 각각 별도의
@@ -1439,7 +1441,16 @@ def _build_vision_messages_multi(messages: list, images: list) -> list:
         raise ValueError("callLLMVision: user 메시지가 없습니다.")
     user_text = _msg_text(new_messages[last_user_idx].get("content", ""))
     parts = [{"type": "text", "text": user_text}]
-    for image_b64, image_mime in images:
+    for index, image in enumerate(images, start=1):
+        if not isinstance(image, (tuple, list)) or len(image) not in (2, 3):
+            raise ValueError(
+                "callLLMVision: images 항목은 (b64, mime) 또는 "
+                f"(b64, mime, label)이어야 합니다: index={index} value={image!r}"
+            )
+        image_b64, image_mime = image[0], image[1]
+        image_label = str(image[2] or "").strip() if len(image) == 3 else ""
+        if image_label:
+            parts.append({"type": "text", "text": image_label})
         parts.append(
             {"type": "image_url",
              "image_url": {"url": f"data:{image_mime};base64,{image_b64}"}}
@@ -1466,16 +1477,23 @@ def _prepare_vision_messages(
     """
     if images:
         normalized: list = []
-        for b64, mime in images:
+        for index, image in enumerate(images, start=1):
+            if not isinstance(image, (tuple, list)) or len(image) not in (2, 3):
+                raise ValueError(
+                    "callLLMVision: images 항목은 (b64, mime) 또는 "
+                    f"(b64, mime, label)이어야 합니다: index={index} value={image!r}"
+                )
+            b64, mime = image[0], image[1]
+            label = str(image[2] or "").strip() if len(image) == 3 else ""
             if not b64:
                 continue
             nb, nm = _normalize_vision_image(b64, mime)
-            normalized.append((nb, nm))
+            normalized.append((nb, nm, label) if label else (nb, nm))
         if not normalized:
             raise ValueError("callLLMVision: images 가 비어 있습니다.")
         new_messages = _build_vision_messages_multi(messages, normalized)
-        log_mime = ",".join(m for _, m in normalized)
-        log_len = sum(len(b) for b, _ in normalized)
+        log_mime = ",".join(str(image[1]) for image in normalized)
+        log_len = sum(len(image[0]) for image in normalized)
         return new_messages, log_mime, log_len
     if not image_b64:
         raise ValueError("callLLMVision: image_b64 가 비어 있습니다.")
@@ -1836,8 +1854,9 @@ async def callLLMVision(messages: list, image_b64: str = None, image_mime: str =
         json_mode: True 면 OpenAI 호환/Gemini 요청에 response_format=json_object 를
                    설정해 JSON 출력을 강제한다. 비지원 프로바이더는 프롬프트 기반 JSON
                    지시에 의존한다(응답은 호출자가 파싱).
-        images: 다중 이미지. [(b64, mime), ...] 를 주면 격자 합성 없이 각각 별도의
-                이미지 파트로 함께 전송한다. 비어있지 않은 리스트일 때만 다중 경로.
+        images: 다중 이미지. ``(b64, mime)`` 또는 ``(b64, mime, label)`` 항목을
+                주면 격자 합성 없이 각각 별도의 이미지 파트로 함께 전송한다.
+                label은 해당 이미지 바로 앞의 텍스트 파트로 배치된다.
 
     Returns:
         LLM 응답 텍스트. 실패 시 "[LLM 실패] ..." 형식의 에러 문자열 반환.

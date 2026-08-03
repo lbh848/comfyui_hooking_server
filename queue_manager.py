@@ -47,6 +47,7 @@ GPU_QUEUE_PRIORITY_TYPES = (
 LLM_QUEUE_PRIORITY_TYPES = (
     "character_maker",
     "instance_lora_prompt_refine",
+    "lora_prompt_review",
     "bot_llm_face_tag_analysis",
     "qwen_edit_translate",
     "llm_test",
@@ -66,6 +67,7 @@ def _normalize_queue_order_map(
     raw_order,
     supported_types: tuple[str, ...],
     lane_label: str,
+    missing_after: Optional[dict[str, str]] = None,
 ) -> dict[str, int]:
     """설정된 상대 순서를 보존하면서 알려진 타입을 10부터 빠짐없이 재번호화한다."""
     if raw_order is None:
@@ -106,6 +108,20 @@ def _normalize_queue_order_map(
     configured.sort(key=lambda entry: (entry[0], entry[1]))
     ordered_types = [entry[2] for entry in configured]
     ordered_types.extend(item_type for _, item_type in sorted(missing))
+
+    # 새 큐 타입을 도입한 뒤 레거시 설정에 그 타입만 없을 때는 맨 끝에 붙이지 않고
+    # 선언된 기본 선행 타입 바로 뒤에 삽입한다. 사용자가 이미 순위를 저장한 타입은
+    # 건드리지 않아 기존의 수동 순서 선택도 그대로 보존한다.
+    missing_types = {item_type for _, item_type in missing}
+    for item_type, predecessor in (missing_after or {}).items():
+        if (
+            item_type not in missing_types
+            or item_type not in ordered_types
+            or predecessor not in ordered_types
+        ):
+            continue
+        ordered_types.remove(item_type)
+        ordered_types.insert(ordered_types.index(predecessor) + 1, item_type)
 
     # 인스턴스 분석/학습은 UI와 백엔드 모두 하나의 고정 순서 그룹으로 취급한다.
     if (
@@ -164,6 +180,9 @@ def normalize_queue_priority_orders(config: dict) -> tuple[dict[str, int], dict[
             llm_order,
             LLM_QUEUE_PRIORITY_TYPES,
             "LLM",
+            missing_after={
+                "lora_prompt_review": "instance_lora_prompt_refine",
+            },
         ),
     )
 
@@ -176,6 +195,7 @@ LLM_TYPES = frozenset({
     "illustration_llm_build",       # CHAT -> CALL1/2/3 -> 다중 삽화 큐 생성
     "illustration_easy_edit",       # 저장 슬롯 -> 기존 편하게 수정 LLM -> 수정 재생성
     "instance_lora_prompt_refine",  # 태그 정제 / test_setup (instance·style·bot·asset 전부 LLM 호출)
+    "lora_prompt_review",           # 1차 정제 + 설정된 route의 선택적 2차 비전 검수
     "bot_llm_face_tag_analysis",    # 비전 LLM 기반 얼굴/눈 태그 자동 분류
     "character_maker",              # 캐릭터 메이커 draft/feedback LLM 수정 (revise)
     "qwen_edit_translate",          # Qwen Edit 지시문 영어 번역
@@ -185,7 +205,7 @@ LLM_TYPES = frozenset({
 @dataclass
 class QueueItem:
     id: str
-    type: str  # illustration | asset_generation | qwen_edit | qwen_edit_translate | asset_lora_training | bot_lora_training | instance_lora_training | instance_lora_analysis | tag_analysis | auto_match_batch | data_patch_utility | instance_lora_prompt_refine
+    type: str  # illustration | asset_generation | qwen_edit | qwen_edit_translate | asset_lora_training | bot_lora_training | instance_lora_training | instance_lora_analysis | tag_analysis | auto_match_batch | data_patch_utility | instance_lora_prompt_refine | lora_prompt_review
     label: str
     status: str = "pending"  # pending | processing | completed | failed | cancelled
     params: dict = field(default_factory=dict)
@@ -333,6 +353,49 @@ class QueueManager:
         runtime_handler=None,
         depends_on: Optional[list[str]] = None,
     ) -> QueueItem:
+        # LoRA 2차 검수가 켜져 있으면 모든 bot/asset/instance/style 정제 생산자가
+        # 별도 수정 없이 실제 전용 LLM 큐 타입을 사용한다. 이 타입의 핸들러가
+        # 기존 1차 정제 뒤 검수를 이어 실행하므로 label/params/dependency는 보존한다.
+        if item_type == "instance_lora_prompt_refine":
+            if self.get_config is None:
+                print(
+                    "[QUEUE:LORA_REVIEW] 설정 조회 함수가 없어 기존 정제 큐 사용: "
+                    f"label={label}"
+                )
+            else:
+                try:
+                    queue_config = self.get_config()
+                    if not isinstance(queue_config, dict):
+                        raise TypeError(
+                            "큐 설정은 dict여야 합니다: "
+                            f"type={type(queue_config).__name__}"
+                        )
+                    review_enabled = queue_config.get(
+                        "lora_prompt_review_enabled", False
+                    )
+                    if not isinstance(review_enabled, bool):
+                        raise TypeError(
+                            "lora_prompt_review_enabled는 bool이어야 합니다: "
+                            f"value={review_enabled!r}"
+                        )
+                    if review_enabled:
+                        item_type = "lora_prompt_review"
+                        print(
+                            "[QUEUE:LORA_REVIEW] 전용 큐 타입으로 승격: "
+                            f"label={label}"
+                        )
+                    else:
+                        print(
+                            "[QUEUE:LORA_REVIEW] 설정 OFF, 기존 정제 큐 사용: "
+                            f"label={label}"
+                        )
+                except Exception as e:
+                    print(
+                        "[QUEUE:LORA_REVIEW] 설정 조회 실패, 기존 정제 큐 사용: "
+                        f"label={label} error={type(e).__name__}: {e}"
+                    )
+                    traceback.print_exc()
+
         normalized_dependencies = []
         if depends_on is not None:
             if not isinstance(depends_on, (list, tuple, set)):
@@ -712,7 +775,7 @@ class QueueManager:
                 )
             return None
 
-        if item_type == "instance_lora_prompt_refine":
+        if item_type in ("instance_lora_prompt_refine", "lora_prompt_review"):
             source = str(params.get("source_type") or "").strip().lower()
             if source == "instance":
                 return self._normalized_scope("instance", params.get("lora_id"))
@@ -774,14 +837,14 @@ class QueueManager:
             "instance_lora_training",
         }
         if (
-            candidate.type == "instance_lora_prompt_refine"
+            candidate.type in ("instance_lora_prompt_refine", "lora_prompt_review")
             and blocker.type in analysis_types
         ):
             return True
         if (
             candidate.type in training_types
             and blocker.type
-            in analysis_types | {"instance_lora_prompt_refine"}
+            in analysis_types | {"instance_lora_prompt_refine", "lora_prompt_review"}
         ):
             return True
         return False
@@ -1326,6 +1389,7 @@ class QueueManager:
             "regenerate": self._handle_regenerate,
             "bot_llm_face_tag_analysis": self._handle_bot_llm_face_tag_analysis,
             "instance_lora_prompt_refine": self._handle_instance_lora_prompt_refine,
+            "lora_prompt_review": self._handle_instance_lora_prompt_refine,
             "character_maker": self._handle_character_maker,
         }
         handler = dispatch.get(item.type)
@@ -3649,6 +3713,8 @@ class QueueManager:
                 test_positive=test_positive,
                 bot_name=bot_name,
                 project_name=project_name,
+                source_type="bot_lora_test_setup",
+                card_filename=card_filename,
             )
             if not result.get("success"):
                 err = result.get("error", "알 수 없는 오류")
@@ -3738,6 +3804,7 @@ class QueueManager:
         bot_name = params.get("bot_name", "")
         project_name = params.get("project_name", "")
         char_name = params.get("char_name", "")
+        card_filename = params.get("card_filename", "")
         card_positive = params.get("card_positive", "")
         test_filename = params.get("test_filename", "")
         test_positive = params.get("test_positive", "")
@@ -3767,6 +3834,8 @@ class QueueManager:
                 test_positive=test_positive,
                 bot_name=bot_name,
                 project_name=project_name,
+                source_type="bot_lora_char_test_setup",
+                card_filename=card_filename,
             )
             if not result.get("success"):
                 err = result.get("error", "알 수 없는 오류")
@@ -3847,6 +3916,7 @@ class QueueManager:
         from modes.instance_lora_mode import run_auto_refine_test_setup
         char_name = params.get("char_name", "")
         entry = params.get("entry", "")
+        card_filename = params.get("card_filename", "")
         card_positive = params.get("card_positive", "")
         test_filename = params.get("test_filename", "")
         test_positive = params.get("test_positive", "")
@@ -3875,6 +3945,9 @@ class QueueManager:
                 test_positive=test_positive,
                 bot_name="",
                 project_name="",
+                source_type="asset_test_setup",
+                entry=entry,
+                card_filename=card_filename,
             )
             if not result.get("success"):
                 err = result.get("error", "알 수 없는 오류")

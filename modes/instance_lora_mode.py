@@ -38,6 +38,7 @@ AUTO_LORA_PROMPT_META_ASSET_FILE = os.path.join(ASSET_DATA_DIR, "auto_lora_promp
 BOT_TEST_SETUP_PROMPT_BUILTIN_FILE = os.path.join(AUTO_LORA_PROMPT_DIR, "bot_test_setup_system.txt")
 BOT_TEST_SETUP_PROMPT_CUSTOM_FILE = os.path.join(ASSET_DATA_DIR, "bot_test_setup_prompt_custom.txt")
 BOT_TEST_SETUP_PROMPT_META_FILE = os.path.join(ASSET_DATA_DIR, "bot_test_setup_prompt_meta.json")
+ASSET_TEST_SETUP_PROMPT_BUILTIN_FILE = os.path.join(AUTO_LORA_PROMPT_DIR, "asset_test_setup_system.txt")
 
 # 스타일 LoRA(그림체/화풍) 정제 전용 템플릿. 인스턴스 정제와 동일 동작이되 별도 템플릿으로 발전시키기 위해 분리.
 # template_set == "style" 일 때 사용된다.
@@ -47,6 +48,8 @@ STYLE_LORA_PROMPT_META_FILE = os.path.join(ASSET_DATA_DIR, "style_lora_prompt_me
 
 _bot_test_setup_prompt_builtin_cache: str | None = None
 _bot_test_setup_prompt_builtin_mtime: float = 0.0
+_asset_test_setup_prompt_builtin_cache: str | None = None
+_asset_test_setup_prompt_builtin_mtime: float = 0.0
 
 _auto_lora_prompt_builtin_cache: str | None = None
 _auto_lora_prompt_builtin_mtime: float = 0.0
@@ -208,6 +211,31 @@ def _load_bot_test_setup_prompt_builtin() -> str:
         return ""
 
 
+def _load_asset_test_setup_prompt_builtin() -> str:
+    """에셋 LoRA 테스트 조합 전용 builtin 프롬프트 로드. mtime 기반 캐싱."""
+    global _asset_test_setup_prompt_builtin_cache, _asset_test_setup_prompt_builtin_mtime
+    path = ASSET_TEST_SETUP_PROMPT_BUILTIN_FILE
+    if not os.path.isfile(path):
+        print(f"[INSTANCE_LORA] asset_test_setup builtin 파일 없음: {path}")
+        return ""
+    try:
+        mtime = os.path.getmtime(path)
+        if (
+            _asset_test_setup_prompt_builtin_cache is not None
+            and mtime == _asset_test_setup_prompt_builtin_mtime
+        ):
+            return _asset_test_setup_prompt_builtin_cache
+        with open(path, "r", encoding="utf-8") as f:
+            txt = f.read()
+        _asset_test_setup_prompt_builtin_cache = txt
+        _asset_test_setup_prompt_builtin_mtime = mtime
+        return txt
+    except Exception as e:
+        print(f"[INSTANCE_LORA] asset_test_setup builtin 로드 실패: {e}")
+        traceback.print_exc()
+        return ""
+
+
 def _render_bot_test_setup_prompt(template: str, test_prompt: str, character_prompt: str) -> str:
     """bot_test_setup 템플릿의 {test_prompt} / {character_prompt} 변수 치환.
     미리보기와 실제 전송이 반드시 이 단일 함수만 경유하도록 한다 (CLAUDE.md)."""
@@ -337,7 +365,12 @@ async def run_auto_refine_lora_prompt(
 
     반환: {"success": True, "data": {"positive": "..."}} 또는 {"success": False, "error": "..."}
     """
-    from modes.llm_service import callLLMVisionTask, supports_vision, get_config, routing_primary_service
+    from modes.llm_service import (
+        callLLMVisionTask,
+        routing_primary_model,
+        routing_primary_service,
+        supports_vision,
+    )
     from modes.lighbd_service import _log_lighbd_history
     import datetime
 
@@ -347,6 +380,7 @@ async def run_auto_refine_lora_prompt(
             await _server.notify_frontend("lighbd_llm_stream", {"type": event_type, **(data or {})})
         except Exception as e:
             print(f"[INSTANCE_LORA] WARN: notify_frontend 실패: {e}")
+            traceback.print_exc()
 
     try:
         source_type = (source_type or "bot").strip().lower()
@@ -429,7 +463,6 @@ async def run_auto_refine_lora_prompt(
                 return {"success": False, "error": f"학습 이미지를 찾을 수 없습니다: {filename} (character={char_name} entry={entry})"}
 
         # 비전 서비스 확인 (외부 API 분기: primary LLM 기준)
-        cfg = get_config()
         service = routing_primary_service("refine_lora_prompt")
         if not supports_vision(service):
             print(f"[INSTANCE_LORA] 비전 미지원 서비스: {service}")
@@ -488,8 +521,13 @@ async def run_auto_refine_lora_prompt(
             source_desc = f"training entry={entry}"
         print(f"[INSTANCE_LORA] auto_refine_lora_prompt 호출: source={source_type} {source_desc} char={char_name} filename={filename} service={service} is_asset={is_asset} gender={gender_tag} etc_len={len(current_positive)} use_custom={use_custom}")
 
-        use_model = cfg.get("llm_model", "")
-        await _notify_llm_widget("start", {"model": use_model, "prompt_id": f"auto_lora_prompt:{source_type}:{char_name}/{filename}"})
+        use_model = routing_primary_model("refine_lora_prompt")
+        await _notify_llm_widget("start", {
+            "model": use_model,
+            "prompt_id": f"auto_lora_prompt:{source_type}:{char_name}/{filename}",
+            "call_name": "LORA PROMPT REFINE",
+            "task_key": "refine_lora_prompt",
+        })
 
         raw = None
         last_err = None
@@ -517,24 +555,56 @@ async def run_auto_refine_lora_prompt(
         if raw and not raw.startswith("[LLM 실패]"):
             parsed = _parse_auto_lora_prompt_response(raw, gender_fallback=gender_tag)
             if parsed is not None:
-                done_data = {
+                # 첫 호출을 먼저 독립적으로 완료·기록한다. 선택적 2차 검수는 별도
+                # route/위젯/자세히 기록을 사용하므로 두 LLM 호출의 통계가 섞이지 않는다.
+                first_elapsed = time.time() - t0
+                first_done_data = {
                     "text": raw,
                     "completion_tokens": max(1, len(raw) // 3),
-                    "elapsed": round(total_elapsed, 3),
-                    "tps": round((max(1, len(raw) // 3) / total_elapsed), 1) if total_elapsed > 0 else 0.0,
+                    "elapsed": round(first_elapsed, 3),
+                    "tps": round((max(1, len(raw) // 3) / first_elapsed), 1) if first_elapsed > 0 else 0.0,
                     "ttft": None,
                 }
-                await _notify_llm_widget("done", done_data)
+                await _notify_llm_widget("done", first_done_data)
                 _log_lighbd_history({
                     "ts": datetime.datetime.now().isoformat(timespec="seconds"),
                     "prompt_id": f"auto_lora_prompt:{source_type}:{char_name}/{filename}",
+                    "call_name": "LORA PROMPT REFINE",
+                    "task_key": "refine_lora_prompt",
+                    "model": use_model,
                     "input": messages,
                     "output": raw,
-                    "completion_tokens": done_data["completion_tokens"],
-                    "elapsed": done_data["elapsed"],
-                    "tps": done_data["tps"],
+                    "completion_tokens": first_done_data["completion_tokens"],
+                    "elapsed": first_done_data["elapsed"],
+                    "tps": first_done_data["tps"],
                     "status": "ok",
                 })
+
+                try:
+                    from modes.lora_prompt_review import run_lora_prompt_review
+                    prompt_id = f"auto_lora_prompt:{source_type}:{char_name}/{filename}"
+                    review = await run_lora_prompt_review(
+                        candidate_positive=parsed["positive"],
+                        original_contract=rendered,
+                        image_paths=[img_path],
+                        prompt_id=prompt_id,
+                        source_type=source_type,
+                        review_mode="style_caption" if source_type == "style" else "single_source",
+                        image_roles=[
+                            "style LoRA source image; preserve depicted content but exclude visual-style descriptions"
+                            if source_type == "style"
+                            else "LoRA source image; authoritative for every visible tag"
+                        ],
+                    )
+                    if review.get("positive"):
+                        parsed = {"positive": review["positive"]}
+                except Exception as review_err:
+                    print(
+                        f"[INSTANCE_LORA] 2차 라우팅 검수 예외, 1차 결과 유지: "
+                        f"source={source_type} filename={filename} error={review_err}"
+                    )
+                    traceback.print_exc()
+
                 print(f"[INSTANCE_LORA] auto_refine_lora_prompt 완료: positive 길이={len(parsed['positive'])}")
                 return {"success": True, "data": parsed}
             last_err = f"LLM 응답을 JSON으로 파싱하지 못했습니다. raw: {raw[:300]}"
@@ -547,6 +617,9 @@ async def run_auto_refine_lora_prompt(
         _log_lighbd_history({
             "ts": datetime.datetime.now().isoformat(timespec="seconds"),
             "prompt_id": f"auto_lora_prompt:{source_type}:{char_name}/{filename}",
+            "call_name": "LORA PROMPT REFINE",
+            "task_key": "refine_lora_prompt",
+            "model": use_model,
             "input": messages,
             "output": "",
             "elapsed": round(total_elapsed, 3),
@@ -561,12 +634,117 @@ async def run_auto_refine_lora_prompt(
         _log_lighbd_history({
             "ts": datetime.datetime.now().isoformat(timespec="seconds"),
             "prompt_id": f"auto_lora_prompt:{source_type}:{char_name}/{filename}",
+            "call_name": "LORA PROMPT REFINE",
+            "task_key": "refine_lora_prompt",
+            "model": locals().get("use_model", ""),
             "input": messages if "messages" in locals() else [],
             "output": "",
             "status": "error",
             "error": f"{type(e).__name__}: {e}",
         })
         return {"success": False, "error": str(e)}
+
+
+def _resolve_test_setup_image_paths(
+    *,
+    source_type: str,
+    bot_name: str,
+    project_name: str,
+    character: str,
+    entry: str,
+    card_filename: str,
+    test_filename: str,
+) -> list[str]:
+    """테스트 전환 검수의 [source/card, test/reference] 이미지 경로를 반환한다.
+
+    구버전 클라이언트가 card_filename을 보내지 않은 경우에만 해당 캐릭터/entry의
+    첫 학습 이미지를 명시적으로 기록한 뒤 사용한다. 두 경로가 모두 없으면 검수
+    helper가 유효 이미지 수 불일치로 안전하게 1차 결과를 유지한다.
+    """
+    source_type = (source_type or "").strip().lower()
+    resolved_card_filename = (card_filename or "").strip()
+    try:
+        if source_type in ("bot_lora_test_setup", "bot_lora_char_test_setup"):
+            from modes.bot_lora_mode import (
+                _get_project_training_images,
+                get_bot_char_test_image_path,
+                get_bot_test_image_path,
+                get_bot_training_image_path,
+            )
+
+            if not resolved_card_filename:
+                training_images = _get_project_training_images(
+                    bot_name, project_name, character
+                )
+                if training_images:
+                    resolved_card_filename = str(training_images[0].get("filename") or "").strip()
+                    print(
+                        f"[INSTANCE_LORA] card_filename 누락, 첫 봇 학습 이미지 사용: "
+                        f"source={source_type} bot={bot_name} project={project_name} "
+                        f"character={character} card={resolved_card_filename}"
+                    )
+                else:
+                    print(
+                        f"[INSTANCE_LORA] card_filename 누락 및 봇 학습 이미지 없음: "
+                        f"source={source_type} bot={bot_name} project={project_name} character={character}"
+                    )
+            card_path = get_bot_training_image_path(
+                bot_name, project_name, character, resolved_card_filename
+            ) if resolved_card_filename else None
+            if source_type == "bot_lora_char_test_setup":
+                test_path = get_bot_char_test_image_path(
+                    bot_name, project_name, character, test_filename
+                )
+            else:
+                test_path = get_bot_test_image_path(
+                    bot_name, project_name, test_filename
+                )
+        elif source_type == "asset_test_setup":
+            from modes.lora_mode import (
+                get_test_image_path,
+                get_training_image_path,
+                list_training_images,
+            )
+
+            if not resolved_card_filename:
+                training_images = list_training_images(character, entry)
+                if training_images:
+                    resolved_card_filename = str(training_images[0].get("filename") or "").strip()
+                    print(
+                        f"[INSTANCE_LORA] card_filename 누락, 첫 에셋 학습 이미지 사용: "
+                        f"character={character} entry={entry} card={resolved_card_filename}"
+                    )
+                else:
+                    print(
+                        f"[INSTANCE_LORA] card_filename 누락 및 에셋 학습 이미지 없음: "
+                        f"character={character} entry={entry}"
+                    )
+            card_path = get_training_image_path(
+                character, entry, resolved_card_filename
+            ) if resolved_card_filename else None
+            test_path = get_test_image_path(character, entry, test_filename)
+        else:
+            print(f"[INSTANCE_LORA] 테스트 이미지 경로 해석 불가 source_type: {source_type}")
+            return []
+
+        if not card_path:
+            print(
+                f"[INSTANCE_LORA] 검수 카드/소스 이미지 경로 없음: source={source_type} "
+                f"character={character} card={resolved_card_filename}"
+            )
+        if not test_path:
+            print(
+                f"[INSTANCE_LORA] 검수 테스트 이미지 경로 없음: source={source_type} "
+                f"character={character} test={test_filename}"
+            )
+        return [path for path in (card_path, test_path) if path]
+    except Exception as e:
+        print(
+            f"[INSTANCE_LORA] 테스트 이미지 경로 해석 실패: source={source_type} "
+            f"character={character} card={resolved_card_filename} test={test_filename} error={e}"
+        )
+        traceback.print_exc()
+        return []
 
 
 async def run_auto_refine_test_setup(
@@ -576,15 +754,22 @@ async def run_auto_refine_test_setup(
     test_positive: str,
     bot_name: str = "",
     project_name: str = "",
+    source_type: str = "bot_lora_test_setup",
+    entry: str = "",
+    card_filename: str = "",
 ) -> dict:
-    """봇 LoRA '테스트 이미지 일괄 세팅' 텍스트 정제 (core, 비전 미사용).
+    """봇/에셋 LoRA 테스트 프롬프트 1차 조합 + 2이미지 비전 검수.
 
     공통 테스트 이미지 프롬프트(test_positive)에서 품질/자세/표정을, 캐릭터 카드 수정
     프롬프트(card_positive)에서 복장/외모를 추출해 조합한 테스트용 positive 프롬프트 생성.
 
     반환: {"success": True, "data": {"positive": "..."}} 또는 {"success": False, "error": "..."}
     """
-    from modes.llm_service import callLLMTask, get_config
+    from modes.llm_service import (
+        callLLMTask,
+        routing_primary_model,
+        routing_primary_service,
+    )
     from modes.lighbd_service import _log_lighbd_history
     import datetime
 
@@ -594,9 +779,18 @@ async def run_auto_refine_test_setup(
             await _server.notify_frontend("lighbd_llm_stream", {"type": event_type, **(data or {})})
         except Exception as e:
             print(f"[INSTANCE_LORA] WARN: notify_frontend 실패: {e}")
+            traceback.print_exc()
 
     messages = []
     try:
+        source_type = (source_type or "bot_lora_test_setup").strip().lower()
+        if source_type not in (
+            "bot_lora_test_setup",
+            "bot_lora_char_test_setup",
+            "asset_test_setup",
+        ):
+            print(f"[INSTANCE_LORA] 지원하지 않는 test setup source_type: {source_type}")
+            return {"success": False, "error": f"지원하지 않는 test setup source_type: {source_type}"}
         if not character:
             return {"success": False, "error": "character 필드가 필요합니다."}
         if not test_filename:
@@ -608,7 +802,11 @@ async def run_auto_refine_test_setup(
 
         custom_text, use_custom = _load_bot_test_setup_prompt_custom()
         if use_custom and custom_text.strip():
+            # 기존 공유 프롬프트 편집 UI와의 하위 호환을 보존한다. 에셋의 2차
+            # asset_test_transfer 정책은 커스텀 문구가 캐릭터 중심이어도 최종 역할을 교정한다.
             template = custom_text
+        elif source_type == "asset_test_setup":
+            template = _load_asset_test_setup_prompt_builtin()
         else:
             template = _load_bot_test_setup_prompt_builtin()
         if not template.strip():
@@ -621,13 +819,17 @@ async def run_auto_refine_test_setup(
             {"role": "user", "content": rendered},
         ]
 
-        cfg = get_config()
-        service = cfg.get("llm_service", "")
-        use_model = cfg.get("llm_model", "")
-        prompt_id = f"bot_test_setup:{bot_name}/{project_name}/{character}/{test_filename}"
-        print(f"[INSTANCE_LORA] run_auto_refine_test_setup 호출: bot={bot_name} project={project_name} char={character} test={test_filename} service={service} card_len={len(card_positive)} test_len={len(test_positive)}")
+        service = routing_primary_service("refine_lora_test_setup")
+        use_model = routing_primary_model("refine_lora_test_setup")
+        prompt_id = f"{source_type}:{bot_name}/{project_name}/{character}/{test_filename}"
+        print(f"[INSTANCE_LORA] run_auto_refine_test_setup 호출: source={source_type} bot={bot_name} project={project_name} char={character} entry={entry} card={card_filename} test={test_filename} service={service} card_len={len(card_positive)} test_len={len(test_positive)}")
 
-        await _notify_llm_widget("start", {"model": use_model, "prompt_id": prompt_id})
+        await _notify_llm_widget("start", {
+            "model": use_model,
+            "prompt_id": prompt_id,
+            "call_name": "LORA TEST SETUP",
+            "task_key": "refine_lora_test_setup",
+        })
 
         raw = None
         last_err = None
@@ -651,24 +853,63 @@ async def run_auto_refine_test_setup(
         if raw and not raw.startswith("[LLM 실패]"):
             parsed = _parse_auto_lora_prompt_response(raw)
             if parsed is not None:
-                done_data = {
+                first_done_data = {
                     "text": raw,
                     "completion_tokens": max(1, len(raw) // 3),
                     "elapsed": round(total_elapsed, 3),
                     "tps": round((max(1, len(raw) // 3) / total_elapsed), 1) if total_elapsed > 0 else 0.0,
                     "ttft": None,
                 }
-                await _notify_llm_widget("done", done_data)
+                await _notify_llm_widget("done", first_done_data)
                 _log_lighbd_history({
                     "ts": datetime.datetime.now().isoformat(timespec="seconds"),
                     "prompt_id": prompt_id,
+                    "call_name": "LORA TEST SETUP",
+                    "task_key": "refine_lora_test_setup",
+                    "model": use_model,
                     "input": messages,
                     "output": raw,
-                    "completion_tokens": done_data["completion_tokens"],
-                    "elapsed": done_data["elapsed"],
-                    "tps": done_data["tps"],
+                    "completion_tokens": first_done_data["completion_tokens"],
+                    "elapsed": first_done_data["elapsed"],
+                    "tps": first_done_data["tps"],
                     "status": "ok",
                 })
+
+                try:
+                    from modes.lora_prompt_review import run_lora_prompt_review
+                    image_paths = _resolve_test_setup_image_paths(
+                        source_type=source_type,
+                        bot_name=bot_name,
+                        project_name=project_name,
+                        character=character,
+                        entry=entry,
+                        card_filename=card_filename,
+                        test_filename=test_filename,
+                    )
+                    is_asset_test = source_type == "asset_test_setup"
+                    review = await run_lora_prompt_review(
+                        candidate_positive=parsed["positive"],
+                        original_contract=rendered,
+                        image_paths=image_paths,
+                        prompt_id=prompt_id,
+                        source_type=source_type,
+                        review_mode="asset_test_transfer" if is_asset_test else "test_transfer",
+                        image_roles=[
+                            "source asset image; supplies the learned asset's defining visible properties"
+                            if is_asset_test
+                            else "character card image; supplies identity, appearance, outfit, and accessories only",
+                            "test/reference image; supplies pose, expression, action, framing, composition, and background only",
+                        ],
+                    )
+                    if review.get("positive"):
+                        parsed = {"positive": review["positive"]}
+                except Exception as review_err:
+                    print(
+                        f"[INSTANCE_LORA] 테스트 2차 라우팅 검수 예외, 1차 결과 유지: "
+                        f"source={source_type} test={test_filename} error={review_err}"
+                    )
+                    traceback.print_exc()
+
                 print(f"[INSTANCE_LORA] run_auto_refine_test_setup 완료: positive 길이={len(parsed['positive'])}")
                 return {"success": True, "data": parsed}
             last_err = f"LLM 응답을 JSON으로 파싱하지 못했습니다. raw: {raw[:300]}"
@@ -681,6 +922,9 @@ async def run_auto_refine_test_setup(
         _log_lighbd_history({
             "ts": datetime.datetime.now().isoformat(timespec="seconds"),
             "prompt_id": prompt_id,
+            "call_name": "LORA TEST SETUP",
+            "task_key": "refine_lora_test_setup",
+            "model": use_model,
             "input": messages,
             "output": "",
             "elapsed": round(total_elapsed, 3),
@@ -694,7 +938,10 @@ async def run_auto_refine_test_setup(
         await _notify_llm_widget("error", {"error": f"{type(e).__name__}: {e}"})
         _log_lighbd_history({
             "ts": datetime.datetime.now().isoformat(timespec="seconds"),
-            "prompt_id": f"bot_test_setup:{bot_name}/{project_name}/{character}/{test_filename}",
+            "prompt_id": f"{source_type}:{bot_name}/{project_name}/{character}/{test_filename}",
+            "call_name": "LORA TEST SETUP",
+            "task_key": "refine_lora_test_setup",
+            "model": locals().get("use_model", ""),
             "input": messages,
             "output": "",
             "status": "error",
@@ -832,6 +1079,7 @@ async def handle_auto_refine_enqueue(request):
         if source_type == "asset_test_setup":
             char_name = (body.get("character") or "").strip()
             entry = (body.get("entry") or "").strip()
+            card_filename = (body.get("card_filename") or "").strip()
             card_positive = body.get("card_positive", "") or ""
             test_filename = (body.get("test_filename") or "").strip()
             test_positive = body.get("test_positive", "") or ""
@@ -862,6 +1110,7 @@ async def handle_auto_refine_enqueue(request):
                     "source_type": source_type,
                     "char_name": char_name,
                     "entry": entry,
+                    "card_filename": card_filename,
                     "card_positive": card_positive,
                     "test_filename": test_filename,
                     "test_positive": test_positive,
@@ -918,6 +1167,7 @@ async def handle_auto_refine_enqueue(request):
         # ── bot_lora_char_test_setup: 캐릭터별 테스트 이미지 단일 정제 전용 분기 ──
         # (공통→char_test 복사 없이, 이미 존재하는 char_test 이미지의 positive만 교체)
         if source_type == "bot_lora_char_test_setup":
+            card_filename = (body.get("card_filename") or "").strip()
             card_positive = body.get("card_positive", "") or ""
             test_filename = (body.get("test_filename") or "").strip()
             test_positive = body.get("test_positive", "") or ""
@@ -949,6 +1199,7 @@ async def handle_auto_refine_enqueue(request):
                     "bot_name": bot_name,
                     "project_name": project_name,
                     "char_name": char_name,
+                    "card_filename": card_filename,
                     "card_positive": card_positive,
                     "test_filename": test_filename,
                     "test_positive": test_positive,
