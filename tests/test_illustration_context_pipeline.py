@@ -12,6 +12,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from modes import illustration_context_pipeline as pipeline
 
 
+@pytest.fixture(autouse=True)
+def _isolate_lighbd_history_writes(monkeypatch):
+    """파이프라인 단위 테스트가 운영 LLM 이력 파일을 수정하지 않게 한다."""
+    monkeypatch.setattr(
+        pipeline.lighbd_service,
+        "_log_lighbd_history",
+        lambda _record: None,
+    )
+
+
 def _toon_for_slots(slots):
     rows = []
     for slot in slots:
@@ -2796,6 +2806,13 @@ def test_call3_slot_coverage_requires_every_selected_slot_and_rejects_others(cap
     assert reason == ""
 
     valid, reason = pipeline.validate_call3_slot_coverage(
+        '[Scene slot=2]\n\n[Scene slot=7]\nMinsu: (Wait.)',
+        [2, 7],
+    )
+    assert valid is True
+    assert reason == ""
+
+    valid, reason = pipeline.validate_call3_slot_coverage(
         '[Scene slot=2]\nHana: "Ready."\n[Scene slot=-1]\nHana: "Poster."',
         [2, 7],
     )
@@ -2828,7 +2845,124 @@ def test_manga_prompt_declares_all_balloon_labels_and_short_dialogue_rules():
         assert label in manga
     assert "Do not write paragraphs, long monologues, or multi-sentence speeches." in manga
     assert "Never omit or skip a supplied selected scene." in manga
+    assert "leave that Scene block body empty" in manga
+    assert "Every supplied selected scene header is mandatory" in manga
     assert "Never output slot -1." in manga
+
+
+def test_call3_partial_recovery_keeps_safe_dialogue_and_fills_silent_headers(capsys):
+    recovered, metadata = pipeline.recover_call3_partial_output(
+        '''[Scene slot=11]
+Alisa: "정상 대사야." #normal
+[Scene slot=99]
+Alisa: "예상 밖 슬롯." #normal''',
+        [4, 7, 11],
+        "Alisa",
+        "한국어",
+    )
+
+    assert recovered == '''[Scene slot=4]
+
+[Scene slot=7]
+
+[Scene slot=11]
+Alisa: "정상 대사야." #normal'''
+    assert metadata["missing_headers"] == [4, 7]
+    assert metadata["unexpected_headers"] == [99]
+    assert metadata["populated_slots"] == [11]
+    assert metadata["silent_slots"] == [4, 7]
+    assert "슬롯별 부분 복구 성공" in capsys.readouterr().out
+
+
+@pytest.mark.asyncio
+async def test_call3_accepts_header_only_silent_scenes_without_correction(monkeypatch):
+    calls = []
+
+    async def fake_pipeline_call(
+        call_name,
+        messages,
+        stream_notify=None,
+        result_validator=None,
+        **kwargs,
+    ):
+        calls.append(call_name)
+        return '''[Scene slot=4]
+
+[Scene slot=7]
+
+[Scene slot=11]
+Alisa: "이 장면에는 대사가 있어." #normal'''
+
+    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
+    state = await pipeline._build_call3_dialogue_with_recovery(
+        [{"role": "user", "content": "selected scenes"}],
+        [4, 7, 11],
+        "Alisa",
+        "한국어",
+    )
+
+    assert calls == ["CALL3"]
+    assert state["correction_used"] is False
+    assert state["partial_recovery_used"] is False
+    assert state["silent_slots"] == [4, 7]
+    assert pipeline.parse_speak_output(state["output"]) == {
+        11: 'Alisa: "이 장면에는 대사가 있어." #normal'
+    }
+
+
+@pytest.mark.asyncio
+async def test_call3_correction_exhaustion_keeps_only_safe_slots(monkeypatch, capsys):
+    calls = []
+
+    async def fake_pipeline_call(
+        call_name,
+        messages,
+        stream_notify=None,
+        result_validator=None,
+        **kwargs,
+    ):
+        calls.append(call_name)
+        if call_name == "CALL3":
+            return '[Scene slot=4]\nAlisa: "정상 대사야." #normal'
+        raise RuntimeError("교정 라우팅 소진")
+
+    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
+    state = await pipeline._build_call3_dialogue_with_recovery(
+        [{"role": "user", "content": "selected scenes"}],
+        [4, 7],
+        "Alisa",
+        "한국어",
+    )
+
+    assert calls == ["CALL3", "CALL3-CORRECTION"]
+    assert state["correction_used"] is True
+    assert state["partial_recovery_used"] is True
+    assert state["silent_slots"] == [7]
+    assert pipeline.parse_speak_output(state["output"]) == {
+        4: 'Alisa: "정상 대사야." #normal'
+    }
+    captured = capsys.readouterr().out
+    assert "안전한 슬롯별 대사만 복구" in captured
+    assert "슬롯별 부분 복구 성공" in captured
+
+
+@pytest.mark.asyncio
+async def test_call3_total_failure_becomes_silent_without_raising(monkeypatch, capsys):
+    async def fail_pipeline_call(*args, **kwargs):
+        raise RuntimeError("CALL3 공급자 전체 실패")
+
+    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fail_pipeline_call)
+    state = await pipeline._build_call3_dialogue_with_recovery(
+        [{"role": "user", "content": "selected scenes"}],
+        [4, 7],
+        "Alisa",
+        "한국어",
+    )
+
+    assert state["partial_recovery_used"] is True
+    assert state["silent_slots"] == [4, 7]
+    assert state["output"] == "[Scene slot=4]\n\n[Scene slot=7]"
+    assert "이미지 파이프라인 계속" in capsys.readouterr().out
 
 
 @pytest.mark.asyncio

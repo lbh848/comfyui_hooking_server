@@ -3734,10 +3734,14 @@ def validate_call3_slot_coverage(
     text: str,
     expected_slots: list[int],
 ) -> tuple[bool, str]:
-    """CALL3가 선택된 모든 slot만 빠짐없이 작성했는지 검증한다."""
+    """CALL3가 선택된 모든 slot header를 순서대로 작성했는지 검증한다.
+
+    Scene header만 있고 본문이 비어 있는 블록은 의도적인 무대사 장면이다. 대사가
+    있는 slot 목록이 아니라 header 목록으로 구조적 완전성을 판단해야 한다.
+    """
     expected = list(dict.fromkeys(int(slot) for slot in expected_slots))
     parsed = parse_speak_output(text)
-    actual = list(parsed)
+    populated = list(parsed)
     emitted_headers = [
         int(match.group(1))
         for match in re.finditer(
@@ -3745,12 +3749,20 @@ def validate_call3_slot_coverage(
             str(text or ""),
         )
     ]
-    missing = [slot for slot in expected if slot not in parsed]
-    unexpected = [slot for slot in actual if slot not in expected]
-    if missing or unexpected or emitted_headers != expected:
+    missing = [slot for slot in expected if slot not in emitted_headers]
+    unexpected = [slot for slot in emitted_headers if slot not in expected]
+    seen_headers = set()
+    duplicates = []
+    for slot in emitted_headers:
+        if slot in seen_headers and slot not in duplicates:
+            duplicates.append(slot)
+        seen_headers.add(slot)
+    silent = [slot for slot in expected if slot not in parsed]
+    if emitted_headers != expected:
         reason = (
-            f"CALL3 선택 slot 불일치: expected={expected}, actual={actual}, "
-            f"headers={emitted_headers}, missing={missing}, unexpected={unexpected}"
+            f"CALL3 선택 slot 불일치: expected={expected}, populated={populated}, "
+            f"headers={emitted_headers}, missing={missing}, unexpected={unexpected}, "
+            f"duplicates={duplicates}, silent={silent}"
         )
         print(f"[ILLUST_CONTEXT:CALL3] {reason}")
         return False, reason
@@ -3912,6 +3924,121 @@ def _remove_call3_roster_leaking_dialogue_entries(
     if source.endswith("\n"):
         sanitized += "\n"
     return sanitized, removed
+
+
+def _call3_scene_blocks(text: str) -> list[dict]:
+    """CALL3 텍스트를 header와 본문 줄로 분리한다."""
+    blocks = []
+    current = None
+    for raw_line in str(text or "").splitlines():
+        header_match = _CALL3_SCENE_ENTRY_RE.match(raw_line)
+        if header_match:
+            if current is not None:
+                blocks.append(current)
+            current = {
+                "slot": int(header_match.group("slot")),
+                "lines": [],
+            }
+            tail = header_match.group("tail").strip()
+            if tail:
+                current["lines"].append(tail)
+            continue
+        if current is not None:
+            current["lines"].append(raw_line)
+    if current is not None:
+        blocks.append(current)
+    return blocks
+
+
+def recover_call3_partial_output(
+    text: str,
+    expected_slots: list[int],
+    character_names: str,
+    output_language: str,
+) -> tuple[str, dict]:
+    """안전한 CALL3 블록만 보존하고 나머지 slot은 명시적 무대사로 복구한다.
+
+    슬롯 판단은 Scene header라는 구조화 데이터만 사용한다. 예상 밖 블록과 중복
+    블록은 버리고, 빠진 블록은 빈 header로 채운다. 현지화 대사에 내부 roster ID가
+    유출된 경우에는 기존 엔트리 단위 제거기를 적용한다.
+    """
+    expected = list(dict.fromkeys(int(slot) for slot in expected_slots))
+    source = str(text or "")
+    removed_entries = []
+    if (
+        source
+        and _call3_dialogue_requires_localized_names(output_language)
+        and _call3_dialogue_roster_leaks(source, character_names)
+    ):
+        source, removed_entries = _remove_call3_roster_leaking_dialogue_entries(
+            source,
+            character_names,
+        )
+
+    blocks_by_slot = {}
+    unexpected_headers = []
+    duplicate_headers = []
+    emitted_headers = []
+    expected_set = set(expected)
+    for block in _call3_scene_blocks(source):
+        slot = int(block["slot"])
+        emitted_headers.append(slot)
+        if slot not in expected_set:
+            unexpected_headers.append(slot)
+            continue
+        if slot in blocks_by_slot:
+            duplicate_headers.append(slot)
+            continue
+        blocks_by_slot[slot] = block
+
+    missing_headers = [slot for slot in expected if slot not in blocks_by_slot]
+    normalized_blocks = []
+    for slot in expected:
+        block = blocks_by_slot.get(slot) or {"lines": []}
+        body_lines = list(block.get("lines") or [])
+        while body_lines and not str(body_lines[0]).strip():
+            body_lines.pop(0)
+        while body_lines and not str(body_lines[-1]).strip():
+            body_lines.pop()
+        normalized = f"[Scene slot={slot}]"
+        if body_lines:
+            normalized += "\n" + "\n".join(body_lines)
+        normalized_blocks.append(normalized)
+    normalized_output = "\n\n".join(normalized_blocks)
+
+    residual_leaks = _call3_dialogue_roster_leaks(
+        normalized_output,
+        character_names,
+    )
+    if residual_leaks and _call3_dialogue_requires_localized_names(output_language):
+        print(
+            "[ILLUST_CONTEXT:CALL3-RECOVERY] 부분 복구 후 roster ID 유출이 남아 "
+            "모든 CALL3 대사를 포기하고 무대사 header만 유지: "
+            f"leaks={residual_leaks}, slots={expected}"
+        )
+        normalized_output = "\n\n".join(
+            f"[Scene slot={slot}]" for slot in expected
+        )
+
+    populated_slots = list(parse_speak_output(normalized_output))
+    silent_slots = [slot for slot in expected if slot not in populated_slots]
+    metadata = {
+        "emitted_headers": emitted_headers,
+        "missing_headers": missing_headers,
+        "unexpected_headers": unexpected_headers,
+        "duplicate_headers": duplicate_headers,
+        "populated_slots": populated_slots,
+        "silent_slots": silent_slots,
+        "removed_entries": removed_entries,
+        "residual_leaks": residual_leaks,
+    }
+    print(
+        "[ILLUST_CONTEXT:CALL3-RECOVERY] 슬롯별 부분 복구 성공: "
+        f"populated={populated_slots}, silent={silent_slots}, "
+        f"missing_headers={missing_headers}, unexpected={unexpected_headers}, "
+        f"duplicates={duplicate_headers}, removed={removed_entries}"
+    )
+    return normalized_output, metadata
 
 
 def _call3_dialogue_requires_localized_names(output_language: str) -> bool:
@@ -4285,6 +4412,151 @@ async def _call_pipeline_llm(
         print(f"[ILLUST_CONTEXT:{call_name}] 호출 예외: {e}")
         traceback.print_exc()
         raise
+
+
+async def _build_call3_dialogue_with_recovery(
+    speak_messages: list[dict],
+    selected_slots: list[int],
+    character_names: str,
+    speak_language: str,
+    stream_notify=None,
+) -> dict:
+    """CALL3를 실행하고 실패 범위를 대사 슬롯 안으로 격리한다."""
+    state = {
+        "output": "",
+        "initial_output": "",
+        "correction_used": False,
+        "partial_recovery_used": False,
+        "dialogue_drop_recovery_used": False,
+        "dropped_dialogue_entries": [],
+        "silent_slots": [],
+        "failure_reason": "",
+    }
+    normalized_messages = _normalize_messages(speak_messages)
+    try:
+        initial_output = await _call_pipeline_llm(
+            "CALL3",
+            normalized_messages,
+            stream_notify,
+        )
+    except Exception as initial_error:
+        state["failure_reason"] = str(initial_error)
+        print(
+            "[ILLUST_CONTEXT:CALL3-RECOVERY] 최초 CALL3 호출/라우팅이 소진되어 "
+            "모든 선택 슬롯을 무대사로 두고 이미지 파이프라인 계속: "
+            f"slots={selected_slots}, error={type(initial_error).__name__}: "
+            f"{initial_error}"
+        )
+        traceback.print_exc()
+        recovered, recovery = recover_call3_partial_output(
+            "",
+            selected_slots,
+            character_names,
+            speak_language,
+        )
+        state.update({
+            "output": recovered,
+            "partial_recovery_used": True,
+            "silent_slots": recovery["silent_slots"],
+        })
+        return state
+
+    state["initial_output"] = initial_output
+    call3_valid, call3_failure_reason = validate_call3_output_contract(
+        initial_output,
+        selected_slots,
+        character_names,
+        speak_language,
+    )
+    if call3_valid:
+        state["output"] = initial_output
+        state["silent_slots"] = [
+            slot for slot in selected_slots
+            if slot not in parse_speak_output(initial_output)
+        ]
+        return state
+
+    state["correction_used"] = True
+    state["failure_reason"] = call3_failure_reason
+    roster_correction_instruction = ""
+    if _call3_dialogue_requires_localized_names(speak_language):
+        roster_correction_instruction = (
+            "Keep each exact roster identifier as machine-readable speaker metadata only "
+            "on the left side of the colon. Never repeat a roster identifier inside quoted "
+            "dialogue or parenthesized thought. Infer a natural in-story form of address "
+            "from the original narrative and bounded scene windows; if uncertain, omit "
+            "the direct address. Preserve the speaker prefix and required output tag. "
+        )
+    print(
+        f"[ILLUST_CONTEXT:CALL3-CORRECTION] 최초 CALL3 결과가 출력 계약을 위반해 "
+        f"교정 호출 1회 실행: slots={selected_slots}, reason={call3_failure_reason}"
+    )
+    retry_messages = deepcopy(speak_messages)
+    retry_messages.extend([{
+        "role": "assistant",
+        "content": initial_output,
+    }, {
+        "role": "user",
+        "content": (
+            "Your previous output violated the selected-scene contract. "
+            f"Required slots, in order: {selected_slots}. "
+            "Rewrite the entire output. Emit exactly one [Scene slot=N] block "
+            "for every required slot and no block for any other slot. "
+            "A scene that should intentionally remain silent, or has no suitable "
+            "visible or narratively present speaker, must keep its Scene header with "
+            "an empty body. Do not invent narration, action description, dialogue, or "
+            "thought merely to fill such a block. Every other block must contain at "
+            "least one dialogue, thought, or inner monologue entry. "
+            f"Write every dialogue and thought in {speak_language}; this language rule is mandatory. "
+            + roster_correction_instruction
+            + "Character names in speaker prefixes, Scene headers, and required tags are "
+            "the only language exceptions. "
+            f"Validation failure to fix: {call3_failure_reason}. "
+            "Output only the corrected Scene blocks."
+        ),
+    }])
+    try:
+        corrected_output = await _call_pipeline_llm(
+            "CALL3-CORRECTION",
+            _normalize_messages(retry_messages),
+            stream_notify,
+            result_validator=lambda result: validate_call3_output_contract(
+                result,
+                selected_slots,
+                character_names,
+                speak_language,
+            ),
+        )
+        state["output"] = corrected_output
+        state["silent_slots"] = [
+            slot for slot in selected_slots
+            if slot not in parse_speak_output(corrected_output)
+        ]
+        return state
+    except Exception as correction_error:
+        state["failure_reason"] = str(correction_error)
+        print(
+            "[ILLUST_CONTEXT:CALL3-RECOVERY] CALL3 교정/라우팅 폴백 소진, "
+            "최초 결과에서 안전한 슬롯별 대사만 복구하고 이미지 파이프라인 계속: "
+            f"slots={selected_slots}, error={type(correction_error).__name__}: "
+            f"{correction_error}"
+        )
+        traceback.print_exc()
+        recovered, recovery = recover_call3_partial_output(
+            initial_output,
+            selected_slots,
+            character_names,
+            speak_language,
+        )
+        removed_entries = list(recovery["removed_entries"])
+        state.update({
+            "output": recovered,
+            "partial_recovery_used": True,
+            "dialogue_drop_recovery_used": bool(removed_entries),
+            "dropped_dialogue_entries": removed_entries,
+            "silent_slots": recovery["silent_slots"],
+        })
+        return state
 
 
 class ParallelPipelineJobsError(RuntimeError):
@@ -6554,8 +6826,11 @@ async def build_from_context(
     call3_output = ""
     call3_initial_output = ""
     call3_correction_used = False
+    call3_partial_recovery_used = False
     call3_dialogue_drop_recovery_used = False
     call3_dropped_dialogue_entries = []
+    call3_silent_slots = []
+    call3_failure_reason = ""
     call3_descriptors = [
         descriptor
         for descriptor in descriptors
@@ -6611,112 +6886,25 @@ async def build_from_context(
                 f"\n\nLanguage: {speak_language}"
             ),
         })
-        call3_output = await _call_pipeline_llm("CALL3", _normalize_messages(speak_messages), stream_notify)
-        call3_initial_output = call3_output
-        call3_valid, call3_failure_reason = validate_call3_output_contract(
-            call3_output,
+        call3_state = await _build_call3_dialogue_with_recovery(
+            speak_messages,
             selected_slots,
             extra_names,
             speak_language,
+            stream_notify,
         )
-        if not call3_valid:
-            call3_correction_used = True
-            roster_correction_instruction = ""
-            if _call3_dialogue_requires_localized_names(speak_language):
-                roster_correction_instruction = (
-                    "Keep each exact roster identifier as machine-readable speaker metadata only "
-                    "on the left side of the colon. Never repeat a roster identifier inside quoted "
-                    "dialogue or parenthesized thought. Infer a natural in-story form of address "
-                    "from the original narrative and bounded scene windows; if uncertain, omit "
-                    "the direct address. Preserve the speaker prefix and required output tag. "
-                )
-            print(
-                f"[ILLUST_CONTEXT:CALL3-CORRECTION] 최초 CALL3 결과가 출력 계약을 위반해 "
-                f"교정 호출 1회 실행: "
-                f"slots={selected_slots}, reason={call3_failure_reason}"
-            )
-            retry_messages = deepcopy(speak_messages)
-            retry_messages.extend([{
-                "role": "assistant",
-                "content": call3_output,
-            }, {
-                "role": "user",
-                "content": (
-                    "Your previous output violated the selected-scene contract. "
-                    f"Required slots, in order: {selected_slots}. "
-                    "Rewrite the entire output. Emit exactly one [Scene slot=N] block "
-                    "for every required slot and no block for any other slot. "
-                    "Every block must contain at least one dialogue, thought, or inner "
-                    "monologue entry. "
-                    f"Write every dialogue and thought in {speak_language}; this language rule is mandatory. "
-                    + roster_correction_instruction
-                    + "Character names in speaker prefixes, Scene headers, and required tags are "
-                    "the only language exceptions. "
-                    f"Validation failure to fix: {call3_failure_reason}. "
-                    "Output only the corrected Scene blocks."
-                ),
-            }])
-            try:
-                call3_output = await _call_pipeline_llm(
-                    "CALL3-CORRECTION",
-                    _normalize_messages(retry_messages),
-                    stream_notify,
-                    result_validator=lambda result: validate_call3_output_contract(
-                        result,
-                        selected_slots,
-                        extra_names,
-                        speak_language,
-                    ),
-                )
-            except Exception as correction_error:
-                print(
-                    "[ILLUST_CONTEXT:CALL3-RECOVERY] CALL3 교정/라우팅 폴백 소진, "
-                    "최초 결과의 유출 대사만 제거하는 부분 복구 검사: "
-                    f"slots={selected_slots}, error={type(correction_error).__name__}: "
-                    f"{correction_error}"
-                )
-                traceback.print_exc()
-                coverage_valid, coverage_reason = validate_call3_slot_coverage(
-                    call3_initial_output,
-                    selected_slots,
-                )
-                initial_leaks = _call3_dialogue_roster_leaks(
-                    call3_initial_output,
-                    extra_names,
-                )
-                if not coverage_valid or not initial_leaks:
-                    print(
-                        "[ILLUST_CONTEXT:CALL3-RECOVERY] 부분 복구 불가, 기존 실패 유지: "
-                        f"coverage_valid={coverage_valid}, coverage_reason={coverage_reason!r}, "
-                        f"leaks={initial_leaks}"
-                    )
-                    raise
-
-                sanitized_output, removed_entries = (
-                    _remove_call3_roster_leaking_dialogue_entries(
-                        call3_initial_output,
-                        extra_names,
-                    )
-                )
-                residual_leaks = _call3_dialogue_roster_leaks(
-                    sanitized_output,
-                    extra_names,
-                )
-                if not removed_entries or residual_leaks:
-                    print(
-                        "[ILLUST_CONTEXT:CALL3-RECOVERY] 유출 대사 제거 결과 검증 실패, "
-                        "기존 실패 유지: "
-                        f"removed={removed_entries}, residual_leaks={residual_leaks}"
-                    )
-                    raise
-
-                call3_output = sanitized_output
-                call3_dialogue_drop_recovery_used = True
-                call3_dropped_dialogue_entries = removed_entries
-                print(
-                    "[ILLUST_CONTEXT:CALL3-RECOVERY] 부분 복구 성공, 유출 대사만 제거하고 "
-                    f"파이프라인 계속: removed={removed_entries}"
-                )
+        call3_output = str(call3_state["output"] or "")
+        call3_initial_output = str(call3_state["initial_output"] or "")
+        call3_correction_used = bool(call3_state["correction_used"])
+        call3_partial_recovery_used = bool(call3_state["partial_recovery_used"])
+        call3_dialogue_drop_recovery_used = bool(
+            call3_state["dialogue_drop_recovery_used"]
+        )
+        call3_dropped_dialogue_entries = list(
+            call3_state["dropped_dialogue_entries"]
+        )
+        call3_silent_slots = list(call3_state["silent_slots"])
+        call3_failure_reason = str(call3_state["failure_reason"] or "")
         # CALL3가 닫는 따옴표/괄호 안 끝에 #감정을 붙여 내보낸 줄을 교정한다.
         # parse_speak_output이 #감정을 닫는 구분자 바깥에서만 인식하므로, 출력 직후
         # 무조건 한 번 훑어 안쪽 끝 #감정을 바깥으로 옮긴다(감정 토글과 무관).
@@ -6792,8 +6980,11 @@ async def build_from_context(
         "call3_output": call3_output,
         "call3_initial_output": call3_initial_output,
         "call3_correction_used": call3_correction_used,
+        "call3_partial_recovery_used": call3_partial_recovery_used,
         "call3_dialogue_drop_recovery_used": call3_dialogue_drop_recovery_used,
         "call3_dropped_dialogue_entries": call3_dropped_dialogue_entries,
+        "call3_silent_slots": call3_silent_slots,
+        "call3_failure_reason": call3_failure_reason,
         "character_states_after": character_states_after,
         "last_visual_by_character": last_visual_by_character,
         "history_input_hash": (
