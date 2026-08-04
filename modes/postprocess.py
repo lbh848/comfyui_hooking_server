@@ -938,15 +938,19 @@ def load_saved_face_crop_bytes(bot_name: str, character: str, source_filename: s
 def _center_crop_square(image, target_size: int):
     """비정사각형 이미지를 target_size 정사각형으로 center-crop(왜곡 없이).
 
-    crop_face가 얼굴을 못 찾았을 때의 폴백용. crop_face와 동일한 cover 방식으로
-    비율을 유지해 짧은 변을 target_size로 확대한 뒤 긴 변을 중앙 기준으로 깎는다.
-    실패 시 None.
+    저장 FACE CROP 정규화와 얼굴 검출 폴백에서 공용으로 사용한다. 원본 비율을
+    유지해 짧은 변을 target_size로 확대한 뒤 긴 변만 중앙 기준으로 최소한 깎는다.
+    실패 시 None을 반환하고 원인을 로그에 남긴다.
     """
     try:
         img = image if image.mode in ("RGB", "RGBA") else image.convert("RGB")
         w, h = img.size
         side = min(w, h)
         if side <= 0:
+            print(
+                f"[POSTPROCESS] center-crop 불가: image_size={img.size}, "
+                f"target_size={target_size}"
+            )
             return None
         scale = target_size / float(side)
         nw = max(target_size, int(round(w * scale)))
@@ -1054,16 +1058,27 @@ def _prepare_face_images(segments: list, settings: dict, bot_name: str,
         )
         if saved_crop_raw:
             try:
-                saved_face = Image.open(io.BytesIO(saved_crop_raw)).convert("RGB")
-                saved_face.info["postprocess_face_center"] = (0.5, 0.5)
-                speaker_key = speaker.casefold()
-                result[(speaker_key, emotion.casefold())] = saved_face
-                result.setdefault(speaker_key, saved_face)
-                print(
-                    f"[POSTPROCESS_FACE] 저장 FACE CROP 우선 사용: "
-                    f"bot={bot_name}, speaker={speaker}, source={matched[0]!r}"
+                saved_source = Image.open(io.BytesIO(saved_crop_raw)).convert("RGB")
+                saved_face = _center_crop_square(
+                    saved_source, max(64, int(target_size))
                 )
-                continue
+                if saved_face is None:
+                    print(
+                        f"[POSTPROCESS_FACE] 저장 FACE CROP 최소 크롭 실패, ONNX 폴백: "
+                        f"bot={bot_name}, speaker={speaker}, source={matched[0]!r}, "
+                        f"size={saved_source.size}"
+                    )
+                else:
+                    saved_face.info["postprocess_face_center"] = (0.5, 0.5)
+                    speaker_key = speaker.casefold()
+                    result[(speaker_key, emotion.casefold())] = saved_face
+                    result.setdefault(speaker_key, saved_face)
+                    print(
+                        f"[POSTPROCESS_FACE] 저장 FACE CROP 우선 사용(비율 유지 최소 크롭): "
+                        f"bot={bot_name}, speaker={speaker}, source={matched[0]!r}, "
+                        f"original_size={saved_source.size}, thumbnail_size={saved_face.size}"
+                    )
+                    continue
             except Exception as e:
                 print(
                     f"[POSTPROCESS_FACE] 저장 FACE CROP 디코딩 실패, ONNX 폴백: "

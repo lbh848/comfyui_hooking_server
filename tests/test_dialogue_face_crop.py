@@ -22,6 +22,17 @@ def _png_bytes(color=(20, 40, 60)):
     return output.getvalue()
 
 
+def _wide_face_png_bytes():
+    image = Image.new("RGB", (120, 80), (0, 255, 0))
+    for x in range(20):
+        for y in range(80):
+            image.putpixel((x, y), (255, 0, 0))
+            image.putpixel((119 - x, y), (0, 0, 255))
+    output = io.BytesIO()
+    image.save(output, format="PNG")
+    return output.getvalue()
+
+
 def test_dialogue_face_crop_path_uses_face_crop_folder_and_suffix(tmp_path, monkeypatch):
     monkeypatch.setattr(bot_mode_module, "BOT_DIR", str(tmp_path / "bot"))
 
@@ -225,7 +236,7 @@ def test_postprocess_prefers_saved_face_crop_without_running_onnx(monkeypatch):
     monkeypatch.setattr(
         postprocess,
         "load_saved_face_crop_bytes",
-        lambda *_args, **_kwargs: _png_bytes((220, 30, 40)),
+        lambda *_args, **_kwargs: _wide_face_png_bytes(),
     )
 
     def original_should_not_load(*_args, **_kwargs):
@@ -246,7 +257,14 @@ def test_postprocess_prefers_saved_face_crop_without_running_onnx(monkeypatch):
     )
 
     assert "alice" in result
-    assert result["alice"].getpixel((0, 0)) == (220, 30, 40)
+    assert result["alice"].size == (96, 96)
+    for pixel in (
+        result["alice"].getpixel((5, 48)),
+        result["alice"].getpixel((90, 48)),
+    ):
+        assert pixel[1] > 240
+        assert pixel[0] < 15
+        assert pixel[2] < 15
     assert result["alice"].info["postprocess_face_center"] == (0.5, 0.5)
 
 
