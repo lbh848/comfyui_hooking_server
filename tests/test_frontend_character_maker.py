@@ -165,6 +165,18 @@ def test_settings_drawer_disables_items_by_asset_workflow():
     assert "설정 → 삽화에서 결정" in html
 
 
+def test_character_maker_can_select_asset_or_illustration_generation():
+    html = _html()
+
+    assert 'id="cm-setting-generation-workflow"' in html
+    assert '<option value="asset">에셋 워크플로우</option>' in html
+    assert '<option value="illustration">삽화 워크플로우</option>' in html
+    assert 'id="cm-setting-illustration-workflow" disabled' in html
+    assert "generation_workflow: stringValue('cm-setting-generation-workflow'" in html
+    assert "/illustration-prompt" in html
+    assert "function cmGetGenerationCapabilities" in html
+
+
 def test_settings_drawer_marks_only_pose_and_ipadapter_as_locked():
     html = _html()
 

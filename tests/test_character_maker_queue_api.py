@@ -22,10 +22,27 @@ class FakeCharacterMaker:
 
     def update_session(self, session_id, payload):
         self.updated.append((session_id, payload))
+        settings = payload.get("settings") or {}
         return {
             "id": session_id,
-            "settings": {"asset_workflow_type": "anima_only"},
+            "settings": {
+                "asset_workflow_type": "anima_only",
+                "generation_workflow": settings.get("generation_workflow", "asset"),
+            },
+            "fields": payload.get("fields") or {},
+            "llm_fields": {},
+            "natural_language": payload.get("natural_language", ""),
+            "llm_natural_language": "",
+            "editable_preset_tags": payload.get("editable_preset_tags") or {},
+            "editable_preset_enabled": payload.get("editable_preset_enabled") or {},
         }
+
+    def save_generation_artifacts(self, session_id, **kwargs):
+        self.saved_artifacts = (session_id, kwargs)
+        return (
+            "temporary/default/images/illustration.webp",
+            "temporary/default/images/illustration_prompt.json",
+        )
 
     def add_revision(self, session_id, **kwargs):
         self.revisions.append((session_id, kwargs))
@@ -36,7 +53,14 @@ class FakeCharacterMaker:
         }
 
 
-async def _request_generation(server, monkeypatch, queue_result):
+async def _request_generation(
+    server,
+    monkeypatch,
+    queue_result,
+    *,
+    generation_workflow="asset",
+    image_bytes=None,
+):
     captured = {}
     maker = FakeCharacterMaker()
 
@@ -51,7 +75,11 @@ async def _request_generation(server, monkeypatch, queue_result):
         )
         future = asyncio.get_running_loop().create_future()
         future.set_result(queue_result)
-        return SimpleNamespace(id="queue-character-maker", completion_future=future)
+        return SimpleNamespace(
+            id="queue-character-maker",
+            completion_future=future,
+            generated_image_bytes=image_bytes,
+        )
 
     async def fail_direct_generate(**_kwargs):
         raise AssertionError("캐릭터 메이커가 asset_mode.generate를 직접 호출했습니다")
@@ -79,10 +107,15 @@ async def _request_generation(server, monkeypatch, queue_result):
                     "expression": [],
                     "composition": [],
                 },
+                "settings": {"generation_workflow": generation_workflow},
                 "positive_prompt": (
-                    "[FACE_ID_ACTIVATE]\ntrue\n"
-                    "[FACE_ID_DIR]\nunsafe-reference\n"
-                    "[END]"
+                    (
+                        "[FACE_ID_ACTIVATE]\ntrue\n"
+                        "[FACE_ID_DIR]\nunsafe-reference\n"
+                        "[END]"
+                    )
+                    if generation_workflow == "asset"
+                    else "client-side illustration prompt is ignored"
                 ),
                 "negative_prompt": "low quality",
                 "note": "user revision",
@@ -115,6 +148,7 @@ async def test_character_maker_generation_uses_integrated_asset_queue(monkeypatc
     assert payload["generation"] == {
         "success": True,
         "filename": "revision.webp",
+        "generation_workflow": "asset",
     }
     assert captured["item_type"] == "asset_generation"
     assert captured["label"] == "캐릭터 메이커 사용자 이미지 생성"
@@ -143,3 +177,51 @@ async def test_character_maker_generation_preserves_queue_failure(monkeypatch):
     assert payload == {"success": False, "error": "ComfyUI generation failed"}
     assert captured["item_type"] == "asset_generation"
     assert maker.revisions == []
+
+
+@pytest.mark.asyncio
+async def test_character_maker_generation_routes_illustration_without_asset_tokens(
+    monkeypatch,
+):
+    import server
+
+    built_prompt = {
+        "positive": "[ANIMA_ALL]\nsilver_hair, black_coat\n[END]",
+        "negative": "low quality\n[SDXL]\nlow quality",
+        "illustration_workflow_type": "v3",
+        "provider": "comfy",
+        "provider_mode": "comfy",
+        "prompt_format": "v3",
+        "width": 700,
+        "height": 1024,
+        "chansub_quality_tag_start": 0,
+        "chansub_quality_tag_count": 0,
+    }
+    monkeypatch.setattr(
+        server,
+        "_build_character_maker_illustration_prompt",
+        lambda _session, *, source: dict(built_prompt),
+    )
+
+    response, payload, captured, maker = await _request_generation(
+        server,
+        monkeypatch,
+        {
+            "success": True,
+            "image_size": 3,
+            "provider": "comfy",
+            "illustration_workflow_type": "v3",
+        },
+        generation_workflow="illustration",
+        image_bytes=b"img",
+    )
+
+    assert response.status == 200
+    assert payload["success"] is True
+    assert payload["generation"]["generation_workflow"] == "illustration"
+    assert captured["item_type"] == "character_maker_illustration"
+    assert captured["kwargs"]["priority"] == 0
+    assert captured["params"]["positive"] == built_prompt["positive"]
+    assert captured["params"]["illustration_workflow_type"] == "v3"
+    assert maker.saved_artifacts[1]["image_bytes"] == b"img"
+    assert maker.revisions[0][1]["positive"] == built_prompt["positive"]

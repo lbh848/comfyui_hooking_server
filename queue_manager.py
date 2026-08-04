@@ -24,6 +24,7 @@ from modes import llm_service
 QUEUE_PRIORITY_START = 10
 RESERVED_ILLUSTRATION_TYPE_ORDER = {
     "illustration": 0,
+    "character_maker_illustration": 0,
     "regenerate": 0,
     "illustration_llm_build": 1,
     "illustration_easy_edit": 2,
@@ -1374,6 +1375,7 @@ class QueueManager:
             "illustration": self._handle_illustration,
             "illustration_llm_build": self._handle_illustration_llm_build,
             "illustration_easy_edit": self._handle_illustration_easy_edit,
+            "character_maker_illustration": self._handle_character_maker_illustration,
             "asset_generation": self._handle_asset_generation,
             "qwen_edit": self._handle_qwen_edit,
             "qwen_edit_translate": self._handle_qwen_edit_translate,
@@ -1576,6 +1578,84 @@ class QueueManager:
         elif not img_bytes:
             raise RuntimeError(f"이미지 생성 실패: {error}")
         return {"success": True}
+
+    async def _handle_character_maker_illustration(self, item: QueueItem) -> dict:
+        """캐릭터 메이커의 완성된 삽화 프롬프트를 선택 삽화 공급자로 생성한다."""
+        params = item.params if isinstance(item.params, dict) else {}
+        positive = params.get("positive", "")
+        negative = params.get("negative", "")
+        provider = str(params.get("provider") or "comfy").strip().lower()
+        workflow_type = str(params.get("illustration_workflow_type") or "").strip()
+        if not isinstance(positive, str) or not positive.strip():
+            print(
+                f"[QUEUE:CHARACTER_MAKER_ILLUST] 실행 거부: "
+                f"item={item.id}, positive 비어 있음, params={params!r}"
+            )
+            raise ValueError("캐릭터 메이커 삽화 프롬프트가 비어 있습니다")
+        if not isinstance(negative, str):
+            print(
+                f"[QUEUE:CHARACTER_MAKER_ILLUST] 실행 거부: "
+                f"item={item.id}, negative_type={type(negative).__name__}"
+            )
+            raise ValueError("캐릭터 메이커 삽화 부정 프롬프트가 문자열이 아닙니다")
+        if provider not in ("comfy", "chansub"):
+            print(
+                f"[QUEUE:CHARACTER_MAKER_ILLUST] 공급자 오류: "
+                f"item={item.id}, provider={provider!r}"
+            )
+            raise ValueError(f"지원하지 않는 캐릭터 메이커 삽화 공급자입니다: {provider}")
+        if not self.generate_image_with_prompt:
+            print(
+                f"[QUEUE:CHARACTER_MAKER_ILLUST] 실행 실패: "
+                f"item={item.id}, generate_image_with_prompt 미주입"
+            )
+            raise RuntimeError("generate_image_with_prompt 콜백이 설정되지 않았습니다")
+
+        async def _on_progress(value, max_value):
+            await self._notify_progress(item, {
+                "phase": "generating",
+                "value": value,
+                "max": max_value,
+                "current": value,
+                "total": max_value,
+            })
+
+        start_time = time.time()
+        img_bytes, error = await self.generate_image_with_prompt(
+            positive,
+            negative,
+            progress_callback=_on_progress,
+            provider=provider,
+            width=params.get("width"),
+            height=params.get("height"),
+            chansub_quality_tag_start=int(params.get("chansub_quality_tag_start") or 0),
+            chansub_quality_tag_count=int(params.get("chansub_quality_tag_count") or 0),
+            illustration_workflow_type=workflow_type or None,
+            comfy_task_key="illustration",
+        )
+        elapsed_time = time.time() - start_time
+        if not img_bytes:
+            print(
+                f"[QUEUE:CHARACTER_MAKER_ILLUST] 생성 결과 없음: "
+                f"item={item.id}, workflow={workflow_type!r}, provider={provider}, "
+                f"error={error}"
+            )
+            raise RuntimeError(f"캐릭터 메이커 삽화 생성 실패: {error}")
+
+        # QueueItem.to_dict()에 bytes가 포함되지 않도록 결과 본문과 분리한다.
+        item.generated_image_bytes = img_bytes
+        print(
+            f"[QUEUE:CHARACTER_MAKER_ILLUST] 완료: item={item.id}, "
+            f"workflow={workflow_type}, provider={provider}, "
+            f"bytes={len(img_bytes):,}, elapsed={elapsed_time:.1f}s"
+        )
+        return {
+            "success": True,
+            "image_size": len(img_bytes),
+            "generation_time": elapsed_time,
+            "provider": provider,
+            "illustration_workflow_type": workflow_type,
+        }
 
     async def _handle_regenerate(self, item: QueueItem) -> dict:
         """삽화 백업 재생성 (백업 프롬프트 + 현재 워크플로우로 이미지 재생성).

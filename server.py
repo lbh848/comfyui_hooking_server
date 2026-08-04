@@ -14738,6 +14738,386 @@ def _character_maker_control_value(prompt: str, key: str, value: str) -> str:
     return prompt + addition + end_token
 
 
+def _character_maker_prompt_tags(value) -> list[str]:
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, str):
+        return [item.strip() for item in value.split(",") if item.strip()]
+    if value not in (None, ""):
+        print(
+            "[CHARACTER_MAKER:ILLUST] 프롬프트 태그 형식 오류: "
+            f"type={type(value).__name__}, value={value!r}"
+        )
+    return []
+
+
+def _character_maker_resolve_preset_tags(
+    session_state: dict,
+    profile_tags: dict,
+    field: str,
+    category: str,
+) -> list[str]:
+    editable_enabled = session_state.get("editable_preset_enabled") or {}
+    editable_tags = session_state.get("editable_preset_tags") or {}
+    if bool(editable_enabled.get(field, False)):
+        return _character_maker_prompt_tags(editable_tags.get(field, []))
+
+    settings = session_state.get("settings") or {}
+    preset_name = str(settings.get(field) or "").strip()
+    if not preset_name:
+        return []
+    presets = profile_tags.get(category) or {}
+    if not isinstance(presets, dict):
+        print(
+            f"[CHARACTER_MAKER:ILLUST] 프리셋 카테고리 형식 오류: "
+            f"field={field}, category={category}, type={type(presets).__name__}"
+        )
+        return []
+    if preset_name not in presets:
+        print(
+            f"[CHARACTER_MAKER:ILLUST] 선택 프리셋 누락: "
+            f"field={field}, category={category}, preset={preset_name!r}"
+        )
+        return []
+    return _character_maker_prompt_tags(presets.get(preset_name))
+
+
+def _character_maker_lora_payload(
+    items: list[dict], *, include_character: bool
+) -> list[dict]:
+    payload = []
+    for item in items:
+        if not isinstance(item, dict):
+            print(
+                "[CHARACTER_MAKER:ILLUST] LoRA 항목 형식 오류로 제외: "
+                f"type={type(item).__name__}, value={item!r}"
+            )
+            continue
+        lora_path = str(item.get("lora_path") or "").strip()
+        if not lora_path:
+            print(f"[CHARACTER_MAKER:ILLUST] 경로 없는 LoRA 제외: {item!r}")
+            continue
+        entry = {
+            "lora_path": IllustPromptBuilder._resolve_lora_path(item),
+            "str": float(item.get("strength", 0.5)),
+            "BASE": str(item.get("BASE") or "anima").strip().lower(),
+        }
+        if include_character:
+            entry["CHAR"] = "character_maker"
+        payload.append(entry)
+    return payload
+
+
+def _build_character_maker_illustration_prompt(
+    session_state: dict,
+    *,
+    source: str,
+) -> dict:
+    """캐릭터 메이커의 구조화 상태를 현재 삽화 프로필용 최종 프롬프트로 만든다."""
+    if source not in ("user", "llm"):
+        raise CharacterMakerError("source 는 user 또는 llm 이어야 합니다.")
+    if not isinstance(session_state, dict):
+        print(
+            "[CHARACTER_MAKER:ILLUST] 세션 상태 형식 오류: "
+            f"type={type(session_state).__name__}"
+        )
+        raise CharacterMakerError("캐릭터 메이커 세션 상태가 올바르지 않습니다.")
+
+    fields_key = "llm_fields" if source == "llm" else "fields"
+    natural_key = "llm_natural_language" if source == "llm" else "natural_language"
+    fields = session_state.get(fields_key) or {}
+    settings = session_state.get("settings") or {}
+    if not isinstance(fields, dict) or not isinstance(settings, dict):
+        print(
+            f"[CHARACTER_MAKER:ILLUST] 생성 상태 형식 오류: "
+            f"fields_type={type(fields).__name__}, settings_type={type(settings).__name__}"
+        )
+        raise CharacterMakerError("캐릭터 메이커 생성 상태가 올바르지 않습니다.")
+
+    profile_tags = copy.deepcopy(asset_mode._tags or {})
+    if not isinstance(profile_tags, dict):
+        print(
+            "[CHARACTER_MAKER:ILLUST] 에셋 태그 데이터 형식 오류: "
+            f"type={type(profile_tags).__name__}"
+        )
+        raise CharacterMakerError("삽화 프리셋 태그 데이터가 준비되지 않았습니다.")
+
+    preset_specs = {
+        "quality_preset": ("quality_presets", "sdxl_quality_preset"),
+        "artist_preset": ("artist_presets", "sdxl_artist_preset"),
+        "negative_preset": ("negative_presets", "sdxl_negative_preset"),
+        "anima_quality_preset": ("quality_presets", "anima_quality_preset"),
+        "anima_artist_preset": ("artist_presets", "anima_artist_preset"),
+        "anima_negative_preset": ("negative_presets", "anima_negative_preset"),
+    }
+    resolved_presets = {
+        field: _character_maker_resolve_preset_tags(
+            session_state,
+            profile_tags,
+            field,
+            category,
+        )
+        for field, (category, _target) in preset_specs.items()
+    }
+    character_negative = _character_maker_resolve_preset_tags(
+        session_state,
+        profile_tags,
+        "character_negative_preset",
+        "character_negative_presets",
+    )
+
+    builder_settings = {
+        "chansub_workflow_type": str(
+            app_config.get("chansub_workflow_type") or "anima"
+        ).strip().lower(),
+        "face_id_activate": False,
+        "face_id_str": 0.55,
+        "face_crop_top": float(settings.get("face_crop_top", 2.5)),
+        "face_crop_bottom": float(settings.get("face_crop_bottom", 1.0)),
+        "face_lora_upscale_size": str(
+            settings.get("face_lora_upscale_size") or ""
+        ).strip(),
+        "hrf_activate": bool(settings.get("hrf_sdxl", False)),
+        "anima_hrf_activate": bool(settings.get("hrf_anima", False)),
+        "hrf_size": float(settings.get("hrf_size", 2.0)),
+        "hrf_restore_size": bool(settings.get("hrf_restore_size", True)),
+        "fd_activate": bool(settings.get("sdxl_fd_enabled", False)),
+        "hd_activate": bool(settings.get("sdxl_hd_enabled", False)),
+        "ed_activate": bool(settings.get("sdxl_ed_enabled", False)),
+        "anima_fd_activate": bool(settings.get("anima_fd_enabled", False)),
+        "anima_hd_activate": bool(settings.get("anima_hd_enabled", False)),
+        "anima_ed_activate": bool(settings.get("anima_ed_enabled", False)),
+        "img_w": int(settings.get("img_w", 700)),
+        "img_h": int(settings.get("img_h", 1024)),
+        "seed": int(settings.get("seed", -1)),
+        "positive_whitelist": [],
+        "positive_blacklist": [],
+    }
+    for field, (category, target_setting) in preset_specs.items():
+        temp_name = f"__character_maker_{field}__"
+        category_data = profile_tags.get(category)
+        if not isinstance(category_data, dict):
+            category_data = {}
+            profile_tags[category] = category_data
+        values = list(resolved_presets[field])
+        if field == "negative_preset" or field == "anima_negative_preset":
+            values.extend(character_negative)
+            values = list(dict.fromkeys(values))
+        category_data[temp_name] = values
+        builder_settings[target_setting] = temp_name
+
+    workflow_type = workflow_profiles.normalize_illustration_workflow_type(
+        app_config.get("illustration_workflow_type")
+    )
+    provider = workflow_profiles.illustration_provider_for_slot(workflow_type, 1)
+    prompt_format = workflow_profiles.illustration_prompt_format(
+        workflow_type,
+        provider,
+    )
+    local_profile = workflow_profiles.illustration_local_profile(workflow_type)
+    allowed_lora_bases: set[str] = set()
+    if provider == "comfy" and prompt_format == "v3":
+        if local_profile == workflow_profiles.ILLUST_V3:
+            allowed_lora_bases = {"anima", "sdxl"}
+        elif local_profile == workflow_profiles.ILLUST_V3_ANIMA:
+            allowed_lora_bases = {"anima"}
+
+    def enabled_loras(list_key: str, enabled_key: str) -> list[dict]:
+        if not bool(settings.get(enabled_key, False)) or not allowed_lora_bases:
+            return []
+        raw_items = settings.get(list_key) or []
+        if not isinstance(raw_items, list):
+            print(
+                f"[CHARACTER_MAKER:ILLUST] LoRA 목록 형식 오류: "
+                f"key={list_key}, type={type(raw_items).__name__}"
+            )
+            return []
+        return [
+            item
+            for item in raw_items
+            if isinstance(item, dict)
+            and str(item.get("BASE") or "anima").strip().lower()
+            in allowed_lora_bases
+        ]
+
+    regular_loras = enabled_loras("lora_list", "lora_enabled")
+    style_loras = enabled_loras("style_lora_list", "style_lora_enabled")
+    face_loras = enabled_loras("face_lora_list", "face_lora_enabled")
+    trigger_parts = [
+        str(item.get("trigger") or "").strip()
+        for item in regular_loras + style_loras
+        if str(item.get("trigger") or "").strip()
+    ]
+
+    setup_parts = _character_maker_prompt_tags(fields.get("composition", []))
+    natural_language = str(session_state.get(natural_key) or "").strip()
+    if natural_language:
+        setup_parts.append(natural_language)
+    char_parts = trigger_parts
+    for field in ("appearance", "outfit", "expression"):
+        char_parts.extend(_character_maker_prompt_tags(fields.get(field, [])))
+    setup = ", ".join(dict.fromkeys(setup_parts))
+    char = ", ".join(dict.fromkeys(char_parts))
+    supplement = ""
+    if not char:
+        print(
+            f"[CHARACTER_MAKER:ILLUST] 캐릭터 태그 비어 있음: "
+            f"source={source}, fields={fields!r}"
+        )
+        raise CharacterMakerError("삽화로 그릴 캐릭터 태그가 비어 있습니다.")
+
+    width = builder_settings["img_w"]
+    height = builder_settings["img_h"]
+    quality_tag_start = 0
+    quality_tag_count = 0
+    if provider == "chansub":
+        built = ChansubPromptBuilder().build(
+            setup,
+            char,
+            supplement,
+            profile_tags,
+            builder_settings,
+        )
+        positive = built["positive"]
+        negative = built["negative"]
+        width = built["width"]
+        height = built["height"]
+        quality_tag_start = built["quality_tag_start"]
+        quality_tag_count = built["quality_tag_count"]
+    elif prompt_format == "v1":
+        built = build_v1_prompt(
+            setup,
+            char,
+            supplement,
+            profile_tags,
+            builder_settings,
+        )
+        positive = built["positive"]
+        negative = built["negative"]
+        width = built["width"]
+        height = built["height"]
+    else:
+        builder = IllustPromptBuilder()
+        marker = "character_maker"
+        positive = builder.build_positive_prompt(
+            setup,
+            char,
+            supplement,
+            [marker],
+            {"characters": []},
+            profile_tags,
+            builder_settings,
+            "",
+        )
+        negative = builder.build_negative_prompt(
+            profile_tags,
+            builder_settings,
+            [marker],
+            {"characters": []},
+        )
+        regular_payload = _character_maker_lora_payload(
+            regular_loras,
+            include_character=True,
+        )
+        style_payload = _character_maker_lora_payload(
+            style_loras,
+            include_character=False,
+        )
+        face_payload = _character_maker_lora_payload(
+            face_loras,
+            include_character=True,
+        )
+        face_upscale = str(settings.get("face_lora_upscale_size") or "").strip()
+        if face_upscale:
+            for entry in face_payload:
+                entry["UPSCALE_SIZE"] = face_upscale
+        face_anima_triggers = ", ".join(
+            str(item.get("trigger") or "").strip()
+            for item in face_loras
+            if str(item.get("BASE") or "anima").strip().lower() == "anima"
+            and str(item.get("trigger") or "").strip()
+        )
+        face_sdxl_triggers = ", ".join(
+            str(item.get("trigger") or "").strip()
+            for item in face_loras
+            if str(item.get("BASE") or "anima").strip().lower() == "sdxl"
+            and str(item.get("trigger") or "").strip()
+        )
+        positive = _character_maker_control_value(
+            positive,
+            "LORA_ACTIVATE",
+            "true" if regular_payload else "false",
+        )
+        positive = _character_maker_control_value(
+            positive,
+            "LORA_DATA",
+            json.dumps({"list": regular_payload}, ensure_ascii=False),
+        )
+        positive = _character_maker_control_value(
+            positive,
+            "STYLE_LORA_ACTIVATE",
+            "true" if style_payload else "false",
+        )
+        positive = _character_maker_control_value(
+            positive,
+            "STYLE_LORA_DATA",
+            json.dumps({"list": style_payload}, ensure_ascii=False),
+        )
+        positive = _character_maker_control_value(
+            positive,
+            "FACE_LORA_ACTIVATE",
+            "true" if face_payload else "false",
+        )
+        positive = _character_maker_control_value(
+            positive,
+            "FACE_LORA_DATA",
+            json.dumps({"list": face_payload}, ensure_ascii=False),
+        )
+        positive = _character_maker_control_value(
+            positive,
+            "CHAR_FACE_TAG_INFORM",
+            json.dumps(
+                {
+                    "list": [
+                        {
+                            "FACE_TAGS": str(settings.get("face_tags") or ""),
+                            "EYE_TAGS": str(settings.get("eye_tags") or ""),
+                            "POSITIVE": "",
+                            "TRIGGER_ANIMA": face_anima_triggers,
+                            "TRIGGER_SDXL": face_sdxl_triggers,
+                            "CHAR": marker,
+                        }
+                    ]
+                },
+                ensure_ascii=False,
+            ),
+        )
+
+    if not positive.strip():
+        print(
+            f"[CHARACTER_MAKER:ILLUST] 빌더 결과 비어 있음: "
+            f"workflow={workflow_type}, provider={provider}, source={source}"
+        )
+        raise CharacterMakerError("삽화 프롬프트를 만들지 못했습니다.")
+    print(
+        f"[CHARACTER_MAKER:ILLUST] 프롬프트 빌드 완료: "
+        f"workflow={workflow_type}, provider={provider}, format={prompt_format}, "
+        f"source={source}, positive_len={len(positive)}, negative_len={len(negative)}"
+    )
+    return {
+        "positive": positive,
+        "negative": negative,
+        "illustration_workflow_type": workflow_type,
+        "provider": provider,
+        "provider_mode": workflow_profiles.illustration_provider_mode(workflow_type),
+        "prompt_format": prompt_format,
+        "width": width,
+        "height": height,
+        "chansub_quality_tag_start": quality_tag_start,
+        "chansub_quality_tag_count": quality_tag_count,
+    }
+
+
 async def handle_api_character_maker_create(request: web.Request) -> web.Response:
     try:
         return web.json_response(
@@ -14916,6 +15296,68 @@ async def handle_api_character_maker_revise(request: web.Request) -> web.Respons
         return _character_maker_error_response("LLM 수정", exc)
 
 
+def _character_maker_generation_update_payload(body: dict, source: str) -> dict:
+    # source=="llm" 인 경우 사용자 fields/natural_language를 보존한다.
+    if source == "user":
+        update_keys = (
+            "world_context",
+            "fields",
+            "locks",
+            "settings",
+            "natural_language",
+            "editable_preset_tags",
+            "editable_preset_enabled",
+        )
+    else:
+        update_keys = (
+            "world_context",
+            "locks",
+            "settings",
+            "llm_natural_language",
+            "editable_preset_tags",
+            "editable_preset_enabled",
+        )
+    return {key: body[key] for key in update_keys if key in body}
+
+
+async def handle_api_character_maker_illustration_prompt(
+    request: web.Request,
+) -> web.Response:
+    """현재 CM 상태를 저장하고 실제 삽화 빌더 결과를 미리보기로 반환한다."""
+    session_id = request.match_info.get("session_id", "")
+    try:
+        body = await request.json()
+        source = str(body.get("source") or "user")
+        if source not in ("user", "llm"):
+            print(
+                f"[CHARACTER_MAKER:ILLUST] 미리보기 source 오류: "
+                f"session={session_id}, source={source!r}"
+            )
+            raise CharacterMakerError("source 는 user 또는 llm 이어야 합니다.")
+        async with character_maker.operation_lock(session_id):
+            session_state = character_maker.update_session(
+                session_id,
+                _character_maker_generation_update_payload(body, source),
+            )
+            generation_workflow = str(
+                (session_state.get("settings") or {}).get("generation_workflow")
+                or "asset"
+            ).strip().lower()
+            if generation_workflow != "illustration":
+                print(
+                    f"[CHARACTER_MAKER:ILLUST] 미리보기 거부: "
+                    f"session={session_id}, generation_workflow={generation_workflow!r}"
+                )
+                raise CharacterMakerError("현재 생성 방식이 삽화 워크플로우가 아닙니다.")
+            prompt = _build_character_maker_illustration_prompt(
+                session_state,
+                source=source,
+            )
+        return web.json_response({"success": True, "prompt": prompt})
+    except Exception as exc:
+        return _character_maker_error_response("삽화 프롬프트 미리보기", exc)
+
+
 async def handle_api_character_maker_generate(request: web.Request) -> web.Response:
     session_id = request.match_info.get("session_id", "")
     operation_lock = None
@@ -14928,83 +15370,108 @@ async def handle_api_character_maker_generate(request: web.Request) -> web.Respo
         source = str(body.get("source") or "user")
         if source not in ("user", "llm"):
             raise CharacterMakerError("source 는 user 또는 llm 이어야 합니다.")
-        # source=="llm" 인 경우 사용자 fields 를 건드리지 않는다.
-        # 리비전 스냅샷은 add_revision 이 session["llm_fields"] 에서 만든다.
-        if source == "user":
-            update_keys = (
-                "world_context",
-                "fields",
-                "locks",
-                "settings",
-                "natural_language",
-                "editable_preset_tags",
-                "editable_preset_enabled",
-            )
-        else:
-            update_keys = (
-                "world_context",
-                "locks",
-                "settings",
-                "llm_natural_language",
-                "editable_preset_tags",
-                "editable_preset_enabled",
-            )
-        update_payload = {
-            key: body[key] for key in update_keys if key in body
-        }
+        update_payload = _character_maker_generation_update_payload(body, source)
         session_state = character_maker.update_session(session_id, update_payload)
-        positive = body.get("positive_prompt")
-        negative = body.get("negative_prompt")
-        if not isinstance(positive, str) or not positive.strip():
-            print(
-                f"[CHARACTER_MAKER] 생성 거부: "
-                f"session={session_id}, positive_prompt 비어 있음"
-            )
-            raise CharacterMakerError("생성 프롬프트가 비어 있습니다.")
-        if not isinstance(negative, str):
-            raise CharacterMakerError("부정 프롬프트는 문자열이어야 합니다.")
-        if "[END]" not in positive:
-            print(
-                f"[CHARACTER_MAKER] 생성 거부: "
-                f"session={session_id}, [END] 토큰 누락"
-            )
-            raise CharacterMakerError("에셋 워크플로우 제어 토큰 [END]가 없습니다.")
-
         settings = session_state["settings"]
-        positive = _character_maker_control_value(
-            positive,
-            "FACE_ID_ACTIVATE",
-            "false",
-        )
-        positive = _character_maker_control_value(
-            positive,
-            "FACE_ID_DIR",
-            "soya_char_ref/fallback",
-        )
-        queue_body = {
-            "character": f"maker-{session_id[:8]}",
-            "appearance": "character-maker-temporary",
-            "outfit": "character-maker-temporary",
-            "expression": "character-maker-temporary",
-            "face_id_enabled": False,
-            "asset_workflow_type": settings.get("asset_workflow_type"),
-            "positive_prompt": positive,
-            "negative_prompt": negative,
-            "storage_group": "character_maker",
-            "storage_session": session_id,
-        }
-        item = await queue_manager.add_item(
-            "asset_generation",
-            label=(
-                "캐릭터 메이커 사용자 이미지 생성"
-                if source == "user"
-                else "캐릭터 메이커 LLM 이미지 생성"
-            ),
-            params={"body": queue_body},
-        )
+        generation_workflow = str(
+            settings.get("generation_workflow") or "asset"
+        ).strip().lower()
+        local_path = ""
+        prompt_record_path = ""
+
+        if generation_workflow == "illustration":
+            prompt_data = _build_character_maker_illustration_prompt(
+                session_state,
+                source=source,
+            )
+            positive = prompt_data["positive"]
+            negative = prompt_data["negative"]
+            item = await queue_manager.add_item(
+                "character_maker_illustration",
+                label=(
+                    "캐릭터 메이커 사용자 삽화 생성"
+                    if source == "user"
+                    else "캐릭터 메이커 LLM 삽화 생성"
+                ),
+                params={
+                    "positive": positive,
+                    "negative": negative,
+                    "provider": prompt_data["provider"],
+                    "illustration_workflow_type": prompt_data[
+                        "illustration_workflow_type"
+                    ],
+                    "width": prompt_data["width"],
+                    "height": prompt_data["height"],
+                    "chansub_quality_tag_start": prompt_data[
+                        "chansub_quality_tag_start"
+                    ],
+                    "chansub_quality_tag_count": prompt_data[
+                        "chansub_quality_tag_count"
+                    ],
+                },
+                priority=0,
+            )
+        elif generation_workflow == "asset":
+            positive = body.get("positive_prompt")
+            negative = body.get("negative_prompt")
+            if not isinstance(positive, str) or not positive.strip():
+                print(
+                    f"[CHARACTER_MAKER] 에셋 생성 거부: "
+                    f"session={session_id}, positive_prompt 비어 있음"
+                )
+                raise CharacterMakerError("생성 프롬프트가 비어 있습니다.")
+            if not isinstance(negative, str):
+                raise CharacterMakerError("부정 프롬프트는 문자열이어야 합니다.")
+            if "[END]" not in positive:
+                print(
+                    f"[CHARACTER_MAKER] 에셋 생성 거부: "
+                    f"session={session_id}, [END] 토큰 누락"
+                )
+                raise CharacterMakerError("에셋 워크플로우 제어 토큰 [END]가 없습니다.")
+
+            positive = _character_maker_control_value(
+                positive,
+                "FACE_ID_ACTIVATE",
+                "false",
+            )
+            positive = _character_maker_control_value(
+                positive,
+                "FACE_ID_DIR",
+                "soya_char_ref/fallback",
+            )
+            queue_body = {
+                "character": f"maker-{session_id[:8]}",
+                "appearance": "character-maker-temporary",
+                "outfit": "character-maker-temporary",
+                "expression": "character-maker-temporary",
+                "face_id_enabled": False,
+                "asset_workflow_type": settings.get("asset_workflow_type"),
+                "positive_prompt": positive,
+                "negative_prompt": negative,
+                "storage_group": "character_maker",
+                "storage_session": session_id,
+            }
+            item = await queue_manager.add_item(
+                "asset_generation",
+                label=(
+                    "캐릭터 메이커 사용자 이미지 생성"
+                    if source == "user"
+                    else "캐릭터 메이커 LLM 이미지 생성"
+                ),
+                params={"body": queue_body},
+            )
+            prompt_data = None
+        else:
+            print(
+                f"[CHARACTER_MAKER] 생성 방식 오류: "
+                f"session={session_id}, generation_workflow={generation_workflow!r}"
+            )
+            raise CharacterMakerError("지원하지 않는 캐릭터 메이커 생성 방식입니다.")
+
         print(
             f"[CHARACTER_MAKER] 이미지 생성 큐 등록: "
-            f"session={session_id}, source={source}, item={item.id}"
+            f"session={session_id}, source={source}, "
+            f"workflow={generation_workflow}, item={item.id}"
         )
         result = await item.completion_future
         if not isinstance(result, dict):
@@ -15020,8 +15487,33 @@ async def handle_api_character_maker_generate(request: web.Request) -> web.Respo
                 f"session={session_id}, item={item.id}, result={result}"
             )
             return web.json_response(result, status=500)
-        local_path = result.get("local_path", "")
-        prompt_record_path = result.get("prompt_record_path", "")
+        if generation_workflow == "illustration":
+            image_bytes = getattr(item, "generated_image_bytes", None)
+            if not image_bytes:
+                print(
+                    f"[CHARACTER_MAKER] 삽화 큐 이미지 바이트 누락: "
+                    f"session={session_id}, item={item.id}, result={result}"
+                )
+                raise RuntimeError("삽화 생성 결과 이미지가 큐에서 누락되었습니다.")
+            local_path, prompt_record_path = character_maker.save_generation_artifacts(
+                session_id,
+                image_bytes=image_bytes,
+                positive=positive,
+                negative=negative,
+                metadata={
+                    "generation_workflow": generation_workflow,
+                    "illustration_workflow_type": prompt_data[
+                        "illustration_workflow_type"
+                    ],
+                    "provider": prompt_data["provider"],
+                    "provider_mode": prompt_data["provider_mode"],
+                    "prompt_format": prompt_data["prompt_format"],
+                    "source": source,
+                },
+            )
+        else:
+            local_path = result.get("local_path", "")
+            prompt_record_path = result.get("prompt_record_path", "")
         session_state = character_maker.add_revision(
             session_id,
             image_path=local_path,
@@ -15036,6 +15528,7 @@ async def handle_api_character_maker_generate(request: web.Request) -> web.Respo
             for key, value in result.items()
             if key not in ("local_path", "prompt_record_path")
         }
+        public_result["generation_workflow"] = generation_workflow
         return web.json_response(
             {
                 "success": True,
@@ -15481,6 +15974,7 @@ app.router.add_post("/api/character_maker/session/{session_id}/reference", handl
 app.router.add_get("/api/character_maker/session/{session_id}/reference/{reference_id}", handle_api_character_maker_reference_get)
 app.router.add_delete("/api/character_maker/session/{session_id}/reference/{reference_id}", handle_api_character_maker_reference_delete)
 app.router.add_post("/api/character_maker/session/{session_id}/revise", handle_api_character_maker_revise)
+app.router.add_post("/api/character_maker/session/{session_id}/illustration-prompt", handle_api_character_maker_illustration_prompt)
 app.router.add_post("/api/character_maker/session/{session_id}/generate", handle_api_character_maker_generate)
 app.router.add_post("/api/character_maker/session/{session_id}/accept", handle_api_character_maker_accept)
 app.router.add_get("/api/character_maker/session/{session_id}/image/{revision_id}", handle_api_character_maker_image)

@@ -73,6 +73,7 @@ MAX_REFERENCE_BYTES = 12 * 1024 * 1024
 MAX_CHAT_ITEMS = 40
 MAX_CHAT_CONTEXT_ITEMS = 12
 MAX_REVISIONS = 12
+GENERATION_WORKFLOW_TYPES = ("asset", "illustration")
 
 
 class CharacterMakerError(ValueError):
@@ -411,6 +412,7 @@ class CharacterMakerService:
     def _default_settings(self) -> dict[str, Any]:
         config = self.config_getter() or {}
         return {
+            "generation_workflow": "asset",
             "asset_workflow_type": str(config.get("asset_workflow_type") or "ilxl"),
             "quality_preset": "",
             "artist_preset": "",
@@ -905,6 +907,18 @@ class CharacterMakerService:
         if not isinstance(raw, dict):
             raise CharacterMakerError("제작 설정은 객체여야 합니다.")
         settings = session["settings"]
+        if "generation_workflow" in raw:
+            generation_workflow = str(raw.get("generation_workflow") or "").strip().lower()
+            if generation_workflow not in GENERATION_WORKFLOW_TYPES:
+                print(
+                    "[CHARACTER_MAKER] 생성 워크플로우 설정 거부: "
+                    f"value={raw.get('generation_workflow')!r}, "
+                    f"allowed={GENERATION_WORKFLOW_TYPES}"
+                )
+                raise CharacterMakerError(
+                    "generation_workflow는 asset 또는 illustration이어야 합니다."
+                )
+            settings["generation_workflow"] = generation_workflow
         string_fields = (
             "asset_workflow_type",
             "quality_preset",
@@ -1903,6 +1917,94 @@ class CharacterMakerService:
             "diff": _tag_diff(before, session["llm_fields"]),
             "rag": rag_meta,
         }
+
+    def save_generation_artifacts(
+        self,
+        session_id: str,
+        *,
+        image_bytes: bytes,
+        positive: str,
+        negative: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> tuple[str, str]:
+        """생성 결과를 캐릭터 메이커 임시 루트에 안전하게 저장한다.
+
+        삽화 워크플로우는 에셋 모드의 전용 저장기를 통과하지 않으므로 동일한
+        리비전 계약(image_path + prompt_path)을 여기서 만든다. 파일명은 매번 새로
+        생성하여 기존 데이터 파일을 덮어쓰지 않는다.
+        """
+        session = self._session(session_id)
+        if not isinstance(image_bytes, (bytes, bytearray)) or not image_bytes:
+            print(
+                f"[CHARACTER_MAKER] 생성 이미지 저장 거부: "
+                f"session={session_id}, bytes={len(image_bytes) if image_bytes else 0}"
+            )
+            raise CharacterMakerError("생성된 이미지 데이터가 비어 있습니다.")
+        if not isinstance(positive, str) or not positive.strip():
+            print(
+                f"[CHARACTER_MAKER] 생성 이미지 저장 거부: "
+                f"session={session_id}, positive 비어 있음"
+            )
+            raise CharacterMakerError("생성 프롬프트가 비어 있습니다.")
+        if not isinstance(negative, str):
+            raise CharacterMakerError("부정 프롬프트는 문자열이어야 합니다.")
+
+        image_dir = os.path.join(self._session_dir(), "images")
+        _assert_within(self.temp_root, image_dir)
+        os.makedirs(image_dir, exist_ok=True)
+        stem = f"{int(time.time())}_{uuid.uuid4().hex[:10]}"
+        image_path = os.path.join(image_dir, stem + ".webp")
+        prompt_path = os.path.join(image_dir, stem + "_prompt.json")
+        _assert_within(self.temp_root, image_path)
+        _assert_within(self.temp_root, prompt_path)
+
+        try:
+            with Image.open(io.BytesIO(bytes(image_bytes))) as image:
+                image.load()
+                save_image = image if image.mode == "RGBA" else image.convert("RGB")
+                save_image.save(image_path, format="WEBP", quality=90, method=4)
+        except Exception as exc:
+            print(
+                f"[CHARACTER_MAKER] 생성 이미지 WEBP 저장 실패: "
+                f"session={session_id}, path={image_path}, "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            raise CharacterMakerError("생성 이미지를 임시 파일로 저장하지 못했습니다.") from exc
+
+        prompt_record = {
+            "positive": positive,
+            "negative": negative,
+            "storage_group": "character_maker",
+            "storage_session": session["id"],
+        }
+        if isinstance(metadata, dict):
+            prompt_record.update(copy.deepcopy(metadata))
+        try:
+            self._atomic_write_json(prompt_path, prompt_record)
+        except Exception as exc:
+            print(
+                f"[CHARACTER_MAKER] 생성 프롬프트 기록 저장 실패: "
+                f"session={session_id}, path={prompt_path}, "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            try:
+                if os.path.isfile(image_path):
+                    os.remove(image_path)
+            except Exception as cleanup_exc:
+                print(
+                    f"[CHARACTER_MAKER] 프롬프트 저장 실패 이미지 정리 실패: "
+                    f"path={image_path}, error={cleanup_exc}"
+                )
+                traceback.print_exc()
+            raise CharacterMakerError("생성 프롬프트 기록을 저장하지 못했습니다.") from exc
+
+        print(
+            f"[CHARACTER_MAKER] 생성 결과 임시 저장 완료: "
+            f"session={session_id}, image={image_path}, prompt={prompt_path}"
+        )
+        return image_path, prompt_path
 
     def add_revision(
         self,

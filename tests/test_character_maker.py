@@ -210,6 +210,52 @@ def test_session_persists_across_service_restart(tmp_path):
     assert restored["fields"]["outfit"] == ["long_coat"]
 
 
+def test_generation_workflow_defaults_to_asset_and_persists_illustration(tmp_path):
+    service, _ = _service(tmp_path)
+    session = service.public_session(character_maker_module.SINGLE_SESSION_ID)
+
+    assert session["settings"]["generation_workflow"] == "asset"
+    updated = service.update_session(
+        session["id"],
+        {"settings": {"generation_workflow": "illustration"}},
+    )
+    assert updated["settings"]["generation_workflow"] == "illustration"
+
+    restarted, _ = _service(tmp_path)
+    restored = restarted.public_session(character_maker_module.SINGLE_SESSION_ID)
+    assert restored["settings"]["generation_workflow"] == "illustration"
+
+    with pytest.raises(CharacterMakerError, match="asset 또는 illustration"):
+        restarted.update_session(
+            restored["id"],
+            {"settings": {"generation_workflow": "automatic"}},
+        )
+
+
+def test_character_maker_saves_illustration_artifacts_in_session_temp_root(tmp_path):
+    service, _ = _service(tmp_path)
+    png_bytes = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+    )
+
+    image_path, prompt_path = service.save_generation_artifacts(
+        character_maker_module.SINGLE_SESSION_ID,
+        image_bytes=png_bytes,
+        positive="[ANIMA_ALL]\nsilver_hair\n[END]",
+        negative="low quality",
+        metadata={"generation_workflow": "illustration"},
+    )
+
+    expected_root = tmp_path / "temporary" / "default" / "images"
+    assert Path(image_path).is_file()
+    assert Path(prompt_path).is_file()
+    assert Path(image_path).is_relative_to(expected_root)
+    assert Path(prompt_path).is_relative_to(expected_root)
+    prompt_record = json.loads(Path(prompt_path).read_text(encoding="utf-8"))
+    assert prompt_record["generation_workflow"] == "illustration"
+    assert prompt_record["positive"].startswith("[ANIMA_ALL]")
+
+
 def test_session_settings_accept_lora_and_do_not_expose_generation_ipadapter(tmp_path):
     service, _ = _service(tmp_path)
     session = service.create_session()

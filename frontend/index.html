@@ -13293,17 +13293,34 @@
                                     <span class="cm-hint">이 영역은 LLM이 수정하지 않음</span>
                                 </div>
                                 <div class="cm-settings-body">
-                                    <div class="at-model-legend"><strong>표시 규칙:</strong> 에셋 워크플로우(ILXL·ANIMA)에 따라 쓸 수 없는 항목과 캐릭터 메이커가 아직 지원하지 않는 항목은 회색으로 잠깁니다.</div>
+                                    <div class="at-model-legend" id="cm-workflow-legend"><strong>표시 규칙:</strong> 선택한 생성 방식과 모델 계열에 따라 쓸 수 없는 항목은 회색으로 잠깁니다.</div>
 
                                     <section class="batch-slot-section">
-                                        <div class="batch-slot-section-title"><span>에셋 워크플로우</span><span class="batch-slot-section-hint" id="cm-workflow-badge">ILXL</span></div>
+                                        <div class="batch-slot-section-title"><span>생성 워크플로우</span><span class="batch-slot-section-hint" id="cm-generation-workflow-badge">에셋</span></div>
                                         <div class="batch-slot-fields-grid">
                                             <div class="batch-field-group cm-field-wide">
-                                                <div class="batch-field-label">워크플로우 타입 <span class="at-model-reason">설정 → 삽화에서 결정</span></div>
+                                                <div class="batch-field-label">생성 방식 <span class="at-model-reason">캐릭터 메이커에서 선택</span></div>
+                                                <select class="at-fill-select" id="cm-setting-generation-workflow" data-cm-setting="generation_workflow" onchange="cmSettingChanged()">
+                                                    <option value="asset">에셋 워크플로우</option>
+                                                    <option value="illustration">삽화 워크플로우</option>
+                                                </select>
+                                            </div>
+                                            <div class="batch-field-group cm-field-wide" id="cm-asset-workflow-row">
+                                                <div class="batch-field-label">에셋 워크플로우 타입 <span class="at-model-reason">설정 → 삽화에서 결정</span></div>
                                                 <select class="at-fill-select" id="cm-setting-workflow" data-cm-setting="asset_workflow_type" disabled>
                                                     <option value="ilxl">ILXL</option>
                                                     <option value="anima_ilxl">ANIMA + ILXL</option>
                                                     <option value="anima_only">ONLY ANIMA</option>
+                                                </select>
+                                            </div>
+                                            <div class="batch-field-group cm-field-wide" id="cm-illustration-workflow-row" style="display:none;">
+                                                <div class="batch-field-label">삽화 워크플로우 타입 <span class="at-model-reason">설정 → 삽화에서 결정</span></div>
+                                                <select class="at-fill-select" id="cm-setting-illustration-workflow" disabled>
+                                                    <option value="v1">V1 계열</option>
+                                                    <option value="v3">V3 · ANIMA + ILXL</option>
+                                                    <option value="v3_anima">V3 · ONLY ANIMA</option>
+                                                    <option value="chansub">챈섭</option>
+                                                    <option value="chansub_v3_anima">챈섭 + V3 ONLY ANIMA</option>
                                                 </select>
                                             </div>
                                         </div>
@@ -13342,7 +13359,7 @@
                                         </div>
                                     </section>
 
-                                    <section class="batch-slot-section">
+                                    <section class="batch-slot-section" data-cm-lora-controls>
                                         <div class="batch-slot-section-title"><span>LoRA</span><span class="batch-slot-section-hint">모델 보정</span></div>
                                         <div class="batch-slot-option-stack">
                                             <div class="batch-toggle-row"><label>LoRA</label><label class="toggle-switch"><input type="checkbox" id="cm-setting-lora-enabled" data-cm-setting="lora_enabled" onchange="cmLoraToggleChanged()"><span class="toggle-slider"></span></label></div>
@@ -13376,27 +13393,27 @@
                                                 <div class="batch-field-group"><div class="batch-field-label">너비</div><input class="at-fill-select" id="cm-setting-width" data-cm-setting="img_w" type="number" min="256" max="4096" step="8" value="700" onchange="cmSettingChanged()"></div>
                                                 <div class="batch-field-group"><div class="batch-field-label">높이</div><input class="at-fill-select" id="cm-setting-height" data-cm-setting="img_h" type="number" min="256" max="4096" step="8" value="1024" onchange="cmSettingChanged()"></div>
                                             </div>
-                                            <div class="at-model-option-group">
+                                            <div class="at-model-option-group" data-cm-local-advanced>
                                                 <div class="at-model-option-head"><span>HIRES FIX</span><span class="batch-slot-section-hint">업스케일</span></div>
                                                 <div class="batch-toggle-row at-model-control" data-at-availability="ilxl"><label><span class="illust-section-chip sdxl">ILXL</span> HIRES FIX</label><label class="toggle-switch"><input type="checkbox" id="cm-setting-hrf-sdxl" data-cm-setting="hrf_sdxl" onchange="cmSettingChanged()"><span class="toggle-slider"></span></label></div>
                                                 <div class="batch-toggle-row at-model-control" data-at-availability="anima"><label><span class="illust-section-chip anima">ANIMA</span> HIRES FIX <span class="at-model-reason">ANIMA 전용</span></label><label class="toggle-switch"><input type="checkbox" id="cm-setting-hrf-anima" data-cm-setting="hrf_anima" onchange="cmSettingChanged()"><span class="toggle-slider"></span></label></div>
                                             </div>
-                                            <div class="at-model-option-group">
+                                            <div class="at-model-option-group" data-cm-local-advanced>
                                                 <div class="at-model-option-head"><span>HIRES 세부 설정</span><span class="at-model-reason">HIRES 활성화 시</span></div>
                                                 <div style="display:flex;align-items:center;gap:6px;"><span class="batch-field-label">배율</span><input type="range" id="cm-setting-hrf-size" data-cm-setting="hrf_size" min="1" max="3" step="0.05" value="2" style="flex:1;" oninput="document.getElementById('cm-setting-hrf-size-value').textContent=Number(this.value).toFixed(2)" onchange="cmSettingChanged()"><span id="cm-setting-hrf-size-value" style="font-size:0.68rem;">2.00</span></div>
                                                 <div class="batch-toggle-row"><label>RESTORE SIZE</label><label class="toggle-switch"><input type="checkbox" id="cm-setting-hrf-restore" data-cm-setting="hrf_restore_size" checked onchange="cmSettingChanged()"><span class="toggle-slider"></span></label></div>
                                                 <div class="batch-toggle-row"><label>CONTROL NET</label><label class="toggle-switch"><input type="checkbox" id="cm-setting-hrf-control" data-cm-setting="hrf_control_net" onchange="cmSettingChanged()"><span class="toggle-slider"></span></label></div>
                                             </div>
-                                            <div class="at-model-option-group">
+                                            <div class="at-model-option-group" data-cm-local-advanced>
                                                 <div class="at-model-option-head"><span>디테일러</span><span class="batch-slot-section-hint">FACE · HAND · EYE</span></div>
                                                 <div class="at-model-control" data-at-availability="ilxl" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;"><span class="illust-section-chip sdxl">ILXL</span><label class="at-toolbar-check"><input type="checkbox" id="cm-setting-sdxl-fd" data-cm-setting="sdxl_fd_enabled" onchange="cmSettingChanged()"> Face</label><label class="at-toolbar-check"><input type="checkbox" id="cm-setting-sdxl-hd" data-cm-setting="sdxl_hd_enabled" onchange="cmSettingChanged()"> Hand</label><label class="at-toolbar-check"><input type="checkbox" id="cm-setting-sdxl-ed" data-cm-setting="sdxl_ed_enabled" onchange="cmSettingChanged()"> Eye</label></div>
                                                 <div class="at-model-control" data-at-availability="anima" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;"><span class="illust-section-chip anima">ANIMA</span><label class="at-toolbar-check"><input type="checkbox" id="cm-setting-anima-fd" data-cm-setting="anima_fd_enabled" onchange="cmSettingChanged()"> Face</label><label class="at-toolbar-check"><input type="checkbox" id="cm-setting-anima-hd" data-cm-setting="anima_hd_enabled" onchange="cmSettingChanged()"> Hand</label><label class="at-toolbar-check"><input type="checkbox" id="cm-setting-anima-ed" data-cm-setting="anima_ed_enabled" onchange="cmSettingChanged()"> Eye</label><span class="at-model-reason">ANIMA 전용</span></div>
                                             </div>
-                                            <div class="at-model-option-group at-model-control" data-at-availability="anima">
+                                            <div class="at-model-option-group at-model-control" data-at-availability="anima" data-cm-local-advanced>
                                                 <div class="at-model-option-head"><span>FACE CROP</span><span class="at-model-reason">ANIMA 전용</span></div>
                                                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:7px;"><div class="batch-field-group"><div class="batch-field-label">TOP</div><input class="at-fill-select" id="cm-setting-face-crop-top" data-cm-setting="face_crop_top" type="number" step="0.1" value="2.5" onchange="cmSettingChanged()"></div><div class="batch-field-group"><div class="batch-field-label">BOTTOM</div><input class="at-fill-select" id="cm-setting-face-crop-bottom" data-cm-setting="face_crop_bottom" type="number" step="0.1" value="1" onchange="cmSettingChanged()"></div></div>
                                             </div>
-                                            <div class="at-model-option-group at-model-control" data-at-availability="anima">
+                                            <div class="at-model-option-group at-model-control" data-at-availability="anima" data-cm-local-advanced>
                                                 <div class="at-model-option-head"><span>Face LoRA 보정</span><span class="at-model-reason">ANIMA 전용</span></div>
                                                 <div class="batch-field-group"><div class="batch-field-label">고정 사이즈</div><input class="at-fill-select" id="cm-setting-face-upscale" data-cm-setting="face_lora_upscale_size" type="number" placeholder="사용 안 함" onchange="cmSettingChanged()"></div>
                                                 <div class="batch-field-group"><div class="batch-field-label">FACE TAGS</div><input class="at-fill-select" id="cm-setting-face-tags" data-cm-setting="face_tags" type="text" onchange="cmSettingChanged()"></div>
@@ -37667,6 +37684,9 @@
                 return Number.isFinite(value) ? String(value) : '';
             };
             return {
+                generation_workflow: stringValue('cm-setting-generation-workflow', 'generation_workflow') === 'illustration'
+                    ? 'illustration'
+                    : 'asset',
                 asset_workflow_type: stringValue('cm-setting-workflow', 'asset_workflow_type') || 'ilxl',
                 quality_preset: stringValue('cm-setting-quality', 'quality_preset'),
                 artist_preset: stringValue('cm-setting-artist', 'artist_preset'),
@@ -37716,7 +37736,6 @@
         function cmSyncWorkflowFromConfig() {
             if (!cmSession?.settings) return;
             const next = normalizeAssetWorkflowType(currentConfig?.asset_workflow_type);
-            if (cmSession.settings.asset_workflow_type === next) return;
             cmSession.settings.asset_workflow_type = next;
             cmApplySettingsToUI();
         }
@@ -37725,7 +37744,9 @@
             if (!cmSession?.settings) return;
             const settings = cmSession.settings;
             const values = {
+                'cm-setting-generation-workflow': settings.generation_workflow === 'illustration' ? 'illustration' : 'asset',
                 'cm-setting-workflow': settings.asset_workflow_type || 'ilxl',
+                'cm-setting-illustration-workflow': normalizeIllustrationWorkflowType(currentConfig?.illustration_workflow_type),
                 'cm-setting-quality': settings.quality_preset || '',
                 'cm-setting-artist': settings.artist_preset || '',
                 'cm-setting-negative': settings.negative_preset || '',
@@ -37795,6 +37816,7 @@
             cmSession.settings = cmCollectSettings();
             cmRagVerified = false;
             cmRenderAllLoraSettings();
+            cmApplySettingsAvailability();
             cmRenderStatus();
             cmQueueSync();
         }
@@ -37904,9 +37926,7 @@
                     '<div class="cm-maker-lora-empty">선택된 LoRA가 없습니다.</div>';
                 return;
             }
-            const capabilities = getAssetWorkflowCapabilities(
-                cmSession.settings.asset_workflow_type,
-            );
+            const capabilities = cmGetGenerationCapabilities();
             list.innerHTML = items.map((item, index) => {
                 const base = String(item.BASE || 'anima').toLowerCase() === 'ilxl'
                     ? 'sdxl'
@@ -38100,32 +38120,109 @@
             }
         }
 
-        // 에셋 워크플로우(ILXL/ANIMA)에 따라 쓸 수 없는 항목을 회색 잠금.
+        function cmGetGenerationCapabilities() {
+            const generationWorkflow = document.getElementById('cm-setting-generation-workflow')?.value === 'illustration'
+                ? 'illustration'
+                : 'asset';
+            if (generationWorkflow === 'illustration') {
+                const type = normalizeIllustrationWorkflowType(
+                    currentConfig?.illustration_workflow_type,
+                );
+                const illustration = getIllustrationCapabilities(type);
+                return {
+                    generationWorkflow,
+                    type,
+                    ilxl: !!illustration.sdxl,
+                    anima: !!illustration.anima,
+                    dual: !!illustration.sdxl && !!illustration.anima,
+                    pose: false,
+                    ipadapter: false,
+                    localAdvanced: !!illustration.localAdvanced,
+                    lora: !!illustration.localAdvanced,
+                };
+            }
+            return {
+                ...getAssetWorkflowCapabilities(
+                    document.getElementById('cm-setting-workflow')?.value,
+                ),
+                generationWorkflow,
+                localAdvanced: true,
+                lora: true,
+            };
+        }
+
+        // 선택한 생성 워크플로우와 모델 계열에 따라 쓸 수 없는 항목을 회색 잠금.
         // CM 미지원(.cm-unsupported) 항목은 마크업 disabled를 유지하고 건드리지 않는다.
         function cmApplySettingsAvailability() {
             const wall = document.getElementById('cm-settings-wall');
             if (!wall) return;
-            const workflowEl = document.getElementById('cm-setting-workflow');
-            const capabilities = getAssetWorkflowCapabilities(workflowEl?.value);
-            const badge = document.getElementById('cm-workflow-badge');
-            if (badge) {
-                badge.textContent = capabilities.dual ? 'ILXL+ANIMA'
+            const capabilities = cmGetGenerationCapabilities();
+            const illustrationMode = capabilities.generationWorkflow === 'illustration';
+            const generationBadge = document.getElementById('cm-generation-workflow-badge');
+            if (generationBadge) {
+                const modelLabel = capabilities.dual ? 'ILXL+ANIMA'
                     : capabilities.anima ? 'ANIMA'
                     : 'ILXL';
+                generationBadge.textContent = `${illustrationMode ? '삽화' : '에셋'} · ${modelLabel}`;
             }
+            const assetRow = document.getElementById('cm-asset-workflow-row');
+            const illustrationRow = document.getElementById('cm-illustration-workflow-row');
+            if (assetRow) assetRow.style.display = illustrationMode ? 'none' : '';
+            if (illustrationRow) illustrationRow.style.display = illustrationMode ? '' : 'none';
+            const illustrationSelect = document.getElementById('cm-setting-illustration-workflow');
+            if (illustrationSelect) {
+                illustrationSelect.value = normalizeIllustrationWorkflowType(
+                    currentConfig?.illustration_workflow_type,
+                );
+            }
+            const legend = document.getElementById('cm-workflow-legend');
+            if (legend) {
+                legend.innerHTML = illustrationMode
+                    ? '<strong>삽화 모드:</strong> 현재 설정의 삽화 프로필을 사용하며, V1·챈섭에서 지원하지 않는 로컬 고급 옵션은 잠깁니다.'
+                    : '<strong>에셋 모드:</strong> 현재 설정의 에셋 프로필을 사용하며, 모델 계열에 맞지 않는 옵션은 잠깁니다.';
+            }
+            wall.querySelectorAll('[data-cm-local-advanced]').forEach(container => {
+                const available = !illustrationMode || capabilities.localAdvanced;
+                container.classList.toggle('is-unavailable', !available);
+                container.querySelectorAll('input, select, button').forEach(control => {
+                    control.disabled = !available;
+                });
+            });
+            wall.querySelectorAll('[data-cm-lora-controls]').forEach(container => {
+                const available = !illustrationMode || capabilities.lora;
+                container.classList.toggle('is-unavailable', !available);
+                container.querySelectorAll('input, select, button').forEach(control => {
+                    control.disabled = !available;
+                });
+            });
+            // 상위 그룹 상태를 먼저 적용한 뒤 모델별 상태를 적용해야, 예를 들어
+            // ANIMA-only에서 상위 그룹 활성화가 ILXL 하위 컨트롤을 다시 켜지 않는다.
             wall.querySelectorAll('[data-at-availability]').forEach(container => {
                 const availability = container.dataset.atAvailability;
-                const available = availability === 'anima' ? capabilities.anima
+                const modelAvailable = availability === 'anima' ? capabilities.anima
                     : (availability === 'sdxl-only' || availability === 'ilxl') ? capabilities.ilxl
                     : availability === 'pose' ? capabilities.pose
                     : availability === 'ipadapter' ? capabilities.ipadapter
                     : true;
+                const advancedAvailable = !container.closest('[data-cm-local-advanced]')
+                    || !illustrationMode
+                    || capabilities.localAdvanced;
+                const loraAvailable = !container.closest('[data-cm-lora-controls]')
+                    || !illustrationMode
+                    || capabilities.lora;
+                const available = modelAvailable && advancedAvailable && loraAvailable;
                 container.classList.toggle('is-unavailable', !available);
                 if (container.classList.contains('cm-unsupported')) return; // 미지원은 항상 잠금
                 container.querySelectorAll('input, select, button').forEach(control => {
                     control.disabled = !available;
                 });
             });
+            const generateButton = document.getElementById('cm-generate-btn');
+            if (generateButton && !cmBusy) {
+                generateButton.textContent = illustrationMode
+                    ? '사용자 삽화 생성'
+                    : '사용자 이미지 생성';
+            }
         }
 
         // 프롬프트 구성(외모·복장·표정·구도) 잠금 행을 자유 편집 영역의 현재 태그 수와 동기화.
@@ -38770,7 +38867,11 @@
                 }
 
                 // 2) 즉시 다시 그리기(우측 LLM 이미지)
-                cmSetBusy(true, `${baseLabel} · ComfyUI에서 LLM 결과를 그리는 중...`);
+                const generationWorkflow = cmCollectSettings().generation_workflow;
+                cmSetBusy(
+                    true,
+                    `${baseLabel} · ${generationWorkflow === 'illustration' ? '삽화' : '에셋'} 워크플로우에서 LLM 결과를 그리는 중...`,
+                );
                 cmPrepareSeedForGenerate();
                 const promptData = await cmBuildPromptData('llm');
                 const genPayload = {
@@ -38790,7 +38891,10 @@
                 cmSession = genData.session;
                 cmRender();
                 const ragNote = data.rag?.enabled ? ' · RAG 후보 검증 포함' : '';
-                showToast(`${baseLabel} LLM 수정 후 이미지를 그렸습니다${ragNote}.`, 'success');
+                showToast(
+                    `${baseLabel} LLM 수정 후 ${generationWorkflow === 'illustration' ? '삽화' : '에셋'}으로 그렸습니다${ragNote}.`,
+                    'success',
+                );
             } catch (error) {
                 console.error('[CHARACTER_MAKER] LLM 수정 실패:', error);
                 if (cmSession?.settings?.rag_enabled) {
@@ -38887,6 +38991,23 @@
         }
 
         async function cmBuildPromptData(source = 'user') {
+            const generationWorkflow = cmCollectSettings().generation_workflow;
+            if (generationWorkflow === 'illustration') {
+                const data = await cmRequest(
+                    `/api/character_maker/session/${encodeURIComponent(cmSession.id)}/illustration-prompt`,
+                    {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ ...cmCurrentPayload(), source }),
+                    },
+                );
+                const promptData = data.prompt;
+                if (!promptData?.positive) {
+                    console.error('[CHARACTER_MAKER] 삽화 프롬프트 생성 결과가 비어 있습니다:', data);
+                    throw new Error('삽화 생성 프롬프트를 만들지 못했습니다.');
+                }
+                return promptData;
+            }
             if (!assetTags) {
                 console.error('[CHARACTER_MAKER] 프롬프트 생성 실패: assetTags가 비어 있습니다.');
                 throw new Error('에셋 프리셋 데이터가 준비되지 않았습니다.');
@@ -38913,7 +39034,13 @@
                 showToast('이미지 생성 전에 외모와 복장 태그를 각각 하나 이상 준비하세요.', 'error');
                 return;
             }
-            cmSetBusy(true, 'ComfyUI에서 새 리비전을 생성하는 중...');
+            const generationWorkflow = cmCollectSettings().generation_workflow;
+            cmSetBusy(
+                true,
+                generationWorkflow === 'illustration'
+                    ? '삽화 워크플로우에서 새 리비전을 생성하는 중...'
+                    : '에셋 워크플로우에서 새 리비전을 생성하는 중...',
+            );
             try {
                 cmPrepareSeedForGenerate();
                 const promptData = await cmBuildPromptData('user');
@@ -38931,7 +39058,10 @@
                 });
                 cmSession = data.session;
                 cmRender();
-                showToast(`새 이미지 리비전 R${cmSession.revisions.length}을 생성했습니다.`, 'success');
+                showToast(
+                    `새 ${generationWorkflow === 'illustration' ? '삽화' : '에셋'} 리비전 R${cmSession.revisions.length}을 생성했습니다.`,
+                    'success',
+                );
             } catch (error) {
                 console.error('[CHARACTER_MAKER] 이미지 생성 실패:', error);
                 showToast('이미지 생성 실패: ' + error.message, 'error');

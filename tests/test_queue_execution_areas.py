@@ -742,6 +742,39 @@ async def test_character_maker_item_lands_in_llm_lane():
 
 
 @pytest.mark.asyncio
+async def test_character_maker_illustration_uses_selected_provider_lane_and_keeps_bytes_off_result():
+    manager = QueueManager()
+    observed = {}
+
+    async def fake_generate(positive, negative, **kwargs):
+        observed.update({"positive": positive, "negative": negative, **kwargs})
+        return b"generated-image", None
+
+    manager.generate_image_with_prompt = fake_generate
+    item = _item(
+        "character_maker_illustration",
+        {
+            "positive": "[ANIMA_ALL]\nsilver_hair\n[END]",
+            "negative": "low quality",
+            "provider": "chansub",
+            "illustration_workflow_type": "chansub",
+            "width": 700,
+            "height": 1024,
+        },
+    )
+
+    assert manager._item_execution_area(item) == ("external", "chansub")
+    result = await manager._handle_character_maker_illustration(item)
+
+    assert result["success"] is True
+    assert result["image_size"] == len(b"generated-image")
+    assert item.generated_image_bytes == b"generated-image"
+    assert "generated_image_bytes" not in result
+    assert observed["provider"] == "chansub"
+    assert observed["illustration_workflow_type"] == "chansub"
+
+
+@pytest.mark.asyncio
 async def test_character_maker_handler_calls_revise_and_returns_result():
     manager = QueueManager()
     received = {}
