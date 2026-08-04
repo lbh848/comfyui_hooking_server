@@ -36,6 +36,35 @@ from .danbooru_rag import DanbooruRagError, get_danbooru_rag_service
 EDITABLE_FIELDS = ("appearance", "outfit", "expression", "composition")
 # 잠금(LLM 수정 보호) 대상: 태그 필드 4종 + 자연어. 자연어는 별도 최상위 문자열 필드.
 LOCKABLE_FIELDS = EDITABLE_FIELDS + ("natural_language",)
+# 생성 설정에서 사용자가 자유 편집 영역으로 꺼낼 수 있는 프리셋 태그.
+# LLM 계약(EDITABLE_FIELDS)에는 포함하지 않아 사용자만 수정할 수 있게 유지한다.
+EDITABLE_PRESET_FIELDS = (
+    "quality_preset",
+    "artist_preset",
+    "negative_preset",
+    "anima_quality_preset",
+    "anima_artist_preset",
+    "anima_negative_preset",
+    "character_negative_preset",
+)
+EDITABLE_PRESET_CATEGORIES = {
+    "quality_preset": "quality_presets",
+    "artist_preset": "artist_presets",
+    "negative_preset": "negative_presets",
+    "anima_quality_preset": "quality_presets",
+    "anima_artist_preset": "artist_presets",
+    "anima_negative_preset": "negative_presets",
+    "character_negative_preset": "character_negative_presets",
+}
+EDITABLE_PRESET_LABELS = {
+    "quality_preset": "ILXL 품질",
+    "artist_preset": "ILXL 아티스트",
+    "negative_preset": "ILXL 부정",
+    "anima_quality_preset": "ANIMA 품질",
+    "anima_artist_preset": "ANIMA 아티스트",
+    "anima_negative_preset": "ANIMA 부정",
+    "character_negative_preset": "캐릭터 부정",
+}
 MAX_NATURAL_LANGUAGE_LENGTH = 2000
 RAG_COLD_START_TIMEOUT_SECONDS = 300.0
 SINGLE_SESSION_ID = "default"
@@ -96,6 +125,27 @@ def _normalize_locks(value: Any) -> dict[str, bool]:
     if not isinstance(value, dict):
         raise CharacterMakerError("locks는 객체여야 합니다.")
     return {field: bool(value.get(field, False)) for field in LOCKABLE_FIELDS}
+
+
+def _normalize_editable_preset_tags(value: Any) -> dict[str, list[str]]:
+    if value is None:
+        value = {}
+    if not isinstance(value, dict):
+        raise CharacterMakerError("editable_preset_tags는 객체여야 합니다.")
+    return {
+        field: _normalize_tag_list(value.get(field, []), field=field)
+        for field in EDITABLE_PRESET_FIELDS
+    }
+
+
+def _normalize_editable_preset_enabled(value: Any) -> dict[str, bool]:
+    if value is None:
+        value = {}
+    if not isinstance(value, dict):
+        raise CharacterMakerError("editable_preset_enabled는 객체여야 합니다.")
+    return {
+        field: bool(value.get(field, False)) for field in EDITABLE_PRESET_FIELDS
+    }
 
 
 def _normalize_lora_list(value: Any) -> list[dict[str, Any]]:
@@ -422,6 +472,12 @@ class CharacterMakerService:
             "fields": {field: [] for field in EDITABLE_FIELDS},
             "llm_fields": {field: [] for field in EDITABLE_FIELDS},
             "locks": {field: False for field in LOCKABLE_FIELDS},
+            "editable_preset_tags": {
+                field: [] for field in EDITABLE_PRESET_FIELDS
+            },
+            "editable_preset_enabled": {
+                field: False for field in EDITABLE_PRESET_FIELDS
+            },
             "settings": self._default_settings(),
             "chat": [],
             "active_chat_branch_id": "",
@@ -470,6 +526,14 @@ class CharacterMakerService:
         data.setdefault("fields", {field: [] for field in EDITABLE_FIELDS})
         data.setdefault("llm_fields", {field: [] for field in EDITABLE_FIELDS})
         data.setdefault("locks", {field: False for field in LOCKABLE_FIELDS})
+        data.setdefault(
+            "editable_preset_tags",
+            {field: [] for field in EDITABLE_PRESET_FIELDS},
+        )
+        data.setdefault(
+            "editable_preset_enabled",
+            {field: False for field in EDITABLE_PRESET_FIELDS},
+        )
         data.setdefault("settings", {})
         data.setdefault("chat", [])
         data.setdefault("active_chat_branch_id", "")
@@ -486,6 +550,25 @@ class CharacterMakerService:
             data["llm_fields"].setdefault(field, [])
             data["locks"].setdefault(field, False)
         data["locks"].setdefault("natural_language", False)
+        try:
+            data["editable_preset_tags"] = _normalize_editable_preset_tags(
+                data.get("editable_preset_tags")
+            )
+            data["editable_preset_enabled"] = _normalize_editable_preset_enabled(
+                data.get("editable_preset_enabled")
+            )
+        except CharacterMakerError as exc:
+            print(
+                "[CHARACTER_MAKER] 로드 시 생성 프리셋 편집 상태 오류, 초기화: "
+                f"path={path}, error={exc}"
+            )
+            traceback.print_exc()
+            data["editable_preset_tags"] = {
+                field: [] for field in EDITABLE_PRESET_FIELDS
+            }
+            data["editable_preset_enabled"] = {
+                field: False for field in EDITABLE_PRESET_FIELDS
+            }
         # 과거 채팅은 기준을 추측하지 않는다. 기준 메타데이터가 없는 항목은
         # "unknown"으로 보존하되 새 LLM 요청의 체크포인트 문맥에는 포함하지 않는다.
         migrated_chat_items = 0
@@ -531,6 +614,27 @@ class CharacterMakerService:
             if not isinstance(item, dict):
                 continue
             item.setdefault("source", "user")
+            try:
+                item["editable_preset_tags"] = _normalize_editable_preset_tags(
+                    item.get("editable_preset_tags")
+                )
+                item["editable_preset_enabled"] = (
+                    _normalize_editable_preset_enabled(
+                        item.get("editable_preset_enabled")
+                    )
+                )
+            except CharacterMakerError as exc:
+                print(
+                    "[CHARACTER_MAKER] 로드 시 리비전 생성 프리셋 편집 상태 오류, "
+                    f"초기화: revision={item.get('id')}, error={exc}"
+                )
+                traceback.print_exc()
+                item["editable_preset_tags"] = {
+                    field: [] for field in EDITABLE_PRESET_FIELDS
+                }
+                item["editable_preset_enabled"] = {
+                    field: False for field in EDITABLE_PRESET_FIELDS
+                }
         # 새 설정 키가 추가되어도 기본값으로 채운다(사용자 값은 보존).
         defaults = self._default_settings()
         for key, value in defaults.items():
@@ -679,6 +783,14 @@ class CharacterMakerService:
                 "created_at": item["created_at"],
                 "fields": copy.deepcopy(item["fields"]),
                 "natural_language": item.get("natural_language", ""),
+                "editable_preset_tags": copy.deepcopy(
+                    item.get("editable_preset_tags")
+                    or {field: [] for field in EDITABLE_PRESET_FIELDS}
+                ),
+                "editable_preset_enabled": copy.deepcopy(
+                    item.get("editable_preset_enabled")
+                    or {field: False for field in EDITABLE_PRESET_FIELDS}
+                ),
                 "note": item.get("note", ""),
                 "source": item.get("source", "user"),
                 "url": f"/api/character_maker/session/{session_id}/image/{item['id']}",
@@ -698,6 +810,12 @@ class CharacterMakerService:
             "fields": copy.deepcopy(session["fields"]),
             "llm_fields": copy.deepcopy(session["llm_fields"]),
             "locks": copy.deepcopy(session["locks"]),
+            "editable_preset_tags": copy.deepcopy(
+                session["editable_preset_tags"]
+            ),
+            "editable_preset_enabled": copy.deepcopy(
+                session["editable_preset_enabled"]
+            ),
             "settings": copy.deepcopy(session["settings"]),
             "chat": copy.deepcopy(session["chat"]),
             "active_chat_branch_id": session.get("active_chat_branch_id", ""),
@@ -753,6 +871,16 @@ class CharacterMakerService:
             session["llm_fields"] = _normalize_fields(payload.get("llm_fields"))
         if "locks" in payload:
             session["locks"] = _normalize_locks(payload.get("locks"))
+        if "editable_preset_tags" in payload:
+            session["editable_preset_tags"] = _normalize_editable_preset_tags(
+                payload.get("editable_preset_tags")
+            )
+        if "editable_preset_enabled" in payload:
+            session["editable_preset_enabled"] = (
+                _normalize_editable_preset_enabled(
+                    payload.get("editable_preset_enabled")
+                )
+            )
         if "settings" in payload:
             self._update_settings(session, payload.get("settings"))
         if "active_revision_id" in payload:
@@ -1631,7 +1759,13 @@ class CharacterMakerService:
             raise CharacterMakerError("base 는 user 또는 llm 이어야 합니다.")
         # base=="user" 일 때만 사용자 fields 를 동기화한다.
         # base=="llm" 은 사용자 fields 를 건드리지 않고 LLM 작업 영역(llm_fields)에서 출발한다.
-        sync_keys = ("world_context", "locks", "settings")
+        sync_keys = (
+            "world_context",
+            "locks",
+            "settings",
+            "editable_preset_tags",
+            "editable_preset_enabled",
+        )
         if base == "user":
             sync_keys = sync_keys + ("fields", "natural_language")
         self.update_session(
@@ -1805,6 +1939,14 @@ class CharacterMakerService:
             "source": source,
             "fields": fields_snapshot,
             "natural_language": natural_language_snapshot,
+            # LLM 편집 필드와 별개인 사용자 전용 생성 프리셋 태그도
+            # 이미지 생성 시점 그대로 확정 단계까지 운반한다.
+            "editable_preset_tags": copy.deepcopy(
+                session["editable_preset_tags"]
+            ),
+            "editable_preset_enabled": copy.deepcopy(
+                session["editable_preset_enabled"]
+            ),
             "settings": copy.deepcopy(session["settings"]),
             "image_path": image_path,
             "prompt_path": prompt_path,
@@ -2097,6 +2239,24 @@ class CharacterMakerService:
             raise CharacterMakerError(
                 f"사용자 이미지의 태그 스냅샷이 올바르지 않습니다: {exc}"
             ) from exc
+        try:
+            revision_editable_preset_tags = _normalize_editable_preset_tags(
+                promote_revision.get("editable_preset_tags")
+            )
+            revision_editable_preset_enabled = (
+                _normalize_editable_preset_enabled(
+                    promote_revision.get("editable_preset_enabled")
+                )
+            )
+        except CharacterMakerError as exc:
+            print(
+                f"[CHARACTER_MAKER] 리비전 생성 프리셋 편집 스냅샷 오류: "
+                f"session={session_id}, revision={revision_id}, error={exc}"
+            )
+            traceback.print_exc()
+            raise CharacterMakerError(
+                f"사용자 이미지의 생성 프리셋 편집 스냅샷이 올바르지 않습니다: {exc}"
+            ) from exc
         if appearance_mode == "new" and not revision_fields["appearance"]:
             print(
                 f"[CHARACTER_MAKER] 확정 거부: session={session_id}, "
@@ -2192,6 +2352,94 @@ class CharacterMakerService:
                     "자연어 프리셋을 등록하려면 사용자 이미지 생성 당시 자연어가 필요합니다."
                 )
 
+        raw_editable_registrations = payload.get(
+            "editable_preset_registrations", {}
+        )
+        if not isinstance(raw_editable_registrations, dict):
+            print(
+                f"[CHARACTER_MAKER] 생성 프리셋 등록 요청 형식 오류: "
+                f"session={session_id}, "
+                f"type={type(raw_editable_registrations).__name__}"
+            )
+            raise CharacterMakerError("생성 프리셋 등록 요청은 객체여야 합니다.")
+        unknown_registration_fields = sorted(
+            set(raw_editable_registrations) - set(EDITABLE_PRESET_FIELDS)
+        )
+        if unknown_registration_fields:
+            print(
+                f"[CHARACTER_MAKER] 알 수 없는 생성 프리셋 등록 필드: "
+                f"session={session_id}, fields={unknown_registration_fields}"
+            )
+            raise CharacterMakerError(
+                "알 수 없는 생성 프리셋 등록 항목이 있습니다: "
+                + ", ".join(unknown_registration_fields)
+            )
+
+        editable_preset_registrations: dict[str, dict[str, str]] = {}
+        planned_names: set[tuple[str, str]] = set()
+        for field in EDITABLE_PRESET_FIELDS:
+            raw_registration = raw_editable_registrations.get(field, {})
+            if raw_registration is None:
+                raw_registration = {}
+            if not isinstance(raw_registration, dict):
+                print(
+                    f"[CHARACTER_MAKER] 생성 프리셋 등록 항목 형식 오류: "
+                    f"session={session_id}, field={field}, "
+                    f"type={type(raw_registration).__name__}"
+                )
+                raise CharacterMakerError(
+                    f"{EDITABLE_PRESET_LABELS[field]} 등록 설정은 객체여야 합니다."
+                )
+            mode = str(raw_registration.get("mode") or "none").strip()
+            if mode not in ("none", "new"):
+                print(
+                    f"[CHARACTER_MAKER] 생성 프리셋 등록 방식 오류: "
+                    f"session={session_id}, field={field}, mode={mode!r}"
+                )
+                raise CharacterMakerError(
+                    f"{EDITABLE_PRESET_LABELS[field]} 등록 방식이 올바르지 않습니다."
+                )
+            if mode == "none":
+                continue
+            if not revision_editable_preset_enabled[field]:
+                print(
+                    f"[CHARACTER_MAKER] 잠긴 생성 프리셋 신규 등록 거부: "
+                    f"session={session_id}, revision={revision_id}, field={field}"
+                )
+                raise CharacterMakerError(
+                    f"{EDITABLE_PRESET_LABELS[field]}은(는) 선택 이미지 생성 당시 "
+                    "자유 편집 상태가 아니었습니다."
+                )
+            if not revision_editable_preset_tags[field]:
+                print(
+                    f"[CHARACTER_MAKER] 빈 생성 프리셋 신규 등록 거부: "
+                    f"session={session_id}, revision={revision_id}, field={field}"
+                )
+                raise CharacterMakerError(
+                    f"{EDITABLE_PRESET_LABELS[field]} 프리셋으로 저장할 태그가 없습니다."
+                )
+            preset_name = registration_name(
+                raw_registration.get("name"),
+                f"{EDITABLE_PRESET_LABELS[field]} 프리셋명",
+                "new",
+            )
+            category = EDITABLE_PRESET_CATEGORIES[field]
+            planned_key = (category, preset_name.casefold())
+            if planned_key in planned_names:
+                print(
+                    f"[CHARACTER_MAKER] 생성 프리셋 신규 이름 중복: "
+                    f"session={session_id}, category={category}, name={preset_name!r}"
+                )
+                raise CharacterMakerError(
+                    f"같은 종류에 동일한 새 프리셋명이 중복되었습니다: {preset_name}"
+                )
+            planned_names.add(planned_key)
+            editable_preset_registrations[field] = {
+                "mode": "new",
+                "name": preset_name,
+                "category": category,
+            }
+
         asset_mode_module = importlib.import_module("modes.asset_mode")
         tags_file = asset_mode_module.TAGS_FILE
         asset_dir = asset_mode_module.ASSET_DIR
@@ -2244,6 +2492,24 @@ class CharacterMakerService:
                 f"type={type(natural_language_presets).__name__}"
             )
             raise CharacterMakerError("자연어 프리셋 데이터 구조가 올바르지 않습니다.")
+        editable_category_targets: dict[str, dict[str, Any]] = {}
+        for category, label in (
+            ("quality_presets", "품질"),
+            ("artist_presets", "아티스트"),
+            ("negative_presets", "부정"),
+            ("character_negative_presets", "캐릭터 부정"),
+        ):
+            target = new_tags.setdefault(category, {})
+            if not isinstance(target, dict):
+                print(
+                    f"[CHARACTER_MAKER] {label} 프리셋 구조 오류: "
+                    f"session={session_id}, category={category}, "
+                    f"type={type(target).__name__}"
+                )
+                raise CharacterMakerError(
+                    f"{label} 프리셋 데이터 구조가 올바르지 않습니다."
+                )
+            editable_category_targets[category] = target
         if registration_mode == "new" and character_name in characters:
             collisions.append(f"캐릭터 '{character_name}'")
         if registration_mode == "existing" and character_name not in characters:
@@ -2290,6 +2556,12 @@ class CharacterMakerService:
             and natural_language_name in natural_language_presets
         ):
             collisions.append(f"자연어 '{natural_language_name}'")
+        for field, registration in editable_preset_registrations.items():
+            target = editable_category_targets[registration["category"]]
+            if registration["name"] in target:
+                collisions.append(
+                    f"{EDITABLE_PRESET_LABELS[field]} '{registration['name']}'"
+                )
         if collisions:
             print(
                 f"[CHARACTER_MAKER] 확정 충돌: session={session_id}, "
@@ -2307,6 +2579,10 @@ class CharacterMakerService:
             composition_presets[composition_name] = list(revision_fields["composition"])
         if natural_language_mode == "new":
             natural_language_presets[natural_language_name] = natural_language_text
+        for field, registration in editable_preset_registrations.items():
+            editable_category_targets[registration["category"]][
+                registration["name"]
+            ] = list(revision_editable_preset_tags[field])
         if registration_mode == "new":
             new_tags.setdefault("characters", {})[character_name] = {
                 "appearance": appearance_name,
@@ -2460,6 +2736,12 @@ class CharacterMakerService:
                     "character_maker_fields": copy.deepcopy(revision_fields),
                     "character_maker_natural_language": str(
                         promote_revision.get("natural_language") or ""
+                    ),
+                    "character_maker_editable_preset_tags": copy.deepcopy(
+                        revision_editable_preset_tags
+                    ),
+                    "character_maker_editable_preset_enabled": copy.deepcopy(
+                        revision_editable_preset_enabled
                     ),
                     "character_maker_settings": copy.deepcopy(
                         promote_revision.get("settings") or {}
@@ -2640,6 +2922,9 @@ class CharacterMakerService:
             "composition_name": composition_name,
             "natural_language_mode": natural_language_mode,
             "natural_language_name": natural_language_name,
+            "editable_preset_registrations": copy.deepcopy(
+                editable_preset_registrations
+            ),
             "revision_id": revision_id,
             "promoted_image": bool(promoted_image),
             "promoted_filename": os.path.basename(promoted_image),

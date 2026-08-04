@@ -14937,9 +14937,18 @@ async def handle_api_character_maker_generate(request: web.Request) -> web.Respo
                 "locks",
                 "settings",
                 "natural_language",
+                "editable_preset_tags",
+                "editable_preset_enabled",
             )
         else:
-            update_keys = ("world_context", "locks", "settings", "llm_natural_language")
+            update_keys = (
+                "world_context",
+                "locks",
+                "settings",
+                "llm_natural_language",
+                "editable_preset_tags",
+                "editable_preset_enabled",
+            )
         update_payload = {
             key: body[key] for key in update_keys if key in body
         }

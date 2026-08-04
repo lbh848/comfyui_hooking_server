@@ -416,3 +416,60 @@ def test_character_maker_has_free_edit_natural_language_card():
     assert 'data-cm-setting="natural_language_preset"' not in html
     # Anima 자연어 가이드가 UI 도움말에 반영되어 있다.
     assert "Anima는 자연어 이해력" in html
+
+
+def test_generation_presets_can_move_to_user_only_free_edit_cards():
+    html = _html()
+
+    fields = (
+        "quality_preset",
+        "artist_preset",
+        "negative_preset",
+        "anima_quality_preset",
+        "anima_artist_preset",
+        "anima_negative_preset",
+        "character_negative_preset",
+    )
+    for field in fields:
+        assert f'data-cm-editable-preset="{field}"' in html
+        assert f"cmToggleEditablePreset('{field}', this.checked)" in html
+
+    assert 'id="cm-editable-preset-list"' in html
+    assert "const CM_EDITABLE_PRESETS" in html
+    assert "function cmRenderEditablePresetCards()" in html
+    assert "function cmEditablePresetTextInput(field, value)" in html
+    assert "LLM 제외 · 사용자 전용" in html
+    assert "editable_preset_tags:" in html
+    assert "editable_preset_enabled:" in html
+    # LLM이 수정 가능한 필드 목록에는 생성 프리셋 편집본을 넣지 않는다.
+    assert "const CM_FIELDS = ['appearance', 'outfit', 'expression', 'composition'];" in html
+    assert "const CM_LOCKABLE = [...CM_FIELDS, 'natural_language'];" in html
+
+
+def test_generation_prompt_prefers_raw_editable_preset_tags_without_duplicates():
+    html = _html()
+
+    raw_fields = (
+        "raw_quality_tags",
+        "raw_artist_tags",
+        "raw_negative_tags",
+        "raw_anima_quality_tags",
+        "raw_anima_artist_tags",
+        "raw_anima_negative_tags",
+        "raw_character_negative_tags",
+    )
+    for raw_field in raw_fields:
+        assert raw_field in html
+        assert f"Array.isArray(slot.{raw_field})" in html
+    assert "slot[config.rawSlotKey]" in html
+
+
+def test_confirmation_can_save_each_edited_generation_preset_as_new():
+    html = _html()
+
+    assert 'id="cm-confirm-editable-presets"' in html
+    assert 'id="cm-confirm-editable-preset-list"' in html
+    assert "function cmRenderConfirmEditablePresets(activeRevision)" in html
+    assert "function cmCollectEditablePresetRegistrations" in html
+    assert "editable_preset_registrations: editablePresetRegistrations" in html
+    assert "선택 이미지에 사용한 편집본을 새 프리셋으로 저장" in html

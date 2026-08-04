@@ -572,6 +572,35 @@ def test_ref_only_manifest_never_labels_first_reference_as_current(
     assert user_payload["image_manifest"][0]["role"] == "REF"
 
 
+def test_editable_generation_preset_tags_are_excluded_from_llm_prompt(tmp_path):
+    service, _ = _service(tmp_path)
+    session = service.create_session()
+    service.update_session(
+        session["id"],
+        {
+            "settings": {"artist_preset": "원본 아티스트"},
+            "editable_preset_tags": {
+                "artist_preset": ["USER_ONLY_STYLE_TOKEN"]
+            },
+            "editable_preset_enabled": {"artist_preset": True},
+        },
+    )
+    live = service._session(session["id"])
+
+    messages = service._revision_messages(
+        live,
+        "그림체를 조정해줘",
+        rag_enabled=False,
+        base="user",
+    )
+    user_payload = json.loads(messages[1]["content"].split("\n", 1)[1])
+
+    assert user_payload["read_only_settings"]["artist_preset"] == "원본 아티스트"
+    assert "editable_preset_tags" not in user_payload
+    assert "editable_preset_enabled" not in user_payload
+    assert "USER_ONLY_STYLE_TOKEN" not in json.dumps(messages, ensure_ascii=False)
+
+
 def test_manifest_keeps_ref_role_when_current_encoding_fails(monkeypatch, tmp_path):
     service, _ = _service(tmp_path)
     session = service.create_session()
@@ -959,7 +988,17 @@ def test_confirm_new_character_creates_folder_card_and_snapshot_presets(
                 "outfit": ["long_coat"],
                 "expression": ["gentle_smile"],
                 "composition": ["cowboy_shot"],
-            }
+            },
+            "editable_preset_tags": {
+                "quality_preset": ["masterpiece", "best_quality"],
+                "anima_artist_preset": ["soft_painterly_style"],
+                "character_negative_preset": ["bad_hands"],
+            },
+            "editable_preset_enabled": {
+                "quality_preset": True,
+                "anima_artist_preset": True,
+                "character_negative_preset": True,
+            },
         },
     )
     image_path = (
@@ -995,7 +1034,17 @@ def test_confirm_new_character_creates_folder_card_and_snapshot_presets(
                 "outfit": ["changed_outfit_after_generation"],
                 "expression": ["changed_expression_after_generation"],
                 "composition": ["changed_composition_after_generation"],
-            }
+            },
+            "editable_preset_tags": {
+                "quality_preset": ["changed_quality_after_generation"],
+                "anima_artist_preset": ["changed_artist_after_generation"],
+                "character_negative_preset": ["changed_negative_after_generation"],
+            },
+            "editable_preset_enabled": {
+                "quality_preset": True,
+                "anima_artist_preset": True,
+                "character_negative_preset": True,
+            },
         },
     )
 
@@ -1013,6 +1062,17 @@ def test_confirm_new_character_creates_folder_card_and_snapshot_presets(
             "composition_name": "루멘 시트 구도",
             "natural_language_mode": "new",
             "natural_language_name": "루멘 기본 자연어",
+            "editable_preset_registrations": {
+                "quality_preset": {"mode": "new", "name": "루멘 ILXL 품질"},
+                "anima_artist_preset": {
+                    "mode": "new",
+                    "name": "루멘 ANIMA 아티스트",
+                },
+                "character_negative_preset": {
+                    "mode": "new",
+                    "name": "루멘 캐릭터 부정",
+                },
+            },
             "revision_id": revision_id,
         },
     )
@@ -1035,6 +1095,16 @@ def test_confirm_new_character_creates_folder_card_and_snapshot_presets(
         saved["natural_language_presets"]["루멘 기본 자연어"]
         == "A silver-haired traveler waits beneath a blue moon."
     )
+    assert saved["quality_presets"]["루멘 ILXL 품질"] == [
+        "masterpiece",
+        "best_quality",
+    ]
+    assert saved["artist_presets"]["루멘 ANIMA 아티스트"] == [
+        "soft_painterly_style"
+    ]
+    assert saved["character_negative_presets"]["루멘 캐릭터 부정"] == [
+        "bad_hands"
+    ]
     assert saved["characters"]["루멘"] == {
         "appearance": "루멘 외모",
         "outfit": "루멘 코트",
@@ -1052,6 +1122,12 @@ def test_confirm_new_character_creates_folder_card_and_snapshot_presets(
         promoted_prompt["character_maker_natural_language"]
         == "A silver-haired traveler waits beneath a blue moon."
     )
+    assert promoted_prompt["character_maker_editable_preset_tags"][
+        "quality_preset"
+    ] == ["masterpiece", "best_quality"]
+    assert promoted_prompt["character_maker_editable_preset_enabled"][
+        "anima_artist_preset"
+    ] is True
     assert promoted_prompt["composition_preset"] == "루멘 시트 구도"
     asset_listing = AssetMode().list_images("루멘", "루멘 코트", "루멘 미소")
     assert asset_listing["representative"] == "revision.webp"
@@ -1070,6 +1146,11 @@ def test_confirm_new_character_creates_folder_card_and_snapshot_presets(
     assert result["finalized"]["promoted_image"] is True
     assert result["finalized"]["natural_language_mode"] == "new"
     assert result["finalized"]["natural_language_name"] == "루멘 기본 자연어"
+    assert set(result["finalized"]["editable_preset_registrations"]) == {
+        "quality_preset",
+        "anima_artist_preset",
+        "character_negative_preset",
+    }
     assert list(backup_root.glob("tags_before_character_maker_*.json"))
 
 
@@ -1707,6 +1788,8 @@ def test_backward_compat_loads_session_without_natural_language(tmp_path):
     assert public["natural_language"] == ""
     assert public["llm_natural_language"] == ""
     assert public["locks"]["natural_language"] is False
+    assert public["editable_preset_tags"]["artist_preset"] == []
+    assert public["editable_preset_enabled"]["artist_preset"] is False
     assert public["world_context"] == "legacy world"
 
 

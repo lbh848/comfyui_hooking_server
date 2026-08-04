@@ -9602,6 +9602,7 @@
         .cm-field-card[data-field="outfit"] .cm-field-dot { background: var(--cm-outfit); }
         .cm-field-card[data-field="expression"] .cm-field-dot { background: var(--cm-expression); }
         .cm-field-card[data-field="composition"] .cm-field-dot { background: var(--cm-composition); }
+        .cm-editable-preset-card .cm-field-dot { background: #f0a45d; }
         .cm-field-name { font-size: .73rem; font-weight: 700; }
         .cm-field-count { color: var(--text2); font-size: .61rem; }
         .cm-lock-btn {
@@ -9662,6 +9663,39 @@
         .cm-tag-textarea { min-height: 72px; padding: 7px 8px; resize: vertical; line-height: 1.45; }
         .cm-tag-add input:focus,
         .cm-tag-textarea:focus { border-color: var(--accent); }
+        .cm-editable-preset-list:empty { display: none; }
+        .cm-editable-preset-card {
+            border-color: color-mix(in srgb, #f0a45d 38%, var(--border));
+            background: color-mix(in srgb, #f0a45d 4%, var(--surface));
+        }
+        .cm-user-only-badge {
+            margin-left: auto;
+            padding: 2px 6px;
+            border: 1px solid color-mix(in srgb, #f0a45d 38%, transparent);
+            border-radius: 999px;
+            color: #f2bd87;
+            background: color-mix(in srgb, #f0a45d 9%, transparent);
+            font-size: .59rem;
+            white-space: nowrap;
+        }
+        .cm-preset-return-btn { margin-left: 0; }
+        .cm-preset-pull-label {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 6px;
+        }
+        .cm-preset-pull-toggle {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            color: var(--text2);
+            font-size: .59rem;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+        .cm-preset-pull-toggle input { margin: 0; accent-color: #f0a45d; }
+        .cm-preset-pull-toggle:has(input:checked) { color: #f2bd87; }
         /* 자연어 자유편집 — 태그 textarea와 달리 항상 표시(.cm-text-editor 기본 display:none 무시). */
         .cm-natural-textarea {
             display: block;
@@ -13194,6 +13228,8 @@
                                 </div>
                             </section>
 
+                            <div id="cm-editable-preset-list" class="cm-editable-preset-list"></div>
+
                             <section class="cm-field-card cm-natural-card" data-field="natural_language">
                                 <div class="cm-field-head">
                                     <span class="cm-field-dot"></span>
@@ -13287,13 +13323,13 @@
                                     <section class="batch-slot-section">
                                         <div class="batch-slot-section-title"><span>프리셋 태그</span><span class="batch-slot-section-hint">ILXL · ANIMA</span></div>
                                         <div class="batch-slot-fields-grid">
-                                            <div class="batch-field-group at-model-control" data-at-availability="sdxl-only"><div class="batch-field-label">ILXL 품질 태그</div><select class="at-fill-select" id="cm-setting-quality" data-cm-setting="quality_preset" onchange="cmSettingChanged()"></select></div>
-                                            <div class="batch-field-group at-model-control" data-at-availability="sdxl-only"><div class="batch-field-label">ILXL 아티스트</div><select class="at-fill-select" id="cm-setting-artist" data-cm-setting="artist_preset" onchange="cmSettingChanged()"></select></div>
-                                            <div class="batch-field-group at-model-control" data-at-availability="sdxl-only"><div class="batch-field-label">ILXL 부정 태그</div><select class="at-fill-select" id="cm-setting-negative" data-cm-setting="negative_preset" onchange="cmSettingChanged()"></select></div>
-                                            <div class="batch-field-group at-model-control" data-at-availability="anima"><div class="batch-field-label">ANIMA 품질 태그 <span class="at-model-reason">ANIMA 전용</span></div><select class="at-fill-select" id="cm-setting-anima-quality" data-cm-setting="anima_quality_preset" onchange="cmSettingChanged()"></select></div>
-                                            <div class="batch-field-group at-model-control" data-at-availability="anima"><div class="batch-field-label">ANIMA 아티스트 <span class="at-model-reason">ANIMA 전용</span></div><select class="at-fill-select" id="cm-setting-anima-artist" data-cm-setting="anima_artist_preset" onchange="cmSettingChanged()"></select></div>
-                                            <div class="batch-field-group at-model-control" data-at-availability="anima"><div class="batch-field-label">ANIMA 부정 태그 <span class="at-model-reason">ANIMA 전용</span></div><select class="at-fill-select" id="cm-setting-anima-negative" data-cm-setting="anima_negative_preset" onchange="cmSettingChanged()"></select></div>
-                                            <div class="batch-field-group"><div class="batch-field-label">캐릭터 부정(optional)</div><select class="at-fill-select" id="cm-setting-char-negative" data-cm-setting="character_negative_preset" onchange="cmSettingChanged()"></select></div>
+                                            <div class="batch-field-group at-model-control" data-at-availability="sdxl-only" data-cm-editable-preset="quality_preset"><div class="batch-field-label cm-preset-pull-label"><span>ILXL 품질 태그</span><label class="cm-preset-pull-toggle" title="선택 프리셋 태그를 LLM 비대상 자유 편집 영역으로 이동"><input type="checkbox" id="cm-pull-quality" onchange="cmToggleEditablePreset('quality_preset', this.checked)"><span>자유 편집</span></label></div><select class="at-fill-select" id="cm-setting-quality" data-cm-setting="quality_preset" onchange="cmSettingChanged()"></select></div>
+                                            <div class="batch-field-group at-model-control" data-at-availability="sdxl-only" data-cm-editable-preset="artist_preset"><div class="batch-field-label cm-preset-pull-label"><span>ILXL 아티스트</span><label class="cm-preset-pull-toggle" title="선택 프리셋 태그를 LLM 비대상 자유 편집 영역으로 이동"><input type="checkbox" id="cm-pull-artist" onchange="cmToggleEditablePreset('artist_preset', this.checked)"><span>자유 편집</span></label></div><select class="at-fill-select" id="cm-setting-artist" data-cm-setting="artist_preset" onchange="cmSettingChanged()"></select></div>
+                                            <div class="batch-field-group at-model-control" data-at-availability="sdxl-only" data-cm-editable-preset="negative_preset"><div class="batch-field-label cm-preset-pull-label"><span>ILXL 부정 태그</span><label class="cm-preset-pull-toggle" title="선택 프리셋 태그를 LLM 비대상 자유 편집 영역으로 이동"><input type="checkbox" id="cm-pull-negative" onchange="cmToggleEditablePreset('negative_preset', this.checked)"><span>자유 편집</span></label></div><select class="at-fill-select" id="cm-setting-negative" data-cm-setting="negative_preset" onchange="cmSettingChanged()"></select></div>
+                                            <div class="batch-field-group at-model-control" data-at-availability="anima" data-cm-editable-preset="anima_quality_preset"><div class="batch-field-label cm-preset-pull-label"><span>ANIMA 품질 태그 <span class="at-model-reason">ANIMA 전용</span></span><label class="cm-preset-pull-toggle" title="선택 프리셋 태그를 LLM 비대상 자유 편집 영역으로 이동"><input type="checkbox" id="cm-pull-anima-quality" onchange="cmToggleEditablePreset('anima_quality_preset', this.checked)"><span>자유 편집</span></label></div><select class="at-fill-select" id="cm-setting-anima-quality" data-cm-setting="anima_quality_preset" onchange="cmSettingChanged()"></select></div>
+                                            <div class="batch-field-group at-model-control" data-at-availability="anima" data-cm-editable-preset="anima_artist_preset"><div class="batch-field-label cm-preset-pull-label"><span>ANIMA 아티스트 <span class="at-model-reason">ANIMA 전용</span></span><label class="cm-preset-pull-toggle" title="선택 프리셋 태그를 LLM 비대상 자유 편집 영역으로 이동"><input type="checkbox" id="cm-pull-anima-artist" onchange="cmToggleEditablePreset('anima_artist_preset', this.checked)"><span>자유 편집</span></label></div><select class="at-fill-select" id="cm-setting-anima-artist" data-cm-setting="anima_artist_preset" onchange="cmSettingChanged()"></select></div>
+                                            <div class="batch-field-group at-model-control" data-at-availability="anima" data-cm-editable-preset="anima_negative_preset"><div class="batch-field-label cm-preset-pull-label"><span>ANIMA 부정 태그 <span class="at-model-reason">ANIMA 전용</span></span><label class="cm-preset-pull-toggle" title="선택 프리셋 태그를 LLM 비대상 자유 편집 영역으로 이동"><input type="checkbox" id="cm-pull-anima-negative" onchange="cmToggleEditablePreset('anima_negative_preset', this.checked)"><span>자유 편집</span></label></div><select class="at-fill-select" id="cm-setting-anima-negative" data-cm-setting="anima_negative_preset" onchange="cmSettingChanged()"></select></div>
+                                            <div class="batch-field-group" data-cm-editable-preset="character_negative_preset"><div class="batch-field-label cm-preset-pull-label"><span>캐릭터 부정(optional)</span><label class="cm-preset-pull-toggle" title="선택 프리셋 태그를 LLM 비대상 자유 편집 영역으로 이동"><input type="checkbox" id="cm-pull-char-negative" onchange="cmToggleEditablePreset('character_negative_preset', this.checked)"><span>자유 편집</span></label></div><select class="at-fill-select" id="cm-setting-char-negative" data-cm-setting="character_negative_preset" onchange="cmSettingChanged()"></select></div>
                                         </div>
                                     </section>
 
@@ -13541,6 +13577,10 @@
                                         <label>저장할 이미지 생성 당시 자연어</label>
                                         <div id="cm-confirm-natural-language-preview" class="cm-hint"></div>
                                     </div>
+                                </div>
+                                <div id="cm-confirm-editable-presets" style="display:none;margin-top:14px;">
+                                    <div class="cm-confirm-preset-title">생성 프리셋 편집본 <span>선택 이미지 생성 당시 스냅샷</span></div>
+                                    <div id="cm-confirm-editable-preset-list" class="cm-confirm-preset-list" style="margin-top:7px;"></div>
                                 </div>
                             </section>
                             <div id="cm-confirm-summary" class="cm-confirm-summary"></div>
@@ -37057,6 +37097,18 @@
             expression: '표정',
             composition: '구도/기타',
         };
+        // 생성 설정 프리셋 중 자유 편집으로 꺼낼 수 있는 항목.
+        // 이 목록은 LLM 수정 계약(CM_FIELDS/CM_LOCKABLE)에 절대 포함하지 않는다.
+        const CM_EDITABLE_PRESETS = {
+            quality_preset: { label: 'ILXL 품질', selectId: 'cm-setting-quality', toggleId: 'cm-pull-quality', category: 'quality_presets', rawSlotKey: 'raw_quality_tags' },
+            artist_preset: { label: 'ILXL 아티스트', selectId: 'cm-setting-artist', toggleId: 'cm-pull-artist', category: 'artist_presets', rawSlotKey: 'raw_artist_tags' },
+            negative_preset: { label: 'ILXL 부정', selectId: 'cm-setting-negative', toggleId: 'cm-pull-negative', category: 'negative_presets', rawSlotKey: 'raw_negative_tags' },
+            anima_quality_preset: { label: 'ANIMA 품질', selectId: 'cm-setting-anima-quality', toggleId: 'cm-pull-anima-quality', category: 'quality_presets', rawSlotKey: 'raw_anima_quality_tags' },
+            anima_artist_preset: { label: 'ANIMA 아티스트', selectId: 'cm-setting-anima-artist', toggleId: 'cm-pull-anima-artist', category: 'artist_presets', rawSlotKey: 'raw_anima_artist_tags' },
+            anima_negative_preset: { label: 'ANIMA 부정', selectId: 'cm-setting-anima-negative', toggleId: 'cm-pull-anima-negative', category: 'negative_presets', rawSlotKey: 'raw_anima_negative_tags' },
+            character_negative_preset: { label: '캐릭터 부정', selectId: 'cm-setting-char-negative', toggleId: 'cm-pull-char-negative', category: 'character_negative_presets', rawSlotKey: 'raw_character_negative_tags' },
+        };
+        const CM_EDITABLE_PRESET_FIELDS = Object.keys(CM_EDITABLE_PRESETS);
         // 캐릭터 메이커는 단일 영속 세션 하나만 사용한다. 서버가 디스크에서 로드/보존하므로
         // 브라우저에 세션 식별자를 따로 저장하지 않는다.
         const CM_SINGLE_SESSION_ID = 'default';
@@ -37104,6 +37156,14 @@
                 locks: Object.fromEntries(CM_LOCKABLE.map(field => [
                     field,
                     !!cmSession?.locks?.[field],
+                ])),
+                editable_preset_tags: Object.fromEntries(CM_EDITABLE_PRESET_FIELDS.map(field => [
+                    field,
+                    [...(cmSession?.editable_preset_tags?.[field] || [])],
+                ])),
+                editable_preset_enabled: Object.fromEntries(CM_EDITABLE_PRESET_FIELDS.map(field => [
+                    field,
+                    !!cmSession?.editable_preset_enabled?.[field],
                 ])),
                 settings: cmCollectSettings(),
             };
@@ -37392,6 +37452,188 @@
         function cmLoadExpressionPreset() { return cmLoadFieldPreset('expression'); }
         function cmLoadCompositionPreset() { return cmLoadFieldPreset('composition'); }
 
+        function cmEnsureEditablePresetState() {
+            if (!cmSession) return;
+            if (!cmSession.editable_preset_tags || typeof cmSession.editable_preset_tags !== 'object') {
+                cmSession.editable_preset_tags = {};
+            }
+            if (!cmSession.editable_preset_enabled || typeof cmSession.editable_preset_enabled !== 'object') {
+                cmSession.editable_preset_enabled = {};
+            }
+            CM_EDITABLE_PRESET_FIELDS.forEach(field => {
+                if (!Array.isArray(cmSession.editable_preset_tags[field])) {
+                    cmSession.editable_preset_tags[field] = [];
+                }
+                cmSession.editable_preset_enabled[field] = !!cmSession.editable_preset_enabled[field];
+            });
+        }
+
+        function cmToggleEditablePreset(field, enabled) {
+            const config = CM_EDITABLE_PRESETS[field];
+            if (!cmSession || !config) {
+                console.error('[CHARACTER_MAKER] 생성 프리셋 자유 편집 토글 실패:', field, enabled);
+                return;
+            }
+            cmEnsureEditablePresetState();
+            const toggle = document.getElementById(config.toggleId);
+            if (enabled) {
+                const presetName = (document.getElementById(config.selectId)?.value || '').trim();
+                if (!presetName) {
+                    console.error('[CHARACTER_MAKER] 생성 프리셋 자유 편집 실패: 선택 프리셋 없음', field);
+                    if (toggle) toggle.checked = false;
+                    showToast(`${config.label} 프리셋을 먼저 선택하세요.`, 'error');
+                    return;
+                }
+                const rawTags = assetTags?.[config.category]?.[presetName];
+                if (!Array.isArray(rawTags)) {
+                    console.error('[CHARACTER_MAKER] 생성 프리셋 자유 편집 실패: 태그 배열 없음', {
+                        field,
+                        presetName,
+                        category: config.category,
+                        value: rawTags,
+                    });
+                    if (toggle) toggle.checked = false;
+                    showToast(`${config.label} 프리셋 '${presetName}'의 태그를 찾을 수 없습니다.`, 'error');
+                    return;
+                }
+                cmSession.editable_preset_tags[field] = cmCleanTags(rawTags);
+                cmSession.editable_preset_enabled[field] = true;
+                showToast(`${config.label} '${presetName}'을 자유 편집 영역으로 옮겼습니다.`, 'success');
+            } else {
+                cmSession.editable_preset_enabled[field] = false;
+                cmSession.editable_preset_tags[field] = [];
+                showToast(`${config.label}을 생성 설정 프리셋으로 되돌렸습니다.`, 'info');
+            }
+            cmRenderEditablePresetControls();
+            cmRenderEditablePresetCards();
+            cmQueueSync();
+        }
+
+        function cmRenderEditablePresetControls() {
+            if (!cmSession) return;
+            cmEnsureEditablePresetState();
+            CM_EDITABLE_PRESET_FIELDS.forEach(field => {
+                const config = CM_EDITABLE_PRESETS[field];
+                const enabled = !!cmSession.editable_preset_enabled[field];
+                const toggle = document.getElementById(config.toggleId);
+                const select = document.getElementById(config.selectId);
+                const group = document.querySelector(`[data-cm-editable-preset="${field}"]`);
+                const unavailable = !!group?.classList.contains('is-unavailable');
+                if (toggle) {
+                    toggle.checked = enabled;
+                    toggle.disabled = unavailable;
+                }
+                if (select) select.disabled = unavailable || enabled;
+                group?.classList.toggle('cm-preset-is-editing', enabled);
+            });
+        }
+
+        function cmRenderEditablePresetCards() {
+            const container = document.getElementById('cm-editable-preset-list');
+            if (!container || !cmSession) return;
+            cmEnsureEditablePresetState();
+            const enabledFields = CM_EDITABLE_PRESET_FIELDS.filter(
+                field => cmSession.editable_preset_enabled[field]
+            );
+            container.innerHTML = enabledFields.map(field => {
+                const config = CM_EDITABLE_PRESETS[field];
+                return `
+                    <section class="cm-field-card cm-editable-preset-card" data-editable-preset-field="${field}">
+                        <div class="cm-field-head">
+                            <span class="cm-field-dot"></span>
+                            <span class="cm-field-name">${escapeHtml(config.label)}</span>
+                            <span class="cm-field-count" data-count>0 tags</span>
+                            <span class="cm-user-only-badge">LLM 제외 · 사용자 전용</span>
+                            <button type="button" class="cm-lock-btn cm-preset-return-btn" onclick="cmToggleEditablePreset('${field}', false)">잠금 영역으로</button>
+                        </div>
+                        <div class="cm-field-body">
+                            <div class="cm-chip-editor">
+                                <div class="cm-chip-list" data-chips></div>
+                                <div class="cm-tag-add">
+                                    <input data-add-input placeholder="태그 추가 · 쉼표 구분" onkeydown="cmEditablePresetTagKeydown(event, '${field}')">
+                                    <button class="cm-btn" type="button" onclick="cmAddEditablePresetTags('${field}')">＋</button>
+                                </div>
+                            </div>
+                            <div class="cm-text-wrap">
+                                <textarea class="cm-tag-textarea cm-text-editor" data-text placeholder="comma, separated, tags" oninput="cmEditablePresetTextInput('${field}', this.value)"></textarea>
+                            </div>
+                        </div>
+                    </section>`;
+            }).join('');
+            enabledFields.forEach(field => cmRenderEditablePresetField(field));
+        }
+
+        function cmRenderEditablePresetField(field, preserveActiveText = false) {
+            if (!cmSession || !CM_EDITABLE_PRESETS[field]) return;
+            const card = document.querySelector(`[data-editable-preset-field="${field}"]`);
+            if (!card) return;
+            const tags = cmSession.editable_preset_tags?.[field] || [];
+            const chipList = card.querySelector('[data-chips]');
+            if (chipList) {
+                chipList.innerHTML = tags.length
+                    ? tags.map((tag, index) => `
+                        <span class="cm-tag-chip">
+                            <span title="${escapeHtml(tag)}">${escapeHtml(tag)}</span>
+                            <button type="button" onclick="cmRemoveEditablePresetTag('${field}', ${index})" aria-label="태그 삭제">×</button>
+                        </span>`).join('')
+                    : '<span class="cm-hint">태그가 비어 있습니다. 직접 추가할 수 있습니다.</span>';
+                chipList.querySelectorAll('.cm-tag-chip').forEach((chip, index) => {
+                    _attachTagChipTooltip(chip, tags[index]);
+                });
+            }
+            const textarea = card.querySelector('[data-text]');
+            if (textarea && (!preserveActiveText || document.activeElement !== textarea)) {
+                textarea.value = tags.join(', ');
+            }
+            const count = card.querySelector('[data-count]');
+            if (count) count.textContent = `${tags.length} tags`;
+        }
+
+        function cmEditablePresetTextInput(field, value) {
+            if (!cmSession || !CM_EDITABLE_PRESETS[field]) return;
+            cmSession.editable_preset_tags[field] = cmCleanTags(value);
+            cmRenderEditablePresetField(field, true);
+            cmQueueSync();
+        }
+
+        function cmEditablePresetTagKeydown(event, field) {
+            if (event.key !== 'Enter') return;
+            event.preventDefault();
+            cmAddEditablePresetTags(field);
+        }
+
+        function cmAddEditablePresetTags(field) {
+            if (!cmSession || !CM_EDITABLE_PRESETS[field]) return;
+            const card = document.querySelector(`[data-editable-preset-field="${field}"]`);
+            const input = card?.querySelector('[data-add-input]');
+            const added = cmCleanTags(input?.value || '');
+            if (!added.length) {
+                console.error('[CHARACTER_MAKER] 생성 프리셋 태그 추가 스킵: 입력 비어 있음', field);
+                return;
+            }
+            cmSession.editable_preset_tags[field] = cmCleanTags([
+                ...(cmSession.editable_preset_tags[field] || []),
+                ...added,
+            ]);
+            if (input) input.value = '';
+            cmRenderEditablePresetField(field);
+            cmQueueSync();
+        }
+
+        function cmRemoveEditablePresetTag(field, index) {
+            if (!cmSession || !CM_EDITABLE_PRESETS[field]) return;
+            const tags = [...(cmSession.editable_preset_tags[field] || [])];
+            if (index < 0 || index >= tags.length) {
+                console.error('[CHARACTER_MAKER] 생성 프리셋 태그 삭제 인덱스 오류:', field, index);
+                return;
+            }
+            tags.splice(index, 1);
+            cmSession.editable_preset_tags[field] = tags;
+            _hideTagChipTooltip();
+            cmRenderEditablePresetField(field);
+            cmQueueSync();
+        }
+
         function cmCollectSettings() {
             const fallback = cmSession?.settings || {};
             const stringValue = (id, key) => {
@@ -37539,6 +37781,7 @@
             cmRenderSeedControl();
             cmRenderAllLoraSettings();
             cmApplySettingsAvailability();
+            cmRenderEditablePresetControls();
             // 새 세션에 영속화 설정을 반영한 직후라면, DOM이 채워진 시점에서 서버/스토리지에 동기화.
             if (cmNeedsPostLoadSync) {
                 cmNeedsPostLoadSync = false;
@@ -38285,6 +38528,8 @@
             const world = document.getElementById('cm-world-context');
             if (world && document.activeElement !== world) world.value = cmSession.world_context || '';
             CM_FIELDS.forEach(field => cmRenderField(field));
+            cmRenderEditablePresetControls();
+            cmRenderEditablePresetCards();
             cmRenderNaturalLanguage();
             cmRenderChat();
             cmRenderReferences();
@@ -38585,7 +38830,7 @@
         function cmBuildGenerationSlot(fields = cmSession?.fields, naturalLanguage = '') {
             const settings = cmCollectSettings();
             const src = fields || (cmSession?.fields);
-            return {
+            const slot = {
                 asset_workflow_type: settings.asset_workflow_type,
                 raw_appearance_tags: [...(src.appearance || [])],
                 raw_outfit_tags: [...(src.outfit || [])],
@@ -38630,6 +38875,15 @@
                 img_h: settings.img_h,
                 seed: settings.seed,
             };
+            cmEnsureEditablePresetState();
+            CM_EDITABLE_PRESET_FIELDS.forEach(field => {
+                if (!cmSession?.editable_preset_enabled?.[field]) return;
+                const config = CM_EDITABLE_PRESETS[field];
+                slot[config.rawSlotKey] = [
+                    ...(cmSession.editable_preset_tags?.[field] || []),
+                ];
+            });
+            return slot;
         }
 
         async function cmBuildPromptData(source = 'user') {
@@ -38795,6 +39049,58 @@
             ) || null;
         }
 
+        function cmRenderConfirmEditablePresets(activeRevision) {
+            const section = document.getElementById('cm-confirm-editable-presets');
+            const list = document.getElementById('cm-confirm-editable-preset-list');
+            if (!section || !list) return;
+            const enabled = activeRevision?.editable_preset_enabled || {};
+            const tagsByField = activeRevision?.editable_preset_tags || {};
+            const fields = CM_EDITABLE_PRESET_FIELDS.filter(field => !!enabled[field]);
+            section.style.display = fields.length ? '' : 'none';
+            list.innerHTML = fields.map(field => {
+                const config = CM_EDITABLE_PRESETS[field];
+                const count = Array.isArray(tagsByField[field]) ? tagsByField[field].length : 0;
+                return `
+                    <div class="cm-confirm-preset-row" data-confirm-editable-preset="${field}">
+                        <div class="cm-confirm-preset-title">${escapeHtml(config.label)} <span>${count} tags · LLM 제외 편집본</span></div>
+                        <label class="cm-confirm-representative">
+                            <input type="checkbox" data-save-editable-preset onchange="cmUpdateConfirmEditablePresetMode('${field}')">
+                            <span>선택 이미지에 사용한 편집본을 새 프리셋으로 저장</span>
+                        </label>
+                        <div class="cm-confirm-field" style="margin-top:7px;">
+                            <label>새 ${escapeHtml(config.label)} 프리셋 이름</label>
+                            <input data-editable-preset-name disabled placeholder="예: 캐릭터용 ${escapeHtml(config.label)}" oninput="cmUpdateConfirmSummary()">
+                        </div>
+                    </div>`;
+            }).join('');
+        }
+
+        function cmUpdateConfirmEditablePresetMode(field) {
+            const row = document.querySelector(`[data-confirm-editable-preset="${field}"]`);
+            if (!row) {
+                console.error('[CHARACTER_MAKER] 확정 생성 프리셋 행을 찾을 수 없습니다:', field);
+                return;
+            }
+            const save = !!row.querySelector('[data-save-editable-preset]')?.checked;
+            const nameInput = row.querySelector('[data-editable-preset-name]');
+            if (nameInput) nameInput.disabled = !save;
+            cmUpdateConfirmSummary();
+        }
+
+        function cmCollectEditablePresetRegistrations(activeRevision = cmGetActiveUserRevision()) {
+            const enabled = activeRevision?.editable_preset_enabled || {};
+            return Object.fromEntries(
+                CM_EDITABLE_PRESET_FIELDS
+                    .filter(field => !!enabled[field])
+                    .map(field => {
+                        const row = document.querySelector(`[data-confirm-editable-preset="${field}"]`);
+                        const save = !!row?.querySelector('[data-save-editable-preset]')?.checked;
+                        const name = row?.querySelector('[data-editable-preset-name]')?.value?.trim() || '';
+                        return [field, { mode: save ? 'new' : 'none', name: save ? name : '' }];
+                    })
+            );
+        }
+
         function cmOpenConfirm() {
             if (!cmSession) return;
             const activeRevision = cmGetActiveUserRevision();
@@ -38860,6 +39166,7 @@
                     ? `${naturalLanguage.length}자 · ${naturalLanguage}`
                     : '선택 이미지에는 저장할 자연어가 없습니다.';
             }
+            cmRenderConfirmEditablePresets(activeRevision);
             const targetSelect = document.getElementById('cm-confirm-registration-mode');
             const existingTarget = targetSelect?.querySelector('option[value="existing"]');
             const hasExistingCharacters = Object.keys(assetTags?.characters || {}).length > 0;
@@ -38968,6 +39275,19 @@
             const naturalLanguageName = document.getElementById('cm-confirm-natural-language-name')?.value.trim() || '';
             const revisionNaturalLanguage = String(activeRevision?.natural_language || '').trim();
             const displayPart = value => escapeHtml(value || '(선택 필요)');
+            const editablePresetRegistrations = cmCollectEditablePresetRegistrations(activeRevision);
+            const editablePresetFields = CM_EDITABLE_PRESET_FIELDS.filter(
+                field => !!activeRevision?.editable_preset_enabled?.[field]
+            );
+            const editablePresetSummary = editablePresetFields.length
+                ? editablePresetFields.map(field => {
+                    const registration = editablePresetRegistrations[field] || { mode: 'none', name: '' };
+                    const tagCount = activeRevision?.editable_preset_tags?.[field]?.length || 0;
+                    return registration.mode === 'new'
+                        ? `${CM_EDITABLE_PRESETS[field].label} '${displayPart(registration.name)}'(${tagCount})`
+                        : `${CM_EDITABLE_PRESETS[field].label} 저장 안 함(${tagCount})`;
+                }).join(' · ')
+                : '없음';
             const selectionLabel = (selection, fieldName) => selection.mode === 'existing'
                 ? `기존 '${displayPart(selection.name)}'`
                 : `새로 등록 '${displayPart(selection.name)}' · ${(revisionFields[fieldName] || []).length} tags`;
@@ -38994,6 +39314,7 @@
                 <b>자연어</b> · ${saveNaturalLanguage
                     ? `새로 등록 '${displayPart(naturalLanguageName)}' · ${revisionNaturalLanguage.length}자`
                     : '프리셋 등록 안 함 · 카드 기록에는 보존'}<br>
+                <b>생성 프리셋 편집본</b> · ${editablePresetSummary}<br>
                 새 프리셋이나 캐릭터 정보를 저장할 때는 먼저 <code>요구사항/</code>에 태그 데이터를 백업합니다.
             `;
         }
@@ -39015,6 +39336,7 @@
             const compositionMode = document.getElementById('cm-confirm-composition-mode')?.value || 'none';
             const saveNaturalLanguage = document.getElementById('cm-confirm-save-natural-language')?.checked || false;
             const characterName = cmGetConfirmCharacterName();
+            const editablePresetRegistrations = cmCollectEditablePresetRegistrations(activeRevision);
             const payload = {
                 registration_mode: registrationMode,
                 character_name: characterName,
@@ -39032,6 +39354,7 @@
                 natural_language_name: saveNaturalLanguage
                     ? (document.getElementById('cm-confirm-natural-language-name')?.value.trim() || '')
                     : '',
+                editable_preset_registrations: editablePresetRegistrations,
                 set_representative: document.getElementById('cm-confirm-set-representative')?.checked || false,
                 revision_id: activeRevision.id,
             };
@@ -39092,6 +39415,23 @@
                 showToast('선택 이미지 생성 당시 저장된 자연어가 없습니다.', 'error');
                 return;
             }
+            for (const [field, registration] of Object.entries(editablePresetRegistrations)) {
+                if (registration.mode !== 'new') continue;
+                const config = CM_EDITABLE_PRESETS[field];
+                if (!registration.name) {
+                    console.error('[CHARACTER_MAKER] 새 생성 프리셋 이름 누락:', field, registration);
+                    showToast(`새 ${config?.label || field} 프리셋 이름을 입력하세요.`, 'error');
+                    return;
+                }
+                if (!(activeRevision.editable_preset_tags?.[field] || []).length) {
+                    console.error('[CHARACTER_MAKER] 새 생성 프리셋 태그 누락:', {
+                        revision_id: activeRevision.id,
+                        field,
+                    });
+                    showToast(`새 ${config?.label || field} 프리셋으로 저장할 태그가 없습니다.`, 'error');
+                    return;
+                }
+            }
 
             cmSetBusy(
                 true,
@@ -39122,6 +39462,9 @@
                     payload.composition_mode === 'new' ? '구도' : '',
                     data.finalized.natural_language_mode === 'new' ? '자연어' : '',
                 ].filter(Boolean);
+                Object.keys(data.finalized.editable_preset_registrations || {}).forEach(field => {
+                    newPresetLabels.push(CM_EDITABLE_PRESETS[field]?.label || field);
+                });
                 const representativeLabel = data.finalized.representative_updated
                     ? '대표 이미지도 반영했습니다.'
                     : '기존 대표 이미지는 유지했습니다.';
@@ -74158,9 +74501,15 @@
             const loraTriggerWords = triggerSrc.map(l => l.trigger).filter(t => t && t.trim()).join(', ');
             const animaLoraTriggerWords = triggerSrc.filter(l => (l.BASE || 'anima') === 'anima').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
             const sdxlLoraTriggerWords = triggerSrc.filter(l => l.BASE === 'sdxl').map(l => l.trigger).filter(t => t && t.trim()).join(', ');
-            const artistTags = (slot.artist_preset && assetTags.artist_presets?.[slot.artist_preset]) || [];
-            const animaArtistTags = (slot.anima_artist_preset && assetTags.artist_presets?.[slot.anima_artist_preset]) || [];
-            const qTags = (slot.quality_preset && assetTags.quality_presets?.[slot.quality_preset]) || [];
+            const artistTags = Array.isArray(slot.raw_artist_tags)
+                ? slot.raw_artist_tags
+                : ((slot.artist_preset && assetTags.artist_presets?.[slot.artist_preset]) || []);
+            const animaArtistTags = Array.isArray(slot.raw_anima_artist_tags)
+                ? slot.raw_anima_artist_tags
+                : ((slot.anima_artist_preset && assetTags.artist_presets?.[slot.anima_artist_preset]) || []);
+            const qTags = Array.isArray(slot.raw_quality_tags)
+                ? slot.raw_quality_tags
+                : ((slot.quality_preset && assetTags.quality_presets?.[slot.quality_preset]) || []);
             const cTags = Array.isArray(slot.raw_composition_tags)
                 ? slot.raw_composition_tags
                 : ((slot.composition_preset && assetTags.composition_presets?.[slot.composition_preset]) || []);
@@ -74176,10 +74525,18 @@
             const naturalLanguage = slot.natural_language_preset
                 ? (assetTags?.natural_language_presets?.[slot.natural_language_preset] || slot.natural_language || '')
                 : (slot.natural_language || '');
-            const cnTags = (slot.character_negative_preset && assetTags.character_negative_presets?.[slot.character_negative_preset]) || [];
-            const nTags = (slot.negative_preset && assetTags.negative_presets?.[slot.negative_preset]) || [];
-            const animaQTags = (slot.anima_quality_preset && assetTags.quality_presets?.[slot.anima_quality_preset]) || [];
-            const animaNTags = (slot.anima_negative_preset && assetTags.negative_presets?.[slot.anima_negative_preset]) || [];
+            const cnTags = Array.isArray(slot.raw_character_negative_tags)
+                ? slot.raw_character_negative_tags
+                : ((slot.character_negative_preset && assetTags.character_negative_presets?.[slot.character_negative_preset]) || []);
+            const nTags = Array.isArray(slot.raw_negative_tags)
+                ? slot.raw_negative_tags
+                : ((slot.negative_preset && assetTags.negative_presets?.[slot.negative_preset]) || []);
+            const animaQTags = Array.isArray(slot.raw_anima_quality_tags)
+                ? slot.raw_anima_quality_tags
+                : ((slot.anima_quality_preset && assetTags.quality_presets?.[slot.anima_quality_preset]) || []);
+            const animaNTags = Array.isArray(slot.raw_anima_negative_tags)
+                ? slot.raw_anima_negative_tags
+                : ((slot.anima_negative_preset && assetTags.negative_presets?.[slot.anima_negative_preset]) || []);
             return { loraTriggerWords, animaLoraTriggerWords, sdxlLoraTriggerWords, artistTags, animaArtistTags, qTags, cTags, appTags, exprTags, outfitTags, naturalLanguage, cnTags, nTags, animaQTags, animaNTags };
         }
 
