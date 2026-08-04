@@ -26,6 +26,7 @@ from comfy_installer.python_runtime import (
 
 VALID_VRAM_MODES = {"auto", "highvram", "normalvram", "lowvram", "novram"}
 DEFAULT_COMFY_LAUNCH_PROFILE: dict[str, Any] = {
+    "auto_start": False,
     "enable_cors": True,
     "listen_all": True,
     "fast": False,
@@ -53,7 +54,7 @@ def normalize_comfy_launch_profile(value: Any) -> dict[str, Any]:
         raise ComfyRuntimeValidationError("ComfyUI 실행 옵션은 객체여야 합니다.")
 
     profile = copy.deepcopy(DEFAULT_COMFY_LAUNCH_PROFILE)
-    for key in ("enable_cors", "listen_all", "fast"):
+    for key in ("auto_start", "enable_cors", "listen_all", "fast"):
         if key not in value:
             continue
         if not isinstance(value[key], bool):
@@ -662,6 +663,44 @@ class ComfyRuntimeManager:
         state = self._states[parsed_instance]
         with state.lock:
             return state.process is not None and state.process.poll() is None
+
+
+def autostart_comfy_instances(
+    manager: ComfyRuntimeManager,
+    *,
+    profiles: Any,
+    ports: dict[int, Any],
+) -> dict[int, dict[str, Any]]:
+    """설정에서 자동 시작이 켜진 Comfy 인스턴스를 서로 독립적으로 시작한다."""
+
+    normalized_profiles = normalize_comfy_launch_profiles(profiles)
+    started: dict[int, dict[str, Any]] = {}
+    for instance_id in (1, 2):
+        profile = normalized_profiles[str(instance_id)]
+        if not profile["auto_start"]:
+            print(
+                f"[COMFY_RUNTIME_AUTOSTART] Comfy #{instance_id} 자동 시작 OFF: "
+                "실행을 건너뜁니다."
+            )
+            continue
+        port = ports.get(instance_id)
+        try:
+            print(
+                f"[COMFY_RUNTIME_AUTOSTART] Comfy #{instance_id} 자동 시작 시도: "
+                f"port={port}"
+            )
+            started[instance_id] = manager.start(
+                instance_id=instance_id,
+                port=port,
+                profile=profile,
+            )
+        except Exception as exc:
+            print(
+                f"[COMFY_RUNTIME_AUTOSTART] Comfy #{instance_id} 자동 시작 실패: "
+                f"port={port}, error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+    return started
 
 
 def register_comfy_runtime_routes(

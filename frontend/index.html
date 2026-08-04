@@ -4358,6 +4358,15 @@
             gap: 8px;
             margin-top: 10px;
         }
+        .comfy-runtime-autostart {
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            color: var(--text2);
+            font-size: .69rem;
+            font-weight: 700;
+            white-space: nowrap;
+        }
         .comfy-runtime-port-pill {
             margin-right: auto;
             color: var(--text2);
@@ -16871,6 +16880,13 @@
 
                             <div class="comfy-runtime-actions">
                                 <span class="comfy-runtime-port-pill" id="comfy-runtime-port">127.0.0.1:8188</span>
+                                <div class="comfy-runtime-autostart" title="이 매니저가 시작될 때 현재 Comfy 인스턴스를 자동으로 실행합니다.">
+                                    <label class="toggle-switch sm" for="comfy-runtime-auto-start">
+                                        <input type="checkbox" id="comfy-runtime-auto-start">
+                                        <span class="toggle-slider"></span>
+                                    </label>
+                                    <label for="comfy-runtime-auto-start">매니저 시작 시 자동 실행</label>
+                                </div>
                                 <button type="button" class="comfy-runtime-btn start" id="comfy-runtime-start" onclick="comfyRuntimeStart()">▶ 실행</button>
                                 <button type="button" class="comfy-runtime-btn stop" id="comfy-runtime-stop" onclick="comfyRuntimeStop()" disabled>■ 종료</button>
                             </div>
@@ -22786,6 +22802,7 @@
 
         // ─── ComfyUI 실행 관리 ───
         const COMFY_RUNTIME_PROFILE_DEFAULTS = Object.freeze({
+            auto_start: false,
             enable_cors: true,
             listen_all: true,
             fast: false,
@@ -22921,6 +22938,7 @@
                 ? source.vram_mode
                 : 'auto';
             return {
+                auto_start: source.auto_start === true,
                 enable_cors: source.enable_cors === undefined ? true : source.enable_cors === true,
                 listen_all: source.listen_all === undefined ? true : source.listen_all === true,
                 fast: source.fast === true,
@@ -22944,6 +22962,7 @@
             if (!comfyRuntimeProfilesInitialized) return;
             const cudaRaw = document.getElementById('comfy-runtime-cuda-device')?.value.trim() || '';
             comfyRuntimeProfiles[comfyRuntimeActiveInstance] = comfyRuntimeNormalizeProfile({
+                auto_start: !!document.getElementById('comfy-runtime-auto-start')?.checked,
                 enable_cors: !!document.getElementById('comfy-runtime-enable-cors')?.checked,
                 listen_all: !!document.getElementById('comfy-runtime-listen-all')?.checked,
                 fast: !!document.getElementById('comfy-runtime-fast')?.checked,
@@ -22956,10 +22975,12 @@
             const profile = comfyRuntimeProfiles[comfyRuntimeActiveInstance]
                 || { ...COMFY_RUNTIME_PROFILE_DEFAULTS };
             const cors = document.getElementById('comfy-runtime-enable-cors');
+            const autoStart = document.getElementById('comfy-runtime-auto-start');
             const listen = document.getElementById('comfy-runtime-listen-all');
             const fast = document.getElementById('comfy-runtime-fast');
             const vram = document.getElementById('comfy-runtime-vram-mode');
             const cuda = document.getElementById('comfy-runtime-cuda-device');
+            if (autoStart) autoStart.checked = profile.auto_start;
             if (cors) cors.checked = profile.enable_cors;
             if (listen) listen.checked = profile.listen_all;
             if (fast) fast.checked = profile.fast;

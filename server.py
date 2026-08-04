@@ -119,6 +119,7 @@ from comfy_installer.workflow_library import migrate_legacy_workflow_layout
 from comfy_runtime import (
     DEFAULT_COMFY_LAUNCH_PROFILES,
     ComfyRuntimeValidationError,
+    autostart_comfy_instances,
     normalize_comfy_launch_profiles,
     register_comfy_runtime_routes,
 )
@@ -19578,6 +19579,22 @@ async def on_startup(app):
     _main_event_loop = asyncio.get_running_loop()
     _backup_data_on_startup()
     asyncio.create_task(_ws_heartbeat())
+    try:
+        await asyncio.to_thread(
+            autostart_comfy_instances,
+            comfy_runtime_manager,
+            profiles=app_config.get("comfy_launch_profiles"),
+            ports={
+                1: app_config.get("comfyui_port", 8188),
+                2: app_config.get("comfyui_port_2", 8187),
+            },
+        )
+    except Exception as e:
+        print(
+            f"[COMFY_RUNTIME_AUTOSTART] 자동 시작 설정 처리 실패: "
+            f"error={type(e).__name__}: {e}"
+        )
+        traceback.print_exc()
     try:
         await update_workflow_if_needed()
     except Exception as e:

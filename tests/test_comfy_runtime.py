@@ -11,6 +11,7 @@ from aiohttp.test_utils import TestClient, TestServer
 from comfy_runtime import (
     ComfyRuntimeManager,
     ComfyRuntimeValidationError,
+    autostart_comfy_instances,
     normalize_comfy_launch_profile,
     register_comfy_runtime_routes,
 )
@@ -20,6 +21,7 @@ def test_launch_profile_defaults_enable_network_options() -> None:
     profile = normalize_comfy_launch_profile({})
 
     assert profile == {
+        "auto_start": False,
         "enable_cors": True,
         "listen_all": True,
         "fast": False,
@@ -60,6 +62,7 @@ def test_build_command_uses_supported_comfy_arguments(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     "profile",
     (
+        {"auto_start": "yes"},
         {"enable_cors": "yes"},
         {"vram_mode": "unknown"},
         {"cuda_device": -1},
@@ -127,6 +130,54 @@ def test_runtime_reports_managed_process_running_state(tmp_path: Path) -> None:
     assert manager.is_running(instance_id=1) is True
     process.returncode = 0
     assert manager.is_running(instance_id=1) is False
+
+
+def test_autostart_starts_only_enabled_instances() -> None:
+    calls: list[dict] = []
+
+    class _Manager:
+        def start(self, **kwargs):
+            calls.append(kwargs)
+            return {"instance_id": kwargs["instance_id"], "running": True}
+
+    started = autostart_comfy_instances(
+        _Manager(),  # type: ignore[arg-type]
+        profiles={
+            "1": {"auto_start": True},
+            "2": {"auto_start": False},
+        },
+        ports={1: 8188, 2: 8187},
+    )
+
+    assert [call["instance_id"] for call in calls] == [1]
+    assert calls[0]["port"] == 8188
+    assert started == {1: {"instance_id": 1, "running": True}}
+
+
+def test_autostart_keeps_instance_failures_isolated() -> None:
+    calls: list[dict] = []
+
+    class _Manager:
+        def start(self, **kwargs):
+            calls.append(kwargs)
+            if kwargs["instance_id"] == 1:
+                raise RuntimeError("first instance failed")
+            return {"instance_id": kwargs["instance_id"], "running": True}
+
+    started = autostart_comfy_instances(
+        _Manager(),  # type: ignore[arg-type]
+        profiles={
+            "1": {"auto_start": True},
+            "2": {"auto_start": True, "fast": True},
+        },
+        ports={1: 8188, 2: 8187},
+    )
+
+    assert [call["instance_id"] for call in calls] == [1, 2]
+    assert calls[0]["port"] == 8188
+    assert calls[1]["port"] == 8187
+    assert calls[1]["profile"]["fast"] is True
+    assert started == {2: {"instance_id": 2, "running": True}}
 
 
 @pytest.mark.asyncio

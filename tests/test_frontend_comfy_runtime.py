@@ -37,6 +37,7 @@ def test_runtime_has_two_instance_tabs_controls_and_raw_terminal() -> None:
         'id="comfy-runtime-fast"',
         'id="comfy-runtime-vram-mode"',
         'id="comfy-runtime-cuda-device"',
+        'id="comfy-runtime-auto-start"',
         'id="comfy-runtime-start"',
         'id="comfy-runtime-stop"',
         'id="comfy-runtime-terminal"',
@@ -57,6 +58,9 @@ def test_runtime_frontend_uses_dedicated_process_apis_and_persists_profiles() ->
         assert endpoint in FRONTEND
 
     assert "comfy_launch_profiles: comfyRuntimeProfilesForSave()" in FRONTEND
+    assert "auto_start: false" in FRONTEND
+    assert "auto_start: source.auto_start === true" in FRONTEND
+    assert "매니저 시작 시 자동 실행" in FRONTEND
     assert "enable_cors: true" in FRONTEND
     assert "listen_all: true" in FRONTEND
     assert "fast: false" in FRONTEND
