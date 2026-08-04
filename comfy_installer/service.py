@@ -20,7 +20,12 @@ from .configurator import (
     retarget_config_to_embedded_comfy,
     restore_config_backup,
 )
-from .credentials import load_civitai_key, save_civitai_key
+from .credentials import (
+    CredentialStoreError,
+    load_civitai_key,
+    save_civitai_key,
+    save_lora_manager_civitai_key,
+)
 from .crypto import ExtractedWorkflowPack
 from .dependency_installer import (
     create_comfy_venv,
@@ -359,9 +364,49 @@ class ComfyInstallerService:
     def set_civitai_key(self, api_key: str) -> dict:
         return save_civitai_key(
             self.project_root,
-            self.requirements_dir,
             api_key,
         )
+
+    def replace_lora_manager_civitai_key(self, api_key: str) -> dict:
+        if not isinstance(api_key, str):
+            raise InstallerServiceError("api_key는 문자열이어야 합니다.")
+        key = api_key.strip()
+        if not key:
+            print("[COMFY_INSTALL][KEY] 문제 해결 키 교체 거부: 빈 API 키")
+            raise InstallerServiceError("교체할 Civitai API 키가 비어 있습니다.")
+
+        with self._lock:
+            if self._thread is not None and self._thread.is_alive():
+                print(
+                    "[COMFY_INSTALL][KEY] 문제 해결 키 교체 거부: "
+                    "설치 또는 업데이트 작업 실행 중"
+                )
+                raise InstallerServiceError(
+                    "설치 또는 업데이트가 끝난 뒤 Civitai 키를 교체하세요."
+                )
+
+        try:
+            lora_manager = save_lora_manager_civitai_key(self.comfy_root, key)
+            installer = save_civitai_key(self.project_root, key)
+        except CredentialStoreError as exc:
+            print(f"[COMFY_INSTALL][KEY] 문제 해결 키 교체 실패: {exc}")
+            traceback.print_exc()
+            raise InstallerServiceError(str(exc)) from exc
+
+        self._log(
+            "[문제 해결] Civitai 키 교체 완료: "
+            "설치기와 LoRA Manager 설정 동기화, ComfyUI 재시작 필요"
+        )
+        return {
+            "key_set": True,
+            "installer_path": installer["path"],
+            "lora_manager_path": lora_manager["path"],
+            "backup_paths": {
+                "installer": installer["backup_path"],
+                "lora_manager": lora_manager["backup_path"],
+            },
+            "restart_required": True,
+        }
 
     def migrate_from_existing_comfy(
         self, old_comfy_root: str | os.PathLike[str]

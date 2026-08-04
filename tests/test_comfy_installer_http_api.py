@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -152,6 +153,65 @@ async def test_civitai_key_api_returns_plain_saved_value(tmp_path: Path) -> None
         response = await client.get("/api/comfy-installer/civitai-key")
         assert response.status == 200
         assert (await response.json())["api_key"] == "plain-civitai-key"
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_troubleshooting_replaces_installer_and_lora_manager_civitai_keys(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = tmp_path / "config.json"
+    config.write_text("{}\n", encoding="utf-8")
+    (tmp_path / "comfy" / "custom_nodes" / "comfyui-lora-manager").mkdir(
+        parents=True
+    )
+    local_app_data = tmp_path / "local-app-data"
+    monkeypatch.setenv("LOCALAPPDATA", str(local_app_data))
+    lora_settings = (
+        local_app_data / "ComfyUI-LoRA-Manager" / "settings.json"
+    )
+    lora_settings.parent.mkdir(parents=True)
+    lora_settings.write_text(
+        json.dumps({"civitai_api_key": "old-key", "theme": "dark"}),
+        encoding="utf-8",
+    )
+
+    app = web.Application()
+    register_comfy_installer_routes(
+        app,
+        project_root=tmp_path,
+        config_path=config,
+        requirements_dir=tmp_path / "requirements",
+    )
+    client = TestClient(TestServer(app))
+    await client.start_server()
+    try:
+        response = await client.post(
+            "/api/comfy-installer/troubleshooting/civitai-key",
+            json={"api_key": "replacement-key"},
+        )
+        assert response.status == 200
+        payload = await response.json()
+        assert payload["ok"] is True
+        assert payload["key_set"] is True
+        assert payload["restart_required"] is True
+        assert "replacement-key" not in json.dumps(payload)
+
+        installer_key = json.loads(
+            (tmp_path / "key" / "civitai_key.json").read_text(encoding="utf-8")
+        )
+        assert installer_key == {"api_key": "replacement-key"}
+        updated_lora_settings = json.loads(lora_settings.read_text(encoding="utf-8"))
+        assert updated_lora_settings == {
+            "civitai_api_key": "replacement-key",
+            "theme": "dark",
+        }
+        assert Path(payload["backup_paths"]["lora_manager"]).parent == (
+            lora_settings.parent / "backups"
+        )
+        assert not (tmp_path / "requirements").exists()
     finally:
         await client.close()
 

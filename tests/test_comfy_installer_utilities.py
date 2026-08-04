@@ -5,7 +5,11 @@ from pathlib import Path
 from threading import Event
 
 import comfy_installer.updater as updater_module
-from comfy_installer.credentials import load_civitai_key, save_civitai_key
+from comfy_installer.credentials import (
+    load_civitai_key,
+    save_civitai_key,
+    save_lora_manager_civitai_key,
+)
 from comfy_installer.input_patcher import patch_comfy_input
 from comfy_installer.migration import _robocopy_command, migrate_user_data
 from comfy_installer.updater import update_hooking_server_main
@@ -110,15 +114,51 @@ def test_robocopy_command_is_parallel_and_never_moves_or_overwrites(
     assert {"/MOV", "/MOVE", "/MIR", "/PURGE"}.isdisjoint(options)
 
 
-def test_civitai_key_is_plain_and_backed_up_before_rewrite(tmp_path: Path):
-    requirements = tmp_path / "requirements"
-    save_civitai_key(tmp_path, requirements, "first-key")
-    result = save_civitai_key(tmp_path, requirements, "second-key")
+def test_civitai_key_is_plain_and_backed_up_outside_requirements(tmp_path: Path):
+    save_civitai_key(tmp_path, "first-key")
+    result = save_civitai_key(tmp_path, "second-key")
 
     assert load_civitai_key(tmp_path) == "second-key"
     stored = json.loads((tmp_path / "key" / "civitai_key.json").read_text(encoding="utf-8"))
     assert stored == {"api_key": "second-key"}
-    assert Path(result["backup_path"]).is_file()
+    backup = Path(result["backup_path"])
+    assert backup.is_file()
+    assert backup.parent == tmp_path / "key" / "backups"
+    assert not (tmp_path / "requirements").exists()
+
+
+def test_lora_manager_civitai_key_replacement_preserves_settings_and_backs_up(
+    tmp_path: Path,
+    monkeypatch,
+):
+    comfy_root = tmp_path / "comfy"
+    (comfy_root / "custom_nodes" / "comfyui-lora-manager").mkdir(parents=True)
+    local_app_data = tmp_path / "local-app-data"
+    monkeypatch.setenv("LOCALAPPDATA", str(local_app_data))
+    settings_path = (
+        local_app_data / "ComfyUI-LoRA-Manager" / "settings.json"
+    )
+    settings_path.parent.mkdir(parents=True)
+    settings_path.write_text(
+        json.dumps(
+            {
+                "civitai_api_key": "old-key",
+                "default_lora_root": "D:/models/loras",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = save_lora_manager_civitai_key(comfy_root, "replacement-key")
+
+    stored = json.loads(settings_path.read_text(encoding="utf-8"))
+    assert stored == {
+        "civitai_api_key": "replacement-key",
+        "default_lora_root": "D:/models/loras",
+    }
+    backup = Path(result["backup_path"])
+    assert backup.parent == settings_path.parent / "backups"
+    assert json.loads(backup.read_text(encoding="utf-8"))["civitai_api_key"] == "old-key"
 
 
 def test_hooking_updater_uses_main_only_after_explicit_call(tmp_path: Path, monkeypatch):

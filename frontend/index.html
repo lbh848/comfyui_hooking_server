@@ -18729,6 +18729,26 @@
                             <div class="comfy-installer-log-head"><span>실행 로그</span><span>COMFY INSTALLER</span></div>
                             <pre class="comfy-installer-log" id="comfy-installer-log" role="log" aria-live="polite">설치 로그가 여기에 표시됩니다.</pre>
                         </section>
+
+                        <section class="comfy-installer-card">
+                            <div class="comfy-installer-section-head">
+                                <span class="comfy-installer-step" aria-hidden="true">06</span>
+                                <div class="comfy-installer-section-heading">
+                                    <h3 class="comfy-installer-title">문제 해결</h3>
+                                    <p class="comfy-installer-section-copy">LoRA Manager에서 Civitai 다운로드 인증 오류가 발생할 때 API 키를 교체합니다.</p>
+                                </div>
+                            </div>
+                            <div class="comfy-installer-grid">
+                                <div class="comfy-installer-field full">
+                                    <label for="comfy-installer-repair-civitai-key">LoRA Manager Civitai API 키 교체</label>
+                                    <input type="password" id="comfy-installer-repair-civitai-key" autocomplete="new-password" spellcheck="false" placeholder="새 Civitai API 키">
+                                </div>
+                            </div>
+                            <div class="comfy-installer-actions" style="margin-top:10px;">
+                                <button type="button" class="comfy-installer-btn" id="comfy-installer-repair-civitai-btn" onclick="comfyInstallerReplaceLoraManagerCivitaiKey()">Civitai 키 교체</button>
+                                <span class="comfy-installer-note" id="comfy-installer-repair-civitai-note">설치기와 LoRA Manager 설정에 함께 저장합니다. 교체 후 ComfyUI를 재시작해야 적용됩니다.</span>
+                            </div>
+                        </section>
                     </div>
                 </div>
 
@@ -23327,6 +23347,45 @@
                 comfyInstallerSetError(error.message || error);
                 if (!silent) showToast(`Civitai 키 저장 실패: ${error.message || error}`, 'error');
                 return false;
+            } finally {
+                if (button) button.disabled = false;
+            }
+        }
+
+        async function comfyInstallerReplaceLoraManagerCivitaiKey() {
+            const input = document.getElementById('comfy-installer-repair-civitai-key');
+            const button = document.getElementById('comfy-installer-repair-civitai-btn');
+            const note = document.getElementById('comfy-installer-repair-civitai-note');
+            const apiKey = String(input?.value || '').trim();
+            if (!apiKey) {
+                showToast('교체할 Civitai API 키를 입력하세요', 'warning');
+                if (note) note.textContent = 'Civitai API 키가 비어 있습니다.';
+                return;
+            }
+
+            if (button) button.disabled = true;
+            if (note) note.textContent = 'Civitai API 키를 교체하는 중입니다...';
+            comfyInstallerSetError('');
+            try {
+                const data = await fetchJSON('/api/comfy-installer/troubleshooting/civitai-key', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ api_key: apiKey }),
+                });
+                if (input) input.value = '';
+                const installInput = document.getElementById('comfy-installer-civitai-key');
+                if (installInput) installInput.value = apiKey;
+                if (note) {
+                    note.textContent = data.restart_required
+                        ? '키 교체 완료. ComfyUI를 재시작한 뒤 다시 다운로드하세요.'
+                        : '키 교체 완료. 다시 다운로드하세요.';
+                }
+                showToast('Civitai 키를 교체했습니다. ComfyUI를 재시작해주세요.', 'success');
+            } catch (error) {
+                console.error('[COMFY_INSTALL] LoRA Manager Civitai 키 교체 실패:', error);
+                comfyInstallerSetError(error.message || error);
+                if (note) note.textContent = `키 교체 실패: ${error.message || error}`;
+                showToast(`Civitai 키 교체 실패: ${error.message || error}`, 'error');
             } finally {
                 if (button) button.disabled = false;
             }

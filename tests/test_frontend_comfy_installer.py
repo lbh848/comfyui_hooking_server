@@ -24,6 +24,9 @@ def test_settings_has_comfy_installer_tab_and_key_inputs() -> None:
     assert 'id="comfy-installer-compat-start-btn"' in FRONTEND
     assert 'id="comfy-installer-migrate-btn"' in FRONTEND
     assert 'id="comfy-installer-retarget-config-btn"' in FRONTEND
+    assert ">문제 해결</h3>" in FRONTEND
+    assert 'id="comfy-installer-repair-civitai-key"' in FRONTEND
+    assert 'id="comfy-installer-repair-civitai-btn"' in FRONTEND
     assert "이사하기(V4 사용자용)" in FRONTEND
     assert "config를 내장 Comfy로 수정" in FRONTEND
     assert "comfy/.installer-state/backups/config" in FRONTEND
@@ -51,6 +54,7 @@ def test_frontend_uses_dedicated_installer_apis_and_does_not_persist_keys() -> N
         "/api/comfy-installer/unpack-workflow-pack",
         "/api/comfy-installer/workflow-library",
         "/api/comfy-installer/civitai-key",
+        "/api/comfy-installer/troubleshooting/civitai-key",
         "/api/comfy-installer/migrate",
         "/api/comfy-installer/retarget-config",
     ):
@@ -62,6 +66,12 @@ def test_frontend_uses_dedicated_installer_apis_and_does_not_persist_keys() -> N
     assert "install_mode: installMode" in FRONTEND
     assert "restore_config_after_success" not in FRONTEND
     assert "workflowKeyInput.value = ''" in FRONTEND
+
+
+def test_troubleshooting_civitai_key_replacement_requires_comfy_restart() -> None:
+    assert "async function comfyInstallerReplaceLoraManagerCivitaiKey()" in FRONTEND
+    assert "설치기와 LoRA Manager 설정에 함께 저장합니다" in FRONTEND
+    assert "ComfyUI를 재시작한 뒤 다시 다운로드하세요" in FRONTEND
 
 
 def test_nvidia_compatibility_install_warns_about_sageattention_workflows() -> None:

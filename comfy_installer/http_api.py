@@ -259,6 +259,30 @@ async def handle_civitai_key(request: web.Request) -> web.Response:
         return _json_error(str(exc), status=500)
 
 
+async def handle_replace_lora_manager_civitai_key(
+    request: web.Request,
+) -> web.Response:
+    service = request.app[APP_SERVICE_KEY]
+    try:
+        body = await _read_json_object(request)
+        api_key = body.get("api_key", "")
+        if not isinstance(api_key, str):
+            raise InstallerServiceError("api_key는 문자열이어야 합니다.")
+        result = await asyncio.to_thread(
+            service.replace_lora_manager_civitai_key,
+            api_key,
+        )
+        return web.json_response({"ok": True, **result})
+    except InstallerServiceError as exc:
+        print(f"[COMFY_INSTALL][API] LoRA Manager Civitai 키 교체 거부: {exc}")
+        traceback.print_exc()
+        return _json_error(str(exc), status=400)
+    except Exception as exc:
+        print(f"[COMFY_INSTALL][API] LoRA Manager Civitai 키 교체 실패: {exc}")
+        traceback.print_exc()
+        return _json_error(str(exc), status=500)
+
+
 async def handle_update(request: web.Request) -> web.Response:
     service = request.app[APP_SERVICE_KEY]
     try:
@@ -427,6 +451,10 @@ def register_comfy_installer_routes(
     )
     app.router.add_get("/api/comfy-installer/civitai-key", handle_civitai_key)
     app.router.add_post("/api/comfy-installer/civitai-key", handle_civitai_key)
+    app.router.add_post(
+        "/api/comfy-installer/troubleshooting/civitai-key",
+        handle_replace_lora_manager_civitai_key,
+    )
     app.router.add_post("/api/comfy-installer/update", handle_update)
     app.router.add_post(
         "/api/comfy-installer/shutdown-after-update",
