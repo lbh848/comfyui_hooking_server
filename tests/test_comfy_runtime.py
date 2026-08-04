@@ -52,6 +52,7 @@ def test_build_command_uses_supported_comfy_arguments(tmp_path: Path) -> None:
         str(manager.main_path),
     ]
     assert command[command.index("--port") + 1] == "8187"
+    assert "--enable-manager" in command
     assert command[command.index("--listen") + 1] == "0.0.0.0"
     assert command[command.index("--enable-cors-header") + 1] == "*"
     assert command[command.index("--cuda-device") + 1] == "1"

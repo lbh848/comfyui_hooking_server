@@ -206,6 +206,7 @@ class ComfyRuntimeManager:
             "--port",
             str(parsed_port),
             "--disable-auto-launch",
+            "--enable-manager",
         ]
         if normalized_profile["listen_all"]:
             command.extend(("--listen", "0.0.0.0"))
