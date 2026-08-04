@@ -48520,6 +48520,99 @@
             });
         }
 
+        function _lbExtraClampTagInsertIndex(index, length) {
+            if (!Number.isInteger(index)) {
+                console.error('[LB_EXTRA] 태그 삽입 위치가 올바르지 않아 맨 뒤로 이동합니다', { index, length });
+                return length;
+            }
+            return Math.max(0, Math.min(index, length));
+        }
+
+        function _lbExtraMoveEditedTag(srcCi, srcGrp, srcIdx, dstCi, dstGrp, dstIdx) {
+            if (srcCi !== dstCi) {
+                console.error('[LB_EXTRA] 태그 순서 변경 실패: 다른 캐릭터로는 이동할 수 없습니다', {
+                    srcCi, srcGrp, srcIdx, dstCi, dstGrp, dstIdx
+                });
+                return false;
+            }
+
+            const srcArr = _lbExtraEdited[srcCi]?.[srcGrp];
+            const dstArr = _lbExtraEdited[dstCi]?.[dstGrp];
+            if (!Array.isArray(srcArr) || !Array.isArray(dstArr)) {
+                console.error('[LB_EXTRA] 태그 순서 변경 실패: 편집 대상 배열을 찾지 못했습니다', {
+                    srcCi, srcGrp, srcIdx, dstCi, dstGrp, dstIdx
+                });
+                return false;
+            }
+            if (!Number.isInteger(srcIdx) || srcIdx < 0 || srcIdx >= srcArr.length) {
+                console.error('[LB_EXTRA] 태그 순서 변경 실패: 원본 태그 위치가 올바르지 않습니다', {
+                    srcCi, srcGrp, srcIdx, srcLength: srcArr.length
+                });
+                return false;
+            }
+
+            const moved = srcArr[srcIdx];
+            if (srcArr !== dstArr) {
+                if (dstGrp === 'appearance') {
+                    const genderTag = _getCharGenderTag(_lbExtraEdited[dstCi].name).toLowerCase();
+                    if ((moved.tag || '').toLowerCase() === genderTag) {
+                        console.info('[LB_EXTRA] 고정 성별 태그 이동 건너뜀', {
+                            srcCi, srcGrp, srcIdx, dstCi, dstGrp, tag: moved.tag
+                        });
+                        showToast(`'${genderTag}'는 성별 태그라 자동 고정됩니다`, 'info');
+                        return false;
+                    }
+                }
+                if (dstArr.some(tag => tag.tag === moved.tag)) {
+                    console.info('[LB_EXTRA] 대상 그룹에 이미 있는 태그 이동 건너뜀', {
+                        srcCi, srcGrp, srcIdx, dstCi, dstGrp, tag: moved.tag
+                    });
+                    return false;
+                }
+            }
+
+            let insertIdx = _lbExtraClampTagInsertIndex(dstIdx, dstArr.length);
+            srcArr.splice(srcIdx, 1);
+            if (srcArr === dstArr && srcIdx < insertIdx) insertIdx -= 1;
+            insertIdx = _lbExtraClampTagInsertIndex(insertIdx, dstArr.length);
+            dstArr.splice(insertIdx, 0, moved);
+            return true;
+        }
+
+        function _lbExtraResolveTagDrop(event, zone, chipSelector, indexAttribute, itemCount) {
+            const targetChip = event.target?.closest?.(chipSelector);
+            if (!targetChip || !zone.contains(targetChip)) {
+                return { index: itemCount, chip: null, after: false };
+            }
+
+            const targetIdx = parseInt(targetChip.getAttribute(indexAttribute), 10);
+            if (!Number.isInteger(targetIdx)) {
+                console.error('[LB_EXTRA] 태그 드롭 위치 계산 실패: 대상 칩 인덱스가 없습니다', {
+                    chipSelector, indexAttribute, value: targetChip.getAttribute(indexAttribute)
+                });
+                return { index: itemCount, chip: null, after: false };
+            }
+
+            const rect = targetChip.getBoundingClientRect();
+            const after = event.clientX >= rect.left + (rect.width / 2);
+            return { index: targetIdx + (after ? 1 : 0), chip: targetChip, after };
+        }
+
+        function _lbExtraClearTagDropIndicators(scope, zoneSelector, chipSelector) {
+            scope.querySelectorAll(zoneSelector).forEach(zone => { zone.style.background = ''; });
+            scope.querySelectorAll(chipSelector).forEach(chip => { chip.style.boxShadow = ''; });
+        }
+
+        function _lbExtraShowTagDropIndicator(scope, zone, placement, zoneSelector, chipSelector) {
+            _lbExtraClearTagDropIndicators(scope, zoneSelector, chipSelector);
+            zone.style.background = 'rgba(0,105,92,0.12)';
+            if (placement.chip) {
+                placement.chip.style.boxShadow = placement.after
+                    ? 'inset -3px 0 0 var(--accent)'
+                    : 'inset 3px 0 0 var(--accent)';
+            }
+        }
+
         function _attachLbExtraDnD(container) {
             let dragIdx = null;
             container.querySelectorAll('.lb-extra-char').forEach(el => {
@@ -48571,7 +48664,7 @@
                 });
                 tag.addEventListener('dragend', () => {
                     tag.style.opacity = '';
-                    container.querySelectorAll('.lb-extra-drop').forEach(z => z.style.background = '');
+                    _lbExtraClearTagDropIndicators(container, '.lb-extra-drop', '.lb-extra-tag');
                 });
             });
 
@@ -48588,7 +48681,7 @@
                 });
                 tag.addEventListener('dragend', () => {
                     tag.style.opacity = '';
-                    container.querySelectorAll('.lb-extra-drop').forEach(z => z.style.background = '');
+                    _lbExtraClearTagDropIndicators(container, '.lb-extra-drop', '.lb-extra-tag');
                 });
             });
 
@@ -48599,20 +48692,36 @@
                     e.preventDefault();
                     e.stopPropagation();
                     e.dataTransfer.dropEffect = 'move';
-                    zone.style.background = 'rgba(0,105,92,0.12)';
+                    const dstCi = parseInt(zone.dataset.dci);
+                    const dstGrp = zone.dataset.dgrp;
+                    const dstArr = _lbExtraEdited[dstCi]?.[dstGrp];
+                    if (!Array.isArray(dstArr)) {
+                        console.error('[LB_EXTRA] 태그 드래그 실패: 드롭 대상 배열을 찾지 못했습니다', { dstCi, dstGrp });
+                        return;
+                    }
+                    const placement = _lbExtraResolveTagDrop(e, zone, '.lb-extra-tag', 'data-tti', dstArr.length);
+                    _lbExtraShowTagDropIndicator(container, zone, placement, '.lb-extra-drop', '.lb-extra-tag');
                 });
                 zone.addEventListener('dragleave', (e) => {
                     if (!e.dataTransfer.types.includes('text/lbextra-tag') && !e.dataTransfer.types.includes('text/lbextra-uncat')) return;
-                    zone.style.background = '';
+                    if (e.relatedTarget && zone.contains(e.relatedTarget)) return;
+                    _lbExtraClearTagDropIndicators(container, '.lb-extra-drop', '.lb-extra-tag');
                 });
                 zone.addEventListener('drop', (e) => {
                     if (!e.dataTransfer.types.includes('text/lbextra-tag') && !e.dataTransfer.types.includes('text/lbextra-uncat')) return;
                     e.preventDefault();
                     e.stopPropagation();
-                    zone.style.background = '';
 
                     const dstCi = parseInt(zone.dataset.dci);
                     const dstGrp = zone.dataset.dgrp;
+                    const dstArr = _lbExtraEdited[dstCi]?.[dstGrp];
+                    if (!Array.isArray(dstArr)) {
+                        console.error('[LB_EXTRA] 태그 드롭 실패: 드롭 대상 배열을 찾지 못했습니다', { dstCi, dstGrp });
+                        _lbExtraClearTagDropIndicators(container, '.lb-extra-drop', '.lb-extra-tag');
+                        return;
+                    }
+                    const placement = _lbExtraResolveTagDrop(e, zone, '.lb-extra-tag', 'data-tti', dstArr.length);
+                    _lbExtraClearTagDropIndicators(container, '.lb-extra-drop', '.lb-extra-tag');
 
                     if (e.dataTransfer.types.includes('text/lbextra-uncat')) {
                         // 미분류 -> appearance/outfit (복사, 원본 유지)
@@ -48627,26 +48736,17 @@
                             }
                         }
                         if (!_lbExtraEdited[dstCi][dstGrp].some(t => t.tag === tag.tag)) {
-                            _lbExtraEdited[dstCi][dstGrp].push(JSON.parse(JSON.stringify(tag)));
+                            const insertIdx = _lbExtraClampTagInsertIndex(placement.index, dstArr.length);
+                            dstArr.splice(insertIdx, 0, JSON.parse(JSON.stringify(tag)));
+                        } else {
+                            console.info('[LB_EXTRA] 대상 그룹에 이미 있는 미분류 태그 추가 건너뜀', {
+                                dstCi, dstGrp, tag: tag.tag
+                            });
                         }
                     } else {
-                        // 편집본 내 이동 (appearance <-> outfit)
+                        // 편집본 내 이동 및 같은 그룹 안의 순서 변경
                         const src = JSON.parse(e.dataTransfer.getData('text/lbextra-tag'));
-                        if (src.ci !== dstCi) return;
-                        if (src.group === dstGrp) return;
-                        const arr = _lbExtraEdited[src.ci][src.group];
-                        const [moved] = arr.splice(src.ti, 1);
-                        if (dstGrp === 'appearance') {
-                            const gt = _getCharGenderTag(_lbExtraEdited[dstCi].name).toLowerCase();
-                            if ((moved.tag || '').toLowerCase() === gt) {
-                                showToast(`'${gt}'는 성별 태그라 자동 고정됩니다`, 'info');
-                                _lbExtraEdited[src.ci][src.group].splice(src.ti, 0, moved); // 원위치 복구
-                                return;
-                            }
-                        }
-                        if (!_lbExtraEdited[dstCi][dstGrp].some(t => t.tag === moved.tag)) {
-                            _lbExtraEdited[dstCi][dstGrp].push(moved);
-                        }
+                        _lbExtraMoveEditedTag(src.ci, src.group, src.ti, dstCi, dstGrp, placement.index);
                     }
                     _renderLbExtraContent();
                 });
@@ -49423,7 +49523,7 @@
                 });
                 tag.addEventListener('dragend', () => {
                     tag.style.opacity = '';
-                    overlay.querySelectorAll('.fe-edit-drop').forEach(z => z.style.background = '');
+                    _lbExtraClearTagDropIndicators(overlay, '.fe-edit-drop', '.fe-edit-tag');
                 });
             });
 
@@ -49440,7 +49540,7 @@
                 });
                 tag.addEventListener('dragend', () => {
                     tag.style.opacity = '';
-                    overlay.querySelectorAll('.fe-edit-drop').forEach(z => z.style.background = '');
+                    _lbExtraClearTagDropIndicators(overlay, '.fe-edit-drop', '.fe-edit-tag');
                 });
             });
 
@@ -49450,20 +49550,36 @@
                     e.preventDefault();
                     e.stopPropagation();
                     e.dataTransfer.dropEffect = e.dataTransfer.types.includes('text/fe-edit') ? 'move' : 'copy';
-                    zone.style.background = 'rgba(0,105,92,0.12)';
+                    const dstCi = parseInt(zone.dataset.fdci);
+                    const dstGrp = zone.dataset.fdgrp;
+                    const dstArr = _lbExtraEdited[dstCi]?.[dstGrp];
+                    if (!Array.isArray(dstArr)) {
+                        console.error('[LB_EXTRA] 집중 편집 태그 드래그 실패: 드롭 대상 배열을 찾지 못했습니다', { dstCi, dstGrp });
+                        return;
+                    }
+                    const placement = _lbExtraResolveTagDrop(e, zone, '.fe-edit-tag', 'data-fti', dstArr.length);
+                    _lbExtraShowTagDropIndicator(overlay, zone, placement, '.fe-edit-drop', '.fe-edit-tag');
                 });
                 zone.addEventListener('dragleave', (e) => {
                     if (!e.dataTransfer.types.includes('text/fe-orig') && !e.dataTransfer.types.includes('text/fe-edit')) return;
-                    zone.style.background = '';
+                    if (e.relatedTarget && zone.contains(e.relatedTarget)) return;
+                    _lbExtraClearTagDropIndicators(overlay, '.fe-edit-drop', '.fe-edit-tag');
                 });
                 zone.addEventListener('drop', (e) => {
                     if (!e.dataTransfer.types.includes('text/fe-orig') && !e.dataTransfer.types.includes('text/fe-edit')) return;
                     e.preventDefault();
                     e.stopPropagation();
-                    zone.style.background = '';
 
                     const dstCi = parseInt(zone.dataset.fdci);
                     const dstGrp = zone.dataset.fdgrp;
+                    const dstArr = _lbExtraEdited[dstCi]?.[dstGrp];
+                    if (!Array.isArray(dstArr)) {
+                        console.error('[LB_EXTRA] 집중 편집 태그 드롭 실패: 드롭 대상 배열을 찾지 못했습니다', { dstCi, dstGrp });
+                        _lbExtraClearTagDropIndicators(overlay, '.fe-edit-drop', '.fe-edit-tag');
+                        return;
+                    }
+                    const placement = _lbExtraResolveTagDrop(e, zone, '.fe-edit-tag', 'data-fti', dstArr.length);
+                    _lbExtraClearTagDropIndicators(overlay, '.fe-edit-drop', '.fe-edit-tag');
 
                     if (e.dataTransfer.types.includes('text/fe-orig')) {
                         const src = JSON.parse(e.dataTransfer.getData('text/fe-orig'));
@@ -49480,25 +49596,16 @@
                             }
                         }
                         if (!_lbExtraEdited[dstCi][dstGrp].some(t => t.tag === tag.tag)) {
-                            _lbExtraEdited[dstCi][dstGrp].push(JSON.parse(JSON.stringify(tag)));
+                            const insertIdx = _lbExtraClampTagInsertIndex(placement.index, dstArr.length);
+                            dstArr.splice(insertIdx, 0, JSON.parse(JSON.stringify(tag)));
+                        } else {
+                            console.info('[LB_EXTRA] 집중 편집 대상 그룹에 이미 있는 원본 태그 추가 건너뜀', {
+                                dstCi, dstGrp, tag: tag.tag
+                            });
                         }
                     } else {
                         const src = JSON.parse(e.dataTransfer.getData('text/fe-edit'));
-                        if (src.fci !== dstCi) return;
-                        if (src.fegrp === dstGrp) return;
-                        const arr = _lbExtraEdited[src.fci][src.fegrp];
-                        const [moved] = arr.splice(src.fti, 1);
-                        if (dstGrp === 'appearance') {
-                            const gt = _getCharGenderTag(_lbExtraEdited[dstCi].name).toLowerCase();
-                            if ((moved.tag || '').toLowerCase() === gt) {
-                                showToast(`'${gt}'는 성별 태그라 자동 고정됩니다`, 'info');
-                                _lbExtraEdited[src.fci][src.fegrp].splice(src.fti, 0, moved);
-                                return;
-                            }
-                        }
-                        if (!_lbExtraEdited[dstCi][dstGrp].some(t => t.tag === moved.tag)) {
-                            _lbExtraEdited[dstCi][dstGrp].push(moved);
-                        }
+                        _lbExtraMoveEditedTag(src.fci, src.fegrp, src.fti, dstCi, dstGrp, placement.index);
                     }
                     _renderFocusEditContent();
                 });

@@ -111,3 +111,99 @@ def test_lb_extra_normal_and_focus_edit_inputs_share_the_same_parser():
     assert "_appendLbExtraTagsFromInput(ci, group, inputEl)" in normal_add
     assert "_appendLbExtraTagsFromInput(ci, group, inputEl)" in focus_add
     assert source.count('placeholder="태그 추가 (쉼표로 여러 개)..."') == 4
+
+
+def test_lb_extra_tag_move_supports_same_group_ordering_and_cross_group_insertion():
+    source = _frontend_source()
+    helpers = _function_source(
+        source,
+        "_lbExtraClampTagInsertIndex(index, length)",
+        "_attachLbExtraDnD(container)",
+    )
+    setup = """
+const _lbExtraEdited = [{
+    name: 'Alice',
+    appearance: [{tag: 'a'}, {tag: 'b'}, {tag: 'c'}],
+    outfit: [{tag: 'coat'}]
+}];
+const _getCharGenderTag = () => '1girl';
+const showToast = () => {};
+const results = [
+    _lbExtraMoveEditedTag(0, 'appearance', 0, 0, 'appearance', 2),
+    _lbExtraMoveEditedTag(0, 'appearance', 2, 0, 'appearance', 0),
+    _lbExtraMoveEditedTag(0, 'outfit', 0, 0, 'appearance', 1)
+];
+"""
+
+    actual = _run_node(
+        f"{helpers}\n{setup}",
+        "({ results, appearance: _lbExtraEdited[0].appearance, outfit: _lbExtraEdited[0].outfit })",
+    )
+
+    assert actual == {
+        "results": [True, True, True],
+        "appearance": [
+            {"tag": "c"},
+            {"tag": "coat"},
+            {"tag": "b"},
+            {"tag": "a"},
+        ],
+        "outfit": [],
+    }
+
+
+def test_lb_extra_normal_and_focus_drop_handlers_use_pointer_based_insert_positions():
+    source = _frontend_source()
+    normal_dnd = _function_source(
+        source,
+        "_attachLbExtraTagDnD(container)",
+        "_lbExtraShowRep(charName)",
+    )
+    focus_dnd = _function_source(
+        source,
+        "_attachFocusEditDnD()",
+        "_attachFocusEditAutoComplete()",
+    )
+
+    assert "_lbExtraResolveTagDrop(e, zone, '.lb-extra-tag', 'data-tti', dstArr.length)" in normal_dnd
+    assert "_lbExtraMoveEditedTag(src.ci, src.group, src.ti, dstCi, dstGrp, placement.index)" in normal_dnd
+    assert "_lbExtraResolveTagDrop(e, zone, '.fe-edit-tag', 'data-fti', dstArr.length)" in focus_dnd
+    assert "_lbExtraMoveEditedTag(src.fci, src.fegrp, src.fti, dstCi, dstGrp, placement.index)" in focus_dnd
+
+
+def test_lb_extra_drop_position_uses_chip_halves_and_empty_space_appends():
+    source = _frontend_source()
+    helpers = _function_source(
+        source,
+        "_lbExtraClampTagInsertIndex(index, length)",
+        "_attachLbExtraDnD(container)",
+    )
+    setup = """
+const chip = {
+    getAttribute: () => '1',
+    getBoundingClientRect: () => ({left: 100, width: 40})
+};
+const zone = {contains: candidate => candidate === chip};
+const before = _lbExtraResolveTagDrop(
+    {target: {closest: () => chip}, clientX: 110}, zone, '.tag', 'data-index', 3
+);
+const after = _lbExtraResolveTagDrop(
+    {target: {closest: () => chip}, clientX: 130}, zone, '.tag', 'data-index', 3
+);
+const empty = _lbExtraResolveTagDrop(
+    {target: {closest: () => null}, clientX: 0}, zone, '.tag', 'data-index', 3
+);
+"""
+
+    actual = _run_node(
+        f"{helpers}\n{setup}",
+        "({ before: {index: before.index, after: before.after}, "
+        "after: {index: after.index, after: after.after}, "
+        "empty: {index: empty.index, after: empty.after} })",
+    )
+
+    assert actual == {
+        "before": {"index": 1, "after": False},
+        "after": {"index": 2, "after": True},
+        "empty": {"index": 3, "after": False},
+    }
