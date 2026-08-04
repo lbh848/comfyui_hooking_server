@@ -11591,7 +11591,7 @@
                                     <div class="section-title" style="margin-bottom:2px;">삽화 데이터 준비</div>
                                     <div style="font-size:0.67rem; color:var(--text2); line-height:1.35;">아래 작업을 선택 캐릭터에 순서대로 실행합니다.</div>
                                 </div>
-                                <span style="font-size:0.62rem; color:#38BDF8; border:1px solid rgba(56,189,248,0.35); border-radius:999px; padding:2px 6px; white-space:nowrap;">6단계</span>
+                                <span style="font-size:0.62rem; color:#38BDF8; border:1px solid rgba(56,189,248,0.35); border-radius:999px; padding:2px 6px; white-space:nowrap;">7단계</span>
                             </div>
                             <button id="btn-bot-one-click-settings" onclick="openBotOneClickSettings()" style="width:100%; background:linear-gradient(90deg,#0284C7,#7C3AED); color:#fff; border:none; padding:7px 10px; border-radius:6px; cursor:pointer; font-size:0.78rem; font-weight:700; box-shadow:0 3px 10px rgba(2,132,199,0.22);">원클릭 설정</button>
                             <div id="bot-one-click-status" style="display:none; margin-top:6px; padding:6px 7px; border-radius:5px; background:rgba(15,23,42,0.28); color:var(--text2); font-size:0.68rem; line-height:1.4;"></div>
@@ -11617,7 +11617,9 @@
                         <div style="background:rgba(0,121,107,0.10); border-radius:8px; padding:10px; margin-top:8px;">
                             <div class="section-title">프로그램용 embedding</div>
                             <button id="btn-program-embedding" onclick="openProgramEmbeddingModal()" style="width:100%; background:#00796B; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">선택 캐릭터 FACE embedding</button>
+                            <button id="btn-dialogue-face-crop" onclick="openDialogueFaceCropModal()" style="width:100%; margin-top:4px; background:#00838F; color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">대사모드용 FACE CROP 추출</button>
                             <div id="program-embedding-status" style="font-size:0.7rem; color:var(--text2); margin-top:4px; display:none;"></div>
+                            <div id="dialogue-face-crop-status" style="font-size:0.7rem; color:var(--text2); margin-top:4px; display:none;"></div>
                         </div>
                         <div style="background:rgba(255,152,0,0.08); border-radius:8px; padding:10px; margin-top:8px;">
                             <div class="section-title">얼굴 이미지 일괄 작업</div>
@@ -20713,6 +20715,9 @@
                             if (msg.data && msg.data.phase === 'complete') {
                                 loadInstanceLoraGrid();
                             }
+                            break;
+                        case 'bot_dialogue_face_crop_progress':
+                            handleDialogueFaceCropProgress(msg.data);
                             break;
                         case 'instance_lora_analyze_progress':
                             if (msg.data && msg.data.phase === 'completed') {
@@ -52772,6 +52777,7 @@
 
         async function openCharacterDetail(charName) {
             botCurrentChar = charName;
+            _botFaceCropFolderOpen = false;
             updateBotBreadcrumb();
 
             // 사이드바를 캐릭터 상세 액션으로 교체
@@ -52795,7 +52801,7 @@
                         <input id="bot-detail-search" type="text" placeholder="🔍 파일명 검색" autocomplete="off"
                             style="width:100%; margin-top:6px; padding:5px 8px; font-size:0.75rem; border:1px solid var(--border); border-radius:4px; background:var(--surface2); color:var(--text); box-sizing:border-box;"
                             oninput="filterBotCharDetailImages(this.value)">
-                        <div style="display:flex; flex-direction:column; gap:4px; margin-top:6px;">
+                        <div id="bot-detail-action-buttons" style="display:flex; flex-direction:column; gap:4px; margin-top:6px;">
                             <button id="btn-detail-upload" style="width:100%; background:var(--accent); color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">업로드</button>
                             <button id="btn-detail-import" style="width:100%; background:var(--accent); color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">에셋 가져오기</button>
                             <button id="btn-detail-rename" style="width:100%; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">이름 변경</button>
@@ -52809,6 +52815,10 @@
                 charDetailSidebar.style.display = '';
             }
             document.getElementById('bot-detail-title').textContent = charName;
+            const detailActionButtons = document.getElementById('bot-detail-action-buttons');
+            if (detailActionButtons) detailActionButtons.style.display = 'flex';
+            const detailSearch = document.getElementById('bot-detail-search');
+            if (detailSearch) detailSearch.placeholder = '🔍 파일명 검색';
             document.getElementById('btn-detail-upload').onclick = () => openBotImageUpload(charName);
             document.getElementById('btn-detail-import').onclick = () => openBotAssetImport(charName);
             document.getElementById('btn-detail-rename').onclick = () => renameBotCharacter(charName);
@@ -52822,6 +52832,7 @@
         }
 
         function closeCharacterDetail() {
+            _botFaceCropFolderOpen = false;
             botCurrentChar = '';
 
             // 사이드바 복원
@@ -52837,7 +52848,8 @@
             renderBotCharacters();
         }
 
-        let _botCharDetailCache = null; // { charName, images, repImages }
+        let _botCharDetailCache = null; // { mode, charName, images, repImages, faceCropFolder }
+        let _botFaceCropFolderOpen = false;
 
         function filterBotCharDetailImages(query) {
             if (!_botCharDetailCache) return;
@@ -52845,14 +52857,23 @@
             const filtered = q
                 ? _botCharDetailCache.images.filter(img => (img.filename || '').toLowerCase().includes(q))
                 : _botCharDetailCache.images;
-            renderBotCharDetailGrid(_botCharDetailCache.charName, filtered, _botCharDetailCache.repImages);
+            if (_botCharDetailCache.mode === 'face_crop') {
+                renderBotFaceCropGrid(_botCharDetailCache.charName, filtered);
+                return;
+            }
+            renderBotCharDetailGrid(
+                _botCharDetailCache.charName,
+                filtered,
+                _botCharDetailCache.repImages,
+                _botCharDetailCache.faceCropFolder,
+            );
         }
 
-        function renderBotCharDetailGrid(charName, images, repImages) {
+        function renderBotCharDetailGrid(charName, images, repImages, faceCropFolder = null) {
             const grid = document.getElementById('bot-char-detail-grid');
             if (!grid) { console.warn('[BOT] renderBotCharDetailGrid: grid 없음'); return; }
             grid.innerHTML = '';
-            if (!images || images.length === 0) {
+            if ((!images || images.length === 0) && !faceCropFolder) {
                 grid.innerHTML = '<div style="color:var(--text2); font-size:0.8rem; padding:20px;">이미지 없음</div>';
                 return;
             }
@@ -52909,6 +52930,24 @@
                 `;
                 grid.appendChild(card);
             }
+            // 일반 이미지와 같은 그리드 레벨에 표시하되 항상 마지막에 둔다.
+            if (faceCropFolder) {
+                const folderCard = document.createElement('div');
+                folderCard.className = 'asset-gallery-card';
+                folderCard.dataset.folder = 'FACE CROP';
+                folderCard.style.cursor = 'pointer';
+                folderCard.onclick = () => openBotFaceCropFolder(charName);
+                folderCard.innerHTML = `
+                    <div class="gallery-thumb" style="display:flex; align-items:center; justify-content:center; min-height:160px; background:linear-gradient(145deg,rgba(0,121,107,0.22),rgba(14,165,233,0.12)); color:#4DD0E1;">
+                        <div style="text-align:center; pointer-events:none;">
+                            <svg width="72" height="72" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M10 4H2.8A1.8 1.8 0 0 0 1 5.8v12.4A1.8 1.8 0 0 0 2.8 20h18.4a1.8 1.8 0 0 0 1.8-1.8V7.8A1.8 1.8 0 0 0 21.2 6h-9L10 4z"/></svg>
+                            <div style="margin-top:5px; font-size:0.72rem; color:var(--text2);">${Number(faceCropFolder.count || 0)}장</div>
+                        </div>
+                    </div>
+                    <div style="padding:9px 10px; font-size:0.76rem; font-weight:750; text-align:center; color:var(--text);">FACE CROP</div>
+                `;
+                grid.appendChild(folderCard);
+            }
         }
 
         async function loadBotCharDetailImages(charName, preserveSearch = false) {
@@ -52920,24 +52959,140 @@
             try {
                 const resp = await fetch(`/api/bot_mode/images?bot=${encodeURIComponent(botCurrentBot)}&character=${encodeURIComponent(charName)}`);
                 const data = await resp.json();
-                if (!data.images || data.images.length === 0) {
-                    _botCharDetailCache = { charName, images: [], repImages: [] };
+                const faceCropFolder = (data.folders || []).find(folder => folder.kind === 'face_crop') || null;
+                if ((!data.images || data.images.length === 0) && !faceCropFolder) {
+                    _botCharDetailCache = { mode: 'root', charName, images: [], repImages: [], faceCropFolder: null };
                     grid.innerHTML = '<div style="color:var(--text2); font-size:0.8rem; padding:20px;">이미지 없음</div>';
                     return;
                 }
                 const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
                 const ch = bot ? bot.characters.find(c => c.name === charName) : null;
                 const repImages = (ch && ch.rep_images) ? ch.rep_images : [];
-                _botCharDetailCache = { charName, images: data.images, repImages };
+                _botCharDetailCache = { mode: 'root', charName, images: data.images || [], repImages, faceCropFolder };
                 if (searchInput && preserveSearch) {
                     searchInput.value = prevQuery;
                     filterBotCharDetailImages(prevQuery);
                 } else {
-                    renderBotCharDetailGrid(charName, data.images, repImages);
+                    renderBotCharDetailGrid(charName, data.images || [], repImages, faceCropFolder);
                 }
             } catch (e) {
                 console.error(`[BOT] 캐릭터 "${charName}" 이미지 로드 실패:`, e);
                 grid.innerHTML = '<div style="color:var(--error); font-size:0.8rem; padding:20px;">로드 실패</div>';
+            }
+        }
+
+        async function openBotFaceCropFolder(charName) {
+            if (!botCurrentBot || !charName) {
+                console.error('[DIALOGUE_FACE_CROP] 폴더 진입 실패: 봇/캐릭터 없음', botCurrentBot, charName);
+                showToast('FACE CROP 폴더를 열 수 없습니다.', 'error');
+                return;
+            }
+            _botFaceCropFolderOpen = true;
+            updateBotBreadcrumb();
+            const title = document.getElementById('bot-detail-title');
+            if (title) title.textContent = `${charName} / FACE CROP`;
+            const actionButtons = document.getElementById('bot-detail-action-buttons');
+            if (actionButtons) actionButtons.style.display = 'none';
+            const searchInput = document.getElementById('bot-detail-search');
+            if (searchInput) {
+                searchInput.value = '';
+                searchInput.placeholder = '🔍 FACE CROP 파일명 검색';
+            }
+            await loadBotFaceCropImages(charName);
+        }
+
+        async function closeBotFaceCropFolder() {
+            const charName = botCurrentChar;
+            _botFaceCropFolderOpen = false;
+            updateBotBreadcrumb();
+            const title = document.getElementById('bot-detail-title');
+            if (title) title.textContent = charName;
+            const actionButtons = document.getElementById('bot-detail-action-buttons');
+            if (actionButtons) actionButtons.style.display = 'flex';
+            const searchInput = document.getElementById('bot-detail-search');
+            if (searchInput) {
+                searchInput.value = '';
+                searchInput.placeholder = '🔍 파일명 검색';
+            }
+            await loadBotCharDetailImages(charName);
+        }
+
+        async function loadBotFaceCropImages(charName, preserveSearch = false) {
+            const grid = document.getElementById('bot-char-detail-grid');
+            if (!grid) {
+                console.error('[DIALOGUE_FACE_CROP] FACE CROP 그리드가 없습니다.');
+                return;
+            }
+            grid.innerHTML = '<div style="color:var(--text2); font-size:0.8rem;">FACE CROP 불러오는 중...</div>';
+            const searchInput = document.getElementById('bot-detail-search');
+            const previousQuery = searchInput && preserveSearch ? searchInput.value : '';
+            try {
+                const response = await fetch(`/api/bot_mode/face_crop_images?bot=${encodeURIComponent(botCurrentBot)}&character=${encodeURIComponent(charName)}`);
+                const data = await response.json();
+                if (!response.ok || data.error) throw new Error(data.error || `HTTP ${response.status}`);
+                _botCharDetailCache = {
+                    mode: 'face_crop',
+                    charName,
+                    images: data.images || [],
+                    repImages: [],
+                    faceCropFolder: null,
+                };
+                if (searchInput && preserveSearch) {
+                    searchInput.value = previousQuery;
+                    filterBotCharDetailImages(previousQuery);
+                } else {
+                    renderBotFaceCropGrid(charName, data.images || []);
+                }
+            } catch (error) {
+                console.error('[DIALOGUE_FACE_CROP] FACE CROP 목록 로드 실패:', error);
+                grid.innerHTML = '<div style="color:var(--error); font-size:0.8rem; padding:20px;">FACE CROP 로드 실패</div>';
+            }
+        }
+
+        function renderBotFaceCropGrid(charName, images) {
+            const grid = document.getElementById('bot-char-detail-grid');
+            if (!grid) {
+                console.error('[DIALOGUE_FACE_CROP] FACE CROP 렌더링 그리드가 없습니다.');
+                return;
+            }
+            grid.innerHTML = '';
+            if (!images || !images.length) {
+                grid.innerHTML = '<div style="color:var(--text2); font-size:0.8rem; padding:20px;">저장된 FACE CROP 이미지가 없습니다.</div>';
+                return;
+            }
+            for (const image of images) {
+                const card = document.createElement('div');
+                card.className = 'asset-gallery-card';
+                card.dataset.filename = image.filename;
+                card.innerHTML = `
+                    <div style="position:relative;">
+                        <img class="gallery-thumb" src="${escAttr(image.url)}" loading="lazy" onerror="this.style.display='none'" onclick="openLightbox(this.src)" style="cursor:zoom-in;">
+                    </div>
+                    <div style="padding:7px 8px;">
+                        <div style="font-size:0.65rem; color:var(--text2); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escAttr(image.filename)}">${escHtml(image.filename)}</div>
+                        <button onclick="deleteBotFaceCropImage('${escAttr(image.filename)}','${escAttr(charName)}')"
+                            style="width:100%; margin-top:6px; background:var(--error); color:#fff; border:none; padding:4px; border-radius:4px; cursor:pointer; font-size:0.7rem;">삭제</button>
+                    </div>
+                `;
+                grid.appendChild(card);
+            }
+        }
+
+        async function deleteBotFaceCropImage(filename, charName) {
+            if (!confirm(`FACE CROP 이미지 "${filename}"을(를) 삭제하시겠습니까?\n다음 추출 실행에서 다시 생성할 수 있습니다.`)) return;
+            try {
+                const response = await fetch('/api/bot_mode/face_crop_image/delete', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({bot: botCurrentBot, character: charName, filename}),
+                });
+                const data = await response.json();
+                if (!response.ok || data.error) throw new Error(data.error || `HTTP ${response.status}`);
+                await loadBotFaceCropImages(charName, true);
+                showToast('FACE CROP 이미지가 삭제되었습니다.', 'success');
+            } catch (error) {
+                console.error('[DIALOGUE_FACE_CROP] FACE CROP 삭제 실패:', error);
+                showToast('FACE CROP 삭제 실패: ' + (error.message || error), 'error');
             }
         }
 
@@ -52950,12 +53105,18 @@
             }
             if (botCurrentChar) {
                 html += `<span class="bc-sep">›</span>`;
-                html += `<span class="bc-active">${escHtml(botCurrentChar)}</span>`;
+                if (_botFaceCropFolderOpen) {
+                    html += `<span class="bc-active" style="cursor:pointer;" onclick="closeBotFaceCropFolder()">${escHtml(botCurrentChar)}</span>`;
+                    html += '<span class="bc-sep">›</span><span class="bc-active">FACE CROP</span>';
+                } else {
+                    html += `<span class="bc-active">${escHtml(botCurrentChar)}</span>`;
+                }
             }
             bc.innerHTML = html;
         }
 
         function navToBotChars() {
+            _botFaceCropFolderOpen = false;
             botCurrentChar = '';
             const charDetailSidebar = document.getElementById('bot-char-detail-sidebar');
             if (charDetailSidebar) charDetailSidebar.style.display = 'none';
@@ -52973,6 +53134,7 @@
         }
 
         function botNavBack() {
+            _botFaceCropFolderOpen = false;
             botCurrentChar = '';
             const charDetailSidebar = document.getElementById('bot-char-detail-sidebar');
             if (charDetailSidebar) charDetailSidebar.style.display = 'none';
@@ -57185,6 +57347,7 @@
             ['negative', '부정 프롬프트 적용'],
             ['data_patch', '데이터 패치'],
             ['embedding', '프로그램용 embedding'],
+            ['dialogue_face_crop', '대사모드 FACE CROP'],
             ['face_batch', '얼굴 이미지 일괄 작업'],
             ['llm_refine', 'LLM 얼굴/눈 태그 정제'],
         ];
@@ -57290,7 +57453,7 @@
                 <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:14px; padding:16px 19px; border-bottom:1px solid var(--border); background:linear-gradient(90deg,rgba(2,132,199,0.11),rgba(124,58,237,0.10));">
                     <div>
                         <div style="font-size:1.05rem; font-weight:750;">원클릭 설정 · ${escHtml(botCurrentBot)}</div>
-                        <div style="font-size:0.72rem; color:var(--text2); margin-top:4px;">캐릭터와 두 가지 필수 설정만 고르면 6단계를 순서대로 진행합니다.</div>
+                        <div style="font-size:0.72rem; color:var(--text2); margin-top:4px;">캐릭터와 두 가지 필수 설정만 고르면 7단계를 순서대로 진행합니다.</div>
                     </div>
                     <button onclick="closeBotOneClickModal()" aria-label="닫기" style="background:none; border:none; color:var(--text2); font-size:1.35rem; cursor:pointer;">&times;</button>
                 </div>
@@ -57331,7 +57494,7 @@
                             <div style="font-size:0.65rem; color:var(--text2); margin-top:6px; line-height:1.35;">이번 실행에만 적용되며 기존 패치 설정 파일은 변경하지 않습니다.</div>
                         </div>
                         <div style="padding:8px 10px; border-radius:7px; background:var(--surface2); color:var(--text2); font-size:0.67rem; line-height:1.45;">
-                            태그 분석 → 부정 적용 → 데이터 패치 → embedding → 얼굴 태그/부정 작업 → LLM 정제
+                            태그 분석 → 부정 적용 → 데이터 패치 → embedding → 대사 FACE CROP → 얼굴 태그/부정 작업 → LLM 정제
                         </div>
                     </section>
                 </div>
@@ -57494,6 +57657,7 @@
             await _botOneClickRunStage('negative', () => _runBotOneClickRepresentativeNegative(run));
             await _botOneClickRunStage('data_patch', () => _runBotOneClickDataPatch(run));
             await _botOneClickRunStage('embedding', () => _runBotOneClickEmbedding(run));
+            await _botOneClickRunStage('dialogue_face_crop', () => _runBotOneClickDialogueFaceCrop(run));
             await _botOneClickRunStage('face_batch', () => _runBotOneClickFaceBatch(run));
             await _botOneClickRunStage('llm_refine', () => _runBotOneClickLlmRefine(run));
         }
@@ -57659,6 +57823,35 @@
             }
         }
 
+        async function _runBotOneClickDialogueFaceCrop(run) {
+            _botOneClickUpdateStage(
+                'dialogue_face_crop',
+                'running',
+                `${run.charNames.length}명 · 기존 FACE CROP 확인 및 Comfy 추출 준비 중...`,
+            );
+            const result = await _botOneClickJson('/api/bot_mode/dialogue_face_crop', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    bot_name: run.botName,
+                    char_names: run.charNames,
+                    face_crop_top: run.cropTop,
+                    face_crop_bottom: run.cropBottom,
+                }),
+            });
+            const warning = Boolean(
+                result.warning || result.failed_count || result.character_warning_count
+            );
+            return {
+                warning,
+                detail: result.message || (
+                    `저장 ${Number(result.success_count || 0)}장 · `
+                    + `스킵 ${Number(result.skipped_count || 0)}장 · `
+                    + `실패 ${Number(result.failed_count || 0)}장`
+                ),
+            };
+        }
+
         async function _runBotOneClickFaceBatch(run) {
             const warnings = [];
             let analyzed = 0;
@@ -57724,6 +57917,171 @@
             }
             const result = await waiter.promise;
             return {warning: result.failed.length > 0, detail: `LLM 정제 성공 ${result.success.length}명${result.failed.length ? ` · 실패 ${result.failed.length}명` : ''}`};
+        }
+
+        // ─── 대사모드용 Comfy FACE CROP ─────────────────────
+        async function openDialogueFaceCropModal() {
+            if (!botCurrentBot) {
+                showToast('봇을 먼저 선택하세요.', 'error');
+                return;
+            }
+            const botName = botCurrentBot;
+            const bot = (botData?.bots || []).find(entry => entry.name === botName);
+            const characters = bot?.characters || [];
+            if (!characters.length) {
+                showToast('선택할 캐릭터가 없습니다.', 'error');
+                return;
+            }
+            document.getElementById('dialogue-face-crop-modal')?.remove();
+            const modal = document.createElement('div');
+            modal.id = 'dialogue-face-crop-modal';
+            modal.dataset.botName = botName;
+            modal.style.cssText = 'position:fixed; inset:0; z-index:10020; display:flex; align-items:center; justify-content:center; padding:18px; background:rgba(0,0,0,0.74); backdrop-filter:blur(3px);';
+            modal.innerHTML = '<div style="padding:24px 30px; border:1px solid var(--border); border-radius:12px; background:var(--surface); color:var(--text);">FACE CROP 대상을 불러오는 중...</div>';
+            document.body.appendChild(modal);
+
+            let cropTop = 1.0;
+            let cropBottom = 1.0;
+            let countResults = [];
+            try {
+                const [patchSettings, counts] = await Promise.all([
+                    fetchJSON(`/api/bot_mode/patch_settings?bot=${encodeURIComponent(botName)}`),
+                    Promise.all(characters.map(async character => {
+                        try {
+                            const response = await fetch(`/api/bot_mode/images?bot=${encodeURIComponent(botName)}&character=${encodeURIComponent(character.name)}`);
+                            const data = await response.json();
+                            if (!response.ok || data.error) throw new Error(data.error || `HTTP ${response.status}`);
+                            return {name: character.name, count: (data.images || []).length, images: data.images || []};
+                        } catch (error) {
+                            console.error('[DIALOGUE_FACE_CROP] 캐릭터 이미지 수 조회 실패:', character.name, error);
+                            return {name: character.name, count: 0, images: [], error: error.message || String(error)};
+                        }
+                    })),
+                ]);
+                cropTop = Number(patchSettings?.face_crop_top) || 1.0;
+                cropBottom = Number(patchSettings?.face_crop_bottom) || 1.0;
+                countResults = counts;
+            } catch (error) {
+                console.error('[DIALOGUE_FACE_CROP] 대상/패치 설정 로드 실패:', error);
+                countResults = characters.map(character => ({name: character.name, count: 0, images: [], error: '목록 조회 실패'}));
+                showToast('FACE CROP 대상 일부를 불러오지 못했습니다.', 'warning');
+            }
+            if (!document.body.contains(modal)) return;
+
+            const currentSelected = botCurrentChar;
+            const eligible = countResults.filter(entry => entry.count > 0);
+            const rows = countResults.map(entry => {
+                const enabled = entry.count > 0;
+                const checked = enabled && (currentSelected ? entry.name === currentSelected : true);
+                const first = entry.images?.[0];
+                return `<label style="display:flex; align-items:center; gap:9px; padding:8px; border:1px solid var(--border); border-radius:7px; background:var(--surface2); opacity:${enabled ? 1 : 0.5}; cursor:${enabled ? 'pointer' : 'not-allowed'};">
+                    <input type="checkbox" class="dialogue-face-crop-char-check" data-name="${escAttr(entry.name)}" ${checked ? 'checked' : ''} ${enabled ? '' : 'disabled'} style="width:17px; height:17px; cursor:${enabled ? 'pointer' : 'not-allowed'};">
+                    <div style="width:48px; height:48px; flex-shrink:0; overflow:hidden; border:1px solid var(--border); border-radius:6px; background:var(--surface); display:flex; align-items:center; justify-content:center; color:var(--text2); font-size:0.62rem;">
+                        ${first?.url ? `<img src="${escAttr(first.url)}" loading="lazy" alt="" style="width:100%; height:100%; object-fit:cover;">` : '이미지 없음'}
+                    </div>
+                    <div style="min-width:0; flex:1;"><div style="font-size:0.81rem; font-weight:650; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escHtml(entry.name)}</div><div style="font-size:0.67rem; color:var(--text2); margin-top:2px;">원본 이미지 ${entry.count}장${entry.error ? ` · ${escHtml(entry.error)}` : ''}</div></div>
+                </label>`;
+            }).join('');
+
+            modal.dataset.cropTop = String(cropTop);
+            modal.dataset.cropBottom = String(cropBottom);
+            modal.innerHTML = `<div style="width:min(760px,95vw); max-height:90vh; display:flex; flex-direction:column; overflow:hidden; border:1px solid color-mix(in srgb,#00838F 45%,var(--border)); border-radius:13px; background:var(--surface); color:var(--text); box-shadow:0 18px 60px rgba(0,0,0,0.55);">
+                <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px; padding:15px 18px; border-bottom:1px solid var(--border); background:rgba(0,131,143,0.10);">
+                    <div><div style="font-size:1rem; font-weight:750;">대사모드용 FACE CROP 추출</div><div style="font-size:0.7rem; color:var(--text2); margin-top:4px;">${escHtml(botName)} · 배포 얼굴 추출 워크플로우 사용</div></div>
+                    <button onclick="document.getElementById('dialogue-face-crop-modal')?.remove()" style="background:none; border:none; color:var(--text2); font-size:1.3rem; cursor:pointer;">&times;</button>
+                </div>
+                <div style="padding:14px 18px; overflow-y:auto; flex:1;">
+                    <div style="padding:9px 10px; margin-bottom:10px; border-radius:7px; background:rgba(0,121,107,0.09); color:var(--text2); font-size:0.7rem; line-height:1.5;">CROP_TOP ${cropTop} · CROP_BOTTOM ${cropBottom}<br>기존 <b>FACE CROP</b> 파일은 건너뛰며, 실패한 이미지는 경고만 남기고 다음 이미지를 계속 처리합니다.</div>
+                    <div style="display:flex; gap:6px; margin-bottom:8px;"><button onclick="document.querySelectorAll('.dialogue-face-crop-char-check:not([disabled])').forEach(input=>input.checked=true)" style="padding:3px 9px; border:1px solid var(--border); border-radius:5px; background:var(--surface2); color:var(--text); cursor:pointer; font-size:0.68rem;">전체 선택</button><button onclick="document.querySelectorAll('.dialogue-face-crop-char-check:not([disabled])').forEach(input=>input.checked=false)" style="padding:3px 9px; border:1px solid var(--border); border-radius:5px; background:var(--surface2); color:var(--text); cursor:pointer; font-size:0.68rem;">전체 해제</button><span style="margin-left:auto; font-size:0.68rem; color:var(--text2);">실행 가능 ${eligible.length}명</span></div>
+                    <div style="display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:7px;">${rows}</div>
+                    <div id="dialogue-face-crop-modal-status" style="display:none; margin-top:10px; padding:8px 10px; border-radius:6px; background:var(--surface2); color:var(--text2); font-size:0.72rem; white-space:pre-wrap;"></div>
+                </div>
+                <div style="display:flex; justify-content:flex-end; gap:7px; padding:12px 18px; border-top:1px solid var(--border);"><button onclick="document.getElementById('dialogue-face-crop-modal')?.remove()" style="padding:7px 15px; border:1px solid var(--border); border-radius:6px; background:var(--surface2); color:var(--text); cursor:pointer;">닫기</button><button id="dialogue-face-crop-start-btn" onclick="startDialogueFaceCrop()" style="padding:7px 17px; border:none; border-radius:6px; background:#00838F; color:#fff; cursor:pointer; font-weight:700;">추출 시작</button></div>
+            </div>`;
+        }
+
+        async function startDialogueFaceCrop() {
+            const modal = document.getElementById('dialogue-face-crop-modal');
+            if (!modal) {
+                console.error('[DIALOGUE_FACE_CROP] 실행 모달이 없습니다.');
+                return;
+            }
+            const charNames = Array.from(modal.querySelectorAll('.dialogue-face-crop-char-check:checked')).map(input => input.dataset.name).filter(Boolean);
+            if (!charNames.length) {
+                showToast('최소 한 명의 캐릭터를 선택하세요.', 'error');
+                return;
+            }
+            const botName = modal.dataset.botName || '';
+            const button = document.getElementById('dialogue-face-crop-start-btn');
+            const modalStatus = document.getElementById('dialogue-face-crop-modal-status');
+            const sidebarStatus = document.getElementById('dialogue-face-crop-status');
+            if (button) { button.disabled = true; button.textContent = '큐 처리 중...'; }
+            if (modalStatus) { modalStatus.style.display = 'block'; modalStatus.textContent = 'FACE CROP 큐에 추가하는 중...'; }
+            if (sidebarStatus) { sidebarStatus.style.display = 'block'; sidebarStatus.textContent = '대사모드 FACE CROP 처리 중...'; }
+            try {
+                const response = await fetch('/api/bot_mode/dialogue_face_crop', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        bot_name: botName,
+                        char_names: charNames,
+                        face_crop_top: Number(modal.dataset.cropTop) || 1.0,
+                        face_crop_bottom: Number(modal.dataset.cropBottom) || 1.0,
+                    }),
+                });
+                const data = await response.json();
+                if (!response.ok || data.error || data.success === false) throw new Error(data.error || data.message || `HTTP ${response.status}`);
+                const warning = Boolean(data.warning || data.failed_count || data.character_warning_count);
+                if (modalStatus) modalStatus.textContent = data.message || 'FACE CROP 처리가 완료되었습니다.';
+                if (sidebarStatus) {
+                    sidebarStatus.textContent = data.message || '대사모드 FACE CROP 완료';
+                    sidebarStatus.style.color = warning ? '#F59E0B' : '#22C55E';
+                }
+                showToast(data.message || 'FACE CROP 처리가 완료되었습니다.', warning ? 'warning' : 'success');
+                if (_botFaceCropFolderOpen && botCurrentBot === botName && charNames.includes(botCurrentChar)) {
+                    await loadBotFaceCropImages(botCurrentChar, true);
+                } else if (botCurrentBot === botName && charNames.includes(botCurrentChar)) {
+                    await loadBotCharDetailImages(botCurrentChar, true);
+                }
+            } catch (error) {
+                console.error('[DIALOGUE_FACE_CROP] 수동 실행 실패:', error);
+                if (modalStatus) modalStatus.textContent = `경고: ${error.message || error}\n다른 프로세스는 중단되지 않았습니다.`;
+                if (sidebarStatus) {
+                    sidebarStatus.textContent = `FACE CROP 경고: ${error.message || error}`;
+                    sidebarStatus.style.color = '#F59E0B';
+                }
+                showToast('FACE CROP 처리 경고: ' + (error.message || error), 'warning');
+            } finally {
+                if (button) { button.disabled = false; button.textContent = '추출 시작'; }
+            }
+        }
+
+        function handleDialogueFaceCropProgress(data) {
+            if (!data?.bot_name) {
+                console.error('[DIALOGUE_FACE_CROP] 진행 이벤트에 bot_name이 없습니다:', data);
+                return;
+            }
+            const current = Number(data.current || data.step || 0);
+            const total = Number(data.total || 0);
+            const progressText = data.phase === 'complete'
+                ? (data.message || `FACE CROP 완료 · 저장 ${Number(data.success_count || 0)}장 · 스킵 ${Number(data.skipped_count || 0)}장 · 실패 ${Number(data.failed_count || 0)}장`)
+                : `FACE CROP ${current}/${total} · 저장 ${Number(data.success_count || 0)} · 스킵 ${Number(data.skipped_count || 0)} · 실패 ${Number(data.failed_count || 0)}${data.filename ? `\n${data.char_name || ''} / ${data.filename}` : ''}`;
+            const modal = document.getElementById('dialogue-face-crop-modal');
+            const modalStatus = document.getElementById('dialogue-face-crop-modal-status');
+            if (modal?.dataset.botName === data.bot_name && modalStatus) {
+                modalStatus.style.display = 'block';
+                modalStatus.textContent = progressText;
+            }
+            if (botCurrentBot === data.bot_name) {
+                const sidebarStatus = document.getElementById('dialogue-face-crop-status');
+                if (sidebarStatus) {
+                    sidebarStatus.style.display = 'block';
+                    sidebarStatus.textContent = progressText.replace('\n', ' · ');
+                }
+            }
+            if (_botOneClickRun?.running && _botOneClickRun.botName === data.bot_name) {
+                _botOneClickUpdateStage('dialogue_face_crop', 'running', progressText);
+            }
         }
 
         // ─── 프로그램용 FACE embedding ──────────────────────

@@ -19,7 +19,7 @@ def _function_source(source: str, name: str, next_name: str) -> str:
     return source.split(f"function {name}", 1)[1].split(f"function {next_name}", 1)[0]
 
 
-def test_one_click_parent_group_contains_the_six_existing_work_groups():
+def test_one_click_parent_group_contains_the_existing_work_groups_and_dialogue_crop():
     parent = FRONTEND.split('id="bot-one-click-workflow-group"', 1)[1].split(
         'id="btn-bot-auto-lora"', 1
     )[0]
@@ -30,6 +30,7 @@ def test_one_click_parent_group_contains_the_six_existing_work_groups():
         'id="btn-bot-negative-all"',
         'id="btn-data-patch"',
         'id="btn-program-embedding"',
+        'id="btn-dialogue-face-crop"',
         'id="btn-bot-util-analyze"',
         'id="btn-bot-llm-batch"',
     ):
@@ -60,6 +61,7 @@ def test_one_click_pipeline_order_and_transient_patch_settings_are_explicit():
         "negative",
         "data_patch",
         "embedding",
+        "dialogue_face_crop",
         "face_batch",
         "llm_refine",
     )
@@ -73,6 +75,15 @@ def test_one_click_pipeline_order_and_transient_patch_settings_are_explicit():
     assert "face_crop_top: run.cropTop" in data_patch
     assert "face_crop_bottom: run.cropBottom" in data_patch
     assert "/api/bot_mode/patch_settings" not in data_patch
+
+    dialogue_crop = _function_source(
+        FRONTEND,
+        "_runBotOneClickDialogueFaceCrop(run)",
+        "_runBotOneClickFaceBatch(run)",
+    )
+    assert "/api/bot_mode/dialogue_face_crop" in dialogue_crop
+    assert "face_crop_top: run.cropTop" in dialogue_crop
+    assert "face_crop_bottom: run.cropBottom" in dialogue_crop
 
     assert "patch_settings=patch_settings" in QUEUE_SOURCE
     assert "저장하지 않는 임시 패치 설정 적용" in SERVER_SOURCE

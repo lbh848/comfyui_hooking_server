@@ -62,6 +62,56 @@ RECOMMENDED_POSITIVE_RULES = {
 }
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
+FACE_CROP_FOLDER_NAME = "FACE CROP"
+
+
+def dialogue_face_crop_filename(source_filename: str) -> str:
+    """원본 이미지 파일명에 대응하는 저장 FACE CROP PNG 파일명을 반환한다."""
+    base = os.path.splitext(os.path.basename(str(source_filename or "")))[0]
+    if not base:
+        print(f"[DIALOGUE_FACE_CROP] 출력 파일명 생성 실패: source={source_filename!r}")
+        raise ValueError("원본 이미지 파일명이 비어 있습니다.")
+    return f"{base}_face.png"
+
+
+def dialogue_face_crop_dir(bot_name: str, char_name: str) -> str:
+    """대사모드용 FACE CROP 고정 폴더 경로를 반환한다."""
+    root = os.path.abspath(BOT_DIR)
+    folder = os.path.abspath(os.path.join(
+        root, str(bot_name or ""), str(char_name or ""), FACE_CROP_FOLDER_NAME
+    ))
+    if os.path.commonpath([root, folder]) != root:
+        print(
+            f"[DIALOGUE_FACE_CROP] 폴더 경로 이탈 차단: "
+            f"bot={bot_name!r}, char={char_name!r}, path={folder}"
+        )
+        raise ValueError("잘못된 FACE CROP 폴더 경로입니다.")
+    return folder
+
+
+def dialogue_face_crop_path(bot_name: str, char_name: str, source_filename: str) -> str:
+    """원본 이미지에 대응하는 대사모드용 FACE CROP 경로를 반환한다."""
+    return os.path.join(
+        dialogue_face_crop_dir(bot_name, char_name),
+        dialogue_face_crop_filename(source_filename),
+    )
+
+
+def dialogue_face_crop_named_path(bot_name: str, char_name: str, filename: str) -> str:
+    """FACE CROP 폴더 안의 단일 파일 경로를 경로 조작 없이 해석한다."""
+    safe_name = os.path.basename(str(filename or ""))
+    if not safe_name or safe_name != str(filename or ""):
+        print(
+            f"[DIALOGUE_FACE_CROP] 잘못된 파일명: bot={bot_name!r}, "
+            f"char={char_name!r}, filename={filename!r}"
+        )
+        raise ValueError("잘못된 FACE CROP 파일명입니다.")
+    folder = os.path.abspath(dialogue_face_crop_dir(bot_name, char_name))
+    path = os.path.abspath(os.path.join(folder, safe_name))
+    if os.path.commonpath([folder, path]) != folder:
+        print(f"[DIALOGUE_FACE_CROP] FACE CROP 경로 이탈 차단: {path}")
+        raise ValueError("잘못된 FACE CROP 경로입니다.")
+    return path
 
 TAG_FILTER_PROFILES_FILE = os.path.join(ASSET_DATA_DIR, "tag_filter_profiles.json")
 
@@ -678,7 +728,7 @@ class BotMode:
         char_dir = os.path.join(BOT_DIR, bot_name, char_name)
         if not os.path.isdir(char_dir):
             print(f"[BOT_MODE] 캐릭터 폴더 없음: {char_dir}")
-            return _json_ok({"images": []})
+            return _json_ok({"images": [], "folders": []})
 
         images = []
         for fname in sorted(os.listdir(char_dir)):
@@ -704,7 +754,29 @@ class BotMode:
                 "url": f"/api/bot_mode/image/{bot_name}/{char_name}/{fname}",
             })
 
-        return _json_ok({"images": images})
+        folders = []
+        face_crop_dir = dialogue_face_crop_dir(bot_name, char_name)
+        if os.path.isdir(face_crop_dir):
+            try:
+                face_crop_count = sum(
+                    1
+                    for fname in os.listdir(face_crop_dir)
+                    if os.path.isfile(os.path.join(face_crop_dir, fname))
+                    and os.path.splitext(fname)[1].lower() in IMAGE_EXTENSIONS
+                )
+                folders.append({
+                    "name": FACE_CROP_FOLDER_NAME,
+                    "count": face_crop_count,
+                    "kind": "face_crop",
+                })
+            except Exception as e:
+                print(
+                    f"[DIALOGUE_FACE_CROP] 폴더 정보 조회 실패: "
+                    f"bot={bot_name!r}, char={char_name!r}, path={face_crop_dir}, error={e}"
+                )
+                traceback.print_exc()
+
+        return _json_ok({"images": images, "folders": folders})
 
     # ─── 이미지 파일 서빙 ────────────────────────────────
     def iter_character_image_filenames(self, bot_name: str, char_name: str):
@@ -773,6 +845,98 @@ class BotMode:
         import mimetypes as mt
         content_type = mt.guess_type(filepath)[0] or "image/webp"
         return web.FileResponse(filepath, headers={"Content-Type": content_type})
+
+    async def handle_get_face_crop_images(self, request):
+        """GET /api/bot_mode/face_crop_images?bot=...&character=..."""
+        try:
+            bot_name = request.query.get("bot", "").strip()
+            char_name = request.query.get("character", "").strip()
+            if not bot_name or not char_name:
+                print(
+                    f"[DIALOGUE_FACE_CROP] 목록 조회 실패: "
+                    f"bot={bot_name!r}, char={char_name!r}"
+                )
+                return _json_error("봇과 캐릭터 이름이 필요합니다.")
+
+            folder = dialogue_face_crop_dir(bot_name, char_name)
+            if not os.path.isdir(folder):
+                print(f"[DIALOGUE_FACE_CROP] 목록 폴더 없음: {folder}")
+                return _json_ok({"images": [], "folder": FACE_CROP_FOLDER_NAME})
+
+            images = []
+            for filename in sorted(os.listdir(folder)):
+                path = os.path.join(folder, filename)
+                if not os.path.isfile(path):
+                    continue
+                if os.path.splitext(filename)[1].lower() not in IMAGE_EXTENSIONS:
+                    continue
+                images.append({
+                    "filename": filename,
+                    "url": (
+                        f"/api/bot_mode/face_crop_image/{quote(bot_name, safe='')}/"
+                        f"{quote(char_name, safe='')}/{quote(filename, safe='')}"
+                    ),
+                })
+            return _json_ok({"images": images, "folder": FACE_CROP_FOLDER_NAME})
+        except Exception as e:
+            print(f"[DIALOGUE_FACE_CROP] 목록 조회 실패: {e}")
+            traceback.print_exc()
+            return _json_error(str(e))
+
+    async def handle_get_face_crop_image(self, request):
+        """GET /api/bot_mode/face_crop_image/{bot}/{character}/{filename}"""
+        try:
+            bot_name = request.match_info.get("bot", "")
+            char_name = request.match_info.get("character", "")
+            filename = request.match_info.get("filename", "")
+            if not bot_name or not char_name or not filename:
+                print(
+                    f"[DIALOGUE_FACE_CROP] 이미지 조회 필수값 누락: "
+                    f"bot={bot_name!r}, char={char_name!r}, filename={filename!r}"
+                )
+                return _json_error("경로가 올바르지 않습니다.")
+            path = dialogue_face_crop_named_path(bot_name, char_name, filename)
+            if not os.path.isfile(path):
+                print(f"[DIALOGUE_FACE_CROP] 이미지 파일 없음: {path}")
+                return _json_error("파일을 찾을 수 없습니다.", status=404)
+            import mimetypes as mt
+            content_type = mt.guess_type(path)[0] or "image/png"
+            return web.FileResponse(path, headers={"Content-Type": content_type})
+        except ValueError as e:
+            print(f"[DIALOGUE_FACE_CROP] 이미지 경로 검증 실패: {e}")
+            return _json_error(str(e), status=400)
+        except Exception as e:
+            print(f"[DIALOGUE_FACE_CROP] 이미지 조회 실패: {e}")
+            traceback.print_exc()
+            return _json_error(str(e))
+
+    async def handle_delete_face_crop_image(self, request):
+        """POST /api/bot_mode/face_crop_image/delete - 저장 FACE CROP 단일 삭제."""
+        try:
+            body = await request.json()
+            bot_name = str(body.get("bot", "")).strip()
+            char_name = str(body.get("character", "")).strip()
+            filename = str(body.get("filename", "")).strip()
+            if not bot_name or not char_name or not filename:
+                print(
+                    f"[DIALOGUE_FACE_CROP] 삭제 필수값 누락: "
+                    f"bot={bot_name!r}, char={char_name!r}, filename={filename!r}"
+                )
+                return _json_error("필수 값이 누락되었습니다.")
+            path = dialogue_face_crop_named_path(bot_name, char_name, filename)
+            if not os.path.isfile(path):
+                print(f"[DIALOGUE_FACE_CROP] 삭제 대상 파일 없음: {path}")
+                return _json_error("파일을 찾을 수 없습니다.", status=404)
+            os.remove(path)
+            print(f"[DIALOGUE_FACE_CROP] 이미지 삭제: {path}")
+            return _json_ok({"deleted": True})
+        except ValueError as e:
+            print(f"[DIALOGUE_FACE_CROP] 삭제 경로 검증 실패: {e}")
+            return _json_error(str(e), status=400)
+        except Exception as e:
+            print(f"[DIALOGUE_FACE_CROP] 이미지 삭제 실패: {e}")
+            traceback.print_exc()
+            return _json_error(str(e))
 
     # ─── 이미지 업로드 ─────────────────────────────────────
     async def handle_upload_image(self, request):
@@ -3083,6 +3247,107 @@ class BotDataPatcher:
             return _json_ok({"success": True, "message": "미리보기를 취소했습니다."})
         except Exception as e:
             print(f"[PROGRAM_EMBEDDING] 미리보기 취소 실패: {e}")
+            traceback.print_exc()
+            return _json_error(str(e), status=500)
+
+    async def handle_dialogue_face_crop(self, request):
+        """POST /api/bot_mode/dialogue_face_crop - 선택 캐릭터 이미지 크롭 큐 실행."""
+        try:
+            body = await request.json()
+            bot_name = str(body.get("bot_name", "")).strip()
+            raw_char_names = body.get("char_names") or []
+            if not bot_name:
+                print(f"[DIALOGUE_FACE_CROP_API] bot_name 비어있음: body={body!r}")
+                return _json_error("봇 이름이 비어있습니다.")
+            if not isinstance(raw_char_names, list):
+                print(
+                    f"[DIALOGUE_FACE_CROP_API] char_names 타입 오류: "
+                    f"type={type(raw_char_names).__name__}, value={raw_char_names!r}"
+                )
+                return _json_error("char_names는 리스트여야 합니다.")
+            char_names = []
+            for value in raw_char_names:
+                name = str(value or "").strip()
+                if name and name not in char_names:
+                    char_names.append(name)
+            if not char_names:
+                print(f"[DIALOGUE_FACE_CROP_API] 선택 캐릭터 없음: bot={bot_name!r}")
+                return _json_error("선택된 캐릭터가 없습니다.")
+
+            data = _load_bot_data()
+            bot = next(
+                (entry for entry in data.get("bots", []) if entry.get("name") == bot_name),
+                None,
+            )
+            if not bot:
+                print(f"[DIALOGUE_FACE_CROP_API] 봇 없음: {bot_name!r}")
+                return _json_error(f"봇을 찾을 수 없습니다: {bot_name}")
+            known_characters = {
+                str(character.get("name") or "")
+                for character in bot.get("characters", [])
+            }
+            missing = [name for name in char_names if name not in known_characters]
+            if missing:
+                print(
+                    f"[DIALOGUE_FACE_CROP_API] 캐릭터 없음: "
+                    f"bot={bot_name!r}, missing={missing!r}"
+                )
+                return _json_error(f"캐릭터를 찾을 수 없습니다: {', '.join(missing)}")
+
+            config_path = os.path.join(BASE_DIR, "config.json")
+            if not os.path.isfile(config_path):
+                print(f"[DIALOGUE_FACE_CROP_API] config.json 없음: {config_path}")
+                return _json_error("config.json이 없습니다.")
+            with open(config_path, "r", encoding="utf-8") as config_file:
+                config = json.load(config_file)
+            workflow_path = str(
+                config.get("face_extract_workflow_source_path") or ""
+            ).strip()
+            if not workflow_path or not os.path.isfile(workflow_path):
+                print(
+                    f"[DIALOGUE_FACE_CROP_API] 워크플로우 경로 오류: "
+                    f"{workflow_path!r}"
+                )
+                return _json_error("얼굴 추출 워크플로우가 설정되지 않았습니다.")
+
+            face_crop_top = self._program_embedding_float(
+                body, "face_crop_top", 1.0, 0.1, 10.0
+            )
+            face_crop_bottom = self._program_embedding_float(
+                body, "face_crop_bottom", 1.0, 0.1, 10.0
+            )
+            from queue_manager import queue_manager
+
+            item = await queue_manager.add_item(
+                "instance_lora_face_extract",
+                f"[대사 FACE CROP] {bot_name} ({len(char_names)}명)",
+                {
+                    "operation": "bot_dialogue_face_crop",
+                    "bot_name": bot_name,
+                    "char_names": char_names,
+                    "face_crop_top": face_crop_top,
+                    "face_crop_bottom": face_crop_bottom,
+                },
+            )
+            print(
+                f"[DIALOGUE_FACE_CROP_API] 큐 추가 및 완료 대기: "
+                f"item={item.id}, bot={bot_name}, chars={char_names}, "
+                f"top={face_crop_top}, bottom={face_crop_bottom}"
+            )
+            result = await item.completion_future
+            if not isinstance(result, dict):
+                print(
+                    f"[DIALOGUE_FACE_CROP_API] 큐 결과 타입 오류: "
+                    f"item={item.id}, result={result!r}"
+                )
+                raise TypeError("FACE CROP 큐 결과가 올바르지 않습니다.")
+            return _json_ok(result)
+        except (TypeError, ValueError) as e:
+            print(f"[DIALOGUE_FACE_CROP_API] 요청/결과 오류: {e}")
+            traceback.print_exc()
+            return _json_error(str(e))
+        except Exception as e:
+            print(f"[DIALOGUE_FACE_CROP_API] 실행 실패: {e}")
             traceback.print_exc()
             return _json_error(str(e), status=500)
 

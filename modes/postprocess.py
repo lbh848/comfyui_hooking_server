@@ -899,6 +899,39 @@ def load_face_image_bytes(bot_name: str, character: str, filename: str):
             return f.read()
     except Exception as e:
         print(f"[POSTPROCESS_FACE] 이미지 로드 실패({bot_name}/{character}/{filename}): {e}")
+        traceback.print_exc()
+        return None
+
+
+def load_saved_face_crop_bytes(bot_name: str, character: str, source_filename: str):
+    """원본 파일명에 대응하는 저장 FACE CROP bytes를 반환한다.
+
+    저장 크롭이 없으면 정상적인 ONNX 폴백 경로이므로 None을 반환하되, 캐시 미스
+    사유를 로그에 남긴다.
+    """
+    try:
+        from modes.bot_mode import dialogue_face_crop_path
+
+        path = dialogue_face_crop_path(bot_name, character, source_filename)
+        if not os.path.isfile(path):
+            print(
+                f"[POSTPROCESS_FACE] 저장 FACE CROP 없음, ONNX 폴백: "
+                f"bot={bot_name}, character={character}, source={source_filename}, "
+                f"expected={path}"
+            )
+            return None
+        with open(path, "rb") as face_file:
+            data = face_file.read()
+        if not data:
+            print(f"[POSTPROCESS_FACE] 저장 FACE CROP이 비어 있음, ONNX 폴백: {path}")
+            return None
+        return data
+    except Exception as e:
+        print(
+            f"[POSTPROCESS_FACE] 저장 FACE CROP 로드 실패, ONNX 폴백: "
+            f"bot={bot_name}, character={character}, source={source_filename}, error={e}"
+        )
+        traceback.print_exc()
         return None
 
 
@@ -1016,6 +1049,27 @@ def _prepare_face_images(segments: list, settings: dict, bot_name: str,
                 f"speaker={speaker}, emotion={emotion!r}"
             )
             continue
+        saved_crop_raw = load_saved_face_crop_bytes(
+            bot_name, speaker, matched[0]
+        )
+        if saved_crop_raw:
+            try:
+                saved_face = Image.open(io.BytesIO(saved_crop_raw)).convert("RGB")
+                saved_face.info["postprocess_face_center"] = (0.5, 0.5)
+                speaker_key = speaker.casefold()
+                result[(speaker_key, emotion.casefold())] = saved_face
+                result.setdefault(speaker_key, saved_face)
+                print(
+                    f"[POSTPROCESS_FACE] 저장 FACE CROP 우선 사용: "
+                    f"bot={bot_name}, speaker={speaker}, source={matched[0]!r}"
+                )
+                continue
+            except Exception as e:
+                print(
+                    f"[POSTPROCESS_FACE] 저장 FACE CROP 디코딩 실패, ONNX 폴백: "
+                    f"bot={bot_name}, speaker={speaker}, source={matched[0]!r}, error={e}"
+                )
+                traceback.print_exc()
         raw = load_face_image_bytes(bot_name, speaker, matched[0])
         if not raw:
             print(

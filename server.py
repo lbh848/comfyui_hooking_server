@@ -15508,6 +15508,15 @@ app.router.add_get("/api/bot_mode/bots", bot_mode.handle_get_bots)
 app.router.add_post("/api/bot_mode/action", bot_mode.handle_bot_action)
 app.router.add_get("/api/bot_mode/images", bot_mode.handle_get_images)
 app.router.add_get("/api/bot_mode/image/{bot}/{character}/{filename}", bot_mode.handle_get_image)
+app.router.add_get("/api/bot_mode/face_crop_images", bot_mode.handle_get_face_crop_images)
+app.router.add_get(
+    "/api/bot_mode/face_crop_image/{bot}/{character}/{filename}",
+    bot_mode.handle_get_face_crop_image,
+)
+app.router.add_post(
+    "/api/bot_mode/face_crop_image/delete",
+    bot_mode.handle_delete_face_crop_image,
+)
 app.router.add_post("/api/bot_mode/upload", bot_mode.handle_upload_image)
 app.router.add_post("/api/bot_mode/import_asset", bot_mode.handle_import_asset)
 app.router.add_post("/api/bot_mode/prompt", bot_mode.handle_update_prompt)
@@ -15534,6 +15543,7 @@ app.router.add_post("/api/bot_mode/program_embedding/preview", data_patcher.hand
 app.router.add_get("/api/bot_mode/program_embedding/preview_image/{preview_id}/{index}", data_patcher.handle_program_embedding_preview_image)
 app.router.add_post("/api/bot_mode/program_embedding/commit", data_patcher.handle_program_embedding_commit)
 app.router.add_post("/api/bot_mode/program_embedding/cancel", data_patcher.handle_program_embedding_cancel)
+app.router.add_post("/api/bot_mode/dialogue_face_crop", data_patcher.handle_dialogue_face_crop)
 app.router.add_get("/api/bot_mode/utility_settings", bot_mode.handle_get_utility_settings)
 app.router.add_post("/api/bot_mode/utility_settings", bot_mode.handle_save_utility_settings)
 app.router.add_get("/api/bot_mode/patch_settings", bot_mode.handle_get_patch_settings)
