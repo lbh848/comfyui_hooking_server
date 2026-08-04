@@ -101,6 +101,12 @@
       "sha256": "d01092bf97a983dd85dd3f7268893383ea036347c27005dedd9a758a953dc5fe"
     },
     {
+      "name": "ComfyUI-Manager",
+      "source_type": "git",
+      "repository": "https://github.com/ltdrdata/ComfyUI-Manager.git",
+      "ref": "d47c9346190397e1c316bc5a82155faaf9f5d700"
+    },
+    {
       "name": "ComfyUI-DCW",
       "source_type": "git",
       "repository": "https://github.com/namemechan/ComfyUI-DCW.git",
