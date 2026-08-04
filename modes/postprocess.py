@@ -1423,7 +1423,8 @@ def _paste_diagonal_faces(canvas, first_face, second_face, box, pal):
     """좌상단=인물 1, 우하단=인물 2로 '/' 대각선 썸네일을 합성한다.
 
     각 얼굴 이미지의 중심을 단순 정사각형 중심에 두지 않고 해당 삼각형의
-    무게중심으로 옮긴다. 확대 여유를 둬 이동 후에도 빈 가장자리가 보이지 않게 한다.
+    무게중심으로 옮기되 추가 확대는 하지 않는다. 중심 이동으로 비는 삼각형 끝은
+    배경색으로 채워 원본 FACE CROP이 더 많이 보이게 한다.
     """
     try:
         x1, y1, x2, y2 = [int(v) for v in box]
@@ -1449,19 +1450,10 @@ def _paste_diagonal_faces(canvas, first_face, second_face, box, pal):
                     )
                     face_center_x, face_center_y = 0.5, 0.5
 
-                # 실제 얼굴 중심을 목표 무게중심에 둔 상태에서도 네 변이 비지 않는
-                # 최소 확대율을 계산한다. 과도한 확대는 2.2배에서 제한한다.
-                min_zoom = max(
-                    center[0] / face_center_x,
-                    (1.0 - center[0]) / (1.0 - face_center_x),
-                    center[1] / face_center_y,
-                    (1.0 - center[1]) / (1.0 - face_center_y),
-                )
-                zoom = max(1.38, min(2.2, min_zoom + 0.04))
-                tile_size = max(size, int(round(size * zoom)))
-                tile = face_img.convert("RGBA").resize(
-                    (tile_size, tile_size), Image.LANCZOS,
-                )
+                # FACE CROP을 슬롯 크기 그대로 사용한다. 삼각형을 빈틈없이 채우기
+                # 위한 고정/계산 확대는 얼굴을 다시 잘라내므로 적용하지 않는다.
+                tile_size = size
+                tile = _face_tile(face_img, tile_size, placeholder_color)
                 layer = Image.new("RGBA", (size, size), placeholder_color)
                 target_x = int(round(size * center[0]))
                 target_y = int(round(size * center[1]))

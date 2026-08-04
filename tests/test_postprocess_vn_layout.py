@@ -11,6 +11,7 @@ from modes.postprocess import (
     _draw_colorized_text,
     _load_font,
     _merge_vn_defaults,
+    _paste_diagonal_faces,
     _resolve_vn_theme,
     _select_vn_theme,
     compose_postprocess,
@@ -213,6 +214,28 @@ class PostprocessVnLayoutTests(unittest.TestCase):
         )
         self.assertGreater(left_blue, 0)
         self.assertEqual(right_blue, 0)
+
+    def test_two_thumbnail_diagonal_slot_uses_no_extra_face_zoom(self):
+        first = Image.new("RGBA", (100, 100), (0, 0, 0, 255))
+        for x in range(100):
+            color = (round(255 * x / 99), 0, 0, 255)
+            for y in range(100):
+                first.putpixel((x, y), color)
+        second = Image.new("RGBA", (100, 100), (0, 0, 255, 255))
+        canvas = Image.new("RGBA", (120, 120), (0, 0, 0, 0))
+
+        _paste_diagonal_faces(
+            canvas, first, second, (0, 0, 120, 120), None,
+        )
+
+        # 1.0배 FACE CROP의 바깥 영역이 유지되고, 중심 이동으로 비는 끝부분은
+        # 의도한 슬롯 배경색으로 남아야 한다.
+        red, green, blue, alpha = canvas.getpixel((95, 10))
+        self.assertGreater(red, 235)
+        self.assertLess(green, 10)
+        self.assertLess(blue, 10)
+        self.assertEqual(alpha, 255)
+        self.assertEqual(canvas.getpixel((100, 10)), (58, 62, 82, 255))
 
     def test_multi_face_mode_first_renders_only_one_thumbnail(self):
         faces = {
