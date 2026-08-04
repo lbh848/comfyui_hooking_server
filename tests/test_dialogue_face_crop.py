@@ -33,7 +33,7 @@ def test_dialogue_face_crop_path_uses_face_crop_folder_and_suffix(tmp_path, monk
 
 
 @pytest.mark.asyncio
-async def test_dialogue_face_crop_skips_existing_and_continues_after_one_failure(
+async def test_dialogue_face_crop_overwrites_existing_and_continues_after_one_failure(
     tmp_path, monkeypatch
 ):
     bot_root = tmp_path / "bot"
@@ -47,7 +47,9 @@ async def test_dialogue_face_crop_skips_existing_and_continues_after_one_failure
     (char_dir / "b.png").write_bytes(_png_bytes((0, 255, 0)))
     (char_dir / "c.png").write_bytes(_png_bytes((0, 0, 255)))
     existing_bytes = _png_bytes((100, 100, 100))
+    failed_existing_bytes = _png_bytes((120, 110, 100))
     (crop_dir / "a_face.png").write_bytes(existing_bytes)
+    (crop_dir / "b_face.png").write_bytes(failed_existing_bytes)
 
     workflow_path = tmp_path / "face-workflow.json"
     workflow_path.write_text(json.dumps({"nodes": []}), encoding="utf-8")
@@ -120,12 +122,15 @@ async def test_dialogue_face_crop_skips_existing_and_continues_after_one_failure
 
     assert result["success"] is True
     assert result["warning"] is True
-    assert result["success_count"] == 1
-    assert result["skipped_count"] == 1
+    assert result["success_count"] == 2
+    assert result["skipped_count"] == 0
+    assert result["overwritten_count"] == 1
     assert result["failed_count"] == 1
-    assert len(submitted) == 2
-    assert (crop_dir / "a_face.png").read_bytes() == existing_bytes
-    assert not (crop_dir / "b_face.png").exists()
+    assert len(submitted) == 3
+    assert all("[FACE_CROP_TOP]\n1.4" in prompt for prompt in submitted)
+    assert all("[FACE_CROP_BOTTOM]\n1.1" in prompt for prompt in submitted)
+    assert (crop_dir / "a_face.png").read_bytes() == _png_bytes((10, 20, 30))
+    assert (crop_dir / "b_face.png").read_bytes() == failed_existing_bytes
     assert (crop_dir / "c_face.png").read_bytes() == _png_bytes((10, 20, 30))
     assert not (comfy_input / "soya_dialogue_face_crop" / item.id).exists()
     complete = [
@@ -138,7 +143,7 @@ async def test_dialogue_face_crop_skips_existing_and_continues_after_one_failure
 
 
 @pytest.mark.asyncio
-async def test_dialogue_face_crop_all_existing_skips_comfy_conversion(tmp_path, monkeypatch):
+async def test_dialogue_face_crop_all_existing_are_reprocessed_and_overwritten(tmp_path, monkeypatch):
     bot_root = tmp_path / "bot"
     char_dir = bot_root / "sample-bot" / "alice"
     crop_dir = char_dir / "FACE CROP"
@@ -157,10 +162,39 @@ async def test_dialogue_face_crop_all_existing_skips_comfy_conversion(tmp_path, 
         "face_extract_workflow_source_path": str(workflow_path),
     }
 
-    async def conversion_must_not_run(*_args, **_kwargs):
-        raise AssertionError("모든 FACE CROP이 있으면 Comfy 변환을 실행하면 안 됩니다.")
+    async def convert_workflow(_raw, task_key):
+        assert task_key == "face_extract"
+        return {"1": {"inputs": {}, "_meta": {"title": "긍정프롬프트"}}}, None
 
-    manager.convert_workflow_via_endpoint = conversion_must_not_run
+    async def monitor(_item, _workflow, **_kwargs):
+        return "prompt-existing", {"_comfy_port": 8188}
+
+    async def fetch_history(prompt_id, port):
+        assert (prompt_id, port) == ("prompt-existing", 8188)
+        return {
+            prompt_id: {
+                "outputs": {
+                    "preview": {
+                        "images": [
+                            {"filename": "replacement.png", "subfolder": "", "type": "temp"}
+                        ]
+                    }
+                }
+            }
+        }
+
+    replacement = _png_bytes((90, 80, 70))
+
+    async def fetch_image(filename, subfolder, image_type, port):
+        assert (filename, subfolder, image_type, port) == (
+            "replacement.png", "", "temp", 8188
+        )
+        return replacement
+
+    manager.convert_workflow_via_endpoint = convert_workflow
+    manager._monitor_training_ws = monitor
+    manager.fetch_real_history = fetch_history
+    manager.fetch_real_image = fetch_image
     item = QueueItem(
         id="all-existing",
         type="instance_lora_face_extract",
@@ -175,9 +209,11 @@ async def test_dialogue_face_crop_all_existing_skips_comfy_conversion(tmp_path, 
     result = await manager._handle_instance_lora_face_extract(item)
 
     assert result["success"] is True
-    assert result["success_count"] == 0
-    assert result["skipped_count"] == 1
+    assert result["success_count"] == 1
+    assert result["skipped_count"] == 0
+    assert result["overwritten_count"] == 1
     assert result["failed_count"] == 0
+    assert (crop_dir / "alice_face.png").read_bytes() == replacement
 
 
 def test_postprocess_prefers_saved_face_crop_without_running_onnx(monkeypatch):
@@ -230,3 +266,8 @@ def test_frontend_places_face_crop_folder_last_and_has_no_folder_entry_button():
     assert "folderCard.onclick = () => openBotFaceCropFolder(charName);" in render_source
     assert "btn-face-crop-folder" not in frontend
     assert 'id="btn-dialogue-face-crop"' in frontend
+    assert 'id="dialogue-face-crop-top"' in frontend
+    assert 'id="dialogue-face-crop-bottom"' in frontend
+    assert "face_crop_top: cropTop" in frontend
+    assert "face_crop_bottom: cropBottom" in frontend
+    assert "기존 <b>FACE CROP</b> 파일은 새 결과로 덮어쓰고" in frontend

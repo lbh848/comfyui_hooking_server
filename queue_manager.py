@@ -2358,7 +2358,7 @@ class QueueManager:
         """봇 캐릭터 이미지별 대사모드 FACE CROP을 Comfy 워크플로우로 저장한다.
 
         이미지 하나의 검출/워크플로우가 실패해도 해당 실패를 결과에 기록하고 다음
-        이미지로 진행한다. 이미 저장된 결과는 덮어쓰지 않고 건너뛴다.
+        이미지로 진행한다. 이미 저장된 결과도 새 추출 결과로 원자적으로 덮어쓴다.
         """
         import shutil
 
@@ -2456,6 +2456,7 @@ class QueueManager:
                 "total_count": 0,
                 "success_count": 0,
                 "skipped_count": 0,
+                "overwritten_count": 0,
                 "failed_count": 0,
                 "character_warning_count": len(character_warnings),
                 "failed": [],
@@ -2472,67 +2473,6 @@ class QueueManager:
                     "phase": "complete",
                     "current": 0,
                     "total": 0,
-                    **result,
-                })
-            return result
-
-        if all(os.path.isfile(job["output_path"]) for job in jobs):
-            results = []
-            for processed, job in enumerate(jobs, start=1):
-                print(
-                    f"[DIALOGUE_FACE_CROP] 전체 기존 파일 스킵: "
-                    f"bot={bot_name}, char={job['char_name']}, source={job['filename']}, "
-                    f"output={job['output_path']}"
-                )
-                results.append({
-                    "char_name": job["char_name"],
-                    "filename": job["filename"],
-                    "status": "skipped",
-                    "message": "기존 FACE CROP이 있어 건너뜀",
-                })
-                progress = {
-                    "phase": "dialogue_face_crop",
-                    "step": processed,
-                    "current": processed,
-                    "total": total,
-                    "char_name": job["char_name"],
-                    "filename": job["filename"],
-                    "status": "skipped",
-                    "success_count": 0,
-                    "skipped_count": processed,
-                    "failed_count": 0,
-                }
-                await self._notify_progress(item, progress)
-                if self.notify_frontend:
-                    await self.notify_frontend(
-                        "bot_dialogue_face_crop_progress",
-                        {"bot_name": bot_name, **progress},
-                    )
-            result = {
-                "success": True,
-                "warning": bool(character_warnings),
-                "message": (
-                    f"FACE CROP 저장 0장, 기존 파일 스킵 {total}장, 실패 0장"
-                    + (
-                        f", 캐릭터 경고 {len(character_warnings)}건"
-                        if character_warnings else ""
-                    )
-                ),
-                "total_count": total,
-                "success_count": 0,
-                "skipped_count": total,
-                "failed_count": 0,
-                "character_warning_count": len(character_warnings),
-                "failed": [],
-                "character_warnings": character_warnings,
-                "results": results,
-            }
-            if self.notify_frontend:
-                await self.notify_frontend("bot_dialogue_face_crop_progress", {
-                    "bot_name": bot_name,
-                    "phase": "complete",
-                    "current": total,
-                    "total": total,
                     **result,
                 })
             return result
@@ -2567,6 +2507,7 @@ class QueueManager:
 
         success_count = 0
         skipped_count = 0
+        overwritten_count = 0
         failed = []
         results = []
         processed = 0
@@ -2578,114 +2519,104 @@ class QueueManager:
                 status = "failed"
                 message = ""
                 try:
-                    if os.path.isfile(output_path):
-                        skipped_count += 1
-                        status = "skipped"
-                        message = "기존 FACE CROP이 있어 건너뜀"
+                    image_stage_dir = os.path.join(staging_root, f"{index:06d}")
+                    os.makedirs(image_stage_dir, exist_ok=False)
+                    staged_path = os.path.join(image_stage_dir, filename)
+                    shutil.copy2(job["source_path"], staged_path)
+                    extract_prompt = "\n".join([
+                        "[PATH]", image_stage_dir,
+                        "[FACE_CROP_TOP]", str(face_crop_top),
+                        "[FACE_CROP_BOTTOM]", str(face_crop_bottom),
+                        "[EMB_TARGET]", filename,
+                        "[END]",
+                    ])
+                    workflow = copy.deepcopy(api_workflow)
+                    prompt_injected = False
+                    for node_info in workflow.values():
+                        if not isinstance(node_info, dict):
+                            continue
+                        title = node_info.get("_meta", {}).get("title", "")
+                        if title == "긍정프롬프트":
+                            node_info.setdefault("inputs", {})["value"] = extract_prompt
+                            prompt_injected = True
+                        elif title == "부정프롬프트":
+                            node_info.setdefault("inputs", {})["value"] = ""
+                    if not prompt_injected:
                         print(
-                            f"[DIALOGUE_FACE_CROP] 기존 파일 스킵: "
+                            f"[DIALOGUE_FACE_CROP] 긍정프롬프트 노드 없음: "
+                            f"workflow={workflow_path}, source={job['source_path']}"
+                        )
+                        raise ValueError("얼굴 추출 워크플로우의 긍정프롬프트 노드를 찾지 못했습니다.")
+
+                    prompt_id, submit_result = await self._monitor_training_ws(
+                        item,
+                        workflow,
+                        event_type="bot_dialogue_face_crop_comfy_progress",
+                        extra_data={
+                            "bot_name": bot_name,
+                            "char_name": char_name,
+                            "filename": filename,
+                            "current": index,
+                            "total": total,
+                        },
+                    )
+                    comfy_port = int(submit_result.get("_comfy_port"))
+                    history = await self.fetch_real_history(prompt_id, port=comfy_port)
+                    outputs = history.get(prompt_id, {}).get("outputs", {})
+                    cropped_bytes = None
+                    for node_output in outputs.values():
+                        if not isinstance(node_output, dict):
+                            continue
+                        images = node_output.get("images") or []
+                        if not images:
+                            continue
+                        first = images[0]
+                        cropped_bytes = await self.fetch_real_image(
+                            first["filename"],
+                            first.get("subfolder", ""),
+                            first.get("type", "output"),
+                            port=comfy_port,
+                        )
+                        if cropped_bytes:
+                            break
+                    if not cropped_bytes:
+                        print(
+                            f"[DIALOGUE_FACE_CROP] 추출 결과 없음: "
                             f"bot={bot_name}, char={char_name}, source={filename}, "
-                            f"output={output_path}"
+                            f"prompt_id={prompt_id}, output_nodes={list(outputs.keys())}"
                         )
-                    else:
-                        image_stage_dir = os.path.join(staging_root, f"{index:06d}")
-                        os.makedirs(image_stage_dir, exist_ok=False)
-                        staged_path = os.path.join(image_stage_dir, filename)
-                        shutil.copy2(job["source_path"], staged_path)
-                        extract_prompt = "\n".join([
-                            "[PATH]", image_stage_dir,
-                            "[FACE_CROP_TOP]", str(face_crop_top),
-                            "[FACE_CROP_BOTTOM]", str(face_crop_bottom),
-                            "[EMB_TARGET]", filename,
-                            "[END]",
-                        ])
-                        workflow = copy.deepcopy(api_workflow)
-                        prompt_injected = False
-                        for node_info in workflow.values():
-                            if not isinstance(node_info, dict):
-                                continue
-                            title = node_info.get("_meta", {}).get("title", "")
-                            if title == "긍정프롬프트":
-                                node_info.setdefault("inputs", {})["value"] = extract_prompt
-                                prompt_injected = True
-                            elif title == "부정프롬프트":
-                                node_info.setdefault("inputs", {})["value"] = ""
-                        if not prompt_injected:
-                            print(
-                                f"[DIALOGUE_FACE_CROP] 긍정프롬프트 노드 없음: "
-                                f"workflow={workflow_path}, source={job['source_path']}"
-                            )
-                            raise ValueError("얼굴 추출 워크플로우의 긍정프롬프트 노드를 찾지 못했습니다.")
+                        raise ValueError("Comfy 얼굴 추출 결과 이미지를 찾지 못했습니다.")
 
-                        prompt_id, submit_result = await self._monitor_training_ws(
-                            item,
-                            workflow,
-                            event_type="bot_dialogue_face_crop_comfy_progress",
-                            extra_data={
-                                "bot_name": bot_name,
-                                "char_name": char_name,
-                                "filename": filename,
-                                "current": index,
-                                "total": total,
-                            },
-                        )
-                        comfy_port = int(submit_result.get("_comfy_port"))
-                        history = await self.fetch_real_history(prompt_id, port=comfy_port)
-                        outputs = history.get(prompt_id, {}).get("outputs", {})
-                        cropped_bytes = None
-                        for node_output in outputs.values():
-                            if not isinstance(node_output, dict):
-                                continue
-                            images = node_output.get("images") or []
-                            if not images:
-                                continue
-                            first = images[0]
-                            cropped_bytes = await self.fetch_real_image(
-                                first["filename"],
-                                first.get("subfolder", ""),
-                                first.get("type", "output"),
-                                port=comfy_port,
-                            )
-                            if cropped_bytes:
-                                break
-                        if not cropped_bytes:
-                            print(
-                                f"[DIALOGUE_FACE_CROP] 추출 결과 없음: "
-                                f"bot={bot_name}, char={char_name}, source={filename}, "
-                                f"prompt_id={prompt_id}, output_nodes={list(outputs.keys())}"
-                            )
-                            raise ValueError("Comfy 얼굴 추출 결과 이미지를 찾지 못했습니다.")
-
-                        if os.path.isfile(output_path):
-                            skipped_count += 1
-                            status = "skipped"
-                            message = "처리 중 기존 FACE CROP이 확인되어 저장하지 않음"
-                            print(f"[DIALOGUE_FACE_CROP] 저장 직전 기존 파일 확인, 스킵: {output_path}")
-                        else:
-                            os.makedirs(job["output_dir"], exist_ok=True)
-                            temp_output = f"{output_path}.tmp-{uuid.uuid4().hex}"
+                    output_existed = os.path.isfile(output_path)
+                    os.makedirs(job["output_dir"], exist_ok=True)
+                    temp_output = f"{output_path}.tmp-{uuid.uuid4().hex}"
+                    try:
+                        with open(temp_output, "wb") as output_file:
+                            output_file.write(cropped_bytes)
+                        os.replace(temp_output, output_path)
+                    finally:
+                        if os.path.isfile(temp_output):
                             try:
-                                with open(temp_output, "wb") as output_file:
-                                    output_file.write(cropped_bytes)
-                                os.replace(temp_output, output_path)
-                            finally:
-                                if os.path.isfile(temp_output):
-                                    try:
-                                        os.remove(temp_output)
-                                    except Exception as cleanup_error:
-                                        print(
-                                            f"[DIALOGUE_FACE_CROP] 임시 출력 삭제 실패: "
-                                            f"path={temp_output}, error={cleanup_error}"
-                                        )
-                                        traceback.print_exc()
-                            success_count += 1
-                            status = "saved"
-                            message = "FACE CROP 저장 완료"
-                            print(
-                                f"[DIALOGUE_FACE_CROP] 저장 완료: "
-                                f"bot={bot_name}, char={char_name}, source={filename}, "
-                                f"output={output_path}, bytes={len(cropped_bytes)}"
-                            )
+                                os.remove(temp_output)
+                            except Exception as cleanup_error:
+                                print(
+                                    f"[DIALOGUE_FACE_CROP] 임시 출력 삭제 실패: "
+                                    f"path={temp_output}, error={cleanup_error}"
+                                )
+                                traceback.print_exc()
+                    success_count += 1
+                    if output_existed:
+                        overwritten_count += 1
+                        status = "overwritten"
+                        message = "기존 FACE CROP 덮어쓰기 완료"
+                    else:
+                        status = "saved"
+                        message = "FACE CROP 저장 완료"
+                    print(
+                        f"[DIALOGUE_FACE_CROP] {message}: "
+                        f"bot={bot_name}, char={char_name}, source={filename}, "
+                        f"output={output_path}, bytes={len(cropped_bytes)}"
+                    )
                 except Exception as e:
                     message = str(e)
                     failed.append({
@@ -2716,6 +2647,7 @@ class QueueManager:
                         "status": status,
                         "success_count": success_count,
                         "skipped_count": skipped_count,
+                        "overwritten_count": overwritten_count,
                         "failed_count": len(failed),
                     }
                     await self._notify_progress(item, progress)
@@ -2737,7 +2669,7 @@ class QueueManager:
 
         warning_count = len(failed) + len(character_warnings)
         message = (
-            f"FACE CROP 저장 {success_count}장, 기존 파일 스킵 {skipped_count}장, "
+            f"FACE CROP 저장 {success_count}장, 기존 파일 덮어쓰기 {overwritten_count}장, "
             f"실패 {len(failed)}장"
         )
         if character_warnings:
@@ -2749,6 +2681,7 @@ class QueueManager:
             "total_count": total,
             "success_count": success_count,
             "skipped_count": skipped_count,
+            "overwritten_count": overwritten_count,
             "failed_count": len(failed),
             "character_warning_count": len(character_warnings),
             "failed": failed,
