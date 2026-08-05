@@ -163,7 +163,12 @@ def _normalize_lora_list(value: Any) -> list[dict[str, Any]]:
         if not isinstance(raw, dict):
             raise CharacterMakerError(f"LoRA {index + 1}번 항목은 객체여야 합니다.")
         source = str(raw.get("source") or "asset").strip().lower()
-        if source not in {"asset", "bot", "instance"}:
+        if source not in {"asset", "bot", "instance", "style"}:
+            print(
+                "[CHARACTER_MAKER] LoRA source 검증 실패: "
+                f"index={index + 1}, source={source!r}, "
+                "allowed=('asset', 'bot', 'instance', 'style')"
+            )
             raise CharacterMakerError(
                 f"LoRA {index + 1}번 항목의 source가 올바르지 않습니다."
             )

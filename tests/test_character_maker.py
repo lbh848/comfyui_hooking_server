@@ -210,6 +210,46 @@ def test_session_persists_across_service_restart(tmp_path):
     assert restored["fields"]["outfit"] == ["long_coat"]
 
 
+def test_update_session_accepts_and_preserves_style_lora_source(tmp_path):
+    service, _ = _service(tmp_path)
+    session = service.public_session(character_maker_module.SINGLE_SESSION_ID)
+
+    updated = service.update_session(
+        session["id"],
+        {
+            "settings": {
+                "style_lora_enabled": True,
+                "style_lora_list": [
+                    {
+                        "source": "style",
+                        "name": "watercolor-style",
+                        "character": "style",
+                        "lora_path": "sdxl/watercolor/model.safetensors",
+                        "strength": 0.5,
+                        "trigger": "watercolor style",
+                        "BASE": "sdxl",
+                    }
+                ],
+            }
+        },
+    )
+
+    assert updated["settings"]["style_lora_enabled"] is True
+    assert updated["settings"]["style_lora_list"] == [
+        {
+            "source": "style",
+            "name": "watercolor-style",
+            "character": "style",
+            "lora_path": "sdxl/watercolor/model.safetensors",
+            "strength": 0.5,
+            "preview_url": "",
+            "trigger": "watercolor style",
+            "BASE": "sdxl",
+            "lora_id": "",
+        }
+    ]
+
+
 def test_new_character_preserves_all_generation_state_and_clears_character_work(
     tmp_path,
 ):

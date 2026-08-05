@@ -199,6 +199,12 @@ def test_settings_drawer_marks_only_pose_and_ipadapter_as_locked():
     assert "<input type=\"checkbox\" disabled>" in html or 'type="checkbox" disabled' in html
 
 
+def test_style_lora_source_uses_style_label():
+    html = _html()
+
+    assert "item.source === 'style' ? '스타일' : '에셋'" in html
+
+
 def test_only_four_fields_have_free_chip_and_text_editors():
     html = _html()
 

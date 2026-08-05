@@ -13440,7 +13440,7 @@
                 </div>
             </div>
 
-            <div id="cm-confirm-modal" class="cm-modal" onclick="if(event.target===this)cmCloseConfirm()">
+            <div id="cm-confirm-modal" class="cm-modal">
                 <div class="cm-modal-shell cm-confirm-shell">
                     <div class="cm-modal-head">
                         <div>
@@ -37953,7 +37953,9 @@
                     : capabilities.anima;
                 const sourceLabel = item.source === 'bot'
                     ? '봇'
-                    : (item.source === 'instance' ? '인스턴스' : '에셋');
+                    : (item.source === 'instance'
+                        ? '인스턴스'
+                        : (item.source === 'style' ? '스타일' : '에셋'));
                 const strength = Number.isFinite(Number(item.strength))
                     ? Number(item.strength)
                     : 0.5;
