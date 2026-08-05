@@ -33,6 +33,7 @@ def test_config_apply_backs_up_updates_and_restores(tmp_path):
         "comfyui_port": 8188,
         "comfy_input_dir": r"E:\old\input",
         "workflow_base_dir": r"E:\old\workflows",
+        "qwen_edit_workflow_source_path": r"E:\project\mode_workflow\배포_qwen_edit_v1_변환전.json",
         "illustration_workflow_source_paths": {
             "v1": r"E:\old\first.json",
         },
@@ -56,6 +57,7 @@ def test_config_apply_backs_up_updates_and_restores(tmp_path):
         ],
         default_workflow_bindings={
             "debug_workflow_source_path": str(second),
+            "qwen_edit_workflow_source_path": str(second),
         },
         workflow_base_dir=workflows,
     )
@@ -66,6 +68,7 @@ def test_config_apply_backs_up_updates_and_restores(tmp_path):
     assert updated["illustration_workflow_source_paths"]["v1"] == str(first)
     assert updated["asset_workflow_source_path"] == str(second)
     assert updated["debug_workflow_source_path"] == str(second)
+    assert updated["qwen_edit_workflow_source_path"] == str(second)
     assert updated["workflow_base_dir"] == str(workflows)
     assert updated["comfy_input_dir"] == str(comfy / "input")
     assert updated["outfit_mode_enabled"] is False
@@ -295,7 +298,7 @@ def test_config_only_retarget_uses_installer_backup_and_updates_direct_paths(
     assert result.already_retargeted is False
 
 
-def test_config_retarget_fills_only_empty_paths_from_library_bindings(
+def test_config_retarget_forces_library_bindings_and_base_path(
     tmp_path,
 ):
     config_path = tmp_path / "config.json"
@@ -307,9 +310,13 @@ def test_config_retarget_fills_only_empty_paths_from_library_bindings(
     utility_default = workflows / "utility__v2.json"
     debug_default = workflows / "debug__v2.json"
     lora_default = workflows / "lora_anima__v2.json"
+    qwen_default = workflows / "qwen_edit__v2.json"
+    inpainting_default = workflows / "anima_inpainting__v2.json"
     _write_json(utility_default, {"1": {"class_type": "KSampler"}})
     _write_json(debug_default, {"2": {"class_type": "KSampler"}})
     _write_json(lora_default, {"3": {"class_type": "KSampler"}})
+    _write_json(qwen_default, {"4": {"class_type": "KSampler"}})
+    _write_json(inpainting_default, {"5": {"class_type": "KSampler"}})
     custom_utility = tmp_path / "mode_workflow" / "custom_utility.json"
     custom_utility.parent.mkdir()
     _write_json(custom_utility, {"custom": True})
@@ -318,6 +325,12 @@ def test_config_retarget_fills_only_empty_paths_from_library_bindings(
         "utility_workflow_source_path": str(custom_utility),
         "debug_workflow_source_path": "   ",
         "lora_training_workflow_source_paths": "",
+        "qwen_edit_workflow_source_path": str(
+            tmp_path / "mode_workflow" / "배포_qwen_edit_v1_변환전.json"
+        ),
+        "anima_inpainting_workflow_source_path": str(
+            tmp_path / "mode_workflow" / "배포_ANIMA_inpainting_v1.json"
+        ),
     }
     _write_json(config_path, original)
     backup = backup_current_config(
@@ -336,22 +349,31 @@ def test_config_retarget_fills_only_empty_paths_from_library_bindings(
             "utility_workflow_source_path": str(utility_default),
             "debug_workflow_source_path": str(debug_default),
             "lora_training_workflow_source_paths.anima": str(lora_default),
+            "qwen_edit_workflow_source_path": str(qwen_default),
+            "anima_inpainting_workflow_source_path": str(inpainting_default),
         },
         workflow_base_dir=workflows,
     )
 
     updated = json.loads(config_path.read_text(encoding="utf-8"))
-    assert updated["utility_workflow_source_path"] == str(custom_utility)
+    assert updated["utility_workflow_source_path"] == str(utility_default)
     assert updated["workflow_base_dir"] == str(workflows)
     assert updated["debug_workflow_source_path"] == str(debug_default)
     assert updated["lora_training_workflow_source_paths"]["anima"] == str(
         lora_default
     )
-    assert result.updated_paths == (
+    assert updated["qwen_edit_workflow_source_path"] == str(qwen_default)
+    assert updated["anima_inpainting_workflow_source_path"] == str(
+        inpainting_default
+    )
+    assert set(result.updated_paths) == {
         "$.workflow_base_dir",
+        "$.utility_workflow_source_path",
         "$.debug_workflow_source_path",
         "$.lora_training_workflow_source_paths.anima",
-    )
+        "$.qwen_edit_workflow_source_path",
+        "$.anima_inpainting_workflow_source_path",
+    }
     assert json.loads(result.backup_path.read_text(encoding="utf-8")) == original
 
 

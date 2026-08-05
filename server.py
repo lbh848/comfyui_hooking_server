@@ -377,14 +377,8 @@ DEFAULT_CONFIG = {
     "asset_workflow_source_path": "",  # 에셋 생성 워크플로우 원본 소스 전체 경로
     "anima_asset_workflow_source_path": "",  # ANIMA+ILXL 에셋 생성 워크플로우 원본 소스 전체 경로
     "anima_only_asset_workflow_source_path": "",  # ONLY ANIMA 에셋 생성 워크플로우 원본 소스 전체 경로
-    "qwen_edit_workflow_source_path": os.path.join(
-        MODE_WORKFLOW_DIR,
-        "배포_qwen_edit_v1_변환전.json",
-    ),  # QWEN_EDIT UI/API 워크플로우 원본 소스 전체 경로
-    "anima_inpainting_workflow_source_path": os.path.join(
-        MODE_WORKFLOW_DIR,
-        "배포_ANIMA_inpainting_v1.json",
-    ),  # ANIMA Inpainting 변환 전 UI 워크플로우
+    "qwen_edit_workflow_source_path": "",  # 설치 라이브러리의 QWEN_EDIT 워크플로우 절대 경로
+    "anima_inpainting_workflow_source_path": "",  # 설치 라이브러리의 ANIMA Inpainting 절대 경로
     "asset_edit_tool": "qwen",  # qwen | anima_inpainting
     "asset_workflow_type": workflow_profiles.ASSET_ILXL,
     "tag_analysis_workflow_source_path": "",  # 태그 분석 워크플로우 원본 소스 전체 경로

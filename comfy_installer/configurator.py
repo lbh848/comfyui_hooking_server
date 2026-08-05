@@ -183,18 +183,6 @@ def _set_dotted(config: dict, dotted_key: str, value: str) -> None:
     cursor[parts[-1]] = value
 
 
-_MISSING = object()
-
-
-def _get_dotted(config: Mapping[str, Any], dotted_key: str) -> Any:
-    cursor: Any = config
-    for part in dotted_key.split("."):
-        if not isinstance(cursor, Mapping) or part not in cursor:
-            return _MISSING
-        cursor = cursor[part]
-    return cursor
-
-
 def _normalize_embedded_workflow_bindings(
     workflow_bindings: Mapping[str, str],
     *,
@@ -274,28 +262,26 @@ def _normalize_embedded_workflow_base_dir(
     return str(base_dir)
 
 
-def _fill_empty_workflow_bindings(
+def _apply_workflow_bindings(
     config: dict,
     workflow_bindings: Mapping[str, str],
 ) -> list[str]:
-    filled: list[str] = []
+    changed: list[str] = []
     for key, value in workflow_bindings.items():
-        current = _get_dotted(config, key)
-        is_empty = (
-            current is _MISSING
-            or current is None
-            or (isinstance(current, str) and not current.strip())
-            or (isinstance(current, (dict, list)) and not current)
-        )
-        if not is_empty:
-            continue
+        current: Any = config
+        for part in key.split("."):
+            if not isinstance(current, Mapping) or part not in current:
+                current = None
+                break
+            current = current[part]
+        if current != value:
+            changed.append(key)
         _set_dotted(config, key, value)
-        filled.append(key)
         print(
-            "[COMFY_INSTALL][CONFIG] 빈 기본 워크플로우 경로 설정: "
+            "[COMFY_INSTALL][CONFIG] 내장 워크플로우 경로 강제 설정: "
             f"key={key}, path={value}"
         )
-    return filled
+    return changed
 
 
 def _json_child_path(parent: str, key: str) -> str:
@@ -739,7 +725,7 @@ def retarget_config_to_embedded_comfy(
                 comfy_root=new_root,
                 label="기본 워크플로우",
             )
-            defaulted_keys = _fill_empty_workflow_bindings(
+            defaulted_keys = _apply_workflow_bindings(
                 seeded,
                 normalized_defaults,
             )
@@ -868,7 +854,7 @@ def apply_installed_config(
         updated = copy.deepcopy(config)
         for key, value in normalized_bindings.items():
             _set_dotted(updated, key, value)
-        defaulted_keys = _fill_empty_workflow_bindings(
+        defaulted_keys = _apply_workflow_bindings(
             updated,
             normalized_defaults,
         )

@@ -528,7 +528,7 @@ def test_qwen_workflow_and_frontend_contracts():
     assert 'value="anima_inpainting"' in frontend
     assert 'id="setting-anima-inpainting-workflow-filename"' in frontend
     assert 'id="setting-anima-inpainting-workflow-source-path"' in frontend
-    assert "배포_ANIMA_inpainting_v1.json" in frontend
+    assert 'placeholder="라이브러리 배포 워크플로우"' in frontend
     assert "qwen_edit_workflow_source_path:" in frontend
     assert "anima_inpainting_workflow_source_path:" in frontend
     assert "asset_edit_tool:" in frontend
@@ -553,6 +553,6 @@ def test_qwen_workflow_and_frontend_contracts():
     assert "handle_api_qwen_composite_background_remove" in server_source
     assert "handle_api_qwen_composite_item_delete" in server_source
     assert 'queue_manager.add_item(\n            "qwen_edit"' in server_source
-    assert '"qwen_edit_workflow_source_path": os.path.join(' in server_source
+    assert '"qwen_edit_workflow_source_path": ""' in server_source
     assert "qwen_edit_mode.convert_workflow_func = lambda workflow:" in server_source
     assert 'task_key="qwen_edit"' in server_source

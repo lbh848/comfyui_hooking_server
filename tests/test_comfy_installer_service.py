@@ -268,13 +268,20 @@ def test_config_only_retarget_fills_missing_paths_from_library_defaults(
     workflow_root.mkdir(parents=True)
     default_tag = workflow_root / "tag__v4.json"
     default_debug = workflow_root / "debug__v4.json"
+    default_qwen = workflow_root / "배포_qwen_edit_v1__v4.json"
     default_tag.write_text("{}\n", encoding="utf-8")
     default_debug.write_text("{}\n", encoding="utf-8")
+    default_qwen.write_text("{}\n", encoding="utf-8")
     config.write_text(
         json.dumps(
             {
                 "comfy_input_dir": str(embedded_comfy / "input"),
                 "tag_analysis_workflow_source_path": "",
+                "qwen_edit_workflow_source_path": str(
+                    tmp_path
+                    / "mode_workflow"
+                    / "배포_qwen_edit_v1_변환전.json"
+                ),
             },
             ensure_ascii=False,
         ),
@@ -284,13 +291,14 @@ def test_config_only_retarget_fills_missing_paths_from_library_defaults(
     def fake_import_defaults(**_kwargs):
         return WorkflowSelection(
             release_version="v4",
-            selected_item_ids=("tag", "debug"),
+            selected_item_ids=("tag", "debug", "qwen"),
             workflow_bindings={
                 "tag_analysis_workflow_source_path": str(default_tag),
                 "debug_workflow_source_path": str(default_debug),
+                "qwen_edit_workflow_source_path": str(default_qwen),
             },
             model_ids=(),
-            user_files=(str(default_tag), str(default_debug)),
+            user_files=(str(default_tag), str(default_debug), str(default_qwen)),
         )
 
     monkeypatch.setattr(
@@ -309,10 +317,12 @@ def test_config_only_retarget_fills_missing_paths_from_library_defaults(
     updated = json.loads(config.read_text(encoding="utf-8"))
     assert updated["tag_analysis_workflow_source_path"] == str(default_tag)
     assert updated["debug_workflow_source_path"] == str(default_debug)
+    assert updated["qwen_edit_workflow_source_path"] == str(default_qwen)
     assert set(result["config"]["updated_paths"]) == {
         "$.workflow_base_dir",
         "$.tag_analysis_workflow_source_path",
         "$.debug_workflow_source_path",
+        "$.qwen_edit_workflow_source_path",
     }
 
 

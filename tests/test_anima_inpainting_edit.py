@@ -159,16 +159,15 @@ def test_soya_contains_local_anima_lllite_implementation_and_registration():
     assert "6701c8d6fc3bf1b2ed966b87c95ce609c52cebea" in notice
 
 
-def test_global_asset_setting_defaults_to_exact_anima_ui_workflow_name():
+def test_global_asset_setting_waits_for_installed_library_workflow_binding():
     server_source = (ROOT / "server.py").read_text(encoding="utf-8")
     frontend = (ROOT / "frontend" / "index.html").read_text(encoding="utf-8")
 
     assert '"asset_edit_tool": "qwen"' in server_source
-    assert '"anima_inpainting_workflow_source_path": os.path.join(' in server_source
-    assert '"배포_ANIMA_inpainting_v1.json"' in server_source
+    assert '"anima_inpainting_workflow_source_path": ""' in server_source
     assert 'id="setting-asset-edit-tool"' in frontend
     assert 'value="anima_inpainting"' in frontend
-    assert "배포_ANIMA_inpainting_v1.json" in frontend
+    assert 'placeholder="라이브러리 배포 워크플로우"' in frontend
 
 
 @pytest.mark.asyncio
