@@ -55870,7 +55870,7 @@
                         </div>
                         <div id="illust-te-tags-${sec.id}" style="min-height:24px;"></div>
                         <div class="inline-add" style="margin-top:4px; position:relative;">
-                            <input type="text" id="illust-te-input-${sec.id}" placeholder="태그 추가"
+                            <input type="text" id="illust-te-input-${sec.id}" placeholder="태그 추가 (쉼표 구분, 괄호 묶음 유지)"
                                 onkeydown="illustTeInputKeydown(event, '${sec.id}')">
                             <div class="tag-autocomplete-dropdown" id="ac-illust-te-${sec.id}"></div>
                             <button onclick="illustTeAddTag('${sec.id}')">+</button>
@@ -55906,9 +55906,9 @@
             _refreshIllustTagEditor();
         }
 
-        async function _refreshIllustTagEditor() {
+        async function _refreshIllustTagEditor(prefetchedTagsData = null) {
             try {
-                const tagsData = await fetchJSON('/api/asset_mode/tags');
+                const tagsData = prefetchedTagsData || await fetchJSON('/api/asset_mode/tags');
                 if (!tagsData) return;
                 _illustPresetsCache = tagsData;
                 ILLUST_TAG_EDITOR_SECTIONS.forEach(sec => {
@@ -56110,26 +56110,23 @@
             const sec = ILLUST_TAG_EDITOR_SECTIONS.find(s => s.id === secId);
             if (!sec) return;
             const input = document.getElementById(`illust-te-input-${secId}`);
-            const val = input?.value?.trim();
-            if (!val) return;
+            if (!input?.value?.trim()) return;
             const presetName = _illustTePresetName(secId);
             if (!presetName) { showToast('프리셋을 먼저 선택하세요', 'error'); return; }
-            try {
-                const resp = await fetch('/api/asset_mode/tags', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ action: 'add_preset_tag', preset_type: sec.presetType, preset_name: presetName, value: val })
-                });
-                const result = await resp.json();
-                if (result.success) {
-                    input.value = '';
-                    await _refreshIllustTagEditor();
+            const existingTags = _illustPresetsCache?.[sec.presetType]?.[presetName]
+                || assetTags?.[sec.presetType]?.[presetName]
+                || [];
+            await addAssetTagInput({
+                inputId: `illust-te-input-${secId}`,
+                action: 'add_preset_tag',
+                baseParams: { preset_type: sec.presetType, preset_name: presetName },
+                existingTags,
+                afterReload: async () => {
+                    await _refreshIllustTagEditor(assetTags);
                     const sidebarContainerId = sec.selectId.replace('-preset', '-tags');
                     renderIllustPresetTags(sec.selectId, sidebarContainerId, sec.presetType);
-                } else {
-                    showToast(result.error || '추가 실패', 'error');
                 }
-            } catch (err) { showToast('요청 실패: ' + err.message, 'error'); }
+            });
         }
 
         async function illustTeRemoveTag(secId, idx) {

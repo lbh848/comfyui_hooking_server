@@ -116,3 +116,22 @@ def test_face_tag_restore_preserves_parenthesized_groups():
     assert "parseAssetTagInput(tagsStr)" in init_face
     assert "parseAssetTagInput(val)" in get_slot
     assert "bulkFaceTagsArray = parseAssetTagInput(s.face_tags);" in source
+
+
+def test_illustration_prompt_tag_editor_uses_the_common_parser():
+    source = _frontend_source()
+    add_tag = _function_source(
+        source, "illustTeAddTag(secId)", "illustTeRemoveTag(secId, idx)"
+    )
+    refresh = _function_source(
+        source,
+        "_refreshIllustTagEditor(prefetchedTagsData = null)",
+        "_renderIllustTeChips(container, tags, presetType, presetName)",
+    )
+
+    assert "addAssetTagInput({" in add_tag
+    assert "action: 'add_preset_tag'" in add_tag
+    assert "existingTags," in add_tag
+    assert "await _refreshIllustTagEditor(assetTags);" in add_tag
+    assert "prefetchedTagsData || await fetchJSON('/api/asset_mode/tags')" in refresh
+    assert 'placeholder="태그 추가 (쉼표 구분, 괄호 묶음 유지)"' in source
