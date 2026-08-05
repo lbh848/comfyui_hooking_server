@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -10,7 +11,9 @@ from comfy_installer.workflow_library import (
     LEGACY_DISTRIBUTION_LIBRARY_DIRNAME,
     LEGACY_USER_WORKFLOW_DIRNAME,
     USER_WORKFLOW_DIRNAME,
+    import_default_user_copies,
     import_user_copies,
+    latest_release_version,
     library_status,
     migrate_legacy_workflow_layout,
     selection_requirements,
@@ -30,6 +33,87 @@ def _workflow(path: Path, model_name: str) -> None:
             ensure_ascii=False,
         ),
         encoding="utf-8",
+    )
+
+
+def _write_library_release(
+    library_root: Path,
+    release_version: str,
+    items: list[tuple[str, list[str]]],
+) -> None:
+    release_root = (
+        library_root / DISTRIBUTION_LIBRARY_DIRNAME / release_version
+    )
+    release_root.mkdir(parents=True)
+    state_items = []
+    for item_id, bindings in items:
+        filename = f"{item_id.replace('.', '_')}.json"
+        workflow = release_root / filename
+        _workflow(workflow, f"{release_version}-{item_id}")
+        state_items.append(
+            {
+                "id": item_id,
+                "name": filename,
+                "filename": filename,
+                "sha256": hashlib.sha256(workflow.read_bytes()).hexdigest(),
+                "bindings": bindings,
+                "model_ids": [],
+            }
+        )
+    (release_root / ".soya-pack.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "release_version": release_version,
+                "items": state_items,
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_default_workflow_copies_use_latest_release_metadata_as_source_of_truth(
+    tmp_path: Path,
+) -> None:
+    library_root = tmp_path / "library"
+    _write_library_release(
+        library_root,
+        "v2",
+        [("old_default", ["old_workflow_source_path"])],
+    )
+    latest_items = [
+        (
+            "illustration_defaults",
+            [
+                "comfy_workflow_source_path",
+                "illustration_workflow_source_paths.v3_anima",
+            ],
+        ),
+        ("debug_default", ["debug_workflow_source_path"]),
+    ]
+    _write_library_release(library_root, "v10", latest_items)
+
+    selection = import_default_user_copies(
+        comfy_root=tmp_path / "comfy",
+        library_root=library_root,
+    )
+
+    assert latest_release_version(library_root) == "v10"
+    assert selection.release_version == "v10"
+    assert set(selection.selected_item_ids) == {
+        "illustration_defaults",
+        "debug_default",
+    }
+    assert set(selection.workflow_bindings) == {
+        "comfy_workflow_source_path",
+        "illustration_workflow_source_paths.v3_anima",
+        "debug_workflow_source_path",
+    }
+    assert all(Path(path).is_file() for path in selection.workflow_bindings.values())
+    assert all(
+        Path(path).parent.name == USER_WORKFLOW_DIRNAME
+        for path in selection.workflow_bindings.values()
     )
 
 

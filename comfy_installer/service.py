@@ -63,6 +63,8 @@ from .system_probe import probe_system
 from .updater import update_hooking_server_main
 from .workflow_library import (
     WorkflowSelection,
+    WorkflowLibraryError,
+    import_default_user_copies,
     import_user_copies,
     library_status,
     migrate_legacy_workflow_layout,
@@ -331,6 +333,40 @@ class ComfyInstallerService:
             self.workflow_library_root,
         )
 
+    def _prepare_default_workflows(
+        self,
+        *,
+        release_version: str | None = None,
+        required: bool = False,
+    ) -> WorkflowSelection | None:
+        try:
+            selection = import_default_user_copies(
+                comfy_root=self.comfy_root,
+                library_root=self.workflow_library_root,
+                release_version=release_version,
+                log=self._log,
+            )
+            self._log(
+                "[설정] 기본 워크플로우 사용자 사본 준비 완료: "
+                f"release={selection.release_version}, "
+                f"bindings={len(selection.workflow_bindings)}"
+            )
+            return selection
+        except WorkflowLibraryError as exc:
+            print(
+                "[COMFY_INSTALL][SERVICE] 기본 워크플로우를 준비하지 "
+                f"못했습니다: release={release_version!r}, error={exc}"
+            )
+            traceback.print_exc()
+            if required:
+                raise
+            self._log(
+                "[설정] 워크플로우 라이브러리가 없어 빈 기본 경로 "
+                f"채우기를 건너뜁니다: {exc}",
+                "warning",
+            )
+            return None
+
     def unpack_workflow_pack(
         self,
         *,
@@ -477,12 +513,18 @@ class ComfyInstallerService:
                     "사용자 데이터 이사를 중단했습니다."
                 )
             advance("migration_config")
+            default_workflows = self._prepare_default_workflows()
             config_update = retarget_config_to_embedded_comfy(
                 config_path=self.config_path,
                 backup_dir=self.config_backup_dir,
                 backup_path=config_backup["backup_path"],
                 old_comfy_root=old_comfy_root,
                 new_comfy_root=self.comfy_root,
+                default_workflow_bindings=(
+                    default_workflows.workflow_bindings
+                    if default_workflows is not None
+                    else None
+                ),
             )
             if config_update.already_retargeted:
                 self._log("[이사] config.json은 이미 내장 Comfy 경로입니다.")
@@ -526,6 +568,7 @@ class ComfyInstallerService:
                     "다른 ComfyUI 작업 중에는 config.json 경로를 변경할 수 없습니다."
                 )
         try:
+            default_workflows = self._prepare_default_workflows()
             config_backup = backup_current_config(
                 config_path=self.config_path,
                 backup_dir=self.config_backup_dir,
@@ -537,6 +580,11 @@ class ComfyInstallerService:
                 backup_path=config_backup["backup_path"],
                 old_comfy_root=None,
                 new_comfy_root=self.comfy_root,
+                default_workflow_bindings=(
+                    default_workflows.workflow_bindings
+                    if default_workflows is not None
+                    else None
+                ),
             )
             if config_update.already_retargeted:
                 self._log("[설정] config.json은 이미 내장 Comfy 경로입니다.")
@@ -1232,12 +1280,19 @@ class ComfyInstallerService:
                         process = None
 
             self._set_phase("config")
+            default_workflows = self._prepare_default_workflows(
+                release_version=release_version,
+                required=True,
+            )
             config_update = apply_installed_config(
                 config_path=self.config_path,
                 requirements_dir=self.config_backup_dir,
                 comfy_root=self.comfy_root,
                 workflow_bindings=selection.workflow_bindings,
                 required_bindings=selection.workflow_bindings.keys(),
+                default_workflow_bindings=(
+                    default_workflows.workflow_bindings
+                ),
             )
 
             self._set_phase("complete")

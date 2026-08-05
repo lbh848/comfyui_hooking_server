@@ -170,7 +170,9 @@ def _set_dotted(config: dict, dotted_key: str, value: str) -> None:
     cursor = config
     for part in parts[:-1]:
         existing = cursor.get(part)
-        if existing is None:
+        if existing is None or (
+            isinstance(existing, str) and not existing.strip()
+        ):
             existing = {}
             cursor[part] = existing
         if not isinstance(existing, dict):
@@ -179,6 +181,92 @@ def _set_dotted(config: dict, dotted_key: str, value: str) -> None:
             )
         cursor = existing
     cursor[parts[-1]] = value
+
+
+_MISSING = object()
+
+
+def _get_dotted(config: Mapping[str, Any], dotted_key: str) -> Any:
+    cursor: Any = config
+    for part in dotted_key.split("."):
+        if not isinstance(cursor, Mapping) or part not in cursor:
+            return _MISSING
+        cursor = cursor[part]
+    return cursor
+
+
+def _normalize_embedded_workflow_bindings(
+    workflow_bindings: Mapping[str, str],
+    *,
+    comfy_root: Path,
+    label: str,
+) -> dict[str, str]:
+    workflow_root = (comfy_root / "user" / "default" / "workflows").resolve()
+    normalized: dict[str, str] = {}
+    for raw_key, raw_value in workflow_bindings.items():
+        key = str(raw_key).strip()
+        if not key:
+            print(
+                f"[COMFY_INSTALL][CONFIG] {label} 바인딩 키가 비어 있습니다: "
+                f"key={raw_key!r}, value={raw_value!r}"
+            )
+            raise ConfigUpdateError(f"{label} 바인딩 키가 비어 있습니다.")
+        try:
+            workflow_path = Path(raw_value).resolve()
+        except (OSError, RuntimeError, TypeError) as exc:
+            print(
+                f"[COMFY_INSTALL][CONFIG] {label} 경로 해석 실패: "
+                f"key={key!r}, value={raw_value!r}, error={exc}"
+            )
+            traceback.print_exc()
+            raise ConfigUpdateError(
+                f"{label} 경로를 해석할 수 없습니다: key={key!r}"
+            ) from exc
+        try:
+            workflow_path.relative_to(workflow_root)
+        except ValueError as exc:
+            print(
+                f"[COMFY_INSTALL][CONFIG] {label} 경로가 내장 Comfy "
+                f"워크플로우 폴더 밖입니다: key={key!r}, path={workflow_path}"
+            )
+            raise ConfigUpdateError(
+                f"{label} 경로가 설치 폴더 밖을 가리킵니다: "
+                f"key={key!r}, path={workflow_path}"
+            ) from exc
+        if not workflow_path.is_file():
+            print(
+                f"[COMFY_INSTALL][CONFIG] {label} 파일이 없습니다: "
+                f"key={key!r}, path={workflow_path}"
+            )
+            raise ConfigUpdateError(
+                f"{label} 파일이 없습니다: key={key!r}, path={workflow_path}"
+            )
+        normalized[key] = str(workflow_path)
+    return normalized
+
+
+def _fill_empty_workflow_bindings(
+    config: dict,
+    workflow_bindings: Mapping[str, str],
+) -> list[str]:
+    filled: list[str] = []
+    for key, value in workflow_bindings.items():
+        current = _get_dotted(config, key)
+        is_empty = (
+            current is _MISSING
+            or current is None
+            or (isinstance(current, str) and not current.strip())
+            or (isinstance(current, (dict, list)) and not current)
+        )
+        if not is_empty:
+            continue
+        _set_dotted(config, key, value)
+        filled.append(key)
+        print(
+            "[COMFY_INSTALL][CONFIG] 빈 기본 워크플로우 경로 설정: "
+            f"key={key}, path={value}"
+        )
+    return filled
 
 
 def _json_child_path(parent: str, key: str) -> str:
@@ -549,6 +637,7 @@ def retarget_config_to_embedded_comfy(
     backup_path: str | os.PathLike[str],
     old_comfy_root: str | os.PathLike[str] | None,
     new_comfy_root: str | os.PathLike[str],
+    default_workflow_bindings: Mapping[str, str] | None = None,
 ) -> ConfigRetargetResult:
     config_file = Path(config_path).resolve()
     backup_root = Path(backup_dir).resolve()
@@ -601,8 +690,20 @@ def retarget_config_to_embedded_comfy(
         config = _read_json_object(config_file, "현재 설정")
         updated_paths: list[str] = []
         missing_targets: list[tuple[str, str]] = []
+        seeded = copy.deepcopy(config)
+        if default_workflow_bindings:
+            normalized_defaults = _normalize_embedded_workflow_bindings(
+                default_workflow_bindings,
+                comfy_root=new_root,
+                label="기본 워크플로우",
+            )
+            defaulted_keys = _fill_empty_workflow_bindings(
+                seeded,
+                normalized_defaults,
+            )
+            updated_paths.extend(f"$.{key}" for key in defaulted_keys)
         updated = _retarget_descendant_paths(
-            config,
+            seeded,
             json_path="$",
             old_root=old_root,
             new_root=new_root,
@@ -680,6 +781,7 @@ def apply_installed_config(
     comfy_root: str | os.PathLike[str],
     workflow_bindings: Mapping[str, str],
     required_bindings: Iterable[str],
+    default_workflow_bindings: Mapping[str, str] | None = None,
     comfy_port: int = 8188,
 ) -> ConfigUpdateResult:
     config_file = Path(config_path).resolve()
@@ -699,29 +801,26 @@ def apply_installed_config(
                 "워크플로우 바인딩이 누락되었습니다: " + ", ".join(missing)
             )
 
-        normalized_bindings: dict[str, str] = {}
-        workflow_root = (install_root / "user" / "default" / "workflows").resolve()
-        for key in required:
-            workflow_path = Path(workflow_bindings[key]).resolve()
-            try:
-                workflow_path.relative_to(workflow_root)
-            except ValueError as exc:
-                raise ConfigUpdateError(
-                    "워크플로우 경로가 설치 폴더 밖을 가리킵니다: "
-                    f"key={key!r}, path={workflow_path}"
-                ) from exc
-            if not workflow_path.is_file():
-                raise ConfigUpdateError(
-                    f"설치된 워크플로우 파일이 없습니다: key={key!r}, "
-                    f"path={workflow_path}"
-                )
-            normalized_bindings[key] = str(workflow_path)
+        normalized_bindings = _normalize_embedded_workflow_bindings(
+            {key: workflow_bindings[key] for key in required},
+            comfy_root=install_root,
+            label="설치된 워크플로우",
+        )
+        normalized_defaults = _normalize_embedded_workflow_bindings(
+            default_workflow_bindings or {},
+            comfy_root=install_root,
+            label="기본 워크플로우",
+        )
 
         before_hash = _sha256_file(config_file)
         config = _read_json_object(config_file, "현재 설정")
         updated = copy.deepcopy(config)
         for key, value in normalized_bindings.items():
             _set_dotted(updated, key, value)
+        defaulted_keys = _fill_empty_workflow_bindings(
+            updated,
+            normalized_defaults,
+        )
 
         lora_base = install_root / "models" / "loras" / "SOYA_CHAR_LORA"
         direct_updates = {
@@ -752,7 +851,11 @@ def apply_installed_config(
             raise ConfigUpdateError("config.json 저장 후 재검증 값이 일치하지 않습니다.")
         after_hash = _sha256_file(config_file)
         all_updated_keys = tuple(
-            sorted(set(normalized_bindings) | set(direct_updates))
+            sorted(
+                set(normalized_bindings)
+                | set(defaulted_keys)
+                | set(direct_updates)
+            )
         )
         print(
             "[COMFY_INSTALL][CONFIG] 설치 경로 설정 적용 완료: "

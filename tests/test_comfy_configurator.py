@@ -53,6 +53,9 @@ def test_config_apply_backs_up_updates_and_restores(tmp_path):
             "illustration_workflow_source_paths.v1",
             "asset_workflow_source_path",
         ],
+        default_workflow_bindings={
+            "debug_workflow_source_path": str(second),
+        },
     )
 
     updated = json.loads(config_path.read_text(encoding="utf-8"))
@@ -60,6 +63,7 @@ def test_config_apply_backs_up_updates_and_restores(tmp_path):
     assert updated["unrelated"] == "preserve me"
     assert updated["illustration_workflow_source_paths"]["v1"] == str(first)
     assert updated["asset_workflow_source_path"] == str(second)
+    assert updated["debug_workflow_source_path"] == str(second)
     assert updated["comfy_input_dir"] == str(comfy / "input")
     assert updated["outfit_mode_enabled"] is False
     assert updated["outfit_workflow_source_path"] == ""
@@ -285,6 +289,63 @@ def test_config_only_retarget_uses_installer_backup_and_updates_direct_paths(
         new_comfy / "user" / "default" / "workflows" / "main.json"
     )
     assert result.already_retargeted is False
+
+
+def test_config_retarget_fills_only_empty_paths_from_library_bindings(
+    tmp_path,
+):
+    config_path = tmp_path / "config.json"
+    backup_dir = tmp_path / "comfy" / ".installer-state" / "backups" / "config"
+    new_comfy = tmp_path / "comfy"
+    workflows = new_comfy / "user" / "default" / "workflows" / "SOYA_USER"
+    (new_comfy / ".git").mkdir(parents=True)
+    workflows.mkdir(parents=True)
+    utility_default = workflows / "utility__v2.json"
+    debug_default = workflows / "debug__v2.json"
+    lora_default = workflows / "lora_anima__v2.json"
+    _write_json(utility_default, {"1": {"class_type": "KSampler"}})
+    _write_json(debug_default, {"2": {"class_type": "KSampler"}})
+    _write_json(lora_default, {"3": {"class_type": "KSampler"}})
+    custom_utility = tmp_path / "mode_workflow" / "custom_utility.json"
+    custom_utility.parent.mkdir()
+    _write_json(custom_utility, {"custom": True})
+    original = {
+        "comfy_input_dir": str(new_comfy / "input"),
+        "utility_workflow_source_path": str(custom_utility),
+        "debug_workflow_source_path": "   ",
+        "lora_training_workflow_source_paths": "",
+    }
+    _write_json(config_path, original)
+    backup = backup_current_config(
+        config_path=config_path,
+        backup_dir=backup_dir,
+        reason="comfy_embedded_retarget",
+    )
+
+    result = retarget_config_to_embedded_comfy(
+        config_path=config_path,
+        backup_dir=backup_dir,
+        backup_path=backup["backup_path"],
+        old_comfy_root=None,
+        new_comfy_root=new_comfy,
+        default_workflow_bindings={
+            "utility_workflow_source_path": str(utility_default),
+            "debug_workflow_source_path": str(debug_default),
+            "lora_training_workflow_source_paths.anima": str(lora_default),
+        },
+    )
+
+    updated = json.loads(config_path.read_text(encoding="utf-8"))
+    assert updated["utility_workflow_source_path"] == str(custom_utility)
+    assert updated["debug_workflow_source_path"] == str(debug_default)
+    assert updated["lora_training_workflow_source_paths"]["anima"] == str(
+        lora_default
+    )
+    assert result.updated_paths == (
+        "$.debug_workflow_source_path",
+        "$.lora_training_workflow_source_paths.anima",
+    )
+    assert json.loads(result.backup_path.read_text(encoding="utf-8")) == original
 
 
 def test_v4_migration_still_rejects_unrelated_config_paths(tmp_path):

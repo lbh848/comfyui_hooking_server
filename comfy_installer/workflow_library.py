@@ -553,6 +553,53 @@ def _load_release(library_root: Path, release_version: str) -> tuple[Path, dict]
     return root, state
 
 
+def latest_release_version(
+    library_root: str | os.PathLike[str],
+) -> str:
+    """Return the newest unpacked workflow-library release."""
+    distributed_root = (
+        Path(library_root).resolve() / DISTRIBUTION_LIBRARY_DIRNAME
+    )
+    candidates: list[tuple[int, str]] = []
+    try:
+        if not distributed_root.is_dir():
+            print(
+                "[COMFY_INSTALL][WORKFLOW_LIBRARY] 기본 워크플로우 배포 "
+                f"폴더가 없습니다: {distributed_root}"
+            )
+            raise WorkflowLibraryError(
+                "기본 경로를 설정할 워크플로우 팩이 없습니다. "
+                "먼저 워크플로우 팩을 풀어주세요."
+            )
+        for child in distributed_root.iterdir():
+            if (
+                child.is_dir()
+                and _RELEASE_RE.fullmatch(child.name)
+                and (child / _STATE_FILENAME).is_file()
+            ):
+                candidates.append((int(child.name[1:]), child.name))
+        if not candidates:
+            print(
+                "[COMFY_INSTALL][WORKFLOW_LIBRARY] 사용할 수 있는 기본 "
+                f"워크플로우 배포 버전이 없습니다: {distributed_root}"
+            )
+            raise WorkflowLibraryError(
+                "기본 경로를 설정할 워크플로우 배포 버전이 없습니다."
+            )
+        return max(candidates)[1]
+    except WorkflowLibraryError:
+        raise
+    except Exception as exc:
+        print(
+            "[COMFY_INSTALL][WORKFLOW_LIBRARY] 최신 기본 워크플로우 "
+            f"버전 확인 실패: root={distributed_root}, error={exc}"
+        )
+        traceback.print_exc()
+        raise WorkflowLibraryError(
+            f"최신 기본 워크플로우 버전 확인 실패: {exc}"
+        ) from exc
+
+
 def import_user_copies(
     *,
     comfy_root: str | os.PathLike[str],
@@ -626,6 +673,89 @@ def import_user_copies(
         model_ids=tuple(sorted(model_ids)),
         user_files=tuple(user_files),
     )
+
+
+def import_default_user_copies(
+    *,
+    comfy_root: str | os.PathLike[str],
+    library_root: str | os.PathLike[str],
+    release_version: str | None = None,
+    log: LogCallback | None = None,
+) -> WorkflowSelection:
+    """Ensure every workflow in one release has an embedded user copy.
+
+    The release metadata is the sole source of truth for default config
+    bindings.  A future pack can add or rename workflows without adding a
+    second filename map to the installer or server config.
+    """
+    release = release_version or latest_release_version(library_root)
+    try:
+        _, state = _load_release(Path(library_root).resolve(), release)
+        items = state.get("items")
+        if not isinstance(items, list) or not items:
+            print(
+                "[COMFY_INSTALL][WORKFLOW_LIBRARY] 기본 워크플로우 항목이 "
+                f"비어 있습니다: release={release}, items={items!r}"
+            )
+            raise WorkflowLibraryError(
+                f"기본 워크플로우 배포 항목이 비어 있습니다: {release}"
+            )
+        item_ids: list[str] = []
+        expected_bindings: set[str] = set()
+        for item in items:
+            if not isinstance(item, dict):
+                print(
+                    "[COMFY_INSTALL][WORKFLOW_LIBRARY] 기본 워크플로우 "
+                    f"항목 형식 오류: release={release}, item={item!r}"
+                )
+                raise WorkflowLibraryError(
+                    f"기본 워크플로우 항목 형식이 잘못되었습니다: {release}"
+                )
+            item_id = str(item.get("id") or "").strip()
+            bindings = item.get("bindings")
+            if not item_id or not isinstance(bindings, list) or not bindings:
+                print(
+                    "[COMFY_INSTALL][WORKFLOW_LIBRARY] 기본 워크플로우 "
+                    "ID/바인딩 누락: "
+                    f"release={release}, item={item!r}"
+                )
+                raise WorkflowLibraryError(
+                    f"기본 워크플로우 ID/바인딩이 누락되었습니다: {release}"
+                )
+            item_ids.append(item_id)
+            expected_bindings.update(str(value) for value in bindings)
+
+        selection = import_user_copies(
+            comfy_root=comfy_root,
+            library_root=library_root,
+            release_version=release,
+            selected_item_ids=item_ids,
+            log=log,
+        )
+        actual_bindings = set(selection.workflow_bindings)
+        if actual_bindings != expected_bindings:
+            print(
+                "[COMFY_INSTALL][WORKFLOW_LIBRARY] 기본 워크플로우 바인딩 "
+                "검증 실패: "
+                f"release={release}, missing="
+                f"{sorted(expected_bindings - actual_bindings)}, extra="
+                f"{sorted(actual_bindings - expected_bindings)}"
+            )
+            raise WorkflowLibraryError(
+                f"기본 워크플로우 바인딩 검증에 실패했습니다: {release}"
+            )
+        return selection
+    except WorkflowLibraryError:
+        raise
+    except Exception as exc:
+        print(
+            "[COMFY_INSTALL][WORKFLOW_LIBRARY] 기본 워크플로우 사용자 "
+            f"사본 준비 실패: release={release}, error={exc}"
+        )
+        traceback.print_exc()
+        raise WorkflowLibraryError(
+            f"기본 워크플로우 사용자 사본 준비 실패: {exc}"
+        ) from exc
 
 
 def selection_requirements(

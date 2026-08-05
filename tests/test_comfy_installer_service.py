@@ -14,6 +14,7 @@ from comfy_installer.service import ComfyInstallerService, _INSTALL_PHASES
 from comfy_installer.workflow_library import (
     LEGACY_USER_WORKFLOW_DIRNAME,
     USER_WORKFLOW_DIRNAME,
+    WorkflowSelection,
 )
 
 
@@ -224,6 +225,64 @@ def test_config_only_retarget_uses_installer_backup_directory(tmp_path: Path) ->
     assert updated["comfy_workflow_source_path"] == str(
         embedded_comfy / "user" / "default" / "workflows" / "main.json"
     )
+
+
+def test_config_only_retarget_fills_missing_paths_from_library_defaults(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = tmp_path / "config.json"
+    embedded_comfy = tmp_path / "comfy"
+    workflow_root = embedded_comfy / "user" / "default" / "workflows" / "SOYA_USER"
+    (embedded_comfy / ".git").mkdir(parents=True)
+    workflow_root.mkdir(parents=True)
+    default_tag = workflow_root / "tag__v4.json"
+    default_debug = workflow_root / "debug__v4.json"
+    default_tag.write_text("{}\n", encoding="utf-8")
+    default_debug.write_text("{}\n", encoding="utf-8")
+    config.write_text(
+        json.dumps(
+            {
+                "comfy_input_dir": str(embedded_comfy / "input"),
+                "tag_analysis_workflow_source_path": "",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    def fake_import_defaults(**_kwargs):
+        return WorkflowSelection(
+            release_version="v4",
+            selected_item_ids=("tag", "debug"),
+            workflow_bindings={
+                "tag_analysis_workflow_source_path": str(default_tag),
+                "debug_workflow_source_path": str(default_debug),
+            },
+            model_ids=(),
+            user_files=(str(default_tag), str(default_debug)),
+        )
+
+    monkeypatch.setattr(
+        service_module,
+        "import_default_user_copies",
+        fake_import_defaults,
+    )
+    service = ComfyInstallerService(
+        project_root=tmp_path,
+        config_path=config,
+        requirements_dir=tmp_path / "요구사항",
+    )
+
+    result = service.retarget_config_to_embedded()
+
+    updated = json.loads(config.read_text(encoding="utf-8"))
+    assert updated["tag_analysis_workflow_source_path"] == str(default_tag)
+    assert updated["debug_workflow_source_path"] == str(default_debug)
+    assert set(result["config"]["updated_paths"]) == {
+        "$.tag_analysis_workflow_source_path",
+        "$.debug_workflow_source_path",
+    }
 
 
 def test_v4_migration_runs_in_background_and_publishes_progress(
