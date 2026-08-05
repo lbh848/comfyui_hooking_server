@@ -255,6 +255,8 @@ def test_lv2_navigation_keeps_storage_names_separate_from_automatch_chain_names(
 
     # Name-mapping export keys target those sanitized storage directories.
     assert "const safeName = match.name.replace(" in name_mapping_export
+    assert "const cleanedValue = atExtractEmotion(imgName);" in name_mapping_export
+    assert "window._atTagPreview" not in name_mapping_export
     assert "expressionMapping[safeName] = cleanedValue;" in name_mapping_export
 
     # Chain slots and per-expression settings keep the original tag name.
