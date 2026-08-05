@@ -274,12 +274,15 @@ def search_tags(query: str, limit: int = 20) -> list[dict]:
     # 영문 → 태그명 prefix/substring 매치
     q_lower = q.lower().replace('_', ' ')
 
+    exact_match = []
     prefix_match = []
     substr_match = []
     alias_match  = []
 
     for tag in _tags:
-        if tag['name'].startswith(q_lower):
+        if tag['name'] == q_lower:
+            exact_match.append({'name': tag['name'], 'description': tag.get('description', '')})
+        elif tag['name'].startswith(q_lower):
             prefix_match.append({'name': tag['name'], 'description': tag.get('description', '')})
         elif q_lower in tag['name']:
             substr_match.append({'name': tag['name'], 'description': tag.get('description', '')})
@@ -289,5 +292,5 @@ def search_tags(query: str, limit: int = 20) -> list[dict]:
                     alias_match.append({'name': tag['name'], 'description': tag.get('description', '')})
                     break
 
-    combined = prefix_match + substr_match + alias_match
+    combined = exact_match + prefix_match + substr_match + alias_match
     return combined[:limit]

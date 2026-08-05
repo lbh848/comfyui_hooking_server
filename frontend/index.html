@@ -10146,6 +10146,8 @@
         .pm-field, .pm-form-group { margin-bottom: 13px; }
         .pm-field label, .pm-form-group label { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 6px; font-weight: 650; font-size: 0.78rem; }
         .pm-field-hint { color: var(--text2); font-size: 0.68rem; font-weight: 400; }
+        .pm-tag-input-wrap { position: relative; }
+        .pm-tag-input-wrap textarea { display: block; }
         .pm-input, .pm-field select, .pm-field input, .pm-field textarea, .pm-form-group select, .pm-form-group input, .pm-form-group textarea { width: 100%; border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; background: color-mix(in srgb, var(--bg) 76%, var(--surface)); color: var(--text); font: inherit; font-size: 0.8rem; outline: none; transition: border-color 0.15s, box-shadow 0.15s; }
         .pm-field textarea, .pm-form-group textarea { min-height: 138px; resize: vertical; line-height: 1.55; }
         .pm-input:focus, .pm-field select:focus, .pm-field input:focus, .pm-field textarea:focus { border-color: color-mix(in srgb, var(--accent) 72%, var(--border)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 13%, transparent); }
@@ -10173,6 +10175,7 @@
         .pm-preview-empty { color: var(--text2); font-size: 0.7rem; }
         .pm-tags-preview { display: flex; flex-wrap: wrap; gap: 5px; }
         .pm-tag-chip { display: inline-block; max-width: 100%; padding: 3px 7px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text2); font-size: 0.68rem; overflow-wrap: anywhere; }
+        .pm-tag-chip.explainable { cursor: help; }
         .pm-tag-chip.common { border-color: color-mix(in srgb, #4aa3ff 45%, var(--border)); color: color-mix(in srgb, #4aa3ff 70%, var(--text)); background: color-mix(in srgb, #4aa3ff 10%, transparent); }
         .pm-tag-chip.added { border-color: color-mix(in srgb, var(--success) 45%, var(--border)); color: color-mix(in srgb, var(--success) 72%, var(--text)); background: color-mix(in srgb, var(--success) 10%, transparent); }
         .pm-tag-chip.removed { border-color: color-mix(in srgb, var(--error) 38%, var(--border)); color: color-mix(in srgb, var(--error) 67%, var(--text)); background: color-mix(in srgb, var(--error) 9%, transparent); }
@@ -14771,7 +14774,10 @@
                                                     <span id="pm-editor-content-label">태그</span>
                                                     <span class="pm-field-hint" id="pm-editor-content-hint">쉼표로 구분 · 괄호 안 쉼표 유지</span>
                                                 </label>
-                                                <textarea id="pm-editor-content" placeholder="tag1, tag2, tag3, ..." oninput="pmEditorChanged()"></textarea>
+                                                <div class="pm-tag-input-wrap">
+                                                    <textarea id="pm-editor-content" placeholder="tag1, tag2, tag3, ..." oninput="pmEditorChanged()"></textarea>
+                                                    <div class="tag-autocomplete-dropdown" id="ac-pm-editor-content"></div>
+                                                </div>
                                             </div>
                                             <div class="pm-field" style="margin-bottom:0;">
                                                 <label>입력 미리보기 <span class="pm-field-hint" id="pm-preview-count">0개</span></label>
@@ -60663,19 +60669,21 @@
         const _tagDescCache = new Map();
 
         async function _lookupTagDescription(tagName) {
-            const key = tagName.trim().toLowerCase().replace(/\s+/g, ' ');
+            const key = tagName.trim().toLowerCase().replace(/_/g, ' ').replace(/\s+/g, ' ');
             if (!key) return null;
             if (_tagDescCache.has(key)) return _tagDescCache.get(key);
             let desc = null;
             try {
                 const resp = await fetch(`/api/autocomplete?query=${encodeURIComponent(key)}&limit=15`);
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
                 const tags = await resp.json();
                 if (Array.isArray(tags)) {
-                    const exact = tags.find(t => (t.name || '').toLowerCase() === key);
-                    const hit = exact || tags[0];
-                    desc = (hit && hit.description && hit.description.trim()) ? hit.description.trim() : null;
+                    const exact = tags.find(t => (t.name || '').trim().toLowerCase().replace(/\s+/g, ' ') === key);
+                    desc = (exact && exact.description && exact.description.trim()) ? exact.description.trim() : null;
                 }
-            } catch (e) { /* 네트워크/파싱 실패 시 설명 없음 취급 */ }
+            } catch (e) {
+                console.error('[TAG_DESC] 태그 설명 조회 실패:', { tagName, error: e });
+            }
             _tagDescCache.set(key, desc);
             return desc;
         }
@@ -70384,16 +70392,26 @@
         // ─── 태그 자동완성 ────────────────────────────────────
         const TagAutocomplete = {
             _timers: {},
+            _requestIds: {},
             _activeDropdown: null,
 
-            attach(inputId, dropdownId, mode) {
+            attach(inputId, dropdownId, mode, options = {}) {
                 const input = document.getElementById(inputId);
                 const dropdown = document.getElementById(dropdownId);
                 if (!input || !dropdown) return;
 
                 const onInput = () => {
                     clearTimeout(this._timers[inputId]);
-                    this._timers[inputId] = setTimeout(() => this._search(input, dropdown, mode), 200);
+                    const requestId = (this._requestIds[inputId] || 0) + 1;
+                    this._requestIds[inputId] = requestId;
+                    if (!this._isEnabled(options)) {
+                        dropdown.classList.remove('visible');
+                        return;
+                    }
+                    this._timers[inputId] = setTimeout(
+                        () => this._search(input, dropdown, mode, options, requestId),
+                        200,
+                    );
                 };
 
                 input.addEventListener('input', onInput);
@@ -70402,44 +70420,87 @@
                     if (!dropdown.classList.contains('visible')) return;
                     if (e.key === 'ArrowDown') { e.preventDefault(); this._moveFocus(dropdown, 1); }
                     else if (e.key === 'ArrowUp') { e.preventDefault(); this._moveFocus(dropdown, -1); }
-                    else if (e.key === 'Enter') {
+                    else if (e.key === 'Enter' || e.key === 'Tab') {
                         const focused = dropdown.querySelector('.ac-item.focused');
-                        if (focused) { e.preventDefault(); this._select(input, dropdown, focused.textContent, mode); }
-                    } else if (e.key === 'Escape') { dropdown.classList.remove('visible'); }
+                        if (focused) {
+                            e.preventDefault();
+                            this._select(input, dropdown, focused.dataset.tag || focused.textContent, mode, options);
+                        }
+                    } else if (e.key === 'Escape') {
+                        dropdown.classList.remove('visible');
+                        _hideTagChipTooltip();
+                    }
                 });
+            },
+
+            _isEnabled(options) {
+                if (typeof options.enabled !== 'function') return true;
+                try {
+                    return Boolean(options.enabled());
+                } catch (e) {
+                    console.error('[TAG_AUTOCOMPLETE] 활성 조건 확인 실패:', e);
+                    return false;
+                }
+            },
+
+            dismiss(inputId, dropdownId) {
+                clearTimeout(this._timers[inputId]);
+                this._requestIds[inputId] = (this._requestIds[inputId] || 0) + 1;
+                const dropdown = document.getElementById(dropdownId);
+                if (dropdown) dropdown.classList.remove('visible');
+                _hideTagChipTooltip();
             },
 
             _getCurrentWord(el, mode) {
                 if (mode === 'textarea') {
                     const pos = el.selectionStart;
-                    const val = el.value.substring(0, pos);
-                    const match = val.match(/([^,;|\n]+)$/);
-                    if (match) {
-                        const word = match[0].replace(/^\s+/, '');
-                        if (word.length >= 2) return { word, start: pos - word.length };
+                    const valueBeforeCursor = el.value.substring(0, pos);
+                    const bracketStack = [];
+                    const closingPairs = { ')': '(', ']': '[', '}': '{' };
+                    let start = 0;
+                    for (let index = 0; index < valueBeforeCursor.length; index++) {
+                        const char = valueBeforeCursor[index];
+                        if (char === '(' || char === '[' || char === '{') {
+                            bracketStack.push(char);
+                        } else if (Object.prototype.hasOwnProperty.call(closingPairs, char)) {
+                            if (bracketStack[bracketStack.length - 1] === closingPairs[char]) bracketStack.pop();
+                        } else if (bracketStack.length === 0 && (char === ',' || char === ';' || char === '|' || char === '\n')) {
+                            start = index + 1;
+                        }
                     }
+                    const rawWord = valueBeforeCursor.substring(start);
+                    const leadingSpaceCount = (rawWord.match(/^\s*/) || [''])[0].length;
+                    const word = rawWord.substring(leadingSpaceCount);
+                    if (word.length >= 2) return { word, start: start + leadingSpaceCount };
                     return null;
                 }
                 const v = el.value.trim();
                 return v.length >= 2 ? { word: v, start: 0 } : null;
             },
 
-            async _search(input, dropdown, mode) {
+            async _search(input, dropdown, mode, options = {}, requestId = 0) {
+                if (!this._isEnabled(options)) {
+                    dropdown.classList.remove('visible');
+                    return;
+                }
                 const info = this._getCurrentWord(input, mode);
                 if (!info) { dropdown.classList.remove('visible'); return; }
                 const query = info.word.replace(/ /g, '_');
                 try {
                     const resp = await fetch(`/api/autocomplete?query=${encodeURIComponent(query)}&limit=15`);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
                     const tags = await resp.json();
+                    if (requestId !== this._requestIds[input.id] || !this._isEnabled(options)) return;
+                    if (!Array.isArray(tags)) throw new TypeError('자동완성 응답이 배열이 아닙니다.');
                     if (!tags.length) { dropdown.classList.remove('visible'); return; }
-                    const qLower = query.toLowerCase();
+                    const qLower = info.word.toLowerCase().replace(/_/g, ' ');
                     let html = '';
                     for (const tag of tags) {
                         const name = escapeHtml(tag.name);
                         const escaped = qLower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
                         const highlighted = name.replace(new RegExp(`(${escaped})`, 'gi'), '<mark>$1</mark>');
                         const desc = tag.description ? ` data-desc="${escapeAttr(tag.description)}"` : '';
-                        html += `<div class="ac-item"${desc}>${highlighted}</div>`;
+                        html += `<div class="ac-item" data-tag="${escapeAttr(tag.name)}"${desc}>${highlighted}</div>`;
                     }
                     dropdown.innerHTML = html;
                     dropdown.classList.add('visible');
@@ -70447,7 +70508,7 @@
                     dropdown.querySelectorAll('.ac-item').forEach(item => {
                         item.addEventListener('mousedown', (e) => {
                             e.preventDefault();
-                            this._select(input, dropdown, item.textContent, mode);
+                            this._select(input, dropdown, item.dataset.tag || item.textContent, mode, options);
                         });
                         const desc = item.getAttribute('data-desc');
                         if (desc) {
@@ -70463,24 +70524,36 @@
                             });
                         }
                     });
-                } catch (e) { dropdown.classList.remove('visible'); }
+                } catch (e) {
+                    console.error('[TAG_AUTOCOMPLETE] 태그 검색 실패:', { query: info.word, error: e });
+                    dropdown.classList.remove('visible');
+                }
             },
 
-            _select(input, dropdown, tagName, mode) {
+            _select(input, dropdown, tagName, mode, options = {}) {
                 if (mode === 'textarea') {
                     const info = this._getCurrentWord(input, mode);
                     if (info) {
                         const before = input.value.substring(0, info.start);
                         const after = input.value.substring(input.selectionStart);
-                        input.value = before + tagName + ', ' + after;
-                        const newPos = info.start + tagName.length + 2;
+                        const suffix = /^\s*[,;|\n]/.test(after) ? '' : ', ';
+                        input.value = before + tagName + suffix + after;
+                        const newPos = info.start + tagName.length + suffix.length;
                         input.setSelectionRange(newPos, newPos);
                     }
                 } else {
                     input.value = tagName;
                 }
                 dropdown.classList.remove('visible');
+                _hideTagChipTooltip();
                 input.focus();
+                if (typeof options.onSelect === 'function') {
+                    try {
+                        options.onSelect({ input, tagName });
+                    } catch (e) {
+                        console.error('[TAG_AUTOCOMPLETE] 선택 후 처리 실패:', { tagName, error: e });
+                    }
+                }
             },
 
             _moveFocus(dropdown, dir) {
@@ -70500,7 +70573,8 @@
             if (!e.target.closest('.inline-add')
                 && !e.target.closest('.form-group')
                 && !e.target.closest('.cm-tag-add')
-                && !e.target.closest('.cm-text-wrap')) {
+                && !e.target.closest('.cm-text-wrap')
+                && !e.target.closest('.pm-tag-input-wrap')) {
                 document.querySelectorAll('.tag-autocomplete-dropdown').forEach(d => d.classList.remove('visible'));
             }
         });
@@ -76517,6 +76591,7 @@
             contentLabel.textContent = isNaturalLanguage ? '자연어 텍스트' : '태그';
             contentHint.textContent = isNaturalLanguage ? '원문 그대로 저장' : '쉼표로 구분 · 괄호 안 쉼표 유지';
             content.placeholder = isNaturalLanguage ? '자연어 텍스트를 입력하세요...' : 'tag1, tag2, tag3, ...';
+            TagAutocomplete.dismiss('pm-editor-content', 'ac-pm-editor-content');
             document.getElementById('pm-reset-editor').textContent = isEditing ? '변경 취소' : '입력 초기화';
             document.getElementById('pm-btn-save').textContent = isEditing ? '변경사항 저장' : '새 프리셋 추가';
             document.getElementById('pm-save-note').textContent = isEditing
@@ -76526,6 +76601,7 @@
         }
 
         function pmEditorChanged() {
+            _hideTagChipTooltip();
             const name = (document.getElementById('pm-editor-name').value || '').trim();
             const draftValue = pmParseDraftValue();
             if (pmSelectedPreset) {
@@ -76557,6 +76633,10 @@
                 chip.className = 'pm-tag-chip';
                 chip.style.whiteSpace = pmIsNaturalLanguage() ? 'pre-wrap' : '';
                 chip.textContent = value;
+                if (!pmIsNaturalLanguage()) {
+                    chip.classList.add('explainable');
+                    _attachTagChipTooltip(chip, value);
+                }
                 preview.appendChild(chip);
             }
         }
@@ -76688,6 +76768,7 @@
         }
 
         function pmRenderComparisonPanels(target, draftValue) {
+            _hideTagChipTooltip();
             const existingBox = document.getElementById('pm-compare-existing');
             const draftBox = document.getElementById('pm-compare-draft');
             document.getElementById('pm-compare-legend').style.display = pmIsNaturalLanguage() ? 'none' : 'flex';
@@ -76723,8 +76804,9 @@
             }
             for (const tag of tags) {
                 const chip = document.createElement('span');
-                chip.className = `pm-tag-chip ${classForTag(tag)}`;
+                chip.className = `pm-tag-chip explainable ${classForTag(tag)}`;
                 chip.textContent = tag;
+                _attachTagChipTooltip(chip, tag);
                 container.appendChild(chip);
             }
         }
@@ -77108,6 +77190,7 @@
 
         function pmFinalizeTraceResults(matchRows, presetTags, totalFound) {
             const results = document.getElementById('pm-trace-results');
+            _hideTagChipTooltip();
             document.getElementById('pm-btn-clear').style.display = '';
             if (matchRows.length === 0) {
                 results.innerHTML = '<div class="pm-trace-empty">이 프리셋 값이 사용된 에셋을 찾지 못했습니다.</div>';
@@ -77118,9 +77201,16 @@
                 <span><strong style="color:var(--text);">${totalFound || matchRows.length}개</strong> 에셋 발견</span>
                 <span class="pm-tags-preview">${tags}</span>
             </div>${matchRows.join('')}`;
+            results.querySelectorAll('.pm-trace-summary .pm-tag-chip').forEach((chip, index) => {
+                const tag = (presetTags || [])[index];
+                if (!tag) return;
+                chip.classList.add('explainable');
+                _attachTagChipTooltip(chip, tag);
+            });
         }
 
         function pmClearTraceResults() {
+            _hideTagChipTooltip();
             if (pmTraceAbortController) {
                 pmTraceAbortController.abort();
                 pmTraceAbortController = null;
@@ -77130,6 +77220,11 @@
             document.getElementById('pm-btn-clear').style.display = 'none';
             document.getElementById('pm-trace-results').innerHTML = '<div class="pm-empty">아직 추적 결과가 없습니다.</div>';
         }
+
+        TagAutocomplete.attach('pm-editor-content', 'ac-pm-editor-content', 'textarea', {
+            enabled: () => !pmIsNaturalLanguage(),
+            onSelect: () => pmEditorChanged(),
+        });
         // IL_RATE(학습률) 추천값 표 데이터: [스텝, 학습률, 기본값여부]
         const IL_RATE_RECOMMEND = [
             [50, 0.000500, true], [100, 0.000480], [200, 0.000442], [300, 0.000408, false, 0.0003],

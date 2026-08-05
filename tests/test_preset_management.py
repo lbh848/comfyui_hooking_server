@@ -146,8 +146,14 @@ def test_frontend_uses_unified_preset_workspace_and_explicit_save_action():
 
     assert 'id="pm-view-manage"' in source
     assert 'id="pm-editor-name"' in source
+    assert 'id="ac-pm-editor-content"' in source
     assert 'id="pm-compare-target"' in source
     assert 'id="pm-trace-results"' in source
     assert "action: 'save_managed_preset'" in source
+    assert "TagAutocomplete.attach('pm-editor-content', 'ac-pm-editor-content', 'textarea'" in source
+    assert "enabled: () => !pmIsNaturalLanguage()" in source
+    assert "_attachTagChipTooltip(chip, value)" in source
+    assert "_attachTagChipTooltip(chip, tag)" in source
+    assert "replace(/_/g, ' ').replace(/\\s+/g, ' ')" in source
     assert 'id="pm-view-batch"' not in source
     assert 'id="pm-view-trace"' not in source
