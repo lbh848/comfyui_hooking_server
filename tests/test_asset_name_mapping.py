@@ -10,7 +10,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from modes.asset_mode import AssetMode
+from modes.asset_mode import AUTOMATCH_DEFAULT_OUTFIT_DIR, AssetMode
 
 
 asset_mode_module = importlib.import_module("modes.asset_mode")
@@ -354,6 +354,40 @@ def test_get_export_info_does_not_delete_empty_directories(mode):
     assert info["outfits"] == []
     assert info["expressions"] == []
     assert empty.is_dir()
+
+
+def test_automatch_defaults_are_excluded_from_name_mapping_and_export(mode):
+    asset_mode, root, _, _ = mode
+    _write_representative(root, "alice", "uniform", "angry")
+    _write_representative(
+        root,
+        "alice",
+        AUTOMATCH_DEFAULT_OUTFIT_DIR,
+        "angry_v1",
+        filename="default.webp",
+    )
+
+    info = asset_mode.get_character_export_info("alice")
+
+    assert info["outfits"] == ["uniform"]
+    assert info["expressions"] == ["angry"]
+
+    plan = asset_mode.build_character_export_plan(
+        "alice",
+        mapping_override=_mapping(
+            outfits={"uniform": "school"},
+            expressions={"angry": "angry"},
+        ),
+    )
+
+    assert plan["success"] is True
+    assert plan["selection"] == {
+        "outfits": ["uniform"],
+        "expressions": ["angry"],
+    }
+    assert [item["filename"] for item in plan["files"]] == [
+        "alice_school_angry.webp"
+    ]
 
 
 def test_representative_metadata_cannot_escape_expression_directory(mode, tmp_path):

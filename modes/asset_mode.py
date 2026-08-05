@@ -2522,7 +2522,7 @@ class AssetMode:
                 outfit_path = os.path.join(char_dir, outfit_dir_name)
                 if not os.path.isdir(outfit_path):
                     continue
-                if outfit_dir_name == "Lora":
+                if outfit_dir_name in ("Lora", AUTOMATCH_DEFAULT_OUTFIT_DIR):
                     continue
                 outfit_has_files = False
                 for expr_dir_name in sorted(os.listdir(outfit_path)):
@@ -2720,7 +2720,10 @@ class AssetMode:
         available_expressions = set()
         for outfit_name in sorted(os.listdir(char_dir)):
             outfit_path = os.path.join(char_dir, outfit_name)
-            if outfit_name == "Lora" or not os.path.isdir(outfit_path):
+            if (
+                outfit_name in ("Lora", AUTOMATCH_DEFAULT_OUTFIT_DIR)
+                or not os.path.isdir(outfit_path)
+            ):
                 continue
             available_outfits.append(outfit_name)
             for expression_name in sorted(os.listdir(outfit_path)):
