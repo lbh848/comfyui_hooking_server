@@ -95,6 +95,21 @@ def test_server_runs_workflow_path_migration_before_loading_config() -> None:
     )
 
 
+def test_common_settings_persist_absolute_workflow_base_dir() -> None:
+    server_source = Path("server.py").read_text(encoding="utf-8")
+    frontend_source = Path("frontend/index.html").read_text(encoding="utf-8")
+
+    assert '"workflow_base_dir": ""' in server_source
+    assert (
+        "currentConfig.workflow_base_dir || pathParts.baseDir"
+        in frontend_source
+    )
+    assert (
+        "workflow_base_dir: document.getElementById('setting-workflow-base-dir')"
+        in frontend_source
+    )
+
+
 def test_installed_compatibility_mode_is_reused_for_updates(tmp_path: Path) -> None:
     config = tmp_path / "config.json"
     config.write_text("{}\n", encoding="utf-8")
@@ -162,6 +177,13 @@ def test_v4_migration_backs_up_copies_and_retargets_config(tmp_path: Path) -> No
     assert json.loads(backup.read_text(encoding="utf-8")) == original
     updated = json.loads(config.read_text(encoding="utf-8"))
     assert updated["comfy_input_dir"] == str(embedded_comfy / "input")
+    assert updated["workflow_base_dir"] == str(
+        embedded_comfy
+        / "user"
+        / "default"
+        / "workflows"
+        / USER_WORKFLOW_DIRNAME
+    )
     assert updated["nested"]["lora"] == str(
         embedded_comfy / "models" / "loras" / "SOYA_CHAR_LORA"
     )
@@ -173,6 +195,7 @@ def test_v4_migration_backs_up_copies_and_retargets_config(tmp_path: Path) -> No
         / "character.safetensors"
     ).read_bytes() == b"lora"
     assert result["config"]["updated_paths"] == [
+        "$.workflow_base_dir",
         "$.comfy_input_dir",
         "$.nested.lora",
     ]
@@ -222,6 +245,13 @@ def test_config_only_retarget_uses_installer_backup_directory(tmp_path: Path) ->
     assert not requirements.exists()
     updated = json.loads(config.read_text(encoding="utf-8"))
     assert updated["comfy_input_dir"] == str(embedded_comfy / "input")
+    assert updated["workflow_base_dir"] == str(
+        embedded_comfy
+        / "user"
+        / "default"
+        / "workflows"
+        / USER_WORKFLOW_DIRNAME
+    )
     assert updated["comfy_workflow_source_path"] == str(
         embedded_comfy / "user" / "default" / "workflows" / "main.json"
     )
@@ -280,6 +310,7 @@ def test_config_only_retarget_fills_missing_paths_from_library_defaults(
     assert updated["tag_analysis_workflow_source_path"] == str(default_tag)
     assert updated["debug_workflow_source_path"] == str(default_debug)
     assert set(result["config"]["updated_paths"]) == {
+        "$.workflow_base_dir",
         "$.tag_analysis_workflow_source_path",
         "$.debug_workflow_source_path",
     }

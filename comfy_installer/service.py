@@ -64,6 +64,7 @@ from .updater import update_hooking_server_main
 from .workflow_library import (
     WorkflowSelection,
     WorkflowLibraryError,
+    embedded_workflow_base_dir,
     import_default_user_copies,
     import_user_copies,
     library_status,
@@ -367,6 +368,31 @@ class ComfyInstallerService:
             )
             return None
 
+    def _embedded_workflow_base_dir(self) -> Path:
+        if not self.comfy_root.is_dir() or not (
+            self.comfy_root / ".git"
+        ).is_dir():
+            print(
+                "[COMFY_INSTALL][SERVICE] 워크플로우 베이스 경로를 "
+                f"설정할 내장 Comfy가 없습니다: {self.comfy_root}"
+            )
+            raise InstallerServiceError(
+                f"내장 Comfy가 설치되지 않았습니다: {self.comfy_root}"
+            )
+        base_dir = embedded_workflow_base_dir(self.comfy_root)
+        try:
+            base_dir.mkdir(parents=True, exist_ok=True)
+        except Exception as exc:
+            print(
+                "[COMFY_INSTALL][SERVICE] 내장 워크플로우 베이스 폴더 "
+                f"생성 실패: path={base_dir}, error={exc}"
+            )
+            traceback.print_exc()
+            raise InstallerServiceError(
+                f"내장 워크플로우 베이스 폴더 생성 실패: {exc}"
+            ) from exc
+        return base_dir
+
     def unpack_workflow_pack(
         self,
         *,
@@ -514,6 +540,7 @@ class ComfyInstallerService:
                 )
             advance("migration_config")
             default_workflows = self._prepare_default_workflows()
+            workflow_base_dir = self._embedded_workflow_base_dir()
             config_update = retarget_config_to_embedded_comfy(
                 config_path=self.config_path,
                 backup_dir=self.config_backup_dir,
@@ -525,6 +552,7 @@ class ComfyInstallerService:
                     if default_workflows is not None
                     else None
                 ),
+                workflow_base_dir=workflow_base_dir,
             )
             if config_update.already_retargeted:
                 self._log("[이사] config.json은 이미 내장 Comfy 경로입니다.")
@@ -569,6 +597,7 @@ class ComfyInstallerService:
                 )
         try:
             default_workflows = self._prepare_default_workflows()
+            workflow_base_dir = self._embedded_workflow_base_dir()
             config_backup = backup_current_config(
                 config_path=self.config_path,
                 backup_dir=self.config_backup_dir,
@@ -585,6 +614,7 @@ class ComfyInstallerService:
                     if default_workflows is not None
                     else None
                 ),
+                workflow_base_dir=workflow_base_dir,
             )
             if config_update.already_retargeted:
                 self._log("[설정] config.json은 이미 내장 Comfy 경로입니다.")
@@ -1284,6 +1314,7 @@ class ComfyInstallerService:
                 release_version=release_version,
                 required=True,
             )
+            workflow_base_dir = self._embedded_workflow_base_dir()
             config_update = apply_installed_config(
                 config_path=self.config_path,
                 requirements_dir=self.config_backup_dir,
@@ -1293,6 +1324,7 @@ class ComfyInstallerService:
                 default_workflow_bindings=(
                     default_workflows.workflow_bindings
                 ),
+                workflow_base_dir=workflow_base_dir,
             )
 
             self._set_phase("complete")

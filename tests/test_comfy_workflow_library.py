@@ -11,6 +11,7 @@ from comfy_installer.workflow_library import (
     LEGACY_DISTRIBUTION_LIBRARY_DIRNAME,
     LEGACY_USER_WORKFLOW_DIRNAME,
     USER_WORKFLOW_DIRNAME,
+    embedded_workflow_base_dir,
     import_default_user_copies,
     import_user_copies,
     latest_release_version,
@@ -100,6 +101,15 @@ def test_default_workflow_copies_use_latest_release_metadata_as_source_of_truth(
     )
 
     assert latest_release_version(library_root) == "v10"
+    assert embedded_workflow_base_dir(tmp_path / "comfy") == (
+        tmp_path
+        / "comfy"
+        / "user"
+        / "default"
+        / "workflows"
+        / USER_WORKFLOW_DIRNAME
+    ).resolve()
+    assert embedded_workflow_base_dir(tmp_path / "comfy").is_absolute()
     assert selection.release_version == "v10"
     assert set(selection.selected_item_ids) == {
         "illustration_defaults",

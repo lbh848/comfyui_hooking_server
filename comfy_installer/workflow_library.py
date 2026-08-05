@@ -38,6 +38,19 @@ class WorkflowSelection:
     user_files: tuple[str, ...]
 
 
+def embedded_workflow_base_dir(
+    comfy_root: str | os.PathLike[str],
+) -> Path:
+    """Canonical folder used by embedded Comfy workflow config paths."""
+    return (
+        Path(comfy_root).resolve()
+        / "user"
+        / "default"
+        / "workflows"
+        / USER_WORKFLOW_DIRNAME
+    ).resolve()
+
+
 def _sha256_bytes(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
 
@@ -626,9 +639,7 @@ def import_user_copies(
         raise WorkflowLibraryError(
             "선택한 워크플로우가 팩에 없습니다: " + ", ".join(missing)
         )
-    user_root = (
-        comfy / "user" / "default" / "workflows" / USER_WORKFLOW_DIRNAME
-    ).resolve()
+    user_root = embedded_workflow_base_dir(comfy)
     user_root.mkdir(parents=True, exist_ok=True)
     bindings: dict[str, str] = {}
     model_ids: set[str] = set()
@@ -808,7 +819,7 @@ def library_status(
     distributed_root = (
         Path(library_root).resolve() / DISTRIBUTION_LIBRARY_DIRNAME
     )
-    user_root = workflows_root / USER_WORKFLOW_DIRNAME
+    user_root = embedded_workflow_base_dir(comfy)
     releases: list[dict] = []
     if distributed_root.is_dir():
         for child in sorted(

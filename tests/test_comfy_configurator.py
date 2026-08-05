@@ -32,6 +32,7 @@ def test_config_apply_backs_up_updates_and_restores(tmp_path):
     original = {
         "comfyui_port": 8188,
         "comfy_input_dir": r"E:\old\input",
+        "workflow_base_dir": r"E:\old\workflows",
         "illustration_workflow_source_paths": {
             "v1": r"E:\old\first.json",
         },
@@ -56,6 +57,7 @@ def test_config_apply_backs_up_updates_and_restores(tmp_path):
         default_workflow_bindings={
             "debug_workflow_source_path": str(second),
         },
+        workflow_base_dir=workflows,
     )
 
     updated = json.loads(config_path.read_text(encoding="utf-8"))
@@ -64,6 +66,7 @@ def test_config_apply_backs_up_updates_and_restores(tmp_path):
     assert updated["illustration_workflow_source_paths"]["v1"] == str(first)
     assert updated["asset_workflow_source_path"] == str(second)
     assert updated["debug_workflow_source_path"] == str(second)
+    assert updated["workflow_base_dir"] == str(workflows)
     assert updated["comfy_input_dir"] == str(comfy / "input")
     assert updated["outfit_mode_enabled"] is False
     assert updated["outfit_workflow_source_path"] == ""
@@ -168,6 +171,7 @@ def test_v4_migration_accepts_config_already_retargeted_to_embedded_comfy(
     (new_comfy / "input").mkdir()
     original = {
         "comfy_input_dir": str(new_comfy / "input"),
+        "workflow_base_dir": str(tmp_path / "external" / "workflows"),
         "nested": {"unrelated": str(tmp_path / "elsewhere")},
     }
     _write_json(config_path, original)
@@ -333,15 +337,18 @@ def test_config_retarget_fills_only_empty_paths_from_library_bindings(
             "debug_workflow_source_path": str(debug_default),
             "lora_training_workflow_source_paths.anima": str(lora_default),
         },
+        workflow_base_dir=workflows,
     )
 
     updated = json.loads(config_path.read_text(encoding="utf-8"))
     assert updated["utility_workflow_source_path"] == str(custom_utility)
+    assert updated["workflow_base_dir"] == str(workflows)
     assert updated["debug_workflow_source_path"] == str(debug_default)
     assert updated["lora_training_workflow_source_paths"]["anima"] == str(
         lora_default
     )
     assert result.updated_paths == (
+        "$.workflow_base_dir",
         "$.debug_workflow_source_path",
         "$.lora_training_workflow_source_paths.anima",
     )

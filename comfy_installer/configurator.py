@@ -245,6 +245,35 @@ def _normalize_embedded_workflow_bindings(
     return normalized
 
 
+def _normalize_embedded_workflow_base_dir(
+    value: str | os.PathLike[str],
+    *,
+    comfy_root: Path,
+) -> str:
+    workflow_root = (comfy_root / "user" / "default" / "workflows").resolve()
+    try:
+        base_dir = Path(value).resolve()
+        base_dir.relative_to(workflow_root)
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        print(
+            "[COMFY_INSTALL][CONFIG] 내장 워크플로우 베이스 경로 검증 실패: "
+            f"value={value!r}, workflow_root={workflow_root}, error={exc}"
+        )
+        traceback.print_exc()
+        raise ConfigUpdateError(
+            f"내장 워크플로우 베이스 경로가 잘못되었습니다: {value!r}"
+        ) from exc
+    if not base_dir.is_dir():
+        print(
+            "[COMFY_INSTALL][CONFIG] 내장 워크플로우 베이스 폴더가 "
+            f"없습니다: {base_dir}"
+        )
+        raise ConfigUpdateError(
+            f"내장 워크플로우 베이스 폴더가 없습니다: {base_dir}"
+        )
+    return str(base_dir)
+
+
 def _fill_empty_workflow_bindings(
     config: dict,
     workflow_bindings: Mapping[str, str],
@@ -638,6 +667,7 @@ def retarget_config_to_embedded_comfy(
     old_comfy_root: str | os.PathLike[str] | None,
     new_comfy_root: str | os.PathLike[str],
     default_workflow_bindings: Mapping[str, str] | None = None,
+    workflow_base_dir: str | os.PathLike[str] | None = None,
 ) -> ConfigRetargetResult:
     config_file = Path(config_path).resolve()
     backup_root = Path(backup_dir).resolve()
@@ -691,6 +721,18 @@ def retarget_config_to_embedded_comfy(
         updated_paths: list[str] = []
         missing_targets: list[tuple[str, str]] = []
         seeded = copy.deepcopy(config)
+        if workflow_base_dir is not None:
+            normalized_base_dir = _normalize_embedded_workflow_base_dir(
+                workflow_base_dir,
+                comfy_root=new_root,
+            )
+            if seeded.get("workflow_base_dir") != normalized_base_dir:
+                updated_paths.append("$.workflow_base_dir")
+            seeded["workflow_base_dir"] = normalized_base_dir
+            print(
+                "[COMFY_INSTALL][CONFIG] 내장 워크플로우 베이스 경로 강제 설정: "
+                f"path={normalized_base_dir}"
+            )
         if default_workflow_bindings:
             normalized_defaults = _normalize_embedded_workflow_bindings(
                 default_workflow_bindings,
@@ -782,6 +824,7 @@ def apply_installed_config(
     workflow_bindings: Mapping[str, str],
     required_bindings: Iterable[str],
     default_workflow_bindings: Mapping[str, str] | None = None,
+    workflow_base_dir: str | os.PathLike[str] | None = None,
     comfy_port: int = 8188,
 ) -> ConfigUpdateResult:
     config_file = Path(config_path).resolve()
@@ -811,6 +854,14 @@ def apply_installed_config(
             comfy_root=install_root,
             label="기본 워크플로우",
         )
+        normalized_base_dir = (
+            _normalize_embedded_workflow_base_dir(
+                workflow_base_dir,
+                comfy_root=install_root,
+            )
+            if workflow_base_dir is not None
+            else None
+        )
 
         before_hash = _sha256_file(config_file)
         config = _read_json_object(config_file, "현재 설정")
@@ -833,6 +884,8 @@ def apply_installed_config(
             "outfit_mode_enabled": False,
             "outfit_workflow_source_path": "",
         }
+        if normalized_base_dir is not None:
+            direct_updates["workflow_base_dir"] = normalized_base_dir
         updated.update(direct_updates)
 
         backup_root.mkdir(parents=True, exist_ok=True)

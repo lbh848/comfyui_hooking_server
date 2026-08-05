@@ -24215,7 +24215,8 @@
             const workflowPath = (initialLocalProfile && illustrationPaths[initialLocalProfile])
                 || currentConfig.comfy_workflow_source_path || '';
             const pathParts = splitWorkflowPath(workflowPath);
-            document.getElementById('setting-workflow-base-dir').value = pathParts.baseDir;
+            document.getElementById('setting-workflow-base-dir').value =
+                currentConfig.workflow_base_dir || pathParts.baseDir;
             document.getElementById('setting-workflow-path').value = workflowPath;
             for (const profile of ['v1', 'v3', 'v3_anima']) {
                 const profilePath = illustrationPaths[profile]
@@ -25366,6 +25367,7 @@
                 webp_quality: 'WebP 화질',
                 backup_webp_quality: '백업 WebP 화질',
                 backup_webp_lossless: '백업 무손실',
+                workflow_base_dir: '워크플로우 베이스 폴더',
                 comfy_workflow_source_path: '워크플로우 경로',
                 backup_base_dir: '백업 폴더',
                 backup_max_count: '백업 최대 수',
@@ -25647,6 +25649,7 @@
                 comfyui_port_illustration: null,
                 comfy_launch_profiles: comfyRuntimeProfilesForSave(),
                 comfy_task_allocations: comfyAllocationsForSave(),
+                workflow_base_dir: document.getElementById('setting-workflow-base-dir').value.trim(),
                 send_original: document.getElementById('setting-send-original').checked,
                 webp_quality: parseInt(document.getElementById('setting-webp-quality').value) || 85,
                 backup_webp_quality: parseInt(document.getElementById('setting-backup-webp-quality').value) || 80,

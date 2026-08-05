@@ -186,6 +186,7 @@ DEFAULT_CONFIG = {
     "comfyui_port_illustration": None,  # 삽화 전용 포트 (null=메인 포트 사용)
     "comfy_launch_profiles": copy.deepcopy(DEFAULT_COMFY_LAUNCH_PROFILES),
     "comfy_task_allocations": copy.deepcopy(DEFAULT_COMFY_TASK_ALLOCATIONS),
+    "workflow_base_dir": "",  # 공통 설정 UI의 워크플로우 베이스 폴더 절대 경로
     "comfy_workflow_source_path": "",
     "data_saving_mode": False,
     "send_original": False,  # 전송 시 원본 무변환 전송
