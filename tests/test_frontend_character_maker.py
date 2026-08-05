@@ -261,7 +261,7 @@ def test_each_field_has_preset_loader_wired_to_load_function():
     assert "setAssetSelectValue(selectId, '')" in html
 
 
-def test_browser_uses_single_persistent_session_and_persists_settings():
+def test_browser_uses_single_persistent_session_and_sends_settings_on_reset():
     html = _html()
 
     # 단일 영속 세션: 식별자는 고정 'default'이며 sessionStorage에 저장하지 않는다.
@@ -270,11 +270,13 @@ def test_browser_uses_single_persistent_session_and_persists_settings():
     assert "sessionStorage.setItem(CM_SESSION_STORAGE_KEY" not in html
     # 서버 재시작 감지 폐기 분기는 제거되었다(세션이 디스크에 보존되므로).
     assert "cmSession.boot_id !== cmCapabilities.boot_id" not in html
-    # 생성 설정은 세션을 갈아치워도 유지되도록 localStorage에 영속화한다.
-    assert "const CM_SETTINGS_STORAGE_KEY = 'characterMakerSettings'" in html
-    assert "function cmPersistSettings" in html
-    assert "function cmMergePersistedSettings" in html
-    assert "cmMergePersistedSettings()" in html
+    # 새 캐릭터 생성은 localStorage 사본이 아니라 서버의 현재 설정을 보존한다.
+    # 아직 디바운스 중인 브라우저 변경도 POST 본문으로 함께 전달한다.
+    assert "CM_SETTINGS_STORAGE_KEY" not in html
+    assert "cmMergePersistedSettings" not in html
+    assert "function cmCurrentGenerationState()" in html
+    assert "await cmCreateSession(generationState)" in html
+    assert "options.body = JSON.stringify(generationState)" in html
 
 
 def test_character_maker_apis_and_required_card_confirmation_are_wired():

@@ -37129,8 +37129,6 @@
         // 캐릭터 메이커는 단일 영속 세션 하나만 사용한다. 서버가 디스크에서 로드/보존하므로
         // 브라우저에 세션 식별자를 따로 저장하지 않는다.
         const CM_SINGLE_SESSION_ID = 'default';
-        // 생성 설정(프리셋·해상도·시드·LoRA·HIRES·디테일러·FACE CROP 등)을 세션을 갈아치워도 유지.
-        const CM_SETTINGS_STORAGE_KEY = 'characterMakerSettings';
         // 시드 모드('random'|'fixed')는 프론트엔드 전용 상태. 시드 값 자체는 항상 구체적
         // 숫자로 송출하므로(-1 사용 안 함) 'random'이면 생성 직전에 새 시드를 굴린다.
         const CM_SEED_MODE_STORAGE_KEY = 'characterMakerSeedMode';
@@ -37143,7 +37141,6 @@
         let cmSyncVersion = 0;
         let cmLastDiff = null;
         let cmRagVerified = false;
-        let cmNeedsPostLoadSync = false;
 
         async function cmRequest(url, options = {}) {
             const response = await fetch(url, options);
@@ -37186,16 +37183,37 @@
             };
         }
 
-        async function cmCreateSession() {
-            // POST = 서버의 단일 세션을 빈 세션으로 리셋. 세션 id는 항상 'default'이다.
-            const data = await cmRequest('/api/character_maker/session', { method: 'POST' });
+        function cmCurrentGenerationState() {
+            if (!cmSession) return null;
+            cmEnsureEditablePresetState();
+            return {
+                settings: cmCollectSettings(),
+                editable_preset_tags: Object.fromEntries(
+                    CM_EDITABLE_PRESET_FIELDS.map(field => [
+                        field,
+                        [...(cmSession.editable_preset_tags[field] || [])],
+                    ])
+                ),
+                editable_preset_enabled: Object.fromEntries(
+                    CM_EDITABLE_PRESET_FIELDS.map(field => [
+                        field,
+                        !!cmSession.editable_preset_enabled[field],
+                    ])
+                ),
+            };
+        }
+
+        async function cmCreateSession(generationState = null) {
+            // POST = 캐릭터 작업만 비우고 생성 설정 전체를 서버에서 보존한다.
+            // 현재 브라우저에 아직 디바운스 중인 변경도 함께 보내 서버 상태보다 우선한다.
+            const options = { method: 'POST' };
+            if (generationState) {
+                options.headers = { 'Content-Type': 'application/json' };
+                options.body = JSON.stringify(generationState);
+            }
+            const data = await cmRequest('/api/character_maker/session', options);
             cmSession = data.session;
             cmLastDiff = null;
-            // 리셋된 빈 세션은 서버 기본값이므로, 영속화된 생성 설정(localStorage)을 다시 반영한다.
-            // 실제 동기화/영속화는 cmApplySettingsToUI가 DOM에 반영한 뒤에 수행한다.
-            if (cmMergePersistedSettings()) {
-                cmNeedsPostLoadSync = true;
-            }
             return cmSession;
         }
 
@@ -37803,12 +37821,6 @@
             cmRenderAllLoraSettings();
             cmApplySettingsAvailability();
             cmRenderEditablePresetControls();
-            // 새 세션에 영속화 설정을 반영한 직후라면, DOM이 채워진 시점에서 서버/스토리지에 동기화.
-            if (cmNeedsPostLoadSync) {
-                cmNeedsPostLoadSync = false;
-                cmPersistSettings();
-                cmQueueSync();
-            }
         }
 
         function cmSettingChanged() {
@@ -37900,7 +37912,6 @@
                 if (el) el.value = n;
                 if (cmSession?.settings) cmSession.settings.seed = n;
             }
-            if (cmSeedMode === 'random') cmPersistSettings();
         }
 
         // CM LoRA는 일반/스타일/페이스 3종류. 각 종류별로 설정 키·패널·피커 오버레이가 다르다.
@@ -38637,58 +38648,8 @@
             cmRenderPromptLockSummary();
         }
 
-        function cmLoadPersistedSettings() {
-            try {
-                const raw = localStorage.getItem(CM_SETTINGS_STORAGE_KEY);
-                if (!raw) return null;
-                const parsed = JSON.parse(raw);
-                return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-                    ? parsed
-                    : null;
-            } catch (error) {
-                console.error('[CHARACTER_MAKER] 영속화 설정 로드 실패:', error);
-                return null;
-            }
-        }
-
-        function cmPersistSettings() {
-            if (!cmSession) return;
-            try {
-                const snapshot = cmCollectSettings();
-                // 워크플로우 타입은 설정→삽화의 전역값을 따르므로 영속화에서 제외한다.
-                delete snapshot.asset_workflow_type;
-                localStorage.setItem(
-                    CM_SETTINGS_STORAGE_KEY,
-                    JSON.stringify(snapshot),
-                );
-            } catch (error) {
-                console.error('[CHARACTER_MAKER] 영속화 설정 저장 실패:', error);
-            }
-        }
-
-        // 새로 만든 세션(서버 기본값) 위에 영속화된 설정을 덮어쓴다.
-        // 설정 스키마에 있는 키만 반영하며, 배열은 얕게 복사한다.
-        function cmMergePersistedSettings() {
-            if (!cmSession?.settings) return false;
-            const persisted = cmLoadPersistedSettings();
-            if (!persisted) return false;
-            let applied = false;
-            Object.entries(persisted).forEach(([key, value]) => {
-                // 워크플로우 타입은 설정→삽화의 전역값을 따르므로 복원하지 않는다.
-                if (key === 'asset_workflow_type') return;
-                if (!(key in cmSession.settings)) return;
-                cmSession.settings[key] = Array.isArray(value)
-                    ? value.map(item => ({...item}))
-                    : value;
-                applied = true;
-            });
-            return applied;
-        }
-
         function cmQueueSync(delay = 450) {
             if (!cmSession) return;
-            // 설정 변경을 즉시 영속화(탭/세션 종료 직전 상황 대비). 네트워크 동기화는 아래 디바운스.
-            cmPersistSettings();
             clearTimeout(cmSyncTimer);
             const version = ++cmSyncVersion;
             const saveStatus = document.getElementById('cm-save-status');
@@ -39617,13 +39578,18 @@
         async function cmResetSession() {
             if (cmBusy) return;
             if (cmSession && !window.confirm('현재 캐릭터 작업을 지우고 새 캐릭터를 시작할까요?')) return;
+            const generationState = cmCurrentGenerationState();
+            // 이전 캐릭터의 디바운스 PATCH가 새 세션을 다시 덮지 않도록 대기 작업을 폐기한다.
+            clearTimeout(cmSyncTimer);
+            cmSyncTimer = null;
+            cmSyncVersion++;
             cmSetBusy(true, '새 캐릭터 작업공간을 만드는 중...');
             try {
                 cmSession = null;
                 cmLastDiff = null;
                 cmRagVerified = false;
-                // POST create = 서버 단일 세션을 빈 세션으로 리셋.
-                await cmCreateSession();
+                // POST create = 생성 설정은 보존하고 캐릭터 작업만 리셋.
+                await cmCreateSession(generationState);
                 cmPopulatePresetOptions();
                 cmApplySettingsToUI();
                 cmRender();
@@ -39638,7 +39604,6 @@
 
         window.addEventListener('pagehide', () => {
             if (!cmSession || !cmInitialized) return;
-            cmPersistSettings();
             try {
                 fetch(`/api/character_maker/session/${encodeURIComponent(cmSession.id)}`, {
                     method: 'PATCH',

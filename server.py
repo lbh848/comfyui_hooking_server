@@ -97,6 +97,7 @@ from modes import illustration_context_pipeline
 from modes import multi_char_mask
 from modes.character_maker_mode import (
     MAX_REFERENCE_BYTES,
+    SINGLE_SESSION_ID,
     CharacterMakerError,
     CharacterMakerService,
 )
@@ -15120,9 +15121,14 @@ def _build_character_maker_illustration_prompt(
 
 async def handle_api_character_maker_create(request: web.Request) -> web.Response:
     try:
-        return web.json_response(
-            {"success": True, "session": character_maker.create_session()}
-        )
+        async with character_maker.operation_lock(SINGLE_SESSION_ID):
+            generation_state = await request.json() if request.can_read_body else None
+            return web.json_response(
+                {
+                    "success": True,
+                    "session": character_maker.create_session(generation_state),
+                }
+            )
     except Exception as exc:
         return _character_maker_error_response("세션 생성", exc)
 

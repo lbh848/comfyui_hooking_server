@@ -722,24 +722,103 @@ class CharacterMakerService:
             )
             traceback.print_exc()
 
-    def create_session(self) -> dict[str, Any]:
-        """단일 고정 세션을 빈 세션으로 리셋한다(기존 작업 삭제)."""
-        self._reset_single_session()
+    def create_session(self, generation_state: Any = None) -> dict[str, Any]:
+        """캐릭터 작업만 비우고 생성 설정은 유지한 단일 세션을 만든다."""
+        self._reset_single_session(generation_state)
         session = self.sessions[SINGLE_SESSION_ID]
         self._persist_session(session)
         print(
-            f"[CHARACTER_MAKER] 세션 리셋: session={SINGLE_SESSION_ID}, "
-            f"boot={self.boot_id}"
+            f"[CHARACTER_MAKER] 세션 리셋(생성 설정 유지): "
+            f"session={SINGLE_SESSION_ID}, boot={self.boot_id}"
         )
         return self.public_session(SINGLE_SESSION_ID)
 
-    def _reset_single_session(self) -> None:
+    def _generation_state_for_reset(self, override: Any = None) -> dict[str, Any]:
+        """현재 서버 설정 위에 선택적인 최신 브라우저 설정을 검증·병합한다."""
+        current = self.sessions.get(SINGLE_SESSION_ID)
+        settings = copy.deepcopy(
+            current.get("settings") if isinstance(current, dict) else None
+        )
+        if not isinstance(settings, dict):
+            settings = self._default_settings()
+        else:
+            for key, value in self._default_settings().items():
+                settings.setdefault(key, copy.deepcopy(value))
+
+        try:
+            editable_tags = _normalize_editable_preset_tags(
+                current.get("editable_preset_tags")
+                if isinstance(current, dict)
+                else None
+            )
+            editable_enabled = _normalize_editable_preset_enabled(
+                current.get("editable_preset_enabled")
+                if isinstance(current, dict)
+                else None
+            )
+            if override is not None:
+                if not isinstance(override, dict):
+                    raise CharacterMakerError("보존할 생성 설정은 객체여야 합니다.")
+                allowed = {
+                    "settings",
+                    "editable_preset_tags",
+                    "editable_preset_enabled",
+                }
+                unknown = sorted(set(override) - allowed)
+                if unknown:
+                    raise CharacterMakerError(
+                        "새 캐릭터 생성 시 보존할 수 없는 필드입니다: "
+                        + ", ".join(unknown)
+                    )
+                if "settings" in override:
+                    holder = {"settings": settings}
+                    self._update_settings(holder, override.get("settings"))
+                    settings = holder["settings"]
+                if "editable_preset_tags" in override:
+                    raw_tags = override.get("editable_preset_tags")
+                    if not isinstance(raw_tags, dict):
+                        raise CharacterMakerError(
+                            "editable_preset_tags는 객체여야 합니다."
+                        )
+                    merged_tags = copy.deepcopy(editable_tags)
+                    merged_tags.update(raw_tags)
+                    editable_tags = _normalize_editable_preset_tags(merged_tags)
+                if "editable_preset_enabled" in override:
+                    raw_enabled = override.get("editable_preset_enabled")
+                    if not isinstance(raw_enabled, dict):
+                        raise CharacterMakerError(
+                            "editable_preset_enabled는 객체여야 합니다."
+                        )
+                    merged_enabled = copy.deepcopy(editable_enabled)
+                    merged_enabled.update(raw_enabled)
+                    editable_enabled = _normalize_editable_preset_enabled(
+                        merged_enabled
+                    )
+        except CharacterMakerError as exc:
+            print(
+                "[CHARACTER_MAKER] 새 캐릭터 생성 설정 보존 실패: "
+                f"error={exc}, override={override!r}"
+            )
+            traceback.print_exc()
+            raise
+
+        # 에셋 워크플로우는 생성 설정 중에서도 전역 config의 현재값이 권위값이다.
+        settings["asset_workflow_type"] = self._live_asset_workflow_type()
+        return {
+            "settings": settings,
+            "editable_preset_tags": editable_tags,
+            "editable_preset_enabled": editable_enabled,
+        }
+
+    def _reset_single_session(self, generation_state: Any = None) -> None:
+        preserved = self._generation_state_for_reset(generation_state)
         session_dir = self._session_dir()
         _assert_within(self.temp_root, session_dir)
         if os.path.isdir(session_dir):
             shutil.rmtree(session_dir)
         session = self._fresh_session()
         session["boot_id"] = self.boot_id
+        session.update(preserved)
         self.sessions[SINGLE_SESSION_ID] = session
         # 작업 잠금은 기존 객체를 유지한다(현재 연산이 잡고 있을 수 있음).
         self._operation_locks.setdefault(SINGLE_SESSION_ID, asyncio.Lock())

@@ -210,6 +210,162 @@ def test_session_persists_across_service_restart(tmp_path):
     assert restored["fields"]["outfit"] == ["long_coat"]
 
 
+def test_new_character_preserves_all_generation_state_and_clears_character_work(
+    tmp_path,
+):
+    service, _ = _service(tmp_path)
+    session = service.public_session(character_maker_module.SINGLE_SESSION_ID)
+    service.update_session(
+        session["id"],
+        {
+            "world_context": "초기화되어야 하는 세계관",
+            "natural_language": "초기화되어야 하는 캐릭터 설명",
+            "fields": {
+                "appearance": ["silver_hair"],
+                "outfit": ["long_coat"],
+                "expression": ["smile"],
+                "composition": ["portrait"],
+            },
+            "locks": {
+                "appearance": True,
+                "outfit": True,
+                "expression": True,
+                "composition": True,
+                "natural_language": True,
+            },
+            "editable_preset_tags": {
+                "quality_preset": ["masterpiece", "best_quality"],
+                "anima_artist_preset": ["custom_artist_style"],
+            },
+            "editable_preset_enabled": {
+                "quality_preset": True,
+                "anima_artist_preset": True,
+            },
+            "settings": {
+                "generation_workflow": "illustration",
+                "quality_preset": "ILXL 품질",
+                "artist_preset": "ILXL 작가",
+                "negative_preset": "ILXL 부정",
+                "character_negative_preset": "캐릭터 부정",
+                "anima_quality_preset": "ANIMA 품질",
+                "anima_artist_preset": "ANIMA 작가",
+                "anima_negative_preset": "ANIMA 부정",
+                "img_w": 1216,
+                "img_h": 832,
+                "seed": 4294967295,
+                "rag_enabled": True,
+                "lora_enabled": True,
+                "lora_list": [
+                    {
+                        "source": "asset",
+                        "name": "character-lora",
+                        "lora_path": "character/model.safetensors",
+                        "strength": 0.7,
+                    }
+                ],
+                "style_lora_enabled": True,
+                "style_lora_list": [
+                    {
+                        "source": "asset",
+                        "name": "style-lora",
+                        "lora_path": "style/model.safetensors",
+                        "strength": 0.4,
+                    }
+                ],
+                "face_lora_enabled": True,
+                "face_lora_list": [
+                    {
+                        "source": "asset",
+                        "name": "face-lora",
+                        "lora_path": "face/model.safetensors",
+                        "strength": 0.6,
+                    }
+                ],
+                "face_lora_upscale_size": "1024",
+                "face_tags": "detailed_face",
+                "eye_tags": "detailed_eyes",
+                "hrf_sdxl": True,
+                "hrf_anima": True,
+                "hrf_size": 2.35,
+                "hrf_restore_size": False,
+                "hrf_control_net": True,
+                "sdxl_fd_enabled": True,
+                "sdxl_hd_enabled": True,
+                "sdxl_ed_enabled": True,
+                "anima_fd_enabled": True,
+                "anima_hd_enabled": True,
+                "anima_ed_enabled": True,
+                "face_crop_top": 3.2,
+                "face_crop_bottom": 1.4,
+            },
+        },
+    )
+    live = service._session(session["id"])
+    live["chat"] = [{"role": "user", "content": "초기화 대상"}]
+    live["finalized"] = {"character_name": "초기화 대상"}
+    stale_path = Path(service.temp_root) / session["id"] / "images" / "stale.webp"
+    stale_path.write_bytes(b"stale-character-image")
+
+    before = service.public_session(session["id"])
+    expected_settings = copy.deepcopy(before["settings"])
+    expected_editable_tags = copy.deepcopy(before["editable_preset_tags"])
+    expected_editable_enabled = copy.deepcopy(before["editable_preset_enabled"])
+
+    reset = service.create_session()
+
+    assert reset["settings"] == expected_settings
+    assert reset["editable_preset_tags"] == expected_editable_tags
+    assert reset["editable_preset_enabled"] == expected_editable_enabled
+    assert reset["world_context"] == ""
+    assert reset["natural_language"] == ""
+    assert reset["fields"] == {
+        "appearance": [],
+        "outfit": [],
+        "expression": [],
+        "composition": [],
+    }
+    assert not any(reset["locks"].values())
+    assert reset["chat"] == []
+    assert reset["references"] == []
+    assert reset["revisions"] == []
+    assert reset["finalized"] is None
+    assert not stale_path.exists()
+
+    restarted, _ = _service(tmp_path)
+    persisted = restarted.public_session(character_maker_module.SINGLE_SESSION_ID)
+    assert persisted["settings"] == expected_settings
+    assert persisted["editable_preset_tags"] == expected_editable_tags
+    assert persisted["editable_preset_enabled"] == expected_editable_enabled
+
+
+def test_new_character_prefers_validated_latest_generation_state(tmp_path):
+    service, _ = _service(tmp_path)
+    session = service.public_session(character_maker_module.SINGLE_SESSION_ID)
+    service.update_session(
+        session["id"],
+        {
+            "settings": {"quality_preset": "서버의 이전 값", "img_w": 700},
+            "editable_preset_tags": {"quality_preset": ["server_old_tag"]},
+            "editable_preset_enabled": {"quality_preset": False},
+        },
+    )
+
+    reset = service.create_session(
+        {
+            "settings": {"quality_preset": "브라우저의 최신 값", "img_w": 1024},
+            "editable_preset_tags": {"quality_preset": ["browser_latest_tag"]},
+            "editable_preset_enabled": {"quality_preset": True},
+        }
+    )
+
+    assert reset["settings"]["quality_preset"] == "브라우저의 최신 값"
+    assert reset["settings"]["img_w"] == 1024
+    assert reset["editable_preset_tags"]["quality_preset"] == [
+        "browser_latest_tag"
+    ]
+    assert reset["editable_preset_enabled"]["quality_preset"] is True
+
+
 def test_generation_workflow_defaults_to_asset_and_persists_illustration(tmp_path):
     service, _ = _service(tmp_path)
     session = service.public_session(character_maker_module.SINGLE_SESSION_ID)
