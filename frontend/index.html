@@ -69069,11 +69069,13 @@
                     const pend = grp.filter(q => q.status === 'pending').length;
                     const done = Math.max(0, total - pend - grp.filter(q => q.status === 'processing').length);
                     barLabel.textContent = processing.batch_label || processing.label;
+                    barLabel.title = processing.batch_label || processing.label || '';
                     const pct = total > 0 ? Math.round((done / total) * 100) : Math.round(processing.progress || 0);
                     barProgressText.textContent = done + '/' + total;
                     barProgressBar.style.width = pct + '%';
                 } else {
                     barLabel.textContent = processing.label;
+                    barLabel.title = processing.label || '';
                     const pct = Math.round(processing.progress || 0);
                     barProgressText.textContent = pct + '%';
                     barProgressBar.style.width = pct + '%';
@@ -69082,6 +69084,7 @@
                 barStopBtn.style.display = 'inline-block';
             } else if (pending.length > 0) {
                 barLabel.textContent = '다음: ' + (pending[0].batch_label || pending[0].label);
+                barLabel.title = pending[0].batch_label || pending[0].label || '';
                 barProgressText.textContent = '준비중...';
                 barProgressBar.style.width = '0%';
                 barSpinner.style.display = 'block';
@@ -69108,6 +69111,7 @@
                 if (assetQueue.length > 0) {
                     const cancelledCount = assetQueue.filter(q => q.status === 'cancelled').length;
                     barLabel.textContent = cancelledCount === assetQueue.length ? '취소됨' : '완료';
+                    barLabel.title = '';
                     barProgressText.textContent = '';
                     barProgressBar.style.width = '100%';
                 }
@@ -69147,6 +69151,8 @@
                         (proc ? '<div class="item-progress-bar"><div class="item-progress-bar-inner" style="width:' + pct + '%"></div></div>' : '') +
                         '<div class="item-status">' + statusText + '</div>' +
                         actionBtn;
+                    const _batchLblEl = row.querySelector('.item-label');
+                    if (_batchLblEl) _batchLblEl.title = item.batch_label || item.label || '';
                     panelBody.appendChild(row);
                 } else {
                     const ts = getTypeStyle(item.type);
@@ -69209,6 +69215,8 @@
                         (item.status === 'processing' ? '<div class="item-progress-bar"><div class="item-progress-bar-inner" style="width:' + Math.round(item.progress || 0) + '%"></div></div>' : '') +
                         '<div class="item-status">' + statusText + phaseHint + '</div>' +
                         actionBtn;
+                    const _itemLblEl = row.querySelector('.item-label');
+                    if (_itemLblEl) _itemLblEl.title = item.label || '';
                     panelBody.appendChild(row);
                 }
             });
