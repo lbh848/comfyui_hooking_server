@@ -61084,7 +61084,7 @@
 
         async function addAssetAppearanceTag() {
             const app = getAssetSelectValue('asset-appearance-select');
-            if (!app) return;
+            if (!app) { showToast('외모를 먼저 선택하세요', 'error'); return; }
             await addAssetTagInput({
                 inputId: 'asset-new-appearance-tag',
                 action: 'add_appearance_tag',
@@ -61124,7 +61124,7 @@
 
         async function addAssetOutfitTag() {
             const outfit = getAssetSelectValue('asset-outfit-select');
-            if (!outfit) return;
+            if (!outfit) { showToast('복장을 먼저 선택하세요', 'error'); return; }
             await addAssetTagInput({
                 inputId: 'asset-new-outfit-tag',
                 action: 'add_outfit_tag',
@@ -61165,7 +61165,7 @@
 
         async function addAssetExpressionTag() {
             const expr = getAssetSelectValue('asset-expression-select');
-            if (!expr) return;
+            if (!expr) { showToast('표정을 먼저 선택하세요', 'error'); return; }
             await addAssetTagInput({
                 inputId: 'asset-new-expression-tag',
                 action: 'add_expression_tag',
