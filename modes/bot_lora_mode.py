@@ -1090,6 +1090,10 @@ def update_char_session_representative(bot_name: str, project_name: str, char_na
     if "session_representatives" not in char_cfg:
         char_cfg["session_representatives"] = {}
     char_cfg["session_representatives"][session_name] = representative
+    # 대표 설정 시 session_priority에 없으면 맨 앞에 추가 (1순위 후보가 되도록).
+    # style_lora_mode.update_style_session_representative 와 동일 정책.
+    if session_name not in (char_cfg.get("session_priority") or []):
+        char_cfg.setdefault("session_priority", []).insert(0, session_name)
     _save_bot_lora_manage(data)
     return {"success": True}
 
@@ -1568,10 +1572,23 @@ def _list_bot_trained_sessions(lora_load_path: str, bot_name: str, project_name:
 
 
 def _resolve_session_priority(char_cfg: dict, entry_dir: str, session_reps: dict) -> list:
-    """저장된 session_priority 반환. 비어있으면 representative 있는 세션들로 자동 채움(마이그레이션, 저장 안 함)."""
+    """저장된 session_priority 반환. 비어있으면 representative 있는 세션들로 자동 채움(마이그레이션, 저장 안 함).
+
+    저장값이 있더라도 디스크에 더 이상 존재하지 않는(삭제된) 세션 이름은 무시한다.
+    걸러낸 뒤 남은 것이 없으면 representative 기반 자동 채움으로 넘어간다.
+    (탐색기 수동 삭제 등 어떤 경로로든 생긴 찌꺼기를 런타임에 무효화)
+    """
     priority = list(char_cfg.get("session_priority", []) or [])
     if priority:
-        return priority
+        if os.path.isdir(entry_dir):
+            existing = {n for n in os.listdir(entry_dir) if os.path.isdir(os.path.join(entry_dir, n))}
+            filtered = [n for n in priority if n in existing]
+            if filtered:
+                return filtered
+            print(f"[BOT_LORA] session_priority 항목이 모두 삭제된 세션임, representative 기반으로 재계산: {priority}")
+        else:
+            # 디스크를 검증할 수 없으면 저장값을 신뢰
+            return priority
     if not os.path.isdir(entry_dir):
         return []
     auto = []
@@ -1745,8 +1762,12 @@ def cleanup_non_representative_loras(lora_load_path: str, bot_name: str, project
 
             print(f"[BOT_LORA_CLEANUP] 비대표 step 삭제: {session_name}/{step_name}")
 
-    # session_representatives 업데이트 저장
+    # 삭제된 세션들을 session_representatives 및 session_priority에서 정리 후 저장
     if deleted_sessions:
+        session_prio = char_cfg.get("session_priority") or []
+        if session_prio:
+            deleted_set = set(deleted_sessions)
+            char_cfg["session_priority"] = [s for s in session_prio if s not in deleted_set]
         _save_bot_lora_manage(manage_data)
 
     result = {
@@ -1823,14 +1844,21 @@ def delete_bot_trained_session(lora_load_path: str, bot_name: str, project_name:
     try:
         file_count = sum(1 for _ in os.listdir(session_dir))
         shutil.rmtree(session_dir)
-        # 세션 대표 설정에서도 해당 세션 키 제거
+        # 세션 대표 설정 및 우선순위에서도 해당 세션 제거
         manage_data = _load_bot_lora_manage()
         char_cfg = _get_char_config(manage_data, bot_name, project_name, char_name) or {}
         session_reps = char_cfg.get("session_representatives", {})
+        session_prio = char_cfg.get("session_priority") or []
+        changed = False
         if session in session_reps:
             del session_reps[session]
+            changed = True
+        if session in session_prio:
+            char_cfg["session_priority"] = [s for s in session_prio if s != session]
+            changed = True
+        if changed:
             _save_bot_lora_manage(manage_data)
-            print(f"[BOT_LORA_TRAINED] 세션 대표 설정에서 제거: {session}")
+            print(f"[BOT_LORA_TRAINED] 세션 관리정보에서 제거(대표/우선순위): {session}")
         print(f"[BOT_LORA_TRAINED] 세션 폴더 삭제 완료: {session_dir} ({file_count}개 파일)")
         return {"success": True, "deleted_session": session, "file_count": file_count}
     except Exception as e:
