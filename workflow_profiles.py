@@ -8,7 +8,6 @@
 from __future__ import annotations
 
 import copy
-import os
 from typing import Iterable
 
 
@@ -26,11 +25,11 @@ ILLUSTRATION_WORKFLOW_TYPES = (
     ILLUST_CHANSUB_V3_ANIMA,
 )
 
-ILLUSTRATION_LOCAL_FILENAMES = {
-    ILLUST_V1: "배포_삽화_v1_1.json",
-    ILLUST_V3: "배포_삽화_v3_4.json",
-    ILLUST_V3_ANIMA: "배포_삽화(ONLY_ANIMA)_v3_4.json",
-}
+ILLUSTRATION_LOCAL_PROFILES = (
+    ILLUST_V1,
+    ILLUST_V3,
+    ILLUST_V3_ANIMA,
+)
 
 ILLUSTRATION_PROFILE_LABELS = {
     ILLUST_V1: "V1 계열 삽화 워크플로우",
@@ -163,7 +162,7 @@ def illustration_provider_for_slot(workflow_type: str, slot_index: int) -> str:
 
 def illustration_local_profile(workflow_type: str) -> str | None:
     workflow_type = normalize_illustration_workflow_type(workflow_type)
-    if workflow_type in ILLUSTRATION_LOCAL_FILENAMES:
+    if workflow_type in ILLUSTRATION_LOCAL_PROFILES:
         return workflow_type
     if workflow_type == ILLUST_CHANSUB_V3_ANIMA:
         return ILLUST_V3_ANIMA
@@ -286,24 +285,26 @@ def is_restore_prompt_compatible(filename: str, workflow_type: str) -> bool:
     return normalized in compatible_restore_prompt_files(workflow_type, [normalized])
 
 
-def _default_illustration_source_paths(config: dict) -> dict:
+def _normalize_illustration_source_paths(
+    config: dict,
+    illustration_type: str,
+) -> dict:
+    """기존 경로만 정규화하고 배포 파일명을 임의로 만들지 않는다.
+
+    배포 워크플로우의 파일명과 절대경로는 Comfy 워크플로우 라이브러리가
+    관리한다. 구 설정의 단일 경로는 현재 선택된 로컬 프로필에만 승계한다.
+    """
     raw_paths = config.get("illustration_workflow_source_paths")
     paths = copy.deepcopy(raw_paths) if isinstance(raw_paths, dict) else {}
+    normalized = {
+        profile: str(paths.get(profile) or "")
+        for profile in ILLUSTRATION_LOCAL_PROFILES
+    }
     legacy_path = str(config.get("comfy_workflow_source_path") or "").strip()
-    base_dir = os.path.dirname(legacy_path) if legacy_path else ""
-    if not base_dir:
-        base_dir = next(
-            (
-                os.path.dirname(str(path))
-                for path in paths.values()
-                if str(path or "").strip()
-            ),
-            "",
-        )
-    for profile, filename in ILLUSTRATION_LOCAL_FILENAMES.items():
-        if not str(paths.get(profile) or "").strip():
-            paths[profile] = os.path.join(base_dir, filename) if base_dir else filename
-    return {key: str(paths.get(key) or "") for key in ILLUSTRATION_LOCAL_FILENAMES}
+    local_profile = illustration_local_profile(illustration_type)
+    if local_profile and legacy_path and not normalized[local_profile].strip():
+        normalized[local_profile] = legacy_path
+    return normalized
 
 
 def normalize_workflow_config(config: dict) -> dict:
@@ -313,7 +314,10 @@ def normalize_workflow_config(config: dict) -> dict:
         raw_type = infer_legacy_illustration_workflow_type(config)
     illustration_type = normalize_illustration_workflow_type(raw_type)
     config["illustration_workflow_type"] = illustration_type
-    config["illustration_workflow_source_paths"] = _default_illustration_source_paths(config)
+    config["illustration_workflow_source_paths"] = _normalize_illustration_source_paths(
+        config,
+        illustration_type,
+    )
     config["illustration_provider"] = illustration_provider_mode(illustration_type)
     config["restore_prompt_file"] = normalize_restore_prompt_file(
         config.get("restore_prompt_file")

@@ -17848,13 +17848,13 @@
                             <div class="asset-workflow-card-head">
                                 <div>
                                     <div class="asset-workflow-card-title">V1 계열 삽화 워크플로우</div>
-                                    <div class="asset-workflow-card-desc">배포_삽화_v1_1.json</div>
+                                    <div class="asset-workflow-card-desc">라이브러리의 V1 배포 워크플로우</div>
                                 </div>
                                 <span class="asset-workflow-status" id="setting-illustration-v1-workflow-status">비활성</span>
                             </div>
                             <div class="form-group">
                                 <div class="autocomplete-wrapper">
-                                    <input type="text" id="setting-illustration-v1-workflow-filename" placeholder="배포_삽화_v1_1.json"
+                                    <input type="text" id="setting-illustration-v1-workflow-filename" placeholder="라이브러리 배포 워크플로우"
                                            oninput="onIllustrationWorkflowFilenameInput('v1', this.value)" onfocus="onIllustrationWorkflowFilenameInput('v1', this.value)" disabled>
                                     <div class="autocomplete-list" id="illustration-v1-workflow-autocomplete" data-illustration-profile="v1"></div>
                                 </div>
@@ -17866,13 +17866,13 @@
                             <div class="asset-workflow-card-head">
                                 <div>
                                     <div class="asset-workflow-card-title">V3 계열 삽화 워크플로우</div>
-                                    <div class="asset-workflow-card-desc">배포_삽화_v3_4.json · ANIMA+ILXL</div>
+                                    <div class="asset-workflow-card-desc">라이브러리의 ANIMA+ILXL 배포 워크플로우</div>
                                 </div>
                                 <span class="asset-workflow-status" id="setting-illustration-v3-workflow-status">비활성</span>
                             </div>
                             <div class="form-group">
                                 <div class="autocomplete-wrapper">
-                                    <input type="text" id="setting-illustration-v3-workflow-filename" placeholder="배포_삽화_v3_4.json"
+                                    <input type="text" id="setting-illustration-v3-workflow-filename" placeholder="라이브러리 배포 워크플로우"
                                            oninput="onIllustrationWorkflowFilenameInput('v3', this.value)" onfocus="onIllustrationWorkflowFilenameInput('v3', this.value)" disabled>
                                     <div class="autocomplete-list" id="illustration-v3-workflow-autocomplete" data-illustration-profile="v3"></div>
                                 </div>
@@ -17884,13 +17884,13 @@
                             <div class="asset-workflow-card-head">
                                 <div>
                                     <div class="asset-workflow-card-title">V3 계열 삽화 워크플로우 (ONLY ANIMA)</div>
-                                    <div class="asset-workflow-card-desc">배포_삽화(ONLY_ANIMA)_v3_4.json</div>
+                                    <div class="asset-workflow-card-desc">라이브러리의 ONLY ANIMA 배포 워크플로우</div>
                                 </div>
                                 <span class="asset-workflow-status" id="setting-illustration-v3-anima-workflow-status">비활성</span>
                             </div>
                             <div class="form-group">
                                 <div class="autocomplete-wrapper">
-                                    <input type="text" id="setting-illustration-v3-anima-workflow-filename" placeholder="배포_삽화(ONLY_ANIMA)_v3_4.json"
+                                    <input type="text" id="setting-illustration-v3-anima-workflow-filename" placeholder="라이브러리 배포 워크플로우"
                                            oninput="onIllustrationWorkflowFilenameInput('v3_anima', this.value)" onfocus="onIllustrationWorkflowFilenameInput('v3_anima', this.value)" disabled>
                                     <div class="autocomplete-list" id="illustration-v3-anima-workflow-autocomplete" data-illustration-profile="v3_anima"></div>
                                 </div>
@@ -18179,7 +18179,7 @@
                                 </div>
                                 <div class="form-group">
                                     <div class="autocomplete-wrapper">
-                                        <input type="text" id="setting-anima-only-asset-workflow-filename" placeholder="예: 배포_에셋(ONLY_ANIMA)_v2_3.json"
+                                        <input type="text" id="setting-anima-only-asset-workflow-filename" placeholder="라이브러리 배포 워크플로우"
                                                oninput="onAnimaOnlyAssetFilenameInput(this.value)" onfocus="onAnimaOnlyAssetFilenameInput(this.value)" disabled>
                                         <div class="autocomplete-list" id="anima-only-asset-workflow-autocomplete"></div>
                                     </div>
@@ -24545,10 +24545,10 @@
             const botLoraLoadPath = currentConfig.bot_lora_load_path || '';
             const instanceLoraLoadPath = currentConfig.instance_lora_load_path || '';
             const styleLoraLoadPath = currentConfig.style_lora_load_path || '';
-            const basePath = loraLoadPath.replace(/\\SOYA_CHAR_LORA$/, '')
-                || botLoraLoadPath.replace(/\\SOYA_CHAR_LORA\\SOYA_BOT_LORA$/, '').replace(/\\SOYA_BOT_LORA$/, '')
-                || instanceLoraLoadPath.replace(/\\SOYA_CHAR_LORA\\SOYA_INSTANCE_LORA$/, '').replace(/\\SOYA_INSTANCE_LORA$/, '')
-                || styleLoraLoadPath.replace(/\\SOYA_CHAR_LORA\\SOYA_STYLE_LORA$/, '').replace(/\\SOYA_STYLE_LORA$/, '');
+            const basePath = stripManagedLoraPath(loraLoadPath)
+                || stripManagedLoraPath(botLoraLoadPath)
+                || stripManagedLoraPath(instanceLoraLoadPath)
+                || stripManagedLoraPath(styleLoraLoadPath);
             document.getElementById('setting-lora-load-path').value = basePath || loraLoadPath;
 
             document.getElementById('settings-modal').classList.add('visible');
@@ -24589,12 +24589,16 @@
             updateAssetWorkflowPath();
             updateAnimaAssetWorkflowPath();
             updateAnimaOnlyAssetWorkflowPath();
+            updateQwenEditWorkflowPath();
+            updateAnimaInpaintingWorkflowPath();
             updateTagAnalysisWorkflowPath();
+            updateAssetTagAnalysisWorkflowPath();
             updateLoraAnimaWorkflowPath();
             updateLoraSdxlWorkflowPath();
             updateStyleLoraAnimaWorkflowPath();
             updateStyleLoraSdxlWorkflowPath();
             updateFaceExtractWorkflowPath();
+            updateDebugWorkflowPath();
         }
 
         // 베이스 경로와 파일명을 결합
@@ -24610,6 +24614,19 @@
                 return normalizedBase + filename;
             }
             return normalizedBase + sep + filename;
+        }
+
+        function combineLoraLoadPath(baseDir, ...parts) {
+            const normalizedBase = String(baseDir || '').trim().replace(/[\\/]+$/, '');
+            if (!normalizedBase) return '';
+            return [normalizedBase, ...parts].join('\\');
+        }
+
+        function stripManagedLoraPath(path) {
+            return String(path || '').trim().replace(
+                /[\\/]SOYA_CHAR_LORA(?:[\\/]SOYA_(?:BOT|INSTANCE|STYLE)_LORA)?$/i,
+                ''
+            );
         }
 
         // 가중치 클램프 상태 업데이트
@@ -25733,10 +25750,10 @@
                     sdxl: document.getElementById('setting-style-lora-workflow-sdxl-source-path').value
                 },
                 face_extract_workflow_source_path: document.getElementById('setting-face-extract-workflow-source-path').value,
-                lora_load_path: document.getElementById('setting-lora-load-path').value.trim().replace(/\\?$/, '\\SOYA_CHAR_LORA'),
-                bot_lora_load_path: document.getElementById('setting-lora-load-path').value.trim().replace(/\\?$/, '\\SOYA_CHAR_LORA\\SOYA_BOT_LORA'),
-                instance_lora_load_path: document.getElementById('setting-lora-load-path').value.trim().replace(/\\?$/, '\\SOYA_CHAR_LORA\\SOYA_INSTANCE_LORA'),
-                style_lora_load_path: document.getElementById('setting-lora-load-path').value.trim().replace(/\\?$/, '\\SOYA_CHAR_LORA\\SOYA_STYLE_LORA'),
+                lora_load_path: combineLoraLoadPath(document.getElementById('setting-lora-load-path').value, 'SOYA_CHAR_LORA'),
+                bot_lora_load_path: combineLoraLoadPath(document.getElementById('setting-lora-load-path').value, 'SOYA_CHAR_LORA', 'SOYA_BOT_LORA'),
+                instance_lora_load_path: combineLoraLoadPath(document.getElementById('setting-lora-load-path').value, 'SOYA_CHAR_LORA', 'SOYA_INSTANCE_LORA'),
+                style_lora_load_path: combineLoraLoadPath(document.getElementById('setting-lora-load-path').value, 'SOYA_CHAR_LORA', 'SOYA_STYLE_LORA'),
                 webp_lossless: currentConfig.webp_lossless || false,
                 workflow_filename: currentConfig.workflow_filename || '',
                 debug_workflow_source_path: document.getElementById('setting-debug-workflow-source-path').value,
@@ -46771,9 +46788,16 @@
         }
 
         let debugWorkflowAutocompleteTimeout;
+        function updateDebugWorkflowPath() {
+            const baseDir = document.getElementById('setting-workflow-base-dir').value.trim();
+            const filename = document.getElementById('setting-debug-workflow-filename').value;
+            document.getElementById('setting-debug-workflow-source-path').value =
+                combineWorkflowPath(baseDir, filename);
+        }
+
         async function onDebugWorkflowFilenameInput(value) {
             const baseDir = document.getElementById('setting-workflow-base-dir').value.trim();
-            document.getElementById('setting-debug-workflow-source-path').value = combineWorkflowPath(baseDir, value);
+            updateDebugWorkflowPath();
             const list = document.getElementById('debug-workflow-autocomplete');
             clearTimeout(debugWorkflowAutocompleteTimeout);
             debugWorkflowAutocompleteTimeout = setTimeout(async () => {
@@ -60733,6 +60757,9 @@
         }
 
         function renderTagChips(containerId, tags, removeFnName) {
+            // 칩이 innerHTML 재생성으로 통째로 교체되면 mouseleave가 발생하지 않아
+            // 호버 중이던 설명 툴팁(#ac-tooltip)이 화면에 남는다. 재렌더 직전에 숨긴다.
+            _hideTagChipTooltip();
             const container = document.getElementById(containerId);
             container.innerHTML = '';
             tags.forEach((tag, idx) => {
@@ -64438,6 +64465,9 @@
         }
 
         function renderTagChipsWithFn(container, tags, removeFn) {
+            // 칩이 innerHTML 재생성으로 통째로 교체되면 mouseleave가 발생하지 않아
+            // 호버 중이던 설명 툴팁(#ac-tooltip)이 화면에 남는다. 재렌더 직전에 숨긴다.
+            _hideTagChipTooltip();
             container.innerHTML = '';
             tags.forEach((tag, idx) => {
                 if (!tag) return;

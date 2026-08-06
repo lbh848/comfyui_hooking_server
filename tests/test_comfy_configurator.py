@@ -322,6 +322,10 @@ def test_config_retarget_forces_library_bindings_and_base_path(
     _write_json(custom_utility, {"custom": True})
     original = {
         "comfy_input_dir": str(new_comfy / "input"),
+        "outfit_mode_enabled": True,
+        "outfit_workflow_source_path": str(
+            tmp_path / "external" / "outfit.json"
+        ),
         "utility_workflow_source_path": str(custom_utility),
         "debug_workflow_source_path": "   ",
         "lora_training_workflow_source_paths": "",
@@ -366,8 +370,12 @@ def test_config_retarget_forces_library_bindings_and_base_path(
     assert updated["anima_inpainting_workflow_source_path"] == str(
         inpainting_default
     )
+    assert updated["outfit_mode_enabled"] is False
+    assert updated["outfit_workflow_source_path"] == ""
     assert set(result.updated_paths) == {
         "$.workflow_base_dir",
+        "$.outfit_mode_enabled",
+        "$.outfit_workflow_source_path",
         "$.utility_workflow_source_path",
         "$.debug_workflow_source_path",
         "$.lora_training_workflow_source_paths.anima",

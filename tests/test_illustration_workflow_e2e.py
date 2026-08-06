@@ -68,6 +68,49 @@ def test_all_illustration_profiles_normalize_end_to_end(
         assert workflow_profiles.active_illustration_source_path(config) == source_paths[local_profile]
 
 
+def test_empty_workflow_paths_stay_empty_until_library_binding_is_applied():
+    config = {
+        "illustration_workflow_type": "v3",
+        "comfy_workflow_source_path": "",
+        "illustration_workflow_source_paths": {
+            "v1": "",
+            "v3": "",
+            "v3_anima": "",
+        },
+        "illustration_context_toggles": {},
+        "chansub_workflow_type": "anima",
+        "asset_workflow_type": "ilxl",
+    }
+
+    workflow_profiles.normalize_workflow_config(config)
+
+    assert config["comfy_workflow_source_path"] == ""
+    assert config["illustration_workflow_source_paths"] == {
+        "v1": "",
+        "v3": "",
+        "v3_anima": "",
+    }
+
+
+def test_legacy_single_workflow_path_only_seeds_selected_profile():
+    legacy_path = r"E:\external\custom-v3.json"
+    config = {
+        "illustration_workflow_type": "v3",
+        "comfy_workflow_source_path": legacy_path,
+        "illustration_context_toggles": {},
+        "chansub_workflow_type": "anima",
+        "asset_workflow_type": "ilxl",
+    }
+
+    workflow_profiles.normalize_workflow_config(config)
+
+    assert config["illustration_workflow_source_paths"] == {
+        "v1": "",
+        "v3": legacy_path,
+        "v3_anima": "",
+    }
+
+
 def test_restore_prompt_compatibility_matrix_covers_v1_v3_and_chansub():
     files = list(workflow_profiles.RESTORE_PROMPT_COMPATIBILITY)
 

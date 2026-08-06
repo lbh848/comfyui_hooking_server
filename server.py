@@ -10315,7 +10315,7 @@ async def handle_api_config(request: web.Request) -> web.Response:
                     )
                 body["illustration_workflow_source_paths"] = {
                     key: str(source_paths.get(key) or "")
-                    for key in workflow_profiles.ILLUSTRATION_LOCAL_FILENAMES
+                    for key in workflow_profiles.ILLUSTRATION_LOCAL_PROFILES
                 }
 
             if "asset_workflow_type" in body:

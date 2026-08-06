@@ -110,6 +110,75 @@ def test_common_settings_persist_absolute_workflow_base_dir() -> None:
     )
 
 
+def test_frontend_keeps_empty_lora_paths_empty_and_rebases_every_workflow() -> None:
+    frontend_source = Path("frontend/index.html").read_text(encoding="utf-8")
+    update_start = frontend_source.index("function updateWorkflowPath()")
+    update_end = frontend_source.index("function combineWorkflowPath", update_start)
+    update_source = frontend_source[update_start:update_end]
+
+    for updater in (
+        "updateQwenEditWorkflowPath();",
+        "updateAnimaInpaintingWorkflowPath();",
+        "updateAssetTagAnalysisWorkflowPath();",
+        "updateDebugWorkflowPath();",
+    ):
+        assert updater in update_source
+    assert "if (!normalizedBase) return '';" in frontend_source
+    assert "function stripManagedLoraPath(path)" in frontend_source
+    assert ".trim().replace(/\\\\?$/, '\\\\SOYA_CHAR_LORA')" not in frontend_source
+
+
+def test_default_config_and_runtime_normalization_do_not_invent_workflow_names() -> None:
+    import copy
+
+    import server
+    import workflow_profiles
+
+    config = copy.deepcopy(server.DEFAULT_CONFIG)
+    workflow_profiles.normalize_workflow_config(config)
+
+    assert config["workflow_base_dir"] == ""
+    assert config["comfy_workflow_source_path"] == ""
+    assert set(config["illustration_workflow_source_paths"].values()) == {""}
+    source_paths = {
+        key: value
+        for key, value in config.items()
+        if key.endswith("_workflow_source_path")
+    }
+    assert set(source_paths.values()) == {""}
+    assert set(config["lora_training_workflow_source_paths"].values()) == {""}
+    assert set(config["style_lora_training_workflow_source_paths"].values()) == {""}
+
+
+def test_library_covers_every_distributed_config_workflow_binding() -> None:
+    import json
+
+    import server
+    from comfy_installer.workflow_library import latest_release_version
+
+    library_root = Path("comfy_workflow_library")
+    release = latest_release_version(library_root)
+    manifest_path = library_root / "SOYA_DISTRIBUTION" / release / ".soya-pack.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    library_bindings = {
+        str(binding)
+        for item in manifest["items"]
+        for binding in item["bindings"]
+    }
+
+    config_bindings = set()
+    for key, value in server.DEFAULT_CONFIG.items():
+        if key == "comfy_workflow_source_path" or key.endswith(
+            "_workflow_source_path"
+        ):
+            config_bindings.add(key)
+        elif key.endswith("_workflow_source_paths") and isinstance(value, dict):
+            config_bindings.update(f"{key}.{child_key}" for child_key in value)
+
+    assert library_bindings - config_bindings == set()
+    assert config_bindings - library_bindings == {"outfit_workflow_source_path"}
+
+
 def test_installed_compatibility_mode_is_reused_for_updates(tmp_path: Path) -> None:
     config = tmp_path / "config.json"
     config.write_text("{}\n", encoding="utf-8")

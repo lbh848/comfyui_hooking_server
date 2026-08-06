@@ -92,7 +92,11 @@ def _configured_mode(tmp_path: Path):
     )
 
     mode = QwenEditMode(asset_mode=FakeAssetMode(source_path))
-    mode.get_config = lambda: {"comfy_input_dir": str(input_dir)}
+    workflow_path = ROOT / "mode_workflow" / "배포_qwen_edit_v1.json"
+    mode.get_config = lambda: {
+        "comfy_input_dir": str(input_dir),
+        "qwen_edit_workflow_source_path": str(workflow_path),
+    }
     return mode, source_path, input_dir
 
 
@@ -238,6 +242,14 @@ async def test_qwen_edit_loads_selected_ui_workflow_through_converter(tmp_path):
     assert converted[0]["nodes"][0]["type"] == "TestNode"
     assert workflow == expected_api
     assert workflow_path == str(selected_workflow.resolve())
+
+
+@pytest.mark.asyncio
+async def test_qwen_edit_requires_configured_library_workflow_path():
+    mode = QwenEditMode()
+
+    with pytest.raises(FileNotFoundError, match="설정 경로가 비어 있습니다"):
+        await mode._load_workflow({"qwen_edit_workflow_source_path": ""})
 
 
 @pytest.mark.asyncio
@@ -554,5 +566,10 @@ def test_qwen_workflow_and_frontend_contracts():
     assert "handle_api_qwen_composite_item_delete" in server_source
     assert 'queue_manager.add_item(\n            "qwen_edit"' in server_source
     assert '"qwen_edit_workflow_source_path": ""' in server_source
+    qwen_mode_source = (ROOT / "modes" / "qwen_edit_mode.py").read_text(
+        encoding="utf-8"
+    )
+    assert "QWEN_EDIT_WORKFLOW_PATH" not in qwen_mode_source
+    assert "ANIMA_INPAINTING_WORKFLOW_PATH" not in qwen_mode_source
     assert "qwen_edit_mode.convert_workflow_func = lambda workflow:" in server_source
     assert 'task_key="qwen_edit"' in server_source

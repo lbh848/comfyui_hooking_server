@@ -21,17 +21,6 @@ from modes import llm_service
 from modes.lighbd_service import _log_lighbd_history
 
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-QWEN_EDIT_WORKFLOW_PATH = os.path.join(
-    BASE_DIR,
-    "mode_workflow",
-    "배포_qwen_edit_v1.json",
-)
-ANIMA_INPAINTING_WORKFLOW_PATH = os.path.join(
-    BASE_DIR,
-    "mode_workflow",
-    "배포_ANIMA_inpainting_v1.json",
-)
 QWEN_EDIT_CHECKPOINT_RELATIVE = os.path.join(
     "v19",
     "Qwen-Rapid-AIO-NSFW-v19.safetensors",
@@ -828,18 +817,22 @@ class QwenEditMode:
         edit_tool = self.normalize_edit_tool(edit_tool)
         if edit_tool == EDIT_TOOL_ANIMA_INPAINTING:
             config_key = "anima_inpainting_workflow_source_path"
-            fallback_path = ANIMA_INPAINTING_WORKFLOW_PATH
             workflow_label = "ANIMA Inpainting"
         else:
             config_key = "qwen_edit_workflow_source_path"
-            fallback_path = QWEN_EDIT_WORKFLOW_PATH
             workflow_label = "Qwen Edit"
         configured_path = str(
             config.get(config_key) or ""
         ).strip()
-        workflow_path = os.path.realpath(
-            configured_path or fallback_path
-        )
+        if not configured_path:
+            print(
+                "[EDIT_TOOL] 워크플로우 로드 실패: 설정 경로 비어 있음 "
+                f"tool={edit_tool}, config_key={config_key!r}"
+            )
+            raise FileNotFoundError(
+                f"{workflow_label} 워크플로우 설정 경로가 비어 있습니다."
+            )
+        workflow_path = os.path.realpath(configured_path)
         if not os.path.isfile(workflow_path):
             print(
                 "[EDIT_TOOL] 워크플로우 로드 실패: 파일 없음 "

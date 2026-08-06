@@ -730,6 +730,23 @@ def retarget_config_to_embedded_comfy(
                 normalized_defaults,
             )
             updated_paths.extend(f"$.{key}" for key in defaulted_keys)
+        disabled_outfit_paths: list[str] = []
+        for key, value in (
+            ("outfit_mode_enabled", False),
+            ("outfit_workflow_source_path", ""),
+        ):
+            if key not in seeded or seeded.get(key) == value:
+                continue
+            seeded[key] = value
+            json_path = f"$.{key}"
+            updated_paths.append(json_path)
+            disabled_outfit_paths.append(json_path)
+        if disabled_outfit_paths:
+            print(
+                "[COMFY_INSTALL][CONFIG] 내장 배포 워크플로우가 없는 복장 추출 "
+                "설정을 비활성화합니다: "
+                f"updated={disabled_outfit_paths}"
+            )
         updated = _retarget_descendant_paths(
             seeded,
             json_path="$",
