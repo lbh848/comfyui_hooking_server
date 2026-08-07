@@ -14133,7 +14133,7 @@
                     <div id="asset-lora-test-setup-section" style="display:none; background:rgba(0,180,140,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
                         <div style="font-size:0.8rem; font-weight:600; margin-bottom:6px;">LLM 기반 테스트 이미지 태그 정제</div>
                         <button id="asset-lora-test-setup-btn" onclick="openAssetLoraTestSetupModal()" style="width:100%; padding:8px; background:rgba(0,180,140,0.85); color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">선택 이미지 일괄 정제</button>
-                        <button type="button" onclick="_openBotTestSetupPromptModal()" style="width:100%; margin-top:6px; padding:6px 12px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:0.78rem;">⚙️ LLM 프롬프트</button>
+                        <button type="button" onclick="_openBotTestSetupPromptModal(true)" style="width:100%; margin-top:6px; padding:6px 12px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:0.78rem;">⚙️ LLM 프롬프트</button>
                         <div style="font-size:0.68rem; color:var(--text-secondary); margin-top:4px;">학습 첫 이미지의 복장/외모 + 테스트 이미지의 품질/자세/구도를 조합합니다.</div>
                         <div id="asset-lora-test-setup-status" style="margin-top:6px; font-size:0.72rem; color:var(--text-secondary); min-height:0.9rem;"></div>
                     </div>
@@ -14356,7 +14356,7 @@
                             <div style="background:rgba(0,180,140,0.08); border-radius:8px; padding:10px; margin-bottom:8px;">
                                 <div style="font-size:0.8rem; font-weight:600; margin-bottom:6px;">LLM 기반 테스트 이미지 태그 정제</div>
                                 <button id="bot-lora-test-setup-btn" onclick="openBotTestSetupCardSelectModal()" style="width:100%; padding:8px; background:rgba(0,180,140,0.85); color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">선택 이미지 일괄 정제</button>
-                                <button type="button" onclick="_openBotTestSetupPromptModal()" style="width:100%; margin-top:6px; padding:6px 12px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:0.78rem;">⚙️ LLM 프롬프트</button>
+                                <button type="button" onclick="_openBotTestSetupPromptModal(false)" style="width:100%; margin-top:6px; padding:6px 12px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:0.78rem;">⚙️ LLM 프롬프트</button>
                                 <div id="bot-lora-test-setup-status" style="margin-top:6px; font-size:0.72rem; color:var(--text-secondary); min-height:0.9rem;"></div>
                             </div>
                             <!-- 학습 설정 폼 -->
@@ -35973,7 +35973,7 @@
                 document.getElementById('lora-picker-footer').innerHTML = `
                     <div style="display:flex; gap:6px; align-items:center; flex:1; flex-wrap:wrap;">
                         <button id="lora-test-llm-btn" type="button" style="padding:6px 12px;background:var(--accent);color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:0.8rem;font-weight:600;">🤖 LLM 정제</button>
-                        <button type="button" onclick="_openBotTestSetupPromptModal()" style="padding:6px 12px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:0.8rem;">⚙️ LLM 프롬프트</button>
+                        <button type="button" onclick="_openBotTestSetupPromptModal(true)" style="padding:6px 12px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:0.8rem;">⚙️ LLM 프롬프트</button>
                         <span id="lora-test-refine-status" style="font-size:0.72rem;color:var(--text2);"></span>
                     </div>
                     <button onclick="closeLoraImagePicker()" style="padding:8px 16px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:6px; cursor:pointer;">닫기</button>
@@ -43979,7 +43979,7 @@
             document.getElementById('lora-picker-footer').innerHTML = `
                 <div style="display:flex; gap:6px; align-items:center; flex:1; flex-wrap:wrap;">
                     <button id="bot-lora-char-test-llm-btn" type="button" style="padding:6px 12px;background:var(--accent);color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:0.8rem;font-weight:600;">🤖 LLM 정제</button>
-                    <button type="button" onclick="_openBotTestSetupPromptModal()" style="padding:6px 12px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:0.8rem;">⚙️ LLM 프롬프트</button>
+                    <button type="button" onclick="_openBotTestSetupPromptModal(false)" style="padding:6px 12px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:0.8rem;">⚙️ LLM 프롬프트</button>
                     <span id="bot-lora-char-test-refine-status" style="font-size:0.72rem;color:var(--text2);"></span>
                 </div>
                 <button onclick="closeLoraImagePicker()" style="padding:8px 16px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:6px; cursor:pointer;">닫기</button>
@@ -51735,7 +51735,7 @@
         }
 
         // ── 테스트 이미지 세팅 전용 LLM 프롬프트 편집 ──
-        let _botTestSetupPromptState = { builtin: '', custom: '', useCustom: false };
+        let _botTestSetupPromptState = { builtin: '', custom: '', useCustom: false, isAsset: false };
 
         function _btsEffectiveTemplate() {
             const s = _botTestSetupPromptState;
@@ -51743,9 +51743,13 @@
         }
         function _renderBtsPromptPreview(template) {
             // 미리보기/실제 전송 동일 렌더 (CLAUDE.md). 샘플 변수 치환.
+            // {character_prompt} 는 모드에 따라 의미가 다르다: 봇=캐릭터 카드(복장/외모), 에셋=소스 에셋 외관.
+            const charSample = _botTestSetupPromptState.isAsset
+                ? 'white dress, blue ribbon, gold trim, ...'
+                : '1girl, blonde hair, blue eyes, white dress, ...';
             return (template || '')
                 .replace(/\{test_prompt\}/g, '<quality tags>, standing, smile, cowboy shot')
-                .replace(/\{character_prompt\}/g, '1girl, blonde hair, blue eyes, white dress, ...');
+                .replace(/\{character_prompt\}/g, charSample);
         }
         function _updateBtsPromptActiveBadge() {
             const badge = document.getElementById('bts-active-badge');
@@ -51764,10 +51768,10 @@
             if (pre) pre.textContent = _renderBtsPromptPreview(_btsEffectiveTemplate());
         }
 
-        async function _openBotTestSetupPromptModal() {
+        async function _openBotTestSetupPromptModal(isAsset = false) {
             let builtin = '', custom = '', useCustom = false;
             try {
-                const resp = await fetch('/api/instance_lora/bot_test_setup_prompt');
+                const resp = await fetch(`/api/instance_lora/bot_test_setup_prompt?asset=${isAsset ? 1 : 0}`);
                 const text = await resp.text();
                 let data; try { data = JSON.parse(text); } catch (_) { data = null; }
                 if (!data || !data.success) {
@@ -51781,8 +51785,12 @@
                 showToast('LLM 프롬프트 로드 예외: ' + e.message, 'error');
                 return;
             }
-            _botTestSetupPromptState = { builtin, custom, useCustom };
+            _botTestSetupPromptState = { builtin, custom, useCustom, isAsset };
 
+            const titleText = isAsset ? '에셋 테스트 조합 - LLM 프롬프트' : '테스트 이미지 세팅 - LLM 프롬프트';
+            const hintText = isAsset
+                ? '테스트 장면(품질/자세/구도/배경)과 학습 에셋 외관(소스 에셋 프롬프트)을 조합하는 시스템 프롬프트입니다. 에셋은 의상 세트·오브젝트·소품 등 캐릭터가 아닐 수 있습니다. 변수: <code>{test_prompt}</code>, <code>{character_prompt}</code>.'
+                : '품질/자세/표정(공통 테스트 프롬프트)과 복장/외모(캐릭터 카드 프롬프트)를 조합하는 시스템 프롬프트입니다. 변수: <code>{test_prompt}</code>, <code>{character_prompt}</code>.';
             const existing = document.getElementById('bot-test-setup-prompt-overlay');
             if (existing) existing.remove();
             const overlay = document.createElement('div');
@@ -51792,12 +51800,12 @@
             overlay.innerHTML = `
                 <div class="modal-content" style="max-width:820px;">
                     <div class="modal-header">
-                        <h2>테스트 이미지 세팅 - LLM 프롬프트</h2>
+                        <h2>${titleText}</h2>
                         <button class="modal-close" onclick="_closeBotTestSetupPromptModal()">&times;</button>
                     </div>
                     <div class="modal-body">
                         <div style="margin-bottom:10px; padding:8px 10px; background:rgba(255,180,0,0.08); border:1px solid rgba(255,180,0,0.25); border-radius:8px; font-size:0.76rem; color:var(--text-secondary);">
-                            품질/자세/표정(공통 테스트 프롬프트)과 복장/외모(캐릭터 카드 프롬프트)를 조합하는 시스템 프롬프트입니다. 변수: <code>{test_prompt}</code>, <code>{character_prompt}</code>.
+                            ${hintText}
                         </div>
                         <div style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">
                             <label style="display:flex; align-items:center; gap:4px; font-size:0.82rem; cursor:pointer;">
@@ -51846,11 +51854,12 @@
         async function _saveBotTestSetupPrompt() {
             const custom = document.getElementById('bts-custom-area').value || '';
             const useCustom = document.getElementById('bts-use-custom').checked;
+            const isAsset = !!_botTestSetupPromptState.isAsset;
             if (useCustom && !custom.trim()) { showToast('커스텀 사용 체크 시 프롬프트를 입력해야 합니다', 'error'); return; }
             try {
                 const resp = await fetch('/api/instance_lora/bot_test_setup_prompt', {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ custom, use_custom: useCustom }),
+                    body: JSON.stringify({ custom, use_custom: useCustom, asset: isAsset }),
                 });
                 const text = await resp.text();
                 let data; try { data = JSON.parse(text); } catch (_) { data = null; }
@@ -51858,7 +51867,7 @@
                     showToast('LLM 프롬프트 저장 실패: ' + ((data && data.error) || `HTTP ${resp.status}`), 'error');
                     return;
                 }
-                _botTestSetupPromptState = { builtin: _botTestSetupPromptState.builtin, custom, useCustom };
+                _botTestSetupPromptState = { builtin: _botTestSetupPromptState.builtin, custom, useCustom, isAsset };
                 showToast('LLM 프롬프트 저장 완료', 'success');
                 _closeBotTestSetupPromptModal();
             } catch (e) {

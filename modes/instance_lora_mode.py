@@ -38,7 +38,11 @@ AUTO_LORA_PROMPT_META_ASSET_FILE = os.path.join(ASSET_DATA_DIR, "auto_lora_promp
 BOT_TEST_SETUP_PROMPT_BUILTIN_FILE = os.path.join(AUTO_LORA_PROMPT_DIR, "bot_test_setup_system.txt")
 BOT_TEST_SETUP_PROMPT_CUSTOM_FILE = os.path.join(ASSET_DATA_DIR, "bot_test_setup_prompt_custom.txt")
 BOT_TEST_SETUP_PROMPT_META_FILE = os.path.join(ASSET_DATA_DIR, "bot_test_setup_prompt_meta.json")
+# 에셋(의상 세트/오브젝트/소품 등) 전용 — 캐릭터(봇 LoRA) 테스트 세팅과 보존 대상이 달라 별도 템플릿/설정.
+# builtin 은 배포용, custom/meta 는 로컬 편집용. auto_lora_prompt 의 bot/asset 분리와 동일 패턴.
 ASSET_TEST_SETUP_PROMPT_BUILTIN_FILE = os.path.join(AUTO_LORA_PROMPT_DIR, "asset_test_setup_system.txt")
+ASSET_TEST_SETUP_PROMPT_CUSTOM_FILE = os.path.join(ASSET_DATA_DIR, "asset_test_setup_prompt_custom.txt")
+ASSET_TEST_SETUP_PROMPT_META_FILE = os.path.join(ASSET_DATA_DIR, "asset_test_setup_prompt_meta.json")
 
 # 스타일 LoRA(그림체/화풍) 정제 전용 템플릿. 인스턴스 정제와 동일 동작이되 별도 템플릿으로 발전시키기 위해 분리.
 # template_set == "style" 일 때 사용된다.
@@ -244,47 +248,58 @@ def _render_bot_test_setup_prompt(template: str, test_prompt: str, character_pro
     return rendered
 
 
-def _load_bot_test_setup_prompt_custom() -> tuple[str, bool]:
-    """bot_test_setup 커스텀 프롬프트와 use_custom 플래그 로드. (없으면 빈 문자열, False)."""
+def _test_setup_prompt_paths(is_asset: bool = False) -> tuple[str, str, str]:
+    """bot/asset 테스트 세팅 프롬프트 (builtin, custom, meta) 파일 경로 반환.
+    is_asset=True 이면 에셋 전용(학습 에셋 외관) 템플릿/설정을, 아니면 캐릭터(봇 LoRA) 템플릿/설정을 반환한다.
+    auto_lora_prompt 의 _auto_lora_prompt_paths 와 동일한 bot/asset 분리 패턴."""
+    if is_asset:
+        return (ASSET_TEST_SETUP_PROMPT_BUILTIN_FILE, ASSET_TEST_SETUP_PROMPT_CUSTOM_FILE, ASSET_TEST_SETUP_PROMPT_META_FILE)
+    return (BOT_TEST_SETUP_PROMPT_BUILTIN_FILE, BOT_TEST_SETUP_PROMPT_CUSTOM_FILE, BOT_TEST_SETUP_PROMPT_META_FILE)
+
+
+def _load_test_setup_prompt_custom(is_asset: bool = False) -> tuple[str, bool]:
+    """테스트 세팅 커스텀 프롬프트와 use_custom 플래그 로드. (없으면 빈 문자열, False).
+    is_asset=True 이면 에셋 전용 custom/meta 파일을 로드한다."""
+    custom_file, meta_file = _test_setup_prompt_paths(is_asset)[1:]
     custom = ""
-    if os.path.isfile(BOT_TEST_SETUP_PROMPT_CUSTOM_FILE):
+    if os.path.isfile(custom_file):
         try:
-            with open(BOT_TEST_SETUP_PROMPT_CUSTOM_FILE, "r", encoding="utf-8") as f:
+            with open(custom_file, "r", encoding="utf-8") as f:
                 custom = f.read()
         except Exception as e:
-            print(f"[INSTANCE_LORA] bot_test_setup custom 로드 실패: {e}")
+            print(f"[INSTANCE_LORA] test_setup custom 로드 실패 (asset={is_asset}): {e}")
             traceback.print_exc()
 
     use_custom = False
-    if os.path.isfile(BOT_TEST_SETUP_PROMPT_META_FILE):
+    if os.path.isfile(meta_file):
         try:
-            with open(BOT_TEST_SETUP_PROMPT_META_FILE, "r", encoding="utf-8") as f:
+            with open(meta_file, "r", encoding="utf-8") as f:
                 meta = json.load(f)
                 use_custom = bool(meta.get("use_custom", False))
         except Exception as e:
-            print(f"[INSTANCE_LORA] bot_test_setup meta 로드 실패: {e}")
+            print(f"[INSTANCE_LORA] test_setup meta 로드 실패 (asset={is_asset}): {e}")
             traceback.print_exc()
 
     return custom, use_custom
 
 
-def _save_bot_test_setup_prompt_custom(text: str, use_custom: bool) -> None:
-    """bot_test_setup 커스텀 프롬프트 저장. 기존 파일은 .bak 로 백업."""
+def _save_test_setup_prompt_custom(text: str, use_custom: bool, is_asset: bool = False) -> None:
+    """테스트 세팅 커스텀 프롬프트 저장. 기존 파일은 .bak 로 백업.
+    is_asset=True 이면 에셋 전용 custom/meta 파일에 저장한다."""
     os.makedirs(ASSET_DATA_DIR, exist_ok=True)
-    custom_file = BOT_TEST_SETUP_PROMPT_CUSTOM_FILE
-    meta_file = BOT_TEST_SETUP_PROMPT_META_FILE
+    custom_file, meta_file = _test_setup_prompt_paths(is_asset)[1:]
 
     if os.path.isfile(custom_file):
         try:
             shutil.copy2(custom_file, custom_file + ".bak")
         except Exception as e:
-            print(f"[INSTANCE_LORA] bot_test_setup custom 백업 실패: {e}")
+            print(f"[INSTANCE_LORA] test_setup custom 백업 실패 (asset={is_asset}): {e}")
 
     try:
         with open(custom_file, "w", encoding="utf-8") as f:
             f.write(text)
     except Exception as e:
-        print(f"[INSTANCE_LORA] bot_test_setup custom 저장 실패: {e}")
+        print(f"[INSTANCE_LORA] test_setup custom 저장 실패 (asset={is_asset}): {e}")
         traceback.print_exc()
         raise
 
@@ -292,13 +307,13 @@ def _save_bot_test_setup_prompt_custom(text: str, use_custom: bool) -> None:
         try:
             shutil.copy2(meta_file, meta_file + ".bak")
         except Exception as e:
-            print(f"[INSTANCE_LORA] bot_test_setup meta 백업 실패: {e}")
+            print(f"[INSTANCE_LORA] test_setup meta 백업 실패 (asset={is_asset}): {e}")
 
     try:
         with open(meta_file, "w", encoding="utf-8") as f:
             json.dump({"use_custom": bool(use_custom)}, f, ensure_ascii=False, indent=2)
     except Exception as e:
-        print(f"[INSTANCE_LORA] bot_test_setup meta 저장 실패: {e}")
+        print(f"[INSTANCE_LORA] test_setup meta 저장 실패 (asset={is_asset}): {e}")
         traceback.print_exc()
         raise
 
@@ -800,12 +815,11 @@ async def run_auto_refine_test_setup(
         if not test_positive or not test_positive.strip():
             return {"success": False, "error": "공통 테스트 이미지 프롬프트(test_positive)가 비어 있습니다."}
 
-        custom_text, use_custom = _load_bot_test_setup_prompt_custom()
+        is_asset = source_type == "asset_test_setup"
+        custom_text, use_custom = _load_test_setup_prompt_custom(is_asset)
         if use_custom and custom_text.strip():
-            # 기존 공유 프롬프트 편집 UI와의 하위 호환을 보존한다. 에셋의 2차
-            # asset_test_transfer 정책은 커스텀 문구가 캐릭터 중심이어도 최종 역할을 교정한다.
             template = custom_text
-        elif source_type == "asset_test_setup":
+        elif is_asset:
             template = _load_asset_test_setup_prompt_builtin()
         else:
             template = _load_bot_test_setup_prompt_builtin()
@@ -994,13 +1008,16 @@ async def handle_set_auto_lora_prompt(request):
 
 
 async def handle_get_bot_test_setup_prompt(request):
-    """GET /api/instance_lora/bot_test_setup_prompt - 테스트 이미지 세팅 전용 LLM 프롬프트 조회."""
+    """GET /api/instance_lora/bot_test_setup_prompt - 테스트 이미지 세팅 전용 LLM 프롬프트 조회.
+    ?asset=1 이면 에셋 전용(학습 에셋 외관) builtin/custom/use_custom 을 반환한다."""
     try:
-        builtin = _load_bot_test_setup_prompt_builtin()
-        custom, use_custom = _load_bot_test_setup_prompt_custom()
+        is_asset = request.query.get("asset", "").strip() in ("1", "true", "True")
+        builtin = _load_asset_test_setup_prompt_builtin() if is_asset else _load_bot_test_setup_prompt_builtin()
+        custom, use_custom = _load_test_setup_prompt_custom(is_asset)
         return web.json_response({
             "success": True,
             "data": {
+                "is_asset": is_asset,
                 "builtin": builtin,
                 "custom": custom,
                 "use_custom": use_custom,
@@ -1013,15 +1030,18 @@ async def handle_get_bot_test_setup_prompt(request):
 
 
 async def handle_set_bot_test_setup_prompt(request):
-    """POST /api/instance_lora/bot_test_setup_prompt - 테스트 이미지 세팅 전용 LLM 프롬프트 저장."""
+    """POST /api/instance_lora/bot_test_setup_prompt - 테스트 이미지 세팅 전용 LLM 프롬프트 저장.
+    body.asset 가 true 이면 에셋 전용 custom/meta 파일에 저장한다."""
+    is_asset = False
     try:
         body = await request.json()
         custom = body.get("custom", "") or ""
         use_custom = bool(body.get("use_custom", False))
-        _save_bot_test_setup_prompt_custom(custom, use_custom)
+        is_asset = bool(body.get("asset", False))
+        _save_test_setup_prompt_custom(custom, use_custom, is_asset)
         return web.json_response({"success": True})
     except Exception as e:
-        print(f"[INSTANCE_LORA] bot_test_setup_prompt 저장 실패: {e}")
+        print(f"[INSTANCE_LORA] bot_test_setup_prompt 저장 실패 (asset={is_asset}): {e}")
         traceback.print_exc()
         return web.json_response({"success": False, "error": str(e)})
 
