@@ -1317,7 +1317,7 @@ def _draw_multi_panel(canvas, rect, pal, opacity: float):
                 (x2 - cut // 2, y2), (x1 + cut, y2),
                 (x1, y2 - cut), (x1, y1 + cut // 2),
             ]
-            ld.polygon(points, fill=(8, 14, 18, int(232 * opa)))
+            ld.polygon(points, fill=(8, 14, 18, int(255 * opa)))
             ld.line(points + [points[0]], fill=(118, 220, 222, 165), width=2)
             inset = max(6, cut // 2)
             inner = [
@@ -1728,7 +1728,7 @@ def _render_unified_theme_dialogue(
         panel_layer = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
         panel_draw = ImageDraw.Draw(panel_layer)
         if style == "classic":
-            alpha = int((255 if placement == "extend" else 178) * opacity)
+            alpha = int(255 * opacity)
             panel_draw.rectangle([(x1, y1), (x2, y2)], fill=(0, 0, 0, alpha))
             panel_draw.line(
                 [(x1, y1), (x2, y1)], fill=(180, 182, 188, 210), width=2,
@@ -1744,7 +1744,7 @@ def _render_unified_theme_dialogue(
                 (x2 - cut // 2, y2), (x1 + cut, y2),
                 (x1, y2 - cut), (x1, y1 + cut // 2),
             ]
-            panel_draw.polygon(points, fill=(8, 14, 18, int(232 * opacity)))
+            panel_draw.polygon(points, fill=(8, 14, 18, int(255 * opacity)))
             panel_draw.line(points + [points[0]], fill=(118, 220, 222, 150), width=2)
             inset = max(6, cut // 2)
             inner = [
@@ -1768,12 +1768,11 @@ def _render_unified_theme_dialogue(
                 fill=(244, 163, 77, 235),
             )
         elif style == "devil":
-            # 하단 그라데이션(어두운 보라→검정)은 유지하되 기준 알파를 강하게:
-            # 상단 50%(128) · 하단 완전(255). 사용자 opacity(0~100→0~1)는
-            # 이 기준값 전체에 동등하게 곱해져, 낮출수록 그라데이션이 균등하게 옅어진다.
+            # 카드 배경 반투명도(0~100→0~1)는 절대 스케일: 100%=완전 불투명(255),
+            # 0%=완전 투명. 어두운 보라→검정 색 그라데이션은 devil 정체성으로 유지.
             gradient = _vertical_gradient(
                 (max(1, x2 - x1), max(1, y2 - y1)),
-                (10, 8, 12, int(128 * opacity)),
+                (10, 8, 12, int(255 * opacity)),
                 (0, 0, 0, int(255 * opacity)),
             )
             panel_layer.alpha_composite(gradient, (x1, y1))
@@ -1785,7 +1784,7 @@ def _render_unified_theme_dialogue(
                 (x2, y1 + cut * 2), (x2, y2),
                 (x1, y2), (x1, y1 + cut),
             ]
-            panel_draw.polygon(points, fill=(0, 0, 0, int(224 * opacity)))
+            panel_draw.polygon(points, fill=(0, 0, 0, int(255 * opacity)))
             panel_draw.line(
                 [(x1, y1 + cut), (x1 + cut, y1), (x1 + cut * 4, y1)],
                 fill=(23, 151, 204, 225), width=max(2, cut // 5),
@@ -2357,11 +2356,11 @@ def compose_postprocess(image_bytes: bytes, speak_text: str,
                             text_outline_width, bot_name)
 
     # ===== classic: 검정 심플 렌더링 =====
-    # 카드 배경 반투명도(0~100). 100=불투명. 2인+ classic_simple 경로
-    # (_render_unified_theme_dialogue)와 동일 공식으로 적용.
+    # 카드 배경 반투명도(0~100→0~1)는 절대 스케일: 100%=완전 불투명(255), 0%=완전 투명.
+    # 2인+ classic_simple 경로(_render_unified_theme_dialogue)와 동일 공식.
     # - overlay: 바가 이미지 위에 덮이므로 opacity 슬라이더가 이미지 비치는 정도로 반영됨.
     # - extend(기본): 바 아래 스트립도 순수 검정이라 검정 위 검정이 되어 opacity 적용이
-    #   시각적으로 의미 없음(2인+ 경과 동일한 구조적 한계). 100=불투명 검정으로 둔다.
+    #   시각적으로 의미 없음(구조적 한계). overlay에서만 실질 효과.
     try:
         _classic_opacity = float(settings.get("opacity", 100)) / 100.0
     except (TypeError, ValueError):
@@ -2379,7 +2378,7 @@ def compose_postprocess(image_bytes: bytes, speak_text: str,
         overlay = Image.new("RGBA", (img_w, img_h), (0, 0, 0, 0))
         od = ImageDraw.Draw(overlay)
         od.rectangle([(0, layout["bar_y"]), (img_w, img_h)],
-                     fill=OVERLAY_COLOR + (int(178 * _classic_opacity),))
+                     fill=OVERLAY_COLOR + (int(255 * _classic_opacity),))
         canvas = Image.alpha_composite(canvas, overlay)
         draw = ImageDraw.Draw(canvas)
 
