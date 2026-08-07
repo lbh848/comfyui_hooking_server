@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
@@ -14144,7 +14144,7 @@
                         <div style="display:flex; flex-direction:column; gap:6px;">
                             <div>
                                 <label style="font-size:0.7rem; color:var(--text-secondary); display:block; margin-bottom:2px;">PROFILE</label>
-                                <select id="lora-cfg-profile" style="width:100%; padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); font-size:0.8rem; box-sizing:border-box;">
+                                <select id="lora-cfg-profile" onchange="applyLoraProfileDefaults('lora-cfg')" style="width:100%; padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); font-size:0.8rem; box-sizing:border-box;">
                                     <option value="anima">anima</option>
                                     <option value="sdxl">sdxl</option>
                                 </select>
@@ -14365,7 +14365,7 @@
                                 <div style="display:flex; flex-direction:column; gap:6px;">
                                     <div>
                                         <label style="font-size:0.7rem; color:var(--text-secondary); display:block; margin-bottom:2px;">PROFILE</label>
-                                        <select id="bot-lora-cfg-profile" style="width:100%; padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); font-size:0.8rem; box-sizing:border-box;">
+                                        <select id="bot-lora-cfg-profile" onchange="applyLoraProfileDefaults('bot-lora-cfg')" style="width:100%; padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); font-size:0.8rem; box-sizing:border-box;">
                                             <option value="anima">anima</option>
                                             <option value="sdxl">sdxl</option>
                                         </select>
@@ -16854,7 +16854,12 @@
                         <label style="font-size: 0.8rem; margin-bottom: 4px;">베이스 경로 (폴더)</label>
                         <input type="text" id="setting-workflow-base-dir" placeholder="워크플로우 파일이 있는 폴더 경로 입력"
                                oninput="updateWorkflowPath()">
-                        <div class="hint" style="margin-bottom: 8px;">워크플로우 파일이 있는 폴더 경로</div>
+                        <div class="hint" id="setting-workflow-base-dir-hint" style="margin-bottom: 8px;">워크플로우 파일이 있는 폴더 경로</div>
+                        <label style="display:flex; align-items:center; gap:6px; font-size:0.75rem; color:var(--text-secondary); margin-bottom:8px; cursor:pointer;">
+                            <input type="checkbox" id="setting-workflow-base-dir-manual"
+                                   onchange="toggleAutoPathField('setting-workflow-base-dir')">
+                            직접 지정 (원격/사용자 지정 위치를 쓸 때만 체크)
+                        </label>
                     </div>
                     <input type="hidden" id="setting-workflow-path">
 
@@ -16869,7 +16874,12 @@
                             <input type="text" id="setting-comfy-input-dir" placeholder="예: C:\ComfyUI\input" style="flex: 1;">
                             <button type="button" class="btn-patch-comfy-input" onclick="patchComfyInput()" title="Comfy Input 폴더에 soya_char_ref/fallback, soya_style_ref/fallback, soya_lora 폴더를 비우고 다시 fallback 이미지를 복사합니다.">리패치</button>
                         </div>
-                        <div class="hint">절대 경로를 입력하세요</div>
+                        <div class="hint" id="setting-comfy-input-dir-hint">절대 경로를 입력하세요</div>
+                        <label style="display:flex; align-items:center; gap:6px; font-size:0.75rem; color:var(--text-secondary); margin-top:6px; cursor:pointer;">
+                            <input type="checkbox" id="setting-comfy-input-dir-manual"
+                                   onchange="toggleAutoPathField('setting-comfy-input-dir')">
+                            직접 지정 (ComfyUI가 다른 PC/위치에 있을 때만 체크)
+                        </label>
                     </div>
 
                     <div class="setting-row">
@@ -24234,6 +24244,11 @@
             document.getElementById('setting-utility-workflow-source-path').value = utilityPath;
 
             document.getElementById('setting-comfy-input-dir').value = currentConfig.comfy_input_dir || '';
+            // 자동 설정 경로 2종은 기본 잠금. 값이 없으면 "먼저 설치/임포트하라"고 안내한다.
+            refreshAutoPathField('setting-workflow-base-dir', '워크플로우 팩을 먼저 가져오세요',
+                '"삽화 워크플로 가져오기"로 팩을 임포트하면 자동으로 채워집니다.');
+            refreshAutoPathField('setting-comfy-input-dir', 'ComfyUI를 먼저 설치/업데이트하세요',
+                'ComfyUI 설치·업데이트를 실행하면 자동으로 채워집니다.');
             document.getElementById('setting-backup-dir').value = currentConfig.backup_base_dir || '';
             document.getElementById('setting-backup-max-count').value = currentConfig.backup_max_count || 500;
 
@@ -24579,6 +24594,40 @@
         }
 
         // 워크플로우 경로 업데이트
+        // ─── 자동 설정 경로 필드 잠금 ─────────────────────────
+        // 이 값들은 ComfyUI 설치 / 워크플로우 팩 임포트가 자동으로 채운다.
+        // 사용자가 빈칸을 보고 임의 경로를 넣으면 자동 채움과 충돌하므로 기본적으로 잠근다.
+        function toggleAutoPathField(inputId) {
+            const input = document.getElementById(inputId);
+            const cb = document.getElementById(inputId + '-manual');
+            if (!input || !cb) return;
+            input.disabled = !cb.checked;
+            input.style.opacity = cb.checked ? '' : '0.6';
+            if (cb.checked) input.focus();
+        }
+
+        // emptyMsg: 값이 아직 없을 때 placeholder, hintMsg: 그때 보여줄 안내문
+        function refreshAutoPathField(inputId, emptyMsg, hintMsg) {
+            const input = document.getElementById(inputId);
+            const cb = document.getElementById(inputId + '-manual');
+            const hint = document.getElementById(inputId + '-hint');
+            if (!input || !cb) return;
+            const hasValue = !!(input.value || '').trim();
+            // 값이 이미 있으면 자동 설정된 것으로 보고 잠금 유지, 없으면 안내 표시
+            cb.checked = false;
+            input.disabled = true;
+            input.style.opacity = '0.6';
+            if (!hasValue) {
+                input.placeholder = emptyMsg;
+                if (hint) {
+                    hint.textContent = hintMsg;
+                    hint.style.color = 'var(--text-secondary)';
+                }
+            } else if (hint) {
+                hint.textContent = '자동 설정됨 — 수정하려면 아래 "직접 지정"을 체크하세요.';
+            }
+        }
+
         function updateWorkflowPath() {
             for (const profile of ['v1', 'v3', 'v3_anima']) {
                 updateIllustrationWorkflowPath(profile);
@@ -34188,7 +34237,7 @@
         let loraCurrentCharacter = '';
         let loraCurrentEntry = '';
         let loraPickerTarget = 'training'; // 'training' or 'test'
-        let loraPickerState = { level: 'characters', pickerCharacter: '', outfit: '', expression: '', selected: new Set() };
+        let loraPickerState = { level: 'characters', pickerCharacter: '', outfit: '', expression: '', selected: new Set(), scroll: {} };
 
         function _loraHideAll() {
             document.getElementById('lora-loading').style.display = 'none';
@@ -36742,7 +36791,7 @@
         function openLoraImagePicker(target = 'training') {
             if (!loraCurrentCharacter) { showToast('먼저 캐릭터를 선택하세요', 'error'); return; }
             loraPickerTarget = target;
-            loraPickerState = { level: 'characters', pickerCharacter: loraCurrentCharacter, outfit: '', expression: '', selected: new Set() };
+            loraPickerState = { level: 'characters', pickerCharacter: loraCurrentCharacter, outfit: '', expression: '', selected: new Set(), scroll: {} };
             document.getElementById('lora-picker-title').textContent = target === 'test' ? '테스트 이미지 선택' : '학습용 이미지 선택';
             document.getElementById('lora-picker-footer').style.display = 'flex';
             document.getElementById('lora-picker-footer').innerHTML = `
@@ -36752,31 +36801,79 @@
             const modal = document.getElementById('lora-image-picker-modal');
             modal.style.display = 'flex';
             // 캐릭터 그리드 로드
-            const body = document.getElementById('lora-picker-body');
-            body.innerHTML = '<div style="text-align:center; padding:32px;"><div class="spinner" style="width:32px;height:32px;border-width:3px;margin:0 auto;"></div></div>';
-            fetchJSON('/api/lora/characters').then(function(resp) {
-                if (!resp || !resp.success || !resp.characters || resp.characters.length === 0) {
-                    body.innerHTML = '<div style="text-align:center; padding:32px; color:var(--text-secondary);">캐릭터가 없습니다.</div>';
-                    return;
-                }
-                var countInfo = loraPickerState.selected.size > 0 ? ' (현재 ' + loraPickerState.selected.size + '장 선택됨)' : '';
-                var html = '<div style="margin-bottom:8px; font-size:0.85rem; color:var(--text-secondary);">에셋을 탐색할 캐릭터를 선택하세요' + countInfo + '</div>';
-                html += '<div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(120px, 1fr)); gap:10px;">';
-                resp.characters.forEach(function(name) {
-                    var border = name === loraPickerState.pickerCharacter ? 'border-color:var(--accent);' : '';
-                    html += '<div class="asset-folder-card" onclick="enterLoraPickerCharacter(\'' + escapeHtml(name) + '\')" style="' + border + '">';
-                    html += '<div class="folder-icon">📁</div>';
-                    html += '<div class="folder-name">' + escapeHtml(name) + '</div>';
-                    html += '</div>';
+            loadLoraPickerCharacters();
+        }
+
+        // ─── LoRA 피커 검색 ───────────────────────────────────
+        function _loraPickerSearchHtml(id, placeholder) {
+            return '<div style="margin-bottom:10px;">'
+                + '<input type="text" id="' + id + '" placeholder="' + placeholder + '" autocomplete="off" '
+                + 'style="width:100%; padding:7px 10px; border:1px solid var(--border); border-radius:6px; '
+                + 'background:var(--surface2); color:var(--text); font-size:0.85rem; box-sizing:border-box;">'
+                + '<div id="' + id + '-empty" style="display:none; text-align:center; padding:20px; '
+                + 'color:var(--text-secondary); font-size:0.85rem;">검색 결과가 없습니다.</div>'
+                + '</div>';
+        }
+
+        // ─── 스크롤 위치 기억/복원 ───────────────────────────
+        // 현재 레벨의 스크롤 위치를 저장 (다른 레벨로 이동하기 직전에 호출)
+        function _loraPickerSaveScroll() {
+            var body = document.getElementById('lora-picker-body');
+            if (!body || !loraPickerState) return;
+            if (!loraPickerState.scroll) loraPickerState.scroll = {};
+            var key = loraPickerState.level;
+            if (key === 'images') {
+                key = 'images:' + loraPickerState.outfit + '|||' + loraPickerState.expression;
+            }
+            loraPickerState.scroll[key] = body.scrollTop;
+        }
+
+        // 저장해둔 위치로 복원. 이미지가 늦게 로드되며 높이가 변하므로 몇 번 재시도한다.
+        function _loraPickerRestoreScroll(key) {
+            var body = document.getElementById('lora-picker-body');
+            if (!body || !loraPickerState) return;
+            var y = (loraPickerState.scroll || {})[key] || 0;
+            if (!y) return;
+            var tries = 0;
+            var tick = function() {
+                body.scrollTop = y;
+                tries++;
+                if (tries < 12 && Math.abs(body.scrollTop - y) > 2) setTimeout(tick, 50);
+            };
+            requestAnimationFrame(tick);
+        }
+
+        // 검색 정규화: 소문자 + 구분자(-_/., 공백 등) 제거 → "청원고-netural1"을 "netural"로 찾을 수 있게
+        function _loraPickerNorm(s) {
+            return String(s == null ? '' : s)
+                .toLowerCase()
+                .replace(/[\s\-_/\\.,()\[\]|]+/g, '');
+        }
+
+        function _loraPickerBindSearch(inputId, itemSelector, textOf) {
+            var input = document.getElementById(inputId);
+            if (!input) return;
+            var emptyEl = document.getElementById(inputId + '-empty');
+            var apply = function() {
+                var raw = input.value.trim();
+                // 공백으로 나눈 각 토큰이 전부 포함돼야 통과 (AND 검색)
+                var tokens = raw ? raw.split(/\s+/).map(_loraPickerNorm).filter(Boolean) : [];
+                var shown = 0;
+                document.querySelectorAll(itemSelector).forEach(function(el) {
+                    var hay = _loraPickerNorm(textOf(el));
+                    var hit = tokens.length === 0 || tokens.every(function(t) {
+                        return hay.indexOf(t) !== -1;
+                    });
+                    el.style.display = hit ? '' : 'none';
+                    if (hit) shown++;
                 });
-                html += '</div>';
-                body.innerHTML = html;
-                loraPickerState.level = 'characters';
-                loraPickerUpdateCount();
-            }).catch(function(e) {
-                console.error('[LORA] 캐릭터 목록 로드 실패:', e);
-                body.innerHTML = '<div style="text-align:center; padding:32px; color:var(--error);">로드 실패</div>';
-            });
+                if (emptyEl) emptyEl.style.display = (tokens.length && shown === 0) ? 'block' : 'none';
+            };
+            input.addEventListener('input', apply);
+            // 한글 IME 조합 중에도 반영
+            input.addEventListener('compositionupdate', apply);
+            input.addEventListener('compositionend', apply);
+            input.focus();
         }
 
         function closeLoraImagePicker() {
@@ -36806,18 +36903,23 @@
                 }
                 var countInfo = loraPickerState.selected.size > 0 ? ' (현재 ' + loraPickerState.selected.size + '장 선택됨)' : '';
                 var html = '<div style="margin-bottom:8px; font-size:0.85rem; color:var(--text-secondary);">에셋을 탐색할 캐릭터를 선택하세요' + countInfo + '</div>';
-                html += '<div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(120px, 1fr)); gap:10px;">';
+                html += _loraPickerSearchHtml('lora-picker-char-search', '캐릭터 검색...');
+                html += '<div id="lora-picker-char-grid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(120px, 1fr)); gap:10px;">';
                 resp.characters.forEach(function(name) {
                     var border = name === loraPickerState.pickerCharacter ? 'border-color:var(--accent);' : '';
-                    html += '<div class="asset-folder-card" onclick="enterLoraPickerCharacter(\'' + escapeHtml(name) + '\')" style="' + border + '">';
+                    html += '<div class="asset-folder-card" data-name="' + escapeHtml(name) + '" onclick="enterLoraPickerCharacter(\'' + escapeHtml(name) + '\')" style="' + border + '">';
                     html += '<div class="folder-icon">📁</div>';
                     html += '<div class="folder-name">' + escapeHtml(name) + '</div>';
                     html += '</div>';
                 });
                 html += '</div>';
                 body.innerHTML = html;
+                _loraPickerBindSearch('lora-picker-char-search', '#lora-picker-char-grid .asset-folder-card', function(el) {
+                    return el.getAttribute('data-name') || '';
+                });
                 loraPickerState.level = 'characters';
                 loraPickerUpdateCount();
+                _loraPickerRestoreScroll('characters');
             }).catch(function(e) {
                 console.error('[LORA] 캐릭터 목록 로드 실패:', e);
                 body.innerHTML = '<div style="text-align:center; padding:32px; color:var(--error);">로드 실패</div>';
@@ -36825,6 +36927,7 @@
         }
 
         function enterLoraPickerCharacter(character) {
+            _loraPickerSaveScroll();
             loraPickerState.pickerCharacter = character;
             loadLoraPickerGallery();
         }
@@ -36847,6 +36950,7 @@
                 html += '<span style="font-size:0.85rem; color:var(--text-secondary);">' + escapeHtml(pickerChar) + '</span>';
                 html += '<button id="lora-picker-toggle-all" style="padding:4px 12px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:4px; cursor:pointer; font-size:0.8rem; margin-left:auto;">전체 선택/해제</button>';
                 html += '</div>';
+                html += _loraPickerSearchHtml('lora-picker-gallery-search', '의상 / 표정 검색...');
                 html += '<div class="asset-gallery-grid" id="lora-picker-gallery-grid">';
                 resp.gallery.forEach(function(item) {
                     html += '<div class="asset-gallery-item" data-outfit="' + escapeHtml(item.outfit) + '" data-expression="' + escapeHtml(item.expression) + '" style="cursor:pointer;">';
@@ -36867,18 +36971,24 @@
                 var backBtn = document.getElementById('lora-picker-back-chars');
                 if (backBtn) {
                     backBtn.addEventListener('click', function() {
+                        _loraPickerSaveScroll();
                         loadLoraPickerCharacters();
                     });
                 }
                 document.getElementById('lora-picker-toggle-all').addEventListener('click', loraPickerToggleSelectAll);
                 document.querySelectorAll('#lora-picker-gallery-grid .asset-gallery-item').forEach(function(el) {
                     el.addEventListener('click', function() {
+                        _loraPickerSaveScroll();
                         loadLoraPickerImages(this.getAttribute('data-outfit'), this.getAttribute('data-expression'));
                     });
+                });
+                _loraPickerBindSearch('lora-picker-gallery-search', '#lora-picker-gallery-grid .asset-gallery-item', function(el) {
+                    return (el.getAttribute('data-outfit') || '') + ' ' + (el.getAttribute('data-expression') || '');
                 });
 
                 loraPickerState.level = 'gallery';
                 loraPickerUpdateCount();
+                _loraPickerRestoreScroll('gallery');
             }).catch(function(e) {
                 console.error('[LORA] 갤러리 로드 실패:', e);
                 body.innerHTML = '<div style="text-align:center; padding:32px; color:var(--error);">로드 실패</div>';
@@ -36898,12 +37008,16 @@
             headerHtml += '<span style="font-size:0.85rem; color:var(--text-secondary);">' + escapeHtml(pickerChar) + ' / ' + escapeHtml(outfit) + ' / ' + escapeHtml(expression) + '</span>';
             headerHtml += '<button id="lora-picker-img-toggle-all" style="padding:4px 12px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:4px; cursor:pointer; font-size:0.8rem; margin-left:auto;">전체 선택/해제</button>';
             headerHtml += '</div>';
+            headerHtml += _loraPickerSearchHtml('lora-picker-img-search', '파일명 검색...');
             headerHtml += '<div id="lora-picker-images-grid" style="display:grid; grid-template-columns:repeat(3, 1fr); gap:8px;">';
             headerHtml += '<div class="spinner" style="width:32px;height:32px;border-width:3px;margin:16px auto;"></div>';
             headerHtml += '</div>';
             body.innerHTML = headerHtml;
 
-            document.getElementById('lora-picker-back-gallery').addEventListener('click', loadLoraPickerGallery);
+            document.getElementById('lora-picker-back-gallery').addEventListener('click', function() {
+                _loraPickerSaveScroll();
+                loadLoraPickerGallery();
+            });
             document.getElementById('lora-picker-img-toggle-all').addEventListener('click', loraPickerToggleSelectAll);
 
             fetchJSON('/api/asset_mode/characters/' + enc(pickerChar) + '/outfits/' + enc(outfit) + '/expressions/' + enc(expression) + '/images').then(function(resp) {
@@ -36921,7 +37035,7 @@
                     var borderColor = checked ? 'var(--accent)' : 'transparent';
                     var bgColor = checked ? 'var(--accent)' : 'rgba(0,0,0,0.3)';
                     var checkMark = checked ? '&#10003;' : '';
-                    html += '<div data-key="' + escapeHtml(key) + '" style="position:relative; cursor:pointer; border-radius:6px; overflow:hidden; border:2px solid ' + borderColor + '; transition:border-color 0.15s;">';
+                    html += '<div data-key="' + escapeHtml(key) + '" data-filename="' + escapeHtml(img.filename) + '" style="position:relative; cursor:pointer; border-radius:6px; overflow:hidden; border:2px solid ' + borderColor + '; transition:border-color 0.15s;">';
                     html += '<img src="' + imgUrl + '" style="width:100%; display:block;">';
                     html += '<div style="position:absolute; top:4px; right:4px; width:20px; height:20px; border-radius:50%; background:' + bgColor + '; display:flex; align-items:center; justify-content:center; color:#fff; font-size:0.7rem;">' + checkMark + '</div>';
                     if (img.is_representative) {
@@ -36936,6 +37050,10 @@
                         loraPickerToggle(this, this.getAttribute('data-key'));
                     });
                 });
+                _loraPickerBindSearch('lora-picker-img-search', '#lora-picker-images-grid [data-filename]', function(el) {
+                    return el.getAttribute('data-filename') || '';
+                });
+                _loraPickerRestoreScroll('images:' + outfit + '|||' + expression);
             }).catch(function(e) {
                 console.error('[LORA] 이미지 로드 실패:', e);
             });
@@ -36956,9 +37074,69 @@
             loraPickerUpdateCount();
         }
 
+        // 현재 레벨에서 "보이는"(검색 필터 통과) 항목을 전체 선택/해제.
+        // 이미 전부 선택돼 있으면 해제로, 하나라도 빠져 있으면 전체 선택으로 동작한다.
         function loraPickerToggleSelectAll() {
-            // 현재 보이는 갤러리의 모든 이미지를 선택/해제
-            // 갤러리 레벨에서는 의미가 없으므로 아무것도 하지 않음
+            if (!loraPickerState) return;
+
+            // ── 이미지 레벨: DOM에 있는 이미지들을 직접 토글 ──
+            if (loraPickerState.level === 'images') {
+                var items = Array.prototype.slice
+                    .call(document.querySelectorAll('#lora-picker-images-grid [data-key]'))
+                    .filter(function(el) { return el.style.display !== 'none'; });
+                if (!items.length) { showToast('선택할 이미지가 없습니다', 'error'); return; }
+                var allSel = items.every(function(el) {
+                    return loraPickerState.selected.has(el.getAttribute('data-key'));
+                });
+                items.forEach(function(el) {
+                    var key = el.getAttribute('data-key');
+                    if (loraPickerState.selected.has(key) === allSel) loraPickerToggle(el, key);
+                });
+                showToast((allSel ? '전체 해제' : '전체 선택') + ' (' + items.length + '장)', 'success');
+                return;
+            }
+
+            // ── 갤러리 레벨: 보이는 의상/표정 묶음의 이미지를 전부 불러와 선택/해제 ──
+            if (loraPickerState.level === 'gallery') {
+                var groups = Array.prototype.slice
+                    .call(document.querySelectorAll('#lora-picker-gallery-grid .asset-gallery-item'))
+                    .filter(function(el) { return el.style.display !== 'none'; });
+                if (!groups.length) { showToast('선택할 항목이 없습니다', 'error'); return; }
+
+                var btn = document.getElementById('lora-picker-toggle-all');
+                var origText = btn ? btn.textContent : '';
+                if (btn) { btn.disabled = true; btn.textContent = '불러오는 중...'; }
+
+                var enc = encodeURIComponent;
+                var pickerChar = loraPickerState.pickerCharacter;
+                Promise.all(groups.map(function(el) {
+                    var outfit = el.getAttribute('data-outfit');
+                    var expression = el.getAttribute('data-expression');
+                    var url = '/api/asset_mode/characters/' + enc(pickerChar)
+                        + '/outfits/' + enc(outfit)
+                        + '/expressions/' + enc(expression) + '/images';
+                    return fetchJSON(url).then(function(resp) {
+                        return ((resp && resp.images) || []).map(function(img) {
+                            return pickerChar + '|||' + outfit + '|||' + expression + '|||' + img.filename;
+                        });
+                    }).catch(function(e) {
+                        console.error('[LORA] 전체 선택 - 이미지 로드 실패:', outfit, expression, e);
+                        return [];
+                    });
+                })).then(function(lists) {
+                    var keys = [].concat.apply([], lists);
+                    if (btn) { btn.disabled = false; btn.textContent = origText; }
+                    if (!keys.length) { showToast('불러온 이미지가 없습니다', 'error'); return; }
+                    var allSel = keys.every(function(k) { return loraPickerState.selected.has(k); });
+                    keys.forEach(function(k) {
+                        if (allSel) loraPickerState.selected.delete(k);
+                        else loraPickerState.selected.add(k);
+                    });
+                    loraPickerUpdateCount();
+                    showToast((allSel ? '전체 해제' : '전체 선택') + ' (' + keys.length + '장)', 'success');
+                });
+                return;
+            }
         }
 
         function loraPickerUpdateCount() {
@@ -42245,7 +42423,7 @@
         function openStyleTestImagePicker() {
             if (!_styleNeedProject()) return;
             loraPickerTarget = 'style_test';
-            loraPickerState = { level: 'characters', pickerCharacter: '', outfit: '', expression: '', selected: new Set() };
+            loraPickerState = { level: 'characters', pickerCharacter: '', outfit: '', expression: '', selected: new Set(), scroll: {} };
             document.getElementById('lora-picker-title').textContent = '테스트 이미지 — 에셋에서 선택';
             const footer = document.getElementById('lora-picker-footer');
             footer.style.display = 'flex';
@@ -43796,7 +43974,7 @@
         function openBotLoraCharImagePicker(charName) {
             botLoraCharTestTarget = charName;
             loraPickerTarget = 'bot_char_test';
-            loraPickerState = { level: 'characters', pickerCharacter: '', outfit: '', expression: '', selected: new Set() };
+            loraPickerState = { level: 'characters', pickerCharacter: '', outfit: '', expression: '', selected: new Set(), scroll: {} };
             document.getElementById('lora-image-picker-modal').style.display = 'flex';
             loadLoraPickerCharacters();
         }
@@ -44814,7 +44992,7 @@
         function openBotLoraImagePicker() {
             // 기존 lora-image-picker-modal 재사용
             loraPickerTarget = 'bot_test';
-            loraPickerState = { level: 'characters', pickerCharacter: '', outfit: '', expression: '', selected: new Set() };
+            loraPickerState = { level: 'characters', pickerCharacter: '', outfit: '', expression: '', selected: new Set(), scroll: {} };
             document.getElementById('lora-picker-title').textContent = '에셋에서 이미지 선택';
             document.getElementById('lora-picker-footer').style.display = 'flex';
             document.getElementById('lora-picker-footer').innerHTML = `
@@ -77351,6 +77529,50 @@
             [1600, 0.000142], [1700, 0.000131], [1800, 0.000121], [1900, 0.000111],
             [2000, 0.000100, true]
         ];
+        // ─── PROFILE 전환 시 추천값 자동 적용 ──────────────────
+        // 값 출처: 각 입력 라벨에 적힌 추천값
+        //   STEP_PER_IMAGE  Anima:200 / XL:300~400 → XL은 상한 400
+        //   GEN_W           Anima:704 / XL:1024
+        //   GEN_H           Anima:1024 / XL:1536
+        //   IL_RATE         XL:0.00015~0.0002 → 0.0002
+        //                   Anima은 IL_RATE_RECOMMEND 표에서 STEP에 해당하는 값을 조회
+        //   RESOLUTION      1024 (min_bucket_reso=1024 이상이어야 sd-scripts assert 통과)
+        function _animaIlRateForStep(step) {
+            var row = IL_RATE_RECOMMEND.find(function(r) { return r[0] === step; });
+            return row ? row[1] : 0.0005;
+        }
+
+        function loraProfileDefaults(profile) {
+            if (String(profile).toLowerCase() === 'sdxl') {
+                return { step: 400, ilrate: 0.0002, genw: 1024, genh: 1536, resolution: 1024 };
+            }
+            return { step: 200, ilrate: _animaIlRateForStep(200), genw: 704, genh: 1024, resolution: 1024 };
+        }
+
+        // prefix: 'lora-cfg' (로라매니징) 또는 'bot-lora-cfg' (봇 로라)
+        function applyLoraProfileDefaults(prefix) {
+            var sel = document.getElementById(prefix + '-profile');
+            if (!sel) return;
+            var d = loraProfileDefaults(sel.value);
+            var set = function(suffix, val) {
+                var el = document.getElementById(prefix + '-' + suffix);
+                if (el) el.value = val;
+            };
+            set('step', d.step);
+            set('ilrate', d.ilrate);
+            set('genw', d.genw);
+            set('genh', d.genh);
+            set('resolution', d.resolution);
+            // STEP이 바뀌었으므로 SAVE_AFTER 드롭다운 재계산 (로라매니징 쪽에만 존재)
+            if (typeof updateSaveAfterDropdown === 'function' && prefix === 'lora-cfg') {
+                try { updateSaveAfterDropdown(); } catch (e) { console.error('[LORA] SAVE_AFTER 갱신 실패:', e); }
+            }
+            if (typeof showToast === 'function') {
+                showToast(sel.value + ' 추천값 적용: STEP ' + d.step + ' · IL_RATE ' + d.ilrate
+                    + ' · ' + d.genw + 'x' + d.genh + ' · RES ' + d.resolution, 'success');
+            }
+        }
+
         // IL_RATE 추천값 표 모달 열기 (에셋/봇/인스턴스/그림체 공용)
         function showIlRateRecommend() {
             const tbody = document.getElementById('ilrate-recommend-tbody');
