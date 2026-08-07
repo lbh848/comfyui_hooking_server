@@ -4226,12 +4226,14 @@ async def _call_pipeline_llm(
         or llm_service._current_config.get("llm_model")
         or ""
     )
+    service = llm_service.routing_primary_service(task_key) or ""
     history_record = {
         "ts": datetime.datetime.now().isoformat(timespec="seconds"),
         "prompt_id": f"illustration_context:{call_name}",
         "call_name": call_name,
         "task_key": task_key,
         "model": model,
+        "service": service,
         "input": messages,
         "output": "",
         "completion_tokens": 0,
@@ -4240,9 +4242,17 @@ async def _call_pipeline_llm(
         "history_id": execution_id,
         "execution_id": execution_id,
         "parent_execution_id": parent_execution_id,
+        # 자세히 'LLM 실행 연결 정보' 기본값. attempt_success에서 실제 라우팅
+        # 결과(폴백 슬롯 포함)로 덮어쓴다.
+        "phase": "",
+        "llm_slot": "",
+        "attempt": 0,
+        "total_attempts": 0,
+        "attempt_id": "",
     }
     history_logged = False
     terminal_notified = False
+    success_meta: dict = {}
 
     async def _notify(event: dict):
         # stream_notify 이벤트에 큐 서브태스크 그룹을 주입한다.
@@ -4264,8 +4274,24 @@ async def _call_pipeline_llm(
         await stream_notify(event)
 
     async def _record_execution_event(event: dict) -> None:
-        """라우팅 재시도에서 버려지는 실패 응답도 LB 자세히 이력에 남긴다."""
-        if str(event.get("type") or "") != "attempt_failure":
+        """라우팅 재시도 이벤트를 LB 자세히 이력에 반영한다.
+
+        attempt_success: 최종 채택된 시도의 phase/slot/attempt 등을 잡아
+        성공 레코드의 'LLM 실행 연결 정보'를 채운다(폴백 슬롯 포함).
+        attempt_failure: 버려지는 실패 응답을 별도 error 레코드로 남긴다.
+        """
+        etype = str(event.get("type") or "")
+        if etype == "attempt_success":
+            success_meta.clear()
+            success_meta.update({
+                "phase": str(event.get("phase") or ""),
+                "llm_slot": str(event.get("llm_slot") or event.get("slot") or ""),
+                "attempt": int(event.get("attempt") or 0),
+                "total_attempts": int(event.get("total_attempts") or 0),
+                "attempt_id": str(event.get("attempt_id") or ""),
+            })
+            return
+        if etype != "attempt_failure":
             return
         raw_result = event.get("raw_response", event.get("result"))
         attempt_exception = event.get("error") or event.get("exception")
@@ -4353,6 +4379,11 @@ async def _call_pipeline_llm(
             "tps": round(tokens / elapsed, 1) if elapsed > 0 else 0.0,
             "ttft": round(elapsed, 3),
             "status": "ok",
+            "phase": success_meta.get("phase", ""),
+            "llm_slot": success_meta.get("llm_slot", ""),
+            "attempt": success_meta.get("attempt", 0),
+            "total_attempts": success_meta.get("total_attempts", 0),
+            "attempt_id": success_meta.get("attempt_id", ""),
         })
         lighbd_service._log_lighbd_history(history_record)
         history_logged = True
