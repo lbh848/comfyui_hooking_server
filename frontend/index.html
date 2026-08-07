@@ -47854,6 +47854,7 @@
             try {
                 // 1) 원본: 항상 API에서 자동 분류
                 const origResults = [];
+                let promptMissingCount = 0;   // 대표 이미지 프롬프트 파일 누락 캐릭터 수
                 for (let i = 0; i < chars.length; i++) {
                     btn.textContent = `분류 중… (${i + 1}/${chars.length})`;
                     const char = chars[i];
@@ -47863,7 +47864,14 @@
                     const firstRep = char.rep_images[0];
                     const img = (imgData.images || []).find(im => im.filename === firstRep);
                     const prompt = (img && img.prompt) || '';
-                    if (!prompt) { console.log(`[EXPORT_EXTRA] ${char.name}: 프롬프트 없음`); continue; }
+                    if (!prompt) {
+                        // 대표 이미지의 프롬프트 파일(*_prompt.json)이 없으면 자동 분류 불가.
+                        // 캐릭터 자체는 누락시키지 않고 빈 분류 + promptMissing 플래그로 포함시킨다(모달에서 경고 표시).
+                        console.warn(`[EXPORT_EXTRA] ${char.name}: 대표 이미지(${firstRep}) 프롬프트 누락 — 자동 분류 건너뜀`);
+                        promptMissingCount++;
+                        origResults.push({ name: char.name, appearance: [], uncategorized: [], outfit: [], promptMissing: true });
+                        continue;
+                    }
 
                     const groupResp = await fetch('/api/bot_mode/auto_group_prompt', {
                         method: 'POST',
@@ -47886,6 +47894,9 @@
                     });
                 }
                 if (origResults.length === 0) { showToast('가져올 데이터가 없습니다', 'error'); return; }
+                if (promptMissingCount > 0) {
+                    showToast(`프롬프트 누락 캐릭터 ${promptMissingCount}명 — 자동 분류 안 됨, 모달에서 ⚠ 표시 확인`, 'error');
+                }
 
                 _lbExtraOriginal = origResults;
 
@@ -47907,7 +47918,8 @@
                             const gt = _getCharGenderTag(orig.name).toLowerCase();
                             return {
                                 ...saved,
-                                appearance: saved.appearance.filter(t => (t.tag || '').toLowerCase() !== gt)
+                                appearance: saved.appearance.filter(t => (t.tag || '').toLowerCase() !== gt),
+                                promptMissing: orig.promptMissing || false
                             };
                         }
                         return JSON.parse(JSON.stringify(orig));
@@ -48273,7 +48285,9 @@
                         <span style="font-weight:700; font-size:0.95rem;">${escHtml(char.name)}</span>
                         <button onclick="event.stopPropagation(); _lbExtraShowRep('${escAttr(char.name)}')" style="background:var(--surface2); color:var(--text2); border:1px solid var(--border); padding:2px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">사진보기</button>
                         <button onclick="event.stopPropagation(); _openFocusEditModal(${ci})" style="background:var(--surface2); color:var(--text2); border:1px solid var(--border); padding:2px 8px; border-radius:4px; cursor:pointer; font-size:0.7rem;">집중편집</button>
+                        ${char.promptMissing ? '<span style="background:rgba(245,158,11,0.15); color:#B45309; border:1px solid rgba(245,158,11,0.4); padding:2px 8px; border-radius:4px; font-size:0.7rem; font-weight:600;">⚠ 프롬프트 누락</span>' : ''}
                     </div>
+                    ${char.promptMissing ? '<div style="background:rgba(245,158,11,0.12); border:1px solid rgba(245,158,11,0.35); border-radius:4px; padding:6px 10px; margin-bottom:8px; font-size:0.75rem; color:#B45309;">⚠ 프롬프트 누락 캐릭터 — 대표 이미지의 프롬프트 파일이 없어 자동 분류를 하지 못했습니다. 우측 편집칸에 태그를 직접 입력하세요.</div>' : ''}
                     <div style="display:flex; gap:0;">
                         <div style="flex:1; padding-right:12px;">
                             <div style="font-size:0.75rem; color:var(--text2); margin-bottom:4px; font-weight:600;">-Appearance</div>
@@ -49661,9 +49675,12 @@
                 if (_lbExtraEdited.length > 0) {
                     const sanitized = _lbExtraEdited.map(c => {
                         const gt = _getCharGenderTag(c.name).toLowerCase();
+                        // 저장 직렬화에는 UI 전용 플래그(promptMissing)를 제외한 순수 분류 필드만.
                         return {
-                            ...c,
-                            appearance: (c.appearance || []).filter(t => (t.tag || '').toLowerCase() !== gt)
+                            name: c.name,
+                            appearance: (c.appearance || []).filter(t => (t.tag || '').toLowerCase() !== gt),
+                            uncategorized: c.uncategorized || [],
+                            outfit: c.outfit || []
                         };
                     });
                     const resp = await fetch('/api/bot_mode/lb_extra', {
