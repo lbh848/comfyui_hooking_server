@@ -36828,17 +36828,52 @@
             loraPickerState.scroll[key] = body.scrollTop;
         }
 
-        // 저장해둔 위치로 복원. 이미지가 늦게 로드되며 높이가 변하므로 몇 번 재시도한다.
+        // 저장해둔 위치로 복원.
+        // 한 번만 지정하면 안 된다 — 썸네일이 늦게 로드되며 컨테이너 높이가 커지고,
+        // 검색창 포커스나 리플로우가 스크롤을 되돌린다. 목표값이 연속으로 유지될 때까지
+        // 계속 다시 지정하되, 사용자가 직접 스크롤을 시작하면 즉시 손을 뗀다.
         function _loraPickerRestoreScroll(key) {
             var body = document.getElementById('lora-picker-body');
             if (!body || !loraPickerState) return;
             var y = (loraPickerState.scroll || {})[key] || 0;
             if (!y) return;
-            var tries = 0;
+
+            var imgs = Array.prototype.slice.call(body.querySelectorAll('img'));
+            var prevAnchor = body.style.overflowAnchor;
+            var tries = 0, stable = 0, cancelled = false;
+
+            var assert = function() {
+                if (!cancelled && Math.abs(body.scrollTop - y) > 2) body.scrollTop = y;
+            };
+            var stop = function() {
+                if (cancelled) return;
+                cancelled = true;
+                body.removeEventListener('wheel', stop);
+                body.removeEventListener('touchstart', stop);
+                imgs.forEach(function(im) { im.removeEventListener('load', assert); });
+                body.style.overflowAnchor = prevAnchor;
+            };
+
+            // 크롬의 스크롤 앵커링은 위쪽 콘텐츠 높이가 변하면 scrollTop을 자동으로 보정한다.
+            // 썸네일이 순차 로드되는 동안 이게 계속 개입해서 복원값을 밀어낸다.
+            body.style.overflowAnchor = 'none';
+            body.addEventListener('wheel', stop, { passive: true });
+            body.addEventListener('touchstart', stop, { passive: true });
+            // 아직 안 받아진 썸네일은 로드되는 순간 높이가 변하므로 그때 다시 맞춘다.
+            imgs.forEach(function(im) { if (!im.complete) im.addEventListener('load', assert); });
+
             var tick = function() {
-                body.scrollTop = y;
-                tries++;
-                if (tries < 12 && Math.abs(body.scrollTop - y) > 2) setTimeout(tick, 50);
+                if (cancelled) return;
+                if (Math.abs(body.scrollTop - y) <= 2) {
+                    // 도달해도 바로 끝내지 않는다. 세 번 연속 유지돼야 안정된 것으로 본다.
+                    if (++stable >= 3) { stop(); return; }
+                } else {
+                    stable = 0;
+                    body.scrollTop = y;
+                }
+                // 썸네일이 큰 경우 로드에 수 초가 걸리므로 최대 3초까지 버틴다.
+                if (++tries < 60) setTimeout(tick, 50);
+                else stop();
             };
             requestAnimationFrame(tick);
         }
@@ -36873,7 +36908,10 @@
             // 한글 IME 조합 중에도 반영
             input.addEventListener('compositionupdate', apply);
             input.addEventListener('compositionend', apply);
-            input.focus();
+            // preventScroll 필수 — 검색창이 목록 맨 위에 있어서, 그냥 focus()하면 브라우저가
+            // 이 요소를 보이게 하려고 컨테이너를 최상단으로 끌어올린다. 그러면 바로 뒤에서
+            // 복원한 스크롤 위치가 도로 0이 된다.
+            try { input.focus({ preventScroll: true }); } catch (e) { input.focus(); }
         }
 
         function closeLoraImagePicker() {
