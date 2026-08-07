@@ -47812,6 +47812,7 @@
         let _lbExtraOriginal = [];
         let _lbExtraEdited = [];
         let _lbExtraShowDesc = false;
+        let _lbExtraSearchQuery = '';     // 캐릭터 분류 탭 검색어 (이름 부분 매칭)
         let _lbExtraTab = 'classification'; // 'classification' | 'systemPrompt'
         let _systemPromptText = '';
         let _systemPromptPresetSelected = '';   // 선택된 프리셋 이름
@@ -47927,6 +47928,7 @@
         function _openLbExtraModal() {
             const existing = document.getElementById('lb-extra-overlay');
             if (existing) existing.remove();
+            _lbExtraSearchQuery = '';   // 모달 재오픈 시 검색어 초기화
 
             const overlay = document.createElement('div');
             overlay.id = 'lb-extra-overlay';
@@ -47947,6 +47949,9 @@
                                 <span style="display:block; width:12px; height:12px; border-radius:50%; background:#fff; position:absolute; top:2px; left:2px; transition:left 0.2s;"></span>
                             </span>
                         </label>
+                        <div id="lb-extra-search-wrap" style="display:flex; align-items:center; gap:4px;">
+                            <input type="text" id="lb-extra-search" placeholder="캐릭터 검색..." style="padding:4px 8px; border:1px solid var(--border); border-radius:4px; font-size:0.8rem; background:var(--surface2); color:var(--text); width:180px;" autocomplete="off">
+                        </div>
                         <div style="flex:1;"></div>
                         <button id="btn-lb-extra-batch-refine" onclick="_lbExtraBatchRefine()" style="background:#7C3AED; color:#fff; border:none; padding:6px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">일괄 LLM 정제</button>
                         <button onclick="_saveLbExtra()" style="background:#1565C0; color:#fff; border:none; padding:6px 16px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:600;">저장</button>
@@ -47972,6 +47977,13 @@
                 _renderLbExtraContent();
             });
 
+            // 캐릭터 검색: 입력 즉시 부분 매칭 필터링 (검색 버튼 없음).
+            // 본문(#lb-extra-content)만 갱신되므로 입력창 포커스 유지.
+            overlay.querySelector('#lb-extra-search').addEventListener('input', function() {
+                _lbExtraSearchQuery = this.value || '';
+                _renderLbExtraContent();
+            });
+
             _switchLbExtraTab('classification');
         }
 
@@ -47986,16 +47998,19 @@
             const spBtn = document.getElementById('lb-extra-tab-systemPrompt');
             const colHeader = document.getElementById('lb-extra-column-header');
             const descLabel = document.getElementById('lb-extra-desc-label');
+            const searchWrap = document.getElementById('lb-extra-search-wrap');
             if (tab === 'classification') {
                 if (clsBtn) { clsBtn.style.background = 'var(--accent)'; clsBtn.style.color = '#fff'; }
                 if (spBtn) { spBtn.style.background = 'var(--surface2)'; spBtn.style.color = 'var(--text)'; }
                 if (colHeader) colHeader.style.display = 'flex';
                 if (descLabel) descLabel.style.display = 'flex';
+                if (searchWrap) searchWrap.style.display = 'flex';
             } else {
                 if (clsBtn) { clsBtn.style.background = 'var(--surface2)'; clsBtn.style.color = 'var(--text)'; }
                 if (spBtn) { spBtn.style.background = 'var(--accent)'; spBtn.style.color = '#fff'; }
                 if (colHeader) colHeader.style.display = 'none';
                 if (descLabel) descLabel.style.display = 'none';
+                if (searchWrap) searchWrap.style.display = 'none';
                 // 시스템 프롬프트 탭 진입 시 데이터 로드 (builtin+local 모두 GET system_prompt 에서 반환)
                 (async () => {
                     await _loadSystemPrompt();
@@ -48243,9 +48258,14 @@
             }
             if (_lbExtraOriginal.length === 0) { el.innerHTML = '<div style="color:var(--text2); text-align:center; padding:20px;">데이터 없음</div>'; return; }
 
+            // 검색어(이름 부분 매칭, 대소문자 무시)로 캐릭터 필터링
+            const q = (_lbExtraSearchQuery || '').trim().toLowerCase();
             let html = '';
+            let matched = 0;
             _lbExtraOriginal.forEach((char, ci) => {
-                if (ci > 0) html += '<hr style="border:none; border-top:1px solid var(--border); margin:14px 0;">';
+                if (q && !(char.name || '').toLowerCase().includes(q)) return;
+                if (matched > 0) html += '<hr style="border:none; border-top:1px solid var(--border); margin:14px 0;">';
+                matched++;
                 html += `
                 <div class="lb-extra-char" data-idx="${ci}" draggable="true" style="margin-bottom:0;">
                     <div style="display:flex; align-items:center; gap:6px; margin-bottom:8px; cursor:grab;">
@@ -48283,6 +48303,10 @@
                     </div>
                 </div>`;
             });
+            if (matched === 0) {
+                el.innerHTML = '<div style="color:var(--text2); text-align:center; padding:20px;">일치하는 캐릭터 없음</div>';
+                return;
+            }
             el.innerHTML = html;
             _attachLbExtraDnD(el);
             _attachLbExtraTagDnD(el);
