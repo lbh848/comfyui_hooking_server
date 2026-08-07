@@ -10383,7 +10383,8 @@ async def handle_api_config(request: web.Request) -> web.Response:
                     body["character_maker_rag_autostart"] = bool(
                         body.get("character_maker_rag_autostart")
                     )
-                for _vk in ("llm_vision_compress", "llm_vision_compress2", "llm_vision_compress3"):
+                for _slot_n in range(1, llm_service.LLM_SLOT_COUNT + 1):
+                    _vk = "llm_vision_compress" if _slot_n == 1 else f"llm_vision_compress{_slot_n}"
                     if _vk in body:
                         body[_vk] = bool(body.get(_vk))
                 if "character_maker_rag_top_k" in body:
@@ -10577,11 +10578,9 @@ async def handle_api_config(request: web.Request) -> web.Response:
                         status=400,
                     )
 
-            for llm_label, concurrency_key in (
-                ("LLM1", "llm_max_concurrency"),
-                ("LLM2", "llm_max_concurrency2"),
-                ("LLM3", "llm_max_concurrency3"),
-            ):
+            for _slot_n in range(1, llm_service.LLM_SLOT_COUNT + 1):
+                llm_label = f"LLM{_slot_n}"
+                concurrency_key = "llm_max_concurrency" if _slot_n == 1 else f"llm_max_concurrency{_slot_n}"
                 if concurrency_key not in body:
                     continue
                 raw_concurrency = body.get(concurrency_key)
@@ -10616,11 +10615,9 @@ async def handle_api_config(request: web.Request) -> web.Response:
                     )
                 body[concurrency_key] = concurrency
 
-            for llm_label, timeout_key in (
-                ("LLM1", "llm_stream_idle_timeout_seconds"),
-                ("LLM2", "llm_stream_idle_timeout_seconds2"),
-                ("LLM3", "llm_stream_idle_timeout_seconds3"),
-            ):
+            for _slot_n in range(1, llm_service.LLM_SLOT_COUNT + 1):
+                llm_label = f"LLM{_slot_n}"
+                timeout_key = "llm_stream_idle_timeout_seconds" if _slot_n == 1 else f"llm_stream_idle_timeout_seconds{_slot_n}"
                 if timeout_key not in body:
                     continue
                 raw_idle_timeout = body.get(timeout_key)
@@ -10750,43 +10747,31 @@ async def handle_api_config(request: web.Request) -> web.Response:
             # LLM 서비스 설정 업데이트
             # 주의: llm_api_key/llm_api_key2 는 /api/llm/keys 에서 별도 관리.
             # 여기서 빈 문자열로 덮어쓰면 key/llm_keys.json 에서 로드한 키가 증발함.
-            llm_service.update_config({
-                "llm_service": app_config.get("llm_service", "copilot"),
-                "llm_model": app_config.get("llm_model", "gpt-4.1"),
-                "llm_service2": app_config.get("llm_service2", ""),
-                "llm_model2": app_config.get("llm_model2", ""),
-                "llm_service3": app_config.get("llm_service3", ""),
-                "llm_model3": app_config.get("llm_model3", ""),
-                "llm_url": app_config.get("llm_url", ""),
-                "llm_url2": app_config.get("llm_url2", ""),
-                "llm_url3": app_config.get("llm_url3", ""),
-                "llm_reasoning_preset": app_config.get("llm_reasoning_preset", "auto"),
-                "llm_reasoning_effort": app_config.get("llm_reasoning_effort", ""),
-                "llm_reasoning_preset2": app_config.get("llm_reasoning_preset2", "auto"),
-                "llm_reasoning_effort2": app_config.get("llm_reasoning_effort2", ""),
-                "llm_reasoning_preset3": app_config.get("llm_reasoning_preset3", "auto"),
-                "llm_reasoning_effort3": app_config.get("llm_reasoning_effort3", ""),
-                "llm_custom_body": app_config.get("llm_custom_body", ""),
-                "llm_custom_body2": app_config.get("llm_custom_body2", ""),
-                "llm_custom_body3": app_config.get("llm_custom_body3", ""),
+            # 슬롯별 키는 단일 소스(LLM_SLOT_COUNT)에서 자동 확장한다. 슬롯 4/5 도
+            # 리터럴 누락 없이 런타임에 반영되도록 시작 동기화(server.py 하단 루프)와
+            # 동일한 range() 순회를 사용한다.
+            _llm_runtime_cfg = {
                 "llm_reasoning_budget_tokens": app_config.get("llm_reasoning_budget_tokens", 0),
                 "llm_temperature": app_config.get("llm_temperature", 1.0),
                 "llm_max_tokens": app_config.get("llm_max_tokens", 0),
-                "llm_stream": app_config.get("llm_stream", False),
-                "llm_stream2": app_config.get("llm_stream2", False),
-                "llm_stream3": app_config.get("llm_stream3", False),
-                "llm_max_concurrency": app_config.get("llm_max_concurrency", 1),
-                "llm_max_concurrency2": app_config.get("llm_max_concurrency2", 1),
-                "llm_max_concurrency3": app_config.get("llm_max_concurrency3", 1),
-                "llm_stream_idle_timeout_seconds": app_config.get("llm_stream_idle_timeout_seconds", 90.0),
-                "llm_stream_idle_timeout_seconds2": app_config.get("llm_stream_idle_timeout_seconds2", 90.0),
-                "llm_stream_idle_timeout_seconds3": app_config.get("llm_stream_idle_timeout_seconds3", 90.0),
-                "llm_vision_compress": app_config.get("llm_vision_compress", False),
-                "llm_vision_compress2": app_config.get("llm_vision_compress2", False),
-                "llm_vision_compress3": app_config.get("llm_vision_compress3", False),
                 "lora_prompt_review_enabled": app_config.get("lora_prompt_review_enabled", False),
                 "llm_routing": app_config.get("llm_routing", {}),
-            })
+            }
+            for _slot_n in range(1, llm_service.LLM_SLOT_COUNT + 1):
+                _sfx = "" if _slot_n == 1 else str(_slot_n)
+                _llm_runtime_cfg.update({
+                    f"llm_service{_sfx}": app_config.get(f"llm_service{_sfx}", "copilot" if _slot_n == 1 else ""),
+                    f"llm_model{_sfx}": app_config.get(f"llm_model{_sfx}", "gpt-4.1" if _slot_n == 1 else ""),
+                    f"llm_url{_sfx}": app_config.get(f"llm_url{_sfx}", ""),
+                    f"llm_reasoning_preset{_sfx}": app_config.get(f"llm_reasoning_preset{_sfx}", "auto"),
+                    f"llm_reasoning_effort{_sfx}": app_config.get(f"llm_reasoning_effort{_sfx}", ""),
+                    f"llm_custom_body{_sfx}": app_config.get(f"llm_custom_body{_sfx}", ""),
+                    f"llm_stream{_sfx}": app_config.get(f"llm_stream{_sfx}", False),
+                    f"llm_max_concurrency{_sfx}": app_config.get(f"llm_max_concurrency{_sfx}", 1),
+                    f"llm_stream_idle_timeout_seconds{_sfx}": app_config.get(f"llm_stream_idle_timeout_seconds{_sfx}", 90.0),
+                    f"llm_vision_compress{_sfx}": app_config.get(f"llm_vision_compress{_sfx}", False),
+                })
+            llm_service.update_config(_llm_runtime_cfg)
 
             # 임베딩 서비스 설정 업데이트
             embedding_service.update_config({
@@ -10800,13 +10785,10 @@ async def handle_api_config(request: web.Request) -> web.Response:
             save_config(app_config)
 
             # LLM 동시성 설정 변경 시 워커풀 즉시 갱신 (다음 아이템 적재까지 대기하지 않음)
+            # 슬롯 1..N(llm_max_concurrency, llm_max_concurrency2, ...) 전부 감시.
             if any(
-                key in body
-                for key in (
-                    "llm_max_concurrency",
-                    "llm_max_concurrency2",
-                    "llm_max_concurrency3",
-                )
+                f"llm_max_concurrency{'' if _n == 1 else _n}" in body
+                for _n in range(1, llm_service.LLM_SLOT_COUNT + 1)
             ):
                 try:
                     asyncio.ensure_future(queue_manager._ensure_llm_workers())
