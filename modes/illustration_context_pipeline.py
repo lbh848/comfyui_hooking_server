@@ -11,6 +11,7 @@ import asyncio
 import contextvars
 import hashlib
 import json
+import math
 import os
 import re
 import time
@@ -129,8 +130,10 @@ DEFAULT_TOGGLES = {
     "character_limit": 3,
     # scene_mode: "manual" = 서버가 최소/최대 강제, "auto" = lb-xnai(call2)에 완전 방임
     "scene_mode": "manual",
-    "scene_min": 5,
-    "scene_max": 11,
+    # output_count_min/max: 삽화 총 장면 수의 유일한 소스. PLAN은 이 총량을,
+    # 병렬 Call2-detail worker는 (총량÷worker수)를 받아 3배 과잉 생성을 방지한다.
+    "output_count_min": 15,
+    "output_count_max": 17,
     "context_history": True,
     "focus": "",
     "direction": "",
@@ -141,6 +144,27 @@ DEFAULT_TOGGLES = {
     "compat_character_divider": "newline",
     "compat_character_prompt": "separate",
 }
+
+
+# 삽화 장면 수의 유일한 카운트 규칙. presets.json(봇 시스템 프롬프트)에 하드코딩되던
+# 블록을 분리해 편집 불가능한 고정 프롬프트로 중앙화했다. {min}/{max}는 서버가
+# output_count_min/max 토글(PLAN은 총량, 병렬 Call2-detail worker는 총량÷worker수)로
+# 치환해 주입한다. 이 템플릿 자체는 사용자가 직접 편집하지 않는다.
+OUTPUT_COUNT_RULE_TEMPLATE = """## Output Count Rule
+Each response MUST contain a minimum of {min} and a maximum of {max} image tags.
+This is a hard constraint, not a suggestion.
+- If the scene naturally calls for fewer than {min} distinct visual moments, find additional meaningful moments to illustrate (a gesture, an environment shot, a character's expression, an object of focus).
+- Character Count & Focus: Tailor the character count to the specific focus of the image. If character interaction is emphasized, include a maximum of 2 characters. If a character's emotion or expression is the focal point, restrict the image to a maximum of 1 character.
+- Distribution Ratio: Across your total image output, maintain a recommended ratio of 70-80% single-character images and 20-30% two-character interaction images.
+- If the scene contains more than {max} potential visual moments, select the {max} most impactful ones.
+- Never output under {min} images. Never output {max} or more."""
+
+
+def render_output_count_rule(min_value: int, max_value: int) -> str:
+    """output_count_min/max 값을 카운트 규칙 템플릿에 치환해 반환한다."""
+    return OUTPUT_COUNT_RULE_TEMPLATE.replace("{min}", str(int(min_value))).replace(
+        "{max}", str(int(max_value))
+    )
 
 _SESSIONS: dict[str, dict] = {}
 _LOOKUP_KEYS: dict[str, str] = {}
@@ -375,14 +399,14 @@ def merged_toggles(value: dict | None) -> dict:
                 out[_ck] = out["call1_context_turns"]
         out["character_limit"] = max(1, min(3, int(out["character_limit"])))
         out["scene_mode"] = "auto" if str(out.get("scene_mode")) == "auto" else "manual"
-        out["scene_min"] = max(1, min(15, int(out["scene_min"])))
-        out["scene_max"] = max(1, min(15, int(out["scene_max"])))
-        if out["scene_min"] > out["scene_max"]:
+        out["output_count_min"] = max(1, min(30, int(out["output_count_min"])))
+        out["output_count_max"] = max(1, min(30, int(out["output_count_max"])))
+        if out["output_count_min"] > out["output_count_max"]:
             print(
-                f"[ILLUST_CONTEXT] scene_min({out['scene_min']}) > scene_max({out['scene_max']}), "
-                f"min을 max로 보정"
+                f"[ILLUST_CONTEXT] output_count_min({out['output_count_min']}) > "
+                f"output_count_max({out['output_count_max']}), min을 max로 보정"
             )
-            out["scene_min"] = out["scene_max"]
+            out["output_count_min"] = out["output_count_max"]
     except Exception as e:
         print(f"[ILLUST_CONTEXT] 토글 숫자 보정 실패: {e}")
         traceback.print_exc()
@@ -428,8 +452,8 @@ def merged_toggles(value: dict | None) -> dict:
             "call3_context_turns": DEFAULT_TOGGLES["call3_context_turns"],
             "character_limit": DEFAULT_TOGGLES["character_limit"],
             "scene_mode": DEFAULT_TOGGLES["scene_mode"],
-            "scene_min": DEFAULT_TOGGLES["scene_min"],
-            "scene_max": DEFAULT_TOGGLES["scene_max"],
+            "output_count_min": DEFAULT_TOGGLES["output_count_min"],
+            "output_count_max": DEFAULT_TOGGLES["output_count_max"],
         })
     # 예전 UI에서 저장한 고정 배치 크기는 더 이상 사용하지 않는다. CALL2-PLAN이
     # 선택한 전체 장면 수를 최대 동시 요청 수에 맞춰 자동 분배한다.
@@ -3097,8 +3121,20 @@ def _render_conditionals(text: str, values: dict) -> str:
     return text
 
 
-def render_call2_prompt(text: str, toggles: dict, history: str = "") -> str:
-    """Risu 토글 매크로를 서버 설정으로 렌더링한다."""
+def render_call2_prompt(
+    text: str,
+    toggles: dict,
+    history: str = "",
+    *,
+    include_scene_count_limit: bool = True,
+) -> str:
+    """Risu 토글 매크로를 서버 설정으로 렌더링한다.
+
+    include_scene_count_limit=False 면 "# Server limits"에서 장면 수(min/max) 라인을
+    생략한다. 병렬 Call2-detail worker는 PLAN이 정한 총량을 worker 수로 나눈
+    per-worker 카운트 규칙을 별도로 주입받으므로, detail system에는 전체 카운트 라인을
+    붙이지 않는다(3배 과잉 생성 원천 차단).
+    """
     text = str(text or "")
     # 복잡한 history/client-comment 블록은 서버 값으로 명시적으로 재구성한다.
     prefix = text
@@ -3159,9 +3195,10 @@ def render_call2_prompt(text: str, toggles: dict, history: str = "") -> str:
     # scene_mode == "auto" 면 장면 수에 대한 서버 제한을 일절 붙이지 않고
     # lb-xnai(call2)에 완전히 맡긴다(템플릿의 scene.quantity 도 3으로 무력화됨).
     limits = []
-    if str(toggles.get("scene_mode")) != "auto":
+    if include_scene_count_limit and str(toggles.get("scene_mode")) != "auto":
         limits.append(
-            f"Generate between {int(toggles['scene_min'])} and {int(toggles['scene_max'])} scenes."
+            f"Generate between {int(toggles['output_count_min'])} and "
+            f"{int(toggles['output_count_max'])} scenes."
         )
     limits.append(f"Maximum fully visible characters per image: {int(toggles['character_limit'])}.")
     limits.append(
@@ -3328,8 +3365,8 @@ def parse_toon_plan(text: str, toggles: dict, source: str = "CALL2") -> list[dic
         print(f"[ILLUST_CONTEXT:{source}] scenes가 list가 아님: {type(scenes).__name__}")
         scenes = []
     # auto 모드는 파싱 단계에서도 장면 수를 컷하지 않고 lb-xnai(call2)의 결정을
-    # 그대로 수용한다. manual 모드일 때만 scene_max 상한으로 잘라낸다.
-    scene_cap = None if str(toggles.get("scene_mode")) == "auto" else int(toggles["scene_max"])
+    # 그대로 수용한다. manual 모드일 때만 output_count_max 상한으로 잘라낸다.
+    scene_cap = None if str(toggles.get("scene_mode")) == "auto" else int(toggles["output_count_max"])
     capped = scenes if scene_cap is None else scenes[:scene_cap]
     for index, raw in enumerate(capped, start=1):
         if isinstance(raw, dict):
@@ -3384,8 +3421,8 @@ def validate_complete_call2_output(
                 f"expected={normalized_expected}, actual={actual_slots}"
             )
     elif str(toggles.get("scene_mode")) != "auto":
-        minimum = min(int(toggles["scene_min"]), len(candidates))
-        maximum = min(int(toggles["scene_max"]), len(candidates))
+        minimum = min(int(toggles["output_count_min"]), len(candidates))
+        maximum = min(int(toggles["output_count_max"]), len(candidates))
         if not minimum <= len(scenes) <= maximum:
             return fail(
                 f"{source} 장면 수 범위 위반: count={len(scenes)}, "
@@ -3702,8 +3739,8 @@ def parse_call2_plan(
         item["plan_id"] = f"S{index:03d}"
 
     if str(toggles.get("scene_mode")) != "auto":
-        minimum = min(int(toggles["scene_min"]), len(candidates))
-        maximum = min(int(toggles["scene_max"]), len(candidates))
+        minimum = min(int(toggles["output_count_min"]), len(candidates))
+        maximum = min(int(toggles["output_count_max"]), len(candidates))
         if not minimum <= len(scene_plan) <= maximum:
             reason = (
                 f"CALL2-PLAN 장면 수 범위 위반: count={len(scene_plan)}, "
@@ -3833,8 +3870,8 @@ def _parse_call2_detail_output(
     local_toggles.update({
         "key_visual": bool(assigned_keyvis_plan),
         "scene_mode": "manual",
-        "scene_min": len(assigned_slots),
-        "scene_max": len(assigned_slots),
+        "output_count_min": len(assigned_slots),
+        "output_count_max": len(assigned_slots),
     })
     parsed_descriptors = parse_toon_plan(text, local_toggles, source)
     descriptors = [
@@ -4685,6 +4722,18 @@ async def _run_parallel_call2_details(
         f"selected_scenes={len(scene_plan)}, workers={len(jobs)}, "
         f"distribution={distribution}"
     )
+    # 카운트 규칙의 총량(output_count_min/max)을 실제 worker 수로 나눈다.
+    # 각 worker는 자기 몫(per_worker)만 생성해야 3배 과잉 생성이 생기지 않는다.
+    worker_count = max(1, len(jobs))
+    total_min = int(toggles["output_count_min"])
+    total_max = int(toggles["output_count_max"])
+    per_worker_min = max(1, total_min // worker_count)
+    per_worker_max = max(per_worker_min, math.ceil(total_max / worker_count))
+    print(
+        f"[ILLUST_CONTEXT:CALL2_DETAIL] per-worker 카운트 기준: "
+        f"workers={worker_count}, total={total_min}..{total_max}, "
+        f"per_worker={per_worker_min}..{per_worker_max}"
+    )
 
     async def invoke(
         job,
@@ -4706,6 +4755,13 @@ async def _run_parallel_call2_details(
             int(item["slot"]): list(item.get("characters") or [])
             for item in plans
         }
+        # per-worker 카운트 기준(총량÷worker수)을 이 worker에 실제 할당된 batch 크기로
+        # clamp한다. 규칙이 할당량보다 커지면 worker가 빈 장면을 채우려다 검증에 걸려
+        # 재시도하게 된다. 할당량(len(plans))이 곧 이 shard의 진짜 장면 수다.
+        assigned_count = len(plans)
+        shard_min = max(1, min(per_worker_min, assigned_count))
+        shard_max = max(shard_min, min(per_worker_max, assigned_count))
+        shard_count_rule = render_output_count_rule(shard_min, shard_max)
         messages = deepcopy(call2_context_messages)
         if messages and messages[0].get("role") == "system":
             messages[0]["content"] = str(messages[0].get("content") or "") + (
@@ -4720,6 +4776,10 @@ async def _run_parallel_call2_details(
                 "entry for a named character must include its exact canonical name even when cropped "
                 "or partially visible. characters[].negative is optional: include it only when the "
                 "Client explicitly supplied that negative; otherwise omit the field."
+                # 이 worker의 카운트 규칙은 전체 총량이 아니라 (총량÷worker수) per-worker 값을
+                # 할당 batch 크기로 맞춘 것이다. 다른 전역 카운트 지시보다 이 값이 우선한다.
+                + "\n\n# SHARD OUTPUT COUNT RULE (per worker)\n"
+                + shard_count_rule
             )
         assigned_plan_payload = (
             "# ASSIGNED GLOBAL SCENE PLAN\n"
@@ -7950,6 +8010,7 @@ async def build_from_context(
         prompts.get("call2_system", ""),
         call2_detail_toggles,
         history,
+        include_scene_count_limit=False,
     )
     call2_detail_thoughts = render_call2_prompt(
         prompts.get("call2_thoughts", ""),
@@ -8179,9 +8240,17 @@ async def build_from_context(
                     f"Choose the appropriate count from the {len(candidates)} available slots."
                 )
             else:
-                minimum = min(int(toggles["scene_min"]), len(candidates))
-                maximum = min(int(toggles["scene_max"]), len(candidates))
+                minimum = min(int(toggles["output_count_min"]), len(candidates))
+                maximum = min(int(toggles["output_count_max"]), len(candidates))
                 scene_count_rule = f"Choose between {minimum} and {maximum} scenes."
+            # PLAN에게 총장면 수(총량) 카운트 규칙을 준다. 병렬 detail worker는 이 총량을
+            # worker 수로 나눈 per-worker 카운트를 별도로 주입받으므로, 여기서는 전체 값.
+            plan_messages.append({
+                "role": "user",
+                "content": render_output_count_rule(
+                    toggles["output_count_min"], toggles["output_count_max"]
+                ),
+            })
             plan_messages.append({
                 "role": "user",
                 "content": (

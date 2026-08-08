@@ -163,7 +163,7 @@ def test_call2_plan_selects_global_slots_and_builds_key_visual():
 
     plan, reason = pipeline.parse_call2_plan(
         raw,
-        pipeline.merged_toggles({"scene_min": 5, "scene_max": 5}),
+        pipeline.merged_toggles({"output_count_min": 5, "output_count_max": 5}),
         slotted,
     )
 
@@ -218,8 +218,8 @@ def test_call2_plan_uses_anchor_mapping_and_ignores_model_slot_number():
     plan, reason = pipeline.parse_call2_plan(
         raw,
         pipeline.merged_toggles({
-            "scene_min": 1,
-            "scene_max": 1,
+            "output_count_min": 1,
+            "output_count_max": 1,
             "key_visual": False,
         }),
         slotted,
@@ -251,7 +251,7 @@ def test_call2_plan_accepts_compact_server_derived_fields_and_keyvis_plan():
 
     plan, reason = pipeline.parse_call2_plan(
         raw,
-        pipeline.merged_toggles({"scene_min": 1, "scene_max": 1}),
+        pipeline.merged_toggles({"output_count_min": 1, "output_count_max": 1}),
         "첫 문단.\n\n[Slot 0]\n\n둘째 문단.\n\n[Slot 1]",
         segment_slot_map={"C001": 0, "C002": 1},
     )
@@ -283,8 +283,8 @@ def test_call2_plan_accepts_scene_without_named_tracked_characters(capsys):
     plan, reason = pipeline.parse_call2_plan(
         raw,
         pipeline.merged_toggles({
-            "scene_min": 1,
-            "scene_max": 1,
+            "output_count_min": 1,
+            "output_count_max": 1,
             "key_visual": False,
         }),
         "Lunch bell rings.\n\n[Slot 0]",
@@ -779,8 +779,8 @@ async def test_call2_pipeline_returns_empty_without_fallback_when_all_slots_disc
             "call2_parallel_enabled": True,
             "call2_parallel_max_concurrency": 1,
             "call2_parallel_slow_retry_enabled": False,
-            "scene_min": 1,
-            "scene_max": 1,
+            "output_count_min": 1,
+            "output_count_max": 1,
             "key_visual": False,
             "call3_enabled": False,
             "speak_enabled": False,
@@ -842,8 +842,8 @@ async def test_call2_pipeline_generates_characterless_scene_without_fallback(mon
             "call2_parallel_enabled": True,
             "call2_parallel_max_concurrency": 1,
             "call2_parallel_slow_retry_enabled": False,
-            "scene_min": 1,
-            "scene_max": 1,
+            "output_count_min": 1,
+            "output_count_max": 1,
             "key_visual": False,
             "call3_enabled": False,
             "speak_enabled": False,
@@ -1008,8 +1008,8 @@ scenes: []
             "call2_parallel_enabled": True,
             "call2_parallel_max_concurrency": 1,
             "call2_parallel_slow_retry_enabled": False,
-            "scene_min": 1,
-            "scene_max": 1,
+            "output_count_min": 1,
+            "output_count_max": 1,
             "key_visual": True,
             "call3_enabled": False,
             "speak_enabled": False,
@@ -1092,8 +1092,8 @@ scenes: []
 
 def test_complete_call2_validation_rejects_one_shard_as_global_fallback():
     toggles = pipeline.merged_toggles({
-        "scene_min": 3,
-        "scene_max": 3,
+        "output_count_min": 3,
+        "output_count_max": 3,
         "key_visual": False,
     })
     slotted = "\n\n".join(
@@ -1116,8 +1116,8 @@ def test_complete_call2_validation_accepts_scene_without_named_characters():
     descriptors, reason = pipeline.validate_complete_call2_output(
         _toon_without_named_characters(0),
         pipeline.merged_toggles({
-            "scene_min": 1,
-            "scene_max": 1,
+            "output_count_min": 1,
+            "output_count_max": 1,
             "key_visual": False,
         }),
         "Lunch bell rings.\n\n[Slot 0]",
@@ -1166,8 +1166,8 @@ async def test_call2_parallel_failure_is_named_fallback_and_logs_reason(
         {
             "call1_enabled": False,
             "call2_parallel_enabled": True,
-            "scene_min": 1,
-            "scene_max": 1,
+            "output_count_min": 1,
+            "output_count_max": 1,
             "key_visual": False,
             "call3_enabled": False,
             "speak_enabled": False,
@@ -1234,8 +1234,8 @@ async def test_call2_plan_failure_cancels_hanging_independent_keyvis(monkeypatch
         {
             "call1_enabled": False,
             "call2_parallel_enabled": True,
-            "scene_min": 1,
-            "scene_max": 1,
+            "output_count_min": 1,
+            "output_count_max": 1,
             "key_visual": True,
             "call3_enabled": False,
             "speak_enabled": False,
@@ -1299,8 +1299,8 @@ async def test_call2_detail_failure_reuses_preserved_plan_in_global_fallback(mon
             "call2_parallel_enabled": True,
             "call2_parallel_max_concurrency": 1,
             "call2_parallel_slow_retry_enabled": False,
-            "scene_min": 1,
-            "scene_max": 1,
+            "output_count_min": 1,
+            "output_count_max": 1,
             "key_visual": False,
             "call3_enabled": False,
             "speak_enabled": False,
@@ -1389,8 +1389,8 @@ scenes: []
             "call2_parallel_enabled": True,
             "call2_parallel_max_concurrency": 1,
             "call2_parallel_slow_retry_enabled": False,
-            "scene_min": 1,
-            "scene_max": 1,
+            "output_count_min": 1,
+            "output_count_max": 1,
             "key_visual": True,
             "call3_enabled": False,
             "speak_enabled": False,
@@ -1592,8 +1592,8 @@ scenes: []
             "call1_parallel_max_concurrency": 3,
             "call2_parallel_enabled": True,
             "call2_parallel_max_concurrency": 3,
-            "scene_min": 9,
-            "scene_max": 9,
+            "output_count_min": 9,
+            "output_count_max": 9,
             "key_visual": True,
             "call3_enabled": False,
             "speak_enabled": False,
@@ -1620,7 +1620,7 @@ scenes: []
     assert [item["slot"] for item in result["items"][1:]] == list(range(9))
     reparsed = pipeline.parse_toon_plan(
         result["call2_output"],
-        pipeline.merged_toggles({"scene_min": 9, "scene_max": 9}),
+        pipeline.merged_toggles({"output_count_min": 9, "output_count_max": 9}),
         "TEST-MERGED-CALL2",
     )
     assert len(reparsed) == 10
@@ -1758,7 +1758,7 @@ scenes[1]:
     scene: classroom, sunset
     slot: 0
 </lb-xnai>"""
-    items = pipeline.parse_toon_plan(toon, pipeline.merged_toggles({"scene_max": 11}))
+    items = pipeline.parse_toon_plan(toon, pipeline.merged_toggles({"output_count_max": 11}))
 
     assert [item["slot"] for item in items] == [-1, 0]
     pipeline.create_session("cache_test_1234", "context")
@@ -1974,7 +1974,7 @@ scenes[1]:
 
     items = pipeline.parse_toon_plan(
         toon,
-        pipeline.merged_toggles({"scene_max": 11, "key_visual": False}),
+        pipeline.merged_toggles({"output_count_max": 11, "key_visual": False}),
     )
 
     assert len(items) == 1

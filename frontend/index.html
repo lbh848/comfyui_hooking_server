@@ -57138,6 +57138,15 @@
                 ],
             },
             {
+                key: 'output_count',
+                title: '출력 장면 수',
+                description: '삽화 총 장면 수의 유일한 소스입니다. Output Count Rule 프롬프트는 이 값으로 자동 생성되어 CALL2-PLAN에 총량으로 전달되고, 병렬 Call2-detail worker 각각에는 (값÷병렬 수)로 나뉘어 전달되어 3배 과잉 생성을 막습니다.',
+                fields: [
+                    {key: 'output_count_min', label: '최소 장면 수', type: 'number', min: 1, max: 30, help: '삽화 총 장면 수의 하한입니다. PLAN이 이 범위 내에서 총량을 정합니다.'},
+                    {key: 'output_count_max', label: '최대 장면 수', type: 'number', min: 1, max: 30, help: '삽화 총 장면 수의 상한입니다. 이 값을 초과하면 잘라냅니다.'},
+                ],
+            },
+            {
                 key: 'backtranslation', title: 'CALL1 역번역',
                 description: 'CALL1 분석 직전에 현재 응답만 영어로 번역하는 단계입니다. 과거 대화는 번역 대상이 아닙니다.',
                 fields: [
@@ -57227,8 +57236,6 @@
                             {value: 'auto', label: 'lb-xnai에 맡김'},
                         ],
                     },
-                    {key: 'scene_min', label: '최소 Scene 수', type: 'select', help: '장면 수의 하한입니다. 이보다 적게 생성하지 않도록 유도합니다.', options: [1, 3, 5, 7, 9, 11, 13, 15]},
-                    {key: 'scene_max', label: '최대 Scene 수', type: 'select', help: '장면 수의 상한입니다. 이 개수를 초과하면 잘라냅니다.', options: [1, 3, 5, 7, 9, 11, 13, 15]},
                     {key: 'context_history', label: 'lb.extra 외형 이력 사용', type: 'toggle', help: 'CALL2가 저장된 캐릭터 외형과 복장 정보를 참조하도록 합니다.'},
                     {key: 'focus', label: '집중 캐릭터', type: 'text', help: 'CALL2가 우선할 캐릭터입니다. 비워 두면 대화 문맥에서 결정합니다.'},
                     {key: 'direction', label: '우선 연출 지시', type: 'textarea', help: 'CALL2에 이번 생성에서 특별히 강조할 연출을 전달합니다.', stacked: true},

@@ -296,8 +296,8 @@ DEFAULT_CONFIG = {
         "key_visual": True,
         "character_limit": 3,
         "scene_mode": "manual",
-        "scene_min": 5,
-        "scene_max": 11,
+        "output_count_min": 15,
+        "output_count_max": 17,
         "context_history": True,
         "focus": "",
         "direction": "",
@@ -4032,16 +4032,37 @@ def _lb_extra_costume_chunks(collected: dict) -> str:
     return "\n\n".join(chunks).strip()
 
 
+_OUTPUT_COUNT_RULE_BLOCK_RE = re.compile(
+    # '## Output Count Rule' 헤더부터 다음 '## ' 헤더 직전(또는 문자열 끝)까지 제거.
+    r"(?ms)^[ \t]*## Output Count Rule\r?\n.*?(?=^[ \t]*## |\Z)"
+)
+
+
+def strip_output_count_rule(system_prompt: str) -> str:
+    """봇 시스템 프롬프트에서 '## Output Count Rule' 블록을 제거한다.
+
+    카운트 규칙은 삽화 파이프라인이 통제하는 변수화 고정 프롬프트(OUTPUT_COUNT_RULE_TEMPLATE)
+    로 중앙화했다. builtin(presets.json)·local(bot.json) 프리셋 어디에 하드코딩되어 있든,
+    extra_reference로 새어 들어가 각 병렬 Call2-detail worker에 3배로 퍼지는 것을 이 지점에서
+    차단한다.
+    """
+    cleaned = _OUTPUT_COUNT_RULE_BLOCK_RE.sub("", str(system_prompt or ""))
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+    return cleaned
+
+
 def build_active_lb_extra(bot_name: str) -> str:
     """현재 봇의 선택 시스템 프롬프트 + 저장된 lb.extra를 모듈 형식으로 조립(CALL2/CALL2-FIX용 full)."""
     collected = _collect_lb_extra(bot_name)
     if not collected:
         return ""
-    chunks = [collected["system_prompt"]] if collected["system_prompt"] else []
+    # 시스템 프롬프트에 붙은 카운트 규칙은 파이프라인이 별도 주입하므로 여기서 제거.
+    system_prompt = strip_output_count_rule(collected["system_prompt"])
+    chunks = [system_prompt] if system_prompt else []
     costume = _lb_extra_costume_chunks(collected)
     if costume:
         chunks.append(costume)
-    if len(chunks) <= (1 if collected["system_prompt"] else 0):
+    if len(chunks) <= (1 if system_prompt else 0):
         print(f"[ILLUST_CONTEXT] 저장된 lb.extra 캐릭터 데이터가 없음: bot={bot_name}")
     return "\n\n".join(chunks).strip()
 
