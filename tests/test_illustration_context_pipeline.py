@@ -4070,8 +4070,10 @@ async def test_multi_char_layout_reorders_call2_characters_left_to_right(monkeyp
     }
     calls = []
 
-    async def fake_call(call_name, messages, stream_notify=None, result_validator=None, json_mode=False):
+    async def fake_call(call_name, messages, stream_notify=None, result_validator=None, json_mode=False, history_ids_sink=None):
         calls.append((call_name, messages, json_mode))
+        if history_ids_sink is not None:
+            history_ids_sink.append("mask-slot4-id")
         result = """{
           "background_prompt": "wide shot, classroom, soft light",
           "composition_prompt": "two distinct people, one listener on the left and one speaker on the right",
@@ -4102,6 +4104,7 @@ async def test_multi_char_layout_reorders_call2_characters_left_to_right(monkeyp
     assert request_characters[0]["outfit_state"] == {"worn": ["green jacket"]}
     assert [character["name"] for character in descriptor["characters"]] == ["Left", "Right"]
     assert descriptor["multi_char_layout"]["character_order"] == ["Left", "Right"]
+    assert descriptor["multi_char_history_ids"] == ["mask-slot4-id"]
     assert descriptor["multi_char_layout"]["background_prompt"] == (
         "wide shot, classroom, soft light"
     )
@@ -4154,7 +4157,9 @@ async def test_multi_char_layout_rejects_unseparated_prompt(monkeypatch):
         ],
     }
 
-    async def fake_call(call_name, messages, stream_notify=None, result_validator=None, json_mode=False):
+    async def fake_call(call_name, messages, stream_notify=None, result_validator=None, json_mode=False, history_ids_sink=None):
+        if history_ids_sink is not None:
+            history_ids_sink.append("mask-slot5-id")
         result = """{
           "regions": [
             {"name":"Left","x":0.0,"y":0.0,"width":0.5,"height":1.0},
@@ -4172,6 +4177,57 @@ async def test_multi_char_layout_rejects_unseparated_prompt(monkeypatch):
 
     assert "multi_char_layout" not in descriptor
     assert "background_prompt" in descriptor["multi_char_layout_error"]
+    # 실패 경로에서도 자기 slot의 MULTI-CHAR-MASK 호출 id가 descriptor에 남는다.
+    assert descriptor["multi_char_history_ids"] == ["mask-slot5-id"]
+
+
+@pytest.mark.asyncio
+async def test_call_pipeline_llm_history_ids_sink_excludes_global_trace(monkeypatch):
+    """MULTI-CHAR-MASK 경로(history_ids_sink)는 전역 trace에 넣지 않고 sink에만 담는다."""
+    trace: list[str] = []
+    token = pipeline._llm_trace_ctx.set(trace)
+    try:
+        async def fake_call(task_key, actual_messages, **kwargs):
+            return "ok"
+
+        monkeypatch.setattr(pipeline.llm_service, "callLLMTask", fake_call)
+        monkeypatch.setattr(pipeline.lighbd_service, "_log_lighbd_history", lambda _r: None)
+
+        sink: list[str] = []
+        await pipeline._call_pipeline_llm(
+            "MULTI-CHAR-MASK slot=1",
+            [{"role": "user", "content": "{}"}],
+            history_id="mask-main-id",
+            history_ids_sink=sink,
+        )
+
+        assert "mask-main-id" in sink
+        assert trace == []
+    finally:
+        pipeline._llm_trace_ctx.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_call_pipeline_llm_without_sink_appends_global_trace(monkeypatch):
+    """sink가 없으면 기존대로 전역 trace에 id가 들어간다(CALL1/2/3 회귀)."""
+    trace: list[str] = []
+    token = pipeline._llm_trace_ctx.set(trace)
+    try:
+        async def fake_call(task_key, actual_messages, **kwargs):
+            return "ok"
+
+        monkeypatch.setattr(pipeline.llm_service, "callLLMTask", fake_call)
+        monkeypatch.setattr(pipeline.lighbd_service, "_log_lighbd_history", lambda _r: None)
+
+        await pipeline._call_pipeline_llm(
+            "CALL1",
+            [{"role": "user", "content": "scene"}],
+            history_id="call1-id",
+        )
+
+        assert "call1-id" in trace
+    finally:
+        pipeline._llm_trace_ctx.reset(token)
 
 
 @pytest.mark.asyncio
@@ -5056,6 +5112,108 @@ def test_call2_semantic_audit_removes_and_logs_forbidden_identity_additions():
         "adult", "fair skin", "tsurime", "hair down",
     ]
     assert audits[0]["conflicts_removed"] == ["straight hair"]
+
+
+def test_call2_semantic_audit_drops_out_of_candidate_value_not_whole_response():
+    # 한 값이 후보 밖이면 응답 전체를 거부(degraded)하지 않고 그 값만 버린다.
+    # 같은 엔트리의 다른 결정과 다른 엔트리 결정은 살아야 한다.
+    descriptors = [
+        {
+            "kind": "scene",
+            "slot": 5,
+            "characters": [{
+                "name": "Elizabella",
+                "positive": (
+                    "girl, blonde hair, long hair, hair rings, two side up, "
+                    "orange eyes, white dress, detached sleeves, adult, "
+                    "fair skin, hair down"
+                ),
+                "outfit_state": {
+                    "body_state": "clothed",
+                    "worn": ["white dress", "detached sleeves"],
+                    "removed": [],
+                },
+            }],
+        },
+        {
+            "kind": "scene",
+            "slot": 6,
+            "characters": [{
+                "name": "Elizabella",
+                "positive": (
+                    "girl, blonde hair, long hair, orange eyes, white dress, "
+                    "detached sleeves, tsurime, straight hair"
+                ),
+                "outfit_state": {
+                    "body_state": "clothed",
+                    "worn": ["white dress", "detached sleeves"],
+                    "removed": [],
+                },
+            }],
+        },
+    ]
+    fixed = {"Elizabella": "1girl, blonde hair, long hair, orange eyes"}
+    defaults = {"Elizabella": ["white dress", "detached sleeves"]}
+    entries, entry_keys = pipeline._call2_authority_audit_entries(
+        descriptors,
+        fixed,
+        defaults,
+    )
+    # id=1: "white royal dress" 는 generated_positive 에 정확히 없으므로 후보 밖.
+    #       이 값만 버리고 adult/fair skin/hair down 은 살려야 한다.
+    # id=2: 정상 결정.
+    decisions, reason = pipeline._parse_call2_authority_audit_output(
+        json.dumps({
+            "entries": [
+                {
+                    "id": 1,
+                    "authority_exceptions": [],
+                    "forbidden_additions": [
+                        "white royal dress", "adult", "fair skin", "hair down",
+                    ],
+                    "conflicts": [],
+                },
+                {
+                    "id": 2,
+                    "authority_exceptions": [],
+                    "forbidden_additions": ["tsurime"],
+                    "conflicts": ["straight hair"],
+                },
+            ],
+        }),
+        entries,
+        entry_keys,
+    )
+
+    # 응답 전체가 거부되지 않는다.
+    assert reason == ""
+    key1 = ("scene", 5, "elizabella")
+    key2 = ("scene", 6, "elizabella")
+    assert decisions[key1]["forbidden_additions"] == [
+        "adult", "fair skin", "hair down",
+    ]
+    assert decisions[key2]["forbidden_additions"] == ["tsurime"]
+    assert decisions[key2]["conflicts"] == ["straight hair"]
+
+    pipeline.apply_call2_authority_base(
+        descriptors,
+        fixed,
+        defaults,
+        decisions,
+        "ok",
+    )
+    tags1 = pipeline._split_top_level_authority_tags(
+        descriptors[0]["characters"][0]["positive"]
+    )
+    tags2 = pipeline._split_top_level_authority_tags(
+        descriptors[1]["characters"][0]["positive"]
+    )
+    for removed in ("adult", "fair skin", "hair down"):
+        assert removed not in tags1
+    # "white royal dress" 는 원래 positive 에 없었으므로 결과 태그에 없다.
+    assert "white royal dress" not in tags1
+    assert "tsurime" not in tags2
+    assert "straight hair" not in tags2
 
 
 def test_call2_untrusted_removed_or_nude_state_cannot_skip_default_restore():

@@ -4161,17 +4161,25 @@ def _parse_call2_authority_audit_output(
                 )
             normalized: list[str] = []
             seen: set[str] = set()
+            dropped: list[str] = []
             for value in values:
                 identity = _authority_tag_identity(value)
                 if not identity or identity not in allowed:
-                    return reject(
-                        f"CALL2-AUTHORITY-AUDIT 후보 밖 {field}: "
-                        f"id={entry_id}, value={value!r}"
-                    )
+                    # apply_call2_authority_base 도 후보 밖 값은 그 값만 스킵하므로
+                    # 파싱 단계에서 응답 전체를 거부하면 한 값의 실수가 모든 엔트리의
+                    # audit 결정을 날리게 된다. 그 값만 로그 남기고 버린다.
+                    dropped.append(str(value))
+                    continue
                 if identity in seen:
                     continue
                 seen.add(identity)
                 normalized.append(allowed[identity])
+            if dropped:
+                print(
+                    f"[ILLUST_CONTEXT:CALL2_AUTHORITY_AUDIT] 후보 밖 {field} "
+                    f"스킵(그 값만, 응답 전체는 유지): id={entry_id}, "
+                    f"dropped={dropped}"
+                )
             normalized_fields[field] = normalized
         decisions[entry_keys[entry_id]] = normalized_fields
     if observed_ids != set(candidates):
@@ -4701,16 +4709,14 @@ async def _run_parallel_call2_details(
         messages = deepcopy(call2_context_messages)
         if messages and messages[0].get("role") == "system":
             messages[0]["content"] = str(messages[0].get("content") or "") + (
-                "\n\n# Parallel CALL2-DETAIL override\n"
-                f"The global planner already selected the visual beats. Output exactly {len(plans)} "
-                f"scenes for assigned slots {assigned_slots}. Do not select, add, remove, or move a scene. "
+                "\n\n# Parallel CALL2-DETAIL instructions\n"
+                "The global planner already selected the visual beats. Do not select, add, remove, or move a scene. "
                 "Copy every assigned slot exactly; the server will attach plan_id after slot validation. "
                 "Omit keyvis completely. "
                 + "An assigned plan may have characters: []. That means no named tracked character is "
                 "present: output characters: [] for that scene, keep anonymous background people only "
                 "in scene/supplement, and do not invent a canonical character. This shard-specific rule "
-                "overrides any global requirement that every scene contain a key character. It also "
-                "overrides global scene-count and key-visual requirements above. Every characters[] "
+                "overrides any global requirement that every scene contain a key character. Every characters[] "
                 "entry for a named character must include its exact canonical name even when cropped "
                 "or partially visible. characters[].negative is optional: include it only when the "
                 "Client explicitly supplied that negative; otherwise omit the field."
@@ -5624,6 +5630,7 @@ async def _call_pipeline_llm(
     stream_observer=None,
     history_id: str = "",
     parent_execution_id: str = "",
+    history_ids_sink: list[str] | None = None,
 ) -> str:
     """삽화 CALL1/2/3 의 LLM 호출. 외부 API 분기(illustration_callN task_key)를 경유한다.
 
@@ -5653,7 +5660,13 @@ async def _call_pipeline_llm(
     execution_id = str(history_id or uuid.uuid4().hex)
     parent_execution_id = str(parent_execution_id or "")
     # 이 호출의 메인 레코드(성공/취소/예외 모두 동일 history_id)를 trace에 등록.
-    _trace_append(execution_id)
+    # MULTI-CHAR-MASK는 slot(장면)마다 별도 호출되므로 전역 trace 대신 호출자가 넘긴
+    # sink(history_ids_sink)에만 담아 백업별로 자기 slot 것만 주입되게 한다.
+    if history_ids_sink is not None:
+        if execution_id not in history_ids_sink:
+            history_ids_sink.append(execution_id)
+    else:
+        _trace_append(execution_id)
     model = (
         llm_service.routing_primary_model(task_key)
         or llm_service._current_config.get("llm_model3")
@@ -5757,7 +5770,13 @@ async def _call_pipeline_llm(
             f"reason={reason}, raw={raw_output[:300]!r}"
         )
         # 버려지는 실패 시도도 별도 error 레코드로 남으므로 trace에 포함.
-        _trace_append(failure_record.get("history_id"))
+        # MULTI-CHAR-MASK 경로(history_ids_sink 사용)는 sink에만 담는다.
+        _failure_hid = failure_record.get("history_id")
+        if history_ids_sink is not None:
+            if _failure_hid and _failure_hid not in history_ids_sink:
+                history_ids_sink.append(_failure_hid)
+        else:
+            _trace_append(_failure_hid)
         lighbd_service._log_lighbd_history(failure_record)
 
     try:
@@ -6826,6 +6845,10 @@ async def calculate_multi_char_layouts(
                 }
                 await stream_notify(payload)
 
+        # MULTI-CHAR-MASK는 slot(장면)마다 별도 호출되므로 이 호출의 history_id(메인 +
+        # 버려지는 실패 시도)를 전역 trace 대신 sink에 모아 descriptor에 저장한다.
+        # server.py 가 백업별로 (공통 trace + 자기 slot의 mask id) 만 주입하도록 쓴다.
+        mask_history_ids: list[str] = []
         try:
             result = await _call_pipeline_llm(
                 f"MULTI-CHAR-MASK slot={slot}",
@@ -6833,7 +6856,11 @@ async def calculate_multi_char_layouts(
                 layout_stream_notify,
                 result_validator=validate_result,
                 json_mode=True,
+                history_ids_sink=mask_history_ids,
             )
+            descriptor["multi_char_history_ids"] = [
+                hid for hid in mask_history_ids if hid
+            ]
             descriptor["multi_char_layout_raw_response"] = str(result or "")
             layout = _parse_multi_char_layout_response(
                 result,
@@ -6855,6 +6882,9 @@ async def calculate_multi_char_layouts(
                 f"slot={slot}, order={layout['character_order']}"
             )
         except Exception as exc:
+            descriptor["multi_char_history_ids"] = [
+                hid for hid in mask_history_ids if hid
+            ]
             descriptor.pop("multi_char_layout", None)
             descriptor["multi_char_layout_error"] = str(exc)
             print(

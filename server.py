@@ -4116,6 +4116,15 @@ async def process_illustration_context_queue_item(item) -> dict:
     # prompt_batch_v1 등 build_from_context 를 거치지 않는 경로는 빈 목록(버튼 비활성).
     llm_trace = []
 
+    def _child_llm_trace(base_trace, descriptor: dict) -> list:
+        # 공통 LLM 호출 trace + 이 백업(자기 slot)의 MULTI-CHAR-MASK history_id.
+        # MULTI-CHAR-MASK는 slot마다 별도 호출되므로 각 백업이 자기 것만 가져간다.
+        slot_ids = [
+            str(x) for x in (descriptor.get("multi_char_history_ids") or [])
+            if str(x).strip()
+        ]
+        return list(base_trace or []) + slot_ids
+
     def _is_multi_char_descriptor(descriptor: dict, prompt_format: str) -> bool:
         if not multi_char_mask_active:
             return False
@@ -4481,6 +4490,8 @@ async def process_illustration_context_queue_item(item) -> dict:
             # build_from_context 완료 시점에 한 번 캡처해 모든 자식 백업에 동일 주입.
             llm_trace = list(built.get("llm_trace") or [])
             # 조기분산(early dispatch)으로 먼저 큐에 들어간 자식들에게 사후 주입.
+            # 이 자식들은 단일 캐릭터(멀티캐릭터는 후순위 보류)라 MULTI-CHAR-MASK가
+            # 없고, llm_trace(공통)에도 MULTI-CHAR-MASK가 빠져 있으므로 그대로 주입한다.
             for _pair in child_pairs:
                 if _pair is None:
                     continue
@@ -4534,7 +4545,7 @@ async def process_illustration_context_queue_item(item) -> dict:
                     built.get("prompt_format", "v3"),
                     defer_postprocess=False,
                     queue_priority=1,
-                    llm_trace=llm_trace,
+                    llm_trace=_child_llm_trace(llm_trace, descriptor),
                 )
 
         if not early_dispatch:
@@ -4547,7 +4558,7 @@ async def process_illustration_context_queue_item(item) -> dict:
                     built.get("context", ""),
                     built.get("prompt_format", "v3"),
                     defer_postprocess=False,
-                    llm_trace=llm_trace,
+                    llm_trace=_child_llm_trace(llm_trace, descriptor),
                 ))
         else:
             await progress(
