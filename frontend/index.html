@@ -21380,6 +21380,10 @@
                             <button onclick="toggleChat('${escapeAttr(b.name)}')">
                                 💬 채팅
                             </button>
+                            <button onclick="openLlmFlowModal('${escapeAttr(b.name)}')"
+                                    ${b.has_llm_trace ? 'title="이 백업을 만든 LLM 흐름(MULTI-CHAR-MASK~CALL3) 입력/출력을 자르기 없이 보여줍니다"' : 'disabled title="LLM 흐름 기록이 없는 백업입니다(도입 전/재생성/수동 생성)"'}>
+                                🧩 LLM 흐름
+                            </button>
                             <button class="delete-backup-btn" onclick="deleteBackup('${escapeAttr(b.name)}', this)" title="이미지와 메타데이터를 삭제합니다">
                                 🗑️ 삭제
                             </button>
@@ -27482,7 +27486,7 @@
                     <div class="lighbd-modal-head">
                         <div class="lighbd-modal-title" id="lighbd-history-title">
                             LB · LLM 히스토리
-                            <div class="lighbd-modal-subtitle">최근 20개 요청 · 항목의 열기를 누르면 전체 입력과 출력을 확인할 수 있습니다.</div>
+                            <div class="lighbd-modal-subtitle">최근 100개 요청 · 항목의 열기를 누르면 전체 입력과 출력을 확인할 수 있습니다.</div>
                         </div>
                         <button class="lighbd-modal-close" onclick="closeLighbdHistoryModal()" aria-label="닫기">✕</button>
                     </div>
@@ -27664,6 +27668,224 @@
             overlay.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeLighbdHistoryDetail(); });
             document.body.appendChild(overlay);
             overlay.focus();
+        }
+
+        // ─── 삽화 백업 LLM 흐름 추적 (MULTI-CHAR-MASK~CALL3) ───
+        let _llmFlowRecords = [];
+        let _llmFlowName = '';
+
+        function closeLlmFlowModal() {
+            const overlay = document.getElementById('llm-flow-overlay');
+            if (overlay) overlay.remove();
+        }
+
+        async function openLlmFlowModal(name) {
+            if (!name) { showToast('백업 이름이 없습니다.', 'error'); return; }
+            closeLlmFlowModal();
+            _llmFlowName = name;
+            _llmFlowRecords = [];
+            const overlay = document.createElement('div');
+            overlay.id = 'llm-flow-overlay';
+            overlay.className = 'lighbd-detail-overlay';
+            overlay.tabIndex = -1;
+            overlay.innerHTML = `
+                <div class="lighbd-detail-shell" role="dialog" aria-modal="true" aria-labelledby="llm-flow-title" style="width:min(1180px, 96vw); max-height:min(92vh, 920px);">
+                    <div class="lighbd-modal-head">
+                        <div class="lighbd-modal-title" id="llm-flow-title">
+                            LLM 흐름 추적 · <span style="font-family:monospace; font-size:.78rem;">${escapeHtml(name)}</span>
+                            <div class="lighbd-modal-subtitle">이 백업을 만든 MULTI-CHAR-MASK~CALL3 단계의 입력/출력 전체. 내용은 자르거나 축약하지 않습니다.</div>
+                        </div>
+                        <button class="lighbd-modal-close" onclick="closeLlmFlowModal()" aria-label="닫기">✕</button>
+                    </div>
+                    <div id="llm-flow-body" class="lighbd-detail-body" style="display:block; overflow-y:auto;">
+                        <div style="color:var(--text2); font-size:0.85rem;">불러오는 중...</div>
+                    </div>
+                </div>`;
+            overlay.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeLlmFlowModal(); });
+            document.body.appendChild(overlay);
+            overlay.focus();
+
+            try {
+                const resp = await fetch(`/api/backups/${encodeURIComponent(name)}/llm_trace`);
+                if (!resp.ok) {
+                    console.error('[LLM_FLOW] API 실패:', resp.status);
+                    throw new Error('HTTP ' + resp.status);
+                }
+                const data = await resp.json();
+                if (data.status === 'error') {
+                    throw new Error(data.error || '조회 실패');
+                }
+                _llmFlowRecords = Array.isArray(data.records) ? data.records : [];
+                renderLlmFlowBody(data);
+            } catch (e) {
+                console.error('[LLM_FLOW] 로드 실패:', e);
+                const body = document.getElementById('llm-flow-body');
+                if (body) body.innerHTML = `<div style="color:#ff6b6b; font-size:0.85rem;">LLM 흐름 로드 실패: ${escapeHtml(e.message || String(e))}</div>`;
+            }
+        }
+
+        function renderLlmFlowBody(data) {
+            const body = document.getElementById('llm-flow-body');
+            if (!body) return;
+            const records = Array.isArray(data.records) ? data.records : [];
+            const missing = Array.isArray(data.missing) ? data.missing : [];
+            const note = data.note || '';
+            let html = '';
+            if (note) {
+                html += `<div style="border:1px solid var(--border); background:rgba(255,159,67,0.12); color:#ffb36b; padding:9px 12px; border-radius:8px; font-size:0.78rem; margin-bottom:12px; white-space:pre-wrap; word-break:break-word;">${escapeHtml(note)}</div>`;
+            }
+            if (records.length) {
+                html += `<div style="display:flex; gap:8px; margin-bottom:12px; flex-wrap:wrap; align-items:center;">
+                    <button onclick="exportLlmFlowMarkdown()" style="padding:5px 12px; font-size:0.78rem; border:1px solid var(--border); border-radius:6px; background:var(--surface1); color:var(--text); cursor:pointer;">📄 MD 내보내기</button>
+                    <span style="font-size:0.74rem; color:var(--text2);">${records.length}개 단계 · 자르기 없음${missing.length ? ` · 삭제됨 ${missing.length}건` : ''}</span>
+                </div>`;
+            }
+            if (!records.length) {
+                html += `<div style="color:var(--text2); font-size:0.85rem;">표시할 LLM 흐름 레코드가 없습니다.</div>`;
+                body.innerHTML = html;
+                return;
+            }
+            for (const record of records) {
+                html += renderLlmFlowRecordSection(record);
+            }
+            body.innerHTML = html;
+        }
+
+        function renderLlmFlowRecordSection(record) {
+            const inputMessages = Array.isArray(record.input) ? record.input : [];
+            const inputText = inputMessages.length
+                ? inputMessages.map((m, i) => `[${i + 1}. ${String(m.role || '?').toUpperCase()}]\n${_formatLighbdHistoryContent(m.content)}`).join('\n\n')
+                : '-';
+            const statusMeta = getLighbdHistoryStatusMeta(record.status);
+            const isError = statusMeta.isError;
+            const errorText = record.error || '';
+            const rawOutput = record.output || '';
+            const callName = record.call_name || record.task_key || 'LLM 호출';
+            const stats = `입력 ${record.prompt_tokens ?? 0} · 출력 ${record.completion_tokens ?? 0} · ${record.elapsed ?? 0}s · ${record.tps ?? 0} t/s`;
+            const outputSection = isError
+                ? `<section class="lighbd-detail-section" style="border:none; border-top:1px solid var(--border); border-radius:0;">
+                            <div class="lighbd-detail-section-title">오류 내용</div>
+                            <pre class="lighbd-detail-content">${escapeHtml(errorText || '-')}</pre>
+                        </section>
+                        <section class="lighbd-detail-section" style="border:none; border-top:1px solid var(--border); border-radius:0;">
+                            <div class="lighbd-detail-section-title">LLM 원본 응답 <span style="color:var(--text2); font-weight:400;">(파싱 실패 원인 분석용)</span></div>
+                            <pre class="lighbd-detail-content">${escapeHtml(rawOutput || '(원본 응답 없음)')}</pre>
+                        </section>`
+                : `<section class="lighbd-detail-section" style="border:none; border-top:1px solid var(--border); border-radius:0;">
+                            <div class="lighbd-detail-section-title">출력 전체</div>
+                            <pre class="lighbd-detail-content">${escapeHtml(rawOutput || '-')}</pre>
+                        </section>`;
+            return `
+                <div style="border:1px solid var(--border); background:rgba(0,0,0,0.18); border-radius:9px; margin-bottom:14px; overflow:hidden;">
+                    <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:8px 12px; background:rgba(255,255,255,0.025); border-bottom:1px solid var(--border);">
+                        <span style="font-size:0.7rem; padding:1px 6px; border-radius:3px; background:rgba(0,188,212,0.16); color:#4dd0e1; font-weight:600;">${escapeHtml(callName)}</span>
+                        <span style="font-size:0.7rem; padding:1px 6px; border-radius:3px; background:${statusMeta.background}; color:${statusMeta.color}; font-weight:600;">${statusMeta.label}</span>
+                        <span style="font-size:0.7rem; color:var(--text2);">${escapeHtml(record.ts || '')}</span>
+                        <span style="font-size:0.7rem; color:var(--text2);">${escapeHtml(stats)}</span>
+                        ${record.model ? `<span style="font-size:0.7rem; color:var(--text2);">${escapeHtml(record.model)}</span>` : ''}
+                    </div>
+                    <section class="lighbd-detail-section" style="border:none; border-radius:0;">
+                        <div class="lighbd-detail-section-title">입력 전체</div>
+                        <pre class="lighbd-detail-content">${escapeHtml(inputText)}</pre>
+                    </section>
+                    ${outputSection}
+                </div>`;
+        }
+
+        function buildLlmFlowMarkdown(name, records) {
+            const lines = [];
+            lines.push(`# LLM 흐름 추적 — ${name}`);
+            lines.push('');
+            lines.push(`> 삽화 백업 \`${name}\` 을 만든 MULTI-CHAR-MASK~CALL3 단계의 LLM 호출 입력/출력 전체. 내용은 자르거나 축약하지 않았습니다.`);
+            lines.push('');
+            lines.push(`- 단계 수: ${records.length}`);
+            lines.push(`- 내보낸 시각: ${new Date().toISOString()}`);
+            lines.push('');
+            lines.push('---');
+            lines.push('');
+            for (let i = 0; i < records.length; i++) {
+                const r = records[i];
+                const callName = r.call_name || r.task_key || 'LLM 호출';
+                const status = r.status || (r.error ? 'error' : 'ok');
+                lines.push(`## ${i + 1}. ${callName}`);
+                lines.push('');
+                lines.push(`- 시각: ${r.ts || '-'}`);
+                lines.push(`- 상태: ${status}`);
+                if (r.model) lines.push(`- 모델: ${r.model}`);
+                if (r.phase || r.llm_slot) lines.push(`- 라우팅: ${r.phase || '-'} / ${r.llm_slot || '-'}`);
+                lines.push(`- 입력 토큰: ${r.prompt_tokens ?? 0} · 출력 토큰: ${r.completion_tokens ?? 0}`);
+                lines.push(`- 경과: ${r.elapsed ?? 0}s · ${r.tps ?? 0} t/s`);
+                if (r.execution_id) lines.push(`- 실행 ID: \`${r.execution_id}\``);
+                if (r.attempt_id) lines.push(`- 시도 ID: \`${r.attempt_id}\``);
+                lines.push('');
+                const inputMessages = Array.isArray(r.input) ? r.input : [];
+                lines.push('### 입력');
+                lines.push('');
+                if (inputMessages.length) {
+                    for (let j = 0; j < inputMessages.length; j++) {
+                        const m = inputMessages[j];
+                        lines.push(`**[${j + 1}. ${String(m.role || '?').toUpperCase()}]**`);
+                        lines.push('');
+                        lines.push('```');
+                        lines.push(_formatLighbdHistoryContent(m.content));
+                        lines.push('```');
+                        lines.push('');
+                    }
+                } else {
+                    lines.push('```');
+                    lines.push('-');
+                    lines.push('```');
+                    lines.push('');
+                }
+                if (r.error) {
+                    lines.push('### 오류 내용');
+                    lines.push('');
+                    lines.push('```');
+                    lines.push(r.error || '-');
+                    lines.push('```');
+                    lines.push('');
+                    if (r.output) {
+                        lines.push('### LLM 원본 응답');
+                        lines.push('');
+                        lines.push('```');
+                        lines.push(r.output);
+                        lines.push('```');
+                        lines.push('');
+                    }
+                } else {
+                    lines.push('### 출력');
+                    lines.push('');
+                    lines.push('```');
+                    lines.push(r.output || '-');
+                    lines.push('```');
+                    lines.push('');
+                }
+                lines.push('---');
+                lines.push('');
+            }
+            return lines.join('\n');
+        }
+
+        function exportLlmFlowMarkdown() {
+            const name = _llmFlowName || 'backup';
+            const records = _llmFlowRecords || [];
+            if (!records.length) { showToast('내보낼 LLM 흐름 기록이 없습니다.', 'warning'); return; }
+            try {
+                const md = buildLlmFlowMarkdown(name, records);
+                const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `${name}_llm_flow.md`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                showToast('MD 내보내기 완료', 'success');
+            } catch (e) {
+                console.error('[LLM_FLOW] MD 내보내기 실패:', e);
+                showToast('MD 내보내기 실패: ' + (e.message || String(e)), 'error');
+            }
         }
         // ─── LLM 서비스 변경 ───
         function updateLlmStreamStatus(slot, checked) {

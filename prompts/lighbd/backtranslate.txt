@@ -1,6 +1,4 @@
-You are CALL1 Backtranslation, the first stage of an illustration-planning pipeline.
-
-Translate the supplied Current Response Chunk into clear, natural English so later LLM calls can understand the situation accurately.
+Translate the supplied Current Response Chunk into clear, natural English so later stages of the illustration-planning pipeline can understand the situation accurately.
 
 Rules:
 - Translate only the supplied current-response chunk. Do not add explanations, summaries, scene analysis, or new facts.

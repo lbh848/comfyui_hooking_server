@@ -208,7 +208,10 @@ def _get_server_globals():
 
 
 LIGHBD_HISTORY_PATH = os.path.join(LOG_DIR, "lighbd_history.jsonl")
-LIGHBD_GENERAL_HISTORY_MAX = 20
+# 일반(CALL1/2/3 등 삽화 LLM 호출) 보관량. "LLM 흐름 추적"으로 과거 백업 흐름을
+# 분석하려면 본문이 보존되어 있어야 하므로 20 → 100 으로 상향. 이미 삭제된 과거 레코드는
+# 복원되지 않으며, 이후 append 시점부터 100건까지 보존된다.
+LIGHBD_GENERAL_HISTORY_MAX = 100
 LIGHBD_MULTI_CHAR_HISTORY_MAX = 100
 LIGHBD_HISTORY_MAX = LIGHBD_GENERAL_HISTORY_MAX + LIGHBD_MULTI_CHAR_HISTORY_MAX
 _MANUAL_RACE_SUCCESS_SUPPRESSIONS: list[dict] = []
@@ -260,7 +263,7 @@ def _is_multi_char_history_record(record: object) -> bool:
 
 
 def _trim_lighbd_history_lines(lines: list[str]) -> list[str]:
-    """일반 최근 20건과 분석용 다중 분리 최근 100건을 각각 보존한다."""
+    """일반 최근 100건과 분석용 다중 분리 최근 100건을 각각 보존한다."""
     general_indices = []
     multi_char_indices = []
     for index, line in enumerate(lines):
@@ -285,7 +288,7 @@ def _trim_lighbd_history_lines(lines: list[str]) -> list[str]:
 
 def _log_lighbd_history(record: dict) -> None:
     """lighbd 전용 히스토리 파일(logs/lighbd_history.jsonl)에 append.
-    일반 호출 최근 20개와 다중 분리 호출 최근 100개를 별도로 유지한다.
+    일반 호출 최근 100개와 다중 분리 호출 최근 100개를 별도로 유지한다.
 
     CLAUDE.md 규칙: write 전 백업. 요구사항/ 폴더에 .bak 보관.
     """

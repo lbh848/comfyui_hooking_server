@@ -1636,6 +1636,7 @@ async def save_backup(
     api_workflow_snapshot=_BACKUP_SNAPSHOT_UNSET,
     conversion_info_snapshot=_BACKUP_SNAPSHOT_UNSET,
     illustration_multi_char: dict = None,
+    llm_trace: list = None,
 ):
     """이미지(WebP q80 + 원본 워크플로우 메타데이터)와 원본 워크플로우를 백업한다.
     bot_name: 봇/워크플로우 컨텍스트 딱지 (bot 모드일 때 봇 이름).
@@ -1830,6 +1831,15 @@ async def save_backup(
             f"order={backup_multi_char['character_order']}, "
             f"fingerprint={backup_multi_char['mask_fingerprint'][:12]}"
         )
+    # LLM 흐름 추적: 이 백업을 만든 삽화 파이프라인(MULTI-CHAR-MASK~CALL3)이 거친
+    # 모든 LLM 호출의 history_id. 프론트의 "LLM 흐름" 버튼이 lighbd_history.jsonl
+    # 에서 이 id들로 레코드를 정확히 매칭해 자르기 없이 보여준다. 빈 목록이면 버튼 비활성.
+    if llm_trace:
+        try:
+            info_to_save["llm_trace"] = [str(x) for x in llm_trace if str(x).strip()]
+        except Exception as e:
+            print(f"[BACKUP] llm_trace 정규화 실패, 무시: {e}")
+            traceback.print_exc()
 
     info_path = os.path.join(WORKFLOW_BACKUP_DIR, f"{base_name}_info.json")
     with open(info_path, "w", encoding="utf-8") as f:
@@ -3118,6 +3128,7 @@ async def _finalize_deferred_illustration_prompt(prompt_id: str, speak_text: str
             api_workflow_snapshot=state.get("api_workflow"),
             conversion_info_snapshot=state.get("conversion_info"),
             illustration_multi_char=state.get("illustration_multi_char"),
+            llm_trace=entry.get("_llm_trace"),
         )
 
         save_node_id = entry.get("save_node_id") or "9"
@@ -3873,6 +3884,7 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
             illustration_multi_char=(
                 queued_multi_char if multi_char_requested else None
             ),
+            llm_trace=(prompts.get(prompt_id) or {}).get("_llm_trace"),
         )
 
         # 프록시 응답 설정
@@ -4100,6 +4112,9 @@ async def process_illustration_context_queue_item(item) -> dict:
     raw_items = []
     history_plan = None
     history_finalize_attempted = False
+    # build_from_context 완료 후 MULTI-CHAR-MASK~CALL3 의 LLM 호출 id 목록으로 채워진다.
+    # prompt_batch_v1 등 build_from_context 를 거치지 않는 경로는 빈 목록(버튼 비활성).
+    llm_trace = []
 
     def _is_multi_char_descriptor(descriptor: dict, prompt_format: str) -> bool:
         if not multi_char_mask_active:
@@ -4186,6 +4201,7 @@ async def process_illustration_context_queue_item(item) -> dict:
         *,
         defer_postprocess,
         queue_priority=None,
+        llm_trace=None,
     ):
         child_provider = illustration_provider_snapshot
         hybrid_prompt_formats = None
@@ -4232,6 +4248,9 @@ async def process_illustration_context_queue_item(item) -> dict:
             "image_bytes": None,
             "timestamp": time.time(),
             "_illustration_runtime_snapshot": child_runtime_snapshot,
+            # 이 자식(이미지 1장) 백업에 묻일 LLM 흐름 trace. 부모 build_from_context
+            # 완료 후 주입되거나(early dispatch), _enqueue_child 호출 시 전달된다.
+            "_llm_trace": list(llm_trace or []),
         }
         child_raw_body = {
             "prompt": child_prompt,
@@ -4458,6 +4477,16 @@ async def process_illustration_context_queue_item(item) -> dict:
                 history_plan=history_plan,
                 enable_multi_char_layout=multi_char_mask_active,
             )
+            # 이 삽화 생성에서 거친 LLM 흐름(MULTI-CHAR-MASK~CALL3)의 history_id 목록.
+            # build_from_context 완료 시점에 한 번 캡처해 모든 자식 백업에 동일 주입.
+            llm_trace = list(built.get("llm_trace") or [])
+            # 조기분산(early dispatch)으로 먼저 큐에 들어간 자식들에게 사후 주입.
+            for _pair in child_pairs:
+                if _pair is None:
+                    continue
+                _cid = _pair[0]
+                if _cid in prompts:
+                    prompts[_cid]["_llm_trace"] = list(llm_trace)
             if history_plan is not None:
                 history_finalize_attempted = True
                 illustration_chat_history.finalize_history(history_plan, built)
@@ -4505,6 +4534,7 @@ async def process_illustration_context_queue_item(item) -> dict:
                     built.get("prompt_format", "v3"),
                     defer_postprocess=False,
                     queue_priority=1,
+                    llm_trace=llm_trace,
                 )
 
         if not early_dispatch:
@@ -4517,6 +4547,7 @@ async def process_illustration_context_queue_item(item) -> dict:
                     built.get("context", ""),
                     built.get("prompt_format", "v3"),
                     defer_postprocess=False,
+                    llm_trace=llm_trace,
                 ))
         else:
             await progress(
@@ -4631,6 +4662,7 @@ async def process_illustration_context_queue_item(item) -> dict:
                             built.get("prompt_format", "v3"),
                         )
                     ),
+                    llm_trace=llm_trace,
                 )
                 retry_pairs.append((idx, descriptor, retry_id, retry_item))
 
@@ -5203,7 +5235,7 @@ async def handle_api_lighbd_enqueue(request: web.Request) -> web.Response:
 
 
 async def handle_api_lighbd_history(request: web.Request) -> web.Response:
-    """GET /api/lighbd/history - 일반 최근 20개와 다중 분리 최근 100개 반환.
+    """GET /api/lighbd/history - 일반 최근 100개와 다중 분리 최근 100개 반환.
 
     자세히 보기 모달 데이터 소스. 각 레코드: ts, prompt_id, input(messages),
     output(plan), completion_tokens, elapsed, tps, status.
@@ -7899,6 +7931,7 @@ async def handle_api_backups(request: web.Request) -> web.Response:
             "conversion_info": info,
             "mtime": os.path.getmtime(f),
             "is_scheduled": is_scheduled,
+            "has_llm_trace": bool(info.get("llm_trace")),
         })
     return web.json_response({
         "backups": backups,
@@ -7907,6 +7940,114 @@ async def handle_api_backups(request: web.Request) -> web.Response:
         "limit": limit,
         "has_more": (offset + limit) < total_count
     })
+
+
+async def handle_api_backup_llm_trace(request: web.Request) -> web.Response:
+    """GET /api/backups/{name}/llm_trace - 해당 백업을 만든 삽화 LLM 흐름
+    (MULTI-CHAR-MASK~CALL3) 레코드를 lighbd_history.jsonl에서 history_id로 매칭해
+    자르기 없이 전체 반환한다. 프론트 'LLM 흐름' 모달 + MD 내보내기 데이터 소스.
+
+    응답: { name, trace_ids, records, missing, note }
+      - records: history_id가 매칭된 lighbd_history 레코드 전체(ts순, 입력/출력 원문 포함)
+      - missing: 보존 한계(lighbd_history.jsonl) 초과로 삭제된 id 목록(본문 복원 불가)
+    """
+    try:
+        name = str(request.match_info.get("name") or "").strip()
+        if not name:
+            return web.json_response(
+                {"status": "error", "error": "백업 이름이 필요합니다"}, status=400
+            )
+        # 경로 조작 방지: 백업명은 타임스탬프+hex 접두 형식(알파벳/숫자/_-)만 허용.
+        if not re.match(r"^[A-Za-z0-9_\-]+$", name):
+            print(f"[BACKUP:LLM_TRACE] 잘못된 백업 이름 거부: name={name!r}")
+            return web.json_response(
+                {"status": "error", "error": f"잘못된 백업 이름: {name!r}"}, status=400
+            )
+        backup_dir = get_backup_base_dir()
+        info_path = os.path.join(backup_dir, f"{name}_info.json")
+        if not os.path.exists(info_path):
+            print(f"[BACKUP:LLM_TRACE] 백업 정보 파일 없음: name={name}")
+            return web.json_response(
+                {"status": "error", "error": f"백업 정보 파일이 없습니다: {name}"},
+                status=404,
+            )
+        try:
+            with open(info_path, "r", encoding="utf-8") as fp:
+                info = json.load(fp)
+        except Exception as e:
+            print(f"[BACKUP:LLM_TRACE] info 읽기 실패: name={name}, error={e}")
+            traceback.print_exc()
+            return web.json_response(
+                {"status": "error", "error": f"백업 정보 읽기 실패: {e}"},
+                status=500,
+            )
+        trace_ids_raw = info.get("llm_trace") or []
+        if not isinstance(trace_ids_raw, list) or not trace_ids_raw:
+            return web.json_response({
+                "name": name,
+                "trace_ids": [],
+                "records": [],
+                "missing": [],
+                "note": (
+                    "이 백업에는 LLM 흐름 기록(trace)이 없습니다. "
+                    "(이 기능 도입 전 백업, 또는 재생성/수동 생성 백업)"
+                ),
+            })
+        trace_ids = [str(x) for x in trace_ids_raw if str(x).strip()]
+        trace_set = set(trace_ids)
+        # lighbd_history.jsonl 에서 history_id로 매칭. 보존 한계로 삭제된 레코드는 missing.
+        history_path = lighbd_service.LIGHBD_HISTORY_PATH
+        records_by_id: dict = {}
+        if os.path.exists(history_path):
+            try:
+                with open(history_path, "r", encoding="utf-8") as f:
+                    for ln in f:
+                        ln = ln.strip()
+                        if not ln:
+                            continue
+                        try:
+                            rec = json.loads(ln)
+                        except Exception as parse_err:
+                            print(
+                                f"[BACKUP:LLM_TRACE] history 줄 파싱 실패, 무시: "
+                                f"error={parse_err}, line={ln[:200]!r}"
+                            )
+                            continue
+                        hid = str(rec.get("history_id") or "")
+                        if hid and hid in trace_set:
+                            records_by_id[hid] = rec
+            except Exception as e:
+                print(f"[BACKUP:LLM_TRACE] history 읽기 실패: name={name}, error={e}")
+                traceback.print_exc()
+        found = list(records_by_id.values())
+        try:
+            found.sort(key=lambda r: str(r.get("ts") or ""))
+        except Exception as sort_err:
+            print(f"[BACKUP:LLM_TRACE] 레코드 정렬 실패: {sort_err}")
+        missing = [hid for hid in trace_ids if hid not in records_by_id]
+        note = ""
+        if missing:
+            note = (
+                f"보존 한계 초과로 {len(missing)}건의 레코드가 "
+                f"lighbd_history에서 삭제되어 본문을 복원할 수 없습니다."
+            )
+        print(
+            f"[BACKUP:LLM_TRACE] 조회: name={name}, "
+            f"trace={len(trace_ids)}, found={len(found)}, missing={len(missing)}"
+        )
+        return web.json_response({
+            "name": name,
+            "trace_ids": trace_ids,
+            "records": found,
+            "missing": missing,
+            "note": note,
+        })
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(f"[BACKUP:LLM_TRACE] API 실패: {e}\n{tb}")
+        return web.json_response(
+            {"status": "error", "error": str(e)}, status=500
+        )
 
 
 async def handle_api_backups_filters(request: web.Request) -> web.Response:
@@ -11823,6 +11964,7 @@ app.router.add_get("/extensions", handle_dummy)
 frontend_auth_controller.register_routes(app)
 app.router.add_get("/api/backups", handle_api_backups)
 app.router.add_get("/api/backups/filters", handle_api_backups_filters)
+app.router.add_get("/api/backups/{name}/llm_trace", handle_api_backup_llm_trace)
 app.router.add_get("/api/backup_image/{filename}", handle_api_backup_image)
 app.router.add_get("/api/backup_prompt/{name}", handle_api_backup_prompt)
 app.router.add_get("/api/backup_chat", handle_api_backup_chat)

@@ -8,6 +8,7 @@ RisuAI는 Comfy history에 이미지가 여러 장 있어도 첫 장만 소비�
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import hashlib
 import json
 import os
@@ -37,6 +38,31 @@ EASY_EDIT_PREFIX = "__LB_ILLUST_EASY_EDIT_V1__"
 MAX_ILLUSTRATION_SLOT_COUNT = 65
 MAX_EASY_EDIT_DIRECTION_LENGTH = 4000
 CALL5_MAX_PAIRWISE_OVERLAP_RATIO = 0.60
+
+# 삽화 1회 생성(build_from_context) 동안 발생한 모든 LLM 호출의 history_id를
+# 수집하는 컨텍스트 변수. _call_pipeline_llm 가 성공/실패/취소/실패시도 레코드의
+# id를 여기에 append 하고, build_from_context 가 종료된 뒤 이 목록을 반환한다.
+# contextvars 로 asyncio gather/병렬 실행에도 안전하게 per-run 수집된다.
+# 이 id 목록은 백업 _info.json 의 llm_trace 로 저장되어 "LLM 흐름 추적" 버튼이
+# 해당 백업을 만든 MULTI-CHAR-MASK~CALL3 전체 흐름을 정확히 매칭하는 데 쓰인다.
+_llm_trace_ctx: contextvars.ContextVar[list[str] | None] = contextvars.ContextVar(
+    "illustration_llm_trace", default=None
+)
+
+
+def _trace_append(history_id: str) -> None:
+    """현재 실행 중인 build_from_context 의 trace 목록에 history_id를 추가한다.
+
+    활성 trace가 없으면(독립 호출·재생성 등) 아무 것도 하지 않는다.
+    """
+    trace = _llm_trace_ctx.get()
+    if trace is None:
+        return
+    hid = str(history_id or "").strip()
+    if not hid:
+        return
+    if hid not in trace:
+        trace.append(hid)
 
 PROMPT_FILES = {
     "call1_backtranslate": "backtranslate.txt",
@@ -5626,6 +5652,8 @@ async def _call_pipeline_llm(
         task_key = "illustration_call2"
     execution_id = str(history_id or uuid.uuid4().hex)
     parent_execution_id = str(parent_execution_id or "")
+    # 이 호출의 메인 레코드(성공/취소/예외 모두 동일 history_id)를 trace에 등록.
+    _trace_append(execution_id)
     model = (
         llm_service.routing_primary_model(task_key)
         or llm_service._current_config.get("llm_model3")
@@ -5728,6 +5756,8 @@ async def _call_pipeline_llm(
             f"attempt={failure_record['attempt']}/{failure_record['total_attempts']}, "
             f"reason={reason}, raw={raw_output[:300]!r}"
         )
+        # 버려지는 실패 시도도 별도 error 레코드로 남으므로 trace에 포함.
+        _trace_append(failure_record.get("history_id"))
         lighbd_service._log_lighbd_history(failure_record)
 
     try:
@@ -7531,6 +7561,10 @@ async def build_from_context(
 ) -> dict:
     toggles = merged_toggles(toggles)
     prompts = load_prompt_files()
+    # 이번 삽화 생성(MULTI-CHAR-MASK~CALL3)의 모든 LLM 호출 history_id를 모은다.
+    # _call_pipeline_llm 가 각 레코드 id를 여기에 append 한다.
+    trace: list[str] = []
+    _llm_trace_token = _llm_trace_ctx.set(trace)
     chats = payload.get("chats") or []
     target_index, narrative = _latest_narrative(chats)
     if target_index < 0 or not narrative:
@@ -8833,7 +8867,7 @@ async def build_from_context(
         item["raw_positive"] = positive
         item["raw_negative"] = negative
         raw_items.append(item)
-    return {
+    _result = {
         "session_id": payload["session_id"],
         "context": downstream_context,
         "narrative": narrative,
@@ -8881,4 +8915,9 @@ async def build_from_context(
         ),
         "prompt_format": prompt_format,
         "items": raw_items,
+        # 이 삽화 생성에서 거친 모든 LLM 호출의 history_id (MULTI-CHAR-MASK~CALL3).
+        # 백업 _info.json 의 llm_trace 로 저장되어 흐름 추적 버튼이 정확 매칭에 사용.
+        "llm_trace": list(trace),
     }
+    _llm_trace_ctx.reset(_llm_trace_token)
+    return _result
