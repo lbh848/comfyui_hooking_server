@@ -4841,7 +4841,7 @@ async def handle_api_illustration_context_bridge_health(request: web.Request) ->
         "short_slot_manifest": True,
         "lookup_key_length": 24,
         "max_slot_manifest_count": illustration_context_pipeline.MAX_ILLUSTRATION_SLOT_COUNT,
-        "progress_phases": ["call1", "call2", "call2_plan", "call2_keyvis", "call2_detail", "call2_fallback", "call3", "multi_char_mask", "enqueue", "generating", "retrying", "regenerating", "ready", "error"],
+        "progress_phases": ["call1", "call2", "call2_plan", "call2_keyvis", "call2_detail", "call2_authority_audit", "call2_fallback", "call3", "multi_char_mask", "enqueue", "generating", "retrying", "regenerating", "ready", "error"],
     })
 
 

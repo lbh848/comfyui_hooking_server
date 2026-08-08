@@ -47,7 +47,10 @@ Rules:
 - current_characters are every character present, acting, speaking, being addressed, or clearly participating in CURRENT CONTEXT. Include implicit participants when discourse establishes them.
 - Use plain canonical-name strings in history_characters and current_characters. Do not wrap a certain name in an object. Only use {"name": ..., "confidence": ...} when confidence is below 1.0 and materially useful.
 - Appearing in CURRENT does not authorize a wardrobe change. Existing wardrobe is carried forward by default.
-- Emit only actual wardrobe changes established by CURRENT. Never emit keep events or restate carried-forward/default outfits. Copy exact evidence from the numbered segment.
+- `wardrobe_events` is a sparse, evidence-bearing change history. Its short `items` list is never a complete outfit snapshot and downstream must merge it over the known/default outfit.
+- Emit only actual wardrobe changes established by CURRENT. A sentence that merely describes a character wearing their known/default outfit, including a first appearance, is not a change. Never emit keep events or restate carried-forward/default outfits. Copy exact evidence from the numbered segment.
+- Wardrobe items are garments, wearable accessories, and their worn/open/removed state only. Never put hair style, hair length/color, eyes, skin, face, body, species, or another appearance trait in `wardrobe_events`.
+- `set` and `replace` describe an explicitly established outfit transition, but `items` still contains only the observed change information. Never assume that an unmentioned default garment or accessory disappeared; use an explicit `remove`, nudity state, or other direct evidence for disappearance.
 - Track nude, topless, bottomless, underwear-only, open, displaced, and partially removed clothing as real wardrobe states. An empty outfit is not "unknown" when nudity is established.
 - A garment absent from a camera view is not removed. Visibility and wardrobe state are different.
 - Emit a reference_assignment only when downstream character presence, attribution, or wardrobe tracking would otherwise be wrong or genuinely ambiguous. Do not enumerate every pronoun after identity is already clear, do not emit canonical names already present, and do not repeat equivalent references in the same segment.

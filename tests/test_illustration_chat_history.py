@@ -229,6 +229,40 @@ def test_pipeline_snapshot_preserves_multi_char_analysis_data(isolated_history):
     }]
 
 
+def test_pipeline_snapshot_preserves_call2_authority_audit(isolated_history):
+    chats = [
+        _chat("user", "continue the scene " * 8),
+        _chat("char", "Elizabella climbs the stairs " * 8),
+    ]
+    plan = history.prepare_history(chats, 1, "bot-a")
+    audit = [{
+        "kind": "scene",
+        "slot": 5,
+        "character": "Elizabella",
+        "missing_fixed_added": ["hair rings"],
+        "missing_wardrobe_added": ["detached sleeves"],
+        "authority_exceptions": [],
+        "forbidden_added_removed": [],
+        "conflicts_removed": ["hair down"],
+        "rejected_exceptions": [],
+        "semantic_status": "ok",
+    }]
+
+    saved = history.finalize_history(plan, {
+        "call2_authority_audit": audit,
+        "call2_authority_audit_output": (
+            '{"entries":[{"id":1,"authority_exceptions":[],'
+            '"conflicts":["hair down"]}]}'
+        ),
+        "call2_authority_audit_status": "ok",
+    })
+
+    snapshot = saved["last_pipeline"]
+    assert snapshot["call2_authority_audit"] == audit
+    assert snapshot["call2_authority_audit_status"] == "ok"
+    assert '"hair down"' in snapshot["call2_authority_audit_output"]
+
+
 def test_search_and_soft_delete(isolated_history):
     chats = [
         _chat("user", "과거 질문" * 20),

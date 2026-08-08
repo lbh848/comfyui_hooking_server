@@ -56,6 +56,30 @@ def _toon_without_named_characters(slot=0):
     )
 
 
+def _call_name(task_key):
+    metadata = pipeline.llm_service._stream_metadata_ctx.get({})
+    return str(metadata.get("call_name") or task_key)
+
+
+def _authority_audit_response(
+    messages,
+    *,
+    authority_exceptions=None,
+    forbidden_additions=None,
+    conflicts=None,
+):
+    request = str(messages[-1].get("content") or "")
+    entries = json.loads(request.split("# AUDIT ENTRIES\n", 1)[1])
+    return json.dumps({
+        "entries": [{
+            "id": int(entry["id"]),
+            "authority_exceptions": list(authority_exceptions or []),
+            "forbidden_additions": list(forbidden_additions or []),
+            "conflicts": list(conflicts or []),
+        } for entry in entries],
+    })
+
+
 def test_context_and_result_transport_markers():
     session_id = "session_12345678"
     context_payload = {
@@ -417,7 +441,7 @@ def test_call2_detail_still_requires_characters_for_named_plan():
     assert "이름 있는 PLAN 캐릭터가 누락됨" in reason
 
 
-def test_call2_detail_rejects_wardrobe_different_from_plan_snapshot():
+def test_call2_detail_repairs_sparse_wardrobe_from_plan_snapshot():
     descriptors, reason = pipeline._parse_call2_detail_output(
         _toon_for_slots([4]),
         pipeline.merged_toggles({"key_visual": False}),
@@ -435,8 +459,12 @@ def test_call2_detail_rejects_wardrobe_different_from_plan_snapshot():
         },
     )
 
-    assert descriptors == []
-    assert "권위 복장 충돌" in reason
+    assert reason == ""
+    assert descriptors[0]["characters"][0]["outfit_state"] == {
+        "body_state": "clothed",
+        "worn": ["blue dress"],
+        "removed": [],
+    }
 
 
 def test_call2_detail_accepts_superset_and_normalizes_to_plan_snapshot():
@@ -578,7 +606,7 @@ def test_call2_detail_keeps_keyvis_character_mismatch_as_error():
 
 
 @pytest.mark.asyncio
-async def test_call2_detail_wardrobe_conflict_retries_only_that_shard(monkeypatch, capsys):
+async def test_call2_detail_sparse_wardrobe_is_repaired_without_retry(monkeypatch, capsys):
     call_names = []
     initial = _toon_for_slots([4])
     corrected = initial.replace("school uniform", "blue dress")
@@ -616,13 +644,10 @@ async def test_call2_detail_wardrobe_conflict_retries_only_that_shard(monkeypatc
         stream_notify=None,
     )
 
-    assert call_names == [
-        "CALL2-DETAIL 1/1",
-        "CALL2-DETAIL 1/1 [WARDROBE-CORRECTION]",
-    ]
+    assert call_names == ["CALL2-DETAIL 1/1"]
     assert len(raw_outputs) == 1
     assert descriptors[0]["characters"][0]["outfit_state"]["worn"] == ["blue dress"]
-    assert "권위 복장 충돌 작업만 교정 재호출" in capsys.readouterr().out
+    assert "희소 DETAIL 복장 출력을 서버 기준으로 복구" in capsys.readouterr().out
 
 
 @pytest.mark.asyncio
@@ -1038,8 +1063,8 @@ scenes: []
     assert "# Server limits" not in keyvis_request
     assert "# CHARACTER DICTIONARY" in keyvis_request
     assert "# AUTHORITATIVE FIXED APPEARANCE" in keyvis_request
-    assert "# AUTHORITATIVE WARDROBE CONTINUITY STATE" in keyvis_request
-    assert "# CURRENT WARDROBE EVENT TIMELINE" in keyvis_request
+    assert "# DEFAULT-BASED WARDROBE CONTINUITY BASE" in keyvis_request
+    assert "# SPARSE CURRENT WARDROBE CHANGE HISTORY" in keyvis_request
     assert "blue dress" in keyvis_request
     assert "timeline event marker" in keyvis_request
     assert "# CLASSIFIED LAST VISUAL REFERENCE" not in keyvis_request
@@ -1054,8 +1079,8 @@ scenes: []
     assert "negative: ..." not in detail_request
     assert "# CHARACTER DICTIONARY" in detail_request
     assert "# AUTHORITATIVE FIXED APPEARANCE" in detail_request
-    assert "# AUTHORITATIVE WARDROBE CONTINUITY STATE" in detail_request
-    assert "# CURRENT WARDROBE EVENT TIMELINE" in detail_request
+    assert "# DEFAULT-BASED WARDROBE CONTINUITY BASE" in detail_request
+    assert "# SPARSE CURRENT WARDROBE CHANGE HISTORY" in detail_request
     assert "# CLASSIFIED LAST VISUAL REFERENCE" in detail_request
     assert "nested generated visual marker" not in detail_request
     assert "dedicated last visual marker" in detail_request
@@ -1118,6 +1143,14 @@ async def test_call2_parallel_failure_is_named_fallback_and_logs_reason(
             return "not valid plan json"
         if call_name == "CALL2-FALLBACK":
             return _toon_for_slots([0])
+        if call_name == "CALL2-AUTHORITY-AUDIT":
+            return json.dumps({
+                "entries": [{
+                    "id": 1,
+                    "authority_exceptions": [],
+                    "conflicts": [],
+                }],
+            })
         raise AssertionError(f"unexpected call: {call_name}")
 
     monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
@@ -1146,7 +1179,11 @@ async def test_call2_parallel_failure_is_named_fallback_and_logs_reason(
     )
 
     output = capsys.readouterr().out
-    assert call_names == ["CALL2-PLAN", "CALL2-FALLBACK"]
+    assert call_names == [
+        "CALL2-PLAN",
+        "CALL2-FALLBACK",
+        "CALL2-AUTHORITY-AUDIT",
+    ]
     assert "[ILLUST_CONTEXT:CALL2-FALLBACK] 폴백 시작" in output
     assert "failed_stage=CALL2-PLAN" in output
     assert "CALL2-PLAN JSON object를 찾지 못함" in output
@@ -1237,6 +1274,14 @@ async def test_call2_detail_failure_reuses_preserved_plan_in_global_fallback(mon
             assert '"slot": 0' in combined
             assert '"wardrobe_snapshot"' in combined
             return _toon_for_slots([0])
+        if call_name == "CALL2-AUTHORITY-AUDIT":
+            return json.dumps({
+                "entries": [{
+                    "id": 1,
+                    "authority_exceptions": [],
+                    "conflicts": [],
+                }],
+            })
         raise AssertionError(f"unexpected call: {call_name}")
 
     monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
@@ -1271,6 +1316,7 @@ async def test_call2_detail_failure_reuses_preserved_plan_in_global_fallback(mon
         "CALL2-DETAIL 1/1",
         "CALL2-DETAIL 1/1 [FAILED-SHARD-RETRY]",
         "CALL2-FALLBACK",
+        "CALL2-AUTHORITY-AUDIT",
     ]
     assert [item["slot"] for item in result["items"]] == [0]
     assert result["call2_plan_output"]
@@ -1318,6 +1364,14 @@ scenes: []
             assert "A separately validated Key Visual is already preserved" in combined
             assert "Omit keyvis completely" in combined
             return _toon_for_slots([0])
+        if call_name == "CALL2-AUTHORITY-AUDIT":
+            return json.dumps({
+                "entries": [{
+                    "id": 1,
+                    "authority_exceptions": [],
+                    "conflicts": [],
+                }],
+            })
         raise AssertionError(f"unexpected call: {call_name}")
 
     monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
@@ -1350,7 +1404,7 @@ scenes: []
     assert call_names.count("CALL2-KEYVIS") == 1
     assert "CALL2-DETAIL 1/1" in call_names
     assert "CALL2-DETAIL 1/1 [FAILED-SHARD-RETRY]" in call_names
-    assert call_names[-1] == "CALL2-FALLBACK"
+    assert call_names[-2:] == ["CALL2-FALLBACK", "CALL2-AUTHORITY-AUDIT"]
     assert result["call2_keyvis_output"] == keyvis_output
     assert result["call2_fallback_stage"] == "CALL2-DETAIL"
     assert [item["kind"] for item in result["items"]] == ["keyvis", "scene"]
@@ -3314,7 +3368,9 @@ Hana: "No way!" #burst""",
 
     async def fake_call(task_key, messages, **kwargs):
         calls.append(messages)
-        return responses[len(calls) - 1]
+        if _call_name(task_key) == "CALL2-AUTHORITY-AUDIT":
+            return _authority_audit_response(messages)
+        return responses[1 if task_key == "illustration_call3" else 0]
 
     monkeypatch.setattr(pipeline.llm_service, "callLLMTask", fake_call)
     result = await pipeline.build_from_context(
@@ -3336,9 +3392,9 @@ Hana: "No way!" #burst""",
         "### hana\n-Appearance: 1girl, black hair",
     )
 
-    assert len(calls) == 2
-    assert "manga dialogue writer and balloon-style editor" in calls[1][0]["content"]
-    assert "#normal" in calls[1][0]["content"]
+    assert len(calls) == 3
+    assert "manga dialogue writer and balloon-style editor" in calls[2][0]["content"]
+    assert "#normal" in calls[2][0]["content"]
     assert result["items"][0]["speak"] == 'Hana: "No way!" #burst'
     assert '[SPEAK]\nHana: "No way!" #burst' in result["items"][0]["raw_positive"]
 
@@ -3363,6 +3419,8 @@ async def test_call3_uses_original_narrative_and_only_call2_selected_scene_slots
                 "Translated second sentence.",
             )
         if task_key == "illustration_call2":
+            if call_name == "CALL2-AUTHORITY-AUDIT":
+                return _authority_audit_response(messages)
             if call_name == "CALL2-PLAN":
                 return json.dumps({
                     "scene_plan": [{
@@ -3446,7 +3504,7 @@ Hana: (다음은 어떤 장면일까?) #thought_cloud"""
     task_keys = [task_key for task_key, _messages, _kwargs in calls]
     assert task_keys[0] == "illustration_call1_backtranslate"
     assert task_keys[-1] == "illustration_call3"
-    assert task_keys.count("illustration_call2") == 4
+    assert task_keys.count("illustration_call2") == 5
     assert "CALL2-PLAN" in call_names
     assert "CALL2-KEYVIS" in call_names
     assert sum(name.startswith("CALL2-DETAIL") for name in call_names) == 2
@@ -3735,6 +3793,8 @@ keyvis:
   scene: poster key visual
 scenes: []
 </lb-xnai>"""
+        if call_name == "CALL2-AUTHORITY-AUDIT":
+            return _authority_audit_response(messages)
         assert call_name.startswith("CALL2-DETAIL")
         return _toon_for_slots([0])
 
@@ -3780,7 +3840,7 @@ scenes: []
         },
     )
 
-    assert task_keys == ["illustration_call2"] * 3
+    assert task_keys == ["illustration_call2"] * 4
     assert "CALL2-PLAN" in call_names
     assert "CALL2-KEYVIS" in call_names
     assert sum(name.startswith("CALL2-DETAIL") for name in call_names) == 1
@@ -3799,6 +3859,8 @@ async def test_call2_ready_callback_runs_before_call3_and_receives_generation_ra
     async def fake_call(task_key, messages, **kwargs):
         events.append(task_key)
         if task_key == "illustration_call2":
+            if _call_name(task_key) == "CALL2-AUTHORITY-AUDIT":
+                return _authority_audit_response(messages)
             return """<lb-xnai>
 scenes[1]:
   - camera: close-up
@@ -3809,7 +3871,12 @@ scenes[1]:
     slot: 0
 </lb-xnai>"""
         assert task_key == "illustration_call3"
-        assert events == ["illustration_call2", "dispatch", "illustration_call3"]
+        assert events == [
+            "illustration_call2",
+            "illustration_call2",
+            "dispatch",
+            "illustration_call3",
+        ]
         return '[Scene slot=0]\nHana: "Ready." #normal'
 
     async def on_call2_ready(payload):
@@ -3839,7 +3906,12 @@ scenes[1]:
         on_call2_ready=on_call2_ready,
     )
 
-    assert events == ["illustration_call2", "dispatch", "illustration_call3"]
+    assert events == [
+        "illustration_call2",
+        "illustration_call2",
+        "dispatch",
+        "illustration_call3",
+    ]
     assert len(early_payloads) == 1
     assert result["items"][0]["speak"] == 'Hana: "Ready." #normal'
     assert '[SPEAK]\nHana: "Ready." #normal' in result["items"][0]["raw_positive"]
@@ -3864,6 +3936,8 @@ async def test_build_from_context_uses_backtranslated_current_response_only(monk
                 return f"Bbyakbbyak opens the door.\n\n{token}"
             return f"She looks inside.\n\n{token}\n\nThe room is quiet."
         assert task_key == "illustration_call2"
+        if _call_name(task_key) == "CALL2-AUTHORITY-AUDIT":
+            return _authority_audit_response(messages)
         return """<lb-xnai>
 scenes[1]:
   - camera: medium shot
@@ -3908,6 +3982,10 @@ scenes[1]:
         message["content"]
         for task_key, messages in calls
         if task_key == "illustration_call2"
+        and not any(
+            "CALL2-AUTHORITY-AUDIT" in str(message.get("content") or "")
+            for message in messages
+        )
         for message in messages
     )
     assert "과거 답변도 한국어다." in call2_text
@@ -4649,6 +4727,413 @@ def test_extract_authoritative_fixed_appearance_supports_current_and_legacy_sche
     }
 
 
+def test_extract_authoritative_default_outfits_keeps_complete_declared_order():
+    extracted = pipeline.extract_authoritative_default_outfits(
+        "### Elizabella\n"
+        "-Appearance\n1girl, blonde hair\n"
+        "-default_outfit\n"
+        "white dress, halter dress, detached sleeves, white gloves, "
+        "white choker, mini crown"
+    )
+
+    assert extracted == {
+        "Elizabella": [
+            "white dress",
+            "halter dress",
+            "detached sleeves",
+            "white gloves",
+            "white choker",
+            "mini crown",
+        ],
+    }
+
+
+def test_sparse_call1_set_keeps_unmentioned_default_outfit_features():
+    reference = (
+        "### Elizabella\n"
+        "-Appearance\n1girl, blonde hair\n"
+        "-default_outfit\n"
+        "white dress, halter dress, detached sleeves, white gloves, "
+        "white choker, mini crown"
+    )
+    states = pipeline.apply_wardrobe_events(
+        {},
+        [{"name": "Elizabella"}],
+        [{
+            "segment_id": "C008",
+            "character": "Elizabella",
+            "operation": "set",
+            "items": ["white royal dress", "mini crown", "long blonde hair down"],
+            "state_after": "clothed",
+            "evidence": "short sparse description",
+        }],
+        "msg_current",
+        selected_reference=reference,
+    )
+
+    worn = states["elizabella"]["current_wardrobe"]["worn"]
+    assert worn[:6] == [
+        "white dress",
+        "halter dress",
+        "detached sleeves",
+        "white gloves",
+        "white choker",
+        "mini crown",
+    ]
+    assert "white royal dress" in worn
+    assert "long blonde hair down" in worn
+
+
+def test_call2_authority_base_restores_missing_fixed_and_default_tags():
+    descriptors = [{
+        "kind": "scene",
+        "slot": 5,
+        "characters": [{
+            "name": "Elizabella",
+            "positive": "girl, blonde hair, long hair, hair down, white royal dress, mini crown",
+            "authority_exceptions": [],
+            "outfit_state": {
+                "body_state": "clothed",
+                "worn": ["white royal dress", "mini crown"],
+                "removed": [],
+            },
+        }],
+    }]
+
+    audits = pipeline.apply_call2_authority_base(
+        descriptors,
+        {
+            "Elizabella": (
+                "1girl, blonde hair, long hair, hair rings, two side up, "
+                "hair between eyes, hair intakes, sidelocks, orange eyes"
+            ),
+        },
+        {
+            "Elizabella": [
+                "white dress", "halter dress", "detached sleeves",
+                "white gloves", "white choker", "mini crown",
+            ],
+        },
+    )
+
+    positive = descriptors[0]["characters"][0]["positive"]
+    for required in (
+        "hair rings", "two side up", "hair between eyes", "hair intakes",
+        "detached sleeves", "white gloves", "white choker",
+    ):
+        assert required in positive
+    assert audits == [{
+        "kind": "scene",
+        "slot": 5,
+        "character": "Elizabella",
+        "missing_fixed_added": [
+            "hair rings", "two side up", "hair between eyes", "hair intakes",
+            "sidelocks", "orange eyes",
+        ],
+        "missing_wardrobe_added": [
+            "white dress", "halter dress", "detached sleeves",
+            "white gloves", "white choker",
+        ],
+        "authority_exceptions": [],
+        "forbidden_added_removed": [],
+        "conflicts_removed": [],
+        "rejected_exceptions": [],
+        "semantic_status": "not_run",
+    }]
+
+
+def test_call2_authority_base_allows_only_explicit_exact_temporary_exceptions():
+    descriptors = [{
+        "kind": "scene",
+        "slot": 7,
+        "characters": [{
+            "name": "Elizabella",
+            "positive": "girl, blonde hair, long hair, twintails, two side up, orange eyes",
+            "authority_exceptions": ["invented omission"],
+            "outfit_state": {
+                "body_state": "clothed",
+                "worn": ["detached sleeves"],
+                "removed": [],
+            },
+        }],
+    }]
+
+    audits = pipeline.apply_call2_authority_base(
+        descriptors,
+        {
+            "Elizabella": (
+                "1girl, blonde hair, long hair, hair rings, two side up, "
+                "hair between eyes, hair intakes, orange eyes"
+            ),
+        },
+        {"Elizabella": ["white dress", "detached sleeves", "white choker"]},
+        {
+            ("scene", 7, "elizabella"): {
+                "authority_exceptions": ["two side up", "hair rings"],
+                "conflicts": [],
+            },
+        },
+        "ok",
+    )
+
+    character = descriptors[0]["characters"][0]
+    tags = pipeline._split_top_level_authority_tags(character["positive"])
+    assert "twintails" in tags
+    assert "two side up" not in tags
+    assert "hair rings" not in tags
+    assert "hair between eyes" in tags
+    assert "hair intakes" in tags
+    assert "detached sleeves" in tags
+    assert "white choker" in tags
+    assert "authority_exceptions" not in character
+    assert audits[0]["conflicts_removed"] == []
+    assert audits[0]["rejected_exceptions"] == ["invented omission"]
+    assert audits[0]["semantic_status"] == "ok"
+
+
+def test_call2_semantic_authority_audit_removes_unsupported_hair_conflict():
+    descriptors = [{
+        "kind": "scene",
+        "slot": 5,
+        "anchor_before": "The queen is still on the stairs.",
+        "anchor_after": "She enters later.",
+        "characters": [{
+            "name": "Elizabella",
+            "positive": "girl, blonde hair, long hair, hair down, orange eyes",
+            "outfit_state": {
+                "body_state": "clothed",
+                "worn": ["white royal dress", "mini crown"],
+                "removed": [],
+            },
+        }],
+    }]
+    fixed = {
+        "Elizabella": (
+            "1girl, blonde hair, long hair, hair rings, two side up, "
+            "hair between eyes, hair intakes, orange eyes"
+        ),
+    }
+    defaults = {
+        "Elizabella": ["white dress", "detached sleeves", "white choker", "mini crown"],
+    }
+    entries, entry_keys = pipeline._call2_authority_audit_entries(
+        descriptors,
+        fixed,
+        defaults,
+    )
+    decisions, reason = pipeline._parse_call2_authority_audit_output(
+        '{"entries":[{"id":1,"authority_exceptions":[],"conflicts":["hair down"]}]}',
+        entries,
+        entry_keys,
+    )
+
+    assert reason == ""
+    audits = pipeline.apply_call2_authority_base(
+        descriptors,
+        fixed,
+        defaults,
+        decisions,
+        "ok",
+    )
+    tags = pipeline._split_top_level_authority_tags(
+        descriptors[0]["characters"][0]["positive"]
+    )
+    assert "hair down" not in tags
+    assert "hair rings" in tags
+    assert "two side up" in tags
+    assert "detached sleeves" in tags
+    assert audits[0]["conflicts_removed"] == ["hair down"]
+
+
+def test_call2_semantic_audit_checks_conflicts_even_when_base_is_complete():
+    descriptors = [{
+        "kind": "scene",
+        "slot": 2,
+        "characters": [{
+            "name": "Elizabella",
+            "positive": (
+                "girl, blonde hair, hair rings, two side up, orange eyes, "
+                "white dress, detached sleeves, hair down"
+            ),
+            "outfit_state": {
+                "body_state": "clothed",
+                "worn": ["white dress", "detached sleeves"],
+                "removed": [],
+            },
+        }],
+    }]
+    fixed = {
+        "Elizabella": "1girl, blonde hair, hair rings, two side up, orange eyes",
+    }
+    defaults = {
+        "Elizabella": ["white dress", "detached sleeves"],
+    }
+
+    entries, entry_keys = pipeline._call2_authority_audit_entries(
+        descriptors,
+        fixed,
+        defaults,
+    )
+    decisions, reason = pipeline._parse_call2_authority_audit_output(
+        '{"entries":[{"id":1,"authority_exceptions":[],"conflicts":["hair down"]}]}',
+        entries,
+        entry_keys,
+    )
+    pipeline.apply_call2_authority_base(
+        descriptors,
+        fixed,
+        defaults,
+        decisions,
+        "ok",
+    )
+
+    assert reason == ""
+    assert len(entries) == 1
+    assert "hair down" not in pipeline._split_top_level_authority_tags(
+        descriptors[0]["characters"][0]["positive"]
+    )
+
+
+def test_call2_semantic_audit_removes_and_logs_forbidden_identity_additions():
+    descriptors = [{
+        "kind": "scene",
+        "slot": 5,
+        "characters": [{
+            "name": "Elizabella",
+            "positive": (
+                "girl, blonde hair, long hair, hair rings, two side up, "
+                "orange eyes, white dress, detached sleeves, adult, fair skin, "
+                "tsurime, hair down, straight hair"
+            ),
+            "outfit_state": {
+                "body_state": "clothed",
+                "worn": ["white dress", "detached sleeves"],
+                "removed": [],
+            },
+        }],
+    }]
+    fixed = {
+        "Elizabella": (
+            "1girl, blonde hair, long hair, hair rings, two side up, orange eyes"
+        ),
+    }
+    defaults = {"Elizabella": ["white dress", "detached sleeves"]}
+    entries, entry_keys = pipeline._call2_authority_audit_entries(
+        descriptors,
+        fixed,
+        defaults,
+    )
+    decisions, reason = pipeline._parse_call2_authority_audit_output(
+        json.dumps({
+            "entries": [{
+                "id": 1,
+                "authority_exceptions": [],
+                "forbidden_additions": [
+                    "adult", "fair skin", "tsurime", "hair down",
+                ],
+                "conflicts": ["straight hair"],
+            }],
+        }),
+        entries,
+        entry_keys,
+    )
+
+    audits = pipeline.apply_call2_authority_base(
+        descriptors,
+        fixed,
+        defaults,
+        decisions,
+        "ok",
+    )
+
+    assert reason == ""
+    tags = pipeline._split_top_level_authority_tags(
+        descriptors[0]["characters"][0]["positive"]
+    )
+    for removed in ("adult", "fair skin", "tsurime", "hair down", "straight hair"):
+        assert removed not in tags
+    assert audits[0]["forbidden_added_removed"] == [
+        "adult", "fair skin", "tsurime", "hair down",
+    ]
+    assert audits[0]["conflicts_removed"] == ["straight hair"]
+
+
+def test_call2_untrusted_removed_or_nude_state_cannot_skip_default_restore():
+    descriptors = [{
+        "kind": "scene",
+        "slot": 4,
+        "characters": [{
+            "name": "Elizabella",
+            "positive": "girl, blonde hair",
+            "authority_exceptions": ["detached sleeves"],
+            "outfit_state": {
+                "body_state": "nude",
+                "worn": [],
+                "removed": ["white dress", "detached sleeves"],
+            },
+        }],
+    }]
+
+    audits = pipeline.apply_call2_authority_base(
+        descriptors,
+        {"Elizabella": "1girl, blonde hair"},
+        {"Elizabella": ["white dress", "detached sleeves"]},
+        {("scene", 4, "elizabella"): {
+            "authority_exceptions": [],
+            "conflicts": [],
+        }},
+        "ok",
+    )
+
+    character = descriptors[0]["characters"][0]
+    assert character["outfit_state"] == {
+        "body_state": "clothed",
+        "worn": ["white dress", "detached sleeves"],
+        "removed": [],
+    }
+    assert "authority_exceptions" not in character
+    assert audits[0]["rejected_exceptions"] == ["detached sleeves"]
+
+
+def test_call2_audited_explicit_nude_change_can_except_default_outfit():
+    descriptors = [{
+        "kind": "scene",
+        "slot": 4,
+        "characters": [{
+            "name": "Elizabella",
+            "positive": "girl, blonde hair",
+            "outfit_state": {
+                "body_state": "nude",
+                "worn": [],
+                "removed": ["white dress", "detached sleeves"],
+            },
+        }],
+    }]
+
+    pipeline.apply_call2_authority_base(
+        descriptors,
+        {"Elizabella": "1girl, blonde hair"},
+        {"Elizabella": ["white dress", "detached sleeves"]},
+        {("scene", 4, "elizabella"): {
+            "authority_exceptions": ["white dress", "detached sleeves"],
+            "conflicts": [],
+        }},
+        "ok",
+    )
+
+    character = descriptors[0]["characters"][0]
+    assert character["outfit_state"] == {
+        "body_state": "nude",
+        "worn": [],
+        "removed": ["white dress", "detached sleeves"],
+    }
+    assert "authority_exceptions" not in character
+    assert character["outfit_state"]["removed"] == [
+        "white dress",
+        "detached sleeves",
+    ]
+
+
 @pytest.mark.parametrize(
     ("operation", "comparison", "has_visual", "expected_type"),
     [
@@ -4783,6 +5268,11 @@ async def test_persistent_history_path_uses_compact_call2_and_updates_wardrobe(m
                 "unresolved_references": [],
             })
         assert task_key == "illustration_call2"
+        if _call_name(task_key) == "CALL2-AUTHORITY-AUDIT":
+            return _authority_audit_response(
+                messages,
+                authority_exceptions=["blue dress"],
+            )
         request_text = "\n".join(message["content"] for message in messages)
         assert "very old fallback history" not in request_text
         assert "### Hana" in request_text
@@ -4868,6 +5358,7 @@ scenes[1]:
     assert [task_key for task_key, _messages in calls] == [
         "illustration_call1",
         "illustration_call2",
+        "illustration_call2",
     ]
     assert result["balanced_fallback_used"] is False
     assert result["reference_provenance"]["turn_relation"] == "PRIOR_COMMITTED_TURN"
@@ -4886,6 +5377,8 @@ async def test_persistent_call2_only_uses_bounded_history_and_visual_candidate(m
     async def fake_call(task_key, messages, **kwargs):
         calls.append((task_key, messages))
         assert task_key == "illustration_call2"
+        if _call_name(task_key) == "CALL2-AUTHORITY-AUDIT":
+            return _authority_audit_response(messages)
         request_text = "\n".join(message["content"] for message in messages)
         assert "bounded past marker" in request_text
         assert "### Hana" in request_text
@@ -4938,12 +5431,18 @@ scenes[1]:
         },
     )
 
-    assert [task_key for task_key, _messages in calls] == ["illustration_call2"]
+    assert [task_key for task_key, _messages in calls] == [
+        "illustration_call2",
+        "illustration_call2",
+    ]
     assert result["balanced_fallback_used"] is True
     assert result["enhanced_narrative"] == "She waits by the door."
     state = result["character_states_after"]["hana"]
-    assert state["current_wardrobe"]["source"] == "call2_visual_candidate"
     assert state["current_wardrobe"]["worn"] == ["white shirt", "black skirt"]
+    assert "source" not in state["current_wardrobe"]
+    assert state["last_visual_reference"]["outfit_state"]["worn"] == [
+        "white shirt", "black skirt",
+    ]
 
 
 @pytest.mark.asyncio
@@ -4961,6 +5460,8 @@ async def test_persistent_history_recovers_missing_prior_wardrobe_with_balanced_
                 "unresolved_references": [],
             })
         assert task_key == "illustration_call2"
+        if _call_name(task_key) == "CALL2-AUTHORITY-AUDIT":
+            return _authority_audit_response(messages)
         request_text = "\n".join(message["content"] for message in messages)
         assert "past wardrobe recovery marker" in request_text
         assert "### Hana" in request_text
@@ -5020,11 +5521,12 @@ scenes[1]:
     assert [task_key for task_key, _messages in calls] == [
         "illustration_call1",
         "illustration_call2",
+        "illustration_call2",
     ]
     assert result["balanced_fallback_used"] is True
     state = result["character_states_after"]["hana"]
-    assert state["current_wardrobe"]["source"] == "call2_visual_candidate"
     assert state["current_wardrobe"]["worn"] == ["red cardigan", "pleated skirt"]
+    assert "source" not in state["current_wardrobe"]
 
 
 @pytest.mark.asyncio
@@ -5049,6 +5551,8 @@ async def test_persistent_backtranslation_off_keeps_call1_call2_call3_combinatio
                 "unresolved_references": [],
             })
         if task_key == "illustration_call2":
+            if _call_name(task_key) == "CALL2-AUTHORITY-AUDIT":
+                return _authority_audit_response(messages)
             return """<lb-xnai>
 scenes[1]:
   - camera: medium shot
@@ -5114,6 +5618,7 @@ scenes[1]:
     assert [task_key for task_key, _messages in calls] == [
         "illustration_call1",
         "illustration_call2",
+        "illustration_call2",
         "illustration_call3",
     ]
     assert result["balanced_fallback_used"] is False
@@ -5128,6 +5633,8 @@ async def test_persistent_call1_off_keeps_call2_call3_with_separate_bounded_hist
         calls.append((task_key, messages))
         request_text = "\n".join(message["content"] for message in messages)
         if task_key == "illustration_call2":
+            if _call_name(task_key) == "CALL2-AUTHORITY-AUDIT":
+                return _authority_audit_response(messages)
             assert "call2 bounded marker" in request_text
             assert "call3 bounded marker" not in request_text
             return """<lb-xnai>
@@ -5182,6 +5689,7 @@ scenes[1]:
     )
 
     assert [task_key for task_key, _messages in calls] == [
+        "illustration_call2",
         "illustration_call2",
         "illustration_call3",
     ]

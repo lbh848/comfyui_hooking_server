@@ -1313,6 +1313,53 @@ def build_reference_provenance(history_plan: dict | None) -> dict:
     return provenance
 
 
+def _split_top_level_authority_tags(value: str) -> list[str]:
+    """Split schema-owned comma tags without breaking weighted/grouped tags."""
+    source = str(value or "").replace("\r\n", "\n").replace("\r", "\n")
+    tags: list[str] = []
+    current: list[str] = []
+    stack: list[str] = []
+    closing_for = {"(": ")", "[": "]", "{": "}"}
+    escaped = False
+    for char in source:
+        if escaped:
+            current.append(char)
+            escaped = False
+            continue
+        if char == "\\":
+            current.append(char)
+            escaped = True
+            continue
+        if char in closing_for:
+            stack.append(closing_for[char])
+            current.append(char)
+            continue
+        if stack and char == stack[-1]:
+            stack.pop()
+            current.append(char)
+            continue
+        if char in (",", "\n") and not stack:
+            tag = "".join(current).strip()
+            if tag:
+                tags.append(tag)
+            current = []
+            continue
+        current.append(char)
+    tag = "".join(current).strip()
+    if tag:
+        tags.append(tag)
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for tag in tags:
+        folded = tag.casefold()
+        if folded in seen:
+            continue
+        seen.add(folded)
+        deduped.append(tag)
+    return deduped
+
+
 def extract_authoritative_fixed_appearance(character_reference: str) -> dict[str, str]:
     """Extract only schema-declared ``-Appearance`` sections from lb.extra.
 
@@ -1367,17 +1414,73 @@ def extract_authoritative_fixed_appearance(character_reference: str) -> dict[str
     return extracted
 
 
+def extract_authoritative_default_outfits(
+    character_reference: str,
+) -> dict[str, list[str]]:
+    """Extract complete ``-default_outfit`` tag sets from the character schema.
+
+    This parses declared sections and comma boundaries only. It does not infer
+    garment meaning from words or narrative text.
+    """
+    source = str(character_reference or "")
+    character_headers = list(re.finditer(r"(?m)^###\s+([^\r\n]+)\s*$", source))
+    extracted: dict[str, list[str]] = {}
+    missing: list[str] = []
+    for index, header in enumerate(character_headers):
+        name = header.group(1).strip()
+        block_end = (
+            character_headers[index + 1].start()
+            if index + 1 < len(character_headers)
+            else len(source)
+        )
+        block = source[header.end():block_end]
+        marker = re.search(
+            r"(?mi)^\s*-default_outfit(?:\s*:\s*(.*))?\s*$",
+            block,
+        )
+        if marker is None:
+            missing.append(name)
+            continue
+        value_start = marker.end()
+        next_section = re.search(r"(?m)^\s*-[^\r\n]+\s*$", block[value_start:])
+        value_end = (
+            value_start + next_section.start()
+            if next_section is not None
+            else len(block)
+        )
+        inline_value = str(marker.group(1) or "").strip()
+        continuation = block[value_start:value_end].strip()
+        value = "\n".join(part for part in (inline_value, continuation) if part)
+        tags = _split_top_level_authority_tags(value)
+        if not tags:
+            missing.append(name)
+            continue
+        extracted[name] = tags
+    if missing:
+        print(
+            "[ILLUST_CONTEXT:WARDROBE_BASE] lb.extra default_outfit 섹션 "
+            f"누락/비어 있음: characters={missing}"
+        )
+    print(
+        "[ILLUST_CONTEXT:WARDROBE_BASE] 기본 복장 구조 추출: "
+        f"characters={list(extracted)}, tags={sum(len(tags) for tags in extracted.values())}"
+    )
+    return extracted
+
+
 def _fixed_appearance_authority_content(fixed_appearance: dict[str, str]) -> str:
     if not fixed_appearance:
         return ""
     return (
         "# AUTHORITATIVE FIXED APPEARANCE\n"
         "For each named character, this server-extracted map is the only authority for "
-        "persistent identity. Narrative and the assigned PLAN may control scene-specific "
-        "pose, action, expression, and visibility; authoritative wardrobe state controls "
+        "persistent identity and is a complete base, not a menu. Copy every supplied tag. "
+        "Narrative and the assigned PLAN may control scene-specific pose, action, expression, "
+        "and a directly conflicting temporary appearance change; a separate server audit "
+        "validates the exact replaced base tag. Authoritative wardrobe state controls "
         "temporary attire. Generated visual references may inform a scene only as permitted "
-        "by SERVER REFERENCE CLASSIFICATION. None of those sources may extend or replace "
-        "persistent traits.\n\n"
+        "by SERVER REFERENCE CLASSIFICATION. None of those sources may silently shorten, "
+        "extend, or replace persistent traits.\n\n"
         + json.dumps(fixed_appearance, ensure_ascii=False, indent=2)
     )
 
@@ -2025,9 +2128,29 @@ def apply_wardrobe_events(
     wardrobe_events: list[dict],
     current_message_id: str,
     selected_reference: str = "",
+    default_outfits: dict[str, list[str]] | None = None,
 ) -> dict:
-    """Apply only CALL1-declared state operations; missing tags never remove clothes."""
+    """Apply CALL1 events as sparse deltas over the complete default outfit.
+
+    CALL1 intentionally emits compact changed items, not a complete visual tag
+    snapshot. Therefore omitted default items are never removed implicitly by a
+    short ``set``/``replace`` payload.
+    """
     states = deepcopy(state_before or {})
+    parsed_defaults = (
+        deepcopy(default_outfits)
+        if isinstance(default_outfits, dict)
+        else extract_authoritative_default_outfits(selected_reference)
+    )
+    defaults_by_name = {
+        str(name).strip().casefold(): [
+            str(item).strip()
+            for item in items or []
+            if str(item).strip()
+        ]
+        for name, items in parsed_defaults.items()
+        if str(name).strip()
+    }
 
     def state_key(name: str) -> str:
         for key, value in states.items():
@@ -2041,38 +2164,110 @@ def apply_wardrobe_events(
             suffix += 1
         return candidate
 
+    def default_items_for(name: str) -> list[str]:
+        return list(defaults_by_name.get(str(name).strip().casefold(), []))
+
+    def ensure_state(name: str) -> str:
+        key = state_key(name)
+        default_items = default_items_for(name)
+        default_reference = (
+            _filter_character_reference(selected_reference, [name])
+            or str(selected_reference or "")
+        )
+        if key not in states or not isinstance(states.get(key), dict):
+            if key in states:
+                print(
+                    f"[ILLUST_CONTEXT:WARDROBE_BASE] 비정상 캐릭터 상태를 기본값으로 복구: "
+                    f"character={name}, type={type(states.get(key)).__name__}"
+                )
+            states[key] = {
+                "canonical_name": name,
+                "default_outfit_reference": default_reference,
+                "current_wardrobe": {
+                    "body_state": "clothed" if default_items else "unknown",
+                    "worn": list(default_items),
+                    "removed": [],
+                },
+                "wardrobe_timeline": [],
+            }
+            if default_items:
+                print(
+                    f"[ILLUST_CONTEXT:WARDROBE_BASE] 신규 캐릭터 기본 복장 초기화: "
+                    f"character={name}, tags={default_items}"
+                )
+            else:
+                print(
+                    f"[ILLUST_CONTEXT:WARDROBE_BASE] 신규 캐릭터 기본 복장 없음: "
+                    f"character={name}"
+                )
+            return key
+
+        tracked = states[key]
+        tracked.setdefault("canonical_name", name)
+        if default_reference and not tracked.get("default_outfit_reference"):
+            tracked["default_outfit_reference"] = default_reference
+        raw_wardrobe = (
+            deepcopy(tracked.get("current_wardrobe"))
+            if isinstance(tracked.get("current_wardrobe"), dict)
+            else {}
+        )
+        wardrobe_metadata = {
+            field: deepcopy(value)
+            for field, value in raw_wardrobe.items()
+            if field not in {"body_state", "worn", "removed", "source"}
+        }
+        if str(raw_wardrobe.get("source") or "").strip() == "call2_visual_candidate":
+            wardrobe = {
+                "body_state": "clothed" if default_items else "unknown",
+                "worn": list(default_items),
+                "removed": [],
+            }
+            print(
+                f"[ILLUST_CONTEXT:WARDROBE_BASE] 구 generated visual 후보 상태를 "
+                f"기본 복장으로 재초기화: character={name}, tags={default_items}"
+            )
+        else:
+            wardrobe = _normalize_outfit_state(raw_wardrobe)
+        if default_items and wardrobe["body_state"] not in {"nude", "underwear_only"}:
+            removed_folded = {item.casefold() for item in wardrobe["removed"]}
+            existing_folded = {item.casefold() for item in wardrobe["worn"]}
+            restored = [
+                item for item in default_items
+                if item.casefold() not in removed_folded
+                and item.casefold() not in existing_folded
+            ]
+            if restored:
+                wardrobe["worn"] = [
+                    item for item in default_items
+                    if item.casefold() not in removed_folded
+                ] + list(wardrobe["worn"])
+                # De-duplicate again because existing state can contain a differently
+                # cased copy of a default item.
+                wardrobe = _normalize_outfit_state(wardrobe)
+                print(
+                    f"[ILLUST_CONTEXT:WARDROBE_BASE] 추적 상태에 누락된 기본 복장 복구: "
+                    f"character={name}, added={restored}"
+                )
+            if wardrobe["body_state"] == "unknown":
+                wardrobe["body_state"] = "clothed"
+        wardrobe.update(wardrobe_metadata)
+        tracked["current_wardrobe"] = wardrobe
+        tracked.setdefault("wardrobe_timeline", [])
+        return key
+
     for item in current_characters or []:
         name = str(item.get("name") if isinstance(item, dict) else item).strip()
         if not name:
             continue
-        key = state_key(name)
-        if key not in states:
-            states[key] = {
-                "canonical_name": name,
-                "default_outfit_reference": (
-                    _filter_character_reference(selected_reference, [name])
-                    or str(selected_reference or "")
-                ),
-                "current_wardrobe": {"body_state": "unknown", "worn": [], "removed": []},
-                "wardrobe_timeline": [],
-            }
+        key = ensure_state(name)
         states[key]["last_seen_message_id"] = str(current_message_id or "")
 
     for event in wardrobe_events or []:
         name = str(event.get("character") or "").strip()
         if not name:
+            print(f"[ILLUST_CONTEXT:WARDROBE_DELTA] 캐릭터 없는 이벤트 스킵: event={event!r}")
             continue
-        key = state_key(name)
-        if key not in states:
-            states[key] = {
-                "canonical_name": name,
-                "default_outfit_reference": (
-                    _filter_character_reference(selected_reference, [name])
-                    or str(selected_reference or "")
-                ),
-                "current_wardrobe": {"body_state": "unknown", "worn": [], "removed": []},
-                "wardrobe_timeline": [],
-            }
+        key = ensure_state(name)
         wardrobe = deepcopy(states[key].get("current_wardrobe") or {})
         worn = [str(value) for value in wardrobe.get("worn") or [] if str(value).strip()]
         removed = [str(value) for value in wardrobe.get("removed") or [] if str(value).strip()]
@@ -2103,12 +2298,20 @@ def apply_wardrobe_events(
             removed = [value for value in removed if value.casefold() not in lowered]
             wardrobe["body_state"] = state_label or "clothed"
         elif operation in ("replace", "set"):
-            if worn:
-                removed = list(dict.fromkeys(removed + worn))
-            worn = list(dict.fromkeys(items))
+            # CALL1's compact list is a sparse change description. Treat it as an
+            # overlay; absence from that list is never evidence that a default
+            # garment disappeared.
+            worn = list(dict.fromkeys(worn + items))
+            lowered = {value.casefold() for value in items}
+            removed = [value for value in removed if value.casefold() not in lowered]
             wardrobe["body_state"] = state_label or ("clothed" if worn else "unknown")
+            print(
+                f"[ILLUST_CONTEXT:WARDROBE_DELTA] {operation} 희소 병합: "
+                f"character={name}, items={items}, retained_base={len(worn) - len(items)}"
+            )
         elif operation in ("reset_default", "contextual_reset"):
-            worn = list(dict.fromkeys(items))
+            default_items = default_items_for(name)
+            worn = list(dict.fromkeys(default_items + items))
             removed = []
             wardrobe["body_state"] = state_label or ("clothed" if worn else "unknown")
         elif operation in ("open", "close", "adjust"):
@@ -2229,6 +2432,7 @@ def bind_scene_plan_wardrobes(
     wardrobe_events: list[dict],
     current_message_id: str,
     selected_reference: str = "",
+    default_outfits: dict[str, list[str]] | None = None,
 ) -> list[dict]:
     """Freeze one server-authoritative wardrobe snapshot per planned scene.
 
@@ -2277,6 +2481,7 @@ def bind_scene_plan_wardrobes(
             applicable_events,
             current_message_id,
             selected_reference=selected_reference,
+            default_outfits=default_outfits,
         )
         planned_outfits = plan.get("planned_outfits") or {}
         wardrobe_snapshot = {}
@@ -2298,27 +2503,18 @@ def bind_scene_plan_wardrobes(
                 source = "call2_plan"
             elif _outfit_state_is_known(tracked_outfit):
                 outfit = tracked_outfit
-                source = "call1_timeline_fallback"
+                source = "default_base_plus_sparse_history"
             elif folded_name in resolved_outfits:
                 outfit = deepcopy(resolved_outfits[folded_name])
                 source = "call2_plan_carried"
             else:
-                last_visual = (
-                    tracked.get("last_visual_reference")
-                    if isinstance(tracked, dict)
-                    else {}
-                ) or {}
-                visual_outfit = _normalize_outfit_state(last_visual.get("outfit_state"))
-                if _outfit_state_is_known(visual_outfit):
-                    outfit = visual_outfit
-                    source = "tracked_last_visual"
-                else:
-                    outfit = planned_outfit
-                    source = "unknown"
-                    print(
-                        f"[ILLUST_CONTEXT:CALL2_PLAN] PLAN·추적 복장 상태가 모두 unknown: "
-                        f"plan={plan_index}, anchor={anchor_segment}, character={name}"
-                    )
+                outfit = planned_outfit
+                source = "unknown"
+                print(
+                    f"[ILLUST_CONTEXT:CALL2_PLAN] 기본·추적 복장 상태가 모두 unknown, "
+                    f"generated visual은 권위로 승격하지 않음: "
+                    f"plan={plan_index}, anchor={anchor_segment}, character={name}"
+                )
             wardrobe_snapshot[name] = outfit
             wardrobe_sources[name] = source
             resolved_outfits[folded_name] = deepcopy(outfit)
@@ -2384,19 +2580,11 @@ def merge_last_visual_into_states(
         result[key]["last_visual_reference"] = deepcopy(visual)
         result[key]["last_seen_message_id"] = str(current_message_id or "")
         outfit_state = visual.get("outfit_state") if isinstance(visual, dict) else None
-        existing_wardrobe = result[key].get("current_wardrobe") or {}
-        existing_body_state = str(existing_wardrobe.get("body_state") or "unknown").lower()
-        if (
-            isinstance(outfit_state, dict)
-            and outfit_state
-            and (allow_visual_initialization or existing_body_state in ("", "unknown"))
-        ):
-            # CALL2-only mode has no semantic wardrobe writer. Keep the generated
-            # state explicitly marked as a visual candidate so the next call can
-            # use it without pretending it came from narrative evidence.
-            candidate = deepcopy(outfit_state)
-            candidate["source"] = "call2_visual_candidate"
-            result[key]["current_wardrobe"] = candidate
+        if isinstance(outfit_state, dict) and outfit_state and allow_visual_initialization:
+            print(
+                f"[ILLUST_CONTEXT:WARDROBE_BASE] generated visual outfit은 참고로만 저장: "
+                f"character={name}, current_message_id={current_message_id!r}"
+            )
     return result
 
 
@@ -3050,11 +3238,24 @@ def _descriptor(raw: dict, kind: str, fallback_slot: int) -> dict:
     for ch in raw.get("characters") or []:
         if not isinstance(ch, dict):
             continue
+        raw_authority_exceptions = ch.get("authority_exceptions") or []
+        if not isinstance(raw_authority_exceptions, list):
+            print(
+                "[ILLUST_CONTEXT:CALL2_AUTHORITY] authority_exceptions가 list가 "
+                f"아니어서 단일 항목으로 정규화: type={type(raw_authority_exceptions).__name__}, "
+                f"value={raw_authority_exceptions!r}"
+            )
+            raw_authority_exceptions = [raw_authority_exceptions]
         chars.append({
             "positive": str(ch.get("positive") or "").strip(),
             "negative": str(ch.get("negative") or "").strip(),
             "name": str(ch.get("name") or "").strip(),
             "position": str(ch.get("position") or "").strip(),
+            "authority_exceptions": [
+                str(value).strip()
+                for value in raw_authority_exceptions
+                if str(value).strip()
+            ],
             "outfit_state": deepcopy(ch.get("outfit_state") or {}),
         })
     slot_value = -1 if kind == "keyvis" else raw.get("slot", fallback_slot)
@@ -3715,9 +3916,9 @@ def _parse_call2_detail_output(
                 actual_outfit = character.get("outfit_state")
                 conflict = _outfit_contract_conflict(expected_outfit, actual_outfit)
                 if conflict:
-                    return [], (
-                        f"CALL2-DETAIL 권위 복장 충돌: slot={slot}, "
-                        f"character={expected_name}, expected={expected_outfit}, "
+                    print(
+                        f"[ILLUST_CONTEXT:CALL2_DETAIL] 희소 DETAIL 복장 출력을 서버 기준으로 복구: "
+                        f"slot={slot}, character={expected_name}, expected={expected_outfit}, "
                         f"actual={_normalize_outfit_state(actual_outfit)}, reason={conflict}"
                     )
                 normalized_actual = _normalize_outfit_state(actual_outfit)
@@ -3766,6 +3967,511 @@ def descriptors_to_toon(descriptors: list[dict]) -> str:
         default_flow_style=False,
     ).strip()
     return f"<lb-xnai>\n{body}\n</lb-xnai>"
+
+
+def _authority_output_tag(tag: str) -> str:
+    """Normalize only the schema-required named-character count label."""
+    value = str(tag or "").strip()
+    folded = value.casefold()
+    if folded == "1girl":
+        return "girl"
+    if folded == "1boy":
+        return "boy"
+    return value
+
+
+def _authority_tag_identity(tag: str) -> str:
+    """Return a structural comparison key without semantic keyword matching."""
+    value = _authority_output_tag(tag).strip()
+    weighted = re.fullmatch(
+        r"\(\s*(?P<tag>.+?)\s*:\s*[+-]?(?:\d+(?:\.\d*)?|\.\d+)\s*\)",
+        value,
+    )
+    if weighted:
+        value = weighted.group("tag").strip()
+    explicit_weight = re.fullmatch(
+        r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)::(?P<tag>.+?)::",
+        value,
+    )
+    if explicit_weight:
+        value = explicit_weight.group("tag").strip()
+    return value.casefold()
+
+
+def _authority_values_for_name(values: dict, name: str):
+    folded = str(name or "").strip().casefold()
+    for candidate_name, value in (values or {}).items():
+        if str(candidate_name or "").strip().casefold() == folded:
+            return value
+    return None
+
+
+def _call2_authority_audit_entries(
+    descriptors: list[dict],
+    fixed_appearance: dict[str, str],
+    default_outfits: dict[str, list[str]],
+) -> tuple[list[dict], dict[int, tuple[str, int, str]]]:
+    entries: list[dict] = []
+    entry_keys: dict[int, tuple[str, int, str]] = {}
+    next_id = 1
+    for descriptor in descriptors or []:
+        kind = str(descriptor.get("kind") or "scene")
+        slot = int(descriptor.get("slot") or 0)
+        scene_context = {
+            "anchor_before": str(descriptor.get("anchor_before") or ""),
+            "anchor_after": str(descriptor.get("anchor_after") or ""),
+            "camera": str(descriptor.get("camera") or ""),
+            "scene": str(descriptor.get("scene") or ""),
+            "supplement": str(descriptor.get("supplement") or ""),
+        }
+        for character in descriptor.get("characters") or []:
+            name = str(character.get("name") or "").strip()
+            if not name:
+                continue
+            fixed_raw = _authority_values_for_name(fixed_appearance, name)
+            default_raw = _authority_values_for_name(default_outfits, name)
+            fixed_tags = [
+                _authority_output_tag(tag)
+                for tag in _split_top_level_authority_tags(str(fixed_raw or ""))
+                if _authority_output_tag(tag)
+            ]
+            default_tags = [
+                str(tag).strip() for tag in (default_raw or []) if str(tag).strip()
+            ]
+            generated_outfit_state = _normalize_outfit_state(
+                character.get("outfit_state")
+            )
+            generated_tags = _split_top_level_authority_tags(
+                str(character.get("positive") or "")
+            )
+            authority_ids = {
+                _authority_tag_identity(tag) for tag in fixed_tags + default_tags
+            }
+            if not authority_ids:
+                print(
+                    f"[ILLUST_CONTEXT:CALL2_AUTHORITY_AUDIT] 감사할 권위 태그 없음: "
+                    f"kind={kind}, slot={slot}, character={name}"
+                )
+                continue
+            entry_id = next_id
+            next_id += 1
+            entry_keys[entry_id] = (kind, slot, name.casefold())
+            entries.append({
+                "id": entry_id,
+                "kind": kind,
+                "slot": slot,
+                "character": name,
+                "scene_context": scene_context,
+                "fixed_appearance": fixed_tags,
+                "default_outfit": default_tags,
+                "generated_positive": generated_tags,
+                "generated_outfit_state": generated_outfit_state,
+            })
+    return entries, entry_keys
+
+
+def _parse_call2_authority_audit_output(
+    text: str,
+    entries: list[dict],
+    entry_keys: dict[int, tuple[str, int, str]],
+) -> tuple[dict[tuple[str, int, str], dict], str]:
+    def reject(reason: str):
+        print(f"[ILLUST_CONTEXT:CALL2_AUTHORITY_AUDIT] 응답 거부: reason={reason}")
+        return {}, reason
+
+    raw = _json_object_from_text(text)
+    if raw is None:
+        return reject("CALL2-AUTHORITY-AUDIT JSON object 파싱 실패")
+    raw_entries = raw.get("entries")
+    if not isinstance(raw_entries, list):
+        return reject("CALL2-AUTHORITY-AUDIT entries가 list가 아님")
+    candidates = {int(item["id"]): item for item in entries}
+    observed_ids: set[int] = set()
+    decisions: dict[tuple[str, int, str], dict] = {}
+    for index, raw_entry in enumerate(raw_entries, start=1):
+        if not isinstance(raw_entry, dict):
+            return reject(
+                f"CALL2-AUTHORITY-AUDIT entries[{index}]가 object가 아님"
+            )
+        try:
+            entry_id = int(raw_entry.get("id"))
+        except Exception as e:
+            print(
+                f"[ILLUST_CONTEXT:CALL2_AUTHORITY_AUDIT] id 파싱 실패: "
+                f"index={index}, value={raw_entry.get('id')!r}, error={e}"
+            )
+            traceback.print_exc()
+            return reject(
+                f"CALL2-AUTHORITY-AUDIT entries[{index}].id 파싱 실패"
+            )
+        if entry_id not in candidates or entry_id in observed_ids:
+            return reject(
+                f"CALL2-AUTHORITY-AUDIT id 불일치/중복: id={entry_id}, "
+                f"expected={sorted(candidates)}"
+            )
+        observed_ids.add(entry_id)
+        candidate = candidates[entry_id]
+        authority_by_id = {
+            _authority_tag_identity(tag): tag
+            for tag in candidate["fixed_appearance"] + candidate["default_outfit"]
+            if _authority_tag_identity(tag)
+        }
+        generated_by_id = {
+            _authority_tag_identity(tag): tag
+            for tag in candidate["generated_positive"]
+            if _authority_tag_identity(tag)
+        }
+
+        normalized_fields: dict[str, list[str]] = {}
+        for field, allowed in (
+            ("authority_exceptions", authority_by_id),
+            ("forbidden_additions", generated_by_id),
+            ("conflicts", generated_by_id),
+        ):
+            values = raw_entry.get(field) or []
+            if not isinstance(values, list):
+                return reject(
+                    f"CALL2-AUTHORITY-AUDIT entries[{index}].{field}가 list가 아님"
+                )
+            normalized: list[str] = []
+            seen: set[str] = set()
+            for value in values:
+                identity = _authority_tag_identity(value)
+                if not identity or identity not in allowed:
+                    return reject(
+                        f"CALL2-AUTHORITY-AUDIT 후보 밖 {field}: "
+                        f"id={entry_id}, value={value!r}"
+                    )
+                if identity in seen:
+                    continue
+                seen.add(identity)
+                normalized.append(allowed[identity])
+            normalized_fields[field] = normalized
+        decisions[entry_keys[entry_id]] = normalized_fields
+    if observed_ids != set(candidates):
+        return reject(
+            f"CALL2-AUTHORITY-AUDIT 응답 id 누락: expected={sorted(candidates)}, "
+            f"actual={sorted(observed_ids)}"
+        )
+    return decisions, ""
+
+
+async def _run_call2_authority_audit(
+    descriptors: list[dict],
+    fixed_appearance: dict[str, str],
+    default_outfits: dict[str, list[str]],
+    current_context: str,
+    stream_notify,
+) -> tuple[dict[tuple[str, int, str], dict], str, str]:
+    entries, entry_keys = _call2_authority_audit_entries(
+        descriptors,
+        fixed_appearance,
+        default_outfits,
+    )
+    if not entries:
+        print(
+            "[ILLUST_CONTEXT:CALL2_AUTHORITY_AUDIT] 감사 가능한 권위 태그가 없어 "
+            "semantic audit LLM 호출 생략"
+        )
+        return {}, "", "not_needed"
+
+    system_prompt = (
+        "You are CALL2-AUTHORITY-AUDIT. Decide only semantic exceptions and conflicts for "
+        "server-owned character tags. Read CURRENT CONTEXT and each entry's scene_context by "
+        "meaning and chronology; never use keyword matching. The complete fixed_appearance and "
+        "default_outfit are mandatory bases. A short historical description is not a complete "
+        "replacement outfit. For each id, return authority_exceptions only for exact supplied "
+        "base tags that the assigned scene explicitly and temporarily replaces or explicitly "
+        "removes. generated_outfit_state is an untrusted proposal and never proves an exception "
+        "by itself. Return forbidden_additions for exact generated_positive tags that invent a "
+        "persistent identity, body, hair, face, eye, skin, or wardrobe trait absent from the base "
+        "and unsupported by the assigned scene. Do not classify pose, action, expression, gaze, "
+        "or temporary scene state as a forbidden addition. Return conflicts even when every base "
+        "tag is already present, but only for exact generated_positive tags that directly "
+        "contradict the base and are not supported by that assigned scene. Do not report camera "
+        "invisibility, brevity, or ordinary scene/action/expression tags. Copy candidate strings "
+        "exactly. Return compact JSON only: "
+        '{"entries":[{"id":1,"authority_exceptions":[],"forbidden_additions":[],"conflicts":[]}]}.'
+    )
+    messages = [{"role": "system", "content": system_prompt}, {
+        "role": "user",
+        "content": (
+            "# CURRENT CONTEXT\n"
+            + str(current_context or "")
+            + "\n\n# AUDIT ENTRIES\n"
+            + json.dumps(entries, ensure_ascii=False, separators=(",", ":"))
+        ),
+    }]
+
+    def validate(result):
+        _decisions, reason = _parse_call2_authority_audit_output(
+            result,
+            entries,
+            entry_keys,
+        )
+        return bool(_decisions), reason or "CALL2-AUTHORITY-AUDIT 검증 실패"
+
+    try:
+        raw_output = await _call_pipeline_llm(
+            "CALL2-AUTHORITY-AUDIT",
+            _normalize_messages(messages),
+            stream_notify,
+            result_validator=validate,
+            json_mode=True,
+        )
+        decisions, reason = _parse_call2_authority_audit_output(
+            raw_output,
+            entries,
+            entry_keys,
+        )
+        if reason:
+            print(
+                f"[ILLUST_CONTEXT:CALL2_AUTHORITY_AUDIT] 최종 응답 검증 실패, "
+                f"기본 세트 전부 복원하는 degraded 모드 사용: reason={reason}, "
+                f"raw={raw_output[:1000]!r}"
+            )
+            return {}, raw_output, "degraded"
+        print(
+            f"[ILLUST_CONTEXT:CALL2_AUTHORITY_AUDIT] semantic audit 완료: "
+            f"entries={len(entries)}, decisions={len(decisions)}"
+        )
+        return decisions, raw_output, "ok"
+    except asyncio.CancelledError:
+        print("[ILLUST_CONTEXT:CALL2_AUTHORITY_AUDIT] 상위 작업 취소")
+        raise
+    except Exception as e:
+        print(
+            f"[ILLUST_CONTEXT:CALL2_AUTHORITY_AUDIT] LLM 실패, 기본 세트 전부 "
+            f"복원하는 degraded 모드 사용: error={e}"
+        )
+        traceback.print_exc()
+        return {}, "", "degraded"
+
+
+def apply_call2_authority_base(
+    descriptors: list[dict],
+    fixed_appearance: dict[str, str],
+    default_outfits: dict[str, list[str]],
+    semantic_decisions: dict[tuple[str, int, str], dict] | None = None,
+    semantic_status: str = "not_run",
+) -> list[dict]:
+    """Restore complete fixed/default bases before RAW/Call5/history consumers.
+
+    Only the separate semantic audit may approve exact authority exceptions.
+    DETAIL/PLAN fields remain untrusted proposals. All other omissions are
+    deterministic server repairs. This function compares only server-provided
+    tag-set membership; it does not classify narrative words.
+    """
+    audits: list[dict] = []
+    for descriptor in descriptors or []:
+        kind = str(descriptor.get("kind") or "scene")
+        slot = int(descriptor.get("slot") or 0)
+        for character in descriptor.get("characters") or []:
+            name = str(character.get("name") or "").strip()
+            if not name:
+                print(
+                    f"[ILLUST_CONTEXT:CALL2_AUTHORITY] 이름 없는 캐릭터 audit 스킵: "
+                    f"kind={kind}, slot={slot}, character={character!r}"
+                )
+                continue
+
+            fixed_raw = _authority_values_for_name(fixed_appearance, name)
+            default_raw = _authority_values_for_name(default_outfits, name)
+            fixed_tags = [
+                _authority_output_tag(tag)
+                for tag in _split_top_level_authority_tags(str(fixed_raw or ""))
+                if _authority_output_tag(tag)
+            ]
+            default_tags = [
+                str(tag).strip()
+                for tag in (default_raw or [])
+                if str(tag).strip()
+            ]
+            if not fixed_tags and not default_tags:
+                print(
+                    f"[ILLUST_CONTEXT:CALL2_AUTHORITY] 캐릭터 권위 기준 없음: "
+                    f"kind={kind}, slot={slot}, character={name}"
+                )
+
+            outfit_state = _normalize_outfit_state(character.get("outfit_state"))
+            body_state = outfit_state["body_state"]
+            wardrobe_authority = default_tags
+
+            allowed_authority = {
+                _authority_tag_identity(tag): tag
+                for tag in fixed_tags + wardrobe_authority
+                if _authority_tag_identity(tag)
+            }
+            valid_exceptions: list[str] = []
+            rejected_exceptions: list[str] = []
+            seen_exceptions: set[str] = set()
+            semantic_decision = (semantic_decisions or {}).get(
+                (kind, slot, name.casefold()),
+                {},
+            )
+            untrusted_exceptions = list(character.get("authority_exceptions") or [])
+            if untrusted_exceptions:
+                rejected_exceptions.extend(
+                    str(value or "").strip()
+                    for value in untrusted_exceptions
+                    if str(value or "").strip()
+                )
+                print(
+                    f"[ILLUST_CONTEXT:CALL2_AUTHORITY] DETAIL/PLAN 자체 예외는 무시: "
+                    f"kind={kind}, slot={slot}, character={name}, "
+                    f"exceptions={untrusted_exceptions}"
+                )
+            requested_exceptions = list(
+                semantic_decision.get("authority_exceptions") or []
+            )
+            for raw_exception in requested_exceptions:
+                exception = str(raw_exception or "").strip()
+                identity = _authority_tag_identity(exception)
+                if not identity or identity not in allowed_authority:
+                    rejected_exceptions.append(exception)
+                    continue
+                if identity in seen_exceptions:
+                    continue
+                seen_exceptions.add(identity)
+                valid_exceptions.append(allowed_authority[identity])
+            exception_ids = {
+                _authority_tag_identity(tag) for tag in valid_exceptions
+            }
+            if rejected_exceptions:
+                print(
+                    f"[ILLUST_CONTEXT:CALL2_AUTHORITY] 기준 밖 authority_exceptions 거부: "
+                    f"kind={kind}, slot={slot}, character={name}, "
+                    f"rejected={rejected_exceptions}"
+                )
+            # Keep semantic decisions in the top-level audit only. Do not expand
+            # DETAIL/Call3/generated RAW character schemas with audit metadata.
+            character.pop("authority_exceptions", None)
+
+            generated_tags = _split_top_level_authority_tags(
+                str(character.get("positive") or "")
+            )
+            generated_by_id = {
+                _authority_tag_identity(tag): tag for tag in generated_tags
+            }
+            semantic_forbidden: list[str] = []
+            for raw_forbidden in semantic_decision.get("forbidden_additions") or []:
+                identity = _authority_tag_identity(raw_forbidden)
+                if identity in generated_by_id and identity not in {
+                    _authority_tag_identity(tag) for tag in semantic_forbidden
+                }:
+                    semantic_forbidden.append(generated_by_id[identity])
+            semantic_forbidden_ids = {
+                _authority_tag_identity(tag) for tag in semantic_forbidden
+            }
+            semantic_conflicts: list[str] = []
+            for raw_conflict in semantic_decision.get("conflicts") or []:
+                identity = _authority_tag_identity(raw_conflict)
+                if (
+                    identity in generated_by_id
+                    and identity not in semantic_forbidden_ids
+                    and identity not in {
+                        _authority_tag_identity(tag) for tag in semantic_conflicts
+                    }
+                ):
+                    semantic_conflicts.append(generated_by_id[identity])
+            semantic_conflict_ids = {
+                _authority_tag_identity(tag) for tag in semantic_conflicts
+            }
+            generated_ids = {
+                _authority_tag_identity(tag) for tag in generated_tags
+            }
+            mandatory_fixed = [
+                tag for tag in fixed_tags
+                if _authority_tag_identity(tag) not in exception_ids
+            ]
+            mandatory_wardrobe = [
+                tag for tag in wardrobe_authority
+                if _authority_tag_identity(tag) not in exception_ids
+            ]
+            missing_fixed = [
+                tag for tag in mandatory_fixed
+                if _authority_tag_identity(tag) not in generated_ids
+            ]
+            missing_wardrobe = [
+                tag for tag in mandatory_wardrobe
+                if _authority_tag_identity(tag) not in generated_ids
+            ]
+
+            excluded_ids = (
+                exception_ids | semantic_forbidden_ids | semantic_conflict_ids
+            )
+            forbidden_added_removed = [
+                tag for tag in generated_tags
+                if _authority_tag_identity(tag) in semantic_forbidden_ids
+            ]
+            conflicts_removed = [
+                tag for tag in generated_tags
+                if _authority_tag_identity(tag) in semantic_conflict_ids
+            ]
+            remaining_generated = [
+                tag for tag in generated_tags
+                if _authority_tag_identity(tag) not in excluded_ids
+            ]
+            combined: list[str] = []
+            combined_ids: set[str] = set()
+            for tag in mandatory_fixed + mandatory_wardrobe + remaining_generated:
+                identity = _authority_tag_identity(tag)
+                if not identity or identity in combined_ids:
+                    continue
+                combined_ids.add(identity)
+                combined.append(tag)
+            character["positive"] = ", ".join(combined)
+
+            existing_worn = [
+                tag for tag in outfit_state["worn"]
+                if _authority_tag_identity(tag) not in excluded_ids
+            ]
+            wardrobe_authority_ids = {
+                _authority_tag_identity(tag) for tag in wardrobe_authority
+            }
+            normalized_worn: list[str] = []
+            normalized_worn_ids: set[str] = set()
+            for tag in mandatory_wardrobe + existing_worn:
+                identity = _authority_tag_identity(tag)
+                if not identity or identity in normalized_worn_ids:
+                    continue
+                normalized_worn_ids.add(identity)
+                normalized_worn.append(tag)
+            outfit_state["worn"] = normalized_worn
+            outfit_state["removed"] = [
+                tag for tag in outfit_state["removed"]
+                if (
+                    _authority_tag_identity(tag) not in wardrobe_authority_ids
+                    or _authority_tag_identity(tag) in exception_ids
+                )
+            ]
+            if mandatory_wardrobe and body_state in {"unknown", "nude", "underwear_only"}:
+                outfit_state["body_state"] = (
+                    "partial" if any(
+                        _authority_tag_identity(tag) in exception_ids
+                        for tag in wardrobe_authority
+                    ) else "clothed"
+                )
+            character["outfit_state"] = outfit_state
+
+            audit = {
+                "kind": kind,
+                "slot": slot,
+                "character": name,
+                "missing_fixed_added": missing_fixed,
+                "missing_wardrobe_added": missing_wardrobe,
+                "authority_exceptions": valid_exceptions,
+                "forbidden_added_removed": forbidden_added_removed,
+                "conflicts_removed": conflicts_removed,
+                "rejected_exceptions": rejected_exceptions,
+                "semantic_status": semantic_status,
+            }
+            audits.append(audit)
+            print(
+                "[ILLUST_CONTEXT:CALL2_AUTHORITY_AUDIT] "
+                + json.dumps(audit, ensure_ascii=False, separators=(",", ":"))
+            )
+    return audits
 
 
 def _balanced_call2_scene_plan_batches(
@@ -3822,7 +4528,10 @@ async def _run_call2_keyvis(
             "identity sources. Do not "
             "creatively fill missing identity traits from narrative prose. Narrative may control pose, "
             "action, expression, composition, and temporary visual state. "
-            "The supplied wardrobe state and event timeline are authoritative; generated visual references "
+            "Rebuild each named character from the complete fixed appearance and complete default outfit. "
+            "The supplied wardrobe state and event timeline are sparse continuity history, not a short "
+            "replacement prompt; preserve every non-conflicting base tag. A separate server audit validates "
+            "exact base tags directly replaced or removed by the current context. Generated visual references "
             "are intentionally absent and must not be reconstructed as identity facts. This override "
             "supersedes every global scene-count, slot-selection, and combined keyvis/scene requirement. "
             "Every characters[] entry must include its exact canonical name even when cropped or partially "
@@ -3989,9 +4698,13 @@ async def _run_parallel_call2_details(
             "content": (
                 assigned_plan_payload
                 + "\n\nExpand each plan into complete Danbooru-style character tags, camera, scene, "
-                "outfit_state, and supplement. wardrobe_snapshot is authoritative: copy each named "
-                "character's body_state, worn, and removed values exactly, and make visible attire tags "
-                "consistent with that snapshot. Never infer, replace, or advance wardrobe state in DETAIL. "
+                "outfit_state, and supplement. Each wardrobe_snapshot is a complete default-based "
+                "continuity base plus sparse change history, not a short replacement prompt. Start from "
+                "every fixed-appearance and default-outfit tag, then interpret sparse changes against the "
+                "assigned scene and current context. Never let a short CALL1 item list suppress an unmentioned "
+                "base feature. Only directly conflicting or explicitly removed exact base tags may be "
+                "omitted; a separate server audit validates those omissions, and every other base tag must "
+                "remain in positive and outfit_state. Never advance state beyond the assigned scene. "
                 "When a plan has characters: [], preserve characters: [] and express anonymous people "
                 "only through scene tags and supplement. "
                 "Copy slot exactly into every scene object and preserve plan order. The server assigns "
@@ -4849,6 +5562,7 @@ _CALL_TASK_KEYS = {
     "CALL2": "illustration_call2",
     "CALL2-PLAN": "illustration_call2",
     "CALL2-KEYVIS": "illustration_call2",
+    "CALL2-AUTHORITY-AUDIT": "illustration_call2",
     "CALL2-FALLBACK": "illustration_call2",
     "CALL2-FIX": "illustration_call2_fix",
     "CALL3": "illustration_call3",
@@ -4864,6 +5578,10 @@ _CALL_QUEUE_SUBTASK_GROUPS = {
     "CALL2": ("call2", "CALL2 장면/태그 빌드"),
     "CALL2-PLAN": ("call2_plan", "CALL2 장면 PLAN"),
     "CALL2-KEYVIS": ("call2_keyvis", "CALL2 Key Visual"),
+    "CALL2-AUTHORITY-AUDIT": (
+        "call2_authority_audit",
+        "CALL2 외형·복장 권위 감사",
+    ),
     "CALL2-FALLBACK": ("call2", "CALL2 폴백"),
     "CALL2-FIX": ("call2_fix", "CALL2-FIX TOON 교정"),
     "CALL3": ("call3", "CALL3 대사 빌드"),
@@ -7138,6 +7856,16 @@ async def build_from_context(
         )
 
     fixed_appearance = extract_authoritative_fixed_appearance(call2_reference)
+    default_outfits = extract_authoritative_default_outfits(call2_reference)
+    if persistent_history and selected_states:
+        selected_states = apply_wardrobe_events(
+            selected_states,
+            call1_result.get("current_characters") or [],
+            [],
+            str(persistent_history.get("current_message_id") or ""),
+            selected_reference=call2_reference,
+            default_outfits=default_outfits,
+        )
     last_visual_reference_classification = classify_last_visual_reference(
         reference_provenance,
         previous_visual,
@@ -7231,8 +7959,10 @@ async def build_from_context(
             append_call2_context({
                 "role": "user",
                 "content": (
-                    "# AUTHORITATIVE WARDROBE CONTINUITY STATE\n"
-                    "Carry this state forward. Absence from a camera frame never means removal.\n\n"
+                    "# DEFAULT-BASED WARDROBE CONTINUITY BASE\n"
+                    "This is the complete default base plus previously tracked sparse deltas. "
+                    "Carry every non-conflicting base item forward. A short later event never turns "
+                    "this into a shorter replacement list, and camera absence never means removal.\n\n"
                     + json.dumps(projected_states, ensure_ascii=False, indent=2)
                 ),
             }, include_plan=False)
@@ -7240,8 +7970,10 @@ async def build_from_context(
             append_call2_context({
                 "role": "user",
                 "content": (
-                    "# CURRENT WARDROBE EVENT TIMELINE\n"
-                    "Apply each event only from its segment onward.\n\n"
+                    "# SPARSE CURRENT WARDROBE CHANGE HISTORY\n"
+                    "Each event contains only observed changes, not a complete outfit. Interpret it "
+                    "against the current context from its segment onward and never discard an "
+                    "unmentioned default feature.\n\n"
                     + json.dumps(wardrobe_events, ensure_ascii=False, indent=2)
                 ),
             }, include_plan=False)
@@ -7308,6 +8040,9 @@ async def build_from_context(
     call2_plan_output = ""
     call2_keyvis_output = ""
     call2_detail_outputs: list[str] = []
+    call2_authority_audit: list[dict] = []
+    call2_authority_audit_output = ""
+    call2_authority_audit_status = "not_run"
     call2_parallel_fallback_stage = ""
     call2_parallel_fallback_reason = ""
     call2_fallback_expected_slots: list[int] | None = None
@@ -7503,6 +8238,7 @@ async def build_from_context(
                     wardrobe_events,
                     str((persistent_history or {}).get("current_message_id") or ""),
                     selected_reference=call2_reference,
+                    default_outfits=default_outfits,
                 )
                 call2_fallback_expected_slots = [
                     int(item["slot"]) for item in parsed_plan["scene_plan"]
@@ -7875,15 +8611,53 @@ async def build_from_context(
             print("[ILLUST_CONTEXT:CALL2] 슬롯 보정 후 생성할 descriptor가 없음")
             raise RuntimeError("CALL2 결과에 유효한 장면 슬롯이 없습니다")
 
+    if progress:
+        await progress(49, "call2_authority_audit", "CALL2 외형·복장 권위 감사")
+    (
+        semantic_authority_decisions,
+        call2_authority_audit_output,
+        call2_authority_audit_status,
+    ) = await _run_call2_authority_audit(
+        descriptors,
+        fixed_appearance,
+        default_outfits,
+        slotted,
+        stream_notify,
+    )
+    call2_authority_audit = apply_call2_authority_base(
+        descriptors,
+        fixed_appearance,
+        default_outfits,
+        semantic_authority_decisions,
+        call2_authority_audit_status,
+    )
+    # Every downstream consumer, including early image enqueue, Call5 inputs,
+    # generated-reference history, and diagnostics, must see the same repaired
+    # descriptor set.
+    call2_output = descriptors_to_toon(descriptors)
+
     last_visual_by_character = _last_visual_by_character(descriptors)
     character_states_after = deepcopy((persistent_history or {}).get("state_before") or {})
     if persistent_history:
+        state_character_names: list[str] = []
+        for item in call1_result.get("current_characters") or []:
+            name = str(item.get("name") if isinstance(item, dict) else item).strip()
+            if name and name.casefold() not in {
+                value.casefold() for value in state_character_names
+            }:
+                state_character_names.append(name)
+        for name in last_visual_by_character:
+            if str(name).strip() and str(name).casefold() not in {
+                value.casefold() for value in state_character_names
+            }:
+                state_character_names.append(str(name).strip())
         character_states_after = apply_wardrobe_events(
             character_states_after,
-            call1_result.get("current_characters") or [],
+            [{"name": name, "confidence": 1.0} for name in state_character_names],
             wardrobe_events,
             str(persistent_history.get("current_message_id") or ""),
             selected_reference=call2_reference,
+            default_outfits=default_outfits,
         )
         character_states_after = merge_last_visual_into_states(
             character_states_after,
@@ -8078,6 +8852,9 @@ async def build_from_context(
         "call2_plan_output": call2_plan_output,
         "call2_keyvis_output": call2_keyvis_output,
         "call2_detail_outputs": call2_detail_outputs,
+        "call2_authority_audit": call2_authority_audit,
+        "call2_authority_audit_output": call2_authority_audit_output,
+        "call2_authority_audit_status": call2_authority_audit_status,
         "call2_fallback_stage": call2_parallel_fallback_stage,
         "call2_fallback_reason": call2_parallel_fallback_reason,
         "call2_fix_output": call2_fix_output,

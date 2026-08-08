@@ -76,26 +76,26 @@ Add prominent props in "color + object": white computer, wooden table. Tags must
 
 ### Characters
 
-Each character needs the visually applicable fixed appearance, authoritative attire, expression, and pose/action groups in their positive tags. This also applies to partially visible characters, limited to what the camera can show.
+Each named character positive is rebuilt from the complete fixed appearance and complete default/current outfit base before expression, pose, action, and scene tags are added. CALL1's short event items are sparse history, never a replacement tag list.
 
 For a named character, `AUTHORITATIVE FIXED APPEARANCE` is the only source of persistent identity. Start `characters[].positive` with the schema-required unnumbered `girl` or `boy` corresponding to the supplied fixed `1girl` or `1boy`; this count-label normalization is not permission to infer any other demographic tag. Preserve any additional demographic tag only when it is explicitly present in that character's fixed appearance. Never infer or append `adult`, `female`, `adolescent`, `mature male`, `mature female`, or another age/sex label from prose, apparent age, role, wardrobe, or a generated reference.
 
 #### Appearance
 
-For named characters, use every fixed appearance tag that is visually applicable to the current frame. A fixed tag may be omitted only when its feature is explicitly hidden, occluded, or temporarily incompatible; never replace an omitted fixed tag with an invented alternative. Narrative prose may control temporary visual state, expression, pose, action, gaze, camera, and visibility, but it cannot redefine persistent identity.
+For named characters, copy every fixed appearance tag into the positive. Cropping, framing, occlusion, or model preference is not permission to omit an identity anchor. Only an explicit direct temporary replacement in the assigned current scene may replace the exact conflicting fixed tag; keep every non-conflicting fixed tag. A separate server audit validates that exception against the current context. Narrative prose may control temporary visual state, expression, pose, action, gaze, camera, and visibility, but it cannot silently redefine persistent identity.
 
 - Hair
-  - For named characters, length, color, cut, texture, bangs, ornaments, and stable style come only from `AUTHORITATIVE FIXED APPEARANCE`.
-  - Do not specialize, generalize, or creatively complete missing hair traits. A temporary state such as wet or disheveled hair is allowed only when supported by the current scene.
+  - For named characters, length, color, cut, texture, bangs, ornaments, and stable style start from `AUTHORITATIVE FIXED APPEARANCE` in full.
+  - Do not specialize, generalize, or creatively complete missing hair traits. An explicit current-scene hairstyle change may replace only directly conflicting fixed hair tags; keep every non-conflicting hair and identity tag.
 - Eyes
   - Eye color, shape, pupils, and other stable traits come only from fixed appearance. Do not invent an eye-shape tag because one is absent.
-  - Emit an eye trait only when the eyes are actually visible; expression-related temporary eye states may follow the current scene.
+  - Keep supplied fixed eye traits as identity anchors even when eyes are closed, cropped, or partly occluded; expression-related temporary eye states may follow the current scene without deleting the fixed traits.
 - Body type
   - Skin color, species, body build, breast size, and other identity-defining physical traits come only from fixed appearance.
   - Do not fill a missing skin, face, or body trait for completeness.
 - Other features
   - Fixed scars, tattoos, freckles, facial hair, and similar identity features come only from fixed appearance. Current-scene temporary damage or dirt may be described without promoting it into identity.
-- Attire: the assigned `wardrobe_snapshot` and `AUTHORITATIVE WARDROBE CONTINUITY STATE` are authoritative. Use specific color/material/style only when supplied by those sources or the current wardrobe event; do not enrich garments from convention. Only positive-tag visible items.
+- Attire: start with every tag in the character's `-default_outfit`, then overlay carried state and sparse wardrobe-event changes. A short CALL1 `set`, `replace`, or descriptive item list never becomes the whole outfit and never deletes an unmentioned default detail. Keep every non-conflicting default garment and accessory in both `positive` and `outfit_state`. Omit a default/current tag only for an explicit direct conflict or removal in the assigned current scene; a separate server audit validates the omission.
   - Requires `naked` if naked.
   - Disassemble uniforms into explicit parts.
   - Headwear: red baseball cap, pink metallic crown
@@ -112,13 +112,13 @@ For named characters, use every fixed appearance tag that is visually applicable
     - `source#` if the character is performing a directional action, `source#patting head`. The other character must have the corresponding `target#` tag.
     - `target#` if the character is receiving a directional action, `target#patting head`. The other character must have the corresponding `source#` tag.{{/compat-comfy}}{{#when::keep::toggle::lb-xnai.nsfw}}
   - Sexual: Include all actions being performed with high details. `sex from front` (Not just `sex`, specify direction), `imminent penetration`, `embracing`, etc.{{/nsfw}}
-- Exposed body parts: Only if within the frame. `armpits`, `clavicle`, `cleavage`, `navel`, `thighs`, `buttocks`, {{#when::toggle::lb-xnai.nsfw}}`nipples`, `pussy`, `anus`, `penis`{{/nsfw}}...
+- Exposed body parts: For inferred scene details, include only those within the frame. A tag already supplied by a named character's fixed appearance remains a mandatory identity anchor under the fixed-base rule above. Examples: `armpits`, `clavicle`, `cleavage`, `navel`, `thighs`, `buttocks`, {{#when::toggle::lb-xnai.nsfw}}`nipples`, `pussy`, `anus`, `penis`{{/nsfw}}...
 
 Never creatively complete persistent appearance for a named character that has an authoritative entry. Creative appearance completion is allowed only for anonymous or unnamed background people with no authoritative appearance entry. A named character with no fixed entry must remain underspecified rather than receiving invented identity traits, and the missing entry must not be hidden by a generated reference.
 
 #### Authority and generated-reference boundary
 
-Resolve conflicts in this order: explicit current-scene temporary state and visibility; `AUTHORITATIVE FIXED APPEARANCE`; assigned/current authoritative wardrobe; current scene plan and narrative intent; classified continuity guidance; reroll or soft guidance; model inference for non-identity details only.
+Resolve conflicts in this order: complete `AUTHORITATIVE FIXED APPEARANCE` and complete default outfit base; explicit current-scene temporary replacements/removals limited to their directly conflicting source tags; carried wardrobe deltas; current scene plan and narrative intent; classified continuity guidance; reroll or soft guidance; model inference for non-identity details only. CALL1 event items are sparse history and can add or explicitly remove information, but can never replace the complete base merely by being shorter.
 
 `CLASSIFIED LAST VISUAL REFERENCE` is supporting generated material, never character ground truth. Follow its server-provided type. A `REROLL` is another rendering of the same moment, not an earlier story event. No generated positive tag may become persistent appearance or wardrobe authority merely because it appeared in that payload.
 

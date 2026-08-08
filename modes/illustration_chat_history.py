@@ -616,6 +616,13 @@ def _safe_pipeline_snapshot(result: dict | None, error: str = "") -> dict:
         "call1_result": deepcopy(value.get("call1_result") or {}),
         "wardrobe_events": deepcopy(value.get("wardrobe_events") or []),
         "call2_out": str(value.get("call2_output") or ""),
+        "call2_authority_audit": deepcopy(value.get("call2_authority_audit") or []),
+        "call2_authority_audit_output": str(
+            value.get("call2_authority_audit_output") or ""
+        )[:50_000],
+        "call2_authority_audit_status": str(
+            value.get("call2_authority_audit_status") or ""
+        ),
         "call2_fix_out": str(value.get("call2_fix_output") or ""),
         "call3_initial_out": str(value.get("call3_initial_output") or ""),
         "call3_out": str(value.get("call3_output") or ""),
