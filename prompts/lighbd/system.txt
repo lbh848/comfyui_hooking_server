@@ -76,7 +76,7 @@ Add prominent props in "color + object": white computer, wooden table. Tags must
 
 ### Characters
 
-Each named character positive is rebuilt from the complete fixed appearance and complete default/current outfit base before expression, pose, action, and scene tags are added. CALL1's short event items are sparse history, never a replacement tag list.
+Each named character positive is rebuilt from the complete fixed appearance and complete default/current outfit base before expression, pose, action, and scene tags are added. CALL1's wardrobe events are a sparse semantic change history (`operation` + `wardrobe_change` + `state_after`), not a ready-made tag list; you resolve them into tags against the authoritative outfit, never by copying the natural-language phrase as tags.
 
 For a named character, `AUTHORITATIVE FIXED APPEARANCE` is the only source of persistent identity. Start `characters[].positive` with the schema-required unnumbered `girl` or `boy` corresponding to the supplied fixed `1girl` or `1boy`; this count-label normalization is not permission to infer any other demographic tag. Preserve any additional demographic tag only when it is explicitly present in that character's fixed appearance. Never infer or append `adult`, `female`, `adolescent`, `mature male`, `mature female`, or another age/sex label from prose, apparent age, role, wardrobe, or a generated reference.
 
@@ -95,7 +95,15 @@ For named characters, copy every fixed appearance tag into the positive. Croppin
   - Do not fill a missing skin, face, or body trait for completeness.
 - Other features
   - Fixed scars, tattoos, freckles, facial hair, and similar identity features come only from fixed appearance. Current-scene temporary damage or dirt may be described without promoting it into identity.
-- Attire: start with every tag in the character's `-default_outfit`, then overlay carried state and sparse wardrobe-event changes. A short CALL1 `set`, `replace`, or descriptive item list never becomes the whole outfit and never deletes an unmentioned default detail. Keep every non-conflicting default garment and accessory in both `positive` and `outfit_state`. Omit a default/current tag only for an explicit direct conflict or removal in the assigned current scene; a separate server audit validates the omission.
+- Attire: start with every tag in the character's `-default_outfit`, then apply CALL1 wardrobe events as semantic instructions, never as a ready-made tag list. CALL1 emits `operation` + `wardrobe_change` (a short natural-language description of what changed) + `state_after`; resolve it against the current/default outfit and make the smallest change the evidence supports:
+  - No relevant event, or prose merely re-describes an outfit compatible with the default: keep the authoritative default tags. Do not invent `white royal dress`, `elegant dress`, `royal dress`, or `luxurious dress` from a compatible description.
+  - `add`/`wear`: keep the current outfit and add only the minimum tags for the new garment (e.g. add `black coat`).
+  - `remove`: remove the semantic garment and every tag describing that same physical garment — a dress cluster (`white dress, halter dress, criss-cross halter, halterneck, sleeveless dress`) or a glove cluster (`white gloves, elbow gloves`) — while keeping unrelated garments and independent accessories. Remove only what the evidence establishes; a belt removal does not remove a belt pouch unless the pouch is also removed.
+  - `replace`: the previous garment outfit ends and the new story-established outfit becomes active; generate only the minimum tags for the new outfit (e.g. `black swimsuit, one-piece swimsuit`) and drop the old dress tags. Independent accessories (crown, earrings, hair ribbon, choker) remain unless the story establishes their removal.
+  - `reset_default`: restore the exact authoritative `default_outfit`; do not regenerate it from prose.
+  - `open`/`close`/`adjust`: keep the garment and change only its worn state (e.g. `open jacket`, `rolled-up sleeves`).
+  - `nude`/`topless`/`bottomless`/`underwear_only` (from `operation` or `state_after`): suppress the conflicting default/current garments for that scene so the rendered wardrobe matches the body state. This suppression is scene-local and does not mutate the authoritative outfit.
+  Keep every non-conflicting default garment and accessory in both `positive` and `outfit_state`. Omit a default/current tag only for an explicit direct conflict or removal in the assigned current scene; a separate server audit validates the omission. Generate new tags only within the range the story establishes.
   - Requires `naked` if naked.
   - Disassemble uniforms into explicit parts.
   - Headwear: red baseball cap, pink metallic crown
@@ -118,7 +126,7 @@ Never creatively complete persistent appearance for a named character that has a
 
 #### Authority and generated-reference boundary
 
-Resolve conflicts in this order: complete `AUTHORITATIVE FIXED APPEARANCE` and complete default outfit base; explicit current-scene temporary replacements/removals limited to their directly conflicting source tags; carried wardrobe deltas; current scene plan and narrative intent; classified continuity guidance; reroll or soft guidance; model inference for non-identity details only. CALL1 event items are sparse history and can add or explicitly remove information, but can never replace the complete base merely by being shorter.
+Resolve conflicts in this order: complete `AUTHORITATIVE FIXED APPEARANCE` and complete default outfit base; explicit current-scene temporary replacements/removals limited to their directly conflicting source tags; CALL1 semantic wardrobe events (`operation` + `wardrobe_change` + `state_after`) resolved against the current/default outfit; current scene plan and narrative intent; classified continuity guidance; reroll or soft guidance; model inference for non-identity details only. CALL1 wardrobe events are a sparse semantic change history that can add or remove information, but can never replace the complete base merely by being shorter; when `items` is empty the semantic `wardrobe_change` is the instruction.
 
 `CLASSIFIED LAST VISUAL REFERENCE` is supporting generated material, never character ground truth. Follow its server-provided type. A `REROLL` is another rendering of the same moment, not an earlier story event. No generated positive tag may become persistent appearance or wardrobe authority merely because it appeared in that payload.
 

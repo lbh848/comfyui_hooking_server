@@ -1975,6 +1975,9 @@ def parse_call1_analysis(
         name = normalize_name(item.get("character") or item.get("name"))
         operation = str(item.get("operation") or "keep").strip().lower()
         evidence = str(item.get("evidence") or "").strip()
+        wardrobe_change = str(item.get("wardrobe_change") or "").strip()
+        # legacy 출력 호환: 신규 CALL1은 wardrobe_change만 내고 items를 비운다.
+        # 하위 호환을 위해 items는 계속 파싱해 둔다(과거 기록/구 출력).
         items = item.get("items") or []
         if not isinstance(items, list):
             items = [items]
@@ -2007,6 +2010,7 @@ def parse_call1_analysis(
             "segment_id": segment_id,
             "character": name,
             "operation": operation,
+            "wardrobe_change": wardrobe_change,
             "items": items,
             "state_after": deepcopy(item.get("state_after")),
             "evidence": evidence,
@@ -2323,7 +2327,12 @@ def apply_wardrobe_events(
         removed = [str(value) for value in wardrobe.get("removed") or [] if str(value).strip()]
         operation = str(event.get("operation") or "keep").lower()
         items = [str(value) for value in event.get("items") or [] if str(value).strip()]
+        wardrobe_change = str(event.get("wardrobe_change") or "").strip()
         state_after = event.get("state_after")
+        # 신규 CALL1은 items 대신 자연어 wardrobe_change만 낸다. CALL2가 이 의미 변화를
+        # 권위 복장 태그로 번역하기 전까지는 worn/removed를 보존하고 state_after(body_state)
+        # 만 반영한다(레거시 items 가 있으면 기존대로 희소 태그 병합을 수행한다).
+        semantic_only = bool(wardrobe_change) and not items
         state_label = (
             str(state_after.get("body_state") or "").strip().lower()
             if isinstance(state_after, dict)
@@ -2355,10 +2364,11 @@ def apply_wardrobe_events(
             lowered = {value.casefold() for value in items}
             removed = [value for value in removed if value.casefold() not in lowered]
             wardrobe["body_state"] = state_label or ("clothed" if worn else "unknown")
-            print(
-                f"[ILLUST_CONTEXT:WARDROBE_DELTA] {operation} 희소 병합: "
-                f"character={name}, items={items}, retained_base={len(worn) - len(items)}"
-            )
+            if not semantic_only:
+                print(
+                    f"[ILLUST_CONTEXT:WARDROBE_DELTA] {operation} 희소 병합: "
+                    f"character={name}, items={items}, retained_base={len(worn) - len(items)}"
+                )
         elif operation in ("reset_default", "contextual_reset"):
             default_items = default_items_for(name)
             worn = list(dict.fromkeys(default_items + items))
@@ -2369,6 +2379,15 @@ def apply_wardrobe_events(
         wardrobe["worn"] = worn
         wardrobe["removed"] = removed
         wardrobe["last_event"] = deepcopy(event)
+        if semantic_only:
+            # 레거시 태그(items) 없이 자연어 의미만 온 이벤트. 옷 태그 해석은 CALL2가
+            # wardrobe_change를 번역할 때까지 보류되므로, 현재는 body_state만 반영한다.
+            print(
+                f"[ILLUST_CONTEXT:WARDROBE_DELTA] semantic event 보류(CALL2 해석 대기): "
+                f"character={name}, operation={operation}, "
+                f"wardrobe_change={wardrobe_change!r}, "
+                f"body_state={wardrobe.get('body_state')}, worn={worn}"
+            )
         states[key]["current_wardrobe"] = wardrobe
         timeline = list(states[key].get("wardrobe_timeline") or [])
         timeline.append(deepcopy(event))
@@ -4397,7 +4416,10 @@ async def _run_call2_authority_audit(
         "default_outfit are mandatory bases. A short historical description is not a complete "
         "replacement outfit. For each id, return authority_exceptions only for exact supplied "
         "base tags that the assigned scene explicitly and temporarily replaces or explicitly "
-        "removes. generated_outfit_state is an untrusted proposal and never proves an exception "
+        "removes. Do not grant an authority exception for an accessory merely because it is "
+        "physically associated with a removed garment; the scene must establish removal of that "
+        "accessory itself (e.g. removing a belt does not authorize removing `belt pouch` unless "
+        "the pouch is also established as removed). generated_outfit_state is an untrusted proposal and never proves an exception "
         "by itself. Return forbidden_additions for exact generated_positive tags that invent a "
         "persistent identity, body, hair, face, eye, skin, or wardrobe trait absent from the base "
         "and unsupported by the assigned scene. Do not classify pose, action, expression, gaze, "
@@ -8310,9 +8332,13 @@ async def build_from_context(
                 "role": "user",
                 "content": (
                     "# SPARSE CURRENT WARDROBE CHANGE HISTORY\n"
-                    "Each event contains only observed changes, not a complete outfit. Interpret it "
-                    "against the current context from its segment onward and never discard an "
-                    "unmentioned default feature.\n\n"
+                    "Each event is a semantic instruction with `operation`, `wardrobe_change` "
+                    "(a short natural-language description of what changed), and `state_after`; "
+                    "`items` may be empty and that is expected. It is not a ready-made tag list and "
+                    "does not contain a complete outfit. Map each `wardrobe_change` to the matching "
+                    "garment cluster of the current/default outfit: keep compatible default tags, "
+                    "remove/add/replace/restore the smallest garment set the evidence supports, and "
+                    "never discard an unmentioned default feature.\n\n"
                     + json.dumps(wardrobe_events, ensure_ascii=False, indent=2)
                 ),
             }, include_plan=False)

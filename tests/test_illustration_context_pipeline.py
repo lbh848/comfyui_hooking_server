@@ -4935,6 +4935,162 @@ def test_sparse_call1_set_keeps_unmentioned_default_outfit_features():
     assert "long blonde hair down" in worn
 
 
+def test_parse_call1_wardrobe_change_schema_preserves_semantic_text():
+    # 신규 CALL1은 items 대신 자연어 wardrobe_change만 낸다.
+    current = "She changed into a swimsuit."
+    _rendered, segments = pipeline._segment_current_context(current)
+    analysis = pipeline.parse_call1_analysis(
+        json.dumps({
+            "reference_assignments": [],
+            "history_characters": [],
+            "current_characters": ["Hana"],
+            "wardrobe_events": [{
+                "segment_id": "C001",
+                "character": "Hana",
+                "operation": "replace",
+                "wardrobe_change": "She changed into a swimsuit.",
+                "state_after": "clothed",
+                "evidence": "She changed into a swimsuit.",
+            }],
+            "unresolved_references": [],
+        }),
+        current,
+        segments,
+        "Hana",
+    )
+
+    assert analysis is not None
+    event = analysis["wardrobe_events"][0]
+    assert event["operation"] == "replace"
+    assert event["wardrobe_change"] == "She changed into a swimsuit."
+    assert event["items"] == []
+    assert event["state_after"] == "clothed"
+    assert event["evidence"] == "She changed into a swimsuit."
+
+
+def test_parse_call1_legacy_items_event_still_carried_for_backward_compat():
+    # 과거 기록/구 출력의 items 형식은 하위 호환을 위해 계속 파싱한다.
+    current = "She removed her gloves."
+    _rendered, segments = pipeline._segment_current_context(current)
+    analysis = pipeline.parse_call1_analysis(
+        json.dumps({
+            "reference_assignments": [],
+            "history_characters": [],
+            "current_characters": ["Hana"],
+            "wardrobe_events": [{
+                "segment_id": "C001",
+                "character": "Hana",
+                "operation": "remove",
+                "items": ["white gloves", "elbow gloves"],
+                "state_after": "clothed",
+                "evidence": "She removed her gloves.",
+            }],
+            "unresolved_references": [],
+        }),
+        current,
+        segments,
+        "Hana",
+    )
+
+    assert analysis is not None
+    event = analysis["wardrobe_events"][0]
+    assert event["operation"] == "remove"
+    assert event["items"] == ["white gloves", "elbow gloves"]
+    assert event["wardrobe_change"] == ""
+
+
+def test_apply_wardrobe_semantic_remove_applies_state_after_only(capsys):
+    # TEST 5: items 없는 remove 이벤트. 옷 태그 해석은 CALL2 대기, body_state만 반영.
+    reference = (
+        "### Sato\n"
+        "-Appearance\n1boy, short hair\n"
+        "-default_outfit\n"
+        "white shirt, blue pants, leather belt, underwear"
+    )
+    states = pipeline.apply_wardrobe_events(
+        {},
+        [{"name": "Sato"}],
+        [{
+            "segment_id": "C001",
+            "character": "Sato",
+            "operation": "remove",
+            "wardrobe_change": (
+                "He removed his pants and underwear, "
+                "leaving his lower body exposed."
+            ),
+            "state_after": "bottomless",
+            "evidence": "He lowered his pants and underwear.",
+        }],
+        "msg_current",
+        selected_reference=reference,
+    )
+
+    wardrobe = states["sato"]["current_wardrobe"]
+    assert wardrobe["worn"] == [
+        "white shirt", "blue pants", "leather belt", "underwear",
+    ]
+    assert wardrobe["removed"] == []
+    assert wardrobe["body_state"] == "bottomless"
+    assert any("semantic event 보류" in line for line in capsys.readouterr().out.splitlines())
+
+
+def test_apply_wardrobe_semantic_replace_preserves_default_until_call2(capsys):
+    # TEST 2: items 없는 replace. swimsuit 태그는 CALL2가 결정하므로 기본 복장 보존.
+    reference = (
+        "### Hana\n"
+        "-Appearance\n1girl, long hair\n"
+        "-default_outfit\n"
+        "white dress, halter dress, mini crown"
+    )
+    states = pipeline.apply_wardrobe_events(
+        {},
+        [{"name": "Hana"}],
+        [{
+            "segment_id": "C001",
+            "character": "Hana",
+            "operation": "replace",
+            "wardrobe_change": "She changed into a swimsuit.",
+            "state_after": "clothed",
+            "evidence": "She changed into a swimsuit.",
+        }],
+        "msg_current",
+        selected_reference=reference,
+    )
+
+    wardrobe = states["hana"]["current_wardrobe"]
+    assert wardrobe["worn"] == ["white dress", "halter dress", "mini crown"]
+    assert wardrobe["body_state"] == "clothed"
+    assert any("semantic event 보류" in line for line in capsys.readouterr().out.splitlines())
+
+
+def test_apply_wardrobe_semantic_reset_default_restores_outfit():
+    # TEST 7: items 없는 reset_default. 의미상 복귀이므로 기본 복장을 복원한다.
+    reference = (
+        "### Hana\n"
+        "-Appearance\n1girl, long hair\n"
+        "-default_outfit\n"
+        "white dress, halter dress, mini crown"
+    )
+    states = pipeline.apply_wardrobe_events(
+        {},
+        [{"name": "Hana"}],
+        [{
+            "segment_id": "C001",
+            "character": "Hana",
+            "operation": "reset_default",
+            "wardrobe_change": "She changed back into her usual outfit.",
+            "state_after": "clothed",
+            "evidence": "She changed back into her usual clothes.",
+        }],
+        "msg_current",
+        selected_reference=reference,
+    )
+
+    wardrobe = states["hana"]["current_wardrobe"]
+    assert wardrobe["worn"] == ["white dress", "halter dress", "mini crown"]
+    assert wardrobe["body_state"] == "clothed"
+
+
 def test_call2_authority_base_restores_missing_fixed_and_default_tags():
     descriptors = [{
         "kind": "scene",
