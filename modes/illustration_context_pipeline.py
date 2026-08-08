@@ -1844,6 +1844,21 @@ def _normalize_analysis_text(value: str) -> str:
     return text.strip()
 
 
+def _analysis_evidence_matches_segment(evidence: str, segment_text: str) -> bool:
+    """Compare literal evidence while tolerating transport-only whitespace changes."""
+    normalized_evidence = re.sub(
+        r"\s+", " ", _normalize_analysis_text(evidence)
+    ).strip()
+    normalized_segment = re.sub(
+        r"\s+", " ", _normalize_analysis_text(segment_text)
+    ).strip()
+    return bool(
+        normalized_evidence
+        and normalized_segment
+        and normalized_evidence in normalized_segment
+    )
+
+
 def _contains_canonical_name(text: str, name: str) -> bool:
     """Check a supplied canonical name as a complete token, not as inference."""
     source = _normalize_analysis_text(text)
@@ -1994,7 +2009,7 @@ def parse_call1_analysis(
             if (
                 not segment_id
                 or not evidence
-                or _normalize_analysis_text(evidence) not in _normalize_analysis_text(segment_text)
+                or not _analysis_evidence_matches_segment(evidence, segment_text)
             ):
                 warnings.append(
                     f"복장 변경 근거 불일치로 폐기: character={name}, operation={operation}, "
@@ -2050,7 +2065,7 @@ def parse_call1_analysis(
             not segment_id
             or not hairstyle_change
             or not evidence
-            or _normalize_analysis_text(evidence) not in _normalize_analysis_text(segment_text)
+            or not _analysis_evidence_matches_segment(evidence, segment_text)
         ):
             warnings.append(
                 f"헤어스타일 변경 근거 불일치로 폐기: character={name}, operation={operation}, "
@@ -2573,6 +2588,66 @@ def _character_state(states: dict, name: str) -> dict:
     return {}
 
 
+def _scene_wardrobe_continuity_note(
+    applicable_events: list[dict],
+    plan_character_names: list[str],
+) -> tuple[str, list[str]]:
+    """Keep CALL1's story meaning intact for one scene without interpreting tags."""
+    canonical_by_name = {
+        str(name or "").strip().casefold(): str(name or "").strip()
+        for name in plan_character_names or []
+        if str(name or "").strip()
+    }
+    statements: list[str] = []
+    affected: list[str] = []
+    for event in applicable_events or []:
+        event_name = str(event.get("character") or "").strip()
+        canonical_name = canonical_by_name.get(event_name.casefold())
+        if not canonical_name:
+            continue
+        change = str(event.get("wardrobe_change") or "").strip()
+        evidence = str(event.get("evidence") or "").strip()
+        if change and evidence and (
+            re.sub(r"\s+", " ", _normalize_analysis_text(change)).casefold()
+            != re.sub(r"\s+", " ", _normalize_analysis_text(evidence)).casefold()
+        ):
+            statement = (
+                f"{change} The original passage states: {evidence}"
+            )
+        else:
+            statement = change or evidence
+        if not statement:
+            legacy_items = [
+                str(item or "").strip()
+                for item in event.get("items") or []
+                if str(item or "").strip()
+            ]
+            if legacy_items:
+                statement = (
+                    "The tracked passage establishes a wardrobe change involving "
+                    + ", ".join(legacy_items)
+                    + "."
+                )
+        if not statement:
+            print(
+                "[ILLUST_CONTEXT:CALL2_PLAN] 자연어 연속성으로 전달할 복장 사건 내용 없음: "
+                f"character={canonical_name}, event={event!r}"
+            )
+            continue
+        statements.append(f"{canonical_name}: {statement}")
+        if canonical_name.casefold() not in {name.casefold() for name in affected}:
+            affected.append(canonical_name)
+    if not statements:
+        return "", []
+    return (
+        "By this point in the story, keep these chronological wardrobe, coverage, and exposure "
+        "changes in force as natural-language visual authority. Read the statements by meaning; "
+        "when they conflict, a later statement supersedes an earlier one.\n"
+        + "\n".join(statements),
+        affected,
+    )
+
+
 def bind_scene_plan_wardrobes(
     scene_plan: list[dict],
     segment_order: list[str],
@@ -2583,12 +2658,7 @@ def bind_scene_plan_wardrobes(
     selected_reference: str = "",
     default_outfits: dict[str, list[str]] | None = None,
 ) -> list[dict]:
-    """Freeze one server-authoritative wardrobe snapshot per planned scene.
-
-    CALL2-PLAN sees the complete narrative and decides the scene-local outfit.
-    CALL1's tracked timeline is a fallback only when PLAN leaves that character
-    unknown. DETAIL may describe the frozen snapshot but never replace it.
-    """
+    """Bind a base snapshot and literal story continuity to each planned scene."""
     rank = {str(segment_id): index for index, segment_id in enumerate(segment_order)}
     normalized_plan = []
     resolved_outfits: dict[str, dict] = {}
@@ -2620,6 +2690,10 @@ def bind_scene_plan_wardrobes(
 
         plan_names = [str(name or "").strip() for name in plan.get("characters") or []]
         plan_names = [name for name in plan_names if name]
+        continuity_note, continuity_characters = _scene_wardrobe_continuity_note(
+            applicable_events,
+            plan_names,
+        )
         all_current = list(current_characters or []) + [
             {"name": name, "confidence": 1.0}
             for name in plan_names
@@ -2670,6 +2744,11 @@ def bind_scene_plan_wardrobes(
 
         plan["wardrobe_snapshot"] = wardrobe_snapshot
         plan["wardrobe_sources"] = wardrobe_sources
+        if continuity_note:
+            plan["continuity_note"] = continuity_note
+            # Internal parser guidance only. It is deliberately omitted from the
+            # LLM payload so the actual inter-LLM handoff stays natural-language.
+            plan["_continuity_characters"] = continuity_characters
         normalized_plan.append(plan)
 
     print(
@@ -2677,6 +2756,23 @@ def bind_scene_plan_wardrobes(
         f"plans={[(item.get('plan_id'), item.get('anchor_segment'), item.get('slot'), item.get('wardrobe_sources')) for item in normalized_plan]}"
     )
     return normalized_plan
+
+
+def _public_call2_scene_plan(plan: dict) -> dict:
+    """Expose only routing plus natural meaning to a downstream CALL2 worker."""
+    public = {
+        "slot": int(plan.get("slot") or 0),
+        "characters": [
+            str(name or "").strip()
+            for name in plan.get("characters") or []
+            if str(name or "").strip()
+        ],
+        "scene_brief": str(plan.get("scene_brief") or "").strip(),
+    }
+    continuity_note = str(plan.get("continuity_note") or "").strip()
+    if continuity_note:
+        public["continuity_note"] = continuity_note
+    return public
 
 
 def _last_visual_by_character(descriptors: list[dict]) -> dict:
@@ -3964,6 +4060,7 @@ def _parse_call2_detail_output(
     assigned_wardrobes_by_slot: dict[int, dict[str, dict]] | None = None,
     assigned_keyvis_plan: dict | None = None,
     assigned_characters_by_slot: dict[int, list[str]] | None = None,
+    assigned_scene_context_by_slot: dict[int, dict] | None = None,
 ) -> tuple[list[dict], str]:
     local_toggles = deepcopy(toggles)
     local_toggles.update({
@@ -4053,6 +4150,20 @@ def _parse_call2_detail_output(
         # plan_id는 모델 출력 계약이 아니라 서버 내부 식별자다. 검증을 통과한
         # 고유 slot을 신뢰하고 전역 PLAN에서 확정한 값을 항상 주입한다.
         item["plan_id"] = plan_id_by_slot[slot]
+        assigned_scene_context = (
+            (assigned_scene_context_by_slot or {}).get(slot) or {}
+        )
+        item["scene_brief"] = str(
+            assigned_scene_context.get("scene_brief") or ""
+        ).strip()
+        item["continuity_note"] = str(
+            assigned_scene_context.get("continuity_note") or ""
+        ).strip()
+        semantic_continuity_names = {
+            str(name or "").strip().casefold()
+            for name in assigned_scene_context.get("continuity_characters") or []
+            if str(name or "").strip()
+        }
         expected_wardrobes = (assigned_wardrobes_by_slot or {}).get(slot) or {}
         if expected_wardrobes:
             expected_by_name = {
@@ -4090,12 +4201,19 @@ def _parse_call2_detail_output(
                         f"PLAN 스냅샷으로 정규화: slot={slot}, character={expected_name}, "
                         f"expected={expected_outfit}, actual={normalized_actual}"
                     )
-                # PLAN이 unknown이면 DETAIL의 구체화를 보존하고, 그 외에는 서버가
-                # PLAN 표현으로 정규화해 후속 히스토리도 같은 상태를 보게 한다.
+                # A literal CALL1 continuity note carries more semantic detail than
+                # the coarse snapshot enums. Preserve DETAIL's contextual resolution
+                # for the affected character so the existing semantic audit can
+                # validate/repair it instead of erasing it before the audit runs.
                 character["outfit_state"] = (
                     deepcopy(normalized_actual)
-                    if expected_outfit["body_state"] == "unknown"
-                    and not _outfit_state_is_known(expected_outfit)
+                    if (
+                        expected_name.casefold() in semantic_continuity_names
+                        and _outfit_state_is_known(normalized_actual)
+                    ) or (
+                        expected_outfit["body_state"] == "unknown"
+                        and not _outfit_state_is_known(expected_outfit)
+                    )
                     else deepcopy(expected_outfit)
                 )
     return keyvis_descriptors + [
@@ -4113,6 +4231,7 @@ def _parse_call2_detail_partial(
     source: str,
     assigned_wardrobes_by_slot: dict[int, dict[str, dict]] | None = None,
     assigned_characters_by_slot: dict[int, list[str]] | None = None,
+    assigned_scene_context_by_slot: dict[int, dict] | None = None,
 ) -> tuple[dict[int, dict], list[int], list[int], str]:
     """CALL2-DETAIL 부분 허용 파서.
 
@@ -4193,6 +4312,20 @@ def _parse_call2_detail_partial(
     discarded_slots: set[int] = set()
     for slot, item in kept_by_slot.items():
         item["plan_id"] = plan_id_by_slot.get(slot, "")
+        assigned_scene_context = (
+            (assigned_scene_context_by_slot or {}).get(slot) or {}
+        )
+        item["scene_brief"] = str(
+            assigned_scene_context.get("scene_brief") or ""
+        ).strip()
+        item["continuity_note"] = str(
+            assigned_scene_context.get("continuity_note") or ""
+        ).strip()
+        semantic_continuity_names = {
+            str(name or "").strip().casefold()
+            for name in assigned_scene_context.get("continuity_characters") or []
+            if str(name or "").strip()
+        }
         expected_wardrobes = (assigned_wardrobes_by_slot or {}).get(slot) or {}
         if not expected_wardrobes:
             continue
@@ -4230,12 +4363,17 @@ def _parse_call2_detail_partial(
                     f"slot={slot}, character={expected_name}, "
                     f"expected={expected_outfit}, actual={normalized_actual}"
                 )
-            # PLAN이 unknown이면 DETAIL의 구체화를 보존하고, 그 외에는 PLAN 표현으로
-            # 정규화해 strict 경로와 같은 상태를 유지한다.
+            # strict 경로와 동일하게 자연어 continuity가 있는 캐릭터의 contextual
+            # resolution은 audit 전까지 보존한다.
             character["outfit_state"] = (
                 deepcopy(normalized_actual)
-                if expected_outfit["body_state"] == "unknown"
-                and not _outfit_state_is_known(expected_outfit)
+                if (
+                    expected_name.casefold() in semantic_continuity_names
+                    and _outfit_state_is_known(normalized_actual)
+                ) or (
+                    expected_outfit["body_state"] == "unknown"
+                    and not _outfit_state_is_known(expected_outfit)
+                )
                 else deepcopy(expected_outfit)
             )
 
@@ -4327,6 +4465,8 @@ def _call2_authority_audit_entries(
         scene_context = {
             "anchor_before": str(descriptor.get("anchor_before") or ""),
             "anchor_after": str(descriptor.get("anchor_after") or ""),
+            "scene_brief": str(descriptor.get("scene_brief") or ""),
+            "continuity_note": str(descriptor.get("continuity_note") or ""),
             "camera": str(descriptor.get("camera") or ""),
             "scene": str(descriptor.get("scene") or ""),
             "supplement": str(descriptor.get("supplement") or ""),
@@ -4356,10 +4496,9 @@ def _call2_authority_audit_entries(
             }
             if not authority_ids:
                 print(
-                    f"[ILLUST_CONTEXT:CALL2_AUTHORITY_AUDIT] 감사할 권위 태그 없음: "
-                    f"kind={kind}, slot={slot}, character={name}"
+                    f"[ILLUST_CONTEXT:CALL2_AUTHORITY_AUDIT] 권위 태그는 없지만 시각 완성도 "
+                    f"감사는 유지: kind={kind}, slot={slot}, character={name}"
                 )
-                continue
             entry_id = next_id
             next_id += 1
             entry_keys[entry_id] = (kind, slot, name.casefold())
@@ -4432,7 +4571,7 @@ def _parse_call2_authority_audit_output(
             if _authority_tag_identity(tag)
         }
 
-        normalized_fields: dict[str, list[str]] = {}
+        normalized_fields: dict[str, object] = {}
         for field, allowed in (
             ("authority_exceptions", authority_by_id),
             ("forbidden_additions", generated_by_id),
@@ -4465,6 +4604,38 @@ def _parse_call2_authority_audit_output(
                     f"dropped={dropped}"
                 )
             normalized_fields[field] = normalized
+        for field in ("required_additions", "scene_additions"):
+            values = raw_entry.get(field) or []
+            if not isinstance(values, list):
+                return reject(
+                    f"CALL2-AUTHORITY-AUDIT entries[{index}].{field}가 list가 아님"
+                )
+            normalized: list[str] = []
+            seen: set[str] = set()
+            for value in values:
+                addition = re.sub(r"\s+", " ", str(value or "")).strip(" ,")
+                identity = _authority_tag_identity(addition)
+                if not identity or identity in seen:
+                    continue
+                seen.add(identity)
+                normalized.append(addition)
+            if len(normalized) > 16:
+                print(
+                    f"[ILLUST_CONTEXT:CALL2_AUTHORITY_AUDIT] {field} 16개 초과분 스킵: "
+                    f"id={entry_id}, dropped={normalized[16:]}"
+                )
+                normalized = normalized[:16]
+            normalized_fields[field] = normalized
+        camera_replacement = re.sub(
+            r"\s+", " ", str(raw_entry.get("camera_replacement") or "")
+        ).strip(" ,")
+        if len(camera_replacement) > 300:
+            print(
+                "[ILLUST_CONTEXT:CALL2_AUTHORITY_AUDIT] camera_replacement 길이 초과로 "
+                f"300자까지 보존: id={entry_id}, length={len(camera_replacement)}"
+            )
+            camera_replacement = camera_replacement[:300].rstrip(" ,")
+        normalized_fields["camera_replacement"] = camera_replacement
         decisions[entry_keys[entry_id]] = normalized_fields
     if observed_ids != set(candidates):
         return reject(
@@ -4496,8 +4667,8 @@ async def _run_call2_authority_audit(
         return {}, "", "not_needed"
 
     system_prompt = (
-        "You are CALL2-AUTHORITY-AUDIT. Decide only semantic exceptions and conflicts for "
-        "server-owned character tags. Read CURRENT CONTEXT and each entry's scene_context by "
+        "You are CALL2-AUTHORITY-AUDIT. Perform the existing authority audit and a final visual-"
+        "completeness repair in this same call. Read CURRENT CONTEXT and each entry's scene_context by "
         "meaning and chronology; never use keyword matching. The complete fixed_appearance and "
         "default_outfit are mandatory bases. A short historical description is not a complete "
         "replacement outfit. For each id, return authority_exceptions only for exact supplied "
@@ -4522,9 +4693,22 @@ async def _run_call2_authority_audit(
         "or temporary scene state as a forbidden addition. Return conflicts even when every base "
         "tag is already present, but only for exact generated_positive tags that directly "
         "contradict the base and are not supported by that assigned scene. Do not report camera "
-        "invisibility, brevity, or ordinary scene/action/expression tags. Copy candidate strings "
-        "exactly. Return compact JSON only: "
-        '{"entries":[{"id":1,"authority_exceptions":[],"forbidden_additions":[],"conflicts":[]}]}.'
+        "invisibility, brevity, or ordinary scene/action/expression tags as authority conflicts. "
+        "Then silently cross-check whether the generated camera, scene, supplement, character tags, "
+        "scene_brief, and natural-language continuity_note form one physically possible image. For "
+        "explicit content, judge the whole scene-specific visual bundle: participant roles and relative "
+        "positions, exact action/contact and touched anatomy, visible exposure, displaced or removed "
+        "clothing, pose, expression, and whether the camera actually includes story-essential evidence. "
+        "Do not invent a sexual act, body detail, intensity, garment change, or exposure unsupported by "
+        "the story. Do not euphemize or omit an explicit fact that the assigned image is meant to show. "
+        "Put only missing character-level visible facts in required_additions, and only missing scene-level "
+        "facts such as overall interaction, background, or `nsfw` in scene_additions. Each list item is one "
+        "concise tag or natural visual phrase; it need not be validated against an external tag dictionary. "
+        "Use camera_replacement only when the present framing or perspective cannot show an essential fact; "
+        "then return one complete coherent replacement camera string, otherwise return an empty string. "
+        "Keep all repairs minimal and mutually compatible. Copy authority/conflict candidate strings exactly. "
+        "Return compact JSON only: "
+        '{"entries":[{"id":1,"authority_exceptions":[],"forbidden_additions":[],"conflicts":[],"required_additions":[],"scene_additions":[],"camera_replacement":""}]}.'
     )
     messages = [{"role": "system", "content": system_prompt}, {
         "role": "user",
@@ -4599,6 +4783,60 @@ def apply_call2_authority_base(
     for descriptor in descriptors or []:
         kind = str(descriptor.get("kind") or "scene")
         slot = int(descriptor.get("slot") or 0)
+        descriptor_decisions = [
+            (semantic_decisions or {}).get(
+                (
+                    kind,
+                    slot,
+                    str(character.get("name") or "").strip().casefold(),
+                ),
+                {},
+            )
+            for character in descriptor.get("characters") or []
+            if str(character.get("name") or "").strip()
+        ]
+        camera_replacements: list[str] = []
+        for decision in descriptor_decisions:
+            replacement = str(decision.get("camera_replacement") or "").strip()
+            if replacement and replacement.casefold() not in {
+                value.casefold() for value in camera_replacements
+            }:
+                camera_replacements.append(replacement)
+        applied_camera_replacement = ""
+        if camera_replacements:
+            applied_camera_replacement = camera_replacements[0]
+            if len(camera_replacements) > 1:
+                print(
+                    "[ILLUST_CONTEXT:CALL2_AUTHORITY_AUDIT] 캐릭터별 camera_replacement "
+                    f"불일치, 첫 결정 사용: kind={kind}, slot={slot}, "
+                    f"candidates={camera_replacements}"
+                )
+            descriptor["camera"] = applied_camera_replacement
+
+        scene_additions: list[str] = []
+        scene_addition_ids: set[str] = set()
+        for decision in descriptor_decisions:
+            for raw_addition in decision.get("scene_additions") or []:
+                addition = str(raw_addition or "").strip()
+                identity = _authority_tag_identity(addition)
+                if not identity or identity in scene_addition_ids:
+                    continue
+                scene_addition_ids.add(identity)
+                scene_additions.append(addition)
+        existing_scene_tags = _split_top_level_authority_tags(
+            str(descriptor.get("scene") or "")
+        )
+        existing_scene_ids = {
+            _authority_tag_identity(tag) for tag in existing_scene_tags
+        }
+        applied_scene_additions = [
+            addition for addition in scene_additions
+            if _authority_tag_identity(addition) not in existing_scene_ids
+        ]
+        if applied_scene_additions:
+            descriptor["scene"] = ", ".join(
+                existing_scene_tags + applied_scene_additions
+            )
         for character in descriptor.get("characters") or []:
             name = str(character.get("name") or "").strip()
             if not name:
@@ -4713,6 +4951,22 @@ def apply_call2_authority_base(
             generated_ids = {
                 _authority_tag_identity(tag) for tag in generated_tags
             }
+            semantic_required: list[str] = []
+            semantic_required_ids: set[str] = set()
+            for raw_required in semantic_decision.get("required_additions") or []:
+                required = str(raw_required or "").strip()
+                identity = _authority_tag_identity(required)
+                if (
+                    not identity
+                    or identity in semantic_required_ids
+                    or identity in generated_ids
+                    or identity in exception_ids
+                    or identity in semantic_forbidden_ids
+                    or identity in semantic_conflict_ids
+                ):
+                    continue
+                semantic_required_ids.add(identity)
+                semantic_required.append(required)
             mandatory_fixed = [
                 tag for tag in fixed_tags
                 if _authority_tag_identity(tag) not in exception_ids
@@ -4747,7 +5001,12 @@ def apply_call2_authority_base(
             ]
             combined: list[str] = []
             combined_ids: set[str] = set()
-            for tag in mandatory_fixed + mandatory_wardrobe + remaining_generated:
+            for tag in (
+                mandatory_fixed
+                + mandatory_wardrobe
+                + remaining_generated
+                + semantic_required
+            ):
                 identity = _authority_tag_identity(tag)
                 if not identity or identity in combined_ids:
                     continue
@@ -4799,6 +5058,12 @@ def apply_call2_authority_base(
                 "rejected_exceptions": rejected_exceptions,
                 "semantic_status": semantic_status,
             }
+            if semantic_required:
+                audit["required_additions"] = semantic_required
+            if applied_scene_additions:
+                audit["scene_additions"] = applied_scene_additions
+            if applied_camera_replacement:
+                audit["camera_replacement"] = applied_camera_replacement
             audits.append(audit)
             print(
                 "[ILLUST_CONTEXT:CALL2_AUTHORITY_AUDIT] "
@@ -4865,7 +5130,12 @@ async def _run_call2_keyvis(
             "The supplied wardrobe state and event timeline are sparse continuity history, not a short "
             "replacement prompt; preserve every non-conflicting base tag. A separate server audit validates "
             "exact base tags directly replaced or removed by the current context. Generated visual references "
-            "are intentionally absent and must not be reconstructed as identity facts. This override "
+            "are intentionally absent and must not be reconstructed as identity facts. "
+            "Before returning, silently verify that the composition is one physically possible image and "
+            "that its camera can actually show every story-essential action, contact, exposure, displaced "
+            "garment, and visible anatomy. Treat explicit content as a coherent scene-specific detail bundle, "
+            "not as one isolated tag, while adding nothing the story does not support. "
+            "This override "
             "supersedes every global scene-count, slot-selection, and combined keyvis/scene requirement. "
             "Every characters[] entry must include its exact canonical name even when cropped or partially "
             "visible. characters[].negative is optional: include it only when the Client explicitly "
@@ -5017,6 +5287,14 @@ async def _run_parallel_call2_details(
             int(item["slot"]): list(item.get("characters") or [])
             for item in plans
         }
+        assigned_scene_context_by_slot = {
+            int(item["slot"]): {
+                "scene_brief": str(item.get("scene_brief") or "").strip(),
+                "continuity_note": str(item.get("continuity_note") or "").strip(),
+                "continuity_characters": list(item.get("_continuity_characters") or []),
+            }
+            for item in plans
+        }
         # per-worker 카운트 기준(총량÷worker수)을 이 worker에 실제 할당된 batch 크기로
         # clamp한다. 규칙이 할당량보다 커지면 worker가 빈 장면을 채우려다 검증에 걸려
         # 재시도하게 된다. 할당량(len(plans))이 곧 이 shard의 진짜 장면 수다.
@@ -5047,19 +5325,30 @@ async def _run_parallel_call2_details(
                     + "\n\n# SHARD OUTPUT COUNT RULE (per worker)\n"
                     + req_rule
                 )
+            public_request_plans = [
+                _public_call2_scene_plan(plan) for plan in request_plans
+            ]
             assigned_plan_payload = (
                 "# ASSIGNED GLOBAL SCENE PLAN\n"
-                + json.dumps(request_plans, ensure_ascii=False, indent=2)
+                + json.dumps(public_request_plans, ensure_ascii=False, indent=2)
             )
             expand_instruction = (
-                "Expand each plan into complete Danbooru-style character tags, camera, scene, "
-                "outfit_state, and supplement. Each wardrobe_snapshot is a complete default-based "
-                "continuity base plus sparse change history, not a short replacement prompt. Start from "
-                "every fixed-appearance and default-outfit tag, then interpret sparse changes against the "
+                "Expand each plan into a complete, coherent visual tag bundle with camera, scene, "
+                "character positives, outfit_state, and supplement. The structured wardrobe snapshot is "
+                "kept server-side for validation rather than used as an inter-LLM semantic handoff. Start "
+                "from the fixed/default/current bases in the supplied context. "
+                "When continuity_note is present, read that natural-language chronology by meaning and "
+                "treat it as authority for the affected character's current wardrobe, coverage, and "
+                "exposure; coarse operation/body-state hints or a stale snapshot must never simplify, "
+                "euphemize, or contradict it. Include every fixed-appearance and default-outfit tag, then "
+                "interpret sparse changes against the "
                 "assigned scene and current context. Never let a short CALL1 item list suppress an unmentioned "
                 "base feature. Only directly conflicting or explicitly removed exact base tags may be "
                 "omitted; a separate server audit validates those omissions, and every other base tag must "
-                "remain in positive and outfit_state. Never advance state beyond the assigned scene. "
+                "remain in positive and outfit_state. Never advance state beyond the assigned scene. Make "
+                "the camera, relative positions, actions, contact, visible anatomy, garment displacement, "
+                "expressions, and background agree as one physically possible image. Do not reduce a "
+                "story-essential explicit state to an ambiguous isolated tag or crop it out. "
                 "When a plan has characters: [], preserve characters: [] and express anonymous people "
                 "only through scene tags and supplement. "
                 "Copy slot exactly into every scene object and preserve plan order. The server assigns "
@@ -5118,6 +5407,7 @@ async def _run_parallel_call2_details(
                 scope_label,
                 assigned_wardrobes_by_slot,
                 assigned_characters_by_slot,
+                assigned_scene_context_by_slot,
             )
 
         def make_validator(scope_slots: list[int]):
@@ -8627,6 +8917,9 @@ async def build_from_context(
                     "Treat consecutive paragraphs sharing one time, location, and ongoing action as one visual beat; select at most one scene from that beat.",
                     "An existing <img ...> block already occupies its visual beat, so select a different beat.",
                     "Choose each anchor by semantic context and common sense, never by keyword matching.",
+                    "Write scene_brief as natural language, not a field menu or tag list. Preserve the central visible action and its ongoing physical state without euphemism.",
+                    "When exposure, displaced clothing, intimate contact, or another state is essential to the selected beat, state the participants, relative positions, contact/action, and visible consequence naturally enough for one physically possible image.",
+                    "Across selected scenes, prefer meaningful visual progression; do not select near-identical stages of one action merely to fill the requested count.",
                 ]
                 focus = str(toggles.get("focus") or "").strip()
                 direction = str(toggles.get("direction") or "").strip()
@@ -8672,9 +8965,11 @@ async def build_from_context(
                     "    }\n"
                     "  ]\n"
                     "}\n\n"
-                    "anchor_segment must be one exact Cxxx ID from the server map. The server reuses "
-                    "CALL1 wardrobe events and tracked state to freeze each DETAIL outfit; do not repeat "
-                    "that data here. characters must contain every named tracked character intended to "
+                    "anchor_segment must be one exact Cxxx ID from the server map. Do not copy a full "
+                    "outfit inventory into scene_brief, but never omit a transient wardrobe, coverage, "
+                    "contact, or exposure state that defines the selected visual moment; describe that "
+                    "state in ordinary natural language. The server separately carries CALL1's literal "
+                    "wardrobe-change wording into DETAIL. characters must contain every named tracked character intended to "
                     "appear in that image, in canonical-name form. Use characters: [] when the visual beat "
                     "contains no named tracked character; anonymous students, crowds, staff, or other "
                     "background people belong in scene_brief and must not be given invented canonical "
@@ -8939,7 +9234,10 @@ async def build_from_context(
         fallback_messages = deepcopy(call2_messages)
         if call2_fallback_scene_plan:
             preserved_plan_payload = {
-                "scene_plan": call2_fallback_scene_plan,
+                "scene_plan": [
+                    _public_call2_scene_plan(plan)
+                    for plan in call2_fallback_scene_plan
+                ],
             }
             keyvis_fallback_rule = (
                 "A separately validated Key Visual is already preserved. Omit keyvis completely and "
@@ -8953,7 +9251,9 @@ async def build_from_context(
                     "# PRESERVED GLOBAL PLAN AFTER DETAIL FAILURE\n"
                     "The planner already completed successfully. Expand every scene below into the final "
                     "<lb-xnai> block. Use every supplied slot exactly once, preserve character coverage and "
-                    "wardrobe_snapshot, and do not reselect, omit, or add scenes. "
+                    "the natural meaning of scene_brief and continuity_note, and do not reselect, omit, or "
+                    "add scenes. Resolve wardrobe against the authoritative bases and event history already "
+                    "present in this context; the server retains its structured snapshot internally. "
                     + keyvis_fallback_rule
                     + "\n\n"
                     + json.dumps(preserved_plan_payload, ensure_ascii=False, indent=2)

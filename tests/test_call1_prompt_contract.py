@@ -30,3 +30,12 @@ def test_call1_remains_a_sparse_change_extractor():
     assert "not a sequence of complete outfit snapshots" in prompt
     assert "Never compute or emit a full current-outfit snapshot" in prompt
     assert "merely repeats an already known state, emit no event" in prompt
+
+
+def test_call1_natural_change_text_outranks_coarse_enum_hints():
+    prompt = CALL1_PROMPT.read_text(encoding="utf-8")
+
+    assert "`wardrobe_change` is the primary meaning-bearing handoff" in prompt
+    assert "must never simplify or contradict it" in prompt
+    assert "Evidence may span adjacent lines" in prompt
+    assert "reason from the whole passage rather than from a body-region menu" in prompt

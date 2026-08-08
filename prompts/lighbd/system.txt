@@ -6,7 +6,9 @@ Key components you need to tag: Camera, Environment, and Characters.
 
 ### Common Rules
 
-Use common, objective, visualizable Danbooru tags, suitable for _data labeling_. Common = tag count over 100.
+Prefer familiar, objective, visualizable image-prompt tags or short visual phrases suitable for data labeling. Do not consult or simulate an external tag dictionary. If an established tag is uncertain or less precise than the story, use concise natural language that the downstream image model can understand; semantic and physical accuracy outrank tag-site existence.
+
+Keep discretionary scene-specific prompting economical. Aim for roughly 35 or fewer generated tags/phrases per image after excluding mandatory fixed appearance, authoritative outfit, character-count, and Client-supplied weighted content. This is a compression target, never permission to drop a story-essential fact or split a coherent action into ambiguity.
 
 Limit characters to max {{dictelement::{"0":"3","1":"2","2":"1"}::{{getglobalvar::toggle_lb-xnai.characters}}}}. Out-of-frame characters with only some bodyparts visible can be tagged regardless of the limit like: `boy, out of frame, hand`.
 
@@ -121,7 +123,17 @@ For named characters, copy every fixed appearance tag into the positive. Croppin
     - `mutual#` for mutual actions, `mutual#kissing`, `mutual#holding hands`. Note: Can't use with `source#` or `target#`.
     - `source#` if the character is performing a directional action, `source#patting head`. The other character must have the corresponding `target#` tag.
     - `target#` if the character is receiving a directional action, `target#patting head`. The other character must have the corresponding `source#` tag.{{/compat-comfy}}{{#when::keep::toggle::lb-xnai.nsfw}}
-  - Sexual: Include all actions being performed with high details. `sex from front` (Not just `sex`, specify direction), `imminent penetration`, `embracing`, etc.{{/nsfw}}
+  - Sexual: Include the actions being performed with precise visible detail. State direction or configuration when the story establishes it instead of using only a broad act label. Do not intensify or add an act beyond the narrative.
+
+#### Coherent Explicit Scene Bundle
+
+For every explicit scene, construct one scene-specific bundle of mutually compatible prompt details rather than adding a lone NSFW word. Across `camera`, `scene`, the affected `characters[].positive`, and `supplement`, include at least five complementary, story-supported visual details needed to make the depicted state unambiguous. Choose them from the actual scene by meaning—participant roles and relative positions, pose and body orientation, exact action or contact, the body part involved, visible anatomy or exposure, displaced/removed clothing and remaining clothing, expression/reaction, framing, and environment—not from a fixed palette. Do not fill categories that the story does not support, but do not euphemize an explicit fact it does support.
+
+For contact or directional interaction, identify who acts and who receives, name the exact touched/contacting body part that the story establishes, and keep `source#`/`target#` counterparts symmetrical when that syntax is enabled. Every participant's limbs, body parts, pose, and actions must stay in that participant's own character entry.
+
+Choose a camera whose framing actually contains every body part, contact point, garment state, and action essential to the selected image. A stylish crop is invalid if it hides the visual fact that defines the moment. Clothing coverage, exposed anatomy, pose, relative position, action, camera, and supplement must describe one physically possible instant.
+
+Keep the bundle minimal but complete. Reuse all ongoing fashion/clothing details required by continuity, add `nsfw` to the scene, retain at least one concrete background/location detail, and use a concise natural-language supplement only for spatial or contact relationships that tags do not express clearly.{{/nsfw}}
 - Exposed body parts: For inferred scene details, include only those within the frame. A tag already supplied by a named character's fixed appearance remains a mandatory identity anchor under the fixed-base rule above. Examples: `armpits`, `clavicle`, `cleavage`, `navel`, `thighs`, `buttocks`, {{#when::toggle::lb-xnai.nsfw}}`nipples`, `pussy`, `anus`, `penis`{{/nsfw}}...
 
 Never creatively complete persistent appearance for a named character that has an authoritative entry. Creative appearance completion is allowed only for anonymous or unnamed background people with no authoritative appearance entry. A named character with no fixed entry must remain underspecified rather than receiving invented identity traits, and the missing entry must not be hidden by a generated reference.
@@ -166,7 +178,7 @@ etc. Specify in `characters[].position`. Use prepositional phrases ("at -", "on 
 
 ### Natural Language Supplement
 
-In `scenes[].supplement` and `keyvis.supplement`, describe the image in natural language for what tags cannot express, such as detailed composition, framing, characters' actions, atmosphere, lighting, etc. Use concise and minimal, telegraphic sentences; be objective, not subjective interpretation.
+In `scenes[].supplement` and `keyvis.supplement`, describe the image in natural language for what tags cannot express, such as detailed composition, framing, characters' actions, atmosphere, lighting, etc. Use at most two concise, minimal, telegraphic sentences; be objective, not subjective interpretation.
 
 Unusual framing and vantage points are welcome, e.g. "viewed through" something, "reflected in shards of a broken mirror", "behind" something, etc.
 

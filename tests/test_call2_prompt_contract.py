@@ -75,3 +75,28 @@ def test_call2_authority_audit_rejects_associated_accessory_removal():
     )
     assert "physically associated with a removed garment" in source
     assert "removing a belt does not authorize removing `belt pouch`" in source
+
+
+def test_call2_builds_one_coherent_explicit_bundle_without_tag_dictionary():
+    system = CALL2_SYSTEM.read_text(encoding="utf-8")
+    thoughts = CALL2_THOUGHTS.read_text(encoding="utf-8")
+
+    assert "Coherent Explicit Scene Bundle" in system
+    assert "at least five complementary, story-supported visual details" in system
+    assert "not from a fixed palette" in system
+    assert "Do not consult or simulate an external tag dictionary" in system
+    assert "camera whose framing actually contains every body part" in system
+    assert "source#`/`target#` counterparts symmetrical" in system
+    assert "silently assemble and cross-check a coherent scene-specific bundle" in thoughts
+    assert "never invent a new act, anatomy, intensity, or garment state" in thoughts
+
+
+def test_call2_plan_handoff_stays_natural_and_schema_remains_compact():
+    source = PIPELINE_PY.read_text(encoding="utf-8")
+
+    assert "Write scene_brief as natural language, not a field menu or tag list" in source
+    assert '"scene_brief": "objective visual moment to expand"' in source
+    assert "lower_body_exposure" not in source
+    assert '"must_show"' not in source
+    assert "required_additions" in source
+    assert "camera_replacement" in source

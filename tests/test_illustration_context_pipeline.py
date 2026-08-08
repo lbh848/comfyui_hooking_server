@@ -67,6 +67,9 @@ def _authority_audit_response(
     authority_exceptions=None,
     forbidden_additions=None,
     conflicts=None,
+    required_additions=None,
+    scene_additions=None,
+    camera_replacement="",
 ):
     request = str(messages[-1].get("content") or "")
     entries = json.loads(request.split("# AUDIT ENTRIES\n", 1)[1])
@@ -76,6 +79,9 @@ def _authority_audit_response(
             "authority_exceptions": list(authority_exceptions or []),
             "forbidden_additions": list(forbidden_additions or []),
             "conflicts": list(conflicts or []),
+            "required_additions": list(required_additions or []),
+            "scene_additions": list(scene_additions or []),
+            "camera_replacement": str(camera_replacement or ""),
         } for entry in entries],
     })
 
@@ -392,6 +398,73 @@ def test_scene_plan_uses_each_outfit_decided_by_global_plan():
     assert bound[1]["wardrobe_sources"]["Hana"] == "call2_plan"
 
 
+def test_scene_plan_carries_literal_wardrobe_change_as_natural_continuity():
+    plans = [{
+        "plan_id": "S001",
+        "slot": 4,
+        "anchor_segment": "C002",
+        "characters": ["Sato"],
+        "scene_brief": "Sato leans forward during the ongoing intimate moment.",
+    }]
+    events = [{
+        "segment_id": "C002",
+        "character": "Sato",
+        # Deliberately coarse/wrong hints reproduce the original failure mode.
+        "operation": "open",
+        "wardrobe_change": (
+            "He pulled down his pants and underwear, leaving his penis exposed."
+        ),
+        "state_after": "partial",
+        "evidence": (
+            "He pulled down his pants and underwear.\n"
+            "His penis remained fully visible."
+        ),
+    }]
+
+    bound = pipeline.bind_scene_plan_wardrobes(
+        plans,
+        ["C001", "C002"],
+        {},
+        [{"name": "Sato", "confidence": 1.0}],
+        events,
+        "message-1",
+        default_outfits={"Sato": ["white shirt", "blue pants", "underwear"]},
+    )
+
+    note = bound[0]["continuity_note"]
+    assert note.startswith("By this point in the story")
+    assert "pulled down his pants and underwear" in note
+    assert "penis remained fully visible" in note
+    assert bound[0]["_continuity_characters"] == ["Sato"]
+
+
+def test_downstream_call2_plan_handoff_omits_internal_wardrobe_structure():
+    public = pipeline._public_call2_scene_plan({
+        "plan_id": "S001",
+        "slot": 4,
+        "anchor_segment": "C002",
+        "characters": ["Sato"],
+        "scene_brief": "Sato leans forward while his lowered clothing remains visible.",
+        "continuity_note": "Sato pulled down his pants and underwear.",
+        "wardrobe_snapshot": {
+            "Sato": {
+                "body_state": "partial",
+                "worn": ["white shirt", "blue pants"],
+                "removed": [],
+            },
+        },
+        "wardrobe_sources": {"Sato": "default_base_plus_sparse_history"},
+        "_continuity_characters": ["Sato"],
+    })
+
+    assert public == {
+        "slot": 4,
+        "characters": ["Sato"],
+        "scene_brief": "Sato leans forward while his lowered clothing remains visible.",
+        "continuity_note": "Sato pulled down his pants and underwear.",
+    }
+
+
 def test_call2_detail_assigns_plan_ids_from_validated_slots():
     output_without_plan_ids = re.sub(
         r"\n\s+plan_id:\s*[^\r\n]+",
@@ -409,6 +482,58 @@ def test_call2_detail_assigns_plan_ids_from_validated_slots():
     assert reason == ""
     assert [item["slot"] for item in descriptors] == [4, 9]
     assert [item["plan_id"] for item in descriptors] == ["S021", "S022"]
+
+
+def test_call2_detail_preserves_contextual_outfit_resolution_until_audit():
+    output = """<lb-xnai>
+scenes[1]:
+  - camera: full body, straight-on
+    characters[1]:
+      - name: Sato
+        positive: boy, white shirt, bottomless, penis, pants down
+        outfit_state:
+          body_state: bottomless
+          worn: [white shirt]
+          removed: [blue pants, underwear]
+    scene: 1boy, interior, bedroom, nsfw
+    slot: 4
+</lb-xnai>"""
+
+    descriptors, reason = pipeline._parse_call2_detail_output(
+        output,
+        pipeline.merged_toggles({"key_visual": False}),
+        [4],
+        ["S001"],
+        "TEST-CALL2-DETAIL-NATURAL-CONTINUITY",
+        assigned_wardrobes_by_slot={
+            4: {
+                "Sato": {
+                    "body_state": "partial",
+                    "worn": ["white shirt", "blue pants", "underwear"],
+                    "removed": [],
+                },
+            },
+        },
+        assigned_characters_by_slot={4: ["Sato"]},
+        assigned_scene_context_by_slot={
+            4: {
+                "scene_brief": "Sato's explicit lower-body exposure is visible.",
+                "continuity_note": (
+                    "Sato pulled down his pants and underwear, leaving his penis exposed."
+                ),
+                "continuity_characters": ["Sato"],
+            },
+        },
+    )
+
+    assert reason == ""
+    character = descriptors[0]["characters"][0]
+    assert character["outfit_state"] == {
+        "body_state": "bottomless",
+        "worn": ["white shirt"],
+        "removed": ["blue pants", "underwear"],
+    }
+    assert "pants and underwear" in descriptors[0]["continuity_note"]
 
 
 def test_call2_detail_accepts_empty_characters_for_characterless_plan():
@@ -613,6 +738,9 @@ async def test_call2_detail_sparse_wardrobe_is_repaired_without_retry(monkeypatc
 
     async def fake_pipeline_call(call_name, messages, *args, **kwargs):
         call_names.append(call_name)
+        combined = "\n".join(str(message.get("content") or "") for message in messages)
+        assert '"scene_brief": "Hana in a blue dress"' in combined
+        assert '"wardrobe_snapshot"' not in combined
         if "WARDROBE-CORRECTION" in call_name:
             return corrected
         return initial
@@ -1368,7 +1496,8 @@ async def test_call2_detail_failure_reuses_preserved_plan_in_global_fallback(mon
             combined = "\n".join(str(message.get("content") or "") for message in messages)
             assert "# PRESERVED GLOBAL PLAN AFTER DETAIL FAILURE" in combined
             assert '"slot": 0' in combined
-            assert '"wardrobe_snapshot"' in combined
+            assert '"scene_brief": "Hana waits"' in combined
+            assert '"wardrobe_snapshot"' not in combined
             return _toon_for_slots([0])
         if call_name == "CALL2-AUTHORITY-AUDIT":
             return json.dumps({
@@ -4968,6 +5097,52 @@ def test_parse_call1_wardrobe_change_schema_preserves_semantic_text():
     assert event["evidence"] == "She changed into a swimsuit."
 
 
+def test_parse_call1_accepts_literal_multiline_evidence_with_transport_whitespace():
+    current = (
+        "He undid the fastener.\n"
+        "He pulled down his pants and underwear.\n"
+        "His penis remained fully visible."
+    )
+    _rendered, segments = pipeline._segment_current_context(current)
+    evidence = (
+        "He undid the fastener. He pulled down his pants and underwear. "
+        "His penis remained fully visible."
+    )
+
+    analysis = pipeline.parse_call1_analysis(
+        json.dumps({
+            "reference_assignments": [],
+            "history_characters": [],
+            "current_characters": ["Sato"],
+            "wardrobe_events": [{
+                "segment_id": "C001",
+                "character": "Sato",
+                "operation": "open",
+                "wardrobe_change": (
+                    "He pulled down his pants and underwear, leaving his penis exposed."
+                ),
+                "state_after": "partial",
+                "evidence": evidence,
+            }],
+            "hairstyle_events": [],
+            "unresolved_references": [],
+        }),
+        current,
+        segments,
+        "Sato",
+    )
+
+    assert analysis is not None
+    assert len(analysis["wardrobe_events"]) == 1
+    assert analysis["wardrobe_events"][0]["wardrobe_change"].endswith(
+        "leaving his penis exposed."
+    )
+    assert not any(
+        "복장 변경 근거 불일치" in warning
+        for warning in analysis["validation_warnings"]
+    )
+
+
 def test_parse_call1_legacy_items_event_still_carried_for_backward_compat():
     # 과거 기록/구 출력의 items 형식은 하위 호환을 위해 계속 파싱한다.
     current = "She removed her gloves."
@@ -5250,6 +5425,82 @@ def test_call2_semantic_authority_audit_removes_unsupported_hair_conflict():
     assert "two side up" in tags
     assert "detached sleeves" in tags
     assert audits[0]["conflicts_removed"] == ["hair down"]
+
+
+def test_call2_existing_audit_call_repairs_missing_visual_bundle_and_camera():
+    descriptors = [{
+        "kind": "scene",
+        "slot": 4,
+        "scene_brief": (
+            "Sato's pants and underwear are lowered and his exposed anatomy is visible."
+        ),
+        "continuity_note": (
+            "Sato pulled down his pants and underwear, leaving his penis exposed."
+        ),
+        "camera": "upper body, straight-on",
+        "scene": "1boy, interior, bedroom",
+        "supplement": "The man thrusts his hips forward.",
+        "characters": [{
+            "name": "Sato",
+            "positive": "boy, white shirt, blue pants, underwear, hips forward",
+            "outfit_state": {
+                "body_state": "bottomless",
+                "worn": ["white shirt"],
+                "removed": ["blue pants", "underwear"],
+            },
+        }],
+    }]
+    fixed = {"Sato": "1boy, short black hair, brown eyes"}
+    defaults = {"Sato": ["white shirt", "blue pants", "underwear"]}
+    entries, entry_keys = pipeline._call2_authority_audit_entries(
+        descriptors,
+        fixed,
+        defaults,
+    )
+
+    assert entries[0]["scene_context"]["scene_brief"].startswith("Sato's pants")
+    assert "leaving his penis exposed" in entries[0]["scene_context"]["continuity_note"]
+    decisions, reason = pipeline._parse_call2_authority_audit_output(
+        json.dumps({
+            "entries": [{
+                "id": 1,
+                "authority_exceptions": ["blue pants", "underwear"],
+                "forbidden_additions": [],
+                "conflicts": [],
+                "required_additions": ["bottomless", "penis", "pants down"],
+                "scene_additions": ["nsfw"],
+                "camera_replacement": "full body, straight-on",
+            }],
+        }),
+        entries,
+        entry_keys,
+    )
+    audits = pipeline.apply_call2_authority_base(
+        descriptors,
+        fixed,
+        defaults,
+        decisions,
+        "ok",
+    )
+
+    assert reason == ""
+    assert descriptors[0]["camera"] == "full body, straight-on"
+    assert pipeline._split_top_level_authority_tags(descriptors[0]["scene"])[-1] == "nsfw"
+    tags = pipeline._split_top_level_authority_tags(
+        descriptors[0]["characters"][0]["positive"]
+    )
+    for required in ("bottomless", "penis", "pants down"):
+        assert required in tags
+    assert "blue pants" not in tags
+    assert "underwear" not in tags
+    assert descriptors[0]["characters"][0]["outfit_state"] == {
+        "body_state": "bottomless",
+        "worn": ["white shirt"],
+        "removed": ["blue pants", "underwear"],
+    }
+    assert audits[0]["required_additions"] == ["bottomless", "penis", "pants down"]
+    assert audits[0]["scene_additions"] == ["nsfw"]
+    assert audits[0]["camera_replacement"] == "full body, straight-on"
 
 
 def test_call2_semantic_audit_checks_conflicts_even_when_base_is_complete():
