@@ -11636,6 +11636,11 @@
                             <button onclick="openBotBatchAddModal()" style="width:100%; margin-top:4px; background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">일괄추가</button>
                             <button onclick="openBotAssetCharImportModal()" disabled style="width:100%; margin-top:4px; background:var(--surface2); color:var(--text2); border:1px solid var(--border); padding:4px 8px; border-radius:4px; cursor:not-allowed; font-size:0.75rem; opacity:0.5;">에셋에서 캐릭터 가져오기</button>
                         </div>
+                        <div style="background:color-mix(in srgb, var(--accent) 12%, transparent); border-radius:8px; padding:10px; margin-top:8px;">
+                            <div class="section-title">대표 이미지 일괄 설정</div>
+                            <div style="font-size:0.67rem; color:var(--text2); line-height:1.35; margin-bottom:6px;">모든 캐릭터의 메인 대표 이미지를 한 화면에서 확인합니다. (보기 전용)</div>
+                            <button onclick="openRepBatchModal()" style="width:100%; background:var(--accent2); color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">대표 이미지 일괄 보기</button>
+                        </div>
                         <div id="bot-one-click-workflow-group" style="background:linear-gradient(145deg, rgba(14,165,233,0.10), rgba(124,58,237,0.08)); border:1px solid color-mix(in srgb, var(--accent) 35%, var(--border)); border-radius:10px; padding:10px; margin-top:8px;">
                             <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:7px;">
                                 <div>
@@ -26107,11 +26112,14 @@
 
         document.addEventListener('keydown', e => {
             if (e.key === 'Escape') {
-                closeLightbox();
+                // 라이트박스(이미지 확대)가 켜져 있으면 그것만 닫고 종료 — 배경 모달은 유지
+                const lb = document.getElementById('lightbox');
+                if (lb && lb.classList.contains('visible')) { closeLightbox(); return; }
                 closePromptModal();
                 closeSettingsModal();
                 closeQueueModal();
                 closeSeedRegenModal();
+                closeRepBatchModal();
             }
         });
 
@@ -55219,6 +55227,191 @@
                 console.error('[BOT] 대표 이미지 토글 실패:', e);
                 showToast('대표 이미지 설정 실패', 'error');
             }
+        }
+
+        // ─── 대표 이미지 일괄 보기 모달 (보기 전용: 데이터 변경 없음) ───
+        // 삽화 데이터 준비(태깅 등) 직전에, 각 캐릭터의 메인 대표(rep_images[0])가
+        // 제대로 지정되어 있는지 파일명으로 한 화면에서 훑어보는 점검용. 저장은 하지 않는다.
+        let _repBatchModalOpen = false;
+        let _repBatchRowData = []; // [{charName, rep0, baseOrder:[{filename,url}], loaded, error}]
+
+        async function openRepBatchModal() {
+            if (_repBatchModalOpen) return;
+            if (!botData || !botCurrentBot) { showToast('봇을 먼저 선택하세요', 'error'); return; }
+            const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
+            if (!bot || !bot.characters || bot.characters.length === 0) {
+                showToast('표시할 캐릭터가 없습니다', 'info'); return;
+            }
+            _repBatchModalOpen = true;
+            _repBatchRowData = bot.characters.map(c => ({
+                charName: c.name,
+                rep0: (c.rep_images || [])[0] || '',
+                baseOrder: [],
+                loaded: false,
+                error: ''
+            }));
+            _repBatchBuildOverlay();
+            _repBatchRowData.forEach((_, i) => _repBatchRenderRow(i));
+            // 캐릭터별 images API 병렬 로드 (동시성 제한)
+            const enc = encodeURIComponent;
+            await _repBatchRunLimited(bot.characters.map((c, i) => async () => {
+                try {
+                    const resp = await fetch('/api/bot_mode/images?bot=' + enc(botCurrentBot) + '&character=' + enc(c.name));
+                    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                    const data = await resp.json();
+                    _repBatchRowData[i].baseOrder = (data && data.images) || [];
+                    _repBatchRowData[i].loaded = true;
+                } catch (e) {
+                    _repBatchRowData[i].error = (e && e.message) ? e.message : '로드 실패';
+                    _repBatchRowData[i].loaded = true;
+                    console.error('[BOT] 대표 일괄 보기 이미지 로드 실패:', c.name, e);
+                }
+                _repBatchRenderRow(i);
+            }), 10);
+        }
+
+        // 동시성 제한 실행 헬퍼 (캐릭터 다수 시 서버 부하 완화)
+        async function _repBatchRunLimited(tasks, limit) {
+            const queue = tasks.slice();
+            const n = Math.max(1, Math.min(limit || 8, queue.length || 1));
+            async function worker() {
+                while (queue.length) {
+                    const t = queue.shift();
+                    if (!t) break;
+                    try { await t(); } catch (e) { /* 개별 에러는 task 내부에서 처리 */ }
+                }
+            }
+            await Promise.all(Array.from({length: n}, () => worker()));
+        }
+
+        function _repBatchBuildOverlay() {
+            const overlay = document.createElement('div');
+            overlay.id = 'rep-batch-overlay';
+            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:10000; display:flex; align-items:center; justify-content:center;';
+            overlay.innerHTML =
+                '<div style="background:var(--surface); border-radius:12px; padding:18px; max-width:1100px; width:95%; max-height:88vh; display:flex; flex-direction:column; overflow:hidden; box-shadow:0 8px 32px rgba(0,0,0,0.3);">' +
+                    '<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; gap:10px;">' +
+                        '<h3 style="margin:0; font-size:1.05rem;">대표 이미지 일괄 보기 <span style="font-size:0.72rem; color:var(--text2); font-weight:normal;">— ' + escHtml(botCurrentBot) + ' (보기 전용)</span></h3>' +
+                        '<input id="rep-batch-search" type="text" placeholder="파일명 검색 (각 행에서 일치 항목을 앞으로)" style="flex:1; max-width:340px; padding:6px 10px; border-radius:6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.82rem; box-sizing:border-box;">' +
+                        '<button onclick="closeRepBatchModal()" style="background:none; border:none; color:var(--text); font-size:1.3rem; cursor:pointer; padding:2px 8px; line-height:1;" title="닫기">✕</button>' +
+                    '</div>' +
+                    '<div style="font-size:0.7rem; color:var(--text2); margin-bottom:8px;">각 캐릭터의 메인 대표(맨 앞, 초록 테두리)를 파일명으로 확인합니다. 검색은 파일명 기준이며 일치 항목이 없으면 원래 순서로 돌아갑니다. 저장은 이곳에서 하지 않습니다.</div>' +
+                    '<div id="rep-batch-body" style="overflow-y:auto; flex:1; display:flex; flex-direction:column; gap:10px; padding-right:4px;"></div>' +
+                '</div>';
+            window._repBatchPrevOverflow = document.body.style.overflow;
+            document.body.style.overflow = 'hidden';
+            document.body.appendChild(overlay);
+            let debounce;
+            const input = overlay.querySelector('#rep-batch-search');
+            input.addEventListener('input', e => {
+                clearTimeout(debounce);
+                debounce = setTimeout(() => filterRepBatchByName(e.target.value), 120);
+            });
+        }
+
+        function _repBatchRenderRow(i) {
+            const row = _repBatchRowData[i];
+            if (!row) return;
+            const body = document.getElementById('rep-batch-body');
+            if (!body) return;
+            let rowEl = body.querySelector('[data-row-idx="' + i + '"]');
+            if (!rowEl) {
+                rowEl = document.createElement('div');
+                rowEl.dataset.rowIdx = i;
+                rowEl.style.cssText = 'background:var(--surface2); border-radius:8px; padding:8px;';
+                body.appendChild(rowEl);
+            }
+            if (!row.loaded) {
+                rowEl.innerHTML = '<div style="font-size:0.8rem; color:var(--text2); padding:4px 2px;">⏳ ' + escHtml(row.charName) + ' 로드 중…</div>';
+                return;
+            }
+            if (row.error) {
+                rowEl.innerHTML = '<div style="font-size:0.8rem; color:var(--error); padding:4px 2px;"><span style="color:var(--text); font-weight:600;">' + escHtml(row.charName) + '</span> — 이미지 로드 실패: ' + escHtml(row.error) + '</div>';
+                return;
+            }
+            if (!row.baseOrder || row.baseOrder.length === 0) {
+                rowEl.innerHTML = '<div style="font-size:0.8rem; color:var(--text2); padding:4px 2px;"><span style="color:var(--text); font-weight:600;">' + escHtml(row.charName) + '</span> — 이미지 없음</div>';
+                return;
+            }
+            const searchEl = document.getElementById('rep-batch-search');
+            const search = (searchEl ? searchEl.value : '').trim().toLowerCase();
+            const display = _repBatchComputeDisplay(row, search);
+            const matchedCount = search ? row.baseOrder.filter(im => (im.filename || '').toLowerCase().includes(search)).length : display.length;
+            const badge = row.rep0
+                ? '<span style="margin-left:6px; font-size:0.6rem; color:var(--accent); border:1px solid color-mix(in srgb, var(--accent) 45%, transparent); border-radius:999px; padding:1px 6px;">대표 설정됨</span>'
+                : '<span style="margin-left:6px; font-size:0.6rem; color:var(--text2); border:1px solid var(--border); border-radius:999px; padding:1px 6px;">대표 미설정</span>';
+            const matchInfo = search
+                ? '<span style="margin-left:auto; font-size:0.66rem; color:var(--text2);">파일명 일치 ' + matchedCount + '건 / 전체 ' + row.baseOrder.length + '장</span>'
+                : '<span style="margin-left:auto; font-size:0.66rem; color:var(--text2);">' + display.length + '장 표시' + (row.baseOrder.length > 10 ? ' (전체 ' + row.baseOrder.length + '장)' : '') + '</span>';
+            const thumbs = display.map(img => {
+                const isRep0 = (img.filename === row.rep0);
+                const borderStyle = isRep0
+                    ? 'border:3px solid #22c55e; box-shadow:0 0 0 1px rgba(34,197,94,0.25);'
+                    : 'border:1px solid var(--border);';
+                return '<div style="flex:0 0 auto; width:78px; position:relative; cursor:zoom-in;" onclick="openLightbox(\'' + escAttr(img.url) + '\')">' +
+                    '<img src="' + escAttr(img.url) + '" loading="lazy" style="width:100%; aspect-ratio:700/1024; object-fit:contain; display:block; border-radius:6px; background:var(--surface); ' + borderStyle + '" onerror="this.style.opacity=0.2">' +
+                    (isRep0 ? '<div style="position:absolute; top:3px; left:3px; background:#22c55e; color:#000; font-size:0.55rem; font-weight:700; padding:1px 5px; border-radius:4px;">대표</div>' : '') +
+                    '<div style="font-size:0.54rem; color:var(--text3); margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="' + escAttr(img.filename) + '">' + escHtml(img.filename) + '</div>' +
+                '</div>';
+            }).join('');
+            rowEl.innerHTML =
+                '<div style="display:flex; align-items:center; margin-bottom:6px;">' +
+                    '<span style="font-weight:600; font-size:0.9rem;">' + escHtml(row.charName) + '</span>' + badge + matchInfo +
+                '</div>' +
+                '<div style="display:flex; gap:6px; overflow-x:auto; padding-bottom:4px;">' + thumbs + '</div>';
+        }
+
+        // 표시 순서 계산. 핵심 불변량: rep0(메인 대표)이 존재하면 항상 맨 앞.
+        function _repBatchComputeDisplay(row, search) {
+            const all = row.baseOrder.slice();
+            let ordered;
+            if (row.rep0) {
+                const rep0Obj = all.find(im => im.filename === row.rep0);
+                const rest = all.filter(im => im.filename !== row.rep0);
+                ordered = rep0Obj ? [rep0Obj].concat(rest) : rest;
+            } else {
+                ordered = all;
+            }
+            if (search) {
+                const matched = ordered.filter(im => (im.filename || '').toLowerCase().includes(search));
+                if (matched.length === 0) return _repBatchCapTen(ordered, row); // 일치 없으면 원래 순서 유지
+                const matchedSet = new Set(matched.map(im => im.filename));
+                const unmatched = ordered.filter(im => !matchedSet.has(im.filename));
+                let result;
+                if (row.rep0) {
+                    const rep0Obj = ordered.find(im => im.filename === row.rep0);
+                    const matchedNoRep0 = matched.filter(im => im.filename !== row.rep0);
+                    const unmatchedNoRep0 = unmatched.filter(im => im.filename !== row.rep0);
+                    result = (rep0Obj ? [rep0Obj] : []).concat(matchedNoRep0).concat(unmatchedNoRep0);
+                } else {
+                    result = matched.concat(unmatched);
+                }
+                return _repBatchCapTen(result, row);
+            }
+            return _repBatchCapTen(ordered, row);
+        }
+
+        // 최대 10개. rep0이 컷에서 빠지면 강제로 맨 앞 삽입 (맨 앞 대표 보장).
+        function _repBatchCapTen(arr, row) {
+            const capped = arr.slice(0, 10);
+            if (row.rep0 && !capped.find(im => im.filename === row.rep0)) {
+                const rep0Obj = row.baseOrder.find(im => im.filename === row.rep0);
+                if (rep0Obj) return [rep0Obj].concat(capped.slice(0, 9));
+            }
+            return capped;
+        }
+
+        function filterRepBatchByName(query) {
+            if (!_repBatchModalOpen) return;
+            _repBatchRowData.forEach((_, i) => _repBatchRenderRow(i));
+        }
+
+        function closeRepBatchModal() {
+            const ov = document.getElementById('rep-batch-overlay');
+            if (ov) ov.remove();
+            document.body.style.overflow = window._repBatchPrevOverflow || '';
+            _repBatchModalOpen = false;
+            _repBatchRowData = [];
         }
 
         function updateRepFirstBorder(charName) {
