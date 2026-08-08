@@ -59199,7 +59199,18 @@
             ['face_batch', '얼굴 이미지 일괄 작업'],
             ['llm_refine', 'LLM 얼굴/눈 태그 정제'],
         ];
+        const BOT_ONE_CLICK_STAGE_DESCRIPTIONS = {
+            tag_analysis: '대표 이미지의 태그를 분석합니다.',
+            negative: '대표 이미지에 선택한 부정 프롬프트를 적용합니다.',
+            data_patch: '캐릭터 데이터를 보정하고 FACE 이미지를 생성합니다.',
+            embedding: '프로그램에서 사용할 캐릭터 embedding을 생성합니다.',
+            dialogue_face_crop: '대사모드용 FACE CROP 이미지를 ComfyUI로 추출합니다.',
+            face_batch: 'FACE 이미지의 태그 분석과 부정 프롬프트 적용을 진행합니다.',
+            llm_refine: 'LLM으로 얼굴과 눈 관련 태그를 마지막으로 정제합니다.',
+        };
+        const BOT_ONE_CLICK_WIZARD_STEPS = ['캐릭터 선택', '기능 선택', '세부 설정', '최종 확인'];
         let _botOneClickRun = null;
+        let _botOneClickWizard = null;
         let _botOneClickDataPatchWait = null;
         let _botOneClickLlmWait = null;
 
@@ -59235,6 +59246,7 @@
         function closeBotOneClickModal() {
             const modal = document.getElementById('bot-one-click-modal');
             if (modal) modal.remove();
+            _botOneClickWizard = null;
         }
 
         async function openBotOneClickSettings() {
@@ -59246,7 +59258,8 @@
                 showToast('봇을 먼저 선택하세요.', 'error');
                 return;
             }
-            const bot = (botData?.bots || []).find(item => item.name === botCurrentBot);
+            const botName = botCurrentBot;
+            const bot = (botData?.bots || []).find(item => item.name === botName);
             const characters = bot?.characters || [];
             if (!characters.length) {
                 showToast('선택할 캐릭터가 없습니다.', 'error');
@@ -59260,7 +59273,7 @@
             let presets = {};
             try {
                 const [patchResult, tagsResult] = await Promise.all([
-                    _botOneClickJson(`/api/bot_mode/patch_settings?bot=${encodeURIComponent(botCurrentBot)}`),
+                    _botOneClickJson(`/api/bot_mode/patch_settings?bot=${encodeURIComponent(botName)}`),
                     _botOneClickJson('/api/asset_mode/tags'),
                 ]);
                 patchSettings = {...patchSettings, ...(patchResult || {})};
@@ -59271,6 +59284,7 @@
                 showToast('일부 설정을 불러오지 못해 기본값으로 표시합니다.', 'warning');
                 if (assetTags?.negative_presets) presets = assetTags.negative_presets;
             }
+            if (!document.body.contains(modal)) return;
 
             const eligibleCount = characters.filter(char => (char.rep_images || []).length > 0).length;
             const presetNames = Object.keys(presets);
@@ -59282,7 +59296,7 @@
                 const reps = char.rep_images || [];
                 const enabled = reps.length > 0;
                 const imageUrl = enabled
-                    ? `/api/bot_mode/image/${encodeURIComponent(botCurrentBot)}/${encodeURIComponent(char.name)}/${encodeURIComponent(reps[0])}`
+                    ? `/api/bot_mode/image/${encodeURIComponent(botName)}/${encodeURIComponent(char.name)}/${encodeURIComponent(reps[0])}`
                     : '';
                 return `<label class="bot-one-click-char-card" data-name="${escAttr(char.name)}" data-enabled="${enabled ? '1' : '0'}"
                     style="display:flex; align-items:center; gap:9px; padding:8px 9px; border:1px solid ${enabled ? 'rgba(56,189,248,0.45)' : 'var(--border)'}; border-radius:7px; background:${enabled ? 'rgba(14,165,233,0.08)' : 'var(--surface2)'}; cursor:${enabled ? 'pointer' : 'not-allowed'}; opacity:${enabled ? 1 : 0.5};">
@@ -59296,17 +59310,30 @@
                     </div>
                 </label>`;
             }).join('');
+            const stageCards = BOT_ONE_CLICK_STAGES.map(([key, label], index) => `
+                <label class="bot-one-click-stage-card" data-stage="${escAttr(key)}" style="display:flex; align-items:center; gap:11px; padding:12px; border:1px solid rgba(56,189,248,0.48); border-radius:9px; background:rgba(14,165,233,0.08); cursor:pointer;">
+                    <input type="checkbox" id="bot-one-click-stage-${escAttr(key)}" class="bot-one-click-stage-toggle" data-stage="${escAttr(key)}" checked onchange="updateBotOneClickStageSelectionUi()" style="width:19px; height:19px; flex-shrink:0; accent-color:#0EA5E9; cursor:pointer;">
+                    <span style="width:25px; height:25px; display:flex; align-items:center; justify-content:center; flex-shrink:0; border-radius:50%; background:rgba(56,189,248,0.16); color:#38BDF8; font-size:0.72rem; font-weight:800;">${index + 1}</span>
+                    <span style="min-width:0; flex:1;">
+                        <span style="display:block; font-size:0.82rem; font-weight:700;">${escHtml(label)}</span>
+                        <span style="display:block; margin-top:3px; color:var(--text2); font-size:0.68rem; line-height:1.35;">${escHtml(BOT_ONE_CLICK_STAGE_DESCRIPTIONS[key] || '')}</span>
+                    </span>
+                    <span class="bot-one-click-stage-status" style="color:#38BDF8; font-size:0.67rem; font-weight:700;">사용</span>
+                </label>`).join('');
 
             modal.innerHTML = `<div style="width:min(980px,96vw); max-height:92vh; display:flex; flex-direction:column; overflow:hidden; border:1px solid color-mix(in srgb,var(--accent) 35%,var(--border)); border-radius:14px; background:var(--surface); box-shadow:0 18px 60px rgba(0,0,0,0.55);">
                 <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:14px; padding:16px 19px; border-bottom:1px solid var(--border); background:linear-gradient(90deg,rgba(2,132,199,0.11),rgba(124,58,237,0.10));">
                     <div>
-                        <div style="font-size:1.05rem; font-weight:750;">원클릭 설정 · ${escHtml(botCurrentBot)}</div>
-                        <div style="font-size:0.72rem; color:var(--text2); margin-top:4px;">캐릭터와 두 가지 필수 설정만 고르면 7단계를 순서대로 진행합니다.</div>
+                        <div style="font-size:1.05rem; font-weight:750;">원클릭 설정 · ${escHtml(botName)}</div>
+                        <div id="bot-one-click-step-caption" style="font-size:0.72rem; color:var(--text2); margin-top:4px;">1/4 · 캐릭터 선택</div>
                     </div>
                     <button onclick="closeBotOneClickModal()" aria-label="닫기" style="background:none; border:none; color:var(--text2); font-size:1.35rem; cursor:pointer;">&times;</button>
                 </div>
-                <div style="padding:15px 18px; overflow-y:auto; flex:1; display:grid; grid-template-columns:minmax(310px,1.15fr) minmax(280px,0.85fr); gap:14px;">
-                    <section style="min-width:0;">
+                <div style="padding:15px 18px; overflow-y:auto; flex:1;">
+                    <div style="display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:6px; margin-bottom:14px;">
+                        ${BOT_ONE_CLICK_WIZARD_STEPS.map((label, index) => `<div class="bot-one-click-step-indicator" data-step="${index}" style="padding:7px 5px; border:1px solid ${index === 0 ? 'rgba(56,189,248,0.55)' : 'var(--border)'}; border-radius:7px; background:${index === 0 ? 'rgba(14,165,233,0.10)' : 'var(--surface2)'}; color:${index === 0 ? '#38BDF8' : 'var(--text2)'}; text-align:center; font-size:0.67rem; font-weight:${index === 0 ? 750 : 500};">${index + 1}. ${escHtml(label)}</div>`).join('')}
+                    </div>
+                    <section class="bot-one-click-wizard-page" data-step="0" style="min-width:0;">
                         <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px;">
                             <div>
                                 <div style="font-size:0.86rem; font-weight:700;">1. 캐릭터 선택</div>
@@ -59320,9 +59347,22 @@
                         <input id="bot-one-click-char-search" type="search" placeholder="캐릭터 이름 검색" oninput="filterBotOneClickCharacters()" style="width:100%; box-sizing:border-box; margin-bottom:7px; padding:7px 9px; border:1px solid var(--border); border-radius:6px; background:var(--surface2); color:var(--text); font-size:0.76rem;">
                         <div id="bot-one-click-char-list" style="display:grid; grid-template-columns:repeat(auto-fill,minmax(210px,1fr)); gap:6px; max-height:430px; overflow-y:auto; padding-right:2px;">${rows}</div>
                     </section>
-                    <section style="display:flex; flex-direction:column; gap:11px; min-width:0;">
-                        <div style="padding:11px; border:1px solid rgba(156,39,176,0.32); border-radius:8px; background:rgba(156,39,176,0.07);">
-                            <div style="font-size:0.84rem; font-weight:700; margin-bottom:8px;">2. 부정 태그 설정</div>
+                    <section class="bot-one-click-wizard-page" data-step="1" style="display:none; min-width:0; max-width:760px; margin:0 auto;">
+                        <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:9px;">
+                            <div>
+                                <div style="font-size:0.86rem; font-weight:700;">2. 실행할 기능 선택</div>
+                                <div id="bot-one-click-stage-count" style="font-size:0.68rem; color:#38BDF8; margin-top:2px;">7개 기능 사용</div>
+                            </div>
+                            <div style="display:flex; gap:5px;">
+                                <button onclick="botOneClickSelectStages(true)" style="padding:3px 9px; border:1px solid var(--border); border-radius:5px; background:var(--surface2); color:var(--text); cursor:pointer; font-size:0.68rem;">모두 사용</button>
+                                <button onclick="botOneClickSelectStages(false)" style="padding:3px 9px; border:1px solid var(--border); border-radius:5px; background:var(--surface2); color:var(--text); cursor:pointer; font-size:0.68rem;">모두 해제</button>
+                            </div>
+                        </div>
+                        <div id="bot-one-click-stage-list" style="display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:7px;">${stageCards}</div>
+                    </section>
+                    <section class="bot-one-click-wizard-page" data-step="2" style="display:none; flex-direction:column; gap:11px; min-width:0; max-width:720px; margin:0 auto;">
+                        <div id="bot-one-click-negative-settings" style="padding:11px; border:1px solid rgba(156,39,176,0.32); border-radius:8px; background:rgba(156,39,176,0.07);">
+                            <div style="font-size:0.84rem; font-weight:700; margin-bottom:8px;">부정 태그 설정</div>
                             <label style="display:block; font-size:0.7rem; color:var(--text2); margin-bottom:4px;">프리셋</label>
                             <select id="bot-one-click-negative-preset" onchange="updateBotOneClickNegativePreset()" style="width:100%; padding:7px 8px; border:1px solid var(--border); border-radius:5px; background:var(--surface2); color:var(--text); font-size:0.77rem;">
                                 ${presetOptions || '<option value="">직접 입력</option>'}
@@ -59331,28 +59371,37 @@
                             <textarea id="bot-one-click-negative-tags" rows="5" placeholder="부정 태그를 입력하세요" style="width:100%; box-sizing:border-box; resize:vertical; padding:7px 8px; border:1px solid var(--border); border-radius:5px; background:var(--surface2); color:var(--text); font-size:0.74rem; line-height:1.4;">${escHtml((presets[firstPreset] || []).join(', '))}</textarea>
                             <div style="font-size:0.65rem; color:var(--text2); margin-top:5px; line-height:1.35;">같은 값이 대표 이미지와 FACE 이미지에 적용됩니다.</div>
                         </div>
-                        <div style="padding:11px; border:1px solid rgba(0,121,107,0.35); border-radius:8px; background:rgba(0,121,107,0.07);">
-                            <div style="font-size:0.84rem; font-weight:700; margin-bottom:8px;">3. FACE 크롭 설정</div>
+                        <div id="bot-one-click-crop-settings" style="padding:11px; border:1px solid rgba(0,121,107,0.35); border-radius:8px; background:rgba(0,121,107,0.07);">
+                            <div style="font-size:0.84rem; font-weight:700; margin-bottom:8px;">FACE 크롭 설정</div>
                             <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
                                 <label style="display:flex; flex-direction:column; gap:4px;"><span style="font-size:0.68rem; color:var(--text2);">CROP_TOP</span><input id="bot-one-click-crop-top" type="number" min="0.1" max="10" step="0.1" value="${Number(patchSettings.face_crop_top) || 1}" style="padding:7px; border:1px solid var(--border); border-radius:5px; background:var(--surface2); color:var(--text);"></label>
                                 <label style="display:flex; flex-direction:column; gap:4px;"><span style="font-size:0.68rem; color:var(--text2);">CROP_BOTTOM</span><input id="bot-one-click-crop-bottom" type="number" min="0.1" max="10" step="0.1" value="${Number(patchSettings.face_crop_bottom) || 1}" style="padding:7px; border:1px solid var(--border); border-radius:5px; background:var(--surface2); color:var(--text);"></label>
-                                <label style="display:flex; flex-direction:column; gap:4px;"><span style="font-size:0.68rem; color:var(--text2);">검출 confidence</span><input id="bot-one-click-confidence" type="number" min="0" max="1" step="0.05" value="0.3" style="padding:7px; border:1px solid var(--border); border-radius:5px; background:var(--surface2); color:var(--text);"></label>
-                                <label style="display:flex; align-items:center; gap:7px; padding:7px 8px; border:1px solid var(--border); border-radius:5px; background:var(--surface2); cursor:pointer;"><input id="bot-one-click-overwrite" type="checkbox"><span style="font-size:0.7rem; line-height:1.25;">기존 FACE<br>새로 추출</span></label>
+                                <label id="bot-one-click-confidence-setting" style="display:flex; flex-direction:column; gap:4px;"><span style="font-size:0.68rem; color:var(--text2);">검출 confidence</span><input id="bot-one-click-confidence" type="number" min="0" max="1" step="0.05" value="0.3" style="padding:7px; border:1px solid var(--border); border-radius:5px; background:var(--surface2); color:var(--text);"></label>
+                                <label id="bot-one-click-overwrite-setting" style="display:flex; align-items:center; gap:7px; padding:7px 8px; border:1px solid var(--border); border-radius:5px; background:var(--surface2); cursor:pointer;"><input id="bot-one-click-overwrite" type="checkbox"><span style="font-size:0.7rem; line-height:1.25;">기존 FACE<br>새로 추출</span></label>
                             </div>
                             <div style="font-size:0.65rem; color:var(--text2); margin-top:6px; line-height:1.35;">이번 실행에만 적용되며 기존 패치 설정 파일은 변경하지 않습니다.</div>
                         </div>
-                        <div style="padding:8px 10px; border-radius:7px; background:var(--surface2); color:var(--text2); font-size:0.67rem; line-height:1.45;">
-                            태그 분석 → 부정 적용 → 데이터 패치 → embedding → 대사 FACE CROP → 얼굴 태그/부정 작업 → LLM 정제
-                        </div>
+                        <div id="bot-one-click-no-settings" style="display:none; padding:18px; border:1px dashed var(--border); border-radius:8px; background:var(--surface2); color:var(--text2); font-size:0.76rem; text-align:center;">선택한 기능에는 추가 설정이 필요하지 않습니다.</div>
+                    </section>
+                    <section class="bot-one-click-wizard-page" data-step="3" style="display:none; min-width:0; max-width:720px; margin:0 auto;">
+                        <div style="font-size:0.86rem; font-weight:700; margin-bottom:9px;">4. 실행 내용 확인</div>
+                        <div id="bot-one-click-review" style="display:flex; flex-direction:column; gap:9px;"></div>
                     </section>
                 </div>
                 <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px 18px; border-top:1px solid var(--border);">
                     <div id="bot-one-click-form-error" style="font-size:0.7rem; color:var(--error);"></div>
-                    <div style="display:flex; gap:7px; flex-shrink:0;"><button onclick="closeBotOneClickModal()" style="padding:7px 15px; border:1px solid var(--border); border-radius:6px; background:var(--surface2); color:var(--text); cursor:pointer;">취소</button><button id="bot-one-click-start-btn" onclick="startBotOneClick()" style="padding:8px 19px; border:none; border-radius:6px; background:linear-gradient(90deg,#0284C7,#7C3AED); color:#fff; cursor:pointer; font-weight:750;">원클릭 시작</button></div>
+                    <div style="display:flex; gap:7px; flex-shrink:0;">
+                        <button onclick="closeBotOneClickModal()" style="padding:7px 15px; border:1px solid var(--border); border-radius:6px; background:var(--surface2); color:var(--text); cursor:pointer;">취소</button>
+                        <button id="bot-one-click-back-btn" onclick="botOneClickPreviousStep()" style="display:none; padding:7px 15px; border:1px solid var(--border); border-radius:6px; background:var(--surface2); color:var(--text); cursor:pointer;">이전</button>
+                        <button id="bot-one-click-next-btn" onclick="botOneClickNextStep()" style="padding:8px 19px; border:none; border-radius:6px; background:#0284C7; color:#fff; cursor:pointer; font-weight:750;">다음</button>
+                        <button id="bot-one-click-start-btn" onclick="startBotOneClick()" style="display:none; padding:8px 19px; border:none; border-radius:6px; background:linear-gradient(90deg,#0284C7,#7C3AED); color:#fff; cursor:pointer; font-weight:750;">원클릭 시작</button>
+                    </div>
                 </div>
             </div>`;
             modal.dataset.embTarget = patchSettings.emb_target || '대표만';
+            _botOneClickWizard = {step: 0, botName};
             updateBotOneClickSelectionUi();
+            updateBotOneClickStageSelectionUi();
         }
 
         function botOneClickSelectCharacters(checked) {
@@ -59370,6 +59419,171 @@
                 card.style.borderColor = input?.checked ? 'rgba(56,189,248,0.55)' : 'var(--border)';
                 card.style.background = input?.checked ? 'rgba(14,165,233,0.08)' : 'var(--surface2)';
             });
+        }
+
+        function botOneClickSelectStages(checked) {
+            document.querySelectorAll('.bot-one-click-stage-toggle').forEach(input => { input.checked = checked; });
+            updateBotOneClickStageSelectionUi();
+        }
+
+        function _botOneClickEnabledStages() {
+            return Object.fromEntries(BOT_ONE_CLICK_STAGES.map(([key]) => {
+                const input = document.getElementById(`bot-one-click-stage-${key}`);
+                return [key, Boolean(input?.checked)];
+            }));
+        }
+
+        function _botOneClickUsesAnyStage(enabledStages, keys) {
+            return keys.some(key => enabledStages[key]);
+        }
+
+        function updateBotOneClickStageSelectionUi() {
+            const inputs = Array.from(document.querySelectorAll('.bot-one-click-stage-toggle'));
+            const enabledCount = inputs.filter(input => input.checked).length;
+            const count = document.getElementById('bot-one-click-stage-count');
+            if (count) count.textContent = `${enabledCount}개 기능 사용 / 전체 ${inputs.length}개`;
+            document.querySelectorAll('.bot-one-click-stage-card').forEach(card => {
+                const input = card.querySelector('.bot-one-click-stage-toggle');
+                const enabled = Boolean(input?.checked);
+                card.style.borderColor = enabled ? 'rgba(56,189,248,0.48)' : 'var(--border)';
+                card.style.background = enabled ? 'rgba(14,165,233,0.08)' : 'var(--surface2)';
+                card.style.opacity = enabled ? '1' : '0.68';
+                const status = card.querySelector('.bot-one-click-stage-status');
+                if (status) {
+                    status.textContent = enabled ? '사용' : '건너뜀';
+                    status.style.color = enabled ? '#38BDF8' : 'var(--text2)';
+                }
+            });
+            _botOneClickUpdateSettingVisibility();
+            const errorEl = document.getElementById('bot-one-click-form-error');
+            if (errorEl) errorEl.textContent = '';
+        }
+
+        function _botOneClickUpdateSettingVisibility() {
+            const enabledStages = _botOneClickEnabledStages();
+            const needsNegative = _botOneClickUsesAnyStage(enabledStages, ['negative', 'face_batch']);
+            const needsCrop = _botOneClickUsesAnyStage(enabledStages, ['data_patch', 'embedding', 'dialogue_face_crop']);
+            const negative = document.getElementById('bot-one-click-negative-settings');
+            const crop = document.getElementById('bot-one-click-crop-settings');
+            const confidence = document.getElementById('bot-one-click-confidence-setting');
+            const overwrite = document.getElementById('bot-one-click-overwrite-setting');
+            const empty = document.getElementById('bot-one-click-no-settings');
+            if (negative) negative.style.display = needsNegative ? 'block' : 'none';
+            if (crop) crop.style.display = needsCrop ? 'block' : 'none';
+            if (confidence) confidence.style.display = enabledStages.embedding ? 'flex' : 'none';
+            if (overwrite) overwrite.style.display = enabledStages.embedding ? 'flex' : 'none';
+            if (empty) empty.style.display = !needsNegative && !needsCrop ? 'block' : 'none';
+        }
+
+        function _botOneClickWizardError(message) {
+            console.error('[BOT_ONE_CLICK] 마법사 입력 검증 실패:', message);
+            const errorEl = document.getElementById('bot-one-click-form-error');
+            if (errorEl) errorEl.textContent = message;
+            showToast(message, 'error');
+            return false;
+        }
+
+        function _botOneClickValidateWizardStep(step) {
+            if (step === 0) {
+                const selected = document.querySelectorAll('.bot-one-click-char-check:checked');
+                if (!selected.length) return _botOneClickWizardError('최소 한 명의 캐릭터를 선택하세요.');
+            }
+            if (step === 1) {
+                const enabledStages = _botOneClickEnabledStages();
+                if (!Object.values(enabledStages).some(Boolean)) return _botOneClickWizardError('실행할 기능을 하나 이상 켜세요.');
+            }
+            if (step === 2) {
+                const enabledStages = _botOneClickEnabledStages();
+                const needsNegative = _botOneClickUsesAnyStage(enabledStages, ['negative', 'face_batch']);
+                const needsCrop = _botOneClickUsesAnyStage(enabledStages, ['data_patch', 'embedding', 'dialogue_face_crop']);
+                const negativeTags = (document.getElementById('bot-one-click-negative-tags')?.value || '').trim();
+                const cropTop = Number(document.getElementById('bot-one-click-crop-top')?.value);
+                const cropBottom = Number(document.getElementById('bot-one-click-crop-bottom')?.value);
+                const confidence = Number(document.getElementById('bot-one-click-confidence')?.value);
+                if (needsNegative && !negativeTags) return _botOneClickWizardError('부정 프롬프트 기능에 적용할 태그를 입력하세요.');
+                if (needsCrop && (!Number.isFinite(cropTop) || cropTop < 0.1 || cropTop > 10)) return _botOneClickWizardError('CROP_TOP은 0.1~10 범위여야 합니다.');
+                if (needsCrop && (!Number.isFinite(cropBottom) || cropBottom < 0.1 || cropBottom > 10)) return _botOneClickWizardError('CROP_BOTTOM은 0.1~10 범위여야 합니다.');
+                if (enabledStages.embedding && (!Number.isFinite(confidence) || confidence < 0 || confidence > 1)) return _botOneClickWizardError('confidence는 0~1 범위여야 합니다.');
+            }
+            const errorEl = document.getElementById('bot-one-click-form-error');
+            if (errorEl) errorEl.textContent = '';
+            return true;
+        }
+
+        function _botOneClickRenderReview() {
+            const review = document.getElementById('bot-one-click-review');
+            if (!review) {
+                console.error('[BOT_ONE_CLICK] 최종 확인 영역을 찾을 수 없습니다.');
+                return;
+            }
+            const charNames = Array.from(document.querySelectorAll('.bot-one-click-char-check:checked')).map(input => input.dataset.name).filter(Boolean);
+            const enabledStages = _botOneClickEnabledStages();
+            const enabledLabels = BOT_ONE_CLICK_STAGES.filter(([key]) => enabledStages[key]).map(([, label]) => label);
+            const skippedLabels = BOT_ONE_CLICK_STAGES.filter(([key]) => !enabledStages[key]).map(([, label]) => label);
+            const needsNegative = _botOneClickUsesAnyStage(enabledStages, ['negative', 'face_batch']);
+            const needsCrop = _botOneClickUsesAnyStage(enabledStages, ['data_patch', 'embedding', 'dialogue_face_crop']);
+            const settingRows = [];
+            if (needsNegative) {
+                const tags = (document.getElementById('bot-one-click-negative-tags')?.value || '').split(',').map(tag => tag.trim()).filter(Boolean);
+                settingRows.push(`부정 태그 ${tags.length}개`);
+            }
+            if (needsCrop) {
+                settingRows.push(`FACE CROP 위 ${escHtml(document.getElementById('bot-one-click-crop-top')?.value || '')} / 아래 ${escHtml(document.getElementById('bot-one-click-crop-bottom')?.value || '')}`);
+            }
+            if (enabledStages.embedding) {
+                const confidence = document.getElementById('bot-one-click-confidence')?.value || '';
+                const overwrite = document.getElementById('bot-one-click-overwrite')?.checked ? '기존 FACE 새로 추출' : '기존 FACE 유지';
+                settingRows.push(`embedding confidence ${escHtml(confidence)} · ${overwrite}`);
+            }
+            const reviewCard = (title, body, tone = 'rgba(56,189,248,0.38)') => `<div style="padding:12px; border:1px solid ${tone}; border-radius:8px; background:var(--surface2);"><div style="font-size:0.72rem; color:var(--text2); margin-bottom:5px;">${title}</div><div style="font-size:0.8rem; line-height:1.5;">${body}</div></div>`;
+            review.innerHTML = [
+                reviewCard(`대상 캐릭터 · ${charNames.length}명`, charNames.map(escHtml).join(', ')),
+                reviewCard(`실행 기능 · ${enabledLabels.length}개`, enabledLabels.map(escHtml).join(' → ')),
+                reviewCard('세부 설정', settingRows.length ? settingRows.join('<br>') : '추가 설정 없음', 'rgba(0,121,107,0.38)'),
+                skippedLabels.length ? reviewCard(`건너뛸 기능 · ${skippedLabels.length}개`, skippedLabels.map(escHtml).join(', '), 'var(--border)') : '',
+            ].join('');
+        }
+
+        function _botOneClickShowWizardStep(step) {
+            if (!_botOneClickWizard) {
+                console.error('[BOT_ONE_CLICK] 마법사 상태가 없어 페이지를 이동할 수 없습니다.', step);
+                return;
+            }
+            const nextStep = Math.max(0, Math.min(BOT_ONE_CLICK_WIZARD_STEPS.length - 1, step));
+            _botOneClickWizard.step = nextStep;
+            document.querySelectorAll('.bot-one-click-wizard-page').forEach(page => {
+                const pageStep = Number(page.dataset.step);
+                page.style.display = pageStep === nextStep ? (pageStep === 2 ? 'flex' : 'block') : 'none';
+            });
+            document.querySelectorAll('.bot-one-click-step-indicator').forEach(indicator => {
+                const active = Number(indicator.dataset.step) === nextStep;
+                indicator.style.borderColor = active ? 'rgba(56,189,248,0.55)' : 'var(--border)';
+                indicator.style.background = active ? 'rgba(14,165,233,0.10)' : 'var(--surface2)';
+                indicator.style.color = active ? '#38BDF8' : 'var(--text2)';
+                indicator.style.fontWeight = active ? '750' : '500';
+            });
+            const caption = document.getElementById('bot-one-click-step-caption');
+            if (caption) caption.textContent = `${nextStep + 1}/4 · ${BOT_ONE_CLICK_WIZARD_STEPS[nextStep]}`;
+            const back = document.getElementById('bot-one-click-back-btn');
+            const next = document.getElementById('bot-one-click-next-btn');
+            const start = document.getElementById('bot-one-click-start-btn');
+            if (back) back.style.display = nextStep > 0 ? 'inline-block' : 'none';
+            if (next) next.style.display = nextStep < 3 ? 'inline-block' : 'none';
+            if (start) start.style.display = nextStep === 3 ? 'inline-block' : 'none';
+            if (nextStep === 2) _botOneClickUpdateSettingVisibility();
+            if (nextStep === 3) _botOneClickRenderReview();
+            const errorEl = document.getElementById('bot-one-click-form-error');
+            if (errorEl) errorEl.textContent = '';
+        }
+
+        function botOneClickNextStep() {
+            const currentStep = _botOneClickWizard?.step ?? 0;
+            if (!_botOneClickValidateWizardStep(currentStep)) return;
+            _botOneClickShowWizardStep(currentStep + 1);
+        }
+
+        function botOneClickPreviousStep() {
+            _botOneClickShowWizardStep((_botOneClickWizard?.step ?? 0) - 1);
         }
 
         function filterBotOneClickCharacters() {
@@ -59406,26 +59620,29 @@
             stage.status = status;
             stage.detail = detail || '';
             _botOneClickRenderProgress();
-            const index = _botOneClickRun.stages.findIndex(item => item.key === key) + 1;
-            if (status === 'running') _botOneClickSetSidebarStatus(`${index}/6 ${stage.label} 진행 중...`, 'normal');
+            const activeStages = _botOneClickRun.stages.filter(item => item.status !== 'skipped');
+            const index = activeStages.findIndex(item => item.key === key) + 1;
+            if (status === 'running') _botOneClickSetSidebarStatus(`${index}/${activeStages.length} ${stage.label} 진행 중...`, 'normal');
         }
 
         function _botOneClickRenderProgress() {
             if (!_botOneClickRun) return;
             const modal = _botOneClickEnsureModal();
             const run = _botOneClickRun;
-            const icon = {pending: '○', running: '◉', completed: '✓', warning: '!', failed: '×'};
-            const color = {pending: 'var(--text2)', running: '#38BDF8', completed: '#22C55E', warning: '#F59E0B', failed: '#EF5350'};
+            const icon = {pending: '○', running: '◉', completed: '✓', warning: '!', failed: '×', skipped: '–'};
+            const color = {pending: 'var(--text2)', running: '#38BDF8', completed: '#22C55E', warning: '#F59E0B', failed: '#EF5350', skipped: 'var(--text2)'};
             const rows = run.stages.map((stage, index) => `<div style="display:flex; align-items:flex-start; gap:10px; padding:10px 11px; border:1px solid ${stage.status === 'running' ? 'rgba(56,189,248,0.5)' : 'var(--border)'}; border-radius:7px; background:${stage.status === 'running' ? 'rgba(14,165,233,0.08)' : 'var(--surface2)'};">
                 <div style="width:24px; height:24px; display:flex; align-items:center; justify-content:center; flex-shrink:0; border-radius:50%; border:1px solid ${color[stage.status]}; color:${color[stage.status]}; font-size:0.76rem; font-weight:800;">${icon[stage.status]}</div>
-                <div style="min-width:0; flex:1;"><div style="font-size:0.8rem; font-weight:650; color:${color[stage.status]};">${index + 1}. ${escHtml(stage.label)}</div><div style="font-size:0.68rem; color:var(--text2); margin-top:3px; line-height:1.35; white-space:pre-wrap;">${escHtml(stage.detail || (stage.status === 'pending' ? '대기 중' : ''))}</div></div>
+                <div style="min-width:0; flex:1; opacity:${stage.status === 'skipped' ? '0.68' : '1'};"><div style="font-size:0.8rem; font-weight:650; color:${color[stage.status]};">${index + 1}. ${escHtml(stage.label)}</div><div style="font-size:0.68rem; color:var(--text2); margin-top:3px; line-height:1.35; white-space:pre-wrap;">${escHtml(stage.detail || (stage.status === 'pending' ? '대기 중' : ''))}</div></div>
             </div>`).join('');
             const finished = !run.running;
             const warnings = run.stages.filter(stage => stage.status === 'warning' || stage.status === 'failed').length;
+            const skipped = run.stages.filter(stage => stage.status === 'skipped').length;
+            const completed = run.stages.filter(stage => stage.status === 'completed').length;
             modal.innerHTML = `<div style="width:min(680px,94vw); max-height:90vh; display:flex; flex-direction:column; overflow:hidden; border:1px solid var(--border); border-radius:13px; background:var(--surface); box-shadow:0 18px 60px rgba(0,0,0,0.55);">
                 <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px; padding:16px 18px; border-bottom:1px solid var(--border); background:linear-gradient(90deg,rgba(2,132,199,0.11),rgba(124,58,237,0.10));"><div><div style="font-size:1rem; font-weight:750;">${finished ? (warnings ? '원클릭 작업 완료 · 확인 필요' : '원클릭 작업 완료') : '원클릭 작업 진행 중'}</div><div style="font-size:0.7rem; color:var(--text2); margin-top:3px;">${escHtml(run.botName)} · ${run.charNames.length}명</div></div><button onclick="closeBotOneClickModal()" style="background:none; border:none; color:var(--text2); font-size:1.3rem; cursor:pointer;">&times;</button></div>
                 <div style="padding:14px 18px; overflow-y:auto; display:flex; flex-direction:column; gap:7px;">${rows}</div>
-                <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; padding:12px 18px; border-top:1px solid var(--border);"><div style="font-size:0.68rem; color:var(--text2);">${finished ? (warnings ? `경고 ${warnings}단계 · 나머지 작업은 계속 처리됨` : '모든 단계가 완료되었습니다.') : '창을 닫아도 작업은 백그라운드에서 계속됩니다.'}</div><button onclick="closeBotOneClickModal()" style="padding:7px 16px; border:none; border-radius:6px; background:${finished ? '#00796B' : 'var(--surface2)'}; color:var(--text); cursor:pointer; font-weight:650;">${finished ? '확인' : '백그라운드로'}</button></div>
+                <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; padding:12px 18px; border-top:1px solid var(--border);"><div style="font-size:0.68rem; color:var(--text2);">${finished ? (warnings ? `경고 ${warnings}단계 · 완료 ${completed}단계 · 건너뜀 ${skipped}단계` : `완료 ${completed}단계 · 건너뜀 ${skipped}단계`) : '창을 닫아도 작업은 백그라운드에서 계속됩니다.'}</div><button onclick="closeBotOneClickModal()" style="padding:7px 16px; border:none; border-radius:6px; background:${finished ? '#00796B' : 'var(--surface2)'}; color:var(--text); cursor:pointer; font-weight:650;">${finished ? '확인' : '백그라운드로'}</button></div>
             </div>`;
         }
 
@@ -59434,38 +59651,42 @@
                 showToast('이미 원클릭 작업이 진행 중입니다.', 'warning');
                 return;
             }
+            for (let step = 0; step <= 2; step++) {
+                if (_botOneClickValidateWizardStep(step)) continue;
+                const message = document.getElementById('bot-one-click-form-error')?.textContent || '';
+                _botOneClickShowWizardStep(step);
+                const errorEl = document.getElementById('bot-one-click-form-error');
+                if (errorEl) errorEl.textContent = message;
+                return;
+            }
             const charNames = Array.from(document.querySelectorAll('.bot-one-click-char-check:checked')).map(input => input.dataset.name).filter(Boolean);
+            const enabledStages = _botOneClickEnabledStages();
             const negativeTags = (document.getElementById('bot-one-click-negative-tags')?.value || '').trim();
             const cropTop = Number(document.getElementById('bot-one-click-crop-top')?.value);
             const cropBottom = Number(document.getElementById('bot-one-click-crop-bottom')?.value);
             const confidence = Number(document.getElementById('bot-one-click-confidence')?.value);
             const overwrite = !!document.getElementById('bot-one-click-overwrite')?.checked;
-            const errorEl = document.getElementById('bot-one-click-form-error');
-            let validationError = '';
-            if (!charNames.length) validationError = '최소 한 명의 캐릭터를 선택하세요.';
-            else if (!negativeTags) validationError = '적용할 부정 태그를 선택하거나 입력하세요.';
-            else if (!Number.isFinite(cropTop) || cropTop < 0.1 || cropTop > 10) validationError = 'CROP_TOP은 0.1~10 범위여야 합니다.';
-            else if (!Number.isFinite(cropBottom) || cropBottom < 0.1 || cropBottom > 10) validationError = 'CROP_BOTTOM은 0.1~10 범위여야 합니다.';
-            else if (!Number.isFinite(confidence) || confidence < 0 || confidence > 1) validationError = 'confidence는 0~1 범위여야 합니다.';
-            if (validationError) {
-                if (errorEl) errorEl.textContent = validationError;
-                showToast(validationError, 'error');
-                return;
-            }
 
             const modal = document.getElementById('bot-one-click-modal');
             _botOneClickRun = {
                 running: true,
-                botName: botCurrentBot,
+                botName: _botOneClickWizard?.botName || botCurrentBot,
                 charNames,
+                enabledStages,
                 negativeTags,
                 cropTop,
                 cropBottom,
                 confidence,
                 overwrite,
                 embTarget: modal?.dataset.embTarget || '대표만',
-                stages: BOT_ONE_CLICK_STAGES.map(([key, label]) => ({key, label, status: 'pending', detail: ''})),
+                stages: BOT_ONE_CLICK_STAGES.map(([key, label]) => ({
+                    key,
+                    label,
+                    status: enabledStages[key] ? 'pending' : 'skipped',
+                    detail: enabledStages[key] ? '' : '사용 안 함',
+                })),
             };
+            _botOneClickWizard = null;
             const button = document.getElementById('btn-bot-one-click-settings');
             if (button) button.textContent = '원클릭 진행 보기';
             _botOneClickRenderProgress();
@@ -59501,13 +59722,17 @@
         }
 
         async function _runBotOneClickPipeline(run) {
-            await _botOneClickRunStage('tag_analysis', () => _runBotOneClickRepresentativeAnalysis(run));
-            await _botOneClickRunStage('negative', () => _runBotOneClickRepresentativeNegative(run));
-            await _botOneClickRunStage('data_patch', () => _runBotOneClickDataPatch(run));
-            await _botOneClickRunStage('embedding', () => _runBotOneClickEmbedding(run));
-            await _botOneClickRunStage('dialogue_face_crop', () => _runBotOneClickDialogueFaceCrop(run));
-            await _botOneClickRunStage('face_batch', () => _runBotOneClickFaceBatch(run));
-            await _botOneClickRunStage('llm_refine', () => _runBotOneClickLlmRefine(run));
+            const runSelectedStage = async (key, task) => {
+                if (!run.enabledStages?.[key]) return;
+                await _botOneClickRunStage(key, task);
+            };
+            await runSelectedStage('tag_analysis', () => _runBotOneClickRepresentativeAnalysis(run));
+            await runSelectedStage('negative', () => _runBotOneClickRepresentativeNegative(run));
+            await runSelectedStage('data_patch', () => _runBotOneClickDataPatch(run));
+            await runSelectedStage('embedding', () => _runBotOneClickEmbedding(run));
+            await runSelectedStage('dialogue_face_crop', () => _runBotOneClickDialogueFaceCrop(run));
+            await runSelectedStage('face_batch', () => _runBotOneClickFaceBatch(run));
+            await runSelectedStage('llm_refine', () => _runBotOneClickLlmRefine(run));
         }
 
         function _botOneClickTrackTagBatch(batchId, label, total, source) {

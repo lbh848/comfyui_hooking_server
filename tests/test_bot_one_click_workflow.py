@@ -37,11 +37,15 @@ def test_one_click_parent_group_contains_the_existing_work_groups_and_dialogue_c
         assert expected in parent
 
 
-def test_one_click_modal_has_only_target_negative_and_face_setup_inputs():
+def test_one_click_modal_is_a_four_step_wizard_with_stage_toggles():
     modal = _function_source(
         FRONTEND, "openBotOneClickSettings()", "botOneClickSelectCharacters(checked)"
     )
 
+    assert "BOT_ONE_CLICK_WIZARD_STEPS.map" in modal
+    assert modal.count('class="bot-one-click-wizard-page"') == 4
+    assert 'class="bot-one-click-stage-toggle"' in modal
+    assert 'id="bot-one-click-stage-list"' in modal
     assert 'id="bot-one-click-char-list"' in modal
     assert 'id="bot-one-click-negative-preset"' in modal
     assert 'id="bot-one-click-negative-tags"' in modal
@@ -49,7 +53,51 @@ def test_one_click_modal_has_only_target_negative_and_face_setup_inputs():
     assert 'id="bot-one-click-crop-bottom"' in modal
     assert 'id="bot-one-click-confidence"' in modal
     assert 'id="bot-one-click-overwrite"' in modal
+    assert 'id="bot-one-click-review"' in modal
+    assert 'id="bot-one-click-back-btn"' in modal
+    assert 'id="bot-one-click-next-btn"' in modal
     assert 'id="bot-one-click-start-btn"' in modal
+
+
+def test_one_click_wizard_validates_only_settings_needed_by_enabled_stages():
+    validation = _function_source(
+        FRONTEND,
+        "_botOneClickValidateWizardStep(step)",
+        "_botOneClickRenderReview()",
+    )
+    visibility = _function_source(
+        FRONTEND,
+        "_botOneClickUpdateSettingVisibility()",
+        "_botOneClickWizardError(message)",
+    )
+
+    for source in (validation, visibility):
+        assert "['negative', 'face_batch']" in source
+        assert "['data_patch', 'embedding', 'dialogue_face_crop']" in source
+    assert "needsNegative && !negativeTags" in validation
+    assert "needsCrop && (!Number.isFinite(cropTop)" in validation
+    assert "enabledStages.embedding && (!Number.isFinite(confidence)" in validation
+    assert "실행할 기능을 하나 이상 켜세요." in validation
+
+
+def test_one_click_disabled_stages_are_snapshotted_and_skipped():
+    start = _function_source(
+        FRONTEND, "startBotOneClick()", "_botOneClickRunStage(key, task)"
+    )
+    pipeline = _function_source(
+        FRONTEND, "_runBotOneClickPipeline(run)", "_botOneClickTrackTagBatch"
+    )
+    progress = _function_source(
+        FRONTEND, "_botOneClickRenderProgress()", "startBotOneClick()"
+    )
+
+    assert "enabledStages," in start
+    assert "status: enabledStages[key] ? 'pending' : 'skipped'" in start
+    assert "if (!run.enabledStages?.[key]) return;" in pipeline
+    assert "runSelectedStage('tag_analysis'" in pipeline
+    assert "runSelectedStage('llm_refine'" in pipeline
+    assert "skipped: '–'" in progress
+    assert "건너뜀 ${skipped}단계" in progress
 
 
 def test_one_click_pipeline_order_and_transient_patch_settings_are_explicit():
