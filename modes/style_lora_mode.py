@@ -908,6 +908,9 @@ def list_style_trained_steps(style_lora_load_path: str, profile: str, project_id
     for fname in sorted(os.listdir(session_dir)):
         if not fname.endswith('.json'):
             continue
+        if fname.endswith('.metadata.json'):
+            print(f"[STYLE_LORA_TRAINED] 보조 메타데이터 제외: {os.path.join(session_dir, fname)}")
+            continue
         json_path = os.path.join(session_dir, fname)
         try:
             with open(json_path, 'r', encoding='utf-8') as f:
