@@ -28122,7 +28122,7 @@
             { key: 'danbooru_tag_search',      label: '단부르 태그 검색', kind: '텍스트/JSON · 2단계', group: 'knowledge_search', json: true },
             { key: 'illustration_call1_backtranslate', label: '삽화 CALL1 역번역',               kind: '텍스트', group: 'illustration_pipeline' },
             { key: 'illustration_call1',       label: '삽화 CALL1 (전처리)',           kind: '텍스트', group: 'illustration_pipeline' },
-            { key: 'illustration_call2',       label: '삽화 CALL2 (본문)',             kind: '텍스트', group: 'illustration_pipeline' },
+            { key: 'illustration_call2',       label: '삽화 CALL2 (PLAN/DETAIL/KEYVIS)', kind: '텍스트', group: 'illustration_pipeline' },
             { key: 'illustration_call2_fix',   label: '삽화 CALL2-FIX (TOON 교정)',    kind: '텍스트', group: 'illustration_pipeline' },
             { key: 'illustration_call3',       label: '삽화 CALL3 (대사 생성)',         kind: '텍스트', group: 'illustration_pipeline' },
             { key: 'illustration_multi_char_mask', label: '삽화 다중 캐릭터 마스크',    kind: 'JSON', group: 'illustration_pipeline' },
@@ -56296,11 +56296,11 @@
                         </div>
                         <div id="illust-tab-content-llm" style="display:none; padding:12px 16px;">
                             <div style="margin-bottom:12px; padding:8px; background:rgba(0,0,0,0.06); border-radius:6px; font-size:0.75rem; color:var(--text2); line-height:1.5;">
-                                CHAT을 받은 서버가 히스토리 연속성/리롤 판정 → CALL1 역번역 → CALL1 병렬 분석·병합 → CALL2-PLAN → CALL2-DETAIL 병렬 생성·병합 → (폴백/파싱 실패 시 기존 CALL2/CALL2-FIX) → CALL3 순서로 실행합니다. 삽화 프롬프트 본문은 config.json이 아니라 아래 개별 txt 파일에 저장됩니다.
+                                CHAT을 받은 서버가 히스토리 연속성/리롤 판정 → CALL1 역번역 → CALL1 병렬 분석·병합 → CALL2-PLAN과 독립 CALL2-KEYVIS 동시 호출 → CALL2-DETAIL 병렬 생성·최종 병합 → (폴백/파싱 실패 시 기존 CALL2/CALL2-FIX) → CALL3 순서로 실행합니다. 삽화 프롬프트 본문은 config.json이 아니라 아래 개별 txt 파일에 저장됩니다.
                                 1. 역번역이 켜져 있으면 <strong>backtranslate.txt</strong>로 현재 응답만 영어로 병렬 번역하며, 과거 CHAT은 번역하지 않습니다.<br>
                                 2. CALL1은 <strong>enhance.txt</strong>와 저장 히스토리로 인물 목록, 지칭 할당, 복장 변화 타임라인을 JSON으로 만듭니다. 병렬 분석을 켜면 segment를 최대 동시 요청 수만큼 균등 분할해 동시에 분석하고 검증된 결과를 하나로 병합합니다.<br>
-                                3. CALL2-PLAN은 전체 context를 읽고 장면 앵커·등장 캐릭터·짧은 장면 개요와 Key Visual 개요만 선택합니다. 서버가 이전 단계의 복장 상태와 슬롯을 결합한 뒤, 선택 장면을 최대 동시 요청 수 안에서 CALL2-DETAIL 작업들에 균등 분배하며 첫 DETAIL 작업이 Key Visual도 완성합니다.<br>
-                                4. CALL2 system = <strong>jailbreak.txt</strong> + <strong>job.txt</strong> + <strong>system.txt</strong>이며, DETAIL 출력은 <strong>format.txt</strong> 구조를 사용합니다. CALL1이 모호하거나 PLAN/DETAIL이 실패하면 기존 단일 CALL2 경로로 폴백합니다.<br>
+                                3. CALL2-PLAN은 장면 앵커·등장 캐릭터·짧은 장면 개요만 선택합니다. 독립 CALL2-KEYVIS는 같은 시점에 별도 LLM 요청으로 대표 이미지 한 장만 완성합니다. PLAN이 끝나면 서버가 복장 상태와 슬롯을 결합해 장면을 CALL2-DETAIL 작업들에 균등 분배하며, Key Visual 결과는 DETAIL과 CALL3 입력에 넣지 않고 마지막 이미지 목록에만 병합합니다.<br>
+                                4. CALL2 system = <strong>jailbreak.txt</strong> + <strong>job.txt</strong> + <strong>system.txt</strong>이며, DETAIL 출력은 <strong>format.txt</strong> 구조를 사용합니다. CALL1이 모호하거나 PLAN/KEYVIS/DETAIL이 실패하면 기존 단일 CALL2 경로로 폴백합니다.<br>
                                 5. CALL2 파싱이 실패하면 <strong>repair.txt</strong>(CALL2-FIX)가 TOON 블록을 교정합니다. CALL3는 생성 설정에서 선택한 <strong>speak.txt</strong> 또는 <strong>manga.txt</strong>로 대사만 생성합니다.<br>
                                 <strong>preset.txt</strong>는 V3의 <code>[SETUP]/[CHAR]/[SUPPLEMENT]</code> RAW 입력 템플릿과 공통 부정 프롬프트를 담습니다. V1을 선택하면 서버가 같은 장면을 <code>[ILXL]/[UPSCALE]</code> 입력 형태로 생성합니다.
                             </div>
@@ -56963,8 +56963,8 @@
                 key: 'call2', title: 'CALL2 장면 생성',
                 description: 'CALL2가 선택하고 묘사할 장면 수, 캐릭터, 연출 및 컨텍스트 범위를 설정합니다.',
                 fields: [
-                    {key: 'call2_parallel_enabled', label: 'PLAN + DETAIL 병렬 생성', type: 'toggle', help: 'PLAN이 전체 장면 슬롯과 Key Visual을 먼저 확정하고, 선택 장면을 DETAIL 배치로 나눠 병렬 생성합니다.'},
-                    {key: 'call2_parallel_max_concurrency', label: '최대 동시 요청 수', type: 'number', min: 1, max: 16, help: 'PLAN이 lb-xnai 장면 수 설정에 따라 선택한 장면 전체를 이 요청 수에 균등 분배합니다. 모든 DETAIL 원본·복제 요청이 이 한도를 공유하며, Key Visual은 PLAN에서 생성되므로 별도 네 번째 요청이 없습니다.', dependsOn: ['call2_parallel_enabled']},
+                    {key: 'call2_parallel_enabled', label: 'PLAN + KEYVIS + DETAIL 병렬 생성', type: 'toggle', help: 'PLAN과 독립 Key Visual LLM을 동시에 시작하고, PLAN이 끝나면 선택 장면을 DETAIL 배치로 나눠 병렬 생성합니다.'},
+                    {key: 'call2_parallel_max_concurrency', label: 'DETAIL 최대 동시 요청 수', type: 'number', min: 1, max: 16, help: 'PLAN이 선택한 장면 전체를 이 DETAIL 요청 수에 균등 분배합니다. DETAIL 원본·복제 요청이 이 한도를 공유하며, 독립 Key Visual 요청은 이 수와 별도로 PLAN과 동시에 실행될 수 있습니다.', dependsOn: ['call2_parallel_enabled']},
                     {
                         key: 'call2_parallel_slow_retry_enabled', label: '느리다고? 다시해!', type: 'toggle',
                         help: '일부 CALL2-DETAIL 배치만 뒤처질 때 같은 배치를 한 번 더 요청해 먼저 검증된 결과를 사용합니다.',
@@ -56979,7 +56979,7 @@
                     {key: 'call2_parallel_slow_retry_condition_operator', label: '조건 결합 방식', type: 'select', help: 'AND는 켜진 조건을 모두, OR는 하나 이상 만족할 때 복제합니다.', options: [{value: 'and', label: 'AND — 모두 만족'}, {value: 'or', label: 'OR — 하나 이상 만족'}], dependsOn: ['call2_parallel_enabled', 'call2_parallel_slow_retry_enabled'], requiresMin: {key: 'call2_parallel_max_concurrency', value: 2}},
                     {key: 'nsfw', label: 'NSFW 태깅', type: 'toggle', help: 'CALL2에 성인 장면용 태깅 지침을 허용합니다. Manga 대사 모드의 버블 타입에도 함께 반영됩니다.'},
                     {key: 'supplement', label: 'SUPPLEMENT 생성', type: 'toggle', help: 'CALL2가 효과와 보조 묘사 섹션을 생성하도록 합니다.'},
-                    {key: 'key_visual', label: 'Key Visual 생성', type: 'toggle', help: 'CALL2가 슬롯 장면 외에 대표 이미지를 생성하도록 합니다.'},
+                    {key: 'key_visual', label: 'Key Visual 생성', type: 'toggle', help: 'CALL2-PLAN과 동시에 독립 CALL2-KEYVIS LLM을 호출해 슬롯 장면과 분리된 대표 이미지 한 장을 생성합니다. 외부 API 분기는 기존 삽화 CALL2 설정을 공유합니다.'},
                     {key: 'character_limit', label: '이미지당 최대 캐릭터', type: 'select', help: '한 이미지에 함께 배치할 캐릭터 수입니다.', options: [1, 2, 3]},
                     {
                         key: 'scene_mode', label: 'Scene 수 결정', type: 'select',
@@ -57025,7 +57025,7 @@
             },
             {
                 key: 'multi_char_mask', title: 'MULTI-CHAR-MASK',
-                description: 'CALL2가 선택한 다중 캐릭터 장면의 영역과 배경·캐릭터 프롬프트를 분리하는 후속 호출입니다.',
+                description: 'CALL2가 확정한 캐릭터 프롬프트는 유지하고, 다중 캐릭터 장면의 배경·구도와 캐릭터 영역만 계산하는 후속 호출입니다.',
                 fields: [],
                 callInfo: [
                     {label: '실행 조건', text: 'Comfy 공급자와 V3 형식에서 한 장면에 캐릭터가 2~3명일 때 자동 실행됩니다.'},

@@ -351,7 +351,7 @@ DEFAULT_CONFIG = {
         # 폴백 없음(fallback_target 미지정)이 기본.
         "illustration_call1_backtranslate": _llm_route_defaults(max_retries=1, retry_delay_sec=0.0, fallback_max_retries=1, fallback_retry_delay_sec=0.0),
         "illustration_call1":      _llm_route_defaults(),  # 전처리(컨텍스트 보강)
-        "illustration_call2":      _llm_route_defaults(),  # 본문(장면/태그 TOON 빌드)
+        "illustration_call2":      _llm_route_defaults(),  # PLAN/DETAIL/KEYVIS 장면·태그 빌드 공유
         "illustration_call2_fix":  _llm_route_defaults(),  # CALL2 파싱 실패 시 TOON 교정(repair.txt)
         "illustration_call3":      _llm_route_defaults(),  # 대사 생성(speak/manga)
         "illustration_multi_char_mask": _llm_route_defaults(json_mode=True),  # CALL3 뒤 캐릭터별 정규화 영역 계산
@@ -3545,10 +3545,23 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                             if region is None:
                                 raise ValueError(f"레이아웃에서 캐릭터 분리 프롬프트를 찾지 못했습니다: {name!r}")
                             separated_character_prompt = str(
-                                region.get("character_prompt") or ""
+                                character.get("positive") or ""
                             ).strip()
                             if not separated_character_prompt:
-                                raise ValueError(f"캐릭터별 분리 프롬프트가 비어 있습니다: {name!r}")
+                                raise ValueError(
+                                    f"검증된 Call2 캐릭터 positive가 비어 있습니다: {name!r}"
+                                )
+                            regional_copy = str(
+                                region.get("character_prompt") or ""
+                            ).strip()
+                            if regional_copy and regional_copy != separated_character_prompt:
+                                print(
+                                    "[MULTI_CHAR:PROMPT] Call5 캐릭터 재작성값 무시, "
+                                    "검증된 Call2 positive 사용: "
+                                    f"character={name!r}, "
+                                    f"call2_chars={len(separated_character_prompt)}, "
+                                    f"call5_chars={len(regional_copy)}"
+                                )
                             per_char_raw = (
                                 f"[NAME]\n{name}\n"
                                 f"[CHAR]\n{separated_character_prompt}"
@@ -4828,7 +4841,7 @@ async def handle_api_illustration_context_bridge_health(request: web.Request) ->
         "short_slot_manifest": True,
         "lookup_key_length": 24,
         "max_slot_manifest_count": illustration_context_pipeline.MAX_ILLUSTRATION_SLOT_COUNT,
-        "progress_phases": ["call1", "call2", "call2_plan", "call2_detail", "call2_fallback", "call3", "enqueue", "generating", "retrying", "regenerating", "ready", "error"],
+        "progress_phases": ["call1", "call2", "call2_plan", "call2_keyvis", "call2_detail", "call2_fallback", "call3", "multi_char_mask", "enqueue", "generating", "retrying", "regenerating", "ready", "error"],
     })
 
 

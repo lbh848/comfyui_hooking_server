@@ -1,33 +1,16 @@
-Think step-by-step for final data, but keep minimal draft per step (invisible to the user, no formatting).
+Reason silently and return only the requested final <lb-xnai> block.
 
-Follow these steps and output each and all step (including nested steps) explicitly without omission:
-
-1. Locate the last log entry with `[Slot #]` markers.
-2. Segment the log into distinct visual beats with at least one character.
-
-Consecutive paragraphs that share the same time, location, and ongoing action MUST be treated as one visual beat, even if the focal character changes. Select at most one generated Scene from each visual beat.
-
-Any existing <img ...> block counts as an illustration already occupying that visual beat. Do not generate another Scene for the same beat; select a different visual beat instead.
-{{#when::lb-xnai.kv.off::tis::0}}3. For each Scene + Key Visual, analyze these explicitly:{{:else}}3. For each Scene, analyze these explicitly:{{/when}}
-   - Time and location
-   - Character visuals: Appearance, attire. Reiterate required tags. Fill in missing details creatively within settings.
-     - Start from the authoritative wardrobe continuity state and apply only wardrobe events that occur before this Scene's segment. Separately record the complete logical `outfit_state`; camera-invisible items remain worn.
-   - Character actions: Emotions, pose, actions.
-   - Scene composition: Camera location, framing, lighting, etc.
-   - Frame: What should be in and out of the frame. Consider camera position, surrounding environment, and relative character directions.{{#when::keep::toggle::lb-xnai.compat.charPrompt}} For multiple character scenes, determine their general position as well.{{/when}}
-   - Name: Whether to specify `characters[].name` or not.
-   - Resulting character tags: EXPLICITLY write final tags for each characters HERE, FIRST.
-   - Best slot number {{#when::lb-xnai.kv.off::tis::0}}(For Scenes only. Exclude the first and last slots; avoid nearby slots.){{:else}}(Exclude the first and last slots; avoid nearby slots.){{/when}} Choose the nearest slot immediately before or after the exact paragraph depicted by the Scene. Spacing is only a tie-breaker. Never move a Scene outside its original visual beat to satisfy distribution or spacing; if the local beat is already occupied, select another visual beat.
-4. Explicitly go through this checklist item by item:
-  - Max character: {{dictelement::{"0":"3","1":"2","2":"1"}::{{getglobalvar::toggle_lb-xnai.characters}}}} excluding partially visible ones.
-  - If user direction or Priority Instruction exists, note them briefly.
-  - NEVER add or remove weights on your own. Limit to copying those specified by the Client.
-  - NEVER drop or alter Client-specified tags without scene justification. Unless the scene explicitly contradicts them (e.g., a garment removed within the narrative), do not consolidate or reword tags for "specificity" because they ARE either specific or reflects author intention.
-  - Verify each character tags:
-    - Specificity: Are the tags (especially attire) **as specific as possible**? MATERIAL AND SHAPE, OR MORE SPECIFIC ALIAS! DO NOT LEAVE ROOMS. CHECK EVERY TAGS.
-      - An example error that keeps showing up because you are a fucking incompetent fool: black skirt (SHORT? LONG? IN WHAT SHAPE?)
-      - Specificity must come from the narrative or character description. Do NOT infer from garment conventions (e.g., pencil skirt does NOT imply any length).
-    - Weights: FINAL WARNING - DO NOT ADD OR MODIFY WEIGHTS ON YOUR OWN OR YOUR CONTRACT SHALL BE VOID.
-5. FIX based on #4.
-
-YOU HAVE UNLIMITED RESOURCES. DO NOT BECOME LAZY. WRITE EVERYTHING OUT.
+1. Use the last log entry and its `[Slot #]` markers. If the server supplies an assigned global scene plan, expand exactly those entries without reselecting or moving them. Otherwise select at most one scene from each distinct visual beat and avoid a beat already occupied by an `<img ...>` block.
+2. For every Scene{{#when::lb-xnai.kv.off::tis::0}} and Key Visual{{/when}}:
+   - Establish time, location, camera, framing, lighting, visible characters, pose, action, expression, and composition from the current scene.
+   - For each named character, begin with the visually applicable `AUTHORITATIVE FIXED APPEARANCE`. Do not creatively complete or reword persistent identity, except for the required count-label normalization from fixed `1girl`/`1boy` to character-positive `girl`/`boy`. A hidden or temporarily incompatible fixed trait may be omitted but never replaced with an invented alternative.
+   - Apply the assigned `wardrobe_snapshot` and authoritative wardrobe events. Keep the complete logical state in `outfit_state`; camera-invisible garments remain logically worn.
+   - Treat a classified generated visual only according to its server-provided type. Never promote its generated tags into identity or wardrobe authority. A REROLL is the same moment, not an earlier event.
+   - Add only current-scene pose, action, expression, gaze, temporary state, and composition details supported by the current narrative.
+   - Preserve client-specified weights and tags exactly. Never add, remove, consolidate, or rewrite a weight.
+3. Before returning, verify:
+   - no named character contains an invented demographic, hair, eye, skin, face, body, species, or other persistent identity trait;
+   - every visible named character uses the exact canonical name and all applicable fixed tags;
+   - each scene uses its assigned slot exactly once and respects the maximum character count;
+   - positive tags contain visible details, while `outfit_state` retains complete logical wardrobe continuity;
+   - camera, scene, supplement, visible-face count, pose, gaze, and character positions do not conflict.

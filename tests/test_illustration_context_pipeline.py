@@ -606,7 +606,6 @@ async def test_call2_detail_wardrobe_conflict_retries_only_that_shard(monkeypatc
                 },
             },
         }],
-        keyvis_descriptor=None,
         call2_context_messages=[{"role": "system", "content": "Build detail."}],
         call2_format="Return TOON.",
         toggles=pipeline.merged_toggles({
@@ -658,7 +657,6 @@ async def test_call2_detail_preserves_successful_shards_and_retries_only_failed(
 
     descriptors, raw_outputs = await pipeline._run_parallel_call2_details(
         scene_plan=scene_plan,
-        keyvis_descriptor=None,
         call2_context_messages=[{"role": "system", "content": "Build detail."}],
         call2_format="Return TOON.",
         toggles=pipeline.merged_toggles({
@@ -703,7 +701,6 @@ async def test_call2_detail_accepts_empty_shard_after_character_discard(monkeypa
                 },
             },
         }],
-        keyvis_descriptor=None,
         call2_context_messages=[{"role": "system", "content": "Build detail."}],
         call2_format="Return TOON.",
         toggles=pipeline.merged_toggles({
@@ -842,10 +839,10 @@ async def test_call2_pipeline_generates_characterless_scene_without_fallback(mon
 
 
 @pytest.mark.asyncio
-async def test_call2_detail_expands_compact_keyvis_plan_in_first_shard(monkeypatch):
+async def test_independent_call2_keyvis_returns_one_object_and_rejects_scenes(monkeypatch):
     seen_messages = []
-    detail_output = _toon_for_slots([4]).replace(
-        "</lb-xnai>",
+    keyvis_output = (
+        "<lb-xnai>\n"
         "keyvis:\n"
         "  camera: full body\n"
         "  characters[1]:\n"
@@ -854,50 +851,218 @@ async def test_call2_detail_expands_compact_keyvis_plan_in_first_shard(monkeypat
         "      negative: lowres\n"
         "  scene: classroom, daylight\n"
         "  supplement: Hana stands at the center of the classroom.\n"
-        "</lb-xnai>",
+        "scenes: []\n"
+        "</lb-xnai>"
     )
 
     async def fake_pipeline_call(call_name, messages, *args, **kwargs):
+        assert call_name == "CALL2-KEYVIS"
         seen_messages.extend(messages)
-        return detail_output
+        return keyvis_output
 
     monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
-    descriptors, raw_outputs = await pipeline._run_parallel_call2_details(
-        scene_plan=[{
-            "plan_id": "S001",
-            "slot": 4,
-            "anchor_segment": "C001",
-            "source_segments": ["C001"],
-            "characters": ["Hana"],
-            "scene_brief": "Hana in class",
-            "wardrobe_snapshot": {
-                "Hana": {
-                    "body_state": "clothed",
-                    "worn": ["school uniform"],
-                    "removed": [],
-                },
-            },
-        }],
-        keyvis_descriptor=None,
-        keyvis_plan={
-            "characters": ["Hana"],
-            "scene_brief": "Hana as the emotional center of the school day",
-        },
+    descriptor, raw_output = await pipeline._run_call2_keyvis(
         call2_context_messages=[{"role": "system", "content": "Build detail."}],
-        call2_format="Return TOON.",
+        allowed_character_names=["Hana"],
         toggles=pipeline.merged_toggles({
             "key_visual": True,
-            "call2_parallel_max_concurrency": 1,
-            "call2_parallel_slow_retry_enabled": False,
         }),
         stream_notify=None,
     )
 
-    assert [item["kind"] for item in descriptors] == ["keyvis", "scene"]
-    assert len(raw_outputs) == 1
+    assert descriptor["kind"] == "keyvis"
+    assert descriptor["slot"] == -1
+    assert raw_output == keyvis_output
     combined = "\n".join(str(message.get("content") or "") for message in seen_messages)
-    assert "# ASSIGNED GLOBAL KEYVIS PLAN" in combined
-    assert "Include one complete keyvis object" in combined
+    assert "# INDEPENDENT KEY VISUAL" in combined
+    assert "# ASSIGNED GLOBAL SCENE PLAN" not in combined
+    assert "Output exactly one keyvis object and no scene objects" in combined
+
+    leaked_scene_output = keyvis_output.replace(
+        "scenes: []",
+        "scenes[1]:\n"
+        "  - camera: close-up\n"
+        "    characters[1]:\n"
+        "      - name: Hana\n"
+        "        positive: 1girl, black hair\n"
+        "    scene: classroom\n"
+        "    slot: 4",
+    )
+    rejected, reason = pipeline._parse_call2_keyvis_output(
+        leaked_scene_output,
+        pipeline.merged_toggles({"key_visual": True}),
+        ["Hana"],
+        "TEST-CALL2-KEYVIS-SCENE-LEAK",
+    )
+    assert rejected is None
+    assert "KEYVIS 전용 응답에 scene이 포함됨" in reason
+
+
+@pytest.mark.asyncio
+async def test_call2_role_inputs_are_isolated_without_mutating_stored_state(monkeypatch):
+    request_by_call = {}
+    state_before = {
+        "hana": {
+            "canonical_name": "Hana",
+            "current_wardrobe": {
+                "body_state": "clothed",
+                "worn": ["blue dress"],
+                "removed": [],
+            },
+            "last_visual_reference": {
+                "positive_tags": "nested generated visual marker",
+                "outfit_state": {
+                    "body_state": "clothed",
+                    "worn": ["blue dress"],
+                    "removed": [],
+                },
+            },
+        },
+    }
+    original_state = json.loads(json.dumps(state_before))
+
+    async def fake_pipeline_call(call_name, messages, *args, **kwargs):
+        request_by_call[call_name] = "\n".join(
+            str(message.get("content") or "") for message in messages
+        )
+        if call_name == "CALL1":
+            return json.dumps({
+                "reference_assignments": [],
+                "history_characters": ["Hana"],
+                "current_characters": [{"name": "Hana", "confidence": 0.99}],
+                "wardrobe_events": [{
+                    "segment_id": "C001",
+                    "character": "Hana",
+                    "operation": "keep",
+                    "items": ["timeline event marker"],
+                    "evidence": "Hana waits in the blue dress.",
+                    "confidence": 0.99,
+                }],
+                "unresolved_references": [],
+            })
+        if call_name == "CALL2-PLAN":
+            return json.dumps({
+                "scene_plan": [{
+                    "anchor_segment": "C001",
+                    "characters": ["Hana"],
+                    "scene_brief": "Hana waits by the window",
+                }],
+            })
+        if call_name == "CALL2-KEYVIS":
+            return """<lb-xnai>
+keyvis:
+  camera: full body
+  characters[1]:
+    - name: Hana
+      positive: 1girl, black hair, blue dress
+      outfit_state:
+        body_state: clothed
+        worn: [blue dress]
+        removed: []
+  scene: bedroom, window, daylight
+  supplement: Hana waits beside the window.
+scenes: []
+</lb-xnai>"""
+        if call_name == "CALL2-DETAIL 1/1":
+            return _toon_for_slots([0]).replace("school uniform", "blue dress")
+        raise AssertionError(f"unexpected call: {call_name}")
+
+    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
+    result = await pipeline.build_from_context(
+        {
+            "session_id": "call2_role_input_isolation_test",
+            "target_slotted": "Hana waits in the blue dress.\n\n[Slot 0]",
+            "chats": [
+                {"role": "user", "data": "Continue."},
+                {"role": "char", "data": "Hana waits in the blue dress."},
+            ],
+        },
+        {
+            "call1_enabled": True,
+            "call1_parallel_enabled": False,
+            "call2_parallel_enabled": True,
+            "call2_parallel_max_concurrency": 1,
+            "call2_parallel_slow_retry_enabled": False,
+            "scene_min": 1,
+            "scene_max": 1,
+            "key_visual": True,
+            "call3_enabled": False,
+            "speak_enabled": False,
+        },
+        "### Hana\n-Appearance\n1girl, black hair\n-default_outfit\nblue dress",
+        extra_costume="### Hana\n-default_outfit\nblue dress",
+        extra_names="Hana",
+        backtranslate_names="Hana",
+        history_plan={
+            "history_id": "hist_call2_role_input_isolation",
+            "operation": "append",
+            "current_message_id": "msg_current",
+            "base_context_hash": "base-current",
+            "state_before": state_before,
+            "call1_history": [],
+            "call2_fallback_history": [],
+            "call3_fallback_history": [],
+            "record_before": {
+                "source": {"branch_id": "main"},
+                "active_turn": {"base_context_hash": "base-previous"},
+                "last_pipeline": {
+                    "last_visual_by_character": {
+                        "Hana": {
+                            "positive_tags": "dedicated last visual marker",
+                            "outfit_state": {
+                                "body_state": "clothed",
+                                "worn": ["blue dress"],
+                                "removed": [],
+                            },
+                        },
+                    },
+                },
+            },
+        },
+    )
+
+    plan_request = request_by_call["CALL2-PLAN"]
+    assert "# CHARACTER DICTIONARY" in plan_request
+    assert "# AUTHORITATIVE FIXED APPEARANCE" not in plan_request
+    assert "# AUTHORITATIVE WARDROBE CONTINUITY STATE" not in plan_request
+    assert "# CURRENT WARDROBE EVENT TIMELINE" not in plan_request
+    assert "# CLASSIFIED LAST VISUAL REFERENCE" not in plan_request
+    assert "nested generated visual marker" not in plan_request
+    assert "dedicated last visual marker" not in plan_request
+    assert "timeline event marker" not in plan_request
+
+    keyvis_request = request_by_call["CALL2-KEYVIS"]
+    assert "### Key Visual" in keyvis_request
+    assert "### Scene" not in keyvis_request
+    assert "# Example" not in keyvis_request
+    assert "# Server limits" not in keyvis_request
+    assert "# CHARACTER DICTIONARY" in keyvis_request
+    assert "# AUTHORITATIVE FIXED APPEARANCE" in keyvis_request
+    assert "# AUTHORITATIVE WARDROBE CONTINUITY STATE" in keyvis_request
+    assert "# CURRENT WARDROBE EVENT TIMELINE" in keyvis_request
+    assert "blue dress" in keyvis_request
+    assert "timeline event marker" in keyvis_request
+    assert "# CLASSIFIED LAST VISUAL REFERENCE" not in keyvis_request
+    assert "nested generated visual marker" not in keyvis_request
+    assert "dedicated last visual marker" not in keyvis_request
+    assert "negative: ..." not in keyvis_request
+
+    detail_request = request_by_call["CALL2-DETAIL 1/1"]
+    assert "# DETAIL CHECKLIST" in detail_request
+    assert "Reason silently and return only the requested final <lb-xnai> block." in detail_request
+    assert "\nkeyvis:\n" not in detail_request
+    assert "negative: ..." not in detail_request
+    assert "# CHARACTER DICTIONARY" in detail_request
+    assert "# AUTHORITATIVE FIXED APPEARANCE" in detail_request
+    assert "# AUTHORITATIVE WARDROBE CONTINUITY STATE" in detail_request
+    assert "# CURRENT WARDROBE EVENT TIMELINE" in detail_request
+    assert "# CLASSIFIED LAST VISUAL REFERENCE" in detail_request
+    assert "nested generated visual marker" not in detail_request
+    assert "dedicated last visual marker" in detail_request
+    assert "timeline event marker" in detail_request
+    assert result["last_visual_reference_classification"]["reference_type"] == "CONTINUITY"
+    assert state_before == original_state
+    assert [item["kind"] for item in result["items"]] == ["keyvis", "scene"]
 
 
 def test_complete_call2_validation_rejects_one_shard_as_global_fallback():
@@ -990,6 +1155,66 @@ async def test_call2_parallel_failure_is_named_fallback_and_logs_reason(
 
 
 @pytest.mark.asyncio
+async def test_call2_plan_failure_cancels_hanging_independent_keyvis(monkeypatch):
+    keyvis_started = asyncio.Event()
+    keyvis_cancelled = asyncio.Event()
+
+    async def fake_pipeline_call(call_name, messages, *args, **kwargs):
+        if call_name == "CALL2-PLAN":
+            await asyncio.wait_for(keyvis_started.wait(), timeout=1)
+            return "not valid plan json"
+        if call_name == "CALL2-KEYVIS":
+            keyvis_started.set()
+            try:
+                await asyncio.Future()
+            except asyncio.CancelledError:
+                keyvis_cancelled.set()
+                raise
+        if call_name == "CALL2-FALLBACK":
+            return _toon_for_slots([0]).replace(
+                "<lb-xnai>\n",
+                "<lb-xnai>\n"
+                "keyvis:\n"
+                "  camera: full body\n"
+                "  characters[1]:\n"
+                "    - name: Hana\n"
+                "      positive: 1girl, black hair, school uniform\n"
+                "  scene: classroom\n"
+                "  supplement: daylight\n",
+            )
+        raise AssertionError(f"unexpected call: {call_name}")
+
+    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
+    result = await pipeline.build_from_context(
+        {
+            "session_id": "call2_plan_failure_cancels_keyvis_test",
+            "target_slotted": "Hana waits.\n\n[Slot 0]",
+            "chats": [
+                {"role": "user", "data": "Continue."},
+                {"role": "char", "data": "Hana waits."},
+            ],
+        },
+        {
+            "call1_enabled": False,
+            "call2_parallel_enabled": True,
+            "scene_min": 1,
+            "scene_max": 1,
+            "key_visual": True,
+            "call3_enabled": False,
+            "speak_enabled": False,
+        },
+        "### Hana\n-Appearance\n1girl, black hair\n-default_outfit\nschool uniform",
+        extra_costume="### Hana\n-default_outfit\nschool uniform",
+        extra_names="Hana",
+        backtranslate_names="Hana",
+    )
+
+    await asyncio.wait_for(keyvis_cancelled.wait(), timeout=1)
+    assert result["call2_fallback_stage"] == "CALL2-PLAN"
+    assert [item["kind"] for item in result["items"]] == ["keyvis", "scene"]
+
+
+@pytest.mark.asyncio
 async def test_call2_detail_failure_reuses_preserved_plan_in_global_fallback(monkeypatch):
     call_names = []
 
@@ -1053,6 +1278,86 @@ async def test_call2_detail_failure_reuses_preserved_plan_in_global_fallback(mon
 
 
 @pytest.mark.asyncio
+async def test_call2_detail_failure_preserves_independent_keyvis_in_scene_only_fallback(
+    monkeypatch,
+):
+    call_names = []
+    keyvis_output = """<lb-xnai>
+keyvis:
+  camera: full body
+  characters[1]:
+    - name: Hana
+      positive: 1girl, black hair, school uniform
+      outfit_state:
+        body_state: clothed
+        worn: [school uniform]
+        removed: []
+  scene: classroom, daylight
+  supplement: Hana stands alone in the classroom.
+scenes: []
+</lb-xnai>"""
+
+    async def fake_pipeline_call(call_name, messages, *args, **kwargs):
+        call_names.append(call_name)
+        if call_name == "CALL2-PLAN":
+            return json.dumps({
+                "scene_plan": [{
+                    "anchor_segment": "C001",
+                    "characters": ["Hana"],
+                    "scene_brief": "Hana waits",
+                }],
+            })
+        if call_name == "CALL2-KEYVIS":
+            return keyvis_output
+        if call_name.startswith("CALL2-DETAIL"):
+            return "not toon"
+        if call_name == "CALL2-FALLBACK":
+            combined = "\n".join(
+                str(message.get("content") or "") for message in messages
+            )
+            assert "A separately validated Key Visual is already preserved" in combined
+            assert "Omit keyvis completely" in combined
+            return _toon_for_slots([0])
+        raise AssertionError(f"unexpected call: {call_name}")
+
+    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
+    result = await pipeline.build_from_context(
+        {
+            "session_id": "call2_preserved_keyvis_scene_fallback_test",
+            "target_slotted": "Hana waits.\n\n[Slot 0]",
+            "chats": [
+                {"role": "user", "data": "Continue."},
+                {"role": "char", "data": "Hana waits."},
+            ],
+        },
+        {
+            "call1_enabled": False,
+            "call2_parallel_enabled": True,
+            "call2_parallel_max_concurrency": 1,
+            "call2_parallel_slow_retry_enabled": False,
+            "scene_min": 1,
+            "scene_max": 1,
+            "key_visual": True,
+            "call3_enabled": False,
+            "speak_enabled": False,
+        },
+        "### Hana\n-Appearance\n1girl, black hair\n-default_outfit\nschool uniform",
+        extra_costume="### Hana\n-default_outfit\nschool uniform",
+        extra_names="Hana",
+        backtranslate_names="Hana",
+    )
+
+    assert call_names.count("CALL2-KEYVIS") == 1
+    assert "CALL2-DETAIL 1/1" in call_names
+    assert "CALL2-DETAIL 1/1 [FAILED-SHARD-RETRY]" in call_names
+    assert call_names[-1] == "CALL2-FALLBACK"
+    assert result["call2_keyvis_output"] == keyvis_output
+    assert result["call2_fallback_stage"] == "CALL2-DETAIL"
+    assert [item["kind"] for item in result["items"]] == ["keyvis", "scene"]
+    assert "Hana stands alone in the classroom." in result["call2_output"]
+
+
+@pytest.mark.asyncio
 async def test_parallel_job_tail_hedge_uses_shared_concurrency_and_duplicate_wins(monkeypatch):
     active = 0
     max_active = 0
@@ -1104,7 +1409,7 @@ async def test_parallel_job_tail_hedge_uses_shared_concurrency_and_duplicate_win
 
 
 @pytest.mark.asyncio
-async def test_call1_segments_and_call2_details_run_in_parallel_batches(monkeypatch):
+async def test_call1_segments_and_call2_plan_keyvis_and_details_run_in_parallel(monkeypatch):
     paragraphs = [f"Hana paragraph {index}." for index in range(10)]
     narrative = "\n\n".join(paragraphs)
     target_slotted = pipeline.insert_slots(narrative)
@@ -1112,13 +1417,19 @@ async def test_call1_segments_and_call2_details_run_in_parallel_batches(monkeypa
     call1_max_active = 0
     detail_active = 0
     detail_max_active = 0
+    plan_keyvis_active = 0
+    plan_keyvis_max_active = 0
+    plan_started = asyncio.Event()
+    keyvis_started = asyncio.Event()
     call_names = []
 
     async def fake_call(task_key, messages, **kwargs):
         nonlocal call1_active, call1_max_active, detail_active, detail_max_active
+        nonlocal plan_keyvis_active, plan_keyvis_max_active
         text = "\n".join(str(message.get("content") or "") for message in messages)
         metadata = pipeline.llm_service._stream_metadata_ctx.get({})
-        call_names.append(str(metadata.get("call_name") or task_key))
+        call_name = str(metadata.get("call_name") or task_key)
+        call_names.append(call_name)
         if task_key == "illustration_call1":
             call1_active += 1
             call1_max_active = max(call1_max_active, call1_active)
@@ -1142,46 +1453,62 @@ async def test_call1_segments_and_call2_details_run_in_parallel_batches(monkeypa
                 call1_active -= 1
 
         assert task_key == "illustration_call2"
-        if "# GLOBAL CALL2 PLAN" in text:
+        if call_name == "CALL2-PLAN":
             assert "Follow these steps and output each and all step" not in text
-            assert '"keyvis_plan"' in text
+            assert '"keyvis_plan"' not in text
             assert '"plan_id": "S001"' not in text
             assert '"outfit_state"' not in text.split("# GLOBAL CALL2 PLAN", 1)[1]
-            return json.dumps({
-                "scene_plan": [
-                    {
-                        "plan_id": f"S{slot + 1:03d}",
-                        "anchor_segment": f"C{slot + 1:03d}",
-                        "source_segments": [f"C{slot + 1:03d}"],
-                        "characters": [{
-                            "name": "Hana",
-                            "outfit_state": {
-                                "body_state": "clothed",
-                                "worn": ["school uniform"],
-                                "removed": [],
-                            },
-                        }],
-                        "scene_brief": f"Hana scene {slot}",
-                    }
-                    for slot in range(9)
-                ],
-                "keyvis": {
-                    "camera": "full body",
-                    "characters": [{
-                        "name": "Hana",
-                        "positive": "1girl, black hair, school uniform",
-                        "negative": "lowres",
-                        "outfit_state": {
-                            "body_state": "clothed",
-                            "worn": ["school uniform"],
-                            "removed": [],
-                        },
-                    }],
-                    "scene": "classroom",
-                    "supplement": "daylight",
-                },
-            })
+            plan_keyvis_active += 1
+            plan_keyvis_max_active = max(plan_keyvis_max_active, plan_keyvis_active)
+            plan_started.set()
+            try:
+                await asyncio.wait_for(keyvis_started.wait(), timeout=1)
+                await asyncio.sleep(0.01)
+                return json.dumps({
+                    "scene_plan": [
+                        {
+                            "anchor_segment": f"C{slot + 1:03d}",
+                            "characters": ["Hana"],
+                            "scene_brief": f"Hana scene {slot}",
+                        }
+                        for slot in range(9)
+                    ],
+                })
+            finally:
+                plan_keyvis_active -= 1
+
+        if call_name == "CALL2-KEYVIS":
+            assert "# INDEPENDENT KEY VISUAL" in text
+            assert "# GLOBAL CALL2 PLAN" not in text
+            assert "# ASSIGNED GLOBAL SCENE PLAN" not in text
+            plan_keyvis_active += 1
+            plan_keyvis_max_active = max(plan_keyvis_max_active, plan_keyvis_active)
+            keyvis_started.set()
+            try:
+                await asyncio.wait_for(plan_started.wait(), timeout=1)
+                await asyncio.sleep(0.01)
+                return """<lb-xnai>
+keyvis:
+  camera: full body
+  characters[1]:
+    - name: Hana
+      positive: 1girl, black hair, school uniform
+      negative: lowres
+      outfit_state:
+        body_state: clothed
+        worn: [school uniform]
+        removed: []
+  scene: classroom
+  supplement: daylight
+scenes: []
+</lb-xnai>"""
+            finally:
+                plan_keyvis_active -= 1
+
+        assert call_name.startswith("CALL2-DETAIL")
         assert "# ASSIGNED GLOBAL SCENE PLAN" in text
+        assert "Omit keyvis" in text
+        assert "# INDEPENDENT KEY VISUAL" not in text
         plan_match = re.search(
             r"# ASSIGNED GLOBAL SCENE PLAN\s*(\[[\s\S]*?\])\s*\n\nExpand each plan",
             text,
@@ -1230,10 +1557,12 @@ async def test_call1_segments_and_call2_details_run_in_parallel_batches(monkeypa
     )
 
     assert call1_max_active == 3
+    assert plan_keyvis_max_active == 2
     assert detail_max_active == 3
     assert len(result["call2_detail_outputs"]) == 3
     assert len(result["items"]) == 10
     assert result["items"][0]["kind"] == "keyvis"
+    assert result["call2_keyvis_output"].startswith("<lb-xnai>")
     assert [item["slot"] for item in result["items"][1:]] == list(range(9))
     reparsed = pipeline.parse_toon_plan(
         result["call2_output"],
@@ -1245,6 +1574,7 @@ async def test_call1_segments_and_call2_details_run_in_parallel_batches(monkeypa
         f"S{index:03d}" for index in range(1, 10)
     ]
     assert "CALL2-PLAN" in call_names
+    assert "CALL2-KEYVIS" in call_names
     assert sum(name.startswith("CALL2-DETAIL") for name in call_names) >= 3
 
 
@@ -3016,9 +3346,13 @@ Hana: "No way!" #burst""",
 @pytest.mark.asyncio
 async def test_call3_uses_original_narrative_and_only_call2_selected_scene_slots(monkeypatch):
     calls = []
+    call_names = []
 
     async def fake_call(task_key, messages, **kwargs):
         calls.append((task_key, messages, kwargs))
+        metadata = pipeline.llm_service._stream_metadata_ctx.get({})
+        call_name = str(metadata.get("call_name") or task_key)
+        call_names.append(call_name)
         if task_key == "illustration_call1_backtranslate":
             body = messages[-1]["content"].split(
                 "slot markers. Copy every token exactly once and in the same order.\n\n",
@@ -3029,29 +3363,39 @@ async def test_call3_uses_original_narrative_and_only_call2_selected_scene_slots
                 "Translated second sentence.",
             )
         if task_key == "illustration_call2":
-            return """<lb-xnai>
+            if call_name == "CALL2-PLAN":
+                return json.dumps({
+                    "scene_plan": [{
+                        "anchor_segment": "C001",
+                        "characters": ["hana"],
+                        "scene_brief": "first selected moment",
+                    }, {
+                        "anchor_segment": "C002",
+                        "characters": ["hana"],
+                        "scene_brief": "second selected moment",
+                    }],
+                })
+            if call_name == "CALL2-KEYVIS":
+                return """<lb-xnai>
 keyvis:
   camera: portrait
   characters[1]:
     - name: hana
       positive: 1girl, hana, black hair
   scene: poster key visual
-scenes[2]:
-  - camera: close-up
-    characters[1]:
-      - name: hana
-        positive: 1girl, hana, black hair
-        position: left
-    scene: first selected moment
-    slot: 2
-  - camera: medium shot
-    characters[1]:
-      - name: hana
-        positive: 1girl, hana, black hair
-        position: center
-    scene: second selected moment
-    slot: 5
+scenes: []
 </lb-xnai>"""
+            assert call_name.startswith("CALL2-DETAIL")
+            detail_text = "\n".join(
+                str(message.get("content") or "") for message in messages
+            )
+            plan_match = re.search(
+                r"# ASSIGNED GLOBAL SCENE PLAN\s*(\[[\s\S]*?\])\s*\n\nExpand each plan",
+                detail_text,
+            )
+            assert plan_match
+            assigned = json.loads(plan_match.group(1))
+            return _toon_for_slots([int(item["slot"]) for item in assigned])
 
         assert task_key == "illustration_call3"
         request = messages[-1]["content"]
@@ -3099,11 +3443,13 @@ Hana: (다음은 어떤 장면일까?) #thought_cloud"""
         backtranslate_names="Hana",
     )
 
-    assert [task_key for task_key, _messages, _kwargs in calls] == [
-        "illustration_call1_backtranslate",
-        "illustration_call2",
-        "illustration_call3",
-    ]
+    task_keys = [task_key for task_key, _messages, _kwargs in calls]
+    assert task_keys[0] == "illustration_call1_backtranslate"
+    assert task_keys[-1] == "illustration_call3"
+    assert task_keys.count("illustration_call2") == 4
+    assert "CALL2-PLAN" in call_names
+    assert "CALL2-KEYVIS" in call_names
+    assert sum(name.startswith("CALL2-DETAIL") for name in call_names) == 2
     assert [item["kind"] for item in result["items"]] == ["keyvis", "scene", "scene"]
     assert result["items"][0]["slot"] == -1
     assert result["items"][0]["speak"] == ""
@@ -3363,18 +3709,34 @@ Alisa: (Alisa라면 어떻게 했을까?) #thought_cloud"""
 @pytest.mark.asyncio
 async def test_call3_skips_dialogue_when_call2_selected_only_key_visual(monkeypatch, capsys):
     task_keys = []
+    call_names = []
 
     async def fake_call(task_key, messages, **kwargs):
         task_keys.append(task_key)
+        metadata = pipeline.llm_service._stream_metadata_ctx.get({})
+        call_name = str(metadata.get("call_name") or task_key)
+        call_names.append(call_name)
         assert task_key == "illustration_call2"
-        return """<lb-xnai>
+        if call_name == "CALL2-PLAN":
+            return json.dumps({
+                "scene_plan": [{
+                    "anchor_segment": "C001",
+                    "characters": ["Maria"],
+                    "scene_brief": "Maria appears in the poster scene",
+                }],
+            })
+        if call_name == "CALL2-KEYVIS":
+            return """<lb-xnai>
 keyvis:
   camera: portrait
   characters[1]:
     - name: hana
       positive: 1girl, hana, black hair
   scene: poster key visual
+scenes: []
 </lb-xnai>"""
+        assert call_name.startswith("CALL2-DETAIL")
+        return _toon_for_slots([0])
 
     monkeypatch.setattr(pipeline.llm_service, "callLLMTask", fake_call)
     result = await pipeline.build_from_context(
@@ -3393,11 +3755,35 @@ keyvis:
             "call3_prompt_mode": "manga",
             "key_visual": True,
         },
-        "### hana\n-Appearance: 1girl, black hair",
+        (
+            "### hana\n-Appearance: 1girl, black hair\n\n"
+            "### Maria\n-Appearance: 1girl, blonde hair\n"
+            "-default_outfit\nschool uniform"
+        ),
         extra_names="Hana",
+        history_plan={
+            "state_before": {
+                "maria": {
+                    "canonical_name": "Maria",
+                    "current_wardrobe": {
+                        "body_state": "clothed",
+                        "worn": ["school uniform"],
+                        "removed": [],
+                    },
+                    "wardrobe_timeline": [],
+                },
+            },
+            "call1_history": [],
+            "call2_fallback_history": [],
+            "record_before": {"last_pipeline": {}},
+            "current_message_id": "msg-keyvis-only",
+        },
     )
 
-    assert task_keys == ["illustration_call2"]
+    assert task_keys == ["illustration_call2"] * 3
+    assert "CALL2-PLAN" in call_names
+    assert "CALL2-KEYVIS" in call_names
+    assert sum(name.startswith("CALL2-DETAIL") for name in call_names) == 1
     assert len(result["items"]) == 1
     assert result["items"][0]["kind"] == "keyvis"
     assert result["items"][0]["slot"] == -1
@@ -3588,8 +3974,20 @@ async def test_multi_char_layout_reorders_call2_characters_left_to_right(monkeyp
         "supplement": "soft light",
         "speak": 'Right: "hello"',
         "characters": [
-            {"name": "Right", "positive": "green hair", "position": "on the right"},
-            {"name": "Left", "positive": "red hair", "position": "on the left"},
+            {
+                "name": "Right",
+                "positive": "green hair",
+                "negative": "red hair",
+                "position": "on the right",
+                "outfit_state": {"worn": ["green jacket"]},
+            },
+            {
+                "name": "Left",
+                "positive": "red hair",
+                "negative": "green hair",
+                "position": "on the left",
+                "outfit_state": {"worn": ["red coat"]},
+            },
         ],
     }
     calls = []
@@ -3620,6 +4018,10 @@ async def test_multi_char_layout_reorders_call2_characters_left_to_right(monkeyp
     assert json.loads(calls[0][1][1]["content"])["positive_note"] == (
         "cinematic color grading"
     )
+    request_characters = json.loads(calls[0][1][1]["content"])["characters"]
+    assert request_characters[0]["validated_positive"] == "green hair"
+    assert request_characters[0]["validated_negative"] == "red hair"
+    assert request_characters[0]["outfit_state"] == {"worn": ["green jacket"]}
     assert [character["name"] for character in descriptor["characters"]] == ["Left", "Right"]
     assert descriptor["multi_char_layout"]["character_order"] == ["Left", "Right"]
     assert descriptor["multi_char_layout"]["background_prompt"] == (
@@ -3633,7 +4035,15 @@ async def test_multi_char_layout_reorders_call2_characters_left_to_right(monkeyp
     assert [
         region["character_prompt"]
         for region in descriptor["multi_char_layout"]["regions"]
-    ] == ["red hair, listening", "green hair, waving"]
+    ] == ["red hair", "green hair"]
+    assert [
+        region["negative"]
+        for region in descriptor["multi_char_layout"]["regions"]
+    ] == ["green hair", "red hair"]
+    assert [
+        region["outfit_state"]
+        for region in descriptor["multi_char_layout"]["regions"]
+    ] == [{"worn": ["red coat"]}, {"worn": ["green jacket"]}]
 
 
 def test_multi_char_mask_generation_setting_controls_layout_path():
@@ -3722,6 +4132,47 @@ async def test_pipeline_llm_records_success_in_lighbd_history(monkeypatch):
     assert {event["execution_id"] for event in events} == {
         records[0]["execution_id"]
     }
+
+
+@pytest.mark.asyncio
+async def test_call2_keyvis_shares_route_and_has_distinct_queue_live_history(monkeypatch):
+    records = []
+    events = []
+    messages = [{"role": "user", "content": "one key visual"}]
+
+    async def fake_call(task_key, actual_messages, **_kwargs):
+        assert task_key == "illustration_call2"
+        assert actual_messages == messages
+        metadata = pipeline.llm_service._stream_metadata_ctx.get({})
+        assert metadata["task_key"] == "illustration_call2"
+        assert metadata["call_name"] == "CALL2-KEYVIS"
+        assert metadata["execution_id"]
+        return "completed key visual"
+
+    async def fake_notify(event):
+        events.append(event)
+
+    monkeypatch.setattr(pipeline.llm_service, "callLLMTask", fake_call)
+    monkeypatch.setattr(pipeline.lighbd_service, "_log_lighbd_history", records.append)
+
+    result = await pipeline._call_pipeline_llm(
+        "CALL2-KEYVIS",
+        messages,
+        fake_notify,
+    )
+
+    assert result == "completed key visual"
+    assert [event["type"] for event in events] == ["start", "done"]
+    assert {event["call_name"] for event in events} == {"CALL2-KEYVIS"}
+    assert {
+        event["queue_subtask"]["group_id"] for event in events
+    } == {"call2_keyvis"}
+    assert len(records) == 1
+    assert records[0]["call_name"] == "CALL2-KEYVIS"
+    assert records[0]["prompt_id"] == "illustration_context:CALL2-KEYVIS"
+    assert records[0]["task_key"] == "illustration_call2"
+    assert records[0]["input"] == messages
+    assert records[0]["output"] == "completed key visual"
 
 
 @pytest.mark.asyncio
@@ -4115,6 +4566,189 @@ def test_call3_scene_selection_never_crosses_an_unselected_illustration_slot():
     assert third["upper_window"] == "선택되지 않은 삽화 아래"
 
 
+@pytest.mark.parametrize(
+    (
+        "operation",
+        "current_base_hash",
+        "previous_base_hash",
+        "expected_relation",
+        "expected_comparison",
+    ),
+    [
+        ("new", "base-current", "", "NO_PRIOR_REFERENCE", "unavailable"),
+        (
+            "append",
+            "base-current",
+            "base-previous",
+            "PRIOR_COMMITTED_TURN",
+            "different",
+        ),
+        (
+            "duplicate",
+            "base-same",
+            "base-same",
+            "SAME_ACTIVE_TURN_EXACT",
+            "same",
+        ),
+        (
+            "reroll",
+            "base-same",
+            "base-same",
+            "SAME_ACTIVE_TURN_REPLACED",
+            "same",
+        ),
+    ],
+)
+def test_reference_provenance_uses_server_history_operation(
+    operation,
+    current_base_hash,
+    previous_base_hash,
+    expected_relation,
+    expected_comparison,
+):
+    provenance = pipeline.build_reference_provenance({
+        "history_id": "hist_reference_provenance",
+        "operation": operation,
+        "base_context_hash": current_base_hash,
+        "record_before": {
+            "source": {"branch_id": "main"},
+            "active_turn": {"base_context_hash": previous_base_hash},
+        },
+    })
+
+    assert provenance["history_operation"] == operation
+    assert provenance["turn_relation"] == expected_relation
+    assert provenance["target_comparison"] == expected_comparison
+    assert provenance["classification_source"] == "history_alignment"
+    if expected_comparison == "same":
+        assert (
+            provenance["current_turn_target_id"]
+            == provenance["previous_turn_target_id"]
+        )
+    elif expected_comparison == "different":
+        assert (
+            provenance["current_turn_target_id"]
+            != provenance["previous_turn_target_id"]
+        )
+
+
+def test_extract_authoritative_fixed_appearance_supports_current_and_legacy_schema():
+    extracted = pipeline.extract_authoritative_fixed_appearance(
+        "### Hana\n"
+        "-Name\nHana\n"
+        "-Appearance\n1girl, black hair, blue eyes\n"
+        "-default_outfit\nblue dress\n\n"
+        "### Sato\n"
+        "-Appearance: 1boy, short black hair\n"
+        "-default_outfit\nwhite shirt"
+    )
+
+    assert extracted == {
+        "Hana": "1girl, black hair, blue eyes",
+        "Sato": "1boy, short black hair",
+    }
+
+
+@pytest.mark.parametrize(
+    ("operation", "comparison", "has_visual", "expected_type"),
+    [
+        ("new", "unavailable", True, "IGNORE"),
+        ("append", "different", True, "CONTINUITY"),
+        ("duplicate", "same", True, "REROLL"),
+        ("reroll", "same", True, "REROLL"),
+        ("reroll", "different", True, "SOFT_REFERENCE"),
+        ("unknown", "unavailable", True, "SOFT_REFERENCE"),
+        ("append", "different", False, "IGNORE"),
+    ],
+)
+def test_last_visual_reference_classification_is_metadata_only(
+    operation,
+    comparison,
+    has_visual,
+    expected_type,
+):
+    visual = (
+        {"Hana": {"positive_tags": "words must not affect classification"}}
+        if has_visual
+        else {}
+    )
+
+    result = pipeline.classify_last_visual_reference(
+        {
+            "history_operation": operation,
+            "target_comparison": comparison,
+            "turn_relation": "test relation",
+        },
+        visual,
+    )
+
+    assert result["reference_type"] == expected_type
+    assert result["character_count"] == (1 if has_visual else 0)
+
+
+def test_call1_prompt_state_excludes_generated_visual_and_duplicate_default():
+    stored = {
+        "hana": {
+            "canonical_name": "Hana",
+            "default_outfit_reference": "duplicate default marker",
+            "current_wardrobe": {
+                "body_state": "clothed",
+                "worn": ["blue dress"],
+                "removed": [],
+            },
+            "wardrobe_timeline": [{"segment_id": "C001", "operation": "wear"}],
+            "last_seen_message_id": "msg_previous",
+            "last_visual_reference": {
+                "source_slot": 7,
+                "positive_tags": "generated visual contamination marker",
+                "outfit_state": {"body_state": "clothed", "worn": ["blue dress"]},
+            },
+        }
+    }
+
+    prompt_state = pipeline._call1_state_for_prompt(
+        stored,
+        "### Hana\n-Name\nHana\n-Appearance\n1girl\n-default_outfit\nblue dress",
+    )
+
+    assert "last_visual_reference" not in prompt_state["hana"]
+    assert "default_outfit_reference" not in prompt_state["hana"]
+    assert prompt_state["hana"]["current_wardrobe"]["worn"] == ["blue dress"]
+    assert prompt_state["hana"]["wardrobe_timeline"] == [
+        {"segment_id": "C001", "operation": "wear"}
+    ]
+    assert stored["hana"]["last_visual_reference"]["source_slot"] == 7
+    assert stored["hana"]["default_outfit_reference"] == "duplicate default marker"
+
+
+def test_call1_prompt_state_preserves_default_when_lb_extra_character_is_missing():
+    stored = {
+        "hana": {
+            "canonical_name": "Hana",
+            "default_outfit_reference": "Hana fallback outfit",
+            "current_wardrobe": {"body_state": "clothed", "worn": ["blue dress"]},
+            "last_visual_reference": {
+                "positive_tags": "generated visual contamination marker"
+            },
+        },
+        "bob": {
+            "canonical_name": "Bob",
+            "default_outfit_reference": "Bob duplicate outfit",
+            "current_wardrobe": {"body_state": "clothed", "worn": ["black suit"]},
+        },
+    }
+
+    prompt_state = pipeline._call1_state_for_prompt(
+        stored,
+        "### Bob\n-Name\nBob\n-Appearance\n1boy\n-default_outfit\nblack suit",
+    )
+
+    assert "last_visual_reference" not in prompt_state["hana"]
+    assert prompt_state["hana"]["default_outfit_reference"] == "Hana fallback outfit"
+    assert "default_outfit_reference" not in prompt_state["bob"]
+    assert stored["bob"]["default_outfit_reference"] == "Bob duplicate outfit"
+
+
 @pytest.mark.asyncio
 async def test_persistent_history_path_uses_compact_call2_and_updates_wardrobe(monkeypatch):
     calls = []
@@ -4122,6 +4756,10 @@ async def test_persistent_history_path_uses_compact_call2_and_updates_wardrobe(m
     async def fake_call(task_key, messages, **kwargs):
         calls.append((task_key, messages))
         if task_key == "illustration_call1":
+            request_text = "\n".join(message["content"] for message in messages)
+            assert "generated visual contamination marker" not in request_text
+            assert "duplicate default marker" not in request_text
+            assert "blue dress" in request_text
             return json.dumps({
                 "reference_assignments": [{
                     "segment_id": "C001",
@@ -4170,10 +4808,20 @@ scenes[1]:
     state_before = {
         "hana": {
             "canonical_name": "Hana",
+            "default_outfit_reference": "duplicate default marker",
             "current_wardrobe": {
                 "body_state": "clothed",
                 "worn": ["blue dress"],
                 "removed": [],
+            },
+            "last_visual_reference": {
+                "source_slot": 7,
+                "positive_tags": "generated visual contamination marker",
+                "outfit_state": {
+                    "body_state": "clothed",
+                    "worn": ["blue dress"],
+                    "removed": [],
+                },
             },
         }
     }
@@ -4222,6 +4870,7 @@ scenes[1]:
         "illustration_call2",
     ]
     assert result["balanced_fallback_used"] is False
+    assert result["reference_provenance"]["turn_relation"] == "PRIOR_COMMITTED_TURN"
     assert result["enhanced_narrative"].startswith("Hana enters")
     wardrobe = result["character_states_after"]["hana"]["current_wardrobe"]
     assert wardrobe["body_state"] == "nude"

@@ -112,6 +112,43 @@ def test_layout_prompt_separation_is_required_and_preserved_when_requested():
         )
 
 
+def test_layout_accepts_spatial_only_regions_when_character_prompts_are_server_owned():
+    layout = _layout()
+    layout["background_prompt"] = "wide shot, rooftop, blue-hour city lights"
+    layout["composition_prompt"] = "two separate figures standing side by side"
+
+    normalized = validate_multi_char_layout(
+        layout,
+        ["Left", "Right"],
+        require_prompt_separation=True,
+        require_character_prompt=False,
+        max_pairwise_overlap_ratio=0.60,
+    )
+
+    assert normalized["character_order"] == ["Left", "Right"]
+    assert [region["character_prompt"] for region in normalized["regions"]] == ["", ""]
+
+
+def test_layout_rejects_regions_over_pairwise_overlap_limit():
+    layout = {
+        "background_prompt": "wide shot, rooftop",
+        "composition_prompt": "two separate figures",
+        "regions": [
+            {"name": "Left", "x": 0.0, "y": 0.0, "width": 0.8, "height": 1.0},
+            {"name": "Right", "x": 0.1, "y": 0.0, "width": 0.8, "height": 1.0},
+        ],
+    }
+
+    with pytest.raises(ValueError, match="overlap"):
+        validate_multi_char_layout(
+            layout,
+            ["Left", "Right"],
+            require_prompt_separation=True,
+            require_character_prompt=False,
+            max_pairwise_overlap_ratio=0.60,
+        )
+
+
 def test_layout_fingerprint_changes_when_only_mask_coordinates_change():
     first = validate_multi_char_layout(_layout(), ["Left", "Right"])
     changed_layout = _layout()

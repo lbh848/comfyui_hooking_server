@@ -203,14 +203,14 @@ async def test_process_prompt_allows_unregistered_multi_char_as_prompt_only(monk
         "composition_prompt": "two people standing apart",
         "regions": [{
             "name": registered_name,
-            "character_prompt": "girl, silver hair, school uniform",
+            "character_prompt": "model rewrite, purple hair",
             "x": 0.0,
             "y": 0.0,
             "width": 0.5,
             "height": 1.0,
         }, {
             "name": prompt_only_name,
-            "character_prompt": "boy, black hair, black jacket",
+            "character_prompt": "model rewrite, white coat",
             "x": 0.5,
             "y": 0.0,
             "width": 0.5,
@@ -223,8 +223,14 @@ async def test_process_prompt_allows_unregistered_multi_char_as_prompt_only(monk
         "illustration_multi_char": {
             "enable": True,
             "characters": [
-                {"name": registered_name, "positive": "girl, silver hair"},
-                {"name": prompt_only_name, "positive": "boy, black hair"},
+                {
+                    "name": registered_name,
+                    "positive": "girl, silver hair, school uniform",
+                },
+                {
+                    "name": prompt_only_name,
+                    "positive": "boy, black hair, black jacket",
+                },
             ],
             "character_order": [registered_name, prompt_only_name],
             "layout": layout,
@@ -273,7 +279,14 @@ async def test_process_prompt_allows_unregistered_multi_char_as_prompt_only(monk
         assert blocks["CHAR_LIST"] == f"{registered_name},{prompt_only_name}"
         assert multi_payload["enable"] is True
         assert multi_payload["char_name_list"] == [registered_name, prompt_only_name]
-        assert multi_payload["char_inform"][1] == "boy, black hair, black jacket"
+        assert multi_payload["char_inform"] == [
+            f"{registered_name}, girl, silver hair, school uniform",
+            "boy, black hair, black jacket",
+        ]
+        assert all(
+            "model rewrite" not in value
+            for value in multi_payload["char_inform"]
+        )
         assert [entry["CHAR"] for entry in cache_payload["list"]] == [registered_name]
         assert [entry["CHAR"] for entry in face_id_payload["list"]] == [registered_name]
         assert raw_body["illustration_multi_char"]["character_order"] == [

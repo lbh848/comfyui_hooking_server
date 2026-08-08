@@ -52,8 +52,12 @@ def validate_multi_char_layout(
     expected_names: Iterable[object],
     *,
     require_prompt_separation: bool = False,
+    require_character_prompt: bool | None = None,
+    max_pairwise_overlap_ratio: float | None = None,
 ) -> dict:
     """LLM 레이아웃과 선택적 2-pass 프롬프트를 검증해 왼쪽→오른쪽으로 정규화한다."""
+    if require_character_prompt is None:
+        require_character_prompt = require_prompt_separation
     names = [str(name or "").strip() for name in expected_names]
     if not 2 <= len(names) <= len(MASK_CHANNELS):
         raise ValueError(f"다중 캐릭터 수는 2~{len(MASK_CHANNELS)}명이어야 합니다: {len(names)}")
@@ -103,7 +107,17 @@ def validate_multi_char_layout(
         character_prompt = _prompt_text(
             raw.get("character_prompt"),
             f"regions[{source_index}].character_prompt",
-            required=require_prompt_separation,
+            required=bool(require_character_prompt),
+        )
+        positive = _prompt_text(
+            raw.get("positive"),
+            f"regions[{source_index}].positive",
+            required=False,
+        )
+        negative = _prompt_text(
+            raw.get("negative"),
+            f"regions[{source_index}].negative",
+            required=False,
         )
         x = _finite_number(raw.get("x"), "x", raw_name)
         y = _finite_number(raw.get("y"), "y", raw_name)
@@ -119,7 +133,7 @@ def validate_multi_char_layout(
                 f"{raw_name!r} 영역이 캔버스를 벗어났습니다: "
                 f"right={x + width}, bottom={y + height}"
             )
-        validated.append({
+        normalized_region = {
             "name": normalized_to_original[key],
             "character_prompt": character_prompt,
             "x": x,
@@ -127,12 +141,59 @@ def validate_multi_char_layout(
             "width": width,
             "height": height,
             "_source_index": source_index,
-        })
+        }
+        if "positive" in raw or positive:
+            normalized_region["positive"] = positive
+        if "negative" in raw or negative:
+            normalized_region["negative"] = negative
+        if "outfit_state" in raw:
+            outfit_state = raw.get("outfit_state")
+            if outfit_state is not None and not isinstance(outfit_state, dict):
+                raise ValueError(
+                    f"regions[{source_index}].outfit_state가 object가 아닙니다: "
+                    f"{type(outfit_state).__name__}"
+                )
+            normalized_region["outfit_state"] = deepcopy(outfit_state or {})
+        validated.append(normalized_region)
 
     missing = set(normalized_to_original) - seen
     if missing:
         missing_names = [normalized_to_original[key] for key in missing]
         raise ValueError(f"레이아웃에서 누락된 캐릭터가 있습니다: {missing_names!r}")
+
+    if max_pairwise_overlap_ratio is not None:
+        try:
+            overlap_limit = float(max_pairwise_overlap_ratio)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"영역 overlap 상한이 숫자가 아닙니다: {max_pairwise_overlap_ratio!r}"
+            ) from exc
+        if not math.isfinite(overlap_limit) or not 0.0 <= overlap_limit <= 1.0:
+            raise ValueError(f"영역 overlap 상한 범위가 잘못되었습니다: {overlap_limit}")
+        for left_index, left in enumerate(validated):
+            for right in validated[left_index + 1:]:
+                overlap_width = max(
+                    0.0,
+                    min(left["x"] + left["width"], right["x"] + right["width"])
+                    - max(left["x"], right["x"]),
+                )
+                overlap_height = max(
+                    0.0,
+                    min(left["y"] + left["height"], right["y"] + right["height"])
+                    - max(left["y"], right["y"]),
+                )
+                overlap_area = overlap_width * overlap_height
+                smaller_area = min(
+                    left["width"] * left["height"],
+                    right["width"] * right["height"],
+                )
+                ratio = overlap_area / smaller_area if smaller_area > 0.0 else 0.0
+                if ratio > overlap_limit + 1e-9:
+                    raise ValueError(
+                        "캐릭터 핵심 영역 overlap이 과도합니다: "
+                        f"left={left['name']!r}, right={right['name']!r}, "
+                        f"ratio={ratio:.3f}, limit={overlap_limit:.3f}"
+                    )
 
     validated.sort(key=lambda region: (
         region["x"] + region["width"] / 2.0,

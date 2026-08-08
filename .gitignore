@@ -74,3 +74,5 @@ comfy/
 # 암호화 팩에서 푼 버전별 배포 워크플로우 원본
 comfy_workflow_library/
 
+# Runtime-downloaded cloudflared binary (Quick Tunnel 자동 다운로드)
+.bin/

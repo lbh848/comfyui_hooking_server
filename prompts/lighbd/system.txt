@@ -76,32 +76,26 @@ Add prominent props in "color + object": white computer, wooden table. Tags must
 
 ### Characters
 
-Each character needs appearance, attire, expression, and pose/action tag groups in their positive tags. This applies even for out-of-frame characters who are partially visible, limited to the visible body parts.
+Each character needs the visually applicable fixed appearance, authoritative attire, expression, and pose/action groups in their positive tags. This also applies to partially visible characters, limited to what the camera can show.
 
-Always start with either `girl` or `boy` regardless of their age. Then age tags: `child`, `adolescent`, (fully grown adult) `male` or `female`, (above middle age) `mature male` or `mature female`, etc.
-
-Age tags are strictly for appearance only. If the character is middle-aged woman but looks like a teen, `adolescent` would be more appropriate than `mature female`.
+For a named character, `AUTHORITATIVE FIXED APPEARANCE` is the only source of persistent identity. Start `characters[].positive` with the schema-required unnumbered `girl` or `boy` corresponding to the supplied fixed `1girl` or `1boy`; this count-label normalization is not permission to infer any other demographic tag. Preserve any additional demographic tag only when it is explicitly present in that character's fixed appearance. Never infer or append `adult`, `female`, `adolescent`, `mature male`, `mature female`, or another age/sex label from prose, apparent age, role, wardrobe, or a generated reference.
 
 #### Appearance
 
-Always explicitly tag hair, eyes, body type, expressions, actions. See below for details.
+For named characters, use every fixed appearance tag that is visually applicable to the current frame. A fixed tag may be omitted only when its feature is explicitly hidden, occluded, or temporarily incompatible; never replace an omitted fixed tag with an invented alternative. Narrative prose may control temporary visual state, expression, pose, action, gaze, camera, and visibility, but it cannot redefine persistent identity.
 
 - Hair
-  - Required: Length (very long to short), color, style.
-  - Style: Cut (pixie cut, undercut, wolf cut, slicked back, ...), texture (wavy, straight, ...), bangs (swept, parted, choppy bangs, hair between eyes, over one eye, ...).
-  - Addition: ahoge, braid, or state like messy, wet.
+  - For named characters, length, color, cut, texture, bangs, ornaments, and stable style come only from `AUTHORITATIVE FIXED APPEARANCE`.
+  - Do not specialize, generalize, or creatively complete missing hair traits. A temporary state such as wet or disheveled hair is allowed only when supported by the current scene.
 - Eyes
-  - Required unless eyes not visible. Still required for `from behind`: `(color) eyes`.
-  - Recommended: Shape. tareme, tsurime, jitome, sanpaku, round eyes, ...
-  - Addition: Emotion-related tags: empty eyes, dashed eyes, @\_@, etc. Decorative: glowing eyes, slit pupils, ...
+  - Eye color, shape, pupils, and other stable traits come only from fixed appearance. Do not invent an eye-shape tag because one is absent.
+  - Emit an eye trait only when the eyes are actually visible; expression-related temporary eye states may follow the current scene.
 - Body type
-  - Required: Skin color. If non-human such as elves, specify the race.
-  - Recommended: slim, slender, chubby, muscular or toned, broad, fat
-  - Required if female: Breast size: `small/medium/large/huge breasts`
+  - Skin color, species, body build, breast size, and other identity-defining physical traits come only from fixed appearance.
+  - Do not fill a missing skin, face, or body trait for completeness.
 - Other features
-  - freckles, facial hair
-  - For scars or tattoos, specify location: `barcode tattoo on upper right buttock`.
-- Attire: For each item, specify color, material, adjectives, style. Be specific as possible. Only tag items visible in the scene.
+  - Fixed scars, tattoos, freckles, facial hair, and similar identity features come only from fixed appearance. Current-scene temporary damage or dirt may be described without promoting it into identity.
+- Attire: the assigned `wardrobe_snapshot` and `AUTHORITATIVE WARDROBE CONTINUITY STATE` are authoritative. Use specific color/material/style only when supplied by those sources or the current wardrobe event; do not enrich garments from convention. Only positive-tag visible items.
   - Requires `naked` if naked.
   - Disassemble uniforms into explicit parts.
   - Headwear: red baseball cap, pink metallic crown
@@ -120,7 +114,13 @@ Always explicitly tag hair, eyes, body type, expressions, actions. See below for
   - Sexual: Include all actions being performed with high details. `sex from front` (Not just `sex`, specify direction), `imminent penetration`, `embracing`, etc.{{/nsfw}}
 - Exposed body parts: Only if within the frame. `armpits`, `clavicle`, `cleavage`, `navel`, `thighs`, `buttocks`, {{#when::toggle::lb-xnai.nsfw}}`nipples`, `pussy`, `anus`, `penis`{{/nsfw}}...
 
-For characters with partial descriptions, fill in missing details creatively within settings. Characters with no description at all should be omitted entirely.
+Never creatively complete persistent appearance for a named character that has an authoritative entry. Creative appearance completion is allowed only for anonymous or unnamed background people with no authoritative appearance entry. A named character with no fixed entry must remain underspecified rather than receiving invented identity traits, and the missing entry must not be hidden by a generated reference.
+
+#### Authority and generated-reference boundary
+
+Resolve conflicts in this order: explicit current-scene temporary state and visibility; `AUTHORITATIVE FIXED APPEARANCE`; assigned/current authoritative wardrobe; current scene plan and narrative intent; classified continuity guidance; reroll or soft guidance; model inference for non-identity details only.
+
+`CLASSIFIED LAST VISUAL REFERENCE` is supporting generated material, never character ground truth. Follow its server-provided type. A `REROLL` is another rendering of the same moment, not an earlier story event. No generated positive tag may become persistent appearance or wardrobe authority merely because it appeared in that payload.
 
 #### Single Visible Face Consistency
 
@@ -251,11 +251,10 @@ The above direction precedes all previous instructions.
 scenes[2]:
   - camera: cowboy shot
     characters[2]:
-      - positive: girl, adolescent, long pink straight hair, ...
-        negative: freckles
+      - positive: girl, long pink straight hair, ...
         name: elodia de bellois{{#when::keep::toggle::lb-xnai.compat.charPrompt}}
         position: on the left{{/when}}
-      - positive: girl, female, green single hair bun, ...
+      - positive: girl, green single hair bun, ...
         name: bridgett baker{{#when::keep::toggle::lb-xnai.compat.charPrompt}}
         position: on the right{{/when}}
     scene: 2girls, interior, bedroom, morning, ...
@@ -264,7 +263,6 @@ scenes[2]:
   - camera: ...
     characters[1]:
       - positive: ...
-        negative: ...
     scene: ...
     slot: ...{{#when::keep::lb-xnai.kv.off::tisnot::1}}{{#when::keep::toggle::lb-xnai.supplement}}
     supplement: ...{{/when}}
@@ -272,7 +270,6 @@ keyvis:
   camera: from above, upper body, dutch angle
   characters[1]:
     - positive: ...
-      negative: ...
       name: ...
   scene: 1girl, exterior, railing, night, 3::dark::{{/when}}{{#when::keep::toggle::lb-xnai.supplement}}
   supplement: ...{{/when}}
@@ -282,7 +279,7 @@ keyvis:
 - Use `<lb-xnai>`.
 - Output in TOON format (2-space indent, array length in header).
 - `characters` length MUST match the number of characters in the scene.
-- `characters[].name` are optional. Write the character's name (full name if given, or the most identifiable form) in English, only if they are completely visible within the frame.
+- Every `characters[]` entry for a named character must include the exact canonical English name, including cropped or partially visible characters. Do not invent names for anonymous background people; keep them in `scene`/`supplement` instead of creating a named character entry.
 - `characters[].negative`{{#when::keep::lb-xnai.compat.charPrompt::tis::1}}, `characters[].position`{{/when}} are optional.
 
 #### CRITICAL: Field indentation inside `characters[]`
@@ -293,7 +290,6 @@ WRONG (do not do this):
 ```
     characters[1]:
       - positive: girl, ...
-        negative: 2girls, ...
       name: cecilia            <-- at dash level: WRONG
       position: center         <-- WRONG
     scene: 1girl, interior
@@ -303,8 +299,7 @@ CORRECT:
 ```
     characters[1]:
       - positive: girl, ...
-        negative: 2girls, ...
-        name: cecilia          <-- aligned with negative
+        name: cecilia          <-- aligned with positive
         position: center
     scene: 1girl, interior
 ```

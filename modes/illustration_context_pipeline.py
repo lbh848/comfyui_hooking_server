@@ -36,6 +36,7 @@ PROMPT_BATCH_PREFIX = "__LB_ILLUST_PROMPT_BATCH_V1__"
 EASY_EDIT_PREFIX = "__LB_ILLUST_EASY_EDIT_V1__"
 MAX_ILLUSTRATION_SLOT_COUNT = 65
 MAX_EASY_EDIT_DIRECTION_LENGTH = 4000
+CALL5_MAX_PAIRWISE_OVERLAP_RATIO = 0.60
 
 PROMPT_FILES = {
     "call1_backtranslate": "backtranslate.txt",
@@ -1185,6 +1186,448 @@ def _history_messages_text(messages: list[dict]) -> str:
         for item in messages
         if str(item.get("data") or item.get("content") or "").strip()
     ).strip()
+
+
+_HISTORY_OPERATION_RELATIONS = {
+    "new": "NO_PRIOR_REFERENCE",
+    "append": "PRIOR_COMMITTED_TURN",
+    "duplicate": "SAME_ACTIVE_TURN_EXACT",
+    "reroll": "SAME_ACTIVE_TURN_REPLACED",
+}
+
+
+def _turn_target_id(history_id: str, branch_id: str, base_context_hash: str) -> str:
+    """Build a stable turn identity from server-owned history provenance."""
+    history = str(history_id or "").strip()
+    branch = str(branch_id or "").strip()
+    base_hash = str(base_context_hash or "").strip()
+    if not history or not branch or not base_hash:
+        return ""
+    seed = "\x00".join(("illustration-turn-v1", history, branch, base_hash))
+    return "turn_" + hashlib.sha256(seed.encode("utf-8")).hexdigest()
+
+
+def build_reference_provenance(history_plan: dict | None) -> dict:
+    """Normalize pre-CALL1 history facts without asking an LLM to classify them."""
+    if not isinstance(history_plan, dict):
+        return {
+            "history_operation": "untracked",
+            "turn_relation": "NO_HISTORY",
+            "history_id": "",
+            "branch_id": "",
+            "current_turn_target_id": "",
+            "previous_turn_target_id": "",
+            "target_comparison": "unavailable",
+            "classification_source": "none",
+        }
+
+    operation = str(history_plan.get("operation") or "").strip().lower()
+    relation = _HISTORY_OPERATION_RELATIONS.get(operation)
+    if relation is None:
+        relation = "UNKNOWN_HISTORY_RELATION"
+        print(
+            f"[ILLUST_CONTEXT:REFERENCE] 알 수 없는 히스토리 연산: "
+            f"operation={operation!r}, history={history_plan.get('history_id')!r}"
+        )
+
+    record_before = history_plan.get("record_before") or {}
+    if not isinstance(record_before, dict):
+        print(
+            f"[ILLUST_CONTEXT:REFERENCE] 이전 히스토리 레코드 형식 오류: "
+            f"type={type(record_before).__name__}, operation={operation!r}"
+        )
+        record_before = {}
+    source = record_before.get("source") or {}
+    if not isinstance(source, dict):
+        print(
+            f"[ILLUST_CONTEXT:REFERENCE] 히스토리 source 형식 오류: "
+            f"type={type(source).__name__}, operation={operation!r}"
+        )
+        source = {}
+    active_turn = record_before.get("active_turn") or {}
+    if not isinstance(active_turn, dict):
+        print(
+            f"[ILLUST_CONTEXT:REFERENCE] 이전 active_turn 형식 오류: "
+            f"type={type(active_turn).__name__}, operation={operation!r}"
+        )
+        active_turn = {}
+
+    history_id = str(history_plan.get("history_id") or "").strip()
+    branch_id = str(source.get("branch_id") or "main").strip() or "main"
+    current_target_id = _turn_target_id(
+        history_id,
+        branch_id,
+        str(history_plan.get("base_context_hash") or ""),
+    )
+    previous_target_id = _turn_target_id(
+        history_id,
+        branch_id,
+        str(active_turn.get("base_context_hash") or ""),
+    )
+    if current_target_id and previous_target_id:
+        target_comparison = (
+            "same" if current_target_id == previous_target_id else "different"
+        )
+    else:
+        target_comparison = "unavailable"
+
+    if (
+        operation in ("append", "reroll", "duplicate")
+        and target_comparison == "unavailable"
+    ):
+        print(
+            f"[ILLUST_CONTEXT:REFERENCE] 턴 target 비교 metadata 부족: "
+            f"operation={operation}, history={history_id}, branch={branch_id}, "
+            f"current_target={bool(current_target_id)}, "
+            f"previous_target={bool(previous_target_id)}"
+        )
+    elif operation in ("reroll", "duplicate") and target_comparison != "same":
+        print(
+            f"[ILLUST_CONTEXT:REFERENCE] 동일 활성 턴 연산의 target 비교 불일치: "
+            f"operation={operation}, comparison={target_comparison}, "
+            f"history={history_id}, branch={branch_id}"
+        )
+    elif operation == "append" and target_comparison == "same":
+        print(
+            f"[ILLUST_CONTEXT:REFERENCE] 과거 턴 추가인데 target id가 동일함: "
+            f"history={history_id}, branch={branch_id}"
+        )
+
+    provenance = {
+        "history_operation": operation or "unknown",
+        "turn_relation": relation,
+        "history_id": history_id,
+        "branch_id": branch_id,
+        "current_turn_target_id": current_target_id,
+        "previous_turn_target_id": previous_target_id,
+        "target_comparison": target_comparison,
+        "classification_source": "history_alignment",
+    }
+    print(
+        f"[ILLUST_CONTEXT:REFERENCE] 턴 관계 확정: "
+        f"operation={provenance['history_operation']}, "
+        f"relation={provenance['turn_relation']}, "
+        f"target={provenance['target_comparison']}, "
+        f"history={history_id}, branch={branch_id}"
+    )
+    return provenance
+
+
+def extract_authoritative_fixed_appearance(character_reference: str) -> dict[str, str]:
+    """Extract only schema-declared ``-Appearance`` sections from lb.extra.
+
+    This is structural parsing of the character dictionary, not semantic tag or
+    narrative keyword matching. The source text is never modified.
+    """
+    source = str(character_reference or "")
+    character_headers = list(re.finditer(r"(?m)^###\s+([^\r\n]+)\s*$", source))
+    extracted: dict[str, str] = {}
+    missing = []
+    for index, header in enumerate(character_headers):
+        name = header.group(1).strip()
+        block_end = (
+            character_headers[index + 1].start()
+            if index + 1 < len(character_headers)
+            else len(source)
+        )
+        block = source[header.end():block_end]
+        marker = re.search(
+            r"(?mi)^\s*-Appearance(?:\s*:\s*(.*))?\s*$",
+            block,
+        )
+        if marker is None:
+            missing.append(name)
+            continue
+        value_start = marker.end()
+        next_section = re.search(r"(?m)^\s*-[^\r\n]+\s*$", block[value_start:])
+        value_end = (
+            value_start + next_section.start()
+            if next_section is not None
+            else len(block)
+        )
+        inline_value = str(marker.group(1) or "").strip()
+        continuation = block[value_start:value_end].strip()
+        value = "\n".join(
+            part for part in (inline_value, continuation) if part
+        )
+        if not value:
+            missing.append(name)
+            continue
+        extracted[name] = value
+    if missing:
+        print(
+            "[ILLUST_CONTEXT:CALL2_DETAIL] lb.extra Appearance 섹션 누락/비어 있음: "
+            f"characters={missing}"
+        )
+    print(
+        "[ILLUST_CONTEXT:CALL2_DETAIL] 고정 Appearance 구조 추출: "
+        f"characters={list(extracted)}, "
+        f"chars={sum(len(value) for value in extracted.values())}"
+    )
+    return extracted
+
+
+def _fixed_appearance_authority_content(fixed_appearance: dict[str, str]) -> str:
+    if not fixed_appearance:
+        return ""
+    return (
+        "# AUTHORITATIVE FIXED APPEARANCE\n"
+        "For each named character, this server-extracted map is the only authority for "
+        "persistent identity. Narrative and the assigned PLAN may control scene-specific "
+        "pose, action, expression, and visibility; authoritative wardrobe state controls "
+        "temporary attire. Generated visual references may inform a scene only as permitted "
+        "by SERVER REFERENCE CLASSIFICATION. None of those sources may extend or replace "
+        "persistent traits.\n\n"
+        + json.dumps(fixed_appearance, ensure_ascii=False, indent=2)
+    )
+
+
+def classify_last_visual_reference(
+    reference_provenance: dict | None,
+    previous_visual: dict | None,
+) -> dict:
+    """Classify generated visual history from server-owned turn metadata.
+
+    This deliberately does not inspect prompt words.  A missing or contradictory
+    turn relationship is downgraded to SOFT_REFERENCE instead of asking CALL2 to
+    infer chronology from generated tags.
+    """
+    visual = previous_visual if isinstance(previous_visual, dict) else {}
+    usable_entries = {
+        str(name): value
+        for name, value in visual.items()
+        if str(name).strip() and isinstance(value, dict) and value
+    }
+    provenance = (
+        reference_provenance
+        if isinstance(reference_provenance, dict)
+        else {}
+    )
+    operation = str(provenance.get("history_operation") or "unknown").strip().lower()
+    comparison = str(provenance.get("target_comparison") or "unavailable").strip().lower()
+
+    if not usable_entries:
+        reference_type = "IGNORE"
+        reason = "no usable generated visual payload"
+    elif operation == "new":
+        reference_type = "IGNORE"
+        reason = "new history operation has no prior visual authority"
+    elif operation in ("duplicate", "reroll") and comparison == "same":
+        reference_type = "REROLL"
+        reason = (
+            "same active turn exact-content rendering attempt"
+            if operation == "duplicate"
+            else "same active turn replacement rendering attempt"
+        )
+    elif operation == "append" and comparison == "different":
+        reference_type = "CONTINUITY"
+        reason = "different target from an earlier committed turn"
+    else:
+        reference_type = "SOFT_REFERENCE"
+        reason = (
+            "turn metadata is missing or contradicts the declared history operation"
+        )
+
+    result = {
+        "reference_type": reference_type,
+        "reference_reason": reason,
+        "history_operation": operation,
+        "turn_relation": str(provenance.get("turn_relation") or "UNKNOWN_HISTORY_RELATION"),
+        "target_comparison": comparison,
+        "branch_id": str(provenance.get("branch_id") or ""),
+        "current_turn_target_id": str(
+            provenance.get("current_turn_target_id") or ""
+        ),
+        "previous_turn_target_id": str(
+            provenance.get("previous_turn_target_id") or ""
+        ),
+        "character_count": len(usable_entries),
+    }
+    print(
+        "[ILLUST_CONTEXT:CALL2_DETAIL] LAST VISUAL 서버 분류: "
+        f"type={reference_type}, reason={reason}, operation={operation}, "
+        f"target={comparison}, characters={list(usable_entries)}"
+    )
+    return result
+
+
+def _classified_visual_reference_content(
+    classification: dict,
+    previous_visual: dict | None,
+) -> str:
+    """Render the DETAIL-only generated reference with type-scoped authority."""
+    reference_type = str(
+        (classification or {}).get("reference_type") or "IGNORE"
+    ).strip().upper()
+    if reference_type == "IGNORE":
+        print(
+            "[ILLUST_CONTEXT:CALL2_DETAIL] LAST VISUAL payload 미전달: "
+            f"reason={(classification or {}).get('reference_reason') or 'IGNORE'}"
+        )
+        return ""
+    if not isinstance(previous_visual, dict) or not previous_visual:
+        print(
+            "[ILLUST_CONTEXT:CALL2_DETAIL] LAST VISUAL 분류는 있으나 payload가 비어 있음: "
+            f"type={reference_type}"
+        )
+        return ""
+
+    if reference_type == "CONTINUITY":
+        type_rule = (
+            "This is an earlier chronological scene. It may support only temporary visual "
+            "states that logically continue into the assigned current scene. Never copy its "
+            "pose, action, expression, gaze, camera, framing, or composition automatically."
+        )
+    elif reference_type == "REROLL":
+        type_rule = (
+            "This is another rendering attempt of the same active turn, not a previous story "
+            "event. Use it only as optional visual guidance. Re-evaluate pose, action, expression, "
+            "gaze, camera, framing, composition, and every temporary choice from the current scene. "
+            "No generated detail may be inherited merely because it appears below."
+        )
+    else:
+        type_rule = (
+            "Chronology is unverified. Use this only as optional composition or visual guidance. "
+            "Do not inherit any identity, wardrobe, pose, expression, action, or temporary state."
+        )
+
+    metadata = {
+        key: value
+        for key, value in (classification or {}).items()
+        if key != "character_count"
+    }
+    return (
+        "# CLASSIFIED LAST VISUAL REFERENCE\n"
+        "The server, not the model, has classified this generated reference.\n"
+        f"{type_rule}\n\n"
+        "AUTHORITATIVE FIXED APPEARANCE and each assigned wardrobe_snapshot always override "
+        "this payload. The generated positive_tags below are never a persistent identity source "
+        "and never a wardrobe authority. Do not promote, complete, or repeat an appearance tag "
+        "unless it is independently supported by AUTHORITATIVE FIXED APPEARANCE.\n\n"
+        "# SERVER REFERENCE CLASSIFICATION\n"
+        + json.dumps(metadata, ensure_ascii=False, indent=2)
+        + "\n\n# NON-AUTHORITATIVE GENERATED REFERENCE PAYLOAD\n"
+        + json.dumps(previous_visual, ensure_ascii=False, indent=2)
+    )
+
+
+def _call1_state_for_prompt(
+    character_state: dict | None,
+    costume_reference: str = "",
+) -> dict:
+    """Remove generated visual data that CALL1 does not consume.
+
+    Stored state is left untouched. CALL1 still receives current wardrobe and its
+    evidence timeline. A duplicated default outfit is removed only when that
+    character is present in the dedicated lb.extra costume block.
+    """
+    if not isinstance(character_state, dict):
+        if character_state is not None:
+            print(
+                f"[ILLUST_CONTEXT:CALL1] 추적 캐릭터 상태 형식 오류로 빈 상태 사용: "
+                f"type={type(character_state).__name__}"
+            )
+        return {}
+
+    result = deepcopy(character_state)
+    costume_names = {
+        match.group(1).strip().casefold()
+        for match in re.finditer(
+            r"(?m)^###\s+([^\r\n]+)\s*$",
+            str(costume_reference or ""),
+        )
+        if match.group(1).strip()
+    }
+    removed_visual = 0
+    removed_default = 0
+    preserved_default = 0
+    malformed = []
+    for name, tracked in result.items():
+        if not isinstance(tracked, dict):
+            malformed.append(str(name))
+            continue
+        if "last_visual_reference" in tracked:
+            tracked.pop("last_visual_reference", None)
+            removed_visual += 1
+        if "default_outfit_reference" in tracked:
+            canonical_name = str(tracked.get("canonical_name") or name).strip()
+            if canonical_name.casefold() in costume_names:
+                tracked.pop("default_outfit_reference", None)
+                removed_default += 1
+            else:
+                preserved_default += 1
+    if malformed:
+        print(
+            f"[ILLUST_CONTEXT:CALL1] 비정상 추적 캐릭터 상태는 원형 보존: "
+            f"characters={malformed}"
+        )
+
+    try:
+        before_chars = len(json.dumps(character_state, ensure_ascii=False, indent=2))
+        after_chars = len(json.dumps(result, ensure_ascii=False, indent=2))
+        print(
+            f"[ILLUST_CONTEXT:CALL1] 입력 상태 정리: characters={len(result)}, "
+            f"visual_removed={removed_visual}, default_duplicate_removed={removed_default}, "
+            f"default_preserved_without_extra={preserved_default}, "
+            f"chars={before_chars}->{after_chars} (-{before_chars - after_chars})"
+        )
+    except Exception as e:
+        print(f"[ILLUST_CONTEXT:CALL1] 입력 상태 정리 크기 계산 실패: error={e}")
+        traceback.print_exc()
+    return result
+
+
+def _state_without_generated_visual_references(
+    character_state: dict | None,
+    *,
+    source: str,
+) -> dict:
+    """Copy tracked state while removing generated visual payloads.
+
+    The current wardrobe and its evidence remain available.  This projection is
+    used by stages that need authoritative state but must not inherit an earlier
+    generated prompt.  Stored history is never mutated.
+    """
+    if not isinstance(character_state, dict):
+        if character_state is not None:
+            print(
+                f"[ILLUST_CONTEXT:{source}] 추적 캐릭터 상태 형식 오류로 빈 상태 사용: "
+                f"type={type(character_state).__name__}"
+            )
+        return {}
+
+    removed = 0
+
+    def scrub(value):
+        nonlocal removed
+        if isinstance(value, dict):
+            cleaned = {}
+            for key, child in value.items():
+                if str(key) == "last_visual_reference":
+                    removed += 1
+                    continue
+                cleaned[key] = scrub(child)
+            return cleaned
+        if isinstance(value, list):
+            return [scrub(item) for item in value]
+        return deepcopy(value)
+
+    result = scrub(character_state)
+    try:
+        before_chars = len(json.dumps(character_state, ensure_ascii=False, indent=2))
+        after_chars = len(json.dumps(result, ensure_ascii=False, indent=2))
+        print(
+            f"[ILLUST_CONTEXT:{source}] generated visual 상태 제거: "
+            f"references={removed}, chars={before_chars}->{after_chars} "
+            f"(-{before_chars - after_chars})"
+        )
+    except Exception as e:
+        print(
+            f"[ILLUST_CONTEXT:{source}] generated visual 상태 크기 계산 실패: "
+            f"error={e}"
+        )
+        traceback.print_exc()
+    return result
 
 
 def _segment_current_context(text: str) -> tuple[str, dict[str, dict]]:
@@ -2514,6 +2957,45 @@ def render_call2_prompt(text: str, toggles: dict, history: str = "") -> str:
     return text.strip()
 
 
+def _keyvis_only_call2_system(rendered_system: str) -> str:
+    """Remove Scene-only selection/output sections from the KEYVIS worker prompt."""
+    source = str(rendered_system or "").strip()
+    without_scene, scene_count = re.subn(
+        r"(?ms)^### Scene\s*$.*?(?=^## Client Comments\s*$)",
+        "",
+        source,
+        count=1,
+    )
+    without_examples, example_count = re.subn(
+        r"(?ms)^# Example\s*$.*\Z",
+        "",
+        without_scene,
+        count=1,
+    )
+    if scene_count != 1:
+        print(
+            "[ILLUST_CONTEXT:CALL2_KEYVIS] 공유 프롬프트에서 Scene 전용 섹션을 "
+            f"찾지 못함: matches={scene_count}"
+        )
+    if example_count != 1:
+        print(
+            "[ILLUST_CONTEXT:CALL2_KEYVIS] 공유 프롬프트에서 공통 출력 예시를 "
+            f"찾지 못함: matches={example_count}"
+        )
+    result = without_examples.strip()
+    if not result:
+        print(
+            "[ILLUST_CONTEXT:CALL2_KEYVIS] KEYVIS 전용 system 축약 결과가 비어 "
+            "공유 system을 그대로 사용"
+        )
+        return source
+    print(
+        "[ILLUST_CONTEXT:CALL2_KEYVIS] Scene 전용 지시 제거: "
+        f"chars={len(source)}->{len(result)} (-{len(source) - len(result)})"
+    )
+    return result
+
+
 def _extract_lb_block(text: str) -> str:
     match = re.search(r"<lb[-_]xnai[^>]*>([\s\S]*?)</lb[-_]xnai>", text or "", re.I)
     return match.group(1).strip() if match else ""
@@ -2694,6 +3176,87 @@ def validate_complete_call2_output(
                 f"{source} scene 필수 camera/scene이 비어 있음: item={item!r}"
             )
     return descriptors, ""
+
+
+def _parse_call2_keyvis_output(
+    text: str,
+    toggles: dict,
+    allowed_character_names: list[str],
+    source: str,
+) -> tuple[dict | None, str]:
+    """Validate the independent KEYVIS worker's one-object contract."""
+    local_toggles = deepcopy(toggles)
+    local_toggles.update({
+        "key_visual": True,
+        # Keep any accidental scene objects visible so this validator can
+        # reject them instead of having a manual scene cap silently drop them.
+        "scene_mode": "auto",
+    })
+    descriptors = parse_toon_plan(text, local_toggles, source)
+    keyvis = [
+        item for item in descriptors
+        if str(item.get("kind") or "") == "keyvis"
+    ]
+    scenes = [
+        item for item in descriptors
+        if str(item.get("kind") or "") == "scene"
+    ]
+
+    def fail(reason: str) -> tuple[None, str]:
+        print(f"[ILLUST_CONTEXT:{source}] 독립 KEYVIS 검증 실패: {reason}")
+        return None, reason
+
+    if len(keyvis) != 1:
+        return fail(f"keyvis 수 불일치: expected=1, actual={len(keyvis)}")
+    if scenes:
+        return fail(
+            "KEYVIS 전용 응답에 scene이 포함됨: "
+            f"slots={[item.get('slot') for item in scenes]}"
+        )
+
+    descriptor = keyvis[0]
+    characters = [
+        item for item in descriptor.get("characters") or []
+        if isinstance(item, dict)
+    ]
+    if not str(descriptor.get("camera") or "").strip():
+        return fail("camera가 비어 있음")
+    if not str(descriptor.get("scene") or "").strip():
+        return fail("scene이 비어 있음")
+    if not characters:
+        return fail("characters가 비어 있음")
+    character_limit = max(1, min(3, int(toggles.get("character_limit", 3))))
+    if len(characters) > character_limit:
+        return fail(
+            f"완전 가시 캐릭터가 설정 상한을 초과함: "
+            f"count={len(characters)}, limit={character_limit}"
+        )
+
+    actual_names = []
+    for index, character in enumerate(characters, start=1):
+        name = str(character.get("name") or "").strip()
+        positive = str(character.get("positive") or "").strip()
+        if not name:
+            return fail(f"characters[{index}].name이 비어 있음")
+        if not positive:
+            return fail(f"characters[{index}].positive가 비어 있음")
+        if name.casefold() in {value.casefold() for value in actual_names}:
+            return fail(f"캐릭터 이름이 중복됨: name={name!r}")
+        actual_names.append(name)
+
+    allowed = {
+        str(name or "").strip().casefold(): str(name or "").strip()
+        for name in allowed_character_names
+        if str(name or "").strip()
+    }
+    if allowed:
+        unexpected = [name for name in actual_names if name.casefold() not in allowed]
+        if unexpected:
+            return fail(
+                f"허용 canonical 캐릭터 밖 이름: unexpected={unexpected}, "
+                f"allowed={list(allowed.values())}"
+            )
+    return descriptor, ""
 
 
 def parse_call2_plan(
@@ -3226,16 +3789,150 @@ def _balanced_call2_scene_plan_batches(
     return batches
 
 
+async def _run_call2_keyvis(
+    *,
+    call2_context_messages: list[dict],
+    allowed_character_names: list[str],
+    toggles: dict,
+    stream_notify,
+) -> tuple[dict, str]:
+    """Generate one independent Key Visual descriptor without a PLAN dependency."""
+    messages = deepcopy(call2_context_messages)
+    allowed = [
+        str(name or "").strip()
+        for name in allowed_character_names
+        if str(name or "").strip()
+    ]
+    if not allowed:
+        print(
+            "[ILLUST_CONTEXT:CALL2_KEYVIS] 현재 canonical roster가 비어 있음: "
+            "CHARACTER DICTIONARY와 현재 문맥에 명시된 canonical 이름만 사용하도록 요청"
+        )
+    if messages and messages[0].get("role") == "system":
+        messages[0]["content"] = str(messages[0].get("content") or "") + (
+            "\n\n# Independent CALL2-KEYVIS override\n"
+            "Create exactly one standalone promotional Key Visual from the supplied current context. "
+            "This worker runs independently from CALL2-PLAN: do not select narrative slots, do not "
+            "output a scene plan, and do not wait for or refer to another worker. Synthesize the central "
+            "relationship, contrast, or theme into one magazine-cover-level composition instead of "
+            "copying one presumed planned scene. Output exactly one keyvis object and no scene objects. "
+            "Use only canonical character names supported by the supplied dictionary and current context. "
+            "For named characters, persistent appearance comes only from the server-supplied "
+            "AUTHORITATIVE FIXED APPEARANCE block; other CHARACTER DICTIONARY sections are not "
+            "identity sources. Do not "
+            "creatively fill missing identity traits from narrative prose. Narrative may control pose, "
+            "action, expression, composition, and temporary visual state. "
+            "The supplied wardrobe state and event timeline are authoritative; generated visual references "
+            "are intentionally absent and must not be reconstructed as identity facts. This override "
+            "supersedes every global scene-count, slot-selection, and combined keyvis/scene requirement. "
+            "Every characters[] entry must include its exact canonical name even when cropped or partially "
+            "visible. characters[].negative is optional: include it only when the Client explicitly "
+            "supplied that negative; otherwise omit the field."
+        )
+
+    roster_text = json.dumps(allowed, ensure_ascii=False)
+    messages.append({
+        "role": "user",
+        "content": (
+            "# INDEPENDENT KEY VISUAL\n"
+            "Return one complete Key Visual descriptor only. Do not output scenes, slots, plan_id, "
+            "analysis, JSON, or prose outside the <lb-xnai> block. Choose at least one and at most "
+            f"{max(1, min(3, int(toggles.get('character_limit', 3))))} named characters when supported "
+            "by the current context.\n\n"
+            "# CURRENT CANONICAL CHARACTER ROSTER\n"
+            + (roster_text if allowed else "(unavailable; use only names in CHARACTER DICTIONARY)")
+            + "\n\n# OUTPUT FORMAT\n"
+            "<lb-xnai>\n"
+            "keyvis:\n"
+            "  camera: ...\n"
+            "  characters:\n"
+            "    - positive: ...\n"
+            "      name: canonical name\n"
+            "      position: ...\n"
+            "      outfit_state:\n"
+            "        body_state: clothed|partial|nude|topless|bottomless|underwear_only|unknown\n"
+            "        worn: [...]\n"
+            "        removed: [...]\n"
+            "  scene: ...\n"
+            "  supplement: ...\n"
+            "scenes: []\n"
+            "</lb-xnai>"
+        ),
+    })
+    try:
+        print(
+            "[ILLUST_CONTEXT:CALL2_KEYVIS] 독립 입력 준비: "
+            f"messages={len(messages)}, "
+            f"chars={sum(len(str(item.get('content') or '')) for item in messages)}, "
+            f"allowed_characters={allowed}"
+        )
+    except Exception as e:
+        print(f"[ILLUST_CONTEXT:CALL2_KEYVIS] 입력 크기 계산 실패: error={e}")
+        traceback.print_exc()
+
+    def validate(result):
+        descriptor, reason = _parse_call2_keyvis_output(
+            result,
+            toggles,
+            allowed,
+            "CALL2-KEYVIS-RETRY-CHECK",
+        )
+        return bool(descriptor), reason or "CALL2-KEYVIS 검증 실패"
+
+    raw_output = await _call_pipeline_llm(
+        "CALL2-KEYVIS",
+        _normalize_messages(messages),
+        stream_notify,
+        result_validator=validate,
+    )
+    descriptor, reason = _parse_call2_keyvis_output(
+        raw_output,
+        toggles,
+        allowed,
+        "CALL2-KEYVIS",
+    )
+    if descriptor is None:
+        print(
+            f"[ILLUST_CONTEXT:CALL2_KEYVIS] 최종 응답 검증 실패: reason={reason}"
+        )
+        raise ValueError(reason or "CALL2-KEYVIS 최종 검증 실패")
+    return descriptor, raw_output
+
+
 async def _run_parallel_call2_details(
     *,
     scene_plan: list[dict],
-    keyvis_descriptor: dict | None,
-    keyvis_plan: dict | None = None,
     call2_context_messages: list[dict],
     call2_format: str,
     toggles: dict,
     stream_notify,
+    call2_thoughts: str = "",
 ) -> tuple[list[dict], list[str]]:
+    source_format = str(call2_format or "").strip()
+    keyvis_marker = re.search(r"(?m)^keyvis:\s*$", source_format)
+    if keyvis_marker is not None:
+        detail_output_format = (
+            source_format[:keyvis_marker.start()].rstrip()
+            + "\n</lb-xnai>"
+        )
+    else:
+        detail_output_format = source_format
+        print(
+            "[ILLUST_CONTEXT:CALL2_DETAIL] format.txt에 keyvis 구조가 없어 "
+            "입력 형식을 그대로 사용"
+        )
+    if not detail_output_format:
+        print(
+            "[ILLUST_CONTEXT:CALL2_DETAIL] scene-only 출력 형식 생성 실패: "
+            "call2_format이 비어 있음"
+        )
+        raise ValueError("CALL2-DETAIL 출력 형식이 비어 있습니다")
+    detail_output_format = re.sub(
+        r"(?m)^\s+negative:\s*\.\.\.\s*\r?\n?",
+        "",
+        detail_output_format,
+    )
+    detail_checklist = str(call2_thoughts or "").strip()
     max_concurrency = int(toggles["call2_parallel_max_concurrency"])
     batches = _balanced_call2_scene_plan_batches(scene_plan, max_concurrency)
     jobs = [{"plans": batch, "weight": len(batch)} for batch in batches]
@@ -3266,39 +3963,26 @@ async def _run_parallel_call2_details(
             int(item["slot"]): list(item.get("characters") or [])
             for item in plans
         }
-        assigned_keyvis_plan = deepcopy(keyvis_plan) if index == 1 and keyvis_plan else None
         messages = deepcopy(call2_context_messages)
         if messages and messages[0].get("role") == "system":
-            keyvis_override = (
-                "Also output exactly one complete keyvis matching the assigned keyvis plan. "
-                if assigned_keyvis_plan
-                else "Omit keyvis completely. "
-            )
             messages[0]["content"] = str(messages[0].get("content") or "") + (
                 "\n\n# Parallel CALL2-DETAIL override\n"
                 f"The global planner already selected the visual beats. Output exactly {len(plans)} "
                 f"scenes for assigned slots {assigned_slots}. Do not select, add, remove, or move a scene. "
                 "Copy every assigned slot exactly; the server will attach plan_id after slot validation. "
-                + keyvis_override
+                "Omit keyvis completely. "
                 + "An assigned plan may have characters: []. That means no named tracked character is "
                 "present: output characters: [] for that scene, keep anonymous background people only "
                 "in scene/supplement, and do not invent a canonical character. This shard-specific rule "
                 "overrides any global requirement that every scene contain a key character. It also "
-                "overrides global scene-count and key-visual requirements above."
+                "overrides global scene-count and key-visual requirements above. Every characters[] "
+                "entry for a named character must include its exact canonical name even when cropped "
+                "or partially visible. characters[].negative is optional: include it only when the "
+                "Client explicitly supplied that negative; otherwise omit the field."
             )
         assigned_plan_payload = (
             "# ASSIGNED GLOBAL SCENE PLAN\n"
             + json.dumps(plans, ensure_ascii=False, indent=2)
-        )
-        if assigned_keyvis_plan:
-            assigned_plan_payload += (
-                "\n\n# ASSIGNED GLOBAL KEYVIS PLAN\n"
-                + json.dumps(assigned_keyvis_plan, ensure_ascii=False, indent=2)
-            )
-        final_keyvis_rule = (
-            "Include one complete keyvis object matching ASSIGNED GLOBAL KEYVIS PLAN."
-            if assigned_keyvis_plan
-            else "Omit keyvis."
         )
         messages.extend([{
             "role": "user",
@@ -3311,11 +3995,17 @@ async def _run_parallel_call2_details(
                 "When a plan has characters: [], preserve characters: [] and express anonymous people "
                 "only through scene tags and supplement. "
                 "Copy slot exactly into every scene object and preserve plan order. The server assigns "
-                "plan_id from the validated slot.\n\n"
+                "plan_id from the validated slot."
+                + (
+                    "\n\n# DETAIL CHECKLIST\n"
+                    + detail_checklist
+                    if detail_checklist
+                    else ""
+                )
+                + "\n\n"
                 "# OUTPUT FORMAT\n"
-                + call2_format
-                + "\n\nReturn one <lb-xnai> block. "
-                + final_keyvis_rule
+                + detail_output_format
+                + "\n\nReturn one <lb-xnai> block containing scenes only. Omit keyvis."
             ),
         }])
 
@@ -3327,7 +4017,7 @@ async def _run_parallel_call2_details(
                 assigned_plan_ids,
                 f"CALL2-DETAIL-{index}-RETRY-CHECK",
                 assigned_wardrobes_by_slot,
-                assigned_keyvis_plan,
+                None,
                 assigned_characters_by_slot,
             )
             if reason:
@@ -3356,7 +4046,7 @@ async def _run_parallel_call2_details(
             assigned_plan_ids,
             f"CALL2-DETAIL-{index}",
             assigned_wardrobes_by_slot,
-            assigned_keyvis_plan,
+            None,
             assigned_characters_by_slot,
         )
         if not descriptors and str(reason).startswith("CALL2-DETAIL 권위 복장 충돌"):
@@ -3398,7 +4088,7 @@ async def _run_parallel_call2_details(
                 assigned_plan_ids,
                 f"CALL2-DETAIL-{index}-WARDROBE-CORRECTION",
                 assigned_wardrobes_by_slot,
-                assigned_keyvis_plan,
+                None,
                 assigned_characters_by_slot,
             )
             if reason:
@@ -3472,18 +4162,11 @@ async def _run_parallel_call2_details(
                     f"{retry_error}"
                 ) from retry_error
         results = [result_by_index[index] for index in range(1, len(jobs) + 1)]
-    descriptors = [deepcopy(keyvis_descriptor)] if keyvis_descriptor else []
+    descriptors = []
     raw_outputs = []
     for result in results:
         descriptors.extend(result.get("descriptors") or [])
         raw_outputs.append(str(result.get("raw") or ""))
-    keyvis_descriptors = [
-        item for item in descriptors if str(item.get("kind") or "") == "keyvis"
-    ]
-    scene_descriptors = [
-        item for item in descriptors if str(item.get("kind") or "") == "scene"
-    ]
-    descriptors = keyvis_descriptors + scene_descriptors
     return descriptors, raw_outputs
 
 
@@ -4158,12 +4841,14 @@ def _build_character_history(extra_reference: str) -> str:
     return str(extra_reference or "").strip()
 
 
-# 삽화 CALL 이름 → 외부 API 분기 task_key. 각 CALL 을 llm_routing 에서 독립적으로
-# 분기(LLM1/LLM2/LLM3)할 수 있다. 기본 primary=llm1(server.py DEFAULT_CONFIG 참고).
+# 삽화 CALL 이름 → 외부 API 분기 task_key. PLAN/DETAIL/KEYVIS는 사용자가 선택한
+# 하나의 illustration_call2 경로를 공유한다. 기본 primary=llm1(server.py 참고).
 _CALL_TASK_KEYS = {
     "CALL1-BACKTRANSLATE": "illustration_call1_backtranslate",
     "CALL1": "illustration_call1",
     "CALL2": "illustration_call2",
+    "CALL2-PLAN": "illustration_call2",
+    "CALL2-KEYVIS": "illustration_call2",
     "CALL2-FALLBACK": "illustration_call2",
     "CALL2-FIX": "illustration_call2_fix",
     "CALL3": "illustration_call3",
@@ -4177,6 +4862,8 @@ _CALL_TASK_KEYS = {
 _CALL_QUEUE_SUBTASK_GROUPS = {
     "CALL1": ("call1", "CALL1 컨텍스트 보강"),
     "CALL2": ("call2", "CALL2 장면/태그 빌드"),
+    "CALL2-PLAN": ("call2_plan", "CALL2 장면 PLAN"),
+    "CALL2-KEYVIS": ("call2_keyvis", "CALL2 Key Visual"),
     "CALL2-FALLBACK": ("call2", "CALL2 폴백"),
     "CALL2-FIX": ("call2_fix", "CALL2-FIX TOON 교정"),
     "CALL3": ("call3", "CALL3 대사 빌드"),
@@ -4208,6 +4895,7 @@ async def _call_pipeline_llm(
     if task_key is None and (
         call_name.startswith("CALL2-PLAN")
         or call_name.startswith("CALL2-DETAIL")
+        or call_name.startswith("CALL2-KEYVIS")
     ):
         task_key = _CALL_TASK_KEYS["CALL2"]
     if task_key is None and call_name.startswith("MULTI-CHAR-MASK"):
@@ -5234,7 +5922,11 @@ async def _run_parallel_call1_analysis(
     return json.dumps(merged, ensure_ascii=False), merge_warnings, merge_fallback_errors
 
 
-def _parse_multi_char_layout_response(text: str, expected_names: list[str]) -> dict:
+def _parse_multi_char_layout_response(
+    text: str,
+    expected_names: list[str],
+    source_characters: list[dict] | None = None,
+) -> dict:
     source = str(text or "").strip()
     if not source:
         raise ValueError("마스크 레이아웃 응답이 비어 있습니다")
@@ -5248,10 +5940,47 @@ def _parse_multi_char_layout_response(text: str, expected_names: list[str]) -> d
         value, _end = json.JSONDecoder().raw_decode(source[object_start:])
     except json.JSONDecodeError as exc:
         raise ValueError(f"마스크 레이아웃 JSON 파싱 실패: {exc}") from exc
+    if source_characters is not None:
+        if not isinstance(value, dict) or not isinstance(value.get("regions"), list):
+            raise ValueError("마스크 레이아웃 regions가 list가 아닙니다")
+        source_by_name = {
+            str(character.get("name") or "").strip().casefold(): character
+            for character in source_characters
+            if isinstance(character, dict)
+            and str(character.get("name") or "").strip()
+        }
+        ignored_rewrites = []
+        for raw_region in value["regions"]:
+            if not isinstance(raw_region, dict):
+                continue
+            region_name = str(raw_region.get("name") or "").strip()
+            character = source_by_name.get(region_name.casefold())
+            if character is None:
+                continue
+            authoritative_positive = str(character.get("positive") or "").strip()
+            authoritative_negative = str(character.get("negative") or "").strip()
+            model_prompt = str(raw_region.get("character_prompt") or "").strip()
+            if model_prompt and model_prompt != authoritative_positive:
+                ignored_rewrites.append(region_name)
+            # Call5 owns only spatial decomposition. Character text is injected
+            # from the already parsed/validated Call2 descriptor on the server.
+            raw_region["character_prompt"] = authoritative_positive
+            raw_region["positive"] = authoritative_positive
+            raw_region["negative"] = authoritative_negative
+            raw_region["outfit_state"] = deepcopy(
+                character.get("outfit_state") or {}
+            )
+        if ignored_rewrites:
+            print(
+                "[ILLUST_CONTEXT:MULTI_CHAR] 모델의 캐릭터 재작성 결과 무시: "
+                f"characters={ignored_rewrites}"
+            )
     return multi_char_mask.validate_multi_char_layout(
         value,
         expected_names,
         require_prompt_separation=True,
+        require_character_prompt=True,
+        max_pairwise_overlap_ratio=CALL5_MAX_PAIRWISE_OVERLAP_RATIO,
     )
 
 
@@ -5303,7 +6032,9 @@ async def calculate_multi_char_layouts(
             "characters": [{
                 "name": str(character.get("name") or ""),
                 "position_hint": str(character.get("position") or ""),
-                "visual_tags": str(character.get("positive") or ""),
+                "validated_positive": str(character.get("positive") or ""),
+                "validated_negative": str(character.get("negative") or ""),
+                "outfit_state": deepcopy(character.get("outfit_state") or {}),
             } for character in characters],
         }
         clean_positive_note = str(positive_note or "").strip()
@@ -5321,7 +6052,11 @@ async def calculate_multi_char_layouts(
 
         def validate_result(result: str):
             try:
-                _parse_multi_char_layout_response(result, expected_names)
+                _parse_multi_char_layout_response(
+                    result,
+                    expected_names,
+                    characters,
+                )
                 return True, ""
             except Exception as exc:
                 print(
@@ -5352,7 +6087,11 @@ async def calculate_multi_char_layouts(
                 json_mode=True,
             )
             descriptor["multi_char_layout_raw_response"] = str(result or "")
-            layout = _parse_multi_char_layout_response(result, expected_names)
+            layout = _parse_multi_char_layout_response(
+                result,
+                expected_names,
+                characters,
+            )
             by_name = {
                 str(character.get("name") or "").strip().casefold(): character
                 for character in characters
@@ -6154,6 +6893,7 @@ async def build_from_context(
     resolved_current = enhanced
     segmented_current, current_segments = _segment_current_context(enhanced)
     persistent_history = history_plan if isinstance(history_plan, dict) else None
+    reference_provenance = build_reference_provenance(persistent_history)
     if toggles.get("call1_enabled"):
         if persistent_history:
             context_slice = persistent_history.get("call1_history") or []
@@ -6173,7 +6913,10 @@ async def build_from_context(
         call1_system = call1_system.replace(
             "{character_state}",
             json.dumps(
-                (persistent_history or {}).get("state_before") or {},
+                _call1_state_for_prompt(
+                    (persistent_history or {}).get("state_before") or {},
+                    costume,
+                ),
                 ensure_ascii=False,
                 indent=2,
             ),
@@ -6394,51 +7137,125 @@ async def build_from_context(
             .get("last_visual_by_character", {})
         )
 
-    history = _build_character_history(call2_reference)
+    fixed_appearance = extract_authoritative_fixed_appearance(call2_reference)
+    last_visual_reference_classification = classify_last_visual_reference(
+        reference_provenance,
+        previous_visual,
+    )
+    classified_visual_reference = _classified_visual_reference_content(
+        last_visual_reference_classification,
+        previous_visual,
+    )
+    # The selected dictionary is already supplied as a dedicated user block and
+    # fixed appearance is supplied separately. Repeating it inside the rendered
+    # system prompt wastes context and makes source authority less clear.
+    history = ""
     call2_system = render_call2_prompt(prompts.get("call2_system", ""), toggles, history)
     call2_thoughts = render_call2_prompt(prompts.get("call2_thoughts", ""), toggles, history)
-    call2_messages = [{
+    call2_detail_toggles = deepcopy(toggles)
+    call2_detail_toggles["key_visual"] = False
+    call2_detail_system = render_call2_prompt(
+        prompts.get("call2_system", ""),
+        call2_detail_toggles,
+        history,
+    )
+    call2_detail_thoughts = render_call2_prompt(
+        prompts.get("call2_thoughts", ""),
+        call2_detail_toggles,
+        history,
+    )
+    call2_keyvis_system = (
+        _keyvis_only_call2_system(call2_system)
+        if toggles.get("key_visual")
+        else call2_system
+    )
+    call2_base_message = {
         "role": "system",
         "content": "\n\n".join(x for x in (
             prompts.get("call2_jailbreak", ""), prompts.get("call2_job", ""), call2_system,
         ) if x.strip()),
-    }]
+    }
+    call2_detail_base_message = {
+        "role": "system",
+        "content": "\n\n".join(x for x in (
+            prompts.get("call2_jailbreak", ""),
+            prompts.get("call2_job", ""),
+            call2_detail_system,
+        ) if x.strip()),
+    }
+    call2_keyvis_base_message = {
+        "role": "system",
+        "content": "\n\n".join(x for x in (
+            prompts.get("call2_jailbreak", ""),
+            prompts.get("call2_job", ""),
+            call2_keyvis_system,
+        ) if x.strip()),
+    }
+    call2_messages = [deepcopy(call2_base_message)]
+    call2_detail_context_messages = [deepcopy(call2_detail_base_message)]
+    call2_plan_context_messages = [deepcopy(call2_base_message)]
+    call2_keyvis_context_messages = [deepcopy(call2_keyvis_base_message)]
+
+    def append_call2_context(
+        message: dict,
+        *,
+        include_plan: bool = True,
+        include_keyvis: bool = True,
+        include_detail: bool = True,
+    ) -> None:
+        if include_detail:
+            call2_messages.append(deepcopy(message))
+            call2_detail_context_messages.append(deepcopy(message))
+        if include_plan:
+            call2_plan_context_messages.append(deepcopy(message))
+        if include_keyvis:
+            call2_keyvis_context_messages.append(deepcopy(message))
+
     if call2_reference.strip():
-        call2_messages.append({"role": "user", "content": "# CHARACTER DICTIONARY\n\n" + call2_reference})
+        append_call2_context({
+            "role": "user",
+            "content": "# CHARACTER DICTIONARY\n\n" + call2_reference,
+        })
+    fixed_appearance_content = _fixed_appearance_authority_content(fixed_appearance)
+    if fixed_appearance_content:
+        append_call2_context({
+            "role": "user",
+            "content": fixed_appearance_content,
+        }, include_plan=False)
     if persistent_history:
         if selected_states:
-            call2_messages.append({
+            projected_states = _state_without_generated_visual_references(
+                selected_states,
+                source="CALL2_DETAIL_KEYVIS",
+            )
+            append_call2_context({
                 "role": "user",
                 "content": (
                     "# AUTHORITATIVE WARDROBE CONTINUITY STATE\n"
                     "Carry this state forward. Absence from a camera frame never means removal.\n\n"
-                    + json.dumps(selected_states, ensure_ascii=False, indent=2)
+                    + json.dumps(projected_states, ensure_ascii=False, indent=2)
                 ),
-            })
+            }, include_plan=False)
         if wardrobe_events:
-            call2_messages.append({
+            append_call2_context({
                 "role": "user",
                 "content": (
                     "# CURRENT WARDROBE EVENT TIMELINE\n"
                     "Apply each event only from its segment onward.\n\n"
                     + json.dumps(wardrobe_events, ensure_ascii=False, indent=2)
                 ),
-            })
-        if previous_visual:
-            call2_messages.append({
+            }, include_plan=False)
+        if classified_visual_reference:
+            append_call2_context({
                 "role": "user",
-                "content": (
-                    "# LAST VISUAL REFERENCE\n"
-                    "Use only appearance/attire continuity; ignore old pose, action, expression and framing.\n\n"
-                    + json.dumps(previous_visual, ensure_ascii=False, indent=2)
-                ),
-            })
+                "content": classified_visual_reference,
+            }, include_plan=False, include_keyvis=False)
         if balanced_fallback:
             fallback_text = _history_messages_text(
                 persistent_history.get("call2_fallback_history") or []
             )
             if fallback_text:
-                call2_messages.append({
+                append_call2_context({
                     "role": "user",
                     "content": "# BALANCED FALLBACK PAST HISTORY\n\n" + fallback_text,
                 })
@@ -6448,12 +7265,38 @@ async def build_from_context(
             )
     else:
         for item in chats[max(0, target_index - int(toggles["call2_context_turns"])):target_index]:
-            call2_messages.append({
+            append_call2_context({
                 "role": "assistant" if item["role"] == "char" else "user",
                 "content": _strip_nodes(item["data"]),
             })
-    call2_messages.append({"role": "user", "content": "[Last log entry]\n" + slotted})
-    call2_context_messages = deepcopy(call2_messages)
+    append_call2_context({
+        "role": "user",
+        "content": "[Last log entry]\n" + slotted,
+    })
+    call2_context_messages = deepcopy(call2_detail_context_messages)
+    try:
+        detail_context_chars = sum(
+            len(str(message.get("content") or ""))
+            for message in call2_context_messages
+        )
+        plan_context_chars = sum(
+            len(str(message.get("content") or ""))
+            for message in call2_plan_context_messages
+        )
+        keyvis_context_chars = sum(
+            len(str(message.get("content") or ""))
+            for message in call2_keyvis_context_messages
+        )
+        print(
+            "[ILLUST_CONTEXT:CALL2] 역할별 입력 분리: "
+            f"detail_chars={detail_context_chars}, plan_chars={plan_context_chars} "
+            f"(-{detail_context_chars - plan_context_chars}), "
+            f"keyvis_chars={keyvis_context_chars} "
+            f"(-{detail_context_chars - keyvis_context_chars})"
+        )
+    except Exception as e:
+        print(f"[ILLUST_CONTEXT:CALL2] 역할별 입력 크기 계산 실패: error={e}")
+        traceback.print_exc()
     call2_messages.append({
         "role": "user",
         "content": "# Output instructions\n\n" + call2_thoughts + "\n\n" + prompts.get("call2_format", ""),
@@ -6463,21 +7306,46 @@ async def build_from_context(
     call2_messages.append({"role": "user", "content": "Return the final <lb-xnai> TOON block only after your analysis."})
     call2_output = ""
     call2_plan_output = ""
+    call2_keyvis_output = ""
     call2_detail_outputs: list[str] = []
     call2_parallel_fallback_stage = ""
     call2_parallel_fallback_reason = ""
     call2_fallback_expected_slots: list[int] | None = None
     call2_fallback_scene_plan: list[dict] = []
-    call2_fallback_keyvis_plan: dict | None = None
+    call2_preserved_keyvis_descriptor: dict | None = None
+    call2_preserved_scene_descriptors: list[dict] = []
+    keyvis_allowed_names: list[str] = []
     call2_detail_completed = False
     descriptors = []
     if toggles.get("call2_parallel_enabled"):
         parallel_stage = "CALL2-PLAN"
+        plan_task: asyncio.Task | None = None
+        keyvis_task: asyncio.Task | None = None
+
+        async def cancel_call2_task(task: asyncio.Task | None, label: str) -> None:
+            if task is None:
+                return
+            was_pending = not task.done()
+            if was_pending:
+                print(f"[ILLUST_CONTEXT:CALL2_PARALLEL] 진행 중 {label} 취소")
+                task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                if was_pending:
+                    print(f"[ILLUST_CONTEXT:CALL2_PARALLEL] {label} 취소 완료")
+            except Exception as cleanup_error:
+                print(
+                    f"[ILLUST_CONTEXT:CALL2_PARALLEL] {label} 정리 중 실패: "
+                    f"error={cleanup_error}"
+                )
+                traceback.print_exc()
+
         try:
             if progress:
-                await progress(31, "call2_plan", "CALL2 전역 장면·키비주얼 계획")
+                await progress(31, "call2_plan", "CALL2 장면 PLAN · Key Visual 병렬 생성")
             candidates = candidate_slots(original_slotted)
-            plan_messages = deepcopy(call2_context_messages)
+            plan_messages = deepcopy(call2_plan_context_messages)
             _call2_segment_text, _call2_segments = _segment_current_context(enhanced)
             (
                 call2_segment_slots,
@@ -6492,6 +7360,8 @@ async def build_from_context(
                     "Read the full supplied context and select binding moments before DETAIL workers expand them.",
                     "Reason silently and return only the compact JSON requested by the user message.",
                     "Do not output Danbooru tags, camera fields, outfit lists, plan_id, source_segments, slots, analysis, or prose outside JSON.",
+                    "Plan narrative scene beats only. You are not an appearance, wardrobe, or Key Visual authority.",
+                    "Do not copy or invent persistent visual traits in scene_brief.",
                     "Treat consecutive paragraphs sharing one time, location, and ongoing action as one visual beat; select at most one scene from that beat.",
                     "An existing <img ...> block already occupies its visual beat, so select a different beat.",
                     "Choose each anchor by semantic context and common sense, never by keyword matching.",
@@ -6513,11 +7383,6 @@ async def build_from_context(
                 minimum = min(int(toggles["scene_min"]), len(candidates))
                 maximum = min(int(toggles["scene_max"]), len(candidates))
                 scene_count_rule = f"Choose between {minimum} and {maximum} scenes."
-            keyvis_rule = (
-                "Return one compact keyvis_plan with character names and one objective promotional-image brief."
-                if toggles.get("key_visual")
-                else "Return keyvis_plan as null."
-            )
             plan_messages.append({
                 "role": "user",
                 "content": (
@@ -6526,9 +7391,8 @@ async def build_from_context(
                     + " Select at most one scene per semantic visual beat. Do not invent or output a "
                     "slot number. Select exactly one anchor_segment for each scene; the server derives "
                     "the slot from the authoritative mapping below. Every selected anchor must map to a "
-                    "different server slot.\n"
-                    + keyvis_rule
-                    + "\n\nReturn this JSON schema only:\n"
+                    "different server slot. Key Visual is handled by a different worker; do not output "
+                    "keyvis or keyvis_plan.\n\nReturn this JSON schema only:\n"
                     "{\n"
                     '  "scene_plan": [\n'
                     "    {\n"
@@ -6536,11 +7400,7 @@ async def build_from_context(
                     '      "characters": ["canonical name"],\n'
                     '      "scene_brief": "objective visual moment to expand"\n'
                     "    }\n"
-                    "  ],\n"
-                    '  "keyvis_plan": {\n'
-                    '    "characters": ["canonical name"],\n'
-                    '    "scene_brief": "objective promotional concept distinct from selected scenes"\n'
-                    "  }\n"
+                    "  ]\n"
                     "}\n\n"
                     "anchor_segment must be one exact Cxxx ID from the server map. The server reuses "
                     "CALL1 wardrobe events and tracked state to freeze each DETAIL outfit; do not repeat "
@@ -6553,26 +7413,63 @@ async def build_from_context(
                 ),
             })
 
+            plan_toggles = deepcopy(toggles)
+            plan_toggles["key_visual"] = False
+
             def validate_plan(result):
                 plan, reason = parse_call2_plan(
                     result,
-                    toggles,
+                    plan_toggles,
                     original_slotted,
                     segment_slot_map=call2_segment_slots,
                     log_errors=False,
                 )
                 return bool(plan), reason or "CALL2-PLAN 파싱 실패"
 
-            call2_plan_output = await _call_pipeline_llm(
-                "CALL2-PLAN",
-                _normalize_messages(plan_messages),
-                stream_notify,
-                result_validator=validate_plan,
-                json_mode=True,
+            normalized_plan_messages = _normalize_messages(plan_messages)
+            print(
+                "[ILLUST_CONTEXT:CALL2_PLAN] 전용 입력 준비: "
+                f"messages={len(normalized_plan_messages)}, "
+                f"chars={sum(len(str(item.get('content') or '')) for item in normalized_plan_messages)}"
             )
+            plan_task = asyncio.create_task(
+                _call_pipeline_llm(
+                    "CALL2-PLAN",
+                    normalized_plan_messages,
+                    stream_notify,
+                    result_validator=validate_plan,
+                    json_mode=True,
+                ),
+                name="call2-plan",
+            )
+            if toggles.get("key_visual"):
+                keyvis_allowed_names = list(current_character_names)
+                if not keyvis_allowed_names:
+                    keyvis_allowed_names = [
+                        match.group(1).strip()
+                        for match in re.finditer(
+                            r"(?m)^###\s+([^\r\n]+)\s*$",
+                            call2_reference,
+                        )
+                        if match.group(1).strip()
+                    ]
+                keyvis_task = asyncio.create_task(
+                    _run_call2_keyvis(
+                        call2_context_messages=call2_keyvis_context_messages,
+                        allowed_character_names=keyvis_allowed_names,
+                        toggles=toggles,
+                        stream_notify=stream_notify,
+                    ),
+                    name="call2-keyvis",
+                )
+            print(
+                "[ILLUST_CONTEXT:CALL2_PARALLEL] 독립 LLM 동시 시작: "
+                f"plan=1, keyvis={1 if keyvis_task else 0}"
+            )
+            call2_plan_output = await plan_task
             parsed_plan, plan_reason = parse_call2_plan(
                 call2_plan_output,
-                toggles,
+                plan_toggles,
                 original_slotted,
                 segment_slot_map=call2_segment_slots,
             )
@@ -6580,10 +7477,22 @@ async def build_from_context(
                 raise ValueError(plan_reason or "CALL2-PLAN 파싱 실패")
             if parsed_plan["mode"] == "legacy":
                 descriptors = list(parsed_plan.get("descriptors") or [])
-                call2_output = call2_plan_output
+                if keyvis_task is not None:
+                    (
+                        call2_preserved_keyvis_descriptor,
+                        call2_keyvis_output,
+                    ) = await keyvis_task
+                    descriptors = [
+                        deepcopy(call2_preserved_keyvis_descriptor),
+                        *[
+                            item for item in descriptors
+                            if str(item.get("kind") or "") != "keyvis"
+                        ],
+                    ]
+                call2_output = descriptors_to_toon(descriptors)
                 print(
                     "[ILLUST_CONTEXT:CALL2_PLAN] 모델이 완성 TOON을 반환해 "
-                    "기존 단일 CALL2 결과로 수용"
+                    "장면 결과로 수용하고 독립 Key Visual과 병합"
                 )
             else:
                 parsed_plan["scene_plan"] = bind_scene_plan_wardrobes(
@@ -6599,7 +7508,6 @@ async def build_from_context(
                     int(item["slot"]) for item in parsed_plan["scene_plan"]
                 ]
                 call2_fallback_scene_plan = deepcopy(parsed_plan["scene_plan"])
-                call2_fallback_keyvis_plan = deepcopy(parsed_plan.get("keyvis_plan"))
                 parallel_stage = "CALL2-DETAIL"
                 if progress:
                     await progress(
@@ -6607,22 +7515,61 @@ async def build_from_context(
                         "call2_detail",
                         f"CALL2 상세 장면 {len(parsed_plan['scene_plan'])}개 병렬 생성",
                     )
-                descriptors, call2_detail_outputs = await _run_parallel_call2_details(
-                    scene_plan=list(parsed_plan["scene_plan"]),
-                    keyvis_descriptor=parsed_plan.get("keyvis_descriptor"),
-                    keyvis_plan=parsed_plan.get("keyvis_plan"),
-                    call2_context_messages=call2_context_messages,
-                    call2_format=prompts.get("call2_format", ""),
-                    toggles=toggles,
-                    stream_notify=stream_notify,
+                detail_task = asyncio.create_task(
+                    _run_parallel_call2_details(
+                        scene_plan=list(parsed_plan["scene_plan"]),
+                        call2_context_messages=call2_context_messages,
+                        call2_format=prompts.get("call2_format", ""),
+                        toggles=toggles,
+                        stream_notify=stream_notify,
+                        call2_thoughts=call2_detail_thoughts,
+                    ),
+                    name="call2-details",
                 )
+                if keyvis_task is not None:
+                    detail_result, keyvis_result = await asyncio.gather(
+                        detail_task,
+                        keyvis_task,
+                        return_exceptions=True,
+                    )
+                    if not isinstance(keyvis_result, BaseException):
+                        (
+                            call2_preserved_keyvis_descriptor,
+                            call2_keyvis_output,
+                        ) = keyvis_result
+                    if isinstance(detail_result, BaseException):
+                        if isinstance(detail_result, asyncio.CancelledError):
+                            raise detail_result
+                        raise detail_result
+                    descriptors, call2_detail_outputs = detail_result
+                    if isinstance(keyvis_result, BaseException):
+                        if isinstance(keyvis_result, asyncio.CancelledError):
+                            raise keyvis_result
+                        call2_preserved_scene_descriptors = deepcopy(descriptors)
+                        parallel_stage = "CALL2-KEYVIS"
+                        raise keyvis_result
+                else:
+                    descriptors, call2_detail_outputs = await detail_task
+                if call2_preserved_keyvis_descriptor is not None:
+                    descriptors = [
+                        deepcopy(call2_preserved_keyvis_descriptor),
+                        *descriptors,
+                    ]
                 parallel_stage = "CALL2-DETAIL-MERGE"
                 call2_output = descriptors_to_toon(descriptors)
                 call2_detail_completed = True
         except asyncio.CancelledError:
+            await cancel_call2_task(plan_task, "CALL2-PLAN")
+            await cancel_call2_task(keyvis_task, "CALL2-KEYVIS")
             print("[ILLUST_CONTEXT:CALL2_PARALLEL] 상위 작업 취소로 병렬 CALL2 중단")
             raise
         except Exception as e:
+            if parallel_stage == "CALL2-PLAN":
+                await cancel_call2_task(keyvis_task, "CALL2-KEYVIS")
+                call2_preserved_keyvis_descriptor = None
+                call2_keyvis_output = ""
+            elif keyvis_task is not None and not keyvis_task.done():
+                await cancel_call2_task(keyvis_task, "CALL2-KEYVIS")
             call2_parallel_fallback_stage = parallel_stage
             call2_parallel_fallback_reason = str(e).strip() or type(e).__name__
             print(
@@ -6635,13 +7582,72 @@ async def build_from_context(
             call2_output = ""
             if parallel_stage == "CALL2-PLAN":
                 call2_plan_output = ""
-            call2_detail_outputs = []
+            if parallel_stage != "CALL2-KEYVIS":
+                call2_detail_outputs = []
             descriptors = []
+
+    if (
+        not descriptors
+        and not call2_detail_completed
+        and call2_parallel_fallback_stage == "CALL2-KEYVIS"
+        and call2_preserved_scene_descriptors
+    ):
+        try:
+            print(
+                "[ILLUST_CONTEXT:CALL2_KEYVIS] 성공한 scene DETAIL을 보존하고 "
+                "Key Visual만 1회 재시도"
+            )
+            if progress:
+                await progress(39, "call2_keyvis", "Key Visual 단독 재시도")
+            (
+                call2_preserved_keyvis_descriptor,
+                call2_keyvis_output,
+            ) = await _run_call2_keyvis(
+                call2_context_messages=call2_keyvis_context_messages,
+                allowed_character_names=keyvis_allowed_names,
+                toggles=toggles,
+                stream_notify=stream_notify,
+            )
+            descriptors = [
+                deepcopy(call2_preserved_keyvis_descriptor),
+                *deepcopy(call2_preserved_scene_descriptors),
+            ]
+            call2_output = descriptors_to_toon(descriptors)
+            call2_detail_completed = True
+            print(
+                "[ILLUST_CONTEXT:CALL2_KEYVIS] 단독 재시도 성공: "
+                f"preserved_scenes={len(call2_preserved_scene_descriptors)}"
+            )
+        except asyncio.CancelledError:
+            print("[ILLUST_CONTEXT:CALL2_KEYVIS] 단독 재시도 중 상위 작업 취소")
+            raise
+        except Exception as keyvis_retry_error:
+            call2_parallel_fallback_reason = (
+                f"{call2_parallel_fallback_reason}; "
+                f"keyvis_retry={keyvis_retry_error}"
+            ).strip("; ")
+            call2_detail_outputs = []
+            print(
+                "[ILLUST_CONTEXT:CALL2_KEYVIS] 단독 재시도도 실패해 전체 폴백 사용: "
+                f"error={keyvis_retry_error}"
+            )
+            traceback.print_exc()
 
     if not descriptors and not call2_detail_completed:
         is_parallel_fallback = bool(call2_parallel_fallback_reason)
         call2_call_name = "CALL2-FALLBACK" if is_parallel_fallback else "CALL2"
         call2_parse_source = call2_call_name
+        preserve_independent_keyvis = bool(
+            call2_preserved_keyvis_descriptor is not None
+            and call2_parallel_fallback_stage != "CALL2-PLAN"
+        )
+        fallback_toggles = deepcopy(toggles)
+        if preserve_independent_keyvis:
+            fallback_toggles["key_visual"] = False
+            print(
+                "[ILLUST_CONTEXT:CALL2-FALLBACK] 검증된 독립 Key Visual 보존, "
+                "scene만 폴백 생성"
+            )
         if is_parallel_fallback and progress:
             await progress(
                 40,
@@ -6652,7 +7658,7 @@ async def build_from_context(
         def validate_fallback(result):
             parsed, reason = validate_complete_call2_output(
                 result,
-                toggles,
+                fallback_toggles,
                 original_slotted,
                 f"{call2_parse_source}-RETRY-CHECK",
                 call2_fallback_expected_slots,
@@ -6663,28 +7669,34 @@ async def build_from_context(
         if call2_fallback_scene_plan:
             preserved_plan_payload = {
                 "scene_plan": call2_fallback_scene_plan,
-                "keyvis_plan": call2_fallback_keyvis_plan,
             }
+            keyvis_fallback_rule = (
+                "A separately validated Key Visual is already preserved. Omit keyvis completely and "
+                "return only the assigned scenes."
+                if preserve_independent_keyvis
+                else "Generate the required Key Visual independently in the same response when enabled."
+            )
             fallback_messages.append({
                 "role": "user",
                 "content": (
                     "# PRESERVED GLOBAL PLAN AFTER DETAIL FAILURE\n"
                     "The planner already completed successfully. Expand every scene below into the final "
                     "<lb-xnai> block. Use every supplied slot exactly once, preserve character coverage and "
-                    "wardrobe_snapshot, and do not reselect, omit, or add scenes. Return the required keyvis "
-                    "when enabled.\n\n"
+                    "wardrobe_snapshot, and do not reselect, omit, or add scenes. "
+                    + keyvis_fallback_rule
+                    + "\n\n"
                     + json.dumps(preserved_plan_payload, ensure_ascii=False, indent=2)
                 ),
             })
-        call2_output = await _call_pipeline_llm(
+        fallback_output = await _call_pipeline_llm(
             call2_call_name,
             _normalize_messages(fallback_messages),
             stream_notify,
             result_validator=validate_fallback,
         )
         descriptors, fallback_validation_reason = validate_complete_call2_output(
-            call2_output,
-            toggles,
+            fallback_output,
+            fallback_toggles,
             original_slotted,
             call2_parse_source,
             call2_fallback_expected_slots,
@@ -6697,6 +7709,17 @@ async def build_from_context(
             raise RuntimeError(
                 fallback_validation_reason or f"{call2_call_name} 최종 검증 실패"
             )
+        if preserve_independent_keyvis:
+            descriptors = [
+                deepcopy(call2_preserved_keyvis_descriptor),
+                *[
+                    item for item in descriptors
+                    if str(item.get("kind") or "") != "keyvis"
+                ],
+            ]
+            call2_output = descriptors_to_toon(descriptors)
+        else:
+            call2_output = fallback_output
 
     # Optimized CALL1 path deliberately sends only selected character details.  If
     # CALL2 nevertheless emits another named character, retry once with the
@@ -6713,6 +7736,7 @@ async def build_from_context(
         observed = {
             str(character.get("name") or "").strip()
             for descriptor in descriptors
+            if str(descriptor.get("kind") or "") == "scene"
             for character in descriptor.get("characters") or []
             if str(character.get("name") or "").strip()
         }
@@ -6723,10 +7747,26 @@ async def build_from_context(
                 f"[ILLUST_CONTEXT:CALL2] CALL1 선택 밖 캐릭터 감지, 균형형 1회 재시도: "
                 f"unexpected={unexpected}, allowed={current_character_names}"
             )
+            preserve_keyvis_during_coverage_retry = bool(
+                call2_preserved_keyvis_descriptor is not None
+                and toggles.get("key_visual")
+            )
+            coverage_retry_toggles = deepcopy(toggles)
+            if preserve_keyvis_during_coverage_retry:
+                coverage_retry_toggles["key_visual"] = False
+            scene_only_previous_output = descriptors_to_toon([
+                descriptor
+                for descriptor in descriptors
+                if str(descriptor.get("kind") or "") == "scene"
+            ])
             retry_messages = deepcopy(call2_messages)
             retry_messages.extend([{
                 "role": "assistant",
-                "content": call2_output,
+                "content": (
+                    scene_only_previous_output
+                    if preserve_keyvis_during_coverage_retry
+                    else call2_output
+                ),
             }, {
                 "role": "user",
                 "content": (
@@ -6739,26 +7779,56 @@ async def build_from_context(
                     + (_history_messages_text(
                         persistent_history.get("call2_fallback_history") or []
                     ) or "(empty)")
-                    + "\n\nReturn the complete corrected <lb-xnai> block only."
+                    + (
+                        "\n\nAn independently validated Key Visual is already preserved and is not "
+                        "included above. Return corrected scene objects only and omit keyvis."
+                        if preserve_keyvis_during_coverage_retry
+                        else "\n\nReturn the complete corrected <lb-xnai> block only."
+                    )
                 ),
             }])
+
+            def validate_coverage_retry(result):
+                parsed, reason = validate_complete_call2_output(
+                    result,
+                    coverage_retry_toggles,
+                    original_slotted,
+                    "CALL2-COVERAGE-RETRY-CHECK",
+                    call2_fallback_expected_slots,
+                )
+                return bool(parsed), reason or "CALL2 캐릭터 커버리지 재시도 검증 실패"
+
             retried_output = await _call_pipeline_llm(
                 "CALL2",
                 _normalize_messages(retry_messages),
                 stream_notify,
-                result_validator=lambda result: (
-                    bool(parse_toon_plan(result, toggles, "CALL2-COVERAGE-RETRY-CHECK")),
-                    "CALL2 캐릭터 커버리지 재시도 파싱 실패",
-                ),
+                result_validator=validate_coverage_retry,
             )
-            retried_descriptors = parse_toon_plan(
+            retried_descriptors, coverage_retry_reason = validate_complete_call2_output(
                 retried_output,
-                toggles,
+                coverage_retry_toggles,
+                original_slotted,
                 "CALL2-COVERAGE-RETRY",
+                call2_fallback_expected_slots,
             )
             if retried_descriptors:
-                call2_output = retried_output
-                descriptors = retried_descriptors
+                if preserve_keyvis_during_coverage_retry:
+                    descriptors = [
+                        deepcopy(call2_preserved_keyvis_descriptor),
+                        *[
+                            item for item in retried_descriptors
+                            if str(item.get("kind") or "") == "scene"
+                        ],
+                    ]
+                    call2_output = descriptors_to_toon(descriptors)
+                else:
+                    call2_output = retried_output
+                    descriptors = retried_descriptors
+            else:
+                print(
+                    "[ILLUST_CONTEXT:CALL2] 캐릭터 커버리지 재시도 최종 검증 실패: "
+                    f"reason={coverage_retry_reason}"
+                )
 
     # CALL2 파싱 실패 시 CALL2-FIX(repair.txt)가 TOON 블록을 교정한다.
     # CALL3는 대사 생성 전용이므로 교정은 여기서 먼저 마무리한다.
@@ -6999,11 +8069,14 @@ async def build_from_context(
         "enhanced_narrative": enhanced,
         "call1_output": call1_output,
         "call1_result": call1_result,
+        "reference_provenance": reference_provenance,
+        "last_visual_reference_classification": last_visual_reference_classification,
         "reference_variables": reference_variables,
         "wardrobe_events": wardrobe_events,
         "balanced_fallback_used": balanced_fallback,
         "call2_output": call2_output,
         "call2_plan_output": call2_plan_output,
+        "call2_keyvis_output": call2_keyvis_output,
         "call2_detail_outputs": call2_detail_outputs,
         "call2_fallback_stage": call2_parallel_fallback_stage,
         "call2_fallback_reason": call2_parallel_fallback_reason,
