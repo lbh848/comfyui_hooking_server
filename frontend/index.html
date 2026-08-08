@@ -1191,6 +1191,21 @@
             gap: 8px;
             align-items: center;
         }
+        .share-issue-block {
+            margin-bottom: 6px;
+        }
+        .share-row-label {
+            margin-bottom: 6px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: var(--text);
+        }
+        .share-row-label .share-row-sub {
+            margin-left: 4px;
+            font-weight: 400;
+            font-size: 0.78rem;
+            color: var(--text2);
+        }
         .share-url-box {
             flex: 1 1 320px;
             min-width: 0;
@@ -18938,14 +18953,28 @@
             </div>
             <div class="modal-body">
                 <!-- 주소 발급 영역 -->
-                <div class="share-issue-row">
-                    <div class="share-url-box empty" id="share-url-box">발급 전</div>
-                    <button class="share-btn primary" id="share-issue-btn" onclick="issueTunnelUrl()">주소 발급</button>
-                    <button class="share-btn" id="share-copy-btn" onclick="copyTunnelUrl()" disabled>복사</button>
-                    <button class="share-btn" id="share-regen-btn" onclick="regenTunnelUrl()" disabled>재발급</button>
-                    <button class="share-btn danger" id="share-stop-btn" onclick="stopTunnelUrl()" disabled>연결 종료</button>
+                <div class="share-issue-block">
+                    <div class="share-row-label">랜덤 주소 <span class="share-row-sub">Cloudflare Quick Tunnel</span></div>
+                    <div class="share-issue-row">
+                        <div class="share-url-box empty" id="share-url-box">발급 전</div>
+                        <button class="share-btn primary" id="share-issue-btn" onclick="issueTunnelUrl()">주소 발급</button>
+                        <button class="share-btn" id="share-copy-btn" onclick="copyTunnelUrl()" disabled>복사</button>
+                        <button class="share-btn" id="share-regen-btn" onclick="regenTunnelUrl()" disabled>재발급</button>
+                        <button class="share-btn danger" id="share-stop-btn" onclick="stopTunnelUrl()" disabled>연결 종료</button>
+                    </div>
                 </div>
                 <div class="share-status" id="share-status"></div>
+
+                <div class="share-issue-block">
+                    <div class="share-row-label">고정 주소 <span class="share-row-sub">Tailscale Funnel (매번 같은 주소, 재발급 불필요)</span></div>
+                    <div class="share-issue-row">
+                        <div class="share-url-box empty" id="ts-url-box">발급 전</div>
+                        <button class="share-btn primary" id="ts-issue-btn" onclick="issueTailscale()">주소 발급</button>
+                        <button class="share-btn" id="ts-copy-btn" onclick="copyTailscale()" disabled>복사</button>
+                        <button class="share-btn danger" id="ts-stop-btn" onclick="stopTailscale()" disabled>연결 종료</button>
+                    </div>
+                </div>
+                <div class="share-status" id="ts-status"></div>
 
                 <!-- 연결 가이드 -->
                 <div class="share-guide">
@@ -20408,6 +20437,9 @@
         // ─── 터널 공유 (공유 모달) ──────────────────────────
         let tunnelActive = false;
         let tunnelUrl = null;
+        // Tailscale Funnel (고정 주소) — Cloudflare 터널과 독립적으로 동작
+        let tsActive = false;
+        let tsUrl = null;
 
         // Workflow JSON 을 모달 textarea 에 예쁘게 채운다 (1회).
         (function _fillShareWorkflow() {
@@ -20446,9 +20478,11 @@
             const stopBtn = document.getElementById('share-stop-btn');
             if (!box) return;
             // 가이드의 "발급받은 주소" 자리(ComfyUI 요청 URL / 서버 HTTPS 주소)를
-            // 실제 발급 주소로 채운다. 미발급 시 플레이스홀더를 유지.
+            // 실제 발급 주소로 채운다. Cloudflare 우선, 없으면 Tailscale 고정 주소.
+            // 미발급 시 플레이스홀더를 유지.
             const guidePlaceholder = 'https://발급받은-주소.example.com';
-            const guideVal = (tunnelActive && tunnelUrl) ? tunnelUrl : guidePlaceholder;
+            const guideVal = (tunnelActive && tunnelUrl) ? tunnelUrl
+                : (tsActive && tsUrl) ? tsUrl : guidePlaceholder;
             const sgComfy = document.getElementById('sg-val-comfy');
             const sgServer = document.getElementById('sg-val-server');
             if (sgComfy) sgComfy.textContent = guideVal;
@@ -20456,18 +20490,23 @@
             if (tunnelActive && tunnelUrl) {
                 box.textContent = tunnelUrl;
                 box.classList.remove('empty');
-                if (issueBtn) issueBtn.disabled = true;
+                if (issueBtn) { issueBtn.disabled = true; issueBtn.title = ''; }
                 if (copyBtn) copyBtn.disabled = false;
                 if (regenBtn) regenBtn.disabled = false;
                 if (stopBtn) stopBtn.disabled = false;
             } else {
                 box.textContent = '발급 전';
                 box.classList.add('empty');
-                if (issueBtn) issueBtn.disabled = false;
+                // 한쪽이 발급되어 있으면 다른 쪽은 동시 발급 불가
+                if (issueBtn) {
+                    issueBtn.disabled = !!tsActive;
+                    issueBtn.title = tsActive ? 'Tailscale 고정 주소가 발급 중입니다. 먼저 해지하세요.' : '';
+                }
                 if (copyBtn) copyBtn.disabled = true;
                 if (regenBtn) regenBtn.disabled = true;
                 if (stopBtn) stopBtn.disabled = true;
             }
+            _renderTailscaleState();
         }
 
         // 서버 상태 조회 → 변수/버튼 동기화
@@ -20496,6 +20535,7 @@
             document.getElementById('share-modal').classList.add('visible');
             // 모달을 열 때마다 서버 상태를 새로고침 — 발급 주소가 유지되어 표시됨.
             _refreshTunnelStatus();
+            _refreshTailscaleStatus();
         }
         function closeShareModal() {
             document.getElementById('share-modal').classList.remove('visible');
@@ -20569,6 +20609,137 @@
             showToast('공유 연결을 종료했습니다.', 'info');
             if (stopBtn) { stopBtn.textContent = '연결 종료'; }
             _renderShareState();
+        }
+
+        // ─── Tailscale Funnel (고정 주소) ───────────────────
+        // Cloudflare 터널과 독립. 고정 주소라 재발급 버튼은 없고 발급/복사/해지만 둔다.
+        function _renderTailscaleState() {
+            const box = document.getElementById('ts-url-box');
+            const issueBtn = document.getElementById('ts-issue-btn');
+            const copyBtn = document.getElementById('ts-copy-btn');
+            const stopBtn = document.getElementById('ts-stop-btn');
+            if (!box) return;
+            if (tsActive && tsUrl) {
+                box.textContent = tsUrl;
+                box.classList.remove('empty');
+                if (issueBtn) { issueBtn.disabled = true; issueBtn.title = ''; }
+                if (copyBtn) copyBtn.disabled = false;
+                if (stopBtn) stopBtn.disabled = false;
+            } else {
+                box.textContent = '발급 전';
+                box.classList.add('empty');
+                // 한쪽이 발급되어 있으면 다른 쪽은 동시 발급 불가
+                if (issueBtn) {
+                    issueBtn.disabled = !!tunnelActive;
+                    issueBtn.title = tunnelActive ? 'Cloudflare 랜덤 주소가 발급 중입니다. 먼저 연결 종료하세요.' : '';
+                }
+                if (copyBtn) copyBtn.disabled = true;
+                if (stopBtn) stopBtn.disabled = true;
+            }
+        }
+
+        function _setTailscaleStatus(msg, isError, enableUrl) {
+            const el = document.getElementById('ts-status');
+            if (!el) return;
+            if (!msg) { el.textContent = ''; el.style.color = isError ? 'var(--error)' : 'var(--text2)'; return; }
+            // HTML 이스케이프. 활성화 URL은 ?node= 가 현재 기기 고정이므로 서버가 런타임에
+            // 추출한 funnel_enable_url 을 버튼으로 노출한다.
+            const esc = msg.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            let html;
+            if (enableUrl) {
+                // 버튼으로 대체하므로 본문에서 URL 토큰은 제거
+                const stripped = esc.replace(/https:\/\/[^\s]+/g, '').replace(/\s+$/g, '');
+                const safeUrl = enableUrl.replace(/'/g, '&#39;');
+                html = stripped + '<br>'
+                    + '<button class="share-btn primary" style="margin-top:8px"'
+                    + ' onclick="window.open(\'' + safeUrl + '\', \'_blank\', \'noopener\')">'
+                    + 'Funnel 활성화 하기 ↗</button>';
+            } else {
+                html = esc.replace(
+                    /(https:\/\/[^\s]+)/g,
+                    '<a href="$1" target="_blank" rel="noopener noreferrer" style="color:var(--accent);text-decoration:underline">$1</a>'
+                );
+            }
+            el.innerHTML = html;
+            el.style.whiteSpace = 'pre-wrap';
+            el.style.color = isError ? 'var(--error)' : 'var(--text2)';
+        }
+
+        async function _refreshTailscaleStatus() {
+            try {
+                const res = await fetchJSON('/api/tailscale/status');
+                if (res.status === 'running' && res.url) {
+                    tsActive = true;
+                    tsUrl = res.url;
+                } else {
+                    tsActive = false;
+                    tsUrl = null;
+                }
+            } catch (e) {
+                tsActive = false;
+                tsUrl = null;
+            }
+            _renderTailscaleState();
+            // 가이드 자리 주소 후보에 Tailscale URL도 포함되므로 같이 갱신
+            _renderShareState();
+        }
+
+        async function issueTailscale() {
+            const issueBtn = document.getElementById('ts-issue-btn');
+            if (issueBtn) { issueBtn.disabled = true; issueBtn.textContent = '발급 중...'; }
+            _setTailscaleStatus('Tailscale Funnel 설정 중... (최대 20초)');
+            try {
+                const res = await fetch('/api/tailscale/start', {method:'POST'});
+                const data = await res.json();
+                if (data && data.url) {
+                    tsActive = true;
+                    tsUrl = data.url;
+                    _renderTailscaleState();
+                    _renderShareState();
+                    _setTailscaleStatus('고정 주소가 발급되었습니다.');
+                    showToast('Tailscale 고정 주소가 발급되었습니다!', 'success');
+                } else {
+                    const err = new Error((data && data.error) || 'Tailscale Funnel 시작 실패');
+                    err.funnel_enable_url = data && data.funnel_enable_url;
+                    throw err;
+                }
+            } catch (e) {
+                _setTailscaleStatus(
+                    '고정 주소 발급 실패: ' + (e && e.message || e),
+                    true,
+                    e && e.funnel_enable_url
+                );
+                showToast('Tailscale 발급 실패: ' + (e && e.message || e), 'error');
+            } finally {
+                if (issueBtn) { issueBtn.textContent = '주소 발급'; }
+                _renderTailscaleState();
+            }
+        }
+
+        function copyTailscale() {
+            if (!tsUrl) { showToast('복사할 주소가 없습니다.', 'error'); return; }
+            navigator.clipboard.writeText(tsUrl).then(() => {
+                showToast('고정 주소가 복사되었습니다!', 'success');
+            }).catch((e) => {
+                showToast('복사 실패: ' + (e && e.message || e), 'error');
+            });
+        }
+
+        async function stopTailscale() {
+            const stopBtn = document.getElementById('ts-stop-btn');
+            if (stopBtn) { stopBtn.disabled = true; stopBtn.textContent = '종료 중...'; }
+            _setTailscaleStatus('Funnel 해지 중...');
+            try { await fetch('/api/tailscale/stop', {method:'POST'}); } catch(e) {
+                _setTailscaleStatus('해지 실패: ' + (e && e.message || e), true);
+            }
+            tsActive = false;
+            tsUrl = null;
+            _renderTailscaleState();
+            _renderShareState();
+            _setTailscaleStatus('Funnel 연결이 해지되었습니다.');
+            showToast('Tailscale Funnel을 해지했습니다.', 'info');
+            if (stopBtn) { stopBtn.textContent = '연결 종료'; }
+            _renderTailscaleState();
         }
 
         // ─── WebSocket 연결 ───

@@ -14776,6 +14776,202 @@ async def _tunnel_cleanup(app):
     _tunnel_process = None
     _tunnel_url = None
 
+# ─── Tailscale Funnel (고정 주소) ────────────────────────
+# Cloudflare Quick Tunnel과 달리 매번 같은 고정 주소가 발급된다.
+# tailscale funnel --bg 로 노드에 설정이 저장되어 서버 재시작 후에도 유지된다.
+_tailscale_active: bool = False
+_tailscale_url: str | None = None
+
+def _tailscale_bin() -> str | None:
+    """설치된 tailscale CLI 경로. 없으면 None."""
+    return shutil.which("tailscale")
+
+async def _tailscale_funnel_state() -> tuple[bool, str | None]:
+    """`tailscale funnel status` 출력에서 활성 여부와 고정 URL을 파싱한다.
+
+    반환: (active, url). URL은 :443 접미사를 제거해 canonical 형태로 정리.
+    tailscale 미설치/미로그인 등으로 실패하면 (False, None).
+    """
+    ts = _tailscale_bin()
+    if not ts:
+        return False, None
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            ts, "funnel", "status",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        out, _err = await asyncio.wait_for(proc.communicate(), timeout=10.0)
+        text = out.decode("utf-8", errors="ignore")
+    except Exception as e:
+        print(f"[TAILSCALE] funnel status 조회 실패: {e}")
+        traceback.print_exc()
+        return False, None
+    # 활성 Funnel이 있으면 "https://<host>(:443)" 토큰이 출력에 나타난다.
+    m = re.search(r'(https://[^\s:]+(?::\d+)?)', text)
+    if not m:
+        return False, None
+    url = m.group(1)
+    if url.endswith(":443"):
+        url = url[:-4]
+    return True, url
+
+async def _tailscale_dnsname_url() -> str | None:
+    """`tailscale status --json` 의 Self.DNSName 으로 고정 URL을 유도 (파싱 실패 시 폴백)."""
+    ts = _tailscale_bin()
+    if not ts:
+        return None
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            ts, "status", "--json",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        out, _err = await asyncio.wait_for(proc.communicate(), timeout=10.0)
+        data = json.loads(out.decode("utf-8", errors="ignore") or "{}")
+        dns = (data.get("Self", {}) or {}).get("DNSName", "")
+        if dns:
+            return "https://" + dns.rstrip(".")
+    except Exception as e:
+        print(f"[TAILSCALE] DNSName 조회 실패: {e}")
+        traceback.print_exc()
+    return None
+
+async def handle_api_tailscale_start(request: web.Request) -> web.Response:
+    global _tailscale_active, _tailscale_url
+    ts = _tailscale_bin()
+    if not ts:
+        msg = "tailscale CLI를 찾을 수 없습니다. Tailscale을 설치하고 로그인한 뒤 다시 시도하세요."
+        print(f"[TAILSCALE] {msg}")
+        return web.json_response({"status": "error", "error": msg}, status=500)
+    try:
+        # 이미 Funnel이 활성이면 같은 고정 주소 재사용
+        active, url = await _tailscale_funnel_state()
+        if active and url:
+            _tailscale_active = True
+            _tailscale_url = url
+            return web.json_response({"status": "running", "url": url})
+        proc = await asyncio.create_subprocess_exec(
+            ts, "funnel", "--bg", "--https=443", "8189",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        # tailscale funnel --bg 는 성공 시 설정 후 종료된다. 하지만 Funnel 미허용 등
+        # 에러 시 "Funnel is not enabled ..." 메시지를 stdout에 출력한 채 종료되지 않고
+        # 대기하는 경우가 있다. communicate()로 끝까지 기다리면 20초 타임아웃만 나고
+        # 진짜 원인을 놓치므로, stdout/stderr를 증분 읽기해서 에러를 빠르게 잡는다.
+        deadline = asyncio.get_event_loop().time() + 20
+        buf = ""
+        error_msg: str | None = None
+        while asyncio.get_event_loop().time() < deadline:
+            if proc.returncode is not None:
+                break
+            try:
+                chunk = await asyncio.wait_for(proc.stdout.read(4096), timeout=1.0)
+                if not chunk:
+                    chunk = await asyncio.wait_for(proc.stderr.read(4096), timeout=1.0)
+                if chunk:
+                    buf += chunk.decode("utf-8", errors="ignore")
+            except asyncio.TimeoutError:
+                continue
+            low = buf.lower()
+            if ("funnel is not enabled" in low
+                    or "not enabled on your tailnet" in low
+                    or "funnel is not available" in low
+                    or "\nerr " in low
+                    or "error:" in low
+                    or "permission denied" in low):
+                error_msg = buf.strip()
+                break
+        # 루프 종료 후에도 살아있으면(에러 대기 중) 강제 종료
+        if proc.returncode is None:
+            try:
+                proc.kill()
+                await proc.wait()
+            except Exception:
+                pass
+        if error_msg:
+            # "Funnel is not enabled ... https://login.tailscale.com/f/funnel?node=..." 등
+            # 활성화 URL 을 포함한 원문을 그대로 클라이언트에 전달.
+            # 활성화 URL은 ?node= 가 현재 기기 고정이라 하드코딩 대신 런타임에 추출.
+            enable_url: str | None = None
+            m = re.search(r'(https://login\.tailscale\.com/f/funnel[^\s]*)', error_msg)
+            if m:
+                enable_url = m.group(1)
+            print(f"[TAILSCALE] funnel 시작 실패: {error_msg}")
+            return web.json_response(
+                {"status": "error", "error": error_msg, "funnel_enable_url": enable_url},
+                status=500,
+            )
+        # 종료 코드 기반 에러 (stdout 키워드에 안 잡힌 경우)
+        rc = proc.returncode
+        if rc is not None and rc != 0:
+            try:
+                rest_out, rest_err = await asyncio.wait_for(proc.communicate(), timeout=3.0)
+                extra = (rest_out.decode("utf-8", "ignore") + " " + rest_err.decode("utf-8", "ignore")).strip()
+            except Exception:
+                extra = buf.strip()
+            msg = extra or f"tailscale funnel 실행 실패 (code {rc})"
+            print(f"[TAILSCALE] funnel 시작 실패 rc={rc}: {msg}")
+            return web.json_response({"status": "error", "error": msg}, status=500)
+        # 성공 여부는 실제 funnel status 로 확인 (--bg 는 설정 후 종료)
+        active, url = await _tailscale_funnel_state()
+        if active and url:
+            _tailscale_active = True
+            _tailscale_url = url
+            print(f"[TAILSCALE] Funnel 고정 주소 발급: {url}")
+            return web.json_response({"status": "running", "url": url})
+        # funnel 명령은 성공했으나 status 파싱에 실패한 경우 DNSName으로 유도
+        url = await _tailscale_dnsname_url()
+        if url:
+            _tailscale_active = True
+            _tailscale_url = url
+            print(f"[TAILSCALE] Funnel 발급(status 파싱 실패, DNSName 사용): {url}")
+            return web.json_response({"status": "running", "url": url})
+        print("[TAILSCALE] funnel 시작 후 주소 확인 실패")
+        return web.json_response(
+            {"status": "error", "error": "Funnel 주소를 확인하지 못했습니다. `tailscale funnel status` 출력을 확인하세요."},
+            status=500,
+        )
+    except asyncio.TimeoutError:
+        print("[TAILSCALE] funnel 시작 타임아웃(20s)")
+        return web.json_response({"status": "error", "error": "tailscale funnel 시작 시간 초과(20초)"}, status=500)
+    except Exception as e:
+        print(f"[TAILSCALE] 시작 중 예외: {e}")
+        traceback.print_exc()
+        return web.json_response({"status": "error", "error": str(e)}, status=500)
+
+async def handle_api_tailscale_status(request: web.Request) -> web.Response:
+    global _tailscale_active, _tailscale_url
+    active, url = await _tailscale_funnel_state()
+    _tailscale_active = active
+    _tailscale_url = url if active else None
+    return web.json_response({
+        "status": "running" if active else "stopped",
+        "url": url if active else None,
+    })
+
+async def handle_api_tailscale_stop(request: web.Request) -> web.Response:
+    global _tailscale_active, _tailscale_url
+    ts = _tailscale_bin()
+    if ts:
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                ts, "funnel", "reset",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            out, err = await asyncio.wait_for(proc.communicate(), timeout=10.0)
+            if proc.returncode != 0:
+                err_text = err.decode("utf-8", errors="ignore")
+                print(f"[TAILSCALE] funnel reset 실패 rc={proc.returncode} stderr={err_text.strip()}")
+        except Exception as e:
+            print(f"[TAILSCALE] funnel reset 중 예외: {e}")
+            traceback.print_exc()
+    _tailscale_active = False
+    _tailscale_url = None
+    return web.json_response({"status": "stopped"})
+
 # ─── 공유 모달 연결 가이드 이미지 서빙 ──────────────────
 # frontend/guide 폴더의 img1.jpg, img2.jpg 만 브라우저에 노출한다.
 # (요구사항/ 폴더는 git 추적 대상이 아니므로 커밋되는 frontend/ 아래에 둔다.)
@@ -16852,6 +17048,9 @@ app.router.add_post("/api/chain_presets/delete", handle_api_chain_presets_delete
 app.router.add_post("/api/tunnel/start", handle_api_tunnel_start)
 app.router.add_get("/api/tunnel/status", handle_api_tunnel_status)
 app.router.add_post("/api/tunnel/stop", handle_api_tunnel_stop)
+app.router.add_post("/api/tailscale/start", handle_api_tailscale_start)
+app.router.add_get("/api/tailscale/status", handle_api_tailscale_status)
+app.router.add_post("/api/tailscale/stop", handle_api_tailscale_stop)
 # 공유 모달 가이드 이미지
 app.router.add_get("/api/guide/img/{filename}", handle_api_guide_img)
 
