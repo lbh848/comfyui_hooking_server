@@ -4393,6 +4393,11 @@
             background: rgba(242,99,116,.1);
             color: #ff9daa;
         }
+        .comfy-runtime-btn.connect {
+            border-color: rgba(108,160,255,.4);
+            background: rgba(108,160,255,.12);
+            color: #a8c7ff;
+        }
         .comfy-runtime-btn:hover:not(:disabled) { filter: brightness(1.14); }
         .comfy-runtime-btn:disabled { opacity: .38; cursor: not-allowed; }
         .comfy-runtime-terminal-card {
@@ -16951,6 +16956,7 @@
                                     <label for="comfy-runtime-auto-start">매니저 시작 시 자동 실행</label>
                                 </div>
                                 <button type="button" class="comfy-runtime-btn start" id="comfy-runtime-start" onclick="comfyRuntimeStart()">▶ 실행</button>
+                                <button type="button" class="comfy-runtime-btn connect" id="comfy-runtime-connect" onclick="comfyRuntimeOpen()" title="현재 Comfy 인스턴스의 웹 UI를 새 탭으로 엽니다.">↗ ComfyUI 접속</button>
                                 <button type="button" class="comfy-runtime-btn stop" id="comfy-runtime-stop" onclick="comfyRuntimeStop()" disabled>■ 종료</button>
                             </div>
                         </section>
@@ -23088,6 +23094,16 @@
             const inputId = Number(instanceId) === 2 ? 'setting-comfyui-port-2' : 'setting-comfyui-port';
             const fallback = Number(instanceId) === 2 ? 8187 : 8188;
             return Number.parseInt(document.getElementById(inputId)?.value, 10) || fallback;
+        }
+
+        function comfyRuntimeOpen() {
+            const port = comfyRuntimePort(comfyRuntimeActiveInstance);
+            const url = `http://127.0.0.1:${port}`;
+            const win = window.open(url, '_blank', 'noopener');
+            if (!win) {
+                console.warn(`[COMFY_RUNTIME] 새 탭 열기 차단됨: ${url}`);
+                alert(`ComfyUI 접속 URL: ${url}\n(팝업이 차단된 경우 주소를 복사해 브라우저에 직접 입력하세요.)`);
+            }
         }
 
         function comfyRuntimeUpdateFastWarning() {
