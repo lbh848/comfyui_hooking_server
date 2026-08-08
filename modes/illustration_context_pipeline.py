@@ -4006,6 +4006,150 @@ def _parse_call2_detail_output(
     ], ""
 
 
+def _parse_call2_detail_partial(
+    text: str,
+    toggles: dict,
+    assigned_slots: list[int],
+    assigned_plan_ids: list[str],
+    source: str,
+    assigned_wardrobes_by_slot: dict[int, dict[str, dict]] | None = None,
+    assigned_characters_by_slot: dict[int, list[str]] | None = None,
+) -> tuple[dict[int, dict], list[int], list[int], str]:
+    """CALL2-DETAIL 부분 허용 파서.
+
+    _parse_call2_detail_output 의 strict 검증과 달리 slot 불일치/장면 수 불일치가
+    나도 전체를 폐기하지 않는다. 할당 슬롯 집합에 정확히 들어오며 per-scene 필수
+    검증(camera/scene/slot/이름있는 PLAN 캐릭터)을 통과한 장면만 보존하고, 그
+    슬롯에 plan_id 주입·복장 확정까지 마친다. CALL2-DETAIL 의 ①전부/②실패분만
+    교대 루프가 매 단계에서 "이미 확보한 좋은 슬롯"을 그대로 가져가도록 쓴다.
+
+    반환: (kept_by_slot, missing_slots, char_discarded_slots, hard_reason)
+      - kept_by_slot: {slot: descriptor} (plan_id/복장 확정 완료)
+      - missing_slots: assigned 중 kept/char_discarded 모두 아닌, 아직 채워야 할 슬롯
+      - char_discarded_slots: 이번 호출에서 PLAN 캐릭터 불일치로 폐기된 슬롯(재시도 무의미)
+      - hard_reason: 장면이 아예 파싱되지 않은 등 부분 보존이 불가능한 사유(빈 문자열=정상)
+    """
+    local_toggles = deepcopy(toggles)
+    local_toggles.update({
+        "key_visual": False,
+        "scene_mode": "manual",
+        "output_count_min": len(assigned_slots),
+        "output_count_max": len(assigned_slots),
+    })
+    parsed_descriptors = parse_toon_plan(text, local_toggles, source)
+    scene_descriptors = [
+        item
+        for item in parsed_descriptors
+        if str(item.get("kind") or "") == "scene"
+    ]
+    if not scene_descriptors:
+        return {}, list(assigned_slots), [], f"CALL2-DETAIL 파싱된 장면 없음: source={source}"
+
+    assigned_set = set(assigned_slots)
+    plan_id_by_slot = dict(zip(assigned_slots, assigned_plan_ids))
+    kept_by_slot: dict[int, dict] = {}
+    for item in scene_descriptors:
+        if (
+            not str(item.get("camera") or "").strip()
+            or not str(item.get("scene") or "").strip()
+        ):
+            print(
+                f"[ILLUST_CONTEXT:CALL2_DETAIL_PARTIAL] 필수 camera/scene 비어 스킵: "
+                f"source={source}, item={item!r}"
+            )
+            continue
+        try:
+            slot = int(item.get("slot"))
+        except Exception:
+            print(
+                f"[ILLUST_CONTEXT:CALL2_DETAIL_PARTIAL] slot 파싱 실패 스킵: "
+                f"source={source}, item={item!r}"
+            )
+            continue
+        if slot not in assigned_set:
+            print(
+                f"[ILLUST_CONTEXT:CALL2_DETAIL_PARTIAL] 할당 밖 slot 스킵: "
+                f"source={source}, slot={slot}, assigned={sorted(assigned_set)}"
+            )
+            continue
+        if slot in kept_by_slot:
+            # 중복 slot: 이미 확보한 첫 장면을 유지하고 나머지는 무시한다.
+            continue
+        expected_characters = None
+        if assigned_characters_by_slot is not None:
+            expected_characters = [
+                str(name or "").strip()
+                for name in assigned_characters_by_slot.get(slot, [])
+                if str(name or "").strip()
+            ]
+        if expected_characters and not (item.get("characters") or []):
+            print(
+                f"[ILLUST_CONTEXT:CALL2_DETAIL_PARTIAL] 이름 있는 PLAN 캐릭터 누락 스킵: "
+                f"source={source}, slot={slot}, expected={expected_characters}"
+            )
+            continue
+        kept_by_slot[slot] = item
+
+    # 보존된 슬롯에 대해 plan_id 주입 + 복장 확정(strict 경로와 동일 규칙).
+    discarded_slots: set[int] = set()
+    for slot, item in kept_by_slot.items():
+        item["plan_id"] = plan_id_by_slot.get(slot, "")
+        expected_wardrobes = (assigned_wardrobes_by_slot or {}).get(slot) or {}
+        if not expected_wardrobes:
+            continue
+        expected_by_name = {
+            str(name).strip().casefold(): (str(name).strip(), _normalize_outfit_state(outfit))
+            for name, outfit in expected_wardrobes.items()
+            if str(name).strip()
+        }
+        actual_by_name, character_reason = _match_call2_detail_characters(
+            item,
+            [value[0] for value in expected_by_name.values()],
+            f"slot={slot}",
+        )
+        if character_reason:
+            discarded_slots.add(slot)
+            print(
+                f"[ILLUST_CONTEXT:CALL2_DETAIL_PARTIAL] PLAN 캐릭터 불일치로 스킵: "
+                f"source={source}, slot={slot}, reason={character_reason}"
+            )
+            continue
+        for folded, (expected_name, expected_outfit) in expected_by_name.items():
+            character = actual_by_name[folded]
+            actual_outfit = character.get("outfit_state")
+            conflict = _outfit_contract_conflict(expected_outfit, actual_outfit)
+            if conflict:
+                print(
+                    f"[ILLUST_CONTEXT:CALL2_DETAIL_PARTIAL] 희소 DETAIL 복장 서버 기준 복구: "
+                    f"slot={slot}, character={expected_name}, expected={expected_outfit}, "
+                    f"actual={_normalize_outfit_state(actual_outfit)}, reason={conflict}"
+                )
+            normalized_actual = _normalize_outfit_state(actual_outfit)
+            if not _outfit_states_equal(normalized_actual, expected_outfit):
+                print(
+                    f"[ILLUST_CONTEXT:CALL2_DETAIL_PARTIAL] DETAIL 추가 복장 항목 PLAN 정규화: "
+                    f"slot={slot}, character={expected_name}, "
+                    f"expected={expected_outfit}, actual={normalized_actual}"
+                )
+            # PLAN이 unknown이면 DETAIL의 구체화를 보존하고, 그 외에는 PLAN 표현으로
+            # 정규화해 strict 경로와 같은 상태를 유지한다.
+            character["outfit_state"] = (
+                deepcopy(normalized_actual)
+                if expected_outfit["body_state"] == "unknown"
+                and not _outfit_state_is_known(expected_outfit)
+                else deepcopy(expected_outfit)
+            )
+
+    for slot in discarded_slots:
+        kept_by_slot.pop(slot, None)
+    missing_slots = [
+        slot
+        for slot in assigned_slots
+        if slot not in kept_by_slot and slot not in discarded_slots
+    ]
+    return kept_by_slot, missing_slots, sorted(discarded_slots), ""
+
+
 def descriptors_to_toon(descriptors: list[dict]) -> str:
     """Serialize merged PLAN/DETAIL descriptors into one diagnostic CALL2 block."""
     data: dict[str, object] = {"scenes": []}
@@ -4758,38 +4902,39 @@ async def _run_parallel_call2_details(
         # per-worker 카운트 기준(총량÷worker수)을 이 worker에 실제 할당된 batch 크기로
         # clamp한다. 규칙이 할당량보다 커지면 worker가 빈 장면을 채우려다 검증에 걸려
         # 재시도하게 된다. 할당량(len(plans))이 곧 이 shard의 진짜 장면 수다.
-        assigned_count = len(plans)
-        shard_min = max(1, min(per_worker_min, assigned_count))
-        shard_max = max(shard_min, min(per_worker_max, assigned_count))
-        shard_count_rule = render_output_count_rule(shard_min, shard_max)
-        messages = deepcopy(call2_context_messages)
-        if messages and messages[0].get("role") == "system":
-            messages[0]["content"] = str(messages[0].get("content") or "") + (
-                "\n\n# Parallel CALL2-DETAIL instructions\n"
-                "The global planner already selected the visual beats. Do not select, add, remove, or move a scene. "
-                "Copy every assigned slot exactly; the server will attach plan_id after slot validation. "
-                "Omit keyvis completely. "
-                + "An assigned plan may have characters: []. That means no named tracked character is "
-                "present: output characters: [] for that scene, keep anonymous background people only "
-                "in scene/supplement, and do not invent a canonical character. This shard-specific rule "
-                "overrides any global requirement that every scene contain a key character. Every characters[] "
-                "entry for a named character must include its exact canonical name even when cropped "
-                "or partially visible. characters[].negative is optional: include it only when the "
-                "Client explicitly supplied that negative; otherwise omit the field."
-                # 이 worker의 카운트 규칙은 전체 총량이 아니라 (총량÷worker수) per-worker 값을
-                # 할당 batch 크기로 맞춘 것이다. 다른 전역 카운트 지시보다 이 값이 우선한다.
-                + "\n\n# SHARD OUTPUT COUNT RULE (per worker)\n"
-                + shard_count_rule
+        def build_messages(request_plans: list[dict], *, partial: bool) -> list[dict]:
+            # per-worker 카운트 기준(총량÷worker수)을 이번 요청에 실제 담긴 batch 크기로
+            # clamp한다. 전부 예측(①)은 shard 전체(len(plans)), 실패분만(②)은 missing 수.
+            # 규칙이 할당량보다 커지면 worker가 빈 장면을 채우려다 검증에 걸려 재시도한다.
+            request_count = len(request_plans)
+            req_min = max(1, min(per_worker_min, request_count))
+            req_max = max(req_min, min(per_worker_max, request_count))
+            req_rule = render_output_count_rule(req_min, req_max)
+            base = deepcopy(call2_context_messages)
+            if base and base[0].get("role") == "system":
+                base[0]["content"] = str(base[0].get("content") or "") + (
+                    "\n\n# Parallel CALL2-DETAIL instructions\n"
+                    "The global planner already selected the visual beats. Do not select, add, remove, or move a scene. "
+                    "Copy every assigned slot exactly; the server will attach plan_id after slot validation. "
+                    "Omit keyvis completely. "
+                    + "An assigned plan may have characters: []. That means no named tracked character is "
+                    "present: output characters: [] for that scene, keep anonymous background people only "
+                    "in scene/supplement, and do not invent a canonical character. This shard-specific rule "
+                    "overrides any global requirement that every scene contain a key character. Every characters[] "
+                    "entry for a named character must include its exact canonical name even when cropped "
+                    "or partially visible. characters[].negative is optional: include it only when the "
+                    "Client explicitly supplied that negative; otherwise omit the field."
+                    # 이 요청의 카운트 규칙은 전체 총량이 아니라 (총량÷worker수) per-worker 값을
+                    # 이번 batch 크기로 맞춘 것이다. 다른 전역 카운트 지시보다 이 값이 우선한다.
+                    + "\n\n# SHARD OUTPUT COUNT RULE (per worker)\n"
+                    + req_rule
+                )
+            assigned_plan_payload = (
+                "# ASSIGNED GLOBAL SCENE PLAN\n"
+                + json.dumps(request_plans, ensure_ascii=False, indent=2)
             )
-        assigned_plan_payload = (
-            "# ASSIGNED GLOBAL SCENE PLAN\n"
-            + json.dumps(plans, ensure_ascii=False, indent=2)
-        )
-        messages.extend([{
-            "role": "user",
-            "content": (
-                assigned_plan_payload
-                + "\n\nExpand each plan into complete Danbooru-style character tags, camera, scene, "
+            expand_instruction = (
+                "Expand each plan into complete Danbooru-style character tags, camera, scene, "
                 "outfit_state, and supplement. Each wardrobe_snapshot is a complete default-based "
                 "continuity base plus sparse change history, not a short replacement prompt. Start from "
                 "every fixed-appearance and default-outfit tag, then interpret sparse changes against the "
@@ -4801,109 +4946,175 @@ async def _run_parallel_call2_details(
                 "only through scene tags and supplement. "
                 "Copy slot exactly into every scene object and preserve plan order. The server assigns "
                 "plan_id from the validated slot."
-                + (
-                    "\n\n# DETAIL CHECKLIST\n"
-                    + detail_checklist
-                    if detail_checklist
-                    else ""
+            )
+            if partial:
+                expand_instruction = (
+                    "These are the ONLY scenes still missing from this shard. Produce exactly these slots "
+                    "and no others — do not repeat scenes already delivered earlier in this shard. "
+                    + expand_instruction
                 )
-                + "\n\n"
-                "# OUTPUT FORMAT\n"
-                + detail_output_format
-                + "\n\nReturn one <lb-xnai> block containing scenes only. Omit keyvis."
-            ),
-        }])
-
-        def validate(result):
-            _parsed, reason = _parse_call2_detail_output(
-                result,
-                toggles,
-                assigned_slots,
-                assigned_plan_ids,
-                f"CALL2-DETAIL-{index}-RETRY-CHECK",
-                assigned_wardrobes_by_slot,
-                None,
-                assigned_characters_by_slot,
-            )
-            if reason:
-                return False, reason
-            # PLAN/DETAIL 캐릭터 불일치로 모든 scene이 폐기된 빈 shard도
-            # 정상 처리다. 파싱 실패와 유효한 빈 결과를 구분한다.
-            return True, ""
-
-        call_name = f"CALL2-DETAIL {index}/{total}"
-        if attempt_kind == "duplicate":
-            call_name += " [느리다고? 다시해!]"
-        elif attempt_kind == "failed_shard_retry":
-            call_name += " [FAILED-SHARD-RETRY]"
-        raw_output = await _call_pipeline_llm(
-            call_name,
-            _normalize_messages(messages),
-            job_stream_notify,
-            result_validator=validate,
-            stream_observer=stream_observer,
-            history_id=history_id,
-        )
-        descriptors, reason = _parse_call2_detail_output(
-            raw_output,
-            toggles,
-            assigned_slots,
-            assigned_plan_ids,
-            f"CALL2-DETAIL-{index}",
-            assigned_wardrobes_by_slot,
-            None,
-            assigned_characters_by_slot,
-        )
-        if not descriptors and str(reason).startswith("CALL2-DETAIL 권위 복장 충돌"):
-            print(
-                f"[ILLUST_CONTEXT:CALL2_DETAIL] 권위 복장 충돌 작업만 교정 재호출: "
-                f"job={index}/{total}, slots={assigned_slots}, reason={reason}"
-            )
-            correction_messages = deepcopy(messages)
-            correction_messages.extend([{
-                "role": "assistant",
-                "content": str(raw_output or ""),
-            }, {
+            base.extend([{
                 "role": "user",
                 "content": (
-                    "Your previous DETAIL output conflicts with the authoritative PLAN wardrobe. "
-                    "Rewrite the complete <lb-xnai> scenes for this shard once. Preserve the assigned "
-                    "visual beats, slots, camera intent, actions, and plan order. For every named "
-                    "character, keep body_state exactly equal to the snapshot, include every PLAN worn "
-                    "and removed item in outfit_state, and make visible attire tags consistent with it. "
-                    "You may add scene-supported logical items, but never omit or move a PLAN item "
-                    "between worn and removed. Return only the corrected <lb-xnai> block.\n\n"
-                    "# AUTHORITATIVE WARDROBE BY SLOT\n"
-                    + json.dumps(assigned_wardrobes_by_slot, ensure_ascii=False, indent=2)
-                    + "\n\n# PREVIOUS VALIDATION ERROR\n"
-                    + str(reason)
+                    assigned_plan_payload
+                    + "\n\n"
+                    + expand_instruction
+                    + (
+                        "\n\n# DETAIL CHECKLIST\n"
+                        + detail_checklist
+                        if detail_checklist
+                        else ""
+                    )
+                    + "\n\n"
+                    "# OUTPUT FORMAT\n"
+                    + detail_output_format
+                    + "\n\nReturn one <lb-xnai> block containing scenes only. Omit keyvis."
                 ),
             }])
-            correction_name = f"CALL2-DETAIL {index}/{total} [WARDROBE-CORRECTION]"
-            raw_output = await _call_pipeline_llm(
-                correction_name,
-                _normalize_messages(correction_messages),
-                job_stream_notify,
-                result_validator=validate,
+            return base
+
+        # CALL2-DETAIL 부분 재시도 루프: ①전부예측(primary) → ②실패분만(fallback) →
+        # 한 사이클(①+②)이 통째로 실패하면 retry+1 하여 max_cycles 까지 ①으로 되돌아간다.
+        # 이미 검증 통과한 좋은 슬롯은 kept_by_slot 에 보존해 두고, 매 단계는 지정 슬롯을
+        # 1회씩만(force_slot) 부른다. 상한·슬롯은 전역 API 분기(llm_routing[CALL2]) 설정을
+        # 그대로 재사용한다. slot 하나만 틀려도 전체를 다시 돌리지 않도록 한다.
+        plan_id_by_slot = dict(zip(assigned_slots, assigned_plan_ids))
+        routing_task_key = _CALL_TASK_KEYS["CALL2"]
+        primary_slot, fallback_slot = llm_service._routing_for(routing_task_key)
+        retry_policy = llm_service._routing_retry_policy(routing_task_key)
+        max_cycles = max(1, int(retry_policy.get("max_retries") or 0) + 1)
+        partial_slot = fallback_slot or primary_slot
+        if fallback_slot is None:
+            print(
+                f"[ILLUST_CONTEXT:CALL2_DETAIL] 폴백 미설정: ②실패분만도 primary 슬롯 사용. "
+                f"job={index}/{total}, primary={primary_slot}"
             )
-            descriptors, reason = _parse_call2_detail_output(
-                raw_output,
+
+        def parse_scope(raw: str, scope_slots: list[int], scope_label: str):
+            scope_plan_ids = [plan_id_by_slot[s] for s in scope_slots]
+            return _parse_call2_detail_partial(
+                raw,
                 toggles,
-                assigned_slots,
-                assigned_plan_ids,
-                f"CALL2-DETAIL-{index}-WARDROBE-CORRECTION",
+                scope_slots,
+                scope_plan_ids,
+                scope_label,
                 assigned_wardrobes_by_slot,
-                None,
                 assigned_characters_by_slot,
             )
-            if reason:
-                print(
-                    f"[ILLUST_CONTEXT:CALL2_DETAIL] 복장 교정 재호출 후에도 실패: "
-                    f"job={index}/{total}, slots={assigned_slots}, reason={reason}"
+
+        def make_validator(scope_slots: list[int]):
+            # 부분 허용: scope 중 1개라도 보존되면 accepted. force_slot 1회 호출이라
+            # 검증 거절은 callLLMTask 내부 재시도를 유발하지 않고 [LLM 실패]로 돌아간다.
+            def validate(result):
+                kept, _missing, discarded, hard = parse_scope(
+                    result,
+                    scope_slots,
+                    f"CALL2-DETAIL-{index}-RETRY-CHECK",
                 )
-        if reason:
-            raise ValueError(reason)
-        return {"raw": raw_output, "descriptors": descriptors}
+                if kept or discarded:
+                    return True, ""
+                return False, (hard or "CALL2-DETAIL 보존 가능한 장면 없음")
+            return validate
+
+        kept_by_slot: dict[int, dict] = {}
+        char_discarded: set[int] = set()
+        raw_outputs: list[str] = []
+        last_reason = ""
+        cycle = 0
+
+        def remaining_to_fill() -> list[int]:
+            # 캐릭터 불일치로 폐기된 슬롯은 재시도해도 같은 결과이므로 채움 대상에서
+            # 빼고, 보존된 슬롯과 함께 "확정"으로 간주해 빈 샤드를 정상으로 받아들인다.
+            return [
+                slot
+                for slot in assigned_slots
+                if slot not in kept_by_slot and slot not in char_discarded
+            ]
+
+        while cycle < max_cycles:
+            missing_slots = remaining_to_fill()
+            if not missing_slots:
+                break
+            cycle += 1
+
+            # ① 전부 예측 (primary 슬롯 1회 강제)
+            full_name = f"CALL2-DETAIL {index}/{total}"
+            if attempt_kind == "duplicate":
+                full_name += " [느리다고? 다시해!]"
+            elif attempt_kind == "failed_shard_retry":
+                full_name += " [FAILED-SHARD-RETRY]"
+            full_name += f" [FULL c{cycle}/{max_cycles}]"
+            try:
+                raw_full = await _call_pipeline_llm(
+                    full_name,
+                    _normalize_messages(build_messages(plans, partial=False)),
+                    job_stream_notify,
+                    result_validator=make_validator(assigned_slots),
+                    stream_observer=stream_observer,
+                    history_id=(history_id if cycle == 1 else ""),
+                    force_slot=primary_slot,
+                )
+                kept, _missing, discarded, hard = parse_scope(
+                    raw_full,
+                    assigned_slots,
+                    f"CALL2-DETAIL-{index}-FULL-c{cycle}",
+                )
+                kept_by_slot.update(kept)
+                char_discarded.update(discarded)
+                char_discarded -= set(kept)
+                raw_outputs.append(str(raw_full or ""))
+                last_reason = hard or ""
+            except Exception as e:
+                last_reason = str(e) or type(e).__name__
+                print(
+                    f"[ILLUST_CONTEXT:CALL2_DETAIL] ①전부예측(primary={primary_slot}) "
+                    f"실패/진행없음: job={index}/{total}, cycle={cycle}/{max_cycles}, "
+                    f"kept={sorted(kept_by_slot)}, error={last_reason}"
+                )
+
+            missing_slots = remaining_to_fill()
+            if not missing_slots:
+                break
+
+            # ② 실패분만 예측 (fallback 슬롯 1회 강제)
+            partial_plans = [p for p in plans if int(p["slot"]) in set(missing_slots)]
+            partial_name = f"CALL2-DETAIL {index}/{total} [PARTIAL c{cycle}/{max_cycles}]"
+            try:
+                raw_part = await _call_pipeline_llm(
+                    partial_name,
+                    _normalize_messages(build_messages(partial_plans, partial=True)),
+                    job_stream_notify,
+                    result_validator=make_validator(missing_slots),
+                    stream_observer=stream_observer,
+                    force_slot=partial_slot,
+                )
+                kept, _missing, discarded, hard = parse_scope(
+                    raw_part,
+                    missing_slots,
+                    f"CALL2-DETAIL-{index}-PARTIAL-c{cycle}",
+                )
+                kept_by_slot.update(kept)
+                char_discarded.update(discarded)
+                char_discarded -= set(kept)
+                raw_outputs.append(str(raw_part or ""))
+                last_reason = hard or ""
+            except Exception as e:
+                last_reason = str(e) or type(e).__name__
+                print(
+                    f"[ILLUST_CONTEXT:CALL2_DETAIL] ②실패분만(partial={partial_slot}) "
+                    f"실패/진행없음: job={index}/{total}, cycle={cycle}/{max_cycles}, "
+                    f"missing={missing_slots}, error={last_reason}"
+                )
+
+        missing_slots = remaining_to_fill()
+        if missing_slots:
+            raise ValueError(
+                f"CALL2-DETAIL 부분 재시도 상한({max_cycles}사이클) 초과로 미확보 슬롯 남음: "
+                f"missing={missing_slots}, assigned={assigned_slots}, last_reason={last_reason}"
+            )
+        descriptors = [kept_by_slot[slot] for slot in assigned_slots if slot in kept_by_slot]
+        combined_raw = "\n\n".join(raw for raw in raw_outputs if raw)
+        return {"raw": combined_raw, "descriptors": descriptors}
 
     try:
         results = await _run_parallel_pipeline_jobs(
@@ -5691,6 +5902,7 @@ async def _call_pipeline_llm(
     history_id: str = "",
     parent_execution_id: str = "",
     history_ids_sink: list[str] | None = None,
+    force_slot: str | None = None,
 ) -> str:
     """삽화 CALL1/2/3 의 LLM 호출. 외부 API 분기(illustration_callN task_key)를 경유한다.
 
@@ -5854,6 +6066,8 @@ async def _call_pipeline_llm(
             call_kwargs["json_mode"] = True
         if stream_observer is not None:
             call_kwargs["stream_observer"] = stream_observer
+        if force_slot is not None:
+            call_kwargs["force_slot"] = force_slot
         stream_metadata_token = llm_service._stream_metadata_ctx.set({
             "task_key": task_key,
             "call_name": call_name,

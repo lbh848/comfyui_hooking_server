@@ -2197,6 +2197,10 @@ class BotMode:
         """DELETE /api/bot_mode/system_prompt_presets - local 프리셋 삭제
 
         scope=local 만 삭제 허용. builtin(배포자료)은 삭제 불가.
+        충돌(이 프리셋을 참조 중인 봇 존재) 처리:
+          - reassign 없음 → {"conflict": true, "bots": [...]} 구조화 응답(프론트 재할당 모달용).
+          - reassign={bot_name: {"scope","preset"}} 있음 → 각 봇을 대체 프리셋으로 바인딩(타겟 본문
+            덮어쓰기 ❌, handle_save_system_prompt 의 local 경로는 본문까지 덮어쓰므로 재사용 금지) 후 삭제.
         """
         try:
             body = await request.json()
@@ -2213,17 +2217,73 @@ class BotMode:
             presets = data.get("system_prompt_presets", {})
             if name not in presets:
                 return _json_error(f"사용자 프리셋을 찾을 수 없습니다: {name}")
-            # 사용 중인 다른 봇이 있으면 삭제 불가
-            using = [b.get("name", "?") for b in data.get("bots", [])
-                     if (b.get("system_prompt_preset") or "").strip() == name
-                     and (b.get("preset_scope") or "local") == "local"]
-            if using:
-                return _json_error(f"이 프리셋을 사용 중인 봇이 있어 삭제할 수 없습니다: {', '.join(using)}")
+
+            # 이 프리셋을 참조 중인 봇들 (local scope 한정)
+            using_bots = [b for b in data.get("bots", [])
+                          if (b.get("system_prompt_preset") or "").strip() == name
+                          and (b.get("preset_scope") or "local") == "local"]
+
+            reassigned = []
+            if using_bots:
+                reassign = body.get("reassign") or {}
+                if not reassign:
+                    # 충돌 구조화 응답: 프론트에서 모달을 띄워 재할당값을 모아 다시 호출하게 함.
+                    bots_info = [
+                        {
+                            "name": b.get("name", "?"),
+                            "preset": (b.get("system_prompt_preset") or "").strip(),
+                            "scope": (b.get("preset_scope") or "local").strip(),
+                        }
+                        for b in using_bots
+                    ]
+                    msg = ("이 프리셋을 사용 중인 봇이 있어 삭제할 수 없습니다: "
+                           + ", ".join(b.get("name", "?") for b in using_bots))
+                    print(f"[BOT_MODE] 프리셋 삭제 충돌(name={name}): {len(using_bots)}개 봇 사용 중")
+                    return web.json_response(
+                        {"error": msg, "conflict": True, "bots": bots_info},
+                        status=400,
+                    )
+
+                # 1) 각 충돌 봇에 재할당값이 있는지 + 타겟 유효성 검증
+                for b in using_bots:
+                    bname = b.get("name")
+                    if bname not in reassign:
+                        return _json_error(f"재할당 대상이 지정되지 않은 봇이 있습니다: {bname}")
+                    tgt = reassign.get(bname) or {}
+                    tscope = (tgt.get("scope") or "").strip()
+                    tpreset = (tgt.get("preset") or "").strip()
+                    if tscope not in ("builtin", "local"):
+                        return _json_error(f"{bname} 의 대체 프리셋 scope 가 잘못되었습니다: {tscope}")
+                    if not tpreset:
+                        return _json_error(f"{bname} 의 대체 프리셋이 비어있습니다.")
+                    if tscope == "builtin":
+                        if tpreset not in builtin:
+                            return _json_error(f"{bname} → 배포자료 프리셋을 찾을 수 없습니다: {tpreset}")
+                    else:  # local
+                        if tpreset == name:
+                            return _json_error(f"{bname} 의 대체 프리셋이 삭제 대상과 같습니다: {tpreset}")
+                        if tpreset not in presets:
+                            return _json_error(f"{bname} → 사용자 프리셋을 찾을 수 없습니다: {tpreset}")
+
+                # 2) 재할당 적용: 타겟 프리셋 본문은 건드리지 않고 바인딩만 변경
+                for b in using_bots:
+                    bname = b.get("name")
+                    tgt = reassign.get(bname) or {}
+                    tscope = (tgt.get("scope") or "local").strip()
+                    tpreset = (tgt.get("preset") or "").strip()
+                    b["system_prompt_preset"] = tpreset
+                    b["preset_scope"] = tscope
+                    reassigned.append({"name": bname, "scope": tscope, "preset": tpreset})
+                    print(f"[BOT_MODE] 재할당(삭제 충돌 회피): {bname} → [{tscope}] '{tpreset}' (삭제 대상 '{name}')")
+
             del presets[name]
             data["system_prompt_presets"] = presets
             _save_bot_data(data)
             print(f"[BOT_MODE] local 시스템 프롬프트 프리셋 삭제: {name}")
-            return _json_ok({"deleted": True, "presets": presets})
+            resp = {"deleted": True, "presets": presets}
+            if reassigned:
+                resp["reassigned"] = reassigned
+            return _json_ok(resp)
         except Exception as e:
             print(f"[BOT_MODE] 시스템 프롬프트 프리셋 삭제 실패: {e}")
             traceback.print_exc()

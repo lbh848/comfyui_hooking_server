@@ -644,10 +644,11 @@ async def test_call2_detail_sparse_wardrobe_is_repaired_without_retry(monkeypatc
         stream_notify=None,
     )
 
-    assert call_names == ["CALL2-DETAIL 1/1"]
+    assert len(call_names) == 1
+    assert call_names[0].startswith("CALL2-DETAIL 1/1")
     assert len(raw_outputs) == 1
     assert descriptors[0]["characters"][0]["outfit_state"]["worn"] == ["blue dress"]
-    assert "희소 DETAIL 복장 출력을 서버 기준으로 복구" in capsys.readouterr().out
+    assert "희소 DETAIL 복장" in capsys.readouterr().out
 
 
 @pytest.mark.asyncio
@@ -696,7 +697,7 @@ async def test_call2_detail_preserves_successful_shards_and_retries_only_failed(
     assert len(raw_outputs) == 3
     assert sum("CALL2-DETAIL 1/3" in name for name in call_names) == 1
     assert sum("CALL2-DETAIL 3/3" in name for name in call_names) == 1
-    assert sum("CALL2-DETAIL 2/3" in name for name in call_names) == 2
+    assert sum("CALL2-DETAIL 2/3" in name for name in call_names) == 3
     assert any("FAILED-SHARD-RETRY" in name for name in call_names)
     assert "성공 shard 보존 후 실패 shard만 재시도" in capsys.readouterr().out
 
@@ -738,8 +739,95 @@ async def test_call2_detail_accepts_empty_shard_after_character_discard(monkeypa
 
     assert descriptors == []
     assert len(raw_outputs) == 1
-    assert call_names == ["CALL2-DETAIL 1/1"]
-    assert "PLAN 캐릭터 불일치로 해당 슬롯 폐기" in capsys.readouterr().out
+    assert len(call_names) == 1
+    assert call_names[0].startswith("CALL2-DETAIL 1/1")
+    assert "PLAN 캐릭터 불일치" in capsys.readouterr().out
+
+
+def test_call2_detail_partial_keeps_good_slots_and_reports_missing():
+    """slot 하나가 빠지거나 할당 밖 번호여도 나머지 좋은 슬롯은 보존한다."""
+    toggles = pipeline.merged_toggles({"key_visual": False})
+    # assigned=[1,2,3] 이지만 출력은 1,2 + 할당 밖 stray 99 (3이 빠짐).
+    text = _toon_for_slots([1, 2, 99])
+    kept, missing, discarded, hard = pipeline._parse_call2_detail_partial(
+        text, toggles, [1, 2, 3], ["S001", "S002", "S003"], "PARTIAL-TEST",
+        None, None,
+    )
+    assert sorted(kept.keys()) == [1, 2]
+    assert missing == [3]
+    assert discarded == []
+    assert hard == ""
+    # 보존된 슬롯에는 서버 plan_id가 주입된다.
+    assert kept[1]["plan_id"] == "S001"
+    assert kept[2]["plan_id"] == "S002"
+
+
+def test_call2_detail_partial_marks_character_discard_as_not_missing(capsys):
+    """캐릭터 불일치로 폐기된 슬롯은 missing이 아니라 discarded로 분류(재시도 무의미)."""
+    toggles = pipeline.merged_toggles({"key_visual": False})
+    text = _toon_for_slots([5])  # 항상 "Hana"
+    kept, missing, discarded, hard = pipeline._parse_call2_detail_partial(
+        text, toggles, [5], ["S005"], "PARTIAL-DISCARD-TEST",
+        {5: {"Maria": {"body_state": "clothed", "worn": ["school uniform"], "removed": []}}},
+        {5: ["Maria"]},  # PLAN은 Maria, 출력은 Hana → 불일치
+    )
+    assert kept == {}
+    assert missing == []
+    assert discarded == [5]
+    assert hard == ""
+
+
+@pytest.mark.asyncio
+async def test_call2_detail_partial_loop_fills_only_missing_slot(monkeypatch):
+    """①전부예측이 일부 슬롯만 맞춰도 좋은 슬롯은 보존하고 ②실패분만 채운다."""
+    calls = []
+    partial_requests = []
+
+    async def fake_pipeline_call(call_name, messages, *args, **kwargs):
+        calls.append(call_name)
+        if "[PARTIAL" in call_name:
+            partial_requests.append(
+                "\n".join(str(m.get("content") or "") for m in messages)
+            )
+            return _toon_for_slots([3])
+        # ① 전부 예측: slot 1,2는 맞지만 3 대신 할당 밖 stray 99를 내보낸다.
+        return _toon_for_slots([1, 2, 99])
+
+    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
+    scene_plan = []
+    for slot in (1, 2, 3):
+        scene_plan.append({
+            "plan_id": f"S{slot:03d}",
+            "slot": slot,
+            "anchor_segment": f"C{slot:03d}",
+            "source_segments": [f"C{slot:03d}"],
+            "characters": ["Hana"],
+            "scene_brief": f"Hana scene {slot}",
+            "wardrobe_snapshot": {
+                "Hana": {"body_state": "clothed", "worn": ["school uniform"], "removed": []},
+            },
+        })
+
+    descriptors, _raw_outputs = await pipeline._run_parallel_call2_details(
+        scene_plan=scene_plan,
+        call2_context_messages=[{"role": "system", "content": "Build detail."}],
+        call2_format="Return TOON.",
+        toggles=pipeline.merged_toggles({
+            "key_visual": False,
+            "call2_parallel_max_concurrency": 1,
+            "call2_parallel_slow_retry_enabled": False,
+        }),
+        stream_notify=None,
+    )
+
+    assert [item["slot"] for item in descriptors] == [1, 2, 3]
+    assert sum("[FULL" in name for name in calls) == 1
+    assert sum("[PARTIAL" in name for name in calls) == 1
+    # ② 실패분만 요청에는 빠진 slot 3만 들어있고, 이미 확보한 1/2는 없다.
+    assert partial_requests
+    assert '"slot": 3' in partial_requests[0]
+    assert '"slot": 1' not in partial_requests[0]
+    assert '"slot": 2' not in partial_requests[0]
 
 
 @pytest.mark.asyncio
@@ -760,7 +848,7 @@ async def test_call2_pipeline_returns_empty_without_fallback_when_all_slots_disc
                 }],
                 "keyvis_plan": None,
             })
-        if call_name == "CALL2-DETAIL 1/1":
+        if call_name.startswith("CALL2-DETAIL 1/1"):
             return _toon_for_slots([0])
         raise AssertionError(f"unexpected call: {call_name}")
 
@@ -791,7 +879,9 @@ async def test_call2_pipeline_returns_empty_without_fallback_when_all_slots_disc
         backtranslate_names="Hana",
     )
 
-    assert call_names == ["CALL2-PLAN", "CALL2-DETAIL 1/1"]
+    assert call_names[0] == "CALL2-PLAN"
+    assert sum(name.startswith("CALL2-DETAIL") for name in call_names) == 1
+    assert "CALL2-FALLBACK" not in call_names
     assert result["items"] == []
     assert result["call2_fix_output"] == ""
     assert result["call2_fallback_stage"] == ""
@@ -817,7 +907,7 @@ async def test_call2_pipeline_generates_characterless_scene_without_fallback(mon
                 }],
                 "keyvis_plan": None,
             })
-        if call_name == "CALL2-DETAIL 1/1":
+        if call_name.startswith("CALL2-DETAIL 1/1"):
             detail_messages.extend(messages)
             return _toon_without_named_characters(0)
         raise AssertionError(f"unexpected call: {call_name}")
@@ -854,7 +944,9 @@ async def test_call2_pipeline_generates_characterless_scene_without_fallback(mon
         backtranslate_names="Hana",
     )
 
-    assert call_names == ["CALL2-PLAN", "CALL2-DETAIL 1/1"]
+    assert call_names[0] == "CALL2-PLAN"
+    assert sum(name.startswith("CALL2-DETAIL 1/1") for name in call_names) == 1
+    assert "CALL2-FALLBACK" not in call_names
     assert len(result["items"]) == 1
     assert result["items"][0]["characters"] == []
     assert result["call2_fallback_stage"] == ""
@@ -988,7 +1080,7 @@ keyvis:
   supplement: Hana waits beside the window.
 scenes: []
 </lb-xnai>"""
-        if call_name == "CALL2-DETAIL 1/1":
+        if call_name.startswith("CALL2-DETAIL 1/1"):
             return _toon_for_slots([0]).replace("school uniform", "blue dress")
         raise AssertionError(f"unexpected call: {call_name}")
 
@@ -1072,7 +1164,11 @@ scenes: []
     assert "dedicated last visual marker" not in keyvis_request
     assert "negative: ..." not in keyvis_request
 
-    detail_request = request_by_call["CALL2-DETAIL 1/1"]
+    detail_request = next(
+        content
+        for name, content in request_by_call.items()
+        if name.startswith("CALL2-DETAIL 1/1")
+    )
     assert "# DETAIL CHECKLIST" in detail_request
     assert "Reason silently and return only the requested final <lb-xnai> block." in detail_request
     assert "\nkeyvis:\n" not in detail_request
@@ -1311,13 +1407,12 @@ async def test_call2_detail_failure_reuses_preserved_plan_in_global_fallback(mon
         backtranslate_names="Hana",
     )
 
-    assert call_names == [
-        "CALL2-PLAN",
-        "CALL2-DETAIL 1/1",
-        "CALL2-DETAIL 1/1 [FAILED-SHARD-RETRY]",
-        "CALL2-FALLBACK",
-        "CALL2-AUTHORITY-AUDIT",
-    ]
+    assert call_names[0] == "CALL2-PLAN"
+    assert call_names[-2:] == ["CALL2-FALLBACK", "CALL2-AUTHORITY-AUDIT"]
+    assert sum(name.startswith("CALL2-DETAIL 1/1") for name in call_names) == 4
+    assert any("FAILED-SHARD-RETRY" in name for name in call_names)
+    assert any("[FULL" in name for name in call_names)
+    assert any("[PARTIAL" in name for name in call_names)
     assert [item["slot"] for item in result["items"]] == [0]
     assert result["call2_plan_output"]
     assert result["call2_fallback_stage"] == "CALL2-DETAIL"
@@ -1402,8 +1497,8 @@ scenes: []
     )
 
     assert call_names.count("CALL2-KEYVIS") == 1
-    assert "CALL2-DETAIL 1/1" in call_names
-    assert "CALL2-DETAIL 1/1 [FAILED-SHARD-RETRY]" in call_names
+    assert any(name.startswith("CALL2-DETAIL 1/1") for name in call_names)
+    assert any("FAILED-SHARD-RETRY" in name for name in call_names)
     assert call_names[-2:] == ["CALL2-FALLBACK", "CALL2-AUTHORITY-AUDIT"]
     assert result["call2_keyvis_output"] == keyvis_output
     assert result["call2_fallback_stage"] == "CALL2-DETAIL"

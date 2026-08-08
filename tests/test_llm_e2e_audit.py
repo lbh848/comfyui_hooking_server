@@ -996,3 +996,77 @@ async def test_slow_retry_duplicate_still_honors_global_route_retry(monkeypatch)
         update["parent_execution_id"]
         for update in linked_updates
     }) == 1
+
+
+@pytest.mark.asyncio
+async def test_call_llm_task_force_slot_bypasses_routing_to_one_call(monkeypatch):
+    """force_slot 이 정해지면 primary→fallback 라우팅/재시도를 건너뛰고 해당 슬롯 1회만 호출.
+
+    CALL2-DETAIL 의 ①전부예측(primary)/②실패분만(fallback) 교대 루프가 단계별로
+    지정 슬롯을 1회씩만 부르도록 쓰는 force_slot 계약을 고정한다."""
+    cfg = _isolated_config(llm_routing={
+        "force_task": {
+            "primary": "llm1",
+            "fallback_target": "llm2",
+            "max_retries": 3,
+            "retry_delay_sec": 0,
+            "fallback_max_retries": 3,
+            "fallback_retry_delay_sec": 0,
+        },
+    })
+    monkeypatch.setattr(llm_service, "_current_config", cfg)
+
+    invoked_slots: list[str] = []
+
+    async def fake_slot(slot, messages, model=None, json_mode=False):
+        invoked_slots.append(slot)
+        return "force-ok"
+
+    monkeypatch.setattr(llm_service, "_call_routed_text_slot", fake_slot)
+
+    result = await llm_service.callLLMTaskResult(
+        "force_task",
+        [{"role": "user", "content": "hi"}],
+        force_slot="llm2",
+    )
+
+    assert result.accepted is True
+    assert result.final_slot == "llm2"
+    assert result.final_phase == "forced"
+    # primary(llm1)·fallback 자동 전환 모두 일어나지 않고 지정 슬롯 1회만.
+    assert invoked_slots == ["llm2"]
+
+
+@pytest.mark.asyncio
+async def test_call_llm_task_force_slot_invalid_falls_back_to_normal_routing(monkeypatch):
+    """force_slot 이 슬롯 id가 아니면 무시하고 일반 primary→fallback 라우팅을 따른다."""
+    cfg = _isolated_config(llm_routing={
+        "force_task": {
+            "primary": "llm1",
+            "fallback_target": "llm2",
+            "max_retries": 0,
+            "retry_delay_sec": 0,
+            "fallback_max_retries": 0,
+            "fallback_retry_delay_sec": 0,
+        },
+    })
+    monkeypatch.setattr(llm_service, "_current_config", cfg)
+
+    invoked_slots: list[str] = []
+
+    async def fake_slot(slot, messages, model=None, json_mode=False):
+        invoked_slots.append(slot)
+        return "routing-ok"
+
+    monkeypatch.setattr(llm_service, "_call_routed_text_slot", fake_slot)
+
+    result = await llm_service.callLLMTaskResult(
+        "force_task",
+        [{"role": "user", "content": "hi"}],
+        force_slot="not-a-slot",
+    )
+
+    assert result.accepted is True
+    assert result.final_slot == "llm1"
+    assert result.final_phase == "primary"
+    assert invoked_slots == ["llm1"]

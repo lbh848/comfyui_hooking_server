@@ -117,6 +117,34 @@ def build_character_alias_map(rules: list[dict], char_names: list[str]) -> dict[
     return aliases
 
 
+def _is_excluded(text: str, rule: dict) -> bool:
+    """규칙의 예외(exclude) 단어가 ``text`` 에 하나라도 부분문자열로 있으면 True.
+
+    trigger 매칭과 같은 대소문자 무관 부분문자열 기준으로 판단한다. 예외 단어가
+    감지되면 trigger 발동 여부와 무관하게 규칙을 억제한다. 예: trigger 가
+    "closed eyes" 일 때 "half-closed eyes" 에 부분매칭되어 잘못 발동하는 것을
+    exclude 에 "half-closed eyes" 를 두어 막는다. ``exclude`` 는 단일 문자열(한
+    단어) 또는 문자열 리스트. 쉼표 분리는 UI 단에서 처리하므로 여기서는 주어진
+    항목을 그대로 사용한다.
+    """
+    if not text:
+        return False
+    raw = rule.get("exclude")
+    if isinstance(raw, str):
+        terms = [raw]
+    elif isinstance(raw, list):
+        terms = [str(item) for item in raw]
+    else:
+        return False
+    for term in terms:
+        cleaned = term.strip()
+        if not cleaned:
+            continue
+        if re.search(re.escape(cleaned), text, flags=re.IGNORECASE):
+            return True
+    return False
+
+
 def apply_remove_rule(text: str, rule: dict) -> tuple[str, bool]:
     """제거 모드 규칙을 적용하고 ``(결과, 실제 적용 여부)``를 반환한다."""
     if not text:
@@ -129,6 +157,12 @@ def apply_remove_rule(text: str, rule: dict) -> tuple[str, bool]:
 
     trigger = (rule.get("trigger") or "").strip()
     remove_trigger = bool(rule.get("remove_trigger", False))
+    if _is_excluded(text, rule):
+        print(
+            f"[WORD_RULE] 제거 모드 규칙 예외(exclude) 발동 억제: "
+            f"trigger={trigger!r}, pattern={pattern_str!r}"
+        )
+        return text, False
     if trigger and not re.search(re.escape(trigger), text, flags=re.IGNORECASE):
         return text, False
 
@@ -699,6 +733,12 @@ def apply_char_tag_override_rules(
         if not trigger:
             print(
                 f"[WORD_RULE] 캐릭터 태그 규칙(type={rule_type})에 trigger가 없어 스킵합니다."
+            )
+            continue
+        if _is_excluded(trigger_text or "", rule):
+            print(
+                f"[WORD_RULE] {label} 규칙 예외(exclude) 발동 억제: "
+                f"trigger={trigger!r}"
             )
             continue
         if not re.search(re.escape(trigger), trigger_text or "", flags=re.IGNORECASE):

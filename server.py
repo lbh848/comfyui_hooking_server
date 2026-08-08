@@ -1637,6 +1637,7 @@ async def save_backup(
     conversion_info_snapshot=_BACKUP_SNAPSHOT_UNSET,
     illustration_multi_char: dict = None,
     llm_trace: list = None,
+    llm_final_result: dict = None,
 ):
     """이미지(WebP q80 + 원본 워크플로우 메타데이터)와 원본 워크플로우를 백업한다.
     bot_name: 봇/워크플로우 컨텍스트 딱지 (bot 모드일 때 봇 이름).
@@ -1839,6 +1840,25 @@ async def save_backup(
             info_to_save["llm_trace"] = [str(x) for x in llm_trace if str(x).strip()]
         except Exception as e:
             print(f"[BACKUP] llm_trace 정규화 실패, 무시: {e}")
+            traceback.print_exc()
+    # LLM 흐름 ① FINAL RESULT: 이 백업 이미지에 사용된 구조화 결과(raw_positive V3 +
+    # 등장 캐릭터 영문 이름). 프론트 "LLM 흐름" 모달 상단 블럭과 ③ 캐릭터 원본(lb.extra)
+    # 매칭에 쓴다. descriptor가 없는 경로(자동 복원/수동)면 None → 저장 안 함.
+    if isinstance(llm_final_result, dict) and (
+        str(llm_final_result.get("raw_positive") or "").strip()
+        or list(llm_final_result.get("character_names") or [])
+    ):
+        try:
+            info_to_save["llm_final_result"] = {
+                "raw_positive": str(llm_final_result.get("raw_positive") or ""),
+                "character_names": [
+                    str(n).strip()
+                    for n in (llm_final_result.get("character_names") or [])
+                    if str(n).strip()
+                ],
+            }
+        except Exception as e:
+            print(f"[BACKUP] llm_final_result 정규화 실패, 무시: {e}")
             traceback.print_exc()
 
     info_path = os.path.join(WORKFLOW_BACKUP_DIR, f"{base_name}_info.json")
@@ -3129,6 +3149,7 @@ async def _finalize_deferred_illustration_prompt(prompt_id: str, speak_text: str
             conversion_info_snapshot=state.get("conversion_info"),
             illustration_multi_char=state.get("illustration_multi_char"),
             llm_trace=entry.get("_llm_trace"),
+            llm_final_result=entry.get("_llm_final_result"),
         )
 
         save_node_id = entry.get("save_node_id") or "9"
@@ -3885,6 +3906,7 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                 queued_multi_char if multi_char_requested else None
             ),
             llm_trace=(prompts.get(prompt_id) or {}).get("_llm_trace"),
+            llm_final_result=(prompts.get(prompt_id) or {}).get("_llm_final_result"),
         )
 
         # 프록시 응답 설정
@@ -3960,6 +3982,30 @@ def _tag_text(values) -> str:
         if value:
             out.append(value)
     return ", ".join(out)
+
+
+def _build_llm_final_result(descriptor: dict | None) -> dict | None:
+    """LLM 흐름 모달의 ① FINAL RESULT 블럭용 구조화 결과를 descriptor에서 뽑는다.
+
+    raw_positive 는 preset.txt(call2_preset) 치환 결과로 V3 마커
+    ([SPEAK]/[Name]/[SETUP]/[CHAR]/[SUPPLEMENT])를 그대로 포함한다. 프론트는 이를
+    블럭별로 파싱해 표시한다. character_names 는 ③ 캐릭터 원본(lb.extra)을 이 그림의
+    등장 캐릭터로 한정하는 데 쓴다. descriptor가 없거나 값이 비어 있으면 None.
+    """
+    if not isinstance(descriptor, dict):
+        return None
+    raw_positive = str(descriptor.get("raw_positive") or "")
+    names = [
+        str(ch.get("name") or "").strip()
+        for ch in (descriptor.get("characters") or [])
+        if isinstance(ch, dict) and str(ch.get("name") or "").strip()
+    ]
+    if not raw_positive and not names:
+        return None
+    return {
+        "raw_positive": raw_positive,
+        "character_names": names,
+    }
 
 
 def _collect_lb_extra(bot_name: str) -> dict | None:
@@ -4281,6 +4327,8 @@ async def process_illustration_context_queue_item(item) -> dict:
             # 이 자식(이미지 1장) 백업에 묻일 LLM 흐름 trace. 부모 build_from_context
             # 완료 후 주입되거나(early dispatch), _enqueue_child 호출 시 전달된다.
             "_llm_trace": list(llm_trace or []),
+            # ① FINAL RESULT 블럭용 구조화 결과. save_backup 이 _info.json 에 저장.
+            "_llm_final_result": _build_llm_final_result(descriptor),
         }
         child_raw_body = {
             "prompt": child_prompt,
@@ -4534,6 +4582,16 @@ async def process_illustration_context_queue_item(item) -> dict:
                 )
                 raise RuntimeError("CALL2 조기 등록 결과와 CALL3 최종 결과 수가 다릅니다")
             final_slots = [entry.get("slot") for entry in raw_items]
+            # early dispatch 시점은 CALL3 전이라 descriptor.speak 가 비어, stash 한
+            # _llm_final_result 의 [SPEAK] 가 항상 None 이 된다. 최종 descriptor(post-CALL3,
+            # speak 반영) 로 같은 인덱스 자식 백업의 FINAL RESULT 를 갱신한다.
+            # child_pairs 와 raw_items 는 동일 descriptors 순서를 유지한다(위 길이 검증).
+            for _i, _pair in enumerate(child_pairs):
+                if _pair is None or _i >= len(raw_items):
+                    continue
+                _cid = _pair[0]
+                if _cid in prompts and isinstance(raw_items[_i], dict):
+                    prompts[_cid]["_llm_final_result"] = _build_llm_final_result(raw_items[_i])
             if early_descriptor_slots != final_slots:
                 print(
                     f"[ILLUST_CONTEXT] 조기 등록/최종 슬롯 순서 불일치: "
@@ -6475,6 +6533,7 @@ async def _enqueue_illustration_session_slot(
         "client_id": body.get("client_id", ""), "extra_data": body.get("extra_data", {}),
         "outputs": {}, "filename": None, "save_node_id": save_node,
         "image_bytes": None, "timestamp": time.time(),
+        "_llm_final_result": _build_llm_final_result(descriptor),
     }
     generated_body = {
         "prompt": generated_prompt,
@@ -6616,6 +6675,7 @@ async def handle_prompt(request: web.Request) -> web.Response:
                 "client_id": body.get("client_id", ""), "extra_data": body.get("extra_data", {}),
                 "outputs": {}, "filename": None, "save_node_id": save_node,
                 "image_bytes": None, "timestamp": time.time(),
+                "_llm_final_result": _build_llm_final_result(descriptor),
             }
             regenerate_body = {
                 "prompt": regenerated_prompt,
@@ -8013,6 +8073,61 @@ async def handle_api_backup_llm_trace(request: web.Request) -> web.Response:
                 {"status": "error", "error": f"백업 정보 읽기 실패: {e}"},
                 status=500,
             )
+        # ── LLM 흐름 모달 상단 요약 블럭용 데이터 (①②③) ──
+        # ① FINAL RESULT: descriptor 치환 결과(raw_positive V3). 도입 전 백업은 None.
+        final_result = info.get("llm_final_result")
+        if not isinstance(final_result, dict):
+            final_result = None
+        # ② 치환 후 최종 SD 프롬프트(평탄화): 백업 .json/.txt 의 긍정/부정 프롬프트.
+        final_positive, final_negative = "", ""
+        for _cand in (f"{name}.json", f"{name}.txt"):
+            _pp = os.path.join(backup_dir, _cand)
+            if os.path.exists(_pp):
+                try:
+                    final_positive, final_negative = _extract_prompts_from_backup(_pp)
+                except Exception as _e:
+                    print(
+                        f"[BACKUP:LLM_TRACE] 백업 프롬프트 추출 실패: "
+                        f"name={name}, error={_e}"
+                    )
+                break
+        # ③ 캐릭터 원본(lb.extra): bot_name 기반. ① 의 character_names 로 이 그림 캐릭터 한정.
+        bot_name = str(info.get("bot_name") or "")
+        lb_extra_chars: list = []
+        if bot_name:
+            try:
+                _collected = _collect_lb_extra(bot_name)
+            except Exception as _e:
+                print(
+                    f"[BACKUP:LLM_TRACE] lb.extra 수집 실패: "
+                    f"bot={bot_name}, error={_e}"
+                )
+                _collected = None
+            if _collected and _collected.get("characters"):
+                _all_chars = _collected["characters"]
+                _wanted = set()
+                if final_result:
+                    _wanted = {
+                        str(_n).strip()
+                        for _n in (final_result.get("character_names") or [])
+                        if str(_n).strip()
+                    }
+                if _wanted:
+                    lb_extra_chars = [
+                        _c for _c in _all_chars
+                        if str(_c.get("name") or "").strip() in _wanted
+                    ]
+                else:
+                    # ① 매칭 정보가 없으면(도입 전 백업 등) 봇 캐릭터 전체 표시.
+                    lb_extra_chars = list(_all_chars)
+        extras = {
+            "final_result": final_result,
+            "final_positive": final_positive,
+            "final_negative": final_negative,
+            "bot_name": bot_name,
+            "lb_extra": lb_extra_chars,
+        }
+
         trace_ids_raw = info.get("llm_trace") or []
         if not isinstance(trace_ids_raw, list) or not trace_ids_raw:
             return web.json_response({
@@ -8024,6 +8139,7 @@ async def handle_api_backup_llm_trace(request: web.Request) -> web.Response:
                     "이 백업에는 LLM 흐름 기록(trace)이 없습니다. "
                     "(이 기능 도입 전 백업, 또는 재생성/수동 생성 백업)"
                 ),
+                **extras,
             })
         trace_ids = [str(x) for x in trace_ids_raw if str(x).strip()]
         trace_set = set(trace_ids)
@@ -8073,6 +8189,7 @@ async def handle_api_backup_llm_trace(request: web.Request) -> web.Response:
             "records": found,
             "missing": missing,
             "note": note,
+            **extras,
         })
     except Exception as e:
         tb = traceback.format_exc()

@@ -27689,6 +27689,11 @@
         // ─── 삽화 백업 LLM 흐름 추적 (MULTI-CHAR-MASK~CALL3) ───
         let _llmFlowRecords = [];
         let _llmFlowName = '';
+        // 상단 요약 블럭용 데이터 (①FINAL RESULT ②치환 후 최종 프롬프트 ③캐릭터 원본)
+        let _llmFlowFinalResult = null;
+        let _llmFlowFinalPositive = '';
+        let _llmFlowFinalNegative = '';
+        let _llmFlowLbExtra = [];
 
         function closeLlmFlowModal() {
             const overlay = document.getElementById('llm-flow-overlay');
@@ -27732,12 +27737,120 @@
                     throw new Error(data.error || '조회 실패');
                 }
                 _llmFlowRecords = Array.isArray(data.records) ? data.records : [];
+                _llmFlowFinalResult = data.final_result || null;
+                _llmFlowFinalPositive = data.final_positive || '';
+                _llmFlowFinalNegative = data.final_negative || '';
+                _llmFlowLbExtra = Array.isArray(data.lb_extra) ? data.lb_extra : [];
                 renderLlmFlowBody(data);
             } catch (e) {
                 console.error('[LLM_FLOW] 로드 실패:', e);
                 const body = document.getElementById('llm-flow-body');
                 if (body) body.innerHTML = `<div style="color:#ff6b6b; font-size:0.85rem;">LLM 흐름 로드 실패: ${escapeHtml(e.message || String(e))}</div>`;
             }
+        }
+
+        function _llmFlowBlockCard(badgeText, badgeBg, titleText, subtitle, innerHtml) {
+            return `
+                <div style="border:1px solid var(--border); background:rgba(0,0,0,0.18); border-radius:9px; margin-bottom:14px; overflow:hidden;">
+                    <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:8px 12px; background:rgba(255,255,255,0.025); border-bottom:1px solid var(--border);">
+                        <span style="font-size:0.72rem; padding:1px 7px; border-radius:3px; background:${badgeBg}; color:#fff; font-weight:700;">${escapeHtml(badgeText)}</span>
+                        <span style="font-size:0.86rem; font-weight:700; color:var(--text);">${escapeHtml(titleText)}</span>
+                        ${subtitle ? `<span style="font-size:0.72rem; color:var(--text2);">${escapeHtml(subtitle)}</span>` : ''}
+                    </div>
+                    <div style="padding:10px 12px;">${innerHtml}</div>
+                </div>`;
+        }
+
+        // raw_positive(V3)에서 [SPEAK]/[Name]/[SETUP]/[CHAR]/[SUPPLEMENT] 섹션별로 파싱.
+        function _parseLlmFlowV3Blocks(raw) {
+            const out = {};
+            if (!raw) return out;
+            const markers = ['SPEAK', 'Name', 'SETUP', 'CHAR', 'SUPPLEMENT', 'CHAT', 'SLOT'];
+            const re = /\[(SPEAK|Name|SETUP|CHAR|SUPPLEMENT|CHAT|SLOT|Negative)\]/g;
+            const hits = [];
+            let m;
+            while ((m = re.exec(raw)) !== null) {
+                hits.push({ marker: m[1], start: m.index, after: m.index + m[0].length });
+            }
+            for (let i = 0; i < hits.length; i++) {
+                const h = hits[i];
+                if (!markers.includes(h.marker)) continue;
+                const contentEnd = (i + 1 < hits.length) ? hits[i + 1].start : raw.length;
+                out[h.marker] = raw.slice(h.after, contentEnd).replace(/^\s*\n/, '').replace(/\s+$/, '');
+            }
+            return out;
+        }
+
+        function _renderLlmFlowFinalResult(finalResult) {
+            if (!finalResult || !finalResult.raw_positive) {
+                return _llmFlowBlockCard('①', 'rgba(120,120,120,0.5)', 'FINAL RESULT',
+                    '해당 그림에 사용된 LLM 구조화 결과',
+                    `<div style="color:var(--text2); font-size:0.8rem;">이 백업에는 구조화 결과가 저장되지 않았습니다 (기능 도입 전 백업).</div>`);
+            }
+            const blocks = _parseLlmFlowV3Blocks(finalResult.raw_positive);
+            const order = ['SPEAK', 'Name', 'SETUP', 'CHAR', 'SUPPLEMENT'];
+            const labels = {
+                SPEAK: 'SPEAK (대사)', Name: 'Name (이름)',
+                SETUP: 'SETUP (구도/장면)', CHAR: 'CHAR (외형/복장)',
+                SUPPLEMENT: 'SUPPLEMENT (보강 묘사)',
+            };
+            let inner = '';
+            for (const key of order) {
+                if (blocks[key] === undefined) continue;
+                inner += `
+                    <div style="margin-bottom:8px;">
+                        <div style="font-size:0.72rem; font-weight:700; color:#4dd0e1; margin-bottom:2px;">${escapeHtml(labels[key] || key)}</div>
+                        <pre class="lighbd-detail-content" style="margin:0; min-height:auto;">${escapeHtml(blocks[key] || '(없음)')}</pre>
+                    </div>`;
+            }
+            inner += `<details style="margin-top:6px;"><summary style="cursor:pointer; font-size:0.74rem; color:var(--text2);">raw_positive 전문 (V3 마커 원문)</summary><pre class="lighbd-detail-content" style="margin-top:6px;">${escapeHtml(finalResult.raw_positive)}</pre></details>`;
+            return _llmFlowBlockCard('①', 'rgba(0,188,212,0.55)', 'FINAL RESULT',
+                '해당 그림에 사용된 LLM 구조화 결과 (preset 치환, V3 마커)', inner);
+        }
+
+        function _renderLlmFlowFinalPrompt(pos, neg) {
+            if (!pos && !neg) {
+                return _llmFlowBlockCard('②', 'rgba(120,120,120,0.5)', '치환 후 최종 프롬프트',
+                    '평탄화된 최종 SD 프롬프트',
+                    `<div style="color:var(--text2); font-size:0.8rem;">최종 프롬프트를 불러오지 못했습니다.</div>`);
+            }
+            let inner = `<div style="margin-bottom:8px;">
+                    <div style="font-size:0.72rem; font-weight:700; color:#4dd0e1; margin-bottom:2px;">Positive (실제 이미지 생성 입력)</div>
+                    <pre class="lighbd-detail-content" style="margin:0;">${escapeHtml(pos || '(없음)')}</pre>
+                </div>`;
+            if (neg) {
+                inner += `<div>
+                    <div style="font-size:0.72rem; font-weight:700; color:var(--text2); margin-bottom:2px;">Negative</div>
+                    <pre class="lighbd-detail-content" style="margin:0;">${escapeHtml(neg)}</pre>
+                </div>`;
+            }
+            return _llmFlowBlockCard('②', 'rgba(0,200,83,0.5)', '치환 후 최종 프롬프트',
+                'process_prompt 평탄화 최종 SD 프롬프트 (LoRA/품질/flatten 적용)', inner);
+        }
+
+        function _renderLlmFlowLbExtra(chars, botName) {
+            if (!Array.isArray(chars) || !chars.length) {
+                return _llmFlowBlockCard('③', 'rgba(120,120,120,0.5)', '캐릭터 원본 (lb.extra)',
+                    '원형 생김새·복장 태그 (태그 누락 점검용)',
+                    `<div style="color:var(--text2); font-size:0.8rem;">표시할 캐릭터 원본 정보가 없습니다.${botName ? '' : ' (bot_name 없음)'}</div>`);
+            }
+            let inner = '';
+            for (const c of chars) {
+                inner += `
+                    <div style="border:1px solid var(--border); border-radius:6px; padding:8px 10px; margin-bottom:8px;">
+                        <div style="font-size:0.8rem; font-weight:700; color:var(--text); margin-bottom:6px;">${escapeHtml(c.name || '(이름 없음)')}</div>
+                        <div style="margin-bottom:6px;">
+                            <div style="font-size:0.7rem; font-weight:700; color:#ba68c8; margin-bottom:2px;">Appearance (원형 생김새)</div>
+                            <pre class="lighbd-detail-content" style="margin:0;">${escapeHtml(c.appearance || '(없음)')}</pre>
+                        </div>
+                        <div>
+                            <div style="font-size:0.7rem; font-weight:700; color:#ffa94d; margin-bottom:2px;">Outfit (원형 옷)</div>
+                            <pre class="lighbd-detail-content" style="margin:0;">${escapeHtml(c.outfit || '(없음)')}</pre>
+                        </div>
+                    </div>`;
+            }
+            const sub = botName ? `bot: ${botName} · 태그 누락 점검용` : '태그 누락 점검용';
+            return _llmFlowBlockCard('③', 'rgba(156,39,176,0.55)', '캐릭터 원본 (lb.extra)', sub, inner);
         }
 
         function renderLlmFlowBody(data) {
@@ -27750,20 +27863,24 @@
             if (note) {
                 html += `<div style="border:1px solid var(--border); background:rgba(255,159,67,0.12); color:#ffb36b; padding:9px 12px; border-radius:8px; font-size:0.78rem; margin-bottom:12px; white-space:pre-wrap; word-break:break-word;">${escapeHtml(note)}</div>`;
             }
-            if (records.length) {
-                html += `<div style="display:flex; gap:8px; margin-bottom:12px; flex-wrap:wrap; align-items:center;">
-                    <button onclick="exportLlmFlowMarkdown()" style="padding:5px 12px; font-size:0.78rem; border:1px solid var(--border); border-radius:6px; background:var(--surface1); color:var(--text); cursor:pointer;">📄 MD 내보내기</button>
-                    <span style="font-size:0.74rem; color:var(--text2);">${records.length}개 단계 · 자르기 없음${missing.length ? ` · 삭제됨 ${missing.length}건` : ''}</span>
-                </div>`;
-            }
+            // LLM 흐름 단계 섹션
+            html += `<div style="margin:4px 0 10px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                <h3 style="margin:0; font-size:0.92rem; font-weight:700; color:var(--text);">LLM 흐름 단계 (MULTI-CHAR-MASK~CALL3)</h3>
+                <button onclick="exportLlmFlowMarkdown()" style="padding:5px 12px; font-size:0.78rem; border:1px solid var(--border); border-radius:6px; background:var(--surface1); color:var(--text); cursor:pointer;">📄 MD 내보내기</button>
+                ${records.length ? `<span style="font-size:0.74rem; color:var(--text2);">${records.length}개 단계 · 자르기 없음${missing.length ? ` · 삭제됨 ${missing.length}건` : ''}</span>` : ''}
+            </div>`;
             if (!records.length) {
                 html += `<div style="color:var(--text2); font-size:0.85rem;">표시할 LLM 흐름 레코드가 없습니다.</div>`;
-                body.innerHTML = html;
-                return;
+            } else {
+                for (const record of records) {
+                    html += renderLlmFlowRecordSection(record);
+                }
             }
-            for (const record of records) {
-                html += renderLlmFlowRecordSection(record);
-            }
+            // 하단 요약 (시간순): ③ 캐릭터 원본(lb.extra) → ① FINAL RESULT → ② 치환 후 최종 프롬프트
+            html += `<div style="margin:18px 0 8px; border-top:1px dashed var(--border); padding-top:12px;"><h3 style="margin:0; font-size:0.82rem; font-weight:700; color:var(--text2);">결과 요약 (시간순)</h3></div>`;
+            html += _renderLlmFlowLbExtra(data.lb_extra, data.bot_name);
+            html += _renderLlmFlowFinalResult(data.final_result);
+            html += _renderLlmFlowFinalPrompt(data.final_positive, data.final_negative);
             body.innerHTML = html;
         }
 
@@ -27816,6 +27933,30 @@
             lines.push('');
             lines.push(`- 단계 수: ${records.length}`);
             lines.push(`- 내보낸 시각: ${new Date().toISOString()}`);
+            lines.push('');
+            lines.push('---');
+            lines.push('');
+            // ── 파이프라인 호출 순서 + 각 역할 (MD만으로 분석 가능하도록 상단 고정) ──
+            lines.push('## 파이프라인 호출 순서 및 역할 (MULTI-CHAR-MASK~CALL3)');
+            lines.push('');
+            lines.push('> 삽화 1장을 만들기 위해 거친 LLM 호출 단계의 실행 순서와 각 역할. ');
+            lines.push('> 레코드는 시각(ts)순이며, 병렬 실행(CALL2-DETAIL/KEYVIS, CALL3↔이미지생성)으로 일부 순서가 겹칠 수 있음. ');
+            lines.push('> 역번역/다중캐릭터 등은 토글·조건부라 생략될 수 있음. ');
+            lines.push('> 최종 사용값은 본문 최하단 **결과 요약(시간순)** 에 정리.');
+            lines.push('');
+            lines.push('1. **CALL1-BACKTRANSLATE** — 최신 CHAR 응답(현재 맥락)을 영어로 역번역. 후속 단계가 상황을 정확히 이해하도록 정규화. (토글 시)');
+            lines.push('2. **CALL1** (enhance) — 엔티티 정체성·공참조(coreference)·복장 상태 분석. sparse event items(set/replace/복장 변화) 생성해 CALL2에 전달.');
+            lines.push('3. **CALL2-PLAN** — 전역 시각 비트 플래너. 어떤 장면(scene)/키비주얼(keyvis)을 그릴지 JSON scene_plan으로 결정.');
+            lines.push('4. **CALL2-KEYVIS / CALL2-DETAIL** — 릴레이 소설 로그에 Danbooru 태그를 붙여 `<lb-xnai>` TOON 구조(camera/scene/supplement/characters) 생성. KEYVIS=키비주얼, DETAIL=일반 장면. PLAN 없이 단독일 때 **CALL2-FALLBACK**.');
+            lines.push('5. **CALL2-AUTHORITY-AUDIT** — 외형·복장 권위 감사. 권위 베이스(고정 외형·기본 복장) 대비 후보밖 값은 그 값만 drop(한 값 실수가 전체 응답을 날리지 않게).');
+            lines.push('6. **CALL2-FIX** — CALL2 출력이 malformed일 때 내용을 바꾸지 않고 구조만 교정(실패 시에만).');
+            lines.push('7. **CALL3** (speak/manga) — 선택된 일반 장면의 대사/생각 작성. speak=vn 대사창, manga=말풍선. 이미지 생성과 병렬 실행.');
+            lines.push('8. **MULTI-CHAR-MASK** (CALL5) — 2인 이상 장면의 캐릭터별 영역 공간 분해(마스크). CALL3 이후, 장면(slot)마다 별도 호출.');
+            lines.push('');
+            lines.push('**결과 요약(본문 최하단, 시간순):** ');
+            lines.push('- **③ 캐릭터 원본(lb.extra)** — 이 그림 캐릭터들의 원형 외형/복장 태그(태그 누락 점검용). ');
+            lines.push('- **① FINAL RESULT** — CALL2가 뽑은 구조화 결과([SPEAK]/[Name]/[SETUP]/[CHAR]/[SUPPLEMENT], preset 치환 · V3 마커). ');
+            lines.push('- **② 치환 후 최종 프롬프트** — 위 결과를 process_prompt가 평탄화(LoRA/품질/flatten)한 실제 SD 입력.');
             lines.push('');
             lines.push('---');
             lines.push('');
@@ -27879,13 +28020,93 @@
                 lines.push('---');
                 lines.push('');
             }
+            // 결과 요약 (시간순): ③ 캐릭터 원본(lb.extra) → ① FINAL RESULT → ② 치환 후 최종 프롬프트
+            const _lb = _llmFlowLbExtra || [];
+            if (_lb.length) {
+                lines.push('---');
+                lines.push('');
+                lines.push('## ③ 캐릭터 원본 (lb.extra) — 원형 생김새·복장 태그 (태그 누락 점검용)');
+                lines.push('');
+                for (const _c of _lb) {
+                    lines.push(`### ${_c.name || '(이름 없음)'}`);
+                    lines.push('');
+                    lines.push('**Appearance (원형 생김새)**');
+                    lines.push('');
+                    lines.push('```');
+                    lines.push(_c.appearance || '(없음)');
+                    lines.push('```');
+                    lines.push('');
+                    lines.push('**Outfit (원형 옷)**');
+                    lines.push('');
+                    lines.push('```');
+                    lines.push(_c.outfit || '(없음)');
+                    lines.push('```');
+                    lines.push('');
+                }
+            }
+            const _fr = _llmFlowFinalResult;
+            if (_fr && _fr.raw_positive) {
+                const _blocks = _parseLlmFlowV3Blocks(_fr.raw_positive);
+                const _order = ['SPEAK', 'Name', 'SETUP', 'CHAR', 'SUPPLEMENT'];
+                const _labels = { SPEAK: 'SPEAK (대사)', Name: 'Name (이름)', SETUP: 'SETUP (구도/장면)', CHAR: 'CHAR (외형/복장)', SUPPLEMENT: 'SUPPLEMENT (보강 묘사)' };
+                lines.push('---');
+                lines.push('');
+                lines.push('## ① FINAL RESULT — 해당 그림에 사용된 LLM 구조화 결과 (preset 치환, V3 마커)');
+                lines.push('');
+                for (const _key of _order) {
+                    if (_blocks[_key] === undefined) continue;
+                    lines.push(`**${_labels[_key] || _key}**`);
+                    lines.push('');
+                    lines.push('```');
+                    lines.push(_blocks[_key] || '(없음)');
+                    lines.push('```');
+                    lines.push('');
+                }
+                lines.push('<details><summary>raw_positive 전문 (V3 마커 원문)</summary>');
+                lines.push('');
+                lines.push('```');
+                lines.push(_fr.raw_positive);
+                lines.push('```');
+                lines.push('');
+                lines.push('</details>');
+                lines.push('');
+            } else {
+                lines.push('---');
+                lines.push('');
+                lines.push('## ① FINAL RESULT');
+                lines.push('');
+                lines.push('> 이 백업에는 구조화 결과가 저장되지 않았습니다 (기능 도입 전 백업).');
+                lines.push('');
+            }
+            if (_llmFlowFinalPositive || _llmFlowFinalNegative) {
+                lines.push('---');
+                lines.push('');
+                lines.push('## ② 치환 후 최종 프롬프트 — process_prompt 평탄화 최종 SD 프롬프트');
+                lines.push('');
+                lines.push('**Positive (실제 이미지 생성 입력)**');
+                lines.push('');
+                lines.push('```');
+                lines.push(_llmFlowFinalPositive || '(없음)');
+                lines.push('```');
+                lines.push('');
+                if (_llmFlowFinalNegative) {
+                    lines.push('**Negative**');
+                    lines.push('');
+                    lines.push('```');
+                    lines.push(_llmFlowFinalNegative);
+                    lines.push('```');
+                    lines.push('');
+                }
+            }
             return lines.join('\n');
         }
 
         function exportLlmFlowMarkdown() {
             const name = _llmFlowName || 'backup';
             const records = _llmFlowRecords || [];
-            if (!records.length) { showToast('내보낼 LLM 흐름 기록이 없습니다.', 'warning'); return; }
+            if (!records.length && !_llmFlowFinalResult && !_llmFlowFinalPositive && !(_llmFlowLbExtra && _llmFlowLbExtra.length)) {
+                showToast('내보낼 LLM 흐름 기록이 없습니다.', 'warning'); return;
+            }
             try {
                 const md = buildLlmFlowMarkdown(name, records);
                 const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' });
@@ -48482,20 +48703,140 @@
                     body: JSON.stringify({ name, scope: 'local' })
                 });
                 const result = await resp.json();
+                if (result.conflict) {
+                    // 사용 중인 봇이 있음 → 재할당 모달 오픈 (토스트로 끝내지 않음)
+                    _openPresetDeleteResolveModal(name, result.bots || []);
+                    return;
+                }
                 if (!result.deleted) {
                     showToast('프리셋 삭제 실패: ' + (result.error || ''), 'error');
                     return;
                 }
-                if (result.presets) _systemPromptLocal = result.presets;
-                if (_systemPromptPresetSelected === name && _systemPromptScope === 'local') {
-                    _systemPromptScope = 'local';
-                    _systemPromptPresetSelected = '';  // render가 첫 프리셋으로 보정
-                }
+                await _afterPresetDeleted(name, result);
                 showToast(`사용자 프리셋 "${name}" 삭제 완료`, 'success');
-                _renderSystemPromptTab();
             } catch (e) {
                 console.error('[LB_EXTRA] 프리셋 삭제 실패:', e);
                 showToast('프리셋 삭제 실패: ' + e.message, 'error');
+            }
+        }
+
+        // 프리셋 삭제(직접/재할당 공통) 후 상태 동기화. 미리보기·전송 공통 후처리 단일 소스.
+        async function _afterPresetDeleted(name, result) {
+            if (result.presets) _systemPromptLocal = result.presets;
+            const reassigned = Array.isArray(result.reassigned) ? result.reassigned : [];
+            if (botCurrentBot && reassigned.some(r => r.name === botCurrentBot)) {
+                // 현재 편집 중인 봇이 대체 프리셋으로 이동됨 → 봇 뷰 새로고침
+                await _loadSystemPrompt();
+            } else if (_systemPromptPresetSelected === name && _systemPromptScope === 'local') {
+                _systemPromptScope = 'local';
+                _systemPromptPresetSelected = '';  // render가 첫 프리셋으로 보정
+            }
+            _renderSystemPromptTab();
+        }
+
+        // ─── 프리셋 삭제 충돌 회피 모달 (충돌 봇을 대체 프리셋으로 재할당 후 삭제) ─────
+        function _openPresetDeleteResolveModal(presetName, bots) {
+            const existing = document.getElementById('preset-delete-resolve-overlay');
+            if (existing) existing.remove();
+
+            // 대체 프리셋 풀: builtin 전체 + local(삭제 대상 제외)
+            const altBuiltin = Object.keys(_systemPromptBuiltin || {});
+            const altLocal = Object.keys(_systemPromptLocal || {}).filter(n => n !== presetName);
+            const hasAlternative = altBuiltin.length > 0 || altLocal.length > 0;
+            // 기본 대체값 = 첫 후보 (모든 충돌 봇은 현재 삭제 대상 프리셋을 쓰고 있으므로 달라야 함)
+            const firstAlt = altLocal.length ? _spEncodeOpt('local', altLocal[0])
+                           : (altBuiltin.length ? _spEncodeOpt('builtin', altBuiltin[0]) : '');
+
+            const opt = (scope, n) => {
+                const v = _spEncodeOpt(scope, n);
+                return `<option value="${escHtml(v)}"${v === firstAlt ? ' selected' : ''}>${escHtml(n)}</option>`;
+            };
+            const buildSelect = () => {
+                let opts = '';
+                if (altLocal.length) opts += `<optgroup label="✏️ 사용자 (편집가능)">${altLocal.map(n => opt('local', n)).join('')}</optgroup>`;
+                if (altBuiltin.length) opts += `<optgroup label="📦 배포자료 (읽기전용)">${altBuiltin.map(n => opt('builtin', n)).join('')}</optgroup>`;
+                return opts;
+            };
+
+            const rowsHtml = (bots || []).map(b => `
+                <div class="pdr-row" data-bot="${escAttr(b.name || '')}" style="display:flex; align-items:center; gap:10px; padding:8px 0; border-bottom:1px solid var(--border);">
+                    <span style="flex:0 1 40%; min-width:140px; font-weight:600; font-size:0.88rem; overflow-wrap:anywhere;">${escHtml(b.name || '?')}</span>
+                    <span style="color:var(--text2); font-size:0.8rem; flex:0 0 auto;">→</span>
+                    <select class="pdr-select" style="flex:1; min-width:0; padding:5px 8px; border-radius:4px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.85rem;">${buildSelect()}</select>
+                </div>`).join('');
+
+            const overlay = document.createElement('div');
+            overlay.id = 'preset-delete-resolve-overlay';
+            overlay.dataset.presetName = presetName;
+            overlay.style.cssText = 'position:fixed; inset:0; z-index:10005; background:rgba(0,0,0,0.6); display:flex; align-items:center; justify-content:center;';
+
+            overlay.innerHTML = `
+                <div style="background:var(--surface); border:1px solid var(--border); border-radius:12px; width:96vw; max-width:680px; max-height:88vh; display:flex; flex-direction:column; overflow:hidden;">
+                    <div style="display:flex; align-items:center; gap:10px; padding:12px 16px; border-bottom:1px solid var(--border);">
+                        <span style="font-weight:700; font-size:1.02rem;">프리셋 삭제 — 충돌 회피</span>
+                        <div style="flex:1;"></div>
+                        <button onclick="_closePresetDeleteResolveModal()" style="background:none; border:none; color:var(--text2); font-size:1.2rem; cursor:pointer;">✕</button>
+                    </div>
+                    <div style="padding:12px 16px 4px; font-size:0.82rem; color:var(--text2); line-height:1.5;">
+                        사용자 프리셋 <b style="color:var(--text);">${escHtml(presetName)}</b> 을(를) 사용 중인 봇이 ${(bots || []).length}개 있습니다.
+                        각 봇이 이동할 <b>대체 시스템 프롬프트</b>를 선택하면, 해당 봇들을 이동시킨 뒤 프리셋을 삭제합니다.
+                    </div>
+                    <div style="padding:8px 16px; overflow-y:auto; flex:1;">
+                        ${hasAlternative ? rowsHtml : '<div style="padding:20px; text-align:center; color:var(--text2);">대체 프리셋이 없습니다. 먼저 다른 프리셋을 추가하세요.</div>'}
+                    </div>
+                    <div style="display:flex; justify-content:flex-end; gap:8px; padding:12px 16px; border-top:1px solid var(--border);">
+                        <button onclick="_closePresetDeleteResolveModal()" style="padding:6px 14px; border-radius:6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); cursor:pointer; font-size:0.85rem;">취소</button>
+                        <button id="pdr-btn-delete" onclick="_commitPresetDeleteResolve()" ${hasAlternative ? '' : 'disabled'} style="padding:6px 14px; border-radius:6px; border:1px solid #c62828; background:#c62828; color:#fff; cursor:pointer; font-size:0.85rem; font-weight:600;${hasAlternative ? '' : ' opacity:0.4; cursor:not-allowed;'}">삭제 실행</button>
+                    </div>
+                </div>`;
+
+            document.body.appendChild(overlay);
+        }
+
+        function _closePresetDeleteResolveModal() {
+            const overlay = document.getElementById('preset-delete-resolve-overlay');
+            if (overlay) overlay.remove();
+        }
+
+        async function _commitPresetDeleteResolve() {
+            const overlay = document.getElementById('preset-delete-resolve-overlay');
+            if (!overlay) return;
+            const presetName = overlay.dataset.presetName || '';
+            if (!presetName) { showToast('삭제 대상 프리셋 정보가 없습니다.', 'error'); return; }
+            const rows = overlay.querySelectorAll('.pdr-row');
+            if (!rows.length) { showToast('재할당할 봇이 없습니다.', 'error'); return; }
+
+            const reassign = {};
+            rows.forEach(row => {
+                const botName = row.getAttribute('data-bot');
+                const selEl = row.querySelector('.pdr-select');
+                const { scope, name } = _spDecodeOpt(selEl ? selEl.value : '');
+                reassign[botName] = { scope, preset: name };
+            });
+
+            const btn = document.getElementById('pdr-btn-delete');
+            const origText = btn ? btn.textContent : '';
+            if (btn) { btn.disabled = true; btn.textContent = '삭제 중…'; }
+
+            try {
+                const resp = await fetch('/api/bot_mode/system_prompt_presets', {
+                    method: 'DELETE',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: presetName, scope: 'local', reassign })
+                });
+                const result = await resp.json();
+                if (!result.deleted) {
+                    showToast('삭제 실패: ' + (result.error || ''), 'error');
+                    if (btn) { btn.disabled = false; btn.textContent = origText; }
+                    return;
+                }
+                _closePresetDeleteResolveModal();
+                await _afterPresetDeleted(presetName, result);
+                showToast(`사용자 프리셋 "${presetName}" 삭제 완료 (충돌 봇 ${rows.length}개 이동)`, 'success');
+            } catch (e) {
+                console.error('[LB_EXTRA] 프리셋 삭제(재할당) 실패:', e);
+                showToast('삭제 실패: ' + e.message, 'error');
+                if (btn) { btn.disabled = false; btn.textContent = origText; }
             }
         }
 
@@ -57855,6 +58196,17 @@
             Object.freeze({ type: 'char_eye_replace', trigger: 'closed eyes', target: 'closed eyes', single_character_only: true }),
         ]);
 
+        // exclude(예외 단어) 리스트 ↔ 쉼표 문자열 변환. UI는 한 칸에 쉼표로 여러
+        // 개를 입력하지만, 데이터 모델은 리스트로 단일 소스를 유지해 백엔드로
+        // 리스트를 그대로 보낸다.
+        function _wrExcludeToText(exclude) {
+            if (!Array.isArray(exclude)) return '';
+            return exclude.map(s => String(s || '').trim()).filter(Boolean).join(', ');
+        }
+        function _wrExcludeFromText(text) {
+            return String(text || '').split(',').map(s => s.trim()).filter(Boolean);
+        }
+
         function createWordReplacementRuleId() {
             return Math.random().toString(36).substr(2, 8);
         }
@@ -57940,7 +58292,7 @@
 
         function addWordReplacementRule() {
             syncWordReplacementFromDom();
-            const newRule = { id: createWordReplacementRuleId(), type: 'replace', source: '', target: '', word: '', enabled: true, single_character_only: false };
+            const newRule = { id: createWordReplacementRuleId(), type: 'replace', source: '', target: '', word: '', enabled: true, single_character_only: false, exclude: [] };
             _wrRules.push(newRule);
             renderWordReplacementList();
             requestAnimationFrame(() => {
@@ -57960,6 +58312,7 @@
                 source: '',
                 target: '',
                 enabled: true,
+                exclude: [],
                 ...rule,
                 id: createWordReplacementRuleId(),
             }));
@@ -58057,6 +58410,7 @@
                 const isCharTagOverride = isCharEyeRemove || isCharEyeReplace || isCharFaceRemove || isCharFaceReplace;
                 const isCharTagReplace = isCharEyeReplace || isCharFaceReplace;
                 const supportsSingleCharacterOnly = !isCharacterAlias;
+                const supportsExclude = isRemove || isCharTagOverride;
                 const charTagFieldLabel = (isCharEyeRemove || isCharEyeReplace) ? 'eye_tags' : 'face_tags';
                 const selectedCard = String(rule.target || '').trim();
                 const missingSelectedCard = selectedCard && !characterCardNames.includes(selectedCard)
@@ -58158,6 +58512,14 @@
                         <button onclick="removeWordReplacementRule('${rule.id}')" title="삭제"
                             style="background:none; border:none; color:var(--error); cursor:pointer; font-size:0.9rem; padding:2px 4px;">✕</button>
                     </div>
+                    ${supportsExclude ? `
+                    <div style="grid-column:1 / -1; display:flex; align-items:center; gap:6px; padding-top:7px; margin-top:3px; border-top:1px dashed var(--border);">
+                        <span style="color:var(--text2); font-size:0.7rem; white-space:nowrap;">예외 단어</span>
+                        <input type="text" value="${escHtml(_wrExcludeToText(rule.exclude))}" data-wr-exclude="${rule.id}"
+                            placeholder="이 단어가 있으면 규칙 미발동 (쉼표로 여러 개, 예: half-closed eyes)"
+                            style="${inputStyle}">
+                    </div>
+                    ` : ''}
                 </div>`;
             }).join('');
 
@@ -58211,6 +58573,12 @@
                     if (rule) rule.single_character_only = el.checked;
                 });
             });
+            container.querySelectorAll('[data-wr-exclude]').forEach(el => {
+                el.addEventListener('input', () => {
+                    const rule = _wrRules.find(r => r.id === el.dataset.wrExclude);
+                    if (rule) rule.exclude = _wrExcludeFromText(el.value);
+                });
+            });
         }
 
         // 렌더 전 DOM에서 _wrRules로 값 동기화 (재렌더/저장 전 호출)
@@ -58250,6 +58618,10 @@
             document.querySelectorAll('[data-wr-singlecharacteronly]').forEach(el => {
                 const rule = _wrRules.find(r => r.id === el.dataset.wrSinglecharacteronly);
                 if (rule) rule.single_character_only = el.checked;
+            });
+            document.querySelectorAll('[data-wr-exclude]').forEach(el => {
+                const rule = _wrRules.find(r => r.id === el.dataset.wrExclude);
+                if (rule) rule.exclude = _wrExcludeFromText(el.value);
             });
         }
 

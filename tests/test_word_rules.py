@@ -1038,5 +1038,102 @@ class CharTagOverrideRulesTest(unittest.TestCase):
         self.assertIs(out, self.characters)
 
 
+class ExcludeRuleTest(unittest.TestCase):
+    """예외(exclude) 단어가 trigger 발동을 억제하는지 검증.
+
+    trigger 감지가 부분문자열 매칭이라 "half-closed eyes" 가 "closed eyes"
+    규칙을 잘못 발동시키는 현상을 exclude 로 보호한다.
+    """
+
+    def test_remove_rule_exclude_protects_half_closed_eyes(self):
+        rules = [{
+            "type": "remove",
+            "trigger": "closed eyes",
+            "pattern": "* eyes",
+            "remove_trigger": False,
+            "exclude": ["half-closed eyes"],
+            "enabled": True,
+        }]
+        positive = "half-closed eyes, blue eyes"
+        positive_out, _negative, applied = apply_prompt_rules(positive, "", rules)
+
+        self.assertEqual(applied, 0)
+        self.assertIn("half-closed eyes", positive_out)
+        # 규칙 자체가 미발동하여 다른 eye 태그도 보존된다.
+        self.assertIn("blue eyes", positive_out)
+
+    def test_remove_rule_without_exclude_still_removes_half_closed_eyes(self):
+        # exclude 가 없으면 기존 동작(부분매칭 발동)이 유지됨을 확인.
+        rules = [{
+            "type": "remove",
+            "trigger": "closed eyes",
+            "pattern": "* eyes",
+            "remove_trigger": False,
+            "enabled": True,
+        }]
+        positive = "half-closed eyes"
+        positive_out, _negative, applied = apply_prompt_rules(positive, "", rules)
+
+        self.assertEqual(applied, 1)
+        self.assertNotIn("half-closed eyes", positive_out)
+
+    def test_remove_rule_exclude_keeps_genuine_closed_eyes_trigger_active(self):
+        # 예외 단어와 진짜 trigger 가 함께 있으면 exclude 가 우선해 억제한다.
+        rules = [{
+            "type": "remove",
+            "trigger": "closed eyes",
+            "pattern": "* eyes",
+            "remove_trigger": False,
+            "exclude": ["half-closed eyes"],
+            "enabled": True,
+        }]
+        positive = "half-closed eyes, closed eyes, blue eyes"
+        positive_out, _negative, applied = apply_prompt_rules(positive, "", rules)
+
+        self.assertEqual(applied, 0)
+        self.assertIn("blue eyes", positive_out)
+
+    def test_char_eye_replace_exclude_suppresses_activation(self):
+        characters = [{"name": "Alice", "eye_tags": "blue eyes"}]
+        rules = [{
+            "type": "char_eye_replace",
+            "trigger": "closed eyes",
+            "target": "closed eyes",
+            "exclude": ["half-closed eyes"],
+            "enabled": True,
+        }]
+        out = apply_char_tag_override_rules(characters, rules, "half-closed eyes")
+
+        self.assertEqual(out[0]["eye_tags"], "blue eyes")
+
+    def test_char_eye_replace_without_exclude_overrides_on_partial_match(self):
+        characters = [{"name": "Alice", "eye_tags": "blue eyes"}]
+        rules = [{
+            "type": "char_eye_replace",
+            "trigger": "closed eyes",
+            "target": "closed eyes",
+            "enabled": True,
+        }]
+        out = apply_char_tag_override_rules(characters, rules, "half-closed eyes")
+
+        self.assertEqual(out[0]["eye_tags"], "closed eyes")
+
+    def test_exclude_as_single_string_term_is_supported(self):
+        # 백엔드는 exclude 문자열을 단일 term으로 취급한다(쉼표 분리는 UI 담당).
+        rules = [{
+            "type": "remove",
+            "trigger": "closed eyes",
+            "pattern": "* eyes",
+            "remove_trigger": False,
+            "exclude": "half-closed eyes",
+            "enabled": True,
+        }]
+        positive = "half-closed eyes, blue eyes"
+        positive_out, _negative, applied = apply_prompt_rules(positive, "", rules)
+
+        self.assertEqual(applied, 0)
+        self.assertIn("blue eyes", positive_out)
+
+
 if __name__ == "__main__":
     unittest.main()

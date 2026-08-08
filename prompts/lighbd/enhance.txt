@@ -26,7 +26,7 @@ Required JSON shape (all five arrays must exist; keep them empty when there is n
     {
       "segment_id": "C001",
       "character": "canonical name",
-      "operation": "wear|add|remove|replace|set|open|close|adjust|nude|topless|bottomless|reset_default|contextual_reset",
+      "operation": "wear|add|remove|replace|open|close|adjust|nude|topless|bottomless|reset_default",
       "items": ["specific garment or accessory"],
       "state_after": "clothed|partial|nude|topless|bottomless|underwear_only|unknown",
       "evidence": "exact short excerpt copied from that CURRENT segment"
@@ -47,10 +47,16 @@ Rules:
 - current_characters are every character present, acting, speaking, being addressed, or clearly participating in CURRENT CONTEXT. Include implicit participants when discourse establishes them.
 - Use plain canonical-name strings in history_characters and current_characters. Do not wrap a certain name in an object. Only use {"name": ..., "confidence": ...} when confidence is below 1.0 and materially useful.
 - Appearing in CURRENT does not authorize a wardrobe change. Existing wardrobe is carried forward by default.
-- `wardrobe_events` is a sparse, evidence-bearing change history. Its short `items` list is never a complete outfit snapshot and downstream must merge it over the known/default outfit.
+- `wardrobe_events` is a sparse, evidence-bearing change history, not a sequence of complete outfit snapshots. Each event reports only what CURRENT establishes as changed. Downstream resolves the resulting wardrobe according to the operation.
 - Emit only actual wardrobe changes established by CURRENT. A sentence that merely describes a character wearing their known/default outfit, including a first appearance, is not a change. Never emit keep events or restate carried-forward/default outfits. Copy exact evidence from the numbered segment.
 - Wardrobe items are garments, wearable accessories, and their worn/open/removed state only. Never put hair style, hair length/color, eyes, skin, face, body, species, or another appearance trait in `wardrobe_events`.
-- `set` and `replace` describe an explicitly established outfit transition, but `items` still contains only the observed change information. Never assume that an unmentioned default garment or accessory disappeared; use an explicit `remove`, nudity state, or other direct evidence for disappearance.
+- Choose the operation from the meaning of the full sentence and its discourse context, never from a trigger word or a fixed keyword list.
+- Use `add` or `wear` only for an incremental addition that leaves the existing outfit in place. For example, putting a shirt over a swimsuit adds the shirt; it does not replace the swimsuit.
+- Use `remove` only when specific worn items are taken off while the rest of the current outfit remains in effect. List only those removed items.
+- Use `replace` for a semantically clear transition from the current outfit to a different outfit, including an unambiguous change of clothes or a newly established non-default outfit state. `items` contains the new outfit information established by the evidence. A `replace` ends the prior worn outfit as a whole; do not require separate `remove` events or an enumeration of every prior/default garment. Do not copy unmentioned default items into `items`.
+- Do not emit `set` or `contextual_reset`. Use `replace` for a complete outfit transition and `reset_default` only when the story establishes a return to the character's known default outfit. If a previously established non-default outfit is restored and its identity is unambiguous from context, express that transition with `replace` and the restored outfit items.
+- A statement such as "she was wearing a swimsuit" may establish a `replace` only when discourse makes it new wardrobe state information relative to the tracked/default state. If it merely repeats an already known state, emit no event.
+- Never compute or emit a full current-outfit snapshot, expand the default outfit, generate appearance tags, assemble image-generation tags, or perform Danbooru correction. CALL1 reports story-established changes only.
 - Track nude, topless, bottomless, underwear-only, open, displaced, and partially removed clothing as real wardrobe states. An empty outfit is not "unknown" when nudity is established.
 - A garment absent from a camera view is not removed. Visibility and wardrobe state are different.
 - Emit a reference_assignment only when downstream character presence, attribution, or wardrobe tracking would otherwise be wrong or genuinely ambiguous. Do not enumerate every pronoun after identity is already clear, do not emit canonical names already present, and do not repeat equivalent references in the same segment.

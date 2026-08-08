@@ -2390,9 +2390,15 @@ async def callLLMTaskResult(
     execution_id: str = "",
     parent_execution_id: str = "",
     execution_observer=None,
+    force_slot: str | None = None,
 ) -> LLMExecutionResult:
     """
     작업별 라우팅 텍스트 LLM 호출의 공통 내부 결과를 반환한다.
+
+    force_slot 이 지정되면 primary→fallback 라우팅 분기를 건너뛰고 해당 슬롯을
+    max_retries=0(1회)으로만 호출한다. CALL2-DETAIL 의 ①전부예측(primary)/
+    ②실패분만(fallback) 교대 루프가 단계별로 지정 슬롯 1회씩만 부르도록 쓴다.
+    기본 None 이면 기존 primary×N→fallback×M 동작을 그대로 유지한다.
 
     config["llm_routing"][task_key] 의 primary(llm1/llm2/llm3) 에 따라 메인 LLM 호출 후,
     작업별 설정에 따라 메인 LLM을 재시도한 뒤, 실패하면 폴백 LLM도 별도 정책으로
@@ -2452,36 +2458,26 @@ async def callLLMTaskResult(
             _stream_metadata_ctx.reset(meta_token)
 
     retry_policy = _routing_retry_policy(task_key)
-    _llm_log(
-        f"callLLMTask[{task_key}]: primary={primary} fallback={fb_target} "
-        f"json_mode={eff_json} retry={retry_policy}"
-    )
-    result, accepted, reason, last_exception = await _invoke_routed_with_retry(
-        task_key,
-        "primary",
-        primary,
-        retry_policy["max_retries"],
-        retry_policy["retry_delay_sec"],
-        _invoke,
-        result_validator,
-        on_attempt_failure=on_attempt_failure,
-        execution_context=context,
-        execution_observer=execution_observer,
-        attempt_events=attempt_events,
-    )
-    final_phase = "primary"
-    final_slot = primary
-    if fb_target is not None and not accepted:
+    force_slot_resolved = None
+    if force_slot:
+        if force_slot not in LLM_SLOT_IDS:
+            print(
+                f"[LLM_ROUTE] force_slot 무효, 일반 라우팅 사용: "
+                f"task={task_key}, force_slot={force_slot!r}"
+            )
+        else:
+            force_slot_resolved = force_slot
+    if force_slot_resolved is not None:
         _llm_log(
-            f"callLLMTask[{task_key}]: primary 소진→폴백 시도 "
-            f"slot={fb_target} reason={reason}"
+            f"callLLMTask[{task_key}]: force_slot={force_slot_resolved} "
+            f"(1회 강제 호출, primary→fallback 분기 스킵) json_mode={eff_json}"
         )
         result, accepted, reason, last_exception = await _invoke_routed_with_retry(
             task_key,
-            "fallback",
-            fb_target,
-            retry_policy["fallback_max_retries"],
-            retry_policy["fallback_retry_delay_sec"],
+            "forced",
+            force_slot_resolved,
+            0,
+            0.0,
             _invoke,
             result_validator,
             on_attempt_failure=on_attempt_failure,
@@ -2489,8 +2485,48 @@ async def callLLMTaskResult(
             execution_observer=execution_observer,
             attempt_events=attempt_events,
         )
-        final_phase = "fallback"
-        final_slot = fb_target
+        final_phase = "forced"
+        final_slot = force_slot_resolved
+    else:
+        _llm_log(
+            f"callLLMTask[{task_key}]: primary={primary} fallback={fb_target} "
+            f"json_mode={eff_json} retry={retry_policy}"
+        )
+        result, accepted, reason, last_exception = await _invoke_routed_with_retry(
+            task_key,
+            "primary",
+            primary,
+            retry_policy["max_retries"],
+            retry_policy["retry_delay_sec"],
+            _invoke,
+            result_validator,
+            on_attempt_failure=on_attempt_failure,
+            execution_context=context,
+            execution_observer=execution_observer,
+            attempt_events=attempt_events,
+        )
+        final_phase = "primary"
+        final_slot = primary
+        if fb_target is not None and not accepted:
+            _llm_log(
+                f"callLLMTask[{task_key}]: primary 소진→폴백 시도 "
+                f"slot={fb_target} reason={reason}"
+            )
+            result, accepted, reason, last_exception = await _invoke_routed_with_retry(
+                task_key,
+                "fallback",
+                fb_target,
+                retry_policy["fallback_max_retries"],
+                retry_policy["fallback_retry_delay_sec"],
+                _invoke,
+                result_validator,
+                on_attempt_failure=on_attempt_failure,
+                execution_context=context,
+                execution_observer=execution_observer,
+                attempt_events=attempt_events,
+            )
+            final_phase = "fallback"
+            final_slot = fb_target
 
     if not accepted:
         if isinstance(result, str) and result.strip().startswith("[LLM 실패]"):
@@ -2556,6 +2592,7 @@ async def callLLMTask(
     execution_id: str = "",
     parent_execution_id: str = "",
     execution_observer=None,
+    force_slot: str | None = None,
 ) -> str:
     """기존 문자열 계약을 유지하는 작업별 텍스트 LLM 공개 함수."""
     execution_result = await callLLMTaskResult(
@@ -2571,6 +2608,7 @@ async def callLLMTask(
         execution_id=execution_id,
         parent_execution_id=parent_execution_id,
         execution_observer=execution_observer,
+        force_slot=force_slot,
     )
     return execution_result.to_legacy()
 
