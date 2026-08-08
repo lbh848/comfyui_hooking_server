@@ -390,6 +390,8 @@ class BotMode:
                     return await self._toggle_rep_image(data, body)
                 elif action == "reorder_rep_images":
                     return await self._reorder_rep_images(data, body)
+                elif action == "bulk_set_main_rep":
+                    return await self._bulk_set_main_rep(data, body)
                 elif action == "update_eye_prompt":
                     return await self._update_eye_prompt(data, body)
                 elif action == "update_char_loras":
@@ -716,6 +718,53 @@ class BotMode:
         _save_bot_data(data)
         print(f"[BOT_MODE] 대표 이미지 순서 변경: {bot_name}/{char_name}/{filename} {direction}")
         return _json_ok({"bots": data["bots"]})
+
+    async def _bulk_set_main_rep(self, data, body):
+        """일괄 메인 대표 지정: items:[{char_name, filename}] 각각을 rep_images[0]로.
+        mode="protect"(기본) → 이미 메인 대표(rep_images[0])가 있으면 건너뜀.
+        mode="push"          → 기존 대표도 filename 제거 후 뒤로 밀고 최대 3개 유지(초과 시 맨 끝 제거)."""
+        bot_name = body.get("bot_name", "").strip()
+        items = body.get("items", []) or []
+        mode = (body.get("mode", "") or "").strip()
+        if mode not in ("protect", "push"):
+            mode = "protect"
+        if not bot_name:
+            return _json_error("봇 이름이 비어있습니다.")
+        if not isinstance(items, list) or len(items) == 0:
+            return _json_error("적용할 항목(items)이 비어있습니다.")
+        bot = next((b for b in data["bots"] if b["name"] == bot_name), None)
+        if not bot:
+            return _json_error(f"봇을 찾을 수 없음: {bot_name}")
+
+        updated = []
+        skipped = []
+        for it in items:
+            if not isinstance(it, dict):
+                continue
+            char_name = (it.get("char_name", "") or "").strip()
+            filename = (it.get("filename", "") or "").strip()
+            if not char_name or not filename:
+                skipped.append({"char_name": char_name, "reason": "값이 비어있음"})
+                continue
+            char = next((c for c in bot.get("characters", []) if c["name"] == char_name), None)
+            if not char:
+                skipped.append({"char_name": char_name, "reason": "캐릭터를 찾을 수 없음"})
+                continue
+            rep_images = char.get("rep_images", []) or []
+            # 보호 모드: 이미 메인 대표가 있으면 밀어내지 않고 건너뜀
+            if mode == "protect" and rep_images and rep_images[0]:
+                skipped.append({"char_name": char_name, "reason": "이미 대표 있음"})
+                continue
+            # filename 제거 후 맨 앞 삽입, 최대 3개 유지
+            new_reps = [filename] + [f for f in rep_images if f != filename]
+            new_reps = new_reps[:3]
+            char["rep_images"] = new_reps
+            updated.append({"char_name": char_name, "filename": filename})
+            print(f"[BOT_MODE] 일괄 메인 대표 지정({mode}): {bot_name}/{char_name}/{filename}")
+
+        if updated:
+            _save_bot_data(data)
+        return _json_ok({"bots": data["bots"], "updated": updated, "skipped": skipped})
 
     # ─── 이미지 목록 ─────────────────────────────────────
     async def handle_get_images(self, request):

@@ -11638,8 +11638,8 @@
                         </div>
                         <div style="background:color-mix(in srgb, var(--accent) 12%, transparent); border-radius:8px; padding:10px; margin-top:8px;">
                             <div class="section-title">대표 이미지 일괄 설정</div>
-                            <div style="font-size:0.67rem; color:var(--text2); line-height:1.35; margin-bottom:6px;">모든 캐릭터의 메인 대표 이미지를 한 화면에서 확인합니다. (보기 전용)</div>
-                            <button onclick="openRepBatchModal()" style="width:100%; background:var(--accent2); color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">대표 이미지 일괄 보기</button>
+                            <div style="font-size:0.67rem; color:var(--text2); line-height:1.35; margin-bottom:6px;">파일명 검색으로 각 캐릭터의 메인 대표 이미지를 한 번에 지정합니다.</div>
+                            <button onclick="openRepBatchModal()" style="width:100%; background:var(--accent2); color:#fff; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:0.75rem;">대표 이미지 일괄 설정</button>
                         </div>
                         <div id="bot-one-click-workflow-group" style="background:linear-gradient(145deg, rgba(14,165,233,0.10), rgba(124,58,237,0.08)); border:1px solid color-mix(in srgb, var(--accent) 35%, var(--border)); border-radius:10px; padding:10px; margin-top:8px;">
                             <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:7px;">
@@ -55229,9 +55229,10 @@
             }
         }
 
-        // ─── 대표 이미지 일괄 보기 모달 (보기 전용: 데이터 변경 없음) ───
-        // 삽화 데이터 준비(태깅 등) 직전에, 각 캐릭터의 메인 대표(rep_images[0])가
-        // 제대로 지정되어 있는지 파일명으로 한 화면에서 훑어보는 점검용. 저장은 하지 않는다.
+        // ─── 대표 이미지 일괄 설정 모달 ───
+        // 파일명 검색으로 각 캐릭터에서 첫 매칭 이미지를 찾아 메인 대표(rep_images[0])로
+        // 한 번에 지정. 검색 시 각 행의 첫 매칭 이미지에 '설정 예정' 배지가 미리보기로 표시되며,
+        // '일괄 설정 적용' 버튼으로 실제 저장한다.
         let _repBatchModalOpen = false;
         let _repBatchRowData = []; // [{charName, rep0, baseOrder:[{filename,url}], loaded, error}]
 
@@ -55264,7 +55265,7 @@
                 } catch (e) {
                     _repBatchRowData[i].error = (e && e.message) ? e.message : '로드 실패';
                     _repBatchRowData[i].loaded = true;
-                    console.error('[BOT] 대표 일괄 보기 이미지 로드 실패:', c.name, e);
+                    console.error('[BOT] 대표 일괄 설정 이미지 로드 실패:', c.name, e);
                 }
                 _repBatchRenderRow(i);
             }), 10);
@@ -55291,11 +55292,16 @@
             overlay.innerHTML =
                 '<div style="background:var(--surface); border-radius:12px; padding:18px; max-width:1100px; width:95%; max-height:88vh; display:flex; flex-direction:column; overflow:hidden; box-shadow:0 8px 32px rgba(0,0,0,0.3);">' +
                     '<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; gap:10px;">' +
-                        '<h3 style="margin:0; font-size:1.05rem;">대표 이미지 일괄 보기 <span style="font-size:0.72rem; color:var(--text2); font-weight:normal;">— ' + escHtml(botCurrentBot) + ' (보기 전용)</span></h3>' +
-                        '<input id="rep-batch-search" type="text" placeholder="파일명 검색 (각 행에서 일치 항목을 앞으로)" style="flex:1; max-width:340px; padding:6px 10px; border-radius:6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.82rem; box-sizing:border-box;">' +
+                        '<h3 style="margin:0; font-size:1.05rem;">대표 이미지 일괄 설정 <span style="font-size:0.72rem; color:var(--text2); font-weight:normal;">— ' + escHtml(botCurrentBot) + '</span></h3>' +
+                        '<input id="rep-batch-search" type="text" placeholder="파일명 검색 (각 행의 첫 일치 항목을 메인 대표로 지정)" style="flex:1; max-width:300px; padding:6px 10px; border-radius:6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.82rem; box-sizing:border-box;">' +
+                        '<select id="rep-batch-mode" title="이미 메인 대표가 있는 캐릭터 처리 방식" style="padding:5px 6px; border-radius:6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.74rem; box-sizing:border-box; cursor:pointer;">' +
+                            '<option value="protect">보호: 빈 캐릭터만</option>' +
+                            '<option value="push">밀어내기: 기존도 교체</option>' +
+                        '</select>' +
+                        '<button id="rep-batch-apply" onclick="applyRepBatchSet()" disabled style="background:var(--accent2); color:#fff; border:none; padding:6px 12px; border-radius:6px; cursor:not-allowed; font-size:0.78rem; font-weight:600; opacity:0.5;">일괄 설정 적용</button>' +
                         '<button onclick="closeRepBatchModal()" style="background:none; border:none; color:var(--text); font-size:1.3rem; cursor:pointer; padding:2px 8px; line-height:1;" title="닫기">✕</button>' +
                     '</div>' +
-                    '<div style="font-size:0.7rem; color:var(--text2); margin-bottom:8px;">각 캐릭터의 메인 대표(맨 앞, 초록 테두리)를 파일명으로 확인합니다. 검색은 파일명 기준이며 일치 항목이 없으면 원래 순서로 돌아갑니다. 저장은 이곳에서 하지 않습니다.</div>' +
+                    '<div style="font-size:0.7rem; color:var(--text2); margin-bottom:8px;">파일명 검색으로 각 캐릭터의 첫 매칭 이미지를 메인 대표(초록 테두리)로 한 번에 지정합니다. 매칭된 이미지에는 <span style="color:#3b82f6; font-weight:600;">파랑 배지(설정 예정)</span>가 표시되며, 적용 버튼을 눌러야 실제 저장됩니다. <b>보호 모드</b>에서는 이미 메인 대표가 있는 캐릭터는 건너뛰고, <b>밀어내기 모드</b>에서는 기존 대표도 교체합니다.</div>' +
                     '<div id="rep-batch-body" style="overflow-y:auto; flex:1; display:flex; flex-direction:column; gap:10px; padding-right:4px;"></div>' +
                 '</div>';
             window._repBatchPrevOverflow = document.body.style.overflow;
@@ -55307,6 +55313,14 @@
                 clearTimeout(debounce);
                 debounce = setTimeout(() => filterRepBatchByName(e.target.value), 120);
             });
+            const modeSel = overlay.querySelector('#rep-batch-mode');
+            if (modeSel) {
+                modeSel.addEventListener('change', () => {
+                    _repBatchRowData.forEach((_, i) => _repBatchRenderRow(i));
+                    _repBatchUpdateApplyBtn();
+                });
+            }
+            _repBatchUpdateApplyBtn();
         }
 
         function _repBatchRenderRow(i) {
@@ -55335,31 +55349,50 @@
             }
             const searchEl = document.getElementById('rep-batch-search');
             const search = (searchEl ? searchEl.value : '').trim().toLowerCase();
+            const mode = _repBatchMode();
             const display = _repBatchComputeDisplay(row, search);
             const matchedCount = search ? row.baseOrder.filter(im => (im.filename || '').toLowerCase().includes(search)).length : display.length;
+            // 검색 시 이 행에서 메인 대표로 지정할 첫 매칭 이미지(baseOrder 기준)
+            row._firstMatch = search ? ((row.baseOrder.find(im => (im.filename || '').toLowerCase().includes(search)) || {}).filename) || '' : '';
+            // 보호 모드에서는 이미 메인 대표가 있으면 이 행은 적용 대상이 아님
+            const rowProtected = (mode === 'protect') && !!row.rep0;
             const badge = row.rep0
                 ? '<span style="margin-left:6px; font-size:0.6rem; color:var(--accent); border:1px solid color-mix(in srgb, var(--accent) 45%, transparent); border-radius:999px; padding:1px 6px;">대표 설정됨</span>'
                 : '<span style="margin-left:6px; font-size:0.6rem; color:var(--text2); border:1px solid var(--border); border-radius:999px; padding:1px 6px;">대표 미설정</span>' +
                   '<button onclick="deleteRepBatchChar(\'' + escAttr(row.charName) + '\')" title="이 캐릭터 삭제" style="margin-left:6px; background:var(--error); color:#fff; border:none; padding:1px 7px; border-radius:999px; cursor:pointer; font-size:0.6rem;">🗑 삭제</button>';
+            const protectNote = (search && rowProtected && matchedCount > 0)
+                ? '<span style="margin-left:6px; font-size:0.6rem; color:var(--text2); border:1px dashed var(--border); border-radius:999px; padding:1px 6px;">보호(건너뜀)</span>'
+                : '';
             const matchInfo = search
                 ? '<span style="margin-left:auto; font-size:0.66rem; color:var(--text2);">파일명 일치 ' + matchedCount + '건 / 전체 ' + row.baseOrder.length + '장</span>'
                 : '<span style="margin-left:auto; font-size:0.66rem; color:var(--text2);">' + display.length + '장 표시' + (row.baseOrder.length > 10 ? ' (전체 ' + row.baseOrder.length + '장)' : '') + '</span>';
             const thumbs = display.map(img => {
                 const isRep0 = (img.filename === row.rep0);
-                const borderStyle = isRep0
-                    ? 'border:3px solid #22c55e; box-shadow:0 0 0 1px rgba(34,197,94,0.25);'
-                    : 'border:1px solid var(--border);';
+                const isCandidate = search && row._firstMatch && (img.filename === row._firstMatch) && !isRep0 && !rowProtected;
+                let borderStyle;
+                if (isRep0) {
+                    borderStyle = 'border:3px solid #22c55e; box-shadow:0 0 0 1px rgba(34,197,94,0.25);';
+                } else if (isCandidate) {
+                    borderStyle = 'border:3px solid #3b82f6; box-shadow:0 0 0 1px rgba(59,130,246,0.25);';
+                } else {
+                    borderStyle = 'border:1px solid var(--border);';
+                }
+                const candidateBadge = isCandidate
+                    ? '<div style="position:absolute; top:3px; left:3px; background:#3b82f6; color:#fff; font-size:0.55rem; font-weight:700; padding:1px 5px; border-radius:4px;">설정 예정</div>'
+                    : '';
                 return '<div style="flex:0 0 auto; width:78px; position:relative; cursor:zoom-in;" onclick="openLightbox(\'' + escAttr(img.url) + '\')">' +
                     '<img src="' + escAttr(img.url) + '" loading="lazy" style="width:100%; aspect-ratio:700/1024; object-fit:contain; display:block; border-radius:6px; background:var(--surface); ' + borderStyle + '" onerror="this.style.opacity=0.2">' +
                     (isRep0 ? '<div style="position:absolute; top:3px; left:3px; background:#22c55e; color:#000; font-size:0.55rem; font-weight:700; padding:1px 5px; border-radius:4px;">대표</div>' : '') +
+                    candidateBadge +
                     '<div style="font-size:0.54rem; color:var(--text3); margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="' + escAttr(img.filename) + '">' + escHtml(img.filename) + '</div>' +
                 '</div>';
             }).join('');
             rowEl.innerHTML =
                 '<div style="display:flex; align-items:center; margin-bottom:6px;">' +
-                    '<span style="font-weight:600; font-size:0.9rem;">' + escHtml(row.charName) + '</span>' + badge + matchInfo +
+                    '<span style="font-weight:600; font-size:0.9rem;">' + escHtml(row.charName) + '</span>' + badge + protectNote + matchInfo +
                 '</div>' +
                 '<div style="display:flex; gap:6px; overflow-x:auto; padding-bottom:4px;">' + thumbs + '</div>';
+            _repBatchUpdateApplyBtn();
         }
 
         // 표시 순서 계산. 핵심 불변량: rep0(메인 대표)이 존재하면 항상 맨 앞.
@@ -55405,6 +55438,85 @@
         function filterRepBatchByName(query) {
             if (!_repBatchModalOpen) return;
             _repBatchRowData.forEach((_, i) => _repBatchRenderRow(i));
+            _repBatchUpdateApplyBtn();
+        }
+
+        // 현재 모드('protect' | 'push')
+        function _repBatchMode() {
+            const sel = document.getElementById('rep-batch-mode');
+            const v = sel ? sel.value : 'protect';
+            return (v === 'push') ? 'push' : 'protect';
+        }
+
+        // 적용 버튼 활성화: 검색어가 있고, 한 개 이상의 '적용 대상' 캐릭터에서 매칭이 있을 때만.
+        // 보호 모드에서는 이미 메인 대표가 있는 캐릭터는 적용 대상에서 제외.
+        function _repBatchUpdateApplyBtn() {
+            const btn = document.getElementById('rep-batch-apply');
+            if (!btn) return;
+            const searchEl = document.getElementById('rep-batch-search');
+            const search = (searchEl ? searchEl.value : '').trim().toLowerCase();
+            const mode = _repBatchMode();
+            const hasMatch = search && _repBatchRowData.some(r =>
+                r.loaded && !r.error && r.baseOrder && r.baseOrder.length > 0 &&
+                !(mode === 'protect' && r.rep0) &&
+                r.baseOrder.some(im => (im.filename || '').toLowerCase().includes(search))
+            );
+            btn.disabled = !hasMatch;
+            btn.style.cursor = hasMatch ? 'pointer' : 'not-allowed';
+            btn.style.opacity = hasMatch ? '1' : '0.5';
+        }
+
+        // 일괄 설정 적용: 현재 검색어로 각 캐릭터의 첫 매칭 이미지를 메인 대표로 지정
+        async function applyRepBatchSet() {
+            if (!botCurrentBot) return;
+            const searchEl = document.getElementById('rep-batch-search');
+            const search = (searchEl ? searchEl.value : '').trim().toLowerCase();
+            if (!search) { showToast('파일명 검색어를 먼저 입력하세요', 'error'); return; }
+            const mode = _repBatchMode();
+            const items = [];
+            const skipNoMatch = [];
+            _repBatchRowData.forEach(r => {
+                if (!r.loaded || r.error || !r.baseOrder || r.baseOrder.length === 0) { skipNoMatch.push(r.charName); return; }
+                const m = r.baseOrder.find(im => (im.filename || '').toLowerCase().includes(search));
+                if (m) items.push({ char_name: r.charName, filename: m.filename });
+                else skipNoMatch.push(r.charName);
+            });
+            if (items.length === 0) { showToast('검색어와 일치하는 이미지가 없습니다', 'error'); return; }
+            const btn = document.getElementById('rep-batch-apply');
+            if (btn) { btn.disabled = true; btn.textContent = '적용 중…'; }
+            try {
+                const resp = await fetch('/api/bot_mode/action', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({action: 'bulk_set_main_rep', bot_name: botCurrentBot, items: items, mode: mode})
+                });
+                const data = await resp.json();
+                if (data.error) { showToast('일괄 설정 실패: ' + data.error, 'error'); return; }
+                botData.bots = data.bots;
+                // 각 행의 rep0 갱신
+                const bot = (botData.bots || []).find(b => b.name === botCurrentBot);
+                (bot ? bot.characters : []).forEach(c => {
+                    const row = _repBatchRowData.find(r => r.charName === c.name);
+                    if (row) row.rep0 = (c.rep_images || [])[0] || '';
+                });
+                _repBatchRowData.forEach((_, i) => _repBatchRenderRow(i));
+                const updated = (data.updated || []).length;
+                const skippedProtected = ((data.skipped || []).filter(s => s.reason === '이미 대표 있음')).length;
+                const skippedNoMatchN = skipNoMatch.length;
+                let msg = '메인 대표 ' + updated + '명 지정 완료';
+                const parts = [];
+                if (skippedProtected > 0) parts.push('이미 대표 있음 ' + skippedProtected + '명');
+                if (skippedNoMatchN > 0) parts.push('매칭 없음 ' + skippedNoMatchN + '명');
+                if (parts.length > 0) msg += ' (' + parts.join(', ') + ' 건너뜀)';
+                showToast(msg, 'success');
+                console.log('[BOT] 대표 일괄 설정 완료:', { mode, updated, skippedProtected, skippedNoMatch: skipNoMatch });
+            } catch (e) {
+                console.error('[BOT] 대표 일괄 설정 실패:', e);
+                showToast('일괄 설정 실패: ' + ((e && e.message) ? e.message : e), 'error');
+            } finally {
+                if (btn) { btn.textContent = '일괄 설정 적용'; }
+                _repBatchUpdateApplyBtn();
+            }
         }
 
         function closeRepBatchModal() {
