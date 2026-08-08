@@ -1234,7 +1234,16 @@ scenes: []
             "call3_enabled": False,
             "speak_enabled": False,
         },
-        "### Hana\n-Appearance\n1girl, black hair\n-default_outfit\nblue dress",
+        (
+            "### Hana\n-Appearance\n1girl, black hair\n-default_outfit\nblue dress\n\n"
+            "### Bob\n-Appearance\n1boy, brown hair\n-default_outfit\nblack suit"
+        ),
+        extra_instruction=(
+            "## Single identifiable character rule\n"
+            "ACTIVE BOT INSTRUCTION MARKER\n\n"
+            "### Nested instruction heading\n"
+            "Keep this nested instruction even when character cards are filtered."
+        ),
         extra_costume="### Hana\n-default_outfit\nblue dress",
         extra_names="Hana",
         backtranslate_names="Hana",
@@ -1267,7 +1276,12 @@ scenes: []
     )
 
     plan_request = request_by_call["CALL2-PLAN"]
+    assert "# ACTIVE BOT IMAGE INSTRUCTIONS" in plan_request
+    assert "ACTIVE BOT INSTRUCTION MARKER" in plan_request
+    assert "### Nested instruction heading" in plan_request
     assert "# CHARACTER DICTIONARY" in plan_request
+    assert "### Hana" in plan_request
+    assert "### Bob" not in plan_request
     assert "# AUTHORITATIVE FIXED APPEARANCE" not in plan_request
     assert "# AUTHORITATIVE WARDROBE CONTINUITY STATE" not in plan_request
     assert "# CURRENT WARDROBE EVENT TIMELINE" not in plan_request
@@ -1281,7 +1295,12 @@ scenes: []
     assert "### Scene" not in keyvis_request
     assert "# Example" not in keyvis_request
     assert "# Server limits" not in keyvis_request
+    assert "# ACTIVE BOT IMAGE INSTRUCTIONS" in keyvis_request
+    assert "ACTIVE BOT INSTRUCTION MARKER" in keyvis_request
+    assert "### Nested instruction heading" in keyvis_request
     assert "# CHARACTER DICTIONARY" in keyvis_request
+    assert "### Hana" in keyvis_request
+    assert "### Bob" not in keyvis_request
     assert "# AUTHORITATIVE FIXED APPEARANCE" in keyvis_request
     assert "# DEFAULT-BASED WARDROBE CONTINUITY BASE" in keyvis_request
     assert "# SPARSE CURRENT WARDROBE CHANGE HISTORY" in keyvis_request
@@ -1301,7 +1320,12 @@ scenes: []
     assert "Reason silently and return only the requested final <lb-xnai> block." in detail_request
     assert "\nkeyvis:\n" not in detail_request
     assert "negative: ..." not in detail_request
+    assert "# ACTIVE BOT IMAGE INSTRUCTIONS" in detail_request
+    assert "ACTIVE BOT INSTRUCTION MARKER" in detail_request
+    assert "### Nested instruction heading" in detail_request
     assert "# CHARACTER DICTIONARY" in detail_request
+    assert "### Hana" in detail_request
+    assert "### Bob" not in detail_request
     assert "# AUTHORITATIVE FIXED APPEARANCE" in detail_request
     assert "# DEFAULT-BASED WARDROBE CONTINUITY BASE" in detail_request
     assert "# SPARSE CURRENT WARDROBE CHANGE HISTORY" in detail_request

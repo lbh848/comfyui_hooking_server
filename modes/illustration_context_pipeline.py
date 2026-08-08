@@ -8288,6 +8288,7 @@ async def build_from_context(
     progress=None,
     stream_notify=None,
     on_call2_ready=None,
+    extra_instruction: str = "",
     extra_costume: str = "",
     extra_names: str = "",
     backtranslate_names: str = "",
@@ -8559,6 +8560,7 @@ async def build_from_context(
         for item in call1_result.get("current_characters") or []
         if isinstance(item, dict) and str(item.get("name") or "").strip()
     ]
+    call2_instruction = str(extra_instruction or "").strip()
     call2_reference = str(extra_reference or "")
     selected_states = {}
     previous_visual = {}
@@ -8711,6 +8713,11 @@ async def build_from_context(
         if include_keyvis:
             call2_keyvis_context_messages.append(deepcopy(message))
 
+    if call2_instruction:
+        append_call2_context({
+            "role": "user",
+            "content": "# ACTIVE BOT IMAGE INSTRUCTIONS\n\n" + call2_instruction,
+        })
     if call2_reference.strip():
         append_call2_context({
             "role": "user",
@@ -9344,7 +9351,14 @@ async def build_from_context(
                     "Character coverage did not match CALL1. Re-evaluate the current context "
                     "with the bounded past history and full character dictionary below. "
                     "Preserve established wardrobe state unless a supplied wardrobe event changes it.\n\n"
-                    "# FULL CHARACTER DICTIONARY\n"
+                    + (
+                        "# ACTIVE BOT IMAGE INSTRUCTIONS\n\n"
+                        + call2_instruction
+                        + "\n\n"
+                        if call2_instruction
+                        else ""
+                    )
+                    + "# FULL CHARACTER DICTIONARY\n"
                     + str(extra_reference or "")
                     + "\n\n# BOUNDED PAST HISTORY\n"
                     + (_history_messages_text(
@@ -9407,9 +9421,20 @@ async def build_from_context(
     if not descriptors and not call2_detail_completed:
         if progress:
             await progress(48, "call2_fix", "CALL2-FIX TOON 교정")
+        fix_system_parts = [prompts.get("call2_fix", "")]
+        if call2_instruction:
+            fix_system_parts.append(
+                "# ACTIVE BOT IMAGE INSTRUCTIONS\n\n" + call2_instruction
+            )
+        if call2_reference.strip():
+            fix_system_parts.append(
+                "# CHARACTER DICTIONARY\n\n" + call2_reference
+            )
         fix_messages = [{
             "role": "system",
-            "content": prompts.get("call2_fix", "") + "\n\n" + call2_reference,
+            "content": "\n\n".join(
+                part for part in fix_system_parts if str(part or "").strip()
+            ),
         }, {
             "role": "user",
             "content": "Repair this malformed output. Return [TOON]...[/TOON].\n\n" + call2_output,

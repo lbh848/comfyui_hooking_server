@@ -400,6 +400,9 @@ async def test_context_queue_keeps_generating_until_call3_returns(tmp_path, monk
     async def fake_build(*args, on_call2_ready=None, **kwargs):
         assert on_call2_ready is not None
         assert args[1]["call1_backtranslate_max_concurrency"] == 3
+        assert args[2] == "separate character card marker"
+        assert kwargs["extra_instruction"] == "separate instruction marker"
+        assert kwargs["extra_costume"] == "separate character card marker"
         await on_call2_ready({
             "session_id": session_id,
             "context": "private context",
@@ -492,8 +495,16 @@ async def test_context_queue_keeps_generating_until_call3_returns(tmp_path, monk
     monkeypatch.setattr(server, "set_prompt_by_title", lambda *args, **kwargs: True)
     monkeypatch.setattr(server, "_finalize_deferred_illustration_prompt", fake_finalize)
     monkeypatch.setattr(server, "complete_prompt_from_reschedule", fake_complete_prompt)
-    monkeypatch.setattr(server, "build_active_lb_extra", lambda *args: "")
-    monkeypatch.setattr(server, "build_lb_extra_costume", lambda *args: "")
+    monkeypatch.setattr(
+        server,
+        "build_active_lb_instruction",
+        lambda *args: "separate instruction marker",
+    )
+    monkeypatch.setattr(
+        server,
+        "build_lb_extra_costume",
+        lambda *args: "separate character card marker",
+    )
     monkeypatch.setattr(server, "build_lb_extra_names", lambda *args: "")
     monkeypatch.setattr(server, "build_bot_character_names", lambda *args: "")
 
@@ -626,7 +637,7 @@ async def test_context_queue_defers_multi_character_scene_until_layout_is_ready(
     monkeypatch.setattr(server.queue_manager, "_notify_progress", ignore_progress)
     monkeypatch.setattr(server, "set_prompt_by_title", lambda *args, **kwargs: True)
     monkeypatch.setattr(server, "complete_prompt_from_reschedule", fake_complete_prompt)
-    monkeypatch.setattr(server, "build_active_lb_extra", lambda *args: "")
+    monkeypatch.setattr(server, "build_active_lb_instruction", lambda *args: "")
     monkeypatch.setattr(server, "build_lb_extra_costume", lambda *args: "")
     monkeypatch.setattr(server, "build_lb_extra_names", lambda *args: "")
     monkeypatch.setattr(server, "build_bot_character_names", lambda *args: "")
@@ -731,7 +742,7 @@ async def test_context_queue_enqueues_multi_character_scene_without_mask_when_di
     monkeypatch.setattr(server.queue_manager, "_notify_progress", ignore_progress)
     monkeypatch.setattr(server, "set_prompt_by_title", lambda *args, **kwargs: True)
     monkeypatch.setattr(server, "complete_prompt_from_reschedule", fake_complete_prompt)
-    monkeypatch.setattr(server, "build_active_lb_extra", lambda *args: "")
+    monkeypatch.setattr(server, "build_active_lb_instruction", lambda *args: "")
     monkeypatch.setattr(server, "build_lb_extra_costume", lambda *args: "")
     monkeypatch.setattr(server, "build_lb_extra_names", lambda *args: "")
     monkeypatch.setattr(server, "build_bot_character_names", lambda *args: "")

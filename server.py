@@ -4097,24 +4097,16 @@ def strip_output_count_rule(system_prompt: str) -> str:
     return cleaned
 
 
-def build_active_lb_extra(bot_name: str) -> str:
-    """현재 봇의 선택 시스템 프롬프트 + 저장된 lb.extra를 모듈 형식으로 조립(CALL2/CALL2-FIX용 full)."""
+def build_active_lb_instruction(bot_name: str) -> str:
+    """현재 봇의 선택 시스템 프롬프트만 반환(CALL2 계열 공통 지침용)."""
     collected = _collect_lb_extra(bot_name)
     if not collected:
         return ""
-    # 시스템 프롬프트에 붙은 카운트 규칙은 파이프라인이 별도 주입하므로 여기서 제거.
-    system_prompt = strip_output_count_rule(collected["system_prompt"])
-    chunks = [system_prompt] if system_prompt else []
-    costume = _lb_extra_costume_chunks(collected)
-    if costume:
-        chunks.append(costume)
-    if len(chunks) <= (1 if system_prompt else 0):
-        print(f"[ILLUST_CONTEXT] 저장된 lb.extra 캐릭터 데이터가 없음: bot={bot_name}")
-    return "\n\n".join(chunks).strip()
+    return strip_output_count_rule(collected["system_prompt"])
 
 
 def build_lb_extra_costume(bot_name: str) -> str:
-    """lb.extra 중 시스템 프롬프트를 제외한 캐릭터 복장 정보만 조립(CALL1용)."""
+    """lb.extra의 캐릭터 카드만 조립(CALL1 및 CALL2 캐릭터 사전용)."""
     collected = _collect_lb_extra(bot_name)
     if not collected:
         return ""
@@ -4492,9 +4484,11 @@ async def process_illustration_context_queue_item(item) -> dict:
                     history_target_index,
                     active_bot,
                 )
-            # CALL1=이름/복장 분석용 정보, CALL2/2-FIX=full 사전, CALL3=이름 목록.
-            extra_reference = build_active_lb_extra(active_bot)
+            # 봇 시스템 지침은 CALL2 계열에 항상 별도 전달하고, 캐릭터 카드는
+            # 등장 캐릭터만 필터링할 수 있도록 처음부터 분리한다.
+            extra_instruction = build_active_lb_instruction(active_bot)
             extra_costume = build_lb_extra_costume(active_bot)
+            extra_character_cards = extra_costume
             extra_names = build_lb_extra_names(active_bot)
             backtranslate_names = build_bot_character_names(active_bot)
             # 후처리 모드(bubble→manga / vn→speak)가 CALL3 대사 프롬프트를 자동 결정한다.
@@ -4545,10 +4539,11 @@ async def process_illustration_context_queue_item(item) -> dict:
             built = await illustration_context_pipeline.build_from_context(
                 payload,
                 illust_toggles,
-                extra_reference,
+                extra_character_cards,
                 progress=progress,
                 stream_notify=stream_notify,
                 on_call2_ready=_on_call2_ready,
+                extra_instruction=extra_instruction,
                 extra_costume=extra_costume,
                 extra_names=extra_names,
                 backtranslate_names=backtranslate_names,
