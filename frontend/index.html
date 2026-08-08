@@ -58188,12 +58188,13 @@
         // ─── 단어 기반 규칙 ────────────────────────────────────
         let _wrRules = [];
         const WORD_REPLACEMENT_DEFAULT_RULES = Object.freeze([
-            Object.freeze({ type: 'remove', trigger: 'closed eyes', pattern: '* eyes', remove_trigger: false, single_character_only: true }),
-            Object.freeze({ type: 'remove', trigger: 'closed eyes', pattern: '* pupils', remove_trigger: false, single_character_only: true }),
-            Object.freeze({ type: 'remove', trigger: 'eyes closed', pattern: '* eyes', remove_trigger: false, single_character_only: true }),
-            Object.freeze({ type: 'remove', trigger: 'eyes closed', pattern: '* pupils', remove_trigger: false, single_character_only: true }),
-            Object.freeze({ type: 'char_eye_replace', trigger: 'eyes closed', target: 'closed eyes', single_character_only: true }),
-            Object.freeze({ type: 'char_eye_replace', trigger: 'closed eyes', target: 'closed eyes', single_character_only: true }),
+            Object.freeze({ type: 'remove', trigger: 'closed eyes', pattern: '* eyes', remove_trigger: false, single_character_only: true, exclude: ['half-closed eyes'] }),
+            Object.freeze({ type: 'remove', trigger: 'closed eyes', pattern: '* pupils', remove_trigger: false, single_character_only: true, exclude: ['half-closed eyes'] }),
+            Object.freeze({ type: 'remove', trigger: 'eyes closed', pattern: '* eyes', remove_trigger: false, single_character_only: true, exclude: ['half-closed eyes'] }),
+            Object.freeze({ type: 'remove', trigger: 'eyes closed', pattern: '* pupils', remove_trigger: false, single_character_only: true, exclude: ['half-closed eyes'] }),
+            Object.freeze({ type: 'char_eye_replace', trigger: 'eyes closed', target: 'closed eyes', single_character_only: true, exclude: ['half-closed eyes'] }),
+            Object.freeze({ type: 'char_eye_replace', trigger: 'closed eyes', target: 'closed eyes', single_character_only: true, exclude: ['half-closed eyes'] }),
+            Object.freeze({ type: 'replace', source: 'red ears', target: 'ears', single_character_only: false }),
         ]);
 
         // exclude(예외 단어) 리스트 ↔ 쉼표 문자열 변환. UI는 한 칸에 쉼표로 여러
@@ -58221,6 +58222,14 @@
             if (type === 'char_eye_replace') {
                 const target = String(rule?.target || '').trim().toLowerCase();
                 return JSON.stringify([type, trigger, target]);
+            }
+            if (type === 'replace') {
+                // replace 타입을 source/target 으로 식별해, 기본값에 포함된
+                // replace 규칙(red ears → ears)만 정확히 교체하고 사용자가 만든
+                // 다른 replace 규칙이 '공용 기본 적용'에서 덮어쓰기되지 않게 한다.
+                const source = String(rule?.source || '').trim().toLowerCase();
+                const target = String(rule?.target || '').trim().toLowerCase();
+                return JSON.stringify([type, source, target]);
             }
             return '';
         }
