@@ -55339,7 +55339,8 @@
             const matchedCount = search ? row.baseOrder.filter(im => (im.filename || '').toLowerCase().includes(search)).length : display.length;
             const badge = row.rep0
                 ? '<span style="margin-left:6px; font-size:0.6rem; color:var(--accent); border:1px solid color-mix(in srgb, var(--accent) 45%, transparent); border-radius:999px; padding:1px 6px;">대표 설정됨</span>'
-                : '<span style="margin-left:6px; font-size:0.6rem; color:var(--text2); border:1px solid var(--border); border-radius:999px; padding:1px 6px;">대표 미설정</span>';
+                : '<span style="margin-left:6px; font-size:0.6rem; color:var(--text2); border:1px solid var(--border); border-radius:999px; padding:1px 6px;">대표 미설정</span>' +
+                  '<button onclick="deleteRepBatchChar(\'' + escAttr(row.charName) + '\')" title="이 캐릭터 삭제" style="margin-left:6px; background:var(--error); color:#fff; border:none; padding:1px 7px; border-radius:999px; cursor:pointer; font-size:0.6rem;">🗑 삭제</button>';
             const matchInfo = search
                 ? '<span style="margin-left:auto; font-size:0.66rem; color:var(--text2);">파일명 일치 ' + matchedCount + '건 / 전체 ' + row.baseOrder.length + '장</span>'
                 : '<span style="margin-left:auto; font-size:0.66rem; color:var(--text2);">' + display.length + '장 표시' + (row.baseOrder.length > 10 ? ' (전체 ' + row.baseOrder.length + '장)' : '') + '</span>';
@@ -55412,6 +55413,34 @@
             document.body.style.overflow = window._repBatchPrevOverflow || '';
             _repBatchModalOpen = false;
             _repBatchRowData = [];
+        }
+
+        // 모달에서 캐릭터 삭제 (대표 미설정 행 정리용). 기존 remove_character API 재사용.
+        async function deleteRepBatchChar(charName) {
+            if (!botCurrentBot || !charName) return;
+            if (!confirm('캐릭터 "' + charName + '"을(를) 삭제하시겠습니까?\n(이미지 파일을 포함해 캐릭터 폴더 전체가 삭제됩니다.)')) return;
+            try {
+                const resp = await fetch('/api/bot_mode/action', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({action: 'remove_character', bot_name: botCurrentBot, char_name: charName})
+                });
+                const data = await resp.json();
+                if (data.error) { showToast('캐릭터 삭제 실패: ' + data.error, 'error'); return; }
+                botData.bots = data.bots;
+                renderBotCharacters();
+                // 모달 행 제거 + 인덱스 재구성
+                _repBatchRowData = _repBatchRowData.filter(r => r.charName !== charName);
+                const body = document.getElementById('rep-batch-body');
+                if (body) {
+                    body.querySelectorAll('[data-row-idx]').forEach(el => el.remove());
+                    _repBatchRowData.forEach((_, i) => _repBatchRenderRow(i));
+                }
+                showToast('캐릭터 "' + charName + '" 삭제됨', 'success');
+            } catch (e) {
+                console.error('[BOT] 대표 일괄 모달 캐릭터 삭제 실패:', e);
+                showToast('캐릭터 삭제 실패: ' + ((e && e.message) ? e.message : e), 'error');
+            }
         }
 
         function updateRepFirstBorder(charName) {
