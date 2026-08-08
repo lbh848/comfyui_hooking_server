@@ -86,7 +86,9 @@ For named characters, copy every fixed appearance tag into the positive. Croppin
 
 - Hair
   - For named characters, length, color, cut, texture, bangs, ornaments, and stable style start from `AUTHORITATIVE FIXED APPEARANCE` in full.
-  - Do not specialize, generalize, or creatively complete missing hair traits. An explicit current-scene hairstyle change may replace only directly conflicting fixed hair tags; keep every non-conflicting hair and identity tag.
+  - Do not specialize, generalize, or creatively complete missing hair traits.
+  - When `SPARSE HAIRSTYLE CHANGE HISTORY` is supplied, it is the hairstyle continuity authority. Resolve it chronologically against fixed appearance and carry the active arrangement forward across later scenes that do not mention the hairstyle; it outranks current-scene prose, and a generated visual reference is never hairstyle authority. A hairstyle event replaces only the directly conflicting arrangement tag (e.g. ponytail, twintails, braid, hair bun, two side up); preserve hair color, length, texture, bangs, sidelocks, and every other fixed hair/identity tag. `reset_default` restores the fixed hairstyle arrangement.
+  - Without that history, an explicit current-scene hairstyle change may replace only directly conflicting fixed hair tags; keep every non-conflicting hair and identity tag.
 - Eyes
   - Eye color, shape, pupils, and other stable traits come only from fixed appearance. Do not invent an eye-shape tag because one is absent.
   - Keep supplied fixed eye traits as identity anchors even when eyes are closed, cropped, or partly occluded; expression-related temporary eye states may follow the current scene without deleting the fixed traits.

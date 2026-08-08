@@ -2017,6 +2017,60 @@ def parse_call1_analysis(
             "confidence": confidence,
         })
 
+    # hairstyle_events: hairstyle "arrangement" 전환만 추적(ponytail/twintails/braid/
+    # hair bun/hair down/two side up/side ponytail 등). 색/길이/앞머리/눈/신체/종족/스킨/
+    # 흉터/포즈/의상/헤어 액세서리는 fixed appearance 또는 wardrobe 영역이므로 여기서 다루지
+    # 않는다. 서버는 의미를 해석하지 않고 이벤트만 보존한다.
+    hairstyle_events = []
+    hairstyle_operations = {"replace", "add", "remove", "reset_default"}
+    for index, item in enumerate(raw.get("hairstyle_events") or [], start=1):
+        if not isinstance(item, dict):
+            warnings.append(f"헤어스타일 사건 형식 오류로 폐기: index={index}")
+            continue
+        segment_id = str(item.get("segment_id") or "").strip()
+        name = normalize_name(item.get("character") or item.get("name"))
+        operation = str(item.get("operation") or "").strip().lower()
+        evidence = str(item.get("evidence") or "").strip()
+        hairstyle_change = str(item.get("hairstyle_change") or "").strip()
+        try:
+            confidence = max(0.0, min(1.0, float(item.get("confidence", 1.0))))
+        except Exception:
+            confidence = 0.0
+        if not name:
+            warnings.append(f"헤어스타일 사건 캐릭터 없어 폐기: index={index}")
+            continue
+        if operation not in hairstyle_operations:
+            warnings.append(
+                f"헤어스타일 사건 operation 미지정/범위외로 폐기: character={name}, "
+                f"operation={operation!r}"
+            )
+            continue
+        segment_text = str((segments.get(segment_id) or {}).get("text") or "")
+        if (
+            not segment_id
+            or not hairstyle_change
+            or not evidence
+            or _normalize_analysis_text(evidence) not in _normalize_analysis_text(segment_text)
+        ):
+            warnings.append(
+                f"헤어스타일 변경 근거 불일치로 폐기: character={name}, operation={operation}, "
+                f"segment={segment_id!r}"
+            )
+            continue
+        if confidence < 0.70:
+            warnings.append(
+                f"헤어스타일 사건 신뢰도 낮아 폐기: {name}/{operation}={confidence:.2f}"
+            )
+            continue
+        hairstyle_events.append({
+            "segment_id": segment_id,
+            "character": name,
+            "operation": operation,
+            "hairstyle_change": hairstyle_change,
+            "evidence": evidence,
+            "confidence": confidence,
+        })
+
     unresolved = raw.get("unresolved_references") or []
     if not isinstance(unresolved, list):
         unresolved = [unresolved]
@@ -2031,6 +2085,7 @@ def parse_call1_analysis(
         "history_characters": history_characters,
         "current_characters": current_characters,
         "wardrobe_events": wardrobe_events,
+        "hairstyle_events": hairstyle_events,
         "unresolved_references": unresolved,
         "validation_warnings": warnings,
         "fallback_errors": fallback_errors,
@@ -2183,12 +2238,17 @@ def apply_wardrobe_events(
     current_message_id: str,
     selected_reference: str = "",
     default_outfits: dict[str, list[str]] | None = None,
+    hairstyle_events: list[dict] | None = None,
 ) -> dict:
     """Apply CALL1 events as sparse deltas over the complete default outfit.
 
     CALL1 intentionally emits compact changed items, not a complete visual tag
     snapshot. Therefore omitted default items are never removed implicitly by a
     short ``set``/``replace`` payload.
+
+    ``hairstyle_events`` are stored verbatim into each character's
+    ``hairstyle_timeline`` (append-only, capped). The server never interprets
+    hairstyle semantics; CALL2/AUDIT resolve them against fixed appearance.
     """
     states = deepcopy(state_before or {})
     parsed_defaults = (
@@ -2243,6 +2303,7 @@ def apply_wardrobe_events(
                     "removed": [],
                 },
                 "wardrobe_timeline": [],
+                "hairstyle_timeline": [],
             }
             if default_items:
                 print(
@@ -2307,6 +2368,7 @@ def apply_wardrobe_events(
         wardrobe.update(wardrobe_metadata)
         tracked["current_wardrobe"] = wardrobe
         tracked.setdefault("wardrobe_timeline", [])
+        tracked.setdefault("hairstyle_timeline", [])
         return key
 
     for item in current_characters or []:
@@ -2393,6 +2455,24 @@ def apply_wardrobe_events(
         timeline.append(deepcopy(event))
         states[key]["wardrobe_timeline"] = timeline[-50:]
         states[key]["last_seen_message_id"] = str(current_message_id or "")
+
+    # hairstyle timeline: 서버는 의미를 해석하지 않고 이벤트를 append 한다.
+    # CALL2/AUDIT가 이 timeline을 fixed appearance에 대해 해석한다.
+    for event in (hairstyle_events or []):
+        name = str(event.get("character") or "").strip()
+        if not name:
+            print(f"[ILLUST_CONTEXT:HAIRSTYLE] 캐릭터 없는 이벤트 스킵: event={event!r}")
+            continue
+        key = ensure_state(name)
+        timeline = list(states[key].get("hairstyle_timeline") or [])
+        timeline.append(deepcopy(event))
+        states[key]["hairstyle_timeline"] = timeline[-50:]
+        states[key]["last_seen_message_id"] = str(current_message_id or "")
+        print(
+            f"[ILLUST_CONTEXT:HAIRSTYLE] timeline 갱신: character={name}, "
+            f"operation={event.get('operation')}, "
+            f"hairstyle_change={str(event.get('hairstyle_change') or '')!r}"
+        )
     return states
 
 
@@ -4236,6 +4316,7 @@ def _call2_authority_audit_entries(
     descriptors: list[dict],
     fixed_appearance: dict[str, str],
     default_outfits: dict[str, list[str]],
+    hairstyle_history: dict[str, list[dict]] | None = None,
 ) -> tuple[list[dict], dict[int, tuple[str, int, str]]]:
     entries: list[dict] = []
     entry_keys: dict[int, tuple[str, int, str]] = {}
@@ -4292,6 +4373,9 @@ def _call2_authority_audit_entries(
                 "default_outfit": default_tags,
                 "generated_positive": generated_tags,
                 "generated_outfit_state": generated_outfit_state,
+                "hairstyle_history": (hairstyle_history or {}).get(
+                    name.casefold(), []
+                ),
             })
     return entries, entry_keys
 
@@ -4396,11 +4480,13 @@ async def _run_call2_authority_audit(
     default_outfits: dict[str, list[str]],
     current_context: str,
     stream_notify,
+    hairstyle_history: dict[str, list[dict]] | None = None,
 ) -> tuple[dict[tuple[str, int, str], dict], str, str]:
     entries, entry_keys = _call2_authority_audit_entries(
         descriptors,
         fixed_appearance,
         default_outfits,
+        hairstyle_history,
     )
     if not entries:
         print(
@@ -4422,7 +4508,17 @@ async def _run_call2_authority_audit(
         "the pouch is also established as removed). generated_outfit_state is an untrusted proposal and never proves an exception "
         "by itself. Return forbidden_additions for exact generated_positive tags that invent a "
         "persistent identity, body, hair, face, eye, skin, or wardrobe trait absent from the base "
-        "and unsupported by the assigned scene. Do not classify pose, action, expression, gaze, "
+        "and unsupported by the assigned scene. An entry may include `hairstyle_history`: a "
+        "chronological list of semantic hairstyle-arrangement transitions. An active transition in "
+        "that history may temporarily authorize, for this scene only, replacement of the directly "
+        "conflicting fixed hairstyle-arrangement tag — list the suppressed fixed arrangement tag "
+        "(e.g. `ponytail`) in `authority_exceptions` and do not flag the active arrangement tag "
+        "(e.g. `twintails`) as a forbidden addition, because it is a temporary hairstyle state, not "
+        "a new persistent trait. Authorize such overrides ONLY for hairstyle-arrangement tags "
+        "(ponytail, twintails, braid, hair bun, two side up, side ponytail, hair down); hair color, "
+        "hair length, texture, bangs, sidelocks, ahoge, eyes, body, species, and any other fixed "
+        "trait remain mandatory and must never be excepted because of hairstyle history. The "
+        "override ends at `reset_default` or a later conflicting hairstyle event. Do not classify pose, action, expression, gaze, "
         "or temporary scene state as a forbidden addition. Return conflicts even when every base "
         "tag is already present, but only for exact generated_positive tags that directly "
         "contradict the base and are not supported by that assigned scene. Do not report camera "
@@ -6746,6 +6842,7 @@ def _merge_call1_shard_values(
         "history_characters": [],
         "current_characters": [],
         "wardrobe_events": [],
+        "hairstyle_events": [],
         "unresolved_references": [],
     }
     warnings = []
@@ -6754,6 +6851,7 @@ def _merge_call1_shard_values(
     current_by_name: dict[str, dict] = {}
     assignment_by_key: dict[tuple, dict] = {}
     wardrobe_seen = set()
+    hairstyle_seen = set()
     unresolved_seen = set()
     segment_rank = {segment_id: index for index, segment_id in enumerate(segment_order)}
 
@@ -6823,6 +6921,21 @@ def _merge_call1_shard_values(
                 wardrobe_seen.add(key)
                 merged["wardrobe_events"].append(deepcopy(item))
 
+        for item in raw.get("hairstyle_events") or []:
+            if not isinstance(item, dict):
+                warnings.append(f"CALL1 shard {shard_index} 헤어스타일 이벤트 형식 오류로 폐기")
+                continue
+            segment_id = str(item.get("segment_id") or "").strip()
+            if segment_id and segment_id not in assigned_ids:
+                warnings.append(
+                    f"CALL1 shard {shard_index} 담당 밖 헤어스타일 이벤트 폐기: segment={segment_id!r}"
+                )
+                continue
+            key = json.dumps(item, ensure_ascii=False, sort_keys=True)
+            if key not in hairstyle_seen:
+                hairstyle_seen.add(key)
+                merged["hairstyle_events"].append(deepcopy(item))
+
         for item in raw.get("unresolved_references") or []:
             if not isinstance(item, dict):
                 continue
@@ -6847,6 +6960,12 @@ def _merge_call1_shard_values(
         ),
     )
     merged["wardrobe_events"].sort(
+        key=lambda item: segment_rank.get(
+            str(item.get("segment_id") or ""),
+            len(segment_rank),
+        )
+    )
+    merged["hairstyle_events"].sort(
         key=lambda item: segment_rank.get(
             str(item.get("segment_id") or ""),
             len(segment_rank),
@@ -7965,6 +8084,7 @@ async def build_from_context(
     call1_output = ""
     call1_result: dict = {}
     wardrobe_events: list[dict] = []
+    hairstyle_events: list[dict] = []
     reference_variables: dict[str, str] = {}
     balanced_fallback = False
     enhanced = backtranslated_narrative or _strip_nodes(narrative)
@@ -8088,6 +8208,7 @@ async def build_from_context(
                         f"errors={parallel_merge_fallback_errors}"
                     )
                 wardrobe_events = list(parsed_call1.get("wardrobe_events") or [])
+                hairstyle_events = list(parsed_call1.get("hairstyle_events") or [])
                 resolved_current, assignment_errors, reference_variables = apply_reference_assignments(
                     enhanced,
                     current_segments,
@@ -8340,6 +8461,47 @@ async def build_from_context(
                     "remove/add/replace/restore the smallest garment set the evidence supports, and "
                     "never discard an unmentioned default feature.\n\n"
                     + json.dumps(wardrobe_events, ensure_ascii=False, indent=2)
+                ),
+            }, include_plan=False)
+        # hairstyle history: selected_states의 누적 timeline + 이번 턴 CALL1 이벤트를 합쳐
+        # CALL2에 전달한다(서버는 의미 해석 없이 전달만). persistence가 이 기능의 핵심이다.
+        hairstyle_history: dict[str, list] = {}
+        for value in (selected_states or {}).values():
+            if not isinstance(value, dict):
+                continue
+            hair_name = str(value.get("canonical_name") or "").strip()
+            if not hair_name:
+                continue
+            hair_timeline = [
+                deepcopy(event) for event in (value.get("hairstyle_timeline") or [])
+                if isinstance(event, dict)
+            ]
+            hairstyle_history[hair_name] = hair_timeline
+        # 이번 턴 CALL1 hairstyle_events는 아직 timeline(이전 누적)에 반영 전이므로 덧붙인다.
+        for event in hairstyle_events or []:
+            hair_name = str(event.get("character") or "").strip()
+            if not hair_name:
+                continue
+            hairstyle_history.setdefault(hair_name, [])
+            hairstyle_history[hair_name].append(deepcopy(event))
+        hairstyle_history = {
+            name: events for name, events in hairstyle_history.items() if events
+        }
+        if hairstyle_history:
+            append_call2_context({
+                "role": "user",
+                "content": (
+                    "# SPARSE HAIRSTYLE CHANGE HISTORY\n"
+                    "Each event is a semantic hairstyle-arrangement transition with `operation` and "
+                    "`hairstyle_change`, not an image-generation tag. Resolve them chronologically "
+                    "against AUTHORITATIVE FIXED APPEARANCE and change only the hairstyle-arrangement "
+                    "dimension. The active hairstyle from this history is the continuity authority: "
+                    "keep it across later scenes that do not repeat the hairstyle, use current-scene "
+                    "prose only as a secondary cue, and never treat a generated visual reference as "
+                    "hairstyle authority. `replace`/`add`/`remove` change only the conflicting "
+                    "arrangement tags; `reset_default` restores the fixed hairstyle. Preserve hair "
+                    "color, length, bangs, eyes, body, and every unrelated fixed trait.\n\n"
+                    + json.dumps(hairstyle_history, ensure_ascii=False, indent=2)
                 ),
             }, include_plan=False)
         if classified_visual_reference:
@@ -8986,6 +9148,29 @@ async def build_from_context(
 
     if progress:
         await progress(49, "call2_authority_audit", "CALL2 외형·복장 권위 감사")
+    # AUDIT에 hairstyle history(누적 timeline + 이번 턴 events)를 전달한다. 서버는
+    # 의미 해석 없이 전달만 하고, AUDIT이 fixed appearance에 대해 temporary override
+    # 여부를 판단한다. 없으면 빈 dict로 전달된다.
+    audit_hairstyle_history: dict[str, list] = {}
+    for value in (selected_states or {}).values():
+        if not isinstance(value, dict):
+            continue
+        hair_name = str(value.get("canonical_name") or "").strip()
+        if not hair_name:
+            continue
+        audit_hairstyle_history[hair_name.casefold()] = [
+            deepcopy(event) for event in (value.get("hairstyle_timeline") or [])
+            if isinstance(event, dict)
+        ]
+    for event in hairstyle_events or []:
+        hair_name = str(event.get("character") or "").strip()
+        if not hair_name:
+            continue
+        audit_hairstyle_history.setdefault(hair_name.casefold(), [])
+        audit_hairstyle_history[hair_name.casefold()].append(deepcopy(event))
+    audit_hairstyle_history = {
+        name: events for name, events in audit_hairstyle_history.items() if events
+    }
     (
         semantic_authority_decisions,
         call2_authority_audit_output,
@@ -8996,6 +9181,7 @@ async def build_from_context(
         default_outfits,
         slotted,
         stream_notify,
+        hairstyle_history=audit_hairstyle_history,
     )
     call2_authority_audit = apply_call2_authority_base(
         descriptors,
@@ -9031,6 +9217,7 @@ async def build_from_context(
             str(persistent_history.get("current_message_id") or ""),
             selected_reference=call2_reference,
             default_outfits=default_outfits,
+            hairstyle_events=hairstyle_events,
         )
         character_states_after = merge_last_visual_into_states(
             character_states_after,
@@ -9220,6 +9407,7 @@ async def build_from_context(
         "last_visual_reference_classification": last_visual_reference_classification,
         "reference_variables": reference_variables,
         "wardrobe_events": wardrobe_events,
+        "hairstyle_events": hairstyle_events,
         "balanced_fallback_used": balanced_fallback,
         "call2_output": call2_output,
         "call2_plan_output": call2_plan_output,

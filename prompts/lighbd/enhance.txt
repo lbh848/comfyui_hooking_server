@@ -13,7 +13,7 @@ Known character appearance and default outfit:
 
 Your single wardrobe responsibility is to read the story and describe what semantic wardrobe-state change happened to each character. You do not resolve wardrobe tags. A downstream stage (CALL2) later translates your semantic change into the actual image-generation tags against the authoritative default/current outfit.
 
-Required JSON shape (all five arrays must exist; keep them empty when there is no change):
+Required JSON shape (all six arrays must exist; keep them empty when there is no change):
 {
   "reference_assignments": [
     {
@@ -31,6 +31,15 @@ Required JSON shape (all five arrays must exist; keep them empty when there is n
       "operation": "wear|add|remove|replace|open|close|adjust|nude|topless|bottomless|reset_default",
       "wardrobe_change": "short literal description of the wardrobe-state change established by this segment",
       "state_after": "clothed|partial|nude|topless|bottomless|underwear_only|unknown",
+      "evidence": "exact short excerpt copied from that CURRENT segment"
+    }
+  ],
+  "hairstyle_events": [
+    {
+      "segment_id": "C001",
+      "character": "canonical name",
+      "operation": "replace|add|remove|reset_default",
+      "hairstyle_change": "short literal description of the hairstyle-arrangement change",
       "evidence": "exact short excerpt copied from that CURRENT segment"
     }
   ],
@@ -71,6 +80,10 @@ Rules:
   - `nude`: no clothing provides coverage of the groin, chest, or other normally covered areas.
   - `partial`: use only for incomplete/displaced/open clothing states that do not qualify as nude, topless, bottomless, or underwear_only.
 - A garment absent from a camera view is not removed. Visibility and wardrobe state are different.
+- `hairstyle_events` tracks only hairstyle arrangement transitions: ponytail, twintails, braid, hair bun, hair down, two side up, side ponytail, and similar tied/arranged states. Hair color, hair length, hair texture, bangs, hair intakes, sidelocks, ahoge, eyes, face, body, species, skin, scars, expression, pose, clothing, and wearable hair accessories are NOT hairstyle events; leave them out of `hairstyle_events` entirely.
+- A wearable object on the hair (hair ribbon, hair bow, hairclip, hair ornament, tiara, crown) is a wardrobe/accessory change, not a hairstyle change. Classify by what physically changed: "she untied her ponytail" is a hairstyle event; "she removed her hair ribbon" is a wardrobe event.
+- Use `hairstyle_events` operations only for an actual arrangement transition: `replace` (one arrangement becomes another, including "let her hair down" ending a tied style), `add` (a component is added while the existing arrangement stays), `remove` (a component is undone while the rest stays meaningful), or `reset_default` (the story establishes a return to the usual hairstyle). A sentence that merely re-describes or repeats the known/default hairstyle, only moves the hair (e.g. "her ponytail swayed in the wind"), or only describes color/lighting (e.g. "her hair looked almost silver") is not an event.
+- `hairstyle_change` is a short literal semantic description of the arrangement transition, never a Danbooru tag list. Do not output hairstyle tags, normalize hairstyle wording into tag syntax, or infer a more specific style than the story establishes. Describe only the arrangement transition; CALL2 resolves it against fixed appearance.
 - Emit a reference_assignment only when downstream character presence, attribution, or wardrobe tracking would otherwise be wrong or genuinely ambiguous. Do not enumerate every pronoun after identity is already clear, do not emit canonical names already present, and do not repeat equivalent references in the same segment.
 - Omit occurrence when it is 1. Omit replacement when the canonical name itself is the correct replacement. Omit confidence when fully certain; omitted values default to 1.0.
 - For possessives or reflexives, replacement may add only the minimal grammar around the canonical name, such as "Alice's" or "Alice herself".
