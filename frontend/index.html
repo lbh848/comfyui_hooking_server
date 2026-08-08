@@ -55541,12 +55541,14 @@
                 if (data.error) { showToast('캐릭터 삭제 실패: ' + data.error, 'error'); return; }
                 botData.bots = data.bots;
                 renderBotCharacters();
-                // 모달 행 제거 + 인덱스 재구성
+                // 모달 행 제거 + 인덱스 재구성 (스크롤 위치 유지)
                 _repBatchRowData = _repBatchRowData.filter(r => r.charName !== charName);
                 const body = document.getElementById('rep-batch-body');
                 if (body) {
+                    const savedScroll = body.scrollTop;
                     body.querySelectorAll('[data-row-idx]').forEach(el => el.remove());
                     _repBatchRowData.forEach((_, i) => _repBatchRenderRow(i));
+                    body.scrollTop = savedScroll;
                 }
                 showToast('캐릭터 "' + charName + '" 삭제됨', 'success');
             } catch (e) {
