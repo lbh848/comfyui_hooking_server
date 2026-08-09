@@ -1,4 +1,5 @@
 ﻿import asyncio
+import io
 import json
 import os
 import sys
@@ -1609,6 +1610,37 @@ def create_placeholder_png() -> bytes:
     idat = _chunk(b"IDAT", zlib.compress(b"\x00\xff\x00\x00"))
     iend = _chunk(b"IEND", b"")
     return sig + ihdr + idat + iend
+
+
+_TEST_KEYVIS_GIF_CACHE: bytes | None = None
+
+
+def _test_keyvis_gif_bytes() -> bytes:
+    """테스트 토글(ILLUST_KEYVIS_GIF_TEST=1) 켜졌을 때 slot -1에 반환할 2프레임 GIF.
+
+    실제 keyvis 생성 경로를 건드리지 않고 /image/-1 응답만 움직이는 GIF로 바꿔,
+    Risu <img src> 에서 애니메이션 재생 여부를 확인하기 위한 임시 주입용이다.
+    한 번 만들어 캐시한다.
+    """
+    global _TEST_KEYVIS_GIF_CACHE
+    if _TEST_KEYVIS_GIF_CACHE:
+        return _TEST_KEYVIS_GIF_CACHE
+    frames = [
+        Image.new("RGB", (64, 64), color=(255, 0, 0)),
+        Image.new("RGB", (64, 64), color=(0, 0, 255)),
+    ]
+    buf = io.BytesIO()
+    frames[0].save(
+        buf,
+        format="GIF",
+        save_all=True,
+        append_images=frames[1:],
+        duration=300,
+        loop=0,
+        disposal=2,
+    )
+    _TEST_KEYVIS_GIF_CACHE = buf.getvalue()
+    return _TEST_KEYVIS_GIF_CACHE
 
 
 # ─── 백업 관리 ────────────────────────────────────────────
@@ -5140,9 +5172,23 @@ async def handle_api_illustration_context_bridge_image(request: web.Request) -> 
     if image_bytes is None:
         print(f"[ILLUST_CONTEXT:BRIDGE] 이미지 없음: session={session_id}, slot={slot}")
         return web.json_response({"error": "image_not_ready_or_missing"}, status=404)
+    # 테스트 토글: slot -1(키비주얼) 요청이 오면 저장된 PNG 대신 2프레임 테스트 GIF를
+    # 반환한다. ILLUST_KEYVIS_GIF_TEST=1 일 때만 작동하며, 평소엔 영향이 없다. 생성·저장
+    # 경로는 건드리지 않고 응답만 치환하므로 토글을 끄면 즉시 원래 PNG로 돌아간다.
+    if slot == -1 and os.environ.get("ILLUST_KEYVIS_GIF_TEST") == "1":
+        print(f"[ILLUST_CONTEXT:BRIDGE] KEYVIS GIF 테스트 주입: session={session_id}")
+        return web.Response(
+            body=_test_keyvis_gif_bytes(),
+            content_type="image/gif",
+            headers={"Cache-Control": "no-store"},
+        )
+    # 실제 바이트 형식을 감지해 MIME을 정한다. slot -1(키비주얼)은 GIF 애니메이션일 수 있고,
+    # 일반 장면 슬롯은 PNG다. content_type을 고정하면 GIF 원본도 image/png로 나가 브라우저가
+    # 스니핑에 의존하게 되므로 매직바이트로 판별한다.
+    content_type = "image/gif" if image_bytes[:6] in (b"GIF87a", b"GIF89a") else "image/png"
     return web.Response(
         body=image_bytes,
-        content_type="image/png",
+        content_type=content_type,
         headers={"Cache-Control": "no-store"},
     )
 
