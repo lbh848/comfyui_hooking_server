@@ -17,14 +17,13 @@ from typing import Any, Mapping
 
 import modal
 
-from comfy_installer.credentials import load_civitai_key
-
 from .manifest import selected_install_plan, workflow_catalog
 from .settings import ModalSettings
 from .workflow_assets import (
+    build_local_model_index,
     resolve_explicit_input_files,
     resolve_input_files,
-    resolve_lora_files,
+    resolve_workflow_model_files,
 )
 
 
@@ -73,7 +72,7 @@ class ModalService:
         self._install_task: asyncio.Task | None = None
         self._install_state: dict[str, Any] = {
             "state": "idle",
-            "message": "Modal 설치를 기다리고 있습니다.",
+            "message": "Modal 동기화를 기다리고 있습니다.",
         }
         self._autoscaler_state: dict[str, Any] = {
             "state": "idle",
@@ -91,6 +90,8 @@ class ModalService:
         self._delete_flush_task: asyncio.Task | None = None
         self._billing_lock = asyncio.Lock()
         self._billing_cache: dict[str, Any] | None = None
+        self._model_sync_lock = asyncio.Lock()
+        self._model_hash_cache: dict[str, tuple[int, int, str]] = {}
 
     @staticmethod
     def _subprocess_env(profile: str, extra: Mapping[str, str] | None = None) -> dict[str, str]:
@@ -341,6 +342,7 @@ class ModalService:
     def workflows(self) -> list[dict[str, Any]]:
         config = self.get_config()
         result: list[dict[str, Any]] = []
+        model_index = build_local_model_index(self.project_root / "comfy")
         for entry in workflow_catalog(self.project_root):
             item = dict(entry)
             try:
@@ -350,19 +352,85 @@ class ModalService:
                     config,
                 )
                 source = plan["workflow_files"][0]
+                workflow = self._load_workflow_files(plan["workflow_files"])[0]
+                assets = resolve_workflow_model_files(
+                    [workflow],
+                    model_index,
+                    include_hashes=False,
+                )
                 item.update(
                     configured=True,
                     source_name=Path(source["source_path"]).name,
                     binding=source["binding"],
+                    model_count=assets["model_count"],
+                    size_bytes=assets["size_bytes"],
+                    size_gib=assets["size_gib"],
                 )
-            except (ValueError, FileNotFoundError) as exc:
+            except (ValueError, FileNotFoundError, json.JSONDecodeError) as exc:
                 print(
-                    f"[MODAL] 워크플로우 실행 경로 미설정: "
+                    f"[MODAL] 사용자 워크플로우 사용 불가: "
                     f"workflow_id={entry.get('id')}, reason={exc}"
                 )
-                item.update(configured=False, source_name="", binding="")
+                traceback.print_exc()
+                item.update(
+                    configured=False,
+                    source_name="",
+                    binding="",
+                    reason=str(exc),
+                    model_count=0,
+                    size_bytes=0,
+                    size_gib=0.0,
+                )
             result.append(item)
         return result
+
+    @staticmethod
+    def _load_workflow_files(workflow_files: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        workflows: list[dict[str, Any]] = []
+        for item in workflow_files:
+            source = Path(str(item.get("source_path") or ""))
+            try:
+                workflow = json.loads(source.read_text(encoding="utf-8"))
+            except Exception as exc:
+                print(
+                    "[MODAL] 사용자 워크플로우 읽기 실패: "
+                    f"path={source}, error={type(exc).__name__}: {exc}"
+                )
+                traceback.print_exc()
+                raise
+            if not isinstance(workflow, dict) or not workflow:
+                print(
+                    "[MODAL] 사용자 워크플로우 JSON 객체가 비어 있습니다: "
+                    f"path={source}, type={type(workflow).__name__}"
+                )
+                raise ValueError(f"사용자 워크플로우 JSON 객체가 비어 있습니다: {source}")
+            workflows.append(workflow)
+        if not workflows:
+            print("[MODAL] 모델 동기화 대상 사용자 워크플로우가 없습니다.")
+            raise ValueError("Modal에 동기화할 사용자 워크플로우가 없습니다.")
+        return workflows
+
+    async def _resolve_local_workflow_assets(
+        self,
+        workflows: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        async with self._model_sync_lock:
+            def resolve() -> dict[str, Any]:
+                model_index = build_local_model_index(self.project_root / "comfy")
+                return resolve_workflow_model_files(
+                    workflows,
+                    model_index,
+                    hash_cache=self._model_hash_cache,
+                    include_hashes=True,
+                )
+
+            assets = await asyncio.to_thread(resolve)
+        print(
+            "[MODAL_SYNC] 로컬 워크플로우 모델 해석 완료: "
+            f"models={len(assets['model_files'])}, loras={len(assets['lora_files'])}, "
+            f"size_gib={assets['size_gib']}"
+        )
+        return assets
 
     @staticmethod
     def _parse_billing_summary(raw_summary: Any) -> dict[str, Any]:
@@ -530,20 +598,32 @@ class ModalService:
         if not await self.account_connected(settings):
             raise RuntimeError("Modal 계정을 먼저 연결하세요.")
         if self._install_task and not self._install_task.done():
-            raise RuntimeError("Modal 설치 또는 업데이트가 이미 진행 중입니다.")
+            raise RuntimeError("Modal 동기화가 이미 진행 중입니다.")
         plan = selected_install_plan(self.project_root, selected_ids, self.get_config())
         self._install_state = {
             "state": "running",
-            "phase": "deploy",
-            "message": "Modal ComfyUI 런타임을 배포하고 있습니다.",
+            "phase": "assets",
+            "message": "SOYA_USER 워크플로우의 현재 로컬 모델을 확인하고 있습니다.",
             "workflow_ids": plan["workflow_ids"],
-            "size_gib": plan["size_gib"],
+            "size_gib": 0.0,
         }
         self._install_task = asyncio.create_task(self._run_install(settings, plan))
         return dict(self._install_state)
 
     async def _run_install(self, settings: ModalSettings, plan: dict[str, Any]) -> None:
         try:
+            workflows = await asyncio.to_thread(
+                self._load_workflow_files,
+                plan["workflow_files"],
+            )
+            assets = await self._resolve_local_workflow_assets(workflows)
+            plan.update(assets)
+            self._install_state.update(
+                phase="deploy",
+                message="Modal ComfyUI 런타임을 배포하고 있습니다.",
+                model_count=plan["model_count"],
+                size_gib=plan["size_gib"],
+            )
             app_path = self.project_root / "modal_backend" / "modal_app.py"
             deploy_env = self._subprocess_env(
                 settings.profile,
@@ -577,15 +657,15 @@ class ModalService:
 
             self._install_state.update(
                 phase="models",
-                message="워크플로우를 업로드하고 필요한 모델을 설치하고 있습니다.",
+                message="사용자 워크플로우와 로컬 모델을 Modal에 업로드하고 있습니다.",
             )
             client_payload = {
                 "action": "install",
                 "app_name": settings.deployment_name,
                 "environment": settings.environment,
                 "workflow_files": plan["workflow_files"],
-                "model_ids": plan["model_ids"],
-                "civitai_key": load_civitai_key(self.project_root),
+                "model_files": plan["model_files"],
+                "lora_files": plan["lora_files"],
             }
             code, stdout, _stderr = await self._run_command(
                 [sys.executable, "-m", "modal_backend.client_cli"],
@@ -610,7 +690,7 @@ class ModalService:
             self._install_state = {
                 "state": "completed",
                 "phase": "complete",
-                "message": "Modal 워크플로우와 모델 설치가 완료되었습니다.",
+                "message": "사용자 워크플로우와 로컬 모델의 Modal 업로드가 완료되었습니다.",
                 "workflow_ids": plan["workflow_ids"],
                 "model_count": plan["model_count"],
                 "size_gib": plan["size_gib"],
@@ -621,7 +701,7 @@ class ModalService:
             self._install_state = {
                 "state": "failed",
                 "phase": self._install_state.get("phase", "unknown"),
-                "message": f"Modal 설치 실패: {type(exc).__name__}: {exc}",
+                "message": f"Modal 동기화 실패: {type(exc).__name__}: {exc}",
                 "workflow_ids": plan.get("workflow_ids", []),
             }
 
@@ -727,11 +807,14 @@ class ModalService:
         if not await self.account_connected(settings):
             print("[MODAL] 워크플로우 변환 실패: Modal 계정이 연결되어 있지 않습니다.")
             raise RuntimeError("Modal 계정이 연결되어 있지 않습니다.")
+        assets = await self._resolve_local_workflow_assets([workflow])
         converted = await self._run_client_action(
             settings,
             "convert_workflow",
             timeout=960,
             workflow=workflow,
+            model_files=assets["model_files"],
+            lora_files=assets["lora_files"],
             timeout_seconds=900,
         )
         if not isinstance(converted, dict) or not self._is_api_workflow(converted):
@@ -829,16 +912,10 @@ class ModalService:
                     phase="converting",
                     message="원격 ComfyUI에서 워크플로우를 API 형식으로 변환하고 있습니다.",
                 )
-                workflow = await self._run_client_action(
-                    settings,
-                    "convert_workflow",
-                    timeout=960,
-                    workflow=workflow,
-                    timeout_seconds=900,
-                )
+                workflow = await self.convert_workflow(workflow)
             state.update(
                 phase="generating",
-                message="LoRA와 입력 이미지를 동기화하고 L4에서 실행하고 있습니다.",
+                message="로컬 모델과 입력 이미지를 동기화하고 L4에서 실행하고 있습니다.",
             )
             image_bytes, metadata = await self.generate(workflow)
             state.update(
@@ -848,6 +925,7 @@ class ModalService:
                 completed_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),
                 prompt_id=metadata.get("prompt_id"),
                 content_type=metadata.get("content_type") or "image/png",
+                model_sync=metadata.get("model_sync") or {},
                 lora_sync=metadata.get("lora_sync") or {},
                 result_available=True,
                 image_bytes=image_bytes,
@@ -1031,8 +1109,8 @@ class ModalService:
                 f"Modal 계정이 연결되지 않았습니다. profile={settings.profile}"
             )
             raise RuntimeError("Modal 계정이 연결되어 있지 않습니다.")
-        lora_files, workflow_input_files, explicit_input_files = await asyncio.gather(
-            asyncio.to_thread(resolve_lora_files, workflow, config),
+        assets, workflow_input_files, explicit_input_files = await asyncio.gather(
+            self._resolve_local_workflow_assets([workflow]),
             asyncio.to_thread(resolve_input_files, workflow, config),
             asyncio.to_thread(
                 resolve_explicit_input_files,
@@ -1050,7 +1128,8 @@ class ModalService:
                 "app_name": settings.deployment_name,
                 "environment": settings.environment,
                 "workflow": workflow,
-                "lora_files": lora_files,
+                "model_files": assets["model_files"],
+                "lora_files": assets["lora_files"],
                 "input_files": input_files,
                 "artifact_prefixes": list(artifact_prefixes or []),
                 "require_images": bool(require_images),
@@ -1066,7 +1145,8 @@ class ModalService:
             if code != 0:
                 print(
                     f"[MODAL] 원격 생성 실패: app={settings.deployment_name}, "
-                    f"exit_code={code}, loras={len(lora_files)}, inputs={len(input_files)}, "
+                    f"exit_code={code}, models={len(assets['model_files'])}, "
+                    f"loras={len(assets['lora_files'])}, inputs={len(input_files)}, "
                     f"stderr={stderr[-2000:]}"
                 )
                 raise RuntimeError("Modal 원격 이미지 생성에 실패했습니다. 서버 로그를 확인하세요.")
@@ -1117,10 +1197,12 @@ class ModalService:
                 f"[MODAL] 원격 워크플로우 완료: app={settings.deployment_name}, "
                 f"prompt_id={result.get('prompt_id')}, images={len(images)}, "
                 f"artifacts={len(stored_artifacts)}, "
+                f"model_sync={result.get('model_sync')}, "
                 f"lora_sync={result.get('lora_sync')}"
             )
             return {
                 "prompt_id": result.get("prompt_id"),
+                "model_sync": result.get("model_sync") or {},
                 "lora_sync": result.get("lora_sync") or {},
                 "images": images,
                 "artifacts": stored_artifacts,
@@ -1147,6 +1229,7 @@ class ModalService:
         first = images[0]
         return first["bytes"], {
             "prompt_id": result.get("prompt_id"),
+            "model_sync": result.get("model_sync") or {},
             "lora_sync": result.get("lora_sync") or {},
             "content_type": first.get("content_type"),
         }

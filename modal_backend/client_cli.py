@@ -16,7 +16,9 @@ import traceback
 import modal
 
 
-SYNC_MANIFEST_PATH = "/.soya-sync-manifest.json"
+MODEL_SYNC_MANIFEST_PATH = "/.soya-local-model-sync-manifest.json"
+# 기존 사용자 LoRA Volume의 동기화 기록을 그대로 이어받는다.
+LORA_SYNC_MANIFEST_PATH = "/.soya-sync-manifest.json"
 
 
 def _remote_function(payload: dict, function_name: str) -> modal.Function:
@@ -45,31 +47,30 @@ def install(payload: dict) -> dict:
     with workflow_volume.batch_upload(force=True) as batch:
         for item in workflow_files:
             batch.put_file(item["source_path"], f"/{item['remote_name']}")
-
-    installer = modal.Function.from_name(
-        app_name,
-        "install_models",
-        environment_name=environment,
-    )
-    remote_result = installer.remote(
-        list(payload.get("model_ids") or []),
-        str(payload.get("civitai_key") or ""),
-    )
+    sync = _sync_environment(payload)
     return {
         "uploaded_workflows": len(workflow_files),
-        "remote": remote_result,
+        **sync,
     }
 
 
-def _read_sync_manifest(volume: modal.Volume) -> dict:
+def _read_sync_manifest(
+    volume: modal.Volume,
+    manifest_path: str,
+    label: str,
+) -> dict:
     try:
-        raw = b"".join(volume.read_file(SYNC_MANIFEST_PATH))
+        raw = b"".join(volume.read_file(manifest_path))
         data = json.loads(raw.decode("utf-8"))
         return data if isinstance(data, dict) else {}
     except modal.exception.NotFoundError:
         return {}
     except Exception as exc:
-        print(f"[MODAL_CLIENT] LoRA 동기화 명세 읽기 실패: {type(exc).__name__}: {exc}", file=sys.stderr)
+        print(
+            f"[MODAL_CLIENT] {label} 동기화 명세 읽기 실패: "
+            f"path={manifest_path}, error={type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
         traceback.print_exc(file=sys.stderr)
         return {}
 
@@ -77,39 +78,96 @@ def _read_sync_manifest(volume: modal.Volume) -> dict:
 def _safe_remote_path(value: str) -> str:
     path = PurePosixPath(str(value).replace("\\", "/"))
     if path.is_absolute() or not path.parts or ".." in path.parts:
-        raise ValueError(f"안전하지 않은 Modal LoRA 경로입니다: {value!r}")
+        print(f"[MODAL_CLIENT] 안전하지 않은 Volume 경로 거부: {value!r}", file=sys.stderr)
+        raise ValueError(f"안전하지 않은 Modal Volume 경로입니다: {value!r}")
     return path.as_posix()
 
 
-def _sync_loras(volume: modal.Volume, files: list[dict]) -> dict:
-    manifest = _read_sync_manifest(volume)
+def _sync_files(
+    volume: modal.Volume,
+    files: list[dict],
+    *,
+    manifest_path: str,
+    label: str,
+) -> dict:
+    manifest = _read_sync_manifest(volume, manifest_path, label)
     uploads = []
     skipped = 0
     for item in files:
-        remote_path = _safe_remote_path(item["remote_path"])
-        expected = {"sha256": str(item["sha256"]), "size": int(item["size"])}
+        source_path = Path(str(item.get("source_path") or ""))
+        remote_path = _safe_remote_path(str(item.get("remote_path") or ""))
+        sha256 = str(item.get("sha256") or "").strip().lower()
+        size = int(item.get("size") or 0)
+        if not source_path.is_file():
+            print(
+                f"[MODAL_CLIENT] {label} 로컬 원본 파일 없음: {source_path}",
+                file=sys.stderr,
+            )
+            raise FileNotFoundError(f"Modal에 올릴 로컬 파일이 없습니다: {source_path}")
+        actual_size = source_path.stat().st_size
+        if not sha256 or size < 0 or actual_size != size:
+            print(
+                f"[MODAL_CLIENT] {label} 로컬 파일 명세 오류: source={source_path}, "
+                f"sha256={sha256!r}, expected_size={size}, actual_size={actual_size}",
+                file=sys.stderr,
+            )
+            raise ValueError(f"Modal에 올릴 로컬 파일의 검증 정보가 올바르지 않습니다: {source_path}")
+        expected = {"sha256": sha256, "size": size}
         if manifest.get(remote_path) == expected:
             skipped += 1
             continue
         uploads.append((item, remote_path, expected))
     if uploads:
-        with volume.batch_upload(force=True) as batch:
-            for item, remote_path, expected in uploads:
-                batch.put_file(item["source_path"], f"/{remote_path}")
-                manifest[remote_path] = expected
-            encoded = (json.dumps(manifest, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
-            batch.put_file(io.BytesIO(encoded), SYNC_MANIFEST_PATH)
+        try:
+            with volume.batch_upload(force=True) as batch:
+                for item, remote_path, expected in uploads:
+                    batch.put_file(item["source_path"], f"/{remote_path}")
+                    manifest[remote_path] = expected
+                encoded = (
+                    json.dumps(manifest, ensure_ascii=False, indent=2) + "\n"
+                ).encode("utf-8")
+                batch.put_file(io.BytesIO(encoded), manifest_path)
+        except Exception as exc:
+            print(
+                f"[MODAL_CLIENT] {label} 로컬 파일 업로드 실패: "
+                f"uploads={len(uploads)}, error={type(exc).__name__}: {exc}",
+                file=sys.stderr,
+            )
+            traceback.print_exc(file=sys.stderr)
+            raise
     return {"uploaded": len(uploads), "skipped": skipped}
+
+
+def _sync_environment(payload: dict) -> dict:
+    app_name = str(payload["app_name"])
+    environment = str(payload["environment"])
+    models_volume = modal.Volume.from_name(
+        f"{app_name}-models",
+        environment_name=environment,
+    )
+    loras_volume = modal.Volume.from_name(
+        f"{app_name}-loras",
+        environment_name=environment,
+    )
+    model_sync = _sync_files(
+        models_volume,
+        list(payload.get("model_files") or []),
+        manifest_path=MODEL_SYNC_MANIFEST_PATH,
+        label="모델",
+    )
+    lora_sync = _sync_files(
+        loras_volume,
+        list(payload.get("lora_files") or []),
+        manifest_path=LORA_SYNC_MANIFEST_PATH,
+        label="LoRA",
+    )
+    return {"model_sync": model_sync, "lora_sync": lora_sync}
 
 
 def generate(payload: dict) -> dict:
     app_name = str(payload["app_name"])
     environment = str(payload["environment"])
-    lora_volume = modal.Volume.from_name(
-        f"{app_name}-loras",
-        environment_name=environment,
-    )
-    sync = _sync_loras(lora_volume, list(payload.get("lora_files") or []))
+    sync = _sync_environment(payload)
     input_files = {
         item["remote_name"]: Path(item["source_path"]).read_bytes()
         for item in (payload.get("input_files") or [])
@@ -178,11 +236,12 @@ def generate(payload: dict) -> dict:
         "outputs": outputs,
         "artifacts": artifacts,
         "text_outputs": list(remote_result.get("text_outputs") or []),
-        "lora_sync": sync,
+        **sync,
     }
 
 
 def convert_workflow(payload: dict) -> dict:
+    _sync_environment(payload)
     worker_cls = modal.Cls.from_name(
         str(payload["app_name"]),
         "ComfyWorker",
@@ -266,7 +325,7 @@ def delete_lora_prefix(payload: dict) -> dict:
         volume.remove_file(f"/{prefix}", recursive=True)
     except modal.exception.NotFoundError:
         pass
-    manifest = _read_sync_manifest(volume)
+    manifest = _read_sync_manifest(volume, LORA_SYNC_MANIFEST_PATH, "LoRA")
     filtered = {
         path: value
         for path, value in manifest.items()
@@ -275,7 +334,7 @@ def delete_lora_prefix(payload: dict) -> dict:
     if filtered != manifest:
         with volume.batch_upload(force=True) as batch:
             encoded = (json.dumps(filtered, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
-            batch.put_file(io.BytesIO(encoded), SYNC_MANIFEST_PATH)
+            batch.put_file(io.BytesIO(encoded), LORA_SYNC_MANIFEST_PATH)
     return {"deleted_prefix": prefix}
 
 

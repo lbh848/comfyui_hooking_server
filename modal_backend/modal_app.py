@@ -2,15 +2,11 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
-import shutil
 import subprocess
-import tempfile
 import time
 import traceback
-import urllib.request
 import uuid
 from pathlib import Path
 
@@ -48,71 +44,6 @@ runtime_image = (
 )
 
 
-def _download_model(model: dict, civitai_key: str) -> dict:
-    relative = Path(str(model["relative_path"]))
-    parts = relative.parts[1:] if relative.parts and relative.parts[0] == "models" else relative.parts
-    target = Path("/models").joinpath(*parts)
-    expected_size = int(model.get("size") or 0)
-    expected_sha = str(model.get("sha256") or "").lower()
-    if target.is_file() and (not expected_size or target.stat().st_size == expected_size):
-        return {"id": model["id"], "status": "existing", "bytes": target.stat().st_size}
-    if model.get("auth") == "civitai" and not civitai_key:
-        raise RuntimeError(f"Civitai API 키가 필요한 모델입니다: {model['id']}")
-
-    target.parent.mkdir(parents=True, exist_ok=True)
-    headers = {"User-Agent": "soya-comfy-modal/1.0"}
-    if model.get("auth") == "civitai":
-        headers["Authorization"] = f"Bearer {civitai_key}"
-    request = urllib.request.Request(str(model["url"]), headers=headers)
-    digest = hashlib.sha256()
-    downloaded = 0
-    with tempfile.NamedTemporaryFile(dir=target.parent, delete=False) as temp:
-        temp_path = Path(temp.name)
-        try:
-            with urllib.request.urlopen(request, timeout=120) as response:
-                while True:
-                    chunk = response.read(8 * 1024 * 1024)
-                    if not chunk:
-                        break
-                    temp.write(chunk)
-                    digest.update(chunk)
-                    downloaded += len(chunk)
-        except Exception:
-            temp_path.unlink(missing_ok=True)
-            raise
-    if expected_size and downloaded != expected_size:
-        temp_path.unlink(missing_ok=True)
-        raise RuntimeError(
-            f"{model['id']} 용량 검증 실패: expected={expected_size}, actual={downloaded}"
-        )
-    actual_sha = digest.hexdigest()
-    if expected_sha and actual_sha != expected_sha:
-        temp_path.unlink(missing_ok=True)
-        raise RuntimeError(
-            f"{model['id']} SHA-256 검증 실패: expected={expected_sha}, actual={actual_sha}"
-        )
-    shutil.move(str(temp_path), str(target))
-    return {"id": model["id"], "status": "downloaded", "bytes": downloaded}
-
-
-@app.function(
-    image=runtime_image,
-    cpu=2.0,
-    memory=4096,
-    timeout=86_400,
-    volumes={"/models": models_volume},
-)
-def install_models(model_ids: list[str], civitai_key: str = "") -> dict:
-    manifest = json.loads(Path("/opt/soya/install_manifest.json").read_text(encoding="utf-8"))
-    models = {item["id"]: item for item in manifest.get("models", [])}
-    unknown = sorted(set(model_ids) - set(models))
-    if unknown:
-        raise ValueError(f"알 수 없는 모델 ID: {', '.join(unknown)}")
-    installed = [_download_model(models[model_id], civitai_key) for model_id in dict.fromkeys(model_ids)]
-    models_volume.commit()
-    return {"models": installed, "count": len(installed)}
-
-
 @app.function(
     image=runtime_image,
     gpu="L4",
@@ -144,20 +75,36 @@ def gpu_probe() -> dict:
 
 def _write_extra_model_paths() -> Path:
     target = Path("/tmp/soya-extra-model-paths.yaml")
-    directories = (
-        "checkpoints",
-        "clip_vision",
-        "controlnet",
-        "diffusion_models",
-        "embeddings",
-        "ipadapter",
-        "loras",
-        "soya_seg",
-        "text_encoders",
-        "ultralytics",
-        "upscale_models",
-        "vae",
-    )
+    model_paths = {
+        "audio_encoders": ("audio_encoders",),
+        "checkpoints": ("checkpoints",),
+        "classifiers": ("classifiers",),
+        "clip_vision": ("clip_vision",),
+        "configs": ("configs",),
+        "controlnet": ("controlnet", "t2i_adapter"),
+        "diffusers": ("diffusers",),
+        "diffusion_models": ("unet", "diffusion_models"),
+        "embeddings": ("embeddings",),
+        "frame_interpolation": ("frame_interpolation",),
+        "gligen": ("gligen",),
+        "hypernetworks": ("hypernetworks",),
+        "latent_upscale_models": ("latent_upscale_models",),
+        "model_patches": ("model_patches",),
+        "photomaker": ("photomaker",),
+        "style_models": ("style_models",),
+        "text_encoders": ("text_encoders", "clip"),
+        "upscale_models": ("upscale_models",),
+        "vae": ("vae",),
+        "vae_approx": ("vae_approx",),
+        # 배포 custom node가 사용하는 모델 폴더들도 사용자 로컬 구조를 유지한다.
+        "anima_cns": ("anima_cns",),
+        "anima_mod_guidance": ("anima_mod_guidance",),
+        "insightface": ("insightface",),
+        "ipadapter": ("ipadapter",),
+        "onnx": ("onnx",),
+        "soya_seg": ("soya_seg",),
+        "ultralytics": ("ultralytics",),
+    }
     lines = [
         "soya_user_loras:",
         "  base_path: /loras",
@@ -166,7 +113,12 @@ def _write_extra_model_paths() -> Path:
         "soya_models:",
         "  base_path: /models",
     ]
-    lines.extend(f"  {directory}: {directory}" for directory in directories)
+    for model_type, directories in model_paths.items():
+        if len(directories) == 1:
+            lines.append(f"  {model_type}: {directories[0]}")
+            continue
+        lines.append(f"  {model_type}: |")
+        lines.extend(f"    {directory}" for directory in directories)
     target.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return target
 
@@ -275,6 +227,8 @@ class ComfyWorker:
     def convert(self, workflow: dict) -> dict:
         import requests
 
+        models_volume.reload()
+        loras_volume.reload()
         if not isinstance(workflow, dict) or not workflow:
             raise ValueError("변환할 ComfyUI workflow JSON 객체가 필요합니다.")
         response = requests.post(
@@ -304,6 +258,7 @@ class ComfyWorker:
     ) -> dict:
         import requests
 
+        models_volume.reload()
         loras_volume.reload()
         if not isinstance(workflow, dict) or not workflow:
             raise ValueError("ComfyUI API workflow JSON 객체가 필요합니다.")

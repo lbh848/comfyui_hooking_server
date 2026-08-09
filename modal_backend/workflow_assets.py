@@ -1,12 +1,183 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path, PurePosixPath
+import traceback
 from typing import Any, Iterable, Mapping
 
 
 _LORA_INPUT_FIELDS = {"lora_name", "lora"}
 _IMAGE_INPUT_FIELDS = {"image"}
+
+
+def build_local_model_index(comfy_root: str | Path) -> dict[str, Any]:
+    """로컬 Comfy models 폴더의 실제 파일을 참조명으로 조회할 색인으로 만든다."""
+
+    models_root = (Path(comfy_root).resolve() / "models").resolve()
+    if not models_root.is_dir():
+        print(f"[MODAL_SYNC] 로컬 Comfy models 폴더가 없습니다: {models_root}")
+        raise FileNotFoundError(f"로컬 Comfy models 폴더가 없습니다: {models_root}")
+
+    files: list[dict[str, Any]] = []
+    lookup: dict[str, list[dict[str, Any]]] = {}
+    try:
+        candidates = sorted(models_root.rglob("*"), key=lambda path: str(path).casefold())
+        for candidate in candidates:
+            if not candidate.is_file():
+                continue
+            resolved = candidate.resolve()
+            try:
+                relative = resolved.relative_to(models_root)
+            except ValueError as exc:
+                print(
+                    "[MODAL_SYNC] models 폴더 밖을 가리키는 모델 파일 거부: "
+                    f"candidate={candidate}, resolved={resolved}, root={models_root}"
+                )
+                raise ValueError(
+                    f"로컬 Comfy models 폴더 밖의 파일은 Modal에 전송할 수 없습니다: {candidate}"
+                ) from exc
+
+            relative_posix = relative.as_posix()
+            is_lora = bool(relative.parts) and relative.parts[0].casefold() == "loras"
+            if is_lora:
+                if len(relative.parts) < 2:
+                    print(f"[MODAL_SYNC] LoRA 상대 경로가 비어 있어 제외: {resolved}")
+                    continue
+                remote_path = PurePosixPath(*relative.parts[1:]).as_posix()
+            else:
+                remote_path = relative_posix
+            stat = resolved.stat()
+            entry = {
+                "source_path": str(resolved),
+                "remote_path": remote_path,
+                "local_relative_path": relative_posix,
+                "kind": "lora" if is_lora else "model",
+                "size": stat.st_size,
+                "mtime_ns": stat.st_mtime_ns,
+            }
+            files.append(entry)
+
+            keys = {
+                relative_posix,
+                f"models/{relative_posix}",
+                relative.name,
+                str(resolved).replace("\\", "/"),
+            }
+            if len(relative.parts) > 1:
+                keys.add(PurePosixPath(*relative.parts[1:]).as_posix())
+            for key in keys:
+                normalized = key.strip().replace("\\", "/").casefold()
+                if normalized:
+                    lookup.setdefault(normalized, []).append(entry)
+    except Exception as exc:
+        print(
+            "[MODAL_SYNC] 로컬 모델 색인 생성 실패: "
+            f"root={models_root}, error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        raise
+
+    if not files:
+        print(f"[MODAL_SYNC] 로컬 Comfy models 폴더에 파일이 없습니다: {models_root}")
+    return {"root": str(models_root), "files": files, "lookup": lookup}
+
+
+def _embedded_json_values(text: str) -> Iterable[Any]:
+    """프롬프트 문자열 등에 포함된 JSON object/array를 손실 없이 찾아낸다."""
+
+    decoder = json.JSONDecoder()
+    for index, character in enumerate(text):
+        if character not in "{[":
+            continue
+        try:
+            value, _end = decoder.raw_decode(text[index:])
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if isinstance(value, (Mapping, list)):
+            yield value
+
+
+def _workflow_string_values(value: Any) -> Iterable[str]:
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped:
+            yield stripped
+            for embedded in _embedded_json_values(stripped):
+                yield from _workflow_string_values(embedded)
+        return
+    if isinstance(value, Mapping):
+        for child in value.values():
+            yield from _workflow_string_values(child)
+        return
+    if isinstance(value, (list, tuple)):
+        for child in value:
+            yield from _workflow_string_values(child)
+
+
+def resolve_workflow_model_files(
+    workflows: Iterable[Mapping[str, Any]],
+    model_index: Mapping[str, Any],
+    *,
+    hash_cache: dict[str, tuple[int, int, str]] | None = None,
+    include_hashes: bool = True,
+) -> dict[str, Any]:
+    """워크플로우가 실제로 언급하는 로컬 모델만 Modal 동기화 명세로 만든다."""
+
+    lookup = model_index.get("lookup")
+    if not isinstance(lookup, Mapping):
+        print(f"[MODAL_SYNC] 로컬 모델 색인 형식 오류: {type(lookup).__name__}")
+        raise TypeError("로컬 모델 색인의 lookup이 올바르지 않습니다.")
+
+    selected: dict[str, dict[str, Any]] = {}
+    for workflow in workflows:
+        if not isinstance(workflow, Mapping) or not workflow:
+            print(
+                "[MODAL_SYNC] 모델 참조를 찾을 워크플로우 형식 오류: "
+                f"type={type(workflow).__name__}"
+            )
+            raise ValueError("Modal 모델 동기화에 사용할 워크플로우가 비어 있습니다.")
+        for raw_value in _workflow_string_values(workflow):
+            normalized = raw_value.replace("\\", "/").casefold()
+            for entry in lookup.get(normalized, []):
+                selected[str(entry["source_path"])] = dict(entry)
+
+    next_cache: dict[str, tuple[int, int, str]] = {}
+    model_files: list[dict[str, Any]] = []
+    lora_files: list[dict[str, Any]] = []
+    size_bytes = 0
+    for source_path in sorted(selected, key=str.casefold):
+        entry = selected[source_path]
+        size = int(entry["size"])
+        mtime_ns = int(entry["mtime_ns"])
+        payload = {
+            "source_path": source_path,
+            "remote_path": str(entry["remote_path"]),
+            "size": size,
+        }
+        if include_hashes:
+            cached = hash_cache.get(source_path) if hash_cache is not None else None
+            if cached is not None and cached[:2] == (size, mtime_ns):
+                digest = cached[2]
+            else:
+                digest = _sha256(Path(source_path))
+            payload["sha256"] = digest
+            next_cache[source_path] = (size, mtime_ns, digest)
+        size_bytes += size
+        if entry["kind"] == "lora":
+            lora_files.append(payload)
+        else:
+            model_files.append(payload)
+
+    if hash_cache is not None and include_hashes:
+        hash_cache.update(next_cache)
+    return {
+        "model_files": model_files,
+        "lora_files": lora_files,
+        "model_count": len(model_files) + len(lora_files),
+        "size_bytes": size_bytes,
+        "size_gib": round(size_bytes / 1024**3, 2),
+    }
 
 
 def _workflow_paths(workflow: Mapping[str, Any], field_names: set[str]) -> list[str]:
