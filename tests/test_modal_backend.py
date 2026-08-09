@@ -878,11 +878,13 @@ async def test_modal_service_install_plan_uses_current_soya_user_model_reference
     }
     service = ModalService(project_root, lambda: config)
     observed: dict = {}
+    commands: list[list[str]] = []
 
     async def connected(_settings: ModalSettings) -> bool:
         return True
 
     async def capture_commands(_args, **kwargs):
+        commands.append(list(_args))
         payload = kwargs.get("stdin_payload")
         if isinstance(payload, dict):
             observed.update(payload)
@@ -902,6 +904,12 @@ async def test_modal_service_install_plan_uses_current_soya_user_model_reference
     assert observed["model_files"][0]["source_path"] == str(checkpoint.resolve())
     assert observed["model_files"][0]["remote_path"] == "checkpoints/changed.safetensors"
     assert observed["lora_files"] == []
+    deployed_paths = [
+        Path(command[4]).name
+        for command in commands
+        if len(command) > 4 and command[1:4] == ["-m", "modal", "deploy"]
+    ]
+    assert deployed_paths == ["modal_app.py"]
 
 
 def test_workflow_assets_resolve_structured_lora_and_image_inputs(tmp_path: Path) -> None:
@@ -1194,18 +1202,29 @@ async def test_modal_web_url_returns_public_url_when_deployed(
         timeout: float,
         **_payload,
     ) -> dict:
-        observed.update({"action": action, "timeout": timeout})
-        return {"url": "https://workspace--soya-comfy-worker-comfy-web-server.modal.run"}
+        observed.update({"action": action, "timeout": timeout, **_payload})
+        return {
+            "url": "https://workspace--soya-comfy-worker-web-comfy-web-server.modal.run",
+            "num_total_runners": 1,
+            "num_running_inputs": 0,
+            "backlog": 0,
+        }
 
     monkeypatch.setattr(service, "account_connected", connected)
     monkeypatch.setattr(service, "_run_client_action", client_action)
 
     result = await service.web_url()
 
-    assert observed == {"action": "web_url", "timeout": 30}
+    assert observed == {
+        "action": "web_status",
+        "timeout": 30,
+        "web_app_name": "soya-comfy-worker-web",
+    }
     assert result == {
         "available": True,
-        "url": "https://workspace--soya-comfy-worker-comfy-web-server.modal.run",
+        "state": "running",
+        "url": "https://workspace--soya-comfy-worker-web-comfy-web-server.modal.run",
+        "app_name": "soya-comfy-worker-web",
     }
 
 
@@ -1254,7 +1273,9 @@ async def test_modal_web_url_treats_none_url_as_not_deployed(
 
     result = await service.web_url()
 
-    assert result == {"available": False, "reason": "app_not_deployed"}
+    assert result["available"] is False
+    assert result["reason"] == "app_not_deployed"
+    assert result["state"] == "stopped"
 
 
 @pytest.mark.asyncio
@@ -1271,7 +1292,9 @@ async def test_modal_web_url_skips_remote_lookup_when_disabled(
 
     result = await service.web_url()
 
-    assert result == {"available": False, "reason": "disabled"}
+    assert result["available"] is False
+    assert result["reason"] == "disabled"
+    assert result["state"] == "stopped"
 
 
 @pytest.mark.asyncio
@@ -1292,7 +1315,9 @@ async def test_modal_web_url_requires_account_connection(
 
     result = await service.web_url()
 
-    assert result == {"available": False, "reason": "account_not_connected"}
+    assert result["available"] is False
+    assert result["reason"] == "account_not_connected"
+    assert result["state"] == "stopped"
 
 
 @pytest.mark.asyncio
@@ -1323,13 +1348,194 @@ async def test_modal_client_web_url_action_reads_comfy_web_server_url(
     result = client_cli.web_url(payload)
 
     assert captured == {
-        "app_name": "soya-comfy-worker",
+        "app_name": "soya-comfy-worker-web",
         "function_name": "comfy_web_server",
         "env": "main",
     }
     assert result == {
         "url": "https://workspace--soya-comfy-worker-comfy-web-server.modal.run"
     }
+
+
+def test_modal_client_web_status_reads_dedicated_web_app_stats(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = {
+        "app_name": "worker",
+        "web_app_name": "worker-manual-web",
+        "environment": "main",
+    }
+    captured: dict = {}
+
+    class FakeStats:
+        backlog = 1
+        num_total_runners = 1
+        num_running_inputs = 2
+
+    class FakeFunction:
+        def get_web_url(self) -> str:
+            return "https://example.modal.run"
+
+        def get_current_stats(self) -> FakeStats:
+            return FakeStats()
+
+    def from_name(app_name: str, function_name: str, *, environment_name: str):
+        captured.update(
+            {"app_name": app_name, "function_name": function_name, "env": environment_name}
+        )
+        return FakeFunction()
+
+    monkeypatch.setattr(client_cli.modal.Function, "from_name", from_name)
+
+    result = client_cli.web_status(payload)
+
+    assert captured == {
+        "app_name": "worker-manual-web",
+        "function_name": "comfy_web_server",
+        "env": "main",
+    }
+    assert result["num_total_runners"] == 1
+    assert result["num_running_inputs"] == 2
+    assert result["backlog"] == 1
+
+
+@pytest.mark.asyncio
+async def test_modal_web_stop_only_stops_dedicated_web_app(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = ModalService(
+        tmp_path,
+        lambda: {
+            "modal_enabled": True,
+            "modal_deployment_name": "worker-app",
+            "modal_environment": "main",
+        },
+    )
+    observed: dict = {}
+
+    async def logs(*, entries: int) -> dict:
+        observed["log_entries"] = entries
+        return {"ok": True, "logs": [], "errors": []}
+
+    async def run_command(args, **_kwargs):
+        observed["command"] = list(args)
+        return 0, "", ""
+
+    monkeypatch.setattr(service, "runtime_logs", logs)
+    monkeypatch.setattr(service, "_run_command", run_command)
+
+    settings = ModalSettings.from_mapping(service.get_config())
+    await service._run_web_stop(settings)
+
+    assert observed["log_entries"] == 500
+    assert observed["command"][1:4] == ["-m", "modal", "app"]
+    assert observed["command"][4:7] == ["stop", "worker-app-web", "--yes"]
+    assert service._web_state["state"] == "stopped"
+    assert service._web_state["app_name"] == "worker-app-web"
+
+
+@pytest.mark.asyncio
+async def test_modal_web_start_redeploys_web_app_before_warming_l4(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = ModalService(
+        tmp_path,
+        lambda: {"modal_enabled": True, "modal_deployment_name": "worker-app"},
+    )
+    settings = ModalSettings.from_mapping(service.get_config())
+    observed: list[str] = []
+
+    async def deploy(_settings: ModalSettings) -> None:
+        observed.append("deploy")
+
+    async def status(_settings: ModalSettings) -> dict:
+        observed.append("status")
+        return {
+            "available": True,
+            "deployed": True,
+            "state": "running",
+            "url": "https://example.modal.run",
+            "app_name": "worker-app-web",
+            "num_total_runners": 1,
+            "num_running_inputs": 0,
+            "backlog": 0,
+        }
+
+    def warm(url: str) -> int:
+        observed.append(f"warm:{url}")
+        return 200
+
+    monkeypatch.setattr(service, "_deploy_web_app", deploy)
+    monkeypatch.setattr(service, "_remote_web_status", status)
+    monkeypatch.setattr(service, "_warm_web_url", warm)
+
+    await service._run_web_start(settings, {"deployed": True})
+
+    assert observed == [
+        "deploy",
+        "status",
+        "warm:https://example.modal.run",
+        "status",
+    ]
+    assert service._web_state["state"] == "running"
+
+
+@pytest.mark.asyncio
+async def test_modal_runtime_logs_merge_remote_sync_and_diagnostic_entries(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = ModalService(tmp_path, lambda: {"modal_enabled": True})
+    service._install_state["logs"] = [
+        {"time": 20.0, "source": "upload", "message": "워크플로우 업로드 완료"}
+    ]
+    service._probe_state = {
+        "state": "completed",
+        "message": "L4 · VRAM 24 GiB 연결 확인",
+        "updated_at": 30.0,
+    }
+
+    async def connected(_settings: ModalSettings) -> bool:
+        return True
+
+    async def client_action(*_args, **_kwargs) -> dict:
+        return {
+            "logs": [
+                {
+                    "time": 10.0,
+                    "source": "stdout",
+                    "category": "jobs",
+                    "app_name": "soya-comfy-worker",
+                    "message": "prompt complete",
+                }
+            ],
+            "errors": [],
+        }
+
+    monkeypatch.setattr(service, "account_connected", connected)
+    monkeypatch.setattr(service, "_run_client_action", client_action)
+
+    result = await service.runtime_logs(entries=100)
+
+    assert [entry["category"] for entry in result["logs"]] == [
+        "jobs",
+        "sync",
+        "diagnostic",
+    ]
+    assert result["errors"] == []
+
+
+def test_modal_web_function_is_isolated_from_worker_app() -> None:
+    root = Path(__file__).resolve().parents[1] / "modal_backend"
+    worker_source = (root / "modal_app.py").read_text(encoding="utf-8")
+    web_source = (root / "modal_web_app.py").read_text(encoding="utf-8")
+
+    assert "def comfy_web_server" not in worker_source
+    assert "def comfy_web_server" in web_source
+    assert "@modal.web_server" in web_source
+    assert 'WEB_APP_NAME = os.environ.get("SOYA_MODAL_WEB_APP_NAME"' in web_source
 
 
 @pytest.mark.asyncio

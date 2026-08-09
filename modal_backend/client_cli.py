@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+import asyncio
+from datetime import datetime, timezone
 import hashlib
 import json
 import io
@@ -15,6 +17,9 @@ import sys
 import traceback
 
 import modal
+from modal._logs import LogsFilters, tail_logs
+from modal.client import _Client
+from modal_proto import api_pb2
 
 
 MODEL_SYNC_MANIFEST_PATH = "/.soya-local-model-sync-manifest.json"
@@ -55,6 +60,19 @@ def _remote_function(payload: dict, function_name: str) -> modal.Function:
     return modal.Function.from_name(
         str(payload["app_name"]),
         function_name,
+        environment_name=str(payload["environment"]),
+    )
+
+
+def _web_app_name(payload: dict) -> str:
+    configured = str(payload.get("web_app_name") or "").strip()
+    return configured or f"{str(payload['app_name'])}-web"
+
+
+def _web_function(payload: dict) -> modal.Function:
+    return modal.Function.from_name(
+        _web_app_name(payload),
+        "comfy_web_server",
         environment_name=str(payload["environment"]),
     )
 
@@ -513,8 +531,171 @@ def web_url(payload: dict) -> dict:
     get_web_url()이 None 을 반환하거나 NotFoundError 를 일으킨다(후자는
     _error_reason 이 app_not_deployed 로 매핑).
     """
-    function = _remote_function(payload, "comfy_web_server")
+    function = _web_function(payload)
     return {"url": function.get_web_url()}
+
+
+def web_status(payload: dict) -> dict:
+    """웹 전용 App을 기동하지 않고 URL과 현재 runner 수를 조회한다."""
+    function = _web_function(payload)
+    url = function.get_web_url()
+    stats = function.get_current_stats()
+    return {
+        "url": url,
+        "app_name": _web_app_name(payload),
+        "backlog": int(stats.backlog),
+        "num_total_runners": int(stats.num_total_runners),
+        "num_running_inputs": int(stats.num_running_inputs),
+    }
+
+
+def _log_source(file_descriptor: int) -> str:
+    if file_descriptor == api_pb2.FILE_DESCRIPTOR_STDOUT:
+        return "stdout"
+    if file_descriptor == api_pb2.FILE_DESCRIPTOR_STDERR:
+        return "stderr"
+    return "system"
+
+
+async def _tail_deployed_app_logs(
+    client: _Client,
+    *,
+    app_name: str,
+    environment: str,
+    app_role: str,
+    entries: int,
+) -> list[dict]:
+    deployed = await client.stub.AppGetByDeploymentName(
+        api_pb2.AppGetByDeploymentNameRequest(
+            name=app_name,
+            environment_name=environment,
+        )
+    )
+    app_id = str(deployed.app_id or "")
+    if not app_id:
+        raise modal.exception.NotFoundError(
+            f"Modal App이 배포되어 있지 않습니다: app={app_name}"
+        )
+
+    function_names: dict[str, str] = {}
+    try:
+        layout = await client.stub.AppGetLayout(
+            api_pb2.AppGetLayoutRequest(app_id=app_id)
+        )
+        function_names = {
+            str(function_id): str(name)
+            for name, function_id in layout.app_layout.function_ids.items()
+        }
+    except Exception as exc:
+        print(
+            f"[MODAL_CLIENT] 로그 함수 이름 조회 실패: app={app_name}, "
+            f"error={type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
+        traceback.print_exc(file=sys.stderr)
+
+    records: list[dict] = []
+    async for batch in tail_logs(
+        client,
+        app_id,
+        entries,
+        filters=LogsFilters(),
+    ):
+        function_id = str(batch.function_id or batch.root_function_id or "")
+        function_name = function_names.get(function_id, "")
+        for item in batch.items:
+            message = str(item.data or "").replace("\x00", "").rstrip("\r\n")
+            if not message:
+                continue
+            timestamp = (
+                float(item.timestamp_ns) / 1_000_000_000
+                if item.timestamp_ns
+                else float(item.timestamp or 0.0)
+            )
+            source = _log_source(int(item.file_descriptor))
+            if app_role == "web" or function_name == "comfy_web_server":
+                category = "web"
+            elif function_name == "gpu_probe":
+                category = "diagnostic"
+            elif not function_id and source == "system":
+                category = "deployment"
+            else:
+                category = "jobs"
+            records.append(
+                {
+                    "time": timestamp,
+                    "timestamp": datetime.fromtimestamp(
+                        timestamp or 0.0,
+                        timezone.utc,
+                    ).isoformat(),
+                    "source": source,
+                    "category": category,
+                    "app_role": app_role,
+                    "app_name": app_name,
+                    "app_id": app_id,
+                    "function_id": function_id,
+                    "function_name": function_name,
+                    "container_id": str(item.container_id or batch.task_id or ""),
+                    "function_call_id": str(item.function_call_id or ""),
+                    "message": message,
+                }
+            )
+    return records
+
+
+async def _runtime_logs_async(payload: dict) -> dict:
+    environment = str(payload["environment"])
+    requested = max(20, min(int(payload.get("entries") or 300), 1000))
+    client = await _Client.from_env()
+    app_specs = (
+        (str(payload["app_name"]), "worker"),
+        (_web_app_name(payload), "web"),
+    )
+    logs: list[dict] = []
+    errors: list[dict] = []
+    for app_name, app_role in app_specs:
+        try:
+            logs.extend(
+                await _tail_deployed_app_logs(
+                    client,
+                    app_name=app_name,
+                    environment=environment,
+                    app_role=app_role,
+                    entries=requested,
+                )
+            )
+        except modal.exception.NotFoundError as exc:
+            errors.append(
+                {
+                    "app_name": app_name,
+                    "app_role": app_role,
+                    "reason": "app_not_deployed",
+                    "error": str(exc),
+                }
+            )
+        except Exception as exc:
+            print(
+                f"[MODAL_CLIENT] App 로그 조회 실패: app={app_name}, "
+                f"error={type(exc).__name__}: {exc}",
+                file=sys.stderr,
+            )
+            traceback.print_exc(file=sys.stderr)
+            errors.append(
+                {
+                    "app_name": app_name,
+                    "app_role": app_role,
+                    "reason": _error_reason(exc),
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+            )
+    logs.sort(key=lambda item: (float(item.get("time") or 0.0), item.get("app_name", "")))
+    if len(logs) > requested:
+        logs = logs[-requested:]
+    return {"logs": logs, "errors": errors, "limit": requested}
+
+
+def runtime_logs(payload: dict) -> dict:
+    return asyncio.run(_runtime_logs_async(payload))
 
 
 def delete_lora_prefix(payload: dict) -> dict:
@@ -561,6 +742,10 @@ def main() -> int:
             result = gpu_probe(payload)
         elif action == "web_url":
             result = web_url(payload)
+        elif action == "web_status":
+            result = web_status(payload)
+        elif action == "runtime_logs":
+            result = runtime_logs(payload)
         elif action == "delete_lora_prefix":
             result = delete_lora_prefix(payload)
         else:

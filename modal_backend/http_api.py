@@ -145,6 +145,46 @@ def register_modal_routes(
             traceback.print_exc()
             return web.json_response({"ok": False, "error": str(exc)}, status=500)
 
+    async def web_start(_request: web.Request) -> web.Response:
+        try:
+            return web.json_response({"ok": True, "web": await service.start_web()})
+        except (ValueError, RuntimeError) as exc:
+            print(f"[MODAL_API] 웹 App 시작 요청 실패: {type(exc).__name__}: {exc}")
+            traceback.print_exc()
+            return web.json_response({"ok": False, "error": str(exc)}, status=400)
+        except Exception as exc:
+            print(f"[MODAL_API] 웹 App 시작 예외: {type(exc).__name__}: {exc}")
+            traceback.print_exc()
+            return web.json_response({"ok": False, "error": str(exc)}, status=500)
+
+    async def web_stop(_request: web.Request) -> web.Response:
+        try:
+            return web.json_response({"ok": True, "web": await service.stop_web()})
+        except (ValueError, RuntimeError) as exc:
+            print(f"[MODAL_API] 웹 App 종료 요청 실패: {type(exc).__name__}: {exc}")
+            traceback.print_exc()
+            return web.json_response({"ok": False, "error": str(exc)}, status=400)
+        except Exception as exc:
+            print(f"[MODAL_API] 웹 App 종료 예외: {type(exc).__name__}: {exc}")
+            traceback.print_exc()
+            return web.json_response({"ok": False, "error": str(exc)}, status=500)
+
+    async def runtime_logs(request: web.Request) -> web.Response:
+        try:
+            raw_entries = request.query.get("entries", "500").strip()
+            entries = int(raw_entries)
+            if not 20 <= entries <= 1000:
+                raise ValueError("entries는 20~1000 사이여야 합니다.")
+            return web.json_response(await service.runtime_logs(entries=entries))
+        except (ValueError, RuntimeError) as exc:
+            print(f"[MODAL_API] 런타임 로그 요청 실패: {type(exc).__name__}: {exc}")
+            traceback.print_exc()
+            return web.json_response({"ok": False, "error": str(exc)}, status=400)
+        except Exception as exc:
+            print(f"[MODAL_API] 런타임 로그 조회 예외: {type(exc).__name__}: {exc}")
+            traceback.print_exc()
+            return web.json_response({"ok": False, "error": str(exc)}, status=500)
+
     async def run_workflow(request: web.Request) -> web.Response:
         try:
             body = await request.json()
@@ -204,6 +244,9 @@ def register_modal_routes(
     app.router.add_post("/api/modal/autoscaler", apply_autoscaler)
     app.router.add_post("/api/modal/probe", probe)
     app.router.add_get("/api/modal/web-url", web_url)
+    app.router.add_post("/api/modal/web/start", web_start)
+    app.router.add_post("/api/modal/web/stop", web_stop)
+    app.router.add_get("/api/modal/runtime/logs", runtime_logs)
     app.router.add_post("/api/modal/workflow/run", run_workflow)
     app.router.add_get("/api/modal/workflow/runs/{job_id}", workflow_run_status)
     app.router.add_get(

@@ -79,7 +79,7 @@ def test_runtime_has_task_allocation_tab_next_to_second_instance() -> None:
     assert 'id="comfy-allocation-list"' in FRONTEND
 
 
-def test_runtime_has_managed_modal_tab_lifecycle_and_workflow_controls() -> None:
+def test_runtime_has_managed_modal_tab_lifecycle_sync_and_log_controls() -> None:
     allocation = FRONTEND.index('id="comfy-runtime-tab-allocation"')
     modal = FRONTEND.index('id="comfy-runtime-tab-modal"')
 
@@ -89,11 +89,17 @@ def test_runtime_has_managed_modal_tab_lifecycle_and_workflow_controls() -> None
         'id="modal-runtime-scaledown-window"',
         'id="modal-runtime-max-concurrency"',
         'id="modal-runtime-status-refresh"',
-        'id="modal-runtime-workflow-select"',
         'id="modal-runtime-workflow-query-btn"',
         'id="modal-runtime-workflow-query-status"',
-        'id="modal-runtime-run-btn"',
-        'id="modal-runtime-result-image"',
+        'id="modal-runtime-web-start-btn"',
+        'id="modal-runtime-web-connect-btn"',
+        'id="modal-runtime-web-stop-btn"',
+        'id="modal-runtime-log"',
+        'data-modal-log-filter="all"',
+        'data-modal-log-filter="web"',
+        'data-modal-log-filter="jobs"',
+        'data-modal-log-filter="sync"',
+        'data-modal-log-filter="diagnostic"',
         'id="modal-runtime-enabled-status"',
         'id="modal-runtime-metered-cost"',
         'id="modal-runtime-adjustments"',
@@ -101,9 +107,11 @@ def test_runtime_has_managed_modal_tab_lifecycle_and_workflow_controls() -> None
         'id="modal-runtime-credit-remaining"',
         "/api/modal/status?runtime=1",
         "/api/modal/billing?refresh=1",
-        "/api/modal/workflow/run",
         "/api/modal/workflows/remote",
         "/api/modal/probe",
+        "/api/modal/runtime/logs?entries=500",
+        "/api/modal/web/start",
+        "/api/modal/web/stop",
     ):
         assert value in FRONTEND
 
@@ -113,16 +121,23 @@ def test_runtime_has_managed_modal_tab_lifecycle_and_workflow_controls() -> None
     assert "60초 캐시" in FRONTEND
     assert "modalRuntimeQueryWorkflows" in FRONTEND
     assert "modalRemoteWorkflowStateText" in FRONTEND
-    assert "item.remote_available !== true" in FRONTEND
-    assert "Modal에 저장된 원격 버전을 실행합니다." in FRONTEND
+    assert "modalRuntimeRunWorkflow" not in FRONTEND
+    assert "modal-runtime-result-image" not in FRONTEND
+    assert "Modal에서 실행" not in FRONTEND
 
 
 def test_modal_panel_has_web_url_access_button_and_drops_local_debug_shortcut() -> None:
     for value in (
-        'id="modal-runtime-web-btn"',
+        'id="modal-runtime-web-start-btn"',
+        'id="modal-runtime-web-connect-btn"',
+        'id="modal-runtime-web-stop-btn"',
+        "modalRuntimeStartWeb",
+        "modalRuntimeStopWeb",
         "modalRuntimeOpenWeb",
         "/api/modal/web-url",
-        "↗ Modal ComfyUI 접속",
+        "↗ ComfyUI 접속",
+        "L4 연결 테스트 도움말",
+        "유료 진단 기능",
     ):
         assert value in FRONTEND
 
@@ -147,14 +162,14 @@ def test_modal_installer_is_inside_runtime_modal_panel_not_installer_page() -> N
     installer_html = FRONTEND[installer_start:installer_end]
 
     assert 'id="modal-installer-card"' in runtime_html
-    assert runtime_html.index('id="modal-runtime-run-btn"') < runtime_html.index(
-        'id="modal-installer-card"'
-    )
     assert 'id="modal-installer-card"' not in installer_html
     assert "modalOpenInstaller" not in FRONTEND
 
     assert "name.textContent = item.source_name || item.id;" in FRONTEND
-    assert "option.textContent = `${item.source_name || item.id} · ${modalRemoteWorkflowStateText(item)}`;" in FRONTEND
+    assert 'id="modal-runtime-workflow-query-btn"' in runtime_html
+    assert runtime_html.index('id="modal-runtime-workflow-query-btn"') > runtime_html.index(
+        'id="modal-installer-card"'
+    )
 
     child_layout_start = FRONTEND.index('.comfy-modal-runtime-panel > *')
     child_layout_end = FRONTEND.index('}', child_layout_start)

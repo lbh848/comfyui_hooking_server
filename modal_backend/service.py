@@ -13,6 +13,7 @@ import threading
 import time
 import traceback
 import uuid
+import urllib.request
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -37,6 +38,8 @@ RUNTIME_MEMORY_GIB = 16
 BILLING_CACHE_SECONDS = 60
 INSTALL_LOG_LIMIT = 180
 INSTALL_LOG_LINE_LIMIT = 1_200
+RUNTIME_LOG_LIMIT = 500
+WEB_APP_SUFFIX = "-web"
 INSTALL_PROGRESS_PREFIX = "@@SOYA_MODAL_PROGRESS@@"
 INSTALL_PHASE_LABELS = {
     "assets": "자산 분석",
@@ -115,7 +118,15 @@ class ModalService:
         self._probe_state: dict[str, Any] = {
             "state": "idle",
             "message": "L4 연결 테스트를 기다리고 있습니다.",
+            "updated_at": time.time(),
         }
+        self._web_task: asyncio.Task | None = None
+        self._web_state: dict[str, Any] = {
+            "state": "stopped",
+            "message": "Modal ComfyUI 웹 L4가 꺼져 있습니다.",
+            "updated_at": time.time(),
+        }
+        self._runtime_log_cache: list[dict[str, Any]] = []
         self._workflow_runs: dict[str, dict[str, Any]] = {}
         self._workflow_run_tasks: dict[str, asyncio.Task] = {}
         self._delete_outbox_path = self.project_root / "modal_lora_delete_outbox.json"
@@ -137,6 +148,23 @@ class ModalService:
         if extra:
             env.update(extra)
         return env
+
+    @staticmethod
+    def _web_app_name(settings: ModalSettings) -> str:
+        return f"{settings.deployment_name}{WEB_APP_SUFFIX}"
+
+    def _modal_deploy_env(self, settings: ModalSettings) -> dict[str, str]:
+        return self._subprocess_env(
+            settings.profile,
+            {
+                "SOYA_MODAL_APP_NAME": settings.deployment_name,
+                "SOYA_MODAL_WEB_APP_NAME": self._web_app_name(settings),
+                "SOYA_MODAL_MAX_CONTAINERS": str(settings.max_concurrency),
+                "SOYA_MODAL_SCALEDOWN_WINDOW": str(
+                    settings.scaledown_window_seconds
+                ),
+            },
+        )
 
     @staticmethod
     async def _run_command(
@@ -546,6 +574,7 @@ class ModalService:
         if settings.enabled and connected and pending_deletes:
             self._schedule_delete_flush()
         runtime: dict[str, Any] | None = None
+        web_runtime: dict[str, Any] | None = None
         if include_runtime:
             if not settings.enabled:
                 runtime = {"available": False, "reason": "disabled"}
@@ -581,6 +610,10 @@ class ModalService:
                         "reason": reason,
                         "error": "" if reason == "deployment_in_progress" else str(exc),
                     }
+            web_runtime = await self.web_status(
+                settings=settings,
+                connected=connected,
+            )
         billing: dict[str, Any]
         if not settings.enabled:
             billing = {
@@ -624,6 +657,7 @@ class ModalService:
             "billing": billing,
             "pending_lora_deletes": pending_deletes,
             "runtime": runtime,
+            "web": web_runtime,
             "workflow_runs": self.recent_workflow_runs(),
         }
 
@@ -726,59 +760,403 @@ class ModalService:
             "backlog": backlog,
         }
 
-    async def web_url(self) -> dict[str, Any]:
-        """Modal ComfyUI 웹 UI 공개 URL을 조회한다.
+    async def _remote_web_status(
+        self,
+        settings: ModalSettings,
+    ) -> dict[str, Any]:
+        result = await self._run_client_action(
+            settings,
+            "web_status",
+            timeout=30,
+            web_app_name=self._web_app_name(settings),
+        )
+        runners = max(0, int(result.get("num_total_runners") or 0))
+        running_inputs = max(0, int(result.get("num_running_inputs") or 0))
+        deployed = bool(result.get("url"))
+        return {
+            "available": True,
+            "deployed": deployed,
+            "state": "running" if runners > 0 else "stopped",
+            **({"reason": "app_not_deployed"} if not deployed else {}),
+            "message": (
+                "Modal ComfyUI 웹 L4가 실행 중입니다."
+                if runners > 0
+                else (
+                    "웹 App은 준비되어 있고 L4는 꺼져 있습니다."
+                    if deployed
+                    else "웹 전용 App이 중지되어 있습니다."
+                )
+            ),
+            "url": str(result.get("url") or ""),
+            "app_name": self._web_app_name(settings),
+            "num_total_runners": runners,
+            "num_running_inputs": running_inputs,
+            "backlog": max(0, int(result.get("backlog") or 0)),
+            "updated_at": time.time(),
+        }
 
-        comfy_web_server 함수(@modal.web_server)의 공개 HTTPS URL을 반환.
-        enabled/계정 연결 게이트를 거치고, 미배포(또는 웹 엔드포인트 아님)면
-        reason="app_not_deployed" 로 내려보내 프론트가 설치 유도 메시지를 보여주게 한다.
-        """
-        settings = ModalSettings.from_mapping(self.get_config())
+    async def web_status(
+        self,
+        *,
+        settings: ModalSettings | None = None,
+        connected: bool | None = None,
+    ) -> dict[str, Any]:
+        settings = settings or ModalSettings.from_mapping(self.get_config())
         if not settings.enabled:
-            print("[MODAL] 웹 URL 조회 생략: Modal 사용 설정이 OFF입니다.")
-            return {"available": False, "reason": "disabled"}
-        if not await self.account_connected(settings):
+            print("[MODAL] 웹 상태 조회 생략: Modal 사용 설정이 OFF입니다.")
+            return {
+                "available": False,
+                "state": "stopped",
+                "reason": "disabled",
+                "message": "Modal 사용 설정이 꺼져 있습니다.",
+            }
+        if connected is None:
+            connected = await self.account_connected(settings)
+        if not connected:
             print(
-                "[MODAL] 웹 URL 조회 생략: Modal 계정이 연결되지 않았습니다. "
+                "[MODAL] 웹 상태 조회 생략: Modal 계정이 연결되지 않았습니다. "
                 f"profile={settings.profile}"
             )
-            return {"available": False, "reason": "account_not_connected"}
+            return {
+                "available": False,
+                "state": "stopped",
+                "reason": "account_not_connected",
+                "message": "Modal 계정을 먼저 연결하세요.",
+            }
+        if self._web_task and not self._web_task.done():
+            return dict(self._web_state)
         try:
-            result = await self._run_client_action(
-                settings,
-                "web_url",
-                timeout=30,
-            )
+            status = await self._remote_web_status(settings)
+            self._web_state = dict(status)
+            return status
         except ModalClientActionError as exc:
+            if exc.reason == "app_not_deployed":
+                status = {
+                    "available": True,
+                    "deployed": False,
+                    "state": "stopped",
+                    "reason": "app_not_deployed",
+                    "message": "웹 전용 App이 중지되어 있습니다.",
+                    "error": str(exc),
+                    "app_name": self._web_app_name(settings),
+                    "num_total_runners": 0,
+                    "num_running_inputs": 0,
+                    "backlog": 0,
+                    "updated_at": time.time(),
+                }
+                self._web_state = dict(status)
+                return status
             print(
-                f"[MODAL] 웹 URL 조회 실패: app={settings.deployment_name}, "
+                f"[MODAL] 웹 상태 조회 실패: app={self._web_app_name(settings)}, "
                 f"reason={exc.reason}, error_type={exc.error_type}, error={exc}"
             )
             traceback.print_exc()
             return {
                 "available": False,
+                "state": "failed",
                 "reason": exc.reason,
                 "error": str(exc),
+                "message": f"웹 상태 조회 실패: {exc}",
             }
         except Exception as exc:
             print(
-                f"[MODAL] 웹 URL 조회 예외: app={settings.deployment_name}, "
+                f"[MODAL] 웹 상태 조회 예외: app={self._web_app_name(settings)}, "
                 f"error={type(exc).__name__}: {exc}"
             )
             traceback.print_exc()
             return {
                 "available": False,
+                "state": "failed",
                 "reason": "runtime_unavailable",
                 "error": str(exc),
+                "message": f"웹 상태 조회 실패: {type(exc).__name__}: {exc}",
             }
-        url = str(result.get("url") or "")
-        if not url:
+
+    async def web_url(self) -> dict[str, Any]:
+        """실행 중인 웹 전용 App의 URL을 반환하며 L4를 새로 켜지는 않는다."""
+        status = await self.web_status()
+        if status.get("state") != "running" or not status.get("url"):
+            return {
+                **status,
+                "available": False,
+                "reason": status.get("reason") or "web_not_running",
+            }
+        return {
+            "available": True,
+            "state": "running",
+            "url": str(status["url"]),
+            "app_name": status.get("app_name"),
+        }
+
+    async def start_web(self) -> dict[str, Any]:
+        settings = ModalSettings.from_mapping(self.get_config())
+        if not settings.enabled:
+            raise RuntimeError("Modal 사용을 켜고 설정을 저장하세요.")
+        if not await self.account_connected(settings):
+            raise RuntimeError("Modal 계정을 먼저 연결하세요.")
+        if self._web_task and not self._web_task.done():
+            return dict(self._web_state)
+        current = await self.web_status(settings=settings, connected=True)
+        if current.get("state") == "running":
+            return current
+        now = time.time()
+        self._web_state = {
+            "available": True,
+            "deployed": bool(current.get("deployed")),
+            "state": "starting",
+            "message": "웹 전용 App을 준비하고 ComfyUI L4를 시작하고 있습니다.",
+            "app_name": self._web_app_name(settings),
+            "num_total_runners": 0,
+            "num_running_inputs": 0,
+            "backlog": 0,
+            "updated_at": now,
+        }
+        self._web_task = asyncio.create_task(self._run_web_start(settings, current))
+        return dict(self._web_state)
+
+    @staticmethod
+    def _warm_web_url(url: str) -> int:
+        request = urllib.request.Request(
+            url,
+            headers={"User-Agent": "SOYA-Comfy-Manager/1.0"},
+            method="GET",
+        )
+        with urllib.request.urlopen(request, timeout=650) as response:
+            response.read(1)
+            return int(response.status or 0)
+
+    async def _deploy_web_app(self, settings: ModalSettings) -> None:
+        app_path = self.project_root / "modal_backend" / "modal_web_app.py"
+        code, _stdout, stderr = await self._run_command(
+            [
+                sys.executable,
+                "-m",
+                "modal",
+                "deploy",
+                str(app_path),
+                "--env",
+                settings.environment,
+            ],
+            env=self._modal_deploy_env(settings),
+            timeout=3600,
+        )
+        if code != 0:
             print(
-                f"[MODAL] 웹 URL 미배포: app={settings.deployment_name} "
-                f"(comfy_web_server 웹 엔드포인트 없음)"
+                f"[MODAL] 웹 App 배포 실패: app={self._web_app_name(settings)}, "
+                f"env={settings.environment}, exit_code={code}, stderr={stderr[-1200:]}"
             )
-            return {"available": False, "reason": "app_not_deployed"}
-        return {"available": True, "url": url}
+            raise RuntimeError("Modal ComfyUI 웹 App 배포에 실패했습니다.")
+
+    async def _run_web_start(
+        self,
+        settings: ModalSettings,
+        current: Mapping[str, Any],
+    ) -> None:
+        try:
+            self._web_state.update(
+                message=(
+                    "웹 전용 App을 최신 런타임으로 갱신하고 있습니다."
+                    if current.get("deployed")
+                    else "중지된 웹 전용 App을 다시 배포하고 있습니다."
+                ),
+                updated_at=time.time(),
+            )
+            await self._deploy_web_app(settings)
+            remote = await self._remote_web_status(settings)
+            url = str(remote.get("url") or "")
+            if not url:
+                print(
+                    f"[MODAL] 웹 App 시작 URL 누락: app={self._web_app_name(settings)}"
+                )
+                raise RuntimeError("Modal ComfyUI 웹 URL을 찾지 못했습니다.")
+            self._web_state.update(
+                deployed=True,
+                url=url,
+                message="L4 컨테이너를 시작하고 ComfyUI 준비를 기다리고 있습니다.",
+                updated_at=time.time(),
+            )
+            status_code = await asyncio.to_thread(self._warm_web_url, url)
+            if status_code < 200 or status_code >= 400:
+                print(
+                    f"[MODAL] 웹 App 준비 응답 오류: app={self._web_app_name(settings)}, "
+                    f"status={status_code}, url={url}"
+                )
+                raise RuntimeError(f"Modal ComfyUI 준비 응답이 HTTP {status_code}입니다.")
+            remote = await self._remote_web_status(settings)
+            self._web_state = {
+                **remote,
+                "state": "running",
+                "message": "Modal ComfyUI 웹 L4가 실행 중입니다.",
+                "updated_at": time.time(),
+            }
+            print(
+                f"[MODAL] 웹 App 시작 완료: app={self._web_app_name(settings)}, "
+                f"url={url}"
+            )
+        except Exception as exc:
+            print(f"[MODAL] 웹 App 시작 실패: {type(exc).__name__}: {exc}")
+            traceback.print_exc()
+            self._web_state = {
+                **self._web_state,
+                "state": "failed",
+                "message": f"웹 App 시작 실패: {type(exc).__name__}: {exc}",
+                "error": str(exc),
+                "updated_at": time.time(),
+            }
+
+    async def stop_web(self) -> dict[str, Any]:
+        settings = ModalSettings.from_mapping(self.get_config())
+        if not settings.enabled:
+            raise RuntimeError("Modal 사용을 켜고 설정을 저장하세요.")
+        if not await self.account_connected(settings):
+            raise RuntimeError("Modal 계정을 먼저 연결하세요.")
+        if self._web_task and not self._web_task.done():
+            raise RuntimeError("Modal ComfyUI 웹 작업이 이미 진행 중입니다.")
+        current = await self.web_status(settings=settings, connected=True)
+        if current.get("state") == "stopped" and not current.get("deployed"):
+            return current
+        self._web_state = {
+            **current,
+            "state": "stopping",
+            "message": "웹 전용 App과 L4 컨테이너를 완전히 종료하고 있습니다.",
+            "updated_at": time.time(),
+        }
+        self._web_task = asyncio.create_task(self._run_web_stop(settings))
+        return dict(self._web_state)
+
+    async def _run_web_stop(self, settings: ModalSettings) -> None:
+        try:
+            await self.runtime_logs(entries=RUNTIME_LOG_LIMIT)
+            code, _stdout, stderr = await self._run_command(
+                [
+                    sys.executable,
+                    "-m",
+                    "modal",
+                    "app",
+                    "stop",
+                    self._web_app_name(settings),
+                    "--yes",
+                    "--env",
+                    settings.environment,
+                ],
+                env=self._subprocess_env(settings.profile),
+                timeout=120,
+            )
+            if code != 0:
+                print(
+                    f"[MODAL] 웹 App 종료 실패: app={self._web_app_name(settings)}, "
+                    f"exit_code={code}, stderr={stderr[-1200:]}"
+                )
+                raise RuntimeError("Modal ComfyUI 웹 App 종료에 실패했습니다.")
+            self._web_state = {
+                "available": True,
+                "deployed": False,
+                "state": "stopped",
+                "reason": "app_not_deployed",
+                "message": "Modal ComfyUI 웹 App과 L4가 완전히 종료되었습니다.",
+                "app_name": self._web_app_name(settings),
+                "num_total_runners": 0,
+                "num_running_inputs": 0,
+                "backlog": 0,
+                "updated_at": time.time(),
+            }
+            print(f"[MODAL] 웹 App 종료 완료: app={self._web_app_name(settings)}")
+        except Exception as exc:
+            print(f"[MODAL] 웹 App 종료 예외: {type(exc).__name__}: {exc}")
+            traceback.print_exc()
+            self._web_state = {
+                **self._web_state,
+                "state": "failed",
+                "message": f"웹 App 종료 실패: {type(exc).__name__}: {exc}",
+                "error": str(exc),
+                "updated_at": time.time(),
+            }
+
+    async def runtime_logs(self, *, entries: int = RUNTIME_LOG_LIMIT) -> dict[str, Any]:
+        settings = ModalSettings.from_mapping(self.get_config())
+        requested = max(20, min(int(entries), 1000))
+        remote_errors: list[dict[str, Any]] = []
+        if not settings.enabled:
+            print("[MODAL] 런타임 로그 원격 조회 생략: Modal 사용 설정이 OFF입니다.")
+        elif not await self.account_connected(settings):
+            print("[MODAL] 런타임 로그 원격 조회 생략: Modal 계정이 연결되지 않았습니다.")
+            remote_errors.append({"reason": "account_not_connected"})
+        else:
+            try:
+                result = await self._run_client_action(
+                    settings,
+                    "runtime_logs",
+                    timeout=45,
+                    web_app_name=self._web_app_name(settings),
+                    entries=requested,
+                )
+                fetched = result.get("logs")
+                if isinstance(fetched, list):
+                    self._runtime_log_cache = [
+                        dict(item) for item in fetched if isinstance(item, Mapping)
+                    ][-requested:]
+                else:
+                    print(
+                        "[MODAL] 런타임 로그 결과 형식 오류: "
+                        f"type={type(fetched).__name__}"
+                    )
+                errors = result.get("errors")
+                if isinstance(errors, list):
+                    remote_errors.extend(
+                        dict(item) for item in errors if isinstance(item, Mapping)
+                    )
+            except Exception as exc:
+                print(f"[MODAL] 런타임 로그 조회 실패: {type(exc).__name__}: {exc}")
+                traceback.print_exc()
+                remote_errors.append(
+                    {
+                        "reason": _runtime_failure_reason(exc),
+                        "error": f"{type(exc).__name__}: {exc}",
+                    }
+                )
+
+        logs = [dict(item) for item in self._runtime_log_cache]
+        for item in self._install_state.get("logs", []):
+            if not isinstance(item, Mapping):
+                continue
+            logs.append(
+                {
+                    "time": float(item.get("time") or 0.0),
+                    "source": str(item.get("source") or "system"),
+                    "category": "sync",
+                    "app_role": "local",
+                    "app_name": "SOYA Modal client",
+                    "function_name": "sync/install",
+                    "container_id": "",
+                    "message": str(item.get("message") or ""),
+                }
+            )
+        probe_updated_at = float(self._probe_state.get("updated_at") or 0.0)
+        probe_message = str(self._probe_state.get("message") or "")
+        if probe_updated_at and probe_message:
+            logs.append(
+                {
+                    "time": probe_updated_at,
+                    "source": "system",
+                    "category": "diagnostic",
+                    "app_role": "local",
+                    "app_name": "SOYA Modal client",
+                    "function_name": "gpu_probe",
+                    "container_id": "",
+                    "message": probe_message,
+                }
+            )
+        logs.sort(key=lambda item: float(item.get("time") or 0.0))
+        if len(logs) > requested:
+            logs = logs[-requested:]
+        return {
+            "ok": True,
+            "logs": logs,
+            "errors": remote_errors,
+            "limit": requested,
+            "cached": bool(remote_errors),
+            "checked_at": time.time(),
+        }
 
     async def start_auth(self, profile: str) -> dict[str, Any]:
         settings = ModalSettings.from_mapping({"modal_profile": profile})
@@ -1351,16 +1729,7 @@ class ModalService:
                 f"자산 분석 완료: 전송 대상 {total_files}개 · {total_bytes / 1024 ** 3:.2f} GiB",
             )
             app_path = self.project_root / "modal_backend" / "modal_app.py"
-            deploy_env = self._subprocess_env(
-                settings.profile,
-                {
-                    "SOYA_MODAL_APP_NAME": settings.deployment_name,
-                    "SOYA_MODAL_MAX_CONTAINERS": str(settings.max_concurrency),
-                    "SOYA_MODAL_SCALEDOWN_WINDOW": str(
-                        settings.scaledown_window_seconds
-                    ),
-                },
-            )
+            deploy_env = self._modal_deploy_env(settings)
             code, _stdout, _stderr = await self._run_command(
                 [
                     sys.executable,
@@ -1387,7 +1756,10 @@ class ModalService:
                 "사용자 워크플로우와 로컬 모델을 Modal Volume에 동기화하고 있습니다.",
                 progress_mode="determinate",
             )
-            self._append_install_log("system", "Modal 런타임 배포 완료 · 파일 동기화 시작")
+            self._append_install_log(
+                "system",
+                "Modal 작업 App 배포 완료 · 파일 동기화 시작",
+            )
             client_payload = {
                 "action": "install",
                 "app_name": settings.deployment_name,
@@ -1510,6 +1882,7 @@ class ModalService:
         self._probe_state = {
             "state": "running",
             "message": "L4 컨테이너를 깨우고 CUDA를 확인하고 있습니다.",
+            "updated_at": time.time(),
         }
         self._probe_task = asyncio.create_task(self._run_probe(settings))
         return dict(self._probe_state)
@@ -1528,6 +1901,7 @@ class ModalService:
                     f"{result.get('device') or 'L4'} · VRAM {vram_gib} GiB · "
                     f"CUDA {result.get('cuda') or '-'} 연결 확인"
                 ),
+                "updated_at": time.time(),
                 **result,
             }
             print(f"[MODAL] L4 연결 테스트 완료: {self._probe_state['message']}")
@@ -1537,6 +1911,7 @@ class ModalService:
             self._probe_state = {
                 "state": "failed",
                 "message": f"L4 연결 테스트 실패: {type(exc).__name__}: {exc}",
+                "updated_at": time.time(),
             }
 
     @staticmethod

@@ -16,18 +16,10 @@ import modal
 APP_NAME = os.environ.get("SOYA_MODAL_APP_NAME", "soya-comfy-worker")
 MAX_CONTAINERS = int(os.environ.get("SOYA_MODAL_MAX_CONTAINERS", "2"))
 SCALEDOWN_WINDOW_SECONDS = int(os.environ.get("SOYA_MODAL_SCALEDOWN_WINDOW", "15"))
-# ComfyUI 웹 UI 공개 노출용 컨테이너의 유휴 종료 시간. 잡 워커 기본(15s)을 그대로
-# 쓰면 브라우저 조작 사이에 컨테이너가 내려가 다시 콜드스타트(최대 540s)를 겪으므로
-# 웹 UI용은 잡 슬라이더와 별개로 길게 가져간다.
-WEB_SCALEDOWN_WINDOW_SECONDS = int(
-    os.environ.get("SOYA_MODAL_WEB_SCALEDOWN_WINDOW", "300")
-)
 if not 1 <= MAX_CONTAINERS <= 10:
     raise ValueError("SOYA_MODAL_MAX_CONTAINERS는 1~10 사이여야 합니다.")
 if not 2 <= SCALEDOWN_WINDOW_SECONDS <= 1200:
     raise ValueError("SOYA_MODAL_SCALEDOWN_WINDOW는 2~1200초 사이여야 합니다.")
-if not 60 <= WEB_SCALEDOWN_WINDOW_SECONDS <= 1200:
-    raise ValueError("SOYA_MODAL_WEB_SCALEDOWN_WINDOW는 60~1200초 사이여야 합니다.")
 MANIFEST_LOCAL = Path(__file__).parents[1] / "comfy_installer" / "resources" / "install_manifest.json"
 IMAGE_INSTALL_LOCAL = Path(__file__).with_name("image_install.py")
 COMFY_REF = "64b8457f55cd7fb54ca7a956d9c73b505e903e0c"
@@ -415,45 +407,3 @@ class ComfyWorker:
             "artifacts": artifacts,
             "text_outputs": list(self.text_outputs),
         }
-
-
-@app.function(
-    image=runtime_image,
-    gpu="L4",
-    cpu=4.0,
-    memory=16_384,
-    min_containers=0,
-    max_containers=1,
-    scaledown_window=WEB_SCALEDOWN_WINDOW_SECONDS,
-    timeout=3_600,
-    startup_timeout=600,
-    volumes={
-        "/models": models_volume,
-        "/loras": loras_volume,
-        "/workflows": workflows_volume,
-    },
-)
-@modal.web_server(port=8188, startup_timeout=600)
-def comfy_web_server() -> None:
-    """ComfyUI 웹 UI를 Modal 공개 URL로 노출한다.
-
-    잡 워커(ComfyWorker)가 컨테이너 내부 127.0.0.1:8188에서만 ComfyUI를 띄우는
-    것과 달리, --listen 0.0.0.0 으로 띄워 @modal.web_server 가 공개 HTTPS URL을
-    부여하도록 한다. 접속 중인 동안 L4 컨테이너가 과금된다(유휴 시
-    WEB_SCALEDOWN_WINDOW_SECONDS 후 자동 종료). 모델/LoRA/워크플로우 볼륨은
-    잡 워커와 동일하게 공유한다.
-    """
-    extra_paths = _write_extra_model_paths()
-    subprocess.Popen(
-        [
-            "python",
-            "/root/ComfyUI/main.py",
-            "--listen",
-            "0.0.0.0",
-            "--port",
-            "8188",
-            "--extra-model-paths-config",
-            str(extra_paths),
-        ],
-        cwd="/root/ComfyUI",
-    )

@@ -8,6 +8,8 @@ workflow/
 workflow_backup/
 workflow_backup_static/
 요구사항/
+# 로컬 백업 (복구/작업 기록용, git 공유 대상 아님)
+backups/
 mode_workflow/
 asset/
 asset_data/
