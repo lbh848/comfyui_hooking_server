@@ -1699,6 +1699,7 @@ def test_modal_web_function_is_isolated_from_worker_app() -> None:
     assert "def comfy_web_server" in web_source
     assert "@modal.web_server" in web_source
     assert 'WEB_APP_NAME = os.environ.get("SOYA_MODAL_WEB_APP_NAME"' in web_source
+    assert '"--enable-cors-header",\n            "*",' in web_source
 
 
 @pytest.mark.asyncio

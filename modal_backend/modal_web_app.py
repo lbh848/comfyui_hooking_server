@@ -63,6 +63,8 @@ def comfy_web_server() -> None:
             "0.0.0.0",
             "--port",
             "8188",
+            "--enable-cors-header",
+            "*",
             "--extra-model-paths-config",
             str(extra_paths),
         ],
