@@ -196,6 +196,8 @@ DEFAULT_CONFIG = {
     "modal_gpu": "L4",
     "modal_max_concurrency": 2,
     "modal_monthly_credit_usd": 30.0,
+    "modal_scaledown_window_seconds": 15,
+    "modal_status_refresh_seconds": 5,
     "workflow_base_dir": "",  # 공통 설정 UI의 워크플로우 베이스 폴더 절대 경로
     "comfy_workflow_source_path": "",
     "data_saving_mode": False,
@@ -10590,6 +10592,8 @@ async def handle_api_config(request: web.Request) -> web.Response:
         # 설정 저장
         try:
             body = await request.json()
+            modal_worker_settings_changed = False
+            modal_autoscaler_settings_changed = False
 
             for _slot_n in range(1, llm_service.LLM_SLOT_COUNT + 1):
                 custom_body_key = "llm_custom_body" if _slot_n == 1 else f"llm_custom_body{_slot_n}"
@@ -10742,7 +10746,9 @@ async def handle_api_config(request: web.Request) -> web.Response:
                         f"'environment': {body.get('modal_environment')!r}, "
                         f"'deployment': {body.get('modal_deployment_name')!r}, "
                         f"'gpu': {body.get('modal_gpu')!r}, "
-                        f"'max_concurrency': {body.get('modal_max_concurrency')!r}}}, "
+                        f"'max_concurrency': {body.get('modal_max_concurrency')!r}, "
+                        f"'scaledown': {body.get('modal_scaledown_window_seconds')!r}, "
+                        f"'refresh': {body.get('modal_status_refresh_seconds')!r}}}, "
                         f"error={e}"
                     )
                     traceback.print_exc()
@@ -10756,7 +10762,25 @@ async def handle_api_config(request: web.Request) -> web.Response:
                         "modal_gpu": normalized_modal.gpu,
                         "modal_max_concurrency": normalized_modal.max_concurrency,
                         "modal_monthly_credit_usd": normalized_modal.monthly_credit_usd,
+                        "modal_scaledown_window_seconds": (
+                            normalized_modal.scaledown_window_seconds
+                        ),
+                        "modal_status_refresh_seconds": (
+                            normalized_modal.status_refresh_seconds
+                        ),
                     }
+                )
+                modal_worker_settings_changed = any(
+                    app_config.get(key) != body.get(key)
+                    for key in ("modal_enabled", "modal_max_concurrency")
+                )
+                modal_autoscaler_settings_changed = any(
+                    app_config.get(key) != body.get(key)
+                    for key in (
+                        "modal_enabled",
+                        "modal_max_concurrency",
+                        "modal_scaledown_window_seconds",
+                    )
                 )
 
             if "asset_edit_tool" in body:
@@ -11196,15 +11220,17 @@ async def handle_api_config(request: web.Request) -> web.Response:
                     print(f"[CONFIG] LLM 워커풀 갱신 실패: {e}")
                     traceback.print_exc()
 
-            if any(
-                key in body
-                for key in ("modal_enabled", "modal_max_concurrency")
-            ):
+            if modal_worker_settings_changed:
                 try:
                     asyncio.ensure_future(queue_manager._ensure_modal_workers())
                 except Exception as e:
                     print(f"[CONFIG] Modal 원격 워커풀 갱신 실패: {e}")
                     traceback.print_exc()
+            if modal_autoscaler_settings_changed:
+                try:
+                    asyncio.ensure_future(modal_service.apply_autoscaler())
+                except Exception as e:
+                    print(f"[CONFIG] Modal autoscaler 갱신 예약 실패: {e}")
                     traceback.print_exc()
 
             # 챈섭 동시성 변경도 실행 중 서버의 외부 워커풀에 즉시 반영한다.

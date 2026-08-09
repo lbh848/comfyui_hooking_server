@@ -8,7 +8,10 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import traceback
+import uuid
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -26,6 +29,7 @@ CPU_USD_PER_CORE_SECOND = 0.0000131
 MEMORY_USD_PER_GIB_SECOND = 0.00000222
 RUNTIME_CPU_CORES = 4
 RUNTIME_MEMORY_GIB = 16
+BILLING_CACHE_SECONDS = 60
 
 
 def cost_summary(settings: ModalSettings) -> dict[str, Any]:
@@ -47,7 +51,7 @@ def cost_summary(settings: ModalSettings) -> dict[str, Any]:
             "cpu_cores": RUNTIME_CPU_CORES,
             "memory_gib": RUNTIME_MEMORY_GIB,
             "min_containers": 0,
-            "scaledown_window_seconds": 15,
+            "scaledown_window_seconds": settings.scaledown_window_seconds,
             "region_multiplier": 1.0,
         },
     }
@@ -67,9 +71,22 @@ class ModalService:
             "state": "idle",
             "message": "Modal 설치를 기다리고 있습니다.",
         }
+        self._autoscaler_state: dict[str, Any] = {
+            "state": "idle",
+            "message": "저장된 자동 종료 설정이 다음 배포에 적용됩니다.",
+        }
+        self._probe_task: asyncio.Task | None = None
+        self._probe_state: dict[str, Any] = {
+            "state": "idle",
+            "message": "L4 연결 테스트를 기다리고 있습니다.",
+        }
+        self._workflow_runs: dict[str, dict[str, Any]] = {}
+        self._workflow_run_tasks: dict[str, asyncio.Task] = {}
         self._delete_outbox_path = self.project_root / "modal_lora_delete_outbox.json"
         self._delete_lock = asyncio.Lock()
         self._delete_flush_task: asyncio.Task | None = None
+        self._billing_lock = asyncio.Lock()
+        self._billing_cache: dict[str, Any] | None = None
 
     @staticmethod
     def _subprocess_env(profile: str, extra: Mapping[str, str] | None = None) -> dict[str, str]:
@@ -137,21 +154,126 @@ class ModalService:
             traceback.print_exc()
             return False
 
-    async def status(self) -> dict[str, Any]:
+    async def _run_client_action(
+        self,
+        settings: ModalSettings,
+        action: str,
+        *,
+        timeout: float,
+        **payload: Any,
+    ) -> dict[str, Any]:
+        request_payload = {
+            "action": action,
+            "app_name": settings.deployment_name,
+            "environment": settings.environment,
+            **payload,
+        }
+        code, stdout, stderr = await self._run_command(
+            [sys.executable, "-m", "modal_backend.client_cli"],
+            env=self._subprocess_env(settings.profile),
+            stdin_payload=request_payload,
+            timeout=timeout,
+        )
+        try:
+            response = json.loads(stdout) if stdout.strip() else {}
+        except json.JSONDecodeError as exc:
+            print(
+                f"[MODAL] {action} 응답 JSON 파싱 실패: exit_code={code}, "
+                f"stdout_length={len(stdout)}, stderr={stderr[-1000:]}"
+            )
+            traceback.print_exc()
+            raise RuntimeError(f"Modal {action} 응답 형식이 올바르지 않습니다.") from exc
+        if code != 0 or not response.get("ok"):
+            error = str(response.get("error") or f"Modal client exit_code={code}")
+            print(
+                f"[MODAL] {action} 실패: app={settings.deployment_name}, "
+                f"environment={settings.environment}, error={error}, stderr={stderr[-1000:]}"
+            )
+            raise RuntimeError(error)
+        result = response.get("result")
+        if not isinstance(result, dict):
+            print(f"[MODAL] {action} 결과 객체 누락: type={type(result).__name__}")
+            raise RuntimeError(f"Modal {action} 결과 객체가 없습니다.")
+        return result
+
+    async def status(self, *, include_runtime: bool = False) -> dict[str, Any]:
         settings = ModalSettings.from_mapping(self.get_config())
-        connected = await self.account_connected(settings)
+        connection_checked = settings.enabled
+        connected = (
+            await self.account_connected(settings)
+            if connection_checked
+            else False
+        )
         pending_deletes = await asyncio.to_thread(self._delete_outbox_count)
         if settings.enabled and connected and pending_deletes:
             self._schedule_delete_flush()
+        runtime: dict[str, Any] | None = None
+        if include_runtime:
+            if not settings.enabled:
+                runtime = {"available": False, "reason": "disabled"}
+            elif not connected:
+                print("[MODAL] 런타임 통계 조회 생략: Modal 계정이 연결되지 않았습니다.")
+                runtime = {"available": False, "reason": "account_not_connected"}
+            else:
+                try:
+                    stats = await self._run_client_action(
+                        settings,
+                        "runtime_stats",
+                        timeout=30,
+                    )
+                    runtime = {"available": True, **stats}
+                except Exception as exc:
+                    print(f"[MODAL] 런타임 통계 조회 실패: {type(exc).__name__}: {exc}")
+                    traceback.print_exc()
+                    runtime = {
+                        "available": False,
+                        "reason": "deployment_unavailable",
+                        "error": str(exc),
+                    }
+        billing: dict[str, Any]
+        if not settings.enabled:
+            billing = {
+                "available": False,
+                "reason": "disabled",
+                "cache_seconds": BILLING_CACHE_SECONDS,
+            }
+        elif not connected:
+            print("[MODAL] 청구 자동 조회 생략: Modal 계정이 연결되지 않았습니다.")
+            billing = {
+                "available": False,
+                "reason": "account_not_connected",
+                "cache_seconds": BILLING_CACHE_SECONDS,
+            }
+        else:
+            try:
+                billing = {
+                    "available": True,
+                    **await self._billing_for_settings(settings),
+                }
+            except Exception as exc:
+                print(f"[MODAL] 청구 자동 조회 실패: {type(exc).__name__}: {exc}")
+                traceback.print_exc()
+                billing = {
+                    "available": False,
+                    "reason": "billing_unavailable",
+                    "error": str(exc),
+                    "cache_seconds": BILLING_CACHE_SECONDS,
+                }
         return {
             "ok": True,
             "connected": connected,
+            "connection_checked": connection_checked,
             "sdk_version": modal.__version__,
             "settings": settings.public_dict(),
             "auth": dict(self._auth_state),
             "install": dict(self._install_state),
+            "autoscaler": dict(self._autoscaler_state),
+            "probe": dict(self._probe_state),
             "cost": cost_summary(settings),
+            "billing": billing,
             "pending_lora_deletes": pending_deletes,
+            "runtime": runtime,
+            "workflow_runs": self.recent_workflow_runs(),
         }
 
     async def start_auth(self, profile: str) -> dict[str, Any]:
@@ -207,26 +329,189 @@ class ModalService:
             }
 
     def workflows(self) -> list[dict[str, Any]]:
-        return workflow_catalog(self.project_root)
+        config = self.get_config()
+        result: list[dict[str, Any]] = []
+        for entry in workflow_catalog(self.project_root):
+            item = dict(entry)
+            try:
+                plan = selected_install_plan(
+                    self.project_root,
+                    [str(entry["id"])],
+                    config,
+                )
+                source = plan["workflow_files"][0]
+                item.update(
+                    configured=True,
+                    source_name=Path(source["source_path"]).name,
+                    binding=source["binding"],
+                )
+            except (ValueError, FileNotFoundError) as exc:
+                print(
+                    f"[MODAL] 워크플로우 실행 경로 미설정: "
+                    f"workflow_id={entry.get('id')}, reason={exc}"
+                )
+                item.update(configured=False, source_name="", binding="")
+            result.append(item)
+        return result
 
-    async def billing(self) -> dict[str, Any]:
-        settings = ModalSettings.from_mapping(self.get_config())
-        if not await self.account_connected(settings):
-            raise RuntimeError("Modal 계정을 먼저 연결하세요.")
-        code, stdout, _stderr = await self._run_command(
-            [sys.executable, "-m", "modal", "billing", "summary", "--json"],
-            env=self._subprocess_env(settings.profile),
-            timeout=30,
-        )
-        if code != 0:
-            print(f"[MODAL] 비용 조회 실패: profile={settings.profile}, exit_code={code}")
-            raise RuntimeError("Modal 비용 정보를 조회하지 못했습니다.")
+    @staticmethod
+    def _parse_billing_summary(raw_summary: Any) -> dict[str, Any]:
         try:
-            return {"ok": True, "summary": json.loads(stdout)}
-        except json.JSONDecodeError as exc:
-            print(f"[MODAL] 비용 응답 JSON 파싱 실패: {exc}")
+            if not isinstance(raw_summary, dict):
+                raise TypeError(
+                    f"청구 요약이 객체가 아닙니다: {type(raw_summary).__name__}"
+                )
+
+            def decimal_value(value: Any, field: str) -> Decimal:
+                try:
+                    parsed = Decimal(str(value))
+                except (InvalidOperation, ValueError, TypeError) as exc:
+                    raise ValueError(
+                        f"{field} 값이 유효한 금액이 아닙니다: {value!r}"
+                    ) from exc
+                if not parsed.is_finite():
+                    raise ValueError(f"{field} 값이 유한한 금액이 아닙니다: {value!r}")
+                return parsed
+
+            metered_cost = decimal_value(raw_summary["metered_cost"], "metered_cost")
+            billed_cost = decimal_value(raw_summary["billed_cost"], "billed_cost")
+            raw_adjustments = raw_summary.get("adjustments", {})
+            raw_breakdown = raw_summary.get("metered_cost_breakdown", {})
+            if not isinstance(raw_adjustments, dict):
+                raise TypeError("adjustments가 객체가 아닙니다.")
+            if not isinstance(raw_breakdown, dict):
+                raise TypeError("metered_cost_breakdown이 객체가 아닙니다.")
+            adjustments = {
+                str(key): decimal_value(value, f"adjustments.{key}")
+                for key, value in raw_adjustments.items()
+            }
+            breakdown = {
+                str(key): decimal_value(value, f"metered_cost_breakdown.{key}")
+                for key, value in raw_breakdown.items()
+            }
+            return {
+                "metered_cost": format(metered_cost, "f"),
+                "billed_cost": format(billed_cost, "f"),
+                "adjustments": {
+                    key: format(value, "f") for key, value in adjustments.items()
+                },
+                "adjustment_total": format(sum(adjustments.values(), Decimal("0")), "f"),
+                "metered_cost_breakdown": {
+                    key: format(value, "f") for key, value in breakdown.items()
+                },
+            }
+        except Exception as exc:
+            print(f"[MODAL] 청구 요약 검증 실패: {type(exc).__name__}: {exc}")
             traceback.print_exc()
             raise RuntimeError("Modal 비용 응답 형식이 올바르지 않습니다.") from exc
+
+    @staticmethod
+    def _billing_result(
+        cache: dict[str, Any],
+        settings: ModalSettings,
+        *,
+        cached: bool,
+        cache_age_seconds: float,
+    ) -> dict[str, Any]:
+        summary = dict(cache["summary"])
+        summary["adjustments"] = dict(summary["adjustments"])
+        summary["metered_cost_breakdown"] = dict(
+            summary["metered_cost_breakdown"]
+        )
+        configured_credit = Decimal(str(settings.monthly_credit_usd))
+        metered_cost = Decimal(summary["metered_cost"])
+        remaining_credit = max(Decimal("0"), configured_credit - metered_cost)
+        summary.update(
+            configured_credit=format(configured_credit, "f"),
+            remaining_credit_estimate=format(remaining_credit, "f"),
+            fetched_at=cache["fetched_at"],
+        )
+        return {
+            "ok": True,
+            "summary": summary,
+            "cached": cached,
+            "cache_age_seconds": round(max(0.0, cache_age_seconds), 1),
+            "cache_seconds": BILLING_CACHE_SECONDS,
+        }
+
+    async def _billing_for_settings(
+        self,
+        settings: ModalSettings,
+        *,
+        force_refresh: bool = False,
+    ) -> dict[str, Any]:
+        async with self._billing_lock:
+            now = time.monotonic()
+            cache = self._billing_cache
+            cache_age = (
+                now - float(cache["stored_at_monotonic"])
+                if cache is not None
+                else float("inf")
+            )
+            if (
+                not force_refresh
+                and cache is not None
+                and cache.get("profile") == settings.profile
+                and cache_age < BILLING_CACHE_SECONDS
+            ):
+                return self._billing_result(
+                    cache,
+                    settings,
+                    cached=True,
+                    cache_age_seconds=cache_age,
+                )
+
+            code, stdout, stderr = await self._run_command(
+                [sys.executable, "-m", "modal", "billing", "summary", "--json"],
+                env=self._subprocess_env(settings.profile),
+                timeout=30,
+            )
+            if code != 0:
+                print(
+                    f"[MODAL] 비용 조회 실패: profile={settings.profile}, "
+                    f"exit_code={code}, stderr={stderr[-1000:]}"
+                )
+                raise RuntimeError("Modal 비용 정보를 조회하지 못했습니다.")
+            try:
+                raw_summary = json.loads(stdout)
+            except json.JSONDecodeError as exc:
+                print(f"[MODAL] 비용 응답 JSON 파싱 실패: {exc}")
+                traceback.print_exc()
+                raise RuntimeError("Modal 비용 응답 형식이 올바르지 않습니다.") from exc
+
+            normalized = self._parse_billing_summary(raw_summary)
+            fetched_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            self._billing_cache = {
+                "profile": settings.profile,
+                "summary": normalized,
+                "fetched_at": fetched_at,
+                "stored_at_monotonic": time.monotonic(),
+            }
+            return self._billing_result(
+                self._billing_cache,
+                settings,
+                cached=False,
+                cache_age_seconds=0.0,
+            )
+
+    async def billing(self, *, force_refresh: bool = False) -> dict[str, Any]:
+        settings = ModalSettings.from_mapping(self.get_config())
+        if not settings.enabled:
+            print(
+                f"[MODAL] 비용 조회 생략: Modal이 비활성화되어 있습니다. "
+                f"profile={settings.profile}"
+            )
+            raise RuntimeError("외부 API 설정에서 Modal 사용을 먼저 켜고 저장하세요.")
+        if not await self.account_connected(settings):
+            print(
+                f"[MODAL] 비용 조회 생략: 계정이 연결되지 않았습니다. "
+                f"profile={settings.profile}"
+            )
+            raise RuntimeError("Modal 계정을 먼저 연결하세요.")
+        return await self._billing_for_settings(
+            settings,
+            force_refresh=force_refresh,
+        )
 
     async def start_install(self, selected_ids: list[str]) -> dict[str, Any]:
         settings = ModalSettings.from_mapping(self.get_config())
@@ -255,6 +540,9 @@ class ModalService:
                 {
                     "SOYA_MODAL_APP_NAME": settings.deployment_name,
                     "SOYA_MODAL_MAX_CONTAINERS": str(settings.max_concurrency),
+                    "SOYA_MODAL_SCALEDOWN_WINDOW": str(
+                        settings.scaledown_window_seconds
+                    ),
                 },
             )
             code, _stdout, _stderr = await self._run_command(
@@ -326,6 +614,257 @@ class ModalService:
                 "message": f"Modal 설치 실패: {type(exc).__name__}: {exc}",
                 "workflow_ids": plan.get("workflow_ids", []),
             }
+
+    async def apply_autoscaler(self) -> dict[str, Any]:
+        settings = ModalSettings.from_mapping(self.get_config())
+        if not settings.enabled:
+            print("[MODAL] Autoscaler 즉시 적용 생략: Modal이 비활성화되어 있습니다.")
+            self._autoscaler_state = {
+                "state": "waiting",
+                "message": "Modal을 켜면 저장된 자동 종료 설정을 적용합니다.",
+            }
+            return dict(self._autoscaler_state)
+        if not await self.account_connected(settings):
+            print("[MODAL] Autoscaler 즉시 적용 생략: Modal 계정이 연결되지 않았습니다.")
+            self._autoscaler_state = {
+                "state": "waiting",
+                "message": "계정 연결 후 설치하거나 설정을 다시 저장하면 적용됩니다.",
+            }
+            return dict(self._autoscaler_state)
+        self._autoscaler_state = {
+            "state": "running",
+            "message": "배포된 Modal autoscaler에 설정을 적용하고 있습니다.",
+        }
+        try:
+            result = await self._run_client_action(
+                settings,
+                "update_autoscaler",
+                timeout=60,
+                max_containers=settings.max_concurrency,
+                scaledown_window_seconds=settings.scaledown_window_seconds,
+            )
+            self._autoscaler_state = {
+                "state": "completed",
+                "message": (
+                    f"최대 {settings.max_concurrency}개 · 유휴 "
+                    f"{settings.scaledown_window_seconds}초로 적용되었습니다."
+                ),
+                **result,
+            }
+        except Exception as exc:
+            print(f"[MODAL] Autoscaler 적용 실패: {type(exc).__name__}: {exc}")
+            traceback.print_exc()
+            self._autoscaler_state = {
+                "state": "failed",
+                "message": f"Autoscaler 적용 실패: {type(exc).__name__}: {exc}",
+            }
+        return dict(self._autoscaler_state)
+
+    async def start_probe(self) -> dict[str, Any]:
+        settings = ModalSettings.from_mapping(self.get_config())
+        if not settings.enabled:
+            raise RuntimeError("Modal 사용을 켜고 설정을 저장하세요.")
+        if not await self.account_connected(settings):
+            raise RuntimeError("Modal 계정을 먼저 연결하세요.")
+        if self._probe_task and not self._probe_task.done():
+            raise RuntimeError("L4 연결 테스트가 이미 진행 중입니다.")
+        self._probe_state = {
+            "state": "running",
+            "message": "L4 컨테이너를 깨우고 CUDA를 확인하고 있습니다.",
+        }
+        self._probe_task = asyncio.create_task(self._run_probe(settings))
+        return dict(self._probe_state)
+
+    async def _run_probe(self, settings: ModalSettings) -> None:
+        try:
+            result = await self._run_client_action(
+                settings,
+                "gpu_probe",
+                timeout=960,
+            )
+            vram_gib = round(int(result.get("vram_bytes") or 0) / 1024**3, 1)
+            self._probe_state = {
+                "state": "completed",
+                "message": (
+                    f"{result.get('device') or 'L4'} · VRAM {vram_gib} GiB · "
+                    f"CUDA {result.get('cuda') or '-'} 연결 확인"
+                ),
+                **result,
+            }
+            print(f"[MODAL] L4 연결 테스트 완료: {self._probe_state['message']}")
+        except Exception as exc:
+            print(f"[MODAL] L4 연결 테스트 실패: {type(exc).__name__}: {exc}")
+            traceback.print_exc()
+            self._probe_state = {
+                "state": "failed",
+                "message": f"L4 연결 테스트 실패: {type(exc).__name__}: {exc}",
+            }
+
+    @staticmethod
+    def _is_api_workflow(workflow: Mapping[str, Any]) -> bool:
+        if "nodes" in workflow and "links" in workflow:
+            return False
+        return any(
+            isinstance(node, Mapping) and "class_type" in node
+            for node in workflow.values()
+        )
+
+    def _workflow_run_public(self, state: Mapping[str, Any]) -> dict[str, Any]:
+        return {
+            key: value
+            for key, value in state.items()
+            if key not in {"image_bytes"}
+        }
+
+    def recent_workflow_runs(self) -> list[dict[str, Any]]:
+        runs = sorted(
+            self._workflow_runs.values(),
+            key=lambda item: str(item.get("created_at") or ""),
+            reverse=True,
+        )
+        return [self._workflow_run_public(item) for item in runs[:20]]
+
+    async def start_workflow_run(self, workflow_id: str) -> dict[str, Any]:
+        settings = ModalSettings.from_mapping(self.get_config())
+        if not settings.enabled:
+            raise RuntimeError("Modal 사용을 켜고 설정을 저장하세요.")
+        if not await self.account_connected(settings):
+            raise RuntimeError("Modal 계정을 먼저 연결하세요.")
+        normalized_id = str(workflow_id or "").strip()
+        plan = selected_install_plan(
+            self.project_root,
+            [normalized_id],
+            self.get_config(),
+        )
+        active_count = sum(
+            1
+            for state in self._workflow_runs.values()
+            if state.get("state") in {"queued", "running"}
+        )
+        if active_count >= settings.max_concurrency:
+            raise RuntimeError(
+                f"Modal 워크플로우가 이미 {active_count}개 실행 중입니다. "
+                "완료 후 다시 시도하세요."
+            )
+        job_id = uuid.uuid4().hex
+        now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        state = {
+            "job_id": job_id,
+            "workflow_id": normalized_id,
+            "source_name": Path(plan["workflow_files"][0]["source_path"]).name,
+            "state": "queued",
+            "phase": "queued",
+            "message": "Modal 워크플로우 실행을 준비하고 있습니다.",
+            "created_at": now,
+            "result_available": False,
+        }
+        self._workflow_runs[job_id] = state
+        while len(self._workflow_runs) > 20:
+            oldest_id = min(
+                self._workflow_runs,
+                key=lambda key: str(self._workflow_runs[key].get("created_at") or ""),
+            )
+            if self._workflow_runs[oldest_id].get("state") in {"queued", "running"}:
+                break
+            self._workflow_runs.pop(oldest_id, None)
+            self._workflow_run_tasks.pop(oldest_id, None)
+        task = asyncio.create_task(self._run_saved_workflow(settings, plan, state))
+        self._workflow_run_tasks[job_id] = task
+        return self._workflow_run_public(state)
+
+    async def _run_saved_workflow(
+        self,
+        settings: ModalSettings,
+        plan: dict[str, Any],
+        state: dict[str, Any],
+    ) -> None:
+        job_id = str(state["job_id"])
+        try:
+            source_path = Path(plan["workflow_files"][0]["source_path"])
+            state.update(
+                state="running",
+                phase="loading",
+                message="로컬 워크플로우 JSON을 읽고 있습니다.",
+            )
+            workflow = await asyncio.to_thread(
+                lambda: json.loads(source_path.read_text(encoding="utf-8"))
+            )
+            if not isinstance(workflow, dict) or not workflow:
+                raise ValueError("워크플로우 JSON 객체가 비어 있습니다.")
+            if not self._is_api_workflow(workflow):
+                state.update(
+                    phase="converting",
+                    message="원격 ComfyUI에서 워크플로우를 API 형식으로 변환하고 있습니다.",
+                )
+                workflow = await self._run_client_action(
+                    settings,
+                    "convert_workflow",
+                    timeout=960,
+                    workflow=workflow,
+                    timeout_seconds=900,
+                )
+            state.update(
+                phase="generating",
+                message="LoRA와 입력 이미지를 동기화하고 L4에서 실행하고 있습니다.",
+            )
+            image_bytes, metadata = await self.generate(workflow)
+            state.update(
+                state="completed",
+                phase="completed",
+                message="Modal 워크플로우 실행이 완료되었습니다.",
+                completed_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                prompt_id=metadata.get("prompt_id"),
+                content_type=metadata.get("content_type") or "image/png",
+                lora_sync=metadata.get("lora_sync") or {},
+                result_available=True,
+                image_bytes=image_bytes,
+            )
+            print(
+                f"[MODAL] 관리 탭 워크플로우 완료: job_id={job_id}, "
+                f"workflow_id={state.get('workflow_id')}, bytes={len(image_bytes)}"
+            )
+        except Exception as exc:
+            print(
+                f"[MODAL] 관리 탭 워크플로우 실패: job_id={job_id}, "
+                f"workflow_id={state.get('workflow_id')}, "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            state.update(
+                state="failed",
+                phase="failed",
+                message=f"Modal 워크플로우 실패: {type(exc).__name__}: {exc}",
+                completed_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                result_available=False,
+            )
+
+    def workflow_run_status(self, job_id: str) -> dict[str, Any]:
+        state = self._workflow_runs.get(str(job_id))
+        if state is None:
+            print(f"[MODAL] 워크플로우 실행 상태 없음: job_id={job_id}")
+            raise KeyError("Modal 워크플로우 실행 기록을 찾을 수 없습니다.")
+        return self._workflow_run_public(state)
+
+    def workflow_run_image(self, job_id: str) -> tuple[bytes, str]:
+        state = self._workflow_runs.get(str(job_id))
+        if state is None:
+            print(f"[MODAL] 워크플로우 결과 없음: job_id={job_id}")
+            raise KeyError("Modal 워크플로우 실행 기록을 찾을 수 없습니다.")
+        image_bytes = state.get("image_bytes")
+        if not isinstance(image_bytes, bytes) or not image_bytes:
+            print(
+                f"[MODAL] 워크플로우 결과 이미지 미준비: job_id={job_id}, "
+                f"state={state.get('state')}"
+            )
+            raise RuntimeError("Modal 워크플로우 결과 이미지가 아직 준비되지 않았습니다.")
+        content_type = str(state.get("content_type") or "image/png").split(";", 1)[0].strip()
+        if "/" not in content_type:
+            print(
+                f"[MODAL] 워크플로우 결과 Content-Type 보정: "
+                f"job_id={job_id}, value={content_type!r}"
+            )
+            content_type = "application/octet-stream"
+        return image_bytes, content_type
 
     async def generate(
         self,

@@ -27,6 +27,8 @@ class ModalSettings:
     gpu: str = "L4"
     max_concurrency: int = 2
     monthly_credit_usd: float = 30.0
+    scaledown_window_seconds: int = 15
+    status_refresh_seconds: int = 5
 
     @classmethod
     def from_mapping(cls, config: Mapping[str, Any]) -> "ModalSettings":
@@ -45,6 +47,18 @@ class ModalSettings:
         credit = float(config.get("modal_monthly_credit_usd", 30.0))
         if not math.isfinite(credit) or not 0 < credit <= 100_000:
             raise ValueError("Modal 월간 크레딧은 0보다 큰 유한한 숫자여야 합니다.")
+        raw_scaledown = config.get("modal_scaledown_window_seconds", 15)
+        if isinstance(raw_scaledown, bool):
+            raise ValueError("Modal 유휴 종료 시간은 2~1200초 사이의 정수여야 합니다.")
+        scaledown = int(raw_scaledown)
+        if scaledown != float(raw_scaledown) or not 2 <= scaledown <= 1200:
+            raise ValueError("Modal 유휴 종료 시간은 2~1200초 사이의 정수여야 합니다.")
+        raw_refresh = config.get("modal_status_refresh_seconds", 5)
+        if isinstance(raw_refresh, bool):
+            raise ValueError("Modal 상태 갱신 주기는 2~60초 사이의 정수여야 합니다.")
+        refresh = int(raw_refresh)
+        if refresh != float(raw_refresh) or not 2 <= refresh <= 60:
+            raise ValueError("Modal 상태 갱신 주기는 2~60초 사이의 정수여야 합니다.")
         return cls(
             enabled=enabled,
             profile=_name(config.get("modal_profile"), "Modal 프로필", "soya-comfy"),
@@ -57,6 +71,8 @@ class ModalSettings:
             gpu=gpu,
             max_concurrency=concurrency,
             monthly_credit_usd=credit,
+            scaledown_window_seconds=scaledown,
+            status_refresh_seconds=refresh,
         )
 
     def public_dict(self) -> dict[str, Any]:
@@ -68,6 +84,8 @@ class ModalSettings:
             "gpu": self.gpu,
             "max_concurrency": self.max_concurrency,
             "monthly_credit_usd": self.monthly_credit_usd,
+            "scaledown_window_seconds": self.scaledown_window_seconds,
+            "status_refresh_seconds": self.status_refresh_seconds,
             "volume_names": {
                 "models": f"{self.deployment_name}-models",
                 "loras": f"{self.deployment_name}-loras",

@@ -78,6 +78,51 @@ def test_runtime_has_task_allocation_tab_next_to_second_instance() -> None:
     assert 'id="comfy-allocation-list"' in FRONTEND
 
 
+def test_runtime_has_managed_modal_tab_lifecycle_and_workflow_controls() -> None:
+    allocation = FRONTEND.index('id="comfy-runtime-tab-allocation"')
+    modal = FRONTEND.index('id="comfy-runtime-tab-modal"')
+
+    assert allocation < modal
+    for value in (
+        'id="comfy-modal-runtime-panel"',
+        'id="modal-runtime-scaledown-window"',
+        'id="modal-runtime-max-concurrency"',
+        'id="modal-runtime-status-refresh"',
+        'id="modal-runtime-workflow-select"',
+        'id="modal-runtime-run-btn"',
+        'id="modal-runtime-result-image"',
+        'id="modal-runtime-enabled-status"',
+        'id="modal-runtime-metered-cost"',
+        'id="modal-runtime-adjustments"',
+        'id="modal-runtime-billed-cost"',
+        'id="modal-runtime-credit-remaining"',
+        "/api/modal/status?runtime=1",
+        "/api/modal/billing?refresh=1",
+        "/api/modal/workflow/run",
+        "/api/modal/probe",
+    ):
+        assert value in FRONTEND
+
+    assert 'id="modal-runtime-enabled"' not in FRONTEND
+    assert "modalRuntimeSetEnabled" not in FRONTEND
+    assert "외부 API 설정에서만 변경할 수 있습니다." in FRONTEND
+    assert "60초 캐시" in FRONTEND
+
+
+def test_modal_groups_are_last_in_external_api_and_installer_pages() -> None:
+    api_start = FRONTEND.index('id="settings-tab-api"')
+    api_end = FRONTEND.index('id="settings-tab-api_route"')
+    api_html = FRONTEND[api_start:api_end]
+    assert api_html.rindex('Modal 원격 ComfyUI') > api_html.rindex('챈섭')
+
+    installer_start = FRONTEND.index('id="settings-tab-comfy_install"')
+    installer_end = FRONTEND.index('id="settings-tab-queue"')
+    installer_html = FRONTEND[installer_start:installer_end]
+    assert installer_html.rindex('aria-hidden="true">M</span>') > installer_html.rindex(
+        'aria-hidden="true">06</span>'
+    )
+
+
 def test_runtime_persists_detailed_task_allocations_and_shows_fallback_state() -> None:
     for task_key in (
         "illustration",

@@ -19,6 +19,14 @@ import modal
 SYNC_MANIFEST_PATH = "/.soya-sync-manifest.json"
 
 
+def _remote_function(payload: dict, function_name: str) -> modal.Function:
+    return modal.Function.from_name(
+        str(payload["app_name"]),
+        function_name,
+        environment_name=str(payload["environment"]),
+    )
+
+
 def _read_payload() -> dict:
     payload = json.load(sys.stdin)
     if not isinstance(payload, dict):
@@ -148,6 +156,81 @@ def generate(payload: dict) -> dict:
     return {"prompt_id": remote_result.get("prompt_id"), "outputs": outputs, "lora_sync": sync}
 
 
+def convert_workflow(payload: dict) -> dict:
+    worker_cls = modal.Cls.from_name(
+        str(payload["app_name"]),
+        "ComfyWorker",
+        environment_name=str(payload["environment"]),
+    )
+    timeout_seconds = max(30, min(int(payload.get("timeout_seconds") or 600), 900))
+    call = worker_cls().convert.spawn(payload["workflow"])
+    try:
+        return call.get(timeout=timeout_seconds)
+    except Exception:
+        try:
+            call.cancel()
+        except Exception as cancel_exc:
+            print(
+                f"[MODAL_CLIENT] 실패한 워크플로우 변환 호출 취소도 실패: "
+                f"{type(cancel_exc).__name__}: {cancel_exc}",
+                file=sys.stderr,
+            )
+            traceback.print_exc(file=sys.stderr)
+        raise
+
+
+def update_autoscaler(payload: dict) -> dict:
+    max_containers = int(payload["max_containers"])
+    scaledown_window = int(payload["scaledown_window_seconds"])
+    if not 1 <= max_containers <= 10:
+        raise ValueError("Modal 최대 컨테이너 수는 1~10 사이여야 합니다.")
+    if not 2 <= scaledown_window <= 1200:
+        raise ValueError("Modal 유휴 종료 시간은 2~1200초 사이여야 합니다.")
+    updated = []
+    for function_name in ("gpu_probe", "ComfyWorker.convert", "ComfyWorker.generate"):
+        function = _remote_function(payload, function_name)
+        function.update_autoscaler(
+            min_containers=0,
+            max_containers=max_containers,
+            scaledown_window=scaledown_window,
+        )
+        updated.append(function_name)
+    return {
+        "updated": updated,
+        "min_containers": 0,
+        "max_containers": max_containers,
+        "scaledown_window_seconds": scaledown_window,
+    }
+
+
+def runtime_stats(payload: dict) -> dict:
+    stats = _remote_function(payload, "ComfyWorker.generate").get_current_stats()
+    return {
+        "backlog": int(stats.backlog),
+        "num_total_runners": int(stats.num_total_runners),
+        "num_running_inputs": int(stats.num_running_inputs),
+        "input_headroom": int(stats.input_headroom),
+    }
+
+
+def gpu_probe(payload: dict) -> dict:
+    probe = _remote_function(payload, "gpu_probe")
+    call = probe.spawn()
+    try:
+        return call.get(timeout=900)
+    except Exception:
+        try:
+            call.cancel()
+        except Exception as cancel_exc:
+            print(
+                f"[MODAL_CLIENT] 실패한 L4 연결 테스트 호출 취소도 실패: "
+                f"{type(cancel_exc).__name__}: {cancel_exc}",
+                file=sys.stderr,
+            )
+            traceback.print_exc(file=sys.stderr)
+        raise
+
+
 def delete_lora_prefix(payload: dict) -> dict:
     app_name = str(payload["app_name"])
     environment = str(payload["environment"])
@@ -178,6 +261,14 @@ def main() -> int:
             result = install(payload)
         elif action == "generate":
             result = generate(payload)
+        elif action == "convert_workflow":
+            result = convert_workflow(payload)
+        elif action == "update_autoscaler":
+            result = update_autoscaler(payload)
+        elif action == "runtime_stats":
+            result = runtime_stats(payload)
+        elif action == "gpu_probe":
+            result = gpu_probe(payload)
         elif action == "delete_lora_prefix":
             result = delete_lora_prefix(payload)
         else:

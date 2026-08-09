@@ -18,6 +18,11 @@ import modal
 
 APP_NAME = os.environ.get("SOYA_MODAL_APP_NAME", "soya-comfy-worker")
 MAX_CONTAINERS = int(os.environ.get("SOYA_MODAL_MAX_CONTAINERS", "2"))
+SCALEDOWN_WINDOW_SECONDS = int(os.environ.get("SOYA_MODAL_SCALEDOWN_WINDOW", "15"))
+if not 1 <= MAX_CONTAINERS <= 10:
+    raise ValueError("SOYA_MODAL_MAX_CONTAINERS는 1~10 사이여야 합니다.")
+if not 2 <= SCALEDOWN_WINDOW_SECONDS <= 1200:
+    raise ValueError("SOYA_MODAL_SCALEDOWN_WINDOW는 2~1200초 사이여야 합니다.")
 MANIFEST_LOCAL = Path(__file__).parents[1] / "comfy_installer" / "resources" / "install_manifest.json"
 IMAGE_INSTALL_LOCAL = Path(__file__).with_name("image_install.py")
 COMFY_REF = "64b8457f55cd7fb54ca7a956d9c73b505e903e0c"
@@ -114,7 +119,7 @@ def install_models(model_ids: list[str], civitai_key: str = "") -> dict:
     memory=16_384,
     min_containers=0,
     max_containers=MAX_CONTAINERS,
-    scaledown_window=15,
+    scaledown_window=SCALEDOWN_WINDOW_SECONDS,
     timeout=3_600,
     volumes={
         "/models": models_volume,
@@ -166,7 +171,7 @@ def _write_extra_model_paths() -> Path:
     memory=16_384,
     min_containers=0,
     max_containers=MAX_CONTAINERS,
-    scaledown_window=15,
+    scaledown_window=SCALEDOWN_WINDOW_SECONDS,
     timeout=3_600,
     startup_timeout=600,
     volumes={
@@ -212,6 +217,28 @@ class ComfyWorker:
                 last_error = f"{type(exc).__name__}: {exc}"
             time.sleep(1)
         raise TimeoutError(f"ComfyUI 시작 제한 시간 초과: last_error={last_error}")
+
+    @modal.method()
+    def convert(self, workflow: dict) -> dict:
+        import requests
+
+        if not isinstance(workflow, dict) or not workflow:
+            raise ValueError("변환할 ComfyUI workflow JSON 객체가 필요합니다.")
+        response = requests.post(
+            "http://127.0.0.1:8188/workflow/convert",
+            json=workflow,
+            timeout=120,
+        )
+        response.raise_for_status()
+        converted = response.json()
+        if not isinstance(converted, dict) or not converted:
+            raise RuntimeError("ComfyUI 워크플로우 변환 결과가 비어 있습니다.")
+        if not any(
+            isinstance(node, dict) and "class_type" in node
+            for node in converted.values()
+        ):
+            raise RuntimeError("ComfyUI 워크플로우가 API 형식으로 변환되지 않았습니다.")
+        return converted
 
     @modal.method()
     def generate(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 
 import pytest
@@ -22,6 +23,8 @@ def test_modal_defaults_are_scale_to_zero_and_l4_budgeted() -> None:
 
     assert settings.gpu == "L4"
     assert settings.max_concurrency == 2
+    assert settings.scaledown_window_seconds == 15
+    assert settings.status_refresh_seconds == 5
     assert cost["assumptions"]["min_containers"] == 0
     assert cost["assumptions"]["scaledown_window_seconds"] == 15
     assert cost["l4_gpu_per_hour"] == pytest.approx(0.7992)
@@ -36,6 +39,10 @@ def test_modal_defaults_are_scale_to_zero_and_l4_budgeted() -> None:
         {"modal_max_concurrency": 11},
         {"modal_profile": "bad profile"},
         {"modal_environment": "a" * 64},
+        {"modal_scaledown_window_seconds": 1},
+        {"modal_scaledown_window_seconds": 1201},
+        {"modal_status_refresh_seconds": 1},
+        {"modal_status_refresh_seconds": 61},
     ],
 )
 def test_modal_settings_reject_invalid_values(config: dict) -> None:
@@ -111,6 +118,93 @@ async def test_disabled_modal_does_not_create_delete_outbox(tmp_path: Path) -> N
     assert not (tmp_path / "modal_lora_delete_outbox.json").exists()
 
 
+@pytest.mark.asyncio
+async def test_disabled_modal_status_skips_all_remote_account_and_billing_checks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = ModalService(tmp_path, lambda: {"modal_enabled": False})
+
+    async def unexpected_account_check(_settings: ModalSettings) -> bool:
+        raise AssertionError("Modal OFF 상태에서는 계정 CLI를 실행하면 안 됩니다.")
+
+    async def unexpected_billing(*_args, **_kwargs) -> dict:
+        raise AssertionError("Modal OFF 상태에서는 청구 API를 실행하면 안 됩니다.")
+
+    monkeypatch.setattr(service, "account_connected", unexpected_account_check)
+    monkeypatch.setattr(service, "_billing_for_settings", unexpected_billing)
+
+    status = await service.status(include_runtime=True)
+
+    assert status["connected"] is False
+    assert status["connection_checked"] is False
+    assert status["runtime"] == {"available": False, "reason": "disabled"}
+    assert status["billing"]["available"] is False
+    assert status["billing"]["reason"] == "disabled"
+    assert status["billing"]["cache_seconds"] == 60
+    with pytest.raises(RuntimeError, match="Modal 사용을 먼저 켜고 저장"):
+        await service.billing(force_refresh=True)
+
+
+@pytest.mark.asyncio
+async def test_modal_billing_uses_sixty_second_cache_and_force_refresh(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = ModalService(
+        tmp_path,
+        lambda: {
+            "modal_enabled": True,
+            "modal_monthly_credit_usd": 30,
+        },
+    )
+    billing_calls = 0
+
+    async def connected(_settings: ModalSettings) -> bool:
+        return True
+
+    async def run_command(args: list[str], **_kwargs) -> tuple[int, str, str]:
+        nonlocal billing_calls
+        assert args[-3:] == ["billing", "summary", "--json"]
+        billing_calls += 1
+        return (
+            0,
+            json.dumps(
+                {
+                    "metered_cost": "7.5",
+                    "billed_cost": "4.0",
+                    "adjustments": {
+                        "plan_credits": "-3.25",
+                        "free_volume_discount": "-0.25",
+                    },
+                    "metered_cost_breakdown": {
+                        "gpu": "7.25",
+                        "memory": "0.25",
+                    },
+                }
+            ),
+            "",
+        )
+
+    monkeypatch.setattr(service, "account_connected", connected)
+    monkeypatch.setattr(service, "_run_command", run_command)
+
+    first = await service.billing()
+    second = await service.billing()
+    forced = await service.billing(force_refresh=True)
+
+    assert billing_calls == 2
+    assert first["cached"] is False
+    assert second["cached"] is True
+    assert second["cache_seconds"] == 60
+    assert forced["cached"] is False
+    assert first["summary"]["metered_cost"] == "7.5"
+    assert first["summary"]["adjustment_total"] == "-3.50"
+    assert first["summary"]["billed_cost"] == "4.0"
+    assert first["summary"]["configured_credit"] == "30.0"
+    assert first["summary"]["remaining_credit_estimate"] == "22.5"
+
+
 def test_modal_enabled_routes_illustrations_away_from_local_gpu() -> None:
     manager = QueueManager()
     manager.get_config = lambda: {
@@ -169,3 +263,72 @@ async def test_modal_workers_run_two_illustrations_in_parallel() -> None:
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_managed_workflow_run_tracks_result_without_local_comfy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workflow = tmp_path / "workflow-api.json"
+    workflow.write_text(
+        json.dumps(
+            {
+                "nodes": [{"id": 1, "type": "EmptyLatentImage"}],
+                "links": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    config = {
+        "modal_enabled": True,
+        "modal_max_concurrency": 2,
+        "comfy_workflow_source_path": str(workflow),
+    }
+    service = ModalService(PROJECT_ROOT, lambda: config)
+
+    async def connected(_settings: ModalSettings) -> bool:
+        return True
+
+    converted = {
+        "1": {
+            "class_type": "EmptyLatentImage",
+            "inputs": {"width": 64, "height": 64, "batch_size": 1},
+        }
+    }
+
+    async def client_action(
+        _settings: ModalSettings,
+        action: str,
+        *,
+        timeout: float,
+        **payload,
+    ) -> dict:
+        assert action == "convert_workflow"
+        assert timeout == 960
+        assert payload["workflow"]["nodes"][0]["type"] == "EmptyLatentImage"
+        return converted
+
+    async def generated(actual_workflow: dict, *, timeout_seconds: int = 3300):
+        assert timeout_seconds == 3300
+        assert actual_workflow == converted
+        return b"png", {
+            "prompt_id": "prompt-1",
+            "content_type": "image/png",
+            "lora_sync": {"uploaded": 0},
+        }
+
+    monkeypatch.setattr(service, "account_connected", connected)
+    monkeypatch.setattr(service, "_run_client_action", client_action)
+    monkeypatch.setattr(service, "generate", generated)
+
+    state = await service.start_workflow_run("comfy_workflow_source_path")
+    await service._workflow_run_tasks[state["job_id"]]
+
+    completed = service.workflow_run_status(state["job_id"])
+    image, content_type = service.workflow_run_image(state["job_id"])
+    assert completed["state"] == "completed"
+    assert completed["result_available"] is True
+    assert "image_bytes" not in completed
+    assert image == b"png"
+    assert content_type == "image/png"
