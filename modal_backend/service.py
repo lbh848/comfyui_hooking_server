@@ -726,6 +726,60 @@ class ModalService:
             "backlog": backlog,
         }
 
+    async def web_url(self) -> dict[str, Any]:
+        """Modal ComfyUI 웹 UI 공개 URL을 조회한다.
+
+        comfy_web_server 함수(@modal.web_server)의 공개 HTTPS URL을 반환.
+        enabled/계정 연결 게이트를 거치고, 미배포(또는 웹 엔드포인트 아님)면
+        reason="app_not_deployed" 로 내려보내 프론트가 설치 유도 메시지를 보여주게 한다.
+        """
+        settings = ModalSettings.from_mapping(self.get_config())
+        if not settings.enabled:
+            print("[MODAL] 웹 URL 조회 생략: Modal 사용 설정이 OFF입니다.")
+            return {"available": False, "reason": "disabled"}
+        if not await self.account_connected(settings):
+            print(
+                "[MODAL] 웹 URL 조회 생략: Modal 계정이 연결되지 않았습니다. "
+                f"profile={settings.profile}"
+            )
+            return {"available": False, "reason": "account_not_connected"}
+        try:
+            result = await self._run_client_action(
+                settings,
+                "web_url",
+                timeout=30,
+            )
+        except ModalClientActionError as exc:
+            print(
+                f"[MODAL] 웹 URL 조회 실패: app={settings.deployment_name}, "
+                f"reason={exc.reason}, error_type={exc.error_type}, error={exc}"
+            )
+            traceback.print_exc()
+            return {
+                "available": False,
+                "reason": exc.reason,
+                "error": str(exc),
+            }
+        except Exception as exc:
+            print(
+                f"[MODAL] 웹 URL 조회 예외: app={settings.deployment_name}, "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            return {
+                "available": False,
+                "reason": "runtime_unavailable",
+                "error": str(exc),
+            }
+        url = str(result.get("url") or "")
+        if not url:
+            print(
+                f"[MODAL] 웹 URL 미배포: app={settings.deployment_name} "
+                f"(comfy_web_server 웹 엔드포인트 없음)"
+            )
+            return {"available": False, "reason": "app_not_deployed"}
+        return {"available": True, "url": url}
+
     async def start_auth(self, profile: str) -> dict[str, Any]:
         settings = ModalSettings.from_mapping({"modal_profile": profile})
         if self._auth_task and not self._auth_task.done():
@@ -846,6 +900,158 @@ class ModalService:
                 f"failed={len(errors)}, names={[item['name'] for item in errors]}"
             )
         return {"workflows": result, "errors": errors}
+
+    async def remote_workflows(self) -> dict[str, Any]:
+        """로컬 SOYA_USER 목록을 원격 workflows Volume의 실제 파일과 비교한다."""
+
+        settings = ModalSettings.from_mapping(self.get_config())
+        if not settings.enabled:
+            print("[MODAL] 원격 워크플로우 조회 실패: Modal이 비활성화되어 있습니다.")
+            raise RuntimeError("Modal 사용을 켜고 설정을 저장하세요.")
+        if not await self.account_connected(settings):
+            print(
+                "[MODAL] 원격 워크플로우 조회 실패: "
+                f"Modal 계정이 연결되지 않았습니다. profile={settings.profile}"
+            )
+            raise RuntimeError("Modal 계정을 먼저 연결하세요.")
+
+        local_payload, remote_payload = await asyncio.gather(
+            asyncio.to_thread(self.workflows),
+            self._run_client_action(
+                settings,
+                "list_workflows",
+                timeout=120,
+            ),
+        )
+        remote_items = remote_payload.get("workflows")
+        if not isinstance(remote_items, list):
+            print(
+                "[MODAL] 원격 워크플로우 조회 결과 형식 오류: "
+                f"type={type(remote_items).__name__}"
+            )
+            raise RuntimeError("Modal 원격 워크플로우 목록 형식이 올바르지 않습니다.")
+
+        remote_by_name: dict[str, dict[str, Any]] = {}
+        for item in remote_items:
+            if not isinstance(item, Mapping):
+                print(
+                    "[MODAL] 원격 워크플로우 항목 형식 오류로 제외: "
+                    f"type={type(item).__name__}, value={item!r}"
+                )
+                continue
+            name = str(item.get("name") or "")
+            if not name:
+                print(f"[MODAL] 이름 없는 원격 워크플로우 항목 제외: {item!r}")
+                continue
+            remote_by_name[name] = dict(item)
+
+        local_paths = {
+            str(item["name"]): Path(str(item["source_path"]))
+            for item in list_soya_user_workflows(self.project_root)
+        }
+        compared: list[dict[str, Any]] = []
+        for local in local_payload["workflows"]:
+            item = dict(local)
+            source_path = local_paths.get(str(item.get("id") or ""))
+            if source_path is None:
+                print(
+                    "[MODAL] 원격 비교 중 로컬 SOYA_USER 경로를 다시 찾지 못했습니다: "
+                    f"workflow={item.get('id')!r}"
+                )
+                raise FileNotFoundError(
+                    f"로컬 SOYA_USER 워크플로우 경로를 찾을 수 없습니다: {item.get('id')}"
+                )
+            try:
+                local_sha256 = await asyncio.to_thread(self._sha256_file, source_path)
+            except Exception as exc:
+                print(
+                    "[MODAL] 로컬 워크플로우 해시 계산 실패: "
+                    f"path={source_path}, error={type(exc).__name__}: {exc}"
+                )
+                traceback.print_exc()
+                raise
+            remote = remote_by_name.get(str(item["id"]))
+            item["local_sha256"] = local_sha256
+            if remote is None:
+                item.update(
+                    remote_exists=False,
+                    remote_available=False,
+                    remote_sha256="",
+                    remote_size=0,
+                    sync_state="missing",
+                )
+            elif remote.get("valid") is not True:
+                item.update(
+                    remote_exists=True,
+                    remote_available=False,
+                    remote_sha256=str(remote.get("sha256") or ""),
+                    remote_size=max(0, int(remote.get("size") or 0)),
+                    remote_error=str(remote.get("error") or "원격 JSON 검증 실패"),
+                    sync_state="invalid",
+                )
+            else:
+                remote_sha256 = str(remote.get("sha256") or "")
+                item.update(
+                    remote_exists=True,
+                    remote_available=True,
+                    remote_sha256=remote_sha256,
+                    remote_size=max(0, int(remote.get("size") or 0)),
+                    remote_mtime=int(remote.get("mtime") or 0),
+                    sync_state=(
+                        "synced" if remote_sha256 == local_sha256 else "different"
+                    ),
+                )
+            compared.append(item)
+
+        counts = {
+            state: sum(1 for item in compared if item.get("sync_state") == state)
+            for state in ("synced", "different", "missing", "invalid")
+        }
+        print(
+            "[MODAL] 원격 워크플로우 조회 완료: "
+            f"local={len(compared)}, remote={len(remote_by_name)}, states={counts}"
+        )
+        return {
+            "workflows": compared,
+            "errors": list(local_payload.get("errors") or []),
+            "remote_errors": list(remote_payload.get("errors") or []),
+            "counts": counts,
+            "checked_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        }
+
+    async def _read_remote_workflow(
+        self,
+        settings: ModalSettings,
+        workflow_name: str,
+    ) -> tuple[dict[str, Any], str]:
+        try:
+            result = await self._run_client_action(
+                settings,
+                "read_workflow",
+                timeout=120,
+                workflow_name=workflow_name,
+            )
+        except ModalClientActionError as exc:
+            if exc.error_type == "FileNotFoundError":
+                print(
+                    "[MODAL] 원격에 동기화되지 않은 워크플로우 실행 거부: "
+                    f"workflow={workflow_name}"
+                )
+                raise FileNotFoundError(
+                    f"{workflow_name}은(는) Modal에 동기화되지 않았습니다. "
+                    "원격 조회 후 워크플로우를 먼저 동기화하세요."
+                ) from exc
+            raise
+        workflow = result.get("workflow")
+        if not isinstance(workflow, dict) or not workflow:
+            print(
+                "[MODAL] 원격 워크플로우 읽기 결과 검증 실패: "
+                f"workflow={workflow_name}, type={type(workflow).__name__}"
+            )
+            raise RuntimeError(
+                f"Modal 원격 워크플로우 JSON 객체가 올바르지 않습니다: {workflow_name}"
+            )
+        return workflow, str(result.get("sha256") or "")
 
     @staticmethod
     def _load_workflow_files(workflow_files: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1402,12 +1608,17 @@ class ModalService:
                 f"Modal 워크플로우가 이미 {active_count}개 실행 중입니다. "
                 "완료 후 다시 시도하세요."
             )
+        remote_workflow, remote_sha256 = await self._read_remote_workflow(
+            settings,
+            normalized_id,
+        )
         job_id = uuid.uuid4().hex
         now = datetime.datetime.now(datetime.timezone.utc).isoformat()
         state = {
             "job_id": job_id,
             "workflow_id": normalized_id,
             "source_name": Path(plan["workflow_files"][0]["source_path"]).name,
+            "remote_sha256": remote_sha256,
             "state": "queued",
             "phase": "queued",
             "message": "Modal 워크플로우 실행을 준비하고 있습니다.",
@@ -1424,29 +1635,25 @@ class ModalService:
                 break
             self._workflow_runs.pop(oldest_id, None)
             self._workflow_run_tasks.pop(oldest_id, None)
-        task = asyncio.create_task(self._run_saved_workflow(settings, plan, state))
+        task = asyncio.create_task(
+            self._run_saved_workflow(settings, state, remote_workflow)
+        )
         self._workflow_run_tasks[job_id] = task
         return self._workflow_run_public(state)
 
     async def _run_saved_workflow(
         self,
         settings: ModalSettings,
-        plan: dict[str, Any],
         state: dict[str, Any],
+        workflow: dict[str, Any],
     ) -> None:
         job_id = str(state["job_id"])
         try:
-            source_path = Path(plan["workflow_files"][0]["source_path"])
             state.update(
                 state="running",
                 phase="loading",
-                message="로컬 워크플로우 JSON을 읽고 있습니다.",
+                message="Modal Volume의 원격 워크플로우 JSON을 준비하고 있습니다.",
             )
-            workflow = await asyncio.to_thread(
-                lambda: json.loads(source_path.read_text(encoding="utf-8"))
-            )
-            if not isinstance(workflow, dict) or not workflow:
-                raise ValueError("워크플로우 JSON 객체가 비어 있습니다.")
             if not self._is_api_workflow(workflow):
                 state.update(
                     phase="converting",

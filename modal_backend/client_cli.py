@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import io
 from pathlib import Path, PurePosixPath
@@ -114,7 +115,7 @@ def _read_sync_manifest(
         raw = b"".join(volume.read_file(manifest_path))
         data = json.loads(raw.decode("utf-8"))
         return data if isinstance(data, dict) else {}
-    except modal.exception.NotFoundError:
+    except (FileNotFoundError, modal.exception.NotFoundError):
         return {}
     except Exception as exc:
         print(
@@ -132,6 +133,118 @@ def _safe_remote_path(value: str) -> str:
         print(f"[MODAL_CLIENT] 안전하지 않은 Volume 경로 거부: {value!r}", file=sys.stderr)
         raise ValueError(f"안전하지 않은 Modal Volume 경로입니다: {value!r}")
     return path.as_posix()
+
+
+def _safe_workflow_name(value: str) -> str:
+    raw = str(value or "").strip()
+    path = PurePosixPath(raw.replace("\\", "/"))
+    if (
+        not raw
+        or path.is_absolute()
+        or len(path.parts) != 1
+        or path.name != raw
+        or path.suffix.casefold() != ".json"
+    ):
+        print(
+            f"[MODAL_CLIENT] 안전하지 않은 원격 워크플로우 이름 거부: {value!r}",
+            file=sys.stderr,
+        )
+        raise ValueError(f"원격 워크플로우 이름은 .json 파일명만 허용합니다: {value!r}")
+    return path.name
+
+
+def list_workflows(payload: dict) -> dict:
+    app_name = str(payload["app_name"])
+    environment = str(payload["environment"])
+    volume = modal.Volume.from_name(
+        f"{app_name}-workflows",
+        environment_name=environment,
+    )
+    try:
+        entries = volume.listdir("/", recursive=False)
+    except Exception as exc:
+        print(
+            "[MODAL_CLIENT] 원격 워크플로우 목록 조회 실패: "
+            f"app={app_name}, environment={environment}, "
+            f"error={type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
+        traceback.print_exc(file=sys.stderr)
+        raise
+
+    workflows: list[dict] = []
+    errors: list[dict[str, str]] = []
+    for entry in entries:
+        entry_type = getattr(getattr(entry, "type", None), "name", "")
+        if entry_type and entry_type != "FILE":
+            continue
+        relative = str(getattr(entry, "path", "") or "").replace("\\", "/").lstrip("/")
+        path = PurePosixPath(relative)
+        if len(path.parts) != 1 or path.suffix.casefold() != ".json":
+            continue
+        name = path.name
+        record = {
+            "name": name,
+            "size": max(0, int(getattr(entry, "size", 0) or 0)),
+            "mtime": int(getattr(entry, "mtime", 0) or 0),
+            "valid": False,
+        }
+        try:
+            raw = b"".join(volume.read_file(f"/{name}"))
+            workflow = json.loads(raw.decode("utf-8"))
+            if not isinstance(workflow, dict) or not workflow:
+                raise ValueError("워크플로우 JSON 객체가 비어 있거나 객체가 아닙니다.")
+            record.update(
+                size=len(raw),
+                sha256=hashlib.sha256(raw).hexdigest(),
+                valid=True,
+            )
+        except Exception as exc:
+            print(
+                "[MODAL_CLIENT] 원격 워크플로우 파일 검사 실패: "
+                f"name={name}, error={type(exc).__name__}: {exc}",
+                file=sys.stderr,
+            )
+            traceback.print_exc(file=sys.stderr)
+            record["error"] = f"{type(exc).__name__}: {exc}"
+            errors.append({"name": name, "error": record["error"]})
+        workflows.append(record)
+    workflows.sort(key=lambda item: str(item["name"]).casefold())
+    return {"workflows": workflows, "errors": errors}
+
+
+def read_workflow(payload: dict) -> dict:
+    app_name = str(payload["app_name"])
+    environment = str(payload["environment"])
+    name = _safe_workflow_name(str(payload.get("workflow_name") or ""))
+    volume = modal.Volume.from_name(
+        f"{app_name}-workflows",
+        environment_name=environment,
+    )
+    try:
+        raw = b"".join(volume.read_file(f"/{name}"))
+        workflow = json.loads(raw.decode("utf-8"))
+    except Exception as exc:
+        print(
+            "[MODAL_CLIENT] 원격 워크플로우 읽기 실패: "
+            f"name={name}, error={type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
+        traceback.print_exc(file=sys.stderr)
+        raise
+    if not isinstance(workflow, dict) or not workflow:
+        print(
+            "[MODAL_CLIENT] 원격 워크플로우 JSON 객체가 비어 있습니다: "
+            f"name={name}, type={type(workflow).__name__}",
+            file=sys.stderr,
+        )
+        raise ValueError(f"원격 워크플로우 JSON 객체가 비어 있습니다: {name}")
+    return {
+        "name": name,
+        "size": len(raw),
+        "sha256": hashlib.sha256(raw).hexdigest(),
+        "workflow": workflow,
+    }
 
 
 def _sync_files(
@@ -393,6 +506,17 @@ def gpu_probe(payload: dict) -> dict:
         raise
 
 
+def web_url(payload: dict) -> dict:
+    """ComfyUI 웹 UI 공개 URL을 Modal에서 조회한다.
+
+    comfy_web_server 함수가 아직 배포되지 않았거나 웹 엔드포인트가 아니면
+    get_web_url()이 None 을 반환하거나 NotFoundError 를 일으킨다(후자는
+    _error_reason 이 app_not_deployed 로 매핑).
+    """
+    function = _remote_function(payload, "comfy_web_server")
+    return {"url": function.get_web_url()}
+
+
 def delete_lora_prefix(payload: dict) -> dict:
     app_name = str(payload["app_name"])
     environment = str(payload["environment"])
@@ -421,6 +545,10 @@ def main() -> int:
         action = str(payload.get("action") or "")
         if action == "install":
             result = install(payload)
+        elif action == "list_workflows":
+            result = list_workflows(payload)
+        elif action == "read_workflow":
+            result = read_workflow(payload)
         elif action == "generate":
             result = generate(payload)
         elif action == "convert_workflow":
@@ -431,6 +559,8 @@ def main() -> int:
             result = runtime_stats(payload)
         elif action == "gpu_probe":
             result = gpu_probe(payload)
+        elif action == "web_url":
+            result = web_url(payload)
         elif action == "delete_lora_prefix":
             result = delete_lora_prefix(payload)
         else:

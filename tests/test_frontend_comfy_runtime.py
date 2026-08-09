@@ -90,6 +90,8 @@ def test_runtime_has_managed_modal_tab_lifecycle_and_workflow_controls() -> None
         'id="modal-runtime-max-concurrency"',
         'id="modal-runtime-status-refresh"',
         'id="modal-runtime-workflow-select"',
+        'id="modal-runtime-workflow-query-btn"',
+        'id="modal-runtime-workflow-query-status"',
         'id="modal-runtime-run-btn"',
         'id="modal-runtime-result-image"',
         'id="modal-runtime-enabled-status"',
@@ -100,6 +102,7 @@ def test_runtime_has_managed_modal_tab_lifecycle_and_workflow_controls() -> None
         "/api/modal/status?runtime=1",
         "/api/modal/billing?refresh=1",
         "/api/modal/workflow/run",
+        "/api/modal/workflows/remote",
         "/api/modal/probe",
     ):
         assert value in FRONTEND
@@ -108,6 +111,23 @@ def test_runtime_has_managed_modal_tab_lifecycle_and_workflow_controls() -> None
     assert "modalRuntimeSetEnabled" not in FRONTEND
     assert "외부 API 설정에서만 변경할 수 있습니다." in FRONTEND
     assert "60초 캐시" in FRONTEND
+    assert "modalRuntimeQueryWorkflows" in FRONTEND
+    assert "modalRemoteWorkflowStateText" in FRONTEND
+    assert "item.remote_available !== true" in FRONTEND
+    assert "Modal에 저장된 원격 버전을 실행합니다." in FRONTEND
+
+
+def test_modal_panel_has_web_url_access_button_and_drops_local_debug_shortcut() -> None:
+    for value in (
+        'id="modal-runtime-web-btn"',
+        "modalRuntimeOpenWeb",
+        "/api/modal/web-url",
+        "↗ Modal ComfyUI 접속",
+    ):
+        assert value in FRONTEND
+
+    assert "로컬 실행 탭" not in FRONTEND
+    assert "modalOpenDebugWorkflow" not in FRONTEND
 
 
 def test_modal_group_is_last_in_external_api_page() -> None:
@@ -134,7 +154,7 @@ def test_modal_installer_is_inside_runtime_modal_panel_not_installer_page() -> N
     assert "modalOpenInstaller" not in FRONTEND
 
     assert "name.textContent = item.source_name || item.id;" in FRONTEND
-    assert "option.textContent = item.source_name || item.id;" in FRONTEND
+    assert "option.textContent = `${item.source_name || item.id} · ${modalRemoteWorkflowStateText(item)}`;" in FRONTEND
 
     child_layout_start = FRONTEND.index('.comfy-modal-runtime-panel > *')
     child_layout_end = FRONTEND.index('}', child_layout_start)

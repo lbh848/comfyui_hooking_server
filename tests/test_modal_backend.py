@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -405,6 +407,143 @@ def test_modal_service_workflows_excludes_broken_json_per_file(
     assert payload["errors"][0]["error"]  # 사유 문자열 존재
 
 
+def test_missing_sync_manifest_is_normal_first_sync_state(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    class MissingManifestVolume:
+        def read_file(self, _path: str):
+            raise FileNotFoundError("manifest does not exist")
+
+    assert client_cli._read_sync_manifest(
+        MissingManifestVolume(),
+        client_cli.MODEL_SYNC_MANIFEST_PATH,
+        "모델",
+    ) == {}
+    assert "동기화 명세 읽기 실패" not in capsys.readouterr().err
+
+
+def test_modal_client_lists_and_hashes_only_root_json_workflows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    good = b'{"1":{"class_type":"EmptyLatentImage"}}'
+    broken = b"{not json"
+
+    class FakeVolume:
+        def listdir(self, path: str, *, recursive: bool):
+            assert path == "/"
+            assert recursive is False
+            file_type = SimpleNamespace(name="FILE")
+            directory_type = SimpleNamespace(name="DIRECTORY")
+            return [
+                SimpleNamespace(path="/good.json", type=file_type, size=len(good), mtime=10),
+                SimpleNamespace(path="/broken.json", type=file_type, size=len(broken), mtime=20),
+                SimpleNamespace(path="/nested", type=directory_type, size=0, mtime=0),
+            ]
+
+        def read_file(self, path: str):
+            if path == "/good.json":
+                return [good]
+            if path == "/broken.json":
+                return [broken]
+            raise AssertionError(path)
+
+    monkeypatch.setattr(
+        client_cli.modal.Volume,
+        "from_name",
+        lambda name, environment_name: FakeVolume(),
+    )
+
+    result = client_cli.list_workflows(
+        {"app_name": "test", "environment": "main"}
+    )
+
+    assert [item["name"] for item in result["workflows"]] == [
+        "broken.json",
+        "good.json",
+    ]
+    good_result = next(item for item in result["workflows"] if item["name"] == "good.json")
+    assert good_result["valid"] is True
+    assert good_result["sha256"] == hashlib.sha256(good).hexdigest()
+    broken_result = next(
+        item for item in result["workflows"] if item["name"] == "broken.json"
+    )
+    assert broken_result["valid"] is False
+    assert [item["name"] for item in result["errors"]] == ["broken.json"]
+
+
+@pytest.mark.asyncio
+async def test_remote_workflow_query_compares_local_and_remote_hashes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root, user_root = _modal_test_project(tmp_path)
+    same = user_root / "same.json"
+    changed = user_root / "changed.json"
+    missing = user_root / "missing.json"
+    same.write_text('{"1":{"class_type":"Same"}}', encoding="utf-8")
+    changed.write_text('{"1":{"class_type":"Local"}}', encoding="utf-8")
+    missing.write_text('{"1":{"class_type":"Missing"}}', encoding="utf-8")
+    service = ModalService(project_root, lambda: {"modal_enabled": True})
+
+    async def connected(_settings: ModalSettings) -> bool:
+        return True
+
+    async def client_action(
+        _settings: ModalSettings,
+        action: str,
+        *,
+        timeout: float,
+        **_payload,
+    ) -> dict:
+        assert action == "list_workflows"
+        assert timeout == 120
+        return {
+            "workflows": [
+                {
+                    "name": "same.json",
+                    "sha256": service._sha256_file(same),
+                    "size": same.stat().st_size,
+                    "mtime": 1,
+                    "valid": True,
+                },
+                {
+                    "name": "changed.json",
+                    "sha256": "f" * 64,
+                    "size": 10,
+                    "mtime": 2,
+                    "valid": True,
+                },
+                {
+                    "name": "remote-only.json",
+                    "sha256": "e" * 64,
+                    "size": 10,
+                    "mtime": 3,
+                    "valid": True,
+                },
+            ],
+            "errors": [],
+        }
+
+    monkeypatch.setattr(service, "account_connected", connected)
+    monkeypatch.setattr(service, "_run_client_action", client_action)
+
+    result = await service.remote_workflows()
+    states = {item["id"]: item["sync_state"] for item in result["workflows"]}
+
+    assert states == {
+        "changed.json": "different",
+        "missing.json": "missing",
+        "same.json": "synced",
+    }
+    assert "remote-only.json" not in states
+    assert result["counts"] == {
+        "synced": 1,
+        "different": 1,
+        "missing": 1,
+        "invalid": 0,
+    }
+
+
 def test_workflow_assets_follow_current_local_checkpoint_and_loras(tmp_path: Path) -> None:
     comfy_root = tmp_path / "comfy"
     checkpoint = comfy_root / "models" / "checkpoints" / "custom" / "changed.safetensors"
@@ -561,6 +700,75 @@ def test_modal_install_uploads_local_assets_without_remote_model_installer(
         "모델",
         "LoRA",
     ]
+
+
+def test_modal_install_replaces_workflow_without_reuploading_matching_model(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workflow = tmp_path / "changed.json"
+    model = tmp_path / "same.safetensors"
+    workflow.write_text('{"1":{"class_type":"Changed"}}', encoding="utf-8")
+    model.write_bytes(b"same-model")
+    expected = {"sha256": "a" * 64, "size": model.stat().st_size}
+
+    class FakeBatch:
+        def __init__(self, uploads: list[tuple[object, str]]) -> None:
+            self.uploads = uploads
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args) -> None:
+            return None
+
+        def put_file(self, source, remote_path: str) -> None:
+            self.uploads.append((source, remote_path))
+
+    class FakeVolume:
+        def __init__(self, manifest: dict | None = None) -> None:
+            self.manifest = manifest or {}
+            self.uploads: list[tuple[object, str]] = []
+
+        def read_file(self, _path: str):
+            return [json.dumps(self.manifest).encode("utf-8")]
+
+        def batch_upload(self, *, force: bool):
+            assert force is True
+            return FakeBatch(self.uploads)
+
+    volumes = {
+        "test-workflows": FakeVolume(),
+        "test-models": FakeVolume({"checkpoints/same.safetensors": expected}),
+        "test-loras": FakeVolume(),
+    }
+    monkeypatch.setattr(
+        client_cli.modal.Volume,
+        "from_name",
+        lambda name, environment_name: volumes[name],
+    )
+
+    result = client_cli.install(
+        {
+            "app_name": "test",
+            "environment": "main",
+            "workflow_files": [
+                {"source_path": str(workflow), "remote_name": workflow.name}
+            ],
+            "model_files": [
+                {
+                    "source_path": str(model),
+                    "remote_path": "checkpoints/same.safetensors",
+                    **expected,
+                }
+            ],
+            "lora_files": [],
+        }
+    )
+
+    assert result["model_sync"] == {"uploaded": 0, "skipped": 1}
+    assert volumes["test-models"].uploads == []
+    assert (str(workflow), f"/{workflow.name}") in volumes["test-workflows"].uploads
 
 
 @pytest.mark.asyncio
@@ -969,6 +1177,162 @@ async def test_modal_worker_status_reports_deploying_instead_of_not_found(
 
 
 @pytest.mark.asyncio
+async def test_modal_web_url_returns_public_url_when_deployed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = ModalService(tmp_path, lambda: {"modal_enabled": True, "modal_gpu": "L4"})
+    observed: dict = {}
+
+    async def connected(_settings: ModalSettings) -> bool:
+        return True
+
+    async def client_action(
+        settings: ModalSettings,
+        action: str,
+        *,
+        timeout: float,
+        **_payload,
+    ) -> dict:
+        observed.update({"action": action, "timeout": timeout})
+        return {"url": "https://workspace--soya-comfy-worker-comfy-web-server.modal.run"}
+
+    monkeypatch.setattr(service, "account_connected", connected)
+    monkeypatch.setattr(service, "_run_client_action", client_action)
+
+    result = await service.web_url()
+
+    assert observed == {"action": "web_url", "timeout": 30}
+    assert result == {
+        "available": True,
+        "url": "https://workspace--soya-comfy-worker-comfy-web-server.modal.run",
+    }
+
+
+@pytest.mark.asyncio
+async def test_modal_web_url_reports_app_not_deployed_when_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = ModalService(tmp_path, lambda: {"modal_enabled": True, "modal_gpu": "L4"})
+
+    async def connected(_settings: ModalSettings) -> bool:
+        return True
+
+    async def not_deployed(*_args, **_kwargs) -> dict:
+        raise ModalClientActionError(
+            "comfy_web_server not found",
+            reason="app_not_deployed",
+            error_type="NotFoundError",
+        )
+
+    monkeypatch.setattr(service, "account_connected", connected)
+    monkeypatch.setattr(service, "_run_client_action", not_deployed)
+
+    result = await service.web_url()
+
+    assert result["available"] is False
+    assert result["reason"] == "app_not_deployed"
+    assert "comfy_web_server not found" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_modal_web_url_treats_none_url_as_not_deployed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = ModalService(tmp_path, lambda: {"modal_enabled": True, "modal_gpu": "L4"})
+
+    async def connected(_settings: ModalSettings) -> bool:
+        return True
+
+    async def returns_none(*_args, **_kwargs) -> dict:
+        return {"url": None}
+
+    monkeypatch.setattr(service, "account_connected", connected)
+    monkeypatch.setattr(service, "_run_client_action", returns_none)
+
+    result = await service.web_url()
+
+    assert result == {"available": False, "reason": "app_not_deployed"}
+
+
+@pytest.mark.asyncio
+async def test_modal_web_url_skips_remote_lookup_when_disabled(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = ModalService(tmp_path, lambda: {"modal_enabled": False})
+
+    async def unexpected_client_action(*_args, **_kwargs) -> dict:
+        raise AssertionError("Modal OFF 상태에서는 웹 URL 원격 조회를 하면 안 됩니다.")
+
+    monkeypatch.setattr(service, "_run_client_action", unexpected_client_action)
+
+    result = await service.web_url()
+
+    assert result == {"available": False, "reason": "disabled"}
+
+
+@pytest.mark.asyncio
+async def test_modal_web_url_requires_account_connection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = ModalService(tmp_path, lambda: {"modal_enabled": True, "modal_gpu": "L4"})
+
+    async def disconnected(_settings: ModalSettings) -> bool:
+        return False
+
+    async def unexpected_client_action(*_args, **_kwargs) -> dict:
+        raise AssertionError("계정 미연결 상태에서는 웹 URL 원격 조회를 하면 안 됩니다.")
+
+    monkeypatch.setattr(service, "account_connected", disconnected)
+    monkeypatch.setattr(service, "_run_client_action", unexpected_client_action)
+
+    result = await service.web_url()
+
+    assert result == {"available": False, "reason": "account_not_connected"}
+
+
+@pytest.mark.asyncio
+async def test_modal_client_web_url_action_reads_comfy_web_server_url(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = {
+        "action": "web_url",
+        "app_name": "soya-comfy-worker",
+        "environment": "main",
+    }
+    captured: dict = {}
+
+    class FakeFunction:
+        def get_web_url(self) -> str | None:
+            return "https://workspace--soya-comfy-worker-comfy-web-server.modal.run"
+
+    def from_name(app_name: str, function_name: str, *, environment_name: str):
+        captured.update(
+            {"app_name": app_name, "function_name": function_name, "env": environment_name}
+        )
+        assert function_name == "comfy_web_server"
+        return FakeFunction()
+
+    monkeypatch.setattr(client_cli.modal.Function, "from_name", from_name)
+
+    result = client_cli.web_url(payload)
+
+    assert captured == {
+        "app_name": "soya-comfy-worker",
+        "function_name": "comfy_web_server",
+        "env": "main",
+    }
+    assert result == {
+        "url": "https://workspace--soya-comfy-worker-comfy-web-server.modal.run"
+    }
+
+
+@pytest.mark.asyncio
 async def test_modal_billing_uses_sixty_second_cache_and_force_refresh(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1212,6 +1576,11 @@ async def test_managed_workflow_run_tracks_result_without_local_comfy(
             "inputs": {"width": 64, "height": 64, "batch_size": 1},
         }
     }
+    remote_workflow = {
+        "nodes": [{"id": 7, "type": "RemoteOnlyNode"}],
+        "links": [],
+    }
+    actions: list[str] = []
 
     async def client_action(
         _settings: ModalSettings,
@@ -1220,9 +1589,18 @@ async def test_managed_workflow_run_tracks_result_without_local_comfy(
         timeout: float,
         **payload,
     ) -> dict:
+        actions.append(action)
+        if action == "read_workflow":
+            assert timeout == 120
+            assert payload["workflow_name"] == workflow.name
+            return {
+                "name": workflow.name,
+                "sha256": "a" * 64,
+                "workflow": remote_workflow,
+            }
         assert action == "convert_workflow"
         assert timeout == 960
-        assert payload["workflow"]["nodes"][0]["type"] == "EmptyLatentImage"
+        assert payload["workflow"] == remote_workflow
         assert payload["model_files"] == []
         assert payload["lora_files"] == []
         return converted
@@ -1248,8 +1626,37 @@ async def test_managed_workflow_run_tracks_result_without_local_comfy(
     completed = service.workflow_run_status(state["job_id"])
     image, content_type = service.workflow_run_image(state["job_id"])
     assert completed["state"] == "completed"
+    assert completed["remote_sha256"] == "a" * 64
     assert completed["result_available"] is True
     assert completed["model_sync"] == {"uploaded": 0}
     assert "image_bytes" not in completed
     assert image == b"png"
     assert content_type == "image/png"
+    assert actions == ["read_workflow", "convert_workflow"]
+
+
+@pytest.mark.asyncio
+async def test_managed_workflow_run_rejects_missing_remote_workflow(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root, user_root = _modal_test_project(tmp_path)
+    workflow = user_root / "local-only.json"
+    workflow.write_text('{"1":{"class_type":"EmptyLatentImage"}}', encoding="utf-8")
+    service = ModalService(project_root, lambda: {"modal_enabled": True})
+
+    async def connected(_settings: ModalSettings) -> bool:
+        return True
+
+    async def missing_remote(*_args, **_kwargs) -> dict:
+        raise ModalClientActionError(
+            "FileNotFoundError: missing",
+            reason="runtime_unavailable",
+            error_type="FileNotFoundError",
+        )
+
+    monkeypatch.setattr(service, "account_connected", connected)
+    monkeypatch.setattr(service, "_run_client_action", missing_remote)
+
+    with pytest.raises(FileNotFoundError, match="동기화되지 않았습니다"):
+        await service.start_workflow_run(workflow.name)

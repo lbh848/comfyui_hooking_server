@@ -17679,6 +17679,7 @@
                                 <button type="button" class="comfy-runtime-btn start" onclick="modalRuntimeSaveAndApply()">설정 저장·적용</button>
                                 <button type="button" class="comfy-runtime-btn" onclick="modalRuntimeRefresh(true)">상태 새로고침</button>
                                 <button type="button" class="comfy-runtime-btn connect" id="modal-runtime-probe-btn" onclick="modalRuntimeStartProbe()">L4 연결 테스트</button>
+                                <button type="button" class="comfy-runtime-btn connect" id="modal-runtime-web-btn" onclick="modalRuntimeOpenWeb()" title="Modal ComfyUI 웹 UI를 새 탭으로 엽니다. 접속 중 L4 컨테이너가 과금됩니다.">↗ Modal ComfyUI 접속</button>
                                 <button type="button" class="comfy-runtime-btn" onclick="modalOpenExternalSettings()">계정 설정</button>
                             </div>
 
@@ -17695,10 +17696,11 @@
                                         </select>
                                     </label>
                                     <div class="comfy-modal-runtime-card-actions">
+                                        <button type="button" class="comfy-runtime-btn" id="modal-runtime-workflow-query-btn" onclick="modalRuntimeQueryWorkflows()">원격 조회</button>
                                         <button type="button" class="comfy-runtime-btn start" id="modal-runtime-run-btn" onclick="modalRuntimeRunWorkflow()">▶ Modal에서 실행</button>
-                                        <button type="button" class="comfy-runtime-btn" onclick="modalOpenDebugWorkflow()">로컬 실행 탭</button>
                                     </div>
-                                    <p class="comfy-modal-runtime-hint">실행 시 현재 워크플로우가 참조하는 로컬 체크포인트·모델·LoRA와 input 이미지를 사용자 Modal 환경에 직접 동기화합니다.</p>
+                                    <p class="comfy-modal-runtime-hint" id="modal-runtime-workflow-query-status">원격 조회 후 동기화 상태와 실행 가능 여부를 확인할 수 있습니다.</p>
+                                    <p class="comfy-modal-runtime-hint">실행 시 Modal Volume에 동기화된 원격 워크플로우 JSON을 사용하며, 참조 모델·LoRA는 해시가 달라진 파일만 증분 동기화합니다.</p>
                                 </section>
                             </div>
 
@@ -24588,6 +24590,32 @@
             }
         }
 
+        async function modalRuntimeOpenWeb() {
+            try {
+                const data = await fetchJSON('/api/modal/web-url');
+                const web = data.web || {};
+                if (!web.available) {
+                    const reason = web.reason || 'unknown';
+                    const messages = {
+                        disabled: 'Modal 사용이 꺼져 있습니다. 외부 API 설정에서 Modal을 켜고 저장하세요.',
+                        account_not_connected: 'Modal 계정을 먼저 연결하세요.',
+                        app_not_deployed: 'Modal ComfyUI 웹 서버가 아직 배포되지 않았습니다. Modal 동기화(설치)를 먼저 실행하세요.',
+                        runtime_unavailable: 'Modal 웹 URL 조회 실패: ' + (web.error || reason),
+                    };
+                    showToast(messages[reason] || ('Modal 웹 URL 조회 실패: ' + (web.error || reason)), 'warning');
+                    return;
+                }
+                const win = window.open(web.url, '_blank', 'noopener');
+                if (!win) {
+                    console.warn(`[MODAL_RUNTIME] 웹 UI 새 탭 열기 차단됨: ${web.url}`);
+                    alert(`Modal ComfyUI 접속 URL:\n${web.url}\n(팝업이 차단된 경우 주소를 복사해 브라우저에 직접 입력하세요.)`);
+                }
+            } catch (error) {
+                console.error('[MODAL_RUNTIME] 웹 URL 조회 실패:', error);
+                showToast('Modal ComfyUI 접속 URL 조회 실패: ' + (error.message || error), 'error');
+            }
+        }
+
         function comfyRuntimeUpdateFastWarning() {
             const warning = document.getElementById('comfy-runtime-fast-warning');
             warning?.classList.toggle('visible', !!document.getElementById('comfy-runtime-fast')?.checked);
@@ -25647,6 +25675,8 @@
         let modalWorkflowCatalog = [];
         // 검색 필터로 항목이 감춰져도 선택이 유지되도록 DOM이 아닌 Set으로 관리.
         let modalSelectedWorkflowIds = new Set();
+        let modalRemoteWorkflowQueryState = 'idle';
+        let modalRemoteWorkflowCheckedAt = '';
         let modalStatusPollTimer = null;
         // auth/install/probe 가 running 이었는지 추적. 터미널(completed/failed)로 전환되면
         // 폴링이 멈추기 전에 최종 상태를 한 번 더 가져와 화면에 반영하기 위함.
@@ -26149,7 +26179,10 @@
                 name.textContent = item.source_name || item.id;
                 const size = document.createElement('span');
                 size.style.color = 'var(--text-secondary,#aaa)';
-                size.textContent = `${item.model_count} 모델 · ${(Number(item.size_gib) || 0).toFixed(2)} GiB`;
+                const remoteState = modalRemoteWorkflowQueryState === 'loaded'
+                    ? ` · ${modalRemoteWorkflowStateText(item)}`
+                    : '';
+                size.textContent = `${item.model_count} 모델 · ${(Number(item.size_gib) || 0).toFixed(2)} GiB${remoteState}`;
                 copy.append(name, size);
                 label.append(checkbox, copy);
                 container.append(label);
@@ -26168,6 +26201,8 @@
             try {
                 const data = await fetchJSON('/api/modal/workflows');
                 modalWorkflowCatalog = data.workflows || [];
+                modalRemoteWorkflowQueryState = 'idle';
+                modalRemoteWorkflowCheckedAt = '';
                 const errors = Array.isArray(data.errors) ? data.errors : [];
                 // 새로고침 후 사라진 항목은 선택에서 제거(스테일 선택 방지).
                 const present = new Set(modalWorkflowCatalog.map(item => item.id));
@@ -26177,6 +26212,8 @@
                 modalRenderWorkflowCatalog(errors);
                 modalUpdateWorkflowSelectionSummary();
                 modalRuntimePopulateWorkflowSelect();
+                const queryStatus = document.getElementById('modal-runtime-workflow-query-status');
+                if (queryStatus) queryStatus.textContent = '원격 조회 후 동기화 상태와 실행 가능 여부를 확인할 수 있습니다.';
             } catch (error) {
                 console.error('[MODAL] 워크플로우 목록 로드 실패:', error);
                 container.textContent = '목록 로드 실패: ' + (error.message || error);
@@ -26203,6 +26240,11 @@
                 if (status) status.textContent = data.install?.message || 'Modal 동기화를 시작했습니다.';
                 started = true;
                 _modalInstallWasRunning = true;
+                modalRemoteWorkflowQueryState = 'idle';
+                modalRemoteWorkflowCheckedAt = '';
+                modalRuntimePopulateWorkflowSelect();
+                const queryStatus = document.getElementById('modal-runtime-workflow-query-status');
+                if (queryStatus) queryStatus.textContent = '동기화가 끝난 뒤 원격 조회를 다시 실행하세요.';
                 modalRenderInstallProgress(data.install || {state: 'running', phase: 'assets'});
                 showToast('Modal 동기화를 시작했습니다', 'success');
                 modalScheduleStatusPoll();
@@ -26214,29 +26256,48 @@
             }
         }
 
+        function modalRemoteWorkflowStateText(item) {
+            const labels = {
+                synced: '동기화됨',
+                different: '동기화 필요',
+                missing: '미동기화',
+                invalid: '원격 파일 오류',
+            };
+            return labels[String(item?.sync_state || '')] || '조회 필요';
+        }
+
         function modalRuntimePopulateWorkflowSelect() {
             const select = document.getElementById('modal-runtime-workflow-select');
             if (!select) return;
             const previous = select.value;
             select.replaceChildren();
-            // 카탈로그는 SOYA_USER 파일 나열이므로 configured는 항상 true.
-            // 파싱 실패 파일은 이미 서버에서 제외되어 여기 들어오지 않는다.
-            const available = modalWorkflowCatalog;
-            if (!available.length) {
+            if (modalRemoteWorkflowQueryState !== 'loaded') {
                 const option = document.createElement('option');
                 option.value = '';
-                option.textContent = 'SOYA_USER에 실행할 워크플로우가 없습니다.';
+                option.textContent = modalRemoteWorkflowQueryState === 'loading'
+                    ? '원격 워크플로우를 조회하고 있습니다.'
+                    : '원격 조회 후 선택할 수 있습니다.';
                 select.appendChild(option);
+                select.disabled = true;
                 modalRuntimeWorkflowChanged();
                 return;
             }
-            for (const item of available) {
+            select.disabled = false;
+            const placeholder = document.createElement('option');
+            placeholder.value = '';
+            const remoteAvailable = modalWorkflowCatalog.filter(item => item.remote_available === true);
+            placeholder.textContent = remoteAvailable.length
+                ? '원격 워크플로우를 선택하세요.'
+                : '실행 가능한 원격 워크플로우가 없습니다.';
+            select.appendChild(placeholder);
+            for (const item of modalWorkflowCatalog) {
                 const option = document.createElement('option');
                 option.value = item.id;
-                option.textContent = item.source_name || item.id;
+                option.textContent = `${item.source_name || item.id} · ${modalRemoteWorkflowStateText(item)}`;
+                option.disabled = item.remote_available !== true;
                 select.appendChild(option);
             }
-            if (available.some(item => item.id === previous)) select.value = previous;
+            if (remoteAvailable.some(item => item.id === previous)) select.value = previous;
             modalRuntimeWorkflowChanged();
         }
 
@@ -26247,10 +26308,61 @@
             const item = modalWorkflowCatalog.find(entry => entry.id === select?.value);
             if (badge) {
                 badge.textContent = item
-                    ? `${item.model_count} 모델 · ${Number(item.size_gib || 0).toFixed(2)} GiB`
-                    : '선택 대기';
+                    ? `${modalRemoteWorkflowStateText(item)} · ${item.model_count} 모델 · ${Number(item.size_gib || 0).toFixed(2)} GiB`
+                    : (modalRemoteWorkflowQueryState === 'loaded' ? '선택 대기' : '조회 필요');
             }
-            if (button) button.disabled = !item;
+            if (button) {
+                button.disabled = modalRemoteWorkflowQueryState !== 'loaded'
+                    || !item
+                    || item.remote_available !== true;
+                button.title = item?.sync_state === 'different'
+                    ? '로컬과 내용이 다릅니다. 실행하면 Modal에 저장된 원격 버전을 사용합니다.'
+                    : '';
+            }
+        }
+
+        async function modalRuntimeQueryWorkflows() {
+            const button = document.getElementById('modal-runtime-workflow-query-btn');
+            const status = document.getElementById('modal-runtime-workflow-query-status');
+            if (button) button.disabled = true;
+            modalRemoteWorkflowQueryState = 'loading';
+            modalRuntimePopulateWorkflowSelect();
+            if (status) status.textContent = '로컬 SOYA_USER와 Modal Volume의 SHA-256을 비교하고 있습니다.';
+            try {
+                const data = await fetchJSON('/api/modal/workflows/remote');
+                modalWorkflowCatalog = Array.isArray(data.workflows) ? data.workflows : [];
+                modalRemoteWorkflowQueryState = 'loaded';
+                modalRemoteWorkflowCheckedAt = String(data.checked_at || '');
+                const present = new Set(modalWorkflowCatalog.map(item => item.id));
+                for (const id of Array.from(modalSelectedWorkflowIds)) {
+                    if (!present.has(id)) modalSelectedWorkflowIds.delete(id);
+                }
+                const errors = Array.isArray(data.errors) ? data.errors : [];
+                const remoteErrors = Array.isArray(data.remote_errors) ? data.remote_errors : [];
+                if (remoteErrors.length) {
+                    console.error('[MODAL_RUNTIME] 원격 워크플로우 검사 실패:', remoteErrors);
+                }
+                modalRenderWorkflowCatalog(errors);
+                modalUpdateWorkflowSelectionSummary();
+                modalRuntimePopulateWorkflowSelect();
+                const counts = data.counts || {};
+                const checked = modalRemoteWorkflowCheckedAt
+                    ? new Date(modalRemoteWorkflowCheckedAt).toLocaleTimeString('ko-KR', {hour12: false})
+                    : '방금';
+                if (status) {
+                    status.textContent = `${checked} 조회 · 동기화됨 ${Number(counts.synced || 0)}개 · 동기화 필요 ${Number(counts.different || 0)}개 · 미동기화 ${Number(counts.missing || 0)}개 · 오류 ${Number(counts.invalid || 0)}개`;
+                }
+                showToast('Modal 워크플로우 동기화 상태를 조회했습니다', 'success');
+            } catch (error) {
+                modalRemoteWorkflowQueryState = 'failed';
+                modalRemoteWorkflowCheckedAt = '';
+                modalRuntimePopulateWorkflowSelect();
+                console.error('[MODAL_RUNTIME] 원격 워크플로우 조회 실패:', error);
+                if (status) status.textContent = '원격 조회 실패: ' + (error.message || error);
+                showToast('Modal 원격 워크플로우 조회 실패: ' + (error.message || error), 'error');
+            } finally {
+                if (button) button.disabled = false;
+            }
         }
 
         function modalRuntimeStopPolling() {
@@ -26328,11 +26440,15 @@
         async function modalRuntimeRunWorkflow() {
             const select = document.getElementById('modal-runtime-workflow-select');
             const workflowId = select?.value || '';
-            if (!workflowId) {
+            const workflowItem = modalWorkflowCatalog.find(item => item.id === workflowId);
+            if (!workflowId || modalRemoteWorkflowQueryState !== 'loaded' || workflowItem?.remote_available !== true) {
                 showToast('Modal에서 실행할 워크플로우를 선택하세요', 'warning');
                 return;
             }
-            if (!window.confirm(`${workflowId} 워크플로우를 Modal L4에서 실행할까요? 요청과 함께 GPU가 자동으로 켜집니다.`)) return;
+            const versionNotice = workflowItem.sync_state === 'different'
+                ? '\n로컬 파일과 내용이 다르므로 Modal에 저장된 원격 버전을 실행합니다.'
+                : '';
+            if (!window.confirm(`${workflowId} 워크플로우를 Modal L4에서 실행할까요? 요청과 함께 GPU가 자동으로 켜집니다.${versionNotice}`)) return;
             const button = document.getElementById('modal-runtime-run-btn');
             if (button) button.disabled = true;
             const image = document.getElementById('modal-runtime-result-image');
@@ -26368,10 +26484,6 @@
             window.setTimeout(() => {
                 document.getElementById('modal-external-api-group')?.scrollIntoView({behavior: 'smooth', block: 'start'});
             }, 80);
-        }
-
-        function modalOpenDebugWorkflow() {
-            switchSettingsTab('debug');
         }
 
         // ─── 설정 모달 탭 전환 ───
