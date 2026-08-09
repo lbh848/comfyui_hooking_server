@@ -205,6 +205,7 @@ DEFAULT_CONFIG = {
     "modal_monthly_credit_usd": 30.0,
     "modal_scaledown_window_seconds": 15,
     "modal_status_refresh_seconds": 5,
+    "modal_container_start_max_retries": 2,
     "modal_web_fast": False,
     "workflow_base_dir": "",  # 공통 설정 UI의 워크플로우 베이스 폴더 절대 경로
     "comfy_workflow_source_path": "",
@@ -10870,6 +10871,8 @@ async def handle_api_config(request: web.Request) -> web.Response:
                         f"'max_concurrency': {body.get('modal_max_concurrency')!r}, "
                         f"'scaledown': {body.get('modal_scaledown_window_seconds')!r}, "
                         f"'refresh': {body.get('modal_status_refresh_seconds')!r}, "
+                        f"'container_start_max_retries': "
+                        f"{body.get('modal_container_start_max_retries')!r}, "
                         f"'web_fast': {body.get('modal_web_fast')!r}}}, "
                         f"error={e}"
                     )
@@ -10889,6 +10892,9 @@ async def handle_api_config(request: web.Request) -> web.Response:
                         ),
                         "modal_status_refresh_seconds": (
                             normalized_modal.status_refresh_seconds
+                        ),
+                        "modal_container_start_max_retries": (
+                            normalized_modal.container_start_max_retries
                         ),
                         "modal_web_fast": normalized_modal.web_fast,
                     }

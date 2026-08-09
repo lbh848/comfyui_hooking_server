@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import builtins
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
 import sys
+import threading
+import time
 from types import SimpleNamespace
 import urllib.error
 
@@ -22,6 +26,7 @@ from modal_backend.service import (
     INSTALL_PROGRESS_PREFIX,
     ModalClientActionError,
     ModalService,
+    WebStartCancelled,
     cost_summary,
 )
 from modal_backend.settings import ModalSettings
@@ -60,6 +65,29 @@ def _modal_test_project(tmp_path: Path) -> tuple[Path, Path]:
     return project_root, user_root
 
 
+def test_modal_manifest_import_does_not_require_comfy_installer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module_path = PROJECT_ROOT / "modal_backend" / "manifest.py"
+    spec = importlib.util.spec_from_file_location(
+        "_modal_manifest_without_comfy_installer",
+        module_path,
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    real_import = builtins.__import__
+
+    def import_without_comfy_installer(name: str, *args, **kwargs):
+        if name == "comfy_installer" or name.startswith("comfy_installer."):
+            raise ModuleNotFoundError("blocked to emulate the Modal runtime")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", import_without_comfy_installer)
+    spec.loader.exec_module(module)
+
+    assert callable(module.load_manifest)
+
+
 def test_modal_defaults_are_scale_to_zero_and_l4_budgeted() -> None:
     settings = ModalSettings.from_mapping({})
     cost = cost_summary(settings)
@@ -68,7 +96,9 @@ def test_modal_defaults_are_scale_to_zero_and_l4_budgeted() -> None:
     assert settings.max_concurrency == 2
     assert settings.scaledown_window_seconds == 15
     assert settings.status_refresh_seconds == 5
+    assert settings.container_start_max_retries == 2
     assert settings.web_fast is False
+    assert settings.public_dict()["container_start_max_retries"] == 2
     assert settings.public_dict()["web_fast"] is False
     assert cost["assumptions"]["min_containers"] == 0
     assert cost["assumptions"]["scaledown_window_seconds"] == 15
@@ -88,6 +118,9 @@ def test_modal_defaults_are_scale_to_zero_and_l4_budgeted() -> None:
         {"modal_scaledown_window_seconds": 1201},
         {"modal_status_refresh_seconds": 1},
         {"modal_status_refresh_seconds": 61},
+        {"modal_container_start_max_retries": -1},
+        {"modal_container_start_max_retries": 11},
+        {"modal_container_start_max_retries": True},
         {"modal_web_fast": "true"},
     ],
 )
@@ -176,6 +209,115 @@ def test_modal_client_error_reason_uses_sdk_exception_types() -> None:
     assert client_cli._error_reason(ValueError("bad data")) == "runtime_unavailable"
 
 
+def test_modal_call_start_retry_limit_cancels_function_and_container(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    class FakeLogs:
+        def __init__(self, call) -> None:
+            self.call = call
+
+        def tail(self, *, entries: int):
+            assert entries == client_cli.CALL_START_LOG_TAIL_ENTRIES
+            return [
+                SimpleNamespace(
+                    message="container boot",
+                    context_ids=["in-1", f"ta-{index}"],
+                )
+                for index in range(1, self.call.poll_count + 1)
+            ]
+
+    class FakeCall:
+        def __init__(self) -> None:
+            self.poll_count = 0
+            self.logs = FakeLogs(self)
+            self.cancel_requests: list[bool] = []
+
+        def get(self, *, timeout: float):
+            assert timeout > 0
+            self.poll_count += 1
+            raise client_cli.modal.exception.TimeoutError("still starting")
+
+        def cancel(self, *, terminate_containers: bool) -> None:
+            self.cancel_requests.append(terminate_containers)
+
+    call = FakeCall()
+
+    with pytest.raises(
+        client_cli.ModalContainerStartRetryLimitError,
+        match="추가 재시도 2회",
+    ):
+        client_cli._wait_for_call_with_start_retry_limit(
+            call,
+            timeout_seconds=30,
+            max_retries=2,
+            operation="generate",
+        )
+
+    assert call.poll_count == 4
+    assert call.cancel_requests == [True]
+    captured = capsys.readouterr()
+    assert "attempt=4/3" in captured.err
+    assert "원격 호출과 실행 컨테이너를 취소" in captured.err
+
+
+def test_modal_call_start_monitor_stops_after_remote_method_marker(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    class FakeLogs:
+        def __init__(self, call) -> None:
+            self.call = call
+
+        def tail(self, *, entries: int):
+            assert entries == client_cli.CALL_START_LOG_TAIL_ENTRIES
+            result = [
+                SimpleNamespace(
+                    message="container boot",
+                    context_ids=["in-1", "ta-1"],
+                )
+            ]
+            if self.call.poll_count >= 2:
+                result.append(
+                    SimpleNamespace(
+                        message=(
+                            client_cli.CALL_STARTED_LOG_PREFIX
+                            + '{"operation":"generate"}'
+                        ),
+                        context_ids=["in-1", "ta-1"],
+                    )
+                )
+            return result
+
+    class FakeCall:
+        def __init__(self) -> None:
+            self.poll_count = 0
+            self.logs = FakeLogs(self)
+            self.cancel_requests: list[bool] = []
+
+        def get(self, *, timeout: float):
+            assert timeout > 0
+            self.poll_count += 1
+            if self.poll_count <= 2:
+                raise client_cli.modal.exception.TimeoutError("still starting")
+            return {"images": []}
+
+        def cancel(self, *, terminate_containers: bool) -> None:
+            self.cancel_requests.append(terminate_containers)
+
+    call = FakeCall()
+
+    result = client_cli._wait_for_call_with_start_retry_limit(
+        call,
+        timeout_seconds=30,
+        max_retries=2,
+        operation="generate",
+    )
+
+    assert result == {"images": []}
+    assert call.poll_count == 3
+    assert call.cancel_requests == []
+    assert "원격 메서드 진입 확인" in capsys.readouterr().err
+
+
 def test_modal_client_main_serializes_app_not_deployed_reason(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -234,6 +376,80 @@ async def test_modal_client_action_preserves_structured_failure_reason(
 
     assert caught.value.reason == "app_not_deployed"
     assert caught.value.error_type == "NotFoundError"
+
+
+@pytest.mark.asyncio
+async def test_modal_client_action_passes_container_start_retry_setting(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = ModalService(tmp_path, lambda: {})
+    observed: dict = {}
+
+    async def successful_command(*_args, **kwargs) -> tuple[int, str, str]:
+        observed.update(kwargs["stdin_payload"])
+        return 0, json.dumps({"ok": True, "result": {}}), ""
+
+    monkeypatch.setattr(service, "_run_command", successful_command)
+    settings = ModalSettings.from_mapping(
+        {"modal_container_start_max_retries": 4}
+    )
+
+    await service._run_client_action(
+        settings,
+        "runtime_stats",
+        timeout=30,
+    )
+
+    assert observed["container_start_max_retries"] == 4
+
+
+@pytest.mark.asyncio
+async def test_modal_run_workflow_preserves_start_retry_limit_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = ModalService(
+        tmp_path,
+        lambda: {
+            "modal_enabled": True,
+            "modal_container_start_max_retries": 2,
+        },
+    )
+    observed: dict = {}
+
+    async def connected(_settings: ModalSettings) -> bool:
+        return True
+
+    async def assets(_workflows: list[dict]) -> dict:
+        return {"model_files": [], "lora_files": []}
+
+    async def failed_command(*_args, **kwargs) -> tuple[int, str, str]:
+        observed.update(kwargs["stdin_payload"])
+        return (
+            1,
+            json.dumps(
+                {
+                    "ok": False,
+                    "error": (
+                        "Modal generate 컨테이너 시작이 최초 1회와 "
+                        "추가 재시도 2회를 초과해 취소되었습니다."
+                    ),
+                }
+            ),
+            "retry limit exceeded",
+        )
+
+    monkeypatch.setattr(service, "account_connected", connected)
+    monkeypatch.setattr(service, "_resolve_local_workflow_assets", assets)
+    monkeypatch.setattr(service, "_run_command", failed_command)
+
+    with pytest.raises(RuntimeError, match="추가 재시도 2회"):
+        await service.run_workflow(
+            {"1": {"class_type": "EmptyLatentImage", "inputs": {}}},
+        )
+
+    assert observed["container_start_max_retries"] == 2
 
 
 def test_manifest_catalog_does_not_use_local_install_model_spec_for_modal() -> None:
@@ -908,12 +1124,13 @@ async def test_modal_service_install_plan_uses_current_soya_user_model_reference
     assert observed["model_files"][0]["source_path"] == str(checkpoint.resolve())
     assert observed["model_files"][0]["remote_path"] == "checkpoints/changed.safetensors"
     assert observed["lora_files"] == []
-    deployed_paths = [
-        Path(command[4]).name
+    deploy_commands = [
+        command
         for command in commands
         if len(command) > 4 and command[1:4] == ["-m", "modal", "deploy"]
     ]
-    assert deployed_paths == ["modal_app.py"]
+    assert len(deploy_commands) == 1
+    assert deploy_commands[0][4:6] == ["-m", "modal_backend.modal_app"]
 
 
 def test_workflow_assets_resolve_structured_lora_and_image_inputs(tmp_path: Path) -> None:
@@ -1535,6 +1752,73 @@ async def test_modal_web_stop_only_stops_dedicated_web_app(
 
 
 @pytest.mark.asyncio
+async def test_modal_web_stop_keeps_stopped_when_log_collection_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    service = ModalService(
+        tmp_path,
+        lambda: {
+            "modal_enabled": True,
+            "modal_deployment_name": "worker-app",
+        },
+    )
+    observed: list[str] = []
+
+    async def stop(_settings: ModalSettings) -> None:
+        observed.append("stop")
+
+    async def logs(*, entries: int) -> dict:
+        observed.append(f"logs:{entries}")
+        raise RuntimeError("log service unavailable")
+
+    monkeypatch.setattr(service, "_stop_web_app", stop)
+    monkeypatch.setattr(service, "runtime_logs", logs)
+
+    settings = ModalSettings.from_mapping(service.get_config())
+    await service._run_web_stop(settings)
+
+    assert observed == ["stop", "logs:500"]
+    assert service._web_state["state"] == "stopped"
+    assert service._web_state["deployed"] is False
+    captured = capsys.readouterr()
+    assert "종료 후 로그 조회 실패" in captured.out
+    assert "Traceback" in captured.err
+
+
+@pytest.mark.asyncio
+async def test_modal_streaming_command_cancellation_kills_child_process() -> None:
+    ready = asyncio.Event()
+
+    def output_callback(_source: str, line: str) -> None:
+        if line == "ready":
+            ready.set()
+
+    task = asyncio.create_task(
+        ModalService._run_command(
+            [
+                sys.executable,
+                "-u",
+                "-c",
+                "import time; print('ready', flush=True); time.sleep(300)",
+            ],
+            env=dict(os.environ),
+            timeout=310,
+            output_callback=output_callback,
+        )
+    )
+    await asyncio.wait_for(ready.wait(), timeout=10)
+
+    started = time.monotonic()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, timeout=5)
+
+    assert time.monotonic() - started < 5
+
+
+@pytest.mark.asyncio
 async def test_modal_web_deploy_uses_package_module_mode(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1601,7 +1885,7 @@ async def test_modal_web_start_redeploys_web_app_before_warming_l4(
             "backlog": 0,
         }
 
-    def warm(url: str) -> int:
+    def warm(url: str, _cancel_event: threading.Event | None = None) -> int:
         observed.append(f"warm:{url}")
         return 200
 
@@ -1663,6 +1947,30 @@ def test_modal_web_warm_retries_server_cold_start_503(
     assert sleeps == [1, 1]
 
 
+def test_modal_web_warm_stops_before_another_request_when_cancelled(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    cancel_event = threading.Event()
+    cancel_event.set()
+
+    def unexpected_urlopen(*_args, **_kwargs):
+        raise AssertionError("취소 후에는 웹 Server를 다시 호출하면 안 됩니다.")
+
+    monkeypatch.setattr(
+        "modal_backend.service.urllib.request.urlopen",
+        unexpected_urlopen,
+    )
+
+    with pytest.raises(WebStartCancelled):
+        ModalService._warm_web_url(
+            "https://example.modal.run",
+            cancel_event,
+        )
+
+    assert "웹 Server 준비 대기 취소" in capsys.readouterr().out
+
+
 @pytest.mark.asyncio
 async def test_modal_web_start_failure_stops_web_app(
     tmp_path: Path,
@@ -1696,6 +2004,66 @@ async def test_modal_web_start_failure_stops_web_app(
     assert service._web_state["deployed"] is False
     assert service._web_state["num_total_runners"] == 0
     assert "자동 종료" in service._web_state["message"]
+
+
+@pytest.mark.asyncio
+async def test_modal_web_stop_cancels_starting_task_before_stopping_app(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = ModalService(
+        tmp_path,
+        lambda: {
+            "modal_enabled": True,
+            "modal_deployment_name": "worker-app",
+            "modal_environment": "main",
+        },
+    )
+    observed: list[str] = []
+    wait_forever = asyncio.Event()
+
+    async def pending_start() -> None:
+        try:
+            await wait_forever.wait()
+        finally:
+            observed.append("start_cancelled")
+
+    async def logs(*, entries: int) -> dict:
+        observed.append(f"logs:{entries}")
+        return {"ok": True, "logs": [], "errors": []}
+
+    async def stop(_settings: ModalSettings) -> None:
+        observed.append("stop")
+
+    async def unexpected_connection_check(_settings: ModalSettings) -> bool:
+        raise AssertionError("시작 취소는 계정 재확인을 기다리면 안 됩니다.")
+
+    monkeypatch.setattr(service, "runtime_logs", logs)
+    monkeypatch.setattr(service, "_stop_web_app", stop)
+    monkeypatch.setattr(service, "account_connected", unexpected_connection_check)
+
+    start_task = asyncio.create_task(pending_start())
+    await asyncio.sleep(0)
+    service._web_task = start_task
+    service._web_state = {
+        "available": True,
+        "deployed": True,
+        "state": "starting",
+        "message": "L4 준비 중",
+    }
+
+    result = await service.stop_web()
+    stop_task = service._web_task
+    assert stop_task is not None
+    await stop_task
+
+    assert result["state"] == "stopping"
+    assert "시작을 취소" in result["message"]
+    assert service._web_start_cancel_event.is_set()
+    assert start_task.cancelled()
+    assert observed == ["start_cancelled", "stop", "logs:500"]
+    assert service._web_state["state"] == "stopped"
+    assert service._web_state["deployed"] is False
 
 
 @pytest.mark.asyncio
@@ -1804,6 +2172,9 @@ def test_modal_web_server_is_isolated_from_worker_app() -> None:
     root = Path(__file__).resolve().parents[1] / "modal_backend"
     worker_source = (root / "modal_app.py").read_text(encoding="utf-8")
     web_source = (root / "modal_web_app.py").read_text(encoding="utf-8")
+    frontend_source = (
+        Path(__file__).resolve().parents[1] / "frontend" / "index.html"
+    ).read_text(encoding="utf-8")
 
     assert "class ComfyWebServer" not in worker_source
     assert "class ComfyWebServer" in web_source
@@ -1826,10 +2197,57 @@ def test_modal_web_server_is_isolated_from_worker_app() -> None:
     assert '"/models": models_volume' not in worker_source
     assert '"/models": models_volume' not in web_source
     assert 'f"  base_path: {COMFY_MODELS_MOUNT_PATH}"' in worker_source
+    cleanup_command = 'f"rm -rf {COMFY_MODELS_MOUNT_PATH}"'
+    assert cleanup_command in worker_source
+    assert worker_source.index('"python /opt/soya/image_install.py"') < worker_source.index(
+        cleanup_command
+    )
     assert '"--enable-cors-header",\n            "*",' in web_source
     assert 'WEB_FAST = os.environ.get("SOYA_MODAL_WEB_FAST", "0") == "1"' in web_source
     assert 'web_runtime_image = runtime_image.env(' in web_source
     assert 'if web_fast:\n            command.append("--fast")' in web_source
+    assert (
+        "const showWebStopAction = webState === 'starting' || webRunning || "
+        "webState === 'stopping';"
+    ) in frontend_source
+    assert "? 'ComfyUI 시작 취소'" in frontend_source
+
+
+def test_modal_runtime_image_precompiles_sageattention_for_l4() -> None:
+    source = (
+        Path(__file__).resolve().parents[1] / "modal_backend" / "modal_app.py"
+    ).read_text(encoding="utf-8")
+
+    assert 'CUDA_VERSION = "12.8.1"' in source
+    assert 'PYTHON_VERSION = "3.12"' in source
+    assert 'TORCH_VERSION = "2.11.0"' in source
+    assert 'TORCHVISION_VERSION = "0.26.0"' in source
+    assert 'TORCHAUDIO_VERSION = "2.11.0"' in source
+    assert 'SAGEATTENTION_VERSION = "2.2.0"' in source
+    assert "modal.Image.from_registry(" in source
+    assert 'f"nvidia/cuda:{CUDA_VERSION}-devel-ubuntu22.04"' in source
+    assert "add_python=PYTHON_VERSION" in source
+    assert ".entrypoint([])" in source
+    assert '"CUDA_HOME": "/usr/local/cuda"' in source
+    assert '"CC": "/usr/bin/gcc"' in source
+    assert '"CXX": "/usr/bin/g++"' in source
+    assert '"CUDAHOSTCXX": "/usr/bin/g++"' in source
+    assert '"TORCH_CUDA_ARCH_LIST": "8.9"' in source
+    assert '"NVCC_APPEND_FLAGS": "--threads 4"' in source
+    assert "index_url=PYTORCH_CUDA_INDEX_URL" in source
+    assert 'extra_options="--no-build-isolation"' in source
+    assert (
+        "git+https://github.com/thu-ml/SageAttention.git@v{SAGEATTENTION_VERSION}"
+        in source
+    )
+    assert "torch.version.cuda == '12.8'" in source
+    assert "modal.Image.debian_slim" not in source
+    assert source.index('f"torch=={TORCH_VERSION}"') < source.index(
+        'f"git+https://github.com/thu-ml/SageAttention.git@v{SAGEATTENTION_VERSION}"'
+    )
+    assert source.index(
+        'f"git+https://github.com/thu-ml/SageAttention.git@v{SAGEATTENTION_VERSION}"'
+    ) < source.index('"python /opt/soya/image_install.py"')
 
 
 @pytest.mark.asyncio

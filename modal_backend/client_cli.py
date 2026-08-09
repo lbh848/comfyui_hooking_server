@@ -14,6 +14,7 @@ import json
 import io
 from pathlib import Path, PurePosixPath
 import sys
+import time
 import traceback
 
 import modal
@@ -27,6 +28,152 @@ MODEL_SYNC_MANIFEST_PATH = "/.soya-local-model-sync-manifest.json"
 # 기존 사용자 LoRA Volume의 동기화 기록을 그대로 이어받는다.
 LORA_SYNC_MANIFEST_PATH = "/.soya-sync-manifest.json"
 INSTALL_PROGRESS_PREFIX = "@@SOYA_MODAL_PROGRESS@@"
+CALL_STARTED_LOG_PREFIX = "@@SOYA_MODAL_CALL_STARTED@@"
+CALL_START_POLL_SECONDS = 3.0
+CALL_START_LOG_TAIL_ENTRIES = 1000
+
+
+class ModalContainerStartRetryLimitError(RuntimeError):
+    """배포 App의 컨테이너 시작 반복이 사용자 설정 한도를 넘었다."""
+
+
+def _container_start_max_retries(payload: dict) -> int:
+    raw_value = payload.get("container_start_max_retries", 2)
+    if isinstance(raw_value, bool):
+        raise ValueError("Modal 컨테이너 시작 재시도 횟수는 0~10 사이의 정수여야 합니다.")
+    retries = int(raw_value)
+    if retries != float(raw_value) or not 0 <= retries <= 10:
+        raise ValueError("Modal 컨테이너 시작 재시도 횟수는 0~10 사이의 정수여야 합니다.")
+    return retries
+
+
+def _call_start_observations(call) -> tuple[bool, set[str]]:
+    """FunctionCall 로그의 구조화 컨텍스트에서 시작 완료와 컨테이너를 읽는다."""
+    started = False
+    container_ids: set[str] = set()
+    for entry in call.logs.tail(entries=CALL_START_LOG_TAIL_ENTRIES):
+        message = str(getattr(entry, "message", "") or "")
+        if message.startswith(CALL_STARTED_LOG_PREFIX):
+            started = True
+        context_ids = list(getattr(entry, "context_ids", None) or [])
+        # Modal 1.5 FunctionCall 로그 컨텍스트는 [input_id, container_id]다.
+        # container_id가 없는 레코드에서 input_id를 컨테이너로 오인하지 않는다.
+        if len(context_ids) < 2:
+            continue
+        container_id = str(context_ids[-1] or "").strip()
+        if container_id:
+            container_ids.add(container_id)
+    return started, container_ids
+
+
+def _cancel_function_call(
+    call,
+    *,
+    operation: str,
+    terminate_containers: bool,
+) -> None:
+    try:
+        call.cancel(terminate_containers=terminate_containers)
+    except Exception as cancel_exc:
+        print(
+            f"[MODAL_CLIENT] {operation} 호출 취소 실패: "
+            f"terminate_containers={terminate_containers}, "
+            f"error={type(cancel_exc).__name__}: {cancel_exc}",
+            file=sys.stderr,
+        )
+        traceback.print_exc(file=sys.stderr)
+
+
+def _wait_for_call_with_start_retry_limit(
+    call,
+    *,
+    timeout_seconds: int,
+    max_retries: int,
+    operation: str,
+):
+    """컨테이너 시작 반복을 감시하다 원격 메서드 진입 후 일반 대기로 전환한다."""
+    allowed_attempts = max_retries + 1
+    deadline = time.monotonic() + max(1, int(timeout_seconds))
+    observed_container_ids: set[str] = set()
+    monitoring_start = True
+
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            print(
+                f"[MODAL_CLIENT] {operation} 결과 대기 시간 초과: "
+                f"timeout_seconds={timeout_seconds}, "
+                f"observed_container_starts={len(observed_container_ids)}",
+                file=sys.stderr,
+            )
+            raise TimeoutError(
+                f"Modal {operation} 결과가 {timeout_seconds}초 안에 도착하지 않았습니다."
+            )
+
+        wait_seconds = (
+            min(CALL_START_POLL_SECONDS, remaining)
+            if monitoring_start
+            else remaining
+        )
+        try:
+            return call.get(timeout=wait_seconds)
+        except modal.exception.TimeoutError:
+            if not monitoring_start:
+                continue
+        except Exception:
+            raise
+
+        try:
+            started, container_ids = _call_start_observations(call)
+        except Exception as monitor_exc:
+            print(
+                f"[MODAL_CLIENT] {operation} 컨테이너 시작 감시 실패로 호출 취소: "
+                f"error={type(monitor_exc).__name__}: {monitor_exc}",
+                file=sys.stderr,
+            )
+            traceback.print_exc(file=sys.stderr)
+            _cancel_function_call(
+                call,
+                operation=operation,
+                terminate_containers=True,
+            )
+            raise RuntimeError(
+                f"Modal {operation} 컨테이너 시작 횟수를 확인하지 못해 안전을 위해 취소했습니다."
+            ) from monitor_exc
+
+        previous_count = len(observed_container_ids)
+        observed_container_ids.update(container_ids)
+        observed_count = len(observed_container_ids)
+        if observed_count != previous_count:
+            print(
+                f"[MODAL_CLIENT] {operation} 컨테이너 시작 감지: "
+                f"attempt={observed_count}/{allowed_attempts}, "
+                f"max_retries={max_retries}",
+                file=sys.stderr,
+            )
+        if observed_count > allowed_attempts:
+            print(
+                f"[MODAL_CLIENT] {operation} 컨테이너 시작 재시도 한도 초과: "
+                f"observed={observed_count}, allowed={allowed_attempts}, "
+                "원격 호출과 실행 컨테이너를 취소합니다.",
+                file=sys.stderr,
+            )
+            _cancel_function_call(
+                call,
+                operation=operation,
+                terminate_containers=True,
+            )
+            raise ModalContainerStartRetryLimitError(
+                f"Modal {operation} 컨테이너 시작이 최초 1회와 추가 재시도 "
+                f"{max_retries}회를 초과해 취소되었습니다."
+            )
+        if started:
+            print(
+                f"[MODAL_CLIENT] {operation} 원격 메서드 진입 확인: "
+                f"container_starts={observed_count}, 시작 재시도 감시 종료",
+                file=sys.stderr,
+            )
+            monitoring_start = False
 
 
 def _emit_install_progress(event: str, **payload) -> None:
@@ -389,16 +536,20 @@ def generate(payload: dict) -> dict:
         bool(payload.get("require_images", True)),
     )
     try:
-        remote_result = call.get(timeout=int(payload.get("timeout_seconds") or 3300) + 120)
+        remote_result = _wait_for_call_with_start_retry_limit(
+            call,
+            timeout_seconds=int(payload.get("timeout_seconds") or 3300) + 120,
+            max_retries=_container_start_max_retries(payload),
+            operation="generate",
+        )
+    except ModalContainerStartRetryLimitError:
+        raise
     except Exception:
-        try:
-            call.cancel()
-        except Exception as cancel_exc:
-            print(
-                f"[MODAL_CLIENT] 실패한 생성 호출 취소도 실패: {type(cancel_exc).__name__}: {cancel_exc}",
-                file=sys.stderr,
-            )
-            traceback.print_exc(file=sys.stderr)
+        _cancel_function_call(
+            call,
+            operation="generate",
+            terminate_containers=False,
+        )
         raise
 
     output_dir = Path(payload["output_dir"])
@@ -454,17 +605,20 @@ def convert_workflow(payload: dict) -> dict:
     timeout_seconds = max(30, min(int(payload.get("timeout_seconds") or 600), 900))
     call = worker_cls().convert.spawn(payload["workflow"])
     try:
-        return call.get(timeout=timeout_seconds)
+        return _wait_for_call_with_start_retry_limit(
+            call,
+            timeout_seconds=timeout_seconds,
+            max_retries=_container_start_max_retries(payload),
+            operation="convert_workflow",
+        )
+    except ModalContainerStartRetryLimitError:
+        raise
     except Exception:
-        try:
-            call.cancel()
-        except Exception as cancel_exc:
-            print(
-                f"[MODAL_CLIENT] 실패한 워크플로우 변환 호출 취소도 실패: "
-                f"{type(cancel_exc).__name__}: {cancel_exc}",
-                file=sys.stderr,
-            )
-            traceback.print_exc(file=sys.stderr)
+        _cancel_function_call(
+            call,
+            operation="convert_workflow",
+            terminate_containers=False,
+        )
         raise
 
 
@@ -511,17 +665,20 @@ def gpu_probe(payload: dict) -> dict:
     probe = _remote_function(payload, "gpu_probe")
     call = probe.spawn()
     try:
-        return call.get(timeout=900)
+        return _wait_for_call_with_start_retry_limit(
+            call,
+            timeout_seconds=900,
+            max_retries=_container_start_max_retries(payload),
+            operation="gpu_probe",
+        )
+    except ModalContainerStartRetryLimitError:
+        raise
     except Exception:
-        try:
-            call.cancel()
-        except Exception as cancel_exc:
-            print(
-                f"[MODAL_CLIENT] 실패한 L4 연결 테스트 호출 취소도 실패: "
-                f"{type(cancel_exc).__name__}: {cancel_exc}",
-                file=sys.stderr,
-            )
-            traceback.print_exc(file=sys.stderr)
+        _cancel_function_call(
+            call,
+            operation="gpu_probe",
+            terminate_containers=False,
+        )
         raise
 
 
@@ -536,8 +693,57 @@ def web_url(payload: dict) -> dict:
     return {"url": server.get_url()}
 
 
+async def _try_app_list_runners(
+    client: "_Client",
+    app_name: str,
+    environment: str,
+) -> int | None:
+    """best-effort AppList probe. 성공 시 n_running_tasks, 실패/미조회 시 None.
+
+    IMPORTANT: ``n_running_tasks``는 APP-level 통계이지 comfy_web_server 특정
+    값이 아니다. 이 값이 WebUI 실행 여부를 의미하려면 SOYA_MODAL_WEB_APP_NAME가
+    WebUI 전용 App이어야 한다(나중에 다른 작업을 같은 App에 넣으면 오판한다).
+
+    Modal은 공개 Python API로 Server의 현재 replica 수를 제공하지 않는다
+    (``modal.Server`` 공개 API는 get_url/autoscaler/logs 정도). 따라서 공식
+    CLI(``modal app list``)가 내부적으로 쓰는 동일한 AppList gRPC를 직접
+    호출한다. 이 경로는 공개·안정 API가 아니므로 Modal SDK 버전업 시 깨질 수
+    있고, 그 경우 이 probe만 None 처리해 호출자가 안전 퇴각하도록 격리했다.
+    향후 Modal이 Server용 공개 stats API를 제공하면 이 함수만 교체하면 된다.
+    """
+    try:
+        response = await client.stub.AppList(
+            api_pb2.AppListRequest(environment_name=environment)
+        )
+    except Exception as exc:
+        print(
+            f"[MODAL_CLIENT] AppList 호출 실패(runner probe 사용 불가): "
+            f"app={app_name}, error={type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
+        traceback.print_exc(file=sys.stderr)
+        return None
+    for app_stats in response.apps:
+        if (
+            str(app_stats.description) == app_name
+            and int(app_stats.state) == api_pb2.APP_STATE_DEPLOYED
+        ):
+            return int(app_stats.n_running_tasks)
+    print(
+        f"[MODAL_CLIENT] 배포된 웹 Server App 통계 누락(미추적): "
+        f"app={app_name}, environment={environment}",
+        file=sys.stderr,
+    )
+    return None
+
+
 async def _web_server_status_async(payload: dict) -> dict:
-    """한 Modal 클라이언트에서 Server URL과 컨테이너 수를 함께 읽는다."""
+    """한 Modal 클라이언트에서 Server URL(필수)과 컨테이너 수(best-effort)를 읽는다.
+
+    공개 ``modal.Server.get_url()``을 진실의 기본값으로 먼저 조회해 url/deployed를
+    확정한다. 그 뒤 AppList probe로 running 컨테이너 수를 보강하되, probe는
+    best-effort라 실패해도 url/deployed를 버리지 않고 runners=None으로 돌려준다.
+    """
     app_name = _web_app_name(payload)
     environment = str(payload["environment"])
     client = await _Client.from_env()
@@ -550,31 +756,40 @@ async def _web_server_status_async(payload: dict) -> dict:
         environment_name=environment,
         client=client,
     )
-    url = await server.get_url()
-    response = await client.stub.AppList(
-        api_pb2.AppListRequest(environment_name=environment)
-    )
-    for app_stats in response.apps:
-        if (
-            str(app_stats.description) == app_name
-            and int(app_stats.state) == api_pb2.APP_STATE_DEPLOYED
-        ):
-            return {
-                "url": url,
-                "backlog": 0,
-                "num_total_runners": int(app_stats.n_running_tasks),
-                # Server는 Function input 큐를 사용하지 않으므로 별도 running
-                # input이나 backlog 통계가 없다.
-                "num_running_inputs": 0,
-            }
-    print(
-        f"[MODAL_CLIENT] 배포된 웹 Server App 통계 누락: app={app_name}, "
-        f"environment={environment}",
-        file=sys.stderr,
-    )
-    raise modal.exception.NotFoundError(
-        f"Modal 웹 Server App이 배포되어 있지 않습니다: app={app_name}"
-    )
+    # 1. get_url (공개 API, 필수) — 미배포면 None 또는 NotFoundError.
+    try:
+        url = await server.get_url()
+    except modal.exception.NotFoundError as exc:
+        # 웹 App은 사용자가 명시적으로 시작하기 전이나 종료한 뒤에는 존재하지
+        # 않는 것이 정상 상태다. subprocess 자체를 실패시키면 짧은 상태 폴링마다
+        # 같은 traceback이 상위 서버 로그에 반복 노출되므로 조용히 stopped로 돌려준다.
+        print(
+            f"[MODAL_CLIENT] 웹 App 미배포: app={app_name}, "
+            f"environment={environment}, error={type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
+        return {
+            "url": None,
+            "deployed": False,
+            "runners": None,
+            "app_name": app_name,
+        }
+    if not url:
+        # get_url이 None을 반환하는 미배포 케이스.
+        return {
+            "url": None,
+            "deployed": False,
+            "runners": None,
+            "app_name": app_name,
+        }
+    # 2. AppList best-effort probe — 실패해도 url/deployed는 살린다.
+    runners = await _try_app_list_runners(client, app_name, environment)
+    return {
+        "url": url,
+        "deployed": True,
+        "runners": runners,
+        "app_name": app_name,
+    }
 
 
 def _web_server_status(payload: dict) -> dict:
@@ -582,36 +797,30 @@ def _web_server_status(payload: dict) -> dict:
 
 
 def web_status(payload: dict) -> dict:
-    """웹 전용 App을 기동하지 않고 URL과 현재 Server task 수를 조회한다."""
+    """웹 전용 App을 기동하지 않고 URL과 현재 Server task 수를 조회한다.
+
+    ``deployed``/``runners``(int|None)가 새 필드이고, ``num_total_runners`` 등
+    레거시 필드는 기존 _remote_web_status 호환을 위해 runners 기반으로 채운다.
+    runners가 None이면 레거시 통계는 0으로 내려주되, 새 필드로 None임을 구분한다.
+    """
     app_name = _web_app_name(payload)
-    try:
-        # Modal Server의 내부 Function에는 get_current_stats()가 노출되어 있어도
-        # 호출하면 ConflictError가 난다. App task 수로 GPU 컨테이너 상태를 읽는다.
-        stats = _web_server_status(payload)
-        url = stats["url"]
-    except modal.exception.NotFoundError as exc:
-        # 웹 App은 사용자가 명시적으로 시작하기 전이나 종료한 뒤에는 존재하지
-        # 않는 것이 정상 상태다. subprocess 자체를 실패시키면 짧은 상태 폴링마다
-        # 같은 traceback이 상위 서버 로그에 반복 노출되므로 stopped 통계로 돌려준다.
-        print(
-            f"[MODAL_CLIENT] 웹 App 미배포: app={app_name}, "
-            f"environment={payload['environment']}, error={type(exc).__name__}: {exc}",
-            file=sys.stderr,
-        )
-        traceback.print_exc(file=sys.stderr)
-        return {
-            "url": None,
-            "app_name": app_name,
-            "backlog": 0,
-            "num_total_runners": 0,
-            "num_running_inputs": 0,
-        }
+    # Modal Server의 내부 Function에는 get_current_stats()가 노출되어 있어도
+    # 호출하면 ConflictError가 난다. App task 수로 GPU 컨테이너 상태를 읽는다.
+    stats = _web_server_status(payload)
+    url = stats.get("url")
+    deployed = bool(stats.get("deployed"))
+    runners = stats.get("runners")
+    runners_value = int(runners) if runners is not None else 0
     return {
         "url": url,
+        "deployed": deployed,
+        "runners": runners,
         "app_name": app_name,
-        "backlog": int(stats["backlog"]),
-        "num_total_runners": int(stats["num_total_runners"]),
-        "num_running_inputs": int(stats["num_running_inputs"]),
+        # 레거시 필드(_remote_web_status 호환). Server는 Function input 큐를
+        # 쓰지 않으므로 running_inputs/backlog는 항상 0이다.
+        "backlog": 0,
+        "num_total_runners": runners_value,
+        "num_running_inputs": 0,
     }
 
 

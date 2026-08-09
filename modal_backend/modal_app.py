@@ -26,7 +26,28 @@ MANIFEST_LOCAL = Path(__file__).parents[1] / "comfy_installer" / "resources" / "
 IMAGE_INSTALL_LOCAL = Path(__file__).with_name("image_install.py")
 COMFY_REF = "64b8457f55cd7fb54ca7a956d9c73b505e903e0c"
 COMFY_MODELS_MOUNT_PATH = "/root/ComfyUI/models"
+CUDA_VERSION = "12.8.1"
+PYTHON_VERSION = "3.12"
+TORCH_VERSION = "2.11.0"
+TORCHVISION_VERSION = "0.26.0"
+TORCHAUDIO_VERSION = "2.11.0"
+PYTORCH_CUDA_INDEX_URL = "https://download.pytorch.org/whl/cu128"
+SAGEATTENTION_VERSION = "2.2.0"
 FORCE_CUSTOM_NODE_BUILD = os.environ.get("SOYA_MODAL_FORCE_CUSTOM_NODE_BUILD", "0") == "1"
+CALL_STARTED_LOG_PREFIX = "@@SOYA_MODAL_CALL_STARTED@@"
+
+
+def _announce_call_started(operation: str) -> None:
+    """컨테이너 초기화 완료를 로컬 FunctionCall 감시기에 알린다."""
+    print(
+        CALL_STARTED_LOG_PREFIX
+        + json.dumps(
+            {"operation": str(operation)},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ),
+        flush=True,
+    )
 
 
 def _extra_custom_nodes() -> list[dict]:
@@ -73,12 +94,47 @@ loras_volume = modal.Volume.from_name(f"{APP_NAME}-loras", create_if_missing=Tru
 workflows_volume = modal.Volume.from_name(f"{APP_NAME}-workflows", create_if_missing=True)
 
 runtime_image = (
-    modal.Image.debian_slim(python_version="3.12")
-    .apt_install("git", "ffmpeg", "libgl1", "libglib2.0-0")
+    modal.Image.from_registry(
+        f"nvidia/cuda:{CUDA_VERSION}-devel-ubuntu22.04",
+        add_python=PYTHON_VERSION,
+    )
+    .entrypoint([])
+    .apt_install(
+        "git",
+        "ffmpeg",
+        "libgl1",
+        "libglib2.0-0",
+        "build-essential",
+    )
+    .env(
+        {
+            "CUDA_HOME": "/usr/local/cuda",
+            "CC": "/usr/bin/gcc",
+            "CXX": "/usr/bin/g++",
+            "CUDAHOSTCXX": "/usr/bin/g++",
+            # Modal 이미지 빌더에는 GPU가 없어도 L4(Ada, sm_89) 전용 CUDA
+            # extension을 결정론적으로 사전 컴파일할 수 있다.
+            "TORCH_CUDA_ARCH_LIST": "8.9",
+            "MAX_JOBS": "4",
+            "EXT_PARALLEL": "4",
+            "NVCC_APPEND_FLAGS": "--threads 4",
+        }
+    )
+    .pip_install(
+        f"torch=={TORCH_VERSION}",
+        f"torchvision=={TORCHVISION_VERSION}",
+        f"torchaudio=={TORCHAUDIO_VERSION}",
+        index_url=PYTORCH_CUDA_INDEX_URL,
+    )
+    .pip_install("triton>=3.0.0", "packaging", "ninja", "wheel")
     .run_commands(
         "git clone https://github.com/comfyanonymous/ComfyUI.git /root/ComfyUI",
         f"cd /root/ComfyUI && git checkout {COMFY_REF}",
         "python -m pip install --no-cache-dir -r /root/ComfyUI/requirements.txt",
+    )
+    .pip_install(
+        f"git+https://github.com/thu-ml/SageAttention.git@v{SAGEATTENTION_VERSION}",
+        extra_options="--no-build-isolation",
     )
     .pip_install("requests")
     .add_local_file(MANIFEST_LOCAL, "/opt/soya/install_manifest.json", copy=True)
@@ -122,6 +178,21 @@ runtime_image = (
     )
     .run_commands(
         "python /opt/soya/image_install.py",
+        (
+            "python -c \"import importlib.metadata as m, sageattention, torch; "
+            "print('[MODAL_IMAGE] PyTorch:', torch.__version__); "
+            "print('[MODAL_IMAGE] CUDA:', torch.version.cuda); "
+            "print('[MODAL_IMAGE] SageAttention:', m.version('sageattention'), "
+            "sageattention.__file__); "
+            f"assert torch.__version__.startswith('{TORCH_VERSION}+cu128'), "
+            "torch.__version__; "
+            "assert torch.version.cuda == '12.8', torch.version.cuda; "
+            f"assert m.version('sageattention') == '{SAGEATTENTION_VERSION}'\""
+        ),
+        # ComfyUI 저장소의 models 폴더에는 placeholder 파일이 들어 있다. Modal은
+        # 이미지에서 비어 있지 않은 경로 위에 Volume을 마운트하지 않으므로,
+        # 런타임 Volume이 연결되기 전 이미지 레이어에서만 기본 폴더를 제거한다.
+        f"rm -rf {COMFY_MODELS_MOUNT_PATH}",
         force_build=FORCE_CUSTOM_NODE_BUILD,
     )
 )
@@ -143,6 +214,7 @@ runtime_image = (
     },
 )
 def gpu_probe() -> dict:
+    _announce_call_started("gpu_probe")
     import torch
 
     if not torch.cuda.is_available():
@@ -308,6 +380,7 @@ class ComfyWorker:
 
     @modal.method()
     def convert(self, workflow: dict) -> dict:
+        _announce_call_started("convert")
         import requests
 
         models_volume.reload()
@@ -339,6 +412,7 @@ class ComfyWorker:
         artifact_prefixes: list[str] | None = None,
         require_images: bool = True,
     ) -> dict:
+        _announce_call_started("generate")
         import requests
 
         models_volume.reload()

@@ -29,6 +29,7 @@ class ModalSettings:
     monthly_credit_usd: float = 30.0
     scaledown_window_seconds: int = 15
     status_refresh_seconds: int = 5
+    container_start_max_retries: int = 2
     web_fast: bool = False
 
     @classmethod
@@ -63,6 +64,15 @@ class ModalSettings:
         refresh = int(raw_refresh)
         if refresh != float(raw_refresh) or not 2 <= refresh <= 60:
             raise ValueError("Modal 상태 갱신 주기는 2~60초 사이의 정수여야 합니다.")
+        raw_start_retries = config.get("modal_container_start_max_retries", 2)
+        if isinstance(raw_start_retries, bool):
+            raise ValueError("Modal 컨테이너 시작 재시도 횟수는 0~10 사이의 정수여야 합니다.")
+        start_retries = int(raw_start_retries)
+        if (
+            start_retries != float(raw_start_retries)
+            or not 0 <= start_retries <= 10
+        ):
+            raise ValueError("Modal 컨테이너 시작 재시도 횟수는 0~10 사이의 정수여야 합니다.")
         return cls(
             enabled=enabled,
             profile=_name(config.get("modal_profile"), "Modal 프로필", "soya-comfy"),
@@ -77,6 +87,7 @@ class ModalSettings:
             monthly_credit_usd=credit,
             scaledown_window_seconds=scaledown,
             status_refresh_seconds=refresh,
+            container_start_max_retries=start_retries,
             web_fast=web_fast,
         )
 
@@ -91,6 +102,7 @@ class ModalSettings:
             "monthly_credit_usd": self.monthly_credit_usd,
             "scaledown_window_seconds": self.scaledown_window_seconds,
             "status_refresh_seconds": self.status_refresh_seconds,
+            "container_start_max_retries": self.container_start_max_retries,
             "web_fast": self.web_fast,
             "volume_names": {
                 "models": f"{self.deployment_name}-models",

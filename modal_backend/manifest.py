@@ -5,9 +5,6 @@ from pathlib import Path
 import traceback
 from typing import Any, Mapping
 
-from comfy_installer.workflow_library import embedded_workflow_base_dir
-
-
 def load_manifest(project_root: str | Path) -> dict[str, Any]:
     path = Path(project_root) / "comfy_installer" / "resources" / "install_manifest.json"
     with path.open("r", encoding="utf-8") as handle:
@@ -36,7 +33,7 @@ def _require_user_workflow(
     workflow_id: str,
     candidate: str,
 ) -> Path:
-    user_root = embedded_workflow_base_dir(Path(project_root).resolve() / "comfy")
+    user_root = _soya_user_root(project_root)
     path = Path(candidate).resolve()
     if not path.is_file():
         print(
@@ -120,6 +117,18 @@ def selected_install_plan(
 
 
 def _soya_user_root(project_root: str | Path) -> Path:
+    # Modal 원격 런타임은 ``modal_backend``만 마운트하며 로컬 설치기 패키지는
+    # 포함하지 않는다. 이 의존성은 로컬 워크플로우를 실제로 탐색할 때만 필요하므로
+    # 모듈 import 단계에서는 불러오지 않는다.
+    try:
+        from comfy_installer.workflow_library import embedded_workflow_base_dir
+    except Exception as exc:
+        print(
+            "[MODAL] 로컬 워크플로우 경로 도우미 import 실패: "
+            f"error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        raise
     return embedded_workflow_base_dir(Path(project_root).resolve() / "comfy")
 
 

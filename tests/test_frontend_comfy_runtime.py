@@ -88,12 +88,14 @@ def test_runtime_has_managed_modal_tab_lifecycle_sync_and_log_controls() -> None
         'id="comfy-modal-runtime-panel"',
         'id="modal-runtime-scaledown-window"',
         'id="modal-runtime-max-concurrency"',
+        'id="modal-runtime-container-start-max-retries"',
         'id="modal-runtime-status-refresh"',
         'id="modal-runtime-web-fast"',
         'id="modal-runtime-workflow-query-btn"',
         'id="modal-runtime-workflow-query-status"',
         'id="modal-runtime-redeploy-btn"',
-        'id="modal-runtime-custom-nodes-btn"',
+        'id="modal-redeploy-choice-modal"',
+        'id="modal-operation-lock-modal"',
         'id="modal-runtime-deployment-status"',
         'id="modal-deploy-progress"',
         'id="modal-deploy-progress-title"',
@@ -133,10 +135,15 @@ def test_runtime_has_managed_modal_tab_lifecycle_sync_and_log_controls() -> None
     assert "--listen 0.0.0.0 · 웹 UI 필수" in FRONTEND
     assert "modal_web_fast: document.getElementById('modal-runtime-web-fast')?.checked === true" in FRONTEND
     assert "modalWebFastEl.checked = currentConfig.modal_web_fast === true" in FRONTEND
+    assert "modal_container_start_max_retries: modalStartRetries" in FRONTEND
+    assert "currentConfig.modal_container_start_max_retries ?? 2" in FRONTEND
+    assert "최초 실행 제외 · 초과 시 강제 취소" in FRONTEND
     assert "60초 캐시" in FRONTEND
     assert "modalRuntimeQueryWorkflows" in FRONTEND
     assert "modalRuntimeRedeploy" in FRONTEND
-    assert "modalRuntimeSyncCustomNodes" in FRONTEND
+    assert "modalStartRedeploy" in FRONTEND
+    assert 'id="modal-runtime-custom-nodes-btn"' not in FRONTEND
+    assert "modalRuntimeSyncCustomNodes" not in FRONTEND
     assert "modalRenderDeploymentProgress" in FRONTEND
     assert "modalRemoteWorkflowStateText" in FRONTEND
     assert "modalRuntimeRunWorkflow" not in FRONTEND
@@ -164,7 +171,7 @@ def test_modal_panel_has_web_url_access_button_and_drops_local_debug_shortcut() 
 
 
 def test_modal_web_start_stays_locked_until_server_state_acknowledges_request() -> None:
-    assert "if (modalWebStartRequestPending) return;" in FRONTEND
+    assert "if (modalWebStartRequestPending || modalOperationLockActive()) return;" in FRONTEND
     assert "modalWebStartRequestPending = true;" in FRONTEND
     assert "if (modalWebStartRequestPending && webState !== 'stopped')" in FRONTEND
     assert (
@@ -187,8 +194,8 @@ def test_modal_redeploy_has_dedicated_live_progress_and_terminal_notifications()
         "modalDeploymentRequestStartedAt = Date.now();",
         "deploymentStartedAt >= modalDeploymentRequestStartedAt - 1500",
         "const staleWhilePending = pending",
-        "button.textContent = 'MODAL 재배포 요청 중…';",
-        "button.textContent = 'Custom Node 확인 중…';",
+        "const endpoint = customNodes ? '/api/modal/custom-nodes/sync' : '/api/modal/redeploy';",
+        "button.textContent = `${label} 요청 중…`;",
         "deployment.state === 'completed'",
         "deployment.state === 'failed'",
         "Modal 배포가 완료되었습니다",
@@ -200,12 +207,57 @@ def test_modal_redeploy_has_dedicated_live_progress_and_terminal_notifications()
     assert "@keyframes modal-deployment-spin" in FRONTEND
 
 
-def test_modal_web_start_and_stop_actions_are_mutually_exclusive() -> None:
+def test_modal_redeploy_uses_one_button_choice_dialog_and_locked_progress() -> None:
+    for value in (
+        'id="modal-redeploy-choice-modal" hidden',
+        'name="modal-redeploy-kind" value="redeploy" checked',
+        'name="modal-redeploy-kind" value="custom_nodes"',
+        'id="modal-redeploy-confirm-btn"',
+        'id="modal-redeploy-custom-preview"',
+        '>기본 재배포</strong>',
+        '>Custom Node 포함 재배포</strong>',
+        'id="modal-operation-lock-modal" hidden',
+        'id="modal-operation-lock-title"',
+        'id="modal-operation-lock-log"',
+        "function modalOpenRedeployChoice()",
+        "function modalConfirmRedeployChoice()",
+        "async function modalStartRedeploy(kind)",
+        "window.addEventListener('beforeunload'",
+        "if (modalOperationLockActive() || modalRedeployChoiceActive()) return;",
+    ):
+        assert value in FRONTEND
+
+    assert FRONTEND.count('id="modal-runtime-redeploy-btn"') == 1
+    assert 'id="modal-runtime-custom-nodes-btn"' not in FRONTEND
+    assert "modalRuntimeSyncCustomNodes" not in FRONTEND
+    assert 'id="modal-operation-lock-modal" onclick=' not in FRONTEND
+    assert 'id="modal-redeploy-choice-modal" onclick=' not in FRONTEND
+
+
+def test_modal_web_start_uses_same_locked_progress_and_keeps_cancel_action() -> None:
+    start = FRONTEND.split("async function modalRuntimeStartWeb()", 1)[1].split(
+        "async function modalRuntimeStopWeb()", 1
+    )[0]
+
+    assert "modalShowOperationLock(" in start
+    assert "'web_start'" in start
+    assert "modalSyncOperationLock({web});" in start
+    assert "modalHideOperationLock();" in start
+    assert 'id="modal-operation-cancel-web-btn"' in FRONTEND
+    assert 'onclick="modalRuntimeStopWeb()" hidden' in FRONTEND
+    assert "modalOperationLockKind === 'web_start' && webState === 'stopping'" in FRONTEND
+
+
+def test_modal_web_start_changes_to_cancellable_stop_action() -> None:
     assert 'id="modal-runtime-web-stop-btn" onclick="modalRuntimeStopWeb()" disabled hidden' in FRONTEND
-    assert "const showWebStopAction = webRunning || webState === 'stopping';" in FRONTEND
+    assert (
+        "const showWebStopAction = webState === 'starting' || webRunning || "
+        "webState === 'stopping';"
+    ) in FRONTEND
     assert "webStartButton.hidden = showWebStopAction;" in FRONTEND
     assert "webStopButton.hidden = !showWebStopAction;" in FRONTEND
-    assert "webStopButton.disabled = deploymentBusy || webBusy || !webRunning;" in FRONTEND
+    assert "webStopButton.disabled = deploymentBusy || webState === 'stopping';" in FRONTEND
+    assert "? 'ComfyUI 시작 취소'" in FRONTEND
     assert "ComfyUI 완전 종료" in FRONTEND
 
 

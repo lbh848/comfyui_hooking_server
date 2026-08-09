@@ -42,6 +42,10 @@ MEMORY_USD_PER_GIB_SECOND = 0.00000222
 RUNTIME_CPU_CORES = 4
 RUNTIME_MEMORY_GIB = 16
 BILLING_CACHE_SECONDS = 60
+# WebUI control-plane 조회(get_url/AppList) 캐시 주기. 브라우저는 5초 폴링하지만
+# WebUI 상태가 초 단위로 움직일 필요는 없으므로 Modal 왕복·rate-limit 부담을 절반
+# 이하로 줄인다(10~15초 범위).
+WEB_REMOTE_CACHE_SECONDS = 12
 INSTALL_LOG_LIMIT = 180
 INSTALL_LOG_LINE_LIMIT = 1_200
 RUNTIME_LOG_LIMIT = 500
@@ -66,6 +70,10 @@ class ModalClientActionError(RuntimeError):
             reason if reason in RUNTIME_FAILURE_REASONS else "runtime_unavailable"
         )
         self.error_type = error_type
+
+
+class WebStartCancelled(RuntimeError):
+    """사용자가 Modal 웹 Server 준비 대기를 취소했다."""
 
 
 def _runtime_failure_reason(exc: Exception) -> str:
@@ -131,6 +139,7 @@ class ModalService:
             "updated_at": time.time(),
         }
         self._web_task: asyncio.Task | None = None
+        self._web_start_cancel_event = threading.Event()
         self._web_state: dict[str, Any] = {
             "state": "stopped",
             "message": "Modal ComfyUI 웹 L4가 꺼져 있습니다.",
@@ -158,6 +167,10 @@ class ModalService:
         # 웹 시작/종료와 App 재배포의 승인 구간을 하나의 락으로 묶어,
         # 상태 조회 await 사이에 서로 다른 작업이 동시에 등록되지 않게 한다.
         self._web_action_lock = self._deployment_action_lock
+        # 좌측 위젯용 WebUI control-plane 결과(get_url/AppList) 캐시.
+        # _billing_cache 패턴과 동일: stored_at_monotonic 기반 TTL.
+        self._web_remote_lock = asyncio.Lock()
+        self._web_remote_cache: dict[str, Any] | None = None
 
     @staticmethod
     def _subprocess_env(profile: str, extra: Mapping[str, str] | None = None) -> dict[str, str]:
@@ -254,6 +267,7 @@ class ModalService:
         loop = asyncio.get_running_loop()
         output_queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
         process_holder: dict[str, subprocess.Popen[str]] = {}
+        cancel_requested = threading.Event()
 
         def queue_event(kind: str, payload: Any) -> None:
             loop.call_soon_threadsafe(output_queue.put_nowait, (kind, payload))
@@ -278,6 +292,9 @@ class ModalService:
                     **kwargs,
                 )
                 process_holder["process"] = process
+                if cancel_requested.is_set() and process.poll() is None:
+                    print(f"[MODAL] 취소 요청된 스트리밍 명령 종료: command={args!r}")
+                    process.kill()
                 if process.stdout is None or process.stderr is None:
                     print(f"[MODAL] 스트리밍 명령 파이프 생성 실패: command={args!r}")
                     raise RuntimeError("Modal 명령 출력 파이프를 만들지 못했습니다.")
@@ -394,10 +411,24 @@ class ModalService:
                         f"kind={kind!r}, payload={payload!r}"
                     )
         except asyncio.CancelledError:
+            cancel_requested.set()
             process = process_holder.get("process")
             if process is not None and process.poll() is None:
                 print(f"[MODAL] 취소된 스트리밍 명령 종료: command={args!r}")
                 process.kill()
+            try:
+                await asyncio.wait_for(asyncio.shield(worker_task), timeout=10)
+            except asyncio.TimeoutError:
+                print(
+                    "[MODAL] 취소된 스트리밍 명령 작업 종료 대기 시간 초과: "
+                    f"command={args!r}"
+                )
+            except Exception as exc:
+                print(
+                    "[MODAL] 취소된 스트리밍 명령 정리 실패: "
+                    f"command={args!r}, error={type(exc).__name__}: {exc}"
+                )
+                traceback.print_exc()
             raise
 
     def _install_snapshot(self) -> dict[str, Any]:
@@ -615,6 +646,9 @@ class ModalService:
             "action": action,
             "app_name": settings.deployment_name,
             "environment": settings.environment,
+            "container_start_max_retries": (
+                settings.container_start_max_retries
+            ),
             **payload,
         }
         code, stdout, stderr = await self._run_command(
@@ -791,43 +825,103 @@ class ModalService:
         }
 
     async def worker_status(self) -> dict[str, Any]:
-        """Return the lightweight GPU worker snapshot used by the always-on dock."""
+        """좌측 always-on 위젯용 L4 작업자 + WebUI 상태 스냅샷.
+
+        worker 블록과 web 블록은 서로 독립적으로 계산된다. 한쪽이 실패해도 다른
+        쪽은 정상 응답하도록 예외를 격리한다(Z안). 최상위 필드(ok/enabled/gpu/
+        refresh_seconds/checked_at)는 프론트엔드 기능 게이트·폴링 주기에 그대로 사용.
+        """
         settings = ModalSettings.from_mapping(self.get_config())
         checked_at = time.time()
-        base = {
+        top = {
             "ok": True,
             "enabled": settings.enabled,
             "gpu": settings.gpu,
             "refresh_seconds": settings.status_refresh_seconds,
             "checked_at": checked_at,
         }
+
+        worker: dict[str, Any]
+        try:
+            worker = await self._worker_status_block(settings)
+        except Exception as exc:
+            # worker 블록 계산 자체가 예외를 던지면 web 블록은 살린다(양방향 격리).
+            print(
+                f"[MODAL_WORKER] 작업자 상태 블록 계산 실패: "
+                f"app={settings.deployment_name}, "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            worker = {
+                "state": "error",
+                "available": False,
+                "reason": "runtime_unavailable",
+                "gpu_on": False,
+                "workers": 0,
+                "generating": 0,
+                "queued": 0,
+                "message": None,
+                "install_phase": None,
+                "error": str(exc),
+            }
+
+        web: dict[str, Any]
+        try:
+            web = await self._dock_web_status(settings)
+        except Exception as exc:
+            # web 블록 계산 자체가 예외를 던지면 worker 블록은 살린다.
+            print(
+                f"[MODAL_WORKER] WebUI 상태 블록 계산 실패: "
+                f"app={self._web_app_name(settings)}, "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            web = {
+                "state": "unknown",
+                "deployed": None,
+                "url": "",
+                "runners": None,
+                "message": "WebUI 상태를 확인하지 못했습니다.",
+                "error": str(exc),
+            }
+        return {**top, "worker": worker, "web": web}
+
+    async def _worker_status_block(self, settings: ModalSettings) -> dict[str, Any]:
+        """L4 작업자(작업 App) 상태를 worker 서브오브젝트로 계산.
+
+        state: disabled / deploying / running / stopped / error.
+        """
         if not settings.enabled:
             print(
                 "[MODAL_WORKER] 상태 조회 생략: Modal 사용 설정이 OFF입니다. "
                 f"app={settings.deployment_name}, environment={settings.environment}"
             )
             return {
-                **base,
+                "state": "disabled",
                 "available": False,
                 "reason": "disabled",
                 "gpu_on": False,
-                "num_total_runners": 0,
-                "num_running_inputs": 0,
-                "backlog": 0,
+                "workers": 0,
+                "generating": 0,
+                "queued": 0,
+                "message": None,
+                "install_phase": None,
+                "error": None,
             }
 
         if self._deployment_running():
             deployment = self._deployment_snapshot()
             return {
-                **base,
+                "state": "deploying",
                 "available": False,
                 "reason": "deployment_in_progress",
+                "gpu_on": False,
+                "workers": 0,
+                "generating": 0,
+                "queued": 0,
                 "message": deployment.get("message") or "Modal App을 재배포하고 있습니다.",
                 "install_phase": deployment.get("phase"),
-                "gpu_on": False,
-                "num_total_runners": 0,
-                "num_running_inputs": 0,
-                "backlog": 0,
+                "error": None,
             }
 
         if (
@@ -836,15 +930,16 @@ class ModalService:
         ):
             install = self._install_snapshot()
             return {
-                **base,
+                "state": "deploying",
                 "available": False,
                 "reason": "deployment_in_progress",
+                "gpu_on": False,
+                "workers": 0,
+                "generating": 0,
+                "queued": 0,
                 "message": install.get("message") or "Modal 앱을 배포하고 있습니다.",
                 "install_phase": install.get("phase"),
-                "gpu_on": False,
-                "num_total_runners": 0,
-                "num_running_inputs": 0,
-                "backlog": 0,
+                "error": None,
             }
 
         try:
@@ -873,35 +968,180 @@ class ModalService:
             if reason == "app_not_deployed" and installing:
                 install = self._install_snapshot()
                 return {
-                    **base,
+                    "state": "deploying",
                     "available": False,
                     "reason": "deployment_in_progress",
+                    "gpu_on": False,
+                    "workers": 0,
+                    "generating": 0,
+                    "queued": 0,
                     "message": install.get("message") or "Modal 앱을 배포하고 있습니다.",
                     "install_phase": install.get("phase"),
-                    "gpu_on": False,
-                    "num_total_runners": 0,
-                    "num_running_inputs": 0,
-                    "backlog": 0,
+                    "error": None,
                 }
             return {
-                **base,
+                "state": "error",
                 "available": False,
                 "reason": reason,
-                "error": str(exc),
                 "gpu_on": False,
-                "num_total_runners": 0,
-                "num_running_inputs": 0,
-                "backlog": 0,
+                "workers": 0,
+                "generating": 0,
+                "queued": 0,
+                "message": None,
+                "install_phase": None,
+                "error": str(exc),
             }
 
+        gpu_on = runners > 0
         return {
-            **base,
+            "state": "running" if gpu_on else "stopped",
             "available": True,
-            "gpu_on": runners > 0,
-            "num_total_runners": runners,
-            "num_running_inputs": running_inputs,
-            "backlog": backlog,
+            "reason": None,
+            "gpu_on": gpu_on,
+            "workers": runners,
+            "generating": running_inputs,
+            "queued": backlog,
+            "message": None,
+            "install_phase": None,
+            "error": None,
         }
+
+    async def _dock_web_status(self, settings: ModalSettings) -> dict[str, Any]:
+        """좌측 위젯용 WebUI 상태.
+
+        공개 ``get_url()``(필수, 배포/URL) + ``AppList``(best-effort, running 보강)
+        + 로컬 ``_web_state``(이 프로세스가 아는 전이 상태)을 조합해 Z안 우선순위로
+        state를 정한다. 이 경로에서 WebUI URL로 HTTP 요청은 절대 하지 않는다
+        (scale-to-zero 서버를 깨워 과금을 유발한다).
+        """
+        if not settings.enabled:
+            return {
+                "state": "stopped",
+                "deployed": False,
+                "url": "",
+                "runners": None,
+                "message": "Modal 사용 설정이 꺼져 있습니다.",
+                "error": None,
+                "reason": "disabled",
+            }
+
+        # 1. 로컬 전이 상태(starting/stopping)는 이 프로세스가 직접 수행 중일 때만
+        #    신뢰한다. 작업이 끝났는데 전이 상태가 남아 있으면 stale이므로 무시.
+        web_task_active = self._web_task is not None and not self._web_task.done()
+        local_state = self._web_state.get("state")
+        if local_state in ("starting", "stopping") and not web_task_active:
+            local_state = None
+
+        # 2. remote control-plane probe(get_url + AppList) — WEB_REMOTE_CACHE_SECONDS 캐시.
+        remote = await self._cached_web_remote(settings)
+        deployed = remote.get("deployed")  # True / False / None(조회 불가)
+        runners = remote.get("runners")  # int | None
+        remote_error = remote.get("error")
+        url = remote.get("url") or ""
+
+        # 3. state 우선순위(Z안):
+        #    로컬 전이(starting/stopping/failed) > AppList 보강(deployed+runners)
+        #    > 로컬 running(이 프로세스가 시작) > deployed(미추적) > stopped/unknown
+        if local_state in ("starting", "stopping", "failed"):
+            state = local_state
+        elif deployed is True and runners is not None:
+            state = "running" if runners > 0 else "stopped"
+        elif local_state == "running":
+            state = "running"
+        elif deployed is True:
+            # 배포됨이 확인됐으나 running 여부를 추적 못 함 → stopped 거짓말 금지.
+            state = "unknown"
+        elif deployed is False:
+            state = "stopped"
+        else:
+            # probe 자체가 실패해 deployed를 모름 → 역시 stopped 단정 금지.
+            state = "unknown"
+
+        if state == "unknown" and remote_error:
+            message = f"WebUI 상태 조회 실패: {remote_error}"
+            error = remote_error
+        elif state == "unknown":
+            message = "WebUI App은 배포되어 있으나 실행 여부를 추적하지 못했습니다."
+            error = None
+        elif state == "running":
+            message = "WebUI가 실행 중입니다."
+            error = None
+        elif state == "stopped":
+            message = "WebUI가 꺼져 있습니다."
+            error = None
+        elif state in ("starting", "stopping", "failed"):
+            message = self._web_state.get("message") or ""
+            error = self._web_state.get("error")
+        else:
+            message = remote.get("message") or ""
+            error = None
+
+        return {
+            "state": state,
+            "deployed": deployed,
+            "url": url,
+            "runners": runners,
+            "message": message,
+            "error": error,
+        }
+
+    async def _cached_web_remote(self, settings: ModalSettings) -> dict[str, Any]:
+        """get_url + AppList 결과를 WEB_REMOTE_CACHE_SECONDS(기본 12초) 캐시.
+
+        캐시 만료 시 ``web_status`` client action 1회 subprocess로 갱신한다. subprocess
+        전체가 실패해도 캐시에 error로 저장해 호출자가 unknown 퇴각하도록 한다.
+        _billing_cache 패턴(stored_at_monotonic 기반 TTL)을 따른다.
+        """
+        async with self._web_remote_lock:
+            now = time.monotonic()
+            cache = self._web_remote_cache
+            cache_age = (
+                now - float(cache["stored_at_monotonic"])
+                if cache is not None
+                else float("inf")
+            )
+            if (
+                cache is not None
+                and cache.get("environment") == settings.environment
+                and cache.get("profile") == settings.profile
+                and cache_age < WEB_REMOTE_CACHE_SECONDS
+            ):
+                return dict(cache["result"])
+            try:
+                result_raw = await self._run_client_action(
+                    settings,
+                    "web_status",
+                    timeout=30,
+                    web_app_name=self._web_app_name(settings),
+                )
+                result = {
+                    "deployed": bool(result_raw.get("deployed")),
+                    "url": str(result_raw.get("url") or ""),
+                    "runners": result_raw.get("runners"),  # int | None
+                    "message": result_raw.get("message"),
+                    "error": None,
+                }
+            except Exception as exc:
+                print(
+                    f"[MODAL_WORKER] WebUI remote probe 실패(캐시를 error로 저장): "
+                    f"app={self._web_app_name(settings)}, "
+                    f"error={type(exc).__name__}: {exc}"
+                )
+                traceback.print_exc()
+                result = {
+                    "deployed": None,
+                    "url": "",
+                    "runners": None,
+                    "message": None,
+                    "error": str(exc),
+                }
+            self._web_remote_cache = {
+                "profile": settings.profile,
+                "environment": settings.environment,
+                "stored_at_monotonic": now,
+                "result": result,
+            }
+            return dict(result)
 
     async def _remote_web_status(
         self,
@@ -1057,16 +1297,30 @@ class ModalService:
                 "backlog": 0,
                 "updated_at": now,
             }
+            self._web_start_cancel_event = threading.Event()
             self._web_task = asyncio.create_task(
                 self._run_web_start(settings, current)
             )
             return dict(self._web_state)
 
     @staticmethod
-    def _warm_web_url(url: str) -> int:
+    def _warm_web_url(
+        url: str,
+        cancel_event: threading.Event | None = None,
+    ) -> int:
         deadline = time.monotonic() + 650
         attempts = 0
+
+        def raise_if_cancelled() -> None:
+            if cancel_event is None or not cancel_event.is_set():
+                return
+            print(
+                f"[MODAL] 웹 Server 준비 대기 취소: attempts={attempts}, url={url}"
+            )
+            raise WebStartCancelled("Modal ComfyUI 시작이 사용자에 의해 취소되었습니다.")
+
         while True:
+            raise_if_cancelled()
             attempts += 1
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -1094,6 +1348,7 @@ class ModalService:
                     response.read(1)
                     status = int(response.status or 0)
                     if 200 <= status < 400:
+                        raise_if_cancelled()
                         return status
                     raise RuntimeError(
                         f"Modal ComfyUI 준비 응답이 HTTP {status}입니다."
@@ -1107,7 +1362,10 @@ class ModalService:
                             f"[MODAL] 웹 Server 콜드 스타트 대기: "
                             f"status=503, attempt={attempts}, url={url}"
                         )
-                    time.sleep(1)
+                    if cancel_event is None:
+                        time.sleep(1)
+                    elif cancel_event.wait(1):
+                        raise_if_cancelled()
                     continue
                 print(
                     f"[MODAL] 웹 Server 준비 요청 실패: status={exc.code}, "
@@ -1117,6 +1375,7 @@ class ModalService:
                 traceback.print_exc()
                 raise
             except Exception as exc:
+                raise_if_cancelled()
                 print(
                     f"[MODAL] 웹 Server 준비 요청 예외: attempt={attempts}, "
                     f"url={url}, error={type(exc).__name__}: {exc}"
@@ -1137,7 +1396,6 @@ class ModalService:
             if custom_node_inventory is not None
             else await self._inventory_for_deploy()
         )
-        app_path = self.project_root / "modal_backend" / "modal_app.py"
         async with self._deploy_lock:
             code, _stdout, stderr = await self._run_command(
                 [
@@ -1145,7 +1403,8 @@ class ModalService:
                     "-m",
                     "modal",
                     "deploy",
-                    str(app_path),
+                    "-m",
+                    "modal_backend.modal_app",
                     "--env",
                     settings.environment,
                 ],
@@ -1178,6 +1437,12 @@ class ModalService:
             if custom_node_inventory is not None
             else await self._inventory_for_deploy()
         )
+        if output_callback is None:
+            def output_callback(source: str, line: str) -> None:
+                if not line:
+                    return
+                print(f"[MODAL_WEB_DEPLOY][{source}] {line}")
+
         async with self._deploy_lock:
             code, _stdout, stderr = await self._run_command(
                 [
@@ -1257,7 +1522,11 @@ class ModalService:
                 message="L4 컨테이너를 시작하고 ComfyUI 준비를 기다리고 있습니다.",
                 updated_at=time.time(),
             )
-            status_code = await asyncio.to_thread(self._warm_web_url, url)
+            status_code = await asyncio.to_thread(
+                self._warm_web_url,
+                url,
+                self._web_start_cancel_event,
+            )
             if status_code < 200 or status_code >= 400:
                 print(
                     f"[MODAL] 웹 App 준비 응답 오류: app={self._web_app_name(settings)}, "
@@ -1275,6 +1544,12 @@ class ModalService:
                 f"[MODAL] 웹 App 시작 완료: app={self._web_app_name(settings)}, "
                 f"url={url}"
             )
+        except (asyncio.CancelledError, WebStartCancelled):
+            self._web_start_cancel_event.set()
+            print(
+                f"[MODAL] 웹 App 시작 작업 취소: app={self._web_app_name(settings)}"
+            )
+            raise
         except Exception as exc:
             print(f"[MODAL] 웹 App 시작 실패: {type(exc).__name__}: {exc}")
             traceback.print_exc()
@@ -1328,7 +1603,26 @@ class ModalService:
             if self._deployment_running():
                 raise RuntimeError("Modal 재배포가 진행 중입니다. 완료 후 종료하세요.")
             if self._web_task and not self._web_task.done():
-                raise RuntimeError("Modal ComfyUI 웹 작업이 이미 진행 중입니다.")
+                if self._web_state.get("state") == "stopping":
+                    return dict(self._web_state)
+                if self._web_state.get("state") != "starting":
+                    raise RuntimeError("Modal ComfyUI 웹 작업이 이미 진행 중입니다.")
+                start_task = self._web_task
+                self._web_start_cancel_event.set()
+                start_task.cancel()
+                self._web_state = {
+                    **self._web_state,
+                    "state": "stopping",
+                    "message": (
+                        "ComfyUI 시작을 취소하고 웹 App과 L4 컨테이너를 "
+                        "완전히 종료하고 있습니다."
+                    ),
+                    "updated_at": time.time(),
+                }
+                self._web_task = asyncio.create_task(
+                    self._run_web_stop(settings, start_task=start_task)
+                )
+                return dict(self._web_state)
             if not await self.account_connected(settings):
                 raise RuntimeError("Modal 계정을 먼저 연결하세요.")
             current = await self.web_status(settings=settings, connected=True)
@@ -1343,9 +1637,30 @@ class ModalService:
             self._web_task = asyncio.create_task(self._run_web_stop(settings))
             return dict(self._web_state)
 
-    async def _run_web_stop(self, settings: ModalSettings) -> None:
+    async def _run_web_stop(
+        self,
+        settings: ModalSettings,
+        *,
+        start_task: asyncio.Task | None = None,
+    ) -> None:
         try:
-            await self.runtime_logs(entries=RUNTIME_LOG_LIMIT)
+            if start_task is not None:
+                try:
+                    await start_task
+                except (asyncio.CancelledError, WebStartCancelled):
+                    print(
+                        f"[MODAL] 취소된 웹 시작 작업 정리 완료: "
+                        f"app={self._web_app_name(settings)}"
+                    )
+                except Exception as exc:
+                    print(
+                        f"[MODAL] 취소 중 웹 시작 작업 예외: "
+                        f"app={self._web_app_name(settings)}, "
+                        f"error={type(exc).__name__}: {exc}"
+                    )
+                    traceback.print_exc()
+            # 비용이 발생할 수 있는 원격 App 중지를 최우선으로 처리한다. 로그 조회가
+            # 느리거나 실패해도 L4 종료가 지연되어서는 안 된다.
             await self._stop_web_app(settings)
             self._web_state = {
                 "available": True,
@@ -1360,6 +1675,15 @@ class ModalService:
                 "updated_at": time.time(),
             }
             print(f"[MODAL] 웹 App 종료 완료: app={self._web_app_name(settings)}")
+            try:
+                await self.runtime_logs(entries=RUNTIME_LOG_LIMIT)
+            except Exception as log_exc:
+                print(
+                    "[MODAL] 웹 App 종료 후 로그 조회 실패(종료 상태 유지): "
+                    f"app={self._web_app_name(settings)}, "
+                    f"error={type(log_exc).__name__}: {log_exc}"
+                )
+                traceback.print_exc()
         except Exception as exc:
             print(f"[MODAL] 웹 App 종료 예외: {type(exc).__name__}: {exc}")
             traceback.print_exc()
@@ -2714,6 +3038,9 @@ class ModalService:
                 "artifact_prefixes": list(artifact_prefixes or []),
                 "require_images": bool(require_images),
                 "timeout_seconds": max(30, min(int(timeout_seconds), 3_300)),
+                "container_start_max_retries": (
+                    settings.container_start_max_retries
+                ),
                 "output_dir": output_dir,
             }
             code, stdout, stderr = await self._run_command(
@@ -2723,13 +3050,35 @@ class ModalService:
                 timeout=payload["timeout_seconds"] + 180,
             )
             if code != 0:
+                failure_response: dict[str, Any] = {}
+                if stdout.strip():
+                    try:
+                        parsed_failure = json.loads(stdout)
+                        if isinstance(parsed_failure, dict):
+                            failure_response = parsed_failure
+                        else:
+                            print(
+                                "[MODAL] 실패 응답 JSON 루트가 객체가 아님: "
+                                f"type={type(parsed_failure).__name__}"
+                            )
+                    except json.JSONDecodeError as exc:
+                        print(
+                            f"[MODAL] 실패 응답 JSON 파싱 실패: {exc}, "
+                            f"stdout_length={len(stdout)}"
+                        )
+                        traceback.print_exc()
+                failure_error = str(
+                    failure_response.get("error")
+                    or "Modal 원격 이미지 생성에 실패했습니다. 서버 로그를 확인하세요."
+                )
                 print(
                     f"[MODAL] 원격 생성 실패: app={settings.deployment_name}, "
                     f"exit_code={code}, models={len(assets['model_files'])}, "
                     f"loras={len(assets['lora_files'])}, inputs={len(input_files)}, "
+                    f"error={failure_error}, "
                     f"stderr={stderr[-2000:]}"
                 )
-                raise RuntimeError("Modal 원격 이미지 생성에 실패했습니다. 서버 로그를 확인하세요.")
+                raise RuntimeError(failure_error)
             try:
                 response = json.loads(stdout)
             except json.JSONDecodeError as exc:
