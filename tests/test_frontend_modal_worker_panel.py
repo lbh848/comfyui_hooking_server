@@ -89,9 +89,9 @@ def test_modal_worker_panel_explains_deployment_and_network_failures() -> None:
     assert "elements.checked.textContent = `${copy.detail}" in render_error
     assert "elements.state.textContent = 'Modal 배포 중';" in render_deploying
     assert "elements.widget.dataset.state = 'checking';" in render_deploying
-    assert "data.reason === 'deployment_in_progress'" in render_status
+    assert "worker.reason === 'deployment_in_progress'" in render_status
     assert "renderModalWorkerDeploying(data);" in render_status
-    assert "data.reason," in render_status
+    assert "worker.reason," in render_status
 
 
 def test_modal_worker_panel_follows_config_and_shared_queue_offset() -> None:

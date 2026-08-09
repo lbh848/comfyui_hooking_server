@@ -58,10 +58,13 @@ def test_chansub_settings_expose_builtin_quality_tag_filter():
     assert "저장·백업 프롬프트는 원문을 유지합니다." in source
 
 
-def test_queue_has_visible_dynamic_hybrid_assignment_area():
+def test_queue_has_visible_execution_areas_for_hybrid_and_modal():
     source = _frontend_source()
 
     assert "{key: 'hybrid', icon: '⚡', title: '동적 배분'" in source
     assert "먼저 빈 GPU/챈섭이 실행" in source
-    assert "grid-template-columns:repeat(4, minmax(0, 1fr))" in source
+    assert "{key: 'modal', icon: '☁️', title: 'Modal GPU'" in source
+    assert "원격 ComfyUI 작업" in source
+    assert "grid-template-columns:repeat(5, minmax(0, 1fr))" in source
     assert ".queue-lane.hybrid { border-top:2px solid #f59e0b; }" in source
+    assert ".queue-lane.modal { border-top:2px solid #a78bfa; }" in source
