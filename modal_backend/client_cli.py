@@ -18,6 +18,7 @@ import traceback
 
 import modal
 from modal._logs import LogsFilters, tail_logs
+from modal._server import _Server
 from modal.client import _Client
 from modal_proto import api_pb2
 
@@ -69,8 +70,8 @@ def _web_app_name(payload: dict) -> str:
     return configured or f"{str(payload['app_name'])}-web"
 
 
-def _web_function(payload: dict) -> modal.Function:
-    return modal.Function.from_name(
+def _web_server(payload: dict) -> modal.Server:
+    return modal.Server.from_name(
         _web_app_name(payload),
         "comfy_web_server",
         environment_name=str(payload["environment"]),
@@ -527,21 +528,67 @@ def gpu_probe(payload: dict) -> dict:
 def web_url(payload: dict) -> dict:
     """ComfyUI 웹 UI 공개 URL을 Modal에서 조회한다.
 
-    comfy_web_server 함수가 아직 배포되지 않았거나 웹 엔드포인트가 아니면
-    get_web_url()이 None 을 반환하거나 NotFoundError 를 일으킨다(후자는
+    comfy_web_server가 아직 배포되지 않았거나 Server 엔드포인트가 아니면
+    get_url()이 None 을 반환하거나 NotFoundError 를 일으킨다(후자는
     _error_reason 이 app_not_deployed 로 매핑).
     """
-    function = _web_function(payload)
-    return {"url": function.get_web_url()}
+    server = _web_server(payload)
+    return {"url": server.get_url()}
+
+
+async def _web_server_status_async(payload: dict) -> dict:
+    """한 Modal 클라이언트에서 Server URL과 컨테이너 수를 함께 읽는다."""
+    app_name = _web_app_name(payload)
+    environment = str(payload["environment"])
+    client = await _Client.from_env()
+    # 공개 ``modal.Server``는 동기 래퍼라 같은 프로세스에서 별도 asyncio.run과
+    # 섞으면 SDK 실행 루프가 교착될 수 있다. 이미 생성한 비동기 클라이언트를
+    # 내부 Server 객체에도 전달해 URL과 App 통계를 단일 루프에서 조회한다.
+    server = _Server.from_name(
+        app_name,
+        "comfy_web_server",
+        environment_name=environment,
+        client=client,
+    )
+    url = await server.get_url()
+    response = await client.stub.AppList(
+        api_pb2.AppListRequest(environment_name=environment)
+    )
+    for app_stats in response.apps:
+        if (
+            str(app_stats.description) == app_name
+            and int(app_stats.state) == api_pb2.APP_STATE_DEPLOYED
+        ):
+            return {
+                "url": url,
+                "backlog": 0,
+                "num_total_runners": int(app_stats.n_running_tasks),
+                # Server는 Function input 큐를 사용하지 않으므로 별도 running
+                # input이나 backlog 통계가 없다.
+                "num_running_inputs": 0,
+            }
+    print(
+        f"[MODAL_CLIENT] 배포된 웹 Server App 통계 누락: app={app_name}, "
+        f"environment={environment}",
+        file=sys.stderr,
+    )
+    raise modal.exception.NotFoundError(
+        f"Modal 웹 Server App이 배포되어 있지 않습니다: app={app_name}"
+    )
+
+
+def _web_server_status(payload: dict) -> dict:
+    return asyncio.run(_web_server_status_async(payload))
 
 
 def web_status(payload: dict) -> dict:
-    """웹 전용 App을 기동하지 않고 URL과 현재 runner 수를 조회한다."""
+    """웹 전용 App을 기동하지 않고 URL과 현재 Server task 수를 조회한다."""
     app_name = _web_app_name(payload)
     try:
-        function = _web_function(payload)
-        url = function.get_web_url()
-        stats = function.get_current_stats()
+        # Modal Server의 내부 Function에는 get_current_stats()가 노출되어 있어도
+        # 호출하면 ConflictError가 난다. App task 수로 GPU 컨테이너 상태를 읽는다.
+        stats = _web_server_status(payload)
+        url = stats["url"]
     except modal.exception.NotFoundError as exc:
         # 웹 App은 사용자가 명시적으로 시작하기 전이나 종료한 뒤에는 존재하지
         # 않는 것이 정상 상태다. subprocess 자체를 실패시키면 짧은 상태 폴링마다
@@ -562,9 +609,9 @@ def web_status(payload: dict) -> dict:
     return {
         "url": url,
         "app_name": app_name,
-        "backlog": int(stats.backlog),
-        "num_total_runners": int(stats.num_total_runners),
-        "num_running_inputs": int(stats.num_running_inputs),
+        "backlog": int(stats["backlog"]),
+        "num_total_runners": int(stats["num_total_runners"]),
+        "num_running_inputs": int(stats["num_running_inputs"]),
     }
 
 

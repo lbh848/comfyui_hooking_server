@@ -23,6 +23,7 @@ from modal_backend.modal_app import (
 
 WORKER_APP_NAME = os.environ.get("SOYA_MODAL_APP_NAME", "soya-comfy-worker")
 WEB_APP_NAME = os.environ.get("SOYA_MODAL_WEB_APP_NAME", f"{WORKER_APP_NAME}-web")
+WEB_WORKFLOW_MOUNT_PATH = "/root/ComfyUI/user/default/workflows/SOYA_USER"
 WEB_FAST = os.environ.get("SOYA_MODAL_WEB_FAST", "0") == "1"
 web_runtime_image = runtime_image.env(
     {"SOYA_MODAL_WEB_FAST": "1" if WEB_FAST else "0"}
@@ -36,54 +37,63 @@ if not 60 <= WEB_SCALEDOWN_WINDOW_SECONDS <= 1200:
 app = modal.App(WEB_APP_NAME)
 
 
-@app.function(
+@app.server(
     image=web_runtime_image,
     gpu="L4",
     cpu=4.0,
     memory=16_384,
+    name="comfy_web_server",
+    port=8188,
+    unauthenticated=True,
     min_containers=0,
     max_containers=1,
     scaledown_window=WEB_SCALEDOWN_WINDOW_SECONDS,
-    timeout=3_600,
     startup_timeout=600,
     volumes={
         "/models": models_volume,
         "/loras": loras_volume,
-        "/workflows": workflows_volume,
+        WEB_WORKFLOW_MOUNT_PATH: workflows_volume,
     },
 )
-@modal.web_server(port=8188, startup_timeout=600)
-def comfy_web_server() -> None:
-    """공유 Volume을 사용하는 수동 편집용 ComfyUI를 공개한다."""
-    extra_paths = _write_extra_model_paths()
-    child_env = os.environ.copy()
-    child_env["PYTHONUNBUFFERED"] = "1"
-    web_fast = os.environ.get("SOYA_MODAL_WEB_FAST", "0") == "1"
-    command = [
-        "python",
-        "-u",
-        "/root/ComfyUI/main.py",
-        "--listen",
-        "0.0.0.0",
-        "--port",
-        "8188",
-        "--enable-cors-header",
-        "*",
-    ]
-    if web_fast:
-        command.append("--fast")
-    command.extend(
-        [
-            "--extra-model-paths-config",
-            str(extra_paths),
+class ComfyWebServer:
+    """함수 입력 변환 없이 ComfyUI 포트를 직접 공개한다.
+
+    ``modal.web_server``는 각 HTTP 요청을 Modal 함수 입력으로 직렬화한다. 그
+    경로에서는 한글 워크플로우 URL이 ASCII로 역직렬화되어 실패할 수 있으므로,
+    native Server를 사용해 요청 경로를 ComfyUI까지 그대로 전달한다.
+    """
+
+    @modal.enter()
+    def start(self) -> None:
+        extra_paths = _write_extra_model_paths()
+        child_env = os.environ.copy()
+        child_env["PYTHONUNBUFFERED"] = "1"
+        web_fast = os.environ.get("SOYA_MODAL_WEB_FAST", "0") == "1"
+        command = [
+            "python",
+            "-u",
+            "/root/ComfyUI/main.py",
+            "--listen",
+            "0.0.0.0",
+            "--port",
+            "8188",
+            "--enable-cors-header",
+            "*",
         ]
-    )
-    print(
-        f"[MODAL_COMFY_WEB] ComfyUI 실행: listen=0.0.0.0, "
-        f"cors=*, fast={web_fast}"
-    )
-    subprocess.Popen(
-        command,
-        cwd="/root/ComfyUI",
-        env=child_env,
-    )
+        if web_fast:
+            command.append("--fast")
+        command.extend(
+            [
+                "--extra-model-paths-config",
+                str(extra_paths),
+            ]
+        )
+        print(
+            f"[MODAL_COMFY_WEB] ComfyUI Server 실행: listen=0.0.0.0, "
+            f"cors=*, fast={web_fast}"
+        )
+        self.process = subprocess.Popen(
+            command,
+            cwd="/root/ComfyUI",
+            env=child_env,
+        )

@@ -13,6 +13,7 @@ import threading
 import time
 import traceback
 import uuid
+import urllib.error
 import urllib.request
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -924,14 +925,65 @@ class ModalService:
 
     @staticmethod
     def _warm_web_url(url: str) -> int:
-        request = urllib.request.Request(
-            url,
-            headers={"User-Agent": "SOYA-Comfy-Manager/1.0"},
-            method="GET",
-        )
-        with urllib.request.urlopen(request, timeout=650) as response:
-            response.read(1)
-            return int(response.status or 0)
+        deadline = time.monotonic() + 650
+        attempts = 0
+        while True:
+            attempts += 1
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                try:
+                    raise TimeoutError(
+                        "Modal ComfyUI Server가 650초 안에 준비되지 않았습니다."
+                    )
+                except TimeoutError:
+                    print(
+                        f"[MODAL] 웹 Server 준비 시간 초과: "
+                        f"attempts={attempts - 1}, url={url}"
+                    )
+                    traceback.print_exc()
+                    raise
+            request = urllib.request.Request(
+                url,
+                headers={"User-Agent": "SOYA-Comfy-Manager/1.0"},
+                method="GET",
+            )
+            try:
+                with urllib.request.urlopen(
+                    request,
+                    timeout=min(30, max(1, remaining)),
+                ) as response:
+                    response.read(1)
+                    status = int(response.status or 0)
+                    if 200 <= status < 400:
+                        return status
+                    raise RuntimeError(
+                        f"Modal ComfyUI 준비 응답이 HTTP {status}입니다."
+                    )
+            except urllib.error.HTTPError as exc:
+                # Modal Server는 scale-to-zero 콜드 스타트 동안 503을 즉시 반환하며,
+                # 그 요청 자체가 컨테이너 시작을 트리거한다.
+                if exc.code == 503 and time.monotonic() < deadline:
+                    if attempts == 1 or attempts % 10 == 0:
+                        print(
+                            f"[MODAL] 웹 Server 콜드 스타트 대기: "
+                            f"status=503, attempt={attempts}, url={url}"
+                        )
+                    time.sleep(1)
+                    continue
+                print(
+                    f"[MODAL] 웹 Server 준비 요청 실패: status={exc.code}, "
+                    f"attempt={attempts}, url={url}, "
+                    f"error={type(exc).__name__}: {exc}"
+                )
+                traceback.print_exc()
+                raise
+            except Exception as exc:
+                print(
+                    f"[MODAL] 웹 Server 준비 요청 예외: attempt={attempts}, "
+                    f"url={url}, error={type(exc).__name__}: {exc}"
+                )
+                traceback.print_exc()
+                raise
 
     async def _deploy_web_app(self, settings: ModalSettings) -> None:
         code, _stdout, stderr = await self._run_command(

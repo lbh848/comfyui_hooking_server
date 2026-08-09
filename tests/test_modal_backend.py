@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import sys
 from types import SimpleNamespace
+import urllib.error
 
 import pytest
 
@@ -1335,24 +1336,24 @@ async def test_modal_client_web_url_action_reads_comfy_web_server_url(
     }
     captured: dict = {}
 
-    class FakeFunction:
-        def get_web_url(self) -> str | None:
+    class FakeServer:
+        def get_url(self) -> str | None:
             return "https://workspace--soya-comfy-worker-comfy-web-server.modal.run"
 
-    def from_name(app_name: str, function_name: str, *, environment_name: str):
+    def from_name(app_name: str, server_name: str, *, environment_name: str):
         captured.update(
-            {"app_name": app_name, "function_name": function_name, "env": environment_name}
+            {"app_name": app_name, "server_name": server_name, "env": environment_name}
         )
-        assert function_name == "comfy_web_server"
-        return FakeFunction()
+        assert server_name == "comfy_web_server"
+        return FakeServer()
 
-    monkeypatch.setattr(client_cli.modal.Function, "from_name", from_name)
+    monkeypatch.setattr(client_cli.modal.Server, "from_name", from_name)
 
     result = client_cli.web_url(payload)
 
     assert captured == {
         "app_name": "soya-comfy-worker-web",
-        "function_name": "comfy_web_server",
+        "server_name": "comfy_web_server",
         "env": "main",
     }
     assert result == {
@@ -1370,36 +1371,98 @@ def test_modal_client_web_status_reads_dedicated_web_app_stats(
     }
     captured: dict = {}
 
-    class FakeStats:
-        backlog = 1
-        num_total_runners = 1
-        num_running_inputs = 2
+    def server_status(actual_payload: dict) -> dict:
+        captured.update(actual_payload)
+        return {
+            "url": "https://example.modal.run",
+            "backlog": 0,
+            "num_total_runners": 1,
+            "num_running_inputs": 0,
+        }
 
-    class FakeFunction:
-        def get_web_url(self) -> str:
-            return "https://example.modal.run"
-
-        def get_current_stats(self) -> FakeStats:
-            return FakeStats()
-
-    def from_name(app_name: str, function_name: str, *, environment_name: str):
-        captured.update(
-            {"app_name": app_name, "function_name": function_name, "env": environment_name}
-        )
-        return FakeFunction()
-
-    monkeypatch.setattr(client_cli.modal.Function, "from_name", from_name)
+    monkeypatch.setattr(client_cli, "_web_server_status", server_status)
 
     result = client_cli.web_status(payload)
 
     assert captured == {
-        "app_name": "worker-manual-web",
-        "function_name": "comfy_web_server",
-        "env": "main",
+        "app_name": "worker",
+        "web_app_name": "worker-manual-web",
+        "environment": "main",
     }
     assert result["num_total_runners"] == 1
-    assert result["num_running_inputs"] == 2
-    assert result["backlog"] == 1
+    assert result["num_running_inputs"] == 0
+    assert result["backlog"] == 0
+
+
+def test_modal_client_web_server_status_reads_url_and_deployed_app_tasks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed: dict = {}
+
+    class FakeStub:
+        async def AppList(self, request):
+            observed["environment"] = request.environment_name
+            return SimpleNamespace(
+                apps=[
+                    SimpleNamespace(
+                        description="worker-web",
+                        state=client_cli.api_pb2.APP_STATE_DEPLOYED,
+                        n_running_tasks=2,
+                    ),
+                    SimpleNamespace(
+                        description="worker-web",
+                        state=client_cli.api_pb2.APP_STATE_STOPPED,
+                        n_running_tasks=0,
+                    ),
+                ]
+            )
+
+    class FakeClient:
+        stub = FakeStub()
+
+    class FakeServer:
+        async def get_url(self) -> str:
+            return "https://example.modal.direct"
+
+    async def from_env():
+        return FakeClient()
+
+    def from_name(
+        app_name: str,
+        server_name: str,
+        *,
+        environment_name: str,
+        client,
+    ) -> FakeServer:
+        observed["app_name"] = app_name
+        observed["server_name"] = server_name
+        observed["server_environment"] = environment_name
+        assert isinstance(client, FakeClient)
+        return FakeServer()
+
+    monkeypatch.setattr(client_cli._Client, "from_env", from_env)
+    monkeypatch.setattr(client_cli._Server, "from_name", from_name)
+
+    result = client_cli._web_server_status(
+        {
+            "app_name": "worker",
+            "web_app_name": "worker-web",
+            "environment": "main",
+        }
+    )
+
+    assert observed == {
+        "environment": "main",
+        "app_name": "worker-web",
+        "server_name": "comfy_web_server",
+        "server_environment": "main",
+    }
+    assert result == {
+        "url": "https://example.modal.direct",
+        "backlog": 0,
+        "num_total_runners": 2,
+        "num_running_inputs": 0,
+    }
 
 
 def test_modal_client_web_status_treats_missing_app_as_stopped(
@@ -1412,14 +1475,13 @@ def test_modal_client_web_status_treats_missing_app_as_stopped(
         "environment": "main",
     }
 
-    class FakeFunction:
-        def get_web_url(self) -> str:
-            raise client_cli.modal.exception.NotFoundError("missing web app")
+    def missing(_payload: dict) -> dict:
+        raise client_cli.modal.exception.NotFoundError("missing web app")
 
     monkeypatch.setattr(
         client_cli,
-        "_web_function",
-        lambda _payload: FakeFunction(),
+        "_web_server_status",
+        missing,
     )
 
     result = client_cli.web_status(payload)
@@ -1556,6 +1618,49 @@ async def test_modal_web_start_redeploys_web_app_before_warming_l4(
         "status",
     ]
     assert service._web_state["state"] == "running"
+
+
+def test_modal_web_warm_retries_server_cold_start_503(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[float] = []
+    sleeps: list[float] = []
+
+    class FakeResponse:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args) -> None:
+            return None
+
+        def read(self, _size: int) -> bytes:
+            return b"<"
+
+    def urlopen(request, *, timeout: float):
+        calls.append(timeout)
+        if len(calls) < 3:
+            raise urllib.error.HTTPError(
+                request.full_url,
+                503,
+                "cold start",
+                hdrs=None,
+                fp=None,
+            )
+        return FakeResponse()
+
+    monkeypatch.setattr("modal_backend.service.urllib.request.urlopen", urlopen)
+    monkeypatch.setattr(
+        "modal_backend.service.time.sleep",
+        lambda seconds: sleeps.append(seconds),
+    )
+
+    result = ModalService._warm_web_url("https://example.modal.run")
+
+    assert result == 200
+    assert len(calls) == 3
+    assert sleeps == [1, 1]
 
 
 @pytest.mark.asyncio
@@ -1695,19 +1800,30 @@ async def test_modal_runtime_logs_only_include_current_server_session(
     )
 
 
-def test_modal_web_function_is_isolated_from_worker_app() -> None:
+def test_modal_web_server_is_isolated_from_worker_app() -> None:
     root = Path(__file__).resolve().parents[1] / "modal_backend"
     worker_source = (root / "modal_app.py").read_text(encoding="utf-8")
     web_source = (root / "modal_web_app.py").read_text(encoding="utf-8")
 
-    assert "def comfy_web_server" not in worker_source
-    assert "def comfy_web_server" in web_source
-    assert "@modal.web_server" in web_source
+    assert "class ComfyWebServer" not in worker_source
+    assert "class ComfyWebServer" in web_source
+    assert "@app.server(" in web_source
+    assert "@modal.web_server" not in web_source
+    assert 'name="comfy_web_server"' in web_source
+    assert "unauthenticated=True" in web_source
+    assert "@modal.enter()" in web_source
     assert 'WEB_APP_NAME = os.environ.get("SOYA_MODAL_WEB_APP_NAME"' in web_source
-    assert '"--enable-cors-header",\n        "*",' in web_source
+    assert (
+        'WEB_WORKFLOW_MOUNT_PATH = '
+        '"/root/ComfyUI/user/default/workflows/SOYA_USER"'
+    ) in web_source
+    assert 'WEB_WORKFLOW_MOUNT_PATH: workflows_volume' in web_source
+    assert '"/workflows": workflows_volume' in worker_source
+    assert '"/workflows": workflows_volume' not in web_source
+    assert '"--enable-cors-header",\n            "*",' in web_source
     assert 'WEB_FAST = os.environ.get("SOYA_MODAL_WEB_FAST", "0") == "1"' in web_source
     assert 'web_runtime_image = runtime_image.env(' in web_source
-    assert 'if web_fast:\n        command.append("--fast")' in web_source
+    assert 'if web_fast:\n            command.append("--fast")' in web_source
 
 
 @pytest.mark.asyncio
