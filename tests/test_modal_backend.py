@@ -10,7 +10,12 @@ from modal_backend.manifest import selected_install_plan, workflow_catalog
 from modal_backend.service import cost_summary
 from modal_backend.service import ModalService
 from modal_backend.settings import ModalSettings
-from modal_backend.workflow_assets import resolve_input_files, resolve_lora_files
+from modal_backend.workflow_assets import (
+    resolve_explicit_input_files,
+    resolve_input_files,
+    resolve_lora_files,
+)
+from modes.asset_tool_mode import AssetToolMode
 from queue_manager import QueueItem, QueueManager
 
 
@@ -109,6 +114,64 @@ def test_workflow_assets_resolve_structured_lora_and_image_inputs(tmp_path: Path
     assert inputs == [{"source_path": str(image_file), "remote_name": "refs/face.png"}]
 
 
+def test_explicit_modal_input_folder_preserves_comfy_relative_paths(tmp_path: Path) -> None:
+    input_root = tmp_path / "input"
+    job_root = input_root / "modal_jobs" / "job-1"
+    first = job_root / "1_train" / "face.png"
+    second = job_root / "2_test" / "pose.png"
+    first.parent.mkdir(parents=True)
+    second.parent.mkdir(parents=True)
+    first.write_bytes(b"face")
+    second.write_bytes(b"pose")
+
+    resolved = resolve_explicit_input_files(
+        [job_root],
+        {"comfy_input_dir": str(input_root)},
+    )
+
+    assert resolved == [
+        {
+            "source_path": str(first),
+            "remote_name": "modal_jobs/job-1/1_train/face.png",
+        },
+        {
+            "source_path": str(second),
+            "remote_name": "modal_jobs/job-1/2_test/pose.png",
+        },
+    ]
+
+
+def test_modal_lora_result_sync_is_non_destructive_and_uses_no_requirements_folder(
+    tmp_path: Path,
+) -> None:
+    local_root = tmp_path / "installed-app" / "loras" / "SOYA_CHAR_LORA"
+    service = ModalService(
+        tmp_path / "installed-app",
+        lambda: {"lora_load_path": str(local_root)},
+    )
+    remote_result = tmp_path / "download" / "hero.safetensors"
+    remote_result.parent.mkdir(parents=True)
+    remote_result.write_bytes(b"modal-v1")
+    artifact = {
+        "path": str(remote_result),
+        "relative_path": "Alice/Lora/hero/hero.safetensors",
+    }
+
+    first = service._store_modal_artifacts([artifact], service.get_config())
+    target = local_root / "Alice" / "Lora" / "hero" / "hero.safetensors"
+    identical = service._store_modal_artifacts([artifact], service.get_config())
+    remote_result.write_bytes(b"modal-v2")
+    conflict = service._store_modal_artifacts([artifact], service.get_config())
+
+    assert first[0]["status"] == "stored"
+    assert identical[0]["status"] == "identical"
+    assert conflict[0]["status"] == "conflict_copy"
+    assert target.read_bytes() == b"modal-v1"
+    assert Path(conflict[0]["local_path"]).read_bytes() == b"modal-v2"
+    assert ".modal-" in Path(conflict[0]["local_path"]).name
+    assert not (tmp_path / "installed-app" / "요구사항").exists()
+
+
 @pytest.mark.asyncio
 async def test_disabled_modal_does_not_create_delete_outbox(tmp_path: Path) -> None:
     service = ModalService(tmp_path, lambda: {"modal_enabled": False})
@@ -116,6 +179,24 @@ async def test_disabled_modal_does_not_create_delete_outbox(tmp_path: Path) -> N
     await service.enqueue_lora_delete("SOYA_CHAR_LORA/Alice/Lora/hero")
 
     assert not (tmp_path / "modal_lora_delete_outbox.json").exists()
+
+
+def test_modal_delete_outbox_uses_deployment_backup_directory(tmp_path: Path) -> None:
+    service = ModalService(tmp_path, lambda: {"modal_enabled": False})
+    first = [{"remote_path": "Alice/Lora/hero"}]
+    second = [{"remote_path": "Bob/Lora/hero"}]
+
+    service._save_delete_outbox(first)
+    service._save_delete_outbox(second)
+
+    backups = list(
+        (tmp_path / "backups" / "modal").glob(
+            "modal_lora_delete_outbox_before_save_*.json"
+        )
+    )
+    assert len(backups) == 1
+    assert json.loads(backups[0].read_text(encoding="utf-8")) == first
+    assert not (tmp_path / "요구사항").exists()
 
 
 @pytest.mark.asyncio
@@ -212,6 +293,7 @@ def test_modal_enabled_routes_illustrations_away_from_local_gpu() -> None:
         "modal_max_concurrency": 2,
         "illustration_provider": "comfy",
         "bot_selected": "test-bot",
+        "comfy_task_allocations": {"illustration": "modal"},
     }
     illustration = QueueItem(id="a", type="illustration", label="a", params={})
     local_gpu = QueueItem(id="b", type="asset_generation", label="b", params={})
@@ -229,6 +311,7 @@ async def test_modal_workers_run_two_illustrations_in_parallel() -> None:
         "modal_max_concurrency": 2,
         "illustration_provider": "comfy",
         "bot_selected": "test-bot",
+        "comfy_task_allocations": {"illustration": "modal"},
     }
     both_started = asyncio.Event()
     active = 0
@@ -263,6 +346,97 @@ async def test_modal_workers_run_two_illustrations_in_parallel() -> None:
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_local_and_modal_lanes_claim_parallel_queue_items_without_duplicates() -> None:
+    manager = QueueManager()
+    manager.get_config = lambda: {
+        "modal_enabled": True,
+        "modal_max_concurrency": 1,
+        "illustration_provider": "comfy",
+        "bot_selected": "test-bot",
+        "comfy_task_allocations": {"illustration": 1},
+        "comfy_task_modal_parallel": {"illustration": True},
+    }
+    both_started = asyncio.Event()
+    release = asyncio.Event()
+    starts = []
+
+    async def execute(item):
+        starts.append((item.id, item.comfy_execution_target))
+        if len(starts) == 2:
+            both_started.set()
+        await release.wait()
+        return {"ok": True}
+
+    async def no_prune(_item):
+        return None
+
+    manager._execute_item = execute
+    manager._deferred_prune = no_prune
+    first = await manager.add_item("illustration", "first", {}, priority=0)
+    second = await manager.add_item("illustration", "second", {}, priority=0)
+
+    try:
+        await asyncio.wait_for(both_started.wait(), timeout=1)
+        assert {item_id for item_id, _target in starts} == {first.id, second.id}
+        assert {target for _item_id, target in starts} == {"local", "modal"}
+
+        release.set()
+        await asyncio.wait_for(
+            asyncio.gather(first.completion_future, second.completion_future),
+            timeout=1,
+        )
+        assert first.status == second.status == "completed"
+    finally:
+        release.set()
+        tasks = [
+            task for task in manager._modal_worker_tasks.values() if not task.done()
+        ]
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_instance_analysis_forks_can_run_on_local_and_modal_concurrently() -> None:
+    tool = AssetToolMode()
+    local_tool = tool.fork_for_execution()
+    modal_tool = tool.fork_for_execution()
+    both_started = asyncio.Event()
+    release = asyncio.Event()
+    active = 0
+    peak = 0
+
+    async def analyze(*_args, **_kwargs):
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        if active == 2:
+            both_started.set()
+        await release.wait()
+        active -= 1
+        return {"success": True, "tags": ["tag"]}
+
+    local_tool._analyze_internal = analyze
+    modal_tool._analyze_internal = analyze
+    local_task = asyncio.create_task(local_tool.analyze_image(b"local"))
+    modal_task = asyncio.create_task(modal_tool.analyze_image(b"modal"))
+
+    try:
+        await asyncio.wait_for(both_started.wait(), timeout=1)
+        release.set()
+        results = await asyncio.wait_for(
+            asyncio.gather(local_task, modal_task),
+            timeout=1,
+        )
+        assert peak == 2
+        assert all(result["success"] for result in results)
+    finally:
+        release.set()
+        await asyncio.gather(local_task, modal_task, return_exceptions=True)
 
 
 @pytest.mark.asyncio

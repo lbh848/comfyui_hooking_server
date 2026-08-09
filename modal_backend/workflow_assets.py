@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path, PurePosixPath
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping
 
 
 _LORA_INPUT_FIELDS = {"lora_name", "lora"}
@@ -102,3 +102,42 @@ def resolve_input_files(
             continue
         result.append({"source_path": str(candidate), "remote_name": relative.as_posix()})
     return result
+
+
+def resolve_explicit_input_files(
+    paths: Iterable[str | Path],
+    config: Mapping[str, Any],
+) -> list[dict[str, str]]:
+    """호출자가 명시한 Comfy input 내부 파일·폴더를 원격 입력 목록으로 만든다."""
+
+    input_root_raw = str(config.get("comfy_input_dir") or "").strip()
+    if not input_root_raw:
+        print("[MODAL_SYNC] 명시 입력 경로 처리 실패: comfy_input_dir 설정이 비어 있습니다.")
+        raise ValueError("Modal 입력 동기화에 필요한 Comfy input 폴더가 비어 있습니다.")
+    input_root = Path(input_root_raw).resolve()
+    result: list[dict[str, str]] = []
+    for raw_path in paths:
+        candidate = Path(raw_path).resolve()
+        if input_root != candidate and input_root not in candidate.parents:
+            print(
+                "[MODAL_SYNC] 명시 입력 경로 거부: Comfy input 폴더 밖입니다. "
+                f"input_root={input_root}, candidate={candidate}"
+            )
+            raise ValueError(f"ComfyUI input 밖의 경로는 전송할 수 없습니다: {candidate}")
+        if not candidate.exists():
+            print(f"[MODAL_SYNC] 명시 입력 경로 없음: {candidate}")
+            raise FileNotFoundError(f"Modal에 전송할 입력 경로가 없습니다: {candidate}")
+        files = [candidate] if candidate.is_file() else sorted(
+            path for path in candidate.rglob("*") if path.is_file()
+        )
+        if not files:
+            print(f"[MODAL_SYNC] 명시 입력 폴더가 비어 있습니다: {candidate}")
+            raise ValueError(f"Modal에 전송할 입력 폴더가 비어 있습니다: {candidate}")
+        for source in files:
+            relative = source.relative_to(input_root).as_posix()
+            result.append({"source_path": str(source), "remote_name": relative})
+
+    deduplicated: dict[str, dict[str, str]] = {}
+    for item in result:
+        deduplicated[item["remote_name"]] = item
+    return list(deduplicated.values())

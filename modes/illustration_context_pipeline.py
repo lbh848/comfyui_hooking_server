@@ -6265,7 +6265,7 @@ def _build_character_history(extra_reference: str) -> str:
     return str(extra_reference or "").strip()
 
 
-# 삽화 CALL 이름 → 외부 API 분기 task_key. PLAN/DETAIL/KEYVIS는 사용자가 선택한
+# 삽화 CALL 이름 → 외부 LLM 분기 task_key. PLAN/DETAIL/KEYVIS는 사용자가 선택한
 # 하나의 illustration_call2 경로를 공유한다. 기본 primary=llm1(server.py 참고).
 _CALL_TASK_KEYS = {
     "CALL1-BACKTRANSLATE": "illustration_call1_backtranslate",
@@ -6312,9 +6312,9 @@ async def _call_pipeline_llm(
     history_ids_sink: list[str] | None = None,
     force_slot: str | None = None,
 ) -> str:
-    """삽화 CALL1/2/3 의 LLM 호출. 외부 API 분기(illustration_callN task_key)를 경유한다.
+    """삽화 CALL1/2/3 의 LLM 호출. 외부 LLM 분기(illustration_callN task_key)를 경유한다.
 
-    외부 API 분기 탭에서 CALL별로 LLM1/LLM2/LLM3 을 선택하거나 폴백을 켤 수 있다.
+    외부 LLM 분기 탭에서 CALL별로 LLM1/LLM2/LLM3 을 선택하거나 폴백을 켤 수 있다.
     실패 시 callLLMTask 가 지정된 폴백 LLM 으로 재시도한다.
     """
     started = time.time()

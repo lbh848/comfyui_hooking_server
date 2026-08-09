@@ -1637,7 +1637,12 @@ def update_lora_entry(name: str, character: str, trigger: str = None, descriptio
     return {"success": True}
 
 
-def export_training_images(character: str, entry: str, comfy_input_dir: str) -> dict:
+def export_training_images(
+    character: str,
+    entry: str,
+    comfy_input_dir: str,
+    folder_name_override: str | None = None,
+) -> dict:
     """
     학습용 이미지를 Comfy Input 폴더 하위로 복사
     - multi_img_folder_name 서브폴더 생성 (없으면 생성, 있으면 내부 비우기)
@@ -1666,7 +1671,11 @@ def export_training_images(character: str, entry: str, comfy_input_dir: str) -> 
     data = _load_lora_manage()
     entry_info = _get_entry(data, character, entry) or {}
     training_config = entry_info.get("training_config", {})
-    folder_name = training_config.get("multi_img_folder_name", "soya_lora")
+    folder_name = (
+        str(folder_name_override).strip().replace("\\", "/")
+        if folder_name_override
+        else training_config.get("multi_img_folder_name", "soya_lora")
+    )
 
     # 대상 폴더 경로
     target_dir = os.path.join(comfy_input_dir, folder_name)

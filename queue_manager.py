@@ -16,6 +16,13 @@ import uuid
 from dataclasses import dataclass, field, asdict
 from typing import Optional
 
+from comfy_allocation import (
+    CURRENT_COMFY_EXECUTION_TARGET,
+    MODAL_COMFY_TARGET,
+    MODAL_SUPPORTED_COMFY_TASK_KEYS,
+    normalize_comfy_task_allocations,
+    normalize_comfy_task_modal_parallel,
+)
 from modes import llm_service
 
 
@@ -289,6 +296,7 @@ class QueueManager:
         self.get_comfy_port_for_task = None    # def(task_key) -> int
         self.fetch_real_history = None         # async def(prompt_id) -> dict
         self.fetch_real_image = None           # async def(filename, subfolder, img_type) -> bytes
+        self.run_modal_workflow = None          # async def(workflow, ...) -> dict
         # 삽화 생성 콜백 (server.py에서 주입)
         self.generate_image_with_prompt = None  # async def(positive, negative) -> (bytes, errors)
         self.process_prompt_full = None         # async def(prompt_id, prompt_data, positive, negative) -> None
@@ -463,7 +471,13 @@ class QueueManager:
         # 챈섭 및 아직 공급자가 정해지지 않은 하이브리드 항목은 외부 워커도 깨운다.
         if self._item_execution_area(item)[0] in ("external", "hybrid"):
             asyncio.ensure_future(self._ensure_external_workers())
-        if self._item_execution_area(item)[0] in ("modal", "hybrid"):
+        if (
+            self._item_execution_area(item)[0] in ("modal", "comfy_parallel")
+            or (
+                self._item_execution_area(item)[0] == "hybrid"
+                and self._modal_comfy_lane_allowed(item)
+            )
+        ):
             asyncio.ensure_future(self._ensure_modal_workers())
         return item
 
@@ -573,10 +587,91 @@ class QueueManager:
             self._external_wakeup.set()
             self._modal_wakeup.set()
 
+    @staticmethod
+    def _comfy_task_key_for_item(item: QueueItem) -> str | None:
+        """큐 타입을 사용자가 설정하는 Comfy 작업 배분 키로 변환한다."""
+
+        mapping = {
+            "illustration": "illustration",
+            "character_maker_illustration": "illustration",
+            "regenerate": "restore_regenerate",
+            "restore_manual": "restore_regenerate",
+            "asset_generation": "asset_generation",
+            "qwen_edit": "qwen_edit",
+            "asset_lora_training": "asset_lora_training",
+            "bot_lora_training": "bot_lora_training",
+            "instance_lora_training": "instance_lora",
+            "instance_lora_analysis": "instance_lora",
+        }
+        mapped = mapping.get(item.type)
+        if mapped:
+            return mapped
+        if item.type == "tag_analysis" and isinstance(item.params, dict):
+            if str(item.params.get("source") or "") in ("instance_lora", "style_lora"):
+                return "instance_lora"
+        return None
+
+    def _comfy_execution_policy(self, item: QueueItem) -> tuple[int | str, bool]:
+        """현재 설정에서 (기본 대상, Modal 병렬 허용)을 반환한다."""
+
+        task_key = self._comfy_task_key_for_item(item)
+        if not task_key:
+            return 1, False
+        try:
+            config = self.get_config() if self.get_config else {}
+            allocations = normalize_comfy_task_allocations(
+                config.get("comfy_task_allocations"),
+                legacy_illustration_port=config.get("comfyui_port_illustration"),
+            )
+            parallel = normalize_comfy_task_modal_parallel(
+                config.get("comfy_task_modal_parallel"),
+                allocations=allocations,
+            )
+            return allocations[task_key], parallel[task_key]
+        except Exception as e:
+            print(
+                "[QUEUE:COMFY_ALLOCATION] 실행 정책 조회 실패, Comfy #1 전용 사용: "
+                f"item={item.id}, type={item.type}, task={task_key}, "
+                f"error={type(e).__name__}: {e}"
+            )
+            traceback.print_exc()
+            return 1, False
+
+    def _local_comfy_lane_allowed(self, item: QueueItem) -> bool:
+        target, _parallel = self._comfy_execution_policy(item)
+        return target != MODAL_COMFY_TARGET
+
+    def _modal_comfy_lane_allowed(self, item: QueueItem) -> bool:
+        task_key = self._comfy_task_key_for_item(item)
+        if task_key not in MODAL_SUPPORTED_COMFY_TASK_KEYS or not self._modal_enabled():
+            return False
+        target, parallel = self._comfy_execution_policy(item)
+        return target == MODAL_COMFY_TARGET or parallel
+
+    @staticmethod
+    def _bind_comfy_execution_target(item: QueueItem, target: str) -> None:
+        if target not in ("local", MODAL_COMFY_TARGET):
+            print(
+                "[QUEUE:COMFY_ALLOCATION] 실행 대상 바인딩 실패: "
+                f"item={item.id}, target={target!r}"
+            )
+            raise ValueError(f"지원하지 않는 Comfy 실행 대상입니다: {target}")
+        item.comfy_execution_target = target
+        print(
+            "[QUEUE:COMFY_ALLOCATION] 대기열 작업 선착순 배분: "
+            f"item={item.id}, type={item.type}, target={target}"
+        )
+
     def _item_execution_area(self, item: QueueItem) -> tuple[str, str]:
         """큐 실행 영역과 공급자를 반환한다. hybrid는 먼저 빈 실행 레인이 가져간다."""
         if item.type in LLM_TYPES:
             return "llm", "llm"
+
+        fixed_target = getattr(item, "comfy_execution_target", None)
+        if fixed_target == MODAL_COMFY_TARGET:
+            return "modal", "modal"
+        if fixed_target == "local":
+            return "gpu", "comfy"
 
         params = item.params if isinstance(item.params, dict) else {}
         raw_body = params.get("raw_body") if isinstance(params.get("raw_body"), dict) else {}
@@ -608,17 +703,13 @@ class QueueManager:
             return "external", "chansub"
         if provider == "hybrid":
             return "hybrid", "hybrid"
-        if item.type in ("illustration", "regenerate") and provider in ("", "comfy"):
-            try:
-                config = self.get_config() if self.get_config else {}
-                if config.get("modal_enabled", False):
-                    return "modal", "modal"
-            except Exception as e:
-                print(
-                    f"[QUEUE:MODAL] 실행 영역 설정 조회 실패, 로컬 GPU 사용: "
-                    f"item={item.id}, error={type(e).__name__}: {e}"
-                )
-                traceback.print_exc()
+        task_key = self._comfy_task_key_for_item(item)
+        if task_key and provider in ("", "comfy", "local"):
+            target, parallel = self._comfy_execution_policy(item)
+            if target == MODAL_COMFY_TARGET:
+                return "modal", "modal"
+            if parallel and self._modal_enabled():
+                return "comfy_parallel", "comfy+modal"
         return "gpu", provider or "local"
 
     def _bind_hybrid_item_provider(self, item: QueueItem, provider: str) -> bool:
@@ -673,6 +764,11 @@ class QueueManager:
         execution_area, provider = self._item_execution_area(item)
         data["execution_area"] = execution_area
         data["provider"] = provider
+        data["comfy_execution_target"] = getattr(
+            item,
+            "comfy_execution_target",
+            None,
+        )
         return data
 
     def get_status(self) -> dict:
@@ -905,12 +1001,21 @@ class QueueManager:
                 lane == "gpu"
                 and item.type not in LLM_TYPES
                 and (
-                    execution_area == "gpu"
-                    or (execution_area == "hybrid" and not self._modal_enabled())
+                    execution_area in ("gpu", "comfy_parallel")
+                    or (
+                        execution_area == "hybrid"
+                        and self._local_comfy_lane_allowed(item)
+                    )
                 )
             ):
                 return True
-            if lane == "modal" and execution_area in ("modal", "hybrid"):
+            if lane == "modal" and (
+                execution_area in ("modal", "comfy_parallel")
+                or (
+                    execution_area == "hybrid"
+                    and self._modal_comfy_lane_allowed(item)
+                )
+            ):
                 return True
         return False
 
@@ -1082,15 +1187,15 @@ class QueueManager:
                 if not pending_items:
                     break
                 pending_items.sort(key=self._sort_key)
-                # 로컬 GPU 항목과 아직 미할당인 하이브리드 항목을 선택한다.
+                # 로컬 전용·로컬/Modal 선착순·로컬 허용 하이브리드 항목을 선택한다.
                 gpu_pending = [
                     i for i in pending_items
                     if i.type not in LLM_TYPES
                     and (
-                        self._item_execution_area(i)[0] == "gpu"
+                        self._item_execution_area(i)[0] in ("gpu", "comfy_parallel")
                         or (
                             self._item_execution_area(i)[0] == "hybrid"
-                            and not self._modal_enabled()
+                            and self._local_comfy_lane_allowed(i)
                         )
                     )
                     and self._dependencies_ready(i)
@@ -1104,6 +1209,8 @@ class QueueManager:
                             f"[QUEUE:HYBRID] GPU 레인 claim 실패: item={next_item.id}"
                         )
                         break
+                if self._comfy_task_key_for_item(next_item):
+                    self._bind_comfy_execution_target(next_item, "local")
                 self.current_item = next_item
                 await self._run_item_pipeline(next_item, is_gpu=True)
         finally:
@@ -1117,6 +1224,8 @@ class QueueManager:
         item.progress = 0.0
         print(f"[QUEUE] 처리 시작: type={item.type}, label={item.label}, id={item.id}")
         await self._notify_queue_updated()
+        execution_target = getattr(item, "comfy_execution_target", None)
+        context_token = CURRENT_COMFY_EXECUTION_TARGET.set(execution_target)
         try:
             result = await self._execute_item(item)
             item.status = "completed"
@@ -1128,6 +1237,8 @@ class QueueManager:
             item.error = str(e)
             print(f"[QUEUE] 처리 실패: id={item.id}, error={e}")
             traceback.print_exc()
+        finally:
+            CURRENT_COMFY_EXECUTION_TARGET.reset(context_token)
         item.completed_at = time.time()
         # 대기 중인 HTTP 핸들러 등에게 완료/실패 알림
         self._settle_future(item)
@@ -1220,7 +1331,13 @@ class QueueManager:
         pending = [
             item for item in self.items
             if item.status == "pending"
-            and self._item_execution_area(item)[0] in ("modal", "hybrid")
+            and (
+                self._item_execution_area(item)[0] in ("modal", "comfy_parallel")
+                or (
+                    self._item_execution_area(item)[0] == "hybrid"
+                    and self._modal_comfy_lane_allowed(item)
+                )
+            )
             and self._dependencies_ready(item)
         ]
         if not pending:
@@ -1231,6 +1348,7 @@ class QueueManager:
             if not self._bind_hybrid_item_provider(item, "comfy"):
                 print(f"[QUEUE:MODAL] 하이브리드 claim 실패: item={item.id}")
                 return None
+        self._bind_comfy_execution_target(item, MODAL_COMFY_TARGET)
         item.status = "processing"
         item.started_at = time.time()
         item.progress = 0.0
@@ -1991,7 +2109,25 @@ class QueueManager:
                 if valid_images:
                     style_ref_subfolder = self.prepare_style_ref_folder(valid_images, comfy_input_dir)
 
-        result = await self.asset_mode.generate(
+        modal_input_paths = []
+        for subfolder in (reference_subfolder, style_ref_subfolder):
+            if not subfolder:
+                continue
+            candidate = os.path.join(comfy_input_dir, subfolder)
+            if os.path.exists(candidate):
+                modal_input_paths.append(candidate)
+            else:
+                print(
+                    "[QUEUE:ASSET:MODAL] 참조 입력 경로 없음: "
+                    f"item={item.id}, subfolder={subfolder!r}, path={candidate!r}"
+                )
+
+        execution_asset_mode = (
+            self.asset_mode.fork_for_execution()
+            if callable(getattr(self.asset_mode, "fork_for_execution", None))
+            else self.asset_mode
+        )
+        result = await execution_asset_mode.generate(
             character=body.get("character", ""),
             outfit=body.get("outfit", ""),
             expression=body.get("expression", ""),
@@ -2030,6 +2166,7 @@ class QueueManager:
             negative_prompt=body.get("negative_prompt"),
             storage_group=body.get("storage_group", ""),
             storage_session=body.get("storage_session", ""),
+            modal_input_paths=modal_input_paths,
         )
 
         # 저장 전에 실패한 경우에도 오토매치 UI가 해당 큐 항목을 완료 처리할 수 있도록
@@ -2124,10 +2261,6 @@ class QueueManager:
             raise ValueError("Comfy Input 폴더가 유효하지 않습니다")
 
         from modes.lora_mode import export_training_images, list_training_images, _get_entry, _load_lora_manage
-        export_result = export_training_images(character, entry, comfy_input_dir)
-        if not export_result.get("success"):
-            raise ValueError(f"이미지 전송 실패: {export_result.get('error', '')}")
-
         data = _load_lora_manage()
         entry_info = _get_entry(data, character, entry) or {}
         training_config = entry_info.get("training_config", {})
@@ -2137,7 +2270,12 @@ class QueueManager:
         step = training_config.get("step_per_image", 50)
         il_rate = training_config.get("il_rate", 0.0005)
         save_step = training_config.get("save_per_step", 50)
-        folder = training_config.get("multi_img_folder_name", "soya_lora")
+        base_folder = training_config.get("multi_img_folder_name", "soya_lora")
+        folder = (
+            f"{base_folder}/modal_jobs/{item.id}"
+            if CURRENT_COMFY_EXECUTION_TARGET.get() == MODAL_COMFY_TARGET
+            else base_folder
+        )
         gen_w = training_config.get("gen_w", 1024)
         gen_h = training_config.get("gen_h", 1024)
         lora_save_path = training_config.get("lora_save_path", f"{character}/Lora/{entry}")
@@ -2146,6 +2284,15 @@ class QueueManager:
         save_after = training_config.get("save_after", 0)
         dim = training_config.get("dim", 32)
         alpha = training_config.get("alpha", 16)
+
+        export_result = export_training_images(
+            character,
+            entry,
+            comfy_input_dir,
+            folder_name_override=folder,
+        )
+        if not export_result.get("success"):
+            raise ValueError(f"이미지 전송 실패: {export_result.get('error', '')}")
 
         images = list_training_images(character, entry)
         if not images:
@@ -2200,7 +2347,13 @@ class QueueManager:
                 ninfo["inputs"]["value"] = negative_text
 
         # 진행률 모니터링 (WebSocket 연결 후 제출하여 경쟁 조건 방지)
-        prompt_id, submit_result = await self._monitor_training_ws(item, wf, "lora_training_progress")
+        prompt_id, submit_result = await self._monitor_training_ws(
+            item,
+            wf,
+            "lora_training_progress",
+            modal_input_paths=[export_result["target_dir"]],
+            modal_artifact_prefixes=[lora_save_path],
+        )
         print(f"[QUEUE-ASSET_LORA] 완료: prompt_id={prompt_id}")
 
         return {
@@ -2243,7 +2396,12 @@ class QueueManager:
         step = training_config.get("step_per_image", 50)
         il_rate = training_config.get("il_rate", 0.0005)
         save_step = training_config.get("save_per_step", 50)
-        folder = training_config.get("multi_img_folder_name", "soya_lora")
+        base_folder = training_config.get("multi_img_folder_name", "soya_lora")
+        folder = (
+            f"{base_folder}/modal_jobs/{item.id}"
+            if CURRENT_COMFY_EXECUTION_TARGET.get() == MODAL_COMFY_TARGET
+            else base_folder
+        )
         gen_w = training_config.get("gen_w", 1024)
         gen_h = training_config.get("gen_h", 1024)
         upscale = training_config.get("upscale", False)
@@ -2331,6 +2489,8 @@ class QueueManager:
                 "char_index": params.get("char_index", 0),
                 "total_chars": params.get("total_chars", 0),
             },
+            modal_input_paths=[export_result["target_dir"]],
+            modal_artifact_prefixes=[lora_save_path],
         )
 
         return {"success": True, "character": char_name}
@@ -2965,6 +3125,13 @@ class QueueManager:
         comfy_input_dir = config.get("comfy_input_dir", "")
         if not comfy_input_dir or not os.path.isdir(comfy_input_dir):
             raise ValueError("Comfy Input 폴더가 유효하지 않습니다")
+        if self.asset_tool is None:
+            raise RuntimeError("인스턴스/스타일 분석용 AssetTool이 주입되지 않았습니다")
+        execution_asset_tool = (
+            self.asset_tool.fork_for_execution()
+            if callable(getattr(self.asset_tool, "fork_for_execution", None))
+            else self.asset_tool
+        )
 
         # ── 소스별 데이터 접근 추상화 ──
         if source == "style_lora":
@@ -3043,7 +3210,7 @@ class QueueManager:
                     if os.path.isfile(img_path):
                         with open(img_path, "rb") as f:
                             image_data = f.read()
-                        analysis = await self.asset_tool.analyze_image(
+                        analysis = await execution_asset_tool.analyze_image(
                             image_data,
                             "expressions",
                             comfy_task_key="instance_lora",
@@ -3072,7 +3239,12 @@ class QueueManager:
             step = profile_settings.get("step_per_image", 125)
             il_rate = profile_settings.get("il_rate", 0.00025)
             save_step = profile_settings.get("save_per_step", 25)
-            folder = profile_settings.get("multi_img_folder_name", "soya_lora")
+            base_folder = profile_settings.get("multi_img_folder_name", "soya_lora")
+            folder = (
+                f"{base_folder}/modal_jobs/{item.id}/{profile}"
+                if CURRENT_COMFY_EXECUTION_TARGET.get() == MODAL_COMFY_TARGET
+                else base_folder
+            )
             gen_w = profile_settings.get("gen_w", 1)
             gen_h = profile_settings.get("gen_h", 1)
             upscale = profile_settings.get("upscale", False)
@@ -3196,6 +3368,8 @@ class QueueManager:
                 extra_data=progress_extra,
                 on_complete=lambda ts_id=primary_id, prof=profile:
                     add_session_fn(datetime.datetime.now().strftime("%Y%m%d-%H%M%S"), prof),
+                modal_input_paths=[export_dir],
+                modal_artifact_prefixes=[lora_save_path],
             )
 
         return {
@@ -3220,6 +3394,13 @@ class QueueManager:
         images = list_images(lora_id)
         if not images:
             raise ValueError("분석할 이미지가 없습니다")
+        if self.asset_tool is None:
+            raise RuntimeError("인스턴스 분석용 AssetTool이 주입되지 않았습니다")
+        execution_asset_tool = (
+            self.asset_tool.fork_for_execution()
+            if callable(getattr(self.asset_tool, "fork_for_execution", None))
+            else self.asset_tool
+        )
 
         if self.notify_frontend:
             await self.notify_frontend("instance_lora_analyze_progress", {
@@ -3245,7 +3426,7 @@ class QueueManager:
                 with open(img_path, "rb") as f:
                     image_data = f.read()
 
-                analysis = await self.asset_tool.analyze_image(
+                analysis = await execution_asset_tool.analyze_image(
                     image_data,
                     "expressions",
                     comfy_task_key="instance_lora",
@@ -3315,6 +3496,8 @@ class QueueManager:
         event_type: str = "lora_training_progress",
         extra_data: dict = None,
         on_complete=None,
+        modal_input_paths: list[str] | None = None,
+        modal_artifact_prefixes: list[str] | None = None,
     ) -> tuple[str, dict]:
         """ComfyUI WebSocket에 먼저 연결한 후 워크플로우를 제출하고 학습 진행률을 모니터링한다.
 
@@ -3322,6 +3505,99 @@ class QueueManager:
         반환값: (prompt_id, submit_result)
         """
         import aiohttp as _aiohttp
+        if CURRENT_COMFY_EXECUTION_TARGET.get() == MODAL_COMFY_TARGET:
+            if not callable(self.run_modal_workflow):
+                print(
+                    "[QUEUE-MONITOR:MODAL] 실행 실패: Modal 워크플로우 콜백 없음 "
+                    f"item={item.id}, type={item.type}"
+                )
+                raise RuntimeError("Modal 학습 워크플로우 콜백이 설정되지 않았습니다")
+            if not modal_input_paths:
+                print(
+                    "[QUEUE-MONITOR:MODAL] 실행 실패: 학습 입력 경로 없음 "
+                    f"item={item.id}, type={item.type}"
+                )
+                raise ValueError("Modal 학습에 전송할 입력 경로가 없습니다")
+            if not modal_artifact_prefixes:
+                print(
+                    "[QUEUE-MONITOR:MODAL] 실행 실패: LoRA 결과 경로 없음 "
+                    f"item={item.id}, type={item.type}"
+                )
+                raise ValueError("Modal 학습의 LoRA 결과 경로가 없습니다")
+            try:
+                await self._notify_progress(
+                    item,
+                    {
+                        "phase": "modal_running",
+                        "percentage": 1,
+                        **(extra_data or {}),
+                    },
+                )
+                if self.notify_frontend:
+                    await self.notify_frontend(
+                        event_type,
+                        {
+                            "phase": "modal_running",
+                            "message": "Modal L4에서 학습 중",
+                            **(extra_data or {}),
+                        },
+                    )
+                result = await self.run_modal_workflow(
+                    workflow,
+                    input_paths=modal_input_paths,
+                    artifact_prefixes=modal_artifact_prefixes,
+                    require_images=False,
+                )
+                prompt_id = str(result.get("prompt_id") or "")
+                if not prompt_id:
+                    print(
+                        "[QUEUE-MONITOR:MODAL] 결과 검증 실패: prompt_id 없음 "
+                        f"item={item.id}, result={result!r}"
+                    )
+                    raise RuntimeError("Modal 학습 결과에 prompt_id가 없습니다")
+                if on_complete:
+                    on_complete()
+                await self._notify_progress(
+                    item,
+                    {
+                        "phase": "all_complete",
+                        "percentage": 100,
+                        **(extra_data or {}),
+                    },
+                )
+                if self.notify_frontend:
+                    await self.notify_frontend(
+                        event_type,
+                        {
+                            "phase": "all_complete",
+                            "message": "Modal 학습 및 LoRA 동기화 완료",
+                            **(extra_data or {}),
+                        },
+                    )
+                print(
+                    "[QUEUE-MONITOR:MODAL] 학습 완료: "
+                    f"item={item.id}, type={item.type}, prompt_id={prompt_id}, "
+                    f"artifacts={len(result.get('artifacts') or [])}"
+                )
+                return prompt_id, {"modal": result}
+            except Exception as e:
+                print(
+                    "[QUEUE-MONITOR:MODAL] 학습 실패: "
+                    f"item={item.id}, type={item.type}, "
+                    f"inputs={modal_input_paths!r}, artifacts={modal_artifact_prefixes!r}, "
+                    f"error={type(e).__name__}: {e}"
+                )
+                traceback.print_exc()
+                if self.notify_frontend:
+                    await self.notify_frontend(
+                        event_type,
+                        {
+                            "phase": "error",
+                            "message": f"{type(e).__name__}: {e}",
+                            **(extra_data or {}),
+                        },
+                    )
+                raise
         host = self.get_real_comfy_host()
         task_key_by_type = {
             "asset_lora_training": "asset_lora_training",
@@ -3654,7 +3930,22 @@ class QueueManager:
                     image_data = f.read()
                 category = "expressions"
 
-            result = await self.asset_tool.analyze_image(image_data, category)
+            comfy_task_key = (
+                "instance_lora"
+                if source in ("instance_lora", "style_lora")
+                else "tag_analysis"
+            )
+            analysis_tool = self.asset_tool
+            if (
+                comfy_task_key == "instance_lora"
+                and callable(getattr(analysis_tool, "fork_for_execution", None))
+            ):
+                analysis_tool = analysis_tool.fork_for_execution()
+            result = await analysis_tool.analyze_image(
+                image_data,
+                category,
+                comfy_task_key=comfy_task_key,
+            )
             if not result.get("success"):
                 err = result.get("error", "분석 실패")
                 print(f"[QUEUE:TAG_ANALYSIS_SINGLE] 분석 실패: {filename} - {err}")

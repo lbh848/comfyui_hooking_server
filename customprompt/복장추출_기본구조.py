@@ -22,7 +22,7 @@
 
 사용 가능한 LLM 호출 함수:
     callLLMTask("extract_outfit", messages, model=None)
-        → 외부 API 분기의 복장 추출 라우팅/재시도/폴백 설정 사용
+        → 외부 LLM 분기의 복장 추출 라우팅/재시도/폴백 설정 사용
 
 사용 가능한 유틸리티:
     get_config() → {"llm_service": ..., "llm_model": ..., "llm_service2": ..., "llm_model2": ..., ...}
@@ -52,13 +52,13 @@ Gemini-3 계열 모델 요청 형식:
 }
 
 주의:
-- callLLMTask가 service/model과 외부 API 분기의 작업별 재시도/폴백 설정을 처리합니다.
+- callLLMTask가 service/model과 외부 LLM 분기의 작업별 재시도/폴백 설정을 처리합니다.
 
 주의:
 - Gemini 모델은 system role을 지원하지 않으므로 시스템 프롬프트도 user role로 전달해야 합니다.
 - GPT 모델은 system role을 지원합니다.
 - LLM 실패 시 반환값: "[LLM 실패] ..." 형식 문자열
-- 폴백은 외부 API 분기의 복장 추출 항목에서 설정합니다.
+- 폴백은 외부 LLM 분기의 복장 추출 항목에서 설정합니다.
 """
 
 from modes.llm_service import callLLMTask, get_config

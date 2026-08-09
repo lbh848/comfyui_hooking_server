@@ -14,9 +14,12 @@ from modes.qwen_edit_mode import (
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_DIR = ROOT / "mode_workflow"
-SOYA_DIR = Path(
-    r"E:\wsl2\matrix\Packages\ComfyUI\custom_nodes"
-) / "comfyui-soya-custom-nodes"
+SOYA_DIR = (
+    ROOT
+    / "comfy"
+    / "custom_nodes"
+    / "comfyui-soya-custom-nodes"
+)
 
 
 def test_anima_workflow_uses_exact_deployment_name_and_has_api_companion():
@@ -261,8 +264,11 @@ async def test_anima_edit_mocked_comfy_e2e_uses_selected_ui_workflow(tmp_path):
         converted.append(workflow)
         return expected_api, None
 
-    async def submit(workflow, progress_callback=None):
+    async def submit(workflow, progress_callback=None, input_paths=None):
         submitted.append(workflow)
+        assert input_paths == [
+            str(input_dir / "qwen_edit" / staged["job_id"])
+        ]
         if progress_callback:
             await progress_callback(30, 30)
         output = io.BytesIO()

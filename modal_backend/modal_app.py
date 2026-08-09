@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+import traceback
 import urllib.request
 import uuid
 from pathlib import Path
@@ -157,9 +158,15 @@ def _write_extra_model_paths() -> Path:
         "upscale_models",
         "vae",
     )
-    lines = ["soya_models:", "  base_path: /models"]
+    lines = [
+        "soya_user_loras:",
+        "  base_path: /loras",
+        "  is_default: true",
+        "  loras: .",
+        "soya_models:",
+        "  base_path: /models",
+    ]
     lines.extend(f"  {directory}: {directory}" for directory in directories)
-    lines.extend(["soya_user_loras:", "  base_path: /loras", "  loras: ."])
     target.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return target
 
@@ -185,6 +192,52 @@ class ComfyWorker:
     @modal.enter()
     def start(self) -> None:
         import requests
+        import threading
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        self.text_outputs = []
+        worker = self
+
+        class TextOutputHandler(BaseHTTPRequestHandler):
+            def do_POST(self) -> None:
+                try:
+                    length = int(self.headers.get("Content-Length") or 0)
+                    payload = json.loads(self.rfile.read(length) or b"{}")
+                    if not isinstance(payload, dict):
+                        raise TypeError("텍스트 출력 payload는 객체여야 합니다.")
+                    worker.text_outputs.append(payload)
+                    encoded = b'{"status":"ok"}'
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(encoded)))
+                    self.end_headers()
+                    self.wfile.write(encoded)
+                except Exception as exc:
+                    print(
+                        "[MODAL_COMFY] 텍스트 출력 수신 실패: "
+                        f"{type(exc).__name__}: {exc}"
+                    )
+                    traceback.print_exc()
+                    encoded = b'{"error":"invalid payload"}'
+                    self.send_response(400)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(encoded)))
+                    self.end_headers()
+                    self.wfile.write(encoded)
+
+            def log_message(self, _format: str, *_args) -> None:
+                return
+
+        self.text_output_server = ThreadingHTTPServer(
+            ("127.0.0.1", 0),
+            TextOutputHandler,
+        )
+        self.text_output_port = int(self.text_output_server.server_address[1])
+        threading.Thread(
+            target=self.text_output_server.serve_forever,
+            name="modal-comfy-text-output",
+            daemon=True,
+        ).start()
 
         extra_paths = _write_extra_model_paths()
         self.process = subprocess.Popen(
@@ -246,12 +299,24 @@ class ComfyWorker:
         workflow: dict,
         input_files: dict[str, bytes] | None = None,
         timeout_seconds: int = 3_300,
+        artifact_prefixes: list[str] | None = None,
+        require_images: bool = True,
     ) -> dict:
         import requests
 
         loras_volume.reload()
         if not isinstance(workflow, dict) or not workflow:
             raise ValueError("ComfyUI API workflow JSON 객체가 필요합니다.")
+        workflow = json.loads(json.dumps(workflow, ensure_ascii=False))
+        self.text_outputs = []
+        for node in workflow.values():
+            if not isinstance(node, dict):
+                continue
+            class_type = str(node.get("class_type") or "")
+            if class_type.startswith("SoyaTextSender"):
+                node.setdefault("inputs", {})["server_url"] = (
+                    f"http://127.0.0.1:{self.text_output_port}/api/text_output"
+                )
         timeout_seconds = max(30, min(int(timeout_seconds), 3_300))
         input_root = Path("/root/ComfyUI/input")
         input_root.mkdir(parents=True, exist_ok=True)
@@ -265,6 +330,37 @@ class ComfyWorker:
             target = input_root.joinpath(*relative.parts)
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(content)
+
+        # md_soya_InstantReferenceLoRA는 첫 번째 LoRA 검색 경로 아래의
+        # SOYA_CHAR_LORA 폴더에 학습 결과를 저장한다. /loras를 is_default로
+        # 등록했으므로 이 폴더가 사용자 LoRA Volume의 결과 루트가 된다.
+        lora_root = Path("/loras/SOYA_CHAR_LORA").resolve()
+        normalized_artifact_roots: list[tuple[str, Path]] = []
+        for raw_prefix in artifact_prefixes or []:
+            normalized = str(raw_prefix or "").strip().replace("\\", "/").strip("/")
+            relative = Path(normalized)
+            if (
+                not normalized
+                or relative.is_absolute()
+                or ".." in relative.parts
+            ):
+                raise ValueError(f"안전하지 않은 Modal LoRA 결과 경로입니다: {raw_prefix!r}")
+            target_root = lora_root.joinpath(*relative.parts).resolve()
+            if lora_root != target_root and lora_root not in target_root.parents:
+                raise ValueError(f"Modal LoRA Volume 밖의 결과 경로입니다: {raw_prefix!r}")
+            normalized_artifact_roots.append((relative.as_posix(), target_root))
+
+        artifact_before: dict[str, tuple[int, int]] = {}
+        for _prefix, target_root in normalized_artifact_roots:
+            if not target_root.exists():
+                continue
+            for path in target_root.rglob("*"):
+                if path.is_file():
+                    stat = path.stat()
+                    artifact_before[path.relative_to(lora_root).as_posix()] = (
+                        stat.st_mtime_ns,
+                        stat.st_size,
+                    )
 
         client_id = uuid.uuid4().hex
         response = requests.post(
@@ -320,6 +416,39 @@ class ComfyWorker:
                         "bytes": view.content,
                     }
                 )
-        if not images:
+        if require_images and not images:
             raise RuntimeError(f"ComfyUI 작업은 완료됐지만 출력 이미지가 없습니다: prompt_id={prompt_id}")
-        return {"prompt_id": prompt_id, "images": images}
+
+        artifacts: list[dict] = []
+        for _prefix, target_root in normalized_artifact_roots:
+            if not target_root.exists():
+                print(f"[MODAL_COMFY] LoRA 결과 경로가 생성되지 않음: {target_root}")
+                continue
+            for path in sorted(target_root.rglob("*")):
+                if not path.is_file():
+                    continue
+                relative_name = path.relative_to(lora_root).as_posix()
+                stat = path.stat()
+                previous = artifact_before.get(relative_name)
+                if previous == (stat.st_mtime_ns, stat.st_size):
+                    continue
+                artifacts.append(
+                    {
+                        "relative_path": relative_name,
+                        "bytes": path.read_bytes(),
+                        "size": stat.st_size,
+                    }
+                )
+        if normalized_artifact_roots:
+            loras_volume.commit()
+            if not artifacts:
+                raise RuntimeError(
+                    "ComfyUI 학습은 완료됐지만 새로 생성되거나 변경된 LoRA 결과가 없습니다: "
+                    f"prompt_id={prompt_id}"
+                )
+        return {
+            "prompt_id": prompt_id,
+            "images": images,
+            "artifacts": artifacts,
+            "text_outputs": list(self.text_outputs),
+        }

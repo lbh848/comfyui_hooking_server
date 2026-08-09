@@ -36,7 +36,7 @@ def test_call1_and_call2_parallel_controls_include_tail_retry_and_keyvis_split()
     assert "call1_parallel_chunk_size" not in FRONTEND
     assert "call2_parallel_batch_size" not in FRONTEND
     assert "독립 Key Visual 요청은 이 수와 별도로 PLAN과 동시에 실행될 수 있습니다." in FRONTEND
-    assert "외부 API 분기는 기존 삽화 CALL2 설정을 공유합니다." in FRONTEND
+    assert "외부 LLM 분기는 기존 삽화 CALL2 설정을 공유합니다." in FRONTEND
     assert "원본과 느린 요청 복제를 모두 합쳐 이 동시성 한도를 넘지 않습니다." in FRONTEND
 
 

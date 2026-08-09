@@ -1624,6 +1624,25 @@
         }
         .external-api-group .setting-row { padding-left: 12px; padding-right: 12px; }
 
+        /* 외부 API 그룹 보조 버튼(연결/상태확인/비용조회 등). */
+        .btn-small {
+            padding: 6px 12px;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            background: var(--surface2);
+            color: var(--text);
+            font-size: .8rem;
+            cursor: pointer;
+            white-space: nowrap;
+            transition: border-color 130ms ease, background 130ms ease;
+        }
+        .btn-small:hover:not(:disabled) {
+            border-color: color-mix(in srgb, var(--accent) 48%, var(--border));
+            background: var(--button-secondary-hover, var(--surface2));
+            color: var(--text);
+        }
+        .btn-small:disabled { opacity: .5; cursor: not-allowed; }
+
         /* LLM 슬롯별 연결 설정 그룹 접기/펼치기(<details> 네이티브). */
         details.llm-group {
             margin: 14px 0 0;
@@ -4213,6 +4232,7 @@
                 color-mix(in srgb, var(--surface2) 48%, var(--surface));
         }
         .comfy-modal-runtime-panel.active { display: flex; }
+        .comfy-modal-runtime-panel > * { flex: 0 0 auto; }
         .comfy-modal-runtime-head {
             display: flex;
             align-items: flex-start;
@@ -4415,7 +4435,7 @@
         }
         .comfy-allocation-row {
             display: grid;
-            grid-template-columns: minmax(0, 1fr) 130px;
+            grid-template-columns: minmax(0, 1fr) 150px;
             align-items: center;
             gap: 12px;
             min-width: 0;
@@ -4444,6 +4464,40 @@
             font-weight: 700;
         }
         .comfy-allocation-select:focus { border-color: var(--accent); }
+        .comfy-allocation-controls {
+            display: grid;
+            gap: 7px;
+        }
+        .comfy-allocation-modal-parallel {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            min-height: 26px;
+            padding: 4px 7px;
+            border: 1px solid color-mix(in srgb, var(--border) 84%, #8b7dff);
+            border-radius: 6px;
+            background: color-mix(in srgb, var(--surface2) 88%, #8b7dff);
+            color: var(--text2);
+            cursor: pointer;
+            font-size: .59rem;
+            font-weight: 700;
+        }
+        .comfy-allocation-modal-parallel input { margin: 0; accent-color: #8b7dff; }
+        .comfy-allocation-modal-parallel.disabled {
+            border-color: var(--border);
+            background: color-mix(in srgb, var(--surface2) 82%, #777);
+            color: color-mix(in srgb, var(--text2) 65%, #777);
+            cursor: not-allowed;
+            opacity: .58;
+        }
+        .comfy-allocation-local-only {
+            min-height: 26px;
+            padding: 6px 7px;
+            color: color-mix(in srgb, var(--text2) 72%, #777);
+            font-size: .58rem;
+            text-align: center;
+        }
         .comfy-runtime-control-card {
             padding: 13px 14px;
             border: 1px solid color-mix(in srgb, var(--border) 84%, var(--accent));
@@ -17009,7 +17063,7 @@
                         <button class="settings-tab-btn active" onclick="switchSettingsTab('common')">공통설정</button>
                         <button class="settings-tab-btn" onclick="switchSettingsTab('comfy_runtime')">Comfy 실행 관리</button>
                         <button class="settings-tab-btn" onclick="switchSettingsTab('api')">외부 API</button>
-                        <button class="settings-tab-btn" onclick="switchSettingsTab('api_route')">외부 API 분기</button>
+                        <button class="settings-tab-btn" onclick="switchSettingsTab('api_route')">외부 LLM 분기</button>
                         <button class="settings-tab-btn" onclick="switchSettingsTab('illustration')">삽화</button>
                         <button class="settings-tab-btn" onclick="switchSettingsTab('asset')">에셋</button>
                         <button class="settings-tab-btn" onclick="switchSettingsTab('character_maker')">단부르 RAG</button>
@@ -17111,11 +17165,11 @@
                             <button type="button" class="comfy-runtime-tab" id="comfy-runtime-tab-2" onclick="switchComfyRuntimeInstance(2)" role="tab" aria-selected="false">
                                 <span class="comfy-runtime-tab-dot"></span>Comfy #2
                             </button>
-                            <button type="button" class="comfy-runtime-tab" id="comfy-runtime-tab-allocation" onclick="switchComfyRuntimeAllocation()" role="tab" aria-selected="false">
-                                Comfy 배분 관리
-                            </button>
                             <button type="button" class="comfy-runtime-tab" id="comfy-runtime-tab-modal" onclick="switchComfyRuntimeModal()" role="tab" aria-selected="false">
                                 <span class="comfy-runtime-tab-dot"></span>MODAL
+                            </button>
+                            <button type="button" class="comfy-runtime-tab" id="comfy-runtime-tab-allocation" onclick="switchComfyRuntimeAllocation()" role="tab" aria-selected="false">
+                                Comfy 배분 관리
                             </button>
                         </div>
 
@@ -17188,7 +17242,7 @@
                         <section class="comfy-runtime-allocation-panel" id="comfy-runtime-allocation-panel" aria-labelledby="comfy-runtime-tab-allocation">
                             <div class="comfy-allocation-head">
                                 <div class="comfy-allocation-title">내부 Comfy 작업 배분</div>
-                                <div class="comfy-allocation-copy">각 작업을 실행할 Comfy 인스턴스를 선택합니다. 선택된 인스턴스가 꺼져 있고 다른 하나만 실행 중이면 실행 중인 인스턴스로 자동 전환됩니다.</div>
+                                <div class="comfy-allocation-copy">기본 실행 대상을 선택합니다. 로컬 Comfy를 선택하고 MODAL 병렬 사용을 켜면 대기 작업을 먼저 비는 로컬 또는 MODAL 워커가 하나씩 가져갑니다. 같은 작업을 중복 실행하지 않습니다.</div>
                                 <div class="comfy-allocation-runtime-state" id="comfy-allocation-runtime-state">실행 상태 확인 중…</div>
                             </div>
                             <div class="comfy-allocation-list" id="comfy-allocation-list"></div>
@@ -17260,7 +17314,6 @@
                                     </label>
                                     <div class="comfy-modal-runtime-card-actions">
                                         <button type="button" class="comfy-runtime-btn start" id="modal-runtime-run-btn" onclick="modalRuntimeRunWorkflow()">▶ Modal에서 실행</button>
-                                        <button type="button" class="comfy-runtime-btn" onclick="modalOpenInstaller()">설치/업데이트</button>
                                         <button type="button" class="comfy-runtime-btn" onclick="modalOpenDebugWorkflow()">로컬 실행 탭</button>
                                     </div>
                                     <p class="comfy-modal-runtime-hint">필요한 모델을 먼저 설치해야 합니다. 실행 시 현재 워크플로우가 참조하는 사용자 LoRA와 input 이미지만 동기화합니다.</p>
@@ -18159,7 +18212,7 @@
                                 <div class="desc">토큰은 프로그램 config가 아니라 Modal 표준 프로필 저장소에 보관됩니다.</div>
                             </div>
                             <div class="setting-control" style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-                                <input type="text" id="setting-modal-profile" value="soya-comfy" spellcheck="false" style="width:180px;">
+                                <input type="text" id="setting-modal-profile" value="soya-comfy" spellcheck="false" style="width:180px; padding:6px 10px; border-radius:6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:.85rem;">
                                 <button type="button" class="btn-small" id="modal-connect-btn" onclick="modalConnectAccount()">브라우저로 계정 연결</button>
                                 <button type="button" class="btn-small" onclick="modalRefreshStatus(true)">상태 확인</button>
                             </div>
@@ -18170,8 +18223,8 @@
                                 <div class="desc">사용자 Workspace 안의 환경과 App 이름입니다. 계정마다 독립적으로 생성됩니다.</div>
                             </div>
                             <div class="setting-control" style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-                                <input type="text" id="setting-modal-environment" value="main" placeholder="environment" style="width:120px;">
-                                <input type="text" id="setting-modal-deployment-name" value="soya-comfy-worker" placeholder="app name" style="width:200px;">
+                                <input type="text" id="setting-modal-environment" value="main" placeholder="environment" style="width:120px; padding:6px 10px; border-radius:6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:.85rem;">
+                                <input type="text" id="setting-modal-deployment-name" value="soya-comfy-worker" placeholder="app name" style="width:200px; padding:6px 10px; border-radius:6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:.85rem;">
                             </div>
                         </div>
                         <div class="setting-row">
@@ -18180,8 +18233,8 @@
                                 <div class="desc">L4는 24GB VRAM입니다. 기본 2개이며 필요하면 최대 10개까지 설정할 수 있습니다.</div>
                             </div>
                             <div class="setting-control" style="display:flex; align-items:center; gap:8px;">
-                                <input type="text" id="setting-modal-gpu" value="L4" disabled style="width:70px;">
-                                <input type="number" id="setting-modal-max-concurrency" value="2" min="1" max="10" step="1" onchange="modalSyncRuntimeControls('external')" style="width:70px;">
+                                <input type="text" id="setting-modal-gpu" value="L4" disabled style="width:70px; padding:6px 10px; border-radius:6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:.85rem; opacity:.7;">
+                                <input type="number" id="setting-modal-max-concurrency" value="2" min="1" max="10" step="1" onchange="modalSyncRuntimeControls('external')" style="width:70px; padding:6px 10px; border-radius:6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:.85rem;">
                                 <span>개</span>
                             </div>
                         </div>
@@ -18191,9 +18244,9 @@
                                 <div class="desc">작업을 끊지 않고 완료 후 유휴 시간을 계산합니다. 상태 갱신은 화면 조회 주기이며 GPU 비용과 무관합니다.</div>
                             </div>
                             <div class="setting-control" style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-                                <input type="number" id="setting-modal-scaledown-window" value="15" min="2" max="1200" step="1" onchange="modalSyncRuntimeControls('external')" style="width:80px;">
+                                <input type="number" id="setting-modal-scaledown-window" value="15" min="2" max="1200" step="1" onchange="modalSyncRuntimeControls('external')" style="width:80px; padding:6px 10px; border-radius:6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:.85rem;">
                                 <span>초 후 종료</span>
-                                <input type="number" id="setting-modal-status-refresh" value="5" min="2" max="60" step="1" onchange="modalSyncRuntimeControls('external')" style="width:70px;">
+                                <input type="number" id="setting-modal-status-refresh" value="5" min="2" max="60" step="1" onchange="modalSyncRuntimeControls('external')" style="width:70px; padding:6px 10px; border-radius:6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:.85rem;">
                                 <span>초마다 상태 갱신</span>
                             </div>
                         </div>
@@ -18203,7 +18256,7 @@
                                 <div class="desc">월 $30를 기준으로 예상 사용 시간을 표시합니다. 실제 청구 정보는 Modal에서 조회합니다.</div>
                             </div>
                             <div class="setting-control" style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-                                <input type="number" id="setting-modal-monthly-credit" value="30" min="1" step="1" style="width:80px;">
+                                <input type="number" id="setting-modal-monthly-credit" value="30" min="1" step="1" style="width:80px; padding:6px 10px; border-radius:6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:.85rem;">
                                 <span>USD</span>
                                 <button type="button" class="btn-small" onclick="modalRefreshBilling()">이번 달 비용 조회</button>
                             </div>
@@ -18221,7 +18274,7 @@
                     </div>
                 </div>
 
-                <!-- Tab: 외부 API 분기 (작업별 LLM1/LLM2 라우팅) -->
+                <!-- Tab: 외부 LLM 분기 (작업별 LLM1/LLM2 라우팅) -->
                 <div class="settings-tab-panel" id="settings-tab-api_route">
                     <div class="setting-row" style="flex-direction: column; align-items: stretch;">
                         <div style="margin-bottom: 8px; color: var(--text-dim); font-size: 13px;">
@@ -18901,7 +18954,7 @@
                     <div class="setting-row">
                         <div class="setting-label">
                             <div class="title">LoRA 프롬프트 2차 검수</div>
-                            <div class="desc">ON이면 1차 완성 프롬프트를 이미지와 함께 다시 검수합니다. 사용할 모델·재시도·폴백은 외부 API 분기의 ‘LoRA 프롬프트 2차 검수’ 블록에서 설정합니다.</div>
+                            <div class="desc">ON이면 1차 완성 프롬프트를 이미지와 함께 다시 검수합니다. 사용할 모델·재시도·폴백은 외부 LLM 분기의 ‘LoRA 프롬프트 2차 검수’ 블록에서 설정합니다.</div>
                         </div>
                         <div class="setting-control" style="display:flex;align-items:center;gap:8px;">
                             <label class="toggle-switch">
@@ -23467,17 +23520,17 @@
             cuda_device: null,
         });
         const COMFY_TASK_DEFINITIONS = Object.freeze([
-            { key: 'illustration', label: '삽화', description: '일반 삽화 생성 요청' },
-            { key: 'restore_regenerate', label: '재생성 / 수동 그리기', description: '삽화 재생성, 수동 그리기, 워크플로우 테스트' },
-            { key: 'asset_generation', label: '에셋 생성', description: '에셋 이미지 생성' },
-            { key: 'qwen_edit', label: 'EDIT', description: 'Qwen Edit 및 ANIMA Inpainting' },
-            { key: 'tag_analysis', label: '태그 분석', description: 'Comfy 워크플로우 기반 이미지 태그 분석' },
-            { key: 'outfit', label: '복장 추출', description: '복장 추출 워크플로우' },
-            { key: 'asset_lora_training', label: '에셋 LoRA', description: '에셋 LoRA 학습' },
-            { key: 'bot_lora_training', label: '봇 LoRA', description: '봇 캐릭터 LoRA 학습' },
-            { key: 'instance_lora', label: '인스턴스 / 스타일 LoRA', description: '인스턴스·스타일 LoRA 분석 및 학습' },
-            { key: 'face_extract', label: '얼굴 추출', description: '인스턴스 LoRA 얼굴 추출' },
-            { key: 'utility_debug', label: '유틸리티 / 디버그', description: '데이터 패치, 봇 유틸리티, 디버그 워크플로우' },
+            { key: 'illustration', label: '삽화', description: '일반 삽화 생성 요청', modalSupported: true },
+            { key: 'restore_regenerate', label: '재생성 / 수동 그리기', description: '삽화 재생성, 수동 그리기, 워크플로우 테스트', modalSupported: true },
+            { key: 'asset_generation', label: '에셋 생성', description: '에셋 이미지 생성', modalSupported: true },
+            { key: 'qwen_edit', label: 'EDIT', description: 'Qwen Edit 및 ANIMA Inpainting', modalSupported: true },
+            { key: 'tag_analysis', label: '태그 분석', description: 'Comfy 워크플로우 기반 이미지 태그 분석', modalSupported: false },
+            { key: 'outfit', label: '복장 추출', description: '복장 추출 워크플로우', modalSupported: false },
+            { key: 'asset_lora_training', label: '에셋 LoRA', description: '에셋 LoRA 학습', modalSupported: true },
+            { key: 'bot_lora_training', label: '봇 LoRA', description: '봇 캐릭터 LoRA 학습', modalSupported: true },
+            { key: 'instance_lora', label: '인스턴스 / 스타일 LoRA', description: '인스턴스·스타일 LoRA 분석 및 학습', modalSupported: true },
+            { key: 'face_extract', label: '얼굴 추출', description: '인스턴스 LoRA 얼굴 추출', modalSupported: false },
+            { key: 'utility_debug', label: '유틸리티 / 디버그', description: '데이터 패치, 봇 유틸리티, 디버그 워크플로우', modalSupported: false },
         ]);
         let comfyRuntimeActiveInstance = 1;
         let comfyRuntimeActiveView = 'instance';
@@ -23495,6 +23548,9 @@
         let comfyTaskAllocations = Object.fromEntries(
             COMFY_TASK_DEFINITIONS.map(item => [item.key, 1]),
         );
+        let comfyTaskModalParallel = Object.fromEntries(
+            COMFY_TASK_DEFINITIONS.map(item => [item.key, false]),
+        );
 
         function comfyAllocationNormalize(raw, legacyIllustrationEnabled = false) {
             const normalized = Object.fromEntries(
@@ -23509,10 +23565,39 @@
             }
             if (source) {
                 for (const item of COMFY_TASK_DEFINITIONS) {
-                    normalized[item.key] = Number(source[item.key]) === 2 ? 2 : 1;
+                    const value = String(source[item.key] ?? '').trim().toLowerCase();
+                    normalized[item.key] = item.modalSupported && value === 'modal'
+                        ? 'modal'
+                        : (Number(source[item.key]) === 2 ? 2 : 1);
                 }
             }
             return normalized;
+        }
+
+        function comfyModalParallelNormalize(raw, allocations) {
+            const source = raw && typeof raw === 'object' && !Array.isArray(raw)
+                ? raw
+                : {};
+            return Object.fromEntries(COMFY_TASK_DEFINITIONS.map(item => [
+                item.key,
+                item.modalSupported
+                    && allocations[item.key] !== 'modal'
+                    && source[item.key] === true,
+            ]));
+        }
+
+        function comfyAllocationSyncModalParallel(item, select, checkbox, toggle) {
+            if (!item.modalSupported || !checkbox || !toggle) return;
+            const modalPrimary = select.value === 'modal';
+            checkbox.disabled = modalPrimary;
+            if (modalPrimary) {
+                checkbox.checked = false;
+                comfyTaskModalParallel[item.key] = false;
+            }
+            toggle.classList.toggle('disabled', modalPrimary);
+            toggle.title = modalPrimary
+                ? '기본 실행 대상이 MODAL이므로 추가 MODAL 병렬 사용은 필요하지 않습니다.'
+                : '대기 작업을 선택한 로컬 Comfy와 MODAL이 먼저 비는 순서대로 나눠 처리합니다.';
         }
 
         function comfyAllocationRender() {
@@ -23520,7 +23605,7 @@
             if (!list) return;
             list.replaceChildren();
             for (const item of COMFY_TASK_DEFINITIONS) {
-                const row = document.createElement('label');
+                const row = document.createElement('div');
                 row.className = 'comfy-allocation-row';
 
                 const copy = document.createElement('span');
@@ -23542,11 +23627,59 @@
                     option.textContent = `Comfy #${instanceId}`;
                     select.appendChild(option);
                 }
+                if (item.modalSupported) {
+                    const modalOption = document.createElement('option');
+                    modalOption.value = 'modal';
+                    modalOption.textContent = 'MODAL';
+                    select.appendChild(modalOption);
+                }
                 select.value = String(comfyTaskAllocations[item.key] || 1);
+
+                const controls = document.createElement('span');
+                controls.className = 'comfy-allocation-controls';
+                controls.appendChild(select);
+
+                let parallelCheckbox = null;
+                let parallelToggle = null;
+                if (item.modalSupported) {
+                    parallelToggle = document.createElement('label');
+                    parallelToggle.className = 'comfy-allocation-modal-parallel';
+                    const toggleText = document.createElement('span');
+                    toggleText.textContent = 'MODAL 병렬 사용';
+                    parallelCheckbox = document.createElement('input');
+                    parallelCheckbox.type = 'checkbox';
+                    parallelCheckbox.id = `setting-comfy-modal-parallel-${item.key}`;
+                    parallelCheckbox.checked = comfyTaskModalParallel[item.key] === true;
+                    parallelCheckbox.setAttribute('aria-label', `${item.label} MODAL 병렬 사용`);
+                    parallelCheckbox.addEventListener('change', () => {
+                        comfyTaskModalParallel[item.key] = parallelCheckbox.checked;
+                    });
+                    parallelToggle.append(toggleText, parallelCheckbox);
+                    controls.appendChild(parallelToggle);
+                } else {
+                    const localOnly = document.createElement('span');
+                    localOnly.className = 'comfy-allocation-local-only';
+                    localOnly.textContent = '로컬 Comfy 전용';
+                    controls.appendChild(localOnly);
+                }
                 select.addEventListener('change', () => {
-                    comfyTaskAllocations[item.key] = Number(select.value) === 2 ? 2 : 1;
+                    comfyTaskAllocations[item.key] = select.value === 'modal'
+                        ? 'modal'
+                        : (Number(select.value) === 2 ? 2 : 1);
+                    comfyAllocationSyncModalParallel(
+                        item,
+                        select,
+                        parallelCheckbox,
+                        parallelToggle,
+                    );
                 });
-                row.append(copy, select);
+                comfyAllocationSyncModalParallel(
+                    item,
+                    select,
+                    parallelCheckbox,
+                    parallelToggle,
+                );
+                row.append(copy, controls);
                 list.appendChild(row);
             }
         }
@@ -23556,6 +23689,10 @@
                 config?.comfy_task_allocations,
                 config?.comfyui_port_illustration != null,
             );
+            comfyTaskModalParallel = comfyModalParallelNormalize(
+                config?.comfy_task_modal_parallel,
+                comfyTaskAllocations,
+            );
             comfyAllocationRender();
             comfyAllocationRefreshRuntimeState();
         }
@@ -23564,9 +23701,25 @@
             const result = {};
             for (const item of COMFY_TASK_DEFINITIONS) {
                 const select = document.getElementById(`setting-comfy-allocation-${item.key}`);
-                result[item.key] = Number(select?.value || comfyTaskAllocations[item.key]) === 2 ? 2 : 1;
+                const value = String(select?.value || comfyTaskAllocations[item.key]);
+                result[item.key] = item.modalSupported && value === 'modal'
+                    ? 'modal'
+                    : (Number(value) === 2 ? 2 : 1);
             }
             comfyTaskAllocations = result;
+            return { ...result };
+        }
+
+        function comfyModalParallelForSave() {
+            const result = {};
+            for (const item of COMFY_TASK_DEFINITIONS) {
+                const select = document.getElementById(`setting-comfy-allocation-${item.key}`);
+                const checkbox = document.getElementById(`setting-comfy-modal-parallel-${item.key}`);
+                result[item.key] = item.modalSupported
+                    && select?.value !== 'modal'
+                    && checkbox?.checked === true;
+            }
+            comfyTaskModalParallel = result;
             return { ...result };
         }
 
@@ -23576,13 +23729,13 @@
             const running1 = !!comfyRuntimeStatuses[1]?.running;
             const running2 = !!comfyRuntimeStatuses[2]?.running;
             if (running1 && running2) {
-                state.textContent = 'Comfy #1과 #2 실행 중 · 작업별 선택 배분을 적용합니다.';
+                state.textContent = 'Comfy #1과 #2 실행 중 · 로컬 선택과 MODAL 선착순 배분을 적용합니다.';
             } else if (running1) {
-                state.textContent = 'Comfy #1만 실행 중 · 모든 내부 Comfy 작업은 자동으로 #1에 들어갑니다.';
+                state.textContent = 'Comfy #1만 실행 중 · 로컬 대상 작업은 #1로 폴백하고 MODAL 대상은 원격 대기열을 사용합니다.';
             } else if (running2) {
-                state.textContent = 'Comfy #2만 실행 중 · 모든 내부 Comfy 작업은 자동으로 #2에 들어갑니다.';
+                state.textContent = 'Comfy #2만 실행 중 · 로컬 대상 작업은 #2로 폴백하고 MODAL 대상은 원격 대기열을 사용합니다.';
             } else {
-                state.textContent = '실행 중인 관리 인스턴스 없음 · 각 작업은 선택된 포트로 요청됩니다.';
+                state.textContent = '실행 중인 로컬 관리 인스턴스 없음 · 로컬은 선택 포트, MODAL 대상은 원격 대기열을 사용합니다.';
             }
         }
 
@@ -25066,7 +25219,7 @@
                     const copy = document.createElement('span');
                     copy.style.cssText = 'display:flex;flex:1;justify-content:space-between;gap:12px;font-size:12px;';
                     const name = document.createElement('strong');
-                    name.textContent = item.id;
+                    name.textContent = item.source_name || item.id;
                     const size = document.createElement('span');
                     size.style.color = 'var(--text-secondary,#aaa)';
                     size.textContent = item.configured
@@ -25128,7 +25281,7 @@
             for (const item of available) {
                 const option = document.createElement('option');
                 option.value = item.id;
-                option.textContent = `${item.id} · ${item.source_name || '파일 설정됨'}`;
+                option.textContent = item.source_name || item.id;
                 select.appendChild(option);
             }
             if (available.some(item => item.id === previous)) select.value = previous;
@@ -25256,14 +25409,6 @@
                 if (button) button.disabled = false;
                 if (empty) empty.textContent = error.message || String(error);
             }
-        }
-
-        function modalOpenInstaller() {
-            switchSettingsTab('comfy_runtime');
-            switchComfyRuntimeModal();
-            window.setTimeout(() => {
-                document.getElementById('modal-installer-card')?.scrollIntoView({behavior: 'smooth', block: 'start'});
-            }, 80);
         }
 
         function modalOpenExternalSettings() {
@@ -25550,7 +25695,7 @@
             // 챈섭 API 키 별도 로드 (key/chansub_key.json)
             loadChansubKey();
 
-            // 외부 API 분기(작업별 LLM1/LLM2 라우팅) 테이블 빌드
+            // 외부 LLM 분기(작업별 LLM1/LLM2 라우팅) 테이블 빌드
             renderLlmRoutingTable();
 
             // LoRA 프롬프트 2차 검수 설정
@@ -26868,6 +27013,7 @@
                 comfyui_port_illustration: null,
                 comfy_launch_profiles: comfyRuntimeProfilesForSave(),
                 comfy_task_allocations: comfyAllocationsForSave(),
+                comfy_task_modal_parallel: comfyModalParallelForSave(),
                 modal_enabled: !!document.getElementById('setting-modal-enabled')?.checked,
                 modal_profile: document.getElementById('setting-modal-profile')?.value.trim() || 'soya-comfy',
                 modal_environment: document.getElementById('setting-modal-environment')?.value.trim() || 'main',
@@ -29719,7 +29865,7 @@
         function onReasoningPreset4Change() { renderReasoningControls(4); }
         function onReasoningPreset5Change() { renderReasoningControls(5); }
 
-        // ─── 외부 API 분기: 작업별 LLM1/LLM2 라우팅 테이블 ───
+        // ─── 외부 LLM 분기: 작업별 LLM1/LLM2 라우팅 테이블 ───
         // task_key 목록과 표시명. DEFAULT_CONFIG(server.py) 와 일치해야 함.
         const LLM_ROUTING_GROUPS = [
             {
@@ -40470,7 +40616,7 @@
                 ? !!routeCapability.vision_ready
                 : !!cmCapabilities?.vision?.ready;
             if (needsVision && !routeVisionReady) {
-                showToast('현재 입력에는 비전 지원 LLM 경로가 필요합니다. 외부 API 분기를 확인하세요.', 'error');
+                showToast('현재 입력에는 비전 지원 LLM 경로가 필요합니다. 외부 LLM 분기를 확인하세요.', 'error');
                 return;
             }
             const baseLabel = base === 'llm' ? 'LLM 기준' : '사용자 기준';
@@ -59084,7 +59230,7 @@
                 callInfo: [
                     {label: '실행 여부', text: '파이프라인의 CALL1 인물·복장 분석 토글에서 설정합니다.'},
                     {label: '프롬프트', text: 'Call 프롬프트 탭의 enhance.txt (CALL1 분석)에서 편집합니다.'},
-                    {label: 'LLM과 재시도', text: '외부 API 분기의 삽화 CALL1 (전처리)에서 설정합니다.'},
+                    {label: 'LLM과 재시도', text: '외부 LLM 분기의 삽화 CALL1 (전처리)에서 설정합니다.'},
                     {label: '히스토리 범위', text: '채팅 히스토리 탭의 CALL1 히스토리 글자수에서 설정합니다.'},
                 ],
             },
@@ -59108,7 +59254,7 @@
                     {key: 'call2_parallel_slow_retry_condition_operator', label: '조건 결합 방식', type: 'select', help: 'AND는 켜진 조건을 모두, OR는 하나 이상 만족할 때 복제합니다.', options: [{value: 'and', label: 'AND — 모두 만족'}, {value: 'or', label: 'OR — 하나 이상 만족'}], dependsOn: ['call2_parallel_enabled', 'call2_parallel_slow_retry_enabled'], requiresMin: {key: 'call2_parallel_max_concurrency', value: 2}},
                     {key: 'nsfw', label: 'NSFW 태깅', type: 'toggle', help: 'CALL2에 성인 장면용 태깅 지침을 허용합니다. Manga 대사 모드의 버블 타입에도 함께 반영됩니다.'},
                     {key: 'supplement', label: 'SUPPLEMENT 생성', type: 'toggle', help: 'CALL2가 효과와 보조 묘사 섹션을 생성하도록 합니다.'},
-                    {key: 'key_visual', label: 'Key Visual 생성', type: 'toggle', help: 'CALL2-PLAN과 동시에 독립 CALL2-KEYVIS LLM을 호출해 슬롯 장면과 분리된 대표 이미지 한 장을 생성합니다. 외부 API 분기는 기존 삽화 CALL2 설정을 공유합니다.'},
+                    {key: 'key_visual', label: 'Key Visual 생성', type: 'toggle', help: 'CALL2-PLAN과 동시에 독립 CALL2-KEYVIS LLM을 호출해 슬롯 장면과 분리된 대표 이미지 한 장을 생성합니다. 외부 LLM 분기는 기존 삽화 CALL2 설정을 공유합니다.'},
                     {key: 'character_limit', label: '이미지당 최대 캐릭터', type: 'select', help: '한 이미지에 함께 배치할 캐릭터 수입니다.', options: [1, 2, 3]},
                     {
                         key: 'scene_mode', label: 'Scene 수 결정', type: 'select',
@@ -59130,7 +59276,7 @@
                 callInfo: [
                     {label: '실행 조건', text: 'CALL2 TOON 파싱 실패 시 자동으로 교정 단계에 진입합니다. 별도 ON/OFF는 두지 않습니다.'},
                     {label: '프롬프트', text: 'Call 프롬프트 탭의 repair.txt (CALL2-FIX TOON 교정)에서 편집합니다.'},
-                    {label: 'LLM과 재시도', text: '외부 API 분기의 삽화 CALL2-FIX (TOON 교정)에서 설정합니다.'},
+                    {label: 'LLM과 재시도', text: '외부 LLM 분기의 삽화 CALL2-FIX (TOON 교정)에서 설정합니다.'},
                     {label: '실패 결과', text: 'CALL2-FIX 이후에도 파싱하지 못하면 해당 삽화 프롬프트 파이프라인을 중단합니다.'},
                 ],
             },
@@ -59158,7 +59304,7 @@
                     {label: '실행 조건', text: 'Comfy 공급자와 V3 형식에서 한 장면에 캐릭터가 2~3명일 때 자동 실행됩니다.'},
                     {label: '처리 위치', text: 'CALL3 처리 다음에 다중 캐릭터 장면별로 병렬 실행됩니다.'},
                     {label: '프롬프트', text: 'prompts/lighbd/multi_char_mask.txt를 사용하며 긍정 프롬프트 추가 메모도 함께 전달됩니다. 현재 Call 프롬프트 탭에는 별도 편집란이 없습니다.'},
-                    {label: 'LLM과 재시도', text: '외부 API 분기의 삽화 다중 캐릭터 마스크에서 설정합니다.'},
+                    {label: 'LLM과 재시도', text: '외부 LLM 분기의 삽화 다중 캐릭터 마스크에서 설정합니다.'},
                 ],
             },
             {

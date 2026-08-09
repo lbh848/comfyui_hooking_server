@@ -283,7 +283,7 @@ async def test_qwen_edit_mocked_comfy_e2e_appends_result_and_metadata(tmp_path):
     submitted = {}
     notifications = []
 
-    async def submit(workflow, progress_callback=None):
+    async def submit(workflow, progress_callback=None, input_paths=None):
         submitted.update(workflow)
         prompt_node = next(
             node
@@ -299,13 +299,17 @@ async def test_qwen_edit_mocked_comfy_e2e_appends_result_and_metadata(tmp_path):
         assert f"[HEIGHT]\n{staged['height']}" in payload
         assert workflow["2"]["inputs"]["text"] == ["1", 0]
         assert workflow["4"]["inputs"]["path"] == ["2", 2]
-        assert sorted(path.name for path in qwen_input.iterdir()) == [
+        job_input = qwen_input / staged["job_id"]
+        assert input_paths == [str(job_input)]
+        assert (qwen_input / "stale.png").is_file()
+        assert stale_dir.is_dir()
+        assert sorted(path.name for path in job_input.iterdir()) == [
             "mask.png",
             "source.png",
         ]
         with (
-            Image.open(qwen_input / "source.png") as source,
-            Image.open(qwen_input / "mask.png") as mask,
+            Image.open(job_input / "source.png") as source,
+            Image.open(job_input / "mask.png") as mask,
         ):
             assert source.size == mask.size
             assert mask.convert("L").getbbox() is not None
@@ -426,7 +430,9 @@ async def test_qwen_edit_uses_gpu_queue_and_translation_uses_llm_queue():
 
 def test_qwen_parser_node_contract_and_errors():
     parser_path = (
-        Path(r"E:\wsl2\matrix\Packages\ComfyUI\custom_nodes")
+        Path(__file__).resolve().parents[1]
+        / "comfy"
+        / "custom_nodes"
         / "comfyui-soya-custom-nodes"
         / "soya_qwen_edit_prompt_parser.py"
     )

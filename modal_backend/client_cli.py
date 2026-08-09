@@ -123,6 +123,8 @@ def generate(payload: dict) -> dict:
         payload["workflow"],
         input_files,
         int(payload.get("timeout_seconds") or 3300),
+        list(payload.get("artifact_prefixes") or []),
+        bool(payload.get("require_images", True)),
     )
     try:
         remote_result = call.get(timeout=int(payload.get("timeout_seconds") or 3300) + 120)
@@ -151,9 +153,33 @@ def generate(payload: dict) -> dict:
                 "node_id": image.get("node_id", ""),
             }
         )
-    if not outputs:
+    if bool(payload.get("require_images", True)) and not outputs:
         raise RuntimeError("Modal ComfyUI가 출력 이미지를 반환하지 않았습니다.")
-    return {"prompt_id": remote_result.get("prompt_id"), "outputs": outputs, "lora_sync": sync}
+    artifacts = []
+    artifact_root = output_dir / "artifacts"
+    for artifact in remote_result.get("artifacts") or []:
+        relative = Path(str(artifact.get("relative_path") or ""))
+        if relative.is_absolute() or not relative.parts or ".." in relative.parts:
+            raise ValueError(
+                f"Modal이 안전하지 않은 LoRA 결과 경로를 반환했습니다: {relative!s}"
+            )
+        target = artifact_root.joinpath(*relative.parts)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(artifact["bytes"])
+        artifacts.append(
+            {
+                "path": str(target),
+                "relative_path": relative.as_posix(),
+                "size": target.stat().st_size,
+            }
+        )
+    return {
+        "prompt_id": remote_result.get("prompt_id"),
+        "outputs": outputs,
+        "artifacts": artifacts,
+        "text_outputs": list(remote_result.get("text_outputs") or []),
+        "lora_sync": sync,
+    }
 
 
 def convert_workflow(payload: dict) -> dict:

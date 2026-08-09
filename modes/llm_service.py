@@ -486,7 +486,7 @@ _current_config = _ContextConfig({
     "llm_vision_compress2": False,       # LLM2 비전 webp 압축
     "llm_vision_compress3": False,       # LLM3 비전 webp 압축
     "lora_prompt_review_enabled": False, # LoRA 완성 프롬프트 2차 비전 검수
-    # 작업별 LLM1/LLM2/LLM3 라우팅과 메인/폴백 재시도 정책(외부 API 분기).
+    # 작업별 LLM1/LLM2/LLM3 라우팅과 메인/폴백 재시도 정책(외부 LLM 분기).
     # 실제 기본값은 server.py 의 DEFAULT_CONFIG 에서 update_config 로 내려온다.
     "llm_routing": {},
 })
@@ -2065,7 +2065,7 @@ async def callLLM3Stream(messages: list, model: str = None, log_history: bool = 
         _request_config_override_ctx.reset(config_token)
 
 
-# ─── 작업별 LLM 라우팅 (외부 API 분기) ─────────────────────────
+# ─── 작업별 LLM 라우팅 (외부 LLM 분기) ─────────────────────────
 #
 # callLLMTask / callLLMVisionTask 는 task_key 별 라우팅과 메인/폴백 재시도 정책을
 # config["llm_routing"] 에서 읽는다. API 오류, 빈 응답, 선택적 응답 검증 실패를 같은

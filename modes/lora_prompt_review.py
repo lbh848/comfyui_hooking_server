@@ -1,4 +1,4 @@
-"""외부 API 분기 설정을 따르는 선택적 LoRA 프롬프트 2차 비전 검수."""
+"""외부 LLM 분기 설정을 따르는 선택적 LoRA 프롬프트 2차 비전 검수."""
 
 import asyncio
 import base64
@@ -196,7 +196,7 @@ async def run_lora_prompt_review(
     """설정된 검수 route를 호출하고 실패하면 유효한 1차 결과를 보존한다.
 
     함수 호출은 한 번이지만 route 내부 primary 재시도와 fallback은 사용자가
-    ``외부 API 분기``의 ``lora_prompt_review`` 블록에 설정한 유한 정책을 따른다.
+    ``외부 LLM 분기``의 ``lora_prompt_review`` 블록에 설정한 유한 정책을 따른다.
     """
     initial = (candidate_positive or "").strip()
     result = {

@@ -54,6 +54,7 @@ PRESET_MGMT_CATEGORIES = [
 ]
 CURRENT_MODE_WORK_DIR = os.path.join(BASE_DIR, "current_mode_workflow")
 MODE_WORKFLOW_DIR = os.path.join(BASE_DIR, "mode_workflow")
+ASSET_WORKFLOW_PREPARE_LOCK = asyncio.Lock()
 
 DEFAULT_POSE_DATA = {
     "people": [
@@ -256,6 +257,7 @@ class AssetMode:
         self._tags_loaded: bool = False
         self._is_generating: bool = False
         self._lock = asyncio.Lock()
+        self._save_generated_workflow_cache: bool = True
 
         # 콜백
         self.mode_log_func: Optional[Callable] = None
@@ -265,6 +267,19 @@ class AssetMode:
         self.submit_workflow_func: Optional[Callable] = None
         self.build_prompt_with_workflow_func: Optional[Callable] = None
         self.upload_reference_image_func: Optional[Callable] = None
+
+    def fork_for_execution(self) -> "AssetMode":
+        """병렬 큐 레인에서 사용할 작업별 실행 상태를 만든다.
+
+        태그와 콜백은 읽기 전용으로 공유하고, 워크플로우 선택 상태와 생성 잠금은
+        복사본에 격리한다. 준비 캐시는 공통 잠금 아래에서만 갱신한다.
+        """
+
+        worker = copy.copy(self)
+        worker._lock = asyncio.Lock()
+        worker._asset_api_workflow = copy.deepcopy(self._asset_api_workflow)
+        worker._save_generated_workflow_cache = False
+        return worker
 
     def _log(self, action: str, data: dict = None):
         if self.mode_log_func:
@@ -1463,6 +1478,7 @@ class AssetMode:
         style_lora_data: str = "",
         storage_group: str = "",
         storage_session: str = "",
+        modal_input_paths: Optional[list[str]] = None,
     ) -> dict:
         async with self._lock:
             self._is_generating = True
@@ -1481,6 +1497,7 @@ class AssetMode:
                     positive_prompt, negative_prompt,
                     style_lora_activate, style_lora_data,
                     storage_group, storage_session,
+                    modal_input_paths,
                 )
             finally:
                 self._is_generating = False
@@ -1524,6 +1541,7 @@ class AssetMode:
         style_lora_data: str = "",
         storage_group: str = "",
         storage_session: str = "",
+        modal_input_paths: Optional[list[str]] = None,
     ) -> dict:
         if storage_group not in ("", "automatch_defaults", "character_maker"):
             error_msg = f"지원하지 않는 에셋 저장 분류: {storage_group}"
@@ -1549,6 +1567,8 @@ class AssetMode:
         )
         # 선택 에셋 프로필에 맞는 워크플로우 경로로 교체
         saved_workflow_path = self.workflow_source_path
+        saved_api_workflow = self._asset_api_workflow
+        saved_asset_hash = self._asset_hash
         selected_workflow_path = {
             workflow_profiles.ASSET_ILXL: self.workflow_source_path,
             workflow_profiles.ASSET_ANIMA_ILXL: self.anima_workflow_source_path,
@@ -1558,12 +1578,23 @@ class AssetMode:
             error_msg = f"{asset_workflow_type} 에셋 워크플로우 소스 경로가 비어 있음"
             print(f"[ASSET] {error_msg}")
             return {"success": False, "error": error_msg}
-        if selected_workflow_path != self.workflow_source_path:
-            self.workflow_source_path = selected_workflow_path
-            self._asset_api_workflow = None
-            self._asset_hash = ""
+        switched_workflow = selected_workflow_path != self.workflow_source_path
         try:
-            ok = await self.update_asset_workflow()
+            async with ASSET_WORKFLOW_PREPARE_LOCK:
+                if switched_workflow:
+                    self.workflow_source_path = selected_workflow_path
+                    self._asset_api_workflow = None
+                    self._asset_hash = ""
+                try:
+                    ok = await self.update_asset_workflow()
+                    prepared_api_workflow = copy.deepcopy(
+                        self._asset_api_workflow
+                    )
+                finally:
+                    if switched_workflow:
+                        self.workflow_source_path = saved_workflow_path
+                        self._asset_api_workflow = saved_api_workflow
+                        self._asset_hash = saved_asset_hash
             if not ok:
                 error_msg = "워크플로우 준비 실패 (소스 경로 및 mode_workflow 폴더 모두 탐색 실패)"
                 print(f"[ASSET] {error_msg}")
@@ -1630,10 +1661,10 @@ class AssetMode:
 
             if self.build_prompt_with_workflow_func:
                 workflow = self.build_prompt_with_workflow_func(
-                    self._asset_api_workflow, positive, negative,
+                    prepared_api_workflow, positive, negative,
                 )
             else:
-                workflow = copy.deepcopy(self._asset_api_workflow)
+                workflow = copy.deepcopy(prepared_api_workflow)
                 for nid, ninfo in workflow.items():
                     if not isinstance(ninfo, dict):
                         continue
@@ -1655,7 +1686,8 @@ class AssetMode:
                     final_negative = ninfo.get("inputs", {}).get("value", negative)
 
             # 프롬프트 주입된 workflow를 asset_api.json에도 저장
-            self._save_cached_api(workflow)
+            if self._save_generated_workflow_cache:
+                self._save_cached_api(workflow)
 
             if self.submit_workflow_func:
                 async def _on_progress(value, max_value):
@@ -1665,7 +1697,13 @@ class AssetMode:
                             "character": character, "outfit": outfit, "expression": expression,
                         })
 
-                img_bytes, error = await self.submit_workflow_func(workflow, progress_callback=_on_progress)
+                submit_kwargs = {"progress_callback": _on_progress}
+                if modal_input_paths:
+                    submit_kwargs["input_paths"] = modal_input_paths
+                img_bytes, error = await self.submit_workflow_func(
+                    workflow,
+                    **submit_kwargs,
+                )
             else:
                 return {"success": False, "error": "submit_workflow_func 미설정"}
 

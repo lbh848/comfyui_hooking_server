@@ -21,7 +21,11 @@ from comfy_installer.credentials import load_civitai_key
 
 from .manifest import selected_install_plan, workflow_catalog
 from .settings import ModalSettings
-from .workflow_assets import resolve_input_files, resolve_lora_files
+from .workflow_assets import (
+    resolve_explicit_input_files,
+    resolve_input_files,
+    resolve_lora_files,
+)
 
 
 L4_USD_PER_SECOND = 0.000222
@@ -709,6 +713,29 @@ class ModalService:
             for node in workflow.values()
         )
 
+    async def convert_workflow(self, workflow: dict[str, Any]) -> dict[str, Any]:
+        settings = ModalSettings.from_mapping(self.get_config())
+        if not settings.enabled:
+            print("[MODAL] 워크플로우 변환 실패: Modal이 비활성화되어 있습니다.")
+            raise RuntimeError("Modal 원격 생성이 비활성화되어 있습니다.")
+        if not await self.account_connected(settings):
+            print("[MODAL] 워크플로우 변환 실패: Modal 계정이 연결되어 있지 않습니다.")
+            raise RuntimeError("Modal 계정이 연결되어 있지 않습니다.")
+        converted = await self._run_client_action(
+            settings,
+            "convert_workflow",
+            timeout=960,
+            workflow=workflow,
+            timeout_seconds=900,
+        )
+        if not isinstance(converted, dict) or not self._is_api_workflow(converted):
+            print(
+                "[MODAL] 워크플로우 변환 결과 검증 실패: "
+                f"type={type(converted).__name__}"
+            )
+            raise RuntimeError("Modal ComfyUI 워크플로우 변환 결과가 올바르지 않습니다.")
+        return converted
+
     def _workflow_run_public(self, state: Mapping[str, Any]) -> dict[str, Any]:
         return {
             key: value
@@ -866,21 +893,150 @@ class ModalService:
             content_type = "application/octet-stream"
         return image_bytes, content_type
 
-    async def generate(
+    @staticmethod
+    def _merge_input_files(*groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        merged: dict[str, dict[str, Any]] = {}
+        for group in groups:
+            for item in group:
+                remote_name = str(item.get("remote_name") or "").replace("\\", "/")
+                if not remote_name:
+                    print(f"[MODAL_SYNC] remote_name 없는 입력 파일 거부: {item!r}")
+                    raise ValueError("Modal 입력 파일의 원격 이름이 비어 있습니다.")
+                merged[remote_name] = item
+        return list(merged.values())
+
+    def _store_modal_artifacts(
+        self,
+        artifacts: list[dict[str, Any]],
+        config: Mapping[str, Any],
+    ) -> list[dict[str, Any]]:
+        """원격 LoRA 결과를 기존 파일을 덮어쓰지 않는 방식으로 로컬에 복귀시킨다."""
+
+        if not artifacts:
+            return []
+        local_root_raw = str(config.get("lora_load_path") or "").strip()
+        if not local_root_raw:
+            print("[MODAL_SYNC] LoRA 결과 저장 실패: lora_load_path 설정이 비어 있습니다.")
+            raise ValueError("Modal LoRA 결과를 저장할 로컬 LoRA 경로가 비어 있습니다.")
+        local_root = Path(local_root_raw).resolve()
+        local_root.mkdir(parents=True, exist_ok=True)
+        stored: list[dict[str, Any]] = []
+        for item in artifacts:
+            source = Path(str(item.get("path") or ""))
+            relative = Path(str(item.get("relative_path") or ""))
+            if not source.is_file():
+                print(f"[MODAL_SYNC] LoRA 결과 임시 파일 없음: {source}")
+                raise FileNotFoundError(f"Modal LoRA 결과 임시 파일이 없습니다: {source}")
+            if relative.is_absolute() or not relative.parts or ".." in relative.parts:
+                print(f"[MODAL_SYNC] 안전하지 않은 LoRA 결과 상대 경로: {relative!s}")
+                raise ValueError(f"안전하지 않은 Modal LoRA 결과 경로입니다: {relative!s}")
+            target = local_root.joinpath(*relative.parts).resolve()
+            if local_root != target and local_root not in target.parents:
+                print(
+                    "[MODAL_SYNC] LoRA 결과 저장 경로 거부: 로컬 LoRA 루트 밖입니다. "
+                    f"root={local_root}, target={target}"
+                )
+                raise ValueError(f"로컬 LoRA 폴더 밖에는 결과를 저장할 수 없습니다: {target}")
+
+            final_target = target
+            status = "stored"
+            if target.exists():
+                if not target.is_file():
+                    print(
+                        "[MODAL_SYNC] LoRA 결과 경로 충돌: 기존 대상이 파일이 아님. "
+                        f"target={target}, type={'directory' if target.is_dir() else 'other'}"
+                    )
+                    raise IsADirectoryError(
+                        f"Modal LoRA 결과 대상이 파일이 아닙니다: {target}"
+                    )
+                source_hash = self._sha256_file(source)
+                target_hash = self._sha256_file(target)
+                if source_hash == target_hash:
+                    print(f"[MODAL_SYNC] 동일한 로컬 LoRA 결과 저장 생략: {target}")
+                    stored.append(
+                        {
+                            "relative_path": relative.as_posix(),
+                            "local_path": str(target),
+                            "status": "identical",
+                        }
+                    )
+                    continue
+                stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+                final_target = target.with_name(
+                    f"{target.stem}.modal-{stamp}{target.suffix}"
+                )
+                status = "conflict_copy"
+                print(
+                    "[MODAL_SYNC] 기존 로컬 LoRA 보존, 충돌 사본으로 저장: "
+                    f"existing={target}, new={final_target}"
+                )
+            final_target.parent.mkdir(parents=True, exist_ok=True)
+            temp_target = final_target.with_name(
+                f".{final_target.name}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp"
+            )
+            try:
+                shutil.copy2(source, temp_target)
+                os.replace(temp_target, final_target)
+            except Exception as exc:
+                temp_target.unlink(missing_ok=True)
+                print(
+                    "[MODAL_SYNC] LoRA 결과 로컬 저장 실패: "
+                    f"source={source}, target={final_target}, "
+                    f"error={type(exc).__name__}: {exc}"
+                )
+                traceback.print_exc()
+                raise
+            stored.append(
+                {
+                    "relative_path": relative.as_posix(),
+                    "local_path": str(final_target),
+                    "status": status,
+                }
+            )
+        return stored
+
+    @staticmethod
+    def _sha256_file(path: Path) -> str:
+        import hashlib
+
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            while chunk := handle.read(8 * 1024 * 1024):
+                digest.update(chunk)
+        return digest.hexdigest()
+
+    async def run_workflow(
         self,
         workflow: dict[str, Any],
         *,
         timeout_seconds: int = 3_300,
-    ) -> tuple[bytes, dict[str, Any]]:
+        input_paths: list[str] | tuple[str, ...] | None = None,
+        artifact_prefixes: list[str] | tuple[str, ...] | None = None,
+        require_images: bool = True,
+    ) -> dict[str, Any]:
         config = self.get_config()
         settings = ModalSettings.from_mapping(config)
         if not settings.enabled:
+            print("[MODAL] 원격 워크플로우 실행 실패: Modal이 비활성화되어 있습니다.")
             raise RuntimeError("Modal 원격 생성이 비활성화되어 있습니다.")
         if not await self.account_connected(settings):
+            print(
+                "[MODAL] 원격 워크플로우 실행 실패: "
+                f"Modal 계정이 연결되지 않았습니다. profile={settings.profile}"
+            )
             raise RuntimeError("Modal 계정이 연결되어 있지 않습니다.")
-        lora_files, input_files = await asyncio.gather(
+        lora_files, workflow_input_files, explicit_input_files = await asyncio.gather(
             asyncio.to_thread(resolve_lora_files, workflow, config),
             asyncio.to_thread(resolve_input_files, workflow, config),
+            asyncio.to_thread(
+                resolve_explicit_input_files,
+                input_paths or [],
+                config,
+            ) if input_paths else asyncio.sleep(0, result=[]),
+        )
+        input_files = self._merge_input_files(
+            workflow_input_files,
+            explicit_input_files,
         )
         with tempfile.TemporaryDirectory(prefix="soya-modal-output-") as output_dir:
             payload = {
@@ -890,10 +1046,12 @@ class ModalService:
                 "workflow": workflow,
                 "lora_files": lora_files,
                 "input_files": input_files,
+                "artifact_prefixes": list(artifact_prefixes or []),
+                "require_images": bool(require_images),
                 "timeout_seconds": max(30, min(int(timeout_seconds), 3_300)),
                 "output_dir": output_dir,
             }
-            code, stdout, _stderr = await self._run_command(
+            code, stdout, stderr = await self._run_command(
                 [sys.executable, "-m", "modal_backend.client_cli"],
                 env=self._subprocess_env(settings.profile),
                 stdin_payload=payload,
@@ -902,7 +1060,8 @@ class ModalService:
             if code != 0:
                 print(
                     f"[MODAL] 원격 생성 실패: app={settings.deployment_name}, "
-                    f"exit_code={code}, loras={len(lora_files)}, inputs={len(input_files)}"
+                    f"exit_code={code}, loras={len(lora_files)}, inputs={len(input_files)}, "
+                    f"stderr={stderr[-2000:]}"
                 )
                 raise RuntimeError("Modal 원격 이미지 생성에 실패했습니다. 서버 로그를 확인하세요.")
             try:
@@ -912,25 +1071,79 @@ class ModalService:
                 traceback.print_exc()
                 raise RuntimeError("Modal 원격 생성 응답 형식이 올바르지 않습니다.") from exc
             if not response.get("ok"):
-                raise RuntimeError(str(response.get("error") or "Modal 원격 생성 실패"))
+                error = str(response.get("error") or "Modal 원격 생성 실패")
+                print(
+                    "[MODAL] 원격 워크플로우 응답 실패: "
+                    f"app={settings.deployment_name}, error={error}, "
+                    f"stderr={stderr[-2000:]}"
+                )
+                raise RuntimeError(error)
             result = response["result"]
             outputs = result.get("outputs") or []
-            if not outputs:
+            if require_images and not outputs:
+                print(
+                    "[MODAL] 원격 워크플로우 이미지 결과 없음: "
+                    f"prompt_id={result.get('prompt_id')}, result_keys={list(result)}"
+                )
                 raise RuntimeError("Modal 원격 생성 결과 이미지가 없습니다.")
-            output_path = Path(outputs[0]["path"])
-            if not output_path.is_file():
-                raise FileNotFoundError(f"Modal 결과 임시 파일이 없습니다: {output_path}")
-            image_bytes = output_path.read_bytes()
+            images: list[dict[str, Any]] = []
+            for output in outputs:
+                output_path = Path(str(output.get("path") or ""))
+                if not output_path.is_file():
+                    print(
+                        "[MODAL] 원격 결과 임시 파일 없음: "
+                        f"prompt_id={result.get('prompt_id')}, path={output_path}"
+                    )
+                    raise FileNotFoundError(f"Modal 결과 임시 파일이 없습니다: {output_path}")
+                images.append(
+                    {
+                        "bytes": output_path.read_bytes(),
+                        "filename": output.get("filename"),
+                        "content_type": output.get("content_type"),
+                        "node_id": output.get("node_id"),
+                    }
+                )
+            stored_artifacts = self._store_modal_artifacts(
+                list(result.get("artifacts") or []),
+                config,
+            )
             print(
-                f"[MODAL] 원격 생성 완료: app={settings.deployment_name}, "
-                f"prompt_id={result.get('prompt_id')}, bytes={len(image_bytes)}, "
+                f"[MODAL] 원격 워크플로우 완료: app={settings.deployment_name}, "
+                f"prompt_id={result.get('prompt_id')}, images={len(images)}, "
+                f"artifacts={len(stored_artifacts)}, "
                 f"lora_sync={result.get('lora_sync')}"
             )
-            return image_bytes, {
+            return {
                 "prompt_id": result.get("prompt_id"),
                 "lora_sync": result.get("lora_sync") or {},
-                "content_type": outputs[0].get("content_type"),
+                "images": images,
+                "artifacts": stored_artifacts,
+                "text_outputs": list(result.get("text_outputs") or []),
             }
+
+    async def generate(
+        self,
+        workflow: dict[str, Any],
+        *,
+        timeout_seconds: int = 3_300,
+        input_paths: list[str] | tuple[str, ...] | None = None,
+    ) -> tuple[bytes, dict[str, Any]]:
+        result = await self.run_workflow(
+            workflow,
+            timeout_seconds=timeout_seconds,
+            input_paths=input_paths,
+            require_images=True,
+        )
+        images = result.get("images") or []
+        if not images:
+            print("[MODAL] 원격 이미지 생성 결과가 비어 있습니다.")
+            raise RuntimeError("Modal 원격 이미지 생성 결과가 없습니다.")
+        first = images[0]
+        return first["bytes"], {
+            "prompt_id": result.get("prompt_id"),
+            "lora_sync": result.get("lora_sync") or {},
+            "content_type": first.get("content_type"),
+        }
 
     def _load_delete_outbox(self) -> list[dict[str, Any]]:
         if not self._delete_outbox_path.is_file():
@@ -951,7 +1164,7 @@ class ModalService:
     def _save_delete_outbox(self, items: list[dict[str, Any]]) -> None:
         target = self._delete_outbox_path
         if target.exists():
-            backup_root = self.project_root / "요구사항"
+            backup_root = self.project_root / "backups" / "modal"
             backup_root.mkdir(parents=True, exist_ok=True)
             stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
             backup = backup_root / f"modal_lora_delete_outbox_before_save_{stamp}.json"

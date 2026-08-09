@@ -16,11 +16,13 @@ from PIL import Image
 from io import BytesIO
 from typing import Optional, Callable, Awaitable
 
+from comfy_allocation import CURRENT_COMFY_EXECUTION_TARGET, MODAL_COMFY_TARGET
 from modes.embedding_service import match_presets_by_query, match_presets_by_names, match_presets_by_names_batch, get_config as get_embedding_config
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CURRENT_MODE_WORK_DIR = os.path.join(BASE_DIR, "current_mode_workflow")
 MODE_WORKFLOW_DIR = os.path.join(BASE_DIR, "mode_workflow")
+ASSET_TOOL_WORKFLOW_PREPARE_LOCK = asyncio.Lock()
 
 
 class AssetToolMode:
@@ -51,6 +53,20 @@ class AssetToolMode:
         self.submit_workflow_func: Optional[Callable] = None
         self.build_prompt_with_workflow_func: Optional[Callable] = None
         self.text_output_wait_func: Optional[Callable] = None
+        self.run_modal_workflow_func: Optional[Callable] = None
+
+    def fork_for_execution(self) -> "AssetToolMode":
+        """인스턴스/스타일 큐 작업이 로컬·Modal에서 병렬 분석할 실행 복사본."""
+
+        worker = copy.copy(self)
+        worker._lock = asyncio.Lock()
+        worker._api_workflow = copy.deepcopy(self._api_workflow)
+        worker._fallback_api_workflow = copy.deepcopy(
+            self._fallback_api_workflow
+        )
+        worker._analysis_cache = dict(self._analysis_cache)
+        worker._is_analyzing = False
+        return worker
 
     def _log(self, action: str, data: dict = None):
         if self.mode_log_func:
@@ -268,14 +284,27 @@ class AssetToolMode:
     ) -> dict:
         """ComfyUI 경유 태그 분석. use_fallback 이면 폴백 워크플로우 슬롯 사용."""
         slot_label = "fallback" if use_fallback else "primary"
-        ok = await self.update_workflow(
-            use_fallback=use_fallback,
-            comfy_task_key=comfy_task_key,
-        )
+        async with ASSET_TOOL_WORKFLOW_PREPARE_LOCK:
+            ok = await self.update_workflow(
+                use_fallback=use_fallback,
+                comfy_task_key=comfy_task_key,
+            )
+            api_workflow = copy.deepcopy(
+                self._fallback_api_workflow
+                if use_fallback
+                else self._api_workflow
+            )
         if not ok:
             return {"success": False, "error": f"태그 분석 워크플로우({slot_label})를 로드할 수 없습니다"}
-
-        api_workflow = self._fallback_api_workflow if use_fallback else self._api_workflow
+        if not api_workflow:
+            print(
+                f"[ASSET_TOOL] 워크플로우 준비 결과 없음: "
+                f"task={comfy_task_key}, slot={slot_label}"
+            )
+            return {
+                "success": False,
+                "error": f"태그 분석 워크플로우({slot_label}) 결과가 비어 있습니다",
+            }
 
         # 이미지를 ComfyUI input 폴더에 업로드
         filename = f"tag_analysis_{uuid.uuid4().hex[:8]}.png"
@@ -297,6 +326,95 @@ class AssetToolMode:
 
         import sys as _sys
         _main_mod = _sys.modules.get('__main__')
+        if CURRENT_COMFY_EXECUTION_TARGET.get() == MODAL_COMFY_TARGET:
+            if not callable(self.run_modal_workflow_func):
+                print(
+                    "[ASSET_TOOL:MODAL] 분석 실패: Modal 워크플로우 콜백이 없습니다. "
+                    f"task={comfy_task_key}, slot={slot_label}"
+                )
+                return {"success": False, "error": "Modal 태그 분석 콜백이 없습니다"}
+            config = getattr(_main_mod, "app_config", {}) or {}
+            comfy_input_dir = str(config.get("comfy_input_dir") or "").strip()
+            if not comfy_input_dir or not os.path.isdir(comfy_input_dir):
+                print(
+                    "[ASSET_TOOL:MODAL] 분석 입력 저장 실패: Comfy input 폴더 오류 "
+                    f"configured={comfy_input_dir!r}"
+                )
+                return {"success": False, "error": "Comfy input 폴더가 유효하지 않습니다"}
+            input_dir = os.path.join(comfy_input_dir, "modal_tag_analysis")
+            os.makedirs(input_dir, exist_ok=True)
+            input_path = os.path.join(input_dir, filename)
+            try:
+                with open(input_path, "wb") as image_file:
+                    image_file.write(image_data_upload)
+            except Exception as e:
+                print(
+                    "[ASSET_TOOL:MODAL] 분석 입력 파일 저장 실패: "
+                    f"path={input_path!r}, error={type(e).__name__}: {e}"
+                )
+                import traceback
+                traceback.print_exc()
+                return {"success": False, "error": f"Modal 분석 입력 저장 실패: {e}"}
+
+            workflow = copy.deepcopy(api_workflow)
+            image_injected = False
+            for ninfo in workflow.values():
+                if not isinstance(ninfo, dict):
+                    continue
+                if ninfo.get("_meta", {}).get("title", "") == "분석이미지로드":
+                    ninfo.setdefault("inputs", {})["image"] = (
+                        f"modal_tag_analysis/{filename}"
+                    )
+                    image_injected = True
+            if not image_injected:
+                print(
+                    f"[ASSET_TOOL:MODAL] 분석이미지로드 노드 없음: "
+                    f"task={comfy_task_key}, slot={slot_label}"
+                )
+                return {
+                    "success": False,
+                    "error": f"워크플로우({slot_label})에 '분석이미지로드' 노드가 없습니다",
+                }
+            try:
+                result = await self.run_modal_workflow_func(
+                    workflow,
+                    input_paths=[input_path],
+                    require_images=False,
+                )
+                text_entries = list(result.get("text_outputs") or [])
+                tag_text = ""
+                for entry in reversed(text_entries):
+                    if str(entry.get("node_title") or "") == "WD_TAG_TEXT":
+                        tag_text = str(entry.get("text") or "")
+                        break
+                if not tag_text:
+                    print(
+                        "[ASSET_TOOL:MODAL] 태그 텍스트 결과 없음: "
+                        f"task={comfy_task_key}, slot={slot_label}, "
+                        f"text_outputs={text_entries!r}"
+                    )
+                    return {"success": False, "error": "Modal 태그 분석 결과가 없습니다"}
+                tags = [
+                    value.strip().replace("_", " ")
+                    for value in tag_text.replace("\n", ",").split(",")
+                    if value.strip()
+                ]
+                unique_tags = list(dict.fromkeys(tags))
+                print(
+                    "[ASSET_TOOL:MODAL] 태그 분석 완료: "
+                    f"task={comfy_task_key}, slot={slot_label}, tags={len(unique_tags)}"
+                )
+                return {"success": True, "tags": unique_tags}
+            except Exception as e:
+                print(
+                    "[ASSET_TOOL:MODAL] 태그 분석 실행 실패: "
+                    f"task={comfy_task_key}, slot={slot_label}, "
+                    f"error={type(e).__name__}: {e}"
+                )
+                import traceback
+                traceback.print_exc()
+                return {"success": False, "error": f"Modal 태그 분석 실패: {e}"}
+
         REAL_COMFY_HOST = getattr(_main_mod, 'REAL_COMFY_HOST', '127.0.0.1')
         resolve_comfy_port = getattr(_main_mod, 'resolve_comfy_port', None)
         if not callable(resolve_comfy_port):

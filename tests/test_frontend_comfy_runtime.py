@@ -70,9 +70,10 @@ def test_runtime_frontend_uses_dedicated_process_apis_and_persists_profiles() ->
 def test_runtime_has_task_allocation_tab_next_to_second_instance() -> None:
     instance_1 = FRONTEND.index('id="comfy-runtime-tab-1"')
     instance_2 = FRONTEND.index('id="comfy-runtime-tab-2"')
+    modal = FRONTEND.index('id="comfy-runtime-tab-modal"')
     allocation = FRONTEND.index('id="comfy-runtime-tab-allocation"')
 
-    assert instance_1 < instance_2 < allocation
+    assert instance_1 < instance_2 < modal < allocation
     assert "Comfy 배분 관리" in FRONTEND
     assert 'id="comfy-runtime-allocation-panel"' in FRONTEND
     assert 'id="comfy-allocation-list"' in FRONTEND
@@ -82,7 +83,7 @@ def test_runtime_has_managed_modal_tab_lifecycle_and_workflow_controls() -> None
     allocation = FRONTEND.index('id="comfy-runtime-tab-allocation"')
     modal = FRONTEND.index('id="comfy-runtime-tab-modal"')
 
-    assert allocation < modal
+    assert modal < allocation
     for value in (
         'id="comfy-modal-runtime-panel"',
         'id="modal-runtime-scaledown-window"',
@@ -130,7 +131,15 @@ def test_modal_installer_is_inside_runtime_modal_panel_not_installer_page() -> N
         'id="modal-installer-card"'
     )
     assert 'id="modal-installer-card"' not in installer_html
-    assert "switchSettingsTab('comfy_runtime');\n            switchComfyRuntimeModal();" in FRONTEND
+    assert "modalOpenInstaller" not in FRONTEND
+
+    assert "name.textContent = item.source_name || item.id;" in FRONTEND
+    assert "option.textContent = item.source_name || item.id;" in FRONTEND
+
+    child_layout_start = FRONTEND.index('.comfy-modal-runtime-panel > *')
+    child_layout_end = FRONTEND.index('}', child_layout_start)
+    child_layout_rule = FRONTEND[child_layout_start:child_layout_end]
+    assert 'flex: 0 0 auto;' in child_layout_rule
 
 
 def test_runtime_persists_detailed_task_allocations_and_shows_fallback_state() -> None:
@@ -150,8 +159,12 @@ def test_runtime_persists_detailed_task_allocations_and_shows_fallback_state() -
         assert f"key: '{task_key}'" in FRONTEND
 
     assert "comfy_task_allocations: comfyAllocationsForSave()" in FRONTEND
-    assert "Comfy #1만 실행 중 · 모든 내부 Comfy 작업은 자동으로 #1에 들어갑니다." in FRONTEND
-    assert "Comfy #2만 실행 중 · 모든 내부 Comfy 작업은 자동으로 #2에 들어갑니다." in FRONTEND
+    assert "comfy_task_modal_parallel: comfyModalParallelForSave()" in FRONTEND
+    assert "modalOption.textContent = 'MODAL'" in FRONTEND
+    assert "toggleText.textContent = 'MODAL 병렬 사용'" in FRONTEND
+    assert "checkbox.disabled = modalPrimary" in FRONTEND
+    assert "Comfy #1만 실행 중 · 로컬 대상 작업은 #1로 폴백" in FRONTEND
+    assert "Comfy #2만 실행 중 · 로컬 대상 작업은 #2로 폴백" in FRONTEND
 
 
 def test_runtime_layout_gives_remaining_space_to_terminal() -> None:

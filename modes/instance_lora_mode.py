@@ -477,7 +477,7 @@ async def run_auto_refine_lora_prompt(
                 print(f"[INSTANCE_LORA] 학습 이미지 없음: char={char_name} entry={entry} filename={filename}")
                 return {"success": False, "error": f"학습 이미지를 찾을 수 없습니다: {filename} (character={char_name} entry={entry})"}
 
-        # 비전 서비스 확인 (외부 API 분기: primary LLM 기준)
+        # 비전 서비스 확인 (외부 LLM 분기: primary LLM 기준)
         service = routing_primary_service("refine_lora_prompt")
         if not supports_vision(service):
             print(f"[INSTANCE_LORA] 비전 미지원 서비스: {service}")

@@ -500,7 +500,7 @@ class QwenEditMode:
             traceback.print_exc()
             raise
 
-    def _prepare_shared_comfy_inputs(self, params: dict, config: dict) -> None:
+    def _prepare_shared_comfy_inputs(self, params: dict, config: dict) -> str:
         configured_input_dir = str(
             config.get("comfy_input_dir") or ""
         ).strip()
@@ -534,8 +534,14 @@ class QwenEditMode:
             )
             raise FileNotFoundError("Qwen Edit 큐 메모리 입력을 찾을 수 없습니다")
 
+        safe_job_id = "".join(
+            char for char in job_id if char.isalnum() or char in ("-", "_")
+        )
+        if not safe_job_id:
+            print(f"[QWEN_EDIT] 작업별 입력 폴더명 생성 실패: job={job_id!r}")
+            raise ValueError("Qwen Edit 작업 ID로 안전한 입력 폴더를 만들 수 없습니다")
         qwen_root = os.path.realpath(
-            os.path.join(comfy_input_dir, QWEN_EDIT_INPUT_SUBDIR)
+            os.path.join(comfy_input_dir, QWEN_EDIT_INPUT_SUBDIR, safe_job_id)
         )
         if os.path.commonpath((comfy_input_dir, qwen_root)) != comfy_input_dir:
             print(
@@ -543,7 +549,7 @@ class QwenEditMode:
                 f"input={comfy_input_dir!r}, qwen_root={qwen_root!r}"
             )
             raise RuntimeError("Qwen Edit 입력 폴더가 Comfy input 밖을 가리킵니다")
-        self._reset_shared_input_dir(qwen_root, comfy_input_dir)
+        os.makedirs(qwen_root, exist_ok=True)
         source_target = os.path.join(qwen_root, "source.png")
         mask_target = os.path.join(qwen_root, "mask.png")
         try:
@@ -560,10 +566,13 @@ class QwenEditMode:
             traceback.print_exc()
             raise
         print(
-            "[QWEN_EDIT] GPU 큐 실행 직전 공유 입력 배치 완료: "
+            "[QWEN_EDIT] 큐 작업별 입력 배치 완료: "
             f"job={job_id}, folder={qwen_root!r}, "
             "files=['mask.png', 'source.png']"
         )
+        params["image_path"] = f"{QWEN_EDIT_INPUT_SUBDIR}/{safe_job_id}"
+        params["mask_path"] = f"{QWEN_EDIT_INPUT_SUBDIR}/{safe_job_id}"
+        return qwen_root
 
     def cleanup_staged_request(self, params: dict) -> None:
         job_id = str((params or {}).get("job_id") or "")
@@ -1147,7 +1156,7 @@ class QwenEditMode:
                 "Qwen Rapid AIO v19 체크포인트 다운로드가 완료되지 않았습니다"
             )
 
-        self._prepare_shared_comfy_inputs(params, config)
+        staged_input_dir = self._prepare_shared_comfy_inputs(params, config)
         workflow, workflow_path = await self._load_workflow(
             config,
             edit_tool,
@@ -1270,6 +1279,7 @@ class QwenEditMode:
             image_bytes, submit_error = await self.submit_workflow_func(
                 workflow,
                 progress_callback=on_progress,
+                input_paths=[staged_input_dir],
             )
             if not image_bytes:
                 print(

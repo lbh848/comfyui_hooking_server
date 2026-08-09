@@ -17,6 +17,7 @@ import traceback
 import base64
 import shutil
 import mimetypes
+from contextvars import ContextVar
 from typing import Any
 
 # ─── 모듈 이중 로드 방지 ─────────────────────────────────
@@ -128,9 +129,13 @@ from comfy_runtime import (
     register_comfy_runtime_routes,
 )
 from comfy_allocation import (
+    CURRENT_COMFY_EXECUTION_TARGET,
     DEFAULT_COMFY_TASK_ALLOCATIONS,
+    DEFAULT_COMFY_TASK_MODAL_PARALLEL,
+    MODAL_COMFY_TARGET,
     ComfyTaskAllocationValidationError,
     normalize_comfy_task_allocations,
+    normalize_comfy_task_modal_parallel,
     select_comfy_instance,
 )
 
@@ -146,6 +151,7 @@ WORKFLOW_BACKUP_DIR = os.path.join(BASE_DIR, "workflow_backup")
 LOG_DIR = os.path.join(BASE_DIR, "logs")
 FRONTEND_DIR = os.path.join(BASE_DIR, "frontend")
 CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
+RUNTIME_BACKUP_DIR = os.path.join(BASE_DIR, "backups")
 FRONTEND_AUTH_FILE = os.path.join(BASE_DIR, "key", "frontend_auth.json")
 
 frontend_auth_manager = FrontendAuthManager(FRONTEND_AUTH_FILE)
@@ -160,7 +166,7 @@ MODE_WORKFLOW_DIR = os.path.join(BASE_DIR, "mode_workflow")
 CURRENT_MODE_WORK_DIR = os.path.join(BASE_DIR, "current_mode_workflow")
 WORKFLOW_BACKUP_STATIC_DIR = os.path.join(BASE_DIR, "workflow_backup_static")
 
-# 외부 API 분기의 작업별 기본값. 재시도 횟수는 최초 호출을 제외한 추가 시도 수다.
+# 외부 LLM 분기의 작업별 기본값. 재시도 횟수는 최초 호출을 제외한 추가 시도 수다.
 def _llm_route_defaults(
     *,
     fallback: bool = False,
@@ -189,6 +195,7 @@ DEFAULT_CONFIG = {
     "comfyui_port_illustration": None,  # 삽화 전용 포트 (null=메인 포트 사용)
     "comfy_launch_profiles": copy.deepcopy(DEFAULT_COMFY_LAUNCH_PROFILES),
     "comfy_task_allocations": copy.deepcopy(DEFAULT_COMFY_TASK_ALLOCATIONS),
+    "comfy_task_modal_parallel": copy.deepcopy(DEFAULT_COMFY_TASK_MODAL_PARALLEL),
     "modal_enabled": False,
     "modal_profile": "soya-comfy",
     "modal_environment": "main",
@@ -332,7 +339,7 @@ DEFAULT_CONFIG = {
     "llm_vision_compress2": False,       # LLM2 비전 webp 압축
     "llm_vision_compress3": False,       # LLM3 비전 webp 압축
     "lora_prompt_review_enabled": False, # LoRA 프롬프트 완성 후 선택적 2차 비전 검수
-    # 작업별 LLM1/LLM2/LLM3 라우팅 및 메인/폴백 재시도 정책(외부 API 분기 탭).
+    # 작업별 LLM1/LLM2/LLM3 라우팅 및 메인/폴백 재시도 정책(외부 LLM 분기 탭).
     "llm_routing": {
         "extract_outfit":          _llm_route_defaults(fallback=True),
         "enhance_outfit":          _llm_route_defaults(fallback=True),
@@ -359,7 +366,7 @@ DEFAULT_CONFIG = {
         ),
         "edit_illustration_prompt":_llm_route_defaults(json_mode=True),  # 끄면 response_format 미전송(Cerebras/Gemma 루프 회피)
         "qwen_edit_translate":     _llm_route_defaults(max_retries=1),
-        # 삽화 컨텍스트 파이프라인 역번역/CALL1/2/2-FIX/3. 메인 LLM/폴백은 외부 API 분기 탭에서 드롭박스로 선택.
+        # 삽화 컨텍스트 파이프라인 역번역/CALL1/2/2-FIX/3. 메인 LLM/폴백은 외부 LLM 분기 탭에서 드롭박스로 선택.
         # 폴백 없음(fallback_target 미지정)이 기본.
         "illustration_call1_backtranslate": _llm_route_defaults(max_retries=1, retry_delay_sec=0.0, fallback_max_retries=1, fallback_retry_delay_sec=0.0),
         "illustration_call1":      _llm_route_defaults(),  # 전처리(컨텍스트 보강)
@@ -660,6 +667,22 @@ def load_config() -> dict:
                     merged["comfy_task_allocations"] = copy.deepcopy(
                         DEFAULT_COMFY_TASK_ALLOCATIONS
                     )
+                try:
+                    merged["comfy_task_modal_parallel"] = (
+                        normalize_comfy_task_modal_parallel(
+                            config.get("comfy_task_modal_parallel"),
+                            allocations=merged["comfy_task_allocations"],
+                        )
+                    )
+                except ComfyTaskAllocationValidationError as e:
+                    print(
+                        "[CONFIG] Comfy 작업별 Modal 병렬 설정 로드 실패, "
+                        f"기본값을 사용합니다: {e}"
+                    )
+                    traceback.print_exc()
+                    merged["comfy_task_modal_parallel"] = copy.deepcopy(
+                        DEFAULT_COMFY_TASK_MODAL_PARALLEL
+                    )
                 for legacy_key in _LEGACY_LLM_RETRY_KEYS:
                     merged.pop(legacy_key, None)
                 # 레거시 서비스(openai-compat/customapi) -> openai 마이그레이션
@@ -679,10 +702,13 @@ def save_config(config: dict):
     """설정 파일을 저장한다."""
     try:
         if os.path.isfile(CONFIG_FILE):
-            requirements_dir = os.path.join(BASE_DIR, "요구사항")
-            os.makedirs(requirements_dir, exist_ok=True)
+            config_backup_dir = os.path.join(RUNTIME_BACKUP_DIR, "config")
+            os.makedirs(config_backup_dir, exist_ok=True)
             stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-            backup_path = os.path.join(requirements_dir, f"config_before_save_{stamp}.json")
+            backup_path = os.path.join(
+                config_backup_dir,
+                f"config_before_save_{stamp}.json",
+            )
             shutil.copy2(CONFIG_FILE, backup_path)
             print(f"[CONFIG] 기존 설정 백업 완료: {backup_path}")
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
@@ -727,6 +753,14 @@ def resolve_comfy_instance(task_key: str) -> tuple[int, int]:
         legacy_illustration_port=app_config.get("comfyui_port_illustration"),
     )
     configured = allocations.get(task_key)
+    if configured == MODAL_COMFY_TARGET:
+        print(
+            "[COMFY_ALLOCATION] Modal 전용 작업의 로컬 포트 조회 거부: "
+            f"task={task_key}, execution_target={CURRENT_COMFY_EXECUTION_TARGET.get()!r}"
+        )
+        raise ComfyTaskAllocationValidationError(
+            f"{task_key} 작업은 Modal 전용으로 배분되어 로컬 포트가 없습니다."
+        )
     running: dict[int, bool] = {1: False, 2: False}
     manager = comfy_runtime_manager
     if manager is None:
@@ -990,6 +1024,10 @@ llm_service.set_manual_parallel_history_func(_record_manual_parallel_race)
 current_original_workflow = None   # 원본 워크플로우 (ComfyUI 드래그앤드롭용)
 current_api_workflow = None        # API 형식 워크플로우 (실행용)
 current_conversion_info = {}       # 변환 정보 (미사용 노드, 에러 등)
+illustration_workflow_build_lock = asyncio.Lock()
+CURRENT_ILLUSTRATION_WORKFLOW_SNAPSHOT: ContextVar[dict[str, Any] | None] = (
+    ContextVar("current_illustration_workflow_snapshot", default=None)
+)
 
 # Reschedule queue for retransmission (max 1 item)
 reschedule_queue = None  # { name, image_bytes, positive, negative, prompt_data }
@@ -1081,6 +1119,19 @@ async def convert_workflow_via_endpoint(
     task_key: str = "utility_debug",
 ):
     """ComfyUI /workflow/convert 엔드포인트로 워크플로우를 API 형식으로 변환한다."""
+    if CURRENT_COMFY_EXECUTION_TARGET.get() == MODAL_COMFY_TARGET:
+        try:
+            print(f"[WORKFLOW:MODAL] 원격 변환 요청: task={task_key}")
+            api_format = await modal_service.convert_workflow(workflow_json)
+            print(f"[WORKFLOW:MODAL] 원격 변환 완료: task={task_key}, nodes={len(api_format)}")
+            return api_format, None
+        except Exception as e:
+            print(
+                "[WORKFLOW:MODAL] 원격 변환 실패: "
+                f"task={task_key}, error={type(e).__name__}: {e}"
+            )
+            traceback.print_exc()
+            return None, f"Modal 워크플로우 변환 실패: {type(e).__name__}: {e}"
     target_port = resolve_comfy_port(task_key)
     url = f"http://{REAL_COMFY_HOST}:{target_port}/workflow/convert"
     print(f"[WORKFLOW] → POST {url} (변환 요청)")
@@ -1728,20 +1779,27 @@ async def save_backup(
         )
         traceback.print_exc()
         raise
+    active_workflow_snapshot = CURRENT_ILLUSTRATION_WORKFLOW_SNAPSHOT.get() or {}
     backup_original_workflow = (
         original_workflow_snapshot
         if original_workflow_snapshot is not _BACKUP_SNAPSHOT_UNSET
-        else current_original_workflow
+        else active_workflow_snapshot.get(
+            "original_workflow",
+            current_original_workflow,
+        )
     )
     backup_api_workflow = (
         api_workflow_snapshot
         if api_workflow_snapshot is not _BACKUP_SNAPSHOT_UNSET
-        else current_api_workflow
+        else active_workflow_snapshot.get("api_workflow", current_api_workflow)
     )
     backup_conversion_info = (
         conversion_info_snapshot
         if conversion_info_snapshot is not _BACKUP_SNAPSHOT_UNSET
-        else current_conversion_info
+        else active_workflow_snapshot.get(
+            "conversion_info",
+            current_conversion_info,
+        )
     )
 
     # 0) 후처리([SPEAK] 합성) — 저장 전 이미지에 적용
@@ -2210,6 +2268,7 @@ async def generate_image_with_prompt(
     삽화 포트가 설정되어 있으면 해당 포트를, 아니면 메인 포트를 사용한다.
     반환: (image_bytes, node_errors_or_error_msg)
     """
+    CURRENT_ILLUSTRATION_WORKFLOW_SNAPSHOT.set(None)
     provider = (provider or "comfy").strip().lower()
     if provider == "chansub":
         request_width = int(width or 756)
@@ -2246,12 +2305,25 @@ async def generate_image_with_prompt(
         print(f"[GEN] 공급자 선택 실패: {message}")
         return None, message
 
-    await update_workflow_if_needed(illustration_workflow_type)
-    if current_api_workflow is None:
-        return None, "API 워크플로우 없음"
-
-    risu_prompt = build_prompt(positive, negative)
-    illust_port = resolve_comfy_port(comfy_task_key)
+    # current_* 워크플로우는 레거시 전역 캐시다. 로컬/Modal 레인이 동시에
+    # 실행될 때는 갱신과 스냅샷 생성을 짧게 직렬화하고, 실제 생성은 복사본으로
+    # 병렬 수행해 서로의 워크플로우·백업 메타데이터를 덮지 않게 한다.
+    async with illustration_workflow_build_lock:
+        await update_workflow_if_needed(illustration_workflow_type)
+        if current_api_workflow is None:
+            return None, "API 워크플로우 없음"
+        workflow_snapshot = {
+            "original_workflow": copy.deepcopy(current_original_workflow),
+            "api_workflow": copy.deepcopy(current_api_workflow),
+            "conversion_info": copy.deepcopy(current_conversion_info),
+        }
+        risu_prompt = build_prompt(positive, negative)
+    CURRENT_ILLUSTRATION_WORKFLOW_SNAPSHOT.set(workflow_snapshot)
+    api_workflow_snapshot = workflow_snapshot["api_workflow"]
+    execution_target = CURRENT_COMFY_EXECUTION_TARGET.get()
+    illust_port = None
+    if execution_target != MODAL_COMFY_TARGET:
+        illust_port = resolve_comfy_port(comfy_task_key)
 
     # 디버깅 모드: ComfyUI 전송 없이 프롬프트 로그만 출력
     if app_config.get("debug_mode_enabled", False):
@@ -2271,7 +2343,7 @@ async def generate_image_with_prompt(
         print("[DEBUG] ══════════════════════════════════════════════════════")
         return None, "디버깅 모드: ComfyUI 전송 생략됨"
 
-    if app_config.get("modal_enabled", False):
+    if execution_target == MODAL_COMFY_TARGET:
         try:
             if progress_callback:
                 await progress_callback(0, 1)
@@ -2304,7 +2376,7 @@ async def generate_image_with_prompt(
                 real_prompt_id, submit_result = await submit_to_real_comfy(risu_prompt, port=illust_port)
                 node_errors = submit_result.get("node_errors", {})
 
-                total_steps = count_ksampler_total_steps(current_api_workflow)
+                total_steps = count_ksampler_total_steps(api_workflow_snapshot)
                 error_holder = {}
                 ws_result = await wait_for_real_comfy(real_ws, real_prompt_id, progress_callback=_on_gen_progress, total_steps=total_steps, error_holder=error_holder)
                 if ws_result is None:
@@ -2431,8 +2503,33 @@ async def submit_workflow_to_comfy(
     progress_callback=None,
     *,
     task_key: str = "asset_generation",
+    input_paths: list[str] | tuple[str, ...] | None = None,
 ) -> tuple[bytes | None, str | dict]:
     """임의의 API 워크플로우를 ComfyUI에 제출하고 이미지를 반환한다."""
+    if CURRENT_COMFY_EXECUTION_TARGET.get() == MODAL_COMFY_TARGET:
+        try:
+            if progress_callback:
+                await progress_callback(0, 1)
+            image_bytes, metadata = await modal_service.generate(
+                workflow_api,
+                input_paths=input_paths,
+            )
+            if progress_callback:
+                await progress_callback(1, 1)
+            print(
+                "[WORKFLOW:MODAL] 이미지 워크플로우 완료: "
+                f"task={task_key}, bytes={len(image_bytes)}, "
+                f"prompt_id={metadata.get('prompt_id')}"
+            )
+            return image_bytes, {"modal": metadata}
+        except Exception as e:
+            print(
+                "[WORKFLOW:MODAL] 이미지 워크플로우 실패: "
+                f"task={task_key}, input_paths={input_paths!r}, "
+                f"error={type(e).__name__}: {e}"
+            )
+            traceback.print_exc()
+            return None, f"Modal 원격 워크플로우 실패: {type(e).__name__}: {e}"
     target_port = resolve_comfy_port(task_key)
     ws_url = (
         f"ws://{REAL_COMFY_HOST}:{target_port}/ws"
@@ -2664,6 +2761,8 @@ def init_queue_manager():
     queue_manager.get_comfy_port_for_task = resolve_comfy_port
     queue_manager.fetch_real_history = fetch_real_history
     queue_manager.fetch_real_image = fetch_real_image
+    queue_manager.run_modal_workflow = modal_service.run_workflow
+    asset_tool.run_modal_workflow_func = modal_service.run_workflow
     queue_manager.process_prompt_full = process_prompt
     queue_manager.process_illustration_context = process_illustration_context_queue_item
     queue_manager.process_illustration_easy_edit = process_illustration_easy_edit_queue_item
@@ -2839,10 +2938,11 @@ asset_mode.convert_workflow_func = lambda workflow: convert_workflow_via_endpoin
     task_key="asset_generation",
 )
 asset_mode.compute_hash_func = compute_file_hash
-asset_mode.submit_workflow_func = lambda workflow, progress_callback=None: submit_workflow_to_comfy(
+asset_mode.submit_workflow_func = lambda workflow, progress_callback=None, input_paths=None: submit_workflow_to_comfy(
     workflow,
     progress_callback=progress_callback,
     task_key="asset_generation",
+    input_paths=input_paths,
 )
 asset_mode.build_prompt_with_workflow_func = build_prompt_with_workflow
 # Qwen 편집 모드 함수 의존성 설정
@@ -2850,10 +2950,11 @@ qwen_edit_mode.convert_workflow_func = lambda workflow: convert_workflow_via_end
     workflow,
     task_key="qwen_edit",
 )
-qwen_edit_mode.submit_workflow_func = lambda workflow, progress_callback=None: submit_workflow_to_comfy(
+qwen_edit_mode.submit_workflow_func = lambda workflow, progress_callback=None, input_paths=None: submit_workflow_to_comfy(
     workflow,
     progress_callback=progress_callback,
     task_key="qwen_edit",
+    input_paths=input_paths,
 )
 qwen_edit_mode.notify_frontend_func = notify_frontend
 # 에셋툴 모드 함수 의존성 설정
@@ -3883,9 +3984,19 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
             prompts[prompt_id]["outputs"] = {"images": []}
             raise RuntimeError(str(node_errors or "이미지 생성 결과가 비어 있습니다"))
 
+        generation_workflow_snapshot = (
+            CURRENT_ILLUSTRATION_WORKFLOW_SNAPSHOT.get()
+            or {
+                "original_workflow": copy.deepcopy(current_original_workflow),
+                "api_workflow": copy.deepcopy(current_api_workflow),
+                "conversion_info": copy.deepcopy(current_conversion_info),
+            }
+        )
         # node_errors 기록
         if illustration_provider == "comfy" and isinstance(node_errors, dict) and node_errors:
-            current_conversion_info["submit_node_errors"] = node_errors
+            generation_workflow_snapshot.setdefault("conversion_info", {})[
+                "submit_node_errors"
+            ] = copy.deepcopy(node_errors)
 
         print(f"[INFO] 이미지 수신 완료: {len(img_bytes):,} bytes ({elapsed_time:.1f}s)")
 
@@ -3918,9 +4029,15 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                 "provider_mode": illustration_provider_mode,
                 "prompt_provider": illustration_provider,
                 "generation_params": copy.deepcopy(_generation_params),
-                "original_workflow": copy.deepcopy(current_original_workflow),
-                "api_workflow": copy.deepcopy(current_api_workflow),
-                "conversion_info": copy.deepcopy(current_conversion_info),
+                "original_workflow": copy.deepcopy(
+                    generation_workflow_snapshot.get("original_workflow")
+                ),
+                "api_workflow": copy.deepcopy(
+                    generation_workflow_snapshot.get("api_workflow")
+                ),
+                "conversion_info": copy.deepcopy(
+                    generation_workflow_snapshot.get("conversion_info")
+                ),
                 "illustration_multi_char": copy.deepcopy(
                     queued_multi_char if multi_char_requested else None
                 ),
@@ -9773,7 +9890,7 @@ async def handle_api_llm_edit_prompt(
         if not image_b64:
             fallback_note = " (백업 이미지가 없어 프롬프트 텍스트만으로 분석했습니다)"
 
-        # 6) LLM 호출 (외부 API 분기: edit_illustration_prompt task_key 라우팅)
+        # 6) LLM 호출 (외부 LLM 분기: edit_illustration_prompt task_key 라우팅)
         if fmt == "chansub":
             messages = llm_prompt_edit.build_chansub_llm_messages(
                 direction, positive, negative
@@ -10636,7 +10753,7 @@ async def handle_api_config(request: web.Request) -> web.Response:
                         body.get("llm_routing")
                     )
                 except (TypeError, ValueError) as e:
-                    print(f"[CONFIG] 외부 API 분기 저장 거부: {e}")
+                    print(f"[CONFIG] 외부 LLM 분기 저장 거부: {e}")
                     traceback.print_exc()
                     return web.json_response({"error": str(e)}, status=400)
 
@@ -10731,7 +10848,10 @@ async def handle_api_config(request: web.Request) -> web.Response:
                     traceback.print_exc()
                     return web.json_response({"error": str(e)}, status=400)
 
-            if any(str(key).startswith("modal_") for key in body):
+            modal_settings_in_body = any(
+                str(key).startswith("modal_") for key in body
+            )
+            if modal_settings_in_body:
                 modal_candidate = copy.deepcopy(app_config)
                 for key, value in body.items():
                     if key in DEFAULT_CONFIG:
@@ -10782,6 +10902,32 @@ async def handle_api_config(request: web.Request) -> web.Response:
                         "modal_scaledown_window_seconds",
                     )
                 )
+
+            if (
+                "comfy_task_allocations" in body
+                or "comfy_task_modal_parallel" in body
+            ):
+                try:
+                    effective_allocations = body.get(
+                        "comfy_task_allocations",
+                        app_config.get("comfy_task_allocations"),
+                    )
+                    body["comfy_task_modal_parallel"] = (
+                        normalize_comfy_task_modal_parallel(
+                            body.get(
+                                "comfy_task_modal_parallel",
+                                app_config.get("comfy_task_modal_parallel"),
+                            ),
+                            allocations=effective_allocations,
+                        )
+                    )
+                except ComfyTaskAllocationValidationError as e:
+                    print(
+                        "[CONFIG] Comfy 작업별 Modal 병렬 설정 저장 거부: "
+                        f"value={body.get('comfy_task_modal_parallel')!r}, error={e}"
+                    )
+                    traceback.print_exc()
+                    return web.json_response({"error": str(e)}, status=400)
 
             if "asset_edit_tool" in body:
                 raw_edit_tool = str(

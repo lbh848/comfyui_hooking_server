@@ -1068,7 +1068,7 @@ async def run_all(
         "chat": chat[:300] if chat else "",
     }
 
-    # LLM 호출 (외부 API 분기: llm_service 가 task_key 별 primary/fallback 판단)
+    # LLM 호출 (외부 LLM 분기: llm_service 가 task_key 별 primary/fallback 판단)
     result = await callLLMTask("enhance_outfit", messages)
 
     if result.startswith("[LLM 실패]"):

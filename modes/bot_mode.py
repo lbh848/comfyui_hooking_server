@@ -4249,7 +4249,7 @@ async def run_auto_classify_face_tags(bot_name: str, char_name: str) -> dict:
         if not any(groups.values()):
             return {"success": False, "error": "분류된 태그가 없습니다. 대표 프롬프트를 확인하세요."}
 
-        # 비전 서비스 확인 (외부 API 분기: primary LLM 기준)
+        # 비전 서비스 확인 (외부 LLM 분기: primary LLM 기준)
         cfg = get_config()
         service = routing_primary_service("classify_face_tags")
         if not supports_vision(service):
@@ -4477,7 +4477,7 @@ async def run_lb_extra_refine(bot_name: str, char_name: str, appearance_tags: li
             print(f"[BOT_MODE] 대표 이미지 파일 없음: {img_path}")
             return {"success": False, "error": f"대표 이미지 파일이 없습니다: {rep0}"}
 
-        # 비전 서비스 확인 (외부 API 분기: primary LLM 기준)
+        # 비전 서비스 확인 (외부 LLM 분기: primary LLM 기준)
         cfg = get_config()
         service = routing_primary_service("refine_lb_extra")
         if not supports_vision(service):

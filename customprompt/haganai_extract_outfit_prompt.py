@@ -43,7 +43,7 @@ Gemini-3 계열 모델 요청 형식:
 }
 
 주의:
-- callLLMTask가 service/model과 외부 API 분기의 작업별 재시도/폴백 설정을 처리합니다.
+- callLLMTask가 service/model과 외부 LLM 분기의 작업별 재시도/폴백 설정을 처리합니다.
 """
 
 import re
@@ -587,7 +587,7 @@ async def run(character_name: str, outfit_list: list, chat_list: list = [],
         {"role": "user", "content": data_prompt},
     ]
 
-    # LLM 호출 (외부 API 분기: task_key 별 primary/fallback 은 llm_service 가 config 에서 판단)
+    # LLM 호출 (외부 LLM 분기: task_key 별 primary/fallback 은 llm_service 가 config 에서 판단)
     config = get_config()
     result = await callLLMTask("extract_outfit", messages)
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import traceback
+from contextvars import ContextVar
 from typing import Any
 
 
@@ -34,6 +35,26 @@ COMFY_TASK_DEFINITIONS: tuple[tuple[str, str, str], ...] = (
 
 COMFY_TASK_KEYS = tuple(item[0] for item in COMFY_TASK_DEFINITIONS)
 DEFAULT_COMFY_TASK_ALLOCATIONS = {key: 1 for key in COMFY_TASK_KEYS}
+MODAL_COMFY_TARGET = "modal"
+MODAL_SUPPORTED_COMFY_TASK_KEYS = frozenset(
+    {
+        "illustration",
+        "restore_regenerate",
+        "asset_generation",
+        "qwen_edit",
+        "asset_lora_training",
+        "bot_lora_training",
+        "instance_lora",
+    }
+)
+DEFAULT_COMFY_TASK_MODAL_PARALLEL = {key: False for key in COMFY_TASK_KEYS}
+
+# 큐 워커가 claim한 실행 대상을 하위 모드와 server.py의 공통 제출 함수까지 전달한다.
+# asyncio Task별 값이 분리되어 로컬 Comfy와 여러 Modal 워커가 동시에 실행돼도 섞이지 않는다.
+CURRENT_COMFY_EXECUTION_TARGET: ContextVar[str | None] = ContextVar(
+    "current_comfy_execution_target",
+    default=None,
+)
 
 
 class ComfyTaskAllocationValidationError(ValueError):
@@ -44,8 +65,8 @@ def normalize_comfy_task_allocations(
     raw: Any,
     *,
     legacy_illustration_port: Any = None,
-) -> dict[str, int]:
-    """누락 키를 채우고 각 작업의 인스턴스 번호를 1 또는 2로 검증한다.
+) -> dict[str, int | str]:
+    """누락 키를 채우고 각 작업의 로컬 인스턴스 또는 Modal 대상을 검증한다.
 
     새 배분 설정이 전혀 없는 기존 설정에서는 ``comfyui_port_illustration`` 사용
     여부를 삽화 계열 두 항목의 Comfy #2 선택으로 승계한다.
@@ -74,6 +95,16 @@ def normalize_comfy_task_allocations(
         if key not in source:
             continue
         value = source.get(key)
+        if isinstance(value, str) and value.strip().lower() == MODAL_COMFY_TARGET:
+            if key not in MODAL_SUPPORTED_COMFY_TASK_KEYS:
+                message = f"{key} 작업은 Modal 배분을 지원하지 않습니다."
+                print(
+                    "[COMFY_ALLOCATION] Modal 작업 배분 값 검증 실패: "
+                    f"task={key}, value={value!r}, error={message}"
+                )
+                raise ComfyTaskAllocationValidationError(message)
+            normalized[key] = MODAL_COMFY_TARGET
+            continue
         try:
             if isinstance(value, bool):
                 raise TypeError("bool은 허용되지 않음")
@@ -91,7 +122,7 @@ def normalize_comfy_task_allocations(
             )
             traceback.print_exc()
             raise ComfyTaskAllocationValidationError(
-                f"comfy_task_allocations.{key} 값은 1 또는 2여야 합니다."
+                f"comfy_task_allocations.{key} 값은 1, 2 또는 modal이어야 합니다."
             ) from exc
         normalized[key] = parsed
 
@@ -99,6 +130,66 @@ def normalize_comfy_task_allocations(
     if unknown:
         print(f"[COMFY_ALLOCATION] 알 수 없는 작업 배분 키 무시: {unknown!r}")
 
+    return normalized
+
+
+def normalize_comfy_task_modal_parallel(
+    raw: Any,
+    *,
+    allocations: dict[str, int | str] | None = None,
+) -> dict[str, bool]:
+    """작업별 Modal 병렬 사용 여부를 검증하고 실행 불가능한 조합은 OFF로 고정한다."""
+
+    if raw is None:
+        source: dict[str, Any] = {}
+    elif isinstance(raw, dict):
+        source = raw
+    else:
+        message = (
+            "Comfy 작업별 Modal 병렬 설정은 객체여야 합니다: "
+            f"type={type(raw).__name__}, value={raw!r}"
+        )
+        print(f"[COMFY_ALLOCATION] Modal 병렬 설정 검증 실패: {message}")
+        raise ComfyTaskAllocationValidationError(message)
+
+    normalized = dict(DEFAULT_COMFY_TASK_MODAL_PARALLEL)
+    effective_allocations = allocations or dict(DEFAULT_COMFY_TASK_ALLOCATIONS)
+    for key in COMFY_TASK_KEYS:
+        if key not in source:
+            continue
+        value = source.get(key)
+        if not isinstance(value, bool):
+            message = (
+                f"comfy_task_modal_parallel.{key} 값은 bool이어야 합니다: "
+                f"value={value!r}"
+            )
+            print(f"[COMFY_ALLOCATION] Modal 병렬 값 검증 실패: {message}")
+            try:
+                raise TypeError(message)
+            except TypeError as exc:
+                traceback.print_exc()
+                raise ComfyTaskAllocationValidationError(message) from exc
+        normalized[key] = value
+
+    for key in COMFY_TASK_KEYS:
+        if not normalized[key]:
+            continue
+        if key not in MODAL_SUPPORTED_COMFY_TASK_KEYS:
+            print(
+                "[COMFY_ALLOCATION] Modal 미지원 작업의 병렬 설정을 OFF로 보정: "
+                f"task={key}"
+            )
+            normalized[key] = False
+        elif effective_allocations.get(key) == MODAL_COMFY_TARGET:
+            print(
+                "[COMFY_ALLOCATION] Modal 전용 배분의 병렬 설정을 OFF로 보정: "
+                f"task={key}"
+            )
+            normalized[key] = False
+
+    unknown = sorted(str(key) for key in source if key not in COMFY_TASK_KEYS)
+    if unknown:
+        print(f"[COMFY_ALLOCATION] 알 수 없는 Modal 병렬 설정 키 무시: {unknown!r}")
     return normalized
 
 
@@ -112,7 +203,7 @@ def comfy_task_definition_payload() -> list[dict[str, str]]:
 
 
 def select_comfy_instance(
-    allocations: dict[str, int],
+    allocations: dict[str, int | str],
     task_key: str,
     running: dict[int, bool],
 ) -> int:
@@ -127,6 +218,14 @@ def select_comfy_instance(
             f"알 수 없는 Comfy 작업 배분 키입니다: {task_key}"
         )
     configured = allocations[task_key]
+    if configured == MODAL_COMFY_TARGET:
+        print(
+            "[COMFY_ALLOCATION] 로컬 인스턴스 선택 거부: "
+            f"task={task_key}, configured=Modal"
+        )
+        raise ComfyTaskAllocationValidationError(
+            f"{task_key} 작업은 Modal 전용으로 배분되어 로컬 포트를 선택할 수 없습니다."
+        )
     running_ids = [instance_id for instance_id in (1, 2) if running.get(instance_id)]
     if len(running_ids) == 1:
         return running_ids[0]

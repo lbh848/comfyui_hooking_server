@@ -214,6 +214,45 @@ async def test_queue_asset_entrypoint_uses_configured_profile_when_body_omits_it
     assert captured["asset_workflow_type"] == "anima_only"
 
 
+@pytest.mark.asyncio
+async def test_asset_execution_forks_do_not_serialize_local_and_modal_generation():
+    mode = _configured_mode()
+    local_worker = mode.fork_for_execution()
+    modal_worker = mode.fork_for_execution()
+    both_started = asyncio.Event()
+    release = asyncio.Event()
+    active = 0
+    peak = 0
+
+    async def fake_generate_internal(*_args):
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        if active == 2:
+            both_started.set()
+        await release.wait()
+        active -= 1
+        return {"success": True}
+
+    local_worker._generate_internal = fake_generate_internal
+    modal_worker._generate_internal = fake_generate_internal
+    local_task = asyncio.create_task(local_worker.generate(character="local"))
+    modal_task = asyncio.create_task(modal_worker.generate(character="modal"))
+
+    try:
+        await asyncio.wait_for(both_started.wait(), timeout=1)
+        release.set()
+        results = await asyncio.wait_for(
+            asyncio.gather(local_task, modal_task),
+            timeout=1,
+        )
+        assert peak == 2
+        assert all(result["success"] for result in results)
+    finally:
+        release.set()
+        await asyncio.gather(local_task, modal_task, return_exceptions=True)
+
+
 def test_frontend_covers_single_batch_bulk_and_automatch_asset_lines():
     source = (Path(__file__).resolve().parents[1] / "frontend" / "index.html").read_text(
         encoding="utf-8"
