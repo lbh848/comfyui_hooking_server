@@ -109,18 +109,28 @@ def test_runtime_has_managed_modal_tab_lifecycle_and_workflow_controls() -> None
     assert "60초 캐시" in FRONTEND
 
 
-def test_modal_groups_are_last_in_external_api_and_installer_pages() -> None:
+def test_modal_group_is_last_in_external_api_page() -> None:
     api_start = FRONTEND.index('id="settings-tab-api"')
     api_end = FRONTEND.index('id="settings-tab-api_route"')
     api_html = FRONTEND[api_start:api_end]
     assert api_html.rindex('Modal 원격 ComfyUI') > api_html.rindex('챈섭')
 
+
+def test_modal_installer_is_inside_runtime_modal_panel_not_installer_page() -> None:
+    runtime_start = FRONTEND.index('id="settings-tab-comfy_runtime"')
+    runtime_end = FRONTEND.index('id="settings-tab-api"')
+    runtime_html = FRONTEND[runtime_start:runtime_end]
+
     installer_start = FRONTEND.index('id="settings-tab-comfy_install"')
     installer_end = FRONTEND.index('id="settings-tab-queue"')
     installer_html = FRONTEND[installer_start:installer_end]
-    assert installer_html.rindex('aria-hidden="true">M</span>') > installer_html.rindex(
-        'aria-hidden="true">06</span>'
+
+    assert 'id="modal-installer-card"' in runtime_html
+    assert runtime_html.index('id="modal-runtime-run-btn"') < runtime_html.index(
+        'id="modal-installer-card"'
     )
+    assert 'id="modal-installer-card"' not in installer_html
+    assert "switchSettingsTab('comfy_runtime');\n            switchComfyRuntimeModal();" in FRONTEND
 
 
 def test_runtime_persists_detailed_task_allocations_and_shows_fallback_state() -> None:

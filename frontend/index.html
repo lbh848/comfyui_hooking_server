@@ -17277,6 +17277,31 @@
                                     <pre class="comfy-modal-runtime-log" id="modal-runtime-log">Modal 상태를 불러오는 중입니다.</pre>
                                 </section>
                             </div>
+
+                            <section class="comfy-installer-card" id="modal-installer-card">
+                                <div class="comfy-installer-section-head">
+                                    <span class="comfy-installer-step" aria-hidden="true">M</span>
+                                    <div class="comfy-installer-section-heading">
+                                        <h3 class="comfy-installer-title">Modal L4 워크플로우 설치</h3>
+                                        <p class="comfy-installer-section-copy">외부 API에서 연결한 사용자 계정에 런타임을 배포하고, 선택한 워크플로우와 필요한 모델만 Volume에 설치합니다.</p>
+                                    </div>
+                                </div>
+                                <div class="comfy-installer-status-grid">
+                                    <div class="comfy-installer-metric"><small>GPU</small><strong>L4 · 24GB</strong></div>
+                                    <div class="comfy-installer-metric"><small>유휴 컨테이너</small><strong>0개</strong></div>
+                                    <div class="comfy-installer-metric"><small>자동 종료</small><strong id="modal-installer-scaledown">작업 후 15초</strong></div>
+                                    <div class="comfy-installer-metric"><small>볼륨 무료 범위</small><strong>월 1 TiB 포함</strong></div>
+                                </div>
+                                <div id="modal-workflow-catalog" class="comfy-workflow-list" style="margin-top:12px; max-height:260px; overflow:auto;">
+                                    <div class="comfy-workflow-empty">Modal 워크플로우 목록을 불러오는 중입니다.</div>
+                                </div>
+                                <div class="comfy-installer-actions" style="margin-top:10px;">
+                                    <button type="button" class="comfy-installer-btn primary" id="modal-installer-start-btn" onclick="modalInstallerStart()">선택 워크플로우를 Modal에 설치/업데이트</button>
+                                    <button type="button" class="comfy-installer-btn" onclick="modalInstallerLoadCatalog()">목록 새로고침</button>
+                                </div>
+                                <p class="comfy-installer-note" id="modal-installer-selection-summary" style="margin-top:8px;">선택 없음</p>
+                                <p class="comfy-installer-note" id="modal-installer-status" style="margin-top:6px;">외부 API에서 Modal 사용을 켜고 설정을 저장한 뒤 실행하세요. 배포만으로 L4는 켜지지 않습니다.</p>
+                            </section>
                         </section>
                     </div>
                 </div>
@@ -19201,30 +19226,6 @@
                             </div>
                         </section>
 
-                        <section class="comfy-installer-card" id="modal-installer-card">
-                            <div class="comfy-installer-section-head">
-                                <span class="comfy-installer-step" aria-hidden="true">M</span>
-                                <div class="comfy-installer-section-heading">
-                                    <h3 class="comfy-installer-title">Modal L4 워크플로우 설치</h3>
-                                    <p class="comfy-installer-section-copy">외부 API에서 연결한 사용자 계정에 런타임을 배포하고, 선택한 워크플로우와 필요한 모델만 Volume에 설치합니다.</p>
-                                </div>
-                            </div>
-                            <div class="comfy-installer-status-grid">
-                                <div class="comfy-installer-metric"><small>GPU</small><strong>L4 · 24GB</strong></div>
-                                <div class="comfy-installer-metric"><small>유휴 컨테이너</small><strong>0개</strong></div>
-                                <div class="comfy-installer-metric"><small>자동 종료</small><strong id="modal-installer-scaledown">작업 후 15초</strong></div>
-                                <div class="comfy-installer-metric"><small>볼륨 무료 범위</small><strong>월 1 TiB 포함</strong></div>
-                            </div>
-                            <div id="modal-workflow-catalog" class="comfy-workflow-list" style="margin-top:12px; max-height:260px; overflow:auto;">
-                                <div class="comfy-workflow-empty">Modal 워크플로우 목록을 불러오는 중입니다.</div>
-                            </div>
-                            <div class="comfy-installer-actions" style="margin-top:10px;">
-                                <button type="button" class="comfy-installer-btn primary" id="modal-installer-start-btn" onclick="modalInstallerStart()">선택 워크플로우를 Modal에 설치/업데이트</button>
-                                <button type="button" class="comfy-installer-btn" onclick="modalInstallerLoadCatalog()">목록 새로고침</button>
-                            </div>
-                            <p class="comfy-installer-note" id="modal-installer-selection-summary" style="margin-top:8px;">선택 없음</p>
-                            <p class="comfy-installer-note" id="modal-installer-status" style="margin-top:6px;">외부 API에서 Modal 사용을 켜고 설정을 저장한 뒤 실행하세요. 배포만으로 L4는 켜지지 않습니다.</p>
-                        </section>
                     </div>
                 </div>
 
@@ -25258,7 +25259,8 @@
         }
 
         function modalOpenInstaller() {
-            switchSettingsTab('comfy_install');
+            switchSettingsTab('comfy_runtime');
+            switchComfyRuntimeModal();
             window.setTimeout(() => {
                 document.getElementById('modal-installer-card')?.scrollIntoView({behavior: 'smooth', block: 'start'});
             }, 80);
