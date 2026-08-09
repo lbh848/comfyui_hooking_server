@@ -1820,6 +1820,12 @@ def test_modal_web_server_is_isolated_from_worker_app() -> None:
     assert 'WEB_WORKFLOW_MOUNT_PATH: workflows_volume' in web_source
     assert '"/workflows": workflows_volume' in worker_source
     assert '"/workflows": workflows_volume' not in web_source
+    assert 'COMFY_MODELS_MOUNT_PATH = "/root/ComfyUI/models"' in worker_source
+    assert 'COMFY_MODELS_MOUNT_PATH: models_volume' in worker_source
+    assert 'COMFY_MODELS_MOUNT_PATH: models_volume' in web_source
+    assert '"/models": models_volume' not in worker_source
+    assert '"/models": models_volume' not in web_source
+    assert 'f"  base_path: {COMFY_MODELS_MOUNT_PATH}"' in worker_source
     assert '"--enable-cors-header",\n            "*",' in web_source
     assert 'WEB_FAST = os.environ.get("SOYA_MODAL_WEB_FAST", "0") == "1"' in web_source
     assert 'web_runtime_image = runtime_image.env(' in web_source

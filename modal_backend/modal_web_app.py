@@ -13,6 +13,7 @@ import subprocess
 import modal
 
 from modal_backend.modal_app import (
+    COMFY_MODELS_MOUNT_PATH,
     _write_extra_model_paths,
     loras_volume,
     models_volume,
@@ -50,7 +51,7 @@ app = modal.App(WEB_APP_NAME)
     scaledown_window=WEB_SCALEDOWN_WINDOW_SECONDS,
     startup_timeout=600,
     volumes={
-        "/models": models_volume,
+        COMFY_MODELS_MOUNT_PATH: models_volume,
         "/loras": loras_volume,
         WEB_WORKFLOW_MOUNT_PATH: workflows_volume,
     },

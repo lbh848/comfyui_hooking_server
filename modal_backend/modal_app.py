@@ -23,6 +23,7 @@ if not 2 <= SCALEDOWN_WINDOW_SECONDS <= 1200:
 MANIFEST_LOCAL = Path(__file__).parents[1] / "comfy_installer" / "resources" / "install_manifest.json"
 IMAGE_INSTALL_LOCAL = Path(__file__).with_name("image_install.py")
 COMFY_REF = "64b8457f55cd7fb54ca7a956d9c73b505e903e0c"
+COMFY_MODELS_MOUNT_PATH = "/root/ComfyUI/models"
 
 app = modal.App(APP_NAME)
 models_volume = modal.Volume.from_name(f"{APP_NAME}-models", create_if_missing=True)
@@ -54,7 +55,7 @@ runtime_image = (
     scaledown_window=SCALEDOWN_WINDOW_SECONDS,
     timeout=3_600,
     volumes={
-        "/models": models_volume,
+        COMFY_MODELS_MOUNT_PATH: models_volume,
         "/loras": loras_volume,
         "/workflows": workflows_volume,
     },
@@ -111,7 +112,7 @@ def _write_extra_model_paths() -> Path:
         "  is_default: true",
         "  loras: .",
         "soya_models:",
-        "  base_path: /models",
+        f"  base_path: {COMFY_MODELS_MOUNT_PATH}",
     ]
     for model_type, directories in model_paths.items():
         if len(directories) == 1:
@@ -134,7 +135,7 @@ def _write_extra_model_paths() -> Path:
     timeout=3_600,
     startup_timeout=600,
     volumes={
-        "/models": models_volume,
+        COMFY_MODELS_MOUNT_PATH: models_volume,
         "/loras": loras_volume,
         "/workflows": workflows_volume,
     },

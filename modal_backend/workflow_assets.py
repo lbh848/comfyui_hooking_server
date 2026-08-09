@@ -239,8 +239,9 @@ def resolve_lora_files(
                 candidates.append(root.joinpath(*relative.parts[1:]))
         local_path = next((candidate for candidate in candidates if candidate.is_file()), None)
         if local_path is None:
-            # 설치 매니페스트가 관리하는 기본 LoRA는 /models에 있으므로 사용자 Volume에
-            # 중복 업로드하지 않는다. 실제 누락이면 ComfyUI가 명확한 노드 오류를 반환한다.
+            # 설치 매니페스트가 관리하는 기본 LoRA는 모델 Volume에 있으므로 사용자
+            # LoRA Volume에 중복 업로드하지 않는다. 실제 누락이면 ComfyUI가 명확한
+            # 노드 오류를 반환한다.
             print(f"[MODAL_SYNC] 로컬 사용자 LoRA 파일을 찾지 못해 업로드 생략: {name}")
             continue
         result.append(
