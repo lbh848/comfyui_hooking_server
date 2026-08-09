@@ -1558,7 +1558,7 @@ async def test_modal_web_deploy_uses_package_module_mode(
     monkeypatch.setattr(service, "_run_command", run_command)
 
     settings = ModalSettings.from_mapping(service.get_config())
-    await service._deploy_web_app(settings)
+    await service._deploy_web_app(settings, custom_node_inventory={})
 
     assert observed["args"][1:7] == [
         "-m",

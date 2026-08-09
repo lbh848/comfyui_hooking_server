@@ -92,6 +92,13 @@ def test_runtime_has_managed_modal_tab_lifecycle_sync_and_log_controls() -> None
         'id="modal-runtime-web-fast"',
         'id="modal-runtime-workflow-query-btn"',
         'id="modal-runtime-workflow-query-status"',
+        'id="modal-runtime-redeploy-btn"',
+        'id="modal-runtime-custom-nodes-btn"',
+        'id="modal-runtime-deployment-status"',
+        'id="modal-deploy-progress"',
+        'id="modal-deploy-progress-title"',
+        'id="modal-deploy-progress-elapsed"',
+        'id="modal-deploy-progress-log"',
         'id="modal-runtime-web-start-btn"',
         'id="modal-runtime-web-connect-btn"',
         'id="modal-runtime-web-stop-btn"',
@@ -109,6 +116,9 @@ def test_runtime_has_managed_modal_tab_lifecycle_sync_and_log_controls() -> None
         "/api/modal/status?runtime=1",
         "/api/modal/billing?refresh=1",
         "/api/modal/workflows/remote",
+        "/api/modal/custom-nodes",
+        "/api/modal/redeploy",
+        "/api/modal/custom-nodes/sync",
         "/api/modal/probe",
         "/api/modal/runtime/logs?entries=500",
         "/api/modal/web/start",
@@ -125,6 +135,9 @@ def test_runtime_has_managed_modal_tab_lifecycle_sync_and_log_controls() -> None
     assert "modalWebFastEl.checked = currentConfig.modal_web_fast === true" in FRONTEND
     assert "60초 캐시" in FRONTEND
     assert "modalRuntimeQueryWorkflows" in FRONTEND
+    assert "modalRuntimeRedeploy" in FRONTEND
+    assert "modalRuntimeSyncCustomNodes" in FRONTEND
+    assert "modalRenderDeploymentProgress" in FRONTEND
     assert "modalRemoteWorkflowStateText" in FRONTEND
     assert "modalRuntimeRunWorkflow" not in FRONTEND
     assert "modal-runtime-result-image" not in FRONTEND
@@ -148,6 +161,52 @@ def test_modal_panel_has_web_url_access_button_and_drops_local_debug_shortcut() 
 
     assert "로컬 실행 탭" not in FRONTEND
     assert "modalOpenDebugWorkflow" not in FRONTEND
+
+
+def test_modal_web_start_stays_locked_until_server_state_acknowledges_request() -> None:
+    assert "if (modalWebStartRequestPending) return;" in FRONTEND
+    assert "modalWebStartRequestPending = true;" in FRONTEND
+    assert "if (modalWebStartRequestPending && webState !== 'stopped')" in FRONTEND
+    assert (
+        "webStartButton.disabled = modalWebStartRequestPending || deploymentBusy || "
+        "webBusy || webRunning || !data.connected"
+    ) in FRONTEND
+
+
+def test_modal_redeploy_has_dedicated_live_progress_and_terminal_notifications() -> None:
+    for value in (
+        'data-phase="inventory"',
+        'data-phase="worker"',
+        'data-phase="web"',
+        'data-phase="shutdown"',
+        'id="modal-deploy-progress-track"',
+        'id="modal-deploy-progress-current"',
+        'id="modal-deploy-progress-count"',
+        "const phaseOrder = ['inventory', 'worker', 'web', 'shutdown', 'complete'];",
+        "deployment.logs.slice(-10)",
+        "modalDeploymentRequestStartedAt = Date.now();",
+        "deploymentStartedAt >= modalDeploymentRequestStartedAt - 1500",
+        "const staleWhilePending = pending",
+        "button.textContent = 'MODAL 재배포 요청 중…';",
+        "button.textContent = 'Custom Node 확인 중…';",
+        "deployment.state === 'completed'",
+        "deployment.state === 'failed'",
+        "Modal 배포가 완료되었습니다",
+        "Modal 배포에 실패했습니다",
+    ):
+        assert value in FRONTEND
+
+    assert "modal-deployment-busy" in FRONTEND
+    assert "@keyframes modal-deployment-spin" in FRONTEND
+
+
+def test_modal_web_start_and_stop_actions_are_mutually_exclusive() -> None:
+    assert 'id="modal-runtime-web-stop-btn" onclick="modalRuntimeStopWeb()" disabled hidden' in FRONTEND
+    assert "const showWebStopAction = webRunning || webState === 'stopping';" in FRONTEND
+    assert "webStartButton.hidden = showWebStopAction;" in FRONTEND
+    assert "webStopButton.hidden = !showWebStopAction;" in FRONTEND
+    assert "webStopButton.disabled = deploymentBusy || webBusy || !webRunning;" in FRONTEND
+    assert "ComfyUI 완전 종료" in FRONTEND
 
 
 def test_modal_group_is_last_in_external_api_page() -> None:

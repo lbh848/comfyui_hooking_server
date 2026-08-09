@@ -12,6 +12,8 @@ from pathlib import Path
 
 import modal
 
+from modal_backend.custom_nodes import LOCAL_COPY_IGNORE_PATTERNS
+
 
 APP_NAME = os.environ.get("SOYA_MODAL_APP_NAME", "soya-comfy-worker")
 MAX_CONTAINERS = int(os.environ.get("SOYA_MODAL_MAX_CONTAINERS", "2"))
@@ -24,6 +26,46 @@ MANIFEST_LOCAL = Path(__file__).parents[1] / "comfy_installer" / "resources" / "
 IMAGE_INSTALL_LOCAL = Path(__file__).with_name("image_install.py")
 COMFY_REF = "64b8457f55cd7fb54ca7a956d9c73b505e903e0c"
 COMFY_MODELS_MOUNT_PATH = "/root/ComfyUI/models"
+FORCE_CUSTOM_NODE_BUILD = os.environ.get("SOYA_MODAL_FORCE_CUSTOM_NODE_BUILD", "0") == "1"
+
+
+def _extra_custom_nodes() -> list[dict]:
+    raw = os.environ.get("SOYA_MODAL_EXTRA_CUSTOM_NODES", "[]")
+    try:
+        parsed = json.loads(raw)
+        if not isinstance(parsed, list):
+            raise TypeError("추가 custom node 인벤토리는 배열이어야 합니다.")
+    except Exception as exc:
+        print(
+            "[MODAL_IMAGE] 추가 custom node 인벤토리 파싱 실패: "
+            f"error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        raise
+    result: list[dict] = []
+    for item in parsed:
+        if not isinstance(item, dict):
+            print(
+                "[MODAL_IMAGE] 추가 custom node 항목 형식 오류: "
+                f"type={type(item).__name__}, value={item!r}"
+            )
+            raise TypeError("추가 custom node 항목은 객체여야 합니다.")
+        name = str(item.get("name") or "")
+        if not name or name in {".", ".."} or Path(name).name != name:
+            print(f"[MODAL_IMAGE] 안전하지 않은 custom node 이름: name={name!r}")
+            raise ValueError(f"안전하지 않은 custom node 이름입니다: {name!r}")
+        source_type = str(item.get("source_type") or "")
+        if source_type not in {"git", "local"}:
+            print(
+                "[MODAL_IMAGE] 지원하지 않는 추가 custom node 소스: "
+                f"name={name}, source_type={source_type!r}"
+            )
+            raise ValueError(f"지원하지 않는 추가 custom node 소스입니다: {source_type}")
+        result.append(dict(item))
+    return result
+
+
+EXTRA_CUSTOM_NODES = _extra_custom_nodes()
 
 app = modal.App(APP_NAME)
 models_volume = modal.Volume.from_name(f"{APP_NAME}-models", create_if_missing=True)
@@ -41,7 +83,47 @@ runtime_image = (
     .pip_install("requests")
     .add_local_file(MANIFEST_LOCAL, "/opt/soya/install_manifest.json", copy=True)
     .add_local_file(IMAGE_INSTALL_LOCAL, "/opt/soya/image_install.py", copy=True)
-    .run_commands("python /opt/soya/image_install.py")
+)
+
+image_install_nodes: list[dict] = []
+for extra_node in EXTRA_CUSTOM_NODES:
+    node_for_image = dict(extra_node)
+    if extra_node["source_type"] == "local":
+        source_path = Path(str(extra_node.get("source_path") or ""))
+        if not source_path.is_dir():
+            print(
+                "[MODAL_IMAGE] 로컬 custom node 원본 폴더 없음: "
+                f"name={extra_node['name']}, path={source_path}"
+            )
+            raise FileNotFoundError(
+                f"로컬 custom node 원본 폴더가 없습니다: {source_path}"
+            )
+        bundled_path = f"/opt/soya/local_custom_nodes/{extra_node['name']}"
+        runtime_image = runtime_image.add_local_dir(
+            source_path,
+            bundled_path,
+            copy=True,
+            ignore=LOCAL_COPY_IGNORE_PATTERNS,
+        )
+        node_for_image.pop("source_path", None)
+        node_for_image["bundled_path"] = bundled_path
+    image_install_nodes.append(node_for_image)
+
+runtime_image = (
+    runtime_image
+    .env(
+        {
+            "SOYA_MODAL_IMAGE_CUSTOM_NODES": json.dumps(
+                image_install_nodes,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+        }
+    )
+    .run_commands(
+        "python /opt/soya/image_install.py",
+        force_build=FORCE_CUSTOM_NODE_BUILD,
+    )
 )
 
 

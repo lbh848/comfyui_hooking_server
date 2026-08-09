@@ -4988,6 +4988,21 @@
             opacity: .42;
             box-shadow: none;
         }
+        .comfy-installer-btn.modal-deployment-busy {
+            gap: 7px;
+            opacity: .72;
+        }
+        .comfy-installer-btn.modal-deployment-busy::before {
+            width: 11px;
+            height: 11px;
+            flex: 0 0 11px;
+            border: 2px solid color-mix(in srgb, currentColor 30%, transparent);
+            border-top-color: currentColor;
+            border-radius: 50%;
+            content: '';
+            animation: modal-deployment-spin .8s linear infinite;
+        }
+        @keyframes modal-deployment-spin { to { transform: rotate(360deg); } }
         .comfy-installer-status-grid {
             display: grid;
             grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -5128,6 +5143,21 @@
             white-space: pre-wrap;
             overflow-wrap: anywhere;
             font: 10px/1.48 Consolas, "Cascadia Mono", monospace;
+        }
+        .modal-deploy-progress[data-state="completed"] {
+            border-color: color-mix(in srgb, #4caf50 54%, var(--border));
+            background: color-mix(in srgb, #4caf50 6%, var(--surface));
+        }
+        .modal-deploy-progress[data-state="failed"] {
+            border-color: color-mix(in srgb, #ff6b6b 58%, var(--border));
+            background: color-mix(in srgb, #ff6b6b 6%, var(--surface));
+        }
+        .modal-deploy-progress[data-state="failed"] .modal-install-progress-fill {
+            background: linear-gradient(90deg, #e75b68, #ff9a76);
+        }
+        .modal-deploy-progress .modal-install-progress-log {
+            min-height: 88px;
+            max-height: 180px;
         }
         .comfy-installer-run-card {
             border-color: color-mix(in srgb, var(--accent) 28%, var(--border));
@@ -17820,7 +17850,7 @@
                                 <button type="button" class="comfy-runtime-btn" onclick="modalRuntimeRefresh(true)">상태 새로고침</button>
                                 <button type="button" class="comfy-runtime-btn start" id="modal-runtime-web-start-btn" onclick="modalRuntimeStartWeb()">ComfyUI 시작</button>
                                 <button type="button" class="comfy-runtime-btn connect" id="modal-runtime-web-connect-btn" onclick="modalRuntimeOpenWeb()" disabled>↗ ComfyUI 접속</button>
-                                <button type="button" class="comfy-runtime-btn stop" id="modal-runtime-web-stop-btn" onclick="modalRuntimeStopWeb()" disabled>ComfyUI 종료</button>
+                                <button type="button" class="comfy-runtime-btn stop" id="modal-runtime-web-stop-btn" onclick="modalRuntimeStopWeb()" disabled hidden>ComfyUI 완전 종료</button>
                                 <span class="comfy-modal-web-state" id="modal-runtime-web-state">꺼짐</span>
                                 <span class="tip-wrap">
                                     <button type="button" class="comfy-runtime-btn connect" id="modal-runtime-probe-btn" onclick="modalRuntimeStartProbe()">L4 연결 테스트</button>
@@ -17884,11 +17914,36 @@
                                 </div>
                                 <div class="comfy-installer-actions" style="margin-top:10px;">
                                     <button type="button" class="comfy-installer-btn primary" id="modal-installer-start-btn" onclick="modalInstallerStart()">선택 워크플로우를 Modal에 동기화</button>
-                                    <button type="button" class="comfy-installer-btn" id="modal-runtime-workflow-query-btn" onclick="modalRuntimeQueryWorkflows()">원격 동기화 조회</button>
+                                    <button type="button" class="comfy-installer-btn" id="modal-runtime-workflow-query-btn" onclick="modalRuntimeQueryWorkflows()">워크플로우 동기화 조회</button>
+                                    <button type="button" class="comfy-installer-btn" id="modal-runtime-redeploy-btn" onclick="modalRuntimeRedeploy()">MODAL 재배포</button>
+                                    <button type="button" class="comfy-installer-btn" id="modal-runtime-custom-nodes-btn" onclick="modalRuntimeSyncCustomNodes()">Custom Node 동기화</button>
                                     <button type="button" class="comfy-installer-btn" onclick="modalInstallerLoadCatalog()">목록 새로고침</button>
                                 </div>
                                 <p class="comfy-installer-note" id="modal-installer-selection-summary" style="margin-top:8px;">선택 없음</p>
                                 <p class="comfy-installer-note" id="modal-runtime-workflow-query-status" style="margin-top:6px;">조회하면 로컬과 원격 워크플로우의 SHA-256 동기화 상태를 표시합니다.</p>
+                                <p class="comfy-installer-note" id="modal-runtime-deployment-status" style="margin-top:6px;">재배포는 L4를 직접 시작하지 않으며, 완료 후 웹 App을 자동 종료합니다. Custom Node 동기화는 로컬 인벤토리를 검사한 뒤 이미지를 강제 빌드합니다.</p>
+                                <div class="modal-install-progress modal-deploy-progress" id="modal-deploy-progress" data-state="idle" hidden>
+                                    <div class="modal-install-progress-head">
+                                        <strong id="modal-deploy-progress-title">Modal 배포 준비</strong>
+                                        <span id="modal-deploy-progress-elapsed">경과 0초</span>
+                                    </div>
+                                    <ol class="modal-install-steps" aria-label="Modal 재배포 단계">
+                                        <li class="modal-install-step modal-deploy-step" data-phase="inventory">1. 인벤토리 확인</li>
+                                        <li class="modal-install-step modal-deploy-step" data-phase="worker">2. 작업 App</li>
+                                        <li class="modal-install-step modal-deploy-step" data-phase="web">3. 웹 App</li>
+                                        <li class="modal-install-step modal-deploy-step" data-phase="shutdown">4. 웹 App 종료</li>
+                                        <li class="modal-install-step modal-deploy-step" data-phase="complete">5. 완료</li>
+                                    </ol>
+                                    <div class="modal-install-progress-track" id="modal-deploy-progress-track"
+                                         role="progressbar" aria-label="Modal 재배포 진행률" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                                        <div class="modal-install-progress-fill" id="modal-deploy-progress-fill"></div>
+                                    </div>
+                                    <div class="modal-install-progress-summary">
+                                        <span class="modal-install-progress-current" id="modal-deploy-progress-current">진행 정보를 기다리고 있습니다.</span>
+                                        <span class="modal-install-progress-count" id="modal-deploy-progress-count">-</span>
+                                    </div>
+                                    <pre class="modal-install-progress-log" id="modal-deploy-progress-log" aria-label="Modal 재배포 최신 로그">최신 배포 로그를 기다리고 있습니다.</pre>
+                                </div>
                                 <p class="comfy-installer-note" id="modal-installer-status" style="margin-top:6px;">외부 API에서 Modal 사용을 켜고 설정을 저장한 뒤 실행하세요. 배포만으로 L4는 켜지지 않습니다.</p>
                                 <div class="modal-install-progress" id="modal-install-progress" data-state="idle" hidden>
                                     <div class="modal-install-progress-head">
@@ -24764,6 +24819,8 @@
 
         async function modalRuntimeStartWeb() {
             const button = document.getElementById('modal-runtime-web-start-btn');
+            if (modalWebStartRequestPending) return;
+            modalWebStartRequestPending = true;
             if (button) button.disabled = true;
             try {
                 const data = await fetchJSON('/api/modal/web/start', {method: 'POST'});
@@ -24773,6 +24830,7 @@
             } catch (error) {
                 console.error('[MODAL_RUNTIME] 웹 App 시작 실패:', error);
                 showToast('Modal ComfyUI 시작 실패: ' + (error.message || error), 'error');
+                modalWebStartRequestPending = false;
                 if (button) button.disabled = false;
             }
         }
@@ -25861,12 +25919,17 @@
         let _modalAuthWasRunning = false;
         let _modalInstallWasRunning = false;
         let _modalProbeWasRunning = false;
+        let _modalDeploymentWasRunning = false;
         let modalRuntimePollTimer = null;
         let modalRuntimePollBusy = false;
         let modalRuntimeLogEntries = [];
         let modalRuntimeLogFilter = 'all';
         let modalRuntimeLogClearedAt = 0;
         let modalRuntimeLogBusy = false;
+        let modalWebStartRequestPending = false;
+        let modalDeploymentRequestPending = false;
+        let modalDeploymentPendingKind = '';
+        let modalDeploymentRequestStartedAt = 0;
 
         function updateModalEnabledStatus(checked) {
             const status = document.getElementById('setting-modal-enabled-status');
@@ -26156,12 +26219,113 @@
             }
         }
 
+        function modalRenderDeploymentProgress(deployment) {
+            const panel = document.getElementById('modal-deploy-progress');
+            if (!panel) {
+                console.error('[MODAL_RUNTIME] 전용 배포 진행 패널 요소가 없습니다.');
+                return;
+            }
+            const pending = modalDeploymentRequestPending;
+            let state = String(deployment?.state || 'idle');
+            let phase = String(deployment?.phase || 'inventory');
+            let kind = String(deployment?.kind || modalDeploymentPendingKind || 'redeploy');
+            let message = String(deployment?.message || 'Modal 배포 요청을 준비하고 있습니다.');
+            const deploymentStartedAt = Number(deployment?.started_at || 0) * 1000;
+            const staleWhilePending = pending
+                && modalDeploymentRequestStartedAt > 0
+                && (!deploymentStartedAt || deploymentStartedAt < modalDeploymentRequestStartedAt - 1500);
+            if (pending && (state === 'idle' || staleWhilePending)) {
+                state = 'running';
+                phase = 'inventory';
+                kind = modalDeploymentPendingKind || 'redeploy';
+                message = kind === 'custom_nodes'
+                    ? '로컬 custom node 인벤토리를 확인하고 있습니다.'
+                    : '재배포할 코드와 custom node 인벤토리를 확인하고 있습니다.';
+            }
+            if (state === 'idle') {
+                panel.hidden = true;
+                panel.dataset.state = 'idle';
+                return;
+            }
+            panel.hidden = false;
+            panel.dataset.state = state;
+
+            const kindLabel = kind === 'custom_nodes'
+                ? 'Custom Node 동기화'
+                : 'MODAL 재배포';
+            const title = document.getElementById('modal-deploy-progress-title');
+            const elapsed = document.getElementById('modal-deploy-progress-elapsed');
+            if (title) title.textContent = `${kindLabel} · ${message}`;
+            let elapsedSeconds = Number(deployment?.elapsed_seconds || 0);
+            if (pending && modalDeploymentRequestStartedAt > 0 && elapsedSeconds <= 0) {
+                elapsedSeconds = Math.max(0, (Date.now() - modalDeploymentRequestStartedAt) / 1000);
+            }
+            if (elapsed) elapsed.textContent = `경과 ${modalFormatInstallDuration(elapsedSeconds)}`;
+
+            const phaseOrder = ['inventory', 'worker', 'web', 'shutdown', 'complete'];
+            const phaseIndex = Math.max(0, phaseOrder.indexOf(phase));
+            panel.querySelectorAll('.modal-deploy-step').forEach((step, index) => {
+                const complete = state === 'completed' || index < phaseIndex;
+                const active = state !== 'completed' && index === phaseIndex;
+                step.classList.toggle('complete', complete);
+                step.classList.toggle('active', active);
+            });
+
+            const percentByPhase = {inventory: 10, worker: 40, web: 70, shutdown: 90, complete: 100};
+            const percent = state === 'completed'
+                ? 100
+                : Number(percentByPhase[phase] || 12);
+            const track = document.getElementById('modal-deploy-progress-track');
+            const fill = document.getElementById('modal-deploy-progress-fill');
+            if (track) track.setAttribute('aria-valuenow', String(percent));
+            if (fill) fill.style.width = `${percent}%`;
+
+            const current = document.getElementById('modal-deploy-progress-current');
+            const count = document.getElementById('modal-deploy-progress-count');
+            const phaseLabels = {
+                inventory: '인벤토리 확인',
+                worker: '작업 App 빌드·배포',
+                web: '웹 App 배포',
+                shutdown: '웹 App·L4 자동 종료',
+                complete: '배포 완료',
+            };
+            if (current) {
+                current.textContent = `${phaseLabels[phase] || phase} · ${message}`;
+                current.title = current.textContent;
+            }
+            if (count) {
+                const summary = deployment?.inventory?.summary || {};
+                count.textContent = deployment?.inventory
+                    ? `manifest ${Number(summary.manifest || 0)} · Git ${Number(summary.git || 0)} · 로컬 ${Number(summary.local || 0)} · 제외 ${Number(summary.skipped || 0)}`
+                    : (phase === 'inventory' ? '대상 확인 중' : '-');
+            }
+
+            const log = document.getElementById('modal-deploy-progress-log');
+            if (log) {
+                const entries = Array.isArray(deployment?.logs) ? deployment.logs.slice(-10) : [];
+                log.textContent = entries.length
+                    ? entries.map(item => {
+                        const timestamp = new Date(Number(item?.time || 0) * 1000);
+                        const timeText = Number.isNaN(timestamp.getTime())
+                            ? '--:--:--'
+                            : timestamp.toLocaleTimeString('ko-KR', {hour12: false});
+                        return `[${timeText}] [${String(item?.source || 'system')}] ${String(item?.message || '')}`;
+                    }).join('\n')
+                    : (phase === 'inventory'
+                        ? '로컬 custom node와 manifest를 비교하고 있습니다.'
+                        : 'Modal CLI 출력을 기다리고 있습니다.');
+                log.scrollTop = log.scrollHeight;
+            }
+        }
+
         function modalApplyStatus(data, showResult = false) {
             const account = document.getElementById('modal-account-status');
             const cost = document.getElementById('modal-cost-status');
             const installStatus = document.getElementById('modal-installer-status');
             const auth = data.auth || {};
             const install = data.install || {};
+            const deployment = data.deployment || {};
+            const deploymentRunning = deployment.state === 'running';
             if (account) {
                 const onoff = data.settings.enabled ? 'Modal ON' : 'Modal OFF';
                 const connection = data.connected ? '연결됨' : '연결 안 됨';
@@ -26193,6 +26357,49 @@
                     : (install.state === 'completed' ? '#4caf50' : 'var(--text-secondary,#aaa)');
             }
             modalRenderInstallProgress(install);
+            const deploymentStartedAt = Number(deployment.started_at || 0) * 1000;
+            const deploymentAcknowledgesRequest = modalDeploymentRequestPending
+                && deployment.state
+                && deployment.state !== 'idle'
+                && deploymentStartedAt > 0
+                && deploymentStartedAt >= modalDeploymentRequestStartedAt - 1500;
+            if (deploymentAcknowledgesRequest) {
+                modalDeploymentRequestPending = false;
+                modalDeploymentPendingKind = String(deployment.kind || modalDeploymentPendingKind || '');
+                modalDeploymentRequestStartedAt = 0;
+            }
+            modalRenderDeploymentProgress(deployment);
+            const deploymentStatus = document.getElementById('modal-runtime-deployment-status');
+            const redeployButton = document.getElementById('modal-runtime-redeploy-btn');
+            const customNodesButton = document.getElementById('modal-runtime-custom-nodes-btn');
+            const installButton = document.getElementById('modal-installer-start-btn');
+            const deploymentBusy = deploymentRunning || modalDeploymentRequestPending;
+            if (redeployButton) redeployButton.disabled = deploymentBusy || install.state === 'running';
+            if (customNodesButton) customNodesButton.disabled = deploymentBusy || install.state === 'running';
+            if (installButton) installButton.disabled = install.state === 'running' || deploymentBusy;
+            const activeDeploymentKind = deploymentRunning
+                ? String(deployment.kind || '')
+                : (modalDeploymentRequestPending ? modalDeploymentPendingKind : '');
+            if (redeployButton) {
+                const busy = activeDeploymentKind === 'redeploy';
+                redeployButton.textContent = busy ? 'MODAL 재배포 중…' : 'MODAL 재배포';
+                redeployButton.classList.toggle('modal-deployment-busy', busy);
+            }
+            if (customNodesButton) {
+                const busy = activeDeploymentKind === 'custom_nodes';
+                customNodesButton.textContent = busy ? 'Custom Node 동기화 중…' : 'Custom Node 동기화';
+                customNodesButton.classList.toggle('modal-deployment-busy', busy);
+            }
+            if (deploymentStatus && deployment.state && deployment.state !== 'idle') {
+                const summary = deployment.inventory?.summary || {};
+                const counts = deployment.inventory
+                    ? ` · manifest ${Number(summary.manifest || 0)} · 추가 Git ${Number(summary.git || 0)} · 로컬 ${Number(summary.local || 0)} · 제외 ${Number(summary.skipped || 0)}`
+                    : '';
+                deploymentStatus.textContent = `${deployment.message || deployment.state}${counts}`;
+                deploymentStatus.style.color = deployment.state === 'failed'
+                    ? '#ff6b6b'
+                    : (deployment.state === 'completed' ? '#4caf50' : 'var(--text-secondary,#aaa)');
+            }
 
             const runtimeState = document.getElementById('modal-runtime-state');
             const runtimeAccount = document.getElementById('modal-runtime-account');
@@ -26245,15 +26452,30 @@
             const webState = String(web.state || 'stopped');
             const webBusy = webState === 'starting' || webState === 'stopping';
             const webRunning = webState === 'running';
-            const webDeployed = web.deployed === true;
             const webStartButton = document.getElementById('modal-runtime-web-start-btn');
             const webConnectButton = document.getElementById('modal-runtime-web-connect-btn');
             const webStopButton = document.getElementById('modal-runtime-web-stop-btn');
             const webStateBadge = document.getElementById('modal-runtime-web-state');
             const webMetric = document.getElementById('modal-runtime-web-status');
-            if (webStartButton) webStartButton.disabled = webBusy || webRunning || !data.connected;
+            if (modalWebStartRequestPending && webState !== 'stopped') {
+                modalWebStartRequestPending = false;
+            }
+            const showWebStopAction = webRunning || webState === 'stopping';
+            if (webStartButton) {
+                webStartButton.hidden = showWebStopAction;
+                webStartButton.disabled = modalWebStartRequestPending || deploymentBusy || webBusy || webRunning || !data.connected;
+                webStartButton.textContent = modalWebStartRequestPending || webState === 'starting'
+                    ? 'ComfyUI 시작 중…'
+                    : 'ComfyUI 시작';
+            }
             if (webConnectButton) webConnectButton.disabled = !webRunning || !web.url;
-            if (webStopButton) webStopButton.disabled = webBusy || (!webRunning && !webDeployed);
+            if (webStopButton) {
+                webStopButton.hidden = !showWebStopAction;
+                webStopButton.disabled = deploymentBusy || webBusy || !webRunning;
+                webStopButton.textContent = webState === 'stopping'
+                    ? 'ComfyUI 종료 중…'
+                    : 'ComfyUI 완전 종료';
+            }
             if (webStateBadge) {
                 const labels = {
                     starting: '시작 중',
@@ -26278,18 +26500,25 @@
                     data.connected ? 'success' : 'warning',
                 );
             }
-            if (auth.state === 'running' || install.state === 'running' || probe.state === 'running' || webBusy) {
+            if (auth.state === 'running' || install.state === 'running' || deploymentRunning || probe.state === 'running' || webBusy) {
                 _modalAuthWasRunning = _modalAuthWasRunning || auth.state === 'running';
                 _modalInstallWasRunning = _modalInstallWasRunning || install.state === 'running';
+                _modalDeploymentWasRunning = _modalDeploymentWasRunning || deploymentRunning;
                 _modalProbeWasRunning = _modalProbeWasRunning || probe.state === 'running';
                 modalScheduleStatusPoll();
             } else {
                 // running 이었다가 터미널(completed/failed)로 넘어간 경우:
                 // 폴링이 여기서 멈추므로, 최종 연결 상태를 한 번 더 가져와 반영한다.
                 // (인증 완료 후 "연결 안 됨"이 화면에 남는 현상 방지)
-                const justFinished = _modalAuthWasRunning || _modalInstallWasRunning || _modalProbeWasRunning;
+                if (_modalDeploymentWasRunning && deployment.state === 'completed') {
+                    showToast(deployment.message || 'Modal 배포가 완료되었습니다', 'success');
+                } else if (_modalDeploymentWasRunning && deployment.state === 'failed') {
+                    showToast(deployment.message || 'Modal 배포에 실패했습니다', 'error');
+                }
+                const justFinished = _modalAuthWasRunning || _modalInstallWasRunning || _modalDeploymentWasRunning || _modalProbeWasRunning;
                 _modalAuthWasRunning = false;
                 _modalInstallWasRunning = false;
+                _modalDeploymentWasRunning = false;
                 _modalProbeWasRunning = false;
                 if (justFinished) modalScheduleStatusPoll();
             }
@@ -26400,7 +26629,7 @@
             };
             return states[String(item?.sync_state || item || '')] || {
                 label: '조회 필요',
-                detail: '원격 동기화 조회를 실행하세요.',
+                detail: '워크플로우 동기화 조회를 실행하세요.',
             };
         }
 
@@ -26630,6 +26859,156 @@
                 showToast('Modal 원격 워크플로우 조회 실패: ' + (error.message || error), 'error');
             } finally {
                 if (button) button.disabled = false;
+            }
+        }
+
+        function modalRuntimeCustomNodeInventoryText(customNodes) {
+            const summary = customNodes?.summary || {};
+            const lines = [
+                `Manifest 노드 ${Number(summary.manifest || 0)}개`,
+                `추가 Git 노드 ${Number(summary.git || 0)}개`,
+                `로컬 소스 복사 ${Number(summary.local || 0)}개 (${comfyInstallerFormatBytes(Number(summary.local_bytes || 0))})`,
+                `제외 ${Number(summary.skipped || 0)}개 · 경고 ${Number(summary.warning || 0)}건`,
+            ];
+            const discovered = Array.isArray(customNodes?.discovered_nodes)
+                ? customNodes.discovered_nodes
+                : [];
+            if (discovered.length) {
+                lines.push('', '추가 동기화 대상:');
+                discovered.slice(0, 12).forEach(item => {
+                    const kind = item.source_type === 'git' ? 'Git' : '로컬 복사';
+                    lines.push(`- ${item.name} (${kind})`);
+                });
+                if (discovered.length > 12) lines.push(`- 외 ${discovered.length - 12}개`);
+            }
+            const skipped = Array.isArray(customNodes?.skipped) ? customNodes.skipped : [];
+            if (skipped.length) {
+                lines.push('', '제외 항목:');
+                skipped.slice(0, 8).forEach(item => lines.push(`- ${item.name}: ${item.reason}`));
+                if (skipped.length > 8) lines.push(`- 외 ${skipped.length - 8}개`);
+            }
+            const warnings = Array.isArray(customNodes?.warnings) ? customNodes.warnings : [];
+            if (warnings.length) {
+                lines.push('', '경고:');
+                warnings.slice(0, 8).forEach(item => lines.push(`- ${item}`));
+                if (warnings.length > 8) lines.push(`- 외 ${warnings.length - 8}건`);
+            }
+            return lines.join('\n');
+        }
+
+        async function modalRuntimeRedeploy() {
+            if (modalDeploymentRequestPending) return;
+            if (!window.confirm('Modal 작업 App과 웹 App을 현재 로컬 코드와 custom node 인벤토리로 재배포할까요? 완료 후 비용 안전을 위해 ComfyUI 웹 App과 L4를 자동 종료합니다.')) return;
+            const button = document.getElementById('modal-runtime-redeploy-btn');
+            modalDeploymentRequestPending = true;
+            modalDeploymentPendingKind = 'redeploy';
+            modalDeploymentRequestStartedAt = Date.now();
+            document.getElementById('modal-runtime-custom-nodes-btn')?.setAttribute('disabled', '');
+            document.getElementById('modal-runtime-web-start-btn')?.setAttribute('disabled', '');
+            if (button) {
+                button.disabled = true;
+                button.textContent = 'MODAL 재배포 요청 중…';
+                button.classList.add('modal-deployment-busy');
+            }
+            modalRenderDeploymentProgress({state: 'idle'});
+            try {
+                const data = await fetchJSON('/api/modal/redeploy', {method: 'POST'});
+                const deployment = data.deployment || {};
+                modalDeploymentRequestStartedAt = Number(deployment.started_at || 0) * 1000
+                    || modalDeploymentRequestStartedAt;
+                _modalDeploymentWasRunning = deployment.state === 'running';
+                modalRenderDeploymentProgress(deployment);
+                const status = document.getElementById('modal-runtime-deployment-status');
+                if (status) status.textContent = deployment.message || 'Modal 재배포를 시작했습니다.';
+                showToast(deployment.message || 'Modal 재배포를 시작했습니다', 'success');
+                modalRuntimeStartPolling();
+            } catch (error) {
+                const elapsedSeconds = Math.max(0, (Date.now() - modalDeploymentRequestStartedAt) / 1000);
+                modalDeploymentRequestPending = false;
+                modalDeploymentPendingKind = '';
+                modalDeploymentRequestStartedAt = 0;
+                console.error('[MODAL_RUNTIME] 재배포 시작 실패:', error);
+                showToast('Modal 재배포 시작 실패: ' + (error.message || error), 'error');
+                modalRenderDeploymentProgress({
+                    state: 'failed',
+                    kind: 'redeploy',
+                    phase: 'inventory',
+                    message: '재배포 요청 실패: ' + (error.message || error),
+                    elapsed_seconds: elapsedSeconds,
+                    logs: [{time: Date.now() / 1000, source: 'error', message: error.message || String(error)}],
+                });
+                if (button) {
+                    button.disabled = false;
+                    button.textContent = 'MODAL 재배포';
+                    button.classList.remove('modal-deployment-busy');
+                }
+                void modalRuntimeRefresh(false);
+            }
+        }
+
+        async function modalRuntimeSyncCustomNodes() {
+            if (modalDeploymentRequestPending) return;
+            const button = document.getElementById('modal-runtime-custom-nodes-btn');
+            modalDeploymentRequestPending = true;
+            modalDeploymentPendingKind = 'custom_nodes';
+            modalDeploymentRequestStartedAt = Date.now();
+            document.getElementById('modal-runtime-redeploy-btn')?.setAttribute('disabled', '');
+            document.getElementById('modal-runtime-web-start-btn')?.setAttribute('disabled', '');
+            if (button) {
+                button.disabled = true;
+                button.textContent = 'Custom Node 확인 중…';
+                button.classList.add('modal-deployment-busy');
+            }
+            modalRenderDeploymentProgress({state: 'idle'});
+            try {
+                const preview = await fetchJSON('/api/modal/custom-nodes');
+                const customNodes = preview.custom_nodes || {};
+                const detail = modalRuntimeCustomNodeInventoryText(customNodes);
+                if (!window.confirm(`${detail}\n\n이 인벤토리로 custom node 이미지 레이어를 강제 빌드하고 작업 App과 웹 App을 재배포할까요? 완료 후 ComfyUI 웹 App과 L4를 자동 종료합니다.`)) {
+                    modalDeploymentRequestPending = false;
+                    modalDeploymentPendingKind = '';
+                    modalDeploymentRequestStartedAt = 0;
+                    modalRenderDeploymentProgress({state: 'idle'});
+                    if (button) {
+                        button.disabled = false;
+                        button.textContent = 'Custom Node 동기화';
+                        button.classList.remove('modal-deployment-busy');
+                    }
+                    void modalRuntimeRefresh(false);
+                    return;
+                }
+                if (button) button.textContent = 'Custom Node 동기화 요청 중…';
+                const data = await fetchJSON('/api/modal/custom-nodes/sync', {method: 'POST'});
+                const deployment = data.deployment || {};
+                modalDeploymentRequestStartedAt = Number(deployment.started_at || 0) * 1000
+                    || modalDeploymentRequestStartedAt;
+                _modalDeploymentWasRunning = deployment.state === 'running';
+                modalRenderDeploymentProgress(deployment);
+                const status = document.getElementById('modal-runtime-deployment-status');
+                if (status) status.textContent = deployment.message || 'Custom node 동기화를 시작했습니다.';
+                showToast(deployment.message || 'Custom node 동기화를 시작했습니다', 'success');
+                modalRuntimeStartPolling();
+            } catch (error) {
+                const elapsedSeconds = Math.max(0, (Date.now() - modalDeploymentRequestStartedAt) / 1000);
+                modalDeploymentRequestPending = false;
+                modalDeploymentPendingKind = '';
+                modalDeploymentRequestStartedAt = 0;
+                console.error('[MODAL_RUNTIME] custom node 동기화 시작 실패:', error);
+                showToast('Custom node 동기화 시작 실패: ' + (error.message || error), 'error');
+                modalRenderDeploymentProgress({
+                    state: 'failed',
+                    kind: 'custom_nodes',
+                    phase: 'inventory',
+                    message: 'Custom node 동기화 요청 실패: ' + (error.message || error),
+                    elapsed_seconds: elapsedSeconds,
+                    logs: [{time: Date.now() / 1000, source: 'error', message: error.message || String(error)}],
+                });
+                if (button) {
+                    button.disabled = false;
+                    button.textContent = 'Custom Node 동기화';
+                    button.classList.remove('modal-deployment-busy');
+                }
+                void modalRuntimeRefresh(false);
             }
         }
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -75,11 +76,45 @@ def _install_git(node: dict, destination: Path) -> None:
     _run(["git", "checkout", "--detach", "FETCH_HEAD"], destination)
 
 
+def _install_local(node: dict, destination: Path) -> None:
+    bundled_path = Path(str(node.get("bundled_path") or ""))
+    if not bundled_path.is_dir():
+        raise FileNotFoundError(
+            f"{node['name']}의 패키징된 로컬 소스가 없습니다: {bundled_path}"
+        )
+    shutil.copytree(bundled_path, destination)
+
+
+def _extra_nodes() -> list[dict]:
+    raw = os.environ.get("SOYA_MODAL_IMAGE_CUSTOM_NODES", "[]")
+    parsed = json.loads(raw)
+    if not isinstance(parsed, list):
+        raise TypeError("추가 custom node 인벤토리는 배열이어야 합니다.")
+    result: list[dict] = []
+    for node in parsed:
+        if not isinstance(node, dict):
+            raise TypeError("추가 custom node 항목은 객체여야 합니다.")
+        name = str(node.get("name") or "")
+        if not name or name in {".", ".."} or Path(name).name != name:
+            raise ValueError(f"안전하지 않은 custom node 이름입니다: {name!r}")
+        result.append(node)
+    return result
+
+
 def install() -> None:
     manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
     custom_root = COMFY_ROOT / "custom_nodes"
     custom_root.mkdir(parents=True, exist_ok=True)
-    for node in manifest.get("custom_nodes", []):
+    nodes = list(manifest.get("custom_nodes", []))
+    known_names = {str(node.get("name") or "").casefold() for node in nodes}
+    for node in _extra_nodes():
+        normalized = str(node.get("name") or "").casefold()
+        if normalized in known_names:
+            print(f"[MODAL_IMAGE] manifest 중복 추가 노드 제외: {node.get('name')}")
+            continue
+        known_names.add(normalized)
+        nodes.append(node)
+    for node in nodes:
         destination = custom_root / str(node["name"])
         if destination.exists():
             print(f"[MODAL_IMAGE] 기존 노드 재사용: {node['name']}")
@@ -89,6 +124,8 @@ def install() -> None:
             _install_archive(node, destination)
         elif node.get("source_type") == "git":
             _install_git(node, destination)
+        elif node.get("source_type") == "local":
+            _install_local(node, destination)
         else:
             raise RuntimeError(
                 f"지원하지 않는 custom node 소스입니다: {node.get('source_type')!r}"

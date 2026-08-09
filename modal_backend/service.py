@@ -21,6 +21,11 @@ from typing import Any, Callable, Mapping
 
 import modal
 
+from .custom_nodes import (
+    deploy_custom_nodes_json,
+    inventory_custom_nodes,
+    public_custom_node_inventory,
+)
 from .manifest import list_soya_user_workflows, plan_from_soya_user_names
 from .settings import ModalSettings
 from .workflow_assets import (
@@ -131,6 +136,13 @@ class ModalService:
             "message": "Modal ComfyUI 웹 L4가 꺼져 있습니다.",
             "updated_at": time.time(),
         }
+        self._deployment_task: asyncio.Task | None = None
+        self._deployment_state: dict[str, Any] = {
+            "state": "idle",
+            "kind": "",
+            "message": "Modal 재배포 요청을 기다리고 있습니다.",
+            "logs": [],
+        }
         self._runtime_log_cache: list[dict[str, Any]] = []
         self._workflow_runs: dict[str, dict[str, Any]] = {}
         self._workflow_run_tasks: dict[str, asyncio.Task] = {}
@@ -141,6 +153,11 @@ class ModalService:
         self._billing_cache: dict[str, Any] | None = None
         self._model_sync_lock = asyncio.Lock()
         self._model_hash_cache: dict[str, tuple[int, int, str]] = {}
+        self._deploy_lock = asyncio.Lock()
+        self._deployment_action_lock = asyncio.Lock()
+        # 웹 시작/종료와 App 재배포의 승인 구간을 하나의 락으로 묶어,
+        # 상태 조회 await 사이에 서로 다른 작업이 동시에 등록되지 않게 한다.
+        self._web_action_lock = self._deployment_action_lock
 
     @staticmethod
     def _subprocess_env(profile: str, extra: Mapping[str, str] | None = None) -> dict[str, str]:
@@ -158,7 +175,13 @@ class ModalService:
     def _web_app_name(settings: ModalSettings) -> str:
         return f"{settings.deployment_name}{WEB_APP_SUFFIX}"
 
-    def _modal_deploy_env(self, settings: ModalSettings) -> dict[str, str]:
+    def _modal_deploy_env(
+        self,
+        settings: ModalSettings,
+        *,
+        custom_node_inventory: Mapping[str, Any] | None = None,
+        force_custom_node_build: bool = False,
+    ) -> dict[str, str]:
         return self._subprocess_env(
             settings.profile,
             {
@@ -169,6 +192,12 @@ class ModalService:
                     settings.scaledown_window_seconds
                 ),
                 "SOYA_MODAL_WEB_FAST": "1" if settings.web_fast else "0",
+                "SOYA_MODAL_EXTRA_CUSTOM_NODES": deploy_custom_nodes_json(
+                    custom_node_inventory or {}
+                ),
+                "SOYA_MODAL_FORCE_CUSTOM_NODE_BUILD": (
+                    "1" if force_custom_node_build else "0"
+                ),
             },
         )
 
@@ -386,6 +415,58 @@ class ModalService:
             )
         return snapshot
 
+    def _deployment_snapshot(self) -> dict[str, Any]:
+        snapshot = dict(self._deployment_state)
+        snapshot["logs"] = [
+            dict(item) for item in self._deployment_state.get("logs", [])
+        ]
+        inventory = self._deployment_state.get("inventory")
+        if isinstance(inventory, Mapping):
+            snapshot["inventory"] = {
+                key: (
+                    [dict(item) if isinstance(item, Mapping) else item for item in value]
+                    if isinstance(value, list)
+                    else dict(value) if isinstance(value, Mapping) else value
+                )
+                for key, value in inventory.items()
+            }
+        started_at = float(snapshot.get("started_at") or 0.0)
+        if started_at > 0:
+            finished_at = float(snapshot.get("finished_at") or 0.0)
+            snapshot["elapsed_seconds"] = round(
+                max(0.0, (finished_at or time.time()) - started_at),
+                1,
+            )
+        return snapshot
+
+    def _deployment_running(self) -> bool:
+        return bool(self._deployment_task and not self._deployment_task.done())
+
+    def _append_deployment_log(self, source: str, line: str) -> None:
+        cleaned = _ANSI_ESCAPE_RE.sub("", str(line)).replace("\x00", "").strip()
+        if not cleaned:
+            return
+        if len(cleaned) > INSTALL_LOG_LINE_LIMIT:
+            cleaned = cleaned[: INSTALL_LOG_LINE_LIMIT - 1] + "…"
+        logs = self._deployment_state.setdefault("logs", [])
+        if not isinstance(logs, list):
+            print(
+                "[MODAL] 재배포 로그 상태 형식 오류: "
+                f"type={type(logs).__name__}; 빈 로그로 복구합니다."
+            )
+            logs = []
+            self._deployment_state["logs"] = logs
+        logs.append(
+            {
+                "time": time.time(),
+                "source": str(source or "system"),
+                "message": cleaned,
+            }
+        )
+        if len(logs) > INSTALL_LOG_LIMIT:
+            del logs[: len(logs) - INSTALL_LOG_LIMIT]
+        self._deployment_state["updated_at"] = time.time()
+
     def _set_install_phase(
         self,
         phase: str,
@@ -573,6 +654,38 @@ class ModalService:
             raise RuntimeError(f"Modal {action} 결과 객체가 없습니다.")
         return result
 
+    async def custom_nodes(self) -> dict[str, Any]:
+        try:
+            inventory = await asyncio.to_thread(
+                inventory_custom_nodes,
+                self.project_root,
+            )
+        except Exception as exc:
+            print(
+                "[MODAL] custom node 인벤토리 생성 실패: "
+                f"error={type(exc).__name__}: {exc}, project_root={self.project_root}"
+            )
+            traceback.print_exc()
+            raise
+        return {
+            "ok": True,
+            "custom_nodes": public_custom_node_inventory(inventory),
+        }
+
+    async def _inventory_for_deploy(self) -> dict[str, Any]:
+        try:
+            return await asyncio.to_thread(
+                inventory_custom_nodes,
+                self.project_root,
+            )
+        except Exception as exc:
+            print(
+                "[MODAL] 배포용 custom node 인벤토리 생성 실패: "
+                f"error={type(exc).__name__}: {exc}, project_root={self.project_root}"
+            )
+            traceback.print_exc()
+            raise
+
     async def status(self, *, include_runtime: bool = False) -> dict[str, Any]:
         settings = ModalSettings.from_mapping(self.get_config())
         # 토큰(연결) 존재 여부는 modal_enabled와 무관하게 항상 조회한다.
@@ -590,6 +703,12 @@ class ModalService:
             elif not connected:
                 print("[MODAL] 런타임 통계 조회 생략: Modal 계정이 연결되지 않았습니다.")
                 runtime = {"available": False, "reason": "account_not_connected"}
+            elif self._deployment_running():
+                runtime = {
+                    "available": False,
+                    "reason": "deployment_in_progress",
+                    "error": "",
+                }
             elif (
                 self._install_state.get("state") == "running"
                 and self._install_state.get("phase") in {"assets", "deploy"}
@@ -660,6 +779,7 @@ class ModalService:
             "settings": settings.public_dict(),
             "auth": dict(self._auth_state),
             "install": self._install_snapshot(),
+            "deployment": self._deployment_snapshot(),
             "autoscaler": dict(self._autoscaler_state),
             "probe": dict(self._probe_state),
             "cost": cost_summary(settings),
@@ -690,6 +810,20 @@ class ModalService:
                 **base,
                 "available": False,
                 "reason": "disabled",
+                "gpu_on": False,
+                "num_total_runners": 0,
+                "num_running_inputs": 0,
+                "backlog": 0,
+            }
+
+        if self._deployment_running():
+            deployment = self._deployment_snapshot()
+            return {
+                **base,
+                "available": False,
+                "reason": "deployment_in_progress",
+                "message": deployment.get("message") or "Modal App을 재배포하고 있습니다.",
+                "install_phase": deployment.get("phase"),
                 "gpu_on": False,
                 "num_total_runners": 0,
                 "num_running_inputs": 0,
@@ -901,27 +1035,32 @@ class ModalService:
         settings = ModalSettings.from_mapping(self.get_config())
         if not settings.enabled:
             raise RuntimeError("Modal 사용을 켜고 설정을 저장하세요.")
-        if not await self.account_connected(settings):
-            raise RuntimeError("Modal 계정을 먼저 연결하세요.")
-        if self._web_task and not self._web_task.done():
+        async with self._web_action_lock:
+            if self._deployment_running():
+                raise RuntimeError("Modal 재배포가 진행 중입니다. 완료 후 시작하세요.")
+            if self._web_task and not self._web_task.done():
+                return dict(self._web_state)
+            if not await self.account_connected(settings):
+                raise RuntimeError("Modal 계정을 먼저 연결하세요.")
+            current = await self.web_status(settings=settings, connected=True)
+            if current.get("state") == "running":
+                return current
+            now = time.time()
+            self._web_state = {
+                "available": True,
+                "deployed": bool(current.get("deployed")),
+                "state": "starting",
+                "message": "웹 전용 App을 준비하고 ComfyUI L4를 시작하고 있습니다.",
+                "app_name": self._web_app_name(settings),
+                "num_total_runners": 0,
+                "num_running_inputs": 0,
+                "backlog": 0,
+                "updated_at": now,
+            }
+            self._web_task = asyncio.create_task(
+                self._run_web_start(settings, current)
+            )
             return dict(self._web_state)
-        current = await self.web_status(settings=settings, connected=True)
-        if current.get("state") == "running":
-            return current
-        now = time.time()
-        self._web_state = {
-            "available": True,
-            "deployed": bool(current.get("deployed")),
-            "state": "starting",
-            "message": "웹 전용 App을 준비하고 ComfyUI L4를 시작하고 있습니다.",
-            "app_name": self._web_app_name(settings),
-            "num_total_runners": 0,
-            "num_running_inputs": 0,
-            "backlog": 0,
-            "updated_at": now,
-        }
-        self._web_task = asyncio.create_task(self._run_web_start(settings, current))
-        return dict(self._web_state)
 
     @staticmethod
     def _warm_web_url(url: str) -> int:
@@ -985,22 +1124,81 @@ class ModalService:
                 traceback.print_exc()
                 raise
 
-    async def _deploy_web_app(self, settings: ModalSettings) -> None:
-        code, _stdout, stderr = await self._run_command(
-            [
-                sys.executable,
-                "-m",
-                "modal",
-                "deploy",
-                "-m",
-                "modal_backend.modal_web_app",
-                "--env",
-                settings.environment,
-            ],
-            env=self._modal_deploy_env(settings),
-            cwd=self.project_root,
-            timeout=3600,
+    async def _deploy_worker_app(
+        self,
+        settings: ModalSettings,
+        *,
+        custom_node_inventory: Mapping[str, Any] | None = None,
+        force_custom_node_build: bool = False,
+        output_callback: Callable[[str, str], None] | None = None,
+    ) -> None:
+        inventory = (
+            custom_node_inventory
+            if custom_node_inventory is not None
+            else await self._inventory_for_deploy()
         )
+        app_path = self.project_root / "modal_backend" / "modal_app.py"
+        async with self._deploy_lock:
+            code, _stdout, stderr = await self._run_command(
+                [
+                    sys.executable,
+                    "-m",
+                    "modal",
+                    "deploy",
+                    str(app_path),
+                    "--env",
+                    settings.environment,
+                ],
+                env=self._modal_deploy_env(
+                    settings,
+                    custom_node_inventory=inventory,
+                    force_custom_node_build=force_custom_node_build,
+                ),
+                cwd=self.project_root,
+                timeout=3600,
+                output_callback=output_callback,
+            )
+        if code != 0:
+            print(
+                f"[MODAL] 작업 App 배포 실패: app={settings.deployment_name}, "
+                f"env={settings.environment}, exit_code={code}, stderr={stderr[-1200:]}"
+            )
+            raise RuntimeError("Modal 작업 App 배포에 실패했습니다.")
+
+    async def _deploy_web_app(
+        self,
+        settings: ModalSettings,
+        *,
+        custom_node_inventory: Mapping[str, Any] | None = None,
+        force_custom_node_build: bool = False,
+        output_callback: Callable[[str, str], None] | None = None,
+    ) -> None:
+        inventory = (
+            custom_node_inventory
+            if custom_node_inventory is not None
+            else await self._inventory_for_deploy()
+        )
+        async with self._deploy_lock:
+            code, _stdout, stderr = await self._run_command(
+                [
+                    sys.executable,
+                    "-m",
+                    "modal",
+                    "deploy",
+                    "-m",
+                    "modal_backend.modal_web_app",
+                    "--env",
+                    settings.environment,
+                ],
+                env=self._modal_deploy_env(
+                    settings,
+                    custom_node_inventory=inventory,
+                    force_custom_node_build=force_custom_node_build,
+                ),
+                cwd=self.project_root,
+                timeout=3600,
+                output_callback=output_callback,
+            )
         if code != 0:
             print(
                 f"[MODAL] 웹 App 배포 실패: app={self._web_app_name(settings)}, "
@@ -1126,21 +1324,24 @@ class ModalService:
         settings = ModalSettings.from_mapping(self.get_config())
         if not settings.enabled:
             raise RuntimeError("Modal 사용을 켜고 설정을 저장하세요.")
-        if not await self.account_connected(settings):
-            raise RuntimeError("Modal 계정을 먼저 연결하세요.")
-        if self._web_task and not self._web_task.done():
-            raise RuntimeError("Modal ComfyUI 웹 작업이 이미 진행 중입니다.")
-        current = await self.web_status(settings=settings, connected=True)
-        if current.get("state") == "stopped" and not current.get("deployed"):
-            return current
-        self._web_state = {
-            **current,
-            "state": "stopping",
-            "message": "웹 전용 App과 L4 컨테이너를 완전히 종료하고 있습니다.",
-            "updated_at": time.time(),
-        }
-        self._web_task = asyncio.create_task(self._run_web_stop(settings))
-        return dict(self._web_state)
+        async with self._web_action_lock:
+            if self._deployment_running():
+                raise RuntimeError("Modal 재배포가 진행 중입니다. 완료 후 종료하세요.")
+            if self._web_task and not self._web_task.done():
+                raise RuntimeError("Modal ComfyUI 웹 작업이 이미 진행 중입니다.")
+            if not await self.account_connected(settings):
+                raise RuntimeError("Modal 계정을 먼저 연결하세요.")
+            current = await self.web_status(settings=settings, connected=True)
+            if current.get("state") == "stopped" and not current.get("deployed"):
+                return current
+            self._web_state = {
+                **current,
+                "state": "stopping",
+                "message": "웹 전용 App과 L4 컨테이너를 완전히 종료하고 있습니다.",
+                "updated_at": time.time(),
+            }
+            self._web_task = asyncio.create_task(self._run_web_stop(settings))
+            return dict(self._web_state)
 
     async def _run_web_stop(self, settings: ModalSettings) -> None:
         try:
@@ -1225,6 +1426,21 @@ class ModalService:
                     "app_role": "local",
                     "app_name": "SOYA Modal client",
                     "function_name": "sync/install",
+                    "container_id": "",
+                    "message": str(item.get("message") or ""),
+                }
+            )
+        for item in self._deployment_state.get("logs", []):
+            if not isinstance(item, Mapping):
+                continue
+            logs.append(
+                {
+                    "time": float(item.get("time") or 0.0),
+                    "source": str(item.get("source") or "system"),
+                    "category": "deployment",
+                    "app_role": "local",
+                    "app_name": "SOYA Modal client",
+                    "function_name": "redeploy/custom-nodes",
                     "container_id": "",
                     "message": str(item.get("message") or ""),
                 }
@@ -1746,45 +1962,48 @@ class ModalService:
         settings = ModalSettings.from_mapping(self.get_config())
         if not settings.enabled:
             raise RuntimeError("외부 API 설정에서 Modal 사용을 먼저 켜고 저장하세요.")
-        if not await self.account_connected(settings):
-            raise RuntimeError("Modal 계정을 먼저 연결하세요.")
-        if self._install_task and not self._install_task.done():
-            raise RuntimeError("Modal 동기화가 이미 진행 중입니다.")
-        # selected_names: SOYA_USER 파일명(확장자 포함, 예: foo.json). config 바인딩
-        # 아님. plan_from_soya_user_names가 파일명 전용 강제 + SOYA_USER 하위 검증.
-        plan = plan_from_soya_user_names(self.project_root, selected_names)
-        started_at = time.time()
-        self._install_state = {
-            "state": "running",
-            "phase": "assets",
-            "phase_label": INSTALL_PHASE_LABELS["assets"],
-            "phase_index": 0,
-            "phase_count": len(INSTALL_PHASE_LABELS),
-            "message": "SOYA_USER 워크플로우의 현재 로컬 모델을 확인하고 있습니다.",
-            "workflow_ids": plan["workflow_ids"],
-            "size_gib": 0.0,
-            "size_bytes": 0,
-            "started_at": started_at,
-            "updated_at": started_at,
-            "progress": {
-                "mode": "indeterminate",
-                "completed_files": 0,
-                "total_files": len(plan["workflow_files"]),
-                "completed_bytes": 0,
-                "total_bytes": 0,
-                "uploaded_files": 0,
-                "skipped_files": 0,
-                "current_label": "워크플로우와 모델 확인",
-                "current_item": "",
-            },
-            "logs": [],
-        }
-        self._append_install_log(
-            "system",
-            f"동기화 시작: 워크플로우 {len(plan['workflow_ids'])}개",
-        )
-        self._install_task = asyncio.create_task(self._run_install(settings, plan))
-        return self._install_snapshot()
+        async with self._deployment_action_lock:
+            if not await self.account_connected(settings):
+                raise RuntimeError("Modal 계정을 먼저 연결하세요.")
+            if self._install_task and not self._install_task.done():
+                raise RuntimeError("Modal 동기화가 이미 진행 중입니다.")
+            if self._deployment_running():
+                raise RuntimeError("Modal 재배포가 진행 중입니다. 완료 후 동기화하세요.")
+            # selected_names: SOYA_USER 파일명(확장자 포함, 예: foo.json). config 바인딩
+            # 아님. plan_from_soya_user_names가 파일명 전용 강제 + SOYA_USER 하위 검증.
+            plan = plan_from_soya_user_names(self.project_root, selected_names)
+            started_at = time.time()
+            self._install_state = {
+                "state": "running",
+                "phase": "assets",
+                "phase_label": INSTALL_PHASE_LABELS["assets"],
+                "phase_index": 0,
+                "phase_count": len(INSTALL_PHASE_LABELS),
+                "message": "SOYA_USER 워크플로우의 현재 로컬 모델을 확인하고 있습니다.",
+                "workflow_ids": plan["workflow_ids"],
+                "size_gib": 0.0,
+                "size_bytes": 0,
+                "started_at": started_at,
+                "updated_at": started_at,
+                "progress": {
+                    "mode": "indeterminate",
+                    "completed_files": 0,
+                    "total_files": len(plan["workflow_files"]),
+                    "completed_bytes": 0,
+                    "total_bytes": 0,
+                    "uploaded_files": 0,
+                    "skipped_files": 0,
+                    "current_label": "워크플로우와 모델 확인",
+                    "current_item": "",
+                },
+                "logs": [],
+            }
+            self._append_install_log(
+                "system",
+                f"동기화 시작: 워크플로우 {len(plan['workflow_ids'])}개",
+            )
+            self._install_task = asyncio.create_task(self._run_install(settings, plan))
+            return self._install_snapshot()
 
     async def _run_install(self, settings: ModalSettings, plan: dict[str, Any]) -> None:
         try:
@@ -1832,28 +2051,10 @@ class ModalService:
                 "system",
                 f"자산 분석 완료: 전송 대상 {total_files}개 · {total_bytes / 1024 ** 3:.2f} GiB",
             )
-            app_path = self.project_root / "modal_backend" / "modal_app.py"
-            deploy_env = self._modal_deploy_env(settings)
-            code, _stdout, _stderr = await self._run_command(
-                [
-                    sys.executable,
-                    "-m",
-                    "modal",
-                    "deploy",
-                    str(app_path),
-                    "--env",
-                    settings.environment,
-                ],
-                env=deploy_env,
-                timeout=3600,
+            await self._deploy_worker_app(
+                settings,
                 output_callback=self._append_install_log,
             )
-            if code != 0:
-                print(
-                    f"[MODAL] 앱 배포 실패: app={settings.deployment_name}, "
-                    f"env={settings.environment}, exit_code={code}"
-                )
-                raise RuntimeError("Modal 앱 배포에 실패했습니다. 서버 로그를 확인하세요.")
 
             self._set_install_phase(
                 "upload",
@@ -1926,6 +2127,159 @@ class ModalService:
                 updated_at=finished_at,
             )
             self._append_install_log(
+                "error",
+                f"{type(exc).__name__}: {exc}",
+            )
+
+    async def start_redeploy(self, *, force_custom_nodes: bool = False) -> dict[str, Any]:
+        settings = ModalSettings.from_mapping(self.get_config())
+        if not settings.enabled:
+            raise RuntimeError("외부 API 설정에서 Modal 사용을 먼저 켜고 저장하세요.")
+        async with self._deployment_action_lock:
+            requested_at = time.time()
+            if self._deployment_running():
+                return self._deployment_snapshot()
+            if self._install_task and not self._install_task.done():
+                raise RuntimeError("Modal 워크플로우 동기화가 진행 중입니다.")
+            if self._web_task and not self._web_task.done():
+                raise RuntimeError("Modal ComfyUI 시작 또는 종료가 진행 중입니다.")
+            if not await self.account_connected(settings):
+                raise RuntimeError("Modal 계정을 먼저 연결하세요.")
+            inventory = await self._inventory_for_deploy()
+            public_inventory = public_custom_node_inventory(inventory)
+            kind = "custom_nodes" if force_custom_nodes else "redeploy"
+            message = (
+                "로컬 custom node를 반영할 Modal 이미지 강제 빌드를 시작합니다."
+                if force_custom_nodes
+                else "Modal 작업 App과 웹 App 재배포를 시작합니다."
+            )
+            self._deployment_state = {
+                "state": "running",
+                "kind": kind,
+                "phase": "worker",
+                "message": message,
+                "inventory": public_inventory,
+                "started_at": requested_at,
+                "updated_at": time.time(),
+                "logs": [],
+            }
+            summary = public_inventory.get("summary") or {}
+            self._append_deployment_log(
+                "system",
+                "custom node 인벤토리: "
+                f"manifest {int(summary.get('manifest') or 0)}개 · "
+                f"추가 Git {int(summary.get('git') or 0)}개 · "
+                f"로컬 복사 {int(summary.get('local') or 0)}개 · "
+                f"제외 {int(summary.get('skipped') or 0)}개",
+            )
+            for warning in public_inventory.get("warnings", []):
+                self._append_deployment_log("warning", str(warning))
+            for skipped in public_inventory.get("skipped", []):
+                if isinstance(skipped, Mapping):
+                    self._append_deployment_log(
+                        "warning",
+                        f"제외: {skipped.get('name')} · {skipped.get('reason')}",
+                    )
+            self._deployment_task = asyncio.create_task(
+                self._run_redeploy(
+                    settings,
+                    inventory,
+                    force_custom_nodes=force_custom_nodes,
+                )
+            )
+            return self._deployment_snapshot()
+
+    async def _run_redeploy(
+        self,
+        settings: ModalSettings,
+        inventory: Mapping[str, Any],
+        *,
+        force_custom_nodes: bool,
+    ) -> None:
+        try:
+            self._append_deployment_log(
+                "system",
+                "Modal 작업 App 이미지 빌드·배포를 시작합니다.",
+            )
+            await self._deploy_worker_app(
+                settings,
+                custom_node_inventory=inventory,
+                force_custom_node_build=force_custom_nodes,
+                output_callback=self._append_deployment_log,
+            )
+            self._deployment_state.update(
+                phase="web",
+                message="작업 App 배포 완료 · 웹 App을 재배포하고 있습니다.",
+                updated_at=time.time(),
+            )
+            self._append_deployment_log(
+                "system",
+                "Modal 작업 App 배포 완료 · 웹 App 배포를 시작합니다.",
+            )
+            # 작업 App의 강제 빌드 결과가 동일한 이미지 캐시에 기록되므로 웹 App은
+            # 같은 인벤토리를 사용하되 두 번째 강제 빌드는 반복하지 않는다.
+            await self._deploy_web_app(
+                settings,
+                custom_node_inventory=inventory,
+                force_custom_node_build=False,
+                output_callback=self._append_deployment_log,
+            )
+            self._deployment_state.update(
+                phase="shutdown",
+                message="웹 App 배포 완료 · 비용 안전을 위해 웹 App을 종료하고 있습니다.",
+                updated_at=time.time(),
+            )
+            self._append_deployment_log(
+                "system",
+                "Modal ComfyUI 웹 App과 L4 자동 종료를 시작합니다.",
+            )
+            await self._stop_web_app(settings)
+            stopped_at = time.time()
+            self._web_state = {
+                "available": True,
+                "deployed": False,
+                "state": "stopped",
+                "reason": "app_not_deployed",
+                "message": "재배포 완료 후 Modal ComfyUI 웹 App과 L4를 자동 종료했습니다.",
+                "app_name": self._web_app_name(settings),
+                "num_total_runners": 0,
+                "num_running_inputs": 0,
+                "backlog": 0,
+                "updated_at": stopped_at,
+            }
+            self._append_deployment_log(
+                "system",
+                "Modal ComfyUI 웹 App과 L4 자동 종료 완료 · L4 0개",
+            )
+            finished_at = time.time()
+            self._deployment_state.update(
+                state="completed",
+                phase="complete",
+                message=(
+                    "Custom node 동기화와 두 Modal App 재배포를 완료하고 웹 App을 자동 종료했습니다."
+                    if force_custom_nodes
+                    else "Modal 작업 App과 웹 App 재배포를 완료하고 웹 App을 자동 종료했습니다."
+                ),
+                finished_at=finished_at,
+                updated_at=finished_at,
+            )
+            self._append_deployment_log("system", self._deployment_state["message"])
+            print(
+                "[MODAL] 재배포 완료: "
+                f"app={settings.deployment_name}, force_custom_nodes={force_custom_nodes}"
+            )
+        except Exception as exc:
+            print(f"[MODAL] 재배포 작업 예외: {type(exc).__name__}: {exc}")
+            traceback.print_exc()
+            finished_at = time.time()
+            self._deployment_state.update(
+                state="failed",
+                message=f"Modal 재배포 실패: {type(exc).__name__}: {exc}",
+                error=str(exc),
+                finished_at=finished_at,
+                updated_at=finished_at,
+            )
+            self._append_deployment_log(
                 "error",
                 f"{type(exc).__name__}: {exc}",
             )

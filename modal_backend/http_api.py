@@ -77,6 +77,49 @@ def register_modal_routes(
             traceback.print_exc()
             return web.json_response({"ok": False, "error": str(exc)}, status=500)
 
+    async def custom_nodes(_request: web.Request) -> web.Response:
+        try:
+            return web.json_response(await service.custom_nodes())
+        except Exception as exc:
+            print(
+                "[MODAL_API] custom node 인벤토리 조회 실패: "
+                f"{type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            return web.json_response({"ok": False, "error": str(exc)}, status=500)
+
+    async def redeploy(_request: web.Request) -> web.Response:
+        try:
+            deployment = await service.start_redeploy(force_custom_nodes=False)
+            return web.json_response({"ok": True, "deployment": deployment})
+        except (ValueError, RuntimeError, FileNotFoundError) as exc:
+            print(f"[MODAL_API] 재배포 요청 거부: {type(exc).__name__}: {exc}")
+            traceback.print_exc()
+            return web.json_response({"ok": False, "error": str(exc)}, status=400)
+        except Exception as exc:
+            print(f"[MODAL_API] 재배포 시작 실패: {type(exc).__name__}: {exc}")
+            traceback.print_exc()
+            return web.json_response({"ok": False, "error": str(exc)}, status=500)
+
+    async def sync_custom_nodes(_request: web.Request) -> web.Response:
+        try:
+            deployment = await service.start_redeploy(force_custom_nodes=True)
+            return web.json_response({"ok": True, "deployment": deployment})
+        except (ValueError, RuntimeError, FileNotFoundError) as exc:
+            print(
+                "[MODAL_API] custom node 동기화 요청 거부: "
+                f"{type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            return web.json_response({"ok": False, "error": str(exc)}, status=400)
+        except Exception as exc:
+            print(
+                "[MODAL_API] custom node 동기화 시작 실패: "
+                f"{type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            return web.json_response({"ok": False, "error": str(exc)}, status=500)
+
     async def billing(request: web.Request) -> web.Response:
         try:
             force_refresh = request.query.get("refresh", "").strip() in {"1", "true"}
@@ -239,6 +282,9 @@ def register_modal_routes(
     app.router.add_post("/api/modal/connect", connect)
     app.router.add_get("/api/modal/workflows", workflows)
     app.router.add_get("/api/modal/workflows/remote", remote_workflows)
+    app.router.add_get("/api/modal/custom-nodes", custom_nodes)
+    app.router.add_post("/api/modal/redeploy", redeploy)
+    app.router.add_post("/api/modal/custom-nodes/sync", sync_custom_nodes)
     app.router.add_get("/api/modal/billing", billing)
     app.router.add_post("/api/modal/install", install)
     app.router.add_post("/api/modal/autoscaler", apply_autoscaler)
