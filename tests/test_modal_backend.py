@@ -318,6 +318,38 @@ def test_modal_call_start_monitor_stops_after_remote_method_marker(
     assert "원격 메서드 진입 확인" in capsys.readouterr().err
 
 
+def test_modal_call_start_monitor_retries_builtin_poll_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeCall:
+        def __init__(self) -> None:
+            self.poll_count = 0
+
+        def get(self, *, timeout: float):
+            assert timeout > 0
+            self.poll_count += 1
+            if self.poll_count == 1:
+                raise TimeoutError("still running")
+            return {"images": []}
+
+    call = FakeCall()
+    monkeypatch.setattr(
+        client_cli,
+        "_call_start_observations",
+        lambda _call: (True, {"ta-1"}),
+    )
+
+    result = client_cli._wait_for_call_with_start_retry_limit(
+        call,
+        timeout_seconds=30,
+        max_retries=2,
+        operation="generate",
+    )
+
+    assert result == {"images": []}
+    assert call.poll_count == 2
+
+
 def test_modal_client_main_serializes_app_not_deployed_reason(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],

@@ -117,7 +117,9 @@ def _wait_for_call_with_start_retry_limit(
         )
         try:
             return call.get(timeout=wait_seconds)
-        except modal.exception.TimeoutError:
+        # Modal 1.5의 FunctionCall.get(timeout=...) 폴링은 내장 TimeoutError를
+        # 사용하지만 일부 SDK 경로는 modal.exception.TimeoutError를 사용한다.
+        except (TimeoutError, modal.exception.TimeoutError):
             if not monitoring_start:
                 continue
         except Exception:

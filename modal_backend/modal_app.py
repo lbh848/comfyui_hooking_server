@@ -13,6 +13,7 @@ from pathlib import Path
 import modal
 
 from modal_backend.custom_nodes import LOCAL_COPY_IGNORE_PATTERNS
+from modal_backend.volume_reload import reload_volume_with_retry
 
 
 APP_NAME = os.environ.get("SOYA_MODAL_APP_NAME", "soya-comfy-worker")
@@ -383,8 +384,8 @@ class ComfyWorker:
         _announce_call_started("convert")
         import requests
 
-        models_volume.reload()
-        loras_volume.reload()
+        reload_volume_with_retry(models_volume, label="models")
+        reload_volume_with_retry(loras_volume, label="loras")
         if not isinstance(workflow, dict) or not workflow:
             raise ValueError("변환할 ComfyUI workflow JSON 객체가 필요합니다.")
         response = requests.post(
@@ -415,8 +416,8 @@ class ComfyWorker:
         _announce_call_started("generate")
         import requests
 
-        models_volume.reload()
-        loras_volume.reload()
+        reload_volume_with_retry(models_volume, label="models")
+        reload_volume_with_retry(loras_volume, label="loras")
         if not isinstance(workflow, dict) or not workflow:
             raise ValueError("ComfyUI API workflow JSON 객체가 필요합니다.")
         workflow = json.loads(json.dumps(workflow, ensure_ascii=False))

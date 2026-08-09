@@ -1555,7 +1555,16 @@
         .queue-lane.llm { border-top:2px solid #8b5cf6; }
         .queue-lane.hybrid { border-top:2px solid #f59e0b; }
         .queue-lane.gpu { border-top:2px solid #22c55e; }
-        .queue-lane.modal { border-top:2px solid #a78bfa; }
+        /* 전역 다이얼로그 클래스 .modal(display:none/position:fixed/...)과 이름이 겹쳐
+           큐 lane이 숨겨지는 충돌을 리셋. 큐 lane은 grid item으로 배치되어야 한다. */
+        .queue-lane.modal {
+            display: block;
+            position: static;
+            top: auto; right: auto; bottom: auto; left: auto;
+            z-index: auto;
+            padding: 0;
+            border-top: 2px solid #a78bfa;
+        }
         .queue-lane.external { border-top:2px solid #38bdf8; }
         .queue-modal-item {
             display:flex; align-items:center; gap:10px;
@@ -74777,14 +74786,8 @@
                 empty.textContent = '대기 중인 작업이 없습니다';
             }
             const items = queueModalData;
-            if (!items.length) {
-                body.innerHTML = '';
-                body.appendChild(empty);
-                if (pauseBanner) body.appendChild(pauseBanner);
-                if (waitBanner) body.appendChild(waitBanner);
-                empty.style.display = 'block';
-                return;
-            }
+            // 큐가 완전히 비어 있어도 5개 lane 구조를 항상 보여준다.
+            // 각 lane은 빈 상태에서 "대기 중인 작업 없음" 표시를 자체 처리한다.
             empty.style.display = 'none';
             body.innerHTML = '';
             body.appendChild(empty);
