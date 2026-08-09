@@ -142,6 +142,32 @@ def test_modal_installer_is_inside_runtime_modal_panel_not_installer_page() -> N
     assert 'flex: 0 0 auto;' in child_layout_rule
 
 
+def test_modal_installer_exposes_live_phase_progress_and_logs() -> None:
+    for value in (
+        'id="modal-install-progress"',
+        'id="modal-install-progress-title"',
+        'id="modal-install-progress-elapsed"',
+        'data-phase="assets"',
+        'data-phase="deploy"',
+        'data-phase="upload"',
+        'data-phase="complete"',
+        'id="modal-install-progress-track"',
+        'id="modal-install-progress-current"',
+        'id="modal-install-progress-count"',
+        'id="modal-install-progress-log"',
+        "function modalRenderInstallProgress(install)",
+        "progress.mode === 'determinate'",
+        "comfyInstallerFormatBytes(Math.min(completedBytes, totalBytes))",
+        "modalRenderInstallProgress(data.install",
+        "runtime?.reason === 'deployment_in_progress'",
+    ):
+        assert value in FRONTEND
+
+    assert "modal-install-progress-slide" in FRONTEND
+    assert "button.disabled = state === 'running'" in FRONTEND
+    assert "if (button && !started) button.disabled = false;" in FRONTEND
+
+
 def test_runtime_persists_detailed_task_allocations_and_shows_fallback_state() -> None:
     for task_key in (
         "illustration",

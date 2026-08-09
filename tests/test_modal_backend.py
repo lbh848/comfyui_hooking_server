@@ -2,14 +2,25 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from pathlib import Path
+import sys
 
 import pytest
 
 from modal_backend import client_cli
-from modal_backend.manifest import selected_install_plan, workflow_catalog
-from modal_backend.service import cost_summary
-from modal_backend.service import ModalService
+from modal_backend.manifest import (
+    list_soya_user_workflows,
+    plan_from_soya_user_names,
+    selected_install_plan,
+    workflow_catalog,
+)
+from modal_backend.service import (
+    INSTALL_PROGRESS_PREFIX,
+    ModalClientActionError,
+    ModalService,
+    cost_summary,
+)
 from modal_backend.settings import ModalSettings
 from modal_backend.workflow_assets import (
     build_local_model_index,
@@ -79,6 +90,146 @@ def test_modal_settings_reject_invalid_values(config: dict) -> None:
         ModalSettings.from_mapping(config)
 
 
+def test_modal_runtime_stats_uses_cls_method_handle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed: dict = {}
+
+    class FakeStats:
+        backlog = 3
+        num_total_runners = 2
+        num_running_inputs = 1
+        input_headroom = 4
+
+    class FakeGenerate:
+        @staticmethod
+        def get_current_stats() -> FakeStats:
+            return FakeStats()
+
+    class FakeWorker:
+        generate = FakeGenerate()
+
+    class FakeCls:
+        def __call__(self) -> FakeWorker:
+            return FakeWorker()
+
+    def from_name(
+        app_name: str,
+        class_name: str,
+        *,
+        environment_name: str,
+    ) -> FakeCls:
+        observed.update(
+            {
+                "app_name": app_name,
+                "class_name": class_name,
+                "environment_name": environment_name,
+            }
+        )
+        return FakeCls()
+
+    monkeypatch.setattr(client_cli.modal.Cls, "from_name", from_name)
+    monkeypatch.setattr(
+        client_cli.modal.Function,
+        "from_name",
+        lambda *_args, **_kwargs: pytest.fail(
+            "@app.cls 메서드 통계 조회에 Function.from_name을 사용하면 안 됩니다."
+        ),
+    )
+
+    result = client_cli.runtime_stats(
+        {"app_name": "test-app", "environment": "main"}
+    )
+
+    assert observed == {
+        "app_name": "test-app",
+        "class_name": "ComfyWorker",
+        "environment_name": "main",
+    }
+    assert result == {
+        "backlog": 3,
+        "num_total_runners": 2,
+        "num_running_inputs": 1,
+        "input_headroom": 4,
+    }
+
+
+def test_modal_client_error_reason_uses_sdk_exception_types() -> None:
+    assert (
+        client_cli._error_reason(client_cli.modal.exception.NotFoundError("missing"))
+        == "app_not_deployed"
+    )
+    assert (
+        client_cli._error_reason(client_cli.modal.exception.ConnectionError("offline"))
+        == "network_unavailable"
+    )
+    assert (
+        client_cli._error_reason(client_cli.modal.exception.ServiceError("unavailable"))
+        == "network_unavailable"
+    )
+    assert client_cli._error_reason(ValueError("bad data")) == "runtime_unavailable"
+
+
+def test_modal_client_main_serializes_app_not_deployed_reason(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def missing_runtime(_payload: dict) -> dict:
+        raise client_cli.modal.exception.NotFoundError("missing app")
+
+    monkeypatch.setattr(
+        client_cli,
+        "_read_payload",
+        lambda: {"action": "runtime_stats"},
+    )
+    monkeypatch.setattr(client_cli, "runtime_stats", missing_runtime)
+
+    assert client_cli.main() == 1
+    captured = capsys.readouterr()
+    response = json.loads(captured.out)
+    assert response == {
+        "ok": False,
+        "reason": "app_not_deployed",
+        "error_type": "NotFoundError",
+        "error": "NotFoundError: missing app",
+    }
+    assert "Traceback (most recent call last)" in captured.err
+
+
+@pytest.mark.asyncio
+async def test_modal_client_action_preserves_structured_failure_reason(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = ModalService(tmp_path, lambda: {"modal_enabled": True})
+
+    async def failed_command(*_args, **_kwargs) -> tuple[int, str, str]:
+        return (
+            1,
+            json.dumps(
+                {
+                    "ok": False,
+                    "reason": "app_not_deployed",
+                    "error_type": "NotFoundError",
+                    "error": "NotFoundError: missing",
+                }
+            ),
+            "remote traceback",
+        )
+
+    monkeypatch.setattr(service, "_run_command", failed_command)
+
+    with pytest.raises(ModalClientActionError) as caught:
+        await service._run_client_action(
+            ModalSettings.from_mapping({}),
+            "runtime_stats",
+            timeout=30,
+        )
+
+    assert caught.value.reason == "app_not_deployed"
+    assert caught.value.error_type == "NotFoundError"
+
+
 def test_manifest_catalog_does_not_use_local_install_model_spec_for_modal() -> None:
     catalog = {item["id"]: item for item in workflow_catalog(PROJECT_ROOT)}
 
@@ -127,6 +278,131 @@ def test_selected_plan_reports_missing_workflow_file() -> None:
             ["comfy_workflow_source_path"],
             {"comfy_workflow_source_path": ""},
         )
+
+
+def test_list_soya_user_workflows_enumerates_files_by_name(tmp_path: Path) -> None:
+    project_root, user_root = _modal_test_project(tmp_path)
+    (user_root / "beta.json").write_text("{}", encoding="utf-8")
+    (user_root / "alpha.json").write_text("{}", encoding="utf-8")
+    (user_root / "not_json.txt").write_text("x", encoding="utf-8")
+
+    entries = list_soya_user_workflows(project_root)
+    names = [entry["name"] for entry in entries]
+    assert names == ["alpha.json", "beta.json"]
+    for entry in entries:
+        assert entry["source_path"].endswith(entry["name"])
+        # resolve된 경로는 SOYA_USER 하위
+        assert Path(entry["source_path"]).resolve().relative_to(user_root.resolve())
+
+
+def test_list_soya_user_workflows_empty_when_missing(tmp_path: Path) -> None:
+    project_root, _user_root = _modal_test_project(tmp_path)
+    assert list_soya_user_workflows(project_root) == []
+
+
+def test_plan_from_soya_user_names_uses_filename_as_id(tmp_path: Path) -> None:
+    project_root, user_root = _modal_test_project(tmp_path)
+    (user_root / "foo.json").write_text('{"nodes": []}', encoding="utf-8")
+
+    plan = plan_from_soya_user_names(project_root, ["foo.json"])
+    assert plan["workflow_ids"] == ["foo.json"]
+    assert plan["workflow_files"][0]["id"] == "foo.json"
+    assert plan["workflow_files"][0]["remote_name"] == "foo.json"
+    assert plan["workflow_files"][0]["source_path"].endswith("foo.json")
+
+
+def test_plan_from_soya_user_names_rejects_path_traversal(tmp_path: Path) -> None:
+    project_root, user_root = _modal_test_project(tmp_path)
+    (user_root / "inside.json").write_text("{}", encoding="utf-8")
+    # workflows 루트(=SOYA_USER 밖)에 파일을 두어도 파일명만 받으므로 접근 불가
+    outside = user_root.parent / "outside.json"
+    outside.write_text("{}", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="파일명만"):
+        plan_from_soya_user_names(project_root, ["../outside.json"])
+    with pytest.raises(ValueError, match="파일명만"):
+        plan_from_soya_user_names(project_root, [str(outside)])
+    with pytest.raises(ValueError, match="파일명만"):
+        plan_from_soya_user_names(project_root, ["sub/inside.json"])
+    # 존재하지 않는 파일명 → FileNotFoundError(파일명 자체는 합법)
+    with pytest.raises(FileNotFoundError):
+        plan_from_soya_user_names(project_root, ["nope.json"])
+    with pytest.raises(ValueError, match="하나 이상"):
+        plan_from_soya_user_names(project_root, [])
+
+
+def test_plan_from_soya_user_names_blocks_symlink_escape(tmp_path: Path) -> None:
+    """SOYA_USER 안의 심볼릭 링크가 밖을 가리키면 거부된다.
+
+    _require_user_workflow의 Path.resolve()가 심볼릭 링크 대상을 따라가므로
+    resolved 경로가 user_root 밖이 되어 relative_to 검증에 걸린다.
+    Windows에서 심볼릭 링크 생성에 관리자 권한이 필요하면 생성 단계에서 skip.
+    """
+    import os
+
+    project_root, user_root = _modal_test_project(tmp_path)
+    target = user_root.parent / "escaped.json"
+    target.write_text("{}", encoding="utf-8")
+    link = user_root / "link.json"
+    try:
+        os.symlink(target, link)
+    except OSError as exc:
+        pytest.skip(f"심볼릭 링크 생성 불가(권한): {exc}")
+
+    with pytest.raises(ValueError, match="설치된 사용자 워크플로우가 아닙니다"):
+        plan_from_soya_user_names(project_root, ["link.json"])
+
+
+def test_modal_service_workflows_lists_soya_user_files_configured_true(
+    tmp_path: Path,
+) -> None:
+    """service.workflows()는 SOYA_USER 파일 나열이며 모두 configured=True다.
+
+    configured=False는 'SOYA_USER 밖' 거부가 아니라 이 카탈로그에서는 의미가 없다.
+    이 계약: 성공적으로 나열된 항목은 항상 configured=True. 파싱 실패 파일은
+    목록에서 제외되고 errors로만 보고된다.
+    """
+    project_root, user_root = _modal_test_project(tmp_path)
+    checkpoint = project_root / "comfy" / "models" / "checkpoints" / "m.safetensors"
+    checkpoint.parent.mkdir(parents=True, exist_ok=True)
+    checkpoint.write_bytes(b"ckpt")
+    (user_root / "good.json").write_text(
+        json.dumps({"1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": "m.safetensors"}}}),
+        encoding="utf-8",
+    )
+
+    service = ModalService(project_root, lambda: {})
+    payload = service.workflows()
+
+    assert isinstance(payload, dict)
+    assert [w["id"] for w in payload["workflows"]] == ["good.json"]
+    good = payload["workflows"][0]
+    assert good["configured"] is True
+    assert good["source_name"] == "good.json"
+    assert good["model_count"] == 1
+    assert payload["errors"] == []
+
+
+def test_modal_service_workflows_excludes_broken_json_per_file(
+    tmp_path: Path,
+) -> None:
+    """한 파일의 깨진 JSON이 전체 /workflows 응답을 터뜨리지 않는다.
+
+    깨진 파일은 workflows 목록에서 제외되고 errors에 이름/사유로 보고된다.
+    정상 파일은 정상적으로 나열된다.
+    """
+    project_root, user_root = _modal_test_project(tmp_path)
+    (user_root / "good.json").write_text('{"1": {"class_type": "EmptyLatentImage"}}', encoding="utf-8")
+    (user_root / "broken.json").write_text("{not json", encoding="utf-8")
+
+    service = ModalService(project_root, lambda: {})
+    payload = service.workflows()
+
+    assert [w["id"] for w in payload["workflows"]] == ["good.json"]
+    assert all(w["configured"] is True for w in payload["workflows"])
+    error_names = [e["name"] for e in payload["errors"]]
+    assert error_names == ["broken.json"]
+    assert payload["errors"][0]["error"]  # 사유 문자열 존재
 
 
 def test_workflow_assets_follow_current_local_checkpoint_and_loras(tmp_path: Path) -> None:
@@ -189,6 +465,7 @@ def test_workflow_assets_follow_current_local_checkpoint_and_loras(tmp_path: Pat
 def test_modal_install_uploads_local_assets_without_remote_model_installer(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     workflow = tmp_path / "user-workflow.json"
     model = tmp_path / "user-checkpoint.safetensors"
@@ -270,6 +547,100 @@ def test_modal_install_uploads_local_assets_without_remote_model_installer(
         "test-models"
     ].uploads
     assert (str(lora), "/user-lora.safetensors") in volumes["test-loras"].uploads
+    progress_lines = [
+        line
+        for line in capsys.readouterr().err.splitlines()
+        if line.startswith(client_cli.INSTALL_PROGRESS_PREFIX)
+    ]
+    progress_events = [
+        json.loads(line[len(client_cli.INSTALL_PROGRESS_PREFIX) :])
+        for line in progress_lines
+    ]
+    assert [event["label"] for event in progress_events if event["event"] == "batch_complete"] == [
+        "워크플로우",
+        "모델",
+        "LoRA",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_modal_streaming_command_forwards_stdout_and_stderr() -> None:
+    observed: list[tuple[str, str]] = []
+
+    code, stdout, stderr = await ModalService._run_command(
+        [
+            sys.executable,
+            "-c",
+            "import sys; print('✓ build-line', flush=True); "
+            "print('✓ warning-line', file=sys.stderr, flush=True)",
+        ],
+        env=ModalService._subprocess_env("test-profile"),
+        timeout=30,
+        output_callback=lambda source, line: observed.append((source, line)),
+    )
+
+    assert code == 0
+    assert stdout == "✓ build-line\n"
+    assert stderr == "✓ warning-line\n"
+    assert ("stdout", "✓ build-line") in observed
+    assert ("stderr", "✓ warning-line") in observed
+
+
+def test_modal_subprocess_environment_forces_utf8_without_mutating_host(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("PYTHONUTF8", raising=False)
+    monkeypatch.delenv("PYTHONIOENCODING", raising=False)
+
+    child_env = ModalService._subprocess_env("utf8-profile")
+
+    assert child_env["MODAL_PROFILE"] == "utf8-profile"
+    assert child_env["PYTHONUTF8"] == "1"
+    assert child_env["PYTHONIOENCODING"] == "utf-8"
+    assert "PYTHONUTF8" not in os.environ
+    assert "PYTHONIOENCODING" not in os.environ
+
+
+def test_modal_install_progress_events_update_public_snapshot(tmp_path: Path) -> None:
+    service = ModalService(tmp_path, lambda: {})
+    started_at = 100.0
+    service._install_state = {
+        "state": "running",
+        "phase": "upload",
+        "started_at": started_at,
+        "progress": {
+            "mode": "determinate",
+            "completed_files": 0,
+            "total_files": 3,
+            "completed_bytes": 0,
+            "total_bytes": 30,
+        },
+        "logs": [],
+    }
+
+    service._handle_install_client_output(
+        "stderr",
+        INSTALL_PROGRESS_PREFIX
+        + json.dumps(
+            {
+                "event": "batch_complete",
+                "label": "모델",
+                "processed_files": 2,
+                "processed_bytes": 20,
+                "uploaded_files": 1,
+                "skipped_files": 1,
+            },
+            ensure_ascii=False,
+        ),
+    )
+    snapshot = service._install_snapshot()
+
+    assert snapshot["progress"]["completed_files"] == 2
+    assert snapshot["progress"]["completed_bytes"] == 20
+    assert snapshot["progress"]["uploaded_files"] == 1
+    assert snapshot["progress"]["skipped_files"] == 1
+    assert snapshot["logs"][-1]["source"] == "upload"
+    assert "모델 완료" in snapshot["logs"][-1]["message"]
 
 
 @pytest.mark.asyncio
@@ -313,7 +684,8 @@ async def test_modal_service_install_plan_uses_current_soya_user_model_reference
     monkeypatch.setattr(service, "account_connected", connected)
     monkeypatch.setattr(service, "_run_command", capture_commands)
 
-    await service.start_install(["comfy_workflow_source_path"])
+    # 파일명(확장자 포함)으로 동기화 대상을 지정한다. config 바인딩 아님.
+    await service.start_install([workflow.name])
     assert service._install_task is not None
     await service._install_task
 
@@ -458,6 +830,142 @@ async def test_disabled_modal_status_checks_account_but_skips_billing_and_runtim
     assert status["billing"]["cache_seconds"] == 60
     with pytest.raises(RuntimeError, match="Modal 사용을 먼저 켜고 저장"):
         await service.billing(force_refresh=True)
+
+
+@pytest.mark.asyncio
+async def test_modal_worker_status_skips_remote_lookup_when_disabled(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = ModalService(tmp_path, lambda: {"modal_enabled": False})
+
+    async def unexpected_client_action(*_args, **_kwargs) -> dict:
+        raise AssertionError("Modal OFF 상태에서는 runtime_stats를 조회하면 안 됩니다.")
+
+    monkeypatch.setattr(service, "_run_client_action", unexpected_client_action)
+
+    status = await service.worker_status()
+
+    assert status["ok"] is True
+    assert status["enabled"] is False
+    assert status["available"] is False
+    assert status["reason"] == "disabled"
+    assert status["gpu_on"] is False
+    assert status["num_total_runners"] == 0
+
+
+@pytest.mark.asyncio
+async def test_modal_worker_status_returns_lightweight_runtime_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = ModalService(
+        tmp_path,
+        lambda: {
+            "modal_enabled": True,
+            "modal_gpu": "L4",
+            "modal_status_refresh_seconds": 7,
+        },
+    )
+    observed: dict = {}
+
+    async def client_action(
+        settings: ModalSettings,
+        action: str,
+        *,
+        timeout: float,
+        **_payload,
+    ) -> dict:
+        observed.update(
+            {
+                "gpu": settings.gpu,
+                "action": action,
+                "timeout": timeout,
+            }
+        )
+        return {
+            "num_total_runners": 2,
+            "num_running_inputs": 1,
+            "backlog": 3,
+            "input_headroom": 0,
+        }
+
+    monkeypatch.setattr(service, "_run_client_action", client_action)
+
+    status = await service.worker_status()
+
+    assert observed == {"gpu": "L4", "action": "runtime_stats", "timeout": 30}
+    assert status["ok"] is True
+    assert status["enabled"] is True
+    assert status["available"] is True
+    assert status["gpu"] == "L4"
+    assert status["refresh_seconds"] == 7
+    assert status["gpu_on"] is True
+    assert status["num_total_runners"] == 2
+    assert status["num_running_inputs"] == 1
+    assert status["backlog"] == 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("reason", "error_type"),
+    [
+        ("app_not_deployed", "NotFoundError"),
+        ("network_unavailable", "ConnectionError"),
+    ],
+)
+async def test_modal_worker_status_exposes_specific_unavailable_reason(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    reason: str,
+    error_type: str,
+) -> None:
+    service = ModalService(tmp_path, lambda: {"modal_enabled": True})
+
+    async def unavailable_client_action(*_args, **_kwargs) -> dict:
+        raise ModalClientActionError(
+            "Modal runtime unavailable",
+            reason=reason,
+            error_type=error_type,
+        )
+
+    monkeypatch.setattr(service, "_run_client_action", unavailable_client_action)
+
+    status = await service.worker_status()
+
+    assert status["ok"] is True
+    assert status["enabled"] is True
+    assert status["available"] is False
+    assert status["reason"] == reason
+    assert status["gpu_on"] is False
+    assert status["num_total_runners"] == 0
+
+
+@pytest.mark.asyncio
+async def test_modal_worker_status_reports_deploying_instead_of_not_found(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = ModalService(tmp_path, lambda: {"modal_enabled": True})
+    service._install_state = {
+        "state": "running",
+        "phase": "deploy",
+        "message": "Modal ComfyUI 런타임 이미지를 빌드하고 있습니다.",
+        "logs": [],
+    }
+
+    async def unavailable_client_action(*_args, **_kwargs) -> dict:
+        raise AssertionError("배포 단계에서는 아직 존재하지 않는 원격 클래스를 조회하면 안 됩니다.")
+
+    monkeypatch.setattr(service, "_run_client_action", unavailable_client_action)
+
+    status = await service.worker_status()
+
+    assert status["available"] is False
+    assert status["reason"] == "deployment_in_progress"
+    assert status["install_phase"] == "deploy"
+    assert "빌드" in status["message"]
+    assert "error" not in status
 
 
 @pytest.mark.asyncio
@@ -733,7 +1241,8 @@ async def test_managed_workflow_run_tracks_result_without_local_comfy(
     monkeypatch.setattr(service, "_run_client_action", client_action)
     monkeypatch.setattr(service, "generate", generated)
 
-    state = await service.start_workflow_run("comfy_workflow_source_path")
+    # 파일명(확장자 포함)으로 실행 대상을 지정한다. config 바인딩 아님.
+    state = await service.start_workflow_run(workflow.name)
     await service._workflow_run_tasks[state["job_id"]]
 
     completed = service.workflow_run_status(state["job_id"])

@@ -117,3 +117,98 @@ def selected_install_plan(
         "size_bytes": 0,
         "size_gib": 0.0,
     }
+
+
+def _soya_user_root(project_root: str | Path) -> Path:
+    return embedded_workflow_base_dir(Path(project_root).resolve() / "comfy")
+
+
+def list_soya_user_workflows(project_root: str | Path) -> list[dict[str, Any]]:
+    """``SOYA_USER`` 폴더에 실제 존재하는 ``.json`` 워크플로우를 파일명 기준으로 나열한다.
+
+    config.json 바인딩에 의존하지 않고 디스크의 실제 파일만 반환한다. 이것이 Modal
+    동기화 카탈로그의 유일한 소스다. 각 항목은 ``{"name": 파일명(.json 포함),
+    "source_path": resolve된 절대경로}`` 형태다.
+
+    심볼릭 링크가 SOYA_USER 밖을 가리키는 경우 ``resolve()``가 대상을 따라가므로
+    ``user_root.relative_to`` 검증으로 걸러진다. 일반 파일이 아닌 항목(소켓·장치
+    등)도 제외한다.
+    """
+    user_root = _soya_user_root(project_root)
+    if not user_root.is_dir():
+        return []
+    entries: list[dict[str, Any]] = []
+    for path in sorted(user_root.glob("*.json"), key=lambda p: p.name.casefold()):
+        if not path.is_file():
+            continue
+        try:
+            resolved = path.resolve()
+            resolved.relative_to(user_root)
+        except (ValueError, OSError) as exc:
+            print(
+                "[MODAL] SOYA_USER 내 비정상 경로 제외(외부 탈출 가능성): "
+                f"path={path}, error={type(exc).__name__}: {exc}"
+            )
+            continue
+        entries.append({"name": path.name, "source_path": str(resolved)})
+    return entries
+
+
+def _enforce_filename_only(name: str) -> str:
+    """동기화 선택 키는 '파일명만' 허용한다. 경로/구분자/절대경로/``..``은 거부한다.
+
+    ``Path(name).name``과 원문이 다르면 구분자나 절대경로가 들어있다는 뜻이므로
+    거부한다. 이 강제는 ``_require_user_workflow``의 방어와 별개로 진입 단에서
+    걸러내는 이중 방어다.
+    """
+    raw = str(name or "")
+    if not raw or raw in {".", ".."}:
+        raise ValueError(f"워크플로우 이름이 비어있거나 잘못되었습니다: {name!r}")
+    base = Path(raw).name
+    if base != raw:
+        raise ValueError(
+            f"워크플로우 이름은 파일명만 허용합니다(경로/구분자/절대경로 불가): {name!r}"
+        )
+    if base in {".", ".."} or not base.rstrip():
+        raise ValueError(f"워크플로우 이름으로 사용할 수 없습니다: {name!r}")
+    return base
+
+
+def plan_from_soya_user_names(
+    project_root: str | Path,
+    selected_names: list[str],
+) -> dict[str, Any]:
+    """선택된 SOYA_USER 파일명들로 동기화 plan을 만든다.
+
+    ``selected_names``는 파일명(확장자 포함, 예: ``foo.json``)만 받는다. 경로·구분자
+    ·``..``·절대경로는 ``_enforce_filename_only``에서 거부한다. 각 파일은
+    ``_require_user_workflow``로 (1) 실존 (2) SOYA_USER 하위 (3) ``resolve()`` 후
+    심볼릭 링크 외부 탈출 차단 을 모두 검증한다.
+
+    반환 shape는 기존 ``selected_install_plan``과 동일해 ``_run_install``/
+    ``_run_saved_workflow``이 그대로 동작한다. ``id``는 항상 파일명(``foo.json``)
+    으로 고정한다.
+    """
+    if not selected_names:
+        raise ValueError("동기화할 워크플로우를 하나 이상 선택하세요.")
+    user_root = _soya_user_root(project_root)
+    workflow_files: list[dict[str, str]] = []
+    for raw in dict.fromkeys(selected_names):
+        name = _enforce_filename_only(raw)
+        candidate = str(user_root / name)
+        path = _require_user_workflow(project_root, name, candidate)
+        workflow_files.append(
+            {
+                "id": path.name,
+                "binding": "",
+                "source_path": str(path),
+                "remote_name": path.name,
+            }
+        )
+    return {
+        "workflow_ids": [item["id"] for item in workflow_files],
+        "workflow_files": workflow_files,
+        "model_count": 0,
+        "size_bytes": 0,
+        "size_gib": 0.0,
+    }

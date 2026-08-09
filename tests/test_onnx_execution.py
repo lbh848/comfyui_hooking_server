@@ -74,8 +74,9 @@ class OnnxExecutionTests(unittest.TestCase):
         self.assertEqual(bubble["onnx_device"], "auto")
         self.assertEqual(bubble["cpu_threads"], 0)
 
-    def test_bubble_min_font_size_defaults_to_automatic(self):
-        self.assertEqual(_default_bubble()["min_font_size"], 0)
+    def test_bubble_min_font_size_defaults_to_30(self):
+        # rosidere 실제 설정 기준. 0=캔버스 자동이지만 기본값은 명시 30px.
+        self.assertEqual(_default_bubble()["min_font_size"], 30)
 
 
 if __name__ == "__main__":

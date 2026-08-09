@@ -19,6 +19,35 @@ import modal
 MODEL_SYNC_MANIFEST_PATH = "/.soya-local-model-sync-manifest.json"
 # 기존 사용자 LoRA Volume의 동기화 기록을 그대로 이어받는다.
 LORA_SYNC_MANIFEST_PATH = "/.soya-sync-manifest.json"
+INSTALL_PROGRESS_PREFIX = "@@SOYA_MODAL_PROGRESS@@"
+
+
+def _emit_install_progress(event: str, **payload) -> None:
+    """설치 subprocess의 stderr로만 전달하는 기계 판독용 진행 이벤트."""
+    print(
+        INSTALL_PROGRESS_PREFIX
+        + json.dumps({"event": event, **payload}, ensure_ascii=False),
+        file=sys.stderr,
+        flush=True,
+    )
+
+
+def _error_reason(exc: Exception) -> str:
+    """Map concrete SDK failures to stable reasons consumed by the UI."""
+    if isinstance(exc, modal.exception.NotFoundError):
+        return "app_not_deployed"
+    if isinstance(
+        exc,
+        (
+            modal.exception.ConnectionError,
+            modal.exception.ServiceError,
+            modal.exception.TimeoutError,
+            ConnectionError,
+            TimeoutError,
+        ),
+    ):
+        return "network_unavailable"
+    return "runtime_unavailable"
 
 
 def _remote_function(payload: dict, function_name: str) -> modal.Function:
@@ -44,9 +73,31 @@ def install(payload: dict) -> dict:
         environment_name=environment,
     )
     workflow_files = payload.get("workflow_files") or []
+    workflow_bytes = sum(
+        Path(str(item["source_path"])).stat().st_size for item in workflow_files
+    )
+    _emit_install_progress(
+        "batch_start",
+        label="워크플로우",
+        total_files=len(workflow_files),
+        total_bytes=workflow_bytes,
+    )
     with workflow_volume.batch_upload(force=True) as batch:
         for item in workflow_files:
             batch.put_file(item["source_path"], f"/{item['remote_name']}")
+            _emit_install_progress(
+                "file_queued",
+                label="워크플로우",
+                name=str(item["remote_name"]),
+            )
+    _emit_install_progress(
+        "batch_complete",
+        label="워크플로우",
+        processed_files=len(workflow_files),
+        processed_bytes=workflow_bytes,
+        uploaded_files=len(workflow_files),
+        skipped_files=0,
+    )
     sync = _sync_environment(payload)
     return {
         "uploaded_workflows": len(workflow_files),
@@ -93,6 +144,7 @@ def _sync_files(
     manifest = _read_sync_manifest(volume, manifest_path, label)
     uploads = []
     skipped = 0
+    processed_bytes = 0
     for item in files:
         source_path = Path(str(item.get("source_path") or ""))
         remote_path = _safe_remote_path(str(item.get("remote_path") or ""))
@@ -112,16 +164,28 @@ def _sync_files(
                 file=sys.stderr,
             )
             raise ValueError(f"Modal에 올릴 로컬 파일의 검증 정보가 올바르지 않습니다: {source_path}")
+        processed_bytes += actual_size
         expected = {"sha256": sha256, "size": size}
         if manifest.get(remote_path) == expected:
             skipped += 1
             continue
         uploads.append((item, remote_path, expected))
+    _emit_install_progress(
+        "batch_start",
+        label=label,
+        total_files=len(files),
+        total_bytes=processed_bytes,
+    )
     if uploads:
         try:
             with volume.batch_upload(force=True) as batch:
                 for item, remote_path, expected in uploads:
                     batch.put_file(item["source_path"], f"/{remote_path}")
+                    _emit_install_progress(
+                        "file_queued",
+                        label=label,
+                        name=remote_path,
+                    )
                     manifest[remote_path] = expected
                 encoded = (
                     json.dumps(manifest, ensure_ascii=False, indent=2) + "\n"
@@ -135,6 +199,14 @@ def _sync_files(
             )
             traceback.print_exc(file=sys.stderr)
             raise
+    _emit_install_progress(
+        "batch_complete",
+        label=label,
+        processed_files=len(files),
+        processed_bytes=processed_bytes,
+        uploaded_files=len(uploads),
+        skipped_files=skipped,
+    )
     return {"uploaded": len(uploads), "skipped": skipped}
 
 
@@ -289,7 +361,12 @@ def update_autoscaler(payload: dict) -> dict:
 
 
 def runtime_stats(payload: dict) -> dict:
-    stats = _remote_function(payload, "ComfyWorker.generate").get_current_stats()
+    worker_cls = modal.Cls.from_name(
+        str(payload["app_name"]),
+        "ComfyWorker",
+        environment_name=str(payload["environment"]),
+    )
+    stats = worker_cls().generate.get_current_stats()
     return {
         "backlog": int(stats.backlog),
         "num_total_runners": int(stats.num_total_runners),
@@ -363,7 +440,12 @@ def main() -> int:
     except Exception as exc:
         print(
             json.dumps(
-                {"ok": False, "error": f"{type(exc).__name__}: {exc}"},
+                {
+                    "ok": False,
+                    "reason": _error_reason(exc),
+                    "error_type": type(exc).__name__,
+                    "error": f"{type(exc).__name__}: {exc}",
+                },
                 ensure_ascii=False,
             )
         )

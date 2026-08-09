@@ -104,12 +104,12 @@ def test_word_rules_modal_is_expanded_and_exposes_order_controls():
 
 def test_word_rule_default_preset_matches_rosidere_first_six():
     expected_defaults = [
-        "{ type: 'remove', trigger: 'closed eyes', pattern: '* eyes', remove_trigger: false, single_character_only: true }",
-        "{ type: 'remove', trigger: 'closed eyes', pattern: '* pupils', remove_trigger: false, single_character_only: true }",
-        "{ type: 'remove', trigger: 'eyes closed', pattern: '* eyes', remove_trigger: false, single_character_only: true }",
-        "{ type: 'remove', trigger: 'eyes closed', pattern: '* pupils', remove_trigger: false, single_character_only: true }",
-        "{ type: 'char_eye_replace', trigger: 'eyes closed', target: 'closed eyes', single_character_only: true }",
-        "{ type: 'char_eye_replace', trigger: 'closed eyes', target: 'closed eyes', single_character_only: true }",
+        "{ type: 'remove', trigger: 'closed eyes', pattern: '* eyes', remove_trigger: false, single_character_only: true, exclude: ['half-closed eyes'] }",
+        "{ type: 'remove', trigger: 'closed eyes', pattern: '* pupils', remove_trigger: false, single_character_only: true, exclude: ['half-closed eyes'] }",
+        "{ type: 'remove', trigger: 'eyes closed', pattern: '* eyes', remove_trigger: false, single_character_only: true, exclude: ['half-closed eyes'] }",
+        "{ type: 'remove', trigger: 'eyes closed', pattern: '* pupils', remove_trigger: false, single_character_only: true, exclude: ['half-closed eyes'] }",
+        "{ type: 'char_eye_replace', trigger: 'eyes closed', target: 'closed eyes', single_character_only: true, exclude: ['half-closed eyes'] }",
+        "{ type: 'char_eye_replace', trigger: 'closed eyes', target: 'closed eyes', single_character_only: true, exclude: ['half-closed eyes'] }",
     ]
     positions = [FRONTEND.index(rule) for rule in expected_defaults]
     assert positions == sorted(positions)

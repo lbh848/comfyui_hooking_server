@@ -39,3 +39,9 @@ dev = [
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
 ]
+
+[tool.pytest.ini_options]
+# 루트 아래 설치된 ComfyUI / 외부 custom_nodes 의 자체 테스트가 잘못 수집되어
+# 의존성 오류를 내는 것을 막는다. 프로젝트 소유 테스트는 tests/ 에만 있다.
+testpaths = ["tests"]
+norecursedirs = ["comfy", "custom_nodes", ".venv", "node_modules"]

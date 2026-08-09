@@ -4,20 +4,22 @@ import asyncio
 import datetime
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import traceback
 import uuid
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 import modal
 
-from .manifest import selected_install_plan, workflow_catalog
+from .manifest import list_soya_user_workflows, plan_from_soya_user_names
 from .settings import ModalSettings
 from .workflow_assets import (
     build_local_model_index,
@@ -33,6 +35,36 @@ MEMORY_USD_PER_GIB_SECOND = 0.00000222
 RUNTIME_CPU_CORES = 4
 RUNTIME_MEMORY_GIB = 16
 BILLING_CACHE_SECONDS = 60
+INSTALL_LOG_LIMIT = 180
+INSTALL_LOG_LINE_LIMIT = 1_200
+INSTALL_PROGRESS_PREFIX = "@@SOYA_MODAL_PROGRESS@@"
+INSTALL_PHASE_LABELS = {
+    "assets": "자산 분석",
+    "deploy": "런타임 빌드",
+    "upload": "파일 업로드",
+    "complete": "완료",
+}
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+RUNTIME_FAILURE_REASONS = frozenset(
+    {"app_not_deployed", "network_unavailable", "runtime_unavailable"}
+)
+
+
+class ModalClientActionError(RuntimeError):
+    def __init__(self, message: str, *, reason: str, error_type: str) -> None:
+        super().__init__(message)
+        self.reason = (
+            reason if reason in RUNTIME_FAILURE_REASONS else "runtime_unavailable"
+        )
+        self.error_type = error_type
+
+
+def _runtime_failure_reason(exc: Exception) -> str:
+    if isinstance(exc, ModalClientActionError):
+        return exc.reason
+    if isinstance(exc, TimeoutError):
+        return "network_unavailable"
+    return "runtime_unavailable"
 
 
 def cost_summary(settings: ModalSettings) -> dict[str, Any]:
@@ -73,6 +105,7 @@ class ModalService:
         self._install_state: dict[str, Any] = {
             "state": "idle",
             "message": "Modal 동기화를 기다리고 있습니다.",
+            "logs": [],
         }
         self._autoscaler_state: dict[str, Any] = {
             "state": "idle",
@@ -97,6 +130,10 @@ class ModalService:
     def _subprocess_env(profile: str, extra: Mapping[str, str] | None = None) -> dict[str, str]:
         env = os.environ.copy()
         env["MODAL_PROFILE"] = profile
+        # Windows 호스트의 기본 Python 출력 인코딩이 CP949여도 Modal CLI가
+        # ✓ 같은 Unicode 상태 문자를 stdout/stderr에 안전하게 출력해야 한다.
+        env["PYTHONUTF8"] = "1"
+        env["PYTHONIOENCODING"] = "utf-8"
         if extra:
             env.update(extra)
         return env
@@ -108,6 +145,7 @@ class ModalService:
         env: Mapping[str, str],
         stdin_payload: dict | None = None,
         timeout: float | None = None,
+        output_callback: Callable[[str, str], None] | None = None,
     ) -> tuple[int, str, str]:
         input_text = None
         if stdin_payload is not None:
@@ -130,17 +168,305 @@ class ModalService:
                 **kwargs,
             )
 
+        if output_callback is None:
+            try:
+                completed = await asyncio.to_thread(run_blocking)
+            except subprocess.TimeoutExpired as exc:
+                print(
+                    "[MODAL] 명령 제한 시간 초과: "
+                    f"command={args[0]} {args[1]}, timeout={timeout}"
+                )
+                traceback.print_exc()
+                raise TimeoutError(
+                    f"명령 제한 시간을 초과했습니다: {args[0]} {args[1]}"
+                ) from exc
+            return (
+                int(completed.returncode or 0),
+                completed.stdout,
+                completed.stderr,
+            )
+
+        loop = asyncio.get_running_loop()
+        output_queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
+        process_holder: dict[str, subprocess.Popen[str]] = {}
+
+        def queue_event(kind: str, payload: Any) -> None:
+            loop.call_soon_threadsafe(output_queue.put_nowait, (kind, payload))
+
+        def run_streaming() -> None:
+            kwargs: dict[str, Any] = {}
+            if os.name == "nt":
+                kwargs["creationflags"] = 0x08000000  # CREATE_NO_WINDOW
+            process: subprocess.Popen[str] | None = None
+            try:
+                process = subprocess.Popen(
+                    args,
+                    stdin=subprocess.PIPE if input_text is not None else None,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    bufsize=1,
+                    env=dict(env),
+                    **kwargs,
+                )
+                process_holder["process"] = process
+                if process.stdout is None or process.stderr is None:
+                    print(f"[MODAL] 스트리밍 명령 파이프 생성 실패: command={args!r}")
+                    raise RuntimeError("Modal 명령 출력 파이프를 만들지 못했습니다.")
+
+                captured: dict[str, list[str]] = {"stdout": [], "stderr": []}
+
+                def read_stream(stream, source: str) -> None:
+                    try:
+                        for line in iter(stream.readline, ""):
+                            captured[source].append(line)
+                            queue_event("line", (source, line.rstrip("\r\n")))
+                    except Exception as exc:
+                        print(
+                            "[MODAL] 명령 출력 리더 실패: "
+                            f"source={source}, error={type(exc).__name__}: {exc}"
+                        )
+                        traceback.print_exc()
+                        queue_event(
+                            "line",
+                            ("error", f"출력 리더 실패({source}): {type(exc).__name__}: {exc}"),
+                        )
+                    finally:
+                        stream.close()
+
+                readers = [
+                    threading.Thread(
+                        target=read_stream,
+                        args=(process.stdout, "stdout"),
+                        name="modal-command-stdout",
+                        daemon=True,
+                    ),
+                    threading.Thread(
+                        target=read_stream,
+                        args=(process.stderr, "stderr"),
+                        name="modal-command-stderr",
+                        daemon=True,
+                    ),
+                ]
+                for reader in readers:
+                    reader.start()
+
+                if input_text is not None:
+                    if process.stdin is None:
+                        print(f"[MODAL] 스트리밍 명령 stdin 생성 실패: command={args!r}")
+                        raise RuntimeError("Modal 명령 입력 파이프를 만들지 못했습니다.")
+                    process.stdin.write(input_text)
+                    process.stdin.close()
+
+                try:
+                    return_code = process.wait(timeout=timeout)
+                except subprocess.TimeoutExpired as exc:
+                    print(
+                        "[MODAL] 스트리밍 명령 제한 시간 초과: "
+                        f"command={args[0]} {args[1]}, timeout={timeout}"
+                    )
+                    traceback.print_exc()
+                    process.kill()
+                    process.wait()
+                    raise TimeoutError(
+                        f"명령 제한 시간을 초과했습니다: {args[0]} {args[1]}"
+                    ) from exc
+                finally:
+                    for reader in readers:
+                        reader.join(timeout=10)
+                        if reader.is_alive():
+                            print(
+                                "[MODAL] 명령 출력 리더 종료 대기 실패: "
+                                f"thread={reader.name}, command={args!r}"
+                            )
+
+                queue_event(
+                    "done",
+                    (
+                        int(return_code or 0),
+                        "".join(captured["stdout"]),
+                        "".join(captured["stderr"]),
+                    ),
+                )
+            except Exception as exc:
+                print(
+                    "[MODAL] 스트리밍 명령 실행 예외: "
+                    f"command={args!r}, error={type(exc).__name__}: {exc}"
+                )
+                traceback.print_exc()
+                if process is not None and process.poll() is None:
+                    process.kill()
+                    process.wait()
+                queue_event("exception", exc)
+
+        worker_task = asyncio.create_task(asyncio.to_thread(run_streaming))
         try:
-            completed = await asyncio.to_thread(run_blocking)
-        except subprocess.TimeoutExpired as exc:
-            raise TimeoutError(
-                f"명령 제한 시간을 초과했습니다: {args[0]} {args[1]}"
-            ) from exc
-        return (
-            int(completed.returncode or 0),
-            completed.stdout,
-            completed.stderr,
+            while True:
+                kind, payload = await output_queue.get()
+                if kind == "line":
+                    source, line = payload
+                    try:
+                        output_callback(source, line)
+                    except Exception as callback_exc:
+                        print(
+                            "[MODAL] 실시간 명령 출력 처리 실패: "
+                            f"source={source}, error={type(callback_exc).__name__}: "
+                            f"{callback_exc}"
+                        )
+                        traceback.print_exc()
+                elif kind == "done":
+                    await worker_task
+                    return payload
+                elif kind == "exception":
+                    await worker_task
+                    raise payload
+                else:
+                    print(
+                        "[MODAL] 알 수 없는 스트리밍 명령 이벤트: "
+                        f"kind={kind!r}, payload={payload!r}"
+                    )
+        except asyncio.CancelledError:
+            process = process_holder.get("process")
+            if process is not None and process.poll() is None:
+                print(f"[MODAL] 취소된 스트리밍 명령 종료: command={args!r}")
+                process.kill()
+            raise
+
+    def _install_snapshot(self) -> dict[str, Any]:
+        snapshot = dict(self._install_state)
+        snapshot["logs"] = [dict(item) for item in self._install_state.get("logs", [])]
+        progress = self._install_state.get("progress")
+        if isinstance(progress, dict):
+            snapshot["progress"] = dict(progress)
+        started_at = float(snapshot.get("started_at") or 0.0)
+        if started_at > 0:
+            finished_at = float(snapshot.get("finished_at") or 0.0)
+            snapshot["elapsed_seconds"] = round(
+                max(0.0, (finished_at or time.time()) - started_at),
+                1,
+            )
+        return snapshot
+
+    def _set_install_phase(
+        self,
+        phase: str,
+        message: str,
+        *,
+        progress_mode: str,
+    ) -> None:
+        phase_order = tuple(INSTALL_PHASE_LABELS)
+        if phase not in INSTALL_PHASE_LABELS:
+            print(f"[MODAL] 알 수 없는 설치 단계 거부: phase={phase!r}")
+            raise ValueError(f"알 수 없는 Modal 설치 단계입니다: {phase}")
+        progress = dict(self._install_state.get("progress") or {})
+        progress["mode"] = progress_mode
+        self._install_state.update(
+            phase=phase,
+            phase_label=INSTALL_PHASE_LABELS[phase],
+            phase_index=phase_order.index(phase),
+            phase_count=len(phase_order),
+            message=message,
+            progress=progress,
+            updated_at=time.time(),
         )
+
+    def _append_install_log(self, source: str, line: str) -> None:
+        cleaned = _ANSI_ESCAPE_RE.sub("", str(line)).replace("\x00", "").strip()
+        if not cleaned:
+            return
+        if len(cleaned) > INSTALL_LOG_LINE_LIMIT:
+            cleaned = cleaned[: INSTALL_LOG_LINE_LIMIT - 1] + "…"
+        logs = self._install_state.setdefault("logs", [])
+        if not isinstance(logs, list):
+            print(
+                "[MODAL] 설치 로그 상태 형식 오류: "
+                f"type={type(logs).__name__}; 빈 로그로 복구합니다."
+            )
+            logs = []
+            self._install_state["logs"] = logs
+        logs.append(
+            {
+                "time": time.time(),
+                "source": str(source or "system"),
+                "message": cleaned,
+            }
+        )
+        if len(logs) > INSTALL_LOG_LIMIT:
+            del logs[: len(logs) - INSTALL_LOG_LIMIT]
+        self._install_state["updated_at"] = time.time()
+
+    def _handle_install_client_output(self, source: str, line: str) -> None:
+        if source != "stderr" or not line.startswith(INSTALL_PROGRESS_PREFIX):
+            self._append_install_log(source, line)
+            return
+        raw_event = line[len(INSTALL_PROGRESS_PREFIX) :]
+        try:
+            event = json.loads(raw_event)
+            if not isinstance(event, dict):
+                raise TypeError("진행 이벤트는 JSON 객체여야 합니다.")
+        except Exception as exc:
+            print(
+                "[MODAL] 업로드 진행 이벤트 파싱 실패: "
+                f"error={type(exc).__name__}: {exc}, payload={raw_event[:500]!r}"
+            )
+            traceback.print_exc()
+            self._append_install_log("stderr", line)
+            return
+
+        event_name = str(event.get("event") or "")
+        label = str(event.get("label") or "파일")
+        progress = self._install_state.setdefault("progress", {})
+        if event_name == "batch_start":
+            progress["current_label"] = label
+            progress["current_item"] = ""
+            self._install_state["message"] = f"{label} 동기화를 준비하고 있습니다."
+            self._append_install_log(
+                "upload",
+                f"{label}: {int(event.get('total_files') or 0)}개 파일 확인",
+            )
+        elif event_name == "file_queued":
+            progress["current_label"] = label
+            progress["current_item"] = str(event.get("name") or "")
+            self._install_state["message"] = (
+                f"{label} 전송 준비 중: {progress['current_item']}"
+            )
+            self._install_state["updated_at"] = time.time()
+        elif event_name == "batch_complete":
+            processed_files = max(0, int(event.get("processed_files") or 0))
+            processed_bytes = max(0, int(event.get("processed_bytes") or 0))
+            progress["completed_files"] = min(
+                int(progress.get("total_files") or processed_files),
+                int(progress.get("completed_files") or 0) + processed_files,
+            )
+            progress["completed_bytes"] = min(
+                int(progress.get("total_bytes") or processed_bytes),
+                int(progress.get("completed_bytes") or 0) + processed_bytes,
+            )
+            progress["uploaded_files"] = int(progress.get("uploaded_files") or 0) + max(
+                0, int(event.get("uploaded_files") or 0)
+            )
+            progress["skipped_files"] = int(progress.get("skipped_files") or 0) + max(
+                0, int(event.get("skipped_files") or 0)
+            )
+            progress["current_label"] = label
+            progress["current_item"] = ""
+            self._install_state["message"] = (
+                f"{label} 동기화 완료 · 전체 "
+                f"{progress['completed_files']}/{progress.get('total_files', 0)}개"
+            )
+            self._append_install_log(
+                "upload",
+                f"{label} 완료: 업로드 {int(event.get('uploaded_files') or 0)}개 · "
+                f"기존 파일 {int(event.get('skipped_files') or 0)}개",
+            )
+        else:
+            print(
+                "[MODAL] 알 수 없는 업로드 진행 이벤트: "
+                f"event={event_name!r}, payload={event!r}"
+            )
+            self._append_install_log("stderr", line)
 
     async def account_connected(self, settings: ModalSettings) -> bool:
         try:
@@ -190,11 +516,20 @@ class ModalService:
             raise RuntimeError(f"Modal {action} 응답 형식이 올바르지 않습니다.") from exc
         if code != 0 or not response.get("ok"):
             error = str(response.get("error") or f"Modal client exit_code={code}")
+            reason = str(response.get("reason") or "runtime_unavailable")
+            if reason not in RUNTIME_FAILURE_REASONS:
+                reason = "runtime_unavailable"
+            error_type = str(response.get("error_type") or "ModalClientError")
             print(
                 f"[MODAL] {action} 실패: app={settings.deployment_name}, "
-                f"environment={settings.environment}, error={error}, stderr={stderr[-1000:]}"
+                f"environment={settings.environment}, reason={reason}, "
+                f"error_type={error_type}, error={error}, stderr={stderr[-1000:]}"
             )
-            raise RuntimeError(error)
+            raise ModalClientActionError(
+                error,
+                reason=reason,
+                error_type=error_type,
+            )
         result = response.get("result")
         if not isinstance(result, dict):
             print(f"[MODAL] {action} 결과 객체 누락: type={type(result).__name__}")
@@ -217,6 +552,15 @@ class ModalService:
             elif not connected:
                 print("[MODAL] 런타임 통계 조회 생략: Modal 계정이 연결되지 않았습니다.")
                 runtime = {"available": False, "reason": "account_not_connected"}
+            elif (
+                self._install_state.get("state") == "running"
+                and self._install_state.get("phase") in {"assets", "deploy"}
+            ):
+                runtime = {
+                    "available": False,
+                    "reason": "deployment_in_progress",
+                    "error": "",
+                }
             else:
                 try:
                     stats = await self._run_client_action(
@@ -228,10 +572,14 @@ class ModalService:
                 except Exception as exc:
                     print(f"[MODAL] 런타임 통계 조회 실패: {type(exc).__name__}: {exc}")
                     traceback.print_exc()
+                    reason = _runtime_failure_reason(exc)
+                    installing = self._install_state.get("state") == "running"
+                    if reason == "app_not_deployed" and installing:
+                        reason = "deployment_in_progress"
                     runtime = {
                         "available": False,
-                        "reason": "deployment_unavailable",
-                        "error": str(exc),
+                        "reason": reason,
+                        "error": "" if reason == "deployment_in_progress" else str(exc),
                     }
         billing: dict[str, Any]
         if not settings.enabled:
@@ -269,7 +617,7 @@ class ModalService:
             "sdk_version": modal.__version__,
             "settings": settings.public_dict(),
             "auth": dict(self._auth_state),
-            "install": dict(self._install_state),
+            "install": self._install_snapshot(),
             "autoscaler": dict(self._autoscaler_state),
             "probe": dict(self._probe_state),
             "cost": cost_summary(settings),
@@ -277,6 +625,105 @@ class ModalService:
             "pending_lora_deletes": pending_deletes,
             "runtime": runtime,
             "workflow_runs": self.recent_workflow_runs(),
+        }
+
+    async def worker_status(self) -> dict[str, Any]:
+        """Return the lightweight GPU worker snapshot used by the always-on dock."""
+        settings = ModalSettings.from_mapping(self.get_config())
+        checked_at = time.time()
+        base = {
+            "ok": True,
+            "enabled": settings.enabled,
+            "gpu": settings.gpu,
+            "refresh_seconds": settings.status_refresh_seconds,
+            "checked_at": checked_at,
+        }
+        if not settings.enabled:
+            print(
+                "[MODAL_WORKER] 상태 조회 생략: Modal 사용 설정이 OFF입니다. "
+                f"app={settings.deployment_name}, environment={settings.environment}"
+            )
+            return {
+                **base,
+                "available": False,
+                "reason": "disabled",
+                "gpu_on": False,
+                "num_total_runners": 0,
+                "num_running_inputs": 0,
+                "backlog": 0,
+            }
+
+        if (
+            self._install_state.get("state") == "running"
+            and self._install_state.get("phase") in {"assets", "deploy"}
+        ):
+            install = self._install_snapshot()
+            return {
+                **base,
+                "available": False,
+                "reason": "deployment_in_progress",
+                "message": install.get("message") or "Modal 앱을 배포하고 있습니다.",
+                "install_phase": install.get("phase"),
+                "gpu_on": False,
+                "num_total_runners": 0,
+                "num_running_inputs": 0,
+                "backlog": 0,
+            }
+
+        try:
+            stats = await self._run_client_action(
+                settings,
+                "runtime_stats",
+                timeout=30,
+            )
+            runners = int(stats["num_total_runners"])
+            running_inputs = int(stats["num_running_inputs"])
+            backlog = int(stats["backlog"])
+            if runners < 0 or running_inputs < 0 or backlog < 0:
+                raise ValueError(
+                    "Modal worker 통계에는 음수가 올 수 없습니다: "
+                    f"runners={runners}, running_inputs={running_inputs}, backlog={backlog}"
+                )
+        except Exception as exc:
+            reason = _runtime_failure_reason(exc)
+            print(
+                "[MODAL_WORKER] 상태 조회 실패: "
+                f"app={settings.deployment_name}, environment={settings.environment}, "
+                f"reason={reason}, error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            installing = self._install_state.get("state") == "running"
+            if reason == "app_not_deployed" and installing:
+                install = self._install_snapshot()
+                return {
+                    **base,
+                    "available": False,
+                    "reason": "deployment_in_progress",
+                    "message": install.get("message") or "Modal 앱을 배포하고 있습니다.",
+                    "install_phase": install.get("phase"),
+                    "gpu_on": False,
+                    "num_total_runners": 0,
+                    "num_running_inputs": 0,
+                    "backlog": 0,
+                }
+            return {
+                **base,
+                "available": False,
+                "reason": reason,
+                "error": str(exc),
+                "gpu_on": False,
+                "num_total_runners": 0,
+                "num_running_inputs": 0,
+                "backlog": 0,
+            }
+
+        return {
+            **base,
+            "available": True,
+            "gpu_on": runners > 0,
+            "num_total_runners": runners,
+            "num_running_inputs": running_inputs,
+            "backlog": backlog,
         }
 
     async def start_auth(self, profile: str) -> dict[str, Any]:
@@ -339,50 +786,66 @@ class ModalService:
                 "profile": profile,
             }
 
-    def workflows(self) -> list[dict[str, Any]]:
-        config = self.get_config()
+    def workflows(self) -> dict[str, Any]:
+        """``SOYA_USER`` 폴더의 실제 워크플로우 파일을 동적 나열한다.
+
+        config.json 바인딩(루트를 가리켜 전부 거부되던 문제)에 의존하지 않는다.
+        각 파일은 개별 try/except로 처리해 한 파일의 깨진 JSON·모델 해석 실패가
+        전체 응답을 터뜨리지 않게 한다. 파싱에 실패한 파일은 목록에서 제외되고
+        ``errors``에 이름/사유로 모여 프론트에 전달된다.
+
+        반환: ``{"workflows": [...], "errors": [...]}``
+        - workflows 항목은 모두 ``configured=True`` (실패 파일은 제외됨).
+          ``configured=False``는 이 카탈로그에서는 의미가 없으므로 API 호환을
+          위해 항상 True로 내려보낸다.
+        - ``id``/``source_name``은 파일명(확장자 포함, 예: ``foo.json``)으로 고정.
+        """
         result: list[dict[str, Any]] = []
+        errors: list[dict[str, str]] = []
         model_index = build_local_model_index(self.project_root / "comfy")
-        for entry in workflow_catalog(self.project_root):
-            item = dict(entry)
+        for entry in list_soya_user_workflows(self.project_root):
+            name = entry["name"]
+            source_path = entry["source_path"]
             try:
-                plan = selected_install_plan(
-                    self.project_root,
-                    [str(entry["id"])],
-                    config,
-                )
-                source = plan["workflow_files"][0]
-                workflow = self._load_workflow_files(plan["workflow_files"])[0]
+                workflow = json.loads(Path(source_path).read_text(encoding="utf-8"))
+                if not isinstance(workflow, dict) or not workflow:
+                    raise ValueError(
+                        f"워크플로우 JSON 객체가 비어 있거나 객체가 아닙니다: {name}"
+                    )
                 assets = resolve_workflow_model_files(
                     [workflow],
                     model_index,
                     include_hashes=False,
                 )
-                item.update(
-                    configured=True,
-                    source_name=Path(source["source_path"]).name,
-                    binding=source["binding"],
-                    model_count=assets["model_count"],
-                    size_bytes=assets["size_bytes"],
-                    size_gib=assets["size_gib"],
-                )
-            except (ValueError, FileNotFoundError, json.JSONDecodeError) as exc:
+            except Exception as exc:
                 print(
-                    f"[MODAL] 사용자 워크플로우 사용 불가: "
-                    f"workflow_id={entry.get('id')}, reason={exc}"
+                    "[MODAL] SOYA_USER 워크플로우 파싱/모델 해석 실패(제외): "
+                    f"name={name}, path={source_path}, "
+                    f"error={type(exc).__name__}: {exc}"
                 )
                 traceback.print_exc()
-                item.update(
-                    configured=False,
-                    source_name="",
-                    binding="",
-                    reason=str(exc),
-                    model_count=0,
-                    size_bytes=0,
-                    size_gib=0.0,
+                errors.append(
+                    {"name": name, "error": f"{type(exc).__name__}: {exc}"}
                 )
-            result.append(item)
-        return result
+                continue
+            result.append(
+                {
+                    "id": name,
+                    "bindings": [],
+                    "binding": "",
+                    "configured": True,
+                    "source_name": name,
+                    "model_count": assets["model_count"],
+                    "size_bytes": assets["size_bytes"],
+                    "size_gib": assets["size_gib"],
+                }
+            )
+        if errors:
+            print(
+                "[MODAL] SOYA_USER 워크플로우 처리 실패 요약: "
+                f"failed={len(errors)}, names={[item['name'] for item in errors]}"
+            )
+        return {"workflows": result, "errors": errors}
 
     @staticmethod
     def _load_workflow_files(workflow_files: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -591,7 +1054,7 @@ class ModalService:
             force_refresh=force_refresh,
         )
 
-    async def start_install(self, selected_ids: list[str]) -> dict[str, Any]:
+    async def start_install(self, selected_names: list[str]) -> dict[str, Any]:
         settings = ModalSettings.from_mapping(self.get_config())
         if not settings.enabled:
             raise RuntimeError("외부 API 설정에서 Modal 사용을 먼저 켜고 저장하세요.")
@@ -599,16 +1062,41 @@ class ModalService:
             raise RuntimeError("Modal 계정을 먼저 연결하세요.")
         if self._install_task and not self._install_task.done():
             raise RuntimeError("Modal 동기화가 이미 진행 중입니다.")
-        plan = selected_install_plan(self.project_root, selected_ids, self.get_config())
+        # selected_names: SOYA_USER 파일명(확장자 포함, 예: foo.json). config 바인딩
+        # 아님. plan_from_soya_user_names가 파일명 전용 강제 + SOYA_USER 하위 검증.
+        plan = plan_from_soya_user_names(self.project_root, selected_names)
+        started_at = time.time()
         self._install_state = {
             "state": "running",
             "phase": "assets",
+            "phase_label": INSTALL_PHASE_LABELS["assets"],
+            "phase_index": 0,
+            "phase_count": len(INSTALL_PHASE_LABELS),
             "message": "SOYA_USER 워크플로우의 현재 로컬 모델을 확인하고 있습니다.",
             "workflow_ids": plan["workflow_ids"],
             "size_gib": 0.0,
+            "size_bytes": 0,
+            "started_at": started_at,
+            "updated_at": started_at,
+            "progress": {
+                "mode": "indeterminate",
+                "completed_files": 0,
+                "total_files": len(plan["workflow_files"]),
+                "completed_bytes": 0,
+                "total_bytes": 0,
+                "uploaded_files": 0,
+                "skipped_files": 0,
+                "current_label": "워크플로우와 모델 확인",
+                "current_item": "",
+            },
+            "logs": [],
         }
+        self._append_install_log(
+            "system",
+            f"동기화 시작: 워크플로우 {len(plan['workflow_ids'])}개",
+        )
         self._install_task = asyncio.create_task(self._run_install(settings, plan))
-        return dict(self._install_state)
+        return self._install_snapshot()
 
     async def _run_install(self, settings: ModalSettings, plan: dict[str, Any]) -> None:
         try:
@@ -618,11 +1106,43 @@ class ModalService:
             )
             assets = await self._resolve_local_workflow_assets(workflows)
             plan.update(assets)
+            workflow_bytes = sum(
+                Path(str(item["source_path"])).stat().st_size
+                for item in plan["workflow_files"]
+            )
+            total_files = (
+                len(plan["workflow_files"])
+                + len(plan["model_files"])
+                + len(plan["lora_files"])
+            )
+            total_bytes = workflow_bytes + sum(
+                max(0, int(item.get("size") or 0))
+                for item in plan["model_files"] + plan["lora_files"]
+            )
             self._install_state.update(
-                phase="deploy",
-                message="Modal ComfyUI 런타임을 배포하고 있습니다.",
                 model_count=plan["model_count"],
                 size_gib=plan["size_gib"],
+                size_bytes=total_bytes,
+                progress={
+                    "mode": "indeterminate",
+                    "completed_files": 0,
+                    "total_files": total_files,
+                    "completed_bytes": 0,
+                    "total_bytes": total_bytes,
+                    "uploaded_files": 0,
+                    "skipped_files": 0,
+                    "current_label": "Modal 런타임 이미지",
+                    "current_item": "",
+                },
+            )
+            self._set_install_phase(
+                "deploy",
+                "Modal ComfyUI 런타임 이미지를 빌드하고 있습니다.",
+                progress_mode="indeterminate",
+            )
+            self._append_install_log(
+                "system",
+                f"자산 분석 완료: 전송 대상 {total_files}개 · {total_bytes / 1024 ** 3:.2f} GiB",
             )
             app_path = self.project_root / "modal_backend" / "modal_app.py"
             deploy_env = self._subprocess_env(
@@ -647,6 +1167,7 @@ class ModalService:
                 ],
                 env=deploy_env,
                 timeout=3600,
+                output_callback=self._append_install_log,
             )
             if code != 0:
                 print(
@@ -655,10 +1176,12 @@ class ModalService:
                 )
                 raise RuntimeError("Modal 앱 배포에 실패했습니다. 서버 로그를 확인하세요.")
 
-            self._install_state.update(
-                phase="models",
-                message="사용자 워크플로우와 로컬 모델을 Modal에 업로드하고 있습니다.",
+            self._set_install_phase(
+                "upload",
+                "사용자 워크플로우와 로컬 모델을 Modal Volume에 동기화하고 있습니다.",
+                progress_mode="determinate",
             )
+            self._append_install_log("system", "Modal 런타임 배포 완료 · 파일 동기화 시작")
             client_payload = {
                 "action": "install",
                 "app_name": settings.deployment_name,
@@ -672,6 +1195,7 @@ class ModalService:
                 env=self._subprocess_env(settings.profile),
                 stdin_payload=client_payload,
                 timeout=86_400,
+                output_callback=self._handle_install_client_output,
             )
             if code != 0:
                 print(
@@ -682,28 +1206,47 @@ class ModalService:
             response = json.loads(stdout)
             if not response.get("ok"):
                 raise RuntimeError(str(response.get("error") or "Modal 원격 설치 실패"))
+            progress = dict(self._install_state.get("progress") or {})
+            progress.update(
+                mode="complete",
+                completed_files=int(progress.get("total_files") or total_files),
+                completed_bytes=int(progress.get("total_bytes") or total_bytes),
+                current_label="동기화 완료",
+                current_item="",
+            )
+            self._install_state["progress"] = progress
+            self._set_install_phase(
+                "complete",
+                "사용자 워크플로우와 로컬 모델의 Modal 업로드가 완료되었습니다.",
+                progress_mode="complete",
+            )
+            finished_at = time.time()
+            self._install_state.update(
+                state="completed",
+                finished_at=finished_at,
+                updated_at=finished_at,
+            )
+            self._append_install_log("system", "Modal 동기화가 완료되었습니다.")
             print(
                 f"[MODAL] 설치 완료: app={settings.deployment_name}, "
                 f"workflows={len(plan['workflow_ids'])}, models={plan['model_count']}, "
                 f"size_gib={plan['size_gib']}"
             )
-            self._install_state = {
-                "state": "completed",
-                "phase": "complete",
-                "message": "사용자 워크플로우와 로컬 모델의 Modal 업로드가 완료되었습니다.",
-                "workflow_ids": plan["workflow_ids"],
-                "model_count": plan["model_count"],
-                "size_gib": plan["size_gib"],
-            }
         except Exception as exc:
             print(f"[MODAL] 설치 작업 예외: {type(exc).__name__}: {exc}")
             traceback.print_exc()
-            self._install_state = {
-                "state": "failed",
-                "phase": self._install_state.get("phase", "unknown"),
-                "message": f"Modal 동기화 실패: {type(exc).__name__}: {exc}",
-                "workflow_ids": plan.get("workflow_ids", []),
-            }
+            finished_at = time.time()
+            self._install_state.update(
+                state="failed",
+                message=f"Modal 동기화 실패: {type(exc).__name__}: {exc}",
+                workflow_ids=plan.get("workflow_ids", []),
+                finished_at=finished_at,
+                updated_at=finished_at,
+            )
+            self._append_install_log(
+                "error",
+                f"{type(exc).__name__}: {exc}",
+            )
 
     async def apply_autoscaler(self) -> dict[str, Any]:
         settings = ModalSettings.from_mapping(self.get_config())
@@ -847,11 +1390,8 @@ class ModalService:
         if not await self.account_connected(settings):
             raise RuntimeError("Modal 계정을 먼저 연결하세요.")
         normalized_id = str(workflow_id or "").strip()
-        plan = selected_install_plan(
-            self.project_root,
-            [normalized_id],
-            self.get_config(),
-        )
+        # workflow_id: SOYA_USER 파일명(확장자 포함). config 바인딩 아님.
+        plan = plan_from_soya_user_names(self.project_root, [normalized_id])
         active_count = sum(
             1
             for state in self._workflow_runs.values()

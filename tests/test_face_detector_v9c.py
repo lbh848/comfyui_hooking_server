@@ -130,10 +130,11 @@ class TestDetectFacesFallback(unittest.TestCase):
 class TestBubbleFaceFallbackKey(unittest.TestCase):
     """postprocess 말풍선 설정에 face_fallback 키가 누락되지 않는지 회귀 가드."""
 
-    def test_default_bubble_has_face_fallback_false(self):
+    def test_default_bubble_has_face_fallback_true(self):
+        # v9c 저신뢰 시 BGR/RGB ±20도 재검출, 미회복 시 v8m 보조 검출이 기본 ON.
         b = pp._default_bubble()
         self.assertIn("face_fallback", b)
-        self.assertIs(b["face_fallback"], False)
+        self.assertIs(b["face_fallback"], True)
 
     def test_face_models_specs(self):
         # imgsz 가 모델별로 분리되어 있는지(960/640).

@@ -4311,9 +4311,8 @@
         .comfy-modal-runtime-actions .comfy-runtime-btn:first-child { margin-right: auto; }
         .comfy-modal-runtime-workspace {
             display: grid;
-            grid-template-columns: minmax(0, .92fr) minmax(0, 1.08fr);
+            grid-template-columns: 1fr;
             gap: 10px;
-            min-height: 260px;
         }
         .comfy-modal-runtime-card {
             display: flex;
@@ -4403,6 +4402,20 @@
             white-space: pre-wrap;
             overflow-wrap: anywhere;
             font: 10px/1.45 Consolas, "Cascadia Mono", monospace;
+        }
+        /* 맨 아래 전체 폭 결과 카드: Comfy 결과처럼 큰 공간 사용. */
+        .comfy-modal-runtime-result-bottom {
+            margin-top: 10px;
+        }
+        .comfy-modal-runtime-result-bottom .comfy-modal-runtime-result {
+            min-height: 240px;
+        }
+        .comfy-modal-runtime-result-bottom .comfy-modal-runtime-result img {
+            max-height: 520px;
+        }
+        .comfy-modal-runtime-result-bottom .comfy-modal-runtime-log {
+            min-height: 140px;
+            max-height: 360px;
         }
         .comfy-allocation-head {
             padding: 14px 16px 12px;
@@ -4986,6 +4999,118 @@
             text-overflow: ellipsis;
             white-space: nowrap;
         }
+        .modal-install-progress {
+            display: grid;
+            gap: 10px;
+            margin-top: 12px;
+            padding: 12px;
+            border: 1px solid color-mix(in srgb, var(--accent) 32%, var(--border));
+            border-radius: 10px;
+            background: color-mix(in srgb, var(--surface2) 42%, var(--surface));
+        }
+        .modal-install-progress[hidden] { display: none !important; }
+        .modal-install-progress-head,
+        .modal-install-progress-summary {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            min-width: 0;
+        }
+        .modal-install-progress-head strong {
+            min-width: 0;
+            overflow: hidden;
+            color: var(--text);
+            font-size: .76rem;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .modal-install-progress-head span,
+        .modal-install-progress-summary {
+            color: var(--text2);
+            font-size: .65rem;
+        }
+        .modal-install-steps {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 6px;
+            margin: 0;
+            padding: 0;
+            list-style: none;
+        }
+        .modal-install-step {
+            min-width: 0;
+            padding: 6px 7px;
+            overflow: hidden;
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            color: var(--text2);
+            background: color-mix(in srgb, var(--surface) 72%, var(--surface2));
+            font-size: .62rem;
+            font-weight: 700;
+            text-align: center;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .modal-install-step.complete {
+            border-color: color-mix(in srgb, #4caf50 48%, var(--border));
+            color: #75d98a;
+            background: color-mix(in srgb, #4caf50 8%, var(--surface));
+        }
+        .modal-install-step.active {
+            border-color: color-mix(in srgb, var(--accent) 72%, var(--border));
+            color: var(--text);
+            background: color-mix(in srgb, var(--accent) 13%, var(--surface));
+            box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 8%, transparent);
+        }
+        .modal-install-progress[data-state="failed"] .modal-install-step.active {
+            border-color: color-mix(in srgb, #ff6b6b 72%, var(--border));
+            color: #ff9b9b;
+            background: color-mix(in srgb, #ff6b6b 10%, var(--surface));
+        }
+        .modal-install-progress-track {
+            position: relative;
+            height: 8px;
+            overflow: hidden;
+            border-radius: 999px;
+            background: color-mix(in srgb, var(--surface3) 78%, #000);
+        }
+        .modal-install-progress-fill {
+            width: 0;
+            height: 100%;
+            border-radius: inherit;
+            background: linear-gradient(90deg, var(--accent), #8d70ff);
+            transition: width .24s ease;
+        }
+        .modal-install-progress-track.indeterminate .modal-install-progress-fill {
+            width: 38% !important;
+            animation: modal-install-progress-slide 1.25s ease-in-out infinite;
+        }
+        @keyframes modal-install-progress-slide {
+            0% { transform: translateX(-110%); }
+            100% { transform: translateX(300%); }
+        }
+        .modal-install-progress-current {
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .modal-install-progress-count { flex: 0 0 auto; }
+        .modal-install-progress-log {
+            min-height: 96px;
+            max-height: 220px;
+            margin: 0;
+            padding: 9px 10px;
+            overflow: auto;
+            border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+            border-radius: 8px;
+            background: #090b10;
+            color: #c2c8d5;
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+            font: 10px/1.48 Consolas, "Cascadia Mono", monospace;
+        }
         .comfy-installer-run-card {
             border-color: color-mix(in srgb, var(--accent) 28%, var(--border));
             background:
@@ -5200,6 +5325,9 @@
         @media (max-width: 520px) {
             .comfy-installer-hero,
             .comfy-installer-card { padding: 14px; border-radius: 11px; }
+            .modal-install-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .modal-install-progress-head,
+            .modal-install-progress-summary { align-items: flex-start; flex-direction: column; }
             .comfy-installer-actions .comfy-installer-btn { flex: 1 1 auto; }
             #comfy-installer-start-btn,
             #comfy-installer-compat-start-btn,
@@ -8097,12 +8225,211 @@
             color: var(--accent);
         }
 
-        /* ─── 서버 실행 중 임시 메모장 ─── */
-        .memo-launcher {
+        /* ─── 좌측 Modal 상태 + 서버 실행 중 임시 메모장 ─── */
+        .left-utility-stack {
             position: fixed;
             left: 0;
             bottom: 18px;
             z-index: 2147483647;
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 8px;
+            max-width: calc(100vw - 12px);
+            pointer-events: none;
+            transition: bottom 0.22s ease;
+        }
+        .left-utility-stack[hidden] {
+            display: none !important;
+        }
+        .left-utility-stack.utility-position-immediate {
+            transition: none;
+        }
+        .modal-worker-widget,
+        .memo-launcher {
+            pointer-events: auto;
+        }
+        .modal-worker-widget[hidden],
+        .modal-worker-panel[hidden],
+        .modal-worker-wall-tab[hidden] {
+            display: none !important;
+        }
+        .modal-worker-panel {
+            width: min(252px, calc(100vw - 12px));
+            overflow: hidden;
+            box-sizing: border-box;
+            border: 1px solid color-mix(in srgb, var(--border) 68%, #22c55e);
+            border-left: 0;
+            border-radius: 0 12px 12px 0;
+            background: color-mix(in srgb, var(--surface) 96%, #111827);
+            box-shadow: 0 14px 38px rgba(0,0,0,0.48), 0 1px 0 rgba(255,255,255,0.05) inset;
+        }
+        .modal-worker-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            min-height: 39px;
+            padding: 6px 7px 6px 11px;
+            border-bottom: 1px solid var(--border);
+            background: linear-gradient(180deg, rgba(34,197,94,0.08), transparent);
+        }
+        .modal-worker-title {
+            display: flex;
+            align-items: center;
+            gap: 9px;
+            min-width: 0;
+        }
+        .modal-worker-state-dot {
+            width: 9px;
+            height: 9px;
+            flex: 0 0 auto;
+            border-radius: 50%;
+            background: #64748b;
+            box-shadow: 0 0 0 4px rgba(100,116,139,0.13);
+        }
+        .modal-worker-heading-copy {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            min-width: 0;
+        }
+        .modal-worker-heading-copy strong {
+            color: var(--text);
+            font-size: 0.82rem;
+            line-height: 1.15;
+        }
+        .modal-worker-heading-copy span {
+            color: var(--text2);
+            font-size: 0.68rem;
+            line-height: 1.15;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .modal-worker-collapse-btn,
+        .modal-worker-refresh-btn {
+            display: grid;
+            place-items: center;
+            padding: 0;
+            border: 1px solid var(--border);
+            background: var(--surface2);
+            color: var(--text2);
+            cursor: pointer;
+        }
+        .modal-worker-collapse-btn {
+            width: 27px;
+            height: 27px;
+            flex: 0 0 auto;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 800;
+            transform: rotate(90deg);
+        }
+        .modal-worker-refresh-btn {
+            width: 25px;
+            height: 25px;
+            flex: 0 0 auto;
+            border-radius: 7px;
+            font-size: 0.78rem;
+        }
+        .modal-worker-collapse-btn:hover,
+        .modal-worker-refresh-btn:hover {
+            border-color: color-mix(in srgb, #22c55e 62%, var(--border));
+            background: var(--surface3);
+            color: var(--text);
+        }
+        .modal-worker-metrics {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            padding: 7px 8px 6px;
+        }
+        .modal-worker-metric {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 3px;
+            min-width: 0;
+            padding: 2px 7px;
+            border-right: 1px solid var(--border);
+        }
+        .modal-worker-metric:last-child {
+            border-right: 0;
+        }
+        .modal-worker-metric span {
+            color: var(--text2);
+            font-size: 0.64rem;
+        }
+        .modal-worker-metric strong {
+            color: var(--text);
+            font-size: 1rem;
+            line-height: 1;
+        }
+        .modal-worker-footer {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            min-height: 28px;
+            padding: 4px 7px 5px 10px;
+            border-top: 1px solid var(--border);
+            color: var(--text2);
+            font-size: 0.64rem;
+        }
+        .modal-worker-footer span {
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .modal-worker-wall-tab {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 7px;
+            width: 30px;
+            min-height: 52px;
+            box-sizing: border-box;
+            padding: 8px 3px;
+            border: 1px solid color-mix(in srgb, var(--border) 68%, #22c55e);
+            border-left: 0;
+            border-radius: 0 10px 10px 0;
+            background: color-mix(in srgb, var(--surface) 95%, #22c55e 5%);
+            color: var(--text);
+            box-shadow: 8px 10px 26px rgba(0,0,0,0.42), 0 1px 0 rgba(255,255,255,0.05) inset;
+            cursor: pointer;
+        }
+        .modal-worker-wall-label {
+            font-size: 0.74rem;
+            font-weight: 800;
+            line-height: 1;
+        }
+        .modal-worker-widget[data-state="on"] .modal-worker-state-dot {
+            background: #22c55e;
+            box-shadow: 0 0 0 4px rgba(34,197,94,0.14), 0 0 12px rgba(34,197,94,0.68);
+        }
+        .modal-worker-widget[data-state="on"] .modal-worker-heading-copy span {
+            color: #4ade80;
+        }
+        .modal-worker-widget[data-state="checking"] .modal-worker-state-dot {
+            background: #f59e0b;
+            box-shadow: 0 0 0 4px rgba(245,158,11,0.14);
+            animation: modal-worker-pulse 1.2s ease-in-out infinite;
+        }
+        @keyframes modal-worker-pulse {
+            0%, 100% { opacity: 0.56; }
+            50% { opacity: 1; }
+        }
+        .modal-worker-widget[data-state="error"] .modal-worker-state-dot {
+            background: #ef4444;
+            box-shadow: 0 0 0 4px rgba(239,68,68,0.14);
+        }
+        .modal-worker-widget[data-state="error"] .modal-worker-heading-copy span {
+            color: #f87171;
+        }
+        .memo-launcher {
+            position: relative;
             display: flex;
             flex-direction: column;
             align-items: center;
@@ -8120,9 +8447,6 @@
             box-shadow: 0 10px 30px rgba(0,0,0,0.44), 0 1px 0 rgba(255,255,255,0.05) inset;
             cursor: pointer;
             font: inherit;
-            transition: bottom 0.22s ease, border-color 0.16s, background 0.16s, transform 0.16s;
-        }
-        .memo-launcher.memo-position-immediate {
             transition: border-color 0.16s, background 0.16s, transform 0.16s;
         }
         .memo-launcher[hidden] {
@@ -8135,6 +8459,9 @@
         }
         .memo-launcher:focus-visible,
         .memo-close-btn:focus-visible,
+        .modal-worker-collapse-btn:focus-visible,
+        .modal-worker-refresh-btn:focus-visible,
+        .modal-worker-wall-tab:focus-visible,
         .memo-textarea:focus-visible,
         .memo-tab-button:focus-visible,
         .memo-knowledge-input:focus-visible,
@@ -8437,9 +8764,14 @@
             color: var(--danger, #ef4444);
         }
         @media (max-width: 520px) {
-            .memo-launcher {
+            .left-utility-stack {
                 bottom: 10px;
+            }
+            .memo-launcher {
                 width: 30px;
+            }
+            .modal-worker-panel {
+                width: min(244px, calc(100vw - 10px));
             }
             .memo-overlay {
                 padding: 10px;
@@ -13927,13 +14259,63 @@
         </div>
     </div>
 
-    <!-- 서버가 실행되는 동안만 내용을 유지하는 전역 메모장 -->
-    <button type="button" class="memo-launcher" id="memo-launcher" hidden
-            aria-controls="memo-overlay" aria-expanded="false"
-            onclick="toggleMemoPad()" title="메모장 펼치기">
-        <span class="memo-launcher-icon" aria-hidden="true">📝</span>
-        <span class="memo-launcher-action" id="memo-launcher-action" aria-hidden="true">›</span>
-    </button>
+    <!-- 작업 큐 위에서 함께 이동하는 Modal 상태 + 전역 메모장 -->
+    <div class="left-utility-stack" id="left-utility-stack" hidden>
+        <section class="modal-worker-widget" id="modal-worker-widget"
+                 data-state="checking" aria-label="Modal GPU Worker 상태" hidden>
+            <div class="modal-worker-panel" id="modal-worker-panel"
+                 role="region" aria-labelledby="modal-worker-heading"
+                 aria-hidden="true" hidden inert>
+                <div class="modal-worker-header">
+                    <div class="modal-worker-title">
+                        <span class="modal-worker-state-dot" aria-hidden="true"></span>
+                        <div class="modal-worker-heading-copy">
+                            <strong id="modal-worker-heading">Modal L4</strong>
+                            <span id="modal-worker-state" role="status" aria-live="polite">상태 확인 대기</span>
+                        </div>
+                    </div>
+                    <button type="button" class="modal-worker-collapse-btn"
+                            id="modal-worker-collapse-btn"
+                            onclick="collapseModalWorkerPanel()"
+                            title="Modal 상태 접기" aria-label="Modal 상태 접기">⌄</button>
+                </div>
+                <div class="modal-worker-metrics">
+                    <div class="modal-worker-metric">
+                        <span>Worker</span>
+                        <strong id="modal-worker-runners">-</strong>
+                    </div>
+                    <div class="modal-worker-metric">
+                        <span>생성 중</span>
+                        <strong id="modal-worker-running">-</strong>
+                    </div>
+                    <div class="modal-worker-metric">
+                        <span>대기</span>
+                        <strong id="modal-worker-backlog">-</strong>
+                    </div>
+                </div>
+                <div class="modal-worker-footer">
+                    <span id="modal-worker-checked">첫 상태 확인 전</span>
+                    <button type="button" class="modal-worker-refresh-btn"
+                            onclick="void refreshModalWorkerStatus(true)"
+                            title="Modal 상태 지금 새로고침" aria-label="Modal 상태 지금 새로고침">↻</button>
+                </div>
+            </div>
+            <button type="button" class="modal-worker-wall-tab"
+                    id="modal-worker-wall-tab" aria-controls="modal-worker-panel"
+                    aria-expanded="false" aria-hidden="false" tabindex="0"
+                    onclick="expandModalWorkerPanel()" title="Modal 상태 펼치기">
+                <span class="modal-worker-state-dot" aria-hidden="true"></span>
+                <span class="modal-worker-wall-label">M</span>
+            </button>
+        </section>
+        <!-- 서버가 실행되는 동안만 내용을 유지하는 전역 메모장 -->
+        <button type="button" class="memo-launcher" id="memo-launcher" hidden
+                aria-controls="memo-overlay" aria-expanded="false"
+                onclick="toggleMemoPad()" title="메모장 펼치기">
+            <span class="memo-launcher-icon" aria-hidden="true">📝</span>
+            <span class="memo-launcher-action" id="memo-launcher-action" aria-hidden="true">›</span>
+        </button>
+    </div>
     <div class="memo-overlay" id="memo-overlay" hidden>
         <section class="memo-dialog" role="dialog" aria-modal="true"
                  aria-labelledby="memo-dialog-heading">
@@ -17318,17 +17700,6 @@
                                     </div>
                                     <p class="comfy-modal-runtime-hint">실행 시 현재 워크플로우가 참조하는 로컬 체크포인트·모델·LoRA와 input 이미지를 사용자 Modal 환경에 직접 동기화합니다.</p>
                                 </section>
-
-                                <section class="comfy-modal-runtime-card result">
-                                    <div class="comfy-modal-runtime-card-head">
-                                        <div><strong>실행 상태와 결과</strong><small id="modal-runtime-run-phase">실행 대기</small></div>
-                                    </div>
-                                    <div class="comfy-modal-runtime-result" id="modal-runtime-result">
-                                        <img id="modal-runtime-result-image" alt="Modal 워크플로우 결과" hidden>
-                                        <div id="modal-runtime-result-empty">워크플로우를 실행하면 결과 이미지가 여기에 표시됩니다.</div>
-                                    </div>
-                                    <pre class="comfy-modal-runtime-log" id="modal-runtime-log">Modal 상태를 불러오는 중입니다.</pre>
-                                </section>
                             </div>
 
                             <section class="comfy-installer-card" id="modal-installer-card">
@@ -17345,7 +17716,14 @@
                                     <div class="comfy-installer-metric"><small>자동 종료</small><strong id="modal-installer-scaledown">작업 후 15초</strong></div>
                                     <div class="comfy-installer-metric"><small>볼륨 무료 범위</small><strong>월 1 TiB 포함</strong></div>
                                 </div>
-                                <div id="modal-workflow-catalog" class="comfy-workflow-list" style="margin-top:12px; max-height:260px; overflow:auto;">
+                                <div style="margin-top:12px; display:flex; align-items:center; gap:8px;">
+                                    <input type="search" id="modal-workflow-search" autocomplete="off"
+                                           placeholder="워크플로우 이름 검색..."
+                                           oninput="modalFilterWorkflows()"
+                                           style="flex:1; padding:6px 10px; border-radius:6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.85rem;">
+                                    <small id="modal-workflow-search-count" style="color:var(--text-secondary,#aaa); white-space:nowrap;"></small>
+                                </div>
+                                <div id="modal-workflow-catalog" class="comfy-workflow-list" style="margin-top:8px; max-height:260px; overflow:auto;">
                                     <div class="comfy-workflow-empty">Modal 워크플로우 목록을 불러오는 중입니다.</div>
                                 </div>
                                 <div class="comfy-installer-actions" style="margin-top:10px;">
@@ -17354,6 +17732,38 @@
                                 </div>
                                 <p class="comfy-installer-note" id="modal-installer-selection-summary" style="margin-top:8px;">선택 없음</p>
                                 <p class="comfy-installer-note" id="modal-installer-status" style="margin-top:6px;">외부 API에서 Modal 사용을 켜고 설정을 저장한 뒤 실행하세요. 배포만으로 L4는 켜지지 않습니다.</p>
+                                <div class="modal-install-progress" id="modal-install-progress" data-state="idle" hidden>
+                                    <div class="modal-install-progress-head">
+                                        <strong id="modal-install-progress-title">동기화 준비</strong>
+                                        <span id="modal-install-progress-elapsed">경과 0초</span>
+                                    </div>
+                                    <ol class="modal-install-steps" aria-label="Modal 동기화 단계">
+                                        <li class="modal-install-step" data-phase="assets">1. 자산 분석</li>
+                                        <li class="modal-install-step" data-phase="deploy">2. 런타임 빌드</li>
+                                        <li class="modal-install-step" data-phase="upload">3. 파일 업로드</li>
+                                        <li class="modal-install-step" data-phase="complete">4. 완료</li>
+                                    </ol>
+                                    <div class="modal-install-progress-track indeterminate" id="modal-install-progress-track"
+                                         role="progressbar" aria-label="Modal 동기화 진행률">
+                                        <div class="modal-install-progress-fill" id="modal-install-progress-fill"></div>
+                                    </div>
+                                    <div class="modal-install-progress-summary">
+                                        <span class="modal-install-progress-current" id="modal-install-progress-current">진행 정보를 기다리고 있습니다.</span>
+                                        <span class="modal-install-progress-count" id="modal-install-progress-count">-</span>
+                                    </div>
+                                    <pre class="modal-install-progress-log" id="modal-install-progress-log" aria-label="Modal 동기화 실시간 로그">실시간 로그를 기다리고 있습니다.</pre>
+                                </div>
+                            </section>
+
+                            <section class="comfy-modal-runtime-card result comfy-modal-runtime-result-bottom">
+                                <div class="comfy-modal-runtime-card-head">
+                                    <div><strong>실행 상태와 결과</strong><small id="modal-runtime-run-phase">실행 대기</small></div>
+                                </div>
+                                <div class="comfy-modal-runtime-result" id="modal-runtime-result">
+                                    <img id="modal-runtime-result-image" alt="Modal 워크플로우 결과" hidden>
+                                    <div id="modal-runtime-result-empty">워크플로우를 실행하면 결과 이미지가 여기에 표시됩니다.</div>
+                                </div>
+                                <pre class="comfy-modal-runtime-log" id="modal-runtime-log">Modal 상태를 불러오는 중입니다.</pre>
                             </section>
                         </section>
                     </div>
@@ -20118,6 +20528,16 @@
         let memoQueueResizeObserver = null;
         let memoQueueMutationObserver = null;
         let memoActiveTab = 'note';
+        let modalWorkerFeatureEnabled = false;
+        let modalWorkerExpanded = false;
+        let modalWorkerPollTimer = null;
+        let modalWorkerPollBusy = false;
+        let modalWorkerPollPending = false;
+        let modalWorkerQueueActive = false;
+        let modalWorkerRuntimeActive = false;
+        let modalWorkerHasSnapshot = false;
+        let modalWorkerActiveRefreshSeconds = 5;
+        const MODAL_WORKER_IDLE_REFRESH_MS = 60000;
 
         function setMemoSaveStatus(message, state = 'idle') {
             const status = document.getElementById('memo-save-status');
@@ -20418,14 +20838,379 @@
             status.className = 'toggle-status ' + (checked ? 'on' : 'off');
         }
 
-        function syncMemoLauncherPosition() {
-            memoPositionFrame = null;
+        function syncLeftUtilityStackVisibility() {
+            const stack = document.getElementById('left-utility-stack');
+            const widget = document.getElementById('modal-worker-widget');
             const launcher = document.getElementById('memo-launcher');
-            if (!launcher) {
-                console.error('[MEMO] 위치를 조정할 메모장 버튼이 없습니다.');
+            if (!stack || !widget || !launcher) {
+                console.error('[LEFT_DOCK] 표시 상태 동기화 UI 요소 누락:', {
+                    stack: !!stack,
+                    widget: !!widget,
+                    launcher: !!launcher,
+                });
                 return;
             }
-            if (launcher.hidden) return;
+            stack.hidden = widget.hidden && launcher.hidden;
+            if (!stack.hidden) scheduleMemoLauncherPositionSync();
+        }
+
+        function setModalWorkerPanelExpanded(expanded) {
+            modalWorkerExpanded = Boolean(expanded);
+            const panel = document.getElementById('modal-worker-panel');
+            const wallTab = document.getElementById('modal-worker-wall-tab');
+            if (!panel || !wallTab) {
+                console.error('[MODAL_WORKER] 접기 UI 요소 누락:', {
+                    panel: !!panel,
+                    wallTab: !!wallTab,
+                    expanded: modalWorkerExpanded,
+                });
+                return;
+            }
+            panel.hidden = !modalWorkerExpanded;
+            panel.inert = !modalWorkerExpanded;
+            panel.setAttribute('aria-hidden', String(!modalWorkerExpanded));
+            wallTab.hidden = modalWorkerExpanded;
+            wallTab.inert = modalWorkerExpanded;
+            wallTab.setAttribute('aria-hidden', String(modalWorkerExpanded));
+            wallTab.setAttribute('aria-expanded', String(modalWorkerExpanded));
+            wallTab.tabIndex = modalWorkerExpanded ? -1 : 0;
+        }
+
+        function collapseModalWorkerPanel() {
+            const wallTab = document.getElementById('modal-worker-wall-tab');
+            if (!wallTab) {
+                console.error('[MODAL_WORKER] 접은 뒤 포커스를 옮길 탭이 없습니다.');
+                return;
+            }
+            setModalWorkerPanelExpanded(false);
+            wallTab.focus();
+        }
+
+        function expandModalWorkerPanel() {
+            const collapseButton = document.getElementById('modal-worker-collapse-btn');
+            if (!collapseButton) {
+                console.error('[MODAL_WORKER] 펼친 뒤 포커스를 옮길 버튼이 없습니다.');
+                return;
+            }
+            setModalWorkerPanelExpanded(true);
+            collapseButton.focus();
+        }
+
+        function stopModalWorkerPolling() {
+            if (modalWorkerPollTimer !== null) {
+                window.clearTimeout(modalWorkerPollTimer);
+                modalWorkerPollTimer = null;
+            }
+        }
+
+        function modalWorkerNextRefreshMs() {
+            return (modalWorkerQueueActive || modalWorkerRuntimeActive)
+                ? modalWorkerActiveRefreshSeconds * 1000
+                : MODAL_WORKER_IDLE_REFRESH_MS;
+        }
+
+        function scheduleModalWorkerPolling() {
+            stopModalWorkerPolling();
+            if (!modalWorkerFeatureEnabled || document.hidden) return;
+            modalWorkerPollTimer = window.setTimeout(
+                () => void refreshModalWorkerStatus(false),
+                modalWorkerNextRefreshMs(),
+            );
+        }
+
+        function modalWorkerCount(data, key) {
+            const value = Number(data?.[key]);
+            if (!Number.isFinite(value) || value < 0 || !Number.isInteger(value)) {
+                console.error('[MODAL_WORKER] 통계 값 형식 오류:', { key, value: data?.[key], data });
+                throw new Error(`Modal ${key} 통계가 올바르지 않습니다.`);
+            }
+            return value;
+        }
+
+        function modalWorkerUiElements() {
+            const elements = {
+                widget: document.getElementById('modal-worker-widget'),
+                heading: document.getElementById('modal-worker-heading'),
+                state: document.getElementById('modal-worker-state'),
+                runners: document.getElementById('modal-worker-runners'),
+                running: document.getElementById('modal-worker-running'),
+                backlog: document.getElementById('modal-worker-backlog'),
+                checked: document.getElementById('modal-worker-checked'),
+                wallTab: document.getElementById('modal-worker-wall-tab'),
+                refreshButton: document.querySelector('.modal-worker-refresh-btn'),
+            };
+            const missing = Object.entries(elements).filter(([, value]) => !value).map(([key]) => key);
+            if (missing.length) {
+                console.error('[MODAL_WORKER] 상태 표시 UI 요소 누락:', { missing });
+                return null;
+            }
+            return elements;
+        }
+
+        function modalWorkerErrorCopy(reason) {
+            switch (String(reason || 'runtime_unavailable')) {
+                case 'app_not_deployed':
+                    return {
+                        state: '원격 ComfyUI 미설치',
+                        detail: 'MODAL 탭에서 워크플로우를 동기화하세요',
+                    };
+                case 'network_unavailable':
+                    return {
+                        state: 'Modal 네트워크 장애',
+                        detail: 'Modal 서버에 연결하지 못했습니다',
+                    };
+                default:
+                    return {
+                        state: '상태 조회 실패',
+                        detail: 'Modal 상태를 확인하지 못했습니다',
+                    };
+            }
+        }
+
+        function renderModalWorkerError(message, reason = 'runtime_unavailable') {
+            const elements = modalWorkerUiElements();
+            if (!elements) return;
+            const technicalDetail = String(message || '알 수 없는 오류');
+            const copy = modalWorkerErrorCopy(reason);
+            modalWorkerRuntimeActive = false;
+            elements.widget.dataset.state = 'error';
+            elements.state.textContent = copy.state;
+            elements.state.title = technicalDetail;
+            elements.runners.textContent = '-';
+            elements.running.textContent = '-';
+            elements.backlog.textContent = '-';
+            elements.wallTab.setAttribute('aria-label', `${copy.state}: ${copy.detail}`);
+            elements.wallTab.title = `${copy.state}: ${copy.detail}`;
+            const retrySeconds = Math.round(modalWorkerNextRefreshMs() / 1000);
+            elements.checked.textContent = `${copy.detail} · ${retrySeconds}초 후 재시도`;
+            elements.checked.title = technicalDetail;
+        }
+
+        function renderModalWorkerDeploying(data) {
+            const elements = modalWorkerUiElements();
+            if (!elements) return;
+            const message = String(data?.message || 'Modal 런타임을 배포하고 있습니다.');
+            modalWorkerRuntimeActive = true;
+            modalWorkerHasSnapshot = true;
+            elements.widget.dataset.state = 'checking';
+            elements.heading.textContent = `Modal ${String(data?.gpu || 'GPU')}`;
+            elements.state.textContent = 'Modal 배포 중';
+            elements.state.title = message;
+            elements.runners.textContent = '-';
+            elements.running.textContent = '-';
+            elements.backlog.textContent = '-';
+            elements.wallTab.setAttribute('aria-label', `Modal 배포 중: ${message}`);
+            elements.wallTab.title = `Modal 배포 중: ${message}`;
+            const nextSeconds = Math.round(modalWorkerNextRefreshMs() / 1000);
+            elements.checked.textContent = `${message} · ${nextSeconds}초 후 확인`;
+            elements.checked.title = message;
+        }
+
+        function renderModalWorkerStatus(data) {
+            const elements = modalWorkerUiElements();
+            if (!elements) return;
+            if (!data || data.ok !== true || data.enabled !== true) {
+                console.error('[MODAL_WORKER] 활성 상태 응답 형식 오류:', data);
+                throw new Error('Modal Worker 상태 응답이 올바르지 않습니다.');
+            }
+            const refreshSeconds = Number(data.refresh_seconds);
+            if (Number.isInteger(refreshSeconds) && refreshSeconds >= 2 && refreshSeconds <= 60) {
+                modalWorkerActiveRefreshSeconds = refreshSeconds;
+            } else {
+                console.error('[MODAL_WORKER] 활성 갱신 주기 형식 오류, 5초 사용:', {
+                    refresh_seconds: data.refresh_seconds,
+                });
+                modalWorkerActiveRefreshSeconds = 5;
+            }
+            if (data.available !== true) {
+                if (data.reason === 'deployment_in_progress') {
+                    renderModalWorkerDeploying(data);
+                    return;
+                }
+                renderModalWorkerError(
+                    data.error || data.reason || 'Modal runtime 통계를 사용할 수 없습니다.',
+                    data.reason,
+                );
+                return;
+            }
+
+            const runners = modalWorkerCount(data, 'num_total_runners');
+            const running = modalWorkerCount(data, 'num_running_inputs');
+            const backlog = modalWorkerCount(data, 'backlog');
+            const gpuOn = runners > 0;
+            if (Boolean(data.gpu_on) !== gpuOn) {
+                console.error('[MODAL_WORKER] GPU 상태와 Worker 수가 일치하지 않습니다:', {
+                    gpu_on: data.gpu_on,
+                    num_total_runners: runners,
+                });
+            }
+            modalWorkerRuntimeActive = gpuOn || running > 0 || backlog > 0;
+            modalWorkerHasSnapshot = true;
+            elements.widget.dataset.state = gpuOn ? 'on' : 'off';
+            elements.heading.textContent = `Modal ${String(data.gpu || 'GPU')}`;
+            elements.state.textContent = gpuOn
+                ? `GPU ON · Worker ${runners}개`
+                : (modalWorkerQueueActive ? 'GPU 시작 대기' : 'GPU OFF · 자동 대기');
+            elements.state.removeAttribute('title');
+            elements.runners.textContent = String(runners);
+            elements.running.textContent = String(running);
+            elements.backlog.textContent = String(backlog);
+            const wallLabel = gpuOn
+                ? `Modal GPU ON, Worker ${runners}개, 펼치기`
+                : `Modal GPU OFF, 펼치기`;
+            elements.wallTab.setAttribute('aria-label', wallLabel);
+            elements.wallTab.title = wallLabel;
+
+            const checkedDate = new Date(Number(data.checked_at || 0) * 1000);
+            const checkedText = Number.isNaN(checkedDate.getTime())
+                ? '방금 확인'
+                : `${checkedDate.toLocaleTimeString('ko-KR', { hour12: false })} 확인`;
+            const nextSeconds = Math.round(modalWorkerNextRefreshMs() / 1000);
+            elements.checked.textContent = `${checkedText} · ${nextSeconds}초 주기`;
+            elements.checked.removeAttribute('title');
+        }
+
+        async function refreshModalWorkerStatus(manual = false) {
+            if (!modalWorkerFeatureEnabled) {
+                if (manual) console.error('[MODAL_WORKER] Modal OFF 상태에서 수동 조회를 요청했습니다.');
+                return;
+            }
+            if (document.hidden && !manual) {
+                stopModalWorkerPolling();
+                return;
+            }
+            if (modalWorkerPollBusy) {
+                modalWorkerPollPending = true;
+                return;
+            }
+            stopModalWorkerPolling();
+            modalWorkerPollBusy = true;
+            const elements = modalWorkerUiElements();
+            if (elements) {
+                elements.refreshButton.disabled = true;
+                elements.checked.textContent = '상태 확인 중…';
+                if (!modalWorkerHasSnapshot) {
+                    elements.widget.dataset.state = 'checking';
+                    elements.state.textContent = '상태 확인 중';
+                }
+            }
+            try {
+                const data = await fetchJSON('/api/modal/worker-status');
+                if (data?.enabled === false) {
+                    console.log('[MODAL_WORKER] 서버 설정이 OFF로 변경되어 상태 블록을 숨깁니다.');
+                    applyModalWorkerFeatureConfig({ modal_enabled: false });
+                    return;
+                }
+                renderModalWorkerStatus(data);
+            } catch (error) {
+                console.error('[MODAL_WORKER] 상태 조회 실패:', error, {
+                    queueActive: modalWorkerQueueActive,
+                    runtimeActive: modalWorkerRuntimeActive,
+                });
+                renderModalWorkerError(error?.message || String(error), 'runtime_unavailable');
+            } finally {
+                modalWorkerPollBusy = false;
+                const latestElements = modalWorkerUiElements();
+                if (latestElements) latestElements.refreshButton.disabled = false;
+                if (modalWorkerPollPending && modalWorkerFeatureEnabled && !document.hidden) {
+                    modalWorkerPollPending = false;
+                    window.setTimeout(() => void refreshModalWorkerStatus(false), 0);
+                } else {
+                    modalWorkerPollPending = false;
+                    scheduleModalWorkerPolling();
+                }
+            }
+        }
+
+        function applyModalWorkerFeatureConfig(config) {
+            if (!config || typeof config !== 'object') {
+                console.error('[MODAL_WORKER] 기능 설정 형식 오류:', config);
+                return;
+            }
+            const widget = document.getElementById('modal-worker-widget');
+            if (!widget) {
+                console.error('[MODAL_WORKER] 기능 상태를 적용할 위젯이 없습니다.', config);
+                return;
+            }
+            const refreshSeconds = Number(config.modal_status_refresh_seconds ?? 5);
+            if (Number.isInteger(refreshSeconds) && refreshSeconds >= 2 && refreshSeconds <= 60) {
+                modalWorkerActiveRefreshSeconds = refreshSeconds;
+            } else {
+                console.error('[MODAL_WORKER] 설정의 갱신 주기가 올바르지 않아 5초를 사용합니다:', {
+                    modal_status_refresh_seconds: config.modal_status_refresh_seconds,
+                });
+                modalWorkerActiveRefreshSeconds = 5;
+            }
+            modalWorkerFeatureEnabled = config.modal_enabled === true;
+            widget.hidden = !modalWorkerFeatureEnabled;
+            if (!modalWorkerFeatureEnabled) {
+                stopModalWorkerPolling();
+                modalWorkerPollPending = false;
+                modalWorkerQueueActive = false;
+                modalWorkerRuntimeActive = false;
+                modalWorkerHasSnapshot = false;
+            }
+            syncLeftUtilityStackVisibility();
+            if (modalWorkerFeatureEnabled) void refreshModalWorkerStatus(false);
+        }
+
+        function notifyModalWorkerQueueState(queueStatus) {
+            const items = Array.isArray(queueStatus?.items) ? queueStatus.items : [];
+            const currentModals = Array.isArray(queueStatus?.current_modals)
+                ? queueStatus.current_modals
+                : [];
+            const candidates = [...items, ...currentModals];
+            const active = candidates.some(item => {
+                const status = String(item?.status || '').toLowerCase();
+                if (status !== 'pending' && status !== 'processing') return false;
+                const area = String(item?.execution_area || '').toLowerCase();
+                const provider = String(item?.provider || '').toLowerCase();
+                return area === 'modal'
+                    || area === 'comfy_parallel'
+                    || provider === 'modal'
+                    || provider === 'comfy+modal';
+            });
+            if (active === modalWorkerQueueActive) return;
+            modalWorkerQueueActive = active;
+            if (modalWorkerFeatureEnabled && !document.hidden) {
+                void refreshModalWorkerStatus(false);
+            }
+        }
+
+        function handleModalWorkerVisibilityChange() {
+            if (!modalWorkerFeatureEnabled) return;
+            if (document.hidden) {
+                stopModalWorkerPolling();
+            } else {
+                void refreshModalWorkerStatus(false);
+            }
+        }
+
+        function initializeModalWorkerUi() {
+            const widget = document.getElementById('modal-worker-widget');
+            const panel = document.getElementById('modal-worker-panel');
+            const wallTab = document.getElementById('modal-worker-wall-tab');
+            if (!widget || !panel || !wallTab) {
+                console.error('[MODAL_WORKER] 초기화 UI 요소 누락:', {
+                    widget: !!widget,
+                    panel: !!panel,
+                    wallTab: !!wallTab,
+                });
+                return;
+            }
+            setModalWorkerPanelExpanded(modalWorkerExpanded);
+            document.addEventListener('visibilitychange', handleModalWorkerVisibilityChange);
+            syncLeftUtilityStackVisibility();
+        }
+
+        function syncMemoLauncherPosition() {
+            memoPositionFrame = null;
+            const stack = document.getElementById('left-utility-stack');
+            if (!stack) {
+                console.error('[LEFT_DOCK] 위치를 조정할 유틸리티 스택이 없습니다.');
+                return;
+            }
+            if (stack.hidden) return;
 
             const mobile = window.matchMedia('(max-width: 520px)').matches;
             const fallbackBottom = mobile ? 10 : 18;
@@ -20454,15 +21239,15 @@
                     });
                 }
             }
-            const currentBottom = Number.parseFloat(getComputedStyle(launcher).bottom);
+            const currentBottom = Number.parseFloat(getComputedStyle(stack).bottom);
             if (Number.isFinite(currentBottom) && bottom > currentBottom) {
-                launcher.classList.add('memo-position-immediate');
-                launcher.style.bottom = `${bottom}px`;
+                stack.classList.add('utility-position-immediate');
+                stack.style.bottom = `${bottom}px`;
                 requestAnimationFrame(() => {
-                    launcher.classList.remove('memo-position-immediate');
+                    stack.classList.remove('utility-position-immediate');
                 });
             } else {
-                launcher.style.bottom = `${bottom}px`;
+                stack.style.bottom = `${bottom}px`;
             }
         }
 
@@ -20516,9 +21301,8 @@
             launcher.hidden = !memoFeatureEnabled;
             if (!memoFeatureEnabled) {
                 closeMemoPad(false);
-            } else {
-                scheduleMemoLauncherPositionSync();
             }
+            syncLeftUtilityStackVisibility();
         }
 
         async function loadMemoFromServer() {
@@ -20819,6 +21603,7 @@
         }
 
         document.addEventListener('DOMContentLoaded', initializeMemoPadUi);
+        document.addEventListener('DOMContentLoaded', initializeModalWorkerUi);
 
         function loadCurrentConfig(forceRefresh = false) {
             if (!forceRefresh && currentConfigLoadPromise) {
@@ -20849,8 +21634,11 @@
         // 페이지 스크립트가 준비되는 즉시 설정 로드를 시작한다. 삽화 탭과 설정 모달은
         // 이 Promise를 공유하므로 시작 직후 탭을 눌러도 동일 요청의 완료를 기다린다.
         loadCurrentConfig()
-            .then(config => applyMemoFeatureEnabled(config.memo_enabled !== false))
-            .catch(error => console.error('[MEMO] 초기 기능 설정 적용 실패:', error));
+            .then(config => {
+                applyMemoFeatureEnabled(config.memo_enabled !== false);
+                applyModalWorkerFeatureConfig(config);
+            })
+            .catch(error => console.error('[LEFT_DOCK] 초기 기능 설정 적용 실패:', error));
 
         // ─── 터널 공유 (공유 모달) ──────────────────────────
         let tunnelActive = false;
@@ -24857,6 +25645,8 @@
 
         // ─── Modal 원격 ComfyUI ───
         let modalWorkflowCatalog = [];
+        // 검색 필터로 항목이 감춰져도 선택이 유지되도록 DOM이 아닌 Set으로 관리.
+        let modalSelectedWorkflowIds = new Set();
         let modalStatusPollTimer = null;
         // auth/install/probe 가 running 이었는지 추적. 터미널(completed/failed)로 전환되면
         // 폴링이 멈추기 전에 최종 상태를 한 번 더 가져와 화면에 반영하기 위함.
@@ -24991,6 +25781,116 @@
             }
         }
 
+        function modalFormatInstallDuration(value) {
+            const seconds = Math.max(0, Math.floor(Number(value) || 0));
+            if (seconds < 60) return `${seconds}초`;
+            const minutes = Math.floor(seconds / 60);
+            const remainSeconds = seconds % 60;
+            if (minutes < 60) return `${minutes}분 ${remainSeconds}초`;
+            const hours = Math.floor(minutes / 60);
+            return `${hours}시간 ${minutes % 60}분`;
+        }
+
+        function modalRenderInstallProgress(install) {
+            const panel = document.getElementById('modal-install-progress');
+            const button = document.getElementById('modal-installer-start-btn');
+            if (!panel) {
+                console.error('[MODAL] 설치 진행 패널 요소가 없습니다.');
+                return;
+            }
+            const state = String(install?.state || 'idle');
+            if (button) button.disabled = state === 'running';
+            if (state === 'idle') {
+                panel.hidden = true;
+                panel.dataset.state = 'idle';
+                return;
+            }
+            panel.hidden = false;
+            panel.dataset.state = state;
+
+            const phaseOrder = ['assets', 'deploy', 'upload', 'complete'];
+            const phase = String(install?.phase || 'assets');
+            const fallbackIndex = Math.max(0, phaseOrder.indexOf(phase));
+            const rawPhaseIndex = Number(install?.phase_index);
+            const phaseIndex = Number.isInteger(rawPhaseIndex)
+                ? Math.max(0, Math.min(rawPhaseIndex, phaseOrder.length - 1))
+                : fallbackIndex;
+            document.querySelectorAll('#modal-install-progress .modal-install-step').forEach((step, index) => {
+                const complete = state === 'completed' || index < phaseIndex;
+                step.classList.toggle('complete', complete);
+                step.classList.toggle('active', index === phaseIndex && state !== 'completed');
+            });
+
+            const title = document.getElementById('modal-install-progress-title');
+            const elapsed = document.getElementById('modal-install-progress-elapsed');
+            if (title) title.textContent = `${install?.phase_label || phase} · ${install?.message || state}`;
+            if (elapsed) elapsed.textContent = `경과 ${modalFormatInstallDuration(install?.elapsed_seconds)}`;
+
+            const progress = install?.progress || {};
+            const totalFiles = Math.max(0, Number(progress.total_files) || 0);
+            const completedFiles = Math.max(0, Number(progress.completed_files) || 0);
+            const totalBytes = Math.max(0, Number(progress.total_bytes) || 0);
+            const completedBytes = Math.max(0, Number(progress.completed_bytes) || 0);
+            const determinate = progress.mode === 'determinate' || progress.mode === 'complete';
+            let percent = 0;
+            if (progress.mode === 'complete' || state === 'completed') {
+                percent = 100;
+            } else if (determinate && totalBytes > 0) {
+                percent = Math.min(100, completedBytes / totalBytes * 100);
+            } else if (determinate && totalFiles > 0) {
+                percent = Math.min(100, completedFiles / totalFiles * 100);
+            }
+            const track = document.getElementById('modal-install-progress-track');
+            const fill = document.getElementById('modal-install-progress-fill');
+            if (track) {
+                track.classList.toggle('indeterminate', state === 'running' && !determinate);
+                if (determinate || state === 'completed') {
+                    track.setAttribute('aria-valuemin', '0');
+                    track.setAttribute('aria-valuemax', '100');
+                    track.setAttribute('aria-valuenow', String(Math.round(percent)));
+                } else {
+                    track.removeAttribute('aria-valuenow');
+                }
+            }
+            if (fill) fill.style.width = `${percent.toFixed(2)}%`;
+
+            const current = document.getElementById('modal-install-progress-current');
+            const count = document.getElementById('modal-install-progress-count');
+            if (current) {
+                current.textContent = progress.current_item
+                    ? `${progress.current_label || '파일'} · ${progress.current_item}`
+                    : (progress.current_label || install?.message || '진행 정보를 기다리고 있습니다.');
+                current.title = current.textContent;
+            }
+            if (count) {
+                const parts = [];
+                if (totalFiles > 0) parts.push(`${Math.min(completedFiles, totalFiles)}/${totalFiles}개`);
+                if (totalBytes > 0) {
+                    parts.push(`${comfyInstallerFormatBytes(Math.min(completedBytes, totalBytes))} / ${comfyInstallerFormatBytes(totalBytes)}`);
+                } else if (Number(install?.size_bytes) > 0) {
+                    parts.push(comfyInstallerFormatBytes(install.size_bytes));
+                }
+                if (Number(progress.skipped_files) > 0) parts.push(`기존 ${Number(progress.skipped_files)}개`);
+                count.textContent = parts.join(' · ') || (Number(install?.model_count) > 0 ? `모델 ${Number(install.model_count)}개` : '-');
+            }
+
+            const log = document.getElementById('modal-install-progress-log');
+            if (log) {
+                const stickToBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 28;
+                const entries = Array.isArray(install?.logs) ? install.logs : [];
+                log.textContent = entries.length
+                    ? entries.map(item => {
+                        const timestamp = new Date(Number(item?.time || 0) * 1000);
+                        const timeText = Number.isNaN(timestamp.getTime())
+                            ? '--:--:--'
+                            : timestamp.toLocaleTimeString('ko-KR', { hour12: false });
+                        return `[${timeText}] [${String(item?.source || 'system')}] ${String(item?.message || '')}`;
+                    }).join('\n')
+                    : '실시간 로그를 기다리고 있습니다.';
+                if (stickToBottom) log.scrollTop = log.scrollHeight;
+            }
+        }
+
         function modalApplyStatus(data, showResult = false) {
             const account = document.getElementById('modal-account-status');
             const cost = document.getElementById('modal-cost-status');
@@ -25027,6 +25927,7 @@
                     ? '#ff6b6b'
                     : (install.state === 'completed' ? '#4caf50' : 'var(--text-secondary,#aaa)');
             }
+            modalRenderInstallProgress(install);
 
             const runtimeState = document.getElementById('modal-runtime-state');
             const runtimeAccount = document.getElementById('modal-runtime-account');
@@ -25041,7 +25942,9 @@
             if (runtimeRunners) {
                 runtimeRunners.textContent = runtime?.available
                     ? `${Number(runtime.num_total_runners || 0)}개`
-                    : (data.settings.enabled ? '배포 확인 필요' : '사용 안 함');
+                    : (runtime?.reason === 'deployment_in_progress'
+                        ? '배포 중'
+                        : (data.settings.enabled ? '배포 확인 필요' : '사용 안 함'));
             }
             if (runtimeInputs) {
                 runtimeInputs.textContent = runtime?.available
@@ -25060,7 +25963,9 @@
                     ? '● 사용 안 함'
                     : (!data.connected
                         ? '● 계정 연결 필요'
-                        : (isRunning ? '● L4 실행 중' : '● 자동 대기'));
+                        : (runtime?.reason === 'deployment_in_progress'
+                            ? '● Modal 배포 중'
+                            : (isRunning ? '● L4 실행 중' : '● 자동 대기')));
             }
             const runtimeEnabledStatus = document.getElementById('modal-runtime-enabled-status');
             if (runtimeEnabledStatus) {
@@ -25084,7 +25989,9 @@
                         `L4 max=${data.settings.max_concurrency} / idle=${data.settings.scaledown_window_seconds}s`,
                         `autoscaler=${autoscaler.message || autoscaler.state || '-'}`,
                         `probe=${probe.message || probe.state || '-'}`,
-                        runtime?.error ? `runtime=${runtime.error}` : '',
+                        runtime?.reason === 'deployment_in_progress'
+                            ? `runtime=배포 등록 대기 중 · ${install.message || ''}`
+                            : (runtime?.error ? `runtime=${runtime.error}` : ''),
                     ].filter(Boolean).join('\n');
                 }
             }
@@ -25164,12 +26071,12 @@
         }
 
         function modalSelectedWorkflows() {
-            return Array.from(document.querySelectorAll('.modal-workflow-checkbox:checked'))
-                .map(input => input.value);
+            // DOM 체크박스가 아니라 Set이 진원. 필터로 감춰진 항목도 선택 유지.
+            return Array.from(modalSelectedWorkflowIds);
         }
 
         function modalUpdateWorkflowSelectionSummary() {
-            const selected = new Set(modalSelectedWorkflows());
+            const selected = modalSelectedWorkflowIds;
             let modelCount = 0;
             let rawBytes = 0;
             for (const item of modalWorkflowCatalog) {
@@ -25185,36 +26092,89 @@
             }
         }
 
+        function modalWorkflowSearchText() {
+            const input = document.getElementById('modal-workflow-search');
+            return (input?.value || '').trim().toLowerCase();
+        }
+
+        function modalFilterWorkflows() {
+            // 검색 입력 변경 시 재렌더. 카탈로그 재조회 없이 로컬 필터만.
+            modalRenderWorkflowCatalog();
+        }
+
+        function modalRenderWorkflowCatalog(errors) {
+            const container = document.getElementById('modal-workflow-catalog');
+            if (!container) return;
+            const query = modalWorkflowSearchText();
+            const filtered = modalWorkflowCatalog.filter(item => {
+                const name = String(item.source_name || item.id || '').toLowerCase();
+                return !query || name.includes(query);
+            });
+            container.replaceChildren();
+            if (errors && errors.length) {
+                const note = document.createElement('p');
+                note.className = 'comfy-installer-note';
+                note.style.cssText = 'color:#d77;margin:0 0 6px;';
+                note.textContent = `처리 실패(${errors.length}개, 제외됨): ${errors.map(e => e.name).join(', ')} — 서버 로그를 확인하세요.`;
+                container.append(note);
+            }
+            if (!modalWorkflowCatalog.length) {
+                const empty = document.createElement('div');
+                empty.className = 'comfy-workflow-empty';
+                empty.textContent = 'SOYA_USER 폴더에 동기화할 워크플로우 파일이 없습니다.';
+                container.append(empty);
+            } else if (!filtered.length) {
+                const empty = document.createElement('div');
+                empty.className = 'comfy-workflow-empty';
+                const rawQuery = (document.getElementById('modal-workflow-search')?.value || '').trim();
+                empty.textContent = `검색 "${rawQuery}"에 일치하는 워크플로우가 없습니다.`;
+                container.append(empty);
+            }
+            for (const item of filtered) {
+                const label = document.createElement('label');
+                label.style.cssText = 'display:flex;align-items:center;gap:9px;padding:8px 10px;border-bottom:1px solid var(--border);cursor:pointer;';
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.className = 'modal-workflow-checkbox';
+                checkbox.value = item.id;
+                checkbox.checked = modalSelectedWorkflowIds.has(item.id);
+                checkbox.addEventListener('change', () => {
+                    if (checkbox.checked) modalSelectedWorkflowIds.add(item.id);
+                    else modalSelectedWorkflowIds.delete(item.id);
+                    modalUpdateWorkflowSelectionSummary();
+                });
+                const copy = document.createElement('span');
+                copy.style.cssText = 'display:flex;flex:1;justify-content:space-between;gap:12px;font-size:12px;';
+                const name = document.createElement('strong');
+                name.textContent = item.source_name || item.id;
+                const size = document.createElement('span');
+                size.style.color = 'var(--text-secondary,#aaa)';
+                size.textContent = `${item.model_count} 모델 · ${(Number(item.size_gib) || 0).toFixed(2)} GiB`;
+                copy.append(name, size);
+                label.append(checkbox, copy);
+                container.append(label);
+            }
+            const countEl = document.getElementById('modal-workflow-search-count');
+            if (countEl) {
+                countEl.textContent = modalWorkflowCatalog.length
+                    ? `${filtered.length} / ${modalWorkflowCatalog.length}개`
+                    : '';
+            }
+        }
+
         async function modalInstallerLoadCatalog() {
             const container = document.getElementById('modal-workflow-catalog');
             if (!container) return;
             try {
                 const data = await fetchJSON('/api/modal/workflows');
                 modalWorkflowCatalog = data.workflows || [];
-                container.replaceChildren();
-                for (const item of modalWorkflowCatalog) {
-                    const label = document.createElement('label');
-                    label.style.cssText = 'display:flex;align-items:center;gap:9px;padding:8px 10px;border-bottom:1px solid var(--border);cursor:pointer;';
-                    const checkbox = document.createElement('input');
-                    checkbox.type = 'checkbox';
-                    checkbox.className = 'modal-workflow-checkbox';
-                    checkbox.value = item.id;
-                    checkbox.disabled = !item.configured;
-                    if (!item.configured) label.style.opacity = '.55';
-                    checkbox.addEventListener('change', modalUpdateWorkflowSelectionSummary);
-                    const copy = document.createElement('span');
-                    copy.style.cssText = 'display:flex;flex:1;justify-content:space-between;gap:12px;font-size:12px;';
-                    const name = document.createElement('strong');
-                    name.textContent = item.source_name || item.id;
-                    const size = document.createElement('span');
-                    size.style.color = 'var(--text-secondary,#aaa)';
-                    size.textContent = item.configured
-                        ? `${item.model_count} 모델 · ${item.size_gib.toFixed(2)} GiB`
-                        : (item.reason || 'SOYA_USER 사용자 워크플로우가 아닙니다');
-                    copy.append(name, size);
-                    label.append(checkbox, copy);
-                    container.append(label);
+                const errors = Array.isArray(data.errors) ? data.errors : [];
+                // 새로고침 후 사라진 항목은 선택에서 제거(스테일 선택 방지).
+                const present = new Set(modalWorkflowCatalog.map(item => item.id));
+                for (const id of Array.from(modalSelectedWorkflowIds)) {
+                    if (!present.has(id)) modalSelectedWorkflowIds.delete(id);
                 }
+                modalRenderWorkflowCatalog(errors);
                 modalUpdateWorkflowSelectionSummary();
                 modalRuntimePopulateWorkflowSelect();
             } catch (error) {
@@ -25232,6 +26192,7 @@
             if (!window.confirm(`선택한 ${workflowIds.length}개 SOYA_USER 워크플로우와 현재 로컬에서 참조하는 모델 파일을 사용자 Modal 계정에 직접 업로드할까요? 외부 모델 사이트에서는 다운로드하지 않으며, GPU는 생성 요청 전까지 켜지지 않습니다.`)) return;
             const button = document.getElementById('modal-installer-start-btn');
             if (button) button.disabled = true;
+            let started = false;
             try {
                 const data = await fetchJSON('/api/modal/install', {
                     method: 'POST',
@@ -25240,13 +26201,16 @@
                 });
                 const status = document.getElementById('modal-installer-status');
                 if (status) status.textContent = data.install?.message || 'Modal 동기화를 시작했습니다.';
+                started = true;
+                _modalInstallWasRunning = true;
+                modalRenderInstallProgress(data.install || {state: 'running', phase: 'assets'});
                 showToast('Modal 동기화를 시작했습니다', 'success');
                 modalScheduleStatusPoll();
             } catch (error) {
                 console.error('[MODAL] 동기화 시작 실패:', error);
                 showToast('Modal 동기화 시작 실패: ' + (error.message || error), 'error');
             } finally {
-                if (button) button.disabled = false;
+                if (button && !started) button.disabled = false;
             }
         }
 
@@ -25255,11 +26219,13 @@
             if (!select) return;
             const previous = select.value;
             select.replaceChildren();
-            const available = modalWorkflowCatalog.filter(item => item.configured);
+            // 카탈로그는 SOYA_USER 파일 나열이므로 configured는 항상 true.
+            // 파싱 실패 파일은 이미 서버에서 제외되어 여기 들어오지 않는다.
+            const available = modalWorkflowCatalog;
             if (!available.length) {
                 const option = document.createElement('option');
                 option.value = '';
-                option.textContent = '실행 경로가 설정된 워크플로우가 없습니다.';
+                option.textContent = 'SOYA_USER에 실행할 워크플로우가 없습니다.';
                 select.appendChild(option);
                 modalRuntimeWorkflowChanged();
                 return;
@@ -27142,6 +28108,7 @@
                     currentConfigLoadPromise = Promise.resolve(currentConfig);
                     applyIllustrationProviderConfig(currentConfig);
                     applyMemoFeatureEnabled(currentConfig.memo_enabled !== false);
+                    applyModalWorkerFeatureConfig(currentConfig);
                     // ANIMA UI 가시성 업데이트
                     updateAnimaUIVisibility();
                     // 버튼 가시성 업데이트
@@ -72820,6 +73787,7 @@
         // ─── 통합 큐 WebSocket 핸들러 ────────────────────────
         function handleQueueUpdated(data) {
             if (!data || !data.items) { console.warn('[QUEUE] handleQueueUpdated: 데이터 없음', data); return; }
+            notifyModalWorkerQueueState(data);
             if (typeof atReconcileDefaultGenerationQueue === 'function') {
                 atReconcileDefaultGenerationQueue(data.items);
             }

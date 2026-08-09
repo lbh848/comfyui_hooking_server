@@ -68,12 +68,12 @@ class PostprocessVnLayoutTests(unittest.TestCase):
     def test_default_vn_contains_new_theme_and_thumbnail_settings(self):
         settings = _default_vn()
 
-        self.assertFalse(settings["dialogue_color"])
+        self.assertTrue(settings["dialogue_color"])
         self.assertEqual(settings["text_outline_width"], -1)
         self.assertNotIn("multi_speaker_layout", settings)
         self.assertEqual(settings["multi_face_mode"], "both")
-        self.assertEqual(settings["theme_single"], "sky")
-        self.assertEqual(settings["theme_dual"], "sky")
+        self.assertEqual(settings["theme_single"], "classic")
+        self.assertEqual(settings["theme_dual"], "classic_simple")
 
     def test_single_and_dual_theme_are_selected_independently(self):
         settings = {
