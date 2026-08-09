@@ -24881,6 +24881,11 @@
         // ─── Modal 원격 ComfyUI ───
         let modalWorkflowCatalog = [];
         let modalStatusPollTimer = null;
+        // auth/install/probe 가 running 이었는지 추적. 터미널(completed/failed)로 전환되면
+        // 폴링이 멈추기 전에 최종 상태를 한 번 더 가져와 화면에 반영하기 위함.
+        let _modalAuthWasRunning = false;
+        let _modalInstallWasRunning = false;
+        let _modalProbeWasRunning = false;
         let modalRuntimePollTimer = null;
         let modalRuntimePollBusy = false;
         let modalRuntimeActiveJobId = '';
@@ -25028,14 +25033,17 @@
             const auth = data.auth || {};
             const install = data.install || {};
             if (account) {
-                const connection = !data.connection_checked
-                    ? 'Modal OFF · 계정 조회 안 함'
-                    : (data.connected ? '연결됨' : '연결 안 됨');
-                account.textContent = `${connection} · profile=${data.settings.profile} · SDK ${data.sdk_version}`
+                const onoff = data.settings.enabled ? 'Modal ON' : 'Modal OFF';
+                const connection = data.connected ? '연결됨' : '연결 안 됨';
+                account.textContent = `${onoff} · ${connection} · profile=${data.settings.profile} · SDK ${data.sdk_version}`
                     + (data.pending_lora_deletes ? ` · LoRA 삭제 대기 ${data.pending_lora_deletes}건` : '')
                     + (auth.state === 'running' ? `\n${auth.message}` : '');
                 account.style.color = data.connected ? '#4caf50' : '#e6a23c';
             }
+            // 인증 진행 중에는 계정 연결 버튼을 비활성화하고, 끝나면 다시 활성화.
+            // 반복 클릭으로 인증 태스크가 살아있는 동안 400이 무한히 나오는 것을 방지.
+            const connectBtn = document.getElementById('modal-connect-btn');
+            if (connectBtn) connectBtn.disabled = (auth.state === 'running');
             if (cost && data.cost) {
                 const lines = [
                     `L4 GPU $${data.cost.l4_gpu_per_hour}/시간 · CPU/RAM 포함 추정 $${data.cost.estimated_container_per_hour}/컨테이너시간`,
@@ -25061,8 +25069,8 @@
             const runtimeInputs = document.getElementById('modal-runtime-inputs');
             const runtime = data.runtime || null;
             if (runtimeAccount) {
-                runtimeAccount.textContent = !data.connection_checked
-                    ? 'OFF · 조회 안 함'
+                runtimeAccount.textContent = !data.settings.enabled
+                    ? 'OFF'
                     : (data.connected ? data.settings.profile : '연결 필요');
             }
             if (runtimeRunners) {
@@ -25122,7 +25130,19 @@
                 );
             }
             if (auth.state === 'running' || install.state === 'running' || probe.state === 'running') {
+                _modalAuthWasRunning = _modalAuthWasRunning || auth.state === 'running';
+                _modalInstallWasRunning = _modalInstallWasRunning || install.state === 'running';
+                _modalProbeWasRunning = _modalProbeWasRunning || probe.state === 'running';
                 modalScheduleStatusPoll();
+            } else {
+                // running 이었다가 터미널(completed/failed)로 넘어간 경우:
+                // 폴링이 여기서 멈추므로, 최종 연결 상태를 한 번 더 가져와 반영한다.
+                // (인증 완료 후 "연결 안 됨"이 화면에 남는 현상 방지)
+                const justFinished = _modalAuthWasRunning || _modalInstallWasRunning || _modalProbeWasRunning;
+                _modalAuthWasRunning = false;
+                _modalInstallWasRunning = false;
+                _modalProbeWasRunning = false;
+                if (justFinished) modalScheduleStatusPoll();
             }
         }
 
@@ -25156,9 +25176,10 @@
             } catch (error) {
                 console.error('[MODAL] 계정 연결 시작 실패:', error);
                 showToast('Modal 계정 연결 실패: ' + (error.message || error), 'error');
-            } finally {
                 if (button) button.disabled = false;
             }
+            // 성공 시 버튼은 modalApplyStatus가 auth.state==='running'을 보고 비활성화를 유지.
+            // 따라서 finally에서 무조건 풀지 않는다(진행 중 풀면 반복 클릭 → 400 스팸).
         }
 
         async function modalRefreshBilling() {

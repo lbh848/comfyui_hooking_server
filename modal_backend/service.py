@@ -202,12 +202,10 @@ class ModalService:
 
     async def status(self, *, include_runtime: bool = False) -> dict[str, Any]:
         settings = ModalSettings.from_mapping(self.get_config())
-        connection_checked = settings.enabled
-        connected = (
-            await self.account_connected(settings)
-            if connection_checked
-            else False
-        )
+        # 토큰(연결) 존재 여부는 modal_enabled와 무관하게 항상 조회한다.
+        # 기능이 꺼져 있어도 "방금 인증한 토큰이 등록됐는지" 확인할 수 있어야 한다.
+        connection_checked = True
+        connected = await self.account_connected(settings)
         pending_deletes = await asyncio.to_thread(self._delete_outbox_count)
         if settings.enabled and connected and pending_deletes:
             self._schedule_delete_flush()
@@ -283,7 +281,15 @@ class ModalService:
     async def start_auth(self, profile: str) -> dict[str, Any]:
         settings = ModalSettings.from_mapping({"modal_profile": profile})
         if self._auth_task and not self._auth_task.done():
-            raise RuntimeError("Modal 계정 연결이 이미 진행 중입니다.")
+            # 이미 브라우저 인증이 진행 중이면 에러 대신 현재 상태를 그대로 반환.
+            # 멱등 처리: 프론트의 반복 클릭/재시도가 400 스팸 무한 루프를 만들지 않도록 한다.
+            self._auth_state = {
+                **self._auth_state,
+                "state": "running",
+                "message": self._auth_state.get("message") or "브라우저에서 Modal 로그인과 Workspace 선택을 완료하세요.",
+                "profile": settings.profile,
+            }
+            return dict(self._auth_state)
         self._auth_state = {
             "state": "running",
             "message": "브라우저에서 Modal 로그인과 Workspace 선택을 완료하세요.",
