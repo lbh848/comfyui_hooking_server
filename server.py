@@ -118,6 +118,8 @@ from comfy_installer.http_api import register_comfy_installer_routes
 from comfy_installer.input_patcher import patch_comfy_input
 from comfy_installer.patch_importer import register_patch_import_routes
 from comfy_installer.workflow_library import migrate_legacy_workflow_layout
+from modal_backend import register_modal_routes
+from modal_backend.settings import ModalSettings
 from comfy_runtime import (
     DEFAULT_COMFY_LAUNCH_PROFILES,
     ComfyRuntimeValidationError,
@@ -187,6 +189,13 @@ DEFAULT_CONFIG = {
     "comfyui_port_illustration": None,  # 삽화 전용 포트 (null=메인 포트 사용)
     "comfy_launch_profiles": copy.deepcopy(DEFAULT_COMFY_LAUNCH_PROFILES),
     "comfy_task_allocations": copy.deepcopy(DEFAULT_COMFY_TASK_ALLOCATIONS),
+    "modal_enabled": False,
+    "modal_profile": "soya-comfy",
+    "modal_environment": "main",
+    "modal_deployment_name": "soya-comfy-worker",
+    "modal_gpu": "L4",
+    "modal_max_concurrency": 2,
+    "modal_monthly_credit_usd": 30.0,
     "workflow_base_dir": "",  # 공통 설정 UI의 워크플로우 베이스 폴더 절대 경로
     "comfy_workflow_source_path": "",
     "data_saving_mode": False,
@@ -2259,6 +2268,21 @@ async def generate_image_with_prompt(
                     print(f"[DEBUG]   노드 {nid} ({cls}): {json.dumps(inputs, ensure_ascii=False)}")
         print("[DEBUG] ══════════════════════════════════════════════════════")
         return None, "디버깅 모드: ComfyUI 전송 생략됨"
+
+    if app_config.get("modal_enabled", False):
+        try:
+            if progress_callback:
+                await progress_callback(0, 1)
+            await notify_frontend("generation_progress", {"value": 0, "max": 1})
+            image_bytes, modal_result = await modal_service.generate(risu_prompt)
+            if progress_callback:
+                await progress_callback(1, 1)
+            await notify_frontend("generation_progress", {"value": 1, "max": 1})
+            return image_bytes, {"modal": modal_result}
+        except Exception as e:
+            print(f"[MODAL_GEN] 원격 이미지 생성 실패: {type(e).__name__}: {e}")
+            traceback.print_exc()
+            return None, f"Modal 원격 이미지 생성 실패: {type(e).__name__}: {e}"
 
     async def _on_gen_progress(value, max_value):
         print(f"[GEN_PROGRESS] {value}/{max_value}")
@@ -10703,6 +10727,38 @@ async def handle_api_config(request: web.Request) -> web.Response:
                     traceback.print_exc()
                     return web.json_response({"error": str(e)}, status=400)
 
+            if any(str(key).startswith("modal_") for key in body):
+                modal_candidate = copy.deepcopy(app_config)
+                for key, value in body.items():
+                    if key in DEFAULT_CONFIG:
+                        modal_candidate[key] = copy.deepcopy(value)
+                try:
+                    normalized_modal = ModalSettings.from_mapping(modal_candidate)
+                except (TypeError, ValueError) as e:
+                    print(
+                        f"[CONFIG] Modal 설정 저장 거부: "
+                        f"values={{'enabled': {body.get('modal_enabled')!r}, "
+                        f"'profile': {body.get('modal_profile')!r}, "
+                        f"'environment': {body.get('modal_environment')!r}, "
+                        f"'deployment': {body.get('modal_deployment_name')!r}, "
+                        f"'gpu': {body.get('modal_gpu')!r}, "
+                        f"'max_concurrency': {body.get('modal_max_concurrency')!r}}}, "
+                        f"error={e}"
+                    )
+                    traceback.print_exc()
+                    return web.json_response({"error": str(e)}, status=400)
+                body.update(
+                    {
+                        "modal_enabled": normalized_modal.enabled,
+                        "modal_profile": normalized_modal.profile,
+                        "modal_environment": normalized_modal.environment,
+                        "modal_deployment_name": normalized_modal.deployment_name,
+                        "modal_gpu": normalized_modal.gpu,
+                        "modal_max_concurrency": normalized_modal.max_concurrency,
+                        "modal_monthly_credit_usd": normalized_modal.monthly_credit_usd,
+                    }
+                )
+
             if "asset_edit_tool" in body:
                 raw_edit_tool = str(
                     body.get("asset_edit_tool") or ""
@@ -11138,6 +11194,17 @@ async def handle_api_config(request: web.Request) -> web.Response:
                     asyncio.ensure_future(queue_manager._ensure_llm_workers())
                 except Exception as e:
                     print(f"[CONFIG] LLM 워커풀 갱신 실패: {e}")
+                    traceback.print_exc()
+
+            if any(
+                key in body
+                for key in ("modal_enabled", "modal_max_concurrency")
+            ):
+                try:
+                    asyncio.ensure_future(queue_manager._ensure_modal_workers())
+                except Exception as e:
+                    print(f"[CONFIG] Modal 원격 워커풀 갱신 실패: {e}")
+                    traceback.print_exc()
                     traceback.print_exc()
 
             # 챈섭 동시성 변경도 실행 중 서버의 외부 워커풀에 즉시 반영한다.
@@ -12260,6 +12327,11 @@ app.router.add_get("/api/restore_manual/characters", handle_api_restore_manual_c
 app.router.add_get("/api/frontend_ws", handle_frontend_ws)
 app.router.add_get("/api/config", handle_api_config)
 app.router.add_post("/api/config", handle_api_config)
+modal_service = register_modal_routes(
+    app,
+    project_root=BASE_DIR,
+    get_config=load_config,
+)
 app.router.add_get("/api/memo", handle_api_memo)
 app.router.add_post("/api/memo", handle_api_memo)
 app.router.add_post("/api/patch-comfy-input", handle_api_patch_comfy_input)
@@ -17451,8 +17523,20 @@ async def handle_api_lora_manage_delete(request):
             return web.json_response({"success": False, "error": "캐릭터 누락"}, status=400)
         config = load_config()
         lora_load_path = config.get("lora_load_path", "")
-        from modes.lora_mode import remove_lora_entry
+        from modes.lora_mode import _safe_dirname, remove_lora_entry
         result = remove_lora_entry(name, character, lora_load_path)
+        if result.get("success"):
+            try:
+                await modal_service.enqueue_lora_delete(
+                    f"SOYA_CHAR_LORA/{_safe_dirname(character)}/Lora/{_safe_dirname(name)}"
+                )
+            except Exception as sync_error:
+                print(
+                    f"[MODAL_SYNC] 에셋 LoRA 원격 삭제 예약 실패: "
+                    f"character={character}, name={name}, error={sync_error}"
+                )
+                traceback.print_exc()
+                result["modal_sync_warning"] = str(sync_error)
         status = 200 if result.get("success") else 400
         return web.json_response(result, status=status)
     except Exception as e:
@@ -18133,8 +18217,20 @@ async def handle_api_bot_lora_project_delete(request):
             return web.json_response({"success": False, "error": "봇/프로젝트 이름 필수"}, status=400)
         config = load_config()
         lora_load_path = config.get("bot_lora_load_path", "") or os.path.join(config.get("lora_load_path", ""), "SOYA_BOT_LORA")
-        from modes.bot_lora_mode import remove_project
+        from modes.bot_lora_mode import _safe_dirname, remove_project
         result = remove_project(bot_name, project_name, lora_load_path)
+        if result.get("success"):
+            try:
+                await modal_service.enqueue_lora_delete(
+                    f"SOYA_CHAR_LORA/SOYA_BOT_LORA/{_safe_dirname(bot_name)}/Lora/{_safe_dirname(project_name)}"
+                )
+            except Exception as sync_error:
+                print(
+                    f"[MODAL_SYNC] 봇 LoRA 원격 삭제 예약 실패: "
+                    f"bot={bot_name}, project={project_name}, error={sync_error}"
+                )
+                traceback.print_exc()
+                result["modal_sync_warning"] = str(sync_error)
         return web.json_response(result)
     except Exception as e:
         print(f"[BOT_LORA_API] 프로젝트 삭제 실패: {e}")
@@ -18946,8 +19042,23 @@ async def handle_api_instance_lora_delete(request):
             return web.json_response({"success": False, "error": "id 필수"}, status=400)
         config = load_config()
         instance_lora_load_path = config.get("instance_lora_load_path", "")
-        from modes.instance_lora_mode import delete_lora
+        from modes.instance_lora_mode import _safe_dirname, delete_lora
         result = delete_lora(lora_id, instance_lora_load_path)
+        if result.get("success"):
+            try:
+                await modal_service.enqueue_lora_delete(
+                    f"SOYA_CHAR_LORA/SOYA_INSTANCE_LORA/anima/{_safe_dirname(lora_id)}"
+                )
+                await modal_service.enqueue_lora_delete(
+                    f"SOYA_CHAR_LORA/SOYA_INSTANCE_LORA/sdxl/{_safe_dirname(lora_id)}"
+                )
+            except Exception as sync_error:
+                print(
+                    f"[MODAL_SYNC] 인스턴스 LoRA 원격 삭제 예약 실패: "
+                    f"id={lora_id}, error={sync_error}"
+                )
+                traceback.print_exc()
+                result["modal_sync_warning"] = str(sync_error)
         return web.json_response(result)
     except Exception as e:
         print(f"[INSTANCE_LORA_API] 삭제 실패: {e}")
@@ -19495,8 +19606,24 @@ async def handle_api_style_lora_project_delete(request):
         if not project:
             return web.json_response({"success": False, "error": "project 필수"}, status=400)
         config = load_config()
-        from modes.style_lora_mode import delete_project
-        return web.json_response(delete_project(project, config.get("style_lora_load_path", "")))
+        from modes.style_lora_mode import _safe_dirname, delete_project
+        result = delete_project(project, config.get("style_lora_load_path", ""))
+        if result.get("success"):
+            try:
+                await modal_service.enqueue_lora_delete(
+                    f"SOYA_CHAR_LORA/SOYA_STYLE_LORA/anima/{_safe_dirname(project)}"
+                )
+                await modal_service.enqueue_lora_delete(
+                    f"SOYA_CHAR_LORA/SOYA_STYLE_LORA/sdxl/{_safe_dirname(project)}"
+                )
+            except Exception as sync_error:
+                print(
+                    f"[MODAL_SYNC] 스타일 LoRA 원격 삭제 예약 실패: "
+                    f"project={project}, error={sync_error}"
+                )
+                traceback.print_exc()
+                result["modal_sync_warning"] = str(sync_error)
+        return web.json_response(result)
     except Exception as e:
         print(f"[STYLE_LORA_API] project delete 실패: {e}")
         traceback.print_exc()

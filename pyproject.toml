@@ -27,6 +27,7 @@ dependencies = [
     "ultralytics>=8.4.95",
     "dill>=0.4.1",
     "argon2-cffi>=25.1.0",
+    "modal>=1.5.3,<2",
 ]
 
 [tool.uv]

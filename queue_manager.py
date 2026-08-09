@@ -262,6 +262,12 @@ class QueueManager:
         self._external_worker_tasks: dict[int, asyncio.Future] = {}
         self._external_next_worker_id: int = 0
         self._external_wakeup: asyncio.Event = asyncio.Event()
+        # Modal 원격 Comfy는 로컬 GPU와 독립된 L4 컨테이너 워커풀에서 삽화/재생성을
+        # 병렬 처리한다. Modal OFF일 때는 워커가 0개이며 기존 로컬 직렬 큐를 보존한다.
+        self.current_modal_items: dict[int, QueueItem] = {}
+        self._modal_worker_tasks: dict[int, asyncio.Future] = {}
+        self._modal_next_worker_id: int = 0
+        self._modal_wakeup: asyncio.Event = asyncio.Event()
         # 삽화 완료 후 다음 작업 시작 전 대기 (새 삽화 도착 시 즉시 진행)
         self._illust_wait_event: Optional[asyncio.Event] = None
         self._illust_wait_started_at: Optional[float] = None
@@ -457,6 +463,8 @@ class QueueManager:
         # 챈섭 및 아직 공급자가 정해지지 않은 하이브리드 항목은 외부 워커도 깨운다.
         if self._item_execution_area(item)[0] in ("external", "hybrid"):
             asyncio.ensure_future(self._ensure_external_workers())
+        if self._item_execution_area(item)[0] in ("modal", "hybrid"):
+            asyncio.ensure_future(self._ensure_modal_workers())
         return item
 
     async def add_items_batch(self, items_spec: list, priority: int = 10) -> list:
@@ -507,6 +515,7 @@ class QueueManager:
             asyncio.ensure_future(self._process_loop())
             self._llm_wakeup.set()
             self._external_wakeup.set()
+            self._modal_wakeup.set()
         return cancelled
 
     async def cancel_item(self, item_id: str) -> bool:
@@ -522,6 +531,7 @@ class QueueManager:
                     asyncio.ensure_future(self._process_loop())
                     self._llm_wakeup.set()
                     self._external_wakeup.set()
+                    self._modal_wakeup.set()
                     return True
                 return False
         return False
@@ -543,6 +553,7 @@ class QueueManager:
             asyncio.ensure_future(self._process_loop())
             self._llm_wakeup.set()
             self._external_wakeup.set()
+            self._modal_wakeup.set()
         return self._paused
 
     async def cancel_all_pending(self):
@@ -560,6 +571,7 @@ class QueueManager:
             asyncio.ensure_future(self._process_loop())
             self._llm_wakeup.set()
             self._external_wakeup.set()
+            self._modal_wakeup.set()
 
     def _item_execution_area(self, item: QueueItem) -> tuple[str, str]:
         """큐 실행 영역과 공급자를 반환한다. hybrid는 먼저 빈 실행 레인이 가져간다."""
@@ -596,6 +608,17 @@ class QueueManager:
             return "external", "chansub"
         if provider == "hybrid":
             return "hybrid", "hybrid"
+        if item.type in ("illustration", "regenerate") and provider in ("", "comfy"):
+            try:
+                config = self.get_config() if self.get_config else {}
+                if config.get("modal_enabled", False):
+                    return "modal", "modal"
+            except Exception as e:
+                print(
+                    f"[QUEUE:MODAL] 실행 영역 설정 조회 실패, 로컬 GPU 사용: "
+                    f"item={item.id}, error={type(e).__name__}: {e}"
+                )
+                traceback.print_exc()
         return "gpu", provider or "local"
 
     def _bind_hybrid_item_provider(self, item: QueueItem, provider: str) -> bool:
@@ -680,6 +703,14 @@ class QueueManager:
                 if not task.done()
             ]),
             "external_target_workers": self._target_external_workers(),
+            "current_modals": [
+                self._item_status_dict(item)
+                for _, item in sorted(self.current_modal_items.items())
+            ],
+            "modal_active_workers": len([
+                task for task in self._modal_worker_tasks.values() if not task.done()
+            ]),
+            "modal_target_workers": self._target_modal_workers(),
         }
 
     def remove_item(self, item_id: str) -> bool:
@@ -873,8 +904,13 @@ class QueueManager:
             if (
                 lane == "gpu"
                 and item.type not in LLM_TYPES
-                and execution_area in ("gpu", "hybrid")
+                and (
+                    execution_area == "gpu"
+                    or (execution_area == "hybrid" and not self._modal_enabled())
+                )
             ):
+                return True
+            if lane == "modal" and execution_area in ("modal", "hybrid"):
                 return True
         return False
 
@@ -1050,7 +1086,13 @@ class QueueManager:
                 gpu_pending = [
                     i for i in pending_items
                     if i.type not in LLM_TYPES
-                    and self._item_execution_area(i)[0] in ("gpu", "hybrid")
+                    and (
+                        self._item_execution_area(i)[0] == "gpu"
+                        or (
+                            self._item_execution_area(i)[0] == "hybrid"
+                            and not self._modal_enabled()
+                        )
+                    )
                     and self._dependencies_ready(i)
                 ]
                 if not gpu_pending:
@@ -1103,6 +1145,133 @@ class QueueManager:
         asyncio.ensure_future(self._process_loop())
         self._llm_wakeup.set()
         self._external_wakeup.set()
+        self._modal_wakeup.set()
+
+    # ─── Modal 원격 Comfy 워커 ─────────────────────────────
+
+    def _modal_enabled(self) -> bool:
+        try:
+            config = self.get_config() if self.get_config else {}
+            enabled = config.get("modal_enabled", False)
+            if not isinstance(enabled, bool):
+                raise TypeError(f"modal_enabled는 bool이어야 합니다: {enabled!r}")
+            return enabled
+        except Exception as e:
+            print(f"[QUEUE:MODAL] 활성 설정 조회 실패, OFF 사용: {type(e).__name__}: {e}")
+            traceback.print_exc()
+            return False
+
+    def _target_modal_workers(self) -> int:
+        if not self._modal_enabled():
+            return 0
+        raw_value = None
+        try:
+            raw_value = (self.get_config() if self.get_config else {}).get(
+                "modal_max_concurrency", 2
+            )
+            if isinstance(raw_value, bool):
+                raise TypeError("bool은 허용되지 않음")
+            numeric = float(raw_value)
+            if not numeric.is_integer():
+                raise ValueError("정수가 아님")
+            target = int(numeric)
+        except Exception as e:
+            print(
+                f"[QUEUE:MODAL] modal_max_concurrency 읽기 실패, 기본 2 사용: "
+                f"value={raw_value!r}, error={type(e).__name__}: {e}"
+            )
+            traceback.print_exc()
+            return 2
+        if not 1 <= target <= 10:
+            print(
+                f"[QUEUE:MODAL] modal_max_concurrency 범위 오류, 기본 2 사용: "
+                f"value={target}"
+            )
+            return 2
+        return target
+
+    async def _ensure_modal_workers(self):
+        self._modal_worker_tasks = {
+            wid: task for wid, task in self._modal_worker_tasks.items() if not task.done()
+        }
+        target = self._target_modal_workers()
+        while len(self._modal_worker_tasks) < target:
+            wid = self._modal_next_worker_id
+            self._modal_next_worker_id += 1
+            self._modal_worker_tasks[wid] = asyncio.ensure_future(
+                self._modal_worker_loop(wid)
+            )
+            print(
+                f"[QUEUE:MODAL] 원격 워커 {wid} 시작 "
+                f"(활성 {len(self._modal_worker_tasks)}/목표 {target})"
+            )
+        self._modal_wakeup.set()
+
+    def _modal_worker_should_exit(self, wid: int) -> bool:
+        target = self._target_modal_workers()
+        alive = sorted(
+            worker_id
+            for worker_id, task in self._modal_worker_tasks.items()
+            if not task.done()
+        )
+        return wid not in set(alive[:target])
+
+    def _pop_next_modal_item(self) -> Optional[QueueItem]:
+        pending = [
+            item for item in self.items
+            if item.status == "pending"
+            and self._item_execution_area(item)[0] in ("modal", "hybrid")
+            and self._dependencies_ready(item)
+        ]
+        if not pending:
+            return None
+        pending.sort(key=self._sort_key)
+        item = pending[0]
+        if self._item_execution_area(item)[0] == "hybrid":
+            if not self._bind_hybrid_item_provider(item, "comfy"):
+                print(f"[QUEUE:MODAL] 하이브리드 claim 실패: item={item.id}")
+                return None
+        item.status = "processing"
+        item.started_at = time.time()
+        item.progress = 0.0
+        return item
+
+    async def _modal_worker_loop(self, wid: int):
+        try:
+            while True:
+                self._modal_worker_tasks = {
+                    worker_id: task
+                    for worker_id, task in self._modal_worker_tasks.items()
+                    if not task.done()
+                }
+                if self._modal_worker_should_exit(wid):
+                    print(f"[QUEUE:MODAL] 원격 워커 {wid} 종료 (동시성 축소 또는 OFF)")
+                    return
+                if self._paused:
+                    self._modal_wakeup.clear()
+                    print(f"[QUEUE:MODAL] 원격 워커 {wid} 일시정지 대기")
+                    await self._modal_wakeup.wait()
+                    continue
+                item = self._pop_next_modal_item()
+                if item is None:
+                    self._modal_wakeup.clear()
+                    if self._has_ready_pending("modal"):
+                        continue
+                    await self._modal_wakeup.wait()
+                    continue
+                self.current_modal_items[wid] = item
+                try:
+                    await self._run_item_pipeline(item, is_gpu=False)
+                finally:
+                    self.current_modal_items.pop(wid, None)
+        except asyncio.CancelledError:
+            print(f"[QUEUE:MODAL] 원격 워커 {wid} 취소")
+            raise
+        except Exception as e:
+            print(f"[QUEUE:MODAL] 원격 워커 {wid} 치명적 예외: {e}")
+            traceback.print_exc()
+        finally:
+            self.current_modal_items.pop(wid, None)
 
     async def _deferred_prune(self, item: QueueItem):
         """완료/실패/취소 항목을 UI에 2초간 띄운 뒤 리스트에서 삭제한다.

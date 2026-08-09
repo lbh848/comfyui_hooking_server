@@ -17004,6 +17004,75 @@
                 <!-- Tab 2: 외부 API 설정 -->
                 <div class="settings-tab-panel" id="settings-tab-api">
                     <div class="external-api-group">
+                        <div class="external-api-group-title">Modal 원격 ComfyUI</div>
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="title">Modal 사용</div>
+                                <div class="desc">L4 컨테이너를 요청할 때만 켜고 작업 종료 15초 뒤 자동으로 0개까지 줄입니다.</div>
+                            </div>
+                            <div class="setting-control" style="display:flex; align-items:center; gap:8px;">
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="setting-modal-enabled" onchange="updateModalEnabledStatus(this.checked)">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                                <span id="setting-modal-enabled-status" class="toggle-status off">OFF</span>
+                            </div>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="title">Modal 계정 프로필</div>
+                                <div class="desc">토큰은 프로그램 config가 아니라 Modal 표준 프로필 저장소에 보관됩니다.</div>
+                            </div>
+                            <div class="setting-control" style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                                <input type="text" id="setting-modal-profile" value="soya-comfy" spellcheck="false" style="width:180px;">
+                                <button type="button" class="btn-small" id="modal-connect-btn" onclick="modalConnectAccount()">브라우저로 계정 연결</button>
+                                <button type="button" class="btn-small" onclick="modalRefreshStatus(true)">상태 확인</button>
+                            </div>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="title">배포 위치</div>
+                                <div class="desc">사용자 Workspace 안의 환경과 App 이름입니다. 계정마다 독립적으로 생성됩니다.</div>
+                            </div>
+                            <div class="setting-control" style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                                <input type="text" id="setting-modal-environment" value="main" placeholder="environment" style="width:120px;">
+                                <input type="text" id="setting-modal-deployment-name" value="soya-comfy-worker" placeholder="app name" style="width:200px;">
+                            </div>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="title">GPU와 최대 병렬 수</div>
+                                <div class="desc">L4는 24GB VRAM입니다. 무료 크레딧 절약을 위해 기본 2개이며 필요하면 최대 10개까지 설정할 수 있습니다.</div>
+                            </div>
+                            <div class="setting-control" style="display:flex; align-items:center; gap:8px;">
+                                <input type="text" id="setting-modal-gpu" value="L4" disabled style="width:70px;">
+                                <input type="number" id="setting-modal-max-concurrency" value="2" min="1" max="10" step="1" style="width:70px;">
+                                <span>개</span>
+                            </div>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="title">무료 크레딧 기준</div>
+                                <div class="desc">현재 Starter의 월 $30를 기준으로 예상 사용 시간을 표시합니다. 실제 청구 정보는 Modal에서 조회합니다.</div>
+                            </div>
+                            <div class="setting-control" style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                                <input type="number" id="setting-modal-monthly-credit" value="30" min="1" step="1" style="width:80px;">
+                                <span>USD</span>
+                                <button type="button" class="btn-small" onclick="modalRefreshBilling()">이번 달 비용 조회</button>
+                            </div>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="title">연결 및 비용 상태</div>
+                                <div class="desc">병렬 처리는 완료 시간을 줄이지만 이미지 한 장당 GPU 비용을 줄이지는 않습니다.</div>
+                            </div>
+                            <div class="setting-control" style="max-width:520px;">
+                                <div id="modal-account-status" style="font-size:12px; line-height:1.6; white-space:pre-wrap;">상태 확인 전</div>
+                                <div id="modal-cost-status" style="font-size:11px; color:var(--text-secondary,#aaa); margin-top:4px; white-space:pre-wrap;"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="external-api-group">
                         <div class="external-api-group-title">LLM</div>
                     <details class="llm-group" open>
                         <summary>LLM1 연결 설정</summary>
@@ -18665,6 +18734,31 @@
                                 <span class="comfy-installer-badge">독립 환경</span>
                                 <span class="comfy-installer-badge">수동 실행</span>
                             </div>
+                        </section>
+
+                        <section class="comfy-installer-card">
+                            <div class="comfy-installer-section-head">
+                                <span class="comfy-installer-step" aria-hidden="true">M</span>
+                                <div class="comfy-installer-section-heading">
+                                    <h3 class="comfy-installer-title">Modal L4 워크플로우 설치</h3>
+                                    <p class="comfy-installer-section-copy">외부 API에서 연결한 사용자 계정에 런타임을 배포하고, 선택한 워크플로우와 필요한 모델만 Volume에 설치합니다.</p>
+                                </div>
+                            </div>
+                            <div class="comfy-installer-status-grid">
+                                <div class="comfy-installer-metric"><small>GPU</small><strong>L4 · 24GB</strong></div>
+                                <div class="comfy-installer-metric"><small>유휴 컨테이너</small><strong>0개</strong></div>
+                                <div class="comfy-installer-metric"><small>자동 종료</small><strong>작업 후 15초</strong></div>
+                                <div class="comfy-installer-metric"><small>볼륨 무료 범위</small><strong>월 1 TiB 포함</strong></div>
+                            </div>
+                            <div id="modal-workflow-catalog" class="comfy-workflow-list" style="margin-top:12px; max-height:260px; overflow:auto;">
+                                <div class="comfy-workflow-empty">Modal 워크플로우 목록을 불러오는 중입니다.</div>
+                            </div>
+                            <div class="comfy-installer-actions" style="margin-top:10px;">
+                                <button type="button" class="comfy-installer-btn primary" id="modal-installer-start-btn" onclick="modalInstallerStart()">선택 워크플로우를 Modal에 설치/업데이트</button>
+                                <button type="button" class="comfy-installer-btn" onclick="modalInstallerLoadCatalog()">목록 새로고침</button>
+                            </div>
+                            <p class="comfy-installer-note" id="modal-installer-selection-summary" style="margin-top:8px;">선택 없음</p>
+                            <p class="comfy-installer-note" id="modal-installer-status" style="margin-top:6px;">외부 API에서 Modal 사용을 켜고 설정을 저장한 뒤 실행하세요. 배포만으로 L4는 켜지지 않습니다.</p>
                         </section>
 
                         <section class="comfy-installer-card">
@@ -24297,6 +24391,177 @@
             }
         }
 
+        // ─── Modal 원격 ComfyUI ───
+        let modalWorkflowCatalog = [];
+        let modalStatusPollTimer = null;
+
+        function updateModalEnabledStatus(checked) {
+            const status = document.getElementById('setting-modal-enabled-status');
+            if (!status) {
+                console.error('[MODAL] 사용 상태 요소가 없습니다.');
+                return;
+            }
+            status.textContent = checked ? 'ON' : 'OFF';
+            status.className = 'toggle-status ' + (checked ? 'on' : 'off');
+        }
+
+        function modalScheduleStatusPoll() {
+            if (modalStatusPollTimer) clearTimeout(modalStatusPollTimer);
+            modalStatusPollTimer = setTimeout(() => void modalRefreshStatus(false), 2000);
+        }
+
+        async function modalRefreshStatus(showResult = false) {
+            const account = document.getElementById('modal-account-status');
+            const cost = document.getElementById('modal-cost-status');
+            const installStatus = document.getElementById('modal-installer-status');
+            try {
+                const data = await fetchJSON('/api/modal/status');
+                const auth = data.auth || {};
+                const install = data.install || {};
+                if (account) {
+                    const connection = data.connected ? '연결됨' : '연결 안 됨';
+                    account.textContent = `${connection} · profile=${data.settings.profile} · SDK ${data.sdk_version}`
+                        + (data.pending_lora_deletes ? ` · LoRA 삭제 대기 ${data.pending_lora_deletes}건` : '')
+                        + (auth.state === 'running' ? `\n${auth.message}` : '');
+                    account.style.color = data.connected ? '#4caf50' : '#e6a23c';
+                }
+                if (cost && data.cost) {
+                    cost.textContent = `L4 GPU $${data.cost.l4_gpu_per_hour}/시간 · CPU/RAM 포함 추정 $${data.cost.estimated_container_per_hour}/컨테이너시간\n`
+                        + `$${data.cost.monthly_credit}로 약 ${data.cost.estimated_container_hours} 컨테이너시간 · 동시 ${data.settings.max_concurrency}개 연속 사용 시 약 ${data.cost.estimated_wall_hours_at_max_concurrency}시간`;
+                }
+                if (installStatus && install.state && install.state !== 'idle') {
+                    installStatus.textContent = install.message || install.state;
+                    installStatus.style.color = install.state === 'failed'
+                        ? '#ff6b6b'
+                        : (install.state === 'completed' ? '#4caf50' : 'var(--text-secondary,#aaa)');
+                }
+                if (showResult) showToast(data.connected ? 'Modal 계정이 연결되어 있습니다' : 'Modal 계정 연결이 필요합니다', data.connected ? 'success' : 'warning');
+                if (auth.state === 'running' || install.state === 'running') modalScheduleStatusPoll();
+            } catch (error) {
+                console.error('[MODAL] 상태 조회 실패:', error);
+                if (account) {
+                    account.textContent = '상태 조회 실패: ' + (error.message || error);
+                    account.style.color = '#ff6b6b';
+                }
+                if (showResult) showToast('Modal 상태 조회 실패: ' + (error.message || error), 'error');
+            }
+        }
+
+        async function modalConnectAccount() {
+            const profile = document.getElementById('setting-modal-profile')?.value.trim() || 'soya-comfy';
+            const button = document.getElementById('modal-connect-btn');
+            if (button) button.disabled = true;
+            try {
+                await fetchJSON('/api/modal/connect', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({profile}),
+                });
+                showToast('브라우저에서 Modal 인증을 완료하세요', 'warning');
+                modalScheduleStatusPoll();
+            } catch (error) {
+                console.error('[MODAL] 계정 연결 시작 실패:', error);
+                showToast('Modal 계정 연결 실패: ' + (error.message || error), 'error');
+            } finally {
+                if (button) button.disabled = false;
+            }
+        }
+
+        async function modalRefreshBilling() {
+            const cost = document.getElementById('modal-cost-status');
+            try {
+                const data = await fetchJSON('/api/modal/billing');
+                if (cost) cost.textContent = 'Modal 이번 달 청구 요약:\n' + JSON.stringify(data.summary, null, 2);
+                showToast('Modal 이번 달 비용을 조회했습니다', 'success');
+            } catch (error) {
+                console.error('[MODAL] 비용 조회 실패:', error);
+                if (cost) cost.textContent = '비용 조회 실패: ' + (error.message || error);
+                showToast('Modal 비용 조회 실패: ' + (error.message || error), 'error');
+            }
+        }
+
+        function modalSelectedWorkflows() {
+            return Array.from(document.querySelectorAll('.modal-workflow-checkbox:checked'))
+                .map(input => input.value);
+        }
+
+        function modalUpdateWorkflowSelectionSummary() {
+            const selected = new Set(modalSelectedWorkflows());
+            const modelIds = new Set();
+            let rawBytes = 0;
+            for (const item of modalWorkflowCatalog) {
+                if (!selected.has(item.id)) continue;
+                for (const modelId of item.model_ids || []) modelIds.add(modelId);
+                rawBytes += Number(item.size_bytes || 0);
+            }
+            const summary = document.getElementById('modal-installer-selection-summary');
+            if (summary) {
+                summary.textContent = selected.size
+                    ? `${selected.size}개 워크플로우 · 중복 전 최대 ${(rawBytes / 1024 ** 3).toFixed(2)} GiB · 고유 모델 ${modelIds.size}개 (서버에서 중복 제거)`
+                    : '선택 없음';
+            }
+        }
+
+        async function modalInstallerLoadCatalog() {
+            const container = document.getElementById('modal-workflow-catalog');
+            if (!container) return;
+            try {
+                const data = await fetchJSON('/api/modal/workflows');
+                modalWorkflowCatalog = data.workflows || [];
+                container.replaceChildren();
+                for (const item of modalWorkflowCatalog) {
+                    const label = document.createElement('label');
+                    label.style.cssText = 'display:flex;align-items:center;gap:9px;padding:8px 10px;border-bottom:1px solid var(--border);cursor:pointer;';
+                    const checkbox = document.createElement('input');
+                    checkbox.type = 'checkbox';
+                    checkbox.className = 'modal-workflow-checkbox';
+                    checkbox.value = item.id;
+                    checkbox.addEventListener('change', modalUpdateWorkflowSelectionSummary);
+                    const copy = document.createElement('span');
+                    copy.style.cssText = 'display:flex;flex:1;justify-content:space-between;gap:12px;font-size:12px;';
+                    const name = document.createElement('strong');
+                    name.textContent = item.id;
+                    const size = document.createElement('span');
+                    size.style.color = 'var(--text-secondary,#aaa)';
+                    size.textContent = `${item.model_count} 모델 · ${item.size_gib.toFixed(2)} GiB`;
+                    copy.append(name, size);
+                    label.append(checkbox, copy);
+                    container.append(label);
+                }
+                modalUpdateWorkflowSelectionSummary();
+            } catch (error) {
+                console.error('[MODAL] 워크플로우 목록 로드 실패:', error);
+                container.textContent = '목록 로드 실패: ' + (error.message || error);
+            }
+        }
+
+        async function modalInstallerStart() {
+            const workflowIds = modalSelectedWorkflows();
+            if (!workflowIds.length) {
+                showToast('Modal에 설치할 워크플로우를 선택하세요', 'warning');
+                return;
+            }
+            if (!window.confirm(`선택한 ${workflowIds.length}개 워크플로우를 사용자 Modal 계정에 설치/업데이트할까요? GPU는 생성 요청 전까지 켜지지 않습니다.`)) return;
+            const button = document.getElementById('modal-installer-start-btn');
+            if (button) button.disabled = true;
+            try {
+                const data = await fetchJSON('/api/modal/install', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({workflow_ids: workflowIds}),
+                });
+                const status = document.getElementById('modal-installer-status');
+                if (status) status.textContent = data.install?.message || 'Modal 설치를 시작했습니다.';
+                showToast('Modal 설치를 시작했습니다', 'success');
+                modalScheduleStatusPoll();
+            } catch (error) {
+                console.error('[MODAL] 설치 시작 실패:', error);
+                showToast('Modal 설치 시작 실패: ' + (error.message || error), 'error');
+            } finally {
+                if (button) button.disabled = false;
+            }
+        }
+
         // ─── 설정 모달 탭 전환 ───
         function switchSettingsTab(tabName) {
             document.querySelectorAll('.settings-tab-btn').forEach(btn => btn.classList.remove('active'));
@@ -24328,6 +24593,8 @@
                 void comfyInstallerRefreshStatus(true);
                 void comfyInstallerLoadCivitaiKey();
                 void comfyInstallerLoadWorkflowLibrary();
+                void modalInstallerLoadCatalog();
+                void modalRefreshStatus(false);
                 if (!comfyInstallerPreflightLoaded) {
                     void comfyInstallerRunPreflight(true);
                 }
@@ -24395,6 +24662,23 @@
             updateMemoSettingStatus(memoEnabled);
             comfyRuntimeInitializeProfiles(currentConfig);
             comfyAllocationInitialize(currentConfig);
+            const modalEnabled = !!currentConfig.modal_enabled;
+            const modalEnabledEl = document.getElementById('setting-modal-enabled');
+            if (modalEnabledEl) modalEnabledEl.checked = modalEnabled;
+            updateModalEnabledStatus(modalEnabled);
+            const modalProfileEl = document.getElementById('setting-modal-profile');
+            if (modalProfileEl) modalProfileEl.value = currentConfig.modal_profile || 'soya-comfy';
+            const modalEnvironmentEl = document.getElementById('setting-modal-environment');
+            if (modalEnvironmentEl) modalEnvironmentEl.value = currentConfig.modal_environment || 'main';
+            const modalDeploymentEl = document.getElementById('setting-modal-deployment-name');
+            if (modalDeploymentEl) modalDeploymentEl.value = currentConfig.modal_deployment_name || 'soya-comfy-worker';
+            const modalGpuEl = document.getElementById('setting-modal-gpu');
+            if (modalGpuEl) modalGpuEl.value = currentConfig.modal_gpu || 'L4';
+            const modalConcurrencyEl = document.getElementById('setting-modal-max-concurrency');
+            if (modalConcurrencyEl) modalConcurrencyEl.value = currentConfig.modal_max_concurrency ?? 2;
+            const modalCreditEl = document.getElementById('setting-modal-monthly-credit');
+            if (modalCreditEl) modalCreditEl.value = currentConfig.modal_monthly_credit_usd ?? 30;
+            void modalRefreshStatus(false);
             document.getElementById('setting-send-original').checked = currentConfig.send_original || false;
             document.getElementById('setting-webp-quality').disabled = currentConfig.send_original || false;
             document.getElementById('setting-webp-quality').value = currentConfig.webp_quality || 85;
@@ -25862,6 +26146,13 @@
                 comfyui_port_illustration: null,
                 comfy_launch_profiles: comfyRuntimeProfilesForSave(),
                 comfy_task_allocations: comfyAllocationsForSave(),
+                modal_enabled: !!document.getElementById('setting-modal-enabled')?.checked,
+                modal_profile: document.getElementById('setting-modal-profile')?.value.trim() || 'soya-comfy',
+                modal_environment: document.getElementById('setting-modal-environment')?.value.trim() || 'main',
+                modal_deployment_name: document.getElementById('setting-modal-deployment-name')?.value.trim() || 'soya-comfy-worker',
+                modal_gpu: 'L4',
+                modal_max_concurrency: parseInt(document.getElementById('setting-modal-max-concurrency')?.value, 10) || 2,
+                modal_monthly_credit_usd: parseFloat(document.getElementById('setting-modal-monthly-credit')?.value) || 30,
                 workflow_base_dir: document.getElementById('setting-workflow-base-dir').value.trim(),
                 send_original: document.getElementById('setting-send-original').checked,
                 webp_quality: parseInt(document.getElementById('setting-webp-quality').value) || 85,
