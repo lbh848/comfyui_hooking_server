@@ -214,7 +214,7 @@ def test_modal_redeploy_uses_one_button_choice_dialog_and_locked_progress() -> N
         'name="modal-redeploy-kind" value="custom_nodes"',
         'id="modal-redeploy-confirm-btn"',
         'id="modal-redeploy-custom-preview"',
-        '>기본 재배포</strong>',
+        '>기본 앱 재배포</strong>',
         '>Custom Node 포함 재배포</strong>',
         'id="modal-operation-lock-modal" hidden',
         'id="modal-operation-lock-title"',
@@ -322,10 +322,9 @@ def test_modal_installer_exposes_live_phase_progress_and_logs() -> None:
         'id="modal-install-progress"',
         'id="modal-install-progress-title"',
         'id="modal-install-progress-elapsed"',
-        'data-phase="assets"',
-        'data-phase="deploy"',
-        'data-phase="upload"',
-        'data-phase="complete"',
+        'data-phase="assets">1. 자산 분석',
+        'data-phase="upload">2. Volume 업로드',
+        'data-phase="complete">3. 완료',
         'id="modal-install-progress-track"',
         'id="modal-install-progress-current"',
         'id="modal-install-progress-count"',
@@ -341,6 +340,14 @@ def test_modal_installer_exposes_live_phase_progress_and_logs() -> None:
     assert "modal-install-progress-slide" in FRONTEND
     assert "button.disabled = state === 'running'" in FRONTEND
     assert "if (button && !started) button.disabled = false;" in FRONTEND
+    assert "const phaseOrder = ['assets', 'upload', 'complete'];" in FRONTEND
+
+
+def test_modal_sync_and_app_deployment_have_separate_responsibilities() -> None:
+    assert ">선택 워크플로우·모델 동기화</button>" in FRONTEND
+    assert ">앱·Custom Node 재배포</button>" in FRONTEND
+    assert "앱 코드와 Custom Node 이미지는 재배포하지 않습니다." in FRONTEND
+    assert "동기화된 워크플로우·모델은 건드리지 않습니다." in FRONTEND
 
 
 def test_runtime_persists_detailed_task_allocations_and_shows_fallback_state() -> None:

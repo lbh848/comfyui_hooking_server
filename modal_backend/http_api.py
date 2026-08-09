@@ -144,11 +144,11 @@ def register_modal_routes(
             state = await service.start_install(selected)
             return web.json_response({"ok": True, "install": state})
         except (ValueError, RuntimeError, FileNotFoundError) as exc:
-            print(f"[MODAL_API] 설치 요청 거부: {type(exc).__name__}: {exc}")
+            print(f"[MODAL_API] 동기화 요청 거부: {type(exc).__name__}: {exc}")
             traceback.print_exc()
             return web.json_response({"ok": False, "error": str(exc)}, status=400)
         except Exception as exc:
-            print(f"[MODAL_API] 설치 시작 실패: {type(exc).__name__}: {exc}")
+            print(f"[MODAL_API] 동기화 시작 실패: {type(exc).__name__}: {exc}")
             traceback.print_exc()
             return web.json_response({"ok": False, "error": str(exc)}, status=500)
 

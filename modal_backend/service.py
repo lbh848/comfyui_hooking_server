@@ -53,7 +53,6 @@ WEB_APP_SUFFIX = "-web"
 INSTALL_PROGRESS_PREFIX = "@@SOYA_MODAL_PROGRESS@@"
 INSTALL_PHASE_LABELS = {
     "assets": "자산 분석",
-    "deploy": "런타임 빌드",
     "upload": "파일 업로드",
     "complete": "완료",
 }
@@ -924,24 +923,6 @@ class ModalService:
                 "error": None,
             }
 
-        if (
-            self._install_state.get("state") == "running"
-            and self._install_state.get("phase") in {"assets", "deploy"}
-        ):
-            install = self._install_snapshot()
-            return {
-                "state": "deploying",
-                "available": False,
-                "reason": "deployment_in_progress",
-                "gpu_on": False,
-                "workers": 0,
-                "generating": 0,
-                "queued": 0,
-                "message": install.get("message") or "Modal 앱을 배포하고 있습니다.",
-                "install_phase": install.get("phase"),
-                "error": None,
-            }
-
         try:
             stats = await self._run_client_action(
                 settings,
@@ -964,21 +945,6 @@ class ModalService:
                 f"reason={reason}, error={type(exc).__name__}: {exc}"
             )
             traceback.print_exc()
-            installing = self._install_state.get("state") == "running"
-            if reason == "app_not_deployed" and installing:
-                install = self._install_snapshot()
-                return {
-                    "state": "deploying",
-                    "available": False,
-                    "reason": "deployment_in_progress",
-                    "gpu_on": False,
-                    "workers": 0,
-                    "generating": 0,
-                    "queued": 0,
-                    "message": install.get("message") or "Modal 앱을 배포하고 있습니다.",
-                    "install_phase": install.get("phase"),
-                    "error": None,
-                }
             return {
                 "state": "error",
                 "available": False,
@@ -2362,24 +2328,14 @@ class ModalService:
                     "total_bytes": total_bytes,
                     "uploaded_files": 0,
                     "skipped_files": 0,
-                    "current_label": "Modal 런타임 이미지",
+                    "current_label": "동기화 준비",
                     "current_item": "",
                 },
-            )
-            self._set_install_phase(
-                "deploy",
-                "Modal ComfyUI 런타임 이미지를 빌드하고 있습니다.",
-                progress_mode="indeterminate",
             )
             self._append_install_log(
                 "system",
                 f"자산 분석 완료: 전송 대상 {total_files}개 · {total_bytes / 1024 ** 3:.2f} GiB",
             )
-            await self._deploy_worker_app(
-                settings,
-                output_callback=self._append_install_log,
-            )
-
             self._set_install_phase(
                 "upload",
                 "사용자 워크플로우와 로컬 모델을 Modal Volume에 동기화하고 있습니다.",
@@ -2387,7 +2343,7 @@ class ModalService:
             )
             self._append_install_log(
                 "system",
-                "Modal 작업 App 배포 완료 · 파일 동기화 시작",
+                "앱 재배포 없이 Modal Volume 파일 동기화 시작",
             )
             client_payload = {
                 "action": "install",
@@ -2406,13 +2362,13 @@ class ModalService:
             )
             if code != 0:
                 print(
-                    f"[MODAL] 워크플로우/모델 설치 실패: app={settings.deployment_name}, "
+                    f"[MODAL] 워크플로우/모델 동기화 실패: app={settings.deployment_name}, "
                     f"exit_code={code}"
                 )
-                raise RuntimeError("Modal 워크플로우 또는 모델 설치에 실패했습니다.")
+                raise RuntimeError("Modal 워크플로우 또는 모델 동기화에 실패했습니다.")
             response = json.loads(stdout)
             if not response.get("ok"):
-                raise RuntimeError(str(response.get("error") or "Modal 원격 설치 실패"))
+                raise RuntimeError(str(response.get("error") or "Modal 원격 동기화 실패"))
             progress = dict(self._install_state.get("progress") or {})
             progress.update(
                 mode="complete",
@@ -2435,12 +2391,12 @@ class ModalService:
             )
             self._append_install_log("system", "Modal 동기화가 완료되었습니다.")
             print(
-                f"[MODAL] 설치 완료: app={settings.deployment_name}, "
+                f"[MODAL] 동기화 완료: app={settings.deployment_name}, "
                 f"workflows={len(plan['workflow_ids'])}, models={plan['model_count']}, "
                 f"size_gib={plan['size_gib']}"
             )
         except Exception as exc:
-            print(f"[MODAL] 설치 작업 예외: {type(exc).__name__}: {exc}")
+            print(f"[MODAL] 동기화 작업 예외: {type(exc).__name__}: {exc}")
             traceback.print_exc()
             finished_at = time.time()
             self._install_state.update(

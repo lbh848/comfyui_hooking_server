@@ -79,7 +79,7 @@ def test_modal_worker_panel_explains_deployment_and_network_failures() -> None:
 
     assert "case 'app_not_deployed':" in error_copy
     assert "state: '작업 App 미배포'" in error_copy
-    assert "설치 자산은 유지될 수 있습니다 · MODAL 탭에서 기본 재배포하세요" in error_copy
+    assert "동기화된 자산은 유지됩니다 · MODAL 탭에서 기본 앱 재배포를 실행하세요" in error_copy
     assert "원격 ComfyUI 미설치" not in error_copy
     assert "워크플로우를 동기화하세요" not in error_copy
     assert "case 'network_unavailable':" in error_copy

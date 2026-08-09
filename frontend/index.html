@@ -1513,17 +1513,21 @@
         }
         .queue-lanes {
             display:grid;
-            grid-template-columns:repeat(5, minmax(0, 1fr));
+            grid-template-columns:repeat(6, minmax(0, 1fr));
             gap:12px;
             align-items:start;
         }
         .queue-lane {
+            grid-column:span 2;
             min-width:0;
             border:1px solid var(--border);
             border-radius:10px;
             background:color-mix(in srgb, var(--surface1) 72%, transparent);
             overflow:hidden;
         }
+        .queue-lane:nth-last-child(2):nth-child(3n + 1),
+        .queue-lane:last-child:nth-child(3n + 2) { grid-column:span 3; }
+        .queue-lane:last-child:nth-child(3n + 1) { grid-column:1 / -1; }
         .queue-lane-header {
             display:flex;
             align-items:center;
@@ -1593,6 +1597,10 @@
         .queue-modal-item .qm-actions button:hover { color:var(--text); background:var(--surface1); }
         @media (max-width:900px) {
             .queue-lanes { grid-template-columns:1fr; }
+            .queue-lane,
+            .queue-lane:nth-last-child(2):nth-child(3n + 1),
+            .queue-lane:last-child:nth-child(3n + 2),
+            .queue-lane:last-child:nth-child(3n + 1) { grid-column:1 / -1; }
             #queue-modal .queue-modal-content { width:min(680px, calc(100vw - 20px)); }
         }
 
@@ -5071,6 +5079,12 @@
             margin: 0;
             padding: 0;
             list-style: none;
+        }
+        #modal-install-progress .modal-install-steps {
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+        }
+        #modal-deploy-progress .modal-install-steps {
+            grid-template-columns: repeat(5, minmax(0, 1fr));
         }
         .modal-install-step {
             min-width: 0;
@@ -17867,15 +17881,15 @@
          role="dialog" aria-modal="true" aria-labelledby="modal-redeploy-choice-title">
         <div class="modal-action-dialog" tabindex="-1">
             <div class="modal-action-head">
-                <h2 id="modal-redeploy-choice-title">MODAL 재배포 방식 선택</h2>
+                <h2 id="modal-redeploy-choice-title">앱 재배포 방식 선택</h2>
                 <p>두 방식 모두 작업 App과 웹 App을 재배포하고, 완료 후 비용 안전을 위해 웹 App과 L4를 자동 종료합니다.</p>
             </div>
             <div class="modal-action-body">
-                <div class="modal-redeploy-options" role="radiogroup" aria-label="MODAL 재배포 방식">
+                <div class="modal-redeploy-options" role="radiogroup" aria-label="앱 재배포 방식">
                     <label class="modal-redeploy-option">
                         <input type="radio" name="modal-redeploy-kind" value="redeploy" checked
                                onchange="modalRedeployChoiceChanged()">
-                        <strong>기본 재배포</strong>
+                        <strong>기본 앱 재배포</strong>
                         <span>현재 로컬 코드와 Custom Node 인벤토리를 사용하고, 재사용 가능한 이미지 빌드 캐시는 유지합니다.</span>
                     </label>
                     <label class="modal-redeploy-option">
@@ -17892,7 +17906,7 @@
                 <div class="modal-action-buttons">
                     <button type="button" onclick="modalCloseRedeployChoice()">취소</button>
                     <button type="button" class="primary" id="modal-redeploy-confirm-btn"
-                            onclick="modalConfirmRedeployChoice()">기본 재배포 시작</button>
+                            onclick="modalConfirmRedeployChoice()">기본 앱 재배포 시작</button>
                 </div>
             </div>
         </div>
@@ -18223,8 +18237,8 @@
                                 <div class="comfy-installer-section-head">
                                     <span class="comfy-installer-step" aria-hidden="true">M</span>
                                     <div class="comfy-installer-section-heading">
-                                        <h3 class="comfy-installer-title">Modal L4 워크플로우 동기화</h3>
-                                        <p class="comfy-installer-section-copy">로컬에 설치된 SOYA_USER 워크플로우와 현재 참조 중인 사용자 모델 파일을 연결한 Modal 계정의 Volume에 직접 업로드합니다.</p>
+                                        <h3 class="comfy-installer-title">Modal 워크플로우·모델 동기화</h3>
+                                        <p class="comfy-installer-section-copy">선택한 SOYA_USER 워크플로우와 참조 중인 모델·LoRA를 Modal Volume에 직접 업로드합니다. 앱 코드와 Custom Node 이미지는 재배포하지 않습니다.</p>
                                     </div>
                                 </div>
                                 <div class="comfy-installer-status-grid">
@@ -18251,14 +18265,14 @@
                                     <div class="comfy-workflow-empty">Modal 워크플로우 목록을 불러오는 중입니다.</div>
                                 </div>
                                 <div class="comfy-installer-actions" style="margin-top:10px;">
-                                    <button type="button" class="comfy-installer-btn primary" id="modal-installer-start-btn" onclick="modalInstallerStart()">선택 워크플로우를 Modal에 동기화</button>
+                                    <button type="button" class="comfy-installer-btn primary" id="modal-installer-start-btn" onclick="modalInstallerStart()">선택 워크플로우·모델 동기화</button>
                                     <button type="button" class="comfy-installer-btn" id="modal-runtime-workflow-query-btn" onclick="modalRuntimeQueryWorkflows()">워크플로우 동기화 조회</button>
-                                    <button type="button" class="comfy-installer-btn" id="modal-runtime-redeploy-btn" onclick="modalRuntimeRedeploy()">MODAL 재배포</button>
+                                    <button type="button" class="comfy-installer-btn" id="modal-runtime-redeploy-btn" onclick="modalRuntimeRedeploy()">앱·Custom Node 재배포</button>
                                     <button type="button" class="comfy-installer-btn" onclick="modalInstallerLoadCatalog()">목록 새로고침</button>
                                 </div>
                                 <p class="comfy-installer-note" id="modal-installer-selection-summary" style="margin-top:8px;">선택 없음</p>
                                 <p class="comfy-installer-note" id="modal-runtime-workflow-query-status" style="margin-top:6px;">조회하면 로컬과 원격 워크플로우의 SHA-256 동기화 상태를 표시합니다.</p>
-                                <p class="comfy-installer-note" id="modal-runtime-deployment-status" style="margin-top:6px;">재배포 버튼에서 기본 방식 또는 Custom Node 이미지 강제 빌드 포함 방식을 선택합니다. 완료 후 웹 App을 자동 종료합니다.</p>
+                                <p class="comfy-installer-note" id="modal-runtime-deployment-status" style="margin-top:6px;">앱 재배포는 작업 App과 웹 App의 코드·Custom Node 환경만 갱신하며, 동기화된 워크플로우·모델은 건드리지 않습니다.</p>
                                 <div class="modal-install-progress modal-deploy-progress" id="modal-deploy-progress" data-state="idle" hidden>
                                     <div class="modal-install-progress-head">
                                         <strong id="modal-deploy-progress-title">Modal 배포 준비</strong>
@@ -18281,7 +18295,7 @@
                                     </div>
                                     <pre class="modal-install-progress-log" id="modal-deploy-progress-log" aria-label="Modal 재배포 최신 로그">최신 배포 로그를 기다리고 있습니다.</pre>
                                 </div>
-                                <p class="comfy-installer-note" id="modal-installer-status" style="margin-top:6px;">외부 API에서 Modal 사용을 켜고 설정을 저장한 뒤 실행하세요. 배포만으로 L4는 켜지지 않습니다.</p>
+                                <p class="comfy-installer-note" id="modal-installer-status" style="margin-top:6px;">외부 API에서 Modal 사용을 켜고 설정을 저장한 뒤 실행하세요. 동기화는 앱을 재배포하거나 L4를 켜지 않습니다.</p>
                                 <div class="modal-install-progress" id="modal-install-progress" data-state="idle" hidden>
                                     <div class="modal-install-progress-head">
                                         <strong id="modal-install-progress-title">동기화 준비</strong>
@@ -18289,9 +18303,8 @@
                                     </div>
                                     <ol class="modal-install-steps" aria-label="Modal 동기화 단계">
                                         <li class="modal-install-step" data-phase="assets">1. 자산 분석</li>
-                                        <li class="modal-install-step" data-phase="deploy">2. 런타임 빌드</li>
-                                        <li class="modal-install-step" data-phase="upload">3. 파일 업로드</li>
-                                        <li class="modal-install-step" data-phase="complete">4. 완료</li>
+                                        <li class="modal-install-step" data-phase="upload">2. Volume 업로드</li>
+                                        <li class="modal-install-step" data-phase="complete">3. 완료</li>
                                     </ol>
                                     <div class="modal-install-progress-track indeterminate" id="modal-install-progress-track"
                                          role="progressbar" aria-label="Modal 동기화 진행률">
@@ -21491,7 +21504,7 @@
                 case 'app_not_deployed':
                     return {
                         state: '작업 App 미배포',
-                        detail: '설치 자산은 유지될 수 있습니다 · MODAL 탭에서 기본 재배포하세요',
+                        detail: '동기화된 자산은 유지됩니다 · MODAL 탭에서 기본 앱 재배포를 실행하세요',
                     };
                 case 'network_unavailable':
                     return {
@@ -26447,7 +26460,7 @@
                 }).join('\n');
                 modalShowOperationLock(
                     'deployment',
-                    customNodes ? 'Custom Node 포함 재배포 중' : 'MODAL 기본 재배포 중',
+                    customNodes ? 'Custom Node 포함 재배포 중' : '기본 앱 재배포 중',
                     String(deployment.message || (
                         customNodes
                             ? 'Custom Node 인벤토리와 이미지 빌드를 준비하고 있습니다.'
@@ -26456,7 +26469,7 @@
                 );
                 modalUpdateOperationProgress(
                     percentByPhase[phase] || 10,
-                    `${customNodes ? 'Custom Node 포함 재배포' : '기본 재배포'} · ${phase} · 경과 ${modalFormatInstallDuration(Number(deployment.elapsed_seconds || 0))}`,
+                    `${customNodes ? 'Custom Node 포함 재배포' : '기본 앱 재배포'} · ${phase} · 경과 ${modalFormatInstallDuration(Number(deployment.elapsed_seconds || 0))}`,
                     logText,
                 );
                 return;
@@ -26564,7 +26577,7 @@
                     ? (modalRedeployInventoryState === 'failed'
                         ? 'Custom Node 인벤토리 다시 확인'
                         : 'Custom Node 포함 재배포 시작')
-                    : '기본 재배포 시작';
+                    : '기본 앱 재배포 시작';
                 confirmButton.disabled = customNodes && modalRedeployInventoryState === 'loading';
             }
             if (customNodes && modalRedeployInventoryState === 'idle') {
@@ -26799,7 +26812,7 @@
             panel.hidden = false;
             panel.dataset.state = state;
 
-            const phaseOrder = ['assets', 'deploy', 'upload', 'complete'];
+            const phaseOrder = ['assets', 'upload', 'complete'];
             const phase = String(install?.phase || 'assets');
             const fallbackIndex = Math.max(0, phaseOrder.indexOf(phase));
             const rawPhaseIndex = Number(install?.phase_index);
@@ -26915,7 +26928,7 @@
 
             const kindLabel = kind === 'custom_nodes'
                 ? 'Custom Node 포함 재배포'
-                : 'MODAL 기본 재배포';
+                : '기본 앱 재배포';
             const title = document.getElementById('modal-deploy-progress-title');
             const elapsed = document.getElementById('modal-deploy-progress-elapsed');
             if (title) title.textContent = `${kindLabel} · ${message}`;
@@ -27045,8 +27058,8 @@
                 redeployButton.textContent = deploymentBusy
                     ? (activeDeploymentKind === 'custom_nodes'
                         ? 'Custom Node 포함 재배포 중…'
-                        : 'MODAL 기본 재배포 중…')
-                    : 'MODAL 재배포';
+                        : '기본 앱 재배포 중…')
+                    : '앱·Custom Node 재배포';
                 redeployButton.classList.toggle('modal-deployment-busy', deploymentBusy);
             }
             if (deploymentStatus && deployment.state && deployment.state !== 'idle') {
@@ -27448,7 +27461,7 @@
                 showToast('Modal에 동기화할 워크플로우를 선택하세요', 'warning');
                 return;
             }
-            if (!window.confirm(`선택한 ${workflowIds.length}개 SOYA_USER 워크플로우와 현재 로컬에서 참조하는 모델 파일을 사용자 Modal 계정에 직접 업로드할까요? 외부 모델 사이트에서는 다운로드하지 않으며, GPU는 생성 요청 전까지 켜지지 않습니다.`)) return;
+            if (!window.confirm(`선택한 ${workflowIds.length}개 SOYA_USER 워크플로우와 현재 로컬에서 참조하는 모델·LoRA 파일을 사용자 Modal 계정에 직접 업로드할까요? 앱과 Custom Node는 재배포하지 않으며, GPU는 생성 요청 전까지 켜지지 않습니다.`)) return;
             const button = document.getElementById('modal-installer-start-btn');
             if (button) button.disabled = true;
             let started = false;
@@ -27566,7 +27579,7 @@
             if (modalDeploymentRequestPending || modalOperationLockActive()) return;
             const customNodes = kind === 'custom_nodes';
             const endpoint = customNodes ? '/api/modal/custom-nodes/sync' : '/api/modal/redeploy';
-            const label = customNodes ? 'Custom Node 포함 재배포' : 'MODAL 기본 재배포';
+            const label = customNodes ? 'Custom Node 포함 재배포' : '기본 앱 재배포';
             const button = document.getElementById('modal-runtime-redeploy-btn');
             modalDeploymentRequestPending = true;
             modalDeploymentPendingKind = customNodes ? 'custom_nodes' : 'redeploy';
@@ -27616,7 +27629,7 @@
                 modalHideOperationLock();
                 if (button) {
                     button.disabled = false;
-                    button.textContent = 'MODAL 재배포';
+                    button.textContent = '앱·Custom Node 재배포';
                     button.classList.remove('modal-deployment-busy');
                 }
                 void modalRuntimeRefresh(false);
@@ -74844,6 +74857,8 @@
                             ${anyPending ? '<button onclick="queueModalCancelBatch(\''+escapeHtml(item.batch_id)+'\')" title="배치 전체 취소">✕</button>' : ''}
                         </span>
                     `;
+                    const batchLabelEl = el.querySelector('.qm-label');
+                    if (batchLabelEl) batchLabelEl.title = label;
                     container.appendChild(el);
                     if (expanded) {
                         grp.forEach(groupItem => {
@@ -74921,6 +74936,8 @@
                     ${isPending ? '<button onclick="queueModalCancelItem(\''+item.id+'\')" title="취소">✕</button>' : ''}
                 </span>
             `;
+            const labelEl = el.querySelector('.qm-label');
+            if (labelEl) labelEl.title = item.label || '';
             if (isPending) {
                 const handle = el.querySelector('.qm-handle');
                 handle.addEventListener('mousedown', (e) => queueModalDragStart(e, idx));
@@ -74948,6 +74965,8 @@
                 <span class="qm-progress">${statusLabel}</span>
                 <span class="qm-actions"></span>
             `;
+            const labelEl = el.querySelector('.qm-label');
+            if (labelEl) labelEl.title = subtask.label || '하위 작업';
             return el;
         }
 

@@ -238,6 +238,7 @@ def install(payload: dict) -> dict:
     workflow_volume = modal.Volume.from_name(
         f"{app_name}-workflows",
         environment_name=environment,
+        create_if_missing=True,
     )
     workflow_files = payload.get("workflow_files") or []
     workflow_bytes = sum(
@@ -495,10 +496,12 @@ def _sync_environment(payload: dict) -> dict:
     models_volume = modal.Volume.from_name(
         f"{app_name}-models",
         environment_name=environment,
+        create_if_missing=True,
     )
     loras_volume = modal.Volume.from_name(
         f"{app_name}-loras",
         environment_name=environment,
+        create_if_missing=True,
     )
     model_sync = _sync_files(
         models_volume,

@@ -862,10 +862,21 @@ def test_modal_install_uploads_local_assets_without_remote_model_installer(
         "test-models": FakeVolume(),
         "test-loras": FakeVolume(),
     }
+    volume_requests: list[tuple[str, str, bool]] = []
+
+    def volume_from_name(
+        name: str,
+        *,
+        environment_name: str,
+        create_if_missing: bool = False,
+    ) -> FakeVolume:
+        volume_requests.append((name, environment_name, create_if_missing))
+        return volumes[name]
+
     monkeypatch.setattr(
         client_cli.modal.Volume,
         "from_name",
-        lambda name, environment_name: volumes[name],
+        volume_from_name,
     )
     monkeypatch.setattr(
         client_cli.modal.Function,
@@ -906,6 +917,11 @@ def test_modal_install_uploads_local_assets_without_remote_model_installer(
         "test-models"
     ].uploads
     assert (str(lora), "/user-lora.safetensors") in volumes["test-loras"].uploads
+    assert volume_requests == [
+        ("test-workflows", "main", True),
+        ("test-models", "main", True),
+        ("test-loras", "main", True),
+    ]
     progress_lines = [
         line
         for line in capsys.readouterr().err.splitlines()
@@ -965,7 +981,7 @@ def test_modal_install_replaces_workflow_without_reuploading_matching_model(
     monkeypatch.setattr(
         client_cli.modal.Volume,
         "from_name",
-        lambda name, environment_name: volumes[name],
+        lambda name, *, environment_name, create_if_missing=False: volumes[name],
     )
 
     result = client_cli.install(
@@ -1129,8 +1145,8 @@ async def test_modal_service_install_plan_uses_current_soya_user_model_reference
         for command in commands
         if len(command) > 4 and command[1:4] == ["-m", "modal", "deploy"]
     ]
-    assert len(deploy_commands) == 1
-    assert deploy_commands[0][4:6] == ["-m", "modal_backend.modal_app"]
+    assert deploy_commands == []
+    assert commands == [[sys.executable, "-m", "modal_backend.client_cli"]]
 
 
 def test_workflow_assets_resolve_structured_lora_and_image_inputs(tmp_path: Path) -> None:
@@ -1379,30 +1395,35 @@ async def test_modal_worker_status_exposes_specific_unavailable_reason(
 
 
 @pytest.mark.asyncio
-async def test_modal_worker_status_reports_deploying_instead_of_not_found(
+async def test_modal_worker_status_does_not_treat_volume_sync_as_deployment(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     service = ModalService(tmp_path, lambda: {"modal_enabled": True})
     service._install_state = {
         "state": "running",
-        "phase": "deploy",
-        "message": "Modal ComfyUI 런타임 이미지를 빌드하고 있습니다.",
+        "phase": "assets",
+        "message": "동기화할 자산을 분석하고 있습니다.",
         "logs": [],
     }
 
     async def unavailable_client_action(*_args, **_kwargs) -> dict:
-        raise AssertionError("배포 단계에서는 아직 존재하지 않는 원격 클래스를 조회하면 안 됩니다.")
+        raise ModalClientActionError(
+            "Modal 작업 App이 배포되지 않았습니다.",
+            reason="app_not_deployed",
+            error_type="NotFoundError",
+        )
 
     monkeypatch.setattr(service, "_run_client_action", unavailable_client_action)
 
     status = await service.worker_status()
+    worker = status["worker"]
 
-    assert status["available"] is False
-    assert status["reason"] == "deployment_in_progress"
-    assert status["install_phase"] == "deploy"
-    assert "빌드" in status["message"]
-    assert "error" not in status
+    assert worker["available"] is False
+    assert worker["state"] == "error"
+    assert worker["reason"] == "app_not_deployed"
+    assert worker["install_phase"] is None
+    assert "배포되지 않았습니다" in worker["error"]
 
 
 @pytest.mark.asyncio
