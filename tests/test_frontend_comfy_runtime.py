@@ -89,6 +89,7 @@ def test_runtime_has_managed_modal_tab_lifecycle_sync_and_log_controls() -> None
         'id="modal-runtime-scaledown-window"',
         'id="modal-runtime-max-concurrency"',
         'id="modal-runtime-status-refresh"',
+        'id="modal-runtime-web-fast"',
         'id="modal-runtime-workflow-query-btn"',
         'id="modal-runtime-workflow-query-status"',
         'id="modal-runtime-web-start-btn"',
@@ -118,6 +119,10 @@ def test_runtime_has_managed_modal_tab_lifecycle_sync_and_log_controls() -> None
     assert 'id="modal-runtime-enabled"' not in FRONTEND
     assert "modalRuntimeSetEnabled" not in FRONTEND
     assert "외부 API 설정에서만 변경할 수 있습니다." in FRONTEND
+    assert "외부 접속 허용" in FRONTEND
+    assert "--listen 0.0.0.0 · 웹 UI 필수" in FRONTEND
+    assert "modal_web_fast: document.getElementById('modal-runtime-web-fast')?.checked === true" in FRONTEND
+    assert "modalWebFastEl.checked = currentConfig.modal_web_fast === true" in FRONTEND
     assert "60초 캐시" in FRONTEND
     assert "modalRuntimeQueryWorkflows" in FRONTEND
     assert "modalRemoteWorkflowStateText" in FRONTEND

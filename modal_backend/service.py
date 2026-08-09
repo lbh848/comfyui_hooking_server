@@ -167,6 +167,7 @@ class ModalService:
                 "SOYA_MODAL_SCALEDOWN_WINDOW": str(
                     settings.scaledown_window_seconds
                 ),
+                "SOYA_MODAL_WEB_FAST": "1" if settings.web_fast else "0",
             },
         )
 

@@ -23,6 +23,10 @@ from modal_backend.modal_app import (
 
 WORKER_APP_NAME = os.environ.get("SOYA_MODAL_APP_NAME", "soya-comfy-worker")
 WEB_APP_NAME = os.environ.get("SOYA_MODAL_WEB_APP_NAME", f"{WORKER_APP_NAME}-web")
+WEB_FAST = os.environ.get("SOYA_MODAL_WEB_FAST", "0") == "1"
+web_runtime_image = runtime_image.env(
+    {"SOYA_MODAL_WEB_FAST": "1" if WEB_FAST else "0"}
+)
 WEB_SCALEDOWN_WINDOW_SECONDS = int(
     os.environ.get("SOYA_MODAL_WEB_SCALEDOWN_WINDOW", "300")
 )
@@ -33,7 +37,7 @@ app = modal.App(WEB_APP_NAME)
 
 
 @app.function(
-    image=runtime_image,
+    image=web_runtime_image,
     gpu="L4",
     cpu=4.0,
     memory=16_384,
@@ -54,20 +58,32 @@ def comfy_web_server() -> None:
     extra_paths = _write_extra_model_paths()
     child_env = os.environ.copy()
     child_env["PYTHONUNBUFFERED"] = "1"
-    subprocess.Popen(
+    web_fast = os.environ.get("SOYA_MODAL_WEB_FAST", "0") == "1"
+    command = [
+        "python",
+        "-u",
+        "/root/ComfyUI/main.py",
+        "--listen",
+        "0.0.0.0",
+        "--port",
+        "8188",
+        "--enable-cors-header",
+        "*",
+    ]
+    if web_fast:
+        command.append("--fast")
+    command.extend(
         [
-            "python",
-            "-u",
-            "/root/ComfyUI/main.py",
-            "--listen",
-            "0.0.0.0",
-            "--port",
-            "8188",
-            "--enable-cors-header",
-            "*",
             "--extra-model-paths-config",
             str(extra_paths),
-        ],
+        ]
+    )
+    print(
+        f"[MODAL_COMFY_WEB] ComfyUI 실행: listen=0.0.0.0, "
+        f"cors=*, fast={web_fast}"
+    )
+    subprocess.Popen(
+        command,
         cwd="/root/ComfyUI",
         env=child_env,
     )

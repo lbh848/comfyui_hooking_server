@@ -17805,6 +17805,14 @@
                                     <span class="comfy-runtime-option-label">상태 갱신</span>
                                     <input type="number" id="modal-runtime-status-refresh" min="2" max="60" step="1" value="5" onchange="modalSyncRuntimeControls('runtime')">
                                 </label>
+                                <div class="comfy-runtime-option read-only-state" title="Modal 웹 UI 접속에 필요한 고정 설정입니다.">
+                                    <span><span class="comfy-runtime-option-label">외부 접속 허용</span><span class="comfy-runtime-option-note">--listen 0.0.0.0 · 웹 UI 필수</span></span>
+                                    <span class="toggle-status on">ON</span>
+                                </div>
+                                <label class="comfy-runtime-option toggle" title="수동 Modal 웹 ComfyUI에만 --fast를 적용합니다.">
+                                    <input type="checkbox" id="modal-runtime-web-fast" onchange="modalSyncRuntimeControls('runtime')">
+                                    <span><span class="comfy-runtime-option-label">FAST 모드</span><span class="comfy-runtime-option-note">--fast · 다음 시작 시 적용</span></span>
+                                </label>
                             </div>
 
                             <div class="comfy-modal-runtime-actions">
@@ -26819,6 +26827,8 @@
             if (modalScaledownEl) modalScaledownEl.value = currentConfig.modal_scaledown_window_seconds ?? 15;
             const modalRefreshEl = document.getElementById('modal-runtime-status-refresh');
             if (modalRefreshEl) modalRefreshEl.value = currentConfig.modal_status_refresh_seconds ?? 5;
+            const modalWebFastEl = document.getElementById('modal-runtime-web-fast');
+            if (modalWebFastEl) modalWebFastEl.checked = currentConfig.modal_web_fast === true;
             const modalCreditEl = document.getElementById('setting-modal-monthly-credit');
             if (modalCreditEl) modalCreditEl.value = currentConfig.modal_monthly_credit_usd ?? 30;
             modalSyncRuntimeControls('runtime');
@@ -28300,6 +28310,7 @@
                 modal_monthly_credit_usd: parseFloat(document.getElementById('setting-modal-monthly-credit')?.value) || 30,
                 modal_scaledown_window_seconds: parseInt(document.getElementById('modal-runtime-scaledown-window')?.value, 10) || 15,
                 modal_status_refresh_seconds: parseInt(document.getElementById('modal-runtime-status-refresh')?.value, 10) || 5,
+                modal_web_fast: document.getElementById('modal-runtime-web-fast')?.checked === true,
                 workflow_base_dir: document.getElementById('setting-workflow-base-dir').value.trim(),
                 send_original: document.getElementById('setting-send-original').checked,
                 webp_quality: parseInt(document.getElementById('setting-webp-quality').value) || 85,

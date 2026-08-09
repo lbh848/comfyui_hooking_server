@@ -29,12 +29,16 @@ class ModalSettings:
     monthly_credit_usd: float = 30.0
     scaledown_window_seconds: int = 15
     status_refresh_seconds: int = 5
+    web_fast: bool = False
 
     @classmethod
     def from_mapping(cls, config: Mapping[str, Any]) -> "ModalSettings":
         enabled = config.get("modal_enabled", False)
         if not isinstance(enabled, bool):
             raise ValueError("modal_enabled는 true/false여야 합니다.")
+        web_fast = config.get("modal_web_fast", False)
+        if not isinstance(web_fast, bool):
+            raise ValueError("modal_web_fast는 true/false여야 합니다.")
         gpu = str(config.get("modal_gpu") or "L4").strip().upper()
         if gpu != "L4":
             raise ValueError("현재 원격 GPU 프로필은 L4만 지원합니다.")
@@ -73,6 +77,7 @@ class ModalSettings:
             monthly_credit_usd=credit,
             scaledown_window_seconds=scaledown,
             status_refresh_seconds=refresh,
+            web_fast=web_fast,
         )
 
     def public_dict(self) -> dict[str, Any]:
@@ -86,6 +91,7 @@ class ModalSettings:
             "monthly_credit_usd": self.monthly_credit_usd,
             "scaledown_window_seconds": self.scaledown_window_seconds,
             "status_refresh_seconds": self.status_refresh_seconds,
+            "web_fast": self.web_fast,
             "volume_names": {
                 "models": f"{self.deployment_name}-models",
                 "loras": f"{self.deployment_name}-loras",

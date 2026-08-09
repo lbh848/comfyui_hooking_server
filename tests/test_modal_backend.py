@@ -67,6 +67,8 @@ def test_modal_defaults_are_scale_to_zero_and_l4_budgeted() -> None:
     assert settings.max_concurrency == 2
     assert settings.scaledown_window_seconds == 15
     assert settings.status_refresh_seconds == 5
+    assert settings.web_fast is False
+    assert settings.public_dict()["web_fast"] is False
     assert cost["assumptions"]["min_containers"] == 0
     assert cost["assumptions"]["scaledown_window_seconds"] == 15
     assert cost["l4_gpu_per_hour"] == pytest.approx(0.7992)
@@ -85,6 +87,7 @@ def test_modal_defaults_are_scale_to_zero_and_l4_budgeted() -> None:
         {"modal_scaledown_window_seconds": 1201},
         {"modal_status_refresh_seconds": 1},
         {"modal_status_refresh_seconds": 61},
+        {"modal_web_fast": "true"},
     ],
 )
 def test_modal_settings_reject_invalid_values(config: dict) -> None:
@@ -1480,6 +1483,7 @@ async def test_modal_web_deploy_uses_package_module_mode(
             "modal_enabled": True,
             "modal_deployment_name": "worker-app",
             "modal_environment": "main",
+            "modal_web_fast": True,
         },
     )
     observed: dict = {}
@@ -1504,6 +1508,7 @@ async def test_modal_web_deploy_uses_package_module_mode(
     ]
     assert observed["args"][7] == "main"
     assert observed["kwargs"]["timeout"] == 3600
+    assert observed["kwargs"]["env"]["SOYA_MODAL_WEB_FAST"] == "1"
 
 
 @pytest.mark.asyncio
@@ -1699,7 +1704,10 @@ def test_modal_web_function_is_isolated_from_worker_app() -> None:
     assert "def comfy_web_server" in web_source
     assert "@modal.web_server" in web_source
     assert 'WEB_APP_NAME = os.environ.get("SOYA_MODAL_WEB_APP_NAME"' in web_source
-    assert '"--enable-cors-header",\n            "*",' in web_source
+    assert '"--enable-cors-header",\n        "*",' in web_source
+    assert 'WEB_FAST = os.environ.get("SOYA_MODAL_WEB_FAST", "0") == "1"' in web_source
+    assert 'web_runtime_image = runtime_image.env(' in web_source
+    assert 'if web_fast:\n        command.append("--fast")' in web_source
 
 
 @pytest.mark.asyncio
