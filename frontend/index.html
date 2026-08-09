@@ -5296,6 +5296,119 @@
             overflow: auto;
             padding: 7px;
         }
+        .modal-workflow-sync-summary {
+            display: grid;
+            grid-template-columns: repeat(5, minmax(0, 1fr));
+            gap: 6px;
+            margin-top: 9px;
+        }
+        .modal-workflow-sync-summary[hidden] { display: none; }
+        .modal-workflow-sync-filter {
+            --sync-color: #8ea4c8;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 6px;
+            min-width: 0;
+            padding: 7px 9px;
+            border: 1px solid color-mix(in srgb, var(--sync-color) 34%, var(--border));
+            border-radius: 8px;
+            background: color-mix(in srgb, var(--sync-color) 6%, var(--surface2));
+            color: var(--text2);
+            cursor: pointer;
+            font-size: .68rem;
+            transition: border-color .15s ease, background .15s ease, color .15s ease;
+        }
+        .modal-workflow-sync-filter::before {
+            width: 7px;
+            height: 7px;
+            flex: 0 0 auto;
+            border-radius: 999px;
+            background: var(--sync-color);
+            box-shadow: 0 0 8px color-mix(in srgb, var(--sync-color) 58%, transparent);
+            content: '';
+        }
+        .modal-workflow-sync-filter span {
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .modal-workflow-sync-filter strong {
+            margin-left: auto;
+            color: var(--sync-color);
+            font-size: .76rem;
+        }
+        .modal-workflow-sync-filter:hover,
+        .modal-workflow-sync-filter.active {
+            border-color: color-mix(in srgb, var(--sync-color) 74%, var(--border));
+            background: color-mix(in srgb, var(--sync-color) 13%, var(--surface2));
+            color: var(--text);
+        }
+        .modal-workflow-sync-filter[data-modal-workflow-sync-filter="synced"] { --sync-color: #55d69e; }
+        .modal-workflow-sync-filter[data-modal-workflow-sync-filter="different"] { --sync-color: #f0bd5b; }
+        .modal-workflow-sync-filter[data-modal-workflow-sync-filter="missing"] { --sync-color: #ff7787; }
+        .modal-workflow-sync-filter[data-modal-workflow-sync-filter="invalid"] { --sync-color: #c48cff; }
+        .modal-workflow-row {
+            --sync-color: var(--border);
+            display: grid;
+            grid-template-columns: auto minmax(0, 1fr);
+            gap: 9px;
+            margin: 4px 0;
+            padding: 9px 10px;
+            border: 1px solid transparent;
+            border-left: 3px solid transparent;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: border-color .15s ease, background .15s ease;
+        }
+        .modal-workflow-row:hover { background: rgba(255,255,255,.04); }
+        .modal-workflow-row.has-sync {
+            border-color: color-mix(in srgb, var(--sync-color) 26%, var(--border));
+            border-left-color: var(--sync-color);
+            background: color-mix(in srgb, var(--sync-color) 5%, transparent);
+        }
+        .modal-workflow-row.state-synced { --sync-color: #55d69e; }
+        .modal-workflow-row.state-different { --sync-color: #f0bd5b; }
+        .modal-workflow-row.state-missing { --sync-color: #ff7787; }
+        .modal-workflow-row.state-invalid { --sync-color: #c48cff; }
+        .modal-workflow-row > input { margin-top: 3px; }
+        .modal-workflow-copy { min-width: 0; }
+        .modal-workflow-main {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            min-width: 0;
+        }
+        .modal-workflow-main strong {
+            min-width: 0;
+            overflow-wrap: anywhere;
+            color: var(--text);
+            font-size: .76rem;
+        }
+        .modal-workflow-detail {
+            display: block;
+            margin-top: 3px;
+            color: var(--text2);
+            font-size: .66rem;
+        }
+        .modal-workflow-sync-badge {
+            flex: 0 0 auto;
+            padding: 3px 7px;
+            border: 1px solid color-mix(in srgb, var(--sync-color) 52%, var(--border));
+            border-radius: 999px;
+            background: color-mix(in srgb, var(--sync-color) 12%, var(--surface2));
+            color: var(--sync-color);
+            font-size: .64rem;
+            font-weight: 800;
+            line-height: 1.25;
+            white-space: nowrap;
+        }
+        .modal-workflow-sync-badge.state-synced { --sync-color: #55d69e; }
+        .modal-workflow-sync-badge.state-different { --sync-color: #f0bd5b; }
+        .modal-workflow-sync-badge.state-missing { --sync-color: #ff7787; }
+        .modal-workflow-sync-badge.state-invalid { --sync-color: #c48cff; }
         .comfy-workflow-item {
             display: grid;
             grid-template-columns: auto minmax(0, 1fr);
@@ -5339,6 +5452,7 @@
             .comfy-installer-field.full { grid-column: auto; }
             .comfy-installer-status-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
             .comfy-workflow-columns { grid-template-columns: 1fr; }
+            .modal-workflow-sync-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
         }
         @media (max-width: 520px) {
             .comfy-installer-hero,
@@ -17708,6 +17822,27 @@
                                 <button type="button" class="comfy-runtime-btn" onclick="modalOpenExternalSettings()">계정 설정</button>
                             </div>
 
+                            <section class="comfy-modal-runtime-card comfy-modal-runtime-console-card">
+                                <div class="comfy-modal-runtime-card-head">
+                                    <div><strong>Modal CMD</strong><small>작업 App·웹 App·동기화·진단 로그를 함께 조회합니다.</small></div>
+                                    <span id="modal-runtime-log-status">로그 대기</span>
+                                </div>
+                                <div class="comfy-modal-log-toolbar">
+                                    <div class="comfy-modal-log-tabs" role="tablist" aria-label="Modal 로그 그룹">
+                                        <button type="button" class="comfy-modal-log-tab active" data-modal-log-filter="all" onclick="modalRuntimeSelectLogTab('all')">전체</button>
+                                        <button type="button" class="comfy-modal-log-tab" data-modal-log-filter="web" onclick="modalRuntimeSelectLogTab('web')">ComfyUI 웹</button>
+                                        <button type="button" class="comfy-modal-log-tab" data-modal-log-filter="jobs" onclick="modalRuntimeSelectLogTab('jobs')">생성·큐</button>
+                                        <button type="button" class="comfy-modal-log-tab" data-modal-log-filter="sync" onclick="modalRuntimeSelectLogTab('sync')">동기화·배포</button>
+                                        <button type="button" class="comfy-modal-log-tab" data-modal-log-filter="diagnostic" onclick="modalRuntimeSelectLogTab('diagnostic')">진단</button>
+                                    </div>
+                                    <label class="comfy-modal-log-option"><input type="checkbox" id="modal-runtime-log-autoscroll" checked>자동 스크롤</label>
+                                    <button type="button" class="comfy-runtime-btn" onclick="modalRuntimeRefreshLogs(true)">로그 새로고침</button>
+                                    <button type="button" class="comfy-runtime-btn" onclick="modalRuntimeCopyLogs()">복사</button>
+                                    <button type="button" class="comfy-runtime-btn" onclick="modalRuntimeClearLogs()">화면 비우기</button>
+                                </div>
+                                <pre class="comfy-modal-runtime-log" id="modal-runtime-log" role="log" aria-live="polite">Modal 로그를 불러오는 중입니다.</pre>
+                            </section>
+
                             <section class="comfy-installer-card" id="modal-installer-card">
                                 <div class="comfy-installer-section-head">
                                     <span class="comfy-installer-step" aria-hidden="true">M</span>
@@ -17728,6 +17863,13 @@
                                            oninput="modalFilterWorkflows()"
                                            style="flex:1; padding:6px 10px; border-radius:6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.85rem;">
                                     <small id="modal-workflow-search-count" style="color:var(--text-secondary,#aaa); white-space:nowrap;"></small>
+                                </div>
+                                <div class="modal-workflow-sync-summary" id="modal-workflow-sync-summary" aria-label="워크플로우 동기화 상태 필터" hidden>
+                                    <button type="button" class="modal-workflow-sync-filter active" data-modal-workflow-sync-filter="all" aria-pressed="true" onclick="modalSetRemoteWorkflowFilter('all')"><span>전체</span><strong id="modal-workflow-sync-count-all">0</strong></button>
+                                    <button type="button" class="modal-workflow-sync-filter" data-modal-workflow-sync-filter="synced" aria-pressed="false" onclick="modalSetRemoteWorkflowFilter('synced')"><span>동기화 완료</span><strong id="modal-workflow-sync-count-synced">0</strong></button>
+                                    <button type="button" class="modal-workflow-sync-filter" data-modal-workflow-sync-filter="different" aria-pressed="false" onclick="modalSetRemoteWorkflowFilter('different')"><span>내용 다름</span><strong id="modal-workflow-sync-count-different">0</strong></button>
+                                    <button type="button" class="modal-workflow-sync-filter" data-modal-workflow-sync-filter="missing" aria-pressed="false" onclick="modalSetRemoteWorkflowFilter('missing')"><span>Modal에 없음</span><strong id="modal-workflow-sync-count-missing">0</strong></button>
+                                    <button type="button" class="modal-workflow-sync-filter" data-modal-workflow-sync-filter="invalid" aria-pressed="false" onclick="modalSetRemoteWorkflowFilter('invalid')"><span>원격 파일 오류</span><strong id="modal-workflow-sync-count-invalid">0</strong></button>
                                 </div>
                                 <div id="modal-workflow-catalog" class="comfy-workflow-list" style="margin-top:8px; max-height:260px; overflow:auto;">
                                     <div class="comfy-workflow-empty">Modal 워크플로우 목록을 불러오는 중입니다.</div>
@@ -17761,27 +17903,6 @@
                                     </div>
                                     <pre class="modal-install-progress-log" id="modal-install-progress-log" aria-label="Modal 동기화 실시간 로그">실시간 로그를 기다리고 있습니다.</pre>
                                 </div>
-                            </section>
-
-                            <section class="comfy-modal-runtime-card comfy-modal-runtime-console-card">
-                                <div class="comfy-modal-runtime-card-head">
-                                    <div><strong>Modal CMD</strong><small>작업 App·웹 App·동기화·진단 로그를 함께 조회합니다.</small></div>
-                                    <span id="modal-runtime-log-status">로그 대기</span>
-                                </div>
-                                <div class="comfy-modal-log-toolbar">
-                                    <div class="comfy-modal-log-tabs" role="tablist" aria-label="Modal 로그 그룹">
-                                        <button type="button" class="comfy-modal-log-tab active" data-modal-log-filter="all" onclick="modalRuntimeSelectLogTab('all')">전체</button>
-                                        <button type="button" class="comfy-modal-log-tab" data-modal-log-filter="web" onclick="modalRuntimeSelectLogTab('web')">ComfyUI 웹</button>
-                                        <button type="button" class="comfy-modal-log-tab" data-modal-log-filter="jobs" onclick="modalRuntimeSelectLogTab('jobs')">생성·큐</button>
-                                        <button type="button" class="comfy-modal-log-tab" data-modal-log-filter="sync" onclick="modalRuntimeSelectLogTab('sync')">동기화·배포</button>
-                                        <button type="button" class="comfy-modal-log-tab" data-modal-log-filter="diagnostic" onclick="modalRuntimeSelectLogTab('diagnostic')">진단</button>
-                                    </div>
-                                    <label class="comfy-modal-log-option"><input type="checkbox" id="modal-runtime-log-autoscroll" checked>자동 스크롤</label>
-                                    <button type="button" class="comfy-runtime-btn" onclick="modalRuntimeRefreshLogs(true)">로그 새로고침</button>
-                                    <button type="button" class="comfy-runtime-btn" onclick="modalRuntimeCopyLogs()">복사</button>
-                                    <button type="button" class="comfy-runtime-btn" onclick="modalRuntimeClearLogs()">화면 비우기</button>
-                                </div>
-                                <pre class="comfy-modal-runtime-log" id="modal-runtime-log" role="log" aria-live="polite">Modal 로그를 불러오는 중입니다.</pre>
                             </section>
                         </section>
                     </div>
@@ -25725,6 +25846,7 @@
         let modalSelectedWorkflowIds = new Set();
         let modalRemoteWorkflowQueryState = 'idle';
         let modalRemoteWorkflowCheckedAt = '';
+        let modalRemoteWorkflowFilter = 'all';
         let modalStatusPollTimer = null;
         // auth/install/probe 가 running 이었는지 추적. 터미널(completed/failed)로 전환되면
         // 폴링이 멈추기 전에 최종 상태를 한 번 더 가져와 화면에 반영하기 위함.
@@ -26249,13 +26371,85 @@
             modalRenderWorkflowCatalog();
         }
 
+        function modalRemoteWorkflowStateMeta(item) {
+            const states = {
+                synced: {
+                    label: '동기화 완료',
+                    detail: '로컬과 Modal Volume의 파일이 같습니다.',
+                },
+                different: {
+                    label: '내용 다름',
+                    detail: 'SHA-256이 다릅니다. 다시 동기화하세요.',
+                },
+                missing: {
+                    label: 'Modal에 없음',
+                    detail: 'Modal Volume에 워크플로우 파일이 없습니다.',
+                },
+                invalid: {
+                    label: '원격 파일 오류',
+                    detail: 'Modal Volume의 워크플로우 파일을 읽을 수 없습니다.',
+                },
+            };
+            return states[String(item?.sync_state || item || '')] || {
+                label: '조회 필요',
+                detail: '원격 동기화 조회를 실행하세요.',
+            };
+        }
+
+        function modalRemoteWorkflowStateText(item) {
+            return modalRemoteWorkflowStateMeta(item).label;
+        }
+
+        function modalSetRemoteWorkflowFilter(state) {
+            const allowed = new Set(['all', 'synced', 'different', 'missing', 'invalid']);
+            modalRemoteWorkflowFilter = allowed.has(String(state || '')) ? String(state) : 'all';
+            modalRenderWorkflowCatalog();
+        }
+
+        function modalRenderWorkflowSyncSummary() {
+            const summary = document.getElementById('modal-workflow-sync-summary');
+            if (!summary) return;
+            const loaded = modalRemoteWorkflowQueryState === 'loaded';
+            summary.hidden = !loaded;
+            if (!loaded) return;
+
+            const counts = {
+                all: modalWorkflowCatalog.length,
+                synced: 0,
+                different: 0,
+                missing: 0,
+                invalid: 0,
+            };
+            for (const item of modalWorkflowCatalog) {
+                const state = String(item?.sync_state || '');
+                if (Object.prototype.hasOwnProperty.call(counts, state)) counts[state] += 1;
+            }
+            if (modalRemoteWorkflowFilter !== 'all' && !counts[modalRemoteWorkflowFilter]) {
+                modalRemoteWorkflowFilter = 'all';
+            }
+            for (const [state, count] of Object.entries(counts)) {
+                const countElement = document.getElementById(`modal-workflow-sync-count-${state}`);
+                if (countElement) countElement.textContent = String(count);
+            }
+            summary.querySelectorAll('[data-modal-workflow-sync-filter]').forEach(button => {
+                const active = button.dataset.modalWorkflowSyncFilter === modalRemoteWorkflowFilter;
+                button.classList.toggle('active', active);
+                button.setAttribute('aria-pressed', active ? 'true' : 'false');
+            });
+        }
+
         function modalRenderWorkflowCatalog(errors) {
             const container = document.getElementById('modal-workflow-catalog');
             if (!container) return;
+            modalRenderWorkflowSyncSummary();
             const query = modalWorkflowSearchText();
             const filtered = modalWorkflowCatalog.filter(item => {
                 const name = String(item.source_name || item.id || '').toLowerCase();
-                return !query || name.includes(query);
+                const matchesSearch = !query || name.includes(query);
+                const matchesSync = modalRemoteWorkflowQueryState !== 'loaded'
+                    || modalRemoteWorkflowFilter === 'all'
+                    || String(item.sync_state || '') === modalRemoteWorkflowFilter;
+                return matchesSearch && matchesSync;
             });
             container.replaceChildren();
             if (errors && errors.length) {
@@ -26274,12 +26468,14 @@
                 const empty = document.createElement('div');
                 empty.className = 'comfy-workflow-empty';
                 const rawQuery = (document.getElementById('modal-workflow-search')?.value || '').trim();
-                empty.textContent = `검색 "${rawQuery}"에 일치하는 워크플로우가 없습니다.`;
+                empty.textContent = rawQuery
+                    ? `검색 "${rawQuery}"에 일치하는 워크플로우가 없습니다.`
+                    : `${modalRemoteWorkflowStateMeta(modalRemoteWorkflowFilter).label} 상태의 워크플로우가 없습니다.`;
                 container.append(empty);
             }
             for (const item of filtered) {
                 const label = document.createElement('label');
-                label.style.cssText = 'display:flex;align-items:center;gap:9px;padding:8px 10px;border-bottom:1px solid var(--border);cursor:pointer;';
+                label.className = 'modal-workflow-row';
                 const checkbox = document.createElement('input');
                 checkbox.type = 'checkbox';
                 checkbox.className = 'modal-workflow-checkbox';
@@ -26291,16 +26487,26 @@
                     modalUpdateWorkflowSelectionSummary();
                 });
                 const copy = document.createElement('span');
-                copy.style.cssText = 'display:flex;flex:1;justify-content:space-between;gap:12px;font-size:12px;';
+                copy.className = 'modal-workflow-copy';
+                const main = document.createElement('span');
+                main.className = 'modal-workflow-main';
                 const name = document.createElement('strong');
                 name.textContent = item.source_name || item.id;
-                const size = document.createElement('span');
-                size.style.color = 'var(--text-secondary,#aaa)';
-                const remoteState = modalRemoteWorkflowQueryState === 'loaded'
-                    ? ` · ${modalRemoteWorkflowStateText(item)}`
-                    : '';
-                size.textContent = `${item.model_count} 모델 · ${(Number(item.size_gib) || 0).toFixed(2)} GiB${remoteState}`;
-                copy.append(name, size);
+                main.append(name);
+                if (modalRemoteWorkflowQueryState === 'loaded') {
+                    const syncState = String(item.sync_state || 'invalid');
+                    const meta = modalRemoteWorkflowStateMeta(syncState);
+                    label.classList.add('has-sync', `state-${syncState}`);
+                    const badge = document.createElement('span');
+                    badge.className = `modal-workflow-sync-badge state-${syncState}`;
+                    badge.textContent = meta.label;
+                    badge.title = String(item.remote_error || meta.detail);
+                    main.append(badge);
+                }
+                const detail = document.createElement('small');
+                detail.className = 'modal-workflow-detail';
+                detail.textContent = `${Number(item.model_count || 0)} 모델 · ${(Number(item.size_gib) || 0).toFixed(2)} GiB`;
+                copy.append(main, detail);
                 label.append(checkbox, copy);
                 container.append(label);
             }
@@ -26320,6 +26526,7 @@
                 modalWorkflowCatalog = data.workflows || [];
                 modalRemoteWorkflowQueryState = 'idle';
                 modalRemoteWorkflowCheckedAt = '';
+                modalRemoteWorkflowFilter = 'all';
                 const errors = Array.isArray(data.errors) ? data.errors : [];
                 // 새로고침 후 사라진 항목은 선택에서 제거(스테일 선택 방지).
                 const present = new Set(modalWorkflowCatalog.map(item => item.id));
@@ -26358,6 +26565,8 @@
                 _modalInstallWasRunning = true;
                 modalRemoteWorkflowQueryState = 'idle';
                 modalRemoteWorkflowCheckedAt = '';
+                modalRemoteWorkflowFilter = 'all';
+                modalRenderWorkflowCatalog();
                 const queryStatus = document.getElementById('modal-runtime-workflow-query-status');
                 if (queryStatus) queryStatus.textContent = '동기화가 끝난 뒤 원격 조회를 다시 실행하세요.';
                 modalRenderInstallProgress(data.install || {state: 'running', phase: 'assets'});
@@ -26371,21 +26580,13 @@
             }
         }
 
-        function modalRemoteWorkflowStateText(item) {
-            const labels = {
-                synced: '동기화됨',
-                different: '동기화 필요',
-                missing: '미동기화',
-                invalid: '원격 파일 오류',
-            };
-            return labels[String(item?.sync_state || '')] || '조회 필요';
-        }
-
         async function modalRuntimeQueryWorkflows() {
             const button = document.getElementById('modal-runtime-workflow-query-btn');
             const status = document.getElementById('modal-runtime-workflow-query-status');
             if (button) button.disabled = true;
             modalRemoteWorkflowQueryState = 'loading';
+            modalRemoteWorkflowFilter = 'all';
+            modalRenderWorkflowCatalog();
             if (status) status.textContent = '로컬 SOYA_USER와 Modal Volume의 SHA-256을 비교하고 있습니다.';
             try {
                 const data = await fetchJSON('/api/modal/workflows/remote');
@@ -26408,12 +26609,14 @@
                     ? new Date(modalRemoteWorkflowCheckedAt).toLocaleTimeString('ko-KR', {hour12: false})
                     : '방금';
                 if (status) {
-                    status.textContent = `${checked} 조회 · 동기화됨 ${Number(counts.synced || 0)}개 · 동기화 필요 ${Number(counts.different || 0)}개 · 미동기화 ${Number(counts.missing || 0)}개 · 오류 ${Number(counts.invalid || 0)}개`;
+                    status.textContent = `${checked} 조회 · 완료 ${Number(counts.synced || 0)}개 · 내용 다름 ${Number(counts.different || 0)}개 · Modal에 없음 ${Number(counts.missing || 0)}개 · 오류 ${Number(counts.invalid || 0)}개`;
                 }
                 showToast('Modal 워크플로우 동기화 상태를 조회했습니다', 'success');
             } catch (error) {
                 modalRemoteWorkflowQueryState = 'failed';
                 modalRemoteWorkflowCheckedAt = '';
+                modalRemoteWorkflowFilter = 'all';
+                modalRenderWorkflowCatalog();
                 console.error('[MODAL_RUNTIME] 원격 워크플로우 조회 실패:', error);
                 if (status) status.textContent = '원격 조회 실패: ' + (error.message || error);
                 showToast('Modal 원격 워크플로우 조회 실패: ' + (error.message || error), 'error');

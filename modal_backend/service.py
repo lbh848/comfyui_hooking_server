@@ -99,6 +99,10 @@ class ModalService:
     def __init__(self, project_root: str | Path, get_config):
         self.project_root = Path(project_root).resolve()
         self.get_config = get_config
+        # 관리 화면의 CMD는 현재 서버 프로세스에서 일어난 일만 보여준다.
+        # Modal 원격 로그는 배포 수명 전체를 반환하므로 이 기준 시각 이전 기록은
+        # runtime_logs()에서 제거한다.
+        self._runtime_log_session_started_at = time.time()
         self._auth_task: asyncio.Task | None = None
         self._auth_state: dict[str, Any] = {
             "state": "idle",
@@ -171,6 +175,7 @@ class ModalService:
         args: list[str],
         *,
         env: Mapping[str, str],
+        cwd: str | Path | None = None,
         stdin_payload: dict | None = None,
         timeout: float | None = None,
         output_callback: Callable[[str, str], None] | None = None,
@@ -191,6 +196,7 @@ class ModalService:
                 encoding="utf-8",
                 errors="replace",
                 env=dict(env),
+                cwd=str(cwd) if cwd is not None else None,
                 timeout=timeout,
                 check=False,
                 **kwargs,
@@ -237,6 +243,7 @@ class ModalService:
                     errors="replace",
                     bufsize=1,
                     env=dict(env),
+                    cwd=str(cwd) if cwd is not None else None,
                     **kwargs,
                 )
                 process_holder["process"] = process
@@ -926,18 +933,19 @@ class ModalService:
             return int(response.status or 0)
 
     async def _deploy_web_app(self, settings: ModalSettings) -> None:
-        app_path = self.project_root / "modal_backend" / "modal_web_app.py"
         code, _stdout, stderr = await self._run_command(
             [
                 sys.executable,
                 "-m",
                 "modal",
                 "deploy",
-                str(app_path),
+                "-m",
+                "modal_backend.modal_web_app",
                 "--env",
                 settings.environment,
             ],
             env=self._modal_deploy_env(settings),
+            cwd=self.project_root,
             timeout=3600,
         )
         if code != 0:
@@ -946,6 +954,29 @@ class ModalService:
                 f"env={settings.environment}, exit_code={code}, stderr={stderr[-1200:]}"
             )
             raise RuntimeError("Modal ComfyUI 웹 App 배포에 실패했습니다.")
+
+    async def _stop_web_app(self, settings: ModalSettings) -> None:
+        code, _stdout, stderr = await self._run_command(
+            [
+                sys.executable,
+                "-m",
+                "modal",
+                "app",
+                "stop",
+                self._web_app_name(settings),
+                "--yes",
+                "--env",
+                settings.environment,
+            ],
+            env=self._subprocess_env(settings.profile),
+            timeout=120,
+        )
+        if code != 0:
+            print(
+                f"[MODAL] 웹 App 종료 실패: app={self._web_app_name(settings)}, "
+                f"exit_code={code}, stderr={stderr[-1200:]}"
+            )
+            raise RuntimeError("Modal ComfyUI 웹 App 종료에 실패했습니다.")
 
     async def _run_web_start(
         self,
@@ -996,11 +1027,45 @@ class ModalService:
         except Exception as exc:
             print(f"[MODAL] 웹 App 시작 실패: {type(exc).__name__}: {exc}")
             traceback.print_exc()
+            cleanup_error = ""
+            try:
+                await self._stop_web_app(settings)
+                print(
+                    f"[MODAL] 시작 실패 웹 App 자동 종료 완료: "
+                    f"app={self._web_app_name(settings)}"
+                )
+            except Exception as cleanup_exc:
+                cleanup_error = f"{type(cleanup_exc).__name__}: {cleanup_exc}"
+                print(
+                    f"[MODAL] 시작 실패 웹 App 자동 종료도 실패: "
+                    f"app={self._web_app_name(settings)}, error={cleanup_error}"
+                )
+                traceback.print_exc()
+            stopped = not cleanup_error
             self._web_state = {
                 **self._web_state,
+                "available": False,
+                "deployed": False if stopped else bool(self._web_state.get("deployed")),
                 "state": "failed",
-                "message": f"웹 App 시작 실패: {type(exc).__name__}: {exc}",
+                "reason": "runtime_unavailable",
+                "message": (
+                    f"웹 App 시작 실패로 자동 종료했습니다: {type(exc).__name__}: {exc}"
+                    if stopped
+                    else (
+                        f"웹 App 시작 실패 후 자동 종료도 실패했습니다: "
+                        f"{type(exc).__name__}: {exc}"
+                    )
+                ),
                 "error": str(exc),
+                **({"cleanup_error": cleanup_error} if cleanup_error else {}),
+                "url": "" if stopped else str(self._web_state.get("url") or ""),
+                "num_total_runners": 0 if stopped else int(
+                    self._web_state.get("num_total_runners") or 0
+                ),
+                "num_running_inputs": 0 if stopped else int(
+                    self._web_state.get("num_running_inputs") or 0
+                ),
+                "backlog": 0 if stopped else int(self._web_state.get("backlog") or 0),
                 "updated_at": time.time(),
             }
 
@@ -1027,27 +1092,7 @@ class ModalService:
     async def _run_web_stop(self, settings: ModalSettings) -> None:
         try:
             await self.runtime_logs(entries=RUNTIME_LOG_LIMIT)
-            code, _stdout, stderr = await self._run_command(
-                [
-                    sys.executable,
-                    "-m",
-                    "modal",
-                    "app",
-                    "stop",
-                    self._web_app_name(settings),
-                    "--yes",
-                    "--env",
-                    settings.environment,
-                ],
-                env=self._subprocess_env(settings.profile),
-                timeout=120,
-            )
-            if code != 0:
-                print(
-                    f"[MODAL] 웹 App 종료 실패: app={self._web_app_name(settings)}, "
-                    f"exit_code={code}, stderr={stderr[-1200:]}"
-                )
-                raise RuntimeError("Modal ComfyUI 웹 App 종료에 실패했습니다.")
+            await self._stop_web_app(settings)
             self._web_state = {
                 "available": True,
                 "deployed": False,
@@ -1131,9 +1176,10 @@ class ModalService:
                     "message": str(item.get("message") or ""),
                 }
             )
+        probe_state = str(self._probe_state.get("state") or "")
         probe_updated_at = float(self._probe_state.get("updated_at") or 0.0)
         probe_message = str(self._probe_state.get("message") or "")
-        if probe_updated_at and probe_message:
+        if probe_state != "idle" and probe_updated_at and probe_message:
             logs.append(
                 {
                     "time": probe_updated_at,
@@ -1146,6 +1192,11 @@ class ModalService:
                     "message": probe_message,
                 }
             )
+        logs = [
+            item
+            for item in logs
+            if float(item.get("time") or 0.0) >= self._runtime_log_session_started_at
+        ]
         logs.sort(key=lambda item: float(item.get("time") or 0.0))
         if len(logs) > requested:
             logs = logs[-requested:]

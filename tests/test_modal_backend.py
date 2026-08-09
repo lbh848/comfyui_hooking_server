@@ -1399,6 +1399,40 @@ def test_modal_client_web_status_reads_dedicated_web_app_stats(
     assert result["backlog"] == 1
 
 
+def test_modal_client_web_status_treats_missing_app_as_stopped(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    payload = {
+        "app_name": "worker",
+        "web_app_name": "worker-web",
+        "environment": "main",
+    }
+
+    class FakeFunction:
+        def get_web_url(self) -> str:
+            raise client_cli.modal.exception.NotFoundError("missing web app")
+
+    monkeypatch.setattr(
+        client_cli,
+        "_web_function",
+        lambda _payload: FakeFunction(),
+    )
+
+    result = client_cli.web_status(payload)
+
+    assert result == {
+        "url": None,
+        "app_name": "worker-web",
+        "backlog": 0,
+        "num_total_runners": 0,
+        "num_running_inputs": 0,
+    }
+    captured = capsys.readouterr()
+    assert "웹 App 미배포" in captured.err
+    assert "Traceback" in captured.err
+
+
 @pytest.mark.asyncio
 async def test_modal_web_stop_only_stops_dedicated_web_app(
     tmp_path: Path,
@@ -1433,6 +1467,43 @@ async def test_modal_web_stop_only_stops_dedicated_web_app(
     assert observed["command"][4:7] == ["stop", "worker-app-web", "--yes"]
     assert service._web_state["state"] == "stopped"
     assert service._web_state["app_name"] == "worker-app-web"
+
+
+@pytest.mark.asyncio
+async def test_modal_web_deploy_uses_package_module_mode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = ModalService(
+        tmp_path,
+        lambda: {
+            "modal_enabled": True,
+            "modal_deployment_name": "worker-app",
+            "modal_environment": "main",
+        },
+    )
+    observed: dict = {}
+
+    async def run_command(args, **kwargs):
+        observed["args"] = list(args)
+        observed["kwargs"] = kwargs
+        return 0, "", ""
+
+    monkeypatch.setattr(service, "_run_command", run_command)
+
+    settings = ModalSettings.from_mapping(service.get_config())
+    await service._deploy_web_app(settings)
+
+    assert observed["args"][1:7] == [
+        "-m",
+        "modal",
+        "deploy",
+        "-m",
+        "modal_backend.modal_web_app",
+        "--env",
+    ]
+    assert observed["args"][7] == "main"
+    assert observed["kwargs"]["timeout"] == 3600
 
 
 @pytest.mark.asyncio
@@ -1483,11 +1554,47 @@ async def test_modal_web_start_redeploys_web_app_before_warming_l4(
 
 
 @pytest.mark.asyncio
+async def test_modal_web_start_failure_stops_web_app(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = ModalService(
+        tmp_path,
+        lambda: {
+            "modal_enabled": True,
+            "modal_deployment_name": "worker-app",
+            "modal_environment": "main",
+        },
+    )
+    settings = ModalSettings.from_mapping(service.get_config())
+    observed: list[str] = []
+
+    async def deploy(_settings: ModalSettings) -> None:
+        observed.append("deploy")
+        raise RuntimeError("broken deployment")
+
+    async def stop(_settings: ModalSettings) -> None:
+        observed.append("stop")
+
+    monkeypatch.setattr(service, "_deploy_web_app", deploy)
+    monkeypatch.setattr(service, "_stop_web_app", stop)
+
+    await service._run_web_start(settings, {"deployed": False})
+
+    assert observed == ["deploy", "stop"]
+    assert service._web_state["state"] == "failed"
+    assert service._web_state["deployed"] is False
+    assert service._web_state["num_total_runners"] == 0
+    assert "자동 종료" in service._web_state["message"]
+
+
+@pytest.mark.asyncio
 async def test_modal_runtime_logs_merge_remote_sync_and_diagnostic_entries(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     service = ModalService(tmp_path, lambda: {"modal_enabled": True})
+    service._runtime_log_session_started_at = 5.0
     service._install_state["logs"] = [
         {"time": 20.0, "source": "upload", "message": "워크플로우 업로드 완료"}
     ]
@@ -1525,6 +1632,62 @@ async def test_modal_runtime_logs_merge_remote_sync_and_diagnostic_entries(
         "diagnostic",
     ]
     assert result["errors"] == []
+
+
+@pytest.mark.asyncio
+async def test_modal_runtime_logs_only_include_current_server_session(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = ModalService(tmp_path, lambda: {"modal_enabled": True})
+    service._runtime_log_session_started_at = 100.0
+    service._install_state["logs"] = [
+        {"time": 90.0, "source": "upload", "message": "이전 동기화"},
+        {"time": 102.0, "source": "upload", "message": "현재 동기화"},
+    ]
+    service._probe_state = {
+        "state": "idle",
+        "message": "L4 연결 테스트를 기다리고 있습니다.",
+        "updated_at": 103.0,
+    }
+
+    async def connected(_settings: ModalSettings) -> bool:
+        return True
+
+    async def client_action(*_args, **_kwargs) -> dict:
+        return {
+            "logs": [
+                {
+                    "time": 99.0,
+                    "source": "stdout",
+                    "category": "web",
+                    "app_name": "soya-comfy-worker",
+                    "message": "이전 웹 로그",
+                },
+                {
+                    "time": 101.0,
+                    "source": "stdout",
+                    "category": "web",
+                    "app_name": "soya-comfy-worker-web",
+                    "message": "현재 웹 로그",
+                },
+            ],
+            "errors": [],
+        }
+
+    monkeypatch.setattr(service, "account_connected", connected)
+    monkeypatch.setattr(service, "_run_client_action", client_action)
+
+    result = await service.runtime_logs(entries=100)
+
+    assert [entry["message"] for entry in result["logs"]] == [
+        "현재 웹 로그",
+        "현재 동기화",
+    ]
+    assert all(
+        entry["message"] != "L4 연결 테스트를 기다리고 있습니다."
+        for entry in result["logs"]
+    )
 
 
 def test_modal_web_function_is_isolated_from_worker_app() -> None:

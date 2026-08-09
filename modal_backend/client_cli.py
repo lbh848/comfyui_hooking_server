@@ -537,12 +537,31 @@ def web_url(payload: dict) -> dict:
 
 def web_status(payload: dict) -> dict:
     """웹 전용 App을 기동하지 않고 URL과 현재 runner 수를 조회한다."""
-    function = _web_function(payload)
-    url = function.get_web_url()
-    stats = function.get_current_stats()
+    app_name = _web_app_name(payload)
+    try:
+        function = _web_function(payload)
+        url = function.get_web_url()
+        stats = function.get_current_stats()
+    except modal.exception.NotFoundError as exc:
+        # 웹 App은 사용자가 명시적으로 시작하기 전이나 종료한 뒤에는 존재하지
+        # 않는 것이 정상 상태다. subprocess 자체를 실패시키면 짧은 상태 폴링마다
+        # 같은 traceback이 상위 서버 로그에 반복 노출되므로 stopped 통계로 돌려준다.
+        print(
+            f"[MODAL_CLIENT] 웹 App 미배포: app={app_name}, "
+            f"environment={payload['environment']}, error={type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
+        traceback.print_exc(file=sys.stderr)
+        return {
+            "url": None,
+            "app_name": app_name,
+            "backlog": 0,
+            "num_total_runners": 0,
+            "num_running_inputs": 0,
+        }
     return {
         "url": url,
-        "app_name": _web_app_name(payload),
+        "app_name": app_name,
         "backlog": int(stats.backlog),
         "num_total_runners": int(stats.num_total_runners),
         "num_running_inputs": int(stats.num_running_inputs),

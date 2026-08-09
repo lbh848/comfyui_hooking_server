@@ -177,6 +177,30 @@ def test_modal_installer_is_inside_runtime_modal_panel_not_installer_page() -> N
     assert 'flex: 0 0 auto;' in child_layout_rule
 
 
+def test_modal_workflow_query_renders_filterable_state_badges() -> None:
+    for value in (
+        'id="modal-workflow-sync-summary"',
+        'data-modal-workflow-sync-filter="all"',
+        'data-modal-workflow-sync-filter="synced"',
+        'data-modal-workflow-sync-filter="different"',
+        'data-modal-workflow-sync-filter="missing"',
+        'data-modal-workflow-sync-filter="invalid"',
+        'id="modal-workflow-sync-count-all"',
+        'id="modal-workflow-sync-count-synced"',
+        'id="modal-workflow-sync-count-different"',
+        'id="modal-workflow-sync-count-missing"',
+        'id="modal-workflow-sync-count-invalid"',
+        'className = `modal-workflow-sync-badge state-${syncState}`',
+        "function modalSetRemoteWorkflowFilter(state)",
+        "function modalRenderWorkflowSyncSummary()",
+        "동기화 완료",
+        "내용 다름",
+        "Modal에 없음",
+        "원격 파일 오류",
+    ):
+        assert value in FRONTEND
+
+
 def test_modal_installer_exposes_live_phase_progress_and_logs() -> None:
     for value in (
         'id="modal-install-progress"',
