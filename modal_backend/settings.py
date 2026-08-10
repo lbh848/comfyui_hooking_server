@@ -8,6 +8,60 @@ from typing import Any, Mapping
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$")
 
+MODAL_GPU_PROFILES: dict[str, dict[str, str | int | float]] = {
+    "L4": {
+        "label": "L4",
+        "vram_gib": 24,
+        "usd_per_second": 0.000222,
+        "cuda_arch": "8.9",
+    },
+    "A10": {
+        "label": "A10",
+        "vram_gib": 24,
+        "usd_per_second": 0.000306,
+        "cuda_arch": "8.6",
+    },
+    "L40S": {
+        "label": "L40S",
+        "vram_gib": 48,
+        "usd_per_second": 0.000542,
+        "cuda_arch": "8.9",
+    },
+    "A100-40GB": {
+        "label": "A100 40GB",
+        "vram_gib": 40,
+        "usd_per_second": 0.000583,
+        "cuda_arch": "8.0",
+    },
+    "A100-80GB": {
+        "label": "A100 80GB",
+        "vram_gib": 80,
+        "usd_per_second": 0.000694,
+        "cuda_arch": "8.0",
+    },
+    "RTX-PRO-6000": {
+        "label": "RTX PRO 6000",
+        "vram_gib": 96,
+        "usd_per_second": 0.000842,
+        "cuda_arch": "12.0",
+    },
+    "H100": {
+        "label": "H100",
+        "vram_gib": 80,
+        "usd_per_second": 0.001097,
+        "cuda_arch": "9.0",
+    },
+}
+SUPPORTED_MODAL_GPUS = frozenset(MODAL_GPU_PROFILES)
+
+
+def normalize_modal_gpu(value: Any, field: str, default: str = "L4") -> str:
+    result = str(value or default).strip().upper()
+    if result not in SUPPORTED_MODAL_GPUS:
+        allowed = ", ".join(MODAL_GPU_PROFILES)
+        raise ValueError(f"{field}는 다음 중 하나여야 합니다: {allowed}")
+    return result
+
 
 def _name(value: Any, field: str, default: str) -> str:
     result = str(value or default).strip()
@@ -24,13 +78,20 @@ class ModalSettings:
     profile: str = "soya-comfy"
     environment: str = "main"
     deployment_name: str = "soya-comfy-worker"
-    gpu: str = "L4"
+    worker_gpu: str = "L4"
+    web_gpu: str = "L4"
     max_concurrency: int = 2
     monthly_credit_usd: float = 30.0
     scaledown_window_seconds: int = 15
     status_refresh_seconds: int = 5
     container_start_max_retries: int = 2
     web_fast: bool = False
+
+    @property
+    def gpu(self) -> str:
+        """이전 호출자를 위한 작업 워커 GPU alias."""
+
+        return self.worker_gpu
 
     @classmethod
     def from_mapping(cls, config: Mapping[str, Any]) -> "ModalSettings":
@@ -40,9 +101,15 @@ class ModalSettings:
         web_fast = config.get("modal_web_fast", False)
         if not isinstance(web_fast, bool):
             raise ValueError("modal_web_fast는 true/false여야 합니다.")
-        gpu = str(config.get("modal_gpu") or "L4").strip().upper()
-        if gpu != "L4":
-            raise ValueError("현재 원격 GPU 프로필은 L4만 지원합니다.")
+        legacy_gpu = config.get("modal_gpu")
+        worker_gpu = normalize_modal_gpu(
+            config.get("modal_worker_gpu", legacy_gpu),
+            "Modal 작업 워커 GPU",
+        )
+        web_gpu = normalize_modal_gpu(
+            config.get("modal_web_gpu", legacy_gpu),
+            "Modal 웹 GPU",
+        )
         raw_concurrency = config.get("modal_max_concurrency", 2)
         if isinstance(raw_concurrency, bool):
             raise ValueError("Modal 동시 실행 수는 1~10 사이의 정수여야 합니다.")
@@ -82,7 +149,8 @@ class ModalSettings:
                 "Modal 배포 이름",
                 "soya-comfy-worker",
             ),
-            gpu=gpu,
+            worker_gpu=worker_gpu,
+            web_gpu=web_gpu,
             max_concurrency=concurrency,
             monthly_credit_usd=credit,
             scaledown_window_seconds=scaledown,
@@ -97,7 +165,21 @@ class ModalSettings:
             "profile": self.profile,
             "environment": self.environment,
             "deployment_name": self.deployment_name,
-            "gpu": self.gpu,
+            # gpu는 이전 상태 API 소비자와의 호환을 위한 작업 워커 alias다.
+            "gpu": self.worker_gpu,
+            "worker_gpu": self.worker_gpu,
+            "web_gpu": self.web_gpu,
+            "gpu_profiles": [
+                {
+                    "id": gpu_id,
+                    **profile,
+                    "usd_per_hour": round(
+                        float(profile["usd_per_second"]) * 3600,
+                        4,
+                    ),
+                }
+                for gpu_id, profile in MODAL_GPU_PROFILES.items()
+            ],
             "max_concurrency": self.max_concurrency,
             "monthly_credit_usd": self.monthly_credit_usd,
             "scaledown_window_seconds": self.scaledown_window_seconds,

@@ -31,7 +31,7 @@ from .lora_inventory import (
     merge_remote_lora_catalog,
     public_lora_catalog,
 )
-from .settings import ModalSettings
+from .settings import MODAL_GPU_PROFILES, ModalSettings
 from .workflow_assets import (
     build_local_model_index,
     resolve_explicit_input_files,
@@ -40,7 +40,6 @@ from .workflow_assets import (
 )
 
 
-L4_USD_PER_SECOND = 0.000222
 CPU_USD_PER_CORE_SECOND = 0.0000131
 MEMORY_USD_PER_GIB_SECOND = 0.00000222
 RUNTIME_CPU_CORES = 4
@@ -158,18 +157,46 @@ def _runtime_failure_reason(exc: Exception) -> str:
 
 
 def cost_summary(settings: ModalSettings) -> dict[str, Any]:
-    gpu_hour = L4_USD_PER_SECOND * 3600
     cpu_hour = CPU_USD_PER_CORE_SECOND * RUNTIME_CPU_CORES * 3600
     memory_hour = MEMORY_USD_PER_GIB_SECOND * RUNTIME_MEMORY_GIB * 3600
-    container_hour = gpu_hour + cpu_hour + memory_hour
+    support_hour = cpu_hour + memory_hour
+
+    def gpu_cost(gpu_id: str) -> dict[str, Any]:
+        profile = MODAL_GPU_PROFILES[gpu_id]
+        gpu_hour = float(profile["usd_per_second"]) * 3600
+        container_hour = gpu_hour + support_hour
+        return {
+            "gpu": gpu_id,
+            "label": str(profile["label"]),
+            "vram_gib": int(profile["vram_gib"]),
+            "gpu_per_hour": round(gpu_hour, 4),
+            "cpu_memory_per_hour": round(support_hour, 4),
+            "container_per_hour": round(container_hour, 4),
+        }
+
+    worker = gpu_cost(settings.worker_gpu)
+    web = gpu_cost(settings.web_gpu)
+    worker_container_hour = float(worker["container_per_hour"])
     return {
         "currency": "USD",
         "monthly_credit": settings.monthly_credit_usd,
-        "l4_gpu_per_hour": round(gpu_hour, 4),
-        "estimated_container_per_hour": round(container_hour, 4),
-        "estimated_container_hours": round(settings.monthly_credit_usd / container_hour, 2),
+        "worker": worker,
+        "web": web,
+        "combined_container_per_hour": round(
+            float(worker["container_per_hour"]) + float(web["container_per_hour"]),
+            4,
+        ),
+        # 기존 비용 UI가 작업 워커 기준 필드를 소비할 수 있도록 일반화된 alias를 둔다.
+        "gpu_per_hour": worker["gpu_per_hour"],
+        "estimated_container_per_hour": worker["container_per_hour"],
+        "estimated_container_hours": round(
+            settings.monthly_credit_usd / worker_container_hour,
+            2,
+        ),
         "estimated_wall_hours_at_max_concurrency": round(
-            settings.monthly_credit_usd / container_hour / settings.max_concurrency,
+            settings.monthly_credit_usd
+            / worker_container_hour
+            / settings.max_concurrency,
             2,
         ),
         "assumptions": {
@@ -215,14 +242,14 @@ class ModalService:
         self._probe_task: asyncio.Task | None = None
         self._probe_state: dict[str, Any] = {
             "state": "idle",
-            "message": "L4 연결 테스트를 기다리고 있습니다.",
+            "message": "작업 워커 GPU 연결 테스트를 기다리고 있습니다.",
             "updated_at": time.time(),
         }
         self._web_task: asyncio.Task | None = None
         self._web_start_cancel_event = threading.Event()
         self._web_state: dict[str, Any] = {
             "state": "stopped",
-            "message": "Modal ComfyUI 웹 L4가 꺼져 있습니다.",
+            "message": "Modal ComfyUI 웹 GPU가 꺼져 있습니다.",
             "updated_at": time.time(),
         }
         self._deployment_task: asyncio.Task | None = None
@@ -286,6 +313,8 @@ class ModalService:
             {
                 "SOYA_MODAL_APP_NAME": settings.deployment_name,
                 "SOYA_MODAL_WEB_APP_NAME": self._web_app_name(settings),
+                "SOYA_MODAL_WORKER_GPU": settings.worker_gpu,
+                "SOYA_MODAL_WEB_GPU": settings.web_gpu,
                 "SOYA_MODAL_MAX_CONTAINERS": str(settings.max_concurrency),
                 "SOYA_MODAL_SCALEDOWN_WINDOW": str(
                     settings.scaledown_window_seconds
@@ -1228,7 +1257,7 @@ class ModalService:
         }
 
     async def worker_status(self) -> dict[str, Any]:
-        """좌측 always-on 위젯용 L4 작업자 + WebUI 상태 스냅샷.
+        """좌측 always-on 위젯용 Modal 작업자 + WebUI 상태 스냅샷.
 
         worker 블록과 web 블록은 서로 독립적으로 계산된다. 한쪽이 실패해도 다른
         쪽은 정상 응답하도록 예외를 격리한다(Z안). 최상위 필드(ok/enabled/gpu/
@@ -1239,7 +1268,9 @@ class ModalService:
         top = {
             "ok": True,
             "enabled": settings.enabled,
-            "gpu": settings.gpu,
+            "gpu": settings.worker_gpu,
+            "worker_gpu": settings.worker_gpu,
+            "web_gpu": settings.web_gpu,
             "refresh_seconds": settings.status_refresh_seconds,
             "checked_at": checked_at,
         }
@@ -1301,7 +1332,7 @@ class ModalService:
         return {**top, "worker": worker, "web": web}
 
     async def _worker_status_block(self, settings: ModalSettings) -> dict[str, Any]:
-        """L4 작업자(작업 App) 상태를 worker 서브오브젝트로 계산.
+        """GPU 작업자(작업 App) 상태를 worker 서브오브젝트로 계산.
 
         state: disabled / deploying / running / stopped / error.
         """
@@ -1398,6 +1429,7 @@ class ModalService:
         if not settings.enabled:
             return {
                 "state": "stopped",
+                "gpu": settings.web_gpu,
                 "deployed": False,
                 "url": "",
                 "runners": None,
@@ -1459,6 +1491,7 @@ class ModalService:
 
         return {
             "state": state,
+            "gpu": settings.web_gpu,
             "deployed": deployed,
             "url": url,
             "runners": runners,
@@ -1541,12 +1574,13 @@ class ModalService:
             "available": True,
             "deployed": deployed,
             "state": "running" if runners > 0 else "stopped",
+            "gpu": settings.web_gpu,
             **({"reason": "app_not_deployed"} if not deployed else {}),
             "message": (
-                "Modal ComfyUI 웹 L4가 실행 중입니다."
+                f"Modal ComfyUI 웹 {settings.web_gpu}가 실행 중입니다."
                 if runners > 0
                 else (
-                    "웹 App은 준비되어 있고 L4는 꺼져 있습니다."
+                    f"웹 App은 준비되어 있고 {settings.web_gpu}는 꺼져 있습니다."
                     if deployed
                     else "웹 전용 App이 중지되어 있습니다."
                 )
@@ -1637,7 +1671,7 @@ class ModalService:
             }
 
     async def web_url(self) -> dict[str, Any]:
-        """실행 중인 웹 전용 App의 URL을 반환하며 L4를 새로 켜지는 않는다."""
+        """실행 중인 웹 전용 App의 URL을 반환하며 GPU를 새로 켜지는 않는다."""
         status = await self.web_status()
         if status.get("state") != "running" or not status.get("url"):
             return {
@@ -1671,7 +1705,11 @@ class ModalService:
                 "available": True,
                 "deployed": bool(current.get("deployed")),
                 "state": "starting",
-                "message": "웹 전용 App을 준비하고 ComfyUI L4를 시작하고 있습니다.",
+                "gpu": settings.web_gpu,
+                "message": (
+                    "웹 전용 App을 준비하고 ComfyUI "
+                    f"{settings.web_gpu}를 시작하고 있습니다."
+                ),
                 "app_name": self._web_app_name(settings),
                 "num_total_runners": 0,
                 "num_running_inputs": 0,
@@ -1900,7 +1938,10 @@ class ModalService:
             self._web_state.update(
                 deployed=True,
                 url=url,
-                message="L4 컨테이너를 시작하고 ComfyUI 준비를 기다리고 있습니다.",
+                message=(
+                    f"{settings.web_gpu} 컨테이너를 시작하고 "
+                    "ComfyUI 준비를 기다리고 있습니다."
+                ),
                 updated_at=time.time(),
             )
             status_code = await asyncio.to_thread(
@@ -1918,7 +1959,7 @@ class ModalService:
             self._web_state = {
                 **remote,
                 "state": "running",
-                "message": "Modal ComfyUI 웹 L4가 실행 중입니다.",
+                "message": f"Modal ComfyUI 웹 {settings.web_gpu}가 실행 중입니다.",
                 "updated_at": time.time(),
             }
             print(
@@ -1995,7 +2036,7 @@ class ModalService:
                     **self._web_state,
                     "state": "stopping",
                     "message": (
-                        "ComfyUI 시작을 취소하고 웹 App과 L4 컨테이너를 "
+                        f"ComfyUI 시작을 취소하고 웹 App과 {settings.web_gpu} 컨테이너를 "
                         "완전히 종료하고 있습니다."
                     ),
                     "updated_at": time.time(),
@@ -2012,7 +2053,10 @@ class ModalService:
             self._web_state = {
                 **current,
                 "state": "stopping",
-                "message": "웹 전용 App과 L4 컨테이너를 완전히 종료하고 있습니다.",
+                "message": (
+                    f"웹 전용 App과 {settings.web_gpu} 컨테이너를 "
+                    "완전히 종료하고 있습니다."
+                ),
                 "updated_at": time.time(),
             }
             self._web_task = asyncio.create_task(self._run_web_stop(settings))
@@ -2041,14 +2085,17 @@ class ModalService:
                     )
                     traceback.print_exc()
             # 비용이 발생할 수 있는 원격 App 중지를 최우선으로 처리한다. 로그 조회가
-            # 느리거나 실패해도 L4 종료가 지연되어서는 안 된다.
+            # 느리거나 실패해도 GPU 종료가 지연되어서는 안 된다.
             await self._stop_web_app(settings)
             self._web_state = {
                 "available": True,
                 "deployed": False,
                 "state": "stopped",
                 "reason": "app_not_deployed",
-                "message": "Modal ComfyUI 웹 App과 L4가 완전히 종료되었습니다.",
+                "message": (
+                    f"Modal ComfyUI 웹 App과 {settings.web_gpu}가 "
+                    "완전히 종료되었습니다."
+                ),
                 "app_name": self._web_app_name(settings),
                 "num_total_runners": 0,
                 "num_running_inputs": 0,
@@ -2427,6 +2474,8 @@ class ModalService:
         config: Mapping[str, Any],
         *,
         include_hashes: bool,
+        item_keys: list[str] | None = None,
+        allow_missing_item_keys: bool = False,
     ) -> dict[str, Any]:
         async with self._model_sync_lock:
             return await asyncio.to_thread(
@@ -2434,24 +2483,26 @@ class ModalService:
                 config,
                 include_hashes=include_hashes,
                 hash_cache=self._model_hash_cache,
+                item_keys=item_keys,
+                allow_missing_item_keys=allow_missing_item_keys,
             )
 
-    async def lora_catalog(self, *, include_remote: bool = False) -> dict[str, Any]:
+    async def lora_catalog(
+        self,
+        *,
+        include_remote: bool = False,
+        item_keys: list[str] | None = None,
+    ) -> dict[str, Any]:
         config = self.get_config()
-        try:
-            local_payload = await self._build_lora_catalog(
-                config,
-                include_hashes=include_remote,
+        normalized_keys = list(
+            dict.fromkeys(
+                str(key).strip() for key in (item_keys or []) if str(key).strip()
             )
-        except Exception as exc:
-            print(
-                f"[MODAL_LORA] 로컬 카탈로그 조회 실패: "
-                f"error={type(exc).__name__}: {exc}"
-            )
-            traceback.print_exc()
-            raise
-        payload: dict[str, Any] = dict(local_payload)
-        checked_at = ""
+        )
+        if len(normalized_keys) > 500:
+            print(f"[MODAL_LORA] 상태 조회 선택 항목 수 초과: count={len(normalized_keys)}")
+            raise ValueError("한 번에 조회할 수 있는 LoRA 항목은 최대 500개입니다.")
+        settings: ModalSettings | None = None
         if include_remote:
             settings = ModalSettings.from_mapping(config)
             if not settings.enabled:
@@ -2463,19 +2514,59 @@ class ModalService:
                     f"계정이 연결되지 않았습니다. profile={settings.profile}"
                 )
                 raise RuntimeError("Modal 계정을 먼저 연결하세요.")
+        try:
+            local_payload = await self._build_lora_catalog(
+                config,
+                include_hashes=include_remote,
+                item_keys=normalized_keys or None,
+                allow_missing_item_keys=bool(normalized_keys),
+            )
+        except Exception as exc:
+            print(
+                f"[MODAL_LORA] 로컬 카탈로그 조회 실패: "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            raise
+        payload: dict[str, Any] = dict(local_payload)
+        checked_at = ""
+        if include_remote:
+            assert settings is not None
             remote_payload = await self._run_client_action(
                 settings,
                 "list_loras",
                 timeout=180,
             )
-            payload = merge_remote_lora_catalog(local_payload, remote_payload)
+            payload = merge_remote_lora_catalog(
+                local_payload,
+                remote_payload,
+                item_keys=normalized_keys or None,
+            )
+            if normalized_keys:
+                returned_keys = {
+                    str(item.get("key") or "") for item in payload.get("items") or []
+                }
+                missing_keys = [key for key in normalized_keys if key not in returned_keys]
+                if missing_keys:
+                    print(
+                        "[MODAL_LORA] 선택 상태 조회 항목이 로컬과 원격에 없습니다: "
+                        f"keys={missing_keys}"
+                    )
+                    raise ValueError("선택한 LoRA 항목이 최신 목록에 없습니다.")
             checked_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
             print(
                 "[MODAL_LORA] 로컬/원격 상태 조회 완료: "
+                f"scope={'selected' if normalized_keys else 'all'}, "
                 f"items={len(payload.get('items') or [])}, counts={payload.get('counts')}"
             )
         public = public_lora_catalog(payload)
-        return {"ok": True, **public, "checked_at": checked_at}
+        return {
+            "ok": True,
+            **public,
+            "checked_at": checked_at,
+            "partial": bool(normalized_keys),
+            "queried_item_keys": normalized_keys,
+        }
 
     async def start_lora_operation(
         self,
@@ -2512,7 +2603,12 @@ class ModalService:
             local_payload, remote_payload = await asyncio.gather(
                 self._build_lora_catalog(
                     config,
-                    include_hashes=True,
+                    include_hashes=normalized_action in {"upload", "sync"},
+                    item_keys=(
+                        normalized_keys
+                        if normalized_action in {"upload", "sync"}
+                        else None
+                    ),
                 ),
                 self._run_client_action(
                     settings,
@@ -2520,7 +2616,11 @@ class ModalService:
                     timeout=180,
                 ),
             )
-            catalog = merge_remote_lora_catalog(local_payload, remote_payload)
+            catalog = merge_remote_lora_catalog(
+                local_payload,
+                remote_payload,
+                item_keys=normalized_keys,
+            )
             by_key = {str(item["key"]): item for item in catalog.get("items") or []}
             missing_keys = [key for key in normalized_keys if key not in by_key]
             if missing_keys:
@@ -3190,7 +3290,7 @@ class ModalService:
             )
             self._append_deployment_log(
                 "system",
-                "Modal ComfyUI 웹 App과 L4 자동 종료를 시작합니다.",
+                f"Modal ComfyUI 웹 App과 {settings.web_gpu} 자동 종료를 시작합니다.",
             )
             await self._stop_web_app(settings)
             stopped_at = time.time()
@@ -3199,7 +3299,10 @@ class ModalService:
                 "deployed": False,
                 "state": "stopped",
                 "reason": "app_not_deployed",
-                "message": "재배포 완료 후 Modal ComfyUI 웹 App과 L4를 자동 종료했습니다.",
+                "message": (
+                    "재배포 완료 후 Modal ComfyUI 웹 App과 "
+                    f"{settings.web_gpu}를 자동 종료했습니다."
+                ),
                 "app_name": self._web_app_name(settings),
                 "num_total_runners": 0,
                 "num_running_inputs": 0,
@@ -3208,7 +3311,10 @@ class ModalService:
             }
             self._append_deployment_log(
                 "system",
-                "Modal ComfyUI 웹 App과 L4 자동 종료 완료 · L4 0개",
+                (
+                    f"Modal ComfyUI 웹 App과 {settings.web_gpu} "
+                    f"자동 종료 완료 · {settings.web_gpu} 0개"
+                ),
             )
             finished_at = time.time()
             self._deployment_state.update(
@@ -3295,10 +3401,14 @@ class ModalService:
         if not await self.account_connected(settings):
             raise RuntimeError("Modal 계정을 먼저 연결하세요.")
         if self._probe_task and not self._probe_task.done():
-            raise RuntimeError("L4 연결 테스트가 이미 진행 중입니다.")
+            raise RuntimeError(
+                f"{settings.worker_gpu} 연결 테스트가 이미 진행 중입니다."
+            )
         self._probe_state = {
             "state": "running",
-            "message": "L4 컨테이너를 깨우고 CUDA를 확인하고 있습니다.",
+            "message": (
+                f"{settings.worker_gpu} 컨테이너를 깨우고 CUDA를 확인하고 있습니다."
+            ),
             "updated_at": time.time(),
         }
         self._probe_task = asyncio.create_task(self._run_probe(settings))
@@ -3315,19 +3425,29 @@ class ModalService:
             self._probe_state = {
                 "state": "completed",
                 "message": (
-                    f"{result.get('device') or 'L4'} · VRAM {vram_gib} GiB · "
+                    f"{result.get('device') or settings.worker_gpu} · "
+                    f"VRAM {vram_gib} GiB · "
                     f"CUDA {result.get('cuda') or '-'} 연결 확인"
                 ),
                 "updated_at": time.time(),
                 **result,
             }
-            print(f"[MODAL] L4 연결 테스트 완료: {self._probe_state['message']}")
+            print(
+                f"[MODAL] {settings.worker_gpu} 연결 테스트 완료: "
+                f"{self._probe_state['message']}"
+            )
         except Exception as exc:
-            print(f"[MODAL] L4 연결 테스트 실패: {type(exc).__name__}: {exc}")
+            print(
+                f"[MODAL] {settings.worker_gpu} 연결 테스트 실패: "
+                f"{type(exc).__name__}: {exc}"
+            )
             traceback.print_exc()
             self._probe_state = {
                 "state": "failed",
-                "message": f"L4 연결 테스트 실패: {type(exc).__name__}: {exc}",
+                "message": (
+                    f"{settings.worker_gpu} 연결 테스트 실패: "
+                    f"{type(exc).__name__}: {exc}"
+                ),
                 "updated_at": time.time(),
             }
 
@@ -3454,7 +3574,10 @@ class ModalService:
                 workflow = await self.convert_workflow(workflow)
             state.update(
                 phase="generating",
-                message="로컬 모델과 입력 이미지를 동기화하고 L4에서 실행하고 있습니다.",
+                message=(
+                    "로컬 모델과 입력 이미지를 동기화하고 "
+                    f"{settings.worker_gpu}에서 실행하고 있습니다."
+                ),
             )
             image_bytes, metadata = await self.generate(workflow)
             state.update(

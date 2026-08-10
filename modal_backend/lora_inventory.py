@@ -98,6 +98,8 @@ def _new_item(
     detail: str,
     scopes: list[str],
     files: list[dict[str, Any]],
+    display_name: str = "",
+    display_subtitle: str = "",
 ) -> dict[str, Any]:
     unique_files: dict[str, dict[str, Any]] = {}
     for item in files:
@@ -117,6 +119,8 @@ def _new_item(
         "category": category,
         "name": name,
         "subtitle": subtitle,
+        "display_name": display_name or name,
+        "display_subtitle": display_subtitle or subtitle,
         "detail": detail,
         "scopes": list(dict.fromkeys(scopes)),
         "files": ordered_files,
@@ -124,6 +128,14 @@ def _new_item(
         "size_bytes": sum(max(0, int(item.get("size") or 0)) for item in ordered_files),
         "sync_state": "unchecked",
     }
+
+
+def _catalog_sort_key(item: Mapping[str, Any]) -> tuple[str, str, str]:
+    return (
+        str(item.get("display_name") or item.get("name") or "").casefold(),
+        str(item.get("display_subtitle") or item.get("subtitle") or "").casefold(),
+        str(item.get("key") or "").casefold(),
+    )
 
 
 def _asset_items(
@@ -178,6 +190,8 @@ def _asset_items(
                     category="asset",
                     name=entry_name,
                     subtitle=character,
+                    display_name=character,
+                    display_subtitle=entry_name,
                     detail=str(entry.get("description") or entry.get("trigger") or ""),
                     scopes=[scope],
                     files=files,
@@ -304,18 +318,30 @@ def build_local_lora_catalog(
     *,
     include_hashes: bool,
     hash_cache: dict[str, tuple[int, int, str]] | None = None,
+    item_keys: list[str] | None = None,
+    allow_missing_item_keys: bool = False,
 ) -> dict[str, Any]:
     """현재 피커에서 실제 사용할 수 있는 LoRA만 논리 항목으로 묶는다."""
 
     from modes.instance_lora_mode import list_instance_lora_for_picker
     from modes.style_lora_mode import list_style_lora_for_picker
 
+    requested_keys = None
+    if item_keys is not None:
+        requested_keys = list(
+            dict.fromkeys(str(key).strip() for key in item_keys if str(key).strip())
+        )
+        if not requested_keys:
+            print("[MODAL_LORA] 선택 상태 조회 요청에 유효한 item_keys가 없습니다.")
+            raise ValueError("조회할 LoRA 항목을 하나 이상 선택하세요.")
+    include_hashes_during_build = include_hashes and requested_keys is None
+
     builders = (
         (
             "bot",
             lambda: _bot_items(
                 config,
-                include_hashes=include_hashes,
+                include_hashes=include_hashes_during_build,
                 hash_cache=hash_cache,
             ),
         ),
@@ -323,7 +349,7 @@ def build_local_lora_catalog(
             "asset",
             lambda: _asset_items(
                 config,
-                include_hashes=include_hashes,
+                include_hashes=include_hashes_during_build,
                 hash_cache=hash_cache,
             ),
         ),
@@ -335,7 +361,7 @@ def build_local_lora_catalog(
                 config_key="instance_lora_load_path",
                 picker=list_instance_lora_for_picker,
                 id_key="lora_id",
-                include_hashes=include_hashes,
+                include_hashes=include_hashes_during_build,
                 hash_cache=hash_cache,
             ),
         ),
@@ -347,15 +373,17 @@ def build_local_lora_catalog(
                 config_key="style_lora_load_path",
                 picker=list_style_lora_for_picker,
                 id_key="project_id",
-                include_hashes=include_hashes,
+                include_hashes=include_hashes_during_build,
                 hash_cache=hash_cache,
             ),
         ),
     )
+
     items: list[dict[str, Any]] = []
     errors: list[dict[str, str]] = []
     for category, builder in builders:
         try:
+            # 선택 조회에서는 먼저 가벼운 로컬 명세만 만든 뒤 선택 항목만 해시한다.
             items.extend(builder())
         except Exception as exc:
             print(
@@ -364,7 +392,23 @@ def build_local_lora_catalog(
             )
             traceback.print_exc()
             errors.append({"category": category, "error": f"{type(exc).__name__}: {exc}"})
-    items.sort(key=lambda item: (str(item["category"]), str(item["name"]).casefold()))
+    if requested_keys is not None:
+        by_key = {str(item.get("key") or ""): item for item in items}
+        missing_keys = [key for key in requested_keys if key not in by_key]
+        if missing_keys and not allow_missing_item_keys:
+            print(
+                "[MODAL_LORA] 선택 상태 조회 항목이 로컬 카탈로그에 없습니다: "
+                f"keys={missing_keys}"
+            )
+            raise ValueError("선택한 LoRA 항목이 최신 로컬 목록에 없습니다.")
+        items = [by_key[key] for key in requested_keys if key in by_key]
+        if include_hashes:
+            for item in items:
+                for file_item in item.get("files") or []:
+                    source_path = Path(str(file_item.get("source_path") or ""))
+                    file_item["sha256"] = _hash_file(source_path, hash_cache)
+
+    items.sort(key=lambda item: (str(item["category"]), *_catalog_sort_key(item)))
     return {"items": items, "errors": errors}
 
 
@@ -404,6 +448,8 @@ def _remote_identity(path_value: str) -> dict[str, Any] | None:
             "category": "asset",
             "name": entry,
             "subtitle": f"{character} · 원격에만 있음",
+            "display_name": character,
+            "display_subtitle": f"{entry} · 원격에만 있음",
             "detail": "로컬 현재 사용본에서 찾을 수 없습니다.",
             "scopes": [f"{MANAGED_LORA_ROOT}/{character}/Lora/{entry}"],
         }
@@ -413,7 +459,14 @@ def _remote_identity(path_value: str) -> dict[str, Any] | None:
 def merge_remote_lora_catalog(
     local_payload: Mapping[str, Any],
     remote_payload: Mapping[str, Any],
+    *,
+    item_keys: list[str] | None = None,
 ) -> dict[str, Any]:
+    requested_keys = (
+        {str(key).strip() for key in item_keys if str(key).strip()}
+        if item_keys is not None
+        else None
+    )
     remote_files = {
         str(item.get("path") or ""): dict(item)
         for item in (remote_payload.get("files") or [])
@@ -426,10 +479,15 @@ def merge_remote_lora_catalog(
             "scopes": list(item.get("scopes") or []),
         }
         for item in (local_payload.get("items") or [])
+        if requested_keys is None or str(item["key"]) in requested_keys
     }
     for remote_path, remote in remote_files.items():
         identity = _remote_identity(remote_path)
-        if identity is None or identity["key"] in items_by_key:
+        if (
+            identity is None
+            or (requested_keys is not None and identity["key"] not in requested_keys)
+            or identity["key"] in items_by_key
+        ):
             continue
         items_by_key[identity["key"]] = _new_item(files=[], **identity)
 
@@ -477,7 +535,7 @@ def merge_remote_lora_catalog(
 
     ordered = sorted(
         items_by_key.values(),
-        key=lambda item: (str(item["category"]), str(item["name"]).casefold()),
+        key=lambda item: (str(item["category"]), *_catalog_sort_key(item)),
     )
     return {
         "items": ordered,

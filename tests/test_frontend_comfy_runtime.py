@@ -90,6 +90,11 @@ def test_runtime_has_managed_modal_tab_lifecycle_sync_and_log_controls() -> None
         'id="modal-runtime-max-concurrency"',
         'id="modal-runtime-container-start-max-retries"',
         'id="modal-runtime-status-refresh"',
+        'id="modal-runtime-worker-gpu"',
+        'id="modal-runtime-web-gpu"',
+        'id="modal-runtime-worker-gpu-cost"',
+        'id="modal-runtime-web-gpu-cost"',
+        'id="modal-runtime-combined-cost"',
         'id="modal-runtime-web-fast"',
         'id="modal-runtime-workflow-query-btn"',
         'id="modal-runtime-workflow-query-status"',
@@ -136,6 +141,8 @@ def test_runtime_has_managed_modal_tab_lifecycle_sync_and_log_controls() -> None
     assert "modal_web_fast: document.getElementById('modal-runtime-web-fast')?.checked === true" in FRONTEND
     assert "modalWebFastEl.checked = currentConfig.modal_web_fast === true" in FRONTEND
     assert "modal_container_start_max_retries: modalStartRetries" in FRONTEND
+    assert "modal_worker_gpu: modalWorkerGpu" in FRONTEND
+    assert "modal_web_gpu: modalWebGpu" in FRONTEND
     assert "currentConfig.modal_container_start_max_retries ?? 2" in FRONTEND
     assert "최초 실행 제외 · 초과 시 강제 취소" in FRONTEND
     assert "60초 캐시" in FRONTEND
@@ -161,13 +168,35 @@ def test_modal_panel_has_web_url_access_button_and_drops_local_debug_shortcut() 
         "modalRuntimeOpenWeb",
         "/api/modal/web-url",
         "↗ ComfyUI 접속",
-        "L4 연결 테스트 도움말",
+        "GPU 연결 테스트 도움말",
         "유료 진단 기능",
     ):
         assert value in FRONTEND
 
     assert "로컬 실행 탭" not in FRONTEND
     assert "modalOpenDebugWorkflow" not in FRONTEND
+
+
+def test_modal_gpu_selectors_are_independent_and_show_hourly_costs() -> None:
+    runtime_start = FRONTEND.index('id="comfy-modal-runtime-panel"')
+    runtime_end = FRONTEND.index('id="modal-runtime-log"', runtime_start)
+    runtime_html = FRONTEND[runtime_start:runtime_end]
+
+    assert runtime_html.count('value="L4" data-vram-gib="24"') == 2
+    assert runtime_html.count('value="A10" data-vram-gib="24"') == 2
+    assert runtime_html.count('value="L40S" data-vram-gib="48"') == 2
+    assert runtime_html.count('value="A100-40GB" data-vram-gib="40"') == 2
+    assert runtime_html.count('value="A100-80GB" data-vram-gib="80"') == 2
+    assert runtime_html.count('value="RTX-PRO-6000" data-vram-gib="96"') == 2
+    assert runtime_html.count('value="H100" data-vram-gib="80"') == 2
+    assert 'value="T4"' not in runtime_html
+    assert "GPU $0.80/시간" in runtime_html
+    assert "GPU $3.95/시간" in runtime_html
+    assert "MODAL_CPU_MEMORY_PER_HOUR = 0.3165" in FRONTEND
+    assert "modalGpuContainerCostText(worker)" in FRONTEND
+    assert "worker.gpuHour + web.gpuHour" in FRONTEND
+    assert "Modal L4 실행 관리" not in FRONTEND
+    assert "최대 병렬 L4" not in FRONTEND
 
 
 def test_modal_web_start_stays_locked_until_server_state_acknowledges_request() -> None:

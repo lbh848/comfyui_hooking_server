@@ -88,11 +88,13 @@ def test_modal_manifest_import_does_not_require_comfy_installer(
     assert callable(module.load_manifest)
 
 
-def test_modal_defaults_are_scale_to_zero_and_l4_budgeted() -> None:
+def test_modal_defaults_are_scale_to_zero_and_independently_gpu_budgeted() -> None:
     settings = ModalSettings.from_mapping({})
     cost = cost_summary(settings)
 
     assert settings.gpu == "L4"
+    assert settings.worker_gpu == "L4"
+    assert settings.web_gpu == "L4"
     assert settings.max_concurrency == 2
     assert settings.scaledown_window_seconds == 15
     assert settings.status_refresh_seconds == 5
@@ -102,14 +104,30 @@ def test_modal_defaults_are_scale_to_zero_and_l4_budgeted() -> None:
     assert settings.public_dict()["web_fast"] is False
     assert cost["assumptions"]["min_containers"] == 0
     assert cost["assumptions"]["scaledown_window_seconds"] == 15
-    assert cost["l4_gpu_per_hour"] == pytest.approx(0.7992)
+    assert cost["worker"]["gpu_per_hour"] == pytest.approx(0.7992)
+    assert cost["web"]["gpu_per_hour"] == pytest.approx(0.7992)
+    assert cost["combined_container_per_hour"] == pytest.approx(2.2314)
     assert cost["estimated_container_hours"] == pytest.approx(26.89)
+
+    split = ModalSettings.from_mapping(
+        {"modal_worker_gpu": "L40S", "modal_web_gpu": "A10"}
+    )
+    split_cost = cost_summary(split)
+    assert split.worker_gpu == "L40S"
+    assert split.web_gpu == "A10"
+    assert split_cost["worker"]["gpu_per_hour"] == pytest.approx(1.9512)
+    assert split_cost["web"]["gpu_per_hour"] == pytest.approx(1.1016)
+    assert "T4" not in {
+        profile["id"] for profile in split.public_dict()["gpu_profiles"]
+    }
 
 
 @pytest.mark.parametrize(
     "config",
     [
         {"modal_gpu": "T4"},
+        {"modal_worker_gpu": "T4"},
+        {"modal_web_gpu": "T4"},
         {"modal_max_concurrency": 0},
         {"modal_max_concurrency": 11},
         {"modal_profile": "bad profile"},
@@ -1659,13 +1677,14 @@ async def test_modal_worker_status_skips_remote_lookup_when_disabled(
     monkeypatch.setattr(service, "_run_client_action", unexpected_client_action)
 
     status = await service.worker_status()
+    worker = status["worker"]
 
     assert status["ok"] is True
     assert status["enabled"] is False
-    assert status["available"] is False
-    assert status["reason"] == "disabled"
-    assert status["gpu_on"] is False
-    assert status["num_total_runners"] == 0
+    assert worker["available"] is False
+    assert worker["reason"] == "disabled"
+    assert worker["gpu_on"] is False
+    assert worker["workers"] == 0
 
 
 @pytest.mark.asyncio
@@ -1677,7 +1696,8 @@ async def test_modal_worker_status_returns_lightweight_runtime_snapshot(
         tmp_path,
         lambda: {
             "modal_enabled": True,
-            "modal_gpu": "L4",
+            "modal_worker_gpu": "L40S",
+            "modal_web_gpu": "A10",
             "modal_status_refresh_seconds": 7,
         },
     )
@@ -1690,34 +1710,51 @@ async def test_modal_worker_status_returns_lightweight_runtime_snapshot(
         timeout: float,
         **_payload,
     ) -> dict:
-        observed.update(
-            {
-                "gpu": settings.gpu,
-                "action": action,
-                "timeout": timeout,
-            }
-        )
-        return {
-            "num_total_runners": 2,
-            "num_running_inputs": 1,
-            "backlog": 3,
-            "input_headroom": 0,
+        observed[action] = {
+            "worker_gpu": settings.worker_gpu,
+            "web_gpu": settings.web_gpu,
+            "timeout": timeout,
         }
+        if action == "runtime_stats":
+            return {
+                "num_total_runners": 2,
+                "num_running_inputs": 1,
+                "backlog": 3,
+                "input_headroom": 0,
+            }
+        if action == "web_status":
+            return {
+                "url": "https://worker-app-web.modal.run",
+                "num_total_runners": 0,
+            }
+        raise AssertionError(f"예상하지 못한 Modal client action: {action}")
 
     monkeypatch.setattr(service, "_run_client_action", client_action)
 
     status = await service.worker_status()
 
-    assert observed == {"gpu": "L4", "action": "runtime_stats", "timeout": 30}
+    assert observed["runtime_stats"] == {
+        "worker_gpu": "L40S",
+        "web_gpu": "A10",
+        "timeout": 30,
+    }
+    assert observed["web_status"] == {
+        "worker_gpu": "L40S",
+        "web_gpu": "A10",
+        "timeout": 30,
+    }
     assert status["ok"] is True
     assert status["enabled"] is True
-    assert status["available"] is True
-    assert status["gpu"] == "L4"
+    assert status["gpu"] == "L40S"
+    assert status["worker_gpu"] == "L40S"
+    assert status["web_gpu"] == "A10"
     assert status["refresh_seconds"] == 7
-    assert status["gpu_on"] is True
-    assert status["num_total_runners"] == 2
-    assert status["num_running_inputs"] == 1
-    assert status["backlog"] == 3
+    assert status["worker"]["available"] is True
+    assert status["worker"]["gpu_on"] is True
+    assert status["worker"]["workers"] == 2
+    assert status["worker"]["generating"] == 1
+    assert status["worker"]["queued"] == 3
+    assert status["web"]["gpu"] == "A10"
 
 
 @pytest.mark.asyncio
@@ -1746,13 +1783,14 @@ async def test_modal_worker_status_exposes_specific_unavailable_reason(
     monkeypatch.setattr(service, "_run_client_action", unavailable_client_action)
 
     status = await service.worker_status()
+    worker = status["worker"]
 
     assert status["ok"] is True
     assert status["enabled"] is True
-    assert status["available"] is False
-    assert status["reason"] == reason
-    assert status["gpu_on"] is False
-    assert status["num_total_runners"] == 0
+    assert worker["available"] is False
+    assert worker["reason"] == reason
+    assert worker["gpu_on"] is False
+    assert worker["workers"] == 0
 
 
 @pytest.mark.asyncio
@@ -1974,9 +2012,9 @@ def test_modal_client_web_status_reads_dedicated_web_app_stats(
         captured.update(actual_payload)
         return {
             "url": "https://example.modal.run",
-            "backlog": 0,
-            "num_total_runners": 1,
-            "num_running_inputs": 0,
+            "deployed": True,
+            "runners": 1,
+            "app_name": "worker-manual-web",
         }
 
     monkeypatch.setattr(client_cli, "_web_server_status", server_status)
@@ -1991,6 +2029,8 @@ def test_modal_client_web_status_reads_dedicated_web_app_stats(
     assert result["num_total_runners"] == 1
     assert result["num_running_inputs"] == 0
     assert result["backlog"] == 0
+    assert result["deployed"] is True
+    assert result["runners"] == 1
 
 
 def test_modal_client_web_server_status_reads_url_and_deployed_app_tasks(
@@ -2058,9 +2098,9 @@ def test_modal_client_web_server_status_reads_url_and_deployed_app_tasks(
     }
     assert result == {
         "url": "https://example.modal.direct",
-        "backlog": 0,
-        "num_total_runners": 2,
-        "num_running_inputs": 0,
+        "deployed": True,
+        "runners": 2,
+        "app_name": "worker-web",
     }
 
 
@@ -2074,27 +2114,46 @@ def test_modal_client_web_status_treats_missing_app_as_stopped(
         "environment": "main",
     }
 
-    def missing(_payload: dict) -> dict:
-        raise client_cli.modal.exception.NotFoundError("missing web app")
+    class FakeClient:
+        pass
 
-    monkeypatch.setattr(
-        client_cli,
-        "_web_server_status",
-        missing,
-    )
+    class MissingServer:
+        async def get_url(self) -> str:
+            raise client_cli.modal.exception.NotFoundError("missing web app")
+
+    async def from_env():
+        return FakeClient()
+
+    def from_name(
+        app_name: str,
+        server_name: str,
+        *,
+        environment_name: str,
+        client,
+    ) -> MissingServer:
+        assert app_name == "worker-web"
+        assert server_name == "comfy_web_server"
+        assert environment_name == "main"
+        assert isinstance(client, FakeClient)
+        return MissingServer()
+
+    monkeypatch.setattr(client_cli._Client, "from_env", from_env)
+    monkeypatch.setattr(client_cli._Server, "from_name", from_name)
 
     result = client_cli.web_status(payload)
 
     assert result == {
         "url": None,
+        "deployed": False,
+        "runners": None,
         "app_name": "worker-web",
         "backlog": 0,
         "num_total_runners": 0,
         "num_running_inputs": 0,
     }
     captured = capsys.readouterr()
-    assert "웹 App 미배포" in captured.err
-    assert "Traceback" in captured.err
+    assert "missing web app" in captured.err
+    assert "Traceback" not in captured.err
 
 
 @pytest.mark.asyncio
@@ -2211,6 +2270,8 @@ async def test_modal_web_deploy_uses_package_module_mode(
             "modal_enabled": True,
             "modal_deployment_name": "worker-app",
             "modal_environment": "main",
+            "modal_worker_gpu": "A10",
+            "modal_web_gpu": "L40S",
             "modal_web_fast": True,
         },
     )
@@ -2237,6 +2298,8 @@ async def test_modal_web_deploy_uses_package_module_mode(
     assert observed["args"][7] == "main"
     assert observed["kwargs"]["timeout"] == 3600
     assert observed["kwargs"]["env"]["SOYA_MODAL_WEB_FAST"] == "1"
+    assert observed["kwargs"]["env"]["SOYA_MODAL_WORKER_GPU"] == "A10"
+    assert observed["kwargs"]["env"]["SOYA_MODAL_WEB_GPU"] == "L40S"
 
 
 @pytest.mark.asyncio
@@ -2507,7 +2570,7 @@ async def test_modal_runtime_logs_only_include_current_server_session(
     ]
     service._probe_state = {
         "state": "idle",
-        "message": "L4 연결 테스트를 기다리고 있습니다.",
+        "message": "작업 워커 GPU 연결 테스트를 기다리고 있습니다.",
         "updated_at": 103.0,
     }
 
@@ -2545,7 +2608,7 @@ async def test_modal_runtime_logs_only_include_current_server_session(
         "현재 동기화",
     ]
     assert all(
-        entry["message"] != "L4 연결 테스트를 기다리고 있습니다."
+        entry["message"] != "작업 워커 GPU 연결 테스트를 기다리고 있습니다."
         for entry in result["logs"]
     )
 
@@ -2566,6 +2629,8 @@ def test_modal_web_server_is_isolated_from_worker_app() -> None:
     assert "unauthenticated=True" in web_source
     assert "@modal.enter()" in web_source
     assert 'WEB_APP_NAME = os.environ.get("SOYA_MODAL_WEB_APP_NAME"' in web_source
+    assert 'gpu=WORKER_GPU' in worker_source
+    assert 'gpu=WEB_GPU' in web_source
     assert (
         'WEB_WORKFLOW_MOUNT_PATH = '
         '"/root/ComfyUI/user/default/workflows/SOYA_USER"'
@@ -2595,7 +2660,7 @@ def test_modal_web_server_is_isolated_from_worker_app() -> None:
     assert "? 'ComfyUI 시작 취소'" in frontend_source
 
 
-def test_modal_runtime_image_precompiles_sageattention_for_l4() -> None:
+def test_modal_runtime_image_precompiles_sageattention_for_supported_gpus() -> None:
     source = (
         Path(__file__).resolve().parents[1] / "modal_backend" / "modal_app.py"
     ).read_text(encoding="utf-8")
@@ -2614,7 +2679,8 @@ def test_modal_runtime_image_precompiles_sageattention_for_l4() -> None:
     assert '"CC": "/usr/bin/gcc"' in source
     assert '"CXX": "/usr/bin/g++"' in source
     assert '"CUDAHOSTCXX": "/usr/bin/g++"' in source
-    assert '"TORCH_CUDA_ARCH_LIST": "8.9"' in source
+    assert '"TORCH_CUDA_ARCH_LIST": CUDA_ARCH_LIST' in source
+    assert 'gpu=WORKER_GPU' in source
     assert '"NVCC_APPEND_FLAGS": "--threads 4"' in source
     assert "index_url=PYTORCH_CUDA_INDEX_URL" in source
     assert 'extra_options="--no-build-isolation"' in source

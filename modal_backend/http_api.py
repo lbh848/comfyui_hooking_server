@@ -83,8 +83,16 @@ def register_modal_routes(
                 "1",
                 "true",
             }
+            item_keys = [
+                value.strip()
+                for value in request.query.getall("item_key", [])
+                if value.strip()
+            ]
             return web.json_response(
-                await service.lora_catalog(include_remote=include_remote)
+                await service.lora_catalog(
+                    include_remote=include_remote,
+                    item_keys=item_keys or None,
+                )
             )
         except (ValueError, RuntimeError, FileNotFoundError) as exc:
             print(
@@ -237,11 +245,11 @@ def register_modal_routes(
                 {"ok": True, "probe": await service.start_probe()}
             )
         except (ValueError, RuntimeError) as exc:
-            print(f"[MODAL_API] L4 연결 테스트 요청 실패: {type(exc).__name__}: {exc}")
+            print(f"[MODAL_API] GPU 연결 테스트 요청 실패: {type(exc).__name__}: {exc}")
             traceback.print_exc()
             return web.json_response({"ok": False, "error": str(exc)}, status=400)
         except Exception as exc:
-            print(f"[MODAL_API] L4 연결 테스트 예외: {type(exc).__name__}: {exc}")
+            print(f"[MODAL_API] GPU 연결 테스트 예외: {type(exc).__name__}: {exc}")
             traceback.print_exc()
             return web.json_response({"ok": False, "error": str(exc)}, status=500)
 

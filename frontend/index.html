@@ -877,7 +877,7 @@
             border-radius: 8px;
             font-size: 0.9rem;
             font-weight: 600;
-            z-index: 20000;
+            z-index: 23000;
             opacity: 0;
             pointer-events: none;
             transition: opacity 0.3s;
@@ -15120,7 +15120,7 @@
                     <div class="modal-worker-title">
                         <span class="modal-worker-state-dot" aria-hidden="true"></span>
                         <div class="modal-worker-heading-copy">
-                            <strong id="modal-worker-heading">Modal L4</strong>
+                            <strong id="modal-worker-heading">Modal GPU</strong>
                             <span id="modal-worker-state" role="status" aria-live="polite">상태 확인 대기</span>
                         </div>
                     </div>
@@ -18292,7 +18292,7 @@
         <div class="modal-action-dialog" tabindex="-1">
             <div class="modal-action-head">
                 <h2 id="modal-redeploy-choice-title">앱 재배포 방식 선택</h2>
-                <p>두 방식 모두 작업 App과 웹 App을 재배포하고, 완료 후 비용 안전을 위해 웹 App과 L4를 자동 종료합니다.</p>
+                <p>두 방식 모두 작업 App과 웹 App을 재배포하고, 완료 후 비용 안전을 위해 웹 App과 선택한 웹 GPU를 자동 종료합니다.</p>
             </div>
             <div class="modal-action-body">
                 <div class="modal-redeploy-options" role="radiogroup" aria-label="앱 재배포 방식">
@@ -18362,7 +18362,7 @@
                            autocomplete="off" placeholder="이름, 캐릭터, 트리거 검색..."
                            oninput="modalRenderLoraCatalog()">
                     <button type="button" class="modal-lora-status-btn" id="modal-lora-status-query-btn"
-                            onclick="modalLoraQueryStatus()">↻ 상태 조회</button>
+                            onclick="modalLoraQueryStatus()" disabled>↻ 전체 상태 조회</button>
                 </div>
                 <div class="modal-lora-selectbar">
                     <span id="modal-lora-query-note">로컬 현재 사용본을 불러오는 중입니다.</span>
@@ -18627,7 +18627,7 @@
                         <section class="comfy-modal-runtime-panel" id="comfy-modal-runtime-panel" aria-labelledby="comfy-runtime-tab-modal">
                             <div class="comfy-modal-runtime-head">
                                 <div>
-                                    <div class="comfy-modal-runtime-title">Modal L4 실행 관리</div>
+                                    <div class="comfy-modal-runtime-title">Modal GPU 실행 관리</div>
                                     <div class="comfy-modal-runtime-copy">요청이 오면 자동 기동하고, 마지막 작업이 끝난 뒤 설정한 유휴 시간이 지나면 GPU 컨테이너가 0개로 내려갑니다.</div>
                                 </div>
                                 <span class="comfy-runtime-state" id="modal-runtime-state">● 상태 확인 중</span>
@@ -18635,7 +18635,7 @@
 
                             <div class="comfy-modal-runtime-metrics">
                                 <div class="comfy-modal-runtime-metric"><small>계정</small><strong id="modal-runtime-account">확인 중</strong></div>
-                                <div class="comfy-modal-runtime-metric"><small>L4 컨테이너</small><strong id="modal-runtime-runners">확인 중</strong></div>
+                                <div class="comfy-modal-runtime-metric"><small id="modal-runtime-worker-metric-label">작업 워커 GPU</small><strong id="modal-runtime-runners">확인 중</strong></div>
                                 <div class="comfy-modal-runtime-metric"><small>실행 입력</small><strong id="modal-runtime-inputs">0</strong></div>
                                 <div class="comfy-modal-runtime-metric"><small>ComfyUI 웹</small><strong id="modal-runtime-web-status">꺼짐</strong></div>
                             </div>
@@ -18656,11 +18656,41 @@
                                     <span id="modal-runtime-enabled-status" class="toggle-status off">OFF</span>
                                 </div>
                                 <label class="comfy-runtime-option">
+                                    <span class="comfy-runtime-option-label">작업 워커 GPU</span>
+                                    <span class="comfy-runtime-option-note" id="modal-runtime-worker-gpu-cost">GPU와 컨테이너 비용 계산 중</span>
+                                    <select id="modal-runtime-worker-gpu" onchange="modalSyncRuntimeControls('runtime')">
+                                        <option value="L4" data-vram-gib="24" data-gpu-hour="0.7992">L4 · 24GB · GPU $0.80/시간</option>
+                                        <option value="A10" data-vram-gib="24" data-gpu-hour="1.1016">A10 · 24GB · GPU $1.10/시간</option>
+                                        <option value="L40S" data-vram-gib="48" data-gpu-hour="1.9512">L40S · 48GB · GPU $1.95/시간</option>
+                                        <option value="A100-40GB" data-vram-gib="40" data-gpu-hour="2.0988">A100 40GB · GPU $2.10/시간</option>
+                                        <option value="A100-80GB" data-vram-gib="80" data-gpu-hour="2.4984">A100 80GB · GPU $2.50/시간</option>
+                                        <option value="RTX-PRO-6000" data-vram-gib="96" data-gpu-hour="3.0312">RTX PRO 6000 · 96GB · GPU $3.03/시간</option>
+                                        <option value="H100" data-vram-gib="80" data-gpu-hour="3.9492">H100 · 80GB · GPU $3.95/시간</option>
+                                    </select>
+                                </label>
+                                <label class="comfy-runtime-option">
+                                    <span class="comfy-runtime-option-label">ComfyUI 웹 GPU</span>
+                                    <span class="comfy-runtime-option-note" id="modal-runtime-web-gpu-cost">GPU와 컨테이너 비용 계산 중</span>
+                                    <select id="modal-runtime-web-gpu" onchange="modalSyncRuntimeControls('runtime')">
+                                        <option value="L4" data-vram-gib="24" data-gpu-hour="0.7992">L4 · 24GB · GPU $0.80/시간</option>
+                                        <option value="A10" data-vram-gib="24" data-gpu-hour="1.1016">A10 · 24GB · GPU $1.10/시간</option>
+                                        <option value="L40S" data-vram-gib="48" data-gpu-hour="1.9512">L40S · 48GB · GPU $1.95/시간</option>
+                                        <option value="A100-40GB" data-vram-gib="40" data-gpu-hour="2.0988">A100 40GB · GPU $2.10/시간</option>
+                                        <option value="A100-80GB" data-vram-gib="80" data-gpu-hour="2.4984">A100 80GB · GPU $2.50/시간</option>
+                                        <option value="RTX-PRO-6000" data-vram-gib="96" data-gpu-hour="3.0312">RTX PRO 6000 · 96GB · GPU $3.03/시간</option>
+                                        <option value="H100" data-vram-gib="80" data-gpu-hour="3.9492">H100 · 80GB · GPU $3.95/시간</option>
+                                    </select>
+                                </label>
+                                <div class="comfy-runtime-option read-only-state">
+                                    <span><span class="comfy-runtime-option-label">웹+워커 동시 실행 예상</span><span class="comfy-runtime-option-note">각 컨테이너 CPU 4코어·RAM 16GB 포함</span></span>
+                                    <span id="modal-runtime-combined-cost" class="toggle-status on">계산 중</span>
+                                </div>
+                                <label class="comfy-runtime-option">
                                     <span class="comfy-runtime-option-label">유휴 자동 종료(s)</span>
                                     <input type="number" id="modal-runtime-scaledown-window" min="2" max="1200" step="1" value="15" onchange="modalSyncRuntimeControls('runtime')">
                                 </label>
                                 <label class="comfy-runtime-option">
-                                    <span class="comfy-runtime-option-label">최대 병렬 L4</span>
+                                    <span class="comfy-runtime-option-label" id="modal-runtime-concurrency-label">최대 병렬 GPU 워커</span>
                                     <input type="number" id="modal-runtime-max-concurrency" min="1" max="10" step="1" value="2" onchange="modalSyncRuntimeControls('runtime')">
                                 </label>
                                 <label class="comfy-runtime-option" title="최초 컨테이너 시작은 제외한 추가 재시도 수입니다. 한도를 넘으면 해당 Modal 호출과 실행 컨테이너를 취소합니다.">
@@ -18680,6 +18710,7 @@
                                     <span><span class="comfy-runtime-option-label">FAST 모드</span><span class="comfy-runtime-option-note">--fast · 다음 시작 시 적용</span></span>
                                 </label>
                             </div>
+                            <div class="comfy-modal-runtime-copy">GPU 변경은 설정 저장 후 기본 앱 재배포로 작업 App에 적용됩니다. 웹 App은 ComfyUI를 다음에 시작할 때 선택한 웹 GPU로 다시 배포됩니다.</div>
 
                             <div class="comfy-modal-runtime-actions">
                                 <button type="button" class="comfy-runtime-btn start" onclick="modalRuntimeSaveAndApply()">설정 저장·적용</button>
@@ -18689,9 +18720,9 @@
                                 <button type="button" class="comfy-runtime-btn stop" id="modal-runtime-web-stop-btn" onclick="modalRuntimeStopWeb()" disabled hidden>ComfyUI 완전 종료</button>
                                 <span class="comfy-modal-web-state" id="modal-runtime-web-state">꺼짐</span>
                                 <span class="tip-wrap">
-                                    <button type="button" class="comfy-runtime-btn connect" id="modal-runtime-probe-btn" onclick="modalRuntimeStartProbe()">L4 연결 테스트</button>
-                                    <span class="tip-q" tabindex="0" aria-label="L4 연결 테스트 도움말">?</span>
-                                    <span class="tip-box" role="tooltip"><b>유료 진단 기능</b><br>실제 작업용 L4를 켜 CUDA·GPU·VRAM 연결만 확인합니다. 정상 생성이나 ComfyUI 접속에는 필요하지 않습니다.</span>
+                                    <button type="button" class="comfy-runtime-btn connect" id="modal-runtime-probe-btn" onclick="modalRuntimeStartProbe()">GPU 연결 테스트</button>
+                                    <span class="tip-q" tabindex="0" aria-label="GPU 연결 테스트 도움말">?</span>
+                                    <span class="tip-box" role="tooltip" id="modal-runtime-probe-help"><b>유료 진단 기능</b><br>선택한 작업 워커 GPU를 켜 CUDA·GPU·VRAM 연결만 확인합니다. 정상 생성이나 ComfyUI 접속에는 필요하지 않습니다.</span>
                                 </span>
                                 <button type="button" class="comfy-runtime-btn" onclick="modalOpenExternalSettings()">계정 설정</button>
                             </div>
@@ -18726,7 +18757,7 @@
                                     </div>
                                 </div>
                                 <div class="comfy-installer-status-grid">
-                                    <div class="comfy-installer-metric"><small>GPU</small><strong>L4 · 24GB</strong></div>
+                                    <div class="comfy-installer-metric"><small>작업 워커 GPU</small><strong id="modal-runtime-sync-gpu">-</strong></div>
                                     <div class="comfy-installer-metric"><small>유휴 컨테이너</small><strong>0개</strong></div>
                                     <div class="comfy-installer-metric"><small>자동 종료</small><strong id="modal-installer-scaledown">작업 후 15초</strong></div>
                                     <div class="comfy-installer-metric"><small>볼륨 무료 범위</small><strong>월 1 TiB 포함</strong></div>
@@ -18780,7 +18811,7 @@
                                     </div>
                                     <pre class="modal-install-progress-log" id="modal-deploy-progress-log" aria-label="Modal 재배포 최신 로그">최신 배포 로그를 기다리고 있습니다.</pre>
                                 </div>
-                                <p class="comfy-installer-note" id="modal-installer-status" style="margin-top:6px;">외부 API에서 Modal 사용을 켜고 설정을 저장한 뒤 실행하세요. 동기화는 L4를 켜지 않으며, 실행 중 워커에 새 모델·LoRA를 반영하려면 기본 앱 재배포가 필요합니다.</p>
+                                <p class="comfy-installer-note" id="modal-installer-status" style="margin-top:6px;">외부 API에서 Modal 사용을 켜고 설정을 저장한 뒤 실행하세요. 동기화는 GPU를 켜지 않으며, 실행 중 워커에 새 모델·LoRA를 반영하려면 기본 앱 재배포가 필요합니다.</p>
                                 <div class="modal-install-progress" id="modal-install-progress" data-state="idle" hidden>
                                     <div class="modal-install-progress-head">
                                         <strong id="modal-install-progress-title">동기화 준비</strong>
@@ -19643,7 +19674,7 @@
                         <div class="setting-row">
                             <div class="setting-label">
                                 <div class="title">Modal 사용</div>
-                                <div class="desc">생성 요청이 올 때 L4를 자동으로 켜고, 마지막 작업 뒤 설정한 유휴 시간이 지나면 0개로 줄입니다.</div>
+                                <div class="desc">생성 요청이 올 때 선택한 작업 워커 GPU를 자동으로 켜고, 마지막 작업 뒤 설정한 유휴 시간이 지나면 0개로 줄입니다.</div>
                             </div>
                             <div class="setting-control" style="display:flex; align-items:center; gap:8px;">
                                 <label class="toggle-switch">
@@ -22068,7 +22099,7 @@
             }
             const runners = Number(web.runners);
             if (state === 'running' && Number.isFinite(runners) && runners > 0) {
-                label += ` · L4 ${runners}개`;
+                label += ` · ${String(web.gpu || 'GPU')} ${runners}개`;
             }
             webStateEl.textContent = label;
             const detail = web.error ? String(web.error) : (web.message || '');
@@ -25757,7 +25788,7 @@
             const cancellingStart = button?.textContent?.includes('시작 취소');
             const confirmation = cancellingStart
                 ? '진행 중인 Modal ComfyUI 시작을 취소하고 웹 App을 완전히 종료할까요?'
-                : 'Modal ComfyUI 웹 전용 App과 L4를 완전히 종료할까요? 열려 있는 ComfyUI 탭의 연결도 끊어집니다.';
+                : 'Modal ComfyUI 웹 전용 App과 웹 GPU를 완전히 종료할까요? 열려 있는 ComfyUI 탭의 연결도 끊어집니다.';
             if (!window.confirm(confirmation)) return;
             if (button) button.disabled = true;
             try {
@@ -26864,6 +26895,9 @@
         let modalLoraStateFilter = 'all';
         let modalLoraRemoteLoaded = false;
         let modalLoraCheckedAt = '';
+        let modalLoraCatalogLoading = false;
+        let modalLoraStatusQueryPending = false;
+        let modalLoraStatusQueryCount = 0;
         let modalLoraOperationState = {state: 'idle'};
         let modalLoraOperationPollTimer = null;
         let modalLoraOperationWasRunning = false;
@@ -26957,7 +26991,7 @@
                 if (String(item.category) !== modalLoraActiveCategory) return false;
                 if (modalLoraStateFilter !== 'all' && String(item.sync_state) !== modalLoraStateFilter) return false;
                 if (!query) return true;
-                return [item.name, item.subtitle, item.detail]
+                return [item.display_name, item.display_subtitle, item.name, item.subtitle, item.detail]
                     .some(value => String(value || '').toLowerCase().includes(query));
             });
         }
@@ -26993,15 +27027,26 @@
                 .map(modalLoraItemByKey)
                 .filter(Boolean);
             const busy = modalLoraOperationRunning();
+            const actionBusy = busy || modalLoraStatusQueryPending;
             const hasSelection = selected.length > 0;
             const everyLocal = hasSelection && selected.every(item => Number(item.file_count || 0) > 0);
+            const everyChecked = hasSelection && selected.every(
+                item => String(item.sync_state || 'unchecked') !== 'unchecked',
+            );
             const anyRemote = selected.some(item => Number(item.remote_file_count || 0) > 0);
             const upload = document.getElementById('modal-lora-upload-btn');
             const sync = document.getElementById('modal-lora-sync-btn');
             const remove = document.getElementById('modal-lora-delete-btn');
-            if (upload) upload.disabled = busy || !everyLocal;
-            if (sync) sync.disabled = busy || !everyLocal;
-            if (remove) remove.disabled = busy || !modalLoraRemoteLoaded || !anyRemote;
+            if (upload) upload.disabled = actionBusy || !everyLocal;
+            if (sync) sync.disabled = actionBusy || !everyLocal;
+            if (remove) remove.disabled = actionBusy || !everyChecked || !anyRemote;
+            const statusButton = document.getElementById('modal-lora-status-query-btn');
+            if (statusButton) {
+                statusButton.disabled = modalLoraCatalogLoading || modalLoraStatusQueryPending || busy;
+                statusButton.textContent = modalLoraStatusQueryPending
+                    ? `↻ ${modalLoraStatusQueryCount ? `선택 ${modalLoraStatusQueryCount}개` : '전체'} 조회 중...`
+                    : (hasSelection ? `↻ 선택 ${selected.length}개 상태 조회` : '↻ 전체 상태 조회');
+            }
             const fileCount = selected.reduce((sum, item) => sum + Number(item.file_count || 0), 0);
             const bytes = selected.reduce((sum, item) => sum + Number(item.size_bytes || 0), 0);
             const botCount = selected.filter(item => item.category === 'bot').length;
@@ -27022,15 +27067,19 @@
             if (!visible.length) {
                 const empty = document.createElement('div');
                 empty.className = 'modal-lora-empty';
-                empty.textContent = modalLoraCatalog.length
-                    ? '현재 탭·검색·상태 조건에 맞는 LoRA가 없습니다.'
-                    : '현재 사용할 수 있는 LoRA가 없습니다. 각 LoRA 관리 화면에서 대표 또는 최신 결과를 확인하세요.';
+                empty.textContent = modalLoraCatalogLoading
+                    ? '로컬 현재 사용본을 불러오는 중입니다.'
+                    : (modalLoraCatalog.length
+                        ? '현재 탭·검색·상태 조건에 맞는 LoRA가 없습니다.'
+                        : '현재 사용할 수 있는 LoRA가 없습니다. 전체 상태 조회로 원격에만 있는 항목을 확인할 수 있습니다.');
                 container.append(empty);
             }
             const busy = modalLoraOperationRunning();
+            const actionBusy = busy || modalLoraStatusQueryPending;
             for (const item of visible) {
                 const row = document.createElement('div');
                 const state = String(item.sync_state || 'unchecked');
+                const itemRemoteChecked = state !== 'unchecked';
                 row.className = `modal-lora-item state-${state}`;
                 if (modalLoraSelectedKeys.has(item.key)) row.classList.add('selected');
 
@@ -27039,7 +27088,9 @@
                 checkbox.className = 'modal-lora-check';
                 checkbox.checked = modalLoraSelectedKeys.has(item.key);
                 checkbox.disabled = busy;
-                checkbox.setAttribute('aria-label', `${item.name} 선택`);
+                const displayName = item.display_name || item.name || '이름 없음';
+                const displaySubtitle = item.display_subtitle || item.subtitle || '';
+                checkbox.setAttribute('aria-label', `${displayName} 선택`);
                 checkbox.addEventListener('change', () => {
                     if (checkbox.checked) modalLoraSelectedKeys.add(item.key);
                     else modalLoraSelectedKeys.delete(item.key);
@@ -27057,7 +27108,7 @@
                 const main = document.createElement('div');
                 main.className = 'modal-lora-item-main';
                 const name = document.createElement('strong');
-                name.textContent = item.name || '이름 없음';
+                name.textContent = displayName;
                 main.append(name);
                 if (item.category === 'bot') {
                     const unit = document.createElement('span');
@@ -27074,10 +27125,10 @@
                 const detail = document.createElement('div');
                 detail.className = 'modal-lora-item-meta';
                 const details = [
-                    item.subtitle,
+                    displaySubtitle,
                     `로컬 ${Number(item.file_count || 0)}개 · ${comfyInstallerFormatBytes(Number(item.size_bytes || 0))}`,
                 ];
-                if (modalLoraRemoteLoaded) details.push(`원격 ${Number(item.remote_file_count || 0)}개 · ${comfyInstallerFormatBytes(Number(item.remote_size_bytes || 0))}`);
+                if (itemRemoteChecked) details.push(`원격 ${Number(item.remote_file_count || 0)}개 · ${comfyInstallerFormatBytes(Number(item.remote_size_bytes || 0))}`);
                 if (state === 'update') details.push(meta.detail);
                 if (item.detail) details.push(item.detail);
                 details.filter(Boolean).forEach(text => {
@@ -27090,13 +27141,13 @@
                 const actions = document.createElement('div');
                 actions.className = 'modal-lora-row-actions';
                 const hasLocal = Number(item.file_count || 0) > 0;
-                const hasRemote = modalLoraRemoteLoaded && Number(item.remote_file_count || 0) > 0;
+                const hasRemote = itemRemoteChecked && Number(item.remote_file_count || 0) > 0;
                 for (const [action, label] of [['upload', '업로드'], ['sync', '동기화'], ['delete', '원격 삭제']]) {
                     const button = document.createElement('button');
                     button.type = 'button';
                     button.textContent = label;
                     if (action === 'delete') button.classList.add('danger');
-                    button.disabled = busy || (action === 'delete' ? !hasRemote : !hasLocal);
+                    button.disabled = actionBusy || (action === 'delete' ? !hasRemote : !hasLocal);
                     button.addEventListener('click', event => {
                         event.stopPropagation();
                         void modalLoraRunAction(action, [item.key]);
@@ -27150,58 +27201,92 @@
 
         async function modalLoraLoadCatalog() {
             const note = document.getElementById('modal-lora-query-note');
+            modalLoraCatalogLoading = true;
+            modalLoraCatalog = [];
+            modalLoraRemoteLoaded = false;
+            modalLoraCheckedAt = '';
+            modalLoraStateFilter = 'all';
             if (note) note.textContent = '로컬 현재 사용본을 확인하고 있습니다.';
+            modalRenderLoraCatalog();
+            let loaded = false;
             try {
                 const data = await fetchJSON('/api/modal/loras');
                 modalLoraCatalog = Array.isArray(data.items) ? data.items : [];
-                modalLoraRemoteLoaded = false;
-                modalLoraCheckedAt = '';
-                modalLoraStateFilter = 'all';
                 const present = new Set(modalLoraCatalog.map(item => item.key));
                 for (const key of Array.from(modalLoraSelectedKeys)) {
                     if (!present.has(key)) modalLoraSelectedKeys.delete(key);
                 }
                 const errors = Array.isArray(data.errors) ? data.errors : [];
                 if (errors.length) console.error('[MODAL_LORA] 일부 로컬 카탈로그 실패:', errors);
-                if (note) note.textContent = `현재 사용본 ${modalLoraCatalog.length}개 항목 · 원격 상태를 조회하고 있습니다.`;
-                modalRenderLoraCatalog();
+                if (note) note.textContent = `현재 사용본 ${modalLoraCatalog.length}개 항목 · 항목을 선택하면 선택 조회, 선택하지 않으면 전체 조회합니다.`;
+                loaded = true;
             } catch (error) {
                 console.error('[MODAL_LORA] 로컬 카탈로그 조회 실패:', error);
                 if (note) note.textContent = '로컬 목록 조회 실패: ' + (error.message || error);
                 const container = document.getElementById('modal-lora-catalog');
                 if (container) container.innerHTML = '<div class="modal-lora-empty">LoRA 목록을 불러오지 못했습니다. 서버 로그를 확인하세요.</div>';
+            } finally {
+                modalLoraCatalogLoading = false;
+                if (loaded) modalRenderLoraCatalog();
+                else modalLoraUpdateControls();
             }
         }
 
-        async function modalLoraQueryStatus(showResult = true) {
-            const button = document.getElementById('modal-lora-status-query-btn');
+        async function modalLoraQueryStatus() {
+            if (modalLoraCatalogLoading || modalLoraStatusQueryPending || modalLoraOperationRunning()) return;
             const note = document.getElementById('modal-lora-query-note');
-            if (button) button.disabled = true;
-            if (note) note.textContent = '현재 사용 LoRA의 SHA-256과 Modal Volume 명세를 비교하고 있습니다.';
+            const requestedKeys = Array.from(modalLoraSelectedKeys)
+                .map(key => String(key || '').trim())
+                .filter(Boolean);
+            const uniqueKeys = Array.from(new Set(requestedKeys));
+            const partial = uniqueKeys.length > 0;
+            const params = new URLSearchParams({remote: '1'});
+            uniqueKeys.forEach(key => params.append('item_key', key));
+            modalLoraStatusQueryPending = true;
+            modalLoraStatusQueryCount = uniqueKeys.length;
+            modalLoraUpdateControls();
+            if (note) {
+                note.textContent = partial
+                    ? `선택한 ${uniqueKeys.length}개 LoRA의 SHA-256과 Modal Volume 명세를 비교하고 있습니다. 목록 선택은 계속 변경할 수 있습니다.`
+                    : '전체 LoRA의 SHA-256과 Modal Volume 명세를 비교하고 있습니다. 목록 선택은 계속 변경할 수 있습니다.';
+            }
             try {
-                const data = await fetchJSON('/api/modal/loras?remote=1');
-                modalLoraCatalog = Array.isArray(data.items) ? data.items : [];
-                modalLoraRemoteLoaded = true;
-                modalLoraCheckedAt = String(data.checked_at || '');
-                const present = new Set(modalLoraCatalog.map(item => item.key));
-                for (const key of Array.from(modalLoraSelectedKeys)) {
-                    if (!present.has(key)) modalLoraSelectedKeys.delete(key);
+                const data = await fetchJSON(`/api/modal/loras?${params.toString()}`);
+                const queriedItems = Array.isArray(data.items) ? data.items : [];
+                if (partial) {
+                    const queriedByKey = new Map(queriedItems.map(item => [String(item.key), item]));
+                    modalLoraCatalog = modalLoraCatalog.map(item => queriedByKey.get(String(item.key)) || item);
+                    for (const item of queriedItems) {
+                        if (!modalLoraItemByKey(item.key)) modalLoraCatalog.push(item);
+                    }
+                } else {
+                    modalLoraCatalog = queriedItems;
+                    const present = new Set(modalLoraCatalog.map(item => item.key));
+                    for (const key of Array.from(modalLoraSelectedKeys)) {
+                        if (!present.has(key)) modalLoraSelectedKeys.delete(key);
+                    }
                 }
+                modalLoraRemoteLoaded = modalLoraCatalog.some(
+                    item => String(item.sync_state || 'unchecked') !== 'unchecked',
+                );
+                modalLoraCheckedAt = String(data.checked_at || '');
                 const checked = modalLoraCheckedAt
                     ? new Date(modalLoraCheckedAt).toLocaleTimeString('ko-KR', {hour12: false})
                     : '방금';
                 const counts = data.counts || {};
-                if (note) note.textContent = `${checked} 조회 · 완료 ${Number(counts.synced || 0)} · 업데이트 ${Number(counts.update || 0)} · 로컬만 ${Number(counts.local_only || 0)} · 원격만 ${Number(counts.remote_only || 0)}`;
+                if (note) note.textContent = `${checked} ${partial ? `선택 ${uniqueKeys.length}개` : '전체'} 조회 · 완료 ${Number(counts.synced || 0)} · 업데이트 ${Number(counts.update || 0)} · 로컬만 ${Number(counts.local_only || 0)} · 원격만 ${Number(counts.remote_only || 0)}`;
                 const remoteErrors = Array.isArray(data.remote_errors) ? data.remote_errors : [];
                 if (remoteErrors.length) console.error('[MODAL_LORA] 원격 명세 경고:', remoteErrors);
                 modalRenderLoraCatalog();
-                if (showResult) showToast('Modal LoRA 상태를 조회했습니다', 'success');
+                showToast(`Modal LoRA ${partial ? `선택 ${uniqueKeys.length}개` : '전체'} 상태를 조회했습니다`, 'success');
             } catch (error) {
                 console.error('[MODAL_LORA] 원격 상태 조회 실패:', error);
                 if (note) note.textContent = '원격 상태 조회 실패: ' + (error.message || error);
-                if (showResult) showToast('Modal LoRA 상태 조회 실패: ' + (error.message || error), 'error');
+                showToast('Modal LoRA 상태 조회 실패: ' + (error.message || error), 'error');
             } finally {
-                if (button) button.disabled = false;
+                modalLoraStatusQueryPending = false;
+                modalLoraStatusQueryCount = 0;
+                modalLoraUpdateControls();
             }
         }
 
@@ -27265,7 +27350,7 @@
                         operation.state === 'completed' ? (operation.message || 'LoRA 작업 완료') : (operation.message || 'LoRA 작업 실패'),
                         operation.state === 'completed' ? 'success' : 'error',
                     );
-                    if (operation.state === 'completed') void modalLoraQueryStatus(false);
+                    if (operation.state === 'completed') void modalLoraLoadCatalog();
                 }
             } catch (error) {
                 console.error('[MODAL_LORA] 작업 상태 조회 실패:', error);
@@ -27275,6 +27360,10 @@
 
         async function modalLoraRunAction(action, explicitKeys = null) {
             if (modalLoraOperationRunning()) return;
+            if (modalLoraStatusQueryPending) {
+                showToast('상태 조회가 끝난 뒤 LoRA 작업을 시작하세요', 'warning');
+                return;
+            }
             const keys = Array.isArray(explicitKeys) ? explicitKeys : Array.from(modalLoraSelectedKeys);
             const items = keys.map(modalLoraItemByKey).filter(Boolean);
             if (!items.length) {
@@ -27283,6 +27372,10 @@
             }
             if ((action === 'upload' || action === 'sync') && items.some(item => !Number(item.file_count || 0))) {
                 showToast('원격에만 있는 항목은 업로드하거나 동기화할 수 없습니다', 'warning');
+                return;
+            }
+            if (action === 'delete' && items.some(item => String(item.sync_state || 'unchecked') === 'unchecked')) {
+                showToast('원격 삭제 전에 선택 항목의 상태를 먼저 조회하세요', 'warning');
                 return;
             }
             if (action === 'delete' && !items.some(item => Number(item.remote_file_count || 0) > 0)) {
@@ -27333,7 +27426,6 @@
             modalLoraSetCategory('bot');
             overlay.querySelector('.modal-action-dialog')?.focus({preventScroll: true});
             await modalLoraLoadCatalog();
-            if (modalLoraSyncActive()) void modalLoraQueryStatus(false);
             try {
                 const data = await fetchJSON('/api/modal/loras/operation');
                 modalRenderLoraOperation(data.operation || {state: 'idle'});
@@ -27445,8 +27537,8 @@
                     stopping ? 'Modal ComfyUI 시작 취소 처리 중' : 'Modal ComfyUI 시작 중',
                     String(web.message || (
                         stopping
-                            ? '웹 App과 L4를 안전하게 종료하고 있습니다.'
-                            : '웹 App을 배포하고 L4의 ComfyUI 준비를 기다리고 있습니다.'
+                            ? '웹 App과 GPU를 안전하게 종료하고 있습니다.'
+                            : '웹 App을 배포하고 GPU의 ComfyUI 준비를 기다리고 있습니다.'
                     )),
                 );
                 const webLogs = modalRuntimeLogEntries
@@ -27571,6 +27663,52 @@
             status.className = 'toggle-status ' + (checked ? 'on' : 'off');
         }
 
+        const MODAL_CPU_MEMORY_PER_HOUR = 0.3165;
+
+        function modalSelectedGpuMeta(selectId) {
+            const select = document.getElementById(selectId);
+            const option = select?.selectedOptions?.[0];
+            if (!select || !option) {
+                console.error('[MODAL_RUNTIME] GPU 선택 요소 또는 option이 없습니다:', {selectId});
+                return {id: 'L4', vramGib: 24, gpuHour: 0.7992};
+            }
+            const gpuHour = Number(option.dataset.gpuHour);
+            const vramGib = Number(option.dataset.vramGib);
+            if (!Number.isFinite(gpuHour) || !Number.isFinite(vramGib)) {
+                console.error('[MODAL_RUNTIME] GPU 비용 메타데이터가 올바르지 않습니다:', {
+                    selectId,
+                    value: select.value,
+                    gpuHour: option.dataset.gpuHour,
+                    vramGib: option.dataset.vramGib,
+                });
+                return {id: select.value || 'L4', vramGib: 0, gpuHour: 0};
+            }
+            return {id: select.value, vramGib, gpuHour};
+        }
+
+        function modalSetGpuSelectValue(selectId, value) {
+            const select = document.getElementById(selectId);
+            if (!select) {
+                console.error('[MODAL_RUNTIME] GPU 선택 요소가 없습니다:', {selectId});
+                return;
+            }
+            const normalized = String(value || 'L4').toUpperCase();
+            if (Array.from(select.options).some(option => option.value === normalized)) {
+                select.value = normalized;
+                return;
+            }
+            console.error('[MODAL_RUNTIME] 저장된 GPU를 지원하지 않아 L4로 복구합니다:', {
+                selectId,
+                value,
+            });
+            select.value = 'L4';
+        }
+
+        function modalGpuContainerCostText(meta) {
+            const containerHour = meta.gpuHour + MODAL_CPU_MEMORY_PER_HOUR;
+            return `GPU $${meta.gpuHour.toFixed(2)} + CPU/RAM $${MODAL_CPU_MEMORY_PER_HOUR.toFixed(2)} = 약 $${containerHour.toFixed(2)}/시간`;
+        }
+
         // GPU·최대 병렬 수·유휴 자동 종료·상태 갱신은 Comfy 실행 관리 탭의
         // 런타임 패널 입력(modal-runtime-*)이 저장 소스다. 외부 API 탭의 중복 입력은 제거됐다.
         function modalSyncRuntimeControls(_source = 'runtime') {
@@ -27579,6 +27717,25 @@
             if (installerScaledown) {
                 installerScaledown.textContent = `작업 후 ${Number(runtimeScaledown?.value || 15)}초`;
             }
+            const worker = modalSelectedGpuMeta('modal-runtime-worker-gpu');
+            const web = modalSelectedGpuMeta('modal-runtime-web-gpu');
+            const workerCost = document.getElementById('modal-runtime-worker-gpu-cost');
+            const webCost = document.getElementById('modal-runtime-web-gpu-cost');
+            const combinedCost = document.getElementById('modal-runtime-combined-cost');
+            if (workerCost) workerCost.textContent = modalGpuContainerCostText(worker);
+            if (webCost) webCost.textContent = modalGpuContainerCostText(web);
+            if (combinedCost) {
+                const total = worker.gpuHour + web.gpuHour + (MODAL_CPU_MEMORY_PER_HOUR * 2);
+                combinedCost.textContent = `약 $${total.toFixed(2)}/시간`;
+            }
+            const workerMetric = document.getElementById('modal-runtime-worker-metric-label');
+            if (workerMetric) workerMetric.textContent = `작업 워커 · ${worker.id}`;
+            const concurrencyLabel = document.getElementById('modal-runtime-concurrency-label');
+            if (concurrencyLabel) concurrencyLabel.textContent = `최대 병렬 ${worker.id} 워커`;
+            const probeButton = document.getElementById('modal-runtime-probe-btn');
+            if (probeButton) probeButton.textContent = `${worker.id} 연결 테스트`;
+            const syncGpu = document.getElementById('modal-runtime-sync-gpu');
+            if (syncGpu) syncGpu.textContent = `${worker.id} · ${worker.vramGib}GB`;
             if (comfyRuntimeActiveView === 'modal') modalRuntimeStartPolling();
         }
 
@@ -27921,7 +28078,7 @@
                 inventory: '인벤토리 확인',
                 worker: '작업 App 빌드·배포',
                 web: '웹 App 배포',
-                shutdown: '웹 App·L4 자동 종료',
+                shutdown: '웹 App·GPU 자동 종료',
                 complete: '배포 완료',
             };
             if (current) {
@@ -27960,6 +28117,8 @@
             const auth = data.auth || {};
             const install = data.install || {};
             const deployment = data.deployment || {};
+            const workerGpu = String(data.settings?.worker_gpu || data.settings?.gpu || 'GPU');
+            const webGpu = String(data.settings?.web_gpu || 'GPU');
             const deploymentRunning = deployment.state === 'running';
             if (account) {
                 const onoff = data.settings.enabled ? 'Modal ON' : 'Modal OFF';
@@ -27974,8 +28133,11 @@
             const connectBtn = document.getElementById('modal-connect-btn');
             if (connectBtn) connectBtn.disabled = (auth.state === 'running');
             if (cost && data.cost) {
+                const workerCost = data.cost.worker || {};
+                const webCost = data.cost.web || {};
                 const lines = [
-                    `L4 GPU $${data.cost.l4_gpu_per_hour}/시간 · CPU/RAM 포함 추정 $${data.cost.estimated_container_per_hour}/컨테이너시간`,
+                    `작업 ${workerGpu} GPU $${workerCost.gpu_per_hour ?? data.cost.gpu_per_hour}/시간 · CPU/RAM 포함 $${workerCost.container_per_hour ?? data.cost.estimated_container_per_hour}/컨테이너시간`,
+                    `웹 ${webGpu} GPU $${webCost.gpu_per_hour}/시간 · CPU/RAM 포함 $${webCost.container_per_hour}/컨테이너시간 · 동시 실행 $${data.cost.combined_container_per_hour}/시간`,
                     `$${data.cost.monthly_credit}로 약 ${data.cost.estimated_container_hours} 컨테이너시간 · 동시 ${data.settings.max_concurrency}개 연속 사용 시 약 ${data.cost.estimated_wall_hours_at_max_concurrency}시간`,
                 ];
                 if (data.billing?.available && data.billing.summary) {
@@ -28068,7 +28230,7 @@
                         ? '● 계정 연결 필요'
                         : (runtime?.reason === 'deployment_in_progress'
                             ? '● Modal 배포 중'
-                            : (isRunning ? '● L4 실행 중' : '● 자동 대기')));
+                            : (isRunning ? `● ${workerGpu} 실행 중` : '● 자동 대기')));
             }
             const runtimeEnabledStatus = document.getElementById('modal-runtime-enabled-status');
             if (runtimeEnabledStatus) {
@@ -28078,7 +28240,12 @@
             modalRenderBilling(data.billing);
             const probe = data.probe || {};
             const probeButton = document.getElementById('modal-runtime-probe-btn');
-            if (probeButton) probeButton.disabled = probe.state === 'running';
+            if (probeButton) {
+                probeButton.disabled = probe.state === 'running';
+                probeButton.textContent = probe.state === 'running'
+                    ? `${workerGpu} 연결 확인 중…`
+                    : `${workerGpu} 연결 테스트`;
+            }
             const web = data.web || {};
             const webState = String(web.state || 'stopped');
             const webBusy = webState === 'starting' || webState === 'stopping';
@@ -28123,7 +28290,7 @@
             }
             if (webMetric) {
                 webMetric.textContent = webRunning
-                    ? `실행 중 · ${Number(web.num_total_runners || 0)}개`
+                    ? `${webGpu} 실행 중 · ${Number(web.num_total_runners || 0)}개`
                     : (webBusy ? (webState === 'starting' ? '시작 중' : '종료 중') : '꺼짐');
                 webMetric.title = web.message || '';
             }
@@ -28669,14 +28836,15 @@
 
         async function modalRuntimeStartProbe() {
             const button = document.getElementById('modal-runtime-probe-btn');
+            const workerGpu = modalSelectedGpuMeta('modal-runtime-worker-gpu').id;
             if (button) button.disabled = true;
             try {
                 await fetchJSON('/api/modal/probe', { method: 'POST' });
-                showToast('Modal L4 연결 테스트를 시작했습니다', 'success');
+                showToast(`Modal ${workerGpu} 연결 테스트를 시작했습니다`, 'success');
                 modalRuntimeStartPolling();
             } catch (error) {
-                console.error('[MODAL_RUNTIME] L4 연결 테스트 시작 실패:', error);
-                showToast('L4 연결 테스트 실패: ' + (error.message || error), 'error');
+                console.error(`[MODAL_RUNTIME] ${workerGpu} 연결 테스트 시작 실패:`, error);
+                showToast(`${workerGpu} 연결 테스트 실패: ` + (error.message || error), 'error');
                 if (button) button.disabled = false;
             }
         }
@@ -28800,6 +28968,14 @@
             if (modalEnvironmentEl) modalEnvironmentEl.value = currentConfig.modal_environment || 'main';
             const modalDeploymentEl = document.getElementById('setting-modal-deployment-name');
             if (modalDeploymentEl) modalDeploymentEl.value = currentConfig.modal_deployment_name || 'soya-comfy-worker';
+            modalSetGpuSelectValue(
+                'modal-runtime-worker-gpu',
+                currentConfig.modal_worker_gpu || currentConfig.modal_gpu || 'L4',
+            );
+            modalSetGpuSelectValue(
+                'modal-runtime-web-gpu',
+                currentConfig.modal_web_gpu || currentConfig.modal_gpu || 'L4',
+            );
             const modalConcurrencyEl = document.getElementById('modal-runtime-max-concurrency');
             if (modalConcurrencyEl) modalConcurrencyEl.value = currentConfig.modal_max_concurrency ?? 2;
             const modalStartRetriesEl = document.getElementById('modal-runtime-container-start-max-retries');
@@ -30290,6 +30466,16 @@
                 showToast('Modal 컨테이너 시작 재시도 횟수는 0~10 사이여야 합니다.', 'error');
                 return false;
             }
+            const modalWorkerGpu = document.getElementById('modal-runtime-worker-gpu')?.value;
+            const modalWebGpu = document.getElementById('modal-runtime-web-gpu')?.value;
+            if (!modalWorkerGpu || !modalWebGpu) {
+                console.error('[MODAL_RUNTIME] GPU 설정 저장 거부:', {
+                    workerGpu: modalWorkerGpu,
+                    webGpu: modalWebGpu,
+                });
+                showToast('Modal 작업 워커와 웹 GPU를 모두 선택하세요.', 'error');
+                return false;
+            }
             const config = {
                 data_saving_mode: currentConfig.data_saving_mode || false,
                 memo_enabled: document.getElementById('setting-memo-enabled').checked,
@@ -30303,7 +30489,9 @@
                 modal_profile: document.getElementById('setting-modal-profile')?.value.trim() || 'soya-comfy',
                 modal_environment: document.getElementById('setting-modal-environment')?.value.trim() || 'main',
                 modal_deployment_name: document.getElementById('setting-modal-deployment-name')?.value.trim() || 'soya-comfy-worker',
-                modal_gpu: 'L4',
+                modal_gpu: modalWorkerGpu,
+                modal_worker_gpu: modalWorkerGpu,
+                modal_web_gpu: modalWebGpu,
                 modal_max_concurrency: parseInt(document.getElementById('modal-runtime-max-concurrency')?.value, 10) || 2,
                 modal_container_start_max_retries: modalStartRetries,
                 modal_monthly_credit_usd: parseFloat(document.getElementById('setting-modal-monthly-credit')?.value) || 30,

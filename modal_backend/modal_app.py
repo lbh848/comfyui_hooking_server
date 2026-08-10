@@ -1,4 +1,4 @@
-"""사용자 Modal Workspace에 배포되는 ComfyUI/L4 애플리케이션."""
+"""사용자 Modal Workspace에 배포되는 ComfyUI GPU 애플리케이션."""
 
 from __future__ import annotations
 
@@ -13,9 +13,28 @@ from pathlib import Path
 import modal
 
 from modal_backend.custom_nodes import LOCAL_COPY_IGNORE_PATTERNS
+from modal_backend.settings import MODAL_GPU_PROFILES, normalize_modal_gpu
 
 
 APP_NAME = os.environ.get("SOYA_MODAL_APP_NAME", "soya-comfy-worker")
+try:
+    WORKER_GPU = normalize_modal_gpu(
+        os.environ.get("SOYA_MODAL_WORKER_GPU"),
+        "SOYA_MODAL_WORKER_GPU",
+    )
+    IMAGE_WEB_GPU = normalize_modal_gpu(
+        os.environ.get("SOYA_MODAL_WEB_GPU"),
+        "SOYA_MODAL_WEB_GPU",
+    )
+except Exception as exc:
+    print(
+        "[MODAL_COMFY] GPU 설정 오류: "
+        f"worker={os.environ.get('SOYA_MODAL_WORKER_GPU')!r}, "
+        f"web={os.environ.get('SOYA_MODAL_WEB_GPU')!r}, "
+        f"error={type(exc).__name__}: {exc}"
+    )
+    traceback.print_exc()
+    raise
 MAX_CONTAINERS = int(os.environ.get("SOYA_MODAL_MAX_CONTAINERS", "2"))
 SCALEDOWN_WINDOW_SECONDS = int(os.environ.get("SOYA_MODAL_SCALEDOWN_WINDOW", "15"))
 if not 1 <= MAX_CONTAINERS <= 10:
@@ -33,6 +52,15 @@ TORCHVISION_VERSION = "0.26.0"
 TORCHAUDIO_VERSION = "2.11.0"
 PYTORCH_CUDA_INDEX_URL = "https://download.pytorch.org/whl/cu128"
 SAGEATTENTION_VERSION = "2.2.0"
+CUDA_ARCH_LIST = ";".join(
+    sorted(
+        {
+            str(MODAL_GPU_PROFILES[gpu_id]["cuda_arch"])
+            for gpu_id in (WORKER_GPU, IMAGE_WEB_GPU)
+        },
+        key=lambda value: tuple(int(part) for part in value.split(".")),
+    )
+)
 FORCE_CUSTOM_NODE_BUILD = os.environ.get("SOYA_MODAL_FORCE_CUSTOM_NODE_BUILD", "0") == "1"
 # Modal Volume 변경만으로는 기존 Memory Snapshot이 무효화되지 않는다. 이 값은
 # deploy 명령을 실행할 때마다 달라져 app.cls의 원격 환경 구성이 변경되게 하고,
@@ -116,9 +144,9 @@ runtime_image = (
             "CC": "/usr/bin/gcc",
             "CXX": "/usr/bin/g++",
             "CUDAHOSTCXX": "/usr/bin/g++",
-            # Modal 이미지 빌더에는 GPU가 없어도 L4(Ada, sm_89) 전용 CUDA
-            # extension을 결정론적으로 사전 컴파일할 수 있다.
-            "TORCH_CUDA_ARCH_LIST": "8.9",
+            # 웹/워커가 서로 다른 GPU를 골라도 이미지 하나를 재사용할 수 있도록
+            # 선택된 두 아키텍처용 CUDA extension을 결정론적으로 사전 컴파일한다.
+            "TORCH_CUDA_ARCH_LIST": CUDA_ARCH_LIST,
             "MAX_JOBS": "4",
             "EXT_PARALLEL": "4",
             "NVCC_APPEND_FLAGS": "--threads 4",
@@ -204,7 +232,7 @@ runtime_image = (
 
 @app.function(
     image=runtime_image,
-    gpu="L4",
+    gpu=WORKER_GPU,
     cpu=4.0,
     memory=16_384,
     min_containers=0,
@@ -222,7 +250,9 @@ def gpu_probe() -> dict:
     import torch
 
     if not torch.cuda.is_available():
-        raise RuntimeError("L4 컨테이너에서 CUDA를 사용할 수 없습니다.")
+        raise RuntimeError(
+            f"{WORKER_GPU} 컨테이너에서 CUDA를 사용할 수 없습니다."
+        )
     props = torch.cuda.get_device_properties(0)
     return {
         "device": torch.cuda.get_device_name(0),
@@ -284,7 +314,7 @@ def _write_extra_model_paths() -> Path:
 
 @app.cls(
     image=runtime_image,
-    gpu="L4",
+    gpu=WORKER_GPU,
     cpu=4.0,
     memory=16_384,
     min_containers=0,
@@ -388,7 +418,10 @@ class ComfyWorker:
                 response = requests.get("http://127.0.0.1:8188/system_stats", timeout=2)
                 if response.ok:
                     print(
-                        "[MODAL_COMFY] ComfyUI L4 워커 snapshot 캡처 지점 준비 완료",
+                        (
+                            "[MODAL_COMFY] ComfyUI "
+                            f"{WORKER_GPU} 워커 snapshot 캡처 지점 준비 완료"
+                        ),
                         flush=True,
                     )
                     return
@@ -437,7 +470,7 @@ class ComfyWorker:
                     if response.ok:
                         print(
                             "[MODAL_COMFY] GPU Memory Snapshot 복원 완료 · "
-                            "ComfyUI L4 워커 준비 완료",
+                            f"ComfyUI {WORKER_GPU} 워커 준비 완료",
                             flush=True,
                         )
                         return

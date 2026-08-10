@@ -201,7 +201,10 @@ DEFAULT_CONFIG = {
     "modal_profile": "soya-comfy",
     "modal_environment": "main",
     "modal_deployment_name": "soya-comfy-worker",
+    # modal_gpu는 이전 config.json과 API 호출의 작업 워커 alias로 유지한다.
     "modal_gpu": "L4",
+    "modal_worker_gpu": "L4",
+    "modal_web_gpu": "L4",
     "modal_max_concurrency": 2,
     "modal_monthly_credit_usd": 30.0,
     "modal_scaledown_window_seconds": 15,
@@ -11024,6 +11027,10 @@ async def handle_api_config(request: web.Request) -> web.Response:
                 for key, value in body.items():
                     if key in DEFAULT_CONFIG:
                         modal_candidate[key] = copy.deepcopy(value)
+                if "modal_gpu" in body and "modal_worker_gpu" not in body:
+                    modal_candidate["modal_worker_gpu"] = copy.deepcopy(
+                        body.get("modal_gpu")
+                    )
                 try:
                     normalized_modal = ModalSettings.from_mapping(modal_candidate)
                 except (TypeError, ValueError) as e:
@@ -11033,7 +11040,8 @@ async def handle_api_config(request: web.Request) -> web.Response:
                         f"'profile': {body.get('modal_profile')!r}, "
                         f"'environment': {body.get('modal_environment')!r}, "
                         f"'deployment': {body.get('modal_deployment_name')!r}, "
-                        f"'gpu': {body.get('modal_gpu')!r}, "
+                        f"'worker_gpu': {body.get('modal_worker_gpu')!r}, "
+                        f"'web_gpu': {body.get('modal_web_gpu')!r}, "
                         f"'max_concurrency': {body.get('modal_max_concurrency')!r}, "
                         f"'scaledown': {body.get('modal_scaledown_window_seconds')!r}, "
                         f"'refresh': {body.get('modal_status_refresh_seconds')!r}, "
@@ -11050,7 +11058,9 @@ async def handle_api_config(request: web.Request) -> web.Response:
                         "modal_profile": normalized_modal.profile,
                         "modal_environment": normalized_modal.environment,
                         "modal_deployment_name": normalized_modal.deployment_name,
-                        "modal_gpu": normalized_modal.gpu,
+                        "modal_gpu": normalized_modal.worker_gpu,
+                        "modal_worker_gpu": normalized_modal.worker_gpu,
+                        "modal_web_gpu": normalized_modal.web_gpu,
                         "modal_max_concurrency": normalized_modal.max_concurrency,
                         "modal_monthly_credit_usd": normalized_modal.monthly_credit_usd,
                         "modal_scaledown_window_seconds": (

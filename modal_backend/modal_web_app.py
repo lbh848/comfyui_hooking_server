@@ -1,7 +1,7 @@
 """수동 접속용 Modal ComfyUI 웹 애플리케이션.
 
 작업 큐용 App과 수명 주기를 분리한다. 관리 화면의 종료 버튼은 이 App만
-영구 중지하므로 열린 브라우저가 재접속을 시도해도 L4가 다시 켜지지 않는다.
+영구 중지하므로 열린 브라우저가 재접속을 시도해도 GPU가 다시 켜지지 않는다.
 다음 시작 때 이 App만 다시 배포한다.
 """
 
@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import traceback
 
 import modal
 
@@ -20,10 +21,24 @@ from modal_backend.modal_app import (
     runtime_image,
     workflows_volume,
 )
+from modal_backend.settings import normalize_modal_gpu
 
 
 WORKER_APP_NAME = os.environ.get("SOYA_MODAL_APP_NAME", "soya-comfy-worker")
 WEB_APP_NAME = os.environ.get("SOYA_MODAL_WEB_APP_NAME", f"{WORKER_APP_NAME}-web")
+try:
+    WEB_GPU = normalize_modal_gpu(
+        os.environ.get("SOYA_MODAL_WEB_GPU"),
+        "SOYA_MODAL_WEB_GPU",
+    )
+except Exception as exc:
+    print(
+        "[MODAL_COMFY_WEB] 웹 GPU 설정 오류: "
+        f"value={os.environ.get('SOYA_MODAL_WEB_GPU')!r}, "
+        f"error={type(exc).__name__}: {exc}"
+    )
+    traceback.print_exc()
+    raise
 WEB_WORKFLOW_MOUNT_PATH = "/root/ComfyUI/user/default/workflows/SOYA_USER"
 WEB_FAST = os.environ.get("SOYA_MODAL_WEB_FAST", "0") == "1"
 web_runtime_image = runtime_image.env(
@@ -40,7 +55,7 @@ app = modal.App(WEB_APP_NAME)
 
 @app.server(
     image=web_runtime_image,
-    gpu="L4",
+    gpu=WEB_GPU,
     cpu=4.0,
     memory=16_384,
     name="comfy_web_server",

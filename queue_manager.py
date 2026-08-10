@@ -269,7 +269,7 @@ class QueueManager:
         self._external_worker_tasks: dict[int, asyncio.Future] = {}
         self._external_next_worker_id: int = 0
         self._external_wakeup: asyncio.Event = asyncio.Event()
-        # Modal 원격 Comfy는 로컬 GPU와 독립된 L4 컨테이너 워커풀에서 삽화/재생성을
+        # Modal 원격 Comfy는 로컬 GPU와 독립된 GPU 컨테이너 워커풀에서 삽화/재생성을
         # 병렬 처리한다. Modal OFF일 때는 워커가 0개이며 기존 로컬 직렬 큐를 보존한다.
         self.current_modal_items: dict[int, QueueItem] = {}
         self._modal_worker_tasks: dict[int, asyncio.Future] = {}
@@ -3534,11 +3534,17 @@ class QueueManager:
                     },
                 )
                 if self.notify_frontend:
+                    modal_config = self.get_config() if self.get_config else {}
+                    modal_gpu = str(
+                        modal_config.get("modal_worker_gpu")
+                        or modal_config.get("modal_gpu")
+                        or "L4"
+                    )
                     await self.notify_frontend(
                         event_type,
                         {
                             "phase": "modal_running",
-                            "message": "Modal L4에서 학습 중",
+                            "message": f"Modal {modal_gpu}에서 학습 중",
                             **(extra_data or {}),
                         },
                     )

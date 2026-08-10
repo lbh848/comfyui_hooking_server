@@ -10,9 +10,11 @@ import pytest
 
 from modal_backend import client_cli
 from modal_backend.lora_inventory import (
+    build_local_lora_catalog,
     merge_remote_lora_catalog,
     public_lora_catalog,
 )
+import modal_backend.lora_inventory as inventory_module
 from modal_backend.service import ModalService
 import modal_backend.service as service_module
 
@@ -109,6 +111,88 @@ def test_merge_remote_lora_catalog_marks_bot_extra_and_remote_only(tmp_path: Pat
     assert "scopes" not in public["items"][0]
     assert "source_path" not in public["items"][0]["files"][0]
     assert "sha256" not in public["items"][0]["files"][0]
+
+    selected_only = merge_remote_lora_catalog(
+        {"items": [bot], "errors": []},
+        remote,
+        item_keys=[bot["key"]],
+    )
+    assert [item["key"] for item in selected_only["items"]] == [bot["key"]]
+    assert selected_only["counts"]["all"] == 1
+
+    remote_only_selected = merge_remote_lora_catalog(
+        {"items": [bot], "errors": []},
+        remote,
+        item_keys=["bot::RemoteBot"],
+    )
+    assert [item["key"] for item in remote_only_selected["items"]] == [
+        "bot::RemoteBot"
+    ]
+    assert remote_only_selected["items"][0]["sync_state"] == "remote_only"
+
+
+def test_local_catalog_uses_asset_character_as_primary_and_hashes_only_selection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first = tmp_path / "first.safetensors"
+    second = tmp_path / "second.safetensors"
+    first.write_bytes(b"first")
+    second.write_bytes(b"second")
+
+    monkeypatch.setattr(
+        "modes.lora_mode.list_lora_for_picker",
+        lambda _root: [
+            {
+                "character": "B 캐릭터",
+                "entries": [
+                    {
+                        "name": "A-ANIMA",
+                        "lora_files": [{"local_path": str(first)}],
+                    }
+                ],
+            },
+            {
+                "character": "A 캐릭터",
+                "entries": [
+                    {
+                        "name": "Z-ANIMA",
+                        "lora_files": [{"local_path": str(second)}],
+                    }
+                ],
+            },
+        ],
+    )
+    monkeypatch.setattr("modes.bot_lora_mode.list_bot_lora_for_picker", lambda _root: [])
+    monkeypatch.setattr("modes.instance_lora_mode.list_instance_lora_for_picker", lambda _root: [])
+    monkeypatch.setattr("modes.style_lora_mode.list_style_lora_for_picker", lambda _root: [])
+
+    local = build_local_lora_catalog(
+        {"lora_load_path": str(tmp_path)},
+        include_hashes=False,
+    )
+    assert [item["display_name"] for item in local["items"]] == ["A 캐릭터", "B 캐릭터"]
+    assert [item["display_subtitle"] for item in local["items"]] == ["Z-ANIMA", "A-ANIMA"]
+
+    selected_key = next(
+        item["key"] for item in local["items"] if item["display_name"] == "B 캐릭터"
+    )
+    hashed_paths: list[Path] = []
+
+    def fake_hash(path: Path, _cache) -> str:
+        hashed_paths.append(path)
+        return path.name
+
+    monkeypatch.setattr(inventory_module, "_hash_file", fake_hash)
+    selected = build_local_lora_catalog(
+        {"lora_load_path": str(tmp_path)},
+        include_hashes=True,
+        item_keys=[selected_key],
+    )
+
+    assert [item["key"] for item in selected["items"]] == [selected_key]
+    assert hashed_paths == [first.resolve()]
+    assert selected["items"][0]["files"][0]["sha256"] == first.name
 
 
 class _FakeBatch:
@@ -268,6 +352,67 @@ async def test_service_starts_one_bot_as_single_operation(
     assert service.lora_operation_status()["state"] == "completed"
 
 
+@pytest.mark.asyncio
+async def test_service_queries_only_selected_lora_status(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bot = _bot_item(tmp_path)
+    service = ModalService(tmp_path, lambda: {"modal_enabled": True})
+    captured: dict = {}
+
+    async def connected(_settings) -> bool:
+        return True
+
+    async def build_catalog(
+        _config,
+        *,
+        include_hashes,
+        item_keys=None,
+        allow_missing_item_keys=False,
+    ):
+        captured["include_hashes"] = include_hashes
+        captured["item_keys"] = item_keys
+        captured["allow_missing_item_keys"] = allow_missing_item_keys
+        return {"items": [bot], "errors": []}
+
+    async def list_remote(*_args, **_kwargs) -> dict:
+        return {
+            "files": [
+                {
+                    "path": "SOYA_CHAR_LORA/SOYA_BOT_LORA/RemoteBot/Lora/main/A/s1/a.safetensors",
+                    "size": 4,
+                    "manifest_size": 4,
+                    "sha256": "2" * 64,
+                }
+            ],
+            "errors": [],
+        }
+
+    monkeypatch.setattr(service, "account_connected", connected)
+    monkeypatch.setattr(service, "_build_lora_catalog", build_catalog)
+    monkeypatch.setattr(service, "_run_client_action", list_remote)
+
+    result = await service.lora_catalog(include_remote=True, item_keys=[bot["key"]])
+
+    assert captured == {
+        "include_hashes": True,
+        "item_keys": [bot["key"]],
+        "allow_missing_item_keys": True,
+    }
+    assert result["partial"] is True
+    assert result["queried_item_keys"] == [bot["key"]]
+    assert [item["key"] for item in result["items"]] == [bot["key"]]
+    assert result["counts"]["local_only"] == 1
+
+    remote_only = await service.lora_catalog(
+        include_remote=True,
+        item_keys=["bot::RemoteBot"],
+    )
+    assert [item["key"] for item in remote_only["items"]] == ["bot::RemoteBot"]
+    assert remote_only["items"][0]["sync_state"] == "remote_only"
+
+
 def test_frontend_has_lora_sync_button_modal_status_and_bot_unit_copy() -> None:
     required = (
         'id="modal-lora-sync-open-btn"',
@@ -278,10 +423,20 @@ def test_frontend_has_lora_sync_button_modal_status_and_bot_unit_copy() -> None:
         'data-lora-category="instance"',
         'data-lora-category="style"',
         "function modalOpenLoraSync()",
+        "function modalLoraQueryStatus()",
         "function modalLoraRunAction(action, explicitKeys = null)",
-        "fetchJSON('/api/modal/loras?remote=1')",
+        "new URLSearchParams({remote: '1'})",
+        "params.append('item_key', key)",
+        "선택하지 않으면 전체 조회합니다",
+        "item.display_name || item.name",
         "봇 전체가 한 단위입니다",
         "원격 Volume에서만 삭제하며 로컬 파일은 그대로 유지합니다",
     )
     for text in required:
         assert text in FRONTEND
+
+    open_start = FRONTEND.index("async function modalOpenLoraSync()")
+    open_end = FRONTEND.index("function modalCloseLoraSync()", open_start)
+    assert "modalLoraQueryStatus" not in FRONTEND[open_start:open_end]
+    assert "void modalLoraQueryStatus" not in FRONTEND
+    assert "z-index: 23000;" in FRONTEND
