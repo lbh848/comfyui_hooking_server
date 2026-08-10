@@ -120,6 +120,31 @@ def test_login_limiter_expires_old_failures():
     assert limiter.is_blocked("client") is False
 
 
+def test_frontend_index_body_is_cached_and_reloaded_after_file_change(tmp_path):
+    auth_file = tmp_path / "key" / "frontend_auth.json"
+    index_file, login_file = _write_frontend_files(tmp_path)
+    controller = FrontendAuthController(
+        FrontendAuthManager(auth_file),
+        index_file=index_file,
+        login_file=login_file,
+    )
+
+    first = controller._load_index_body()
+    second = controller._load_index_body()
+
+    assert second is first
+    assert first == b"<html>protected dashboard</html>"
+
+    index_file.write_text(
+        "<html>updated protected dashboard</html>",
+        encoding="utf-8",
+    )
+    updated = controller._load_index_body()
+
+    assert updated == b"<html>updated protected dashboard</html>"
+    assert updated is not first
+
+
 @pytest.mark.asyncio
 async def test_only_root_is_guarded_and_plugin_routes_remain_available(tmp_path):
     auth_file, manager, client = await _start_auth_app(tmp_path)
@@ -149,6 +174,8 @@ async def test_only_root_is_guarded_and_plugin_routes_remain_available(tmp_path)
         protected_response = await client.get("/")
         assert protected_response.status == 200
         assert "protected dashboard" in await protected_response.text()
+        assert protected_response.headers["Accept-Ranges"] == "none"
+        assert protected_response.headers["Content-Type"] == "text/html; charset=utf-8"
 
         auth_file.unlink()
 

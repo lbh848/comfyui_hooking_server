@@ -8694,10 +8694,27 @@ async def handle_api_backups_filters(request: web.Request) -> web.Response:
 
 
 async def handle_api_backup_image(request: web.Request) -> web.Response:
-    """백업 이미지를 서빙한다. 저장된 파일을 그대로 전송."""
+    """백업 이미지를 서빙한다. 파일을 직접 읽어 바이트로 전송.
+
+    web.FileResponse 를 쓰면 aiohttp 가 파일의 ETag/Last-Modified 를 자동
+    설정하고 조건부 GET(If-None-Match) 에 304 Not Modified 를 반환한다.
+    asyncio sendfile 공유 버퍼 레이스 시대(Python <3.12.11) 에 Chrome 이
+    캐시한 손상 WebP 바이트가 ETag 와 함께 들러붙어 있으면, 서버가 지금은
+    깨끗해도 304 → Chrome 이 옛 손상 캐시 바디를 계속 써서 하단이 노이즈/
+    검게 표시된다. 파일이 안 변하면 ETag 도 안 변해 304 가 영원히 나온다.
+    따라서 FileResponse(ETag/304 경로) 를 쓰지 않고 body 로 직접 보내 매
+    요청 200 + Cache-Control: no-store 로 Chrome 이 항상 fresh 올바른
+    바이트를 쓰게 한다(옛 손상 캐시는 다음 요청에서 자연스럽게 덮어씀).
+
+    추가로 aiohttp FileResponse 는 전역 mimetypes 가 아닌 자체 MimeTypes
+    인스턴스(CONTENT_TYPES, .webp 모름) 를 써 .webp 가 application/octet-stream
+    으로 나가므로 content_type 을 명시적으로 image/webp 로 준다.
+    server.py 상단의 mimetypes.add_type('image/webp','.webp') 는 FileResponse
+    경로엔 영향이 없었음.
+    """
     filename = request.match_info.get("filename", "")
     if ".." in filename or "/" in filename or "\\" in filename:
-        print(f"[OUTFIT_MODE] 결과 이미지 요청 거부: filename={filename!r}")
+        print(f"[BACKUP_IMAGE] 잘못된 filename 요청 거부: {filename!r}")
         return web.Response(status=400, text="Invalid filename")
 
     backup_dir = get_backup_base_dir()
@@ -8706,7 +8723,27 @@ async def handle_api_backup_image(request: web.Request) -> web.Response:
     if not os.path.exists(path):
         return web.Response(status=404)
 
-    return web.FileResponse(path)
+    ext = os.path.splitext(filename)[1].lower()
+    content_type = {
+        ".webp": "image/webp",
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+    }.get(ext, "application/octet-stream")
+
+    try:
+        with open(path, "rb") as f:
+            data = f.read()
+    except Exception:
+        print(f"[BACKUP_IMAGE] 파일 읽기 실패: {path!r}")
+        traceback.print_exc()
+        return web.Response(status=500, text="backup image read error")
+
+    return web.Response(
+        body=data,
+        content_type=content_type,
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate"},
+    )
 
 
 async def handle_api_backup_prompt(request: web.Request) -> web.Response:

@@ -352,6 +352,35 @@ class FrontendAuthController:
         self.index_file = Path(index_file)
         self.login_file = Path(login_file)
         self.login_limiter = LoginAttemptLimiter()
+        self._index_body_cache: bytes | None = None
+        self._index_body_fingerprint: tuple[int, int] | None = None
+
+    def _load_index_body(self) -> bytes:
+        stat = self.index_file.stat()
+        fingerprint = (stat.st_mtime_ns, stat.st_size)
+        if (
+            self._index_body_cache is not None
+            and self._index_body_fingerprint == fingerprint
+        ):
+            return self._index_body_cache
+
+        body = self.index_file.read_bytes()
+        verified_stat = self.index_file.stat()
+        verified_fingerprint = (verified_stat.st_mtime_ns, verified_stat.st_size)
+        if verified_fingerprint != fingerprint or len(body) != verified_stat.st_size:
+            raise RuntimeError(
+                "프런트엔드 파일을 읽는 동안 내용이 변경되었습니다: "
+                f"path={self.index_file} before={fingerprint} "
+                f"after={verified_fingerprint} bytes={len(body)}"
+            )
+
+        self._index_body_cache = body
+        self._index_body_fingerprint = verified_fingerprint
+        print(
+            f"[FRONTEND_AUTH] 프런트엔드 응답 캐시 갱신 완료: "
+            f"path={self.index_file} bytes={len(body)}"
+        )
+        return body
 
     def register_routes(self, app: web.Application) -> None:
         app.router.add_get("/", self.handle_frontend)
@@ -434,9 +463,26 @@ class FrontendAuthController:
                     text="Frontend not found. frontend/index.html 필요",
                     status=404,
                 )
-            return web.FileResponse(
-                self.index_file,
-                headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+            try:
+                index_body = self._load_index_body()
+            except Exception as exc:
+                print(
+                    f"[FRONTEND_AUTH] 프런트엔드 파일 캐시 로드 실패: "
+                    f"{type(exc).__name__}: {exc} path={self.index_file}"
+                )
+                traceback.print_exc()
+                return web.Response(
+                    text="Frontend could not be loaded.",
+                    status=500,
+                )
+            return web.Response(
+                body=index_body,
+                content_type="text/html",
+                charset="utf-8",
+                headers={
+                    "Cache-Control": "no-cache, no-store, must-revalidate",
+                    "Accept-Ranges": "none",
+                },
             )
 
         print(
