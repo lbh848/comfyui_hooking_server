@@ -36,6 +36,23 @@ if __name__ == "__main__":
 mimetypes.add_type('image/webp', '.webp')
 import re
 import math
+
+# ─── AIOHTTP_NOSENDFILE: asyncio Windows sendfile 데이터 레이스 회피 ───────
+# Python 3.12.0 의 asyncio._sendfile_fallback 은 16KB bytearray 를 하나만
+# 재사용한다. 루프가 transp.write(view[:read]) 로 공유 버퍼의 뷰를 넘긴 뒤
+# 다음 반복에서 file.readinto(view) 가 같은 버퍼를 덮어쓰는 사이, 소켓이
+# 아직 이전 조각을 보내는 중이면 바이트가 변조된다. 결과: HTTP 200 + 길이는
+# 맞지만 일부 바이트가 깨져 WebP 하단이 노이즈/검게 표시. 동시 로딩时 재현율 ↑.
+# (CPython #131325, 3.12.11 에서 순서 수정됨)
+#
+# 현재 런타임은 3.12.11(수정 포함)이라 루트 원인은 해결됐으나, 런타임이
+# 3.12.0 등으로 회귀할 경우를 대비해 방어적으로 유지한다. aiohttp 가
+# loop.sendfile 을 부르지 않고 자체 _sendfile_fallback(fobj.read(chunk) 매번
+# 새 bytes) 로 보내도록 강제 — 공유 버퍼 레이스 없는 안전 경로.
+# aiohttp.web_fileresponse.NOSENDFILE 은 모듈 import 시점에 평가되므로,
+# 반드시 import aiohttp 이전에 설정해야 한다.
+os.environ.setdefault("AIOHTTP_NOSENDFILE", "1")
+
 import aiohttp
 from aiohttp import web
 from frontend_auth import (
