@@ -12849,6 +12849,10 @@
                 <button type="button" id="restore-manual-btn" class="control-btn control-btn--primary" onclick="manualRestoreDraw()" style="display:none;">
                     <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m14.5 4.5 5 5L8 21H3v-5zM12 7l5 5"></path></svg>
                     <span class="control-label">삽화 수동 그리기</span>
+                    <span class="tip-wrap" onclick="event.stopPropagation()">
+                        <span class="tip-q" aria-label="삽화 수동 그리기 실행 경로 도움말">?</span>
+                        <span class="tip-box" role="tooltip"><b>실행 경로</b><br>수동 그리기는 ‘재생성 / 수동 그리기’ 작업 배분을 따릅니다. 삽화 워크플로우 가져오기는 실행 중인 로컬 Comfy에서 먼저 API 변환하고, 로컬 변환이 불가능하면 Modal로 폴백합니다.</span>
+                    </span>
                 </button>
             </div>
 
@@ -18660,7 +18664,9 @@
                                     <span class="comfy-runtime-option-note" id="modal-runtime-worker-gpu-cost">GPU와 컨테이너 비용 계산 중</span>
                                     <select id="modal-runtime-worker-gpu" onchange="modalSyncRuntimeControls('runtime')">
                                         <option value="L4" data-vram-gib="24" data-gpu-hour="0.7992">L4 · 24GB · GPU $0.80/시간</option>
+                                        <option value="A10" data-vram-gib="24" data-gpu-hour="1.1016">A10 · 24GB · GPU $1.10/시간</option>
                                         <option value="L40S" data-vram-gib="48" data-gpu-hour="1.9512">L40S · 48GB · GPU $1.95/시간</option>
+                                        <option value="A100-40GB" data-vram-gib="40" data-gpu-hour="2.0988">A100 40GB · GPU $2.10/시간</option>
                                         <option value="RTX-PRO-6000" data-vram-gib="96" data-gpu-hour="3.0312">RTX PRO 6000 · 96GB · GPU $3.03/시간</option>
                                     </select>
                                 </label>
@@ -18669,7 +18675,9 @@
                                     <span class="comfy-runtime-option-note" id="modal-runtime-web-gpu-cost">GPU와 컨테이너 비용 계산 중</span>
                                     <select id="modal-runtime-web-gpu" onchange="modalSyncRuntimeControls('runtime')">
                                         <option value="L4" data-vram-gib="24" data-gpu-hour="0.7992">L4 · 24GB · GPU $0.80/시간</option>
+                                        <option value="A10" data-vram-gib="24" data-gpu-hour="1.1016">A10 · 24GB · GPU $1.10/시간</option>
                                         <option value="L40S" data-vram-gib="48" data-gpu-hour="1.9512">L40S · 48GB · GPU $1.95/시간</option>
+                                        <option value="A100-40GB" data-vram-gib="40" data-gpu-hour="2.0988">A100 40GB · GPU $2.10/시간</option>
                                         <option value="RTX-PRO-6000" data-vram-gib="96" data-gpu-hour="3.0312">RTX PRO 6000 · 96GB · GPU $3.03/시간</option>
                                     </select>
                                 </label>
@@ -18702,7 +18710,7 @@
                                     <span><span class="comfy-runtime-option-label">FAST 모드</span><span class="comfy-runtime-option-note">--fast · 다음 시작 시 적용</span></span>
                                 </label>
                             </div>
-                            <div class="comfy-modal-runtime-copy">지원 GPU는 L4, L40S, RTX PRO 6000입니다. 작업 워커 GPU는 설정 저장 후 다음 호출부터 재배포 없이 동적으로 적용됩니다. GPU별 컨테이너 풀과 Memory Snapshot은 독립적이므로 처음 사용하는 GPU의 첫 호출은 준비 시간이 더 걸릴 수 있습니다. 웹 GPU는 고정 URL 리소스이므로 변경 후 다음 ComfyUI 시작 때 웹 App 재배포가 필요하며 자동으로 진행됩니다. 지원 CUDA 아키텍처 8.9와 12.0을 공통 이미지에 포함하므로 이 세 GPU 사이의 변경만으로 이미지를 다시 빌드하지 않습니다. 최초 배포 또는 코드·Custom Node 변경 때는 이미지 빌드가 진행될 수 있습니다.</div>
+                            <div class="comfy-modal-runtime-copy">지원 GPU는 L4, A10, L40S, A100 40GB, RTX PRO 6000입니다. 작업 워커 GPU는 설정 저장 후 다음 호출부터 재배포 없이 동적으로 적용됩니다. GPU별 컨테이너 풀과 Memory Snapshot은 독립적이므로 처음 사용하는 GPU의 첫 호출은 준비 시간이 더 걸릴 수 있습니다. 웹 GPU는 고정 URL 리소스이므로 변경 후 다음 ComfyUI 시작 때 웹 App 재배포가 필요하며 자동으로 진행됩니다. 공개 Docker 런타임 이미지에 CUDA 아키텍처 8.0, 8.6, 8.9, 12.0을 포함하므로 이 다섯 GPU 사이의 변경만으로 CUDA 커널을 다시 빌드하지 않습니다. 코드·Custom Node 변경 때는 사용자별 상위 이미지 레이어만 빌드될 수 있습니다.</div>
 
                             <div class="comfy-modal-runtime-actions">
                                 <button type="button" class="comfy-runtime-btn start" onclick="modalRuntimeSaveAndApply()">설정 저장·적용</button>
@@ -18773,8 +18781,8 @@
                                 </div>
                                 <div class="comfy-installer-actions" style="margin-top:10px;">
                                     <button type="button" class="comfy-installer-btn primary" id="modal-installer-start-btn" onclick="modalInstallerStart()">선택 워크플로우·모델 동기화</button>
-                                    <button type="button" class="comfy-installer-btn" id="modal-lora-sync-open-btn" onclick="modalOpenLoraSync()">LoRA 동기화</button>
                                     <button type="button" class="comfy-installer-btn" id="modal-runtime-workflow-query-btn" onclick="modalRuntimeQueryWorkflows()">워크플로우 동기화 조회</button>
+                                    <button type="button" class="comfy-installer-btn" id="modal-lora-sync-open-btn" onclick="modalOpenLoraSync()">LoRA 동기화</button>
                                     <button type="button" class="comfy-installer-btn" id="modal-runtime-redeploy-btn" onclick="modalRuntimeRedeploy()">앱·Custom Node 재배포</button>
                                     <button type="button" class="comfy-installer-btn" onclick="modalInstallerLoadCatalog()">목록 새로고침</button>
                                 </div>

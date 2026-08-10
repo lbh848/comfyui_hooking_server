@@ -22,24 +22,12 @@ if not 2 <= SCALEDOWN_WINDOW_SECONDS <= 1200:
     raise ValueError("SOYA_MODAL_SCALEDOWN_WINDOW는 2~1200초 사이여야 합니다.")
 MANIFEST_LOCAL = Path(__file__).parents[1] / "comfy_installer" / "resources" / "install_manifest.json"
 IMAGE_INSTALL_LOCAL = Path(__file__).with_name("image_install.py")
-COMFY_REF = "64b8457f55cd7fb54ca7a956d9c73b505e903e0c"
 COMFY_MODELS_MOUNT_PATH = "/root/ComfyUI/models"
-CUDA_VERSION = "12.8.1"
-PYTHON_VERSION = "3.12"
 TORCH_VERSION = "2.11.0"
-TORCHVISION_VERSION = "0.26.0"
-TORCHAUDIO_VERSION = "2.11.0"
-PYTORCH_CUDA_INDEX_URL = "https://download.pytorch.org/whl/cu128"
 SAGEATTENTION_VERSION = "2.2.0"
-# Comfy-Org가 upstream v2.2.0으로 빌드한 현재 런타임 전용 wheel을 해시까지
-# 고정해, 동일 URL의 release asset이 바뀌어도 검증되지 않은 바이너리를 설치하지 않는다.
-SAGEATTENTION_WHEEL_URL = (
-    "https://github.com/Comfy-Org/wheels/releases/download/sageattention-latest/"
-    "sageattention-2.2.0%2Bcu128torch2.11-cp312-cp312-"
-    "manylinux_2_34_x86_64.manylinux_2_35_x86_64.whl"
-)
-SAGEATTENTION_WHEEL_SHA256 = (
-    "900c20a9baa591463731da9a25f626587ebb1902d2c902a494bfacb9fe8981fc"
+RUNTIME_IMAGE_REF = (
+    "docker.io/bh848/soya-comfy-runtime@"
+    "sha256:eeddc7dc532d612746ecd0d701ceab15605dfee6ec714414af20e854420096ec"
 )
 FORCE_CUSTOM_NODE_BUILD = os.environ.get("SOYA_MODAL_FORCE_CUSTOM_NODE_BUILD", "0") == "1"
 # Modal Volume 변경만으로는 기존 Memory Snapshot이 무효화되지 않는다. 이 값은
@@ -106,45 +94,11 @@ loras_volume = modal.Volume.from_name(f"{APP_NAME}-loras", create_if_missing=Tru
 workflows_volume = modal.Volume.from_name(f"{APP_NAME}-workflows", create_if_missing=True)
 
 runtime_image = (
-    modal.Image.from_registry(
-        f"nvidia/cuda:{CUDA_VERSION}-devel-ubuntu22.04",
-        add_python=PYTHON_VERSION,
-    )
+    # CUDA 12.8, PyTorch 2.11, ComfyUI와 SageAttention sm_80/86/89/120
+    # 커널은 Windows Docker Desktop의 Linux builder에서 한 번만 컴파일한다.
+    # 모든 사용자 Workspace는 공개 이미지를 digest로 고정해 같은 바이너리를 쓴다.
+    modal.Image.from_registry(RUNTIME_IMAGE_REF)
     .entrypoint([])
-    .apt_install(
-        "git",
-        "ffmpeg",
-        "libgl1",
-        "libglib2.0-0",
-        "build-essential",
-    )
-    .env(
-        {
-            "CUDA_HOME": "/usr/local/cuda",
-            "CC": "/usr/bin/gcc",
-            "CXX": "/usr/bin/g++",
-            "CUDAHOSTCXX": "/usr/bin/g++",
-        }
-    )
-    .pip_install(
-        f"torch=={TORCH_VERSION}",
-        f"torchvision=={TORCHVISION_VERSION}",
-        f"torchaudio=={TORCHAUDIO_VERSION}",
-        index_url=PYTORCH_CUDA_INDEX_URL,
-    )
-    .pip_install("triton>=3.0.0", "packaging", "ninja", "wheel")
-    .run_commands(
-        (
-            "python -m pip install --no-cache-dir "
-            f"'{SAGEATTENTION_WHEEL_URL}#sha256={SAGEATTENTION_WHEEL_SHA256}'"
-        )
-    )
-    .run_commands(
-        "git clone https://github.com/comfyanonymous/ComfyUI.git /root/ComfyUI",
-        f"cd /root/ComfyUI && git checkout {COMFY_REF}",
-        "python -m pip install --no-cache-dir -r /root/ComfyUI/requirements.txt",
-    )
-    .pip_install("requests")
     .add_local_file(MANIFEST_LOCAL, "/opt/soya/install_manifest.json", copy=True)
     .add_local_file(IMAGE_INSTALL_LOCAL, "/opt/soya/image_install.py", copy=True)
 )

@@ -144,8 +144,8 @@ def test_runtime_has_managed_modal_tab_lifecycle_sync_and_log_controls() -> None
     assert "modal_worker_gpu: modalWorkerGpu" in FRONTEND
     assert "modal_web_gpu: modalWebGpu" in FRONTEND
     assert "작업 워커 GPU는 설정 저장 후 다음 호출부터 재배포 없이 동적으로 적용됩니다." in FRONTEND
-    assert "L4, L40S, RTX PRO 6000" in FRONTEND
-    assert "지원 CUDA 아키텍처 8.9와 12.0" in FRONTEND
+    assert "L4, A10, L40S, A100 40GB, RTX PRO 6000" in FRONTEND
+    assert "CUDA 아키텍처 8.0, 8.6, 8.9, 12.0" in FRONTEND
     assert "SageAttention 실제 커널 실행을 확인합니다." in FRONTEND
     assert "currentConfig.modal_container_start_max_retries ?? 2" in FRONTEND
     assert "최초 실행 제외 · 초과 시 강제 취소" in FRONTEND
@@ -187,13 +187,17 @@ def test_modal_gpu_selectors_are_independent_and_show_hourly_costs() -> None:
     runtime_html = FRONTEND[runtime_start:runtime_end]
 
     assert runtime_html.count('value="L4" data-vram-gib="24"') == 2
+    assert runtime_html.count('value="A10" data-vram-gib="24"') == 2
     assert runtime_html.count('value="L40S" data-vram-gib="48"') == 2
+    assert runtime_html.count('value="A100-40GB" data-vram-gib="40"') == 2
     assert runtime_html.count('value="RTX-PRO-6000" data-vram-gib="96"') == 2
-    for unsupported_gpu in ("T4", "A10", "A100-40GB", "A100-80GB", "H100"):
+    for unsupported_gpu in ("T4", "A100-80GB", "H100"):
         assert f'value="{unsupported_gpu}"' not in runtime_html
     assert "GPU $0.80/시간" in runtime_html
+    assert "GPU $1.10/시간" in runtime_html
+    assert "GPU $2.10/시간" in runtime_html
     assert "GPU $3.03/시간" in runtime_html
-    assert "지원 CUDA 아키텍처 8.9와 12.0" in runtime_html
+    assert "CUDA 아키텍처 8.0, 8.6, 8.9, 12.0" in runtime_html
     assert "MODAL_CPU_MEMORY_PER_HOUR = 0.3165" in FRONTEND
     assert "modalGpuContainerCostText(worker)" in FRONTEND
     assert "worker.gpuHour + web.gpuHour" in FRONTEND

@@ -119,7 +119,7 @@ def test_modal_defaults_are_scale_to_zero_and_independently_gpu_budgeted() -> No
     assert split_cost["web"]["gpu_per_hour"] == pytest.approx(3.0312)
     assert {
         profile["id"] for profile in split.public_dict()["gpu_profiles"]
-    } == {"L4", "L40S", "RTX-PRO-6000"}
+    } == {"L4", "A10", "L40S", "A100-40GB", "RTX-PRO-6000"}
 
 
 @pytest.mark.parametrize(
@@ -128,8 +128,6 @@ def test_modal_defaults_are_scale_to_zero_and_independently_gpu_budgeted() -> No
         {"modal_gpu": "T4"},
         {"modal_worker_gpu": "T4"},
         {"modal_web_gpu": "T4"},
-        {"modal_worker_gpu": "A10"},
-        {"modal_worker_gpu": "A100-40GB"},
         {"modal_worker_gpu": "A100-80GB"},
         {"modal_worker_gpu": "H100"},
         {"modal_max_concurrency": 0},
@@ -2805,54 +2803,57 @@ def test_modal_web_server_is_isolated_from_worker_app() -> None:
     assert "? 'ComfyUI 시작 취소'" in frontend_source
 
 
-def test_modal_runtime_image_installs_prebuilt_sageattention_wheel() -> None:
+def test_modal_runtime_uses_published_multigpu_container_image() -> None:
     source = (
         Path(__file__).resolve().parents[1] / "modal_backend" / "modal_app.py"
     ).read_text(encoding="utf-8")
+    docker_source = (
+        Path(__file__).resolve().parents[1]
+        / "docker"
+        / "modal-runtime"
+        / "Dockerfile"
+    ).read_text(encoding="utf-8")
+    verify_source = (
+        Path(__file__).resolve().parents[1]
+        / "docker"
+        / "modal-runtime"
+        / "verify_sageattention_image.py"
+    ).read_text(encoding="utf-8")
 
-    assert 'CUDA_VERSION = "12.8.1"' in source
-    assert 'PYTHON_VERSION = "3.12"' in source
     assert 'TORCH_VERSION = "2.11.0"' in source
-    assert 'TORCHVISION_VERSION = "0.26.0"' in source
-    assert 'TORCHAUDIO_VERSION = "2.11.0"' in source
     assert 'SAGEATTENTION_VERSION = "2.2.0"' in source
-    assert "modal.Image.from_registry(" in source
-    assert 'f"nvidia/cuda:{CUDA_VERSION}-devel-ubuntu22.04"' in source
-    assert "add_python=PYTHON_VERSION" in source
-    assert ".entrypoint([])" in source
-    assert '"CUDA_HOME": "/usr/local/cuda"' in source
-    assert '"CC": "/usr/bin/gcc"' in source
-    assert '"CXX": "/usr/bin/g++"' in source
-    assert '"CUDAHOSTCXX": "/usr/bin/g++"' in source
-    assert 'SAGEATTENTION_WHEEL_URL = (' in source
-    assert '"sageattention-2.2.0%2Bcu128torch2.11-cp312-cp312-"' in source
-    assert '"manylinux_2_34_x86_64.manylinux_2_35_x86_64.whl"' in source
+    assert 'RUNTIME_IMAGE_REF = (' in source
+    assert '"docker.io/bh848/soya-comfy-runtime@"' in source
     assert (
-        'SAGEATTENTION_WHEEL_SHA256 = (\n'
-        '    "900c20a9baa591463731da9a25f626587ebb1902d2c902a494bfacb9fe8981fc"'
-    ) in source
-    assert "#sha256={SAGEATTENTION_WHEEL_SHA256}" in source
+        '"sha256:eeddc7dc532d612746ecd0d701ceab15605dfee6ec714414af20e854420096ec"'
+        in source
+    )
+    assert "modal.Image.from_registry(RUNTIME_IMAGE_REF)" in source
+    assert ".entrypoint([])" in source
+    assert "SAGEATTENTION_WHEEL_URL" not in source
+    assert "SAGEATTENTION_WHEEL_SHA256" not in source
     assert 'gpu=WORKER_GPU' not in source
     assert {
         str(profile["cuda_arch"])
         for profile in ModalSettings.from_mapping({}).public_dict()["gpu_profiles"]
-    } == {"8.9", "12.0"}
+    } == {"8.0", "8.6", "8.9", "12.0"}
     assert '"TORCH_CUDA_ARCH_LIST"' not in source
     assert '"MAX_JOBS"' not in source
     assert '"EXT_PARALLEL"' not in source
-    assert "index_url=PYTORCH_CUDA_INDEX_URL" in source
     assert "https://github.com/thu-ml/SageAttention.git" not in source
     assert "sageattention_build.py" not in source
     assert "--no-build-isolation" not in source
     assert "torch.version.cuda == '12.8'" in source
     assert "pv.Version(m.version('sageattention')).base_version" in source
     assert "modal.Image.debian_slim" not in source
-    assert source.index('f"torch=={TORCH_VERSION}"') < source.index(
-        "#sha256={SAGEATTENTION_WHEEL_SHA256}"
+    assert source.index("modal.Image.from_registry(RUNTIME_IMAGE_REF)") < source.index(
+        '"python /opt/soya/image_install.py"'
     )
-    assert source.index(
-        "#sha256={SAGEATTENTION_WHEEL_SHA256}"
-    ) < source.index('"python /opt/soya/image_install.py"')
+    assert 'ARG SAGEATTENTION_ARCH_LIST="8.0;8.6;8.9;12.0"' in docker_source
+    assert "uv pip install" in docker_source
+    assert "verify_sageattention_image.py --static" in docker_source
+    for cubin in ("sm_80", "sm_86", "sm_89", "sm_120"):
+        assert cubin in verify_source
     assert "def _validate_sageattention_cuda()" in source
     assert "output = sageattn(" in source
     assert "torch.cuda.synchronize()" in source

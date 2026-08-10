@@ -1157,6 +1157,66 @@ async def convert_workflow_via_endpoint(
         return None, str(e)
 
 
+async def convert_workflow_local_first_with_modal_fallback(
+    workflow_json: dict,
+):
+    """가져오기용 변환: 실행 중인 로컬 Comfy를 우선하고 Modal로 폴백한다."""
+    local_error = None
+    context_token = CURRENT_COMFY_EXECUTION_TARGET.set("local")
+    try:
+        print("[WORKFLOW:RELOAD] 로컬 Comfy에서 워크플로우 변환 시도")
+        api_format, local_error = await convert_workflow_via_endpoint(
+            workflow_json,
+            task_key="utility_debug",
+        )
+        if api_format is not None:
+            print(
+                "[WORKFLOW:RELOAD] 로컬 Comfy 변환 완료: "
+                f"nodes={len(api_format)}"
+            )
+            return api_format, None
+        print(
+            "[WORKFLOW:RELOAD] 로컬 Comfy 변환 실패, Modal 폴백 검토: "
+            f"error={local_error}"
+        )
+    except Exception as e:
+        local_error = f"{type(e).__name__}: {e}"
+        print(
+            "[WORKFLOW:RELOAD] 로컬 Comfy 변환 예외, Modal 폴백 검토: "
+            f"error={local_error}"
+        )
+        traceback.print_exc()
+    finally:
+        CURRENT_COMFY_EXECUTION_TARGET.reset(context_token)
+
+    if app_config.get("modal_enabled") is not True:
+        print(
+            "[WORKFLOW:RELOAD] Modal 폴백 생략: Modal이 비활성화되어 있습니다. "
+            f"local_error={local_error}"
+        )
+        return None, f"로컬 Comfy 변환 실패: {local_error}; Modal 비활성화"
+
+    try:
+        print("[WORKFLOW:RELOAD] Modal에서 워크플로우 원격 변환 시도")
+        api_format = await modal_service.convert_workflow(workflow_json)
+        print(
+            "[WORKFLOW:RELOAD] Modal 원격 변환 완료: "
+            f"nodes={len(api_format)}"
+        )
+        return api_format, None
+    except Exception as e:
+        modal_error = f"{type(e).__name__}: {e}"
+        print(
+            "[WORKFLOW:RELOAD] Modal 원격 변환 실패: "
+            f"local_error={local_error}, modal_error={modal_error}"
+        )
+        traceback.print_exc()
+        return None, (
+            f"로컬 Comfy 변환 실패: {local_error}; "
+            f"Modal 변환 실패: {modal_error}"
+        )
+
+
 def analyze_conversion(original_wf: dict, api_wf: dict) -> dict:
     """원본과 API 워크플로우를 비교해 미사용 노드를 분석한다."""
     info = {
@@ -1183,7 +1243,11 @@ def analyze_conversion(original_wf: dict, api_wf: dict) -> dict:
     return info
 
 
-async def update_workflow_if_needed(workflow_type: str | None = None) -> bool:
+async def update_workflow_if_needed(
+    workflow_type: str | None = None,
+    *,
+    local_first_modal_fallback: bool = False,
+) -> bool:
     """워크플로우 해시를 비교하고, 필요하면 API 형식으로 변환한다."""
     global current_original_workflow, current_api_workflow, current_conversion_info
 
@@ -1227,10 +1291,15 @@ async def update_workflow_if_needed(workflow_type: str | None = None) -> bool:
         }
         print(f"[WORKFLOW] 이미 API 형식 — 변환 불필요 ({len(wf_data)} 노드)")
     else:
-        api_wf, error = await convert_workflow_via_endpoint(
-            wf_data,
-            task_key="illustration",
-        )
+        if local_first_modal_fallback:
+            api_wf, error = await convert_workflow_local_first_with_modal_fallback(
+                wf_data,
+            )
+        else:
+            api_wf, error = await convert_workflow_via_endpoint(
+                wf_data,
+                task_key="illustration",
+            )
         if api_wf is None:
             current_conversion_info = {
                 "error": error,
@@ -9455,7 +9524,7 @@ async def handle_api_reload_workflow(request: web.Request) -> web.Response:
         if os.path.exists(hash_path):
             os.remove(hash_path)
 
-        ok = await update_workflow_if_needed()
+        ok = await update_workflow_if_needed(local_first_modal_fallback=True)
         if ok:
             print("[RELOAD] 워크플로우 갱신 완료")
             # 복장 추출 모드 워크플로우도 갱신
