@@ -18660,12 +18660,8 @@
                                     <span class="comfy-runtime-option-note" id="modal-runtime-worker-gpu-cost">GPU와 컨테이너 비용 계산 중</span>
                                     <select id="modal-runtime-worker-gpu" onchange="modalSyncRuntimeControls('runtime')">
                                         <option value="L4" data-vram-gib="24" data-gpu-hour="0.7992">L4 · 24GB · GPU $0.80/시간</option>
-                                        <option value="A10" data-vram-gib="24" data-gpu-hour="1.1016">A10 · 24GB · GPU $1.10/시간</option>
                                         <option value="L40S" data-vram-gib="48" data-gpu-hour="1.9512">L40S · 48GB · GPU $1.95/시간</option>
-                                        <option value="A100-40GB" data-vram-gib="40" data-gpu-hour="2.0988">A100 40GB · GPU $2.10/시간</option>
-                                        <option value="A100-80GB" data-vram-gib="80" data-gpu-hour="2.4984">A100 80GB · GPU $2.50/시간</option>
                                         <option value="RTX-PRO-6000" data-vram-gib="96" data-gpu-hour="3.0312">RTX PRO 6000 · 96GB · GPU $3.03/시간</option>
-                                        <option value="H100" data-vram-gib="80" data-gpu-hour="3.9492">H100 · 80GB · GPU $3.95/시간</option>
                                     </select>
                                 </label>
                                 <label class="comfy-runtime-option">
@@ -18673,12 +18669,8 @@
                                     <span class="comfy-runtime-option-note" id="modal-runtime-web-gpu-cost">GPU와 컨테이너 비용 계산 중</span>
                                     <select id="modal-runtime-web-gpu" onchange="modalSyncRuntimeControls('runtime')">
                                         <option value="L4" data-vram-gib="24" data-gpu-hour="0.7992">L4 · 24GB · GPU $0.80/시간</option>
-                                        <option value="A10" data-vram-gib="24" data-gpu-hour="1.1016">A10 · 24GB · GPU $1.10/시간</option>
                                         <option value="L40S" data-vram-gib="48" data-gpu-hour="1.9512">L40S · 48GB · GPU $1.95/시간</option>
-                                        <option value="A100-40GB" data-vram-gib="40" data-gpu-hour="2.0988">A100 40GB · GPU $2.10/시간</option>
-                                        <option value="A100-80GB" data-vram-gib="80" data-gpu-hour="2.4984">A100 80GB · GPU $2.50/시간</option>
                                         <option value="RTX-PRO-6000" data-vram-gib="96" data-gpu-hour="3.0312">RTX PRO 6000 · 96GB · GPU $3.03/시간</option>
-                                        <option value="H100" data-vram-gib="80" data-gpu-hour="3.9492">H100 · 80GB · GPU $3.95/시간</option>
                                     </select>
                                 </label>
                                 <div class="comfy-runtime-option read-only-state">
@@ -18710,7 +18702,7 @@
                                     <span><span class="comfy-runtime-option-label">FAST 모드</span><span class="comfy-runtime-option-note">--fast · 다음 시작 시 적용</span></span>
                                 </label>
                             </div>
-                            <div class="comfy-modal-runtime-copy">작업 워커 GPU는 설정 저장 후 다음 호출부터 재배포 없이 동적으로 적용됩니다. GPU별 컨테이너 풀과 Memory Snapshot은 독립적이므로 처음 사용하는 GPU의 첫 호출은 준비 시간이 더 걸릴 수 있습니다. 웹 GPU는 고정 URL 리소스이므로 다음 ComfyUI 시작 때 웹 App만 재배포됩니다. 모든 지원 CUDA 아키텍처를 공통 이미지에 포함하므로 GPU 변경만으로 이미지를 다시 빌드하지 않으며, 최초 배포 또는 코드·Custom Node 변경 때는 이미지 빌드가 진행될 수 있습니다.</div>
+                            <div class="comfy-modal-runtime-copy">지원 GPU는 L4, L40S, RTX PRO 6000입니다. 작업 워커 GPU는 설정 저장 후 다음 호출부터 재배포 없이 동적으로 적용됩니다. GPU별 컨테이너 풀과 Memory Snapshot은 독립적이므로 처음 사용하는 GPU의 첫 호출은 준비 시간이 더 걸릴 수 있습니다. 웹 GPU는 고정 URL 리소스이므로 변경 후 다음 ComfyUI 시작 때 웹 App 재배포가 필요하며 자동으로 진행됩니다. 지원 CUDA 아키텍처 8.9와 12.0을 공통 이미지에 포함하므로 이 세 GPU 사이의 변경만으로 이미지를 다시 빌드하지 않습니다. 최초 배포 또는 코드·Custom Node 변경 때는 이미지 빌드가 진행될 수 있습니다.</div>
 
                             <div class="comfy-modal-runtime-actions">
                                 <button type="button" class="comfy-runtime-btn start" onclick="modalRuntimeSaveAndApply()">설정 저장·적용</button>

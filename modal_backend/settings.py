@@ -15,41 +15,17 @@ MODAL_GPU_PROFILES: dict[str, dict[str, str | int | float]] = {
         "usd_per_second": 0.000222,
         "cuda_arch": "8.9",
     },
-    "A10": {
-        "label": "A10",
-        "vram_gib": 24,
-        "usd_per_second": 0.000306,
-        "cuda_arch": "8.6",
-    },
     "L40S": {
         "label": "L40S",
         "vram_gib": 48,
         "usd_per_second": 0.000542,
         "cuda_arch": "8.9",
     },
-    "A100-40GB": {
-        "label": "A100 40GB",
-        "vram_gib": 40,
-        "usd_per_second": 0.000583,
-        "cuda_arch": "8.0",
-    },
-    "A100-80GB": {
-        "label": "A100 80GB",
-        "vram_gib": 80,
-        "usd_per_second": 0.000694,
-        "cuda_arch": "8.0",
-    },
     "RTX-PRO-6000": {
         "label": "RTX PRO 6000",
         "vram_gib": 96,
         "usd_per_second": 0.000842,
         "cuda_arch": "12.0",
-    },
-    "H100": {
-        "label": "H100",
-        "vram_gib": 80,
-        "usd_per_second": 0.001097,
-        "cuda_arch": "9.0",
     },
 }
 SUPPORTED_MODAL_GPUS = frozenset(MODAL_GPU_PROFILES)

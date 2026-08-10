@@ -13,9 +13,6 @@ from pathlib import Path
 import modal
 
 from modal_backend.custom_nodes import LOCAL_COPY_IGNORE_PATTERNS
-from modal_backend.settings import MODAL_GPU_PROFILES
-
-
 APP_NAME = os.environ.get("SOYA_MODAL_APP_NAME", "soya-comfy-worker")
 MAX_CONTAINERS = int(os.environ.get("SOYA_MODAL_MAX_CONTAINERS", "2"))
 SCALEDOWN_WINDOW_SECONDS = int(os.environ.get("SOYA_MODAL_SCALEDOWN_WINDOW", "15"))
@@ -34,14 +31,15 @@ TORCHVISION_VERSION = "0.26.0"
 TORCHAUDIO_VERSION = "2.11.0"
 PYTORCH_CUDA_INDEX_URL = "https://download.pytorch.org/whl/cu128"
 SAGEATTENTION_VERSION = "2.2.0"
-CUDA_ARCH_LIST = ";".join(
-    sorted(
-        {
-            str(profile["cuda_arch"])
-            for profile in MODAL_GPU_PROFILES.values()
-        },
-        key=lambda value: tuple(int(part) for part in value.split(".")),
-    )
+# Comfy-Org가 upstream v2.2.0으로 빌드한 현재 런타임 전용 wheel을 해시까지
+# 고정해, 동일 URL의 release asset이 바뀌어도 검증되지 않은 바이너리를 설치하지 않는다.
+SAGEATTENTION_WHEEL_URL = (
+    "https://github.com/Comfy-Org/wheels/releases/download/sageattention-latest/"
+    "sageattention-2.2.0%2Bcu128torch2.11-cp312-cp312-"
+    "manylinux_2_34_x86_64.manylinux_2_35_x86_64.whl"
+)
+SAGEATTENTION_WHEEL_SHA256 = (
+    "900c20a9baa591463731da9a25f626587ebb1902d2c902a494bfacb9fe8981fc"
 )
 FORCE_CUSTOM_NODE_BUILD = os.environ.get("SOYA_MODAL_FORCE_CUSTOM_NODE_BUILD", "0") == "1"
 # Modal Volume 변경만으로는 기존 Memory Snapshot이 무효화되지 않는다. 이 값은
@@ -126,12 +124,6 @@ runtime_image = (
             "CC": "/usr/bin/gcc",
             "CXX": "/usr/bin/g++",
             "CUDAHOSTCXX": "/usr/bin/g++",
-            # GPU 선택 변경만으로 이미지를 다시 빌드하지 않도록 지원하는 모든
-            # 아키텍처용 SageAttention CUDA extension을 한 번에 사전 컴파일한다.
-            "TORCH_CUDA_ARCH_LIST": CUDA_ARCH_LIST,
-            "MAX_JOBS": "4",
-            "EXT_PARALLEL": "4",
-            "NVCC_APPEND_FLAGS": "--threads 4",
         }
     )
     .pip_install(
@@ -142,13 +134,15 @@ runtime_image = (
     )
     .pip_install("triton>=3.0.0", "packaging", "ninja", "wheel")
     .run_commands(
+        (
+            "python -m pip install --no-cache-dir "
+            f"'{SAGEATTENTION_WHEEL_URL}#sha256={SAGEATTENTION_WHEEL_SHA256}'"
+        )
+    )
+    .run_commands(
         "git clone https://github.com/comfyanonymous/ComfyUI.git /root/ComfyUI",
         f"cd /root/ComfyUI && git checkout {COMFY_REF}",
         "python -m pip install --no-cache-dir -r /root/ComfyUI/requirements.txt",
-    )
-    .pip_install(
-        f"git+https://github.com/thu-ml/SageAttention.git@v{SAGEATTENTION_VERSION}",
-        extra_options="--no-build-isolation",
     )
     .pip_install("requests")
     .add_local_file(MANIFEST_LOCAL, "/opt/soya/install_manifest.json", copy=True)
@@ -193,7 +187,8 @@ runtime_image = (
     .run_commands(
         "python /opt/soya/image_install.py",
         (
-            "python -c \"import importlib.metadata as m, sageattention, torch; "
+            "python -c \"import importlib.metadata as m, packaging.version as pv, "
+            "sageattention, torch; "
             "print('[MODAL_IMAGE] PyTorch:', torch.__version__); "
             "print('[MODAL_IMAGE] CUDA:', torch.version.cuda); "
             "print('[MODAL_IMAGE] SageAttention:', m.version('sageattention'), "
@@ -201,7 +196,8 @@ runtime_image = (
             f"assert torch.__version__.startswith('{TORCH_VERSION}+cu128'), "
             "torch.__version__; "
             "assert torch.version.cuda == '12.8', torch.version.cuda; "
-            f"assert m.version('sageattention') == '{SAGEATTENTION_VERSION}'\""
+            "assert pv.Version(m.version('sageattention')).base_version == "
+            f"'{SAGEATTENTION_VERSION}', m.version('sageattention')\""
         ),
         # ComfyUI 저장소의 models 폴더에는 placeholder 파일이 들어 있다. Modal은
         # 이미지에서 비어 있지 않은 경로 위에 Volume을 마운트하지 않으므로,

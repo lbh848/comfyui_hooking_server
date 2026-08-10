@@ -110,16 +110,16 @@ def test_modal_defaults_are_scale_to_zero_and_independently_gpu_budgeted() -> No
     assert cost["estimated_container_hours"] == pytest.approx(26.89)
 
     split = ModalSettings.from_mapping(
-        {"modal_worker_gpu": "L40S", "modal_web_gpu": "A10"}
+        {"modal_worker_gpu": "L40S", "modal_web_gpu": "RTX-PRO-6000"}
     )
     split_cost = cost_summary(split)
     assert split.worker_gpu == "L40S"
-    assert split.web_gpu == "A10"
+    assert split.web_gpu == "RTX-PRO-6000"
     assert split_cost["worker"]["gpu_per_hour"] == pytest.approx(1.9512)
-    assert split_cost["web"]["gpu_per_hour"] == pytest.approx(1.1016)
-    assert "T4" not in {
+    assert split_cost["web"]["gpu_per_hour"] == pytest.approx(3.0312)
+    assert {
         profile["id"] for profile in split.public_dict()["gpu_profiles"]
-    }
+    } == {"L4", "L40S", "RTX-PRO-6000"}
 
 
 @pytest.mark.parametrize(
@@ -128,6 +128,10 @@ def test_modal_defaults_are_scale_to_zero_and_independently_gpu_budgeted() -> No
         {"modal_gpu": "T4"},
         {"modal_worker_gpu": "T4"},
         {"modal_web_gpu": "T4"},
+        {"modal_worker_gpu": "A10"},
+        {"modal_worker_gpu": "A100-40GB"},
+        {"modal_worker_gpu": "A100-80GB"},
+        {"modal_worker_gpu": "H100"},
         {"modal_max_concurrency": 0},
         {"modal_max_concurrency": 11},
         {"modal_profile": "bad profile"},
@@ -516,7 +520,7 @@ async def test_modal_run_workflow_preserves_start_retry_limit_error(
         tmp_path,
         lambda: {
             "modal_enabled": True,
-            "modal_worker_gpu": "H100",
+            "modal_worker_gpu": "RTX-PRO-6000",
             "modal_container_start_max_retries": 2,
         },
     )
@@ -554,7 +558,7 @@ async def test_modal_run_workflow_preserves_start_retry_limit_error(
         )
 
     assert observed["container_start_max_retries"] == 2
-    assert observed["worker_gpu"] == "H100"
+    assert observed["worker_gpu"] == "RTX-PRO-6000"
 
 
 @pytest.mark.asyncio
@@ -1752,7 +1756,7 @@ async def test_modal_worker_status_returns_lightweight_runtime_snapshot(
         lambda: {
             "modal_enabled": True,
             "modal_worker_gpu": "L40S",
-            "modal_web_gpu": "A10",
+            "modal_web_gpu": "RTX-PRO-6000",
             "modal_status_refresh_seconds": 7,
         },
     )
@@ -1790,26 +1794,26 @@ async def test_modal_worker_status_returns_lightweight_runtime_snapshot(
 
     assert observed["runtime_stats"] == {
         "worker_gpu": "L40S",
-        "web_gpu": "A10",
+        "web_gpu": "RTX-PRO-6000",
         "timeout": 30,
     }
     assert observed["web_status"] == {
         "worker_gpu": "L40S",
-        "web_gpu": "A10",
+        "web_gpu": "RTX-PRO-6000",
         "timeout": 30,
     }
     assert status["ok"] is True
     assert status["enabled"] is True
     assert status["gpu"] == "L40S"
     assert status["worker_gpu"] == "L40S"
-    assert status["web_gpu"] == "A10"
+    assert status["web_gpu"] == "RTX-PRO-6000"
     assert status["refresh_seconds"] == 7
     assert status["worker"]["available"] is True
     assert status["worker"]["gpu_on"] is True
     assert status["worker"]["workers"] == 2
     assert status["worker"]["generating"] == 1
     assert status["worker"]["queued"] == 3
-    assert status["web"]["gpu"] == "A10"
+    assert status["web"]["gpu"] == "RTX-PRO-6000"
 
 
 @pytest.mark.asyncio
@@ -2325,7 +2329,7 @@ async def test_modal_web_deploy_uses_package_module_mode(
             "modal_enabled": True,
             "modal_deployment_name": "worker-app",
             "modal_environment": "main",
-            "modal_worker_gpu": "A10",
+            "modal_worker_gpu": "RTX-PRO-6000",
             "modal_web_gpu": "L40S",
             "modal_web_fast": True,
         },
@@ -2353,7 +2357,7 @@ async def test_modal_web_deploy_uses_package_module_mode(
     assert observed["args"][7] == "main"
     assert observed["kwargs"]["timeout"] == 3600
     assert observed["kwargs"]["env"]["SOYA_MODAL_WEB_FAST"] == "1"
-    assert observed["kwargs"]["env"]["SOYA_MODAL_WORKER_GPU"] == "A10"
+    assert observed["kwargs"]["env"]["SOYA_MODAL_WORKER_GPU"] == "RTX-PRO-6000"
     assert observed["kwargs"]["env"]["SOYA_MODAL_WEB_GPU"] == "L40S"
 
 
@@ -2718,7 +2722,7 @@ def test_modal_web_server_is_isolated_from_worker_app() -> None:
     assert "? 'ComfyUI 시작 취소'" in frontend_source
 
 
-def test_modal_runtime_image_precompiles_sageattention_for_supported_gpus() -> None:
+def test_modal_runtime_image_installs_prebuilt_sageattention_wheel() -> None:
     source = (
         Path(__file__).resolve().parents[1] / "modal_backend" / "modal_app.py"
     ).read_text(encoding="utf-8")
@@ -2737,28 +2741,34 @@ def test_modal_runtime_image_precompiles_sageattention_for_supported_gpus() -> N
     assert '"CC": "/usr/bin/gcc"' in source
     assert '"CXX": "/usr/bin/g++"' in source
     assert '"CUDAHOSTCXX": "/usr/bin/g++"' in source
-    assert '"TORCH_CUDA_ARCH_LIST": CUDA_ARCH_LIST' in source
-    assert 'gpu=WORKER_GPU' not in source
-    assert "for profile in MODAL_GPU_PROFILES.values()" in source
-    for cuda_arch in ("8.0", "8.6", "8.9", "9.0", "12.0"):
-        assert cuda_arch in {
-            str(profile["cuda_arch"])
-            for profile in ModalSettings.from_mapping({}).public_dict()["gpu_profiles"]
-        }
-    assert '"NVCC_APPEND_FLAGS": "--threads 4"' in source
-    assert "index_url=PYTORCH_CUDA_INDEX_URL" in source
-    assert 'extra_options="--no-build-isolation"' in source
+    assert 'SAGEATTENTION_WHEEL_URL = (' in source
+    assert '"sageattention-2.2.0%2Bcu128torch2.11-cp312-cp312-"' in source
+    assert '"manylinux_2_34_x86_64.manylinux_2_35_x86_64.whl"' in source
     assert (
-        "git+https://github.com/thu-ml/SageAttention.git@v{SAGEATTENTION_VERSION}"
-        in source
-    )
+        'SAGEATTENTION_WHEEL_SHA256 = (\n'
+        '    "900c20a9baa591463731da9a25f626587ebb1902d2c902a494bfacb9fe8981fc"'
+    ) in source
+    assert "#sha256={SAGEATTENTION_WHEEL_SHA256}" in source
+    assert 'gpu=WORKER_GPU' not in source
+    assert {
+        str(profile["cuda_arch"])
+        for profile in ModalSettings.from_mapping({}).public_dict()["gpu_profiles"]
+    } == {"8.9", "12.0"}
+    assert '"TORCH_CUDA_ARCH_LIST"' not in source
+    assert '"MAX_JOBS"' not in source
+    assert '"EXT_PARALLEL"' not in source
+    assert "index_url=PYTORCH_CUDA_INDEX_URL" in source
+    assert "https://github.com/thu-ml/SageAttention.git" not in source
+    assert "sageattention_build.py" not in source
+    assert "--no-build-isolation" not in source
     assert "torch.version.cuda == '12.8'" in source
+    assert "pv.Version(m.version('sageattention')).base_version" in source
     assert "modal.Image.debian_slim" not in source
     assert source.index('f"torch=={TORCH_VERSION}"') < source.index(
-        'f"git+https://github.com/thu-ml/SageAttention.git@v{SAGEATTENTION_VERSION}"'
+        "#sha256={SAGEATTENTION_WHEEL_SHA256}"
     )
     assert source.index(
-        'f"git+https://github.com/thu-ml/SageAttention.git@v{SAGEATTENTION_VERSION}"'
+        "#sha256={SAGEATTENTION_WHEEL_SHA256}"
     ) < source.index('"python /opt/soya/image_install.py"')
     assert "def _validate_sageattention_cuda()" in source
     assert "output = sageattn(" in source
