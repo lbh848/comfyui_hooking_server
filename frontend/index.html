@@ -514,10 +514,10 @@
             user-select: none;
             letter-spacing: 0.5px;
         }
-        .card-image-area .source-badge.modal {
+        .card-image-area .source-badge.source-modal {
             background: rgba(99,102,241,0.92);
         }
-        .card-image-area .source-badge.chansub {
+        .card-image-area .source-badge.source-chansub {
             background: rgba(236,72,153,0.92);
         }
 
@@ -23913,7 +23913,7 @@
                     ? _src
                     : (String(info.provider || '').toLowerCase() === 'chansub' ? 'chansub' : '');
                 const sourceBadge = sourceKind
-                    ? `<span class="source-badge ${sourceKind}" title="${sourceKind === 'modal' ? 'Modal 원격 ComfyUI 생성' : '챈섭 API 생성'}">${sourceKind === 'modal' ? 'M' : 'S'}</span>`
+                    ? `<span class="source-badge source-${sourceKind}" title="${sourceKind === 'modal' ? 'Modal 원격 ComfyUI 생성' : '챈섭 API 생성'}">${sourceKind === 'modal' ? 'M' : 'S'}</span>`
                     : '';
 
                 // Store prompt data in Map (avoids data-attribute truncation issues)

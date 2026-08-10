@@ -83,12 +83,14 @@ def test_backup_card_has_modal_and_chansub_source_badges():
     # CSS: 썸네일 좌상단 고정, Modal/챈섭 색상 분기.
     assert ".card-image-area .source-badge {" in source
     assert "position: absolute;" in source
-    assert ".card-image-area .source-badge.modal {" in source
-    assert ".card-image-area .source-badge.chansub {" in source
+    assert ".card-image-area .source-badge.source-modal {" in source
+    assert ".card-image-area .source-badge.source-chansub {" in source
 
     # 렌더: execution_source 기반 M/S 분기. 구 백업은 provider fallback.
+    # 전역 다이얼로그 .modal과 충돌하지 않도록 source- 접두 클래스를 사용한다.
     assert "info.execution_source" in render
-    assert "source-badge ${sourceKind}" in render
+    assert "source-badge source-${sourceKind}" in render
+    assert 'class="source-badge ${sourceKind}"' not in render
     assert "${sourceKind === 'modal' ? 'M' : 'S'}" in render
     # 라이트박스는 배지 없이 img.src만 확대 — openLightbox가 source-badge를 참조하지 않는다.
     lightbox = _function_source(source, "openLightbox(src) {", "closeLightbox()")
