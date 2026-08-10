@@ -34,6 +34,10 @@ TORCHAUDIO_VERSION = "2.11.0"
 PYTORCH_CUDA_INDEX_URL = "https://download.pytorch.org/whl/cu128"
 SAGEATTENTION_VERSION = "2.2.0"
 FORCE_CUSTOM_NODE_BUILD = os.environ.get("SOYA_MODAL_FORCE_CUSTOM_NODE_BUILD", "0") == "1"
+# Modal Volume 변경만으로는 기존 Memory Snapshot이 무효화되지 않는다. 이 값은
+# deploy 명령을 실행할 때마다 달라져 app.cls의 원격 환경 구성이 변경되게 하고,
+# 동기화 후 재배포가 오래된 ComfyUI 프로세스 snapshot을 재사용하지 않도록 한다.
+SNAPSHOT_VERSION = os.environ.get("SOYA_MODAL_SNAPSHOT_VERSION") or str(time.time_ns())
 CALL_STARTED_LOG_PREFIX = "@@SOYA_MODAL_CALL_STARTED@@"
 
 
@@ -288,6 +292,9 @@ def _write_extra_model_paths() -> Path:
     scaledown_window=SCALEDOWN_WINDOW_SECONDS,
     timeout=3_600,
     startup_timeout=600,
+    enable_memory_snapshot=True,
+    experimental_options={"enable_gpu_snapshot": True},
+    env={"SOYA_MODAL_SNAPSHOT_VERSION": SNAPSHOT_VERSION},
     volumes={
         COMFY_MODELS_MOUNT_PATH: models_volume,
         "/loras": loras_volume,
@@ -300,12 +307,17 @@ class ComfyWorker:
     # 컨테이너에서 models/loras Volume을 reload하면 volume busy가 발생한다.
     # 각 컨테이너는 시작 시 마운트된 스냅샷만 사용하고, 동기화된 새 자산은
     # 앱 재배포로 컨테이너를 교체한 뒤 반영한다.
-    @modal.enter()
+    @modal.enter(snap=True)
     def start(self) -> None:
         import requests
         import threading
         from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+        print(
+            "[MODAL_COMFY] GPU Memory Snapshot 준비 시작: "
+            f"version={SNAPSHOT_VERSION}",
+            flush=True,
+        )
         self.text_outputs = []
         worker = self
 
@@ -344,11 +356,12 @@ class ComfyWorker:
             TextOutputHandler,
         )
         self.text_output_port = int(self.text_output_server.server_address[1])
-        threading.Thread(
+        self.text_output_thread = threading.Thread(
             target=self.text_output_server.serve_forever,
             name="modal-comfy-text-output",
             daemon=True,
-        ).start()
+        )
+        self.text_output_thread.start()
 
         extra_paths = _write_extra_model_paths()
         self.process = subprocess.Popen(
@@ -374,13 +387,76 @@ class ComfyWorker:
             try:
                 response = requests.get("http://127.0.0.1:8188/system_stats", timeout=2)
                 if response.ok:
-                    print("[MODAL_COMFY] ComfyUI L4 워커 준비 완료")
+                    print(
+                        "[MODAL_COMFY] ComfyUI L4 워커 snapshot 캡처 지점 준비 완료",
+                        flush=True,
+                    )
                     return
                 last_error = f"HTTP {response.status_code}"
             except Exception as exc:
                 last_error = f"{type(exc).__name__}: {exc}"
             time.sleep(1)
         raise TimeoutError(f"ComfyUI 시작 제한 시간 초과: last_error={last_error}")
+
+    @modal.enter(snap=False)
+    def restore(self) -> None:
+        """Snapshot 복원 뒤 자식 프로세스와 내부 HTTP 스레드의 생존을 확인한다."""
+        import requests
+
+        print(
+            "[MODAL_COMFY] GPU Memory Snapshot 복원 상태 확인 시작: "
+            f"version={SNAPSHOT_VERSION}",
+            flush=True,
+        )
+        # snapshot 시점의 요청별 출력이 새 컨테이너에 복제되지 않게 초기화한다.
+        self.text_outputs = []
+        try:
+            if self.process.poll() is not None:
+                raise RuntimeError(
+                    "Snapshot 복원 후 ComfyUI 프로세스가 종료되어 있습니다: "
+                    f"exit_code={self.process.returncode}"
+                )
+            if not self.text_output_thread.is_alive():
+                raise RuntimeError(
+                    "Snapshot 복원 후 텍스트 출력 수신 스레드가 종료되어 있습니다."
+                )
+
+            deadline = time.monotonic() + 30
+            last_error = ""
+            while time.monotonic() < deadline:
+                if self.process.poll() is not None:
+                    raise RuntimeError(
+                        "Snapshot 복원 상태 확인 중 ComfyUI 프로세스가 종료되었습니다: "
+                        f"exit_code={self.process.returncode}"
+                    )
+                try:
+                    response = requests.get(
+                        "http://127.0.0.1:8188/system_stats",
+                        timeout=2,
+                    )
+                    if response.ok:
+                        print(
+                            "[MODAL_COMFY] GPU Memory Snapshot 복원 완료 · "
+                            "ComfyUI L4 워커 준비 완료",
+                            flush=True,
+                        )
+                        return
+                    last_error = f"HTTP {response.status_code}"
+                except Exception as exc:
+                    last_error = f"{type(exc).__name__}: {exc}"
+                time.sleep(0.25)
+            raise TimeoutError(
+                "Snapshot 복원 후 ComfyUI 준비 확인 제한 시간 초과: "
+                f"last_error={last_error}"
+            )
+        except Exception as exc:
+            print(
+                "[MODAL_COMFY] GPU Memory Snapshot 복원 상태 확인 실패: "
+                f"{type(exc).__name__}: {exc}",
+                flush=True,
+            )
+            traceback.print_exc()
+            raise
 
     @modal.method()
     def convert(self, workflow: dict) -> dict:
