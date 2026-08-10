@@ -9,6 +9,12 @@ from typing import Any, Iterable, Mapping
 
 _LORA_INPUT_FIELDS = {"lora_name", "lora"}
 _IMAGE_INPUT_FIELDS = {"image"}
+_SOYA_PROMPT_PARSER_CLASS = "SoyaPromptParser_mdsoya"
+_SOYA_IPA_PATCH_MAKER_CLASS = "SoyaIPAPatchMaker_mdsoya"
+_SOYA_CACHE_INPUT_FIELDS = {
+    "embed_cache_data": ("CACHE_PATH", "emb_path"),
+    "ipa_cache_data": ("FACE_ID_DIR", "ipa_path"),
+}
 
 
 def build_local_model_index(comfy_root: str | Path) -> dict[str, Any]:
@@ -206,6 +212,196 @@ def _safe_relative(value: str, label: str) -> PurePosixPath:
     return path
 
 
+def _workflow_node(
+    workflow: Mapping[str, Any],
+    node_id: Any,
+) -> Mapping[str, Any] | None:
+    node = workflow.get(str(node_id))
+    if not isinstance(node, Mapping):
+        node = workflow.get(node_id)
+    return node if isinstance(node, Mapping) else None
+
+
+def _resolve_linked_strings(
+    workflow: Mapping[str, Any],
+    value: Any,
+    visiting: set[str] | None = None,
+) -> list[str]:
+    """Comfy 링크를 거슬러 올라가 Primitive 문자열 입력을 찾는다."""
+
+    if isinstance(value, str):
+        return [value]
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        return []
+
+    node_id = str(value[0])
+    active = set(visiting or ())
+    if node_id in active:
+        print(f"[MODAL_SYNC] Comfy 문자열 링크 순환을 감지해 중단: node={node_id}")
+        return []
+    active.add(node_id)
+
+    node = _workflow_node(workflow, value[0])
+    if node is None:
+        print(f"[MODAL_SYNC] Comfy 문자열 링크 원본 노드를 찾지 못함: node={node_id}")
+        return []
+    inputs = node.get("inputs")
+    if not isinstance(inputs, Mapping):
+        print(f"[MODAL_SYNC] Comfy 문자열 링크 원본 입력이 객체가 아님: node={node_id}")
+        return []
+
+    resolved: list[str] = []
+    preferred_fields = [field for field in ("value", "text") if field in inputs]
+    source_values = (
+        [inputs[field] for field in preferred_fields]
+        if preferred_fields
+        else list(inputs.values())
+    )
+    for source_value in source_values:
+        resolved.extend(_resolve_linked_strings(workflow, source_value, active))
+    return resolved
+
+
+def _parse_soya_prompt_sections(text: str) -> dict[str, str]:
+    """SoyaPromptParser_mdsoya와 같은 규칙으로 태그 구간을 분리한다."""
+
+    parsed: dict[str, str] = {}
+    current_key: str | None = None
+    current_lines: list[str] = []
+    for line in text.split("\n"):
+        line = line.rstrip("\r")
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            if current_key is not None:
+                parsed[current_key] = "\n".join(current_lines).strip()
+            current_key = stripped[1:-1]
+            current_lines = []
+        elif current_key is not None:
+            current_lines.append(line)
+    if current_key is not None:
+        parsed[current_key] = "\n".join(current_lines).strip()
+    return parsed
+
+
+def _parse_json_stream(text: str, label: str) -> list[Any]:
+    """Comfy 커스텀 노드와 동일하게 연속된 JSON 객체를 파싱한다."""
+
+    stripped = text.strip()
+    if not stripped:
+        print(f"[MODAL_SYNC] 캐시 JSON 구간이 비어 있어 전송할 파일이 없음: {label}")
+        return []
+    decoder = json.JSONDecoder()
+    objects: list[Any] = []
+    position = 0
+    try:
+        while position < len(stripped):
+            if stripped[position] in " \t\n\r":
+                position += 1
+                continue
+            payload, end = decoder.raw_decode(stripped, idx=position)
+            objects.append(payload)
+            position = end
+    except (json.JSONDecodeError, TypeError, ValueError) as exc:
+        print(
+            f"[MODAL_SYNC] 캐시 JSON 파싱 실패: label={label}, "
+            f"position={position}, error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        raise ValueError(f"Modal 입력 캐시 JSON 형식이 올바르지 않습니다: {label}") from exc
+    return objects
+
+
+def _cache_paths_from_json(text: str, path_key: str, label: str) -> list[str]:
+    paths: list[str] = []
+    for payload in _parse_json_stream(text, label):
+        if isinstance(payload, Mapping) and "list" in payload:
+            entries = payload["list"]
+        elif isinstance(payload, list):
+            entries = payload
+        else:
+            print(
+                f"[MODAL_SYNC] 캐시 JSON 루트 형식 오류: label={label}, "
+                f"type={type(payload).__name__}"
+            )
+            raise TypeError(f"Modal 입력 캐시 JSON 루트가 list 형식이 아닙니다: {label}")
+        if not isinstance(entries, list):
+            print(
+                f"[MODAL_SYNC] 캐시 JSON list 필드 형식 오류: label={label}, "
+                f"type={type(entries).__name__}"
+            )
+            raise TypeError(f"Modal 입력 캐시 JSON list 필드가 배열이 아닙니다: {label}")
+        for index, entry in enumerate(entries):
+            if not isinstance(entry, Mapping):
+                print(
+                    f"[MODAL_SYNC] 캐시 JSON 항목 형식 오류: label={label}, "
+                    f"index={index}, type={type(entry).__name__}"
+                )
+                raise TypeError(f"Modal 입력 캐시 항목이 객체가 아닙니다: {label}[{index}]")
+            raw_path = entry.get(path_key)
+            if not isinstance(raw_path, str) or not raw_path.strip():
+                print(
+                    f"[MODAL_SYNC] 캐시 JSON 경로 누락: label={label}, "
+                    f"index={index}, field={path_key}"
+                )
+                raise ValueError(
+                    f"Modal 입력 캐시 경로가 비어 있습니다: {label}[{index}].{path_key}"
+                )
+            paths.append(raw_path.strip().replace("\\", "/"))
+    return paths
+
+
+def _workflow_cache_paths(workflow: Mapping[str, Any]) -> list[str]:
+    """Soya 프롬프트 프로토콜이 참조하는 필수 캐시 경로를 수집한다."""
+
+    result: list[str] = []
+    for node_id, node in workflow.items():
+        if not isinstance(node, Mapping):
+            continue
+        if str(node.get("class_type") or "") != _SOYA_IPA_PATCH_MAKER_CLASS:
+            continue
+        inputs = node.get("inputs")
+        if not isinstance(inputs, Mapping):
+            continue
+
+        for field, (section, path_key) in _SOYA_CACHE_INPUT_FIELDS.items():
+            value = inputs.get(field)
+            if isinstance(value, str) and value.strip():
+                result.extend(
+                    _cache_paths_from_json(value, path_key, f"node={node_id}.{field}")
+                )
+                continue
+            if not isinstance(value, (list, tuple)) or len(value) != 2:
+                continue
+
+            source_node = _workflow_node(workflow, value[0])
+            source_texts = _resolve_linked_strings(workflow, value)
+            if not source_texts:
+                print(
+                    f"[MODAL_SYNC] Soya 캐시 입력 문자열을 찾지 못해 경로 확인을 "
+                    f"건너뜀: node={node_id}, field={field}, source={value[0]}"
+                )
+                continue
+            source_is_parser = (
+                source_node is not None
+                and str(source_node.get("class_type") or "") == _SOYA_PROMPT_PARSER_CLASS
+            )
+            for source_index, source_text in enumerate(source_texts):
+                cache_json = source_text
+                if source_is_parser:
+                    sections = _parse_soya_prompt_sections(source_text)
+                    if section not in sections:
+                        continue
+                    cache_json = sections[section]
+                result.extend(
+                    _cache_paths_from_json(
+                        cache_json,
+                        path_key,
+                        f"node={node_id}.{field}[{source_index}]",
+                    )
+                )
+    return list(dict.fromkeys(result))
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -259,8 +455,23 @@ def resolve_input_files(
     workflow: Mapping[str, Any],
     config: Mapping[str, Any],
 ) -> list[dict[str, str]]:
+    try:
+        cache_names = _workflow_cache_paths(workflow)
+    except Exception as exc:
+        print(
+            f"[MODAL_SYNC] 워크플로우 필수 캐시 경로 해석 실패: "
+            f"error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        raise
     input_root_raw = str(config.get("comfy_input_dir") or "").strip()
     if not input_root_raw:
+        if cache_names:
+            print(
+                "[MODAL_SYNC] 필수 캐시 입력 경로 처리 실패: "
+                "comfy_input_dir 설정이 비어 있습니다."
+            )
+            raise ValueError("Modal 캐시 입력 동기화에 필요한 Comfy input 폴더가 비어 있습니다.")
         return []
     input_root = Path(input_root_raw).resolve()
     result: list[dict[str, str]] = []
@@ -273,7 +484,27 @@ def resolve_input_files(
             print(f"[MODAL_SYNC] 입력 이미지 파일을 찾지 못해 업로드 생략: {candidate}")
             continue
         result.append({"source_path": str(candidate), "remote_name": relative.as_posix()})
-    return result
+    for name in cache_names:
+        try:
+            relative = _safe_relative(name, "필수 캐시 입력")
+            candidate = input_root.joinpath(*relative.parts).resolve()
+            if input_root != candidate and input_root not in candidate.parents:
+                raise ValueError(f"ComfyUI input 밖의 캐시는 전송할 수 없습니다: {name!r}")
+            if not candidate.is_file():
+                raise FileNotFoundError(f"Modal에 전송할 필수 캐시 파일이 없습니다: {candidate}")
+        except (FileNotFoundError, ValueError) as exc:
+            print(
+                f"[MODAL_SYNC] 필수 캐시 입력 확인 실패: name={name!r}, "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            raise
+        result.append({"source_path": str(candidate), "remote_name": relative.as_posix()})
+
+    deduplicated: dict[str, dict[str, str]] = {}
+    for item in result:
+        deduplicated[item["remote_name"]] = item
+    return list(deduplicated.values())
 
 
 def resolve_explicit_input_files(

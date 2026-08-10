@@ -484,6 +484,76 @@ async def test_modal_run_workflow_preserves_start_retry_limit_error(
     assert observed["container_start_max_retries"] == 2
 
 
+@pytest.mark.asyncio
+async def test_modal_run_workflow_includes_soya_cache_inputs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    input_root = tmp_path / "input"
+    character_root = input_root / "soya_bot" / "sample_bot" / "alice"
+    character_root.mkdir(parents=True)
+    cache_pt = character_root / "cache.pt"
+    cache_ipadapter = character_root / "cache.ipadpt"
+    cache_pt.write_bytes(b"embedding-cache")
+    cache_ipadapter.write_bytes(b"ipadapter-cache")
+    positive = "\n".join(
+        [
+            "[CACHE_PATH]",
+            json.dumps(
+                {"list": [{"emb_path": "soya_bot/sample_bot/alice/cache.pt"}]}
+            ),
+            "[FACE_ID_DIR]",
+            json.dumps(
+                {"list": [{"ipa_path": "soya_bot/sample_bot/alice/cache.ipadpt"}]}
+            ),
+        ]
+    )
+    workflow = {
+        "9": {"class_type": "PrimitiveStringMultiline", "inputs": {"value": positive}},
+        "909": {"class_type": "SoyaPromptParser_mdsoya", "inputs": {"text": ["9", 0]}},
+        "458": {
+            "class_type": "SoyaIPAPatchMaker_mdsoya",
+            "inputs": {
+                "embed_cache_data": ["909", 8],
+                "ipa_cache_data": ["909", 10],
+            },
+        },
+    }
+    service = ModalService(
+        tmp_path,
+        lambda: {"modal_enabled": True, "comfy_input_dir": str(input_root)},
+    )
+    observed: dict = {}
+
+    async def connected(_settings: ModalSettings) -> bool:
+        return True
+
+    async def assets(_workflows: list[dict]) -> dict:
+        return {"model_files": [], "lora_files": []}
+
+    async def failed_command(*_args, **kwargs) -> tuple[int, str, str]:
+        observed.update(kwargs["stdin_payload"])
+        return 1, json.dumps({"ok": False, "error": "test stop"}), ""
+
+    monkeypatch.setattr(service, "account_connected", connected)
+    monkeypatch.setattr(service, "_resolve_local_workflow_assets", assets)
+    monkeypatch.setattr(service, "_run_command", failed_command)
+
+    with pytest.raises(RuntimeError, match="test stop"):
+        await service.run_workflow(workflow)
+
+    assert observed["input_files"] == [
+        {
+            "source_path": str(cache_pt),
+            "remote_name": "soya_bot/sample_bot/alice/cache.pt",
+        },
+        {
+            "source_path": str(cache_ipadapter),
+            "remote_name": "soya_bot/sample_bot/alice/cache.ipadpt",
+        },
+    ]
+
+
 def test_manifest_catalog_does_not_use_local_install_model_spec_for_modal() -> None:
     catalog = {item["id"]: item for item in workflow_catalog(PROJECT_ROOT)}
 
@@ -1202,6 +1272,132 @@ def test_workflow_assets_resolve_structured_lora_and_image_inputs(tmp_path: Path
     assert loras[0]["source_path"] == str(lora_file)
     assert loras[0]["remote_path"] == "SOYA_CHAR_LORA/Alice/Lora/hero.safetensors"
     assert inputs == [{"source_path": str(image_file), "remote_name": "refs/face.png"}]
+
+
+def test_workflow_assets_resolve_soya_prompt_parser_cache_inputs(tmp_path: Path) -> None:
+    input_root = tmp_path / "input"
+    character_root = input_root / "soya_bot" / "sample_bot" / "alice"
+    character_root.mkdir(parents=True)
+    cache_pt = character_root / "cache.pt"
+    cache_ipadapter = character_root / "cache.ipadpt"
+    cache_pt.write_bytes(b"embedding-cache")
+    cache_ipadapter.write_bytes(b"ipadapter-cache")
+    positive = "\n".join(
+        [
+            "[CHAR_LIST]",
+            "alice",
+            "[CACHE_PATH]",
+            json.dumps(
+                {"list": [{"emb_path": "soya_bot/sample_bot/alice/cache.pt"}]}
+            ),
+            "[FACE_ID_DIR]",
+            json.dumps(
+                {"list": [{"ipa_path": "soya_bot/sample_bot/alice/cache.ipadpt"}]}
+            ),
+        ]
+    )
+    workflow = {
+        "9": {"class_type": "PrimitiveStringMultiline", "inputs": {"value": positive}},
+        "909": {"class_type": "SoyaPromptParser_mdsoya", "inputs": {"text": ["9", 0]}},
+        "458": {
+            "class_type": "SoyaIPAPatchMaker_mdsoya",
+            "inputs": {
+                "embed_cache_data": ["909", 8],
+                "ipa_cache_data": ["909", 10],
+            },
+        },
+    }
+
+    inputs = resolve_input_files(workflow, {"comfy_input_dir": str(input_root)})
+
+    assert inputs == [
+        {
+            "source_path": str(cache_pt),
+            "remote_name": "soya_bot/sample_bot/alice/cache.pt",
+        },
+        {
+            "source_path": str(cache_ipadapter),
+            "remote_name": "soya_bot/sample_bot/alice/cache.ipadpt",
+        },
+    ]
+
+
+def test_workflow_assets_resolve_direct_soya_cache_inputs(tmp_path: Path) -> None:
+    input_root = tmp_path / "input"
+    cache_file = input_root / "soya_bot" / "sample_bot" / "alice" / "cache.pt"
+    cache_file.parent.mkdir(parents=True)
+    cache_file.write_bytes(b"embedding-cache")
+    workflow = {
+        "458": {
+            "class_type": "SoyaIPAPatchMaker_mdsoya",
+            "inputs": {
+                "embed_cache_data": json.dumps(
+                    {"list": [{"emb_path": "soya_bot/sample_bot/alice/cache.pt"}]}
+                )
+            },
+        }
+    }
+
+    inputs = resolve_input_files(workflow, {"comfy_input_dir": str(input_root)})
+
+    assert inputs == [
+        {
+            "source_path": str(cache_file),
+            "remote_name": "soya_bot/sample_bot/alice/cache.pt",
+        }
+    ]
+
+
+def test_workflow_assets_reject_missing_soya_cache_before_remote_call(
+    tmp_path: Path,
+) -> None:
+    input_root = tmp_path / "input"
+    input_root.mkdir()
+    workflow = {
+        "458": {
+            "class_type": "SoyaIPAPatchMaker_mdsoya",
+            "inputs": {
+                "embed_cache_data": json.dumps(
+                    {"list": [{"emb_path": "soya_bot/sample_bot/alice/cache.pt"}]}
+                )
+            },
+        }
+    }
+
+    with pytest.raises(FileNotFoundError, match="필수 캐시 파일이 없습니다"):
+        resolve_input_files(workflow, {"comfy_input_dir": str(input_root)})
+
+
+def test_workflow_assets_reject_invalid_soya_cache_json(tmp_path: Path) -> None:
+    input_root = tmp_path / "input"
+    input_root.mkdir()
+    workflow = {
+        "458": {
+            "class_type": "SoyaIPAPatchMaker_mdsoya",
+            "inputs": {"embed_cache_data": '{"list": ['},
+        }
+    }
+
+    with pytest.raises(ValueError, match="캐시 JSON 형식이 올바르지 않습니다"):
+        resolve_input_files(workflow, {"comfy_input_dir": str(input_root)})
+
+
+def test_workflow_assets_reject_soya_cache_outside_input_root(tmp_path: Path) -> None:
+    input_root = tmp_path / "input"
+    input_root.mkdir()
+    workflow = {
+        "458": {
+            "class_type": "SoyaIPAPatchMaker_mdsoya",
+            "inputs": {
+                "embed_cache_data": json.dumps(
+                    {"list": [{"emb_path": "../outside/cache.pt"}]}
+                )
+            },
+        }
+    }
+
+    with pytest.raises(ValueError, match="안전하지 않은 필수 캐시 입력 상대 경로"):
+        resolve_input_files(workflow, {"comfy_input_dir": str(input_root)})
 
 
 def test_explicit_modal_input_folder_preserves_comfy_relative_paths(tmp_path: Path) -> None:
