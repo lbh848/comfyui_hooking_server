@@ -85,6 +85,7 @@ from modes.illust_prompt_builder import (
     sync_multi_char_shared_tags,
 )
 from modes.chansub_prompt_builder import ChansubPromptBuilder, build_v1_prompt
+from modes.prompt_path_normalizer import normalize_modal_prompt_paths
 from modes.word_rules import (
     apply_prompt_rules as _apply_prompt_word_rules,
     apply_raw_prompt_rules as _apply_raw_prompt_word_rules,
@@ -2307,6 +2308,23 @@ async def generate_image_with_prompt(
         print(f"[GEN] 공급자 선택 실패: {message}")
         return None, message
 
+    execution_target = CURRENT_COMFY_EXECUTION_TARGET.get()
+    if execution_target == MODAL_COMFY_TARGET:
+        try:
+            positive, normalized_path_count = normalize_modal_prompt_paths(positive)
+            if normalized_path_count:
+                print(
+                    "[MODAL_GEN] 프롬프트 경로 정규화 완료: "
+                    f"fields={normalized_path_count}"
+                )
+        except Exception as e:
+            print(
+                "[MODAL_GEN] 프롬프트 경로 정규화 실패: "
+                f"error={type(e).__name__}: {e}"
+            )
+            traceback.print_exc()
+            return None, f"Modal 프롬프트 경로 정규화 실패: {type(e).__name__}: {e}"
+
     # current_* 워크플로우는 레거시 전역 캐시다. 로컬/Modal 레인이 동시에
     # 실행될 때는 갱신과 스냅샷 생성을 짧게 직렬화하고, 실제 생성은 복사본으로
     # 병렬 수행해 서로의 워크플로우·백업 메타데이터를 덮지 않게 한다.
@@ -2322,7 +2340,6 @@ async def generate_image_with_prompt(
         risu_prompt = build_prompt(positive, negative)
     CURRENT_ILLUSTRATION_WORKFLOW_SNAPSHOT.set(workflow_snapshot)
     api_workflow_snapshot = workflow_snapshot["api_workflow"]
-    execution_target = CURRENT_COMFY_EXECUTION_TARGET.get()
     illust_port = None
     if execution_target != MODAL_COMFY_TARGET:
         illust_port = resolve_comfy_port(comfy_task_key)
