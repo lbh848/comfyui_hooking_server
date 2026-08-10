@@ -77,6 +77,71 @@ def register_modal_routes(
             traceback.print_exc()
             return web.json_response({"ok": False, "error": str(exc)}, status=500)
 
+    async def loras(request: web.Request) -> web.Response:
+        try:
+            include_remote = request.query.get("remote", "").strip().lower() in {
+                "1",
+                "true",
+            }
+            return web.json_response(
+                await service.lora_catalog(include_remote=include_remote)
+            )
+        except (ValueError, RuntimeError, FileNotFoundError) as exc:
+            print(
+                "[MODAL_API] LoRA 카탈로그 요청 실패: "
+                f"{type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            return web.json_response({"ok": False, "error": str(exc)}, status=400)
+        except Exception as exc:
+            print(
+                "[MODAL_API] LoRA 카탈로그 조회 예외: "
+                f"{type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            return web.json_response({"ok": False, "error": str(exc)}, status=500)
+
+    async def lora_operation(request: web.Request) -> web.Response:
+        try:
+            body = await request.json()
+            action = body.get("action", "")
+            item_keys = body.get("item_keys") or []
+            if not isinstance(action, str):
+                raise ValueError("action은 문자열이어야 합니다.")
+            if not isinstance(item_keys, list) or not all(
+                isinstance(item, str) for item in item_keys
+            ):
+                raise ValueError("item_keys는 문자열 배열이어야 합니다.")
+            operation = await service.start_lora_operation(action, item_keys)
+            return web.json_response({"ok": True, "operation": operation})
+        except (ValueError, RuntimeError, FileNotFoundError) as exc:
+            print(
+                "[MODAL_API] LoRA 작업 요청 실패: "
+                f"{type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            return web.json_response({"ok": False, "error": str(exc)}, status=400)
+        except Exception as exc:
+            print(
+                "[MODAL_API] LoRA 작업 시작 예외: "
+                f"{type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            return web.json_response({"ok": False, "error": str(exc)}, status=500)
+
+    async def lora_operation_status(_request: web.Request) -> web.Response:
+        try:
+            return web.json_response(
+                {"ok": True, "operation": service.lora_operation_status()}
+            )
+        except Exception as exc:
+            print(
+                "[MODAL_API] LoRA 작업 상태 조회 예외: "
+                f"{type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            return web.json_response({"ok": False, "error": str(exc)}, status=500)
+
     async def custom_nodes(_request: web.Request) -> web.Response:
         try:
             return web.json_response(await service.custom_nodes())
@@ -282,6 +347,9 @@ def register_modal_routes(
     app.router.add_post("/api/modal/connect", connect)
     app.router.add_get("/api/modal/workflows", workflows)
     app.router.add_get("/api/modal/workflows/remote", remote_workflows)
+    app.router.add_get("/api/modal/loras", loras)
+    app.router.add_post("/api/modal/loras/operation", lora_operation)
+    app.router.add_get("/api/modal/loras/operation", lora_operation_status)
     app.router.add_get("/api/modal/custom-nodes", custom_nodes)
     app.router.add_post("/api/modal/redeploy", redeploy)
     app.router.add_post("/api/modal/custom-nodes/sync", sync_custom_nodes)

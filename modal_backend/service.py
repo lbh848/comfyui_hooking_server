@@ -26,6 +26,11 @@ from .custom_nodes import (
     public_custom_node_inventory,
 )
 from .manifest import list_soya_user_workflows, plan_from_soya_user_names
+from .lora_inventory import (
+    build_local_lora_catalog,
+    merge_remote_lora_catalog,
+    public_lora_catalog,
+)
 from .settings import ModalSettings
 from .workflow_assets import (
     build_local_model_index,
@@ -194,6 +199,13 @@ class ModalService:
         self._install_state: dict[str, Any] = {
             "state": "idle",
             "message": "Modal 동기화를 기다리고 있습니다.",
+            "logs": [],
+        }
+        self._lora_operation_task: asyncio.Task | None = None
+        self._lora_operation_state: dict[str, Any] = {
+            "state": "idle",
+            "action": "",
+            "message": "LoRA 관리 작업을 기다리고 있습니다.",
             "logs": [],
         }
         self._autoscaler_state: dict[str, Any] = {
@@ -804,6 +816,112 @@ class ModalService:
             )
             self._append_install_log("stderr", line)
 
+    def _lora_operation_snapshot(self) -> dict[str, Any]:
+        snapshot = dict(self._lora_operation_state)
+        snapshot["logs"] = [
+            dict(item) for item in self._lora_operation_state.get("logs", [])
+        ]
+        progress = self._lora_operation_state.get("progress")
+        if isinstance(progress, Mapping):
+            snapshot["progress"] = dict(progress)
+        started_at = float(snapshot.get("started_at") or 0.0)
+        if started_at > 0:
+            finished_at = float(snapshot.get("finished_at") or 0.0)
+            snapshot["elapsed_seconds"] = round(
+                max(0.0, (finished_at or time.time()) - started_at),
+                1,
+            )
+        return snapshot
+
+    def _lora_operation_running(self) -> bool:
+        return bool(
+            self._lora_operation_task and not self._lora_operation_task.done()
+        )
+
+    def _append_lora_operation_log(self, source: str, line: str) -> None:
+        cleaned = _ANSI_ESCAPE_RE.sub("", str(line)).replace("\x00", "").strip()
+        if not cleaned:
+            return
+        if len(cleaned) > INSTALL_LOG_LINE_LIMIT:
+            cleaned = cleaned[: INSTALL_LOG_LINE_LIMIT - 1] + "…"
+        logs = self._lora_operation_state.setdefault("logs", [])
+        if not isinstance(logs, list):
+            print(
+                "[MODAL_LORA] 작업 로그 상태 형식 오류: "
+                f"type={type(logs).__name__}; 빈 로그로 복구합니다."
+            )
+            logs = []
+            self._lora_operation_state["logs"] = logs
+        logs.append(
+            {
+                "time": time.time(),
+                "source": str(source or "system"),
+                "message": cleaned,
+            }
+        )
+        if len(logs) > INSTALL_LOG_LIMIT:
+            del logs[: len(logs) - INSTALL_LOG_LIMIT]
+        self._lora_operation_state["updated_at"] = time.time()
+
+    def _handle_lora_client_output(self, source: str, line: str) -> None:
+        if source != "stderr" or not line.startswith(INSTALL_PROGRESS_PREFIX):
+            self._append_lora_operation_log(source, line)
+            return
+        raw_event = line[len(INSTALL_PROGRESS_PREFIX) :]
+        try:
+            event = json.loads(raw_event)
+            if not isinstance(event, dict):
+                raise TypeError("진행 이벤트는 JSON 객체여야 합니다.")
+        except Exception as exc:
+            print(
+                "[MODAL_LORA] 업로드 진행 이벤트 파싱 실패: "
+                f"error={type(exc).__name__}: {exc}, payload={raw_event[:500]!r}"
+            )
+            traceback.print_exc()
+            self._append_lora_operation_log("stderr", line)
+            return
+        progress = self._lora_operation_state.setdefault("progress", {})
+        event_name = str(event.get("event") or "")
+        if event_name == "batch_start":
+            progress["current_item"] = ""
+            self._lora_operation_state["message"] = "현재 사용 LoRA를 확인하고 있습니다."
+            self._append_lora_operation_log(
+                "upload",
+                f"LoRA {int(event.get('total_files') or 0)}개 전송 확인",
+            )
+        elif event_name == "file_queued":
+            current = str(event.get("name") or "")
+            progress["current_item"] = current
+            self._lora_operation_state.update(
+                message=f"LoRA 전송 준비 중: {current}",
+                updated_at=time.time(),
+            )
+        elif event_name == "batch_complete":
+            processed_files = max(0, int(event.get("processed_files") or 0))
+            processed_bytes = max(0, int(event.get("processed_bytes") or 0))
+            progress.update(
+                completed_files=processed_files,
+                completed_bytes=processed_bytes,
+                uploaded_files=max(0, int(event.get("uploaded_files") or 0)),
+                skipped_files=max(0, int(event.get("skipped_files") or 0)),
+                current_item="",
+            )
+            self._lora_operation_state["message"] = (
+                f"LoRA 업로드 완료 · 신규/갱신 {progress['uploaded_files']}개 · "
+                f"동일 {progress['skipped_files']}개"
+            )
+            self._append_lora_operation_log(
+                "upload",
+                f"LoRA 업로드 완료: 신규/갱신 {progress['uploaded_files']}개 · "
+                f"동일 {progress['skipped_files']}개",
+            )
+        else:
+            print(
+                "[MODAL_LORA] 알 수 없는 업로드 진행 이벤트: "
+                f"event={event_name!r}, payload={event!r}"
+            )
+            self._append_lora_operation_log("stderr", line)
+
     async def _account_connected_once(self, settings: ModalSettings) -> bool:
         try:
             async with self._status_command_semaphore:
@@ -916,7 +1034,7 @@ class ModalService:
     ) -> dict[str, Any]:
         # 생성·변환·설치 등 쓰기 작업은 호출마다 반드시 독립 실행한다. 상태 UI가
         # 사용하는 읽기 전용 명령만 동일 payload 기준 single-flight로 합친다.
-        shared_actions = {"runtime_stats", "web_status", "runtime_logs"}
+        shared_actions = {"runtime_stats", "web_status", "runtime_logs", "list_loras"}
         if action not in shared_actions:
             return await self._run_client_action_once(
                 settings,
@@ -1097,6 +1215,7 @@ class ModalService:
             "settings": settings.public_dict(),
             "auth": dict(self._auth_state),
             "install": self._install_snapshot(),
+            "lora_operation": self._lora_operation_snapshot(),
             "deployment": self._deployment_snapshot(),
             "autoscaler": dict(self._autoscaler_state),
             "probe": dict(self._probe_state),
@@ -2303,6 +2422,265 @@ class ModalService:
             "checked_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         }
 
+    async def _build_lora_catalog(
+        self,
+        config: Mapping[str, Any],
+        *,
+        include_hashes: bool,
+    ) -> dict[str, Any]:
+        async with self._model_sync_lock:
+            return await asyncio.to_thread(
+                build_local_lora_catalog,
+                config,
+                include_hashes=include_hashes,
+                hash_cache=self._model_hash_cache,
+            )
+
+    async def lora_catalog(self, *, include_remote: bool = False) -> dict[str, Any]:
+        config = self.get_config()
+        try:
+            local_payload = await self._build_lora_catalog(
+                config,
+                include_hashes=include_remote,
+            )
+        except Exception as exc:
+            print(
+                f"[MODAL_LORA] 로컬 카탈로그 조회 실패: "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            raise
+        payload: dict[str, Any] = dict(local_payload)
+        checked_at = ""
+        if include_remote:
+            settings = ModalSettings.from_mapping(config)
+            if not settings.enabled:
+                print("[MODAL_LORA] 원격 상태 조회 실패: Modal이 비활성화되어 있습니다.")
+                raise RuntimeError("Modal 사용을 켜고 설정을 저장하세요.")
+            if not await self.account_connected(settings):
+                print(
+                    "[MODAL_LORA] 원격 상태 조회 실패: "
+                    f"계정이 연결되지 않았습니다. profile={settings.profile}"
+                )
+                raise RuntimeError("Modal 계정을 먼저 연결하세요.")
+            remote_payload = await self._run_client_action(
+                settings,
+                "list_loras",
+                timeout=180,
+            )
+            payload = merge_remote_lora_catalog(local_payload, remote_payload)
+            checked_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            print(
+                "[MODAL_LORA] 로컬/원격 상태 조회 완료: "
+                f"items={len(payload.get('items') or [])}, counts={payload.get('counts')}"
+            )
+        public = public_lora_catalog(payload)
+        return {"ok": True, **public, "checked_at": checked_at}
+
+    async def start_lora_operation(
+        self,
+        action: str,
+        item_keys: list[str],
+    ) -> dict[str, Any]:
+        normalized_action = str(action or "").strip().lower()
+        if normalized_action not in {"upload", "sync", "delete"}:
+            print(f"[MODAL_LORA] 지원하지 않는 작업 요청: action={action!r}")
+            raise ValueError(f"지원하지 않는 LoRA 작업입니다: {action!r}")
+        normalized_keys = list(dict.fromkeys(str(key).strip() for key in item_keys if str(key).strip()))
+        if not normalized_keys:
+            print("[MODAL_LORA] 선택 항목이 없는 작업 요청 거부")
+            raise ValueError("LoRA 항목을 하나 이상 선택하세요.")
+        if len(normalized_keys) > 500:
+            print(f"[MODAL_LORA] 선택 항목 수 초과: count={len(normalized_keys)}")
+            raise ValueError("한 번에 관리할 수 있는 LoRA 항목은 최대 500개입니다.")
+
+        settings = ModalSettings.from_mapping(self.get_config())
+        if not settings.enabled:
+            print("[MODAL_LORA] 작업 시작 실패: Modal이 비활성화되어 있습니다.")
+            raise RuntimeError("Modal 사용을 켜고 설정을 저장하세요.")
+        async with self._deployment_action_lock:
+            if self._lora_operation_running():
+                raise RuntimeError("다른 LoRA 관리 작업이 이미 진행 중입니다.")
+            if self._install_task and not self._install_task.done():
+                raise RuntimeError("워크플로우·모델 동기화가 진행 중입니다.")
+            if self._deployment_running():
+                raise RuntimeError("Modal 앱 재배포가 진행 중입니다.")
+            if not await self.account_connected(settings):
+                raise RuntimeError("Modal 계정을 먼저 연결하세요.")
+
+            config = self.get_config()
+            local_payload, remote_payload = await asyncio.gather(
+                self._build_lora_catalog(
+                    config,
+                    include_hashes=True,
+                ),
+                self._run_client_action(
+                    settings,
+                    "list_loras",
+                    timeout=180,
+                ),
+            )
+            catalog = merge_remote_lora_catalog(local_payload, remote_payload)
+            by_key = {str(item["key"]): item for item in catalog.get("items") or []}
+            missing_keys = [key for key in normalized_keys if key not in by_key]
+            if missing_keys:
+                print(f"[MODAL_LORA] 최신 카탈로그에 없는 선택 항목: keys={missing_keys}")
+                raise ValueError("선택한 LoRA 항목이 최신 목록에 없습니다. 상태를 다시 조회하세요.")
+            selected = [by_key[key] for key in normalized_keys]
+            if normalized_action in {"upload", "sync"}:
+                remote_only = [item["name"] for item in selected if not item.get("files")]
+                if remote_only:
+                    print(
+                        f"[MODAL_LORA] 로컬 파일 없는 {normalized_action} 요청 거부: "
+                        f"items={remote_only}"
+                    )
+                    raise ValueError(
+                        "원격에만 있는 항목은 업로드하거나 동기화할 수 없습니다: "
+                        + ", ".join(remote_only)
+                    )
+
+            files_by_remote: dict[str, dict[str, Any]] = {}
+            scopes: list[str] = []
+            for item in selected:
+                scopes.extend(str(scope) for scope in item.get("scopes") or [])
+                for file_item in item.get("files") or []:
+                    remote_path = str(file_item.get("remote_path") or "")
+                    existing = files_by_remote.get(remote_path)
+                    if existing and existing.get("source_path") != file_item.get("source_path"):
+                        print(
+                            "[MODAL_LORA] 선택 항목 간 원격 경로 충돌: "
+                            f"remote={remote_path}, first={existing.get('source_path')}, "
+                            f"second={file_item.get('source_path')}"
+                        )
+                        raise ValueError(f"선택한 LoRA의 원격 경로가 충돌합니다: {remote_path}")
+                    files_by_remote[remote_path] = dict(file_item)
+            files = list(files_by_remote.values())
+            total_bytes = sum(max(0, int(item.get("size") or 0)) for item in files)
+            action_labels = {"upload": "업로드", "sync": "동기화", "delete": "원격 삭제"}
+            started_at = time.time()
+            self._lora_operation_state = {
+                "state": "running",
+                "action": normalized_action,
+                "action_label": action_labels[normalized_action],
+                "message": f"선택한 LoRA {len(selected)}개 항목의 {action_labels[normalized_action]}를 준비하고 있습니다.",
+                "item_keys": normalized_keys,
+                "item_names": [str(item["name"]) for item in selected],
+                "started_at": started_at,
+                "updated_at": started_at,
+                "progress": {
+                    "completed_files": 0,
+                    "total_files": len(files),
+                    "completed_bytes": 0,
+                    "total_bytes": total_bytes,
+                    "uploaded_files": 0,
+                    "skipped_files": 0,
+                    "deleted_files": 0,
+                    "current_item": "",
+                },
+                "logs": [],
+            }
+            self._append_lora_operation_log(
+                "system",
+                f"{action_labels[normalized_action]} 시작: 항목 {len(selected)}개 · "
+                f"현재 사용 파일 {len(files)}개 · {total_bytes / 1024 ** 3:.2f} GiB",
+            )
+            self._lora_operation_task = asyncio.create_task(
+                self._run_lora_operation(
+                    settings,
+                    normalized_action,
+                    files,
+                    list(dict.fromkeys(scopes)),
+                )
+            )
+            return self._lora_operation_snapshot()
+
+    async def _run_lora_operation(
+        self,
+        settings: ModalSettings,
+        action: str,
+        files: list[dict[str, Any]],
+        scopes: list[str],
+    ) -> None:
+        try:
+            request_payload = {
+                "action": "manage_loras",
+                "app_name": settings.deployment_name,
+                "environment": settings.environment,
+                "mode": action,
+                "lora_files": files,
+                "scopes": scopes,
+            }
+            code, stdout, stderr = await self._run_command(
+                [sys.executable, "-m", "modal_backend.client_cli"],
+                env=self._subprocess_env(settings.profile),
+                stdin_payload=request_payload,
+                timeout=86_400,
+                output_callback=self._handle_lora_client_output,
+            )
+            try:
+                response = json.loads(stdout) if stdout.strip() else {}
+            except json.JSONDecodeError as exc:
+                print(
+                    "[MODAL_LORA] 작업 응답 JSON 파싱 실패: "
+                    f"action={action}, exit_code={code}, stderr={stderr[-1000:]}"
+                )
+                traceback.print_exc()
+                raise RuntimeError("Modal LoRA 작업 응답 형식이 올바르지 않습니다.") from exc
+            if code != 0 or not response.get("ok"):
+                raise RuntimeError(
+                    str(response.get("error") or f"Modal client exit_code={code}")
+                )
+            result = response.get("result")
+            if not isinstance(result, Mapping):
+                print(
+                    "[MODAL_LORA] 작업 결과 객체 누락: "
+                    f"action={action}, type={type(result).__name__}"
+                )
+                raise RuntimeError("Modal LoRA 작업 결과 객체가 없습니다.")
+            progress = dict(self._lora_operation_state.get("progress") or {})
+            progress.update(
+                completed_files=int(progress.get("total_files") or 0),
+                completed_bytes=int(progress.get("total_bytes") or 0),
+                uploaded_files=max(0, int(result.get("uploaded") or 0)),
+                skipped_files=max(0, int(result.get("skipped") or 0)),
+                deleted_files=max(0, int(result.get("deleted_count") or 0)),
+                current_item="",
+            )
+            finished_at = time.time()
+            action_label = str(self._lora_operation_state.get("action_label") or action)
+            self._lora_operation_state.update(
+                state="completed",
+                message=(
+                    f"LoRA {action_label} 완료 · 업로드/갱신 {progress['uploaded_files']}개 · "
+                    f"동일 {progress['skipped_files']}개 · 원격 삭제 {progress['deleted_files']}개"
+                ),
+                result=dict(result),
+                progress=progress,
+                finished_at=finished_at,
+                updated_at=finished_at,
+            )
+            self._append_lora_operation_log("system", self._lora_operation_state["message"])
+            print(
+                "[MODAL_LORA] 작업 완료: "
+                f"action={action}, items={len(self._lora_operation_state.get('item_keys') or [])}, "
+                f"result={dict(result)}"
+            )
+        except Exception as exc:
+            print(f"[MODAL_LORA] 작업 실패: action={action}, error={type(exc).__name__}: {exc}")
+            traceback.print_exc()
+            finished_at = time.time()
+            self._lora_operation_state.update(
+                state="failed",
+                message=f"LoRA 작업 실패: {type(exc).__name__}: {exc}",
+                error=str(exc),
+                finished_at=finished_at,
+                updated_at=finished_at,
+            )
+            self._append_lora_operation_log("error", f"{type(exc).__name__}: {exc}")
+
+    def lora_operation_status(self) -> dict[str, Any]:
+        return self._lora_operation_snapshot()
+
     async def _read_remote_workflow(
         self,
         settings: ModalSettings,
@@ -2554,6 +2932,8 @@ class ModalService:
                 raise RuntimeError("Modal 계정을 먼저 연결하세요.")
             if self._install_task and not self._install_task.done():
                 raise RuntimeError("Modal 동기화가 이미 진행 중입니다.")
+            if self._lora_operation_running():
+                raise RuntimeError("Modal LoRA 관리 작업이 진행 중입니다.")
             if self._deployment_running():
                 raise RuntimeError("Modal 재배포가 진행 중입니다. 완료 후 동기화하세요.")
             # selected_names: SOYA_USER 파일명(확장자 포함, 예: foo.json). config 바인딩
@@ -2718,6 +3098,8 @@ class ModalService:
                 return self._deployment_snapshot()
             if self._install_task and not self._install_task.done():
                 raise RuntimeError("Modal 워크플로우 동기화가 진행 중입니다.")
+            if self._lora_operation_running():
+                raise RuntimeError("Modal LoRA 관리 작업이 진행 중입니다.")
             if self._web_task and not self._web_task.done():
                 raise RuntimeError("Modal ComfyUI 시작 또는 종료가 진행 중입니다.")
             if not await self.account_connected(settings):

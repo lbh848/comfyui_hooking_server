@@ -304,6 +304,17 @@ def _safe_remote_path(value: str) -> str:
     return path.as_posix()
 
 
+def _safe_managed_lora_path(value: str) -> str:
+    path = _safe_remote_path(value).rstrip("/")
+    if path != "SOYA_CHAR_LORA" and not path.startswith("SOYA_CHAR_LORA/"):
+        print(
+            f"[MODAL_CLIENT] 관리 대상 밖의 LoRA 경로 거부: {value!r}",
+            file=sys.stderr,
+        )
+        raise ValueError(f"SOYA_CHAR_LORA 밖의 원격 LoRA는 관리할 수 없습니다: {value!r}")
+    return path
+
+
 def _safe_workflow_name(value: str) -> str:
     raw = str(value or "").strip()
     path = PurePosixPath(raw.replace("\\", "/"))
@@ -518,6 +529,203 @@ def _sync_environment(payload: dict) -> dict:
         label="LoRA",
     )
     return {"model_sync": model_sync, "lora_sync": lora_sync}
+
+
+def _write_sync_manifest(
+    volume: modal.Volume,
+    manifest_path: str,
+    manifest: dict,
+) -> None:
+    encoded = (json.dumps(manifest, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+    try:
+        with volume.batch_upload(force=True) as batch:
+            batch.put_file(io.BytesIO(encoded), manifest_path)
+    except Exception as exc:
+        print(
+            f"[MODAL_CLIENT] LoRA 동기화 명세 저장 실패: path={manifest_path}, "
+            f"error={type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
+        traceback.print_exc(file=sys.stderr)
+        raise
+
+
+def _lora_volume(payload: dict, *, create_if_missing: bool) -> modal.Volume:
+    return modal.Volume.from_name(
+        f"{str(payload['app_name'])}-loras",
+        environment_name=str(payload["environment"]),
+        create_if_missing=create_if_missing,
+    )
+
+
+def _list_lora_volume(volume: modal.Volume) -> dict:
+    manifest = _read_sync_manifest(volume, LORA_SYNC_MANIFEST_PATH, "LoRA")
+    try:
+        entries = volume.listdir("/", recursive=True)
+    except (FileNotFoundError, modal.exception.NotFoundError):
+        entries = []
+    except Exception as exc:
+        print(
+            f"[MODAL_CLIENT] 원격 LoRA 파일 목록 조회 실패: "
+            f"error={type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
+        traceback.print_exc(file=sys.stderr)
+        raise
+
+    files: list[dict] = []
+    actual_paths: set[str] = set()
+    for entry in entries:
+        entry_type = str(getattr(getattr(entry, "type", None), "name", "") or "")
+        if entry_type and entry_type != "FILE":
+            continue
+        relative = str(getattr(entry, "path", "") or "").replace("\\", "/").lstrip("/")
+        if not relative or f"/{relative}" == LORA_SYNC_MANIFEST_PATH:
+            continue
+        try:
+            safe_path = _safe_remote_path(relative)
+        except ValueError as exc:
+            print(
+                f"[MODAL_CLIENT] 안전하지 않은 원격 LoRA 항목 제외: "
+                f"path={relative!r}, error={exc}",
+                file=sys.stderr,
+            )
+            continue
+        actual_paths.add(safe_path)
+        manifest_entry = manifest.get(safe_path)
+        if not isinstance(manifest_entry, dict):
+            manifest_entry = {}
+        files.append(
+            {
+                "path": safe_path,
+                "size": max(0, int(getattr(entry, "size", 0) or 0)),
+                "mtime": int(getattr(entry, "mtime", 0) or 0),
+                "sha256": str(manifest_entry.get("sha256") or ""),
+                "manifest_size": int(manifest_entry.get("size") or -1),
+                "tracked": bool(manifest_entry),
+            }
+        )
+    errors = [
+        {
+            "path": str(path),
+            "error": "동기화 명세에는 있으나 실제 원격 파일이 없습니다.",
+        }
+        for path in manifest
+        if path not in actual_paths
+    ]
+    files.sort(key=lambda item: str(item["path"]).casefold())
+    return {
+        "files": files,
+        "errors": errors,
+        "file_count": len(files),
+        "tracked_count": sum(1 for item in files if item["tracked"]),
+    }
+
+
+def list_loras(payload: dict) -> dict:
+    return _list_lora_volume(_lora_volume(payload, create_if_missing=True))
+
+
+def _path_in_scopes(path: str, scopes: list[str]) -> bool:
+    return any(path == scope or path.startswith(scope + "/") for scope in scopes)
+
+
+def _delete_lora_paths(
+    volume: modal.Volume,
+    paths: list[str],
+    *,
+    recursive: bool,
+) -> dict:
+    normalized = list(dict.fromkeys(_safe_managed_lora_path(path) for path in paths))
+    deleted: list[str] = []
+    for path in normalized:
+        try:
+            volume.remove_file(f"/{path}", recursive=recursive)
+            deleted.append(path)
+        except (FileNotFoundError, modal.exception.NotFoundError):
+            print(f"[MODAL_CLIENT] 원격 LoRA 삭제 대상 없음: {path}", file=sys.stderr)
+        except Exception as exc:
+            print(
+                f"[MODAL_CLIENT] 원격 LoRA 삭제 실패: path={path}, "
+                f"recursive={recursive}, error={type(exc).__name__}: {exc}",
+                file=sys.stderr,
+            )
+            traceback.print_exc(file=sys.stderr)
+            raise
+
+    manifest = _read_sync_manifest(volume, LORA_SYNC_MANIFEST_PATH, "LoRA")
+    filtered = {
+        path: value
+        for path, value in manifest.items()
+        if not any(path == target or (recursive and path.startswith(target + "/")) for target in normalized)
+    }
+    if filtered != manifest:
+        _write_sync_manifest(volume, LORA_SYNC_MANIFEST_PATH, filtered)
+    return {"deleted": deleted, "deleted_count": len(deleted)}
+
+
+def manage_loras(payload: dict) -> dict:
+    mode = str(payload.get("mode") or "").strip().lower()
+    if mode not in {"upload", "sync", "delete"}:
+        print(f"[MODAL_CLIENT] 지원하지 않는 LoRA 관리 모드: {mode!r}", file=sys.stderr)
+        raise ValueError(f"지원하지 않는 LoRA 관리 모드입니다: {mode!r}")
+    scopes = list(
+        dict.fromkeys(
+            _safe_managed_lora_path(str(scope))
+            for scope in (payload.get("scopes") or [])
+        )
+    )
+    if not scopes:
+        print("[MODAL_CLIENT] LoRA 관리 범위가 비어 있습니다.", file=sys.stderr)
+        raise ValueError("원격 LoRA 관리 범위가 비어 있습니다.")
+
+    volume = _lora_volume(payload, create_if_missing=True)
+    if mode == "delete":
+        current = _list_lora_volume(volume)
+        deleted_file_count = sum(
+            1
+            for item in current["files"]
+            if _path_in_scopes(str(item["path"]), scopes)
+        )
+        deleted = _delete_lora_paths(volume, scopes, recursive=True)
+        deleted["deleted_scopes"] = int(deleted.get("deleted_count") or 0)
+        deleted["deleted_count"] = deleted_file_count
+        return {"mode": mode, "uploaded": 0, "skipped": 0, **deleted}
+
+    files = list(payload.get("lora_files") or [])
+    if not files:
+        print(f"[MODAL_CLIENT] {mode}할 현재 사용 LoRA 파일이 없습니다.", file=sys.stderr)
+        raise ValueError("업로드할 현재 사용 LoRA 파일이 없습니다.")
+    for item in files:
+        remote_path = _safe_managed_lora_path(str(item.get("remote_path") or ""))
+        if not _path_in_scopes(remote_path, scopes):
+            print(
+                f"[MODAL_CLIENT] 선택 범위 밖의 LoRA 업로드 거부: "
+                f"remote={remote_path}, scopes={scopes}",
+                file=sys.stderr,
+            )
+            raise ValueError(f"선택한 관리 범위 밖의 LoRA 파일입니다: {remote_path}")
+    sync_result = _sync_files(
+        volume,
+        files,
+        manifest_path=LORA_SYNC_MANIFEST_PATH,
+        label="LoRA",
+    )
+    deleted = {"deleted": [], "deleted_count": 0}
+    if mode == "sync":
+        desired = {
+            _safe_managed_lora_path(str(item.get("remote_path") or ""))
+            for item in files
+        }
+        current = _list_lora_volume(volume)
+        extras = [
+            str(item["path"])
+            for item in current["files"]
+            if _path_in_scopes(str(item["path"]), scopes)
+            and str(item["path"]) not in desired
+        ]
+        deleted = _delete_lora_paths(volume, extras, recursive=False) if extras else deleted
+    return {"mode": mode, **sync_result, **deleted}
 
 
 def generate(payload: dict) -> dict:
@@ -979,24 +1187,9 @@ def runtime_logs(payload: dict) -> dict:
 
 
 def delete_lora_prefix(payload: dict) -> dict:
-    app_name = str(payload["app_name"])
-    environment = str(payload["environment"])
-    prefix = _safe_remote_path(payload["remote_prefix"]).rstrip("/")
-    volume = modal.Volume.from_name(f"{app_name}-loras", environment_name=environment)
-    try:
-        volume.remove_file(f"/{prefix}", recursive=True)
-    except modal.exception.NotFoundError:
-        pass
-    manifest = _read_sync_manifest(volume, LORA_SYNC_MANIFEST_PATH, "LoRA")
-    filtered = {
-        path: value
-        for path, value in manifest.items()
-        if path != prefix and not path.startswith(prefix + "/")
-    }
-    if filtered != manifest:
-        with volume.batch_upload(force=True) as batch:
-            encoded = (json.dumps(filtered, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
-            batch.put_file(io.BytesIO(encoded), LORA_SYNC_MANIFEST_PATH)
+    prefix = _safe_managed_lora_path(payload["remote_prefix"])
+    volume = _lora_volume(payload, create_if_missing=True)
+    _delete_lora_paths(volume, [prefix], recursive=True)
     return {"deleted_prefix": prefix}
 
 
@@ -1026,6 +1219,10 @@ def main() -> int:
             result = web_status(payload)
         elif action == "runtime_logs":
             result = runtime_logs(payload)
+        elif action == "list_loras":
+            result = list_loras(payload)
+        elif action == "manage_loras":
+            result = manage_loras(payload)
         elif action == "delete_lora_prefix":
             result = delete_lora_prefix(payload)
         else:

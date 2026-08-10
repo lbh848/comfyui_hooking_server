@@ -5307,6 +5307,394 @@
             opacity: .45;
             cursor: not-allowed;
         }
+        .modal-lora-sync-dialog {
+            width: min(1120px, calc(100vw - 32px));
+            height: min(820px, calc(100vh - 32px));
+            max-height: none;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        .modal-lora-sync-dialog .modal-action-head {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 18px;
+            background:
+                radial-gradient(circle at 10% 0, rgba(94, 211, 169, .1), transparent 34%),
+                linear-gradient(110deg, rgba(141, 112, 255, .08), transparent 48%);
+        }
+        .modal-lora-title-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .modal-lora-cloud-mark {
+            display: inline-grid;
+            width: 34px;
+            height: 34px;
+            flex: 0 0 34px;
+            place-items: center;
+            border: 1px solid color-mix(in srgb, #73dbb0 48%, var(--border));
+            border-radius: 11px;
+            color: #91e8c4;
+            background: color-mix(in srgb, #4fc995 12%, var(--surface2));
+            font-size: 1rem;
+        }
+        .modal-lora-title-copy small {
+            display: block;
+            margin-bottom: 3px;
+            color: #91e8c4;
+            font-size: .59rem;
+            font-weight: 800;
+            letter-spacing: .11em;
+        }
+        .modal-lora-close {
+            width: 34px;
+            height: 34px;
+            flex: 0 0 34px;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            color: var(--text2);
+            background: color-mix(in srgb, var(--surface2) 78%, transparent);
+            cursor: pointer;
+            font-size: 1.15rem;
+        }
+        .modal-lora-sync-body {
+            display: flex;
+            flex: 1 1 auto;
+            min-height: 0;
+            flex-direction: column;
+            gap: 12px;
+            padding: 15px 18px 16px;
+            overflow: hidden;
+        }
+        .modal-lora-guide {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 8px;
+        }
+        .modal-lora-guide > div {
+            padding: 9px 11px;
+            border: 1px solid var(--border);
+            border-radius: 9px;
+            color: var(--text2);
+            background: color-mix(in srgb, var(--surface2) 38%, transparent);
+            font-size: .67rem;
+            line-height: 1.45;
+        }
+        .modal-lora-guide strong { color: var(--text); }
+        .modal-lora-summary {
+            display: grid;
+            grid-template-columns: repeat(5, minmax(0, 1fr));
+            gap: 8px;
+        }
+        .modal-lora-summary button {
+            position: relative;
+            min-width: 0;
+            padding: 10px 12px 9px 15px;
+            overflow: hidden;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            color: var(--text2);
+            background: color-mix(in srgb, var(--surface2) 48%, transparent);
+            cursor: pointer;
+            text-align: left;
+        }
+        .modal-lora-summary button::before {
+            position: absolute;
+            inset: 0 auto 0 0;
+            width: 3px;
+            background: var(--lora-state-color, #8d70ff);
+            content: '';
+            opacity: .72;
+        }
+        .modal-lora-summary button.active {
+            border-color: color-mix(in srgb, var(--lora-state-color, #8d70ff) 60%, var(--border));
+            color: var(--text);
+            background: color-mix(in srgb, var(--lora-state-color, #8d70ff) 10%, var(--surface2));
+        }
+        .modal-lora-summary button span {
+            display: block;
+            overflow: hidden;
+            font-size: .61rem;
+            font-weight: 700;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .modal-lora-summary button strong {
+            display: block;
+            margin-top: 3px;
+            color: var(--text);
+            font-size: 1rem;
+        }
+        .modal-lora-summary [data-lora-state="synced"] { --lora-state-color: #55d69e; }
+        .modal-lora-summary [data-lora-state="update"] { --lora-state-color: #f0bd5b; }
+        .modal-lora-summary [data-lora-state="local_only"] { --lora-state-color: #65a9ff; }
+        .modal-lora-summary [data-lora-state="remote_only"] { --lora-state-color: #ff7787; }
+        .modal-lora-toolbar {
+            display: flex;
+            align-items: center;
+            gap: 9px;
+            min-width: 0;
+        }
+        .modal-lora-tabs {
+            display: inline-flex;
+            flex: 0 0 auto;
+            padding: 3px;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            background: color-mix(in srgb, var(--surface2) 68%, transparent);
+        }
+        .modal-lora-tabs button {
+            min-width: 72px;
+            padding: 7px 10px;
+            border: 0;
+            border-radius: 7px;
+            color: var(--text2);
+            background: transparent;
+            cursor: pointer;
+            font-size: .68rem;
+            font-weight: 750;
+        }
+        .modal-lora-tabs button.active {
+            color: #fff;
+            background: linear-gradient(135deg, #7057df, #8d70ff);
+            box-shadow: 0 3px 10px rgba(70, 52, 160, .32);
+        }
+        .modal-lora-search {
+            flex: 1 1 220px;
+            min-width: 120px;
+            height: 36px;
+            box-sizing: border-box;
+            border: 1px solid var(--border);
+            border-radius: 9px;
+            outline: none;
+            padding: 0 11px;
+            color: var(--text);
+            background: color-mix(in srgb, var(--surface2) 46%, var(--surface));
+            font-size: .72rem;
+        }
+        .modal-lora-search:focus {
+            border-color: #8d70ff;
+            box-shadow: 0 0 0 3px rgba(141, 112, 255, .11);
+        }
+        .modal-lora-status-btn {
+            min-height: 36px;
+            flex: 0 0 auto;
+            padding: 7px 11px;
+            border: 1px solid color-mix(in srgb, #73dbb0 45%, var(--border));
+            border-radius: 9px;
+            color: #9ee9ca;
+            background: color-mix(in srgb, #4fc995 9%, var(--surface2));
+            cursor: pointer;
+            font-size: .68rem;
+            font-weight: 750;
+        }
+        .modal-lora-status-btn:disabled { cursor: wait; opacity: .55; }
+        .modal-lora-selectbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            color: var(--text2);
+            font-size: .66rem;
+        }
+        .modal-lora-selectbar-actions { display: flex; gap: 7px; }
+        .modal-lora-selectbar button {
+            padding: 4px 8px;
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            color: var(--text2);
+            background: var(--surface2);
+            cursor: pointer;
+            font-size: .62rem;
+        }
+        .modal-lora-catalog {
+            flex: 1 1 auto;
+            min-height: 170px;
+            overflow: auto;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            background: color-mix(in srgb, var(--bg) 45%, var(--surface));
+        }
+        .modal-lora-empty {
+            display: grid;
+            min-height: 170px;
+            padding: 22px;
+            place-items: center;
+            color: var(--text2);
+            font-size: .74rem;
+            text-align: center;
+        }
+        .modal-lora-item {
+            --lora-state-color: #8d70ff;
+            display: grid;
+            grid-template-columns: auto minmax(0, 1fr) auto;
+            gap: 11px;
+            align-items: center;
+            padding: 11px 12px;
+            border-bottom: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+            background: color-mix(in srgb, var(--surface) 82%, transparent);
+            transition: background .15s ease, border-color .15s ease;
+        }
+        .modal-lora-item:last-child { border-bottom: 0; }
+        .modal-lora-item:hover { background: color-mix(in srgb, var(--surface2) 52%, var(--surface)); }
+        .modal-lora-item.selected {
+            background: color-mix(in srgb, #8d70ff 8%, var(--surface));
+            box-shadow: inset 3px 0 0 #8d70ff;
+        }
+        .modal-lora-item.state-synced { --lora-state-color: #55d69e; }
+        .modal-lora-item.state-update { --lora-state-color: #f0bd5b; }
+        .modal-lora-item.state-local_only { --lora-state-color: #65a9ff; }
+        .modal-lora-item.state-remote_only { --lora-state-color: #ff7787; }
+        .modal-lora-check {
+            width: 17px;
+            height: 17px;
+            accent-color: #8d70ff;
+        }
+        .modal-lora-item-copy { min-width: 0; }
+        .modal-lora-item-main {
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            min-width: 0;
+        }
+        .modal-lora-item-main strong {
+            min-width: 0;
+            overflow: hidden;
+            color: var(--text);
+            font-size: .76rem;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .modal-lora-unit-badge {
+            flex: 0 0 auto;
+            padding: 2px 6px;
+            border: 1px solid color-mix(in srgb, #8d70ff 50%, var(--border));
+            border-radius: 999px;
+            color: #c5baff;
+            background: color-mix(in srgb, #8d70ff 9%, transparent);
+            font-size: .54rem;
+            font-weight: 800;
+        }
+        .modal-lora-item-meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px 10px;
+            margin-top: 5px;
+            color: var(--text2);
+            font-size: .61rem;
+        }
+        .modal-lora-state {
+            flex: 0 0 auto;
+            padding: 4px 8px;
+            border: 1px solid color-mix(in srgb, var(--lora-state-color) 55%, var(--border));
+            border-radius: 999px;
+            color: color-mix(in srgb, var(--lora-state-color) 84%, #fff);
+            background: color-mix(in srgb, var(--lora-state-color) 9%, transparent);
+            font-size: .57rem;
+            font-weight: 800;
+            white-space: nowrap;
+        }
+        .modal-lora-row-actions {
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 5px;
+        }
+        .modal-lora-row-actions button {
+            padding: 5px 7px;
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            color: var(--text2);
+            background: color-mix(in srgb, var(--surface2) 70%, transparent);
+            cursor: pointer;
+            font-size: .58rem;
+            font-weight: 700;
+        }
+        .modal-lora-row-actions button:hover:not(:disabled) {
+            border-color: #8d70ff;
+            color: var(--text);
+        }
+        .modal-lora-row-actions button.danger { color: #ff9ba7; }
+        .modal-lora-row-actions button:disabled { cursor: default; opacity: .32; }
+        .modal-lora-operation {
+            display: grid;
+            gap: 7px;
+            padding: 10px 11px;
+            border: 1px solid color-mix(in srgb, #8d70ff 38%, var(--border));
+            border-radius: 10px;
+            background: color-mix(in srgb, #8d70ff 6%, var(--surface2));
+        }
+        .modal-lora-operation[hidden] { display: none; }
+        .modal-lora-operation-head {
+            display: flex;
+            justify-content: space-between;
+            gap: 10px;
+            color: var(--text2);
+            font-size: .63rem;
+        }
+        .modal-lora-operation-head strong { color: var(--text); font-size: .68rem; }
+        .modal-lora-operation-track {
+            height: 7px;
+            overflow: hidden;
+            border-radius: 999px;
+            background: color-mix(in srgb, var(--surface3) 75%, #000);
+        }
+        .modal-lora-operation-fill {
+            width: 0;
+            height: 100%;
+            border-radius: inherit;
+            background: linear-gradient(90deg, #7057df, #73dbb0);
+            transition: width .2s ease;
+        }
+        .modal-lora-operation-log {
+            max-height: 62px;
+            margin: 0;
+            overflow: auto;
+            color: #bfc7d6;
+            white-space: pre-wrap;
+            font: 9px/1.4 Consolas, "Cascadia Mono", monospace;
+        }
+        .modal-lora-footer {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            padding-top: 1px;
+        }
+        .modal-lora-footer-note {
+            min-width: 0;
+            overflow: hidden;
+            color: var(--text2);
+            font-size: .63rem;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .modal-lora-footer-actions { display: flex; flex: 0 0 auto; gap: 7px; }
+        .modal-lora-footer-actions button {
+            min-height: 34px;
+            padding: 7px 11px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text);
+            background: var(--surface2);
+            cursor: pointer;
+            font-size: .67rem;
+            font-weight: 750;
+        }
+        .modal-lora-footer-actions button.primary {
+            border-color: #8d70ff;
+            color: #fff;
+            background: linear-gradient(135deg, #7057df, #8d70ff);
+        }
+        .modal-lora-footer-actions button.danger {
+            border-color: color-mix(in srgb, #ff6b78 52%, var(--border));
+            color: #ff9ba7;
+            background: color-mix(in srgb, #ff6b78 8%, var(--surface2));
+        }
+        .modal-lora-footer-actions button:disabled { cursor: default; opacity: .35; }
         #modal-operation-lock-modal { z-index: 22100; }
         .modal-operation-main {
             display: grid;
@@ -5365,6 +5753,19 @@
             .modal-redeploy-options { grid-template-columns: 1fr; }
             .modal-action-head,
             .modal-action-body { padding-left: 16px; padding-right: 16px; }
+            .modal-lora-sync-dialog { width: calc(100vw - 16px); height: calc(100vh - 16px); }
+            .modal-lora-sync-body { padding: 12px; overflow-y: auto; }
+            .modal-lora-guide { grid-template-columns: 1fr; }
+            .modal-lora-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .modal-lora-toolbar { align-items: stretch; flex-wrap: wrap; }
+            .modal-lora-tabs { width: 100%; overflow-x: auto; }
+            .modal-lora-tabs button { flex: 1 0 68px; }
+            .modal-lora-search { flex-basis: 160px; }
+            .modal-lora-catalog { flex: 0 0 240px; min-height: 200px; }
+            .modal-lora-item { grid-template-columns: auto minmax(0, 1fr); }
+            .modal-lora-row-actions { grid-column: 2; justify-content: flex-start; }
+            .modal-lora-footer { align-items: stretch; flex-direction: column; }
+            .modal-lora-footer-actions { display: grid; grid-template-columns: repeat(3, 1fr); }
         }
         .comfy-installer-run-card {
             border-color: color-mix(in srgb, var(--accent) 28%, var(--border));
@@ -17921,6 +18322,80 @@
         </div>
     </div>
 
+    <div class="modal-action-overlay" id="modal-lora-sync-modal" hidden
+         role="dialog" aria-modal="true" aria-labelledby="modal-lora-sync-title">
+        <div class="modal-action-dialog modal-lora-sync-dialog" tabindex="-1">
+            <div class="modal-action-head">
+                <div>
+                    <div class="modal-lora-title-row">
+                        <span class="modal-lora-cloud-mark" aria-hidden="true">☁</span>
+                        <div class="modal-lora-title-copy">
+                            <small>MODAL VOLUME</small>
+                            <h2 id="modal-lora-sync-title">LoRA 동기화</h2>
+                        </div>
+                    </div>
+                    <p>현재 실제로 선택 가능한 봇·에셋·인스턴스·그림체 LoRA를 원격과 비교하고 관리합니다.</p>
+                </div>
+                <button type="button" class="modal-lora-close" aria-label="LoRA 동기화 닫기"
+                        onclick="modalCloseLoraSync()">&times;</button>
+            </div>
+            <div class="modal-lora-sync-body">
+                <div class="modal-lora-guide">
+                    <div><strong>업로드</strong> · 현재 사용본을 추가하거나 변경된 파일만 갱신합니다. 원격 잔여 파일은 유지합니다.</div>
+                    <div><strong>동기화</strong> · 업로드 성공 후 현재 구성에서 빠진 원격 파일을 정리합니다. 봇은 봇 전체가 한 단위입니다.</div>
+                </div>
+                <div class="modal-lora-summary" id="modal-lora-summary" aria-label="LoRA 동기화 상태 필터">
+                    <button type="button" class="active" data-lora-state="all" onclick="modalLoraSetStateFilter('all')"><span>전체</span><strong id="modal-lora-count-all">0</strong></button>
+                    <button type="button" data-lora-state="synced" onclick="modalLoraSetStateFilter('synced')"><span>동기화 완료</span><strong id="modal-lora-count-synced">0</strong></button>
+                    <button type="button" data-lora-state="update" onclick="modalLoraSetStateFilter('update')"><span>업데이트 필요</span><strong id="modal-lora-count-update">0</strong></button>
+                    <button type="button" data-lora-state="local_only" onclick="modalLoraSetStateFilter('local_only')"><span>로컬만</span><strong id="modal-lora-count-local_only">0</strong></button>
+                    <button type="button" data-lora-state="remote_only" onclick="modalLoraSetStateFilter('remote_only')"><span>원격만</span><strong id="modal-lora-count-remote_only">0</strong></button>
+                </div>
+                <div class="modal-lora-toolbar">
+                    <div class="modal-lora-tabs" role="tablist" aria-label="LoRA 종류">
+                        <button type="button" class="active" data-lora-category="bot" onclick="modalLoraSetCategory('bot')">봇 <span id="modal-lora-tab-count-bot">0</span></button>
+                        <button type="button" data-lora-category="asset" onclick="modalLoraSetCategory('asset')">에셋 <span id="modal-lora-tab-count-asset">0</span></button>
+                        <button type="button" data-lora-category="instance" onclick="modalLoraSetCategory('instance')">인스턴스 <span id="modal-lora-tab-count-instance">0</span></button>
+                        <button type="button" data-lora-category="style" onclick="modalLoraSetCategory('style')">그림체 <span id="modal-lora-tab-count-style">0</span></button>
+                    </div>
+                    <input type="search" class="modal-lora-search" id="modal-lora-search"
+                           autocomplete="off" placeholder="이름, 캐릭터, 트리거 검색..."
+                           oninput="modalRenderLoraCatalog()">
+                    <button type="button" class="modal-lora-status-btn" id="modal-lora-status-query-btn"
+                            onclick="modalLoraQueryStatus()">↻ 상태 조회</button>
+                </div>
+                <div class="modal-lora-selectbar">
+                    <span id="modal-lora-query-note">로컬 현재 사용본을 불러오는 중입니다.</span>
+                    <span class="modal-lora-selectbar-actions">
+                        <button type="button" onclick="modalLoraSelectVisible()">현재 목록 전체 선택</button>
+                        <button type="button" onclick="modalLoraClearSelection()">선택 해제</button>
+                    </span>
+                </div>
+                <div class="modal-lora-catalog" id="modal-lora-catalog" aria-live="polite">
+                    <div class="modal-lora-empty">LoRA 목록을 불러오는 중입니다.</div>
+                </div>
+                <div class="modal-lora-operation" id="modal-lora-operation" hidden>
+                    <div class="modal-lora-operation-head">
+                        <strong id="modal-lora-operation-title">LoRA 작업 준비</strong>
+                        <span id="modal-lora-operation-count">0 / 0</span>
+                    </div>
+                    <div class="modal-lora-operation-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                        <div class="modal-lora-operation-fill" id="modal-lora-operation-fill"></div>
+                    </div>
+                    <pre class="modal-lora-operation-log" id="modal-lora-operation-log">작업 로그를 기다리고 있습니다.</pre>
+                </div>
+                <div class="modal-lora-footer">
+                    <div class="modal-lora-footer-note" id="modal-lora-selection-note">선택 없음 · 원격 삭제는 로컬 파일을 건드리지 않습니다.</div>
+                    <div class="modal-lora-footer-actions">
+                        <button type="button" id="modal-lora-upload-btn" onclick="modalLoraRunAction('upload')" disabled>선택 업로드</button>
+                        <button type="button" class="primary" id="modal-lora-sync-btn" onclick="modalLoraRunAction('sync')" disabled>선택 동기화</button>
+                        <button type="button" class="danger" id="modal-lora-delete-btn" onclick="modalLoraRunAction('delete')" disabled>원격 삭제</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div class="modal-action-overlay" id="modal-operation-lock-modal" hidden
          role="dialog" aria-modal="true" aria-labelledby="modal-operation-lock-title">
         <div class="modal-action-dialog" tabindex="-1">
@@ -18275,6 +18750,7 @@
                                 </div>
                                 <div class="comfy-installer-actions" style="margin-top:10px;">
                                     <button type="button" class="comfy-installer-btn primary" id="modal-installer-start-btn" onclick="modalInstallerStart()">선택 워크플로우·모델 동기화</button>
+                                    <button type="button" class="comfy-installer-btn" id="modal-lora-sync-open-btn" onclick="modalOpenLoraSync()">LoRA 동기화</button>
                                     <button type="button" class="comfy-installer-btn" id="modal-runtime-workflow-query-btn" onclick="modalRuntimeQueryWorkflows()">워크플로우 동기화 조회</button>
                                     <button type="button" class="comfy-installer-btn" id="modal-runtime-redeploy-btn" onclick="modalRuntimeRedeploy()">앱·Custom Node 재배포</button>
                                     <button type="button" class="comfy-installer-btn" onclick="modalInstallerLoadCatalog()">목록 새로고침</button>
@@ -26382,6 +26858,15 @@
         let modalRedeployInventoryState = 'idle';
         let modalRedeployInventoryText = '';
         let modalRedeployPreviewRequestId = 0;
+        let modalLoraCatalog = [];
+        let modalLoraSelectedKeys = new Set();
+        let modalLoraActiveCategory = 'bot';
+        let modalLoraStateFilter = 'all';
+        let modalLoraRemoteLoaded = false;
+        let modalLoraCheckedAt = '';
+        let modalLoraOperationState = {state: 'idle'};
+        let modalLoraOperationPollTimer = null;
+        let modalLoraOperationWasRunning = false;
 
         function modalOperationLockActive() {
             const overlay = document.getElementById('modal-operation-lock-modal');
@@ -26393,14 +26878,24 @@
             return !!overlay && !overlay.hidden;
         }
 
+        function modalLoraSyncActive() {
+            const overlay = document.getElementById('modal-lora-sync-modal');
+            return !!overlay && !overlay.hidden;
+        }
+
         function modalTrapActionFocus(event) {
             const overlay = modalOperationLockActive()
                 ? document.getElementById('modal-operation-lock-modal')
                 : (modalRedeployChoiceActive()
                     ? document.getElementById('modal-redeploy-choice-modal')
-                    : null);
+                    : (modalLoraSyncActive()
+                        ? document.getElementById('modal-lora-sync-modal')
+                        : null));
             if (!overlay) return false;
-            if (event.key === 'Escape') return true;
+            if (event.key === 'Escape') {
+                if (overlay.id === 'modal-lora-sync-modal') modalCloseLoraSync();
+                return true;
+            }
             if (event.key !== 'Tab') return false;
             const focusable = Array.from(overlay.querySelectorAll(
                 'button:not([disabled]):not([hidden]), input:not([disabled]):not([hidden])',
@@ -26426,7 +26921,444 @@
                 return;
             }
             if (locked) settings.setAttribute('inert', '');
-            else settings.removeAttribute('inert');
+            else if (!modalOperationLockActive() && !modalRedeployChoiceActive() && !modalLoraSyncActive()) {
+                settings.removeAttribute('inert');
+            }
+        }
+
+        function modalLoraStateMeta(state, item = null) {
+            const states = {
+                unchecked: {label: '조회 필요', detail: '상태 조회를 실행하면 원격과 비교합니다.'},
+                synced: {label: '동기화 완료', detail: '현재 사용본과 원격 파일이 같습니다.'},
+                update: {label: '업데이트 필요', detail: '누락·변경 또는 원격 잔여 파일이 있습니다.'},
+                local_only: {label: '로컬만', detail: '현재 사용본이 원격에 없습니다.'},
+                remote_only: {label: '원격만', detail: '로컬 현재 사용본에서 찾을 수 없는 원격 항목입니다.'},
+            };
+            const meta = states[String(state || '')] || states.unchecked;
+            if (state !== 'update' || !item) return meta;
+            const parts = [];
+            if (Number(item.missing_count || 0)) parts.push(`누락 ${Number(item.missing_count)}개`);
+            if (Number(item.different_count || 0)) parts.push(`변경 ${Number(item.different_count)}개`);
+            if (Number(item.extra_count || 0)) parts.push(`원격 잔여 ${Number(item.extra_count)}개`);
+            return {...meta, detail: parts.length ? parts.join(' · ') : meta.detail};
+        }
+
+        function modalLoraItemByKey(key) {
+            return modalLoraCatalog.find(item => String(item.key) === String(key));
+        }
+
+        function modalLoraOperationRunning() {
+            return String(modalLoraOperationState?.state || '') === 'running';
+        }
+
+        function modalLoraVisibleItems() {
+            const query = (document.getElementById('modal-lora-search')?.value || '').trim().toLowerCase();
+            return modalLoraCatalog.filter(item => {
+                if (String(item.category) !== modalLoraActiveCategory) return false;
+                if (modalLoraStateFilter !== 'all' && String(item.sync_state) !== modalLoraStateFilter) return false;
+                if (!query) return true;
+                return [item.name, item.subtitle, item.detail]
+                    .some(value => String(value || '').toLowerCase().includes(query));
+            });
+        }
+
+        function modalLoraUpdateSummary() {
+            const states = ['all', 'synced', 'update', 'local_only', 'remote_only'];
+            const counts = {all: modalLoraCatalog.length, synced: 0, update: 0, local_only: 0, remote_only: 0};
+            if (modalLoraRemoteLoaded) {
+                modalLoraCatalog.forEach(item => {
+                    const state = String(item.sync_state || '');
+                    if (Object.prototype.hasOwnProperty.call(counts, state)) counts[state] += 1;
+                });
+            }
+            if (modalLoraStateFilter !== 'all' && !modalLoraRemoteLoaded) modalLoraStateFilter = 'all';
+            states.forEach(state => {
+                const count = document.getElementById(`modal-lora-count-${state}`);
+                if (count) count.textContent = String(counts[state]);
+            });
+            document.querySelectorAll('#modal-lora-summary [data-lora-state]').forEach(button => {
+                const active = button.dataset.loraState === modalLoraStateFilter;
+                button.classList.toggle('active', active);
+                button.setAttribute('aria-pressed', active ? 'true' : 'false');
+            });
+            for (const category of ['bot', 'asset', 'instance', 'style']) {
+                const count = modalLoraCatalog.filter(item => String(item.category) === category).length;
+                const element = document.getElementById(`modal-lora-tab-count-${category}`);
+                if (element) element.textContent = String(count);
+            }
+        }
+
+        function modalLoraUpdateControls() {
+            const selected = Array.from(modalLoraSelectedKeys)
+                .map(modalLoraItemByKey)
+                .filter(Boolean);
+            const busy = modalLoraOperationRunning();
+            const hasSelection = selected.length > 0;
+            const everyLocal = hasSelection && selected.every(item => Number(item.file_count || 0) > 0);
+            const anyRemote = selected.some(item => Number(item.remote_file_count || 0) > 0);
+            const upload = document.getElementById('modal-lora-upload-btn');
+            const sync = document.getElementById('modal-lora-sync-btn');
+            const remove = document.getElementById('modal-lora-delete-btn');
+            if (upload) upload.disabled = busy || !everyLocal;
+            if (sync) sync.disabled = busy || !everyLocal;
+            if (remove) remove.disabled = busy || !modalLoraRemoteLoaded || !anyRemote;
+            const fileCount = selected.reduce((sum, item) => sum + Number(item.file_count || 0), 0);
+            const bytes = selected.reduce((sum, item) => sum + Number(item.size_bytes || 0), 0);
+            const botCount = selected.filter(item => item.category === 'bot').length;
+            const note = document.getElementById('modal-lora-selection-note');
+            if (note) {
+                note.textContent = hasSelection
+                    ? `${selected.length}개 항목${botCount ? ` · 봇 ${botCount}개 전체 단위` : ''} · 현재 사용 파일 ${fileCount}개 · ${comfyInstallerFormatBytes(bytes)}`
+                    : '선택 없음 · 원격 삭제는 로컬 파일을 건드리지 않습니다.';
+            }
+        }
+
+        function modalRenderLoraCatalog() {
+            const container = document.getElementById('modal-lora-catalog');
+            if (!container) return;
+            modalLoraUpdateSummary();
+            const visible = modalLoraVisibleItems();
+            container.replaceChildren();
+            if (!visible.length) {
+                const empty = document.createElement('div');
+                empty.className = 'modal-lora-empty';
+                empty.textContent = modalLoraCatalog.length
+                    ? '현재 탭·검색·상태 조건에 맞는 LoRA가 없습니다.'
+                    : '현재 사용할 수 있는 LoRA가 없습니다. 각 LoRA 관리 화면에서 대표 또는 최신 결과를 확인하세요.';
+                container.append(empty);
+            }
+            const busy = modalLoraOperationRunning();
+            for (const item of visible) {
+                const row = document.createElement('div');
+                const state = String(item.sync_state || 'unchecked');
+                row.className = `modal-lora-item state-${state}`;
+                if (modalLoraSelectedKeys.has(item.key)) row.classList.add('selected');
+
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.className = 'modal-lora-check';
+                checkbox.checked = modalLoraSelectedKeys.has(item.key);
+                checkbox.disabled = busy;
+                checkbox.setAttribute('aria-label', `${item.name} 선택`);
+                checkbox.addEventListener('change', () => {
+                    if (checkbox.checked) modalLoraSelectedKeys.add(item.key);
+                    else modalLoraSelectedKeys.delete(item.key);
+                    modalRenderLoraCatalog();
+                });
+
+                const copy = document.createElement('div');
+                copy.className = 'modal-lora-item-copy';
+                copy.addEventListener('click', event => {
+                    if (busy || event.target.closest('button,input')) return;
+                    if (modalLoraSelectedKeys.has(item.key)) modalLoraSelectedKeys.delete(item.key);
+                    else modalLoraSelectedKeys.add(item.key);
+                    modalRenderLoraCatalog();
+                });
+                const main = document.createElement('div');
+                main.className = 'modal-lora-item-main';
+                const name = document.createElement('strong');
+                name.textContent = item.name || '이름 없음';
+                main.append(name);
+                if (item.category === 'bot') {
+                    const unit = document.createElement('span');
+                    unit.className = 'modal-lora-unit-badge';
+                    unit.textContent = '봇 전체';
+                    main.append(unit);
+                }
+                const meta = modalLoraStateMeta(state, item);
+                const badge = document.createElement('span');
+                badge.className = 'modal-lora-state';
+                badge.textContent = meta.label;
+                badge.title = meta.detail;
+                main.append(badge);
+                const detail = document.createElement('div');
+                detail.className = 'modal-lora-item-meta';
+                const details = [
+                    item.subtitle,
+                    `로컬 ${Number(item.file_count || 0)}개 · ${comfyInstallerFormatBytes(Number(item.size_bytes || 0))}`,
+                ];
+                if (modalLoraRemoteLoaded) details.push(`원격 ${Number(item.remote_file_count || 0)}개 · ${comfyInstallerFormatBytes(Number(item.remote_size_bytes || 0))}`);
+                if (state === 'update') details.push(meta.detail);
+                if (item.detail) details.push(item.detail);
+                details.filter(Boolean).forEach(text => {
+                    const span = document.createElement('span');
+                    span.textContent = String(text);
+                    detail.append(span);
+                });
+                copy.append(main, detail);
+
+                const actions = document.createElement('div');
+                actions.className = 'modal-lora-row-actions';
+                const hasLocal = Number(item.file_count || 0) > 0;
+                const hasRemote = modalLoraRemoteLoaded && Number(item.remote_file_count || 0) > 0;
+                for (const [action, label] of [['upload', '업로드'], ['sync', '동기화'], ['delete', '원격 삭제']]) {
+                    const button = document.createElement('button');
+                    button.type = 'button';
+                    button.textContent = label;
+                    if (action === 'delete') button.classList.add('danger');
+                    button.disabled = busy || (action === 'delete' ? !hasRemote : !hasLocal);
+                    button.addEventListener('click', event => {
+                        event.stopPropagation();
+                        void modalLoraRunAction(action, [item.key]);
+                    });
+                    actions.append(button);
+                }
+                row.append(checkbox, copy, actions);
+                container.append(row);
+            }
+            modalLoraUpdateControls();
+        }
+
+        function modalLoraSetCategory(category) {
+            if (!['bot', 'asset', 'instance', 'style'].includes(category)) {
+                console.error('[MODAL_LORA] 알 수 없는 카테고리:', category);
+                return;
+            }
+            modalLoraActiveCategory = category;
+            document.querySelectorAll('#modal-lora-sync-modal [data-lora-category]').forEach(button => {
+                const active = button.dataset.loraCategory === category;
+                button.classList.toggle('active', active);
+                button.setAttribute('aria-selected', active ? 'true' : 'false');
+            });
+            modalRenderLoraCatalog();
+        }
+
+        function modalLoraSetStateFilter(state) {
+            if (!['all', 'synced', 'update', 'local_only', 'remote_only'].includes(state)) {
+                console.error('[MODAL_LORA] 알 수 없는 상태 필터:', state);
+                return;
+            }
+            if (state !== 'all' && !modalLoraRemoteLoaded) {
+                showToast('먼저 Modal LoRA 상태를 조회하세요', 'warning');
+                return;
+            }
+            modalLoraStateFilter = state;
+            modalRenderLoraCatalog();
+        }
+
+        function modalLoraSelectVisible() {
+            if (modalLoraOperationRunning()) return;
+            modalLoraVisibleItems().forEach(item => modalLoraSelectedKeys.add(item.key));
+            modalRenderLoraCatalog();
+        }
+
+        function modalLoraClearSelection() {
+            if (modalLoraOperationRunning()) return;
+            modalLoraSelectedKeys.clear();
+            modalRenderLoraCatalog();
+        }
+
+        async function modalLoraLoadCatalog() {
+            const note = document.getElementById('modal-lora-query-note');
+            if (note) note.textContent = '로컬 현재 사용본을 확인하고 있습니다.';
+            try {
+                const data = await fetchJSON('/api/modal/loras');
+                modalLoraCatalog = Array.isArray(data.items) ? data.items : [];
+                modalLoraRemoteLoaded = false;
+                modalLoraCheckedAt = '';
+                modalLoraStateFilter = 'all';
+                const present = new Set(modalLoraCatalog.map(item => item.key));
+                for (const key of Array.from(modalLoraSelectedKeys)) {
+                    if (!present.has(key)) modalLoraSelectedKeys.delete(key);
+                }
+                const errors = Array.isArray(data.errors) ? data.errors : [];
+                if (errors.length) console.error('[MODAL_LORA] 일부 로컬 카탈로그 실패:', errors);
+                if (note) note.textContent = `현재 사용본 ${modalLoraCatalog.length}개 항목 · 원격 상태를 조회하고 있습니다.`;
+                modalRenderLoraCatalog();
+            } catch (error) {
+                console.error('[MODAL_LORA] 로컬 카탈로그 조회 실패:', error);
+                if (note) note.textContent = '로컬 목록 조회 실패: ' + (error.message || error);
+                const container = document.getElementById('modal-lora-catalog');
+                if (container) container.innerHTML = '<div class="modal-lora-empty">LoRA 목록을 불러오지 못했습니다. 서버 로그를 확인하세요.</div>';
+            }
+        }
+
+        async function modalLoraQueryStatus(showResult = true) {
+            const button = document.getElementById('modal-lora-status-query-btn');
+            const note = document.getElementById('modal-lora-query-note');
+            if (button) button.disabled = true;
+            if (note) note.textContent = '현재 사용 LoRA의 SHA-256과 Modal Volume 명세를 비교하고 있습니다.';
+            try {
+                const data = await fetchJSON('/api/modal/loras?remote=1');
+                modalLoraCatalog = Array.isArray(data.items) ? data.items : [];
+                modalLoraRemoteLoaded = true;
+                modalLoraCheckedAt = String(data.checked_at || '');
+                const present = new Set(modalLoraCatalog.map(item => item.key));
+                for (const key of Array.from(modalLoraSelectedKeys)) {
+                    if (!present.has(key)) modalLoraSelectedKeys.delete(key);
+                }
+                const checked = modalLoraCheckedAt
+                    ? new Date(modalLoraCheckedAt).toLocaleTimeString('ko-KR', {hour12: false})
+                    : '방금';
+                const counts = data.counts || {};
+                if (note) note.textContent = `${checked} 조회 · 완료 ${Number(counts.synced || 0)} · 업데이트 ${Number(counts.update || 0)} · 로컬만 ${Number(counts.local_only || 0)} · 원격만 ${Number(counts.remote_only || 0)}`;
+                const remoteErrors = Array.isArray(data.remote_errors) ? data.remote_errors : [];
+                if (remoteErrors.length) console.error('[MODAL_LORA] 원격 명세 경고:', remoteErrors);
+                modalRenderLoraCatalog();
+                if (showResult) showToast('Modal LoRA 상태를 조회했습니다', 'success');
+            } catch (error) {
+                console.error('[MODAL_LORA] 원격 상태 조회 실패:', error);
+                if (note) note.textContent = '원격 상태 조회 실패: ' + (error.message || error);
+                if (showResult) showToast('Modal LoRA 상태 조회 실패: ' + (error.message || error), 'error');
+            } finally {
+                if (button) button.disabled = false;
+            }
+        }
+
+        function modalRenderLoraOperation(operation) {
+            modalLoraOperationState = operation && typeof operation === 'object' ? operation : {state: 'idle'};
+            const panel = document.getElementById('modal-lora-operation');
+            if (!panel) return;
+            const state = String(modalLoraOperationState.state || 'idle');
+            panel.hidden = state === 'idle';
+            if (panel.hidden) {
+                modalRenderLoraCatalog();
+                return;
+            }
+            const progress = modalLoraOperationState.progress || {};
+            const totalFiles = Number(progress.total_files || 0);
+            const completedFiles = Number(progress.completed_files || 0);
+            let percent = totalFiles > 0 ? completedFiles / totalFiles * 100 : 0;
+            if (state === 'running' && percent <= 0) percent = 8;
+            if (state === 'completed') percent = 100;
+            const title = document.getElementById('modal-lora-operation-title');
+            const count = document.getElementById('modal-lora-operation-count');
+            const fill = document.getElementById('modal-lora-operation-fill');
+            const track = panel.querySelector('[role="progressbar"]');
+            const log = document.getElementById('modal-lora-operation-log');
+            if (title) title.textContent = modalLoraOperationState.message || 'LoRA 작업 진행 중';
+            if (count) count.textContent = totalFiles
+                ? `${completedFiles} / ${totalFiles} · ${comfyInstallerFormatBytes(Number(progress.completed_bytes || 0))} / ${comfyInstallerFormatBytes(Number(progress.total_bytes || 0))}`
+                : `${modalLoraOperationState.action_label || '원격 작업'} · 경과 ${modalFormatInstallDuration(Number(modalLoraOperationState.elapsed_seconds || 0))}`;
+            if (fill) fill.style.width = `${Math.max(0, Math.min(100, percent))}%`;
+            if (track) track.setAttribute('aria-valuenow', String(Math.round(percent)));
+            if (log) {
+                const logs = Array.isArray(modalLoraOperationState.logs) ? modalLoraOperationState.logs : [];
+                log.textContent = logs.length
+                    ? logs.slice(-8).map(entry => `[${String(entry.source || 'system').toUpperCase()}] ${String(entry.message || '')}`).join('\n')
+                    : '작업 로그를 기다리고 있습니다.';
+                log.scrollTop = log.scrollHeight;
+            }
+            modalRenderLoraCatalog();
+        }
+
+        function modalLoraScheduleOperationPoll(delay = 900) {
+            if (modalLoraOperationPollTimer !== null) window.clearTimeout(modalLoraOperationPollTimer);
+            if (!modalLoraOperationRunning()) return;
+            modalLoraOperationPollTimer = window.setTimeout(() => void modalLoraPollOperation(), delay);
+        }
+
+        async function modalLoraPollOperation() {
+            try {
+                const data = await fetchJSON('/api/modal/loras/operation');
+                const operation = data.operation || {state: 'idle'};
+                const wasRunning = modalLoraOperationRunning() || modalLoraOperationWasRunning;
+                modalRenderLoraOperation(operation);
+                if (operation.state === 'running') {
+                    modalLoraOperationWasRunning = true;
+                    modalLoraScheduleOperationPoll();
+                    return;
+                }
+                if (wasRunning) {
+                    modalLoraOperationWasRunning = false;
+                    showToast(
+                        operation.state === 'completed' ? (operation.message || 'LoRA 작업 완료') : (operation.message || 'LoRA 작업 실패'),
+                        operation.state === 'completed' ? 'success' : 'error',
+                    );
+                    if (operation.state === 'completed') void modalLoraQueryStatus(false);
+                }
+            } catch (error) {
+                console.error('[MODAL_LORA] 작업 상태 조회 실패:', error);
+                modalLoraScheduleOperationPoll(1600);
+            }
+        }
+
+        async function modalLoraRunAction(action, explicitKeys = null) {
+            if (modalLoraOperationRunning()) return;
+            const keys = Array.isArray(explicitKeys) ? explicitKeys : Array.from(modalLoraSelectedKeys);
+            const items = keys.map(modalLoraItemByKey).filter(Boolean);
+            if (!items.length) {
+                showToast('관리할 LoRA 항목을 선택하세요', 'warning');
+                return;
+            }
+            if ((action === 'upload' || action === 'sync') && items.some(item => !Number(item.file_count || 0))) {
+                showToast('원격에만 있는 항목은 업로드하거나 동기화할 수 없습니다', 'warning');
+                return;
+            }
+            if (action === 'delete' && !items.some(item => Number(item.remote_file_count || 0) > 0)) {
+                showToast('선택 항목에 삭제할 원격 LoRA가 없습니다', 'warning');
+                return;
+            }
+            const botCount = items.filter(item => item.category === 'bot').length;
+            const labels = {upload: '업로드', sync: '동기화', delete: '원격 삭제'};
+            let question = `선택한 ${items.length}개 항목을 ${labels[action]}할까요?`;
+            if (action === 'upload') question += '\n\n현재 사용본만 추가·갱신하고 원격 잔여 파일은 유지합니다.';
+            if (action === 'sync') question += `\n\n업로드 성공 후 현재 구성에서 빠진 원격 파일을 정리합니다.${botCount ? ` 봇 ${botCount}개는 각 봇 전체 구성을 기준으로 처리합니다.` : ''}`;
+            if (action === 'delete') question += '\n\n원격 Volume에서만 삭제하며 로컬 파일은 그대로 유지합니다.';
+            if (!window.confirm(question)) return;
+            try {
+                modalLoraOperationWasRunning = true;
+                modalLoraOperationState = {state: 'running', action, action_label: labels[action], message: `LoRA ${labels[action]} 요청을 준비하고 있습니다.`, progress: {total_files: 0}, logs: []};
+                modalRenderLoraOperation(modalLoraOperationState);
+                const data = await fetchJSON('/api/modal/loras/operation', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({action, item_keys: keys}),
+                });
+                modalRenderLoraOperation(data.operation || modalLoraOperationState);
+                modalLoraScheduleOperationPoll(400);
+            } catch (error) {
+                modalLoraOperationWasRunning = false;
+                modalLoraOperationState = {state: 'failed', action, action_label: labels[action], message: `LoRA ${labels[action]} 시작 실패: ${error.message || error}`, logs: []};
+                modalRenderLoraOperation(modalLoraOperationState);
+                console.error(`[MODAL_LORA] ${labels[action]} 시작 실패:`, error);
+                showToast(`LoRA ${labels[action]} 시작 실패: ` + (error.message || error), 'error');
+            }
+        }
+
+        async function modalOpenLoraSync() {
+            if (modalOperationLockActive() || modalRedeployChoiceActive()) {
+                showToast('현재 Modal 작업이 끝난 뒤 LoRA 동기화를 열어주세요', 'warning');
+                return;
+            }
+            const overlay = document.getElementById('modal-lora-sync-modal');
+            if (!overlay) {
+                console.error('[MODAL_LORA] 동기화 모달 요소가 없습니다.');
+                return;
+            }
+            overlay.hidden = false;
+            modalLockSettingsInteraction(true);
+            modalLoraSelectedKeys.clear();
+            modalLoraStateFilter = 'all';
+            modalLoraSetCategory('bot');
+            overlay.querySelector('.modal-action-dialog')?.focus({preventScroll: true});
+            await modalLoraLoadCatalog();
+            if (modalLoraSyncActive()) void modalLoraQueryStatus(false);
+            try {
+                const data = await fetchJSON('/api/modal/loras/operation');
+                modalRenderLoraOperation(data.operation || {state: 'idle'});
+                if (data.operation?.state === 'running') {
+                    modalLoraOperationWasRunning = true;
+                    modalLoraScheduleOperationPoll();
+                }
+            } catch (error) {
+                console.error('[MODAL_LORA] 기존 작업 상태 확인 실패:', error);
+            }
+        }
+
+        function modalCloseLoraSync() {
+            if (modalLoraOperationRunning()) {
+                showToast('LoRA 작업이 끝난 뒤 창을 닫을 수 있습니다', 'warning');
+                return;
+            }
+            const overlay = document.getElementById('modal-lora-sync-modal');
+            if (overlay) overlay.hidden = true;
+            if (modalLoraOperationPollTimer !== null) {
+                window.clearTimeout(modalLoraOperationPollTimer);
+                modalLoraOperationPollTimer = null;
+            }
+            modalLockSettingsInteraction(false);
+            document.getElementById('modal-lora-sync-open-btn')?.focus({preventScroll: true});
         }
 
         function modalShowOperationLock(kind, title, message) {
