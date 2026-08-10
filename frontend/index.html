@@ -10131,6 +10131,8 @@
         .tip-box { display: none; position: absolute; top: 20px; left: 0; z-index: 2000; width: 270px; padding: 8px 10px; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 6px; font-size: 0.7rem; line-height: 1.5; box-shadow: 0 2px 10px rgba(0,0,0,0.35); white-space: normal; }
         .tip-box b { font-weight: 600; }
         .tip-wrap:hover .tip-box { display: block; }
+        /* 오른쪽 끝 배치 툴팁: left:0 전개가 뷰포트를 벗어나면 right:0로 좌측 전개 */
+        .tip-box.tip-box--end { left: auto; right: 0; }
 
         /* ─── 오토매치 탭 ─── */
         .at-container { display: flex; flex-direction: column; height: calc(100vh - 60px); overflow: hidden; }
@@ -10693,6 +10695,12 @@
             position: relative;
             flex: 1;
             min-height: 320px;
+            /* 종횡비 고정: 화면이 가로로 넓어져도 패인이 가로로만 늘어나
+               세로형 이미지가 작아/잘려 보이는 현상을 막는다. 높이(flex:1)를
+               기준으로 폭을 정하고, 남는 가로 폭은 좌우 여백(align-self:center)으로 둔다. */
+            aspect-ratio: var(--cm-canvas-ratio, 1.37) / 1;
+            max-width: 100%;
+            align-self: center;
             display: flex;
             align-items: stretch;
             overflow: hidden;
@@ -12845,14 +12853,14 @@
                 <button type="button" class="control-btn control-btn--primary" onclick="reloadWorkflow()">
                     <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h7l2 2h9v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><path d="M12 12v6M9 15l3 3 3-3"></path></svg>
                     <span class="control-label">삽화 워크플로우 가져오기</span>
+                    <span class="tip-wrap" onclick="event.stopPropagation()">
+                        <span class="tip-q" aria-label="삽화 워크플로우 가져오기 실행 경로 도움말">?</span>
+                        <span class="tip-box tip-box--end" role="tooltip"><b>실행 경로</b><br>실행 중인 로컬 Comfy에서 먼저 API 변환하고, 로컬 변환이 불가능하면 Modal로 폴백합니다.</span>
+                    </span>
                 </button>
                 <button type="button" id="restore-manual-btn" class="control-btn control-btn--primary" onclick="manualRestoreDraw()" style="display:none;">
                     <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m14.5 4.5 5 5L8 21H3v-5zM12 7l5 5"></path></svg>
                     <span class="control-label">삽화 수동 그리기</span>
-                    <span class="tip-wrap" onclick="event.stopPropagation()">
-                        <span class="tip-q" aria-label="삽화 수동 그리기 실행 경로 도움말">?</span>
-                        <span class="tip-box" role="tooltip"><b>실행 경로</b><br>수동 그리기는 ‘재생성 / 수동 그리기’ 작업 배분을 따릅니다. 삽화 워크플로우 가져오기는 실행 중인 로컬 Comfy에서 먼저 API 변환하고, 로컬 변환이 불가능하면 Modal로 폴백합니다.</span>
-                    </span>
                 </button>
             </div>
 
@@ -43717,6 +43725,14 @@
             const llmImage = document.getElementById('cm-llm-image');
             const meta = document.getElementById('cm-stage-meta');
             if (!revisionsEl || !userPane || !llmPane || !userImage || !llmImage || !cmSession) return;
+            // 캔버스 종횡비를 선택된 생성 비율(세로형 2장 나란히 기준)로 맞춘다.
+            // 화면이 가로로 넓어져도 패인이 가로로만 늘어나 이미지가 작아 보이는 현상 방지.
+            const cmCanvas = document.getElementById('cm-canvas');
+            if (cmCanvas) {
+                const { img_w: cmW = 700, img_h: cmH = 1024 } = cmCollectSettings();
+                const cmRatio = (cmW > 0 && cmH > 0) ? (2 * cmW / cmH) : 1.37;
+                cmCanvas.style.setProperty('--cm-canvas-ratio', String(cmRatio));
+            }
             const revisions = cmSession.revisions || [];
             const activeId = cmSession.active_revision_id;
             const llmActiveId = cmSession.llm_active_revision_id;
