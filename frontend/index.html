@@ -22784,6 +22784,12 @@
                         case 'backup_created':
                             handleBackupCreated(msg.data);
                             break;
+                        case 'regeneration_completed':
+                            handleRegenerationCompleted(msg.data);
+                            break;
+                        case 'regeneration_failed':
+                            handleRegenerationFailed(msg.data);
+                            break;
                         case 'backup_filter_ready':
                             // 백그라운드 필터 캐시 빌드 완료 → 드롭다운 최종 갱신
                             if (typeof loadBackupFilters === 'function') loadBackupFilters();
@@ -23078,6 +23084,19 @@
             }
             // 새 백업이 새 bot_name을 가져올 수 있으므로 필터 드롭다운 갱신
             if (typeof loadBackupFilters === 'function') loadBackupFilters();
+        }
+
+        function handleRegenerationCompleted(data) {
+            const label = String(data?.label || '재생성');
+            const fallbackText = data?.fallback_used ? ' (폴백 사용)' : '';
+            console.log('[REGEN] 백그라운드 재생성 완료:', data);
+            showToast(`${label} 완료${fallbackText}`, 'success');
+        }
+
+        function handleRegenerationFailed(data) {
+            const message = String(data?.message || data?.error || '재생성 실패');
+            console.error('[REGEN] 백그라운드 재생성 실패:', data);
+            showToast(message, 'error');
         }
 
         // ─── API 호출 ───
@@ -23831,10 +23850,7 @@
                     return;
                 }
 
-                showToast('재생성 완료', 'success');
-
-                // 백업 목록 새로고침 (새로 생성된 백업을 표시하기 위해)
-                await loadBackups(true);
+                showToast(data.message || '재생성 요청을 큐에 등록했습니다', 'info');
             } catch (e) {
                 alert('재생성 실패: ' + e.message);
             } finally {
@@ -23863,8 +23879,7 @@
                     return;
                 }
 
-                showToast('재생성 완료 (시드 변경)', 'success');
-                await loadBackups(true);
+                showToast(data.message || '시드 변경 재생성을 큐에 등록했습니다', 'info');
             } catch (e) {
                 alert('재생성 실패: ' + e.message);
             } finally {
@@ -24501,13 +24516,9 @@
                     return;
                 }
 
-                // 성공: 모달 닫고 결과 표시
+                // 큐 등록 성공: 입력 모달은 즉시 닫고 최종 결과는 WebSocket으로 알린다.
                 closePromptModal();
-
-                showToast('프롬프트 수정 후 재생성 완료', 'success');
-
-                // 백업 목록 새로고침
-                await loadBackups(true);
+                showToast(data.message || '프롬프트 수정 재생성을 큐에 등록했습니다', 'info');
             } catch (e) {
                 alert('프롬프트 수정 후 재생성 실패: ' + e.message);
                 submitBtn.disabled = false;
@@ -75214,6 +75225,9 @@
                 if (!item || item.status !== 'failed') return;
                 if (_queueFailToastedIds.has(item.id)) return; // 항목별 1회 알림
                 _queueFailToastedIds.add(item.id);
+                // 비동기 재생성은 하이브리드 폴백이 끝난 뒤 전용 WS 이벤트로
+                // 최종 실패를 알린다. 첫 공급자 실패를 중간 오류로 띄우지 않는다.
+                if (item.params?.regeneration_request_id) return;
                 const failMsg = String(item.error || '큐 작업 실패').trim();
                 if (_queueFailRecentMsgs.some(r => r.msg === failMsg)) return; // 동일 메시지 중복 억제
                 _queueFailRecentMsgs.push({ msg: failMsg, ts: _nowFail });

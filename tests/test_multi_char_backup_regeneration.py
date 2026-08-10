@@ -131,10 +131,10 @@ class _JsonRequest:
         return self._payload
 
 
-def _completed_queue_item():
+def _completed_queue_item(item_id="test-regeneration-item"):
     future = asyncio.get_running_loop().create_future()
     future.set_result({"success": True, "generation_time": 1.0})
-    return SimpleNamespace(completion_future=future)
+    return SimpleNamespace(id=item_id, completion_future=future)
 
 
 @pytest.mark.asyncio
@@ -205,9 +205,13 @@ async def test_regenerate_api_passes_saved_multi_char_snapshot_to_gpu_queue(
 
     response = await server.handle_api_regenerate(_JsonRequest({"name": name}))
 
-    assert response.status == 200
+    response_payload = json.loads(response.text)
+    assert response.status == 202
+    assert response_payload["queued"] is True
+    assert response_payload["job_id"] == "test-regeneration-item"
     assert captured["item_type"] == "regenerate"
     assert captured["params"]["illustration_multi_char"] == snapshot
+    assert captured["params"]["regeneration_request_id"] == response_payload["request_id"]
 
 
 @pytest.mark.asyncio
@@ -247,10 +251,55 @@ async def test_modified_regenerate_keeps_mask_and_rejects_structural_changes(
         })
     )
 
-    assert valid_response.status == 200
+    assert valid_response.status == 202
     assert queued[0]["illustration_multi_char"] == snapshot
     assert invalid_response.status == 409
     assert len(queued) == 1
+
+
+@pytest.mark.asyncio
+async def test_regenerate_api_returns_after_queue_registration_before_completion(
+    tmp_path,
+    monkeypatch,
+):
+    name = "pending-regeneration"
+    snapshot = _snapshot()
+    _write_backup_files(tmp_path, name, _positive(snapshot), snapshot)
+    completion_future = asyncio.get_running_loop().create_future()
+    notifications = []
+
+    async def fake_add_item(_item_type, _label, _params, priority=0):
+        assert priority == 0
+        return SimpleNamespace(
+            id="pending-regeneration-item",
+            completion_future=completion_future,
+        )
+
+    async def fake_notify(event_type, data=None):
+        notifications.append((event_type, data or {}))
+
+    monkeypatch.setattr(server, "WORKFLOW_BACKUP_DIR", str(tmp_path))
+    monkeypatch.setattr(server.queue_manager, "add_item", fake_add_item)
+    monkeypatch.setattr(server, "notify_frontend", fake_notify)
+
+    response = await asyncio.wait_for(
+        server.handle_api_regenerate(_JsonRequest({"name": name})),
+        timeout=0.5,
+    )
+    payload = json.loads(response.text)
+    active_tasks = list(server._regeneration_background_tasks)
+
+    assert response.status == 202
+    assert payload["queued"] is True
+    assert payload["job_id"] == "pending-regeneration-item"
+    assert completion_future.done() is False
+    assert active_tasks
+
+    completion_future.set_result({"success": True, "generation_time": 0.1})
+    await asyncio.gather(*active_tasks)
+
+    assert notifications[-1][0] == "regeneration_completed"
+    assert notifications[-1][1]["request_id"] == payload["request_id"]
 
 
 def test_llm_edit_syncs_scene_into_multi_char_conditioning_without_changing_mask():

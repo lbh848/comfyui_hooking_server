@@ -447,7 +447,7 @@ async def test_modified_regenerate_uses_active_bot_and_remapped_two_character_sn
         })
         future = asyncio.get_running_loop().create_future()
         future.set_result({"success": True, "generation_time": 0.1})
-        return SimpleNamespace(completion_future=future)
+        return SimpleNamespace(id="identity-regeneration-item", completion_future=future)
 
     monkeypatch.setattr(server, "WORKFLOW_BACKUP_DIR", str(tmp_path))
     monkeypatch.setattr(server, "_load_bot_data_readonly", lambda: bot_root)
@@ -466,7 +466,10 @@ async def test_modified_regenerate_uses_active_bot_and_remapped_two_character_sn
         })
     )
 
-    assert response.status == 200
+    response_payload = json.loads(response.text)
+    assert response.status == 202
+    assert response_payload["queued"] is True
+    assert response_payload["job_id"] == "identity-regeneration-item"
     assert captured["item_type"] == "regenerate"
     assert captured["params"]["bot_name"] == bot["name"]
     assert captured["params"]["illustration_multi_char"]["character_order"] == new_names

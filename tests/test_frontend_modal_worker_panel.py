@@ -128,3 +128,29 @@ def test_modal_runtime_status_and_logs_poll_independently() -> None:
     assert "void modalRuntimeRefresh(false);" in start_polling
     assert "void modalRuntimeRefreshLogs(false);" in start_polling
     assert "const MODAL_RUNTIME_LOG_REFRESH_MS = 30000;" in FRONTEND
+
+
+def test_regeneration_http_requests_release_controls_after_queue_registration() -> None:
+    regenerate = _function_source(
+        "doRegenerate(name, btn)",
+        "doRegenerateWithModifiedSeed(name, btn, positive, negative)",
+    )
+    seed_regenerate = _function_source(
+        "doRegenerateWithModifiedSeed(name, btn, positive, negative)",
+        "openSeedRegenModal(name, btn, positive, negative, currentSeed)",
+    )
+    modified = _function_source(
+        "submitModifiedPrompt()",
+        "closeRegen(name)",
+    )
+
+    assert "data.message" in regenerate
+    assert "loadBackups" not in regenerate
+    assert "data.message" in seed_regenerate
+    assert "loadBackups" not in seed_regenerate
+    assert "closePromptModal();" in modified
+    assert "data.message" in modified
+    assert "loadBackups" not in modified
+    assert "case 'regeneration_completed':" in FRONTEND
+    assert "case 'regeneration_failed':" in FRONTEND
+    assert "item.params?.regeneration_request_id" in FRONTEND

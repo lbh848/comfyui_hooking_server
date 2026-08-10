@@ -940,6 +940,7 @@ frontend_ws_manager = FrontendWsConnectionManager(
     stale_timeout=WS_STALE_TIMEOUT,
 )
 frontend_ws_connections = frontend_ws_manager.connections
+_regeneration_background_tasks: set[asyncio.Task] = set()
 
 # ─── 프론트엔드 WebSocket 이벤트 전송 ───────────────────
 async def notify_frontend(event_type: str, data: dict = None):
@@ -7693,6 +7694,8 @@ async def _run_regeneration_attempts(
     generation_params: dict,
     illustration_multi_char: dict | None,
     label: str,
+    regeneration_request_id: str = "",
+    first_item_future: asyncio.Future | None = None,
 ) -> tuple[dict, object]:
     """공급자 레인을 점유하지 않는 위치에서 재생성 시도를 순차 조정한다.
 
@@ -7762,9 +7765,12 @@ async def _run_regeneration_attempts(
                     "prompt_provider": prompt_provider,
                     "generation_params": attempt_params,
                     "illustration_multi_char": illustration_multi_char,
+                    "regeneration_request_id": regeneration_request_id,
                 },
                 priority=0,
             )
+            if first_item_future is not None and not first_item_future.done():
+                first_item_future.set_result(queue_item)
             result = await queue_item.completion_future
             if not isinstance(result, dict):
                 print(
@@ -7806,6 +7812,123 @@ async def _run_regeneration_attempts(
         f"backup={backup_name}, failures={detail}"
     )
     raise RuntimeError(f"재생성 공급자 시도가 모두 실패했습니다 ({detail})")
+
+
+async def _run_background_regeneration_request(
+    request_id: str,
+    first_item_future: asyncio.Future,
+    attempt_kwargs: dict,
+) -> None:
+    """HTTP 응답과 분리된 재생성 조정 작업을 실행하고 최종 결과만 알린다."""
+
+    backup_name = str(attempt_kwargs.get("backup_name") or "")
+    label = str(attempt_kwargs.get("label") or "재생성")
+    try:
+        result, item = await _run_regeneration_attempts(
+            **attempt_kwargs,
+            regeneration_request_id=request_id,
+            first_item_future=first_item_future,
+        )
+        elapsed_time = result.get("generation_time") if isinstance(result, dict) else None
+        used_provider = str(result.get("provider") or "")
+        fallback_used = bool(result.get("fallback_used"))
+        print(
+            f"[REGEN:ASYNC] 최종 완료: request_id={request_id}, "
+            f"backup={backup_name}, provider={used_provider}, "
+            f"fallback={fallback_used}"
+        )
+        await notify_frontend(
+            "regeneration_completed",
+            {
+                "request_id": request_id,
+                "job_id": str(getattr(item, "id", "") or ""),
+                "backup_name": backup_name,
+                "label": label,
+                "provider": used_provider,
+                "fallback_used": fallback_used,
+                "generation_time": elapsed_time,
+                "message": f"{label} 완료",
+            },
+        )
+    except asyncio.CancelledError:
+        if not first_item_future.done():
+            first_item_future.cancel()
+        print(
+            f"[REGEN:ASYNC] 백그라운드 작업 취소: "
+            f"request_id={request_id}, backup={backup_name}"
+        )
+        raise
+    except Exception as exc:
+        if not first_item_future.done():
+            first_item_future.set_exception(exc)
+        print(
+            f"[REGEN:ASYNC] 최종 실패: request_id={request_id}, "
+            f"backup={backup_name}, error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        await notify_frontend(
+            "regeneration_failed",
+            {
+                "request_id": request_id,
+                "backup_name": backup_name,
+                "label": label,
+                "error": str(exc),
+                "message": f"{label} 실패: {exc}",
+            },
+        )
+
+
+async def _enqueue_regeneration_request(
+    **attempt_kwargs: Any,
+) -> tuple[str, object]:
+    """재생성 조정 작업을 시작하고 첫 큐 항목 등록까지만 기다린다."""
+
+    request_id = uuid.uuid4().hex
+    loop = asyncio.get_running_loop()
+    first_item_future = loop.create_future()
+    task = asyncio.create_task(
+        _run_background_regeneration_request(
+            request_id,
+            first_item_future,
+            dict(attempt_kwargs),
+        ),
+        name=f"regeneration-{request_id[:8]}",
+    )
+    _regeneration_background_tasks.add(task)
+
+    def discard_background_task(completed: asyncio.Task) -> None:
+        _regeneration_background_tasks.discard(completed)
+        if completed.cancelled():
+            return
+        try:
+            unexpected = completed.exception()
+        except Exception as exc:
+            print(
+                "[REGEN:ASYNC] 백그라운드 작업 상태 회수 실패: "
+                f"request_id={request_id}, error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            return
+        if unexpected is not None:
+            print(
+                "[REGEN:ASYNC] 처리되지 않은 백그라운드 예외: "
+                f"request_id={request_id}, "
+                f"error={type(unexpected).__name__}: {unexpected}"
+            )
+            traceback.print_exception(
+                type(unexpected),
+                unexpected,
+                unexpected.__traceback__,
+            )
+
+    task.add_done_callback(discard_background_task)
+    try:
+        first_item = await asyncio.shield(first_item_future)
+    except BaseException:
+        if not task.done():
+            task.cancel()
+        raise
+    return request_id, first_item
 
 
 def _read_backup_multi_char_context(backup_name: str, source_positive: str) -> dict | None:
@@ -9172,9 +9295,9 @@ async def handle_api_regenerate(
     """백업의 프롬프트 + 현재 워크플로우로 이미지를 재생성해 반환한다.
 
     생성 자체는 통합 큐(regenerate 타입, priority=0)를 경유해 일반 삽화 생성과
-    ComfyUI 자원을 공유하며 직렬 처리된다. HTTP 응답은 큐 항목 완료를 await 한다.
-    (프론트엔드는 응답의 image를 사용하지 않고 loadBackups()로 결과를 보므로
-    base64는 더 이상 반환하지 않는다.)
+    ComfyUI 자원을 공유하며 직렬 처리된다. 외부 HTTP 요청은 첫 큐 항목 등록 직후
+    202로 반환하고, 최종 완료/실패는 WebSocket으로 알린다. 내부 원격 슬롯 호출은
+    결과 이미지가 필요하므로 ``_return_queue_result=True``일 때만 완료를 기다린다.
     """
     try:
         body = copy.deepcopy(_body) if _body is not None else await request.json()
@@ -9242,19 +9365,35 @@ async def handle_api_regenerate(
         print(f"[REGEN] 재생성 큐 등록: {backup_name}")
         print(f"[REGEN] 긍정: {positive}")
 
+        attempt_kwargs = {
+            "backup_name": backup_name,
+            "positive": positive,
+            "negative": negative,
+            "bot_name": src_bot_name or "",
+            "postprocess_settings": src_pp_settings,
+            "speak_text": src_speak_text,
+            "source_provider": src_provider,
+            "provider_mode": src_provider_mode,
+            "prompt_provider": src_prompt_provider,
+            "generation_params": src_generation_params,
+            "illustration_multi_char": src_multi_char,
+            "label": "재생성",
+        }
+        if not _return_queue_result:
+            request_id, item = await _enqueue_regeneration_request(**attempt_kwargs)
+            return web.json_response(
+                {
+                    "success": True,
+                    "queued": True,
+                    "request_id": request_id,
+                    "job_id": str(getattr(item, "id", "") or ""),
+                    "message": "재생성 요청을 큐에 등록했습니다",
+                },
+                status=202,
+            )
+
         result, item = await _run_regeneration_attempts(
-            backup_name=backup_name,
-            positive=positive,
-            negative=negative,
-            bot_name=src_bot_name or "",
-            postprocess_settings=src_pp_settings,
-            speak_text=src_speak_text,
-            source_provider=src_provider,
-            provider_mode=src_provider_mode,
-            prompt_provider=src_prompt_provider,
-            generation_params=src_generation_params,
-            illustration_multi_char=src_multi_char,
-            label="재생성",
+            **attempt_kwargs,
         )
         elapsed_time = result.get("generation_time") if isinstance(result, dict) else None
         used_provider = str(result.get("provider") or src_provider)
@@ -9264,15 +9403,13 @@ async def handle_api_regenerate(
             + (f" ({elapsed_time:.1f}s)" if elapsed_time else "")
             + f" (provider={used_provider}, fallback={fallback_used})"
         )
-        if _return_queue_result:
-            internal_result = dict(result)
-            internal_result["image_bytes"] = getattr(
-                item,
-                "generated_image_bytes",
-                None,
-            )
-            return internal_result
-        return web.json_response({"success": True, "message": "재생성 완료"})
+        internal_result = dict(result)
+        internal_result["image_bytes"] = getattr(
+            item,
+            "generated_image_bytes",
+            None,
+        )
+        return internal_result
 
     except Exception as e:
         tb = traceback.format_exc()
@@ -9466,7 +9603,8 @@ async def handle_api_reschedule_with_modified_prompt(
     """Reschedule with modified prompt - generates new image with modified prompts and schedules for retransmission.
 
     생성은 통합 큐(regenerate 타입, priority=0)를 경유해 일반 삽화 생성과 ComfyUI 자원을
-    공유하며 직렬 처리된다. HTTP 응답은 큐 항목 완료를 await 한다.
+    공유하며 직렬 처리된다. 외부 HTTP 요청은 첫 큐 등록 직후 202로 반환하고 완료/실패를
+    WebSocket으로 알린다. 내부 호출만 결과 이미지가 필요해 완료를 기다린다.
     """
     try:
         body = copy.deepcopy(_body) if _body is not None else await request.json()
@@ -9575,19 +9713,35 @@ async def handle_api_reschedule_with_modified_prompt(
         print(f"[RESCHEDULE_MOD] Modified positive: {effective_positive}")
         print(f"[RESCHEDULE_MOD] Modified negative: {effective_negative}")
 
+        attempt_kwargs = {
+            "backup_name": backup_name,
+            "positive": effective_positive,
+            "negative": effective_negative,
+            "bot_name": src_bot_name or "",
+            "postprocess_settings": src_pp_settings,
+            "speak_text": src_speak_text,
+            "source_provider": src_provider,
+            "provider_mode": src_provider_mode,
+            "prompt_provider": src_prompt_provider,
+            "generation_params": src_generation_params,
+            "illustration_multi_char": src_multi_char,
+            "label": "수정재생성",
+        }
+        if not _return_queue_result:
+            request_id, item = await _enqueue_regeneration_request(**attempt_kwargs)
+            return web.json_response(
+                {
+                    "success": True,
+                    "queued": True,
+                    "request_id": request_id,
+                    "job_id": str(getattr(item, "id", "") or ""),
+                    "message": "수정 재생성 요청을 큐에 등록했습니다",
+                },
+                status=202,
+            )
+
         result, item = await _run_regeneration_attempts(
-            backup_name=backup_name,
-            positive=effective_positive,
-            negative=effective_negative,
-            bot_name=src_bot_name or "",
-            postprocess_settings=src_pp_settings,
-            speak_text=src_speak_text,
-            source_provider=src_provider,
-            provider_mode=src_provider_mode,
-            prompt_provider=src_prompt_provider,
-            generation_params=src_generation_params,
-            illustration_multi_char=src_multi_char,
-            label="수정재생성",
+            **attempt_kwargs,
         )
         elapsed_time = result.get("generation_time") if isinstance(result, dict) else None
         used_provider = str(result.get("provider") or src_provider)
@@ -9598,14 +9752,9 @@ async def handle_api_reschedule_with_modified_prompt(
             + (f" (bot={src_bot_name})" if src_bot_name else "")
             + f" (provider={used_provider}, fallback={fallback_used})"
         )
-        if _return_queue_result:
-            internal_result = dict(result) if isinstance(result, dict) else {}
-            internal_result["image_bytes"] = getattr(item, "generated_image_bytes", None)
-            return internal_result
-        return web.json_response({
-            "success": True,
-            "message": "Modified image generated"
-        })
+        internal_result = dict(result) if isinstance(result, dict) else {}
+        internal_result["image_bytes"] = getattr(item, "generated_image_bytes", None)
+        return internal_result
 
     except Exception as e:
         tb = traceback.format_exc()
@@ -21038,7 +21187,34 @@ async def on_startup(app):
         asyncio.create_task(_autostart_character_maker_rag())
 
 
+async def _regeneration_background_cleanup(_app: web.Application) -> None:
+    active_tasks = [
+        task for task in _regeneration_background_tasks if not task.done()
+    ]
+    if not active_tasks:
+        return
+    print(
+        f"[REGEN:ASYNC] 서버 종료로 백그라운드 작업 취소: "
+        f"count={len(active_tasks)}"
+    )
+    for task in active_tasks:
+        task.cancel()
+    results = await asyncio.gather(*active_tasks, return_exceptions=True)
+    for task, result in zip(active_tasks, results):
+        if isinstance(result, BaseException) and not isinstance(
+            result,
+            asyncio.CancelledError,
+        ):
+            print(
+                "[REGEN:ASYNC] 종료 정리 중 작업 실패: "
+                f"task={task.get_name()}, "
+                f"error={type(result).__name__}: {result}"
+            )
+            traceback.print_exception(type(result), result, result.__traceback__)
+
+
 app.on_startup.append(on_startup)
+app.on_cleanup.append(_regeneration_background_cleanup)
 app.on_cleanup.append(_tunnel_cleanup)
 app.on_cleanup.append(_character_maker_rag_runtime_cleanup)
 
