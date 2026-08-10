@@ -62,14 +62,16 @@ def test_queue_has_visible_execution_areas_for_hybrid_and_modal():
     source = _frontend_source()
 
     assert "{key: 'hybrid', icon: '⚡', title: '동적 배분'" in source
-    assert "먼저 빈 GPU/챈섭이 실행" in source
+    assert "먼저 빈 로컬 GPU/Modal/챈섭이 실행" in source
     assert "{key: 'modal', icon: '☁️', title: 'Modal GPU'" in source
     assert "원격 ComfyUI 작업" in source
+    assert "if (area === 'comfy_parallel') return 'hybrid';" in source
     assert "grid-template-columns:repeat(6, minmax(0, 1fr))" in source
     assert ".queue-lane:nth-last-child(2):nth-child(3n + 1)" in source
     assert ".queue-lane:last-child:nth-child(3n + 2) { grid-column:span 3; }" in source
     assert ".queue-lane.hybrid { border-top:2px solid #f59e0b; }" in source
-    assert ".queue-lane.modal { border-top:2px solid #a78bfa; }" in source
+    assert ".queue-lane.modal {" in source
+    assert "border-top: 2px solid #a78bfa;" in source
 
 
 def test_queue_full_item_names_are_available_on_hover():
