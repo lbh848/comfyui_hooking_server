@@ -23,6 +23,8 @@ from modal._server import _Server
 from modal.client import _Client
 from modal_proto import api_pb2
 
+from modal_backend.settings import normalize_modal_gpu
+
 
 MODEL_SYNC_MANIFEST_PATH = "/.soya-local-model-sync-manifest.json"
 # 기존 사용자 LoRA Volume의 동기화 기록을 그대로 이어받는다.
@@ -211,6 +213,28 @@ def _remote_function(payload: dict, function_name: str) -> modal.Function:
         str(payload["app_name"]),
         function_name,
         environment_name=str(payload["environment"]),
+    )
+
+
+def _worker_gpu(payload: dict) -> str:
+    return normalize_modal_gpu(
+        payload.get("worker_gpu"),
+        "Modal 동적 작업 워커 GPU",
+    )
+
+
+def _worker_cls(payload: dict) -> modal.Cls:
+    worker_cls = modal.Cls.from_name(
+        str(payload["app_name"]),
+        "ComfyWorker",
+        environment_name=str(payload["environment"]),
+    )
+    return worker_cls.with_options(gpu=_worker_gpu(payload))
+
+
+def _dynamic_worker_function(payload: dict, function_name: str) -> modal.Function:
+    return _remote_function(payload, function_name).with_options(
+        gpu=_worker_gpu(payload)
     )
 
 
@@ -729,18 +753,12 @@ def manage_loras(payload: dict) -> dict:
 
 
 def generate(payload: dict) -> dict:
-    app_name = str(payload["app_name"])
-    environment = str(payload["environment"])
     sync = _sync_environment(payload)
     input_files = {
         item["remote_name"]: Path(item["source_path"]).read_bytes()
         for item in (payload.get("input_files") or [])
     }
-    worker_cls = modal.Cls.from_name(
-        app_name,
-        "ComfyWorker",
-        environment_name=environment,
-    )
+    worker_cls = _worker_cls(payload)
     call = worker_cls().generate.spawn(
         payload["workflow"],
         input_files,
@@ -810,11 +828,7 @@ def generate(payload: dict) -> dict:
 
 def convert_workflow(payload: dict) -> dict:
     _sync_environment(payload)
-    worker_cls = modal.Cls.from_name(
-        str(payload["app_name"]),
-        "ComfyWorker",
-        environment_name=str(payload["environment"]),
-    )
+    worker_cls = _worker_cls(payload)
     timeout_seconds = max(30, min(int(payload.get("timeout_seconds") or 600), 900))
     call = worker_cls().convert.spawn(payload["workflow"])
     try:
@@ -844,7 +858,7 @@ def update_autoscaler(payload: dict) -> dict:
         raise ValueError("Modal 유휴 종료 시간은 2~1200초 사이여야 합니다.")
     updated = []
     for function_name in ("gpu_probe", "ComfyWorker.convert", "ComfyWorker.generate"):
-        function = _remote_function(payload, function_name)
+        function = _dynamic_worker_function(payload, function_name)
         function.update_autoscaler(
             min_containers=0,
             max_containers=max_containers,
@@ -860,11 +874,7 @@ def update_autoscaler(payload: dict) -> dict:
 
 
 def runtime_stats(payload: dict) -> dict:
-    worker_cls = modal.Cls.from_name(
-        str(payload["app_name"]),
-        "ComfyWorker",
-        environment_name=str(payload["environment"]),
-    )
+    worker_cls = _worker_cls(payload)
     stats = worker_cls().generate.get_current_stats()
     return {
         "backlog": int(stats.backlog),
@@ -875,7 +885,7 @@ def runtime_stats(payload: dict) -> dict:
 
 
 def gpu_probe(payload: dict) -> dict:
-    probe = _remote_function(payload, "gpu_probe")
+    probe = _dynamic_worker_function(payload, "gpu_probe")
     call = probe.spawn()
     try:
         return _wait_for_call_with_start_retry_limit(

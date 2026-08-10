@@ -143,6 +143,9 @@ def test_runtime_has_managed_modal_tab_lifecycle_sync_and_log_controls() -> None
     assert "modal_container_start_max_retries: modalStartRetries" in FRONTEND
     assert "modal_worker_gpu: modalWorkerGpu" in FRONTEND
     assert "modal_web_gpu: modalWebGpu" in FRONTEND
+    assert "작업 워커 GPU는 설정 저장 후 다음 호출부터 재배포 없이 동적으로 적용됩니다." in FRONTEND
+    assert "GPU 변경만으로 이미지를 다시 빌드하지 않으며" in FRONTEND
+    assert "SageAttention 실제 커널 실행을 확인합니다." in FRONTEND
     assert "currentConfig.modal_container_start_max_retries ?? 2" in FRONTEND
     assert "최초 실행 제외 · 초과 시 강제 취소" in FRONTEND
     assert "60초 캐시" in FRONTEND

@@ -18710,7 +18710,7 @@
                                     <span><span class="comfy-runtime-option-label">FAST 모드</span><span class="comfy-runtime-option-note">--fast · 다음 시작 시 적용</span></span>
                                 </label>
                             </div>
-                            <div class="comfy-modal-runtime-copy">GPU 변경은 설정 저장 후 기본 앱 재배포로 작업 App에 적용됩니다. 웹 App은 ComfyUI를 다음에 시작할 때 선택한 웹 GPU로 다시 배포됩니다.</div>
+                            <div class="comfy-modal-runtime-copy">작업 워커 GPU는 설정 저장 후 다음 호출부터 재배포 없이 동적으로 적용됩니다. GPU별 컨테이너 풀과 Memory Snapshot은 독립적이므로 처음 사용하는 GPU의 첫 호출은 준비 시간이 더 걸릴 수 있습니다. 웹 GPU는 고정 URL 리소스이므로 다음 ComfyUI 시작 때 웹 App만 재배포됩니다. 모든 지원 CUDA 아키텍처를 공통 이미지에 포함하므로 GPU 변경만으로 이미지를 다시 빌드하지 않으며, 최초 배포 또는 코드·Custom Node 변경 때는 이미지 빌드가 진행될 수 있습니다.</div>
 
                             <div class="comfy-modal-runtime-actions">
                                 <button type="button" class="comfy-runtime-btn start" onclick="modalRuntimeSaveAndApply()">설정 저장·적용</button>
@@ -18722,7 +18722,7 @@
                                 <span class="tip-wrap">
                                     <button type="button" class="comfy-runtime-btn connect" id="modal-runtime-probe-btn" onclick="modalRuntimeStartProbe()">GPU 연결 테스트</button>
                                     <span class="tip-q" tabindex="0" aria-label="GPU 연결 테스트 도움말">?</span>
-                                    <span class="tip-box" role="tooltip" id="modal-runtime-probe-help"><b>유료 진단 기능</b><br>선택한 작업 워커 GPU를 켜 CUDA·GPU·VRAM 연결만 확인합니다. 정상 생성이나 ComfyUI 접속에는 필요하지 않습니다.</span>
+                                    <span class="tip-box" role="tooltip" id="modal-runtime-probe-help"><b>유료 진단 기능</b><br>선택한 작업 워커 GPU를 켜 CUDA·GPU·VRAM과 SageAttention 실제 커널 실행을 확인합니다. 정상 생성이나 ComfyUI 접속에는 필요하지 않습니다.</span>
                                 </span>
                                 <button type="button" class="comfy-runtime-btn" onclick="modalOpenExternalSettings()">계정 설정</button>
                             </div>
@@ -25758,9 +25758,9 @@
             modalShowOperationLock(
                 'web_start',
                 'Modal ComfyUI 시작 중',
-                '웹 App 시작 요청을 서버에 전달하고 있습니다.',
+                '웹 App 재배포 요청을 서버에 전달하고 있습니다. GPU 변경만으로 공통 CUDA 이미지를 다시 빌드하지 않습니다.',
             );
-            modalUpdateOperationProgress(12, '시작 요청 중', 'Modal ComfyUI 시작 요청을 준비하고 있습니다.');
+            modalUpdateOperationProgress(12, '시작 요청 중', '선택 GPU로 웹 App을 재배포할 준비를 하고 있습니다.');
             try {
                 const data = await fetchJSON('/api/modal/web/start', {method: 'POST'});
                 const web = data.web || {};
@@ -27538,7 +27538,7 @@
                     String(web.message || (
                         stopping
                             ? '웹 App과 GPU를 안전하게 종료하고 있습니다.'
-                            : '웹 App을 배포하고 GPU의 ComfyUI 준비를 기다리고 있습니다.'
+                            : '웹 App을 선택 GPU로 재배포하고 ComfyUI 준비를 기다리고 있습니다. GPU 아키텍처는 공통 이미지에 포함되어 있습니다.'
                     )),
                 );
                 const webLogs = modalRuntimeLogEntries
@@ -28840,7 +28840,7 @@
             if (button) button.disabled = true;
             try {
                 await fetchJSON('/api/modal/probe', { method: 'POST' });
-                showToast(`Modal ${workerGpu} 연결 테스트를 시작했습니다`, 'success');
+                showToast(`Modal ${workerGpu} CUDA·SageAttention 연결 테스트를 시작했습니다`, 'success');
                 modalRuntimeStartPolling();
             } catch (error) {
                 console.error(`[MODAL_RUNTIME] ${workerGpu} 연결 테스트 시작 실패:`, error);

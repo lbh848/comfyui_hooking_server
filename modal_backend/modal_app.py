@@ -13,28 +13,10 @@ from pathlib import Path
 import modal
 
 from modal_backend.custom_nodes import LOCAL_COPY_IGNORE_PATTERNS
-from modal_backend.settings import MODAL_GPU_PROFILES, normalize_modal_gpu
+from modal_backend.settings import MODAL_GPU_PROFILES
 
 
 APP_NAME = os.environ.get("SOYA_MODAL_APP_NAME", "soya-comfy-worker")
-try:
-    WORKER_GPU = normalize_modal_gpu(
-        os.environ.get("SOYA_MODAL_WORKER_GPU"),
-        "SOYA_MODAL_WORKER_GPU",
-    )
-    IMAGE_WEB_GPU = normalize_modal_gpu(
-        os.environ.get("SOYA_MODAL_WEB_GPU"),
-        "SOYA_MODAL_WEB_GPU",
-    )
-except Exception as exc:
-    print(
-        "[MODAL_COMFY] GPU 설정 오류: "
-        f"worker={os.environ.get('SOYA_MODAL_WORKER_GPU')!r}, "
-        f"web={os.environ.get('SOYA_MODAL_WEB_GPU')!r}, "
-        f"error={type(exc).__name__}: {exc}"
-    )
-    traceback.print_exc()
-    raise
 MAX_CONTAINERS = int(os.environ.get("SOYA_MODAL_MAX_CONTAINERS", "2"))
 SCALEDOWN_WINDOW_SECONDS = int(os.environ.get("SOYA_MODAL_SCALEDOWN_WINDOW", "15"))
 if not 1 <= MAX_CONTAINERS <= 10:
@@ -55,8 +37,8 @@ SAGEATTENTION_VERSION = "2.2.0"
 CUDA_ARCH_LIST = ";".join(
     sorted(
         {
-            str(MODAL_GPU_PROFILES[gpu_id]["cuda_arch"])
-            for gpu_id in (WORKER_GPU, IMAGE_WEB_GPU)
+            str(profile["cuda_arch"])
+            for profile in MODAL_GPU_PROFILES.values()
         },
         key=lambda value: tuple(int(part) for part in value.split(".")),
     )
@@ -144,8 +126,8 @@ runtime_image = (
             "CC": "/usr/bin/gcc",
             "CXX": "/usr/bin/g++",
             "CUDAHOSTCXX": "/usr/bin/g++",
-            # 웹/워커가 서로 다른 GPU를 골라도 이미지 하나를 재사용할 수 있도록
-            # 선택된 두 아키텍처용 CUDA extension을 결정론적으로 사전 컴파일한다.
+            # GPU 선택 변경만으로 이미지를 다시 빌드하지 않도록 지원하는 모든
+            # 아키텍처용 SageAttention CUDA extension을 한 번에 사전 컴파일한다.
             "TORCH_CUDA_ARCH_LIST": CUDA_ARCH_LIST,
             "MAX_JOBS": "4",
             "EXT_PARALLEL": "4",
@@ -232,7 +214,6 @@ runtime_image = (
 
 @app.function(
     image=runtime_image,
-    gpu=WORKER_GPU,
     cpu=4.0,
     memory=16_384,
     min_containers=0,
@@ -250,16 +231,71 @@ def gpu_probe() -> dict:
     import torch
 
     if not torch.cuda.is_available():
-        raise RuntimeError(
-            f"{WORKER_GPU} 컨테이너에서 CUDA를 사용할 수 없습니다."
-        )
+        raise RuntimeError("동적으로 선택한 GPU 컨테이너에서 CUDA를 사용할 수 없습니다.")
     props = torch.cuda.get_device_properties(0)
+    sageattention = _validate_sageattention_cuda()
     return {
         "device": torch.cuda.get_device_name(0),
         "vram_bytes": int(props.total_memory),
         "cuda": torch.version.cuda,
+        "cuda_arch": f"{props.major}.{props.minor}",
+        "sageattention": sageattention,
         "workflow_count": len(list(Path("/workflows").glob("*.json"))),
     }
+
+
+def _validate_sageattention_cuda() -> dict:
+    """현재 GPU에서 SageAttention 커널을 실제 실행해 fatbin 호환성을 검증한다."""
+    import importlib.metadata
+
+    import torch
+    from sageattention import sageattn
+
+    if not torch.cuda.is_available():
+        print("[MODAL_SAGE] CUDA를 사용할 수 없어 SageAttention 검증을 실행할 수 없습니다.")
+        raise RuntimeError("SageAttention 검증에 사용할 CUDA GPU가 없습니다.")
+    try:
+        q = torch.randn((1, 2, 128, 64), device="cuda", dtype=torch.float16)
+        k = torch.randn_like(q)
+        v = torch.randn_like(q)
+        output = sageattn(
+            q,
+            k,
+            v,
+            tensor_layout="HND",
+            is_causal=False,
+        )
+        torch.cuda.synchronize()
+        if tuple(output.shape) != tuple(q.shape):
+            print(
+                "[MODAL_SAGE] 출력 크기 검증 실패: "
+                f"expected={tuple(q.shape)}, actual={tuple(output.shape)}"
+            )
+            raise RuntimeError("SageAttention CUDA 출력 크기가 올바르지 않습니다.")
+        if not bool(torch.isfinite(output).all().item()):
+            print("[MODAL_SAGE] 출력에 NaN 또는 Inf가 포함되어 있습니다.")
+            raise RuntimeError("SageAttention CUDA 출력에 NaN 또는 Inf가 있습니다.")
+        props = torch.cuda.get_device_properties(0)
+        result = {
+            "version": importlib.metadata.version("sageattention"),
+            "cuda_arch": f"{props.major}.{props.minor}",
+            "output_shape": list(output.shape),
+            "finite": True,
+        }
+        print(
+            "[MODAL_SAGE] 실제 CUDA 커널 검증 완료: "
+            f"device={torch.cuda.get_device_name(0)}, "
+            f"arch={result['cuda_arch']}, version={result['version']}"
+        )
+        return result
+    except Exception as exc:
+        print(
+            "[MODAL_SAGE] 실제 CUDA 커널 검증 실패: "
+            f"device={torch.cuda.get_device_name(0)}, "
+            f"error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        raise
 
 
 def _write_extra_model_paths() -> Path:
@@ -314,7 +350,6 @@ def _write_extra_model_paths() -> Path:
 
 @app.cls(
     image=runtime_image,
-    gpu=WORKER_GPU,
     cpu=4.0,
     memory=16_384,
     min_containers=0,
@@ -341,13 +376,16 @@ class ComfyWorker:
     def start(self) -> None:
         import requests
         import threading
+        import torch
         from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+        device_name = torch.cuda.get_device_name(0)
         print(
             "[MODAL_COMFY] GPU Memory Snapshot 준비 시작: "
-            f"version={SNAPSHOT_VERSION}",
+            f"version={SNAPSHOT_VERSION}, device={device_name}",
             flush=True,
         )
+        _validate_sageattention_cuda()
         self.text_outputs = []
         worker = self
 
@@ -420,7 +458,7 @@ class ComfyWorker:
                     print(
                         (
                             "[MODAL_COMFY] ComfyUI "
-                            f"{WORKER_GPU} 워커 snapshot 캡처 지점 준비 완료"
+                            f"{device_name} 워커 snapshot 캡처 지점 준비 완료"
                         ),
                         flush=True,
                     )
@@ -435,10 +473,12 @@ class ComfyWorker:
     def restore(self) -> None:
         """Snapshot 복원 뒤 자식 프로세스와 내부 HTTP 스레드의 생존을 확인한다."""
         import requests
+        import torch
 
+        device_name = torch.cuda.get_device_name(0)
         print(
             "[MODAL_COMFY] GPU Memory Snapshot 복원 상태 확인 시작: "
-            f"version={SNAPSHOT_VERSION}",
+            f"version={SNAPSHOT_VERSION}, device={device_name}",
             flush=True,
         )
         # snapshot 시점의 요청별 출력이 새 컨테이너에 복제되지 않게 초기화한다.
@@ -470,7 +510,7 @@ class ComfyWorker:
                     if response.ok:
                         print(
                             "[MODAL_COMFY] GPU Memory Snapshot 복원 완료 · "
-                            f"ComfyUI {WORKER_GPU} 워커 준비 완료",
+                            f"ComfyUI {device_name} 워커 준비 완료",
                             flush=True,
                         )
                         return

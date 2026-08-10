@@ -15,6 +15,7 @@ import modal
 
 from modal_backend.modal_app import (
     COMFY_MODELS_MOUNT_PATH,
+    _validate_sageattention_cuda,
     _write_extra_model_paths,
     loras_volume,
     models_volume,
@@ -81,6 +82,7 @@ class ComfyWebServer:
 
     @modal.enter()
     def start(self) -> None:
+        _validate_sageattention_cuda()
         extra_paths = _write_extra_model_paths()
         child_env = os.environ.copy()
         child_env["PYTHONUNBUFFERED"] = "1"

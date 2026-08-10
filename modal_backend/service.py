@@ -237,7 +237,7 @@ class ModalService:
         }
         self._autoscaler_state: dict[str, Any] = {
             "state": "idle",
-            "message": "저장된 자동 종료 설정이 다음 배포에 적용됩니다.",
+            "message": "설정 저장 시 선택한 동적 GPU 워커에 자동 종료 설정을 적용합니다.",
         }
         self._probe_task: asyncio.Task | None = None
         self._probe_state: dict[str, Any] = {
@@ -1011,6 +1011,9 @@ class ModalService:
             "action": action,
             "app_name": settings.deployment_name,
             "environment": settings.environment,
+            # 배포 정의에는 GPU를 고정하지 않고 모든 작업 호출에서 이 값을
+            # with_options(gpu=...)로 적용한다.
+            "worker_gpu": settings.worker_gpu,
             "container_start_max_retries": (
                 settings.container_start_max_retries
             ),
@@ -1078,6 +1081,7 @@ class ModalService:
                 "profile": settings.profile,
                 "environment": settings.environment,
                 "app_name": settings.deployment_name,
+                "worker_gpu": settings.worker_gpu,
                 "payload": payload,
             },
             ensure_ascii=False,
@@ -1921,9 +1925,14 @@ class ModalService:
         try:
             self._web_state.update(
                 message=(
-                    "웹 전용 App을 최신 런타임으로 갱신하고 있습니다."
+                    "웹 전용 App을 선택한 GPU로 재배포하고 있습니다. "
+                    "GPU 아키텍처는 공통 CUDA 이미지에 포함되어 있습니다."
                     if current.get("deployed")
-                    else "중지된 웹 전용 App을 다시 배포하고 있습니다."
+                    else (
+                        "중지된 웹 전용 App을 다시 배포하고 있습니다. "
+                        "공통 이미지가 없거나 코드·Custom Node가 바뀐 경우에만 "
+                        "이미지 빌드가 진행됩니다."
+                    )
                 ),
                 updated_at=time.time(),
             )
@@ -3422,12 +3431,19 @@ class ModalService:
                 timeout=960,
             )
             vram_gib = round(int(result.get("vram_bytes") or 0) / 1024**3, 1)
+            sageattention = result.get("sageattention")
+            sage_version = (
+                str(sageattention.get("version") or "확인됨")
+                if isinstance(sageattention, Mapping)
+                else "확인 실패"
+            )
             self._probe_state = {
                 "state": "completed",
                 "message": (
                     f"{result.get('device') or settings.worker_gpu} · "
                     f"VRAM {vram_gib} GiB · "
-                    f"CUDA {result.get('cuda') or '-'} 연결 확인"
+                    f"CUDA {result.get('cuda') or '-'} · "
+                    f"SageAttention {sage_version} 실제 커널 확인"
                 ),
                 "updated_at": time.time(),
                 **result,
@@ -3789,6 +3805,7 @@ class ModalService:
                 "action": "generate",
                 "app_name": settings.deployment_name,
                 "environment": settings.environment,
+                "worker_gpu": settings.worker_gpu,
                 "workflow": workflow,
                 "model_files": assets["model_files"],
                 "lora_files": assets["lora_files"],

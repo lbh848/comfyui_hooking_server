@@ -167,6 +167,10 @@ def test_modal_runtime_stats_uses_cls_method_handle(
         generate = FakeGenerate()
 
     class FakeCls:
+        def with_options(self, **options) -> "FakeCls":
+            observed["dynamic_options"] = options
+            return self
+
         def __call__(self) -> FakeWorker:
             return FakeWorker()
 
@@ -195,19 +199,67 @@ def test_modal_runtime_stats_uses_cls_method_handle(
     )
 
     result = client_cli.runtime_stats(
-        {"app_name": "test-app", "environment": "main"}
+        {
+            "app_name": "test-app",
+            "environment": "main",
+            "worker_gpu": "L40S",
+        }
     )
 
     assert observed == {
         "app_name": "test-app",
         "class_name": "ComfyWorker",
         "environment_name": "main",
+        "dynamic_options": {"gpu": "L40S"},
     }
     assert result == {
         "backlog": 3,
         "num_total_runners": 2,
         "num_running_inputs": 1,
         "input_headroom": 4,
+    }
+
+
+def test_modal_dynamic_worker_function_applies_selected_gpu(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed: dict = {}
+
+    class FakeFunction:
+        def with_options(self, **options) -> "FakeFunction":
+            observed["dynamic_options"] = options
+            return self
+
+    def from_name(
+        app_name: str,
+        function_name: str,
+        *,
+        environment_name: str,
+    ) -> FakeFunction:
+        observed.update(
+            app_name=app_name,
+            function_name=function_name,
+            environment_name=environment_name,
+        )
+        return FakeFunction()
+
+    monkeypatch.setattr(client_cli.modal.Function, "from_name", from_name)
+
+    result = client_cli._dynamic_worker_function(
+        {
+            "app_name": "test-app",
+            "environment": "main",
+            "worker_gpu": "RTX-PRO-6000",
+        },
+        "gpu_probe",
+    )
+
+    assert isinstance(result, FakeFunction)
+    assert observed == {
+        "app_name": "test-app",
+        "function_name": "gpu_probe",
+        "environment_name": "main",
+        "dynamic_options": {"gpu": "RTX-PRO-6000"},
     }
 
 
@@ -452,6 +504,7 @@ async def test_modal_client_action_passes_container_start_retry_setting(
     )
 
     assert observed["container_start_max_retries"] == 4
+    assert observed["worker_gpu"] == "L4"
 
 
 @pytest.mark.asyncio
@@ -463,6 +516,7 @@ async def test_modal_run_workflow_preserves_start_retry_limit_error(
         tmp_path,
         lambda: {
             "modal_enabled": True,
+            "modal_worker_gpu": "H100",
             "modal_container_start_max_retries": 2,
         },
     )
@@ -500,6 +554,7 @@ async def test_modal_run_workflow_preserves_start_retry_limit_error(
         )
 
     assert observed["container_start_max_retries"] == 2
+    assert observed["worker_gpu"] == "H100"
 
 
 @pytest.mark.asyncio
@@ -2629,7 +2684,10 @@ def test_modal_web_server_is_isolated_from_worker_app() -> None:
     assert "unauthenticated=True" in web_source
     assert "@modal.enter()" in web_source
     assert 'WEB_APP_NAME = os.environ.get("SOYA_MODAL_WEB_APP_NAME"' in web_source
-    assert 'gpu=WORKER_GPU' in worker_source
+    assert 'gpu=WORKER_GPU' not in worker_source
+    assert "worker_cls.with_options(gpu=_worker_gpu(payload))" in (
+        root / "client_cli.py"
+    ).read_text(encoding="utf-8")
     assert 'gpu=WEB_GPU' in web_source
     assert (
         'WEB_WORKFLOW_MOUNT_PATH = '
@@ -2680,7 +2738,13 @@ def test_modal_runtime_image_precompiles_sageattention_for_supported_gpus() -> N
     assert '"CXX": "/usr/bin/g++"' in source
     assert '"CUDAHOSTCXX": "/usr/bin/g++"' in source
     assert '"TORCH_CUDA_ARCH_LIST": CUDA_ARCH_LIST' in source
-    assert 'gpu=WORKER_GPU' in source
+    assert 'gpu=WORKER_GPU' not in source
+    assert "for profile in MODAL_GPU_PROFILES.values()" in source
+    for cuda_arch in ("8.0", "8.6", "8.9", "9.0", "12.0"):
+        assert cuda_arch in {
+            str(profile["cuda_arch"])
+            for profile in ModalSettings.from_mapping({}).public_dict()["gpu_profiles"]
+        }
     assert '"NVCC_APPEND_FLAGS": "--threads 4"' in source
     assert "index_url=PYTORCH_CUDA_INDEX_URL" in source
     assert 'extra_options="--no-build-isolation"' in source
@@ -2696,6 +2760,10 @@ def test_modal_runtime_image_precompiles_sageattention_for_supported_gpus() -> N
     assert source.index(
         'f"git+https://github.com/thu-ml/SageAttention.git@v{SAGEATTENTION_VERSION}"'
     ) < source.index('"python /opt/soya/image_install.py"')
+    assert "def _validate_sageattention_cuda()" in source
+    assert "output = sageattn(" in source
+    assert "torch.cuda.synchronize()" in source
+    assert "torch.isfinite(output).all().item()" in source
 
 
 def test_modal_worker_uses_gpu_memory_snapshot_without_warm_pool() -> None:
