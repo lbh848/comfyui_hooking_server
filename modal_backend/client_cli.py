@@ -856,17 +856,18 @@ def update_autoscaler(payload: dict) -> dict:
         raise ValueError("Modal 최대 컨테이너 수는 1~10 사이여야 합니다.")
     if not 2 <= scaledown_window <= 1200:
         raise ValueError("Modal 유휴 종료 시간은 2~1200초 사이여야 합니다.")
-    updated = []
-    for function_name in ("gpu_probe", "ComfyWorker.convert", "ComfyWorker.generate"):
-        function = _dynamic_worker_function(payload, function_name)
-        function.update_autoscaler(
-            min_containers=0,
-            max_containers=max_containers,
-            scaledown_window=scaledown_window,
-        )
-        updated.append(function_name)
+    autoscaler_options = {
+        "min_containers": 0,
+        "max_containers": max_containers,
+        "scaledown_window": scaledown_window,
+    }
+    probe = _dynamic_worker_function(payload, "gpu_probe")
+    probe.update_autoscaler(**autoscaler_options)
+
+    worker = _worker_cls(payload)()
+    worker.update_autoscaler(**autoscaler_options)
     return {
-        "updated": updated,
+        "updated": ["gpu_probe", "ComfyWorker"],
         "min_containers": 0,
         "max_containers": max_containers,
         "scaledown_window_seconds": scaledown_window,

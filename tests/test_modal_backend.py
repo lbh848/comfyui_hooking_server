@@ -267,6 +267,89 @@ def test_modal_dynamic_worker_function_applies_selected_gpu(
     }
 
 
+def test_modal_update_autoscaler_uses_function_and_cls_instance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed: dict = {"autoscaler_updates": []}
+
+    class FakeFunction:
+        def with_options(self, **options) -> "FakeFunction":
+            observed["function_options"] = options
+            return self
+
+        def update_autoscaler(self, **options) -> None:
+            observed["autoscaler_updates"].append(("gpu_probe", options))
+
+    class FakeWorker:
+        def update_autoscaler(self, **options) -> None:
+            observed["autoscaler_updates"].append(("ComfyWorker", options))
+
+    class FakeCls:
+        def with_options(self, **options) -> "FakeCls":
+            observed["class_options"] = options
+            return self
+
+        def __call__(self) -> FakeWorker:
+            return FakeWorker()
+
+    def function_from_name(
+        app_name: str,
+        function_name: str,
+        *,
+        environment_name: str,
+    ) -> FakeFunction:
+        observed["function_lookup"] = (
+            app_name,
+            function_name,
+            environment_name,
+        )
+        return FakeFunction()
+
+    def cls_from_name(
+        app_name: str,
+        class_name: str,
+        *,
+        environment_name: str,
+    ) -> FakeCls:
+        observed["class_lookup"] = (app_name, class_name, environment_name)
+        return FakeCls()
+
+    monkeypatch.setattr(client_cli.modal.Function, "from_name", function_from_name)
+    monkeypatch.setattr(client_cli.modal.Cls, "from_name", cls_from_name)
+
+    result = client_cli.update_autoscaler(
+        {
+            "app_name": "test-app",
+            "environment": "main",
+            "worker_gpu": "L40S",
+            "max_containers": 3,
+            "scaledown_window_seconds": 45,
+        }
+    )
+
+    autoscaler_options = {
+        "min_containers": 0,
+        "max_containers": 3,
+        "scaledown_window": 45,
+    }
+    assert observed == {
+        "function_lookup": ("test-app", "gpu_probe", "main"),
+        "function_options": {"gpu": "L40S"},
+        "class_lookup": ("test-app", "ComfyWorker", "main"),
+        "class_options": {"gpu": "L40S"},
+        "autoscaler_updates": [
+            ("gpu_probe", autoscaler_options),
+            ("ComfyWorker", autoscaler_options),
+        ],
+    }
+    assert result == {
+        "updated": ["gpu_probe", "ComfyWorker"],
+        "min_containers": 0,
+        "max_containers": 3,
+        "scaledown_window_seconds": 45,
+    }
+
+
 def test_modal_client_error_reason_uses_sdk_exception_types() -> None:
     assert (
         client_cli._error_reason(client_cli.modal.exception.NotFoundError("missing"))
