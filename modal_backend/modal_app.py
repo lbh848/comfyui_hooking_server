@@ -13,7 +13,6 @@ from pathlib import Path
 import modal
 
 from modal_backend.custom_nodes import LOCAL_COPY_IGNORE_PATTERNS
-from modal_backend.volume_reload import reload_volume_with_retry
 
 
 APP_NAME = os.environ.get("SOYA_MODAL_APP_NAME", "soya-comfy-worker")
@@ -297,6 +296,10 @@ def _write_extra_model_paths() -> Path:
 )
 @modal.concurrent(max_inputs=1)
 class ComfyWorker:
+    # ComfyUI는 로드한 모델 파일 핸들을 계속 유지할 수 있으므로 실행 중인
+    # 컨테이너에서 models/loras Volume을 reload하면 volume busy가 발생한다.
+    # 각 컨테이너는 시작 시 마운트된 스냅샷만 사용하고, 동기화된 새 자산은
+    # 앱 재배포로 컨테이너를 교체한 뒤 반영한다.
     @modal.enter()
     def start(self) -> None:
         import requests
@@ -384,8 +387,6 @@ class ComfyWorker:
         _announce_call_started("convert")
         import requests
 
-        reload_volume_with_retry(models_volume, label="models")
-        reload_volume_with_retry(loras_volume, label="loras")
         if not isinstance(workflow, dict) or not workflow:
             raise ValueError("변환할 ComfyUI workflow JSON 객체가 필요합니다.")
         response = requests.post(
@@ -416,8 +417,6 @@ class ComfyWorker:
         _announce_call_started("generate")
         import requests
 
-        reload_volume_with_retry(models_volume, label="models")
-        reload_volume_with_retry(loras_volume, label="loras")
         if not isinstance(workflow, dict) or not workflow:
             raise ValueError("ComfyUI API workflow JSON 객체가 필요합니다.")
         workflow = json.loads(json.dumps(workflow, ensure_ascii=False))
