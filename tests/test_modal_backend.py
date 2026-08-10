@@ -1132,6 +1132,139 @@ async def test_modal_streaming_command_forwards_stdout_and_stderr() -> None:
     assert ("stderr", "✓ warning-line") in observed
 
 
+@pytest.mark.asyncio
+async def test_modal_nonstreaming_command_avoids_default_executor_thread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def unexpected_to_thread(*_args, **_kwargs):
+        raise AssertionError("Modal command waits must not use a default executor thread")
+
+    monkeypatch.setattr(asyncio, "to_thread", unexpected_to_thread)
+
+    code, stdout, stderr = await ModalService._run_command(
+        [sys.executable, "-c", "print('async-subprocess')"],
+        env=dict(os.environ),
+        timeout=30,
+    )
+
+    assert code == 0
+    assert stdout == "async-subprocess\n"
+    assert stderr == ""
+
+
+@pytest.mark.asyncio
+async def test_modal_status_action_single_flight_deduplicates_identical_calls(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = ModalService(tmp_path, lambda: {})
+    settings = ModalSettings.from_mapping({})
+    started = asyncio.Event()
+    release = asyncio.Event()
+    call_count = 0
+
+    async def run_once(
+        _settings: ModalSettings,
+        action: str,
+        *,
+        timeout: float,
+        **_payload,
+    ) -> dict:
+        nonlocal call_count
+        assert action == "runtime_stats"
+        assert timeout == 30
+        call_count += 1
+        started.set()
+        await release.wait()
+        return {"num_total_runners": 1}
+
+    monkeypatch.setattr(service, "_run_client_action_once", run_once)
+
+    first = asyncio.create_task(
+        service._run_client_action(settings, "runtime_stats", timeout=30)
+    )
+    await asyncio.wait_for(started.wait(), timeout=1)
+    second = asyncio.create_task(
+        service._run_client_action(settings, "runtime_stats", timeout=30)
+    )
+    await asyncio.sleep(0)
+
+    assert call_count == 1
+    release.set()
+    assert await asyncio.gather(first, second) == [
+        {"num_total_runners": 1},
+        {"num_total_runners": 1},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_modal_account_check_single_flight_deduplicates_profile_calls(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = ModalService(tmp_path, lambda: {})
+    settings = ModalSettings.from_mapping({"modal_profile": "shared-profile"})
+    started = asyncio.Event()
+    release = asyncio.Event()
+    call_count = 0
+
+    async def connected_once(_settings: ModalSettings) -> bool:
+        nonlocal call_count
+        call_count += 1
+        started.set()
+        await release.wait()
+        return True
+
+    monkeypatch.setattr(service, "_account_connected_once", connected_once)
+
+    first = asyncio.create_task(service.account_connected(settings))
+    await asyncio.wait_for(started.wait(), timeout=1)
+    second = asyncio.create_task(service.account_connected(settings))
+    await asyncio.sleep(0)
+
+    assert call_count == 1
+    release.set()
+    assert await asyncio.gather(first, second) == [True, True]
+
+
+@pytest.mark.asyncio
+async def test_modal_worker_and_web_status_queries_start_concurrently(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = ModalService(tmp_path, lambda: {})
+    started: set[str] = set()
+    both_started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def wait_for_peer(name: str) -> dict:
+        started.add(name)
+        if len(started) == 2:
+            both_started.set()
+        await release.wait()
+        return {"state": "stopped", "source": name}
+
+    monkeypatch.setattr(
+        service,
+        "_worker_status_block",
+        lambda _settings: wait_for_peer("worker"),
+    )
+    monkeypatch.setattr(
+        service,
+        "_dock_web_status",
+        lambda _settings: wait_for_peer("web"),
+    )
+
+    status_task = asyncio.create_task(service.worker_status())
+    await asyncio.wait_for(both_started.wait(), timeout=1)
+    assert started == {"worker", "web"}
+
+    release.set()
+    status = await status_task
+    assert status["worker"]["source"] == "worker"
+    assert status["web"]["source"] == "web"
+
+
 def test_modal_subprocess_environment_forces_utf8_without_mutating_host(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

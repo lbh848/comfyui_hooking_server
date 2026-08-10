@@ -18181,7 +18181,7 @@
                                     <span id="modal-runtime-enabled-status" class="toggle-status off">OFF</span>
                                 </div>
                                 <label class="comfy-runtime-option">
-                                    <span class="comfy-runtime-option-label">유휴 자동 종료</span>
+                                    <span class="comfy-runtime-option-label">유휴 자동 종료(s)</span>
                                     <input type="number" id="modal-runtime-scaledown-window" min="2" max="1200" step="1" value="15" onchange="modalSyncRuntimeControls('runtime')">
                                 </label>
                                 <label class="comfy-runtime-option">
@@ -26357,6 +26357,8 @@
         let _modalDeploymentWasRunning = false;
         let modalRuntimePollTimer = null;
         let modalRuntimePollBusy = false;
+        let modalRuntimeLogPollTimer = null;
+        const MODAL_RUNTIME_LOG_REFRESH_MS = 30000;
         let modalRuntimeLogEntries = [];
         let modalRuntimeLogFilter = 'all';
         let modalRuntimeLogClearedAt = 0;
@@ -26699,6 +26701,10 @@
 
         async function modalRuntimeRefreshLogs(showResult = false) {
             if (modalRuntimeLogBusy) return;
+            if (modalRuntimeLogPollTimer !== null) {
+                window.clearTimeout(modalRuntimeLogPollTimer);
+                modalRuntimeLogPollTimer = null;
+            }
             modalRuntimeLogBusy = true;
             const status = document.getElementById('modal-runtime-log-status');
             try {
@@ -26718,6 +26724,7 @@
                 if (showResult) showToast('Modal 로그 조회 실패: ' + (error.message || error), 'error');
             } finally {
                 modalRuntimeLogBusy = false;
+                modalRuntimeScheduleLogPolling();
             }
         }
 
@@ -27645,18 +27652,39 @@
             }
         }
 
+        function modalRuntimeViewIsActive() {
+            return comfyRuntimeActiveView === 'modal'
+                && document.getElementById('settings-tab-comfy_runtime')?.classList.contains('active');
+        }
+
+        function modalRuntimeScheduleLogPolling() {
+            if (modalRuntimeLogPollTimer !== null) {
+                window.clearTimeout(modalRuntimeLogPollTimer);
+                modalRuntimeLogPollTimer = null;
+            }
+            if (!modalRuntimeViewIsActive()) return;
+            modalRuntimeLogPollTimer = window.setTimeout(
+                () => void modalRuntimeRefreshLogs(false),
+                MODAL_RUNTIME_LOG_REFRESH_MS,
+            );
+        }
+
         function modalRuntimeStopPolling() {
             if (modalRuntimePollTimer !== null) {
                 window.clearTimeout(modalRuntimePollTimer);
                 modalRuntimePollTimer = null;
             }
+            if (modalRuntimeLogPollTimer !== null) {
+                window.clearTimeout(modalRuntimeLogPollTimer);
+                modalRuntimeLogPollTimer = null;
+            }
         }
 
         function modalRuntimeStartPolling() {
             modalRuntimeStopPolling();
-            if (comfyRuntimeActiveView === 'modal'
-                && document.getElementById('settings-tab-comfy_runtime')?.classList.contains('active')) {
+            if (modalRuntimeViewIsActive()) {
                 void modalRuntimeRefresh(false);
+                void modalRuntimeRefreshLogs(false);
             }
         }
 
@@ -27664,10 +27692,7 @@
             if (modalRuntimePollBusy) return;
             modalRuntimePollBusy = true;
             try {
-                const [data] = await Promise.all([
-                    fetchJSON('/api/modal/status?runtime=1'),
-                    modalRuntimeRefreshLogs(false),
-                ]);
+                const data = await fetchJSON('/api/modal/status?runtime=1');
                 modalApplyStatus(data, showResult);
             } catch (error) {
                 console.error('[MODAL_RUNTIME] 런타임 상태 조회 실패:', error);
@@ -27679,8 +27704,7 @@
                 if (showResult) showToast('Modal 런타임 상태 조회 실패: ' + (error.message || error), 'error');
             } finally {
                 modalRuntimePollBusy = false;
-                if (comfyRuntimeActiveView === 'modal'
-                    && document.getElementById('settings-tab-comfy_runtime')?.classList.contains('active')) {
+                if (modalRuntimeViewIsActive()) {
                     const refreshInput = document.getElementById('modal-runtime-status-refresh');
                     const seconds = Math.max(2, Math.min(60, Number(refreshInput?.value || 5)));
                     modalRuntimePollTimer = window.setTimeout(

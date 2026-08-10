@@ -6,7 +6,6 @@ import json
 import os
 import re
 import shutil
-import subprocess
 import sys
 import tempfile
 import threading
@@ -73,6 +72,76 @@ class ModalClientActionError(RuntimeError):
 
 class WebStartCancelled(RuntimeError):
     """사용자가 Modal 웹 Server 준비 대기를 취소했다."""
+
+
+class _ModalSubprocessLoop:
+    """Modal 자식 프로세스 I/O를 전담하는 상주 asyncio 루프.
+
+    Windows에서 서버·pytest가 SelectorEventLoop를 사용하면 asyncio subprocess를
+    직접 만들 수 없다. 전용 ProactorEventLoop를 daemon 스레드에 한 번만 띄우고
+    모든 Modal 명령을 그 루프에 제출하면, 명령 수만큼 기본 executor 스레드를
+    점유하지 않으면서 여러 자식 프로세스를 동시에 기다릴 수 있다.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._ready = threading.Event()
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._startup_error: BaseException | None = None
+        self._thread: threading.Thread | None = None
+
+    def _run(self) -> None:
+        loop: asyncio.AbstractEventLoop | None = None
+        try:
+            loop = (
+                asyncio.ProactorEventLoop()
+                if os.name == "nt"
+                else asyncio.new_event_loop()
+            )
+            asyncio.set_event_loop(loop)
+            self._loop = loop
+            self._ready.set()
+            loop.run_forever()
+        except BaseException as exc:
+            self._startup_error = exc
+            print(
+                "[MODAL] 비동기 subprocess 전용 루프 실패: "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            self._ready.set()
+        finally:
+            if loop is not None and not loop.is_closed():
+                loop.close()
+
+    def submit(self, coroutine):
+        with self._lock:
+            if self._thread is None or not self._thread.is_alive():
+                self._ready.clear()
+                self._startup_error = None
+                self._loop = None
+                self._thread = threading.Thread(
+                    target=self._run,
+                    name="modal-async-subprocess-loop",
+                    daemon=True,
+                )
+                self._thread.start()
+            if not self._ready.wait(timeout=10):
+                coroutine.close()
+                print("[MODAL] 비동기 subprocess 전용 루프 시작 시간 초과")
+                raise RuntimeError("Modal 명령 실행 루프를 시작하지 못했습니다.")
+            if self._startup_error is not None or self._loop is None:
+                coroutine.close()
+                error = self._startup_error
+                print(
+                    "[MODAL] 비동기 subprocess 전용 루프를 사용할 수 없습니다: "
+                    f"error={type(error).__name__ if error else 'unknown'}: {error}"
+                )
+                raise RuntimeError("Modal 명령 실행 루프가 준비되지 않았습니다.") from error
+            return asyncio.run_coroutine_threadsafe(coroutine, self._loop)
+
+
+_MODAL_SUBPROCESS_LOOP = _ModalSubprocessLoop()
 
 
 def _runtime_failure_reason(exc: Exception) -> str:
@@ -170,6 +239,12 @@ class ModalService:
         # _billing_cache 패턴과 동일: stored_at_monotonic 기반 TTL.
         self._web_remote_lock = asyncio.Lock()
         self._web_remote_cache: dict[str, Any] | None = None
+        # 상태 위젯과 설정 화면이 동시에 갱신되어도 같은 Modal control-plane
+        # 명령을 중복 실행하지 않는다. 서로 다른 상태 명령은 최대 2개까지 별도
+        # 비동기 subprocess로 실행해 생성 작업과 메인 이벤트 루프를 점유하지 않는다.
+        self._status_command_semaphore = asyncio.Semaphore(2)
+        self._status_action_tasks: dict[str, asyncio.Task[dict[str, Any]]] = {}
+        self._account_check_tasks: dict[str, asyncio.Task[bool]] = {}
 
     @staticmethod
     def _subprocess_env(profile: str, extra: Mapping[str, str] | None = None) -> dict[str, str]:
@@ -223,212 +298,325 @@ class ModalService:
         timeout: float | None = None,
         output_callback: Callable[[str, str], None] | None = None,
     ) -> tuple[int, str, str]:
-        input_text = None
-        if stdin_payload is not None:
-            input_text = json.dumps(stdin_payload, ensure_ascii=False)
+        caller_loop = asyncio.get_running_loop()
+        output_queue: asyncio.Queue[tuple[str, str] | None] | None = (
+            asyncio.Queue() if output_callback is not None else None
+        )
 
-        def run_blocking() -> subprocess.CompletedProcess[str]:
-            kwargs: dict[str, Any] = {}
-            if os.name == "nt":
-                kwargs["creationflags"] = 0x08000000  # CREATE_NO_WINDOW
-            return subprocess.run(
-                args,
-                input=input_text,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                env=dict(env),
-                cwd=str(cwd) if cwd is not None else None,
-                timeout=timeout,
-                check=False,
-                **kwargs,
-            )
-
-        if output_callback is None:
+        def forward_output(source: str, line: str) -> None:
+            if output_queue is None:
+                return
             try:
-                completed = await asyncio.to_thread(run_blocking)
-            except subprocess.TimeoutExpired as exc:
-                print(
-                    "[MODAL] 명령 제한 시간 초과: "
-                    f"command={args[0]} {args[1]}, timeout={timeout}"
-                )
-                traceback.print_exc()
-                raise TimeoutError(
-                    f"명령 제한 시간을 초과했습니다: {args[0]} {args[1]}"
-                ) from exc
-            return (
-                int(completed.returncode or 0),
-                completed.stdout,
-                completed.stderr,
-            )
-
-        loop = asyncio.get_running_loop()
-        output_queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
-        process_holder: dict[str, subprocess.Popen[str]] = {}
-        cancel_requested = threading.Event()
-
-        def queue_event(kind: str, payload: Any) -> None:
-            loop.call_soon_threadsafe(output_queue.put_nowait, (kind, payload))
-
-        def run_streaming() -> None:
-            kwargs: dict[str, Any] = {}
-            if os.name == "nt":
-                kwargs["creationflags"] = 0x08000000  # CREATE_NO_WINDOW
-            process: subprocess.Popen[str] | None = None
-            try:
-                process = subprocess.Popen(
-                    args,
-                    stdin=subprocess.PIPE if input_text is not None else None,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    encoding="utf-8",
-                    errors="replace",
-                    bufsize=1,
-                    env=dict(env),
-                    cwd=str(cwd) if cwd is not None else None,
-                    **kwargs,
-                )
-                process_holder["process"] = process
-                if cancel_requested.is_set() and process.poll() is None:
-                    print(f"[MODAL] 취소 요청된 스트리밍 명령 종료: command={args!r}")
-                    process.kill()
-                if process.stdout is None or process.stderr is None:
-                    print(f"[MODAL] 스트리밍 명령 파이프 생성 실패: command={args!r}")
-                    raise RuntimeError("Modal 명령 출력 파이프를 만들지 못했습니다.")
-
-                captured: dict[str, list[str]] = {"stdout": [], "stderr": []}
-
-                def read_stream(stream, source: str) -> None:
-                    try:
-                        for line in iter(stream.readline, ""):
-                            captured[source].append(line)
-                            queue_event("line", (source, line.rstrip("\r\n")))
-                    except Exception as exc:
-                        print(
-                            "[MODAL] 명령 출력 리더 실패: "
-                            f"source={source}, error={type(exc).__name__}: {exc}"
-                        )
-                        traceback.print_exc()
-                        queue_event(
-                            "line",
-                            ("error", f"출력 리더 실패({source}): {type(exc).__name__}: {exc}"),
-                        )
-                    finally:
-                        stream.close()
-
-                readers = [
-                    threading.Thread(
-                        target=read_stream,
-                        args=(process.stdout, "stdout"),
-                        name="modal-command-stdout",
-                        daemon=True,
-                    ),
-                    threading.Thread(
-                        target=read_stream,
-                        args=(process.stderr, "stderr"),
-                        name="modal-command-stderr",
-                        daemon=True,
-                    ),
-                ]
-                for reader in readers:
-                    reader.start()
-
-                if input_text is not None:
-                    if process.stdin is None:
-                        print(f"[MODAL] 스트리밍 명령 stdin 생성 실패: command={args!r}")
-                        raise RuntimeError("Modal 명령 입력 파이프를 만들지 못했습니다.")
-                    process.stdin.write(input_text)
-                    process.stdin.close()
-
-                try:
-                    return_code = process.wait(timeout=timeout)
-                except subprocess.TimeoutExpired as exc:
-                    print(
-                        "[MODAL] 스트리밍 명령 제한 시간 초과: "
-                        f"command={args[0]} {args[1]}, timeout={timeout}"
-                    )
-                    traceback.print_exc()
-                    process.kill()
-                    process.wait()
-                    raise TimeoutError(
-                        f"명령 제한 시간을 초과했습니다: {args[0]} {args[1]}"
-                    ) from exc
-                finally:
-                    for reader in readers:
-                        reader.join(timeout=10)
-                        if reader.is_alive():
-                            print(
-                                "[MODAL] 명령 출력 리더 종료 대기 실패: "
-                                f"thread={reader.name}, command={args!r}"
-                            )
-
-                queue_event(
-                    "done",
-                    (
-                        int(return_code or 0),
-                        "".join(captured["stdout"]),
-                        "".join(captured["stderr"]),
-                    ),
+                caller_loop.call_soon_threadsafe(
+                    output_queue.put_nowait,
+                    (source, line),
                 )
             except Exception as exc:
                 print(
-                    "[MODAL] 스트리밍 명령 실행 예외: "
-                    f"command={args!r}, error={type(exc).__name__}: {exc}"
+                    "[MODAL] 명령 출력의 메인 루프 전달 실패: "
+                    f"source={source}, error={type(exc).__name__}: {exc}"
                 )
                 traceback.print_exc()
-                if process is not None and process.poll() is None:
-                    process.kill()
-                    process.wait()
-                queue_event("exception", exc)
 
-        worker_task = asyncio.create_task(asyncio.to_thread(run_streaming))
-        try:
-            while True:
-                kind, payload = await output_queue.get()
-                if kind == "line":
-                    source, line = payload
+        async def execute_on_subprocess_loop() -> tuple[int, str, str]:
+            try:
+                return await ModalService._run_command_async(
+                    args,
+                    env=env,
+                    cwd=cwd,
+                    stdin_payload=stdin_payload,
+                    timeout=timeout,
+                    output_callback=(forward_output if output_queue is not None else None),
+                )
+            finally:
+                if output_queue is not None:
                     try:
-                        output_callback(source, line)
+                        caller_loop.call_soon_threadsafe(output_queue.put_nowait, None)
+                    except Exception as exc:
+                        print(
+                            "[MODAL] 명령 출력 종료 신호 전달 실패: "
+                            f"error={type(exc).__name__}: {exc}"
+                        )
+                        traceback.print_exc()
+
+        async def consume_output() -> None:
+            if output_queue is None or output_callback is None:
+                return
+            while True:
+                entry = await output_queue.get()
+                if entry is None:
+                    return
+                source, line = entry
+                try:
+                    output_callback(source, line)
+                except Exception as callback_exc:
+                    print(
+                        "[MODAL] 실시간 명령 출력 처리 실패: "
+                        f"source={source}, "
+                        f"error={type(callback_exc).__name__}: {callback_exc}"
+                    )
+                    traceback.print_exc()
+
+        concurrent_future = _MODAL_SUBPROCESS_LOOP.submit(
+            execute_on_subprocess_loop()
+        )
+        wrapped_future = asyncio.wrap_future(concurrent_future)
+        consumer_task = (
+            asyncio.create_task(consume_output())
+            if output_queue is not None
+            else None
+        )
+        try:
+            result = await wrapped_future
+            if consumer_task is not None:
+                await consumer_task
+            return result
+        except asyncio.CancelledError:
+            concurrent_future.cancel()
+            if consumer_task is not None:
+                try:
+                    await asyncio.wait_for(
+                        asyncio.shield(consumer_task),
+                        timeout=10,
+                    )
+                except Exception as exc:
+                    print(
+                        "[MODAL] 취소된 명령 출력 소비 정리 실패: "
+                        f"command={args!r}, error={type(exc).__name__}: {exc}"
+                    )
+                    traceback.print_exc()
+                    consumer_task.cancel()
+            raise
+        except Exception:
+            if consumer_task is not None:
+                try:
+                    await asyncio.wait_for(
+                        asyncio.shield(consumer_task),
+                        timeout=10,
+                    )
+                except Exception as exc:
+                    print(
+                        "[MODAL] 실패한 명령 출력 소비 정리 실패: "
+                        f"command={args!r}, error={type(exc).__name__}: {exc}"
+                    )
+                    traceback.print_exc()
+                    consumer_task.cancel()
+            raise
+
+    @staticmethod
+    async def _run_command_async(
+        args: list[str],
+        *,
+        env: Mapping[str, str],
+        cwd: str | Path | None = None,
+        stdin_payload: dict | None = None,
+        timeout: float | None = None,
+        output_callback: Callable[[str, str], None] | None = None,
+    ) -> tuple[int, str, str]:
+        if not args:
+            print("[MODAL] 실행할 명령 인자가 비어 있습니다.")
+            raise ValueError("Modal 명령 인자가 비어 있습니다.")
+
+        input_bytes = (
+            json.dumps(stdin_payload, ensure_ascii=False).encode("utf-8")
+            if stdin_payload is not None
+            else None
+        )
+        process_kwargs: dict[str, Any] = {}
+        if os.name == "nt":
+            process_kwargs["creationflags"] = 0x08000000  # CREATE_NO_WINDOW
+
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *args,
+                stdin=(
+                    asyncio.subprocess.PIPE
+                    if input_bytes is not None
+                    else asyncio.subprocess.DEVNULL
+                ),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=dict(env),
+                cwd=str(cwd) if cwd is not None else None,
+                limit=8 * 1024 * 1024,
+                **process_kwargs,
+            )
+        except Exception as exc:
+            print(
+                "[MODAL] 비동기 명령 프로세스 시작 실패: "
+                f"command={args!r}, error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            raise
+
+        async def stop_process(reason: str) -> None:
+            if process.returncode is not None:
+                return
+            print(
+                f"[MODAL] {reason} 명령 프로세스 종료: "
+                f"pid={process.pid}, command={args!r}"
+            )
+            try:
+                process.kill()
+                await asyncio.wait_for(process.wait(), timeout=10)
+            except ProcessLookupError:
+                return
+            except Exception as exc:
+                print(
+                    "[MODAL] 명령 프로세스 종료 실패: "
+                    f"pid={process.pid}, command={args!r}, "
+                    f"error={type(exc).__name__}: {exc}"
+                )
+                traceback.print_exc()
+
+        if output_callback is None:
+            communicate_task = asyncio.create_task(process.communicate(input_bytes))
+            try:
+                if timeout is None:
+                    stdout_bytes, stderr_bytes = await communicate_task
+                else:
+                    stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                        asyncio.shield(communicate_task),
+                        timeout=timeout,
+                    )
+            except asyncio.TimeoutError as exc:
+                print(
+                    "[MODAL] 명령 제한 시간 초과: "
+                    f"command={args[0]} {args[1] if len(args) > 1 else ''}, "
+                    f"timeout={timeout}"
+                )
+                traceback.print_exc()
+                await stop_process("제한 시간 초과")
+                try:
+                    stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                        asyncio.shield(communicate_task),
+                        timeout=10,
+                    )
+                except Exception:
+                    communicate_task.cancel()
+                raise TimeoutError(
+                    f"명령 제한 시간을 초과했습니다: {args[0]}"
+                ) from exc
+            except asyncio.CancelledError:
+                await stop_process("취소된")
+                try:
+                    await asyncio.wait_for(
+                        asyncio.shield(communicate_task),
+                        timeout=10,
+                    )
+                except Exception as cleanup_exc:
+                    print(
+                        "[MODAL] 취소된 명령 출력 정리 실패: "
+                        f"command={args!r}, "
+                        f"error={type(cleanup_exc).__name__}: {cleanup_exc}"
+                    )
+                    traceback.print_exc()
+                    communicate_task.cancel()
+                raise
+            return (
+                int(process.returncode or 0),
+                stdout_bytes.decode("utf-8", errors="replace")
+                .replace("\r\n", "\n")
+                .replace("\r", "\n"),
+                stderr_bytes.decode("utf-8", errors="replace")
+                .replace("\r\n", "\n")
+                .replace("\r", "\n"),
+            )
+
+        if process.stdout is None or process.stderr is None:
+            print(f"[MODAL] 비동기 스트리밍 출력 파이프 생성 실패: command={args!r}")
+            await stop_process("출력 파이프 생성 실패")
+            raise RuntimeError("Modal 명령 출력 파이프를 만들지 못했습니다.")
+
+        captured: dict[str, list[str]] = {"stdout": [], "stderr": []}
+
+        async def read_stream(
+            stream: asyncio.StreamReader,
+            source: str,
+        ) -> None:
+            try:
+                while True:
+                    raw_line = await stream.readline()
+                    if not raw_line:
+                        return
+                    line = (
+                        raw_line.decode("utf-8", errors="replace")
+                        .replace("\r\n", "\n")
+                        .replace("\r", "\n")
+                    )
+                    captured[source].append(line)
+                    try:
+                        output_callback(source, line.rstrip("\r\n"))
                     except Exception as callback_exc:
                         print(
                             "[MODAL] 실시간 명령 출력 처리 실패: "
-                            f"source={source}, error={type(callback_exc).__name__}: "
-                            f"{callback_exc}"
+                            f"source={source}, "
+                            f"error={type(callback_exc).__name__}: {callback_exc}"
                         )
                         traceback.print_exc()
-                elif kind == "done":
-                    await worker_task
-                    return payload
-                elif kind == "exception":
-                    await worker_task
-                    raise payload
-                else:
-                    print(
-                        "[MODAL] 알 수 없는 스트리밍 명령 이벤트: "
-                        f"kind={kind!r}, payload={payload!r}"
-                    )
-        except asyncio.CancelledError:
-            cancel_requested.set()
-            process = process_holder.get("process")
-            if process is not None and process.poll() is None:
-                print(f"[MODAL] 취소된 스트리밍 명령 종료: command={args!r}")
-                process.kill()
-            try:
-                await asyncio.wait_for(asyncio.shield(worker_task), timeout=10)
-            except asyncio.TimeoutError:
-                print(
-                    "[MODAL] 취소된 스트리밍 명령 작업 종료 대기 시간 초과: "
-                    f"command={args!r}"
-                )
             except Exception as exc:
                 print(
-                    "[MODAL] 취소된 스트리밍 명령 정리 실패: "
-                    f"command={args!r}, error={type(exc).__name__}: {exc}"
+                    "[MODAL] 비동기 명령 출력 읽기 실패: "
+                    f"source={source}, command={args!r}, "
+                    f"error={type(exc).__name__}: {exc}"
                 )
                 traceback.print_exc()
+                raise
+
+        reader_tasks = [
+            asyncio.create_task(read_stream(process.stdout, "stdout")),
+            asyncio.create_task(read_stream(process.stderr, "stderr")),
+        ]
+        if input_bytes is not None:
+            if process.stdin is None:
+                print(f"[MODAL] 비동기 스트리밍 stdin 생성 실패: command={args!r}")
+                await stop_process("stdin 생성 실패")
+                await asyncio.gather(*reader_tasks, return_exceptions=True)
+                raise RuntimeError("Modal 명령 입력 파이프를 만들지 못했습니다.")
+            process.stdin.write(input_bytes)
+            await process.stdin.drain()
+            process.stdin.close()
+            await process.stdin.wait_closed()
+
+        wait_task = asyncio.create_task(process.wait())
+        try:
+            if timeout is None:
+                await wait_task
+            else:
+                await asyncio.wait_for(asyncio.shield(wait_task), timeout=timeout)
+            reader_results = await asyncio.gather(
+                *reader_tasks,
+                return_exceptions=True,
+            )
+            for reader_result in reader_results:
+                if isinstance(reader_result, Exception):
+                    raise reader_result
+        except asyncio.TimeoutError as exc:
+            print(
+                "[MODAL] 스트리밍 명령 제한 시간 초과: "
+                f"command={args[0]} {args[1] if len(args) > 1 else ''}, "
+                f"timeout={timeout}"
+            )
+            traceback.print_exc()
+            await stop_process("제한 시간 초과된 스트리밍")
+            await asyncio.gather(*reader_tasks, return_exceptions=True)
+            raise TimeoutError(
+                f"명령 제한 시간을 초과했습니다: {args[0]}"
+            ) from exc
+        except asyncio.CancelledError:
+            await stop_process("취소된 스트리밍")
+            await asyncio.gather(*reader_tasks, return_exceptions=True)
             raise
+        except Exception:
+            await stop_process("실패한 스트리밍")
+            await asyncio.gather(*reader_tasks, return_exceptions=True)
+            raise
+
+        return (
+            int(process.returncode or 0),
+            "".join(captured["stdout"]),
+            "".join(captured["stderr"]),
+        )
 
     def _install_snapshot(self) -> dict[str, Any]:
         snapshot = dict(self._install_state)
@@ -616,13 +804,14 @@ class ModalService:
             )
             self._append_install_log("stderr", line)
 
-    async def account_connected(self, settings: ModalSettings) -> bool:
+    async def _account_connected_once(self, settings: ModalSettings) -> bool:
         try:
-            code, _stdout, _stderr = await self._run_command(
-                [sys.executable, "-m", "modal", "token", "info"],
-                env=self._subprocess_env(settings.profile),
-                timeout=20,
-            )
+            async with self._status_command_semaphore:
+                code, _stdout, _stderr = await self._run_command(
+                    [sys.executable, "-m", "modal", "token", "info"],
+                    env=self._subprocess_env(settings.profile),
+                    timeout=20,
+                )
             if code != 0:
                 print(
                     f"[MODAL] 계정 상태 확인 실패: profile={settings.profile}, exit_code={code}"
@@ -633,7 +822,37 @@ class ModalService:
             traceback.print_exc()
             return False
 
-    async def _run_client_action(
+    async def account_connected(self, settings: ModalSettings) -> bool:
+        """동시에 들어온 계정 확인 요청은 하나의 ``modal token info``를 공유한다."""
+
+        profile = settings.profile
+        task = self._account_check_tasks.get(profile)
+        if task is None or task.done():
+            task = asyncio.create_task(self._account_connected_once(settings))
+            self._account_check_tasks[profile] = task
+
+            def clear_account_task(
+                completed: asyncio.Task[bool],
+                *,
+                key: str = profile,
+            ) -> None:
+                if self._account_check_tasks.get(key) is completed:
+                    self._account_check_tasks.pop(key, None)
+                if completed.cancelled():
+                    return
+                try:
+                    completed.exception()
+                except Exception as exc:
+                    print(
+                        "[MODAL] 계정 확인 백그라운드 작업 상태 회수 실패: "
+                        f"error={type(exc).__name__}: {exc}"
+                    )
+                    traceback.print_exc()
+
+            task.add_done_callback(clear_account_task)
+        return await asyncio.shield(task)
+
+    async def _run_client_action_once(
         self,
         settings: ModalSettings,
         action: str,
@@ -686,6 +905,72 @@ class ModalService:
             print(f"[MODAL] {action} 결과 객체 누락: type={type(result).__name__}")
             raise RuntimeError(f"Modal {action} 결과 객체가 없습니다.")
         return result
+
+    async def _run_client_action(
+        self,
+        settings: ModalSettings,
+        action: str,
+        *,
+        timeout: float,
+        **payload: Any,
+    ) -> dict[str, Any]:
+        # 생성·변환·설치 등 쓰기 작업은 호출마다 반드시 독립 실행한다. 상태 UI가
+        # 사용하는 읽기 전용 명령만 동일 payload 기준 single-flight로 합친다.
+        shared_actions = {"runtime_stats", "web_status", "runtime_logs"}
+        if action not in shared_actions:
+            return await self._run_client_action_once(
+                settings,
+                action,
+                timeout=timeout,
+                **payload,
+            )
+
+        action_key = json.dumps(
+            {
+                "action": action,
+                "profile": settings.profile,
+                "environment": settings.environment,
+                "app_name": settings.deployment_name,
+                "payload": payload,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        task = self._status_action_tasks.get(action_key)
+        if task is None or task.done():
+            async def run_limited() -> dict[str, Any]:
+                async with self._status_command_semaphore:
+                    return await self._run_client_action_once(
+                        settings,
+                        action,
+                        timeout=timeout,
+                        **payload,
+                    )
+
+            task = asyncio.create_task(run_limited())
+            self._status_action_tasks[action_key] = task
+
+            def clear_status_task(
+                completed: asyncio.Task[dict[str, Any]],
+                *,
+                key: str = action_key,
+            ) -> None:
+                if self._status_action_tasks.get(key) is completed:
+                    self._status_action_tasks.pop(key, None)
+                if completed.cancelled():
+                    return
+                try:
+                    completed.exception()
+                except Exception as exc:
+                    print(
+                        "[MODAL] 상태 명령 작업 상태 회수 실패: "
+                        f"action={action}, error={type(exc).__name__}: {exc}"
+                    )
+                    traceback.print_exc()
+
+            task.add_done_callback(clear_status_task)
+        return await asyncio.shield(task)
 
     async def custom_nodes(self) -> dict[str, Any]:
         try:
@@ -840,9 +1125,18 @@ class ModalService:
             "checked_at": checked_at,
         }
 
+        # Worker App과 WebUI App은 독립된 control-plane 조회다. 두 작업을 함께
+        # 시작하고 실제 Modal 명령 동시성은 _status_command_semaphore가 제한한다.
+        worker_task = asyncio.create_task(self._worker_status_block(settings))
+        web_task = asyncio.create_task(self._dock_web_status(settings))
+
         worker: dict[str, Any]
         try:
-            worker = await self._worker_status_block(settings)
+            worker = await worker_task
+        except asyncio.CancelledError:
+            web_task.cancel()
+            await asyncio.gather(web_task, return_exceptions=True)
+            raise
         except Exception as exc:
             # worker 블록 계산 자체가 예외를 던지면 web 블록은 살린다(양방향 격리).
             print(
@@ -866,7 +1160,9 @@ class ModalService:
 
         web: dict[str, Any]
         try:
-            web = await self._dock_web_status(settings)
+            web = await web_task
+        except asyncio.CancelledError:
+            raise
         except Exception as exc:
             # web 블록 계산 자체가 예외를 던지면 worker 블록은 살린다.
             print(
@@ -2196,11 +2492,12 @@ class ModalService:
                     cache_age_seconds=cache_age,
                 )
 
-            code, stdout, stderr = await self._run_command(
-                [sys.executable, "-m", "modal", "billing", "summary", "--json"],
-                env=self._subprocess_env(settings.profile),
-                timeout=30,
-            )
+            async with self._status_command_semaphore:
+                code, stdout, stderr = await self._run_command(
+                    [sys.executable, "-m", "modal", "billing", "summary", "--json"],
+                    env=self._subprocess_env(settings.profile),
+                    timeout=30,
+                )
             if code != 0:
                 print(
                     f"[MODAL] 비용 조회 실패: profile={settings.profile}, "

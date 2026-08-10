@@ -111,3 +111,20 @@ def test_modal_worker_panel_follows_config_and_shared_queue_offset() -> None:
     assert "document.getElementById('left-utility-stack')" in position
     assert "window.innerHeight - rect.top + 10" in position
     assert "queueContainer.classList.contains('collapsed')" in position
+
+
+def test_modal_runtime_status_and_logs_poll_independently() -> None:
+    refresh = _function_source(
+        "modalRuntimeRefresh(showResult = false)",
+        "modalRuntimeSaveAndApply()",
+    )
+    start_polling = _function_source(
+        "modalRuntimeStartPolling()",
+        "modalRuntimeRefresh(showResult = false)",
+    )
+
+    assert "fetchJSON('/api/modal/status?runtime=1')" in refresh
+    assert "modalRuntimeRefreshLogs" not in refresh
+    assert "void modalRuntimeRefresh(false);" in start_polling
+    assert "void modalRuntimeRefreshLogs(false);" in start_polling
+    assert "const MODAL_RUNTIME_LOG_REFRESH_MS = 30000;" in FRONTEND
