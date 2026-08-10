@@ -11,6 +11,7 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import server
+from comfy_allocation import CURRENT_COMFY_EXECUTION_TARGET, MODAL_COMFY_TARGET
 from modes import llm_prompt_edit, multi_char_mask
 
 
@@ -131,6 +132,37 @@ class _JsonRequest:
         return self._payload
 
 
+def _png_bytes() -> bytes:
+    output = BytesIO()
+    Image.new("RGB", (8, 8), "white").save(output, format="PNG")
+    return output.getvalue()
+
+
+def _patch_backup_env(monkeypatch, tmp_path):
+    monkeypatch.setattr(server, "WORKFLOW_BACKUP_DIR", str(tmp_path))
+    monkeypatch.setattr(server, "current_original_workflow", {
+        "nodes": [
+            {"title": "긍정프롬프트", "widgets_values": [""]},
+            {"title": "부정프롬프트", "widgets_values": [""]},
+        ]
+    })
+    monkeypatch.setattr(server, "current_api_workflow", {})
+    monkeypatch.setattr(server, "current_conversion_info", {})
+    monkeypatch.setattr(server, "cleanup_backups", lambda: None)
+    monkeypatch.setattr(server, "_invalidate_backup_filter_cache", lambda: None)
+
+    async def ignore_notify(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(server, "notify_frontend", ignore_notify)
+
+
+def _read_info(tmp_path, backup_name) -> dict:
+    return json.loads(
+        (tmp_path / f"{backup_name}_info.json").read_text(encoding="utf-8")
+    )
+
+
 def _completed_queue_item(item_id="test-regeneration-item"):
     future = asyncio.get_running_loop().create_future()
     future.set_result({"success": True, "generation_time": 1.0})
@@ -179,6 +211,8 @@ async def test_save_backup_persists_normalized_multi_char_snapshot(tmp_path, mon
         (tmp_path / f"{backup_name}_info.json").read_text(encoding="utf-8")
     )
     assert info["illustration_multi_char"] == snapshot
+    # provider=comfy + 실행처 미지정 → 로컬 GPU(딱지 없음).
+    assert info["execution_source"] == "local"
 
 
 @pytest.mark.asyncio
@@ -343,3 +377,75 @@ def test_llm_edit_syncs_scene_into_multi_char_conditioning_without_changing_mask
     )
     assert valid is False
     assert "블록 수" in reason
+
+
+@pytest.mark.asyncio
+async def test_save_backup_marks_modal_execution_source(tmp_path, monkeypatch):
+    _patch_backup_env(monkeypatch, tmp_path)
+    # 실행처를 Modal로 명시 전달 → M 딱지용 execution_source="modal".
+    backup_name, _ = await server.save_backup(
+        _png_bytes(),
+        "modal-source-test",
+        "p",
+        "n",
+        provider="comfy",
+        execution_target=MODAL_COMFY_TARGET,
+    )
+    info = _read_info(tmp_path, backup_name)
+    assert info["execution_source"] == "modal"
+    assert info["provider"] == "comfy"
+
+
+@pytest.mark.asyncio
+async def test_save_backup_marks_modal_via_contextvar(tmp_path, monkeypatch):
+    _patch_backup_env(monkeypatch, tmp_path)
+    # execution_target 인자 없이 컨텍스트 변수에서 Modal을 읽는 경로(generate_image_with_prompt
+    # 가 Modal 분기로 갔을 때와 동일한 상황).
+    token = CURRENT_COMFY_EXECUTION_TARGET.set(MODAL_COMFY_TARGET)
+    try:
+        backup_name, _ = await server.save_backup(
+            _png_bytes(),
+            "modal-ctx-test",
+            "p",
+            "n",
+            provider="comfy",
+        )
+    finally:
+        CURRENT_COMFY_EXECUTION_TARGET.reset(token)
+    info = _read_info(tmp_path, backup_name)
+    assert info["execution_source"] == "modal"
+
+
+@pytest.mark.asyncio
+async def test_save_backup_marks_chansub_execution_source(tmp_path, monkeypatch):
+    _patch_backup_env(monkeypatch, tmp_path)
+    # 챈섭은 실행처와 무관하게 항상 S 딱지.
+    backup_name, _ = await server.save_backup(
+        _png_bytes(),
+        "chansub-source-test",
+        "p",
+        "n",
+        provider="chansub",
+    )
+    info = _read_info(tmp_path, backup_name)
+    assert info["execution_source"] == "chansub"
+    assert info["provider"] == "chansub"
+
+
+@pytest.mark.asyncio
+async def test_save_backup_local_execution_source_when_target_unset(tmp_path, monkeypatch):
+    _patch_backup_env(monkeypatch, tmp_path)
+    # 로컬 GPU: comfy + 실행처 없음 → 딱지 없음(local).
+    token = CURRENT_COMFY_EXECUTION_TARGET.set("local")
+    try:
+        backup_name, _ = await server.save_backup(
+            _png_bytes(),
+            "local-source-test",
+            "p",
+            "n",
+            provider="comfy",
+        )
+    finally:
+        CURRENT_COMFY_EXECUTION_TARGET.reset(token)
+    info = _read_info(tmp_path, backup_name)
+    assert info["execution_source"] == "local"

@@ -1808,6 +1808,7 @@ async def save_backup(
     illustration_multi_char: dict = None,
     llm_trace: list = None,
     llm_final_result: dict = None,
+    execution_target: str = "",
 ):
     """이미지(WebP q80 + 원본 워크플로우 메타데이터)와 원본 워크플로우를 백업한다.
     bot_name: 봇/워크플로우 컨텍스트 딱지 (bot 모드일 때 봇 이름).
@@ -1818,7 +1819,11 @@ async def save_backup(
     provider_mode: 생성 요청의 공급자 모드(comfy/chansub/hybrid).
     prompt_provider: 저장 프롬프트 문법을 만든 공급자(comfy 또는 chansub).
     *_snapshot: 이미지 생성과 백업이 겹칠 때 해당 이미지 생성 시점의 전역 메타데이터를 고정한다.
-    illustration_multi_char: 2~3인 재생성용 정규화 레이아웃 스냅샷."""
+    illustration_multi_char: 2~3인 재생성용 정규화 레이아웃 스냅샷.
+    execution_target: 이미지를 실제로 생성한 Comfy 실행처("modal"/"local" 등). 빈 값이면
+        CURRENT_COMFY_EXECUTION_TARGET 컨텍스트 변수에서 읽는다. provider와 함께
+        execution_source(modal/chansub/local)를 산출해 _info.json에 저장하며, 프론트는
+        이 값으로 백업 카드에 M/S 딱지를 표시한다."""
     provider = str(provider or "comfy").strip().lower()
     if provider not in ("comfy", "chansub"):
         print(f"[BACKUP] 알 수 없는 실제 공급자 {provider!r}, comfy 사용")
@@ -1837,6 +1842,23 @@ async def save_backup(
             f"실제 공급자 {provider!r} 사용"
         )
         prompt_provider = provider
+    # 실행 출처 딱지(M=Modal / S=챈섭 / 없음=로컬 GPU)용 source 산출.
+    # provider=="chansub"이면 무조건 챈섭. comfy일 때만 실행처가 Modal인지 판별한다.
+    # execution_target 인자가 비었으면 동일 태스크 컨텍스트의 CURRENT_COMFY_EXECUTION_TARGET을
+    # 읽는다(generate_image_with_prompt가 Modal 분기로 갔으면 "modal"이다).
+    effective_target = str(execution_target or "").strip().lower()
+    if not effective_target:
+        try:
+            effective_target = str(CURRENT_COMFY_EXECUTION_TARGET.get() or "").strip().lower()
+        except Exception as e:
+            print(f"[BACKUP] execution_target 컨텍스트 조회 실패, local 사용: {e}")
+            effective_target = ""
+    if provider == "chansub":
+        execution_source = "chansub"
+    elif provider == "comfy" and effective_target == MODAL_COMFY_TARGET:
+        execution_source = "modal"
+    else:
+        execution_source = "local"
     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     base_name = f"{ts}_{prompt_id[:8]}"
     try:
@@ -1995,6 +2017,14 @@ async def save_backup(
     info_to_save["provider"] = provider
     info_to_save["provider_mode"] = provider_mode
     info_to_save["prompt_provider"] = prompt_provider
+    # 실행 출처 딱지(M/S) 표시용. 프론트 renderBackups가 이 값을 읽어 백업 카드 좌상단에
+    # M(modal)/S(chansub) 배지를 표시한다. local은 배지 없음. 구 백업 호환을 위해
+    # 프론트는 이 필드가 없으면 provider로 chansub 여부만 fallback 판단한다.
+    info_to_save["execution_source"] = execution_source
+    print(
+        f"[BACKUP] 실행 출처 딱지: source={execution_source}, "
+        f"provider={provider}, target={effective_target or '(none)'}"
+    )
     if generation_params:
         info_to_save["generation_params"] = generation_params
     # 후처리 설정 스냅샷 + SPEAK 원문 저장 (재생성 시 동일하게 재적용하기 위함)
@@ -3401,6 +3431,7 @@ async def _finalize_deferred_illustration_prompt(prompt_id: str, speak_text: str
             illustration_multi_char=state.get("illustration_multi_char"),
             llm_trace=entry.get("_llm_trace"),
             llm_final_result=entry.get("_llm_final_result"),
+            execution_target=str(state.get("execution_target") or ""),
         )
 
         save_node_id = entry.get("save_node_id") or "9"
@@ -4133,6 +4164,10 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                 "illustration_multi_char": copy.deepcopy(
                     queued_multi_char if multi_char_requested else None
                 ),
+                # 후처리는 별도 태스크에서 나중에 실행되므로, 생성 시점의 Comfy 실행처를
+                # 보존해 둔다. _finalize_deferred_illustration_prompt가 save_backup으로
+                # 전달하며, Modal 삽화가 M 딱지로 남기 위한 근거.
+                "execution_target": str(CURRENT_COMFY_EXECUTION_TARGET.get() or ""),
             }
             print(
                 f"[ILLUST_CONTEXT:POSTPROCESS] 이미지 원본 보류 · 다음 생성 계속: "

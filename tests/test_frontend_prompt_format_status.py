@@ -74,6 +74,27 @@ def test_queue_has_visible_execution_areas_for_hybrid_and_modal():
     assert "border-top: 2px solid #a78bfa;" in source
 
 
+def test_backup_card_has_modal_and_chansub_source_badges():
+    """삽화 백업 카드에 Modal=M / 챈섭=S 딱지가 썸네일 상단에 오버레이로 표시된다.
+    로컬 GPU 백업은 배지 없음. 라이트박스는 img.src만 확대하므로 배지가 보이지 않는다."""
+    source = _frontend_source()
+    render = _function_source(source, "renderBackups(backups) {", "renderConversionInfoContent(info)")
+
+    # CSS: 썸네일 좌상단 고정, Modal/챈섭 색상 분기.
+    assert ".card-image-area .source-badge {" in source
+    assert "position: absolute;" in source
+    assert ".card-image-area .source-badge.modal {" in source
+    assert ".card-image-area .source-badge.chansub {" in source
+
+    # 렌더: execution_source 기반 M/S 분기. 구 백업은 provider fallback.
+    assert "info.execution_source" in render
+    assert "source-badge ${sourceKind}" in render
+    assert "${sourceKind === 'modal' ? 'M' : 'S'}" in render
+    # 라이트박스는 배지 없이 img.src만 확대 — openLightbox가 source-badge를 참조하지 않는다.
+    lightbox = _function_source(source, "openLightbox(src) {", "closeLightbox()")
+    assert "source-badge" not in lightbox
+
+
 def test_queue_full_item_names_are_available_on_hover():
     source = _frontend_source()
 

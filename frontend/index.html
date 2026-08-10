@@ -495,6 +495,32 @@
             font-size: 14px;
         }
 
+        /* 실행 출처 딱지: 썸네일 좌상단 M(Modal)/S(챈섭). 분석·식별용이므로
+           라이트박스(이미지 확대)에는 표시하지 않는다 — openLightbox는 이 배지 없이
+           img.src 만 확대한다. 로컬 GPU 백업은 배지 없음. */
+        .card-image-area .source-badge {
+            position: absolute;
+            top: 6px;
+            left: 6px;
+            z-index: 3;
+            padding: 1px 6px;
+            border-radius: 4px;
+            font-size: 0.66rem;
+            font-weight: 700;
+            line-height: 1.5;
+            color: #fff;
+            background: rgba(0,0,0,0.6);
+            pointer-events: none;
+            user-select: none;
+            letter-spacing: 0.5px;
+        }
+        .card-image-area .source-badge.modal {
+            background: rgba(99,102,241,0.92);
+        }
+        .card-image-area .source-badge.chansub {
+            background: rgba(236,72,153,0.92);
+        }
+
         .card-body {
             padding: 12px 14px;
         }
@@ -23880,6 +23906,16 @@
                 const hasPrompt = positive || negative;
                 const isScheduled = b.is_scheduled || false;
 
+                // 실행 출처 딱지: Modal=M, 챈섭=S, 로컬 GPU=배지 없음.
+                // execution_source가 없는 구 백업은 provider로 chansub 여부만 fallback.
+                const _src = String(info.execution_source || '').toLowerCase();
+                const sourceKind = (_src === 'modal' || _src === 'chansub')
+                    ? _src
+                    : (String(info.provider || '').toLowerCase() === 'chansub' ? 'chansub' : '');
+                const sourceBadge = sourceKind
+                    ? `<span class="source-badge ${sourceKind}" title="${sourceKind === 'modal' ? 'Modal 원격 ComfyUI 생성' : '챈섭 API 생성'}">${sourceKind === 'modal' ? 'M' : 'S'}</span>`
+                    : '';
+
                 // Store prompt data in Map (avoids data-attribute truncation issues)
                 promptDataMap.set(b.name, { positive, negative, enhanced_positive: b.enhanced_positive || '', wildcard_info: b.wildcard_info || {}, conversion_info: b.conversion_info || {} });
 
@@ -23888,6 +23924,7 @@
                 html += `
                 <div class="${cardClass}" data-name="${escapeAttr(b.name)}">
                     <div class="card-image-area">
+                        ${sourceBadge}
                         <img src="${escapeAttr(b.image_url)}" alt="${escapeAttr(b.name)}"
                              loading="lazy" onclick="openLightbox(this.src)">
                         <div class="regen-result" id="regen-${escapeAttr(b.name)}">
