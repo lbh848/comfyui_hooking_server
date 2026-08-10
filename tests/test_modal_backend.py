@@ -2860,20 +2860,19 @@ def test_modal_runtime_uses_published_multigpu_container_image() -> None:
     assert "torch.isfinite(output).all().item()" in source
 
 
-def test_modal_worker_uses_gpu_memory_snapshot_without_warm_pool() -> None:
+def test_modal_worker_starts_without_gpu_memory_snapshot_or_warm_pool() -> None:
     source = (
         Path(__file__).resolve().parents[1] / "modal_backend" / "modal_app.py"
     ).read_text(encoding="utf-8")
     worker_definition = source[source.index("@app.cls(") : source.index("    @modal.method()")]
 
     assert "min_containers=0" in worker_definition
-    assert "enable_memory_snapshot=True" in worker_definition
-    assert 'experimental_options={"enable_gpu_snapshot": True}' in worker_definition
-    assert 'env={"SOYA_MODAL_SNAPSHOT_VERSION": SNAPSHOT_VERSION}' in worker_definition
-    assert "@modal.enter(snap=True)\n    def start" in worker_definition
-    assert "@modal.enter(snap=False)\n    def restore" in worker_definition
-    assert "self.text_output_thread.is_alive()" in worker_definition
-    assert "GPU Memory Snapshot 복원 완료" in worker_definition
+    assert "enable_memory_snapshot" not in worker_definition
+    assert "enable_gpu_snapshot" not in worker_definition
+    assert "SOYA_MODAL_SNAPSHOT_VERSION" not in worker_definition
+    assert "@modal.enter()\n    def start" in worker_definition
+    assert "def restore" not in worker_definition
+    assert "GPU Memory Snapshot" not in worker_definition
 
 
 @pytest.mark.asyncio
