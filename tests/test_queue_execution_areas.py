@@ -21,6 +21,120 @@ def _item(item_type, params=None):
 
 
 @pytest.mark.asyncio
+async def test_illustration_llm_build_overlaps_modal_warm_lease_and_releases_it():
+    manager = QueueManager()
+    manager.get_config = lambda: {
+        "modal_enabled": True,
+        "modal_max_concurrency": 2,
+        "illustration_provider": "comfy",
+        "bot_selected": "test-bot",
+        "comfy_task_allocations": {"illustration": "modal"},
+    }
+    acquire_started = asyncio.Event()
+    pipeline_started = asyncio.Event()
+    events = []
+
+    async def acquire(*, reason):
+        events.append(("acquire", reason))
+        acquire_started.set()
+        await pipeline_started.wait()
+        return "warm-token"
+
+    async def release(token, *, reason):
+        events.append(("release", token, reason))
+        return True
+
+    async def process(item):
+        events.append(("pipeline", item.id))
+        pipeline_started.set()
+        await acquire_started.wait()
+        return {"success": True}
+
+    manager.acquire_modal_warm_lease = acquire
+    manager.release_modal_warm_lease = release
+    manager.process_illustration_context = process
+    item = _item("illustration_llm_build")
+
+    result = await manager._handle_illustration_llm_build(item)
+
+    assert result == {"success": True}
+    assert {event[0] for event in events[:2]} == {"acquire", "pipeline"}
+    assert events[-1] == (
+        "release",
+        "warm-token",
+        f"illustration_llm_build:{item.id}",
+    )
+
+
+@pytest.mark.asyncio
+async def test_illustration_llm_build_skips_warm_lease_for_local_only_allocation():
+    manager = QueueManager()
+    manager.get_config = lambda: {
+        "modal_enabled": True,
+        "illustration_provider": "comfy",
+        "bot_selected": "test-bot",
+        "comfy_task_allocations": {"illustration": 1},
+        "comfy_task_modal_parallel": {"illustration": False},
+    }
+    calls = []
+
+    async def acquire(*, reason):
+        calls.append(("acquire", reason))
+        return "unexpected"
+
+    async def release(token, *, reason):
+        calls.append(("release", token, reason))
+        return True
+
+    async def process(_item):
+        return {"success": True}
+
+    manager.acquire_modal_warm_lease = acquire
+    manager.release_modal_warm_lease = release
+    manager.process_illustration_context = process
+
+    result = await manager._handle_illustration_llm_build(
+        _item("illustration_llm_build")
+    )
+
+    assert result == {"success": True}
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_illustration_llm_build_releases_warm_lease_after_pipeline_failure():
+    manager = QueueManager()
+    manager.get_config = lambda: {
+        "modal_enabled": True,
+        "illustration_provider": "comfy",
+        "bot_selected": "test-bot",
+        "comfy_task_allocations": {"illustration": "modal"},
+    }
+    released = []
+
+    async def acquire(*, reason):
+        return f"warm-token:{reason}"
+
+    async def release(token, *, reason):
+        released.append((token, reason))
+        return True
+
+    async def process(_item):
+        raise RuntimeError("synthetic illustration pipeline failure")
+
+    manager.acquire_modal_warm_lease = acquire
+    manager.release_modal_warm_lease = release
+    manager.process_illustration_context = process
+    item = _item("illustration_llm_build")
+
+    with pytest.raises(RuntimeError, match="synthetic illustration pipeline failure"):
+        await manager._handle_illustration_llm_build(item)
+
+    reason = f"illustration_llm_build:{item.id}"
+    assert released == [(f"warm-token:{reason}", reason)]
+
+
+@pytest.mark.asyncio
 async def test_completion_future_failure_is_observed_without_swallowing_await_error():
     manager = QueueManager()
     future = asyncio.get_running_loop().create_future()

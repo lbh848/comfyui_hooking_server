@@ -321,12 +321,18 @@ def test_modal_update_autoscaler_uses_function_and_cls_instance(
             "environment": "main",
             "worker_gpu": "L40S",
             "max_containers": 3,
+            "worker_min_containers": 3,
             "scaledown_window_seconds": 45,
         }
     )
 
-    autoscaler_options = {
+    probe_autoscaler_options = {
         "min_containers": 0,
+        "max_containers": 3,
+        "scaledown_window": 45,
+    }
+    worker_autoscaler_options = {
+        "min_containers": 3,
         "max_containers": 3,
         "scaledown_window": 45,
     }
@@ -336,16 +342,89 @@ def test_modal_update_autoscaler_uses_function_and_cls_instance(
         "class_lookup": ("test-app", "ComfyWorker", "main"),
         "class_options": {"gpu": "L40S"},
         "autoscaler_updates": [
-            ("gpu_probe", autoscaler_options),
-            ("ComfyWorker", autoscaler_options),
+            ("gpu_probe", probe_autoscaler_options),
+            ("ComfyWorker", worker_autoscaler_options),
         ],
     }
     assert result == {
         "updated": ["gpu_probe", "ComfyWorker"],
-        "min_containers": 0,
+        "min_containers": 3,
         "max_containers": 3,
         "scaledown_window_seconds": 45,
     }
+
+
+@pytest.mark.asyncio
+async def test_modal_worker_warm_lease_uses_max_concurrency_and_reference_count(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = {
+        "modal_enabled": True,
+        "modal_max_concurrency": 2,
+        "modal_scaledown_window_seconds": 45,
+    }
+    service = ModalService(tmp_path, lambda: config)
+    updates: list[dict] = []
+
+    async def connected(_settings: ModalSettings) -> bool:
+        return True
+
+    async def run_client_action(
+        _settings: ModalSettings,
+        action: str,
+        *,
+        timeout: float,
+        **payload,
+    ) -> dict:
+        assert action == "update_autoscaler"
+        assert timeout == 60
+        updates.append(payload)
+        return {
+            "min_containers": payload["worker_min_containers"],
+            "max_containers": payload["max_containers"],
+        }
+
+    monkeypatch.setattr(service, "account_connected", connected)
+    monkeypatch.setattr(service, "_run_client_action", run_client_action)
+
+    first = await service.acquire_worker_warm_lease(reason="first")
+    second = await service.acquire_worker_warm_lease(reason="second")
+
+    assert first and second and first != second
+    assert [update["worker_min_containers"] for update in updates] == [2]
+    assert len(service._worker_warm_leases) == 2
+
+    autoscaler_state = await service.apply_autoscaler()
+    assert autoscaler_state["state"] == "completed"
+    assert autoscaler_state["min_containers"] == 2
+    assert [update["worker_min_containers"] for update in updates] == [2, 2]
+
+    assert await service.release_worker_warm_lease(first, reason="first") is True
+    assert [update["worker_min_containers"] for update in updates] == [2, 2]
+    assert len(service._worker_warm_leases) == 1
+
+    assert await service.release_worker_warm_lease(second, reason="second") is True
+    assert [update["worker_min_containers"] for update in updates] == [2, 2, 0]
+    assert service._worker_warm_leases == {}
+    assert service._worker_warm_pool_applied_min == 0
+
+
+@pytest.mark.parametrize("worker_min", [-1, 4, True, 1.5, "1.5"])
+def test_modal_update_autoscaler_rejects_invalid_worker_minimum(
+    worker_min: object,
+) -> None:
+    with pytest.raises(ValueError):
+        client_cli.update_autoscaler(
+            {
+                "app_name": "test-app",
+                "environment": "main",
+                "worker_gpu": "L4",
+                "max_containers": 3,
+                "worker_min_containers": worker_min,
+                "scaledown_window_seconds": 45,
+            }
+        )
 
 
 def test_modal_client_error_reason_uses_sdk_exception_types() -> None:

@@ -284,6 +284,12 @@ class ModalService:
         self._status_command_semaphore = asyncio.Semaphore(2)
         self._status_action_tasks: dict[str, asyncio.Task[dict[str, Any]]] = {}
         self._account_check_tasks: dict[str, asyncio.Task[bool]] = {}
+        # 삽화 LLM 처리와 Modal ComfyWorker 기동을 겹치기 위한 임시 warm pool.
+        # 여러 삽화 요청이 겹쳐도 마지막 lease가 끝날 때만 scale-to-zero로 복구한다.
+        self._worker_warm_lease_lock = asyncio.Lock()
+        self._worker_warm_leases: dict[str, str] = {}
+        self._worker_warm_pool_applied_min = 0
+        self._worker_warm_reset_task: asyncio.Task | None = None
 
     @staticmethod
     def _subprocess_env(profile: str, extra: Mapping[str, str] | None = None) -> dict[str, str]:
@@ -3358,6 +3364,184 @@ class ModalService:
                 f"{type(exc).__name__}: {exc}",
             )
 
+    async def _apply_worker_autoscaler(
+        self,
+        settings: ModalSettings,
+        *,
+        min_containers: int,
+    ) -> dict[str, Any]:
+        return await self._run_client_action(
+            settings,
+            "update_autoscaler",
+            timeout=60,
+            max_containers=settings.max_concurrency,
+            worker_min_containers=min_containers,
+            scaledown_window_seconds=settings.scaledown_window_seconds,
+        )
+
+    async def acquire_worker_warm_lease(
+        self,
+        *,
+        reason: str = "illustration_llm_build",
+    ) -> str | None:
+        """최대 병렬 수만큼 ComfyWorker를 예열하고 공유 lease 토큰을 반환한다."""
+
+        settings = ModalSettings.from_mapping(self.get_config())
+        if not settings.enabled:
+            print(
+                "[MODAL_WARM] lease 획득 생략: Modal이 비활성화되어 있습니다. "
+                f"reason={reason}"
+            )
+            return None
+
+        token = uuid.uuid4().hex
+        async with self._worker_warm_lease_lock:
+            if not await self.account_connected(settings):
+                print(
+                    "[MODAL_WARM] lease 획득 생략: Modal 계정이 연결되지 않았습니다. "
+                    f"profile={settings.profile}, reason={reason}"
+                )
+                return None
+
+            target_min = settings.max_concurrency
+            if (
+                not self._worker_warm_leases
+                or self._worker_warm_pool_applied_min != target_min
+            ):
+                result = await self._apply_worker_autoscaler(
+                    settings,
+                    min_containers=target_min,
+                )
+                self._worker_warm_pool_applied_min = target_min
+                print(
+                    "[MODAL_WARM] ComfyWorker 예열 시작: "
+                    f"min={target_min}, max={settings.max_concurrency}, "
+                    f"gpu={settings.worker_gpu}, reason={reason}, result={result}"
+                )
+
+            self._worker_warm_leases[token] = reason
+            active_count = len(self._worker_warm_leases)
+
+        print(
+            "[MODAL_WARM] lease 획득: "
+            f"token={token}, active={active_count}, min={target_min}, reason={reason}"
+        )
+        return token
+
+    def _schedule_worker_warm_pool_reset(self) -> None:
+        if self._worker_warm_reset_task and not self._worker_warm_reset_task.done():
+            print("[MODAL_WARM] scale-to-zero 재시도가 이미 예약되어 있습니다.")
+            return
+
+        task = asyncio.create_task(self._retry_worker_warm_pool_reset())
+        self._worker_warm_reset_task = task
+
+        def clear_reset_task(completed: asyncio.Task) -> None:
+            if self._worker_warm_reset_task is completed:
+                self._worker_warm_reset_task = None
+            if completed.cancelled():
+                print("[MODAL_WARM] scale-to-zero 재시도 작업이 취소되었습니다.")
+                return
+            try:
+                completed.exception()
+            except Exception as exc:
+                print(
+                    "[MODAL_WARM] scale-to-zero 재시도 작업 상태 회수 실패: "
+                    f"error={type(exc).__name__}: {exc}"
+                )
+                traceback.print_exc()
+
+        task.add_done_callback(clear_reset_task)
+
+    async def _retry_worker_warm_pool_reset(self) -> None:
+        for attempt, delay in enumerate((1.0, 5.0, 15.0), start=1):
+            await asyncio.sleep(delay)
+            async with self._worker_warm_lease_lock:
+                if self._worker_warm_leases:
+                    print(
+                        "[MODAL_WARM] scale-to-zero 재시도 중단: "
+                        f"새 lease {len(self._worker_warm_leases)}개가 활성 상태입니다."
+                    )
+                    return
+                try:
+                    settings = ModalSettings.from_mapping(self.get_config())
+                    if not await self.account_connected(settings):
+                        raise RuntimeError("Modal 계정이 연결되지 않았습니다")
+                    result = await self._apply_worker_autoscaler(
+                        settings,
+                        min_containers=0,
+                    )
+                    self._worker_warm_pool_applied_min = 0
+                    print(
+                        "[MODAL_WARM] scale-to-zero 재시도 성공: "
+                        f"attempt={attempt}, result={result}"
+                    )
+                    return
+                except Exception as exc:
+                    print(
+                        "[MODAL_WARM] scale-to-zero 재시도 실패: "
+                        f"attempt={attempt}/3, error={type(exc).__name__}: {exc}"
+                    )
+                    traceback.print_exc()
+        print(
+            "[MODAL_WARM] scale-to-zero 복구 최종 실패: "
+            "Modal autoscaler의 min_containers 상태를 관리 화면에서 확인하세요."
+        )
+
+    async def release_worker_warm_lease(
+        self,
+        token: str,
+        *,
+        reason: str = "illustration_llm_build",
+    ) -> bool:
+        """lease를 해제하고 마지막 요청이면 ComfyWorker를 scale-to-zero로 복구한다."""
+
+        reset_required = False
+        async with self._worker_warm_lease_lock:
+            stored_reason = self._worker_warm_leases.pop(token, None)
+            if stored_reason is None:
+                print(
+                    "[MODAL_WARM] lease 해제 실패: 알 수 없거나 이미 해제된 토큰 "
+                    f"token={token!r}, reason={reason}"
+                )
+                return False
+
+            active_count = len(self._worker_warm_leases)
+            if active_count:
+                print(
+                    "[MODAL_WARM] lease 해제, warm pool 유지: "
+                    f"token={token}, active={active_count}, reason={stored_reason}"
+                )
+                return True
+
+            try:
+                settings = ModalSettings.from_mapping(self.get_config())
+                if not await self.account_connected(settings):
+                    raise RuntimeError("Modal 계정이 연결되지 않았습니다")
+                result = await self._apply_worker_autoscaler(
+                    settings,
+                    min_containers=0,
+                )
+                self._worker_warm_pool_applied_min = 0
+                print(
+                    "[MODAL_WARM] 마지막 lease 해제 · scale-to-zero 복구: "
+                    f"token={token}, reason={stored_reason}, result={result}"
+                )
+            except Exception as exc:
+                reset_required = True
+                self._worker_warm_pool_applied_min = -1
+                print(
+                    "[MODAL_WARM] 마지막 lease 해제 후 scale-to-zero 복구 실패: "
+                    f"token={token}, reason={stored_reason}, "
+                    f"error={type(exc).__name__}: {exc}"
+                )
+                traceback.print_exc()
+
+        if reset_required:
+            self._schedule_worker_warm_pool_reset()
+            return False
+        return True
+
     async def apply_autoscaler(self) -> dict[str, Any]:
         settings = ModalSettings.from_mapping(self.get_config())
         if not settings.enabled:
@@ -3379,18 +3563,23 @@ class ModalService:
             "message": "배포된 Modal autoscaler에 설정을 적용하고 있습니다.",
         }
         try:
-            result = await self._run_client_action(
-                settings,
-                "update_autoscaler",
-                timeout=60,
-                max_containers=settings.max_concurrency,
-                scaledown_window_seconds=settings.scaledown_window_seconds,
-            )
+            async with self._worker_warm_lease_lock:
+                worker_min = (
+                    settings.max_concurrency
+                    if self._worker_warm_leases
+                    else 0
+                )
+                result = await self._apply_worker_autoscaler(
+                    settings,
+                    min_containers=worker_min,
+                )
+                self._worker_warm_pool_applied_min = worker_min
             self._autoscaler_state = {
                 "state": "completed",
                 "message": (
                     f"최대 {settings.max_concurrency}개 · 유휴 "
-                    f"{settings.scaledown_window_seconds}초로 적용되었습니다."
+                    f"{settings.scaledown_window_seconds}초 · 임시 최소 "
+                    f"{worker_min}개로 적용되었습니다."
                 ),
                 **result,
             }

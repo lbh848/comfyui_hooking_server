@@ -852,23 +852,51 @@ def convert_workflow(payload: dict) -> dict:
 def update_autoscaler(payload: dict) -> dict:
     max_containers = int(payload["max_containers"])
     scaledown_window = int(payload["scaledown_window_seconds"])
+    raw_worker_min = payload.get("worker_min_containers", 0)
+    if isinstance(raw_worker_min, bool):
+        raise ValueError("Modal 작업 워커 최소 컨테이너 수는 정수여야 합니다.")
+    try:
+        worker_min_containers = int(raw_worker_min)
+        if isinstance(raw_worker_min, float) and not raw_worker_min.is_integer():
+            raise ValueError("정수가 아닌 실수는 허용되지 않습니다.")
+        if (
+            isinstance(raw_worker_min, str)
+            and raw_worker_min.strip() != str(worker_min_containers)
+        ):
+            raise ValueError("정수 문자열 형식이 아닙니다.")
+    except (TypeError, ValueError, OverflowError) as exc:
+        print(
+            "[MODAL_CLIENT] 작업 워커 최소 컨테이너 수 검증 실패: "
+            f"value={raw_worker_min!r}, error={exc}",
+            file=sys.stderr,
+        )
+        traceback.print_exc()
+        raise ValueError("Modal 작업 워커 최소 컨테이너 수는 정수여야 합니다.") from exc
     if not 1 <= max_containers <= 10:
         raise ValueError("Modal 최대 컨테이너 수는 1~10 사이여야 합니다.")
+    if not 0 <= worker_min_containers <= max_containers:
+        raise ValueError(
+            "Modal 작업 워커 최소 컨테이너 수는 0 이상이며 최대 컨테이너 수 이하여야 합니다."
+        )
     if not 2 <= scaledown_window <= 1200:
         raise ValueError("Modal 유휴 종료 시간은 2~1200초 사이여야 합니다.")
-    autoscaler_options = {
+    probe_autoscaler_options = {
         "min_containers": 0,
         "max_containers": max_containers,
         "scaledown_window": scaledown_window,
     }
     probe = _dynamic_worker_function(payload, "gpu_probe")
-    probe.update_autoscaler(**autoscaler_options)
+    probe.update_autoscaler(**probe_autoscaler_options)
 
     worker = _worker_cls(payload)()
-    worker.update_autoscaler(**autoscaler_options)
+    worker.update_autoscaler(
+        min_containers=worker_min_containers,
+        max_containers=max_containers,
+        scaledown_window=scaledown_window,
+    )
     return {
         "updated": ["gpu_probe", "ComfyWorker"],
-        "min_containers": 0,
+        "min_containers": worker_min_containers,
         "max_containers": max_containers,
         "scaledown_window_seconds": scaledown_window,
     }

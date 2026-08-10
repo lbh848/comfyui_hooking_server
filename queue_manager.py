@@ -297,6 +297,8 @@ class QueueManager:
         self.fetch_real_history = None         # async def(prompt_id) -> dict
         self.fetch_real_image = None           # async def(filename, subfolder, img_type) -> bytes
         self.run_modal_workflow = None          # async def(workflow, ...) -> dict
+        self.acquire_modal_warm_lease = None    # async def(reason=...) -> str | None
+        self.release_modal_warm_lease = None    # async def(token, reason=...) -> bool
         # 삽화 생성 콜백 (server.py에서 주입)
         self.generate_image_with_prompt = None  # async def(positive, negative) -> (bytes, errors)
         self.process_prompt_full = None         # async def(prompt_id, prompt_data, positive, negative) -> None
@@ -1272,6 +1274,54 @@ class QueueManager:
             traceback.print_exc()
             return False
 
+    def _should_prewarm_modal_illustration(self, item: QueueItem) -> bool:
+        """LLM 삽화 빌드가 실제로 Modal 이미지를 만들 수 있을 때만 예열한다."""
+
+        if not self._modal_enabled():
+            print(
+                "[QUEUE:MODAL_WARM] 예열 생략: Modal 비활성 "
+                f"item={item.id}"
+            )
+            return False
+        try:
+            config = self.get_config() if self.get_config else {}
+            provider = str(
+                config.get("illustration_provider", "comfy") or "comfy"
+            ).strip().lower()
+            if not config.get("bot_selected"):
+                provider = "comfy"
+            if provider not in ("comfy", "hybrid"):
+                print(
+                    "[QUEUE:MODAL_WARM] 예열 생략: Modal을 사용하지 않는 삽화 공급자 "
+                    f"item={item.id}, provider={provider!r}"
+                )
+                return False
+
+            candidate = QueueItem(
+                id=f"{item.id}:modal-warm-check",
+                type="illustration",
+                label="Modal 삽화 예열 판정",
+                params={"provider": provider},
+            )
+            execution_area = self._item_execution_area(candidate)[0]
+            allowed = execution_area in ("modal", "comfy_parallel") or (
+                execution_area == "hybrid"
+                and self._modal_comfy_lane_allowed(candidate)
+            )
+            if not allowed:
+                print(
+                    "[QUEUE:MODAL_WARM] 예열 생략: 삽화 작업의 Modal 레인 비허용 "
+                    f"item={item.id}, provider={provider}, area={execution_area}"
+                )
+            return allowed
+        except Exception as exc:
+            print(
+                "[QUEUE:MODAL_WARM] 예열 가능 여부 판정 실패, 예열 생략: "
+                f"item={item.id}, error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            return False
+
     def _target_modal_workers(self) -> int:
         if not self._modal_enabled():
             return 0
@@ -1815,12 +1865,67 @@ class QueueManager:
         if not self.process_illustration_context:
             print("[QUEUE:ILLUST_CONTEXT] process_illustration_context 콜백이 설정되지 않음")
             raise RuntimeError("process_illustration_context 콜백이 설정되지 않았습니다")
+
+        warm_lease_task: asyncio.Task | None = None
+        if self._should_prewarm_modal_illustration(item):
+            if not callable(self.acquire_modal_warm_lease):
+                print(
+                    "[QUEUE:MODAL_WARM] 예열 시작 실패: "
+                    f"acquire 콜백이 없습니다. item={item.id}"
+                )
+            elif not callable(self.release_modal_warm_lease):
+                print(
+                    "[QUEUE:MODAL_WARM] 예열 시작 실패: "
+                    f"release 콜백이 없습니다. item={item.id}"
+                )
+            else:
+                async def acquire_warm_lease() -> str | None:
+                    try:
+                        return await self.acquire_modal_warm_lease(
+                            reason=f"illustration_llm_build:{item.id}",
+                        )
+                    except Exception as exc:
+                        print(
+                            "[QUEUE:MODAL_WARM] 예열 lease 획득 실패, "
+                            f"LLM 파이프라인은 계속 실행: item={item.id}, "
+                            f"error={type(exc).__name__}: {exc}"
+                        )
+                        traceback.print_exc()
+                        return None
+
+                # Modal control-plane 요청과 CALL1/2/3을 겹쳐 콜드 스타트 시간을 숨긴다.
+                warm_lease_task = asyncio.create_task(acquire_warm_lease())
         try:
             return await self.process_illustration_context(item)
         except Exception as e:
             print(f"[QUEUE:ILLUST_CONTEXT] 처리 실패: {e}")
             traceback.print_exc()
             raise
+        finally:
+            if warm_lease_task is not None:
+                lease_token: str | None = None
+                try:
+                    lease_token = await warm_lease_task
+                except Exception as exc:
+                    print(
+                        "[QUEUE:MODAL_WARM] 예열 lease 작업 회수 실패: "
+                        f"item={item.id}, error={type(exc).__name__}: {exc}"
+                    )
+                    traceback.print_exc()
+                if lease_token:
+                    try:
+                        await self.release_modal_warm_lease(
+                            lease_token,
+                            reason=f"illustration_llm_build:{item.id}",
+                        )
+                    except Exception as exc:
+                        # 예열 정리 실패가 이미 끝난 삽화 결과를 덮어쓰지 않게 한다.
+                        print(
+                            "[QUEUE:MODAL_WARM] 예열 lease 해제 실패: "
+                            f"item={item.id}, token={lease_token}, "
+                            f"error={type(exc).__name__}: {exc}"
+                        )
+                        traceback.print_exc()
 
     async def _handle_illustration_easy_edit(self, item: QueueItem) -> dict:
         """저장 슬롯의 기존 편하게 수정 LLM과 수정 재생성을 연결한다."""
