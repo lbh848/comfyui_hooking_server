@@ -589,6 +589,74 @@ async def _wait_for_active_streams(predicate):
 
 
 @pytest.mark.asyncio
+async def test_active_streams_respect_each_actual_slot_limit(monkeypatch):
+    config = _test_config()
+    limits = {
+        "llm1": 1,
+        "llm2": 2,
+        "llm3": 3,
+        "llm4": 2,
+        "llm5": 1,
+    }
+    for number in range(1, llm_service.LLM_SLOT_COUNT + 1):
+        suffix = "" if number == 1 else str(number)
+        config[f"llm_service{suffix}"] = "openai"
+        config[f"llm_model{suffix}"] = f"model-{number}"
+        config[f"llm_max_concurrency{suffix}"] = limits[f"llm{number}"]
+    monkeypatch.setattr(llm_service, "_current_config", config)
+    llm_service._active_streams.clear()
+    release = asyncio.Event()
+
+    async def controlled_stream(messages, service, model):
+        slot = llm_service._llm_slot_ctx.get()
+        yield {"type": "start", "service": service, "model": model}
+        yield {"type": "delta", "text": slot, "elapsed": 0.1, "ttft": 0.1}
+        await release.wait()
+        yield {
+            "type": "done",
+            "text": slot,
+            "completion_tokens": 1,
+            "elapsed": 0.2,
+            "tps": 5.0,
+            "ttft": 0.1,
+        }
+
+    monkeypatch.setattr(
+        llm_service,
+        "_dispatch_stream_unlimited",
+        controlled_stream,
+    )
+    tasks = [
+        asyncio.create_task(
+            llm_service.callLLMTrackedStream(
+                [{"role": "user", "content": slot}],
+                slot=slot,
+            )
+        )
+        for slot, limit in limits.items()
+        for _ in range(limit + 2)
+    ]
+
+    try:
+        streams = await _wait_for_active_streams(
+            lambda active: len(active) == sum(limits.values())
+        )
+        for _ in range(10):
+            await asyncio.sleep(0)
+        streams = llm_service.get_active_streams()
+        counts = {
+            slot: sum(stream["llm_slot"] == slot for stream in streams)
+            for slot in limits
+        }
+        assert counts == limits
+        assert len(streams) == sum(limits.values())
+    finally:
+        release.set()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        llm_service._active_streams.clear()
+
+
+@pytest.mark.asyncio
 async def test_tracked_stream_forces_live_registration_and_accepts_cancel(
     monkeypatch,
 ):

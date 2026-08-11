@@ -426,6 +426,12 @@ _request_config_override_ctx: ContextVar[dict | None] = ContextVar(
     default=None,
 )
 _llm_slot_ctx: ContextVar[str] = ContextVar("llm_request_slot", default="llm1")
+# 스트림 추적 계층이 슬롯 게이트를 먼저 확보한 경우 _dispatch_stream의 중복 획득을
+# 막는다. 값은 현재 task에만 전파되므로 서로 다른 LLM 슬롯의 병렬 호출과 섞이지 않는다.
+_preacquired_stream_slot_ctx: ContextVar[str | None] = ContextVar(
+    "llm_preacquired_stream_slot",
+    default=None,
+)
 
 
 class _ContextConfig(dict):
@@ -3526,34 +3532,43 @@ async def _consume_stream_attempt(
     model = coordinator.model
     llm_slot = coordinator.llm_slot
     metadata = coordinator.metadata
-    record = _register_active_stream(
-        stream_id,
-        service,
-        model,
-        llm_slot,
-        metadata,
-        coordinator,
-        race_role=race_role,
-    )
-    coordinator.snapshots[stream_id] = _public_stream_state(record)
-    await _emit_request_stream_observer({
-        **metadata,
-        "type": "stream_open",
-        "service": service,
-        "model": model,
-        "stream_id": stream_id,
-        "llm_slot": llm_slot,
-        "partial_text": "",
-        "partial_length": 0,
-        **_stream_record_event_fields(record),
-    })
-
-    iterator_source = (
-        _dispatch_stream_unlimited(messages=coordinator.messages, service=service, model=model)
-        if preacquired_gate is not None
-        else _dispatch_stream(coordinator.messages, service, model)
-    )
-    iterator = iterator_source.__aiter__()
+    gate = preacquired_gate or _request_gate(llm_slot)
+    if preacquired_gate is None:
+        await gate.acquire()
+    gate_token = _preacquired_stream_slot_ctx.set(llm_slot)
+    try:
+        # 실제 슬롯 용량을 확보한 뒤에만 활성 스트림으로 공개한다. 게이트에서
+        # 기다리는 큐 작업은 아직 provider 연결이 아니므로 active 목록에 포함하지 않는다.
+        record = _register_active_stream(
+            stream_id,
+            service,
+            model,
+            llm_slot,
+            metadata,
+            coordinator,
+            race_role=race_role,
+        )
+        coordinator.snapshots[stream_id] = _public_stream_state(record)
+        await _emit_request_stream_observer({
+            **metadata,
+            "type": "stream_open",
+            "service": service,
+            "model": model,
+            "stream_id": stream_id,
+            "llm_slot": llm_slot,
+            "partial_text": "",
+            "partial_length": 0,
+            **_stream_record_event_fields(record),
+        })
+        iterator = _dispatch_stream(
+            coordinator.messages,
+            service,
+            model,
+        ).__aiter__()
+    except BaseException:
+        _preacquired_stream_slot_ctx.reset(gate_token)
+        await gate.release()
+        raise
     partial_parts: list[str] = []
     final_text = ""
     error_msg = ""
@@ -3858,8 +3873,8 @@ async def _consume_stream_attempt(
         coordinator.snapshots[stream_id] = _public_stream_state(record)
         await _close_stream_iterator(iterator)
         _active_streams.pop(stream_id, None)
-        if preacquired_gate is not None:
-            await preacquired_gate.release()
+        _preacquired_stream_slot_ctx.reset(gate_token)
+        await gate.release()
 
     snapshot = dict(coordinator.snapshots.get(stream_id) or {})
     if done_seen and final_text:
@@ -4882,6 +4897,11 @@ async def _dispatch_stream_unlimited(messages: list, service: str, model: str):
 
 async def _dispatch_stream(messages: list, service: str, model: str):
     """현재 LLM 슬롯의 상한을 스트림이 끝날 때까지 점유하며 이벤트를 전달한다."""
+    current_slot = _normalize_llm_slot(_llm_slot_ctx.get())
+    if _preacquired_stream_slot_ctx.get() == current_slot:
+        async for event in _dispatch_stream_unlimited(messages, service, model):
+            yield event
+        return
     async with _limit_llm_request():
         async for event in _dispatch_stream_unlimited(messages, service, model):
             yield event
