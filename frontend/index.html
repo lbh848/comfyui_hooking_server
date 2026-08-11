@@ -30075,7 +30075,7 @@
         }
 
         // ─── 일괄 태깅/정제 배치 추적 (이미지별 분할 큐 + 장당 디바운스 화면 갱신) ───
-        // batch_id → { label, total, remaining, success, fail, source, refreshFn, refreshTimer, processedIds:Set, finalizeFn }
+        // batch_id → { label, total, remaining, success, fail, failures, source, refreshFn, refreshTimer, processedIds:Set, finalizeFn }
         // 1000장=1000항목이 동일 batch_id 공유. completed/failed 이벤트가 올 때마다 remaining-- 하고
         // 디바운스(600ms)로 화면 갱신 1회 → 전체 reload 스래싱 방지. remaining 0에서 finalize(토스트 1회).
         const _tagBatches = {};
@@ -30117,6 +30117,7 @@
             opts = opts || {};
             _tagBatches[batchId] = {
                 label: label || '', total: total, remaining: total, success: 0, fail: 0,
+                failures: [],
                 source: source, refreshFn: opts.refreshFn || _tagBatchRefreshFn(source),
                 refreshTimer: null, processedIds: new Set(), finalizeFn: opts.finalizeFn || null,
             };
@@ -30157,7 +30158,16 @@
             if (b.processedIds.has(key)) return; // 중복 이벤트 방지
             b.processedIds.add(key);
             b.remaining = Math.max(0, b.remaining - 1);
-            if (phase === 'completed') b.success++; else b.fail++;
+            if (phase === 'completed') {
+                b.success++;
+            } else {
+                b.fail++;
+                b.failures.push({
+                    character: data.character || data.char_name || '',
+                    filename: data.filename || '',
+                    reason: data.error || '태그 분석 실패',
+                });
+            }
             const statusEl = _tagBatchStatusEl(b.source);
             if (statusEl) statusEl.textContent = `${b.label || '일괄 작업'}: 완료 ${b.success} / 실패 ${b.fail} (남은 ${b.remaining})`;
             if (phase === 'completed') _scheduleTagBatchRefresh(data.batch_id);
@@ -60413,7 +60423,7 @@
                 if (skippedNoImageN > 0) parts.push('이미지 없음 ' + skippedNoImageN + '명');
                 if (parts.length > 0) msg += ' (' + parts.join(', ') + ' 건너뜀)';
                 showToast(msg, 'success');
-                console.log('[BOT] 대표 일괄 설정 완료:', { mode, search: search || '(없음)', updated, skippedProtected: skippedProtectedN, skippedNoImage });
+                console.log('[BOT] 대표 일괄 설정 완료:', { mode, search: search || '(없음)', updated, skippedProtected: skippedProtectedN, skippedNoImage: skipNoImage });
             } catch (e) {
                 console.error('[BOT] 대표 일괄 설정 실패:', e);
                 showToast('일괄 설정 실패: ' + ((e && e.message) ? e.message : e), 'error');
@@ -63944,7 +63954,9 @@
             if (!response.ok || data?.error || data?.success === false) {
                 const reason = data?.error || data?.message || `HTTP ${response.status}`;
                 console.error('[BOT_ONE_CLICK] 요청 실패:', url, reason, data);
-                throw new Error(reason);
+                const requestError = new Error(reason);
+                requestError.responseData = data;
+                throw requestError;
             }
             return data;
         }
@@ -63966,8 +63978,23 @@
             _botOneClickWizard = null;
         }
 
-        async function openBotOneClickSettings() {
+        function openNewBotOneClickSettings() {
             if (_botOneClickRun?.running) {
+                console.error('[BOT_ONE_CLICK] 실행 중에는 새 원클릭 설정을 열 수 없습니다.');
+                showToast('진행 중인 원클릭 작업이 끝난 뒤 새 설정을 시작하세요.', 'warning');
+                return;
+            }
+            _botOneClickRun = null;
+            const button = document.getElementById('btn-bot-one-click-settings');
+            if (button) button.textContent = '원클릭 설정';
+            const status = document.getElementById('bot-one-click-status');
+            if (status) { status.style.display = 'none'; status.textContent = ''; }
+            closeBotOneClickModal();
+            openBotOneClickSettings();
+        }
+
+        async function openBotOneClickSettings() {
+            if (_botOneClickRun?.botName === botCurrentBot) {
                 _botOneClickRenderProgress();
                 return;
             }
@@ -64327,15 +64354,66 @@
             status.style.color = tone === 'error' ? 'var(--error)' : tone === 'success' ? '#22C55E' : tone === 'warning' ? '#F59E0B' : 'var(--text2)';
         }
 
+        function _botOneClickIssue(character, reason, filename) {
+            return {
+                character: String(character || '').trim(),
+                reason: String(reason || '원인을 확인할 수 없습니다.').trim(),
+                filename: String(filename || '').trim(),
+            };
+        }
+
+        function _botOneClickDedupeIssues(issues) {
+            const seen = new Set();
+            return (issues || []).filter(issue => {
+                if (!issue) return false;
+                const normalized = _botOneClickIssue(issue.character, issue.reason, issue.filename);
+                issue.character = normalized.character;
+                issue.reason = normalized.reason;
+                issue.filename = normalized.filename;
+                const key = `${normalized.character}\n${normalized.filename}\n${normalized.reason}`;
+                if (seen.has(key)) return false;
+                seen.add(key);
+                return true;
+            });
+        }
+
+        function _botOneClickIssuesFromError(error) {
+            const data = error?.responseData || {};
+            const resultIssues = (data.results || [])
+                .filter(item => item && item.success === false)
+                .map(item => _botOneClickIssue(item.char_name || item.character, item.message || item.error, item.filename));
+            const failedIssues = (data.failed || []).map(item =>
+                _botOneClickIssue(item.char_name || item.character || item.name, item.error || item.message, item.filename)
+            );
+            const warningIssues = (data.character_warnings || []).map(item =>
+                _botOneClickIssue(item.char_name || item.character || item.name, item.error || item.message, item.filename)
+            );
+            const issues = _botOneClickDedupeIssues([...resultIssues, ...failedIssues, ...warningIssues]);
+            return issues.length ? issues : [_botOneClickIssue('', error?.message || error)];
+        }
+
+        function _botOneClickWarningSummary(run) {
+            const warningStages = (run?.stages || []).filter(stage => stage.status === 'warning' || stage.status === 'failed');
+            const labels = warningStages.map(stage => stage.label);
+            const characters = [...new Set(warningStages.flatMap(stage =>
+                (stage.issues || []).map(issue => issue.character).filter(Boolean)
+            ))];
+            const stageSummary = warningStages.length === 1
+                ? labels[0]
+                : `${warningStages.length}단계 (${labels.join(', ')})`;
+            return `확인 필요 · ${stageSummary}${characters.length ? ` · 문제 캐릭터: ${characters.join(', ')}` : ''}`;
+        }
+
         function _botOneClickStageEntry(key) {
             return _botOneClickRun?.stages?.find(stage => stage.key === key);
         }
 
-        function _botOneClickUpdateStage(key, status, detail) {
+        function _botOneClickUpdateStage(key, status, detail, issues) {
             const stage = _botOneClickStageEntry(key);
             if (!stage) return;
             stage.status = status;
             stage.detail = detail || '';
+            if (Array.isArray(issues)) stage.issues = _botOneClickDedupeIssues(issues);
             _botOneClickRenderProgress();
             const activeStages = _botOneClickRun.stages.filter(item => item.status !== 'skipped');
             const index = activeStages.findIndex(item => item.key === key) + 1;
@@ -64348,10 +64426,16 @@
             const run = _botOneClickRun;
             const icon = {pending: '○', running: '◉', completed: '✓', warning: '!', failed: '×', skipped: '–'};
             const color = {pending: 'var(--text2)', running: '#38BDF8', completed: '#22C55E', warning: '#F59E0B', failed: '#EF5350', skipped: 'var(--text2)'};
-            const rows = run.stages.map((stage, index) => `<div style="display:flex; align-items:flex-start; gap:10px; padding:10px 11px; border:1px solid ${stage.status === 'running' ? 'rgba(56,189,248,0.5)' : 'var(--border)'}; border-radius:7px; background:${stage.status === 'running' ? 'rgba(14,165,233,0.08)' : 'var(--surface2)'};">
+            const rows = run.stages.map((stage, index) => {
+                const issueRows = (stage.issues || []).map(issue => {
+                    const subject = [issue.character, issue.filename].filter(Boolean).join(' / ') || '단계 전체';
+                    return `<div style="padding:5px 7px; border-left:2px solid ${color[stage.status]}; border-radius:3px; background:rgba(245,158,11,0.07); color:var(--text); font-size:0.67rem; line-height:1.4;"><b>${escHtml(subject)}</b> · ${escHtml(issue.reason)}</div>`;
+                }).join('');
+                return `<div style="display:flex; align-items:flex-start; gap:10px; padding:10px 11px; border:1px solid ${stage.status === 'running' ? 'rgba(56,189,248,0.5)' : 'var(--border)'}; border-radius:7px; background:${stage.status === 'running' ? 'rgba(14,165,233,0.08)' : 'var(--surface2)'};">
                 <div style="width:24px; height:24px; display:flex; align-items:center; justify-content:center; flex-shrink:0; border-radius:50%; border:1px solid ${color[stage.status]}; color:${color[stage.status]}; font-size:0.76rem; font-weight:800;">${icon[stage.status]}</div>
-                <div style="min-width:0; flex:1; opacity:${stage.status === 'skipped' ? '0.68' : '1'};"><div style="font-size:0.8rem; font-weight:650; color:${color[stage.status]};">${index + 1}. ${escHtml(stage.label)}</div><div style="font-size:0.68rem; color:var(--text2); margin-top:3px; line-height:1.35; white-space:pre-wrap;">${escHtml(stage.detail || (stage.status === 'pending' ? '대기 중' : ''))}</div></div>
-            </div>`).join('');
+                <div style="min-width:0; flex:1; opacity:${stage.status === 'skipped' ? '0.68' : '1'};"><div style="font-size:0.8rem; font-weight:650; color:${color[stage.status]};">${index + 1}. ${escHtml(stage.label)}</div><div style="font-size:0.68rem; color:var(--text2); margin-top:3px; line-height:1.35; white-space:pre-wrap;">${escHtml(stage.detail || (stage.status === 'pending' ? '대기 중' : ''))}</div>${issueRows ? `<div style="display:flex; flex-direction:column; gap:4px; margin-top:7px;">${issueRows}</div>` : ''}</div>
+            </div>`;
+            }).join('');
             const finished = !run.running;
             const warnings = run.stages.filter(stage => stage.status === 'warning' || stage.status === 'failed').length;
             const skipped = run.stages.filter(stage => stage.status === 'skipped').length;
@@ -64359,7 +64443,7 @@
             modal.innerHTML = `<div style="width:min(680px,94vw); max-height:90vh; display:flex; flex-direction:column; overflow:hidden; border:1px solid var(--border); border-radius:13px; background:var(--surface); box-shadow:0 18px 60px rgba(0,0,0,0.55);">
                 <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px; padding:16px 18px; border-bottom:1px solid var(--border); background:linear-gradient(90deg,rgba(2,132,199,0.11),rgba(124,58,237,0.10));"><div><div style="font-size:1rem; font-weight:750;">${finished ? (warnings ? '원클릭 작업 완료 · 확인 필요' : '원클릭 작업 완료') : '원클릭 작업 진행 중'}</div><div style="font-size:0.7rem; color:var(--text2); margin-top:3px;">${escHtml(run.botName)} · ${run.charNames.length}명</div></div><button onclick="closeBotOneClickModal()" style="background:none; border:none; color:var(--text2); font-size:1.3rem; cursor:pointer;">&times;</button></div>
                 <div style="padding:14px 18px; overflow-y:auto; display:flex; flex-direction:column; gap:7px;">${rows}</div>
-                <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; padding:12px 18px; border-top:1px solid var(--border);"><div style="font-size:0.68rem; color:var(--text2);">${finished ? (warnings ? `경고 ${warnings}단계 · 완료 ${completed}단계 · 건너뜀 ${skipped}단계` : `완료 ${completed}단계 · 건너뜀 ${skipped}단계`) : '창을 닫아도 작업은 백그라운드에서 계속됩니다.'}</div><button onclick="closeBotOneClickModal()" style="padding:7px 16px; border:none; border-radius:6px; background:${finished ? '#00796B' : 'var(--surface2)'}; color:var(--text); cursor:pointer; font-weight:650;">${finished ? '확인' : '백그라운드로'}</button></div>
+                <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; padding:12px 18px; border-top:1px solid var(--border);"><div style="font-size:0.68rem; color:var(--text2);">${finished ? (warnings ? `경고 ${warnings}단계 · 완료 ${completed}단계 · 건너뜀 ${skipped}단계` : `완료 ${completed}단계 · 건너뜀 ${skipped}단계`) : '창을 닫아도 작업은 백그라운드에서 계속됩니다.'}</div><div style="display:flex; gap:7px;">${finished ? '<button onclick="openNewBotOneClickSettings()" style="padding:7px 14px; border:1px solid var(--border); border-radius:6px; background:var(--surface2); color:var(--text); cursor:pointer; font-weight:650;">새 원클릭 설정</button>' : ''}<button onclick="closeBotOneClickModal()" style="padding:7px 16px; border:none; border-radius:6px; background:${finished ? '#00796B' : 'var(--surface2)'}; color:var(--text); cursor:pointer; font-weight:650;">${finished ? '확인' : '백그라운드로'}</button></div></div>
             </div>`;
         }
 
@@ -64401,6 +64485,7 @@
                     label,
                     status: enabledStages[key] ? 'pending' : 'skipped',
                     detail: enabledStages[key] ? '' : '사용 안 함',
+                    issues: [],
                 })),
             };
             _botOneClickWizard = null;
@@ -64415,14 +64500,16 @@
                 if (runningStage) {
                     runningStage.status = 'failed';
                     runningStage.detail = e.message || String(e);
+                    runningStage.issues = _botOneClickIssuesFromError(e);
                 }
             } finally {
                 _botOneClickRun.running = false;
                 const warningCount = _botOneClickRun.stages.filter(stage => stage.status === 'warning' || stage.status === 'failed').length;
-                if (button) button.textContent = '원클릭 설정';
-                _botOneClickSetSidebarStatus(warningCount ? `원클릭 완료 · 확인 필요 ${warningCount}단계` : `원클릭 완료 · ${charNames.length}명`, warningCount ? 'warning' : 'success');
+                const warningSummary = warningCount ? _botOneClickWarningSummary(_botOneClickRun) : '';
+                if (button) button.textContent = '원클릭 결과 보기';
+                _botOneClickSetSidebarStatus(warningCount ? `원클릭 완료 · ${warningSummary}` : `원클릭 완료 · ${charNames.length}명`, warningCount ? 'warning' : 'success');
                 _botOneClickRenderProgress();
-                showToast(warningCount ? `원클릭 작업 완료 (${warningCount}단계 확인 필요)` : '원클릭 작업이 모두 완료되었습니다.', warningCount ? 'warning' : 'success');
+                showToast(warningCount ? `원클릭 작업 완료 · ${warningSummary}` : '원클릭 작업이 모두 완료되었습니다.', warningCount ? 'warning' : 'success');
                 if (botCurrentBot === _botOneClickRun.botName && typeof renderBotCharacters === 'function') renderBotCharacters();
             }
         }
@@ -64431,10 +64518,10 @@
             _botOneClickUpdateStage(key, 'running', '준비 중...');
             try {
                 const result = await task();
-                _botOneClickUpdateStage(key, result?.warning ? 'warning' : 'completed', result?.detail || '완료');
+                _botOneClickUpdateStage(key, result?.warning ? 'warning' : 'completed', result?.detail || '완료', result?.issues || []);
             } catch (e) {
                 console.error(`[BOT_ONE_CLICK:${key}] 실패:`, e);
-                _botOneClickUpdateStage(key, 'warning', `실패: ${e.message || e}\n다음 단계는 계속 진행합니다.`);
+                _botOneClickUpdateStage(key, 'warning', `실패: ${e.message || e}\n다음 단계는 계속 진행합니다.`, _botOneClickIssuesFromError(e));
             }
         }
 
@@ -64464,7 +64551,12 @@
                 const timer = setTimeout(() => {
                     console.error('[BOT_ONE_CLICK] 태그 배치 대기 시간 초과:', batchId, label);
                     delete _tagBatches[batchId];
-                    finish({success: 0, fail: total, timeout: true});
+                    finish({
+                        success: 0,
+                        fail: total,
+                        timeout: true,
+                        failures: [_botOneClickIssue('', '태그 분석 완료 이벤트 대기 시간 초과')],
+                    });
                 }, 30 * 60 * 1000);
                 _startTagBatch(batchId, label, total, source, {finalizeFn: finish});
             });
@@ -64478,22 +64570,51 @@
                 if (selected.has(image.character)) groups.get(image.character).push(image.filename);
             });
             const waits = [];
+            const issues = [];
             let queued = 0;
             for (const [charName, filenames] of groups) {
-                if (!filenames.length) continue;
-                const result = await _botOneClickJson('/api/bot_mode/batch_analyze_rep', {
-                    method: 'POST', headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({bot: run.botName, character: charName, filenames}),
-                });
-                const total = Number(result.total || result.count || 0);
-                queued += total;
-                if (result.batch_id && total) waits.push(_botOneClickTrackTagBatch(result.batch_id, `원클릭 태그 분석 ${charName}`, total, 'bot_rep'));
+                if (!filenames.length) {
+                    issues.push(_botOneClickIssue(charName, '분석할 대표 이미지가 없습니다.'));
+                    continue;
+                }
+                try {
+                    const result = await _botOneClickJson('/api/bot_mode/batch_analyze_rep', {
+                        method: 'POST', headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({bot: run.botName, character: charName, filenames}),
+                    });
+                    const total = Number(result.total || result.count || 0);
+                    queued += total;
+                    if (result.batch_id && total) {
+                        waits.push(
+                            _botOneClickTrackTagBatch(result.batch_id, `원클릭 태그 분석 ${charName}`, total, 'bot_rep')
+                                .then(batch => ({...batch, charName}))
+                        );
+                    } else {
+                        issues.push(_botOneClickIssue(charName, total ? '태그 분석 배치 ID가 없습니다.' : '분석 큐에 추가된 대표 이미지가 없습니다.'));
+                    }
+                } catch (e) {
+                    console.error('[BOT_ONE_CLICK] 대표 태그 분석 큐 추가 실패:', charName, e);
+                    issues.push(_botOneClickIssue(charName, e.message || e));
+                }
             }
-            if (!queued) throw new Error('분석할 대표 이미지가 없습니다.');
+            if (!queued) {
+                return {warning: true, detail: '처리된 대표 이미지가 없습니다.', issues};
+            }
             _botOneClickUpdateStage('tag_analysis', 'running', `${queued}장 큐 처리 중...`);
             const results = await Promise.all(waits);
             const failed = results.reduce((sum, result) => sum + Number(result.fail || 0), 0);
-            return {warning: failed > 0, detail: `${queued}장 처리 완료${failed ? ` · 실패 ${failed}장` : ''}`};
+            results.forEach(result => {
+                (result.failures || []).forEach(failure => issues.push(_botOneClickIssue(
+                    failure.character || result.charName,
+                    failure.reason || failure.error || '태그 분석 실패',
+                    failure.filename,
+                )));
+            });
+            return {
+                warning: failed > 0 || issues.length > 0,
+                detail: `${queued}장 처리 완료${failed ? ` · 실패 ${failed}장` : ''}`,
+                issues,
+            };
         }
 
         async function _runBotOneClickRepresentativeNegative(run) {
@@ -64505,18 +64626,30 @@
             });
             let success = 0;
             let failed = 0;
+            const issues = [];
             for (const [charName, filenames] of groups) {
-                if (!filenames.length) continue;
-                const result = await _botOneClickJson('/api/bot_mode/batch_set_negative', {
-                    method: 'POST', headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({bot: run.botName, character: charName, negative_tags: run.negativeTags, filenames}),
-                });
-                success += Number(result.success_count || 0);
-                failed += Number(result.fail_count || 0);
+                if (!filenames.length) {
+                    issues.push(_botOneClickIssue(charName, '부정 프롬프트를 적용할 대표 이미지가 없습니다.'));
+                    continue;
+                }
+                try {
+                    const result = await _botOneClickJson('/api/bot_mode/batch_set_negative', {
+                        method: 'POST', headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({bot: run.botName, character: charName, negative_tags: run.negativeTags, filenames}),
+                    });
+                    const charFailed = Number(result.fail_count || 0);
+                    success += Number(result.success_count || 0);
+                    failed += charFailed;
+                    if (charFailed) issues.push(_botOneClickIssue(charName, `부정 프롬프트 적용 실패 ${charFailed}장`));
+                } catch (e) {
+                    console.error('[BOT_ONE_CLICK] 대표 부정 프롬프트 적용 실패:', charName, e);
+                    failed += filenames.length;
+                    issues.push(_botOneClickIssue(charName, e.message || e));
+                }
                 _botOneClickUpdateStage('negative', 'running', `${success}장 적용${failed ? ` · 실패 ${failed}장` : ''}`);
             }
-            if (!success && !failed) throw new Error('부정 태그를 적용할 대표 이미지가 없습니다.');
-            return {warning: failed > 0, detail: `대표 이미지 ${success}장 적용${failed ? ` · 실패 ${failed}장` : ''}`};
+            if (!success && !failed) return {warning: true, detail: '부정 프롬프트를 적용한 대표 이미지가 없습니다.', issues};
+            return {warning: failed > 0 || issues.length > 0, detail: `대표 이미지 ${success}장 적용${failed ? ` · 실패 ${failed}장` : ''}`, issues};
         }
 
         function _botOneClickCreateNamedWait(kind, botName, names) {
@@ -64579,7 +64712,12 @@
             }
             _botOneClickUpdateStage('data_patch', 'running', `${run.charNames.length}명 FACE 생성 대기 중...`);
             const result = await waiter.promise;
-            return {warning: result.failed.length > 0, detail: `${patchResult.message || '파일 패치 완료'} · FACE 성공 ${result.success.length}명${result.failed.length ? ` · 실패 ${result.failed.length}명` : ''}`};
+            const issues = result.failed.map(item => _botOneClickIssue(item.name, item.error || 'FACE 생성 실패'));
+            return {
+                warning: issues.length > 0,
+                detail: `${patchResult.message || '파일 패치 완료'} · FACE 성공 ${result.success.length}명${result.failed.length ? ` · 실패 ${result.failed.length}명` : ''}`,
+                issues,
+            };
         }
 
         async function _runBotOneClickEmbedding(run) {
@@ -64598,7 +64736,14 @@
                 });
                 previewId = '';
                 const failed = Number(result.failed_count || 0);
-                return {warning: failed > 0 || !result.success, detail: `${result.message || 'embedding 완료'}${failed ? ` · 실패 ${failed}명` : ''}`};
+                const issues = (result.results || [])
+                    .filter(item => item && item.success === false)
+                    .map(item => _botOneClickIssue(item.char_name, item.message || 'embedding 생성 실패'));
+                return {
+                    warning: failed > 0 || !result.success,
+                    detail: `${result.message || 'embedding 완료'}${failed ? ` · 실패 ${failed}명` : ''}`,
+                    issues,
+                };
             } catch (e) {
                 if (previewId) {
                     try {
@@ -64632,6 +64777,18 @@
             const warning = Boolean(
                 result.warning || result.failed_count || result.character_warning_count
             );
+            const issues = [
+                ...(result.failed || []).map(item => _botOneClickIssue(
+                    item.char_name,
+                    item.error || 'FACE CROP 추출 실패',
+                    item.filename,
+                )),
+                ...(result.character_warnings || []).map(item => _botOneClickIssue(
+                    item.char_name,
+                    item.error || 'FACE CROP 대상 경고',
+                    item.filename,
+                )),
+            ];
             return {
                 warning,
                 detail: result.message || (
@@ -64639,43 +64796,88 @@
                     + `덮어쓰기 ${Number(result.overwritten_count || 0)}장 · `
                     + `실패 ${Number(result.failed_count || 0)}장`
                 ),
+                issues,
             };
         }
 
         async function _runBotOneClickFaceBatch(run) {
             const warnings = [];
+            const issues = [];
+            let targetNames = [...run.charNames];
+            try {
+                const utility = await _botOneClickJson(`/api/bot_mode/utility_preview?bot=${encodeURIComponent(run.botName)}&character=`);
+                const selected = new Set(run.charNames);
+                const availableNames = new Set((utility.images || []).map(image => image.character).filter(name => selected.has(name)));
+                const missingNames = run.charNames.filter(name => !availableNames.has(name));
+                missingNames.forEach(name => issues.push(_botOneClickIssue(name, 'FACE 이미지가 없어 일괄 작업에서 제외되었습니다.')));
+                targetNames = run.charNames.filter(name => availableNames.has(name));
+            } catch (e) {
+                console.error('[BOT_ONE_CLICK] FACE 이미지 대상 조회 실패:', e);
+                warnings.push(`FACE 대상 조회 실패: ${e.message || e}`);
+                issues.push(_botOneClickIssue('', `FACE 대상 조회 실패: ${e.message || e}`));
+            }
+            if (!targetNames.length) {
+                return {
+                    warning: true,
+                    detail: '일괄 작업에 사용할 FACE 이미지가 없습니다.',
+                    issues,
+                };
+            }
             let analyzed = 0;
             try {
                 const result = await _botOneClickJson('/api/bot_mode/batch_analyze_utility', {
                     method: 'POST', headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({bot: run.botName, characters: run.charNames}),
+                    body: JSON.stringify({bot: run.botName, characters: targetNames}),
                 });
                 analyzed = Number(result.total || result.count || 0);
                 if (result.batch_id && analyzed) {
                     _botOneClickUpdateStage('face_batch', 'running', `FACE ${analyzed}장 태그 분석 중...`);
                     const batch = await _botOneClickTrackTagBatch(result.batch_id, '원클릭 FACE 태그 분석', analyzed, 'bot_utility');
-                    if (batch.fail) warnings.push(`태그 분석 실패 ${batch.fail}장`);
+                    if (batch.fail) {
+                        warnings.push(`태그 분석 실패 ${batch.fail}장`);
+                        (batch.failures || []).forEach(failure => issues.push(_botOneClickIssue(
+                            failure.character,
+                            failure.reason || failure.error || 'FACE 태그 분석 실패',
+                            failure.filename,
+                        )));
+                        if (!(batch.failures || []).length) issues.push(_botOneClickIssue('', `FACE 태그 분석 실패 ${batch.fail}장`));
+                    }
                 } else {
                     warnings.push('분석할 FACE 이미지 없음');
+                    targetNames.forEach(name => issues.push(_botOneClickIssue(name, '분석할 FACE 이미지가 없습니다.')));
                 }
             } catch (e) {
                 console.error('[BOT_ONE_CLICK] FACE 태그 분석 실패:', e);
                 warnings.push(`태그 분석 실패: ${e.message || e}`);
+                issues.push(..._botOneClickIssuesFromError(e));
             }
 
             let negativeSuccess = 0;
             try {
                 const negative = await _botOneClickJson('/api/bot_mode/batch_set_negative_utility', {
                     method: 'POST', headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({bot: run.botName, negative_tags: run.negativeTags, characters: run.charNames}),
+                    body: JSON.stringify({bot: run.botName, negative_tags: run.negativeTags, characters: targetNames}),
                 });
                 negativeSuccess = Number(negative.success_count || 0);
-                if (negative.fail_count) warnings.push(`부정 태그 실패 ${negative.fail_count}장`);
+                if (negative.fail_count) {
+                    warnings.push(`부정 태그 실패 ${negative.fail_count}장`);
+                    (negative.failed || []).forEach(item => issues.push(_botOneClickIssue(
+                        item.char_name,
+                        item.error || 'FACE 부정 프롬프트 적용 실패',
+                        item.filename,
+                    )));
+                    if (!(negative.failed || []).length) issues.push(_botOneClickIssue('', `FACE 부정 프롬프트 적용 실패 ${negative.fail_count}장`));
+                }
             } catch (e) {
                 console.error('[BOT_ONE_CLICK] FACE 부정 태그 적용 실패:', e);
                 warnings.push(`부정 태그 실패: ${e.message || e}`);
+                issues.push(..._botOneClickIssuesFromError(e));
             }
-            return {warning: warnings.length > 0, detail: `FACE 태그 분석 ${analyzed}장 · 부정 태그 ${negativeSuccess}장${warnings.length ? `\n${warnings.join(' · ')}` : ''}`};
+            return {
+                warning: warnings.length > 0 || issues.length > 0,
+                detail: `FACE 태그 분석 ${analyzed}장 · 부정 태그 ${negativeSuccess}장${warnings.length ? `\n${warnings.join(' · ')}` : ''}`,
+                issues,
+            };
         }
 
         function _handleBotOneClickLlmProgress(data) {
@@ -64690,7 +64892,11 @@
             const utility = await _botOneClickJson(`/api/bot_mode/utility_preview?bot=${encodeURIComponent(run.botName)}&character=`);
             const selected = new Set(run.charNames);
             const faceNames = [...new Set((utility.images || []).map(image => image.character).filter(name => selected.has(name)))];
-            if (!faceNames.length) throw new Error('LLM 정제에 사용할 FACE 이미지가 없습니다.');
+            const missingNames = run.charNames.filter(name => !faceNames.includes(name));
+            const missingIssues = missingNames.map(name => _botOneClickIssue(name, 'LLM 정제에 사용할 FACE 이미지가 없습니다.'));
+            if (!faceNames.length) {
+                return {warning: true, detail: 'LLM 정제 대상 FACE 이미지가 없습니다.', issues: missingIssues};
+            }
             const waiter = _botOneClickCreateNamedWait('llm', run.botName, faceNames);
             _botOneClickLlmWait = waiter;
             try {
@@ -64702,11 +64908,19 @@
                 faceNames.filter(name => !addedNames.has(name)).forEach(name => waiter.mark(name, false, '큐에 추가되지 않음'));
                 _botOneClickUpdateStage('llm_refine', 'running', `${addedNames.size}명 LLM 큐 처리 중...`);
             } catch (e) {
+                console.error('[BOT_ONE_CLICK] LLM 정제 큐 추가 실패:', e);
                 [...waiter.pending].forEach(name => waiter.mark(name, false, `큐 추가 실패: ${e.message || e}`));
-                throw e;
             }
             const result = await waiter.promise;
-            return {warning: result.failed.length > 0, detail: `LLM 정제 성공 ${result.success.length}명${result.failed.length ? ` · 실패 ${result.failed.length}명` : ''}`};
+            const issues = [
+                ...missingIssues,
+                ...result.failed.map(item => _botOneClickIssue(item.name, item.error || 'LLM 정제 실패')),
+            ];
+            return {
+                warning: issues.length > 0,
+                detail: `LLM 정제 성공 ${result.success.length}명${result.failed.length ? ` · 실패 ${result.failed.length}명` : ''}${missingNames.length ? ` · FACE 없음 ${missingNames.length}명` : ''}`,
+                issues,
+            };
         }
 
         // ─── 대사모드용 Comfy FACE CROP ─────────────────────

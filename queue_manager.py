@@ -4201,6 +4201,7 @@ class QueueManager:
         batch_total = params.get("batch_total")
         common_evt = {
             "source": source, "filename": filename,
+            "character": img.get("character", ""),
             "batch_id": batch_id, "batch_index": batch_index, "batch_total": batch_total,
         }
 

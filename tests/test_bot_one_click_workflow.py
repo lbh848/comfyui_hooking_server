@@ -1,5 +1,6 @@
 from pathlib import Path
 import importlib
+import json
 import sys
 
 import pytest
@@ -13,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 FRONTEND = (ROOT / "frontend" / "index.html").read_text(encoding="utf-8")
 QUEUE_SOURCE = (ROOT / "queue_manager.py").read_text(encoding="utf-8")
 SERVER_SOURCE = (ROOT / "server.py").read_text(encoding="utf-8")
+BOT_MODE_SOURCE = (ROOT / "modes" / "bot_mode.py").read_text(encoding="utf-8")
 
 
 def _function_source(source: str, name: str, next_name: str) -> str:
@@ -147,6 +149,87 @@ def test_one_click_completion_trackers_are_connected_to_websocket_handlers():
 
     assert "_handleBotOneClickDataPatchProgress(data);" in data_patch_handler
     assert "_handleBotOneClickLlmProgress(data);" in llm_handler
+
+
+def test_one_click_finished_result_can_be_reopened_and_starts_new_setup_explicitly():
+    open_settings = _function_source(
+        FRONTEND, "openBotOneClickSettings()", "botOneClickSelectCharacters(checked)"
+    )
+    start = _function_source(
+        FRONTEND, "startBotOneClick()", "_botOneClickRunStage(key, task)"
+    )
+    progress = _function_source(
+        FRONTEND, "_botOneClickRenderProgress()", "startBotOneClick()"
+    )
+
+    assert "_botOneClickRun?.botName === botCurrentBot" in open_settings
+    assert "button.textContent = '원클릭 결과 보기'" in start
+    assert 'onclick="openNewBotOneClickSettings()"' in progress
+    assert "function openNewBotOneClickSettings()" in FRONTEND
+
+
+def test_one_click_warning_result_exposes_stage_character_file_and_reason():
+    progress = _function_source(
+        FRONTEND, "_botOneClickRenderProgress()", "startBotOneClick()"
+    )
+    warning_summary = _function_source(
+        FRONTEND, "_botOneClickWarningSummary(run)", "_botOneClickStageEntry(key)"
+    )
+    dialogue_crop = _function_source(
+        FRONTEND,
+        "_runBotOneClickDialogueFaceCrop(run)",
+        "_runBotOneClickFaceBatch(run)",
+    )
+    llm_refine = _function_source(
+        FRONTEND, "_runBotOneClickLlmRefine(run)", "openDialogueFaceCropModal()"
+    )
+
+    assert "stage.issues" in progress
+    assert "issue.character" in progress
+    assert "issue.filename" in progress
+    assert "issue.reason" in progress
+    assert "문제 캐릭터:" in warning_summary
+    assert "result.character_warnings" in dialogue_crop
+    assert "result.failed" in dialogue_crop
+    assert "result.failed.map" in llm_refine
+
+
+def test_one_click_tag_and_negative_failures_keep_character_metadata():
+    assert '"character": img.get("character", "")' in QUEUE_SOURCE
+    assert '"char_name": rep["character"]' in BOT_MODE_SOURCE
+    assert '"failed": failed' in BOT_MODE_SOURCE
+
+
+@pytest.mark.asyncio
+async def test_utility_negative_failure_response_names_character_and_file(
+    tmp_path, monkeypatch
+):
+    bot_mode_module = importlib.import_module("modes.bot_mode")
+    manager = bot_mode_module.BotMode()
+    monkeypatch.setattr(bot_mode_module, "BOT_DIR", str(tmp_path / "bot"))
+    manager._get_utility_image_paths = lambda _bot, _character: [{
+        "character": "alice",
+        "filename": "_face_image.webp",
+    }]
+
+    class Request:
+        async def json(self):
+            return {
+                "bot": "sample-bot",
+                "characters": ["alice"],
+                "negative_tags": "bad anatomy",
+            }
+
+    response = await manager.handle_batch_set_negative_utility(Request())
+    payload = json.loads(response.text)
+
+    assert payload["success_count"] == 0
+    assert payload["fail_count"] == 1
+    assert len(payload["failed"]) == 1
+    failure = payload["failed"][0]
+    assert failure["char_name"] == "alice"
+    assert failure["filename"] == "_face_image.webp"
+    assert failure["error"]
 
 
 @pytest.mark.asyncio

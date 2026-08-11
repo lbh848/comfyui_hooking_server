@@ -1802,10 +1802,20 @@ class BotMode:
                 reps = [r for r in reps if r["character"] in _cset]
             # (레거시) filenames 만 온 경우에도 filename은 캐릭터를 구분하지 못하므로 무시.
             if not reps:
-                return _json_ok({"total": 0, "success_count": 0, "fail_count": 0})
+                print(
+                    f"[BOT_MODE] 유틸리티 부정프롬프트 적용 대상 없음: "
+                    f"bot={bot_name!r}, character={char_name!r}, characters={characters!r}"
+                )
+                return _json_ok({
+                    "total": 0,
+                    "success_count": 0,
+                    "fail_count": 0,
+                    "failed": [],
+                })
 
             success_count = 0
             fail_count = 0
+            failed = []
             for rep in reps:
                 try:
                     base = os.path.splitext(rep["filename"])[0]
@@ -1833,10 +1843,20 @@ class BotMode:
                     print(f"[BOT_MODE] 유틸리티 부정프롬프트 적용: {rep['character']}/{rep['filename']}")
                 except Exception as e:
                     fail_count += 1
+                    failed.append({
+                        "char_name": rep["character"],
+                        "filename": rep["filename"],
+                        "error": str(e),
+                    })
                     print(f"[BOT_MODE] 유틸리티 부정프롬프트 실패: {rep['character']}/{rep['filename']} - {e}")
                     traceback.print_exc()
 
-            return _json_ok({"total": len(reps), "success_count": success_count, "fail_count": fail_count})
+            return _json_ok({
+                "total": len(reps),
+                "success_count": success_count,
+                "fail_count": fail_count,
+                "failed": failed,
+            })
         except Exception as e:
             print(f"[BOT_MODE] batch_set_negative_utility 오류: {e}")
             traceback.print_exc()
