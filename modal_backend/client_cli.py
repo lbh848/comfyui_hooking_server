@@ -29,6 +29,7 @@ from modal_backend.settings import normalize_modal_gpu
 MODEL_SYNC_MANIFEST_PATH = "/.soya-local-model-sync-manifest.json"
 # 기존 사용자 LoRA Volume의 동기화 기록을 그대로 이어받는다.
 LORA_SYNC_MANIFEST_PATH = "/.soya-sync-manifest.json"
+LORA_MANAGER_METADATA_SUFFIX = ".metadata.json"
 INSTALL_PROGRESS_PREFIX = "@@SOYA_MODAL_PROGRESS@@"
 CALL_STARTED_LOG_PREFIX = "@@SOYA_MODAL_CALL_STARTED@@"
 WORKFLOW_PROGRESS_PREFIX = "@@SOYA_MODAL_WORKFLOW_PROGRESS@@"
@@ -663,6 +664,10 @@ def _lora_volume(payload: dict, *, create_if_missing: bool) -> modal.Volume:
     )
 
 
+def _is_lora_manager_metadata(path: str) -> bool:
+    return str(path).casefold().endswith(LORA_MANAGER_METADATA_SUFFIX)
+
+
 def _list_lora_volume(volume: modal.Volume) -> dict:
     manifest = _read_sync_manifest(volume, LORA_SYNC_MANIFEST_PATH, "LoRA")
     try:
@@ -680,6 +685,8 @@ def _list_lora_volume(volume: modal.Volume) -> dict:
 
     files: list[dict] = []
     actual_paths: set[str] = set()
+    ignored_metadata_count = 0
+    ignored_metadata_bytes = 0
     for entry in entries:
         entry_type = str(getattr(getattr(entry, "type", None), "name", "") or "")
         if entry_type and entry_type != "FILE":
@@ -695,6 +702,10 @@ def _list_lora_volume(volume: modal.Volume) -> dict:
                 f"path={relative!r}, error={exc}",
                 file=sys.stderr,
             )
+            continue
+        if _is_lora_manager_metadata(safe_path):
+            ignored_metadata_count += 1
+            ignored_metadata_bytes += max(0, int(getattr(entry, "size", 0) or 0))
             continue
         actual_paths.add(safe_path)
         manifest_entry = manifest.get(safe_path)
@@ -716,8 +727,14 @@ def _list_lora_volume(volume: modal.Volume) -> dict:
             "error": "동기화 명세에는 있으나 실제 원격 파일이 없습니다.",
         }
         for path in manifest
-        if path not in actual_paths
+        if path not in actual_paths and not _is_lora_manager_metadata(path)
     ]
+    if ignored_metadata_count:
+        print(
+            "[MODAL_CLIENT] LoRA Manager 메타데이터를 원격 LoRA 목록에서 제외: "
+            f"count={ignored_metadata_count}, bytes={ignored_metadata_bytes}",
+            file=sys.stderr,
+        )
     files.sort(key=lambda item: str(item["path"]).casefold())
     return {
         "files": files,

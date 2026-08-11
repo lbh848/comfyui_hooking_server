@@ -251,6 +251,39 @@ class _FakeVolume:
                 del self.files[existing]
 
 
+def test_client_list_loras_excludes_lora_manager_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    scope = "SOYA_CHAR_LORA/SOYA_BOT_LORA/MyBot/Lora/main/Alice/s1"
+    model = f"{scope}/alice.safetensors"
+    metadata = f"{scope}/alice.metadata.json"
+    other_json = f"{scope}/notes.json"
+    volume = _FakeVolume(
+        {model: 100, metadata: 12, other_json: 5},
+        {
+            model: {"sha256": "1" * 64, "size": 100},
+            metadata: {"sha256": "2" * 64, "size": 12},
+            other_json: {"sha256": "3" * 64, "size": 5},
+        },
+    )
+    monkeypatch.setattr(
+        client_cli.modal.Volume,
+        "from_name",
+        lambda *_args, **_kwargs: volume,
+    )
+
+    result = client_cli.list_loras(
+        {"app_name": "test", "environment": "main"}
+    )
+
+    assert [item["path"] for item in result["files"]] == [model, other_json]
+    assert result["file_count"] == 2
+    assert result["tracked_count"] == 2
+    assert result["errors"] == []
+    assert "LoRA Manager 메타데이터를 원격 LoRA 목록에서 제외" in capsys.readouterr().err
+
+
 def test_client_sync_uploads_changed_file_then_removes_bot_extras(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -258,9 +291,10 @@ def test_client_sync_uploads_changed_file_then_removes_bot_extras(
     source = tmp_path / "alice.safetensors"
     source.write_bytes(b"new-alice")
     desired = "SOYA_CHAR_LORA/SOYA_BOT_LORA/MyBot/Lora/main/Alice/s1/alice.safetensors"
+    metadata = "SOYA_CHAR_LORA/SOYA_BOT_LORA/MyBot/Lora/main/Alice/s1/alice.metadata.json"
     extra = "SOYA_CHAR_LORA/SOYA_BOT_LORA/MyBot/Lora/old/Removed/s1/old.safetensors"
     volume = _FakeVolume(
-        {desired: 3, extra: 4},
+        {desired: 3, metadata: 2, extra: 4},
         {
             desired: {"sha256": "0" * 64, "size": 3},
             extra: {"sha256": "1" * 64, "size": 4},
@@ -293,7 +327,9 @@ def test_client_sync_uploads_changed_file_then_removes_bot_extras(
     assert result["deleted_count"] == 1
     assert (str(source), f"/{desired}") in volume.uploads
     assert (f"/{extra}", False) in volume.removes
+    assert (f"/{metadata}", False) not in volume.removes
     assert desired in volume.files
+    assert metadata in volume.files
     assert extra not in volume.files
     assert set(volume.manifest) == {desired}
 
