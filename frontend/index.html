@@ -30254,6 +30254,7 @@
                     reason: data.error || '태그 분석 실패',
                 });
             }
+            _botOneClickSyncTagBatchRecord(data.batch_id);
             const statusEl = _tagBatchStatusEl(b.source);
             if (statusEl) statusEl.textContent = `${b.label || '일괄 작업'}: 완료 ${b.success} / 실패 ${b.fail} (남은 ${b.remaining})`;
             if (phase === 'completed') _scheduleTagBatchRefresh(data.batch_id);
@@ -30271,6 +30272,7 @@
                 const pendingProc = grp.filter(i => i.status === 'pending' || i.status === 'processing').length;
                 if (pendingProc < b.remaining) {
                     b.remaining = pendingProc;
+                    _botOneClickSyncTagBatchRecord(batchId);
                     const statusEl = _tagBatchStatusEl(b.source);
                     if (statusEl) statusEl.textContent = `${b.label || '일괄 작업'}: 완료 ${b.success} / 실패 ${b.fail} (남은 ${b.remaining})`;
                     if (b.remaining === 0) _finalizeTagBatch(batchId);
@@ -64605,15 +64607,20 @@
             return record;
         }
 
-        function _botOneClickRegisterTagBatch(run, batchId) {
+        function _botOneClickRegisterTagBatch(run, batchId, stageKey, total) {
             if (!run || !batchId) {
                 console.error('[BOT_ONE_CLICK] 태그 배치 추적 등록 실패:', batchId);
                 return null;
             }
             let record = run.tagBatches.find(item => item.batchId === batchId);
             if (!record) {
-                record = {batchId, cancelChecked: false, cancelledCount: 0};
+                record = {batchId, cancelChecked: false, cancelledCount: 0,
+                    stageKey: stageKey || null, total: Number(total) || 0,
+                    success: 0, fail: 0, cancelled: 0};
                 run.tagBatches.push(record);
+            } else if (stageKey) {
+                record.stageKey = stageKey;
+                if (total) record.total = Number(total);
             }
             if (run.stopRequested) {
                 void (async () => {
@@ -64622,6 +64629,43 @@
                 })();
             }
             return record;
+        }
+
+        // 원클릭 태그 분석 단계 진행률(현재/전체 장수) 갱신.
+        // _tagBatches[batchId]는 배치 종료(_finalizeTagBatch) 시 삭제되므로,
+        // 집계는 run.tagBatches 레코드의 스냅샷(success/fail/cancelled)을 기준으로 한다.
+        // 배치가 여러 개(tag_analysis는 캐릭터별 1개)여도 stageKey별로 합산한다.
+        function _botOneClickSyncTagBatchRecord(batchId) {
+            const run = _botOneClickRun;
+            if (!run || !run.tagBatches) return;
+            const record = run.tagBatches.find(item => item.batchId === batchId);
+            if (!record) return;
+            const b = _tagBatches[batchId];
+            if (b) {
+                record.total = Number(b.total || record.total || 0);
+                record.success = Number(b.success || 0);
+                record.fail = Number(b.fail || 0);
+                record.cancelled = Number(b.cancelled || 0);
+            }
+            if (record.stageKey) _botOneClickRefreshTagStageDetail(record.stageKey);
+        }
+
+        function _botOneClickRefreshTagStageDetail(stageKey) {
+            const run = _botOneClickRun;
+            if (!run || !run.tagBatches) return;
+            let total = 0, success = 0, fail = 0, cancelled = 0, seen = false;
+            for (const record of run.tagBatches) {
+                if (record.stageKey !== stageKey) continue;
+                seen = true;
+                total += Number(record.total || 0);
+                success += Number(record.success || 0);
+                fail += Number(record.fail || 0);
+                cancelled += Number(record.cancelled || 0);
+            }
+            if (!seen || !total) return;
+            const done = success + fail + cancelled;
+            _botOneClickUpdateStage(stageKey, 'running',
+                `${done}/${total}장 완료${fail ? ` · 실패 ${fail}장` : ''}${cancelled ? ` · 취소 ${cancelled}장` : ''}`);
         }
 
         async function _botOneClickCancelTrackedQueueItem(run, record) {
@@ -64981,7 +65025,7 @@
                     if (result.batch_id && total) {
                         const wait = _botOneClickTrackTagBatch(result.batch_id, `원클릭 태그 분석 ${charName}`, total, 'bot_rep')
                             .then(batch => ({...batch, charName}));
-                        _botOneClickRegisterTagBatch(run, result.batch_id);
+                        _botOneClickRegisterTagBatch(run, result.batch_id, 'tag_analysis', total);
                         waits.push(
                             wait
                         );
@@ -65027,6 +65071,7 @@
             (preview.images || []).forEach(image => {
                 if (selected.has(image.character)) groups.get(image.character).push(image.filename);
             });
+            const total = [...groups.values()].reduce((sum, filenames) => sum + filenames.length, 0);
             let success = 0;
             let failed = 0;
             const issues = [];
@@ -65050,7 +65095,7 @@
                     failed += filenames.length;
                     issues.push(_botOneClickIssue(charName, e.message || e));
                 }
-                _botOneClickUpdateStage('negative', 'running', `${success}장 적용${failed ? ` · 실패 ${failed}장` : ''}`);
+                _botOneClickUpdateStage('negative', 'running', `${success}/${total}장 적용${failed ? ` · 실패 ${failed}장` : ''}`);
             }
             if (!success && !failed) {
                 return run.stopRequested
@@ -65275,7 +65320,7 @@
                 if (result.batch_id && analyzed) {
                     _botOneClickUpdateStage('face_batch', 'running', `FACE ${analyzed}장 태그 분석 중...`);
                     const batchWait = _botOneClickTrackTagBatch(result.batch_id, '원클릭 FACE 태그 분석', analyzed, 'bot_utility');
-                    _botOneClickRegisterTagBatch(run, result.batch_id);
+                    _botOneClickRegisterTagBatch(run, result.batch_id, 'face_batch', analyzed);
                     const batch = await batchWait;
                     if (batch.fail) {
                         warnings.push(`태그 분석 실패 ${batch.fail}장`);
