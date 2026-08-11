@@ -2997,6 +2997,8 @@ def build_segment_slot_map(
     requested_items = list(segments.items())
     projected_items = list(projected_segments.items())
     spans: list[tuple[str, int, int, str]] = []
+    excluded_segments: list[str] = []
+    mapping_errors: list[str] = []
 
     if len(requested_items) == len(projected_items):
         for (segment_id, segment), (_projected_id, projected_segment) in zip(
@@ -3024,8 +3026,13 @@ def build_segment_slot_map(
                     f"segment-slot 본문 위치를 찾지 못함: segment={segment_id}, "
                     f"cursor={projection_cursor}, text={text!r}"
                 )
-                print(f"[ILLUST_CONTEXT:CALL2_PLAN] {reason}")
-                return {}, "", reason
+                print(
+                    f"[ILLUST_CONTEXT:CALL2_PLAN] {reason}; "
+                    "해당 segment만 PLAN 후보에서 제외하고 후속 매핑 계속"
+                )
+                excluded_segments.append(str(segment_id))
+                mapping_errors.append(reason)
+                continue
             start, end = span
             spans.append((str(segment_id), start, end, text))
             projection_cursor = end
@@ -3043,8 +3050,13 @@ def build_segment_slot_map(
                 f"span=({projected_start},{projected_end}), "
                 f"projection_length={len(source_indexes)}"
             )
-            print(f"[ILLUST_CONTEXT:CALL2_PLAN] {reason}")
-            return {}, "", reason
+            print(
+                f"[ILLUST_CONTEXT:CALL2_PLAN] {reason}; "
+                "해당 segment만 PLAN 후보에서 제외"
+            )
+            excluded_segments.append(segment_id)
+            mapping_errors.append(reason)
+            continue
         source_start = source_indexes[projected_start]
         source_end = source_indexes[projected_end - 1] + 1
         following = next(
@@ -3061,8 +3073,13 @@ def build_segment_slot_map(
                 f"segment 주변 Slot 마커를 찾지 못함: segment={segment_id}, "
                 f"source_span=({source_start},{source_end})"
             )
-            print(f"[ILLUST_CONTEXT:CALL2_PLAN] {reason}")
-            return {}, "", reason
+            print(
+                f"[ILLUST_CONTEXT:CALL2_PLAN] {reason}; "
+                "해당 segment만 PLAN 후보에서 제외"
+            )
+            excluded_segments.append(segment_id)
+            mapping_errors.append(reason)
+            continue
         slot = int(marker.group(1))
         mapping[segment_id] = slot
         rendered.append(f"[{segment_id} slot={slot}]\n{text}")
@@ -3071,6 +3088,13 @@ def build_segment_slot_map(
         f"[ILLUST_CONTEXT:CALL2_PLAN] segment-slot 권위 매핑 생성: "
         f"segments={len(mapping)}, slots={sorted(set(mapping.values()))}"
     )
+    if mapping_errors:
+        reason = (
+            f"segment-slot 부분 매핑: mapped={len(mapping)}/{len(requested_items)}, "
+            f"excluded={excluded_segments}; first_error={mapping_errors[0]}"
+        )
+        print(f"[ILLUST_CONTEXT:CALL2_PLAN] {reason}")
+        return mapping, "\n\n".join(rendered), reason
     return mapping, "\n\n".join(rendered), ""
 
 
@@ -8903,7 +8927,6 @@ async def build_from_context(
         try:
             if progress:
                 await progress(31, "call2_plan", "CALL2 장면 PLAN · Key Visual 병렬 생성")
-            candidates = candidate_slots(original_slotted)
             plan_messages = deepcopy(call2_plan_context_messages)
             _call2_segment_text, _call2_segments = _segment_current_context(enhanced)
             (
@@ -8913,6 +8936,49 @@ async def build_from_context(
             ) = build_segment_slot_map(slotted, _call2_segments)
             if not call2_segment_slots:
                 raise ValueError(segment_slot_reason or "CALL2 segment-slot 권위 매핑 실패")
+            if segment_slot_reason:
+                print(
+                    "[ILLUST_CONTEXT:CALL2_PLAN] 부분 segment-slot 매핑으로 계속 진행: "
+                    f"reason={segment_slot_reason}"
+                )
+            mapped_slot_set = {
+                int(slot) for slot in call2_segment_slots.values()
+            }
+            candidates = [
+                slot for slot in candidate_slots(original_slotted)
+                if slot in mapped_slot_set
+            ]
+            if not candidates:
+                reason = (
+                    "segment-slot 매핑 결과에 원본 후보 Slot이 없음: "
+                    f"mapped_slots={sorted(mapped_slot_set)}, "
+                    f"original_slots={candidate_slots(original_slotted)}"
+                )
+                print(f"[ILLUST_CONTEXT:CALL2_PLAN] {reason}")
+                raise ValueError(reason)
+            plan_toggles = deepcopy(toggles)
+            plan_toggles["key_visual"] = False
+            configured_minimum = int(plan_toggles["output_count_min"])
+            configured_maximum = int(plan_toggles["output_count_max"])
+            plan_toggles["output_count_min"] = min(
+                configured_minimum,
+                len(candidates),
+            )
+            plan_toggles["output_count_max"] = min(
+                configured_maximum,
+                len(candidates),
+            )
+            if (
+                plan_toggles["output_count_min"] != configured_minimum
+                or plan_toggles["output_count_max"] != configured_maximum
+            ):
+                print(
+                    "[ILLUST_CONTEXT:CALL2_PLAN] 유효 매핑 Slot 수에 맞춰 장면 수 조정: "
+                    f"configured={configured_minimum}..{configured_maximum}, "
+                    f"effective={plan_toggles['output_count_min']}.."
+                    f"{plan_toggles['output_count_max']}, "
+                    f"available_slots={candidates}"
+                )
             if plan_messages and plan_messages[0].get("role") == "system":
                 planner_rules = [
                     "You are CALL2-PLAN, the global semantic visual-beat planner for an illustration pipeline.",
@@ -8942,15 +9008,16 @@ async def build_from_context(
                     f"Choose the appropriate count from the {len(candidates)} available slots."
                 )
             else:
-                minimum = min(int(toggles["output_count_min"]), len(candidates))
-                maximum = min(int(toggles["output_count_max"]), len(candidates))
+                minimum = int(plan_toggles["output_count_min"])
+                maximum = int(plan_toggles["output_count_max"])
                 scene_count_rule = f"Choose between {minimum} and {maximum} scenes."
             # PLAN에게 총장면 수(총량) 카운트 규칙을 준다. 병렬 detail worker는 이 총량을
             # worker 수로 나눈 per-worker 카운트를 별도로 주입받으므로, 여기서는 전체 값.
             plan_messages.append({
                 "role": "user",
                 "content": render_output_count_rule(
-                    toggles["output_count_min"], toggles["output_count_max"]
+                    plan_toggles["output_count_min"],
+                    plan_toggles["output_count_max"],
                 ),
             })
             plan_messages.append({
@@ -8984,9 +9051,6 @@ async def build_from_context(
                     + call2_segment_map
                 ),
             })
-
-            plan_toggles = deepcopy(toggles)
-            plan_toggles["key_visual"] = False
 
             def validate_plan(result):
                 plan, reason = parse_call2_plan(

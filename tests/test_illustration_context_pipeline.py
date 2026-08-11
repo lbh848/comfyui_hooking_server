@@ -200,6 +200,44 @@ def test_segment_slot_map_binds_segments_to_following_server_slot():
     assert "[C004 slot=1]" in annotated
 
 
+def test_segment_slot_map_excludes_only_unmatched_segment_and_resynchronizes():
+    slotted = (
+        "첫 문단.\n\n[Slot 0]\n\n"
+        "둘째 원문.\n\n세부 원문.\n\n[Slot 1]\n\n"
+        "마지막 문단."
+    )
+    segments = {
+        "C001": {"text": "첫 문단."},
+        "C002": {"text": "둘째 가공문과 세부 가공문."},
+        "C003": {"text": "마지막 문단."},
+    }
+
+    mapping, annotated, reason = pipeline.build_segment_slot_map(slotted, segments)
+
+    assert mapping == {"C001": 0, "C003": 1}
+    assert "[C001 slot=0]" in annotated
+    assert "[C002" not in annotated
+    assert "[C003 slot=1]" in annotated
+    assert "mapped=2/3" in reason
+    assert "excluded=['C002']" in reason
+
+
+def test_segment_slot_map_returns_empty_only_when_no_segment_can_be_mapped():
+    slotted = "원문 하나.\n\n[Slot 0]\n\n원문 둘."
+    segments = {
+        "C001": {"text": "가공문 하나."},
+        "C002": {"text": "가공문 둘."},
+        "C003": {"text": "가공문 셋."},
+    }
+
+    mapping, annotated, reason = pipeline.build_segment_slot_map(slotted, segments)
+
+    assert mapping == {}
+    assert annotated == ""
+    assert "mapped=0/3" in reason
+    assert "excluded=['C001', 'C002', 'C003']" in reason
+
+
 def test_call2_plan_uses_anchor_mapping_and_ignores_model_slot_number():
     slotted = "첫 문단.\n\n[Slot 0]\n\n둘째 문단.\n\n[Slot 1]"
     raw = json.dumps({
@@ -1081,6 +1119,87 @@ async def test_call2_pipeline_generates_characterless_scene_without_fallback(mon
     assert "students" in result["items"][0]["scene"]
     detail_prompt = "\n".join(str(message.get("content") or "") for message in detail_messages)
     assert "preserve characters: []" in detail_prompt
+
+
+@pytest.mark.asyncio
+async def test_call2_pipeline_continues_with_partial_segment_slot_map(monkeypatch, capsys):
+    call_names = []
+    plan_requests = []
+
+    async def fake_pipeline_call(call_name, messages, *args, **kwargs):
+        call_names.append(call_name)
+        if call_name == "CALL2-PLAN":
+            plan_requests.append(
+                "\n".join(str(message.get("content") or "") for message in messages)
+            )
+            return json.dumps({
+                "scene_plan": [
+                    {
+                        "anchor_segment": "C001",
+                        "characters": ["Hana"],
+                        "scene_brief": "Hana at the first moment",
+                    },
+                    {
+                        "anchor_segment": "C003",
+                        "characters": ["Hana"],
+                        "scene_brief": "Hana at the final moment",
+                    },
+                ],
+                "keyvis_plan": None,
+            })
+        if call_name.startswith("CALL2-DETAIL 1/1"):
+            return _toon_for_slots([0, 1])
+        raise AssertionError(f"unexpected call: {call_name}")
+
+    monkeypatch.setattr(pipeline, "_call_pipeline_llm", fake_pipeline_call)
+    result = await pipeline.build_from_context(
+        {
+            "session_id": "call2_partial_segment_slot_map_test",
+            "target_slotted": (
+                "첫 문단.\n\n[Slot 0]\n\n"
+                "둘째 원문.\n\n세부 원문.\n\n[Slot 1]\n\n"
+                "마지막 문단."
+            ),
+            "chats": [
+                {"role": "user", "data": "Continue."},
+                {
+                    "role": "char",
+                    "data": (
+                        "첫 문단.\n\n둘째 가공문과 세부 가공문.\n\n마지막 문단."
+                    ),
+                },
+            ],
+        },
+        {
+            "call1_enabled": False,
+            "call2_parallel_enabled": True,
+            "call2_parallel_max_concurrency": 1,
+            "call2_parallel_slow_retry_enabled": False,
+            "output_count_min": 3,
+            "output_count_max": 3,
+            "key_visual": False,
+            "call3_enabled": False,
+            "speak_enabled": False,
+        },
+        "### Hana\n-default_outfit\nschool uniform",
+        extra_costume="### Hana\n-default_outfit\nschool uniform",
+        extra_names="Hana",
+        backtranslate_names="Hana",
+    )
+
+    assert call_names[0] == "CALL2-PLAN"
+    assert sum(name.startswith("CALL2-DETAIL 1/1") for name in call_names) == 1
+    assert "CALL2-FALLBACK" not in call_names
+    assert result["call2_fallback_stage"] == ""
+    assert [item["slot"] for item in result["items"]] == [0, 1]
+    assert plan_requests
+    assert "[C001 slot=0]" in plan_requests[0]
+    assert "[C002" not in plan_requests[0]
+    assert "[C003 slot=1]" in plan_requests[0]
+    assert "minimum of 2 and a maximum of 2" in plan_requests[0]
+    output = capsys.readouterr().out
+    assert "부분 segment-slot 매핑으로 계속 진행" in output
+    assert "effective=2..2" in output
 
 
 @pytest.mark.asyncio
