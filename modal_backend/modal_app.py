@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import subprocess
@@ -31,6 +32,7 @@ RUNTIME_IMAGE_REF = (
 )
 FORCE_CUSTOM_NODE_BUILD = os.environ.get("SOYA_MODAL_FORCE_CUSTOM_NODE_BUILD", "0") == "1"
 CALL_STARTED_LOG_PREFIX = "@@SOYA_MODAL_CALL_STARTED@@"
+WORKFLOW_PROGRESS_PREFIX = "@@SOYA_MODAL_WORKFLOW_PROGRESS@@"
 
 
 def _announce_call_started(operation: str) -> None:
@@ -44,6 +46,178 @@ def _announce_call_started(operation: str) -> None:
         ),
         flush=True,
     )
+
+
+def _emit_workflow_progress(sequence: int, data: dict) -> None:
+    """ComfyUI의 구조화 진행 이벤트를 Modal FunctionCall 로그로 전달한다."""
+    print(
+        WORKFLOW_PROGRESS_PREFIX
+        + json.dumps(
+            {"sequence": int(sequence), "data": dict(data)},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ),
+        flush=True,
+    )
+
+
+async def _execute_comfy_workflow(
+    workflow: dict,
+    timeout_seconds: int,
+    progress_callback,
+) -> tuple[str, dict]:
+    """WebSocket을 먼저 연결해 진행 이벤트를 놓치지 않고 최종 history를 반환한다."""
+    import aiohttp
+
+    client_id = uuid.uuid4().hex
+    prompt_id = ""
+    deadline = time.monotonic() + timeout_seconds
+    ws_url = f"ws://127.0.0.1:8188/ws?clientId={client_id}"
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.ws_connect(ws_url, heartbeat=30) as ws:
+                async with session.post(
+                    "http://127.0.0.1:8188/prompt",
+                    json={"prompt": workflow, "client_id": client_id},
+                    timeout=aiohttp.ClientTimeout(total=30),
+                ) as response:
+                    response.raise_for_status()
+                    payload = await response.json()
+                prompt_id = str(payload.get("prompt_id") or "")
+                if not prompt_id:
+                    print(
+                        "[MODAL_COMFY] prompt 제출 응답에 prompt_id가 없습니다: "
+                        f"payload={payload!r}"
+                    )
+                    raise RuntimeError("ComfyUI prompt_id가 비어 있습니다.")
+
+                while time.monotonic() < deadline:
+                    remaining = max(0.1, deadline - time.monotonic())
+                    try:
+                        message = await asyncio.wait_for(
+                            ws.receive(),
+                            timeout=min(15.0, remaining),
+                        )
+                    except asyncio.TimeoutError:
+                        # 장시간 step 사이에는 이벤트가 없을 수 있다. WS를 닫지 않고
+                        # history 완료 여부만 확인한 뒤 다시 실시간 수신을 계속한다.
+                        try:
+                            async with session.get(
+                                f"http://127.0.0.1:8188/history/{prompt_id}",
+                                timeout=aiohttp.ClientTimeout(total=15),
+                            ) as history_response:
+                                history_response.raise_for_status()
+                                interim_history = (await history_response.json()).get(
+                                    prompt_id
+                                )
+                        except Exception as exc:
+                            print(
+                                "[MODAL_COMFY] WebSocket 유휴 중 history 확인 실패: "
+                                f"prompt_id={prompt_id}, "
+                                f"error={type(exc).__name__}: {exc}"
+                            )
+                            traceback.print_exc()
+                            interim_history = None
+                        if interim_history:
+                            return prompt_id, interim_history
+                        continue
+                    if message.type == aiohttp.WSMsgType.TEXT:
+                        try:
+                            event = json.loads(message.data)
+                        except Exception as exc:
+                            print(
+                                "[MODAL_COMFY] WebSocket JSON 파싱 실패: "
+                                f"error={type(exc).__name__}: {exc}, "
+                                f"payload={str(message.data)[:500]!r}"
+                            )
+                            traceback.print_exc()
+                            continue
+                        event_type = str(event.get("type") or "")
+                        event_data = event.get("data") or {}
+                        if event_type == "md_soya_progress" and isinstance(event_data, dict):
+                            progress_callback({"prompt_id": prompt_id, **event_data})
+                            continue
+                        if event_type == "execution_error":
+                            event_prompt_id = str(event_data.get("prompt_id") or "")
+                            if event_prompt_id and event_prompt_id != prompt_id:
+                                continue
+                            error_message = str(
+                                event_data.get("exception_message")
+                                or event_data.get("exception_type")
+                                or "ComfyUI 실행 오류"
+                            )
+                            print(
+                                "[MODAL_COMFY] WebSocket 실행 오류 수신: "
+                                f"prompt_id={prompt_id}, error={error_message}, "
+                                f"data={event_data!r}"
+                            )
+                            raise RuntimeError(error_message)
+                        if event_type == "executing":
+                            event_prompt_id = str(event_data.get("prompt_id") or "")
+                            if event_prompt_id == prompt_id and event_data.get("node") is None:
+                                break
+                        continue
+                    if message.type in (
+                        aiohttp.WSMsgType.CLOSE,
+                        aiohttp.WSMsgType.CLOSED,
+                        aiohttp.WSMsgType.ERROR,
+                    ):
+                        print(
+                            "[MODAL_COMFY] WebSocket이 완료 전에 종료되어 history 폴백 사용: "
+                            f"prompt_id={prompt_id}, message_type={message.type}"
+                        )
+                        break
+    except Exception:
+        if not prompt_id:
+            print("[MODAL_COMFY] WebSocket 연결 또는 prompt 제출 실패")
+            traceback.print_exc()
+            raise
+        print(
+            "[MODAL_COMFY] WebSocket 모니터링 실패, history 결과로 최종 상태 확인: "
+            f"prompt_id={prompt_id}"
+        )
+        traceback.print_exc()
+
+    if not prompt_id:
+        print("[MODAL_COMFY] history 조회 실패: prompt_id가 비어 있습니다.")
+        raise RuntimeError("ComfyUI prompt_id가 비어 있습니다.")
+
+    async with aiohttp.ClientSession() as session:
+        while time.monotonic() < deadline:
+            try:
+                async with session.get(
+                    f"http://127.0.0.1:8188/history/{prompt_id}",
+                    timeout=aiohttp.ClientTimeout(total=15),
+                ) as response:
+                    response.raise_for_status()
+                    history = (await response.json()).get(prompt_id)
+            except Exception as exc:
+                print(
+                    "[MODAL_COMFY] history 조회 실패, 재시도: "
+                    f"prompt_id={prompt_id}, error={type(exc).__name__}: {exc}"
+                )
+                traceback.print_exc()
+                history = None
+            if history:
+                return prompt_id, history
+            await asyncio.sleep(0.5)
+
+        try:
+            async with session.post(
+                "http://127.0.0.1:8188/interrupt",
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as response:
+                response.raise_for_status()
+        except Exception as exc:
+            print(
+                "[MODAL_COMFY] 제한 시간 초과 후 interrupt 요청 실패: "
+                f"prompt_id={prompt_id}, error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+        raise TimeoutError(
+            f"ComfyUI 생성 제한 시간({timeout_seconds}초)을 초과했습니다: "
+            f"prompt_id={prompt_id}"
+        )
 
 
 def _extra_custom_nodes() -> list[dict]:
@@ -440,6 +614,7 @@ class ComfyWorker:
         timeout_seconds: int = 3_300,
         artifact_prefixes: list[str] | None = None,
         require_images: bool = True,
+        defer_artifacts: bool = False,
     ) -> dict:
         _announce_call_started("generate")
         import requests
@@ -501,33 +676,20 @@ class ComfyWorker:
                         stat.st_size,
                     )
 
-        client_id = uuid.uuid4().hex
-        response = requests.post(
-            "http://127.0.0.1:8188/prompt",
-            json={"prompt": workflow, "client_id": client_id},
-            timeout=30,
-        )
-        response.raise_for_status()
-        prompt_id = str(response.json()["prompt_id"])
-        deadline = time.monotonic() + timeout_seconds
-        history = None
-        while time.monotonic() < deadline:
-            history_response = requests.get(
-                f"http://127.0.0.1:8188/history/{prompt_id}",
-                timeout=15,
+        progress_sequence = 0
+
+        def emit_progress(data: dict) -> None:
+            nonlocal progress_sequence
+            progress_sequence += 1
+            _emit_workflow_progress(progress_sequence, data)
+
+        prompt_id, history = asyncio.run(
+            _execute_comfy_workflow(
+                workflow,
+                timeout_seconds,
+                emit_progress,
             )
-            history_response.raise_for_status()
-            history = history_response.json().get(prompt_id)
-            if history:
-                break
-            time.sleep(0.5)
-        if not history:
-            try:
-                requests.post("http://127.0.0.1:8188/interrupt", timeout=10)
-            finally:
-                raise TimeoutError(
-                    f"ComfyUI 생성 제한 시간({timeout_seconds}초)을 초과했습니다: prompt_id={prompt_id}"
-                )
+        )
 
         status = history.get("status") or {}
         if status.get("status_str") == "error" or not status.get("completed", False):
@@ -571,13 +733,14 @@ class ComfyWorker:
                 previous = artifact_before.get(relative_name)
                 if previous == (stat.st_mtime_ns, stat.st_size):
                     continue
-                artifacts.append(
-                    {
-                        "relative_path": relative_name,
-                        "bytes": path.read_bytes(),
-                        "size": stat.st_size,
-                    }
-                )
+                artifact = {
+                    "relative_path": relative_name,
+                    "remote_path": f"SOYA_CHAR_LORA/{relative_name}",
+                    "size": stat.st_size,
+                }
+                if not defer_artifacts:
+                    artifact["bytes"] = path.read_bytes()
+                artifacts.append(artifact)
         if normalized_artifact_roots:
             loras_volume.commit()
             if not artifacts:

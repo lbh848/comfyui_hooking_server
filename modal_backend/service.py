@@ -54,6 +54,8 @@ INSTALL_LOG_LINE_LIMIT = 1_200
 RUNTIME_LOG_LIMIT = 500
 WEB_APP_SUFFIX = "-web"
 INSTALL_PROGRESS_PREFIX = "@@SOYA_MODAL_PROGRESS@@"
+WORKFLOW_PROGRESS_PREFIX = "@@SOYA_MODAL_WORKFLOW_PROGRESS@@"
+DOWNLOAD_PROGRESS_PREFIX = "@@SOYA_MODAL_DOWNLOAD_PROGRESS@@"
 INSTALL_PHASE_LABELS = {
     "assets": "자산 분석",
     "upload": "파일 업로드",
@@ -3964,6 +3966,7 @@ class ModalService:
         input_paths: list[str] | tuple[str, ...] | None = None,
         artifact_prefixes: list[str] | tuple[str, ...] | None = None,
         require_images: bool = True,
+        progress_callback: Callable[[dict[str, Any]], Any] | None = None,
     ) -> dict[str, Any]:
         config = self.get_config()
         settings = ModalSettings.from_mapping(config)
@@ -3989,6 +3992,87 @@ class ModalService:
             workflow_input_files,
             explicit_input_files,
         )
+        deferred_artifacts = bool(artifact_prefixes and not require_images)
+
+        progress_queue: asyncio.Queue[dict[str, Any] | None] | None = (
+            asyncio.Queue() if progress_callback is not None else None
+        )
+
+        async def consume_progress() -> None:
+            if progress_queue is None or progress_callback is None:
+                return
+            while True:
+                event = await progress_queue.get()
+                if event is None:
+                    return
+                try:
+                    callback_result = progress_callback(event)
+                    if asyncio.iscoroutine(callback_result):
+                        await callback_result
+                except Exception as exc:
+                    print(
+                        "[MODAL] 워크플로우 진행 콜백 실패: "
+                        f"event={event!r}, error={type(exc).__name__}: {exc}"
+                    )
+                    traceback.print_exc()
+
+        def handle_client_output(source: str, line: str) -> None:
+            if source != "stderr" or progress_queue is None:
+                return
+            event: dict[str, Any] | None = None
+            raw_event = ""
+            try:
+                if line.startswith(WORKFLOW_PROGRESS_PREFIX):
+                    raw_event = line[len(WORKFLOW_PROGRESS_PREFIX) :]
+                    parsed = json.loads(raw_event)
+                    if not isinstance(parsed, dict):
+                        raise TypeError("Modal 학습 진행 이벤트는 객체여야 합니다.")
+                    event = parsed
+                elif line.startswith(INSTALL_PROGRESS_PREFIX):
+                    raw_event = line[len(INSTALL_PROGRESS_PREFIX) :]
+                    parsed = json.loads(raw_event)
+                    if not isinstance(parsed, dict):
+                        raise TypeError("Modal 자산 동기화 이벤트는 객체여야 합니다.")
+                    event_name = str(parsed.get("event") or "")
+                    if event_name == "batch_start":
+                        event = {
+                            "phase": "modal_syncing",
+                            "percentage": 1,
+                            "message": (
+                                f"Modal {str(parsed.get('label') or '자산')} 동기화 확인 중"
+                            ),
+                        }
+                    elif event_name == "file_queued":
+                        event = {
+                            "phase": "modal_syncing",
+                            "percentage": 1,
+                            "message": (
+                                f"Modal 전송 준비: {str(parsed.get('name') or '')}"
+                            ),
+                        }
+                    elif event_name == "batch_complete":
+                        event = {
+                            "phase": "modal_syncing",
+                            "percentage": 1,
+                            "message": (
+                                f"Modal {str(parsed.get('label') or '자산')} 동기화 완료"
+                            ),
+                        }
+                if event is not None:
+                    progress_queue.put_nowait(event)
+            except Exception as exc:
+                print(
+                    "[MODAL] 워크플로우 실시간 이벤트 파싱 실패: "
+                    f"source={source}, error={type(exc).__name__}: {exc}, "
+                    f"payload={raw_event[:500]!r}"
+                )
+                traceback.print_exc()
+
+        progress_consumer = (
+            asyncio.create_task(consume_progress())
+            if progress_queue is not None
+            else None
+        )
         with tempfile.TemporaryDirectory(prefix="soya-modal-output-") as output_dir:
             payload = {
                 "action": "generate",
@@ -4001,18 +4085,30 @@ class ModalService:
                 "input_files": input_files,
                 "artifact_prefixes": list(artifact_prefixes or []),
                 "require_images": bool(require_images),
+                "defer_artifacts": deferred_artifacts,
                 "timeout_seconds": max(30, min(int(timeout_seconds), 3_300)),
                 "container_start_max_retries": (
                     settings.container_start_max_retries
                 ),
                 "output_dir": output_dir,
             }
-            code, stdout, stderr = await self._run_command(
-                [sys.executable, "-m", "modal_backend.client_cli"],
-                env=self._subprocess_env(settings.profile),
-                stdin_payload=payload,
-                timeout=payload["timeout_seconds"] + 180,
-            )
+            try:
+                command_kwargs: dict[str, Any] = {
+                    "env": self._subprocess_env(settings.profile),
+                    "stdin_payload": payload,
+                    "timeout": payload["timeout_seconds"] + 180,
+                }
+                if progress_queue is not None:
+                    command_kwargs["output_callback"] = handle_client_output
+                code, stdout, stderr = await self._run_command(
+                    [sys.executable, "-m", "modal_backend.client_cli"],
+                    **command_kwargs,
+                )
+            finally:
+                if progress_queue is not None:
+                    progress_queue.put_nowait(None)
+                if progress_consumer is not None:
+                    await progress_consumer
             if code != 0:
                 failure_response: dict[str, Any] = {}
                 if stdout.strip():
@@ -4082,9 +4178,11 @@ class ModalService:
                         "node_id": output.get("node_id"),
                     }
                 )
-            stored_artifacts = self._store_modal_artifacts(
-                list(result.get("artifacts") or []),
-                config,
+            raw_artifacts = list(result.get("artifacts") or [])
+            stored_artifacts = (
+                []
+                if deferred_artifacts
+                else self._store_modal_artifacts(raw_artifacts, config)
             )
             print(
                 f"[MODAL] 원격 워크플로우 완료: app={settings.deployment_name}, "
@@ -4099,7 +4197,229 @@ class ModalService:
                 "lora_sync": result.get("lora_sync") or {},
                 "images": images,
                 "artifacts": stored_artifacts,
+                "deferred_artifacts": raw_artifacts if deferred_artifacts else [],
                 "text_outputs": list(result.get("text_outputs") or []),
+            }
+
+    async def download_lora_artifacts(
+        self,
+        artifacts: list[dict[str, Any]],
+        *,
+        progress_callback: Callable[[dict[str, Any]], Any] | None = None,
+    ) -> dict[str, Any]:
+        """GPU 호출과 분리된 Volume 다운로드 후 로컬 저장·원격 삭제를 예약한다."""
+        config = self.get_config()
+        settings = ModalSettings.from_mapping(config)
+        if not settings.enabled:
+            print("[MODAL_DOWNLOAD] 다운로드 실패: Modal이 비활성화되어 있습니다.")
+            raise RuntimeError("Modal LoRA 다운로드 중 Modal이 비활성화되었습니다.")
+        if not await self.account_connected(settings):
+            print(
+                "[MODAL_DOWNLOAD] 다운로드 실패: Modal 계정이 연결되지 않았습니다. "
+                f"profile={settings.profile}"
+            )
+            raise RuntimeError("Modal 계정이 연결되어 있지 않습니다.")
+        if not isinstance(artifacts, list) or not artifacts:
+            print(f"[MODAL_DOWNLOAD] 다운로드 artifact 없음: artifacts={artifacts!r}")
+            raise ValueError("다운로드할 Modal LoRA artifact가 없습니다.")
+
+        normalized: list[dict[str, Any]] = []
+        for artifact in artifacts:
+            if not isinstance(artifact, Mapping):
+                print(
+                    "[MODAL_DOWNLOAD] artifact 형식 오류: "
+                    f"type={type(artifact).__name__}, value={artifact!r}"
+                )
+                raise TypeError("Modal LoRA artifact는 객체여야 합니다.")
+            relative = Path(str(artifact.get("relative_path") or ""))
+            remote_path = str(artifact.get("remote_path") or "").replace("\\", "/")
+            remote_parts = Path(remote_path).parts
+            if (
+                relative.is_absolute()
+                or not relative.parts
+                or ".." in relative.parts
+                or not remote_path.startswith("SOYA_CHAR_LORA/")
+                or ".." in remote_parts
+            ):
+                print(
+                    "[MODAL_DOWNLOAD] 안전하지 않은 artifact 경로 거부: "
+                    f"relative={relative!s}, remote={remote_path!r}"
+                )
+                raise ValueError("안전하지 않은 Modal LoRA artifact 경로입니다.")
+            normalized.append(
+                {
+                    "relative_path": relative.as_posix(),
+                    "remote_path": remote_path.strip("/"),
+                    "size": max(0, int(artifact.get("size") or 0)),
+                }
+            )
+
+        progress_queue: asyncio.Queue[dict[str, Any] | None] | None = (
+            asyncio.Queue() if progress_callback is not None else None
+        )
+
+        async def consume_progress() -> None:
+            if progress_queue is None or progress_callback is None:
+                return
+            while True:
+                event = await progress_queue.get()
+                if event is None:
+                    return
+                try:
+                    callback_result = progress_callback(event)
+                    if asyncio.iscoroutine(callback_result):
+                        await callback_result
+                except Exception as exc:
+                    print(
+                        "[MODAL_DOWNLOAD] 진행 콜백 실패: "
+                        f"event={event!r}, error={type(exc).__name__}: {exc}"
+                    )
+                    traceback.print_exc()
+
+        def handle_download_output(source: str, line: str) -> None:
+            if (
+                source != "stderr"
+                or progress_queue is None
+                or not line.startswith(DOWNLOAD_PROGRESS_PREFIX)
+            ):
+                return
+            raw_event = line[len(DOWNLOAD_PROGRESS_PREFIX) :]
+            try:
+                event = json.loads(raw_event)
+                if not isinstance(event, dict):
+                    raise TypeError("Modal LoRA 다운로드 이벤트는 객체여야 합니다.")
+                total_bytes = max(0, int(event.get("total_bytes") or 0))
+                downloaded_bytes = max(0, int(event.get("downloaded_bytes") or 0))
+                total_files = max(0, int(event.get("total_files") or 0))
+                index = max(0, int(event.get("index") or 0))
+                if total_bytes > 0:
+                    percentage = min(99.0, downloaded_bytes / total_bytes * 100.0)
+                elif total_files > 0:
+                    percentage = min(99.0, index / total_files * 100.0)
+                else:
+                    percentage = 0.0
+                if str(event.get("event") or "") == "batch_complete":
+                    percentage = 99.0
+                progress_queue.put_nowait(
+                    {
+                        "phase": "modal_downloading",
+                        "percentage": percentage,
+                        **event,
+                    }
+                )
+            except Exception as exc:
+                print(
+                    "[MODAL_DOWNLOAD] 진행 이벤트 파싱 실패: "
+                    f"error={type(exc).__name__}: {exc}, payload={raw_event[:500]!r}"
+                )
+                traceback.print_exc()
+
+        consumer_task = (
+            asyncio.create_task(consume_progress())
+            if progress_queue is not None
+            else None
+        )
+        with tempfile.TemporaryDirectory(prefix="soya-modal-lora-download-") as output_dir:
+            payload = {
+                "action": "download_lora_artifacts",
+                "app_name": settings.deployment_name,
+                "environment": settings.environment,
+                "artifacts": normalized,
+                "output_dir": output_dir,
+            }
+            try:
+                code, stdout, stderr = await self._run_command(
+                    [sys.executable, "-m", "modal_backend.client_cli"],
+                    env=self._subprocess_env(settings.profile),
+                    stdin_payload=payload,
+                    timeout=3_600,
+                    output_callback=(
+                        handle_download_output if progress_queue is not None else None
+                    ),
+                )
+            finally:
+                if progress_queue is not None:
+                    progress_queue.put_nowait(None)
+                if consumer_task is not None:
+                    await consumer_task
+            if code != 0:
+                failure: dict[str, Any] = {}
+                if stdout.strip():
+                    try:
+                        parsed = json.loads(stdout)
+                        if isinstance(parsed, dict):
+                            failure = parsed
+                        else:
+                            print(
+                                "[MODAL_DOWNLOAD] 실패 응답 루트 형식 오류: "
+                                f"type={type(parsed).__name__}"
+                            )
+                    except Exception as exc:
+                        print(
+                            "[MODAL_DOWNLOAD] 실패 응답 파싱 실패: "
+                            f"error={type(exc).__name__}: {exc}, "
+                            f"stdout_length={len(stdout)}"
+                        )
+                        traceback.print_exc()
+                error = str(
+                    failure.get("error")
+                    or "Modal LoRA Volume 다운로드에 실패했습니다."
+                )
+                print(
+                    "[MODAL_DOWNLOAD] client 실패: "
+                    f"exit_code={code}, artifacts={len(normalized)}, error={error}, "
+                    f"stderr={stderr[-2000:]}"
+                )
+                raise RuntimeError(error)
+            try:
+                response = json.loads(stdout)
+            except Exception as exc:
+                print(
+                    "[MODAL_DOWNLOAD] client 응답 파싱 실패: "
+                    f"error={type(exc).__name__}: {exc}, stdout_length={len(stdout)}"
+                )
+                traceback.print_exc()
+                raise RuntimeError("Modal LoRA 다운로드 응답 형식이 올바르지 않습니다.") from exc
+            if not response.get("ok"):
+                error = str(response.get("error") or "Modal LoRA 다운로드 실패")
+                print(f"[MODAL_DOWNLOAD] client 응답 실패: error={error}")
+                raise RuntimeError(error)
+            result = response.get("result") or {}
+            downloaded = list(result.get("artifacts") or [])
+            if len(downloaded) != len(normalized):
+                print(
+                    "[MODAL_DOWNLOAD] 다운로드 파일 수 검증 실패: "
+                    f"expected={len(normalized)}, actual={len(downloaded)}"
+                )
+                raise RuntimeError("Modal LoRA 다운로드 파일 수가 일치하지 않습니다.")
+            stored = self._store_modal_artifacts(downloaded, config)
+            await self.enqueue_lora_delete_artifacts(downloaded)
+            remote_paths = [str(item["remote_path"]) for item in downloaded]
+            if progress_callback is not None:
+                try:
+                    callback_result = progress_callback(
+                        {
+                            "phase": "modal_download_complete",
+                            "percentage": 100.0,
+                            "total_files": len(stored),
+                            "remote_delete_queued": len(remote_paths),
+                        }
+                    )
+                    if asyncio.iscoroutine(callback_result):
+                        await callback_result
+                except Exception as exc:
+                    print(
+                        "[MODAL_DOWNLOAD] 완료 진행 콜백 실패: "
+                        f"error={type(exc).__name__}: {exc}"
+                    )
+                    traceback.print_exc()
+            print(
+                "[MODAL_DOWNLOAD] LoRA 로컬 저장 및 원격 삭제 예약 완료: "
+                f"stored={len(stored)}, delete_paths={len(remote_paths)}"
+            )
+            return {
+                "artifacts": stored,
+                "remote_delete_queued": remote_paths,
             }
 
     async def generate(
@@ -4189,6 +4509,221 @@ class ModalService:
                 print(f"[MODAL_SYNC] 원격 LoRA 삭제 예약: {normalized}")
         self._schedule_delete_flush()
 
+    async def enqueue_lora_delete_paths(self, remote_paths: list[str]) -> None:
+        """로컬 저장이 확인된 정확한 원격 LoRA 파일만 삭제 outbox에 넣는다."""
+        settings = ModalSettings.from_mapping(self.get_config())
+        if not settings.enabled:
+            print(
+                "[MODAL_SYNC] Modal이 비활성화되어 원격 LoRA 파일 삭제 예약 생략: "
+                f"paths={remote_paths!r}"
+            )
+            return
+        if not isinstance(remote_paths, list) or not remote_paths:
+            print(f"[MODAL_SYNC] 원격 LoRA 삭제 파일 목록이 비어 있음: {remote_paths!r}")
+            raise ValueError("원격 LoRA 삭제 파일 목록이 비어 있습니다.")
+        normalized_paths: list[str] = []
+        for remote_path in remote_paths:
+            normalized = str(remote_path or "").strip().replace("\\", "/").strip("/")
+            parts = normalized.split("/") if normalized else []
+            if (
+                len(parts) < 2
+                or parts[0] != "SOYA_CHAR_LORA"
+                or any(part in ("", ".", "..") for part in parts)
+            ):
+                print(
+                    "[MODAL_SYNC] 안전하지 않은 원격 LoRA 삭제 파일 경로: "
+                    f"path={remote_path!r}"
+                )
+                raise ValueError(
+                    f"안전하지 않은 Modal LoRA 삭제 파일 경로입니다: {remote_path!r}"
+                )
+            normalized_paths.append(normalized)
+        normalized_paths = sorted(set(normalized_paths), key=str.casefold)
+        async with self._delete_lock:
+            items = await asyncio.to_thread(self._load_delete_outbox)
+            already_queued = {
+                str(path)
+                for item in items
+                for path in (
+                    item.get("remote_paths")
+                    if isinstance(item.get("remote_paths"), list)
+                    else []
+                )
+            }
+            already_queued.update(
+                str(artifact.get("remote_path") or "")
+                for item in items
+                for artifact in (
+                    item.get("remote_artifacts")
+                    if isinstance(item.get("remote_artifacts"), list)
+                    else []
+                )
+                if isinstance(artifact, Mapping)
+            )
+            new_paths = [path for path in normalized_paths if path not in already_queued]
+            if new_paths:
+                items.append(
+                    {
+                        "remote_paths": new_paths,
+                        "created_at": datetime.datetime.now(
+                            datetime.timezone.utc
+                        ).isoformat(),
+                        "attempts": 0,
+                    }
+                )
+                await asyncio.to_thread(self._save_delete_outbox, items)
+                print(
+                    "[MODAL_SYNC] 원격 LoRA 파일 삭제 예약: "
+                    f"count={len(new_paths)}, paths={new_paths!r}"
+                )
+            else:
+                print(
+                    "[MODAL_SYNC] 원격 LoRA 파일 삭제가 이미 예약됨: "
+                    f"paths={normalized_paths!r}"
+                )
+        self._schedule_delete_flush()
+
+    async def enqueue_lora_delete_artifacts(
+        self,
+        remote_artifacts: list[dict[str, Any]],
+    ) -> None:
+        """다운로드한 해시와 일치할 때만 삭제하도록 artifact를 outbox에 넣는다."""
+        settings = ModalSettings.from_mapping(self.get_config())
+        if not settings.enabled:
+            print(
+                "[MODAL_SYNC] Modal이 비활성화되어 원격 LoRA 검증 삭제 예약 생략: "
+                f"artifacts={remote_artifacts!r}"
+            )
+            return
+        if not isinstance(remote_artifacts, list) or not remote_artifacts:
+            print(
+                "[MODAL_SYNC] 원격 LoRA 검증 삭제 artifact가 비어 있음: "
+                f"artifacts={remote_artifacts!r}"
+            )
+            raise ValueError("원격 LoRA 검증 삭제 artifact가 비어 있습니다.")
+
+        normalized_artifacts: list[dict[str, Any]] = []
+        for artifact in remote_artifacts:
+            if not isinstance(artifact, Mapping):
+                print(
+                    "[MODAL_SYNC] 원격 LoRA 검증 삭제 artifact 형식 오류: "
+                    f"type={type(artifact).__name__}, value={artifact!r}"
+                )
+                raise TypeError("원격 LoRA 검증 삭제 artifact는 객체여야 합니다.")
+            remote_path = (
+                str(artifact.get("remote_path") or "")
+                .strip()
+                .replace("\\", "/")
+                .strip("/")
+            )
+            parts = remote_path.split("/") if remote_path else []
+            sha256 = str(artifact.get("sha256") or "").strip().lower()
+            try:
+                size = int(artifact.get("size"))
+            except (TypeError, ValueError) as exc:
+                print(
+                    "[MODAL_SYNC] 원격 LoRA 검증 삭제 크기 형식 오류: "
+                    f"path={remote_path!r}, size={artifact.get('size')!r}"
+                )
+                traceback.print_exc()
+                raise ValueError("원격 LoRA 검증 삭제 크기가 올바르지 않습니다.") from exc
+            if (
+                len(parts) < 2
+                or parts[0] != "SOYA_CHAR_LORA"
+                or any(part in ("", ".", "..") for part in parts)
+                or len(sha256) != 64
+                or any(character not in "0123456789abcdef" for character in sha256)
+                or size < 0
+            ):
+                print(
+                    "[MODAL_SYNC] 안전하지 않은 원격 LoRA 검증 삭제 artifact: "
+                    f"path={remote_path!r}, sha256={sha256!r}, size={size}"
+                )
+                raise ValueError("안전하지 않은 Modal LoRA 검증 삭제 artifact입니다.")
+            normalized_artifacts.append(
+                {"remote_path": remote_path, "sha256": sha256, "size": size}
+            )
+
+        unique_artifacts = {
+            (artifact["remote_path"], artifact["sha256"], artifact["size"]): artifact
+            for artifact in normalized_artifacts
+        }
+        normalized_artifacts = [
+            unique_artifacts[key]
+            for key in sorted(unique_artifacts, key=lambda value: value[0].casefold())
+        ]
+        async with self._delete_lock:
+            items = await asyncio.to_thread(self._load_delete_outbox)
+            already_queued = {
+                (
+                    str(artifact.get("remote_path") or ""),
+                    str(artifact.get("sha256") or ""),
+                    str(artifact.get("size") or ""),
+                )
+                for item in items
+                for artifact in (
+                    item.get("remote_artifacts")
+                    if isinstance(item.get("remote_artifacts"), list)
+                    else []
+                )
+                if isinstance(artifact, Mapping)
+            }
+            new_artifacts = [
+                artifact
+                for artifact in normalized_artifacts
+                if (
+                    artifact["remote_path"],
+                    artifact["sha256"],
+                    str(artifact["size"]),
+                )
+                not in already_queued
+            ]
+            if new_artifacts:
+                items.append(
+                    {
+                        "remote_artifacts": new_artifacts,
+                        "created_at": datetime.datetime.now(
+                            datetime.timezone.utc
+                        ).isoformat(),
+                        "attempts": 0,
+                    }
+                )
+                await asyncio.to_thread(self._save_delete_outbox, items)
+                print(
+                    "[MODAL_SYNC] 원격 LoRA 검증 삭제 예약: "
+                    f"count={len(new_artifacts)}, "
+                    f"paths={[item['remote_path'] for item in new_artifacts]!r}"
+                )
+            else:
+                print(
+                    "[MODAL_SYNC] 원격 LoRA 검증 삭제가 이미 예약됨: "
+                    f"paths={[item['remote_path'] for item in normalized_artifacts]!r}"
+                )
+        self._schedule_delete_flush()
+
+    @staticmethod
+    def _delete_outbox_item_key(item: Mapping[str, Any]) -> tuple[str, Any]:
+        remote_artifacts = item.get("remote_artifacts")
+        if isinstance(remote_artifacts, list) and remote_artifacts:
+            return (
+                "artifacts",
+                tuple(
+                    sorted(
+                        (
+                            str(artifact.get("remote_path") or ""),
+                            str(artifact.get("sha256") or ""),
+                            str(artifact.get("size") or ""),
+                        )
+                        for artifact in remote_artifacts
+                        if isinstance(artifact, Mapping)
+                    )
+                ),
+            )
+        remote_paths = item.get("remote_paths")
+        if isinstance(remote_paths, list) and remote_paths:
+            return ("paths", tuple(sorted(str(path) for path in remote_paths)))
+        return ("prefix", str(item.get("remote_prefix") or ""))
+
     def _schedule_delete_flush(self) -> None:
         if self._delete_flush_task and not self._delete_flush_task.done():
             return
@@ -4209,14 +4744,45 @@ class ModalService:
                 if not items:
                     return
                 item = dict(items[0])
-            payload = {
-                "action": "delete_lora_prefix",
-                "app_name": settings.deployment_name,
-                "environment": settings.environment,
-                "remote_prefix": item["remote_prefix"],
-            }
+            remote_artifacts = item.get("remote_artifacts")
+            remote_paths = item.get("remote_paths")
+            if isinstance(remote_artifacts, list) and remote_artifacts:
+                item_key = self._delete_outbox_item_key(item)
+                payload = {
+                    "action": "delete_lora_artifacts",
+                    "app_name": settings.deployment_name,
+                    "environment": settings.environment,
+                    "remote_artifacts": list(remote_artifacts),
+                }
+                target_label = f"verified_files={len(remote_artifacts)}"
+            elif isinstance(remote_paths, list) and remote_paths:
+                item_key = self._delete_outbox_item_key(item)
+                payload = {
+                    "action": "delete_lora_paths",
+                    "app_name": settings.deployment_name,
+                    "environment": settings.environment,
+                    "remote_paths": list(remote_paths),
+                }
+                target_label = f"files={len(remote_paths)}"
+            else:
+                remote_prefix = str(item.get("remote_prefix") or "")
+                if not remote_prefix:
+                    print(f"[MODAL_SYNC] 삭제 outbox 항목 경로 누락: item={item!r}")
+                    async with self._delete_lock:
+                        current = await asyncio.to_thread(self._load_delete_outbox)
+                        current = current[1:]
+                        await asyncio.to_thread(self._save_delete_outbox, current)
+                    continue
+                item_key = ("prefix", remote_prefix)
+                payload = {
+                    "action": "delete_lora_prefix",
+                    "app_name": settings.deployment_name,
+                    "environment": settings.environment,
+                    "remote_prefix": remote_prefix,
+                }
+                target_label = f"prefix={remote_prefix}"
             try:
-                code, stdout, _stderr = await self._run_command(
+                code, stdout, stderr = await self._run_command(
                     [sys.executable, "-m", "modal_backend.client_cli"],
                     env=self._subprocess_env(settings.profile),
                     stdin_payload=payload,
@@ -4225,28 +4791,40 @@ class ModalService:
                 response = json.loads(stdout) if stdout.strip() else {}
                 if code != 0 or not response.get("ok"):
                     raise RuntimeError(
-                        str(response.get("error") or f"Modal client exit_code={code}")
+                        str(
+                            response.get("error")
+                            or f"Modal client exit_code={code}, stderr={stderr[-1000:]}"
+                        )
                     )
                 async with self._delete_lock:
                     current = await asyncio.to_thread(self._load_delete_outbox)
-                    current = [
-                        queued
-                        for queued in current
-                        if queued.get("remote_prefix") != item["remote_prefix"]
-                    ]
+                    filtered = []
+                    for queued in current:
+                        queued_key = self._delete_outbox_item_key(queued)
+                        if queued_key != item_key:
+                            filtered.append(queued)
+                    current = filtered
                     await asyncio.to_thread(self._save_delete_outbox, current)
-                print(f"[MODAL_SYNC] 원격 LoRA 삭제 완료: {item['remote_prefix']}")
+                print(f"[MODAL_SYNC] 원격 LoRA 삭제 완료: {target_label}")
             except Exception as exc:
                 print(
                     f"[MODAL_SYNC] 원격 LoRA 삭제 실패, outbox 유지: "
-                    f"path={item.get('remote_prefix')}, error={type(exc).__name__}: {exc}"
+                    f"target={target_label}, error={type(exc).__name__}: {exc}"
                 )
                 traceback.print_exc()
+                attempts = int(item.get("attempts") or 0) + 1
                 async with self._delete_lock:
                     current = await asyncio.to_thread(self._load_delete_outbox)
                     for queued in current:
-                        if queued.get("remote_prefix") == item.get("remote_prefix"):
-                            queued["attempts"] = int(queued.get("attempts") or 0) + 1
+                        queued_key = self._delete_outbox_item_key(queued)
+                        if queued_key == item_key:
+                            queued["attempts"] = attempts
                             queued["last_error"] = f"{type(exc).__name__}: {exc}"
                     await asyncio.to_thread(self._save_delete_outbox, current)
-                return
+                retry_seconds = min(60.0, 2.0 ** min(attempts, 6))
+                print(
+                    "[MODAL_SYNC] 원격 LoRA 삭제 재시도 대기: "
+                    f"target={target_label}, attempts={attempts}, "
+                    f"retry_seconds={retry_seconds:.0f}"
+                )
+                await asyncio.sleep(retry_seconds)

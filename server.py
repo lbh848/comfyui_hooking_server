@@ -2901,6 +2901,7 @@ def init_queue_manager():
     queue_manager.fetch_real_history = fetch_real_history
     queue_manager.fetch_real_image = fetch_real_image
     queue_manager.run_modal_workflow = modal_service.run_workflow
+    queue_manager.download_modal_artifacts = modal_service.download_lora_artifacts
     queue_manager.acquire_modal_warm_lease = modal_service.acquire_worker_warm_lease
     queue_manager.release_modal_warm_lease = modal_service.release_worker_warm_lease
     asset_tool.run_modal_workflow_func = modal_service.run_workflow

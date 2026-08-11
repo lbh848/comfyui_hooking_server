@@ -31,6 +31,8 @@ MODEL_SYNC_MANIFEST_PATH = "/.soya-local-model-sync-manifest.json"
 LORA_SYNC_MANIFEST_PATH = "/.soya-sync-manifest.json"
 INSTALL_PROGRESS_PREFIX = "@@SOYA_MODAL_PROGRESS@@"
 CALL_STARTED_LOG_PREFIX = "@@SOYA_MODAL_CALL_STARTED@@"
+WORKFLOW_PROGRESS_PREFIX = "@@SOYA_MODAL_WORKFLOW_PROGRESS@@"
+DOWNLOAD_PROGRESS_PREFIX = "@@SOYA_MODAL_DOWNLOAD_PROGRESS@@"
 CALL_START_POLL_SECONDS = 3.0
 CALL_START_LOG_TAIL_ENTRIES = 1000
 
@@ -49,14 +51,29 @@ def _container_start_max_retries(payload: dict) -> int:
     return retries
 
 
-def _call_start_observations(call) -> tuple[bool, set[str]]:
-    """FunctionCall 로그의 구조화 컨텍스트에서 시작 완료와 컨테이너를 읽는다."""
+def _call_log_observations(call) -> tuple[bool, set[str], list[dict]]:
+    """FunctionCall 로그에서 시작 완료, 컨테이너, 진행 이벤트를 함께 읽는다."""
     started = False
     container_ids: set[str] = set()
+    progress_events: list[dict] = []
     for entry in call.logs.tail(entries=CALL_START_LOG_TAIL_ENTRIES):
         message = str(getattr(entry, "message", "") or "")
         if message.startswith(CALL_STARTED_LOG_PREFIX):
             started = True
+        if message.startswith(WORKFLOW_PROGRESS_PREFIX):
+            raw_event = message[len(WORKFLOW_PROGRESS_PREFIX) :].strip()
+            try:
+                event = json.loads(raw_event)
+                if not isinstance(event, dict):
+                    raise TypeError("Modal 워크플로우 진행 이벤트는 객체여야 합니다.")
+                progress_events.append(event)
+            except Exception as exc:
+                print(
+                    "[MODAL_CLIENT] 워크플로우 진행 로그 파싱 실패: "
+                    f"error={type(exc).__name__}: {exc}, payload={raw_event[:500]!r}",
+                    file=sys.stderr,
+                )
+                traceback.print_exc(file=sys.stderr)
         context_ids = list(getattr(entry, "context_ids", None) or [])
         # Modal 1.5 FunctionCall 로그 컨텍스트는 [input_id, container_id]다.
         # container_id가 없는 레코드에서 input_id를 컨테이너로 오인하지 않는다.
@@ -65,6 +82,12 @@ def _call_start_observations(call) -> tuple[bool, set[str]]:
         container_id = str(context_ids[-1] or "").strip()
         if container_id:
             container_ids.add(container_id)
+    return started, container_ids, progress_events
+
+
+def _call_start_observations(call) -> tuple[bool, set[str]]:
+    """기존 시작 감시 호출자를 위한 하위 호환 래퍼."""
+    started, container_ids, _progress_events = _call_log_observations(call)
     return started, container_ids
 
 
@@ -92,59 +115,22 @@ def _wait_for_call_with_start_retry_limit(
     timeout_seconds: int,
     max_retries: int,
     operation: str,
+    stream_progress: bool = False,
 ):
     """컨테이너 시작 반복을 감시하다 원격 메서드 진입 후 일반 대기로 전환한다."""
     allowed_attempts = max_retries + 1
     deadline = time.monotonic() + max(1, int(timeout_seconds))
     observed_container_ids: set[str] = set()
     monitoring_start = True
+    last_progress_sequence = 0
 
-    while True:
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            print(
-                f"[MODAL_CLIENT] {operation} 결과 대기 시간 초과: "
-                f"timeout_seconds={timeout_seconds}, "
-                f"observed_container_starts={len(observed_container_ids)}",
-                file=sys.stderr,
-            )
-            raise TimeoutError(
-                f"Modal {operation} 결과가 {timeout_seconds}초 안에 도착하지 않았습니다."
-            )
-
-        wait_seconds = (
-            min(CALL_START_POLL_SECONDS, remaining)
-            if monitoring_start
-            else remaining
-        )
-        try:
-            return call.get(timeout=wait_seconds)
-        # Modal 1.5의 FunctionCall.get(timeout=...) 폴링은 내장 TimeoutError를
-        # 사용하지만 일부 SDK 경로는 modal.exception.TimeoutError를 사용한다.
-        except (TimeoutError, modal.exception.TimeoutError):
-            if not monitoring_start:
-                continue
-        except Exception:
-            raise
-
-        try:
+    def observe_call_logs() -> bool:
+        nonlocal last_progress_sequence
+        if stream_progress:
+            started, container_ids, progress_events = _call_log_observations(call)
+        else:
             started, container_ids = _call_start_observations(call)
-        except Exception as monitor_exc:
-            print(
-                f"[MODAL_CLIENT] {operation} 컨테이너 시작 감시 실패로 호출 취소: "
-                f"error={type(monitor_exc).__name__}: {monitor_exc}",
-                file=sys.stderr,
-            )
-            traceback.print_exc(file=sys.stderr)
-            _cancel_function_call(
-                call,
-                operation=operation,
-                terminate_containers=True,
-            )
-            raise RuntimeError(
-                f"Modal {operation} 컨테이너 시작 횟수를 확인하지 못해 안전을 위해 취소했습니다."
-            ) from monitor_exc
-
+            progress_events = []
         previous_count = len(observed_container_ids)
         observed_container_ids.update(container_ids)
         observed_count = len(observed_container_ids)
@@ -171,6 +157,91 @@ def _wait_for_call_with_start_retry_limit(
                 f"Modal {operation} 컨테이너 시작이 최초 1회와 추가 재시도 "
                 f"{max_retries}회를 초과해 취소되었습니다."
             )
+        if stream_progress:
+            progress_events.sort(key=lambda event: int(event.get("sequence") or 0))
+            for event in progress_events:
+                sequence = int(event.get("sequence") or 0)
+                if sequence <= last_progress_sequence:
+                    continue
+                data = event.get("data")
+                if not isinstance(data, dict):
+                    print(
+                        "[MODAL_CLIENT] 워크플로우 진행 이벤트 data 형식 오류: "
+                        f"event={event!r}",
+                        file=sys.stderr,
+                    )
+                    continue
+                print(
+                    WORKFLOW_PROGRESS_PREFIX
+                    + json.dumps(data, ensure_ascii=False, separators=(",", ":")),
+                    file=sys.stderr,
+                    flush=True,
+                )
+                last_progress_sequence = sequence
+        return started
+
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            print(
+                f"[MODAL_CLIENT] {operation} 결과 대기 시간 초과: "
+                f"timeout_seconds={timeout_seconds}, "
+                f"observed_container_starts={len(observed_container_ids)}",
+                file=sys.stderr,
+            )
+            raise TimeoutError(
+                f"Modal {operation} 결과가 {timeout_seconds}초 안에 도착하지 않았습니다."
+            )
+
+        wait_seconds = (
+            min(CALL_START_POLL_SECONDS, remaining)
+            if monitoring_start or stream_progress
+            else remaining
+        )
+        try:
+            result = call.get(timeout=wait_seconds)
+            if stream_progress:
+                try:
+                    observe_call_logs()
+                except ModalContainerStartRetryLimitError:
+                    raise
+                except Exception as monitor_exc:
+                    print(
+                        f"[MODAL_CLIENT] {operation} 최종 진행 로그 확인 실패: "
+                        f"error={type(monitor_exc).__name__}: {monitor_exc}",
+                        file=sys.stderr,
+                    )
+                    traceback.print_exc(file=sys.stderr)
+            return result
+        # Modal 1.5의 FunctionCall.get(timeout=...) 폴링은 내장 TimeoutError를
+        # 사용하지만 일부 SDK 경로는 modal.exception.TimeoutError를 사용한다.
+        except (TimeoutError, modal.exception.TimeoutError):
+            if not monitoring_start and not stream_progress:
+                continue
+        except Exception:
+            raise
+
+        try:
+            started = observe_call_logs()
+        except ModalContainerStartRetryLimitError:
+            raise
+        except Exception as monitor_exc:
+            print(
+                f"[MODAL_CLIENT] {operation} 컨테이너 시작 감시 실패로 호출 취소: "
+                f"error={type(monitor_exc).__name__}: {monitor_exc}",
+                file=sys.stderr,
+            )
+            traceback.print_exc(file=sys.stderr)
+            _cancel_function_call(
+                call,
+                operation=operation,
+                terminate_containers=True,
+            )
+            raise RuntimeError(
+                f"Modal {operation} 컨테이너 시작 횟수를 확인하지 못해 안전을 위해 취소했습니다."
+            ) from monitor_exc
+
+        observed_count = len(observed_container_ids)
         if started:
             print(
                 f"[MODAL_CLIENT] {operation} 원격 메서드 진입 확인: "
@@ -184,6 +255,16 @@ def _emit_install_progress(event: str, **payload) -> None:
     """설치 subprocess의 stderr로만 전달하는 기계 판독용 진행 이벤트."""
     print(
         INSTALL_PROGRESS_PREFIX
+        + json.dumps({"event": event, **payload}, ensure_ascii=False),
+        file=sys.stderr,
+        flush=True,
+    )
+
+
+def _emit_download_progress(event: str, **payload) -> None:
+    """LoRA Volume 다운로드 진행을 부모 서버에 구조화해 전달한다."""
+    print(
+        DOWNLOAD_PROGRESS_PREFIX
         + json.dumps({"event": event, **payload}, ensure_ascii=False),
         file=sys.stderr,
         flush=True,
@@ -765,6 +846,7 @@ def generate(payload: dict) -> dict:
         int(payload.get("timeout_seconds") or 3300),
         list(payload.get("artifact_prefixes") or []),
         bool(payload.get("require_images", True)),
+        bool(payload.get("defer_artifacts", False)),
     )
     try:
         remote_result = _wait_for_call_with_start_retry_limit(
@@ -772,6 +854,7 @@ def generate(payload: dict) -> dict:
             timeout_seconds=int(payload.get("timeout_seconds") or 3300) + 120,
             max_retries=_container_start_max_retries(payload),
             operation="generate",
+            stream_progress=True,
         )
     except ModalContainerStartRetryLimitError:
         raise
@@ -807,6 +890,19 @@ def generate(payload: dict) -> dict:
             raise ValueError(
                 f"Modal이 안전하지 않은 LoRA 결과 경로를 반환했습니다: {relative!s}"
             )
+        remote_path = _safe_managed_lora_path(
+            str(artifact.get("remote_path") or f"SOYA_CHAR_LORA/{relative.as_posix()}")
+        )
+        expected_size = max(0, int(artifact.get("size") or 0))
+        if bool(payload.get("defer_artifacts", False)):
+            artifacts.append(
+                {
+                    "relative_path": relative.as_posix(),
+                    "remote_path": remote_path,
+                    "size": expected_size,
+                }
+            )
+            continue
         target = artifact_root.joinpath(*relative.parts)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(artifact["bytes"])
@@ -814,6 +910,7 @@ def generate(payload: dict) -> dict:
             {
                 "path": str(target),
                 "relative_path": relative.as_posix(),
+                "remote_path": remote_path,
                 "size": target.stat().st_size,
             }
         )
@@ -824,6 +921,136 @@ def generate(payload: dict) -> dict:
         "text_outputs": list(remote_result.get("text_outputs") or []),
         **sync,
     }
+
+
+def download_lora_artifacts(payload: dict) -> dict:
+    artifacts = payload.get("artifacts") or []
+    if not isinstance(artifacts, list) or not artifacts:
+        print("[MODAL_CLIENT] 다운로드할 LoRA artifact 목록이 비어 있습니다.", file=sys.stderr)
+        raise ValueError("다운로드할 Modal LoRA artifact가 없습니다.")
+    output_dir_raw = str(payload.get("output_dir") or "").strip()
+    if not output_dir_raw:
+        print("[MODAL_CLIENT] LoRA 다운로드 output_dir가 비어 있습니다.", file=sys.stderr)
+        raise ValueError("Modal LoRA 다운로드 폴더가 비어 있습니다.")
+    output_dir = Path(output_dir_raw)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    volume = _lora_volume(payload, create_if_missing=False)
+
+    normalized: list[dict] = []
+    total_bytes = 0
+    for artifact in artifacts:
+        if not isinstance(artifact, dict):
+            print(
+                "[MODAL_CLIENT] LoRA 다운로드 artifact 형식 오류: "
+                f"type={type(artifact).__name__}, value={artifact!r}",
+                file=sys.stderr,
+            )
+            raise TypeError("Modal LoRA 다운로드 artifact는 객체여야 합니다.")
+        remote_path = _safe_managed_lora_path(str(artifact.get("remote_path") or ""))
+        relative_path = _safe_remote_path(str(artifact.get("relative_path") or ""))
+        expected_size = max(0, int(artifact.get("size") or 0))
+        normalized.append(
+            {
+                "remote_path": remote_path,
+                "relative_path": relative_path,
+                "size": expected_size,
+            }
+        )
+        total_bytes += expected_size
+
+    _emit_download_progress(
+        "batch_start",
+        total_files=len(normalized),
+        total_bytes=total_bytes,
+    )
+    downloaded_bytes = 0
+    downloaded: list[dict] = []
+    for index, artifact in enumerate(normalized, start=1):
+        relative = Path(artifact["relative_path"])
+        target = output_dir.joinpath(*relative.parts)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        part_path = target.with_name(f".{target.name}.part")
+        part_path.unlink(missing_ok=True)
+        file_bytes = 0
+        file_digest = hashlib.sha256()
+        _emit_download_progress(
+            "file_start",
+            index=index,
+            total_files=len(normalized),
+            name=artifact["relative_path"],
+            file_bytes=0,
+            file_size=artifact["size"],
+            downloaded_bytes=downloaded_bytes,
+            total_bytes=total_bytes,
+        )
+        try:
+            with part_path.open("wb") as handle:
+                for chunk in volume.read_file(f"/{artifact['remote_path']}"):
+                    if not isinstance(chunk, bytes):
+                        raise TypeError(
+                            f"Modal Volume 다운로드 chunk가 bytes가 아닙니다: "
+                            f"type={type(chunk).__name__}"
+                        )
+                    handle.write(chunk)
+                    file_digest.update(chunk)
+                    chunk_size = len(chunk)
+                    file_bytes += chunk_size
+                    downloaded_bytes += chunk_size
+                    _emit_download_progress(
+                        "chunk",
+                        index=index,
+                        total_files=len(normalized),
+                        name=artifact["relative_path"],
+                        file_bytes=file_bytes,
+                        file_size=artifact["size"],
+                        downloaded_bytes=downloaded_bytes,
+                        total_bytes=total_bytes,
+                    )
+            if file_bytes != artifact["size"]:
+                print(
+                    "[MODAL_CLIENT] LoRA 다운로드 크기 검증 실패: "
+                    f"remote={artifact['remote_path']}, expected={artifact['size']}, "
+                    f"actual={file_bytes}",
+                    file=sys.stderr,
+                )
+                raise RuntimeError(
+                    f"Modal LoRA 다운로드 크기가 다릅니다: {artifact['relative_path']}"
+                )
+            part_path.replace(target)
+        except Exception as exc:
+            part_path.unlink(missing_ok=True)
+            print(
+                "[MODAL_CLIENT] LoRA artifact 다운로드 실패: "
+                f"remote={artifact['remote_path']}, target={target}, "
+                f"error={type(exc).__name__}: {exc}",
+                file=sys.stderr,
+            )
+            traceback.print_exc(file=sys.stderr)
+            raise
+        downloaded.append(
+            {
+                **artifact,
+                "path": str(target),
+                "sha256": file_digest.hexdigest(),
+            }
+        )
+        _emit_download_progress(
+            "file_complete",
+            index=index,
+            total_files=len(normalized),
+            name=artifact["relative_path"],
+            file_bytes=file_bytes,
+            file_size=artifact["size"],
+            downloaded_bytes=downloaded_bytes,
+            total_bytes=total_bytes,
+        )
+    _emit_download_progress(
+        "batch_complete",
+        total_files=len(normalized),
+        total_bytes=total_bytes,
+        downloaded_bytes=downloaded_bytes,
+    )
+    return {"artifacts": downloaded}
 
 
 def convert_workflow(payload: dict) -> dict:
@@ -1232,6 +1459,97 @@ def delete_lora_prefix(payload: dict) -> dict:
     return {"deleted_prefix": prefix}
 
 
+def delete_lora_paths(payload: dict) -> dict:
+    raw_paths = payload.get("remote_paths") or []
+    if not isinstance(raw_paths, list) or not raw_paths:
+        print("[MODAL_CLIENT] 삭제할 원격 LoRA 파일 목록이 비어 있습니다.", file=sys.stderr)
+        raise ValueError("삭제할 원격 LoRA 파일이 없습니다.")
+    paths = [_safe_managed_lora_path(str(path)) for path in raw_paths]
+    volume = _lora_volume(payload, create_if_missing=False)
+    return _delete_lora_paths(volume, paths, recursive=False)
+
+
+def delete_lora_artifacts(payload: dict) -> dict:
+    """다운로드한 내용과 현재 원격 파일이 같을 때만 정확한 파일을 삭제한다."""
+    raw_artifacts = payload.get("remote_artifacts") or []
+    if not isinstance(raw_artifacts, list) or not raw_artifacts:
+        print("[MODAL_CLIENT] 검증 삭제할 원격 LoRA 목록이 비어 있습니다.", file=sys.stderr)
+        raise ValueError("검증 삭제할 원격 LoRA 목록이 없습니다.")
+    volume = _lora_volume(payload, create_if_missing=False)
+    deletable: list[str] = []
+    skipped_changed: list[str] = []
+    already_missing: list[str] = []
+    for artifact in raw_artifacts:
+        if not isinstance(artifact, dict):
+            print(
+                "[MODAL_CLIENT] 검증 삭제 artifact 형식 오류: "
+                f"type={type(artifact).__name__}, value={artifact!r}",
+                file=sys.stderr,
+            )
+            raise TypeError("검증 삭제할 원격 LoRA artifact는 객체여야 합니다.")
+        remote_path = _safe_managed_lora_path(str(artifact.get("remote_path") or ""))
+        expected_sha256 = str(artifact.get("sha256") or "").strip().lower()
+        expected_size = int(artifact.get("size") or 0)
+        if len(expected_sha256) != 64 or any(
+            character not in "0123456789abcdef" for character in expected_sha256
+        ) or expected_size < 0:
+            print(
+                "[MODAL_CLIENT] 검증 삭제 메타데이터 형식 오류: "
+                f"path={remote_path}, sha256={expected_sha256!r}, "
+                f"size={expected_size}",
+                file=sys.stderr,
+            )
+            raise ValueError(f"원격 LoRA 삭제 검증 정보가 올바르지 않습니다: {remote_path}")
+        digest = hashlib.sha256()
+        actual_size = 0
+        try:
+            for chunk in volume.read_file(f"/{remote_path}"):
+                if not isinstance(chunk, bytes):
+                    raise TypeError(
+                        f"Modal Volume 검증 chunk가 bytes가 아닙니다: "
+                        f"type={type(chunk).__name__}"
+                    )
+                digest.update(chunk)
+                actual_size += len(chunk)
+        except (FileNotFoundError, modal.exception.NotFoundError):
+            print(
+                f"[MODAL_CLIENT] 원격 LoRA 검증 삭제 대상이 이미 없음: {remote_path}",
+                file=sys.stderr,
+            )
+            already_missing.append(remote_path)
+            continue
+        except Exception as exc:
+            print(
+                "[MODAL_CLIENT] 원격 LoRA 삭제 전 검증 실패: "
+                f"path={remote_path}, error={type(exc).__name__}: {exc}",
+                file=sys.stderr,
+            )
+            traceback.print_exc(file=sys.stderr)
+            raise
+        actual_sha256 = digest.hexdigest()
+        if actual_size != expected_size or actual_sha256 != expected_sha256:
+            print(
+                "[MODAL_CLIENT] 원격 LoRA가 다음 학습에서 변경되어 삭제 생략: "
+                f"path={remote_path}, expected_size={expected_size}, "
+                f"actual_size={actual_size}, expected_sha256={expected_sha256}, "
+                f"actual_sha256={actual_sha256}",
+                file=sys.stderr,
+            )
+            skipped_changed.append(remote_path)
+            continue
+        deletable.append(remote_path)
+    deleted = (
+        _delete_lora_paths(volume, deletable, recursive=False)
+        if deletable
+        else {"deleted": [], "deleted_count": 0}
+    )
+    return {
+        **deleted,
+        "skipped_changed": skipped_changed,
+        "already_missing": already_missing,
+    }
+
+
 def main() -> int:
     try:
         payload = _read_payload()
@@ -1244,6 +1562,8 @@ def main() -> int:
             result = read_workflow(payload)
         elif action == "generate":
             result = generate(payload)
+        elif action == "download_lora_artifacts":
+            result = download_lora_artifacts(payload)
         elif action == "convert_workflow":
             result = convert_workflow(payload)
         elif action == "update_autoscaler":
@@ -1264,6 +1584,10 @@ def main() -> int:
             result = manage_loras(payload)
         elif action == "delete_lora_prefix":
             result = delete_lora_prefix(payload)
+        elif action == "delete_lora_paths":
+            result = delete_lora_paths(payload)
+        elif action == "delete_lora_artifacts":
+            result = delete_lora_artifacts(payload)
         else:
             raise ValueError(f"지원하지 않는 Modal 클라이언트 동작입니다: {action}")
         print(json.dumps({"ok": True, "result": result}, ensure_ascii=False))

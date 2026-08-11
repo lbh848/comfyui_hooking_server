@@ -1592,6 +1592,7 @@
             border-top: 2px solid #a78bfa;
         }
         .queue-lane.external { border-top:2px solid #38bdf8; }
+        .queue-lane.modal_download { border-top:2px solid #06b6d4; }
         .queue-modal-item {
             display:flex; align-items:center; gap:10px;
             padding:10px 12px; border-radius:8px;
@@ -40828,12 +40829,23 @@
             const stepEl = document.getElementById('lora-progress-step');
             const timeEl = document.getElementById('lora-progress-time');
 
-            if (phase === 'preparing') {
+            if (phase === 'preparing' || phase === 'modal_running' || phase === 'modal_syncing') {
                 if (phaseEl) phaseEl.textContent = '준비 중';
                 if (pctEl) pctEl.textContent = '';
                 if (barEl) barEl.style.width = '0%';
                 if (stepEl) stepEl.textContent = data.message || '';
                 if (timeEl) timeEl.textContent = '';
+            } else if (phase === 'modal_downloading' || phase === 'modal_download_complete') {
+                const pct = Math.round(Number(data.percentage || 0));
+                if (phaseEl) phaseEl.textContent = phase === 'modal_download_complete' ? 'LoRA 다운로드 완료' : 'LoRA 다운로드 중';
+                if (pctEl) pctEl.textContent = pct + '%';
+                if (barEl) { barEl.style.width = pct + '%'; barEl.style.background = '#06b6d4'; }
+                if (stepEl) stepEl.textContent = data.name || data.message || '';
+                if (timeEl) {
+                    const done = Number(data.downloaded_bytes || 0);
+                    const total = Number(data.total_bytes || 0);
+                    timeEl.textContent = total > 0 ? `${comfyInstallerFormatBytes(done)} / ${comfyInstallerFormatBytes(total)}` : '';
+                }
             } else if (phase === 'training') {
                 const step = data.step || 0;
                 const total = data.total || 1;
@@ -40873,7 +40885,7 @@
                 if (btn) { btn.disabled = false; btn.style.opacity = '1'; btn.style.cursor = 'pointer'; }
                 const stopBtn2 = document.getElementById('lora-training-stop-btn');
                 if (stopBtn2) stopBtn2.style.display = 'none';
-                showToast('LoRA 학습+프리뷰가 완료되었습니다!', 'success');
+                showToast('LoRA 학습 및 다운로드가 완료되었습니다!', 'success');
                 // 학습 완료 시 세션 카드 목록을 새로고침해 새 세션이 바로 보이게 한다.
                 // (엔트리 상세 화면을 보고 있을 때만)
                 const trainedSec = document.getElementById('lora-trained-section');
@@ -50279,12 +50291,23 @@
                 : '';
             if (charEl) charEl.textContent = charInfo;
 
-            if (phase === 'preparing') {
+            if (phase === 'preparing' || phase === 'modal_running' || phase === 'modal_syncing') {
                 if (phaseEl) phaseEl.textContent = '준비 중';
                 if (pctEl) pctEl.textContent = '';
                 if (barEl) barEl.style.width = '0%';
                 if (stepEl) stepEl.textContent = data.message || '';
                 if (timeEl) timeEl.textContent = '';
+            } else if (phase === 'modal_downloading' || phase === 'modal_download_complete') {
+                const pct = Math.round(Number(data.percentage || 0));
+                if (phaseEl) phaseEl.textContent = phase === 'modal_download_complete' ? 'LoRA 다운로드 완료' : 'LoRA 다운로드 중';
+                if (pctEl) pctEl.textContent = pct + '%';
+                if (barEl) { barEl.style.width = pct + '%'; barEl.style.background = '#06b6d4'; }
+                if (stepEl) stepEl.textContent = data.name || data.message || '';
+                if (timeEl) {
+                    const done = Number(data.downloaded_bytes || 0);
+                    const total = Number(data.total_bytes || 0);
+                    timeEl.textContent = total > 0 ? `${comfyInstallerFormatBytes(done)} / ${comfyInstallerFormatBytes(total)}` : '';
+                }
             } else if (phase === 'training') {
                 const step = data.step || 0;
                 const total = data.total || 1;
@@ -75248,6 +75271,7 @@
                     case 'asset_lora_training': return { icon: '🔶', color: '#e67e22' };
                     case 'bot_lora_training': return { icon: '🟣', color: '#9b59b6' };
                     case 'instance_lora_training': return { icon: '🔵', color: '#1abc9c' };
+                    case 'modal_lora_download': return { icon: '⇩', color: '#06b6d4' };
                     case 'instance_lora_analysis': return { icon: '🔍', color: '#2ecc71' };
                     case 'tag_analysis': return { icon: '🏷', color: '#f39c12' };
                     case 'auto_match_batch': return { icon: '🔗', color: '#16a085' };
@@ -75401,6 +75425,14 @@
                                 phaseHint = '<span style="font-size:0.65rem;color:var(--text3);margin-left:2px;">' + d.step + '/' + d.total + '</span>';
                             } else if (d.step !== undefined) {
                                 statusText = '학습 step ' + d.step;
+                            }
+                        } else if (d.phase === 'modal_downloading' || d.phase === 'modal_download_queued') {
+                            statusText = d.phase === 'modal_download_queued' ? '다운로드 대기' : '다운로드';
+                            const done = Number(d.downloaded_bytes || 0);
+                            const total = Number(d.total_bytes || 0);
+                            if (total > 0) {
+                                phaseHint = '<span style="font-size:0.65rem;color:var(--text3);margin-left:2px;">' +
+                                    comfyInstallerFormatBytes(done) + '/' + comfyInstallerFormatBytes(total) + '</span>';
                             }
                         } else if (d.step && d.total) {
                             statusText = d.step + '/' + d.total;
@@ -75921,6 +75953,7 @@
             regenerate: '재생성',
             restore_manual: '수동 생성',
             data_patch_utility: '데이터 패치',
+            modal_lora_download: 'Modal 다운로드',
         };
 
         const _queueAreaDefinitions = [
@@ -75928,6 +75961,7 @@
             {key: 'hybrid', icon: '⚡', title: '동적 배분', note: '먼저 빈 로컬 GPU/Modal/챈섭이 실행'},
             {key: 'gpu', icon: '🖥️', title: 'GPU', note: '로컬 ComfyUI 작업'},
             {key: 'modal', icon: '☁️', title: 'Modal GPU', note: '원격 ComfyUI 작업'},
+            {key: 'modal_download', icon: '⇩', title: 'Modal 다운로드', note: 'GPU 수와 무관한 LoRA 병렬 다운로드'},
             {key: 'external', icon: '☁️', title: '외부 서비스', note: '챈섭 API 작업'},
         ];
 
@@ -76115,6 +76149,14 @@
                     progressLabel = phaseLabel + ' <span style="font-size:0.65rem;color:var(--text3);">' + cur + '/' + tot + '</span>';
                 } else if (d.phase === 'training' && d.step !== undefined && d.total) {
                     progressLabel = pct + '% <span style="font-size:0.65rem;color:var(--text3);">' + d.step + '/' + d.total + '</span>';
+                } else if (d.phase === 'modal_downloading' || d.phase === 'modal_download_queued') {
+                    const done = Number(d.downloaded_bytes || 0);
+                    const total = Number(d.total_bytes || 0);
+                    progressLabel = (d.phase === 'modal_download_queued' ? '다운로드 대기' : pct + '%');
+                    if (total > 0) {
+                        progressLabel += ' <span style="font-size:0.65rem;color:var(--text3);">' +
+                            comfyInstallerFormatBytes(done) + '/' + comfyInstallerFormatBytes(total) + '</span>';
+                    }
                 }
             }
             let subtaskSummary = '';

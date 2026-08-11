@@ -275,6 +275,8 @@ class QueueManager:
         self._modal_worker_tasks: dict[int, asyncio.Future] = {}
         self._modal_next_worker_id: int = 0
         self._modal_wakeup: asyncio.Event = asyncio.Event()
+        # Modal 학습 결과 다운로드는 GPU 워커 수와 무관하게 즉시 병렬 실행한다.
+        self._modal_download_tasks: dict[str, asyncio.Task] = {}
         # 삽화 완료 후 다음 작업 시작 전 대기 (새 삽화 도착 시 즉시 진행)
         self._illust_wait_event: Optional[asyncio.Event] = None
         self._illust_wait_started_at: Optional[float] = None
@@ -297,6 +299,7 @@ class QueueManager:
         self.fetch_real_history = None         # async def(prompt_id) -> dict
         self.fetch_real_image = None           # async def(filename, subfolder, img_type) -> bytes
         self.run_modal_workflow = None          # async def(workflow, ...) -> dict
+        self.download_modal_artifacts = None    # async def(artifacts, progress_callback=...) -> dict
         self.acquire_modal_warm_lease = None    # async def(reason=...) -> str | None
         self.release_modal_warm_lease = None    # async def(token, reason=...) -> bool
         # 삽화 생성 콜백 (server.py에서 주입)
@@ -666,6 +669,8 @@ class QueueManager:
 
     def _item_execution_area(self, item: QueueItem) -> tuple[str, str]:
         """큐 실행 영역과 공급자를 반환한다. hybrid는 먼저 빈 실행 레인이 가져간다."""
+        if item.type == "modal_lora_download":
+            return "modal_download", "modal-volume"
         if item.type in LLM_TYPES:
             return "llm", "llm"
 
@@ -809,6 +814,10 @@ class QueueManager:
                 task for task in self._modal_worker_tasks.values() if not task.done()
             ]),
             "modal_target_workers": self._target_modal_workers(),
+            "modal_download_active": len([
+                task for task in self._modal_download_tasks.values()
+                if not task.done()
+            ]),
         }
 
     def remove_item(self, item_id: str) -> bool:
@@ -1440,6 +1449,159 @@ class QueueManager:
             traceback.print_exc()
         finally:
             self.current_modal_items.pop(wid, None)
+
+    async def _enqueue_modal_artifact_download(
+        self,
+        source_item: QueueItem,
+        artifacts: list[dict],
+        *,
+        event_type: str,
+        extra_data: dict,
+        on_complete=None,
+    ) -> QueueItem:
+        """Modal GPU 레인을 점유하지 않는 독립 LoRA 다운로드 작업을 즉시 시작한다."""
+        if not callable(self.download_modal_artifacts):
+            print(
+                "[QUEUE:MODAL_DOWNLOAD] 등록 실패: 다운로드 콜백 없음 "
+                f"source_item={source_item.id}, artifacts={len(artifacts or [])}"
+            )
+            raise RuntimeError("Modal LoRA 다운로드 콜백이 설정되지 않았습니다")
+        if not isinstance(artifacts, list) or not artifacts:
+            print(
+                "[QUEUE:MODAL_DOWNLOAD] 등록 실패: artifact 없음 "
+                f"source_item={source_item.id}, artifacts={artifacts!r}"
+            )
+            raise ValueError("Modal LoRA 다운로드 artifact가 없습니다")
+
+        item = QueueItem(
+            id=uuid.uuid4().hex[:12],
+            type="modal_lora_download",
+            label=f"{source_item.label} · LoRA 다운로드",
+            status="processing",
+            params={
+                "source_item_id": source_item.id,
+                "artifact_count": len(artifacts),
+            },
+            progress=0.0,
+            progress_detail={
+                "phase": "modal_download_queued",
+                "percentage": 0.0,
+                **dict(extra_data or {}),
+            },
+            started_at=time.time(),
+            priority=source_item.priority,
+        )
+        try:
+            item.completion_future = asyncio.get_running_loop().create_future()
+        except RuntimeError:
+            item.completion_future = asyncio.get_event_loop().create_future()
+        item.completion_future.add_done_callback(self._mark_completion_future_observed)
+        self.items.append(item)
+        task = asyncio.create_task(
+            self._run_modal_artifact_download(
+                item,
+                artifacts,
+                event_type=event_type,
+                extra_data=dict(extra_data or {}),
+                on_complete=on_complete,
+            )
+        )
+        self._modal_download_tasks[item.id] = task
+
+        def forget_download_task(_task: asyncio.Task, item_id: str = item.id) -> None:
+            self._modal_download_tasks.pop(item_id, None)
+
+        task.add_done_callback(forget_download_task)
+        print(
+            "[QUEUE:MODAL_DOWNLOAD] 병렬 다운로드 큐 시작: "
+            f"item={item.id}, source_item={source_item.id}, artifacts={len(artifacts)}, "
+            f"active={len(self._modal_download_tasks)}"
+        )
+        await self._notify_queue_updated()
+        return item
+
+    async def _run_modal_artifact_download(
+        self,
+        item: QueueItem,
+        artifacts: list[dict],
+        *,
+        event_type: str,
+        extra_data: dict,
+        on_complete=None,
+    ) -> None:
+        async def on_progress(event: dict) -> None:
+            detail = {**dict(event or {}), **extra_data}
+            await self._notify_progress(item, detail)
+            if self.notify_frontend:
+                await self.notify_frontend(
+                    event_type,
+                    {
+                        **detail,
+                        "message": (
+                            "Modal LoRA 다운로드 중"
+                            if detail.get("phase") == "modal_downloading"
+                            else "Modal LoRA 다운로드 완료"
+                        ),
+                    },
+                )
+
+        try:
+            result = await self.download_modal_artifacts(
+                artifacts,
+                progress_callback=on_progress,
+            )
+            if on_complete:
+                on_complete()
+            item.status = "completed"
+            item.result = result
+            item.progress = 100.0
+            item.progress_detail = {
+                "phase": "modal_download_complete",
+                "percentage": 100.0,
+                **extra_data,
+            }
+            if self.notify_frontend:
+                await self.notify_frontend(
+                    event_type,
+                    {
+                        "phase": "all_complete",
+                        "message": "Modal 학습 및 LoRA 다운로드 완료",
+                        **extra_data,
+                    },
+                )
+            print(
+                "[QUEUE:MODAL_DOWNLOAD] 완료: "
+                f"item={item.id}, artifacts={len(result.get('artifacts') or [])}, "
+                f"delete_queued={len(result.get('remote_delete_queued') or [])}"
+            )
+        except Exception as exc:
+            item.status = "failed"
+            item.error = str(exc)
+            item.progress_detail = {
+                "phase": "error",
+                "percentage": item.progress,
+                **extra_data,
+            }
+            print(
+                "[QUEUE:MODAL_DOWNLOAD] 실패: "
+                f"item={item.id}, artifacts={len(artifacts)}, "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            if self.notify_frontend:
+                await self.notify_frontend(
+                    event_type,
+                    {
+                        "phase": "error",
+                        "message": f"LoRA 다운로드 실패: {type(exc).__name__}: {exc}",
+                        **extra_data,
+                    },
+                )
+        finally:
+            item.completed_at = time.time()
+            self._settle_future(item)
+            await self._notify_queue_updated()
+            asyncio.ensure_future(self._deferred_prune(item))
 
     async def _deferred_prune(self, item: QueueItem):
         """완료/실패/취소 항목을 UI에 2초간 띄운 뒤 리스트에서 삭제한다.
@@ -3653,11 +3815,24 @@ class QueueManager:
                             **(extra_data or {}),
                         },
                     )
+                async def on_modal_progress(progress: dict) -> None:
+                    detail = {**dict(progress or {}), **(extra_data or {})}
+                    # 원격 custom node의 all_complete는 GPU 학습 완료를 뜻한다.
+                    # 로컬 다운로드까지 끝난 최종 all_complete와 구분한다.
+                    if detail.get("phase") == "all_complete":
+                        detail["phase"] = "training_complete"
+                        detail["percentage"] = 99
+                        detail["message"] = "Modal 학습 완료 · LoRA 다운로드 준비 중"
+                    await self._notify_progress(item, detail)
+                    if self.notify_frontend:
+                        await self.notify_frontend(event_type, detail)
+
                 result = await self.run_modal_workflow(
                     workflow,
                     input_paths=modal_input_paths,
                     artifact_prefixes=modal_artifact_prefixes,
                     require_images=False,
+                    progress_callback=on_modal_progress,
                 )
                 prompt_id = str(result.get("prompt_id") or "")
                 if not prompt_id:
@@ -3666,13 +3841,26 @@ class QueueManager:
                         f"item={item.id}, result={result!r}"
                     )
                     raise RuntimeError("Modal 학습 결과에 prompt_id가 없습니다")
-                if on_complete:
-                    on_complete()
+                deferred_artifacts = list(result.get("deferred_artifacts") or [])
+                if not deferred_artifacts:
+                    print(
+                        "[QUEUE-MONITOR:MODAL] 결과 검증 실패: 지연 artifact 없음 "
+                        f"item={item.id}, prompt_id={prompt_id}, result={result!r}"
+                    )
+                    raise RuntimeError("Modal 학습 결과 다운로드 artifact가 없습니다")
+                download_item = await self._enqueue_modal_artifact_download(
+                    item,
+                    deferred_artifacts,
+                    event_type=event_type,
+                    extra_data=dict(extra_data or {}),
+                    on_complete=on_complete,
+                )
                 await self._notify_progress(
                     item,
                     {
-                        "phase": "all_complete",
+                        "phase": "modal_download_queued",
                         "percentage": 100,
+                        "download_item_id": download_item.id,
                         **(extra_data or {}),
                     },
                 )
@@ -3680,17 +3868,22 @@ class QueueManager:
                     await self.notify_frontend(
                         event_type,
                         {
-                            "phase": "all_complete",
-                            "message": "Modal 학습 및 LoRA 동기화 완료",
+                            "phase": "training_complete",
+                            "message": "Modal 학습 완료 · LoRA 병렬 다운로드 시작",
+                            "download_item_id": download_item.id,
                             **(extra_data or {}),
                         },
                     )
                 print(
-                    "[QUEUE-MONITOR:MODAL] 학습 완료: "
+                    "[QUEUE-MONITOR:MODAL] 학습 완료 및 다운로드 분리: "
                     f"item={item.id}, type={item.type}, prompt_id={prompt_id}, "
-                    f"artifacts={len(result.get('artifacts') or [])}"
+                    f"download_item={download_item.id}, "
+                    f"artifacts={len(deferred_artifacts)}"
                 )
-                return prompt_id, {"modal": result}
+                return prompt_id, {
+                    "modal": result,
+                    "download_item_id": download_item.id,
+                }
             except Exception as e:
                 print(
                     "[QUEUE-MONITOR:MODAL] 학습 실패: "
