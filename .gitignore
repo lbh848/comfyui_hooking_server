@@ -78,3 +78,6 @@ comfy_workflow_library/
 
 # Runtime-downloaded cloudflared binary (Quick Tunnel 자동 다운로드)
 .bin/
+
+# Modal 원격 LoRA 삭제 예약 outbox(런타임 상태 파일)
+modal_lora_delete_outbox.json
