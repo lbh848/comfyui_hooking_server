@@ -260,6 +260,9 @@ class QueueManager:
         # 일시정지: True면 새 작업을 꺼내지 않는다 (현재 실행중은 그대로 완료).
         # 큐 적재(add_item)는 계속되며, 재개 시 대기 항목이 순차 처리된다.
         self._paused = False
+        # 원클릭 안전 중단 토큰. 중단 요청과 큐 등록이 경쟁해도
+        # 나중에 등록된 같은 실행의 항목을 즉시 취소하기 위해 잠시 보존한다.
+        self._cancelled_one_click_runs: dict[str, float] = {}
         # LLM계열 병렬 워커풀 — 설정된 LLM 슬롯별 요청 상한의 합만큼 producer를 둔다.
         # GPU계열(item.type not in LLM_TYPES)은 메인 _process_loop 에서 순차 처리된다.
         self._llm_worker_tasks: dict[int, asyncio.Future] = {}  # wid -> Task
@@ -461,6 +464,29 @@ class QueueManager:
         item.completion_future.add_done_callback(
             self._mark_completion_future_observed
         )
+        one_click_run_id = ""
+        if isinstance(params, dict):
+            one_click_run_id = str(params.get("one_click_run_id") or "").strip()
+        if one_click_run_id:
+            cutoff = time.time() - (6 * 60 * 60)
+            self._cancelled_one_click_runs = {
+                run_id: cancelled_at
+                for run_id, cancelled_at in self._cancelled_one_click_runs.items()
+                if cancelled_at >= cutoff
+            }
+            if one_click_run_id in self._cancelled_one_click_runs:
+                item.status = "cancelled"
+                item.completed_at = time.time()
+                self.items.append(item)
+                print(
+                    "[QUEUE:ONE_CLICK] 안전 중단된 실행의 늦은 큐 등록 취소: "
+                    f"run_id={one_click_run_id}, type={item_type}, id={item.id}, label={label}"
+                )
+                self._settle_future(item)
+                if not skip_notify:
+                    await self._notify_queue_updated()
+                asyncio.ensure_future(self._deferred_prune(item))
+                return item
         self.items.append(item)
         self._resort_pending()
         print(f"[QUEUE] 항목 추가: type={item_type}, label={label}, id={item.id}, priority={priority}, 대기={len([i for i in self.items if i.status == 'pending'])}")
@@ -555,6 +581,41 @@ class QueueManager:
                     return True
                 return False
         return False
+
+    async def cancel_one_click_run(self, run_id: str) -> int:
+        """원클릭 실행이 만든 pending 항목만 취소하고 토큰을 등록한다.
+
+        이미 processing인 항목은 안전하게 완료되도록 두며, 요청과 등록이
+        교차하는 경우 후속 add_item이 같은 토큰을 보고 즉시 취소한다.
+        """
+        normalized = str(run_id or "").strip()
+        if not normalized:
+            print(f"[QUEUE:ONE_CLICK] 안전 중단 등록 실패: run_id={run_id!r}")
+            raise ValueError("one_click_run_id가 필요합니다")
+        self._cancelled_one_click_runs[normalized] = time.time()
+        cancelled = 0
+        for item in self.items:
+            params = item.params if isinstance(item.params, dict) else {}
+            if (
+                str(params.get("one_click_run_id") or "").strip() == normalized
+                and item.status == "pending"
+            ):
+                item.status = "cancelled"
+                item.completed_at = time.time()
+                self._cleanup_item_resources(item)
+                self._settle_future(item)
+                cancelled += 1
+        print(
+            "[QUEUE:ONE_CLICK] 안전 중단 등록: "
+            f"run_id={normalized}, pending_cancelled={cancelled}"
+        )
+        if cancelled > 0:
+            await self._notify_queue_updated()
+            asyncio.ensure_future(self._process_loop())
+            self._llm_wakeup.set()
+            self._external_wakeup.set()
+            self._modal_wakeup.set()
+        return cancelled
 
     async def set_paused(self, paused: bool) -> bool:
         """큐 실행을 일시정지/재개한다.

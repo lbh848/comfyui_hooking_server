@@ -30202,7 +30202,7 @@
             if (!batchId || !total) return;
             opts = opts || {};
             _tagBatches[batchId] = {
-                label: label || '', total: total, remaining: total, success: 0, fail: 0,
+                label: label || '', total: total, remaining: total, success: 0, fail: 0, cancelled: 0,
                 failures: [],
                 source: source, refreshFn: opts.refreshFn || _tagBatchRefreshFn(source),
                 refreshTimer: null, processedIds: new Set(), finalizeFn: opts.finalizeFn || null,
@@ -30224,7 +30224,7 @@
             if (!b) return;
             if (b.refreshTimer) { clearTimeout(b.refreshTimer); b.refreshTimer = null; }
             try { if (b.refreshFn) b.refreshFn(); } catch (e) { console.warn('[TAG_BATCH] 최종 갱신 실패:', e); }
-            const msg = `${b.label || '일괄 작업'} 완료: 성공 ${b.success}건${b.fail ? ` / 실패 ${b.fail}건` : ''}`;
+            const msg = `${b.label || '일괄 작업'} 완료: 성공 ${b.success}건${b.fail ? ` / 실패 ${b.fail}건` : ''}${b.cancelled ? ` / 취소 ${b.cancelled}건` : ''}`;
             showToast(msg, b.fail ? 'error' : 'success');
             const statusEl = _tagBatchStatusEl(b.source);
             if (statusEl) statusEl.textContent = msg;
@@ -64116,6 +64116,10 @@
         let _botOneClickDataPatchWait = null;
         let _botOneClickLlmWait = null;
 
+        function _botOneClickIsStopping(run = _botOneClickRun) {
+            return Boolean(run?.running && run?.stopRequested);
+        }
+
         async function _botOneClickJson(url, options) {
             const response = await fetch(url, options);
             const text = await response.text();
@@ -64579,6 +64583,176 @@
             return `확인 필요 · ${stageSummary}${characters.length ? ` · 문제 캐릭터: ${characters.join(', ')}` : ''}`;
         }
 
+        function _botOneClickNamedWait(kind) {
+            if (kind === 'data_patch') return _botOneClickDataPatchWait;
+            if (kind === 'llm') return _botOneClickLlmWait;
+            return null;
+        }
+
+        function _botOneClickRegisterQueueItem(run, kind, name, itemId) {
+            if (!run || !itemId) {
+                console.error('[BOT_ONE_CLICK] 큐 추적 등록 실패:', {kind, name, itemId});
+                return null;
+            }
+            const record = {kind, name, itemId, cancelChecked: false, cancelled: false};
+            run.queuedItems.push(record);
+            if (run.stopRequested) {
+                void (async () => {
+                    await _botOneClickCancelTrackedQueueItem(run, record);
+                    await _botOneClickRefreshCancellationWaits(run);
+                })();
+            }
+            return record;
+        }
+
+        function _botOneClickRegisterTagBatch(run, batchId) {
+            if (!run || !batchId) {
+                console.error('[BOT_ONE_CLICK] 태그 배치 추적 등록 실패:', batchId);
+                return null;
+            }
+            let record = run.tagBatches.find(item => item.batchId === batchId);
+            if (!record) {
+                record = {batchId, cancelChecked: false, cancelledCount: 0};
+                run.tagBatches.push(record);
+            }
+            if (run.stopRequested) {
+                void (async () => {
+                    await _botOneClickCancelTrackedTagBatch(run, record);
+                    await _botOneClickRefreshCancellationWaits(run);
+                })();
+            }
+            return record;
+        }
+
+        async function _botOneClickCancelTrackedQueueItem(run, record) {
+            if (!record || record.cancelChecked) return;
+            record.cancelChecked = true;
+            try {
+                const response = await fetch('/api/queue/cancel', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({id: record.itemId}),
+                });
+                const data = await response.json();
+                if (!response.ok || data?.error) {
+                    throw new Error(data?.error || `HTTP ${response.status}`);
+                }
+                record.cancelled = data?.success === true;
+                if (record.cancelled) {
+                    _botOneClickNamedWait(record.kind)?.cancel(record.name, '안전 중단으로 대기 큐 취소');
+                } else {
+                    console.info('[BOT_ONE_CLICK] 큐 항목은 이미 처리 중이거나 종료되어 완료를 기다립니다:', record.itemId);
+                }
+            } catch (e) {
+                const message = `큐 중단 확인 실패 (${record.itemId}): ${e.message || e}`;
+                console.error('[BOT_ONE_CLICK] ' + message, e);
+                run.cancelErrors.push(message);
+            }
+        }
+
+        async function _botOneClickCancelTrackedTagBatch(run, record) {
+            if (!record || record.cancelChecked) return;
+            record.cancelChecked = true;
+            try {
+                const result = await _botOneClickJson('/api/queue/cancel_batch', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({batch_id: record.batchId}),
+                });
+                record.cancelledCount += Number(result.cancelled || 0);
+            } catch (e) {
+                const message = `태그 배치 중단 실패 (${record.batchId}): ${e.message || e}`;
+                console.error('[BOT_ONE_CLICK] ' + message, e);
+                run.cancelErrors.push(message);
+            }
+        }
+
+        async function _botOneClickRefreshCancellationWaits(run) {
+            try {
+                const status = await _botOneClickJson('/api/queue/status');
+                const items = Array.isArray(status?.items) ? status.items : [];
+                for (const record of run.queuedItems) {
+                    if (!record.cancelChecked) continue;
+                    const waiter = _botOneClickNamedWait(record.kind);
+                    if (!waiter?.pending?.has(record.name)) continue;
+                    const item = items.find(candidate => candidate.id === record.itemId);
+                    if (record.cancelled || item?.status === 'cancelled' || !item) {
+                        waiter.cancel(record.name, '안전 중단으로 대기 큐 취소');
+                    } else if (item.status === 'completed') {
+                        waiter.mark(record.name, true);
+                    } else if (item.status === 'failed') {
+                        waiter.mark(record.name, false, item.error || '큐 처리 실패');
+                    }
+                }
+                for (const record of run.tagBatches) {
+                    if (!record.cancelChecked) continue;
+                    const tracker = _tagBatches[record.batchId];
+                    if (!tracker) continue;
+                    const activeCount = items.filter(item =>
+                        item.batch_id === record.batchId && (item.status === 'pending' || item.status === 'processing')
+                    ).length;
+                    tracker.cancelled = Math.max(Number(tracker.cancelled || 0), record.cancelledCount);
+                    if (activeCount < tracker.remaining) tracker.remaining = activeCount;
+                    if (tracker.remaining === 0) _finalizeTagBatch(record.batchId);
+                }
+            } catch (e) {
+                const message = `중단 후 큐 상태 확인 실패: ${e.message || e}`;
+                console.error('[BOT_ONE_CLICK] ' + message, e);
+                run.cancelErrors.push(message);
+            }
+        }
+
+        async function _botOneClickCancelPendingWork(run) {
+            const cancellationRequests = [
+                ...run.tagBatches.map(record => _botOneClickCancelTrackedTagBatch(run, record)),
+                ...run.queuedItems.map(record => _botOneClickCancelTrackedQueueItem(run, record)),
+            ];
+            if (!run.runCancelRegistered) {
+                run.runCancelRegistered = true;
+                cancellationRequests.push((async () => {
+                    try {
+                        const result = await _botOneClickJson('/api/queue/cancel_one_click', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({one_click_run_id: run.runId}),
+                        });
+                        run.cancelledQueueCount += Number(result.cancelled || 0);
+                    } catch (e) {
+                        const message = `원클릭 실행 토큰 중단 등록 실패: ${e.message || e}`;
+                        console.error('[BOT_ONE_CLICK] ' + message, e);
+                        run.cancelErrors.push(message);
+                    }
+                })());
+            }
+            await Promise.all(cancellationRequests);
+            await _botOneClickRefreshCancellationWaits(run);
+        }
+
+        async function requestBotOneClickStop() {
+            const run = _botOneClickRun;
+            if (!run?.running) {
+                console.error('[BOT_ONE_CLICK] 안전 중단할 실행 중 작업이 없습니다.');
+                showToast('진행 중인 원클릭 작업이 없습니다.', 'warning');
+                return;
+            }
+            if (run.stopRequested) return;
+            if (!window.confirm('원클릭 작업을 안전하게 중단할까요?\n\n현재 처리 중인 작업은 마무리하고, 이 실행이 만든 대기 큐와 나머지 단계는 취소합니다.')) return;
+
+            run.stopRequested = true;
+            const runningStage = run.stages.find(stage => stage.status === 'running');
+            if (runningStage) {
+                runningStage.detail = `${runningStage.detail || '처리 중...'}\n안전 중단 요청됨 · 현재 처리 완료 대기 중`;
+            }
+            _botOneClickSetSidebarStatus('원클릭 안전 중단 중...', 'warning');
+            _botOneClickRenderProgress();
+            showToast('안전 중단을 요청했습니다. 현재 처리를 마무리하는 중입니다.', 'warning');
+            await _botOneClickCancelPendingWork(run);
+            if (run.cancelErrors.length) {
+                console.error('[BOT_ONE_CLICK] 일부 대기 큐 중단 확인 실패:', run.cancelErrors);
+                showToast('일부 큐의 중단 상태를 확인하지 못했습니다. 현재 처리 완료 후 중단합니다.', 'warning');
+            }
+        }
+
         function _botOneClickStageEntry(key) {
             return _botOneClickRun?.stages?.find(stage => stage.key === key);
         }
@@ -64592,15 +64766,20 @@
             _botOneClickRenderProgress();
             const activeStages = _botOneClickRun.stages.filter(item => item.status !== 'skipped');
             const index = activeStages.findIndex(item => item.key === key) + 1;
-            if (status === 'running') _botOneClickSetSidebarStatus(`${index}/${activeStages.length} ${stage.label} 진행 중...`, 'normal');
+            if (status === 'running') {
+                _botOneClickSetSidebarStatus(
+                    _botOneClickRun.stopRequested ? '원클릭 안전 중단 중...' : `${index}/${activeStages.length} ${stage.label} 진행 중...`,
+                    _botOneClickRun.stopRequested ? 'warning' : 'normal',
+                );
+            }
         }
 
         function _botOneClickRenderProgress() {
             if (!_botOneClickRun) return;
             const modal = _botOneClickEnsureModal();
             const run = _botOneClickRun;
-            const icon = {pending: '○', running: '◉', completed: '✓', warning: '!', failed: '×', skipped: '–'};
-            const color = {pending: 'var(--text2)', running: '#38BDF8', completed: '#22C55E', warning: '#F59E0B', failed: '#EF5350', skipped: 'var(--text2)'};
+            const icon = {pending: '○', running: '◉', completed: '✓', warning: '!', failed: '×', cancelled: '■', skipped: '–'};
+            const color = {pending: 'var(--text2)', running: '#38BDF8', completed: '#22C55E', warning: '#F59E0B', failed: '#EF5350', cancelled: '#F59E0B', skipped: 'var(--text2)'};
             const rows = run.stages.map((stage, index) => {
                 const issueRows = (stage.issues || []).map(issue => {
                     const subject = [issue.character, issue.filename].filter(Boolean).join(' / ') || '단계 전체';
@@ -64615,10 +64794,20 @@
             const warnings = run.stages.filter(stage => stage.status === 'warning' || stage.status === 'failed').length;
             const skipped = run.stages.filter(stage => stage.status === 'skipped').length;
             const completed = run.stages.filter(stage => stage.status === 'completed').length;
+            const cancelled = run.stages.filter(stage => stage.status === 'cancelled').length;
+            const stopped = finished && run.stopRequested;
+            const title = stopped
+                ? '원클릭 작업 안전 중단됨'
+                : (finished ? (warnings ? '원클릭 작업 완료 · 확인 필요' : '원클릭 작업 완료') : (_botOneClickIsStopping(run) ? '원클릭 작업 안전 중단 중' : '원클릭 작업 진행 중'));
+            const footerSummary = stopped
+                ? `완료 ${completed}단계 · 중단 ${cancelled}단계 · 건너뜀 ${skipped}단계`
+                : (finished
+                    ? (warnings ? `경고 ${warnings}단계 · 완료 ${completed}단계 · 건너뜀 ${skipped}단계` : `완료 ${completed}단계 · 건너뜀 ${skipped}단계`)
+                    : (_botOneClickIsStopping(run) ? '현재 처리 중인 작업을 마친 뒤 중단합니다.' : '창을 닫아도 작업은 백그라운드에서 계속됩니다.'));
             modal.innerHTML = `<div style="width:min(680px,94vw); max-height:90vh; display:flex; flex-direction:column; overflow:hidden; border:1px solid var(--border); border-radius:13px; background:var(--surface); box-shadow:0 18px 60px rgba(0,0,0,0.55);">
-                <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px; padding:16px 18px; border-bottom:1px solid var(--border); background:linear-gradient(90deg,rgba(2,132,199,0.11),rgba(124,58,237,0.10));"><div><div style="font-size:1rem; font-weight:750;">${finished ? (warnings ? '원클릭 작업 완료 · 확인 필요' : '원클릭 작업 완료') : '원클릭 작업 진행 중'}</div><div style="font-size:0.7rem; color:var(--text2); margin-top:3px;">${escHtml(run.botName)} · ${run.charNames.length}명</div></div><button onclick="closeBotOneClickModal()" style="background:none; border:none; color:var(--text2); font-size:1.3rem; cursor:pointer;">&times;</button></div>
+                <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px; padding:16px 18px; border-bottom:1px solid var(--border); background:linear-gradient(90deg,rgba(2,132,199,0.11),rgba(124,58,237,0.10));"><div><div style="font-size:1rem; font-weight:750;">${title}</div><div style="font-size:0.7rem; color:var(--text2); margin-top:3px;">${escHtml(run.botName)} · ${run.charNames.length}명</div></div><button onclick="closeBotOneClickModal()" style="background:none; border:none; color:var(--text2); font-size:1.3rem; cursor:pointer;">&times;</button></div>
                 <div style="padding:14px 18px; overflow-y:auto; display:flex; flex-direction:column; gap:7px;">${rows}</div>
-                <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; padding:12px 18px; border-top:1px solid var(--border);"><div style="font-size:0.68rem; color:var(--text2);">${finished ? (warnings ? `경고 ${warnings}단계 · 완료 ${completed}단계 · 건너뜀 ${skipped}단계` : `완료 ${completed}단계 · 건너뜀 ${skipped}단계`) : '창을 닫아도 작업은 백그라운드에서 계속됩니다.'}</div><div style="display:flex; gap:7px;">${finished ? '<button onclick="openNewBotOneClickSettings()" style="padding:7px 14px; border:1px solid var(--border); border-radius:6px; background:var(--surface2); color:var(--text); cursor:pointer; font-weight:650;">새 원클릭 설정</button>' : ''}<button onclick="closeBotOneClickModal()" style="padding:7px 16px; border:none; border-radius:6px; background:${finished ? '#00796B' : 'var(--surface2)'}; color:var(--text); cursor:pointer; font-weight:650;">${finished ? '확인' : '백그라운드로'}</button></div></div>
+                <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; padding:12px 18px; border-top:1px solid var(--border);"><div style="font-size:0.68rem; color:var(--text2);">${footerSummary}</div><div style="display:flex; gap:7px;">${!finished ? `<button id="bot-one-click-stop-btn" onclick="requestBotOneClickStop()" ${run.stopRequested ? 'disabled' : ''} style="padding:7px 14px; border:1px solid rgba(239,68,68,0.7); border-radius:6px; background:${run.stopRequested ? 'var(--surface2)' : 'rgba(239,68,68,0.16)'}; color:${run.stopRequested ? 'var(--text2)' : '#F87171'}; cursor:${run.stopRequested ? 'not-allowed' : 'pointer'}; font-weight:700;">${run.stopRequested ? '중단 처리 중...' : '안전 중단'}</button>` : ''}${finished ? '<button onclick="openNewBotOneClickSettings()" style="padding:7px 14px; border:1px solid var(--border); border-radius:6px; background:var(--surface2); color:var(--text); cursor:pointer; font-weight:650;">새 원클릭 설정</button>' : ''}<button onclick="closeBotOneClickModal()" style="padding:7px 16px; border:none; border-radius:6px; background:${finished ? '#00796B' : 'var(--surface2)'}; color:var(--text); cursor:pointer; font-weight:650;">${finished ? '확인' : '백그라운드로'}</button></div></div>
             </div>`;
         }
 
@@ -64655,6 +64844,15 @@
                 confidence,
                 overwrite,
                 embTarget: modal?.dataset.embTarget || '대표만',
+                runId: typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+                    ? crypto.randomUUID()
+                    : `bot-one-click-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+                stopRequested: false,
+                runCancelRegistered: false,
+                cancelledQueueCount: 0,
+                queuedItems: [],
+                tagBatches: [],
+                cancelErrors: [],
                 stages: BOT_ONE_CLICK_STAGES.map(([key, label]) => ({
                     key,
                     label,
@@ -64682,28 +64880,37 @@
                 const warningCount = _botOneClickRun.stages.filter(stage => stage.status === 'warning' || stage.status === 'failed').length;
                 const warningSummary = warningCount ? _botOneClickWarningSummary(_botOneClickRun) : '';
                 if (button) button.textContent = '원클릭 결과 보기';
-                _botOneClickSetSidebarStatus(warningCount ? `원클릭 완료 · ${warningSummary}` : `원클릭 완료 · ${charNames.length}명`, warningCount ? 'warning' : 'success');
+                const stopped = _botOneClickRun.stopRequested;
+                _botOneClickSetSidebarStatus(
+                    stopped ? '원클릭 안전 중단됨' : (warningCount ? `원클릭 완료 · ${warningSummary}` : `원클릭 완료 · ${charNames.length}명`),
+                    stopped || warningCount ? 'warning' : 'success',
+                );
                 _botOneClickRenderProgress();
-                showToast(warningCount ? `원클릭 작업 완료 · ${warningSummary}` : '원클릭 작업이 모두 완료되었습니다.', warningCount ? 'warning' : 'success');
+                showToast(stopped ? '원클릭 작업을 안전하게 중단했습니다.' : (warningCount ? `원클릭 작업 완료 · ${warningSummary}` : '원클릭 작업이 모두 완료되었습니다.'), stopped || warningCount ? 'warning' : 'success');
                 if (botCurrentBot === _botOneClickRun.botName && typeof renderBotCharacters === 'function') renderBotCharacters();
             }
         }
 
-        async function _botOneClickRunStage(key, task) {
+        async function _botOneClickRunStage(run, key, task) {
             _botOneClickUpdateStage(key, 'running', '준비 중...');
             try {
                 const result = await task();
-                _botOneClickUpdateStage(key, result?.warning ? 'warning' : 'completed', result?.detail || '완료', result?.issues || []);
+                _botOneClickUpdateStage(key, result?.cancelled ? 'cancelled' : (result?.warning ? 'warning' : 'completed'), result?.detail || (result?.cancelled ? '안전 중단됨' : '완료'), result?.issues || []);
             } catch (e) {
                 console.error(`[BOT_ONE_CLICK:${key}] 실패:`, e);
-                _botOneClickUpdateStage(key, 'warning', `실패: ${e.message || e}\n다음 단계는 계속 진행합니다.`, _botOneClickIssuesFromError(e));
+                if (run.stopRequested) {
+                    _botOneClickUpdateStage(key, 'cancelled', `안전 중단 처리 중 종료됨: ${e.message || e}`);
+                } else {
+                    _botOneClickUpdateStage(key, 'warning', `실패: ${e.message || e}\n다음 단계는 계속 진행합니다.`, _botOneClickIssuesFromError(e));
+                }
             }
         }
 
         async function _runBotOneClickPipeline(run) {
             const runSelectedStage = async (key, task) => {
                 if (!run.enabledStages?.[key]) return;
-                await _botOneClickRunStage(key, task);
+                if (run.stopRequested) return;
+                await _botOneClickRunStage(run, key, task);
             };
             await runSelectedStage('tag_analysis', () => _runBotOneClickRepresentativeAnalysis(run));
             await runSelectedStage('negative', () => _runBotOneClickRepresentativeNegative(run));
@@ -64712,6 +64919,14 @@
             await runSelectedStage('dialogue_face_crop', () => _runBotOneClickDialogueFaceCrop(run));
             await runSelectedStage('face_batch', () => _runBotOneClickFaceBatch(run));
             await runSelectedStage('llm_refine', () => _runBotOneClickLlmRefine(run));
+            if (run.stopRequested) {
+                run.stages.forEach(stage => {
+                    if (stage.status !== 'pending') return;
+                    stage.status = 'cancelled';
+                    stage.detail = '안전 중단으로 실행하지 않음';
+                });
+                _botOneClickRenderProgress();
+            }
         }
 
         function _botOneClickTrackTagBatch(batchId, label, total, source) {
@@ -64739,6 +64954,9 @@
 
         async function _runBotOneClickRepresentativeAnalysis(run) {
             const preview = await _botOneClickJson(`/api/bot_mode/rep_preview?bot=${encodeURIComponent(run.botName)}&character=`);
+            if (run.stopRequested) {
+                return {cancelled: true, detail: '대표 이미지 대상 확인 후 안전 중단됨'};
+            }
             const selected = new Set(run.charNames);
             const groups = new Map(run.charNames.map(name => [name, []]));
             (preview.images || []).forEach(image => {
@@ -64748,6 +64966,7 @@
             const issues = [];
             let queued = 0;
             for (const [charName, filenames] of groups) {
+                if (run.stopRequested) break;
                 if (!filenames.length) {
                     issues.push(_botOneClickIssue(charName, '분석할 대표 이미지가 없습니다.'));
                     continue;
@@ -64755,14 +64974,16 @@
                 try {
                     const result = await _botOneClickJson('/api/bot_mode/batch_analyze_rep', {
                         method: 'POST', headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({bot: run.botName, character: charName, filenames}),
+                        body: JSON.stringify({bot: run.botName, character: charName, filenames, one_click_run_id: run.runId}),
                     });
                     const total = Number(result.total || result.count || 0);
                     queued += total;
                     if (result.batch_id && total) {
+                        const wait = _botOneClickTrackTagBatch(result.batch_id, `원클릭 태그 분석 ${charName}`, total, 'bot_rep')
+                            .then(batch => ({...batch, charName}));
+                        _botOneClickRegisterTagBatch(run, result.batch_id);
                         waits.push(
-                            _botOneClickTrackTagBatch(result.batch_id, `원클릭 태그 분석 ${charName}`, total, 'bot_rep')
-                                .then(batch => ({...batch, charName}))
+                            wait
                         );
                     } else {
                         issues.push(_botOneClickIssue(charName, total ? '태그 분석 배치 ID가 없습니다.' : '분석 큐에 추가된 대표 이미지가 없습니다.'));
@@ -64773,11 +64994,14 @@
                 }
             }
             if (!queued) {
-                return {warning: true, detail: '처리된 대표 이미지가 없습니다.', issues};
+                return run.stopRequested
+                    ? {cancelled: true, detail: '태그 분석 큐 등록 전 안전 중단됨'}
+                    : {warning: true, detail: '처리된 대표 이미지가 없습니다.', issues};
             }
             _botOneClickUpdateStage('tag_analysis', 'running', `${queued}장 큐 처리 중...`);
             const results = await Promise.all(waits);
             const failed = results.reduce((sum, result) => sum + Number(result.fail || 0), 0);
+            const cancelled = results.reduce((sum, result) => sum + Number(result.cancelled || 0), 0);
             results.forEach(result => {
                 (result.failures || []).forEach(failure => issues.push(_botOneClickIssue(
                     failure.character || result.charName,
@@ -64786,14 +65010,18 @@
                 )));
             });
             return {
+                cancelled: run.stopRequested || cancelled > 0,
                 warning: failed > 0 || issues.length > 0,
-                detail: `${queued}장 처리 완료${failed ? ` · 실패 ${failed}장` : ''}`,
+                detail: `${queued}장 중 성공 ${results.reduce((sum, result) => sum + Number(result.success || 0), 0)}장${failed ? ` · 실패 ${failed}장` : ''}${cancelled ? ` · 대기 취소 ${cancelled}장` : ''}${run.stopRequested ? '\n안전 중단됨' : ''}`,
                 issues,
             };
         }
 
         async function _runBotOneClickRepresentativeNegative(run) {
             const preview = await _botOneClickJson(`/api/bot_mode/rep_preview?bot=${encodeURIComponent(run.botName)}&character=`);
+            if (run.stopRequested) {
+                return {cancelled: true, detail: '대표 이미지 대상 확인 후 안전 중단됨'};
+            }
             const selected = new Set(run.charNames);
             const groups = new Map(run.charNames.map(name => [name, []]));
             (preview.images || []).forEach(image => {
@@ -64803,6 +65031,7 @@
             let failed = 0;
             const issues = [];
             for (const [charName, filenames] of groups) {
+                if (run.stopRequested) break;
                 if (!filenames.length) {
                     issues.push(_botOneClickIssue(charName, '부정 프롬프트를 적용할 대표 이미지가 없습니다.'));
                     continue;
@@ -64823,23 +65052,33 @@
                 }
                 _botOneClickUpdateStage('negative', 'running', `${success}장 적용${failed ? ` · 실패 ${failed}장` : ''}`);
             }
-            if (!success && !failed) return {warning: true, detail: '부정 프롬프트를 적용한 대표 이미지가 없습니다.', issues};
-            return {warning: failed > 0 || issues.length > 0, detail: `대표 이미지 ${success}장 적용${failed ? ` · 실패 ${failed}장` : ''}`, issues};
+            if (!success && !failed) {
+                return run.stopRequested
+                    ? {cancelled: true, detail: '부정 프롬프트 적용 전 안전 중단됨'}
+                    : {warning: true, detail: '부정 프롬프트를 적용한 대표 이미지가 없습니다.', issues};
+            }
+            return {cancelled: run.stopRequested, warning: failed > 0 || issues.length > 0, detail: `대표 이미지 ${success}장 적용${failed ? ` · 실패 ${failed}장` : ''}${run.stopRequested ? '\n현재 캐릭터 처리 후 안전 중단됨' : ''}`, issues};
         }
 
         function _botOneClickCreateNamedWait(kind, botName, names) {
-            const waiter = {kind, botName, pending: new Set(names), success: [], failed: [], timer: null, resolve: null};
+            const waiter = {kind, botName, pending: new Set(names), success: [], failed: [], cancelled: [], timer: null, resolve: null};
             waiter.promise = new Promise(resolve => { waiter.resolve = resolve; });
             waiter.finish = () => {
                 clearTimeout(waiter.timer);
                 if (kind === 'data_patch' && _botOneClickDataPatchWait === waiter) _botOneClickDataPatchWait = null;
                 if (kind === 'llm' && _botOneClickLlmWait === waiter) _botOneClickLlmWait = null;
-                waiter.resolve({success: waiter.success, failed: waiter.failed, timeout: false});
+                waiter.resolve({success: waiter.success, failed: waiter.failed, cancelled: waiter.cancelled, timeout: false});
             };
             waiter.mark = (name, ok, error) => {
                 if (!waiter.pending.has(name)) return;
                 waiter.pending.delete(name);
                 (ok ? waiter.success : waiter.failed).push(ok ? name : {name, error: error || ''});
+                if (!waiter.pending.size) waiter.finish();
+            };
+            waiter.cancel = (name, reason) => {
+                if (!waiter.pending.has(name)) return;
+                waiter.pending.delete(name);
+                waiter.cancelled.push({name, reason: reason || '안전 중단'});
                 if (!waiter.pending.size) waiter.finish();
             };
             waiter.timer = setTimeout(() => {
@@ -64855,7 +65094,7 @@
             const waiter = _botOneClickDataPatchWait;
             if (!waiter || data?.bot_name !== waiter.botName || !['completed', 'failed'].includes(data?.phase)) return;
             waiter.mark(data.char_name, data.phase === 'completed', data.error);
-            const done = waiter.success.length + waiter.failed.length;
+            const done = waiter.success.length + waiter.failed.length + waiter.cancelled.length;
             _botOneClickUpdateStage('data_patch', 'running', `${done}/${done + waiter.pending.size}명 완료${waiter.failed.length ? ` · 실패 ${waiter.failed.length}명` : ''}`);
         }
 
@@ -64864,11 +65103,18 @@
                 method: 'POST', headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({bot_name: run.botName, char_names: run.charNames}),
             });
+            if (run.stopRequested) {
+                return {
+                    cancelled: true,
+                    detail: `${patchResult.message || '파일 패치 완료'} · FACE 큐 등록 전 안전 중단됨`,
+                };
+            }
             const waiter = _botOneClickCreateNamedWait('data_patch', run.botName, run.charNames);
             _botOneClickDataPatchWait = waiter;
             for (const charName of run.charNames) {
+                if (run.stopRequested) break;
                 try {
-                    await _botOneClickJson('/api/queue/add', {
+                    const queued = await _botOneClickJson('/api/queue/add', {
                         method: 'POST', headers: {'Content-Type': 'application/json'},
                         body: JSON.stringify({
                             type: 'data_patch_utility',
@@ -64876,21 +65122,31 @@
                             params: {
                                 bot_name: run.botName,
                                 char_name: charName,
+                                one_click_run_id: run.runId,
                                 patch_settings: {face_crop_top: run.cropTop, face_crop_bottom: run.cropBottom, emb_target: run.embTarget},
                             },
                         }),
                     });
+                    _botOneClickRegisterQueueItem(run, 'data_patch', charName, queued.item_id);
                 } catch (e) {
                     console.error('[BOT_ONE_CLICK] 데이터 패치 큐 추가 실패:', charName, e);
                     waiter.mark(charName, false, `큐 추가 실패: ${e.message || e}`);
                 }
             }
+            if (run.stopRequested) {
+                await _botOneClickCancelPendingWork(run);
+                const queuedNames = new Set(run.queuedItems.filter(item => item.kind === 'data_patch').map(item => item.name));
+                [...waiter.pending].filter(name => !queuedNames.has(name)).forEach(name =>
+                    waiter.cancel(name, '안전 중단으로 큐에 등록하지 않음')
+                );
+            }
             _botOneClickUpdateStage('data_patch', 'running', `${run.charNames.length}명 FACE 생성 대기 중...`);
             const result = await waiter.promise;
             const issues = result.failed.map(item => _botOneClickIssue(item.name, item.error || 'FACE 생성 실패'));
             return {
+                cancelled: run.stopRequested || result.cancelled.length > 0,
                 warning: issues.length > 0,
-                detail: `${patchResult.message || '파일 패치 완료'} · FACE 성공 ${result.success.length}명${result.failed.length ? ` · 실패 ${result.failed.length}명` : ''}`,
+                detail: `${patchResult.message || '파일 패치 완료'} · FACE 성공 ${result.success.length}명${result.failed.length ? ` · 실패 ${result.failed.length}명` : ''}${result.cancelled.length ? ` · 대기 취소 ${result.cancelled.length}명` : ''}${run.stopRequested ? '\n안전 중단됨' : ''}`,
                 issues,
             };
         }
@@ -64904,6 +65160,13 @@
                 });
                 previewId = preview.preview_id || '';
                 if (!previewId) throw new Error('FACE 미리보기 세션이 생성되지 않았습니다.');
+                if (run.stopRequested) {
+                    await _botOneClickJson('/api/bot_mode/program_embedding/cancel', {
+                        method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({preview_id: previewId}),
+                    });
+                    previewId = '';
+                    return {cancelled: true, detail: 'FACE 미리보기 정리 후 안전 중단됨'};
+                }
                 _botOneClickUpdateStage('embedding', 'running', `확정 가능 ${Number(preview.ready_count || 0)}명 · 임베딩 생성 중...`);
                 const result = await _botOneClickJson('/api/bot_mode/program_embedding/commit', {
                     method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -64947,6 +65210,7 @@
                     char_names: run.charNames,
                     face_crop_top: run.cropTop,
                     face_crop_bottom: run.cropBottom,
+                    one_click_run_id: run.runId,
                 }),
             });
             const warning = Boolean(
@@ -64981,6 +65245,9 @@
             let targetNames = [...run.charNames];
             try {
                 const utility = await _botOneClickJson(`/api/bot_mode/utility_preview?bot=${encodeURIComponent(run.botName)}&character=`);
+                if (run.stopRequested) {
+                    return {cancelled: true, detail: 'FACE 이미지 대상 확인 후 안전 중단됨'};
+                }
                 const selected = new Set(run.charNames);
                 const availableNames = new Set((utility.images || []).map(image => image.character).filter(name => selected.has(name)));
                 const missingNames = run.charNames.filter(name => !availableNames.has(name));
@@ -65002,12 +65269,14 @@
             try {
                 const result = await _botOneClickJson('/api/bot_mode/batch_analyze_utility', {
                     method: 'POST', headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({bot: run.botName, characters: targetNames}),
+                    body: JSON.stringify({bot: run.botName, characters: targetNames, one_click_run_id: run.runId}),
                 });
                 analyzed = Number(result.total || result.count || 0);
                 if (result.batch_id && analyzed) {
                     _botOneClickUpdateStage('face_batch', 'running', `FACE ${analyzed}장 태그 분석 중...`);
-                    const batch = await _botOneClickTrackTagBatch(result.batch_id, '원클릭 FACE 태그 분석', analyzed, 'bot_utility');
+                    const batchWait = _botOneClickTrackTagBatch(result.batch_id, '원클릭 FACE 태그 분석', analyzed, 'bot_utility');
+                    _botOneClickRegisterTagBatch(run, result.batch_id);
+                    const batch = await batchWait;
                     if (batch.fail) {
                         warnings.push(`태그 분석 실패 ${batch.fail}장`);
                         (batch.failures || []).forEach(failure => issues.push(_botOneClickIssue(
@@ -65016,6 +65285,13 @@
                             failure.filename,
                         )));
                         if (!(batch.failures || []).length) issues.push(_botOneClickIssue('', `FACE 태그 분석 실패 ${batch.fail}장`));
+                    }
+                    if (run.stopRequested || batch.cancelled) {
+                        return {
+                            cancelled: true,
+                            detail: `FACE 태그 분석 중 안전 중단됨${batch.cancelled ? ` · 대기 취소 ${batch.cancelled}장` : ''}\n부정 프롬프트는 실행하지 않음`,
+                            issues,
+                        };
                     }
                 } else {
                     warnings.push('분석할 FACE 이미지 없음');
@@ -65059,12 +65335,15 @@
             const waiter = _botOneClickLlmWait;
             if (!waiter || data?.bot_name !== waiter.botName || !['completed', 'failed'].includes(data?.phase)) return;
             waiter.mark(data.char_name, data.phase === 'completed', data.error);
-            const done = waiter.success.length + waiter.failed.length;
+            const done = waiter.success.length + waiter.failed.length + waiter.cancelled.length;
             _botOneClickUpdateStage('llm_refine', 'running', `${done}/${done + waiter.pending.size}명 완료${waiter.failed.length ? ` · 실패 ${waiter.failed.length}명` : ''}`);
         }
 
         async function _runBotOneClickLlmRefine(run) {
             const utility = await _botOneClickJson(`/api/bot_mode/utility_preview?bot=${encodeURIComponent(run.botName)}&character=`);
+            if (run.stopRequested) {
+                return {cancelled: true, detail: 'LLM 정제 대상 확인 후 안전 중단됨'};
+            }
             const selected = new Set(run.charNames);
             const faceNames = [...new Set((utility.images || []).map(image => image.character).filter(name => selected.has(name)))];
             const missingNames = run.charNames.filter(name => !faceNames.includes(name));
@@ -65077,10 +65356,15 @@
             try {
                 const enqueue = await _botOneClickJson('/api/bot_mode/llm_batch_enqueue', {
                     method: 'POST', headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({bot: run.botName, characters: faceNames}),
+                    body: JSON.stringify({bot: run.botName, characters: faceNames, one_click_run_id: run.runId}),
                 });
-                const addedNames = new Set((enqueue.data?.added || []).map(item => item.char_name));
-                faceNames.filter(name => !addedNames.has(name)).forEach(name => waiter.mark(name, false, '큐에 추가되지 않음'));
+                const addedItems = enqueue.data?.added || [];
+                const addedNames = new Set(addedItems.map(item => item.char_name));
+                addedItems.forEach(item => _botOneClickRegisterQueueItem(run, 'llm', item.char_name, item.id));
+                faceNames.filter(name => !addedNames.has(name)).forEach(name =>
+                    run.stopRequested ? waiter.cancel(name, '안전 중단으로 큐에 등록하지 않음') : waiter.mark(name, false, '큐에 추가되지 않음')
+                );
+                if (run.stopRequested) await _botOneClickCancelPendingWork(run);
                 _botOneClickUpdateStage('llm_refine', 'running', `${addedNames.size}명 LLM 큐 처리 중...`);
             } catch (e) {
                 console.error('[BOT_ONE_CLICK] LLM 정제 큐 추가 실패:', e);
@@ -65092,8 +65376,9 @@
                 ...result.failed.map(item => _botOneClickIssue(item.name, item.error || 'LLM 정제 실패')),
             ];
             return {
+                cancelled: run.stopRequested || result.cancelled.length > 0,
                 warning: issues.length > 0,
-                detail: `LLM 정제 성공 ${result.success.length}명${result.failed.length ? ` · 실패 ${result.failed.length}명` : ''}${missingNames.length ? ` · FACE 없음 ${missingNames.length}명` : ''}`,
+                detail: `LLM 정제 성공 ${result.success.length}명${result.failed.length ? ` · 실패 ${result.failed.length}명` : ''}${result.cancelled.length ? ` · 대기 취소 ${result.cancelled.length}명` : ''}${missingNames.length ? ` · FACE 없음 ${missingNames.length}명` : ''}${run.stopRequested ? '\n안전 중단됨' : ''}`,
                 issues,
             };
         }

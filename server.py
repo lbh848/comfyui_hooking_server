@@ -20969,6 +20969,24 @@ async def handle_api_queue_cancel_batch(request):
         traceback.print_exc()
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
+async def handle_api_queue_cancel_one_click(request):
+    """원클릭 실행 토큰에 속한 pending 큐만 안전하게 취소한다."""
+    try:
+        body = await request.json()
+        run_id = str(body.get("one_click_run_id") or "").strip()
+        if not run_id:
+            print(f"[QUEUE_API:ONE_CLICK] 안전 중단 거부: body={body!r}")
+            return web.json_response(
+                {"success": False, "error": "one_click_run_id가 필요합니다"},
+                status=400,
+            )
+        cancelled = await queue_manager.cancel_one_click_run(run_id)
+        return web.json_response({"success": True, "cancelled": cancelled})
+    except Exception as e:
+        print(f"[QUEUE_API:ONE_CLICK] 안전 중단 실패: {e}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
 async def handle_api_queue_remove(request):
     """완료/취소된 큐 아이템 제거"""
     try:
@@ -21000,6 +21018,7 @@ app.router.add_post("/api/queue/add", handle_api_queue_add)
 app.router.add_post("/api/queue/cancel", handle_api_queue_cancel)
 app.router.add_post("/api/queue/cancel_all", handle_api_queue_cancel_all)
 app.router.add_post("/api/queue/cancel_batch", handle_api_queue_cancel_batch)
+app.router.add_post("/api/queue/cancel_one_click", handle_api_queue_cancel_one_click)
 app.router.add_post("/api/queue/remove", handle_api_queue_remove)
 app.router.add_post("/api/queue/pause", handle_api_queue_pause)
 

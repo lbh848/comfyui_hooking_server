@@ -1539,6 +1539,7 @@ class BotMode:
             body = await request.json()
             bot_name = body.get("bot", "").strip()
             char_name = body.get("character", "").strip()
+            one_click_run_id = str(body.get("one_click_run_id") or "").strip()
             if not bot_name:
                 return _json_error("봇 이름이 필요합니다.")
 
@@ -1556,11 +1557,14 @@ class BotMode:
             items_spec = []
             for r in reps:
                 img = {"filepath": r["filepath"], "filename": r["filename"], "character": r["character"], "bot": bot_name}
+                params = {"source": "bot_rep", "image": img}
+                if one_click_run_id:
+                    params["one_click_run_id"] = one_click_run_id
                 items_spec.append({
                     "type": "tag_analysis",
                     "label": f"태그 분석(봇 대표) {bot_name}/{r['character']}/{r['filename']}",
                     "batch_label": batch_label,
-                    "params": {"source": "bot_rep", "image": img},
+                    "params": params,
                 })
             created = await queue_manager.add_items_batch(items_spec)
             batch_id = created[0].batch_id if created else None
@@ -1749,6 +1753,7 @@ class BotMode:
             body = await request.json()
             bot_name = body.get("bot", "").strip()
             char_name = body.get("character", "").strip()
+            one_click_run_id = str(body.get("one_click_run_id") or "").strip()
             if not bot_name:
                 return _json_error("봇 이름이 필요합니다.")
 
@@ -1769,11 +1774,14 @@ class BotMode:
             items_spec = []
             for r in reps:
                 img = {"filepath": r["filepath"], "filename": r["filename"], "character": r["character"], "bot": bot_name}
+                params = {"source": "bot_utility", "image": img}
+                if one_click_run_id:
+                    params["one_click_run_id"] = one_click_run_id
                 items_spec.append({
                     "type": "tag_analysis",
                     "label": f"태그 분석(봇 유틸) {bot_name}/{r['character']}/{r['filename']}",
                     "batch_label": batch_label,
-                    "params": {"source": "bot_utility", "image": img},
+                    "params": params,
                 })
             created = await queue_manager.add_items_batch(items_spec)
             batch_id = created[0].batch_id if created else None
@@ -3445,18 +3453,22 @@ class BotDataPatcher:
             face_crop_bottom = self._program_embedding_float(
                 body, "face_crop_bottom", 1.0, 0.1, 10.0
             )
+            one_click_run_id = str(body.get("one_click_run_id") or "").strip()
             from queue_manager import queue_manager
 
+            queue_params = {
+                "operation": "bot_dialogue_face_crop",
+                "bot_name": bot_name,
+                "char_names": char_names,
+                "face_crop_top": face_crop_top,
+                "face_crop_bottom": face_crop_bottom,
+            }
+            if one_click_run_id:
+                queue_params["one_click_run_id"] = one_click_run_id
             item = await queue_manager.add_item(
                 "instance_lora_face_extract",
                 f"[대사 FACE CROP] {bot_name} ({len(char_names)}명)",
-                {
-                    "operation": "bot_dialogue_face_crop",
-                    "bot_name": bot_name,
-                    "char_names": char_names,
-                    "face_crop_top": face_crop_top,
-                    "face_crop_bottom": face_crop_bottom,
-                },
+                queue_params,
             )
             print(
                 f"[DIALOGUE_FACE_CROP_API] 큐 추가 및 완료 대기: "
@@ -4679,6 +4691,7 @@ async def handle_llm_batch_enqueue(request):
         body = await request.json()
         bot_name = (body.get("bot") or "").strip()
         characters = body.get("characters") or []
+        one_click_run_id = str(body.get("one_click_run_id") or "").strip()
         if not bot_name:
             return web.json_response({"success": False, "error": "bot 필드가 필요합니다."})
         if not isinstance(characters, list) or not characters:
@@ -4698,10 +4711,13 @@ async def handle_llm_batch_enqueue(request):
             cn = (str(char_name) or "").strip()
             if not cn:
                 continue
+            params = {"bot_name": bot_name, "char_name": cn}
+            if one_click_run_id:
+                params["one_click_run_id"] = one_click_run_id
             item = await qm.add_item(
                 item_type="bot_llm_face_tag_analysis",
                 label=f"LLM 얼굴/눈 태그: {bot_name}/{cn}",
-                params={"bot_name": bot_name, "char_name": cn},
+                params=params,
                 priority=10,
             )
             added.append({"char_name": cn, "id": item.id})

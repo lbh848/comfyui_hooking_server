@@ -168,6 +168,52 @@ def test_one_click_finished_result_can_be_reopened_and_starts_new_setup_explicit
     assert "function openNewBotOneClickSettings()" in FRONTEND
 
 
+def test_one_click_progress_modal_exposes_safe_stop_and_marks_remaining_stages_cancelled():
+    progress = _function_source(
+        FRONTEND, "_botOneClickRenderProgress()", "startBotOneClick()"
+    )
+    stop = _function_source(
+        FRONTEND, "requestBotOneClickStop()", "_botOneClickStageEntry(key)"
+    )
+    pipeline = _function_source(
+        FRONTEND, "_runBotOneClickPipeline(run)", "_botOneClickTrackTagBatch"
+    )
+
+    assert 'id="bot-one-click-stop-btn"' in progress
+    assert 'onclick="requestBotOneClickStop()"' in progress
+    assert "'안전 중단'" in progress
+    assert "window.confirm(" in stop
+    assert "run.stopRequested = true" in stop
+    assert "await _botOneClickCancelPendingWork(run)" in stop
+    assert "stage.status = 'cancelled'" in pipeline
+    assert "안전 중단으로 실행하지 않음" in pipeline
+
+
+def test_one_click_safe_stop_tracks_only_its_queue_items_with_a_run_token():
+    cancel = _function_source(
+        FRONTEND,
+        "_botOneClickCancelPendingWork(run)",
+        "requestBotOneClickStop()",
+    )
+    start = _function_source(
+        FRONTEND, "startBotOneClick()", "_botOneClickRunStage(run, key, task)"
+    )
+    one_click_source = _function_source(
+        FRONTEND, "_runBotOneClickPipeline(run)", "openDialogueFaceCropModal()"
+    )
+
+    assert "runId:" in start
+    assert "queuedItems: []" in start
+    assert "tagBatches: []" in start
+    assert "'/api/queue/cancel_one_click'" in cancel
+    assert "one_click_run_id: run.runId" in cancel
+    assert "'/api/queue/cancel_batch'" in FRONTEND
+    assert "fetch('/api/queue/cancel'" in FRONTEND
+    assert one_click_source.count("one_click_run_id: run.runId") >= 5
+    assert 'app.router.add_post("/api/queue/cancel_one_click"' in SERVER_SOURCE
+    assert 'params["one_click_run_id"] = one_click_run_id' in BOT_MODE_SOURCE
+
+
 def test_one_click_warning_result_exposes_stage_character_file_and_reason():
     progress = _function_source(
         FRONTEND, "_botOneClickRenderProgress()", "startBotOneClick()"
@@ -275,6 +321,51 @@ async def test_data_patch_queue_forwards_per_run_patch_settings():
         "char_name": "alice",
         "patch_settings": settings,
     }
+
+
+@pytest.mark.asyncio
+async def test_one_click_safe_stop_cancels_matching_pending_and_rejects_late_items():
+    manager = QueueManager()
+    manager._paused = True
+
+    async def no_llm_workers():
+        return None
+
+    async def no_notify():
+        return None
+
+    manager._ensure_llm_workers = no_llm_workers
+    manager._notify_queue_updated = no_notify
+    run_id = "one-click-safe-stop-test"
+    matching_pending = await manager.add_item(
+        "data_patch_utility",
+        "matching pending",
+        {"one_click_run_id": run_id},
+    )
+    matching_processing = await manager.add_item(
+        "data_patch_utility",
+        "matching processing",
+        {"one_click_run_id": run_id},
+    )
+    unrelated = await manager.add_item(
+        "data_patch_utility",
+        "unrelated",
+        {"one_click_run_id": "another-run"},
+    )
+    matching_processing.status = "processing"
+
+    cancelled = await manager.cancel_one_click_run(run_id)
+    late = await manager.add_item(
+        "data_patch_utility",
+        "late matching item",
+        {"one_click_run_id": run_id},
+    )
+
+    assert cancelled == 1
+    assert matching_pending.status == "cancelled"
+    assert matching_processing.status == "processing"
+    assert unrelated.status == "pending"
+    assert late.status == "cancelled"
 
 
 @pytest.mark.asyncio
