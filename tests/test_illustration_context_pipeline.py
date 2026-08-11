@@ -341,6 +341,77 @@ def test_call2_plan_accepts_scene_without_named_tracked_characters(capsys):
     assert "이름 있는 추적 캐릭터가 없는 장면 수용" in capsys.readouterr().out
 
 
+def test_call2_plan_repairs_duplicate_server_slot_without_reroll(capsys):
+    raw = json.dumps({
+        "scene_plan": [
+            {
+                "anchor_segment": "C041",
+                "characters": ["Rito"],
+                "scene_brief": "Rito hides behind a book while watching carefully",
+            },
+            {
+                "anchor_segment": "C042",
+                "characters": ["Rito"],
+                "scene_brief": "Rito points toward the examination room",
+            },
+        ],
+    })
+
+    plan, reason = pipeline.parse_call2_plan(
+        raw,
+        pipeline.merged_toggles({
+            "output_count_min": 2,
+            "output_count_max": 2,
+            "key_visual": False,
+        }),
+        "Before.\n\n[Slot 40]\n\nNear.\n\n[Slot 41]\n\nAfter.\n\n[Slot 42]",
+        segment_slot_map={"C041": 41, "C042": 41},
+    )
+
+    assert reason == ""
+    assert [item["anchor_segment"] for item in plan["scene_plan"]] == [
+        "C041",
+        "C042",
+    ]
+    assert [item["slot"] for item in plan["scene_plan"]] == [40, 41]
+    output = capsys.readouterr().out
+    assert "중복 slot 로컬 보정" in output
+    assert "중복 slot 권위 위치 유지" in output
+
+
+def test_call2_plan_drops_only_unplaceable_earlier_duplicate(capsys):
+    raw = json.dumps({
+        "scene_plan": [
+            {
+                "anchor_segment": "C041",
+                "characters": ["Rito"],
+                "scene_brief": "Rito hides behind a book",
+            },
+            {
+                "anchor_segment": "C042",
+                "characters": ["Rito"],
+                "scene_brief": "Rito points toward the examination room",
+            },
+        ],
+    })
+
+    plan, reason = pipeline.parse_call2_plan(
+        raw,
+        pipeline.merged_toggles({
+            "output_count_min": 2,
+            "output_count_max": 2,
+            "key_visual": False,
+        }),
+        "Only insertion point.\n\n[Slot 41]",
+        segment_slot_map={"C041": 41, "C042": 41},
+    )
+
+    assert reason == ""
+    assert [item["anchor_segment"] for item in plan["scene_plan"]] == ["C042"]
+    assert [item["slot"] for item in plan["scene_plan"]] == [41]
+    assert "중복 slot 장면 제외" in capsys.readouterr().out
+
+
 def test_scene_plan_wardrobe_snapshot_uses_plan_over_tracked_timeline():
     plans = [{
         "plan_id": "S001",

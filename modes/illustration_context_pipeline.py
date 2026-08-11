@@ -3742,6 +3742,106 @@ def _parse_call2_keyvis_output(
     return descriptor, ""
 
 
+def _repair_call2_plan_slot_collisions(
+    scene_plan: list[dict],
+    candidates: list[int],
+    *,
+    segment_slot_map: dict[str, int] | None = None,
+    log_errors: bool = True,
+) -> tuple[list[dict], int]:
+    """Resolve server-derived PLAN slot collisions without another LLM call.
+
+    Several consecutive Cxxx segments can legitimately map to the same following
+    insertion slot.  Keep the latest segment at that authoritative slot and move
+    earlier plans only into unused candidate slots between the previous selected
+    authoritative slot and the collision.  This preserves narrative order and all
+    non-conflicting authoritative assignments.  Earlier overflow plans are dropped
+    only when that interval has no room.
+    """
+
+    if len({int(item["slot"]) for item in scene_plan}) == len(scene_plan):
+        return scene_plan, 0
+
+    candidate_positions = {slot: index for index, slot in enumerate(candidates)}
+    segment_positions = {
+        segment: index
+        for index, segment in enumerate((segment_slot_map or {}).keys())
+    }
+    indexed_plan = list(enumerate(scene_plan))
+    indexed_plan.sort(
+        key=lambda pair: (
+            candidate_positions[int(pair[1]["slot"])],
+            segment_positions.get(
+                str(pair[1].get("anchor_segment") or ""),
+                pair[0],
+            ),
+            pair[0],
+        )
+    )
+
+    groups: list[tuple[int, list[dict]]] = []
+    for _original_index, item in indexed_plan:
+        authoritative_slot = int(item["slot"])
+        if groups and groups[-1][0] == authoritative_slot:
+            groups[-1][1].append(item)
+        else:
+            groups.append((authoritative_slot, [item]))
+
+    repaired: list[dict] = []
+    dropped_count = 0
+    previous_authoritative_position = -1
+    for authoritative_slot, group in groups:
+        authoritative_position = candidate_positions[authoritative_slot]
+        if len(group) == 1:
+            repaired.append(group[0])
+            previous_authoritative_position = authoritative_position
+            continue
+
+        # The server slot follows every segment in this group, so the latest
+        # segment is the best structurally grounded owner of the exact slot.
+        keeper = group[-1]
+        movable = group[:-1]
+        free_positions = list(
+            range(previous_authoritative_position + 1, authoritative_position)
+        )
+        movable_count = min(len(movable), len(free_positions))
+        dropped = movable[: len(movable) - movable_count]
+        moved = movable[len(movable) - movable_count :]
+        assigned_positions = (
+            free_positions[-movable_count:] if movable_count else []
+        )
+
+        for item in dropped:
+            dropped_count += 1
+            if log_errors:
+                print(
+                    "[ILLUST_CONTEXT:CALL2_PLAN] 중복 slot 장면 제외: "
+                    f"anchor={item.get('anchor_segment')!r}, "
+                    f"server_slot={authoritative_slot}, reason=이전 미사용 후보 없음"
+                )
+        for item, assigned_position in zip(moved, assigned_positions):
+            assigned_slot = candidates[assigned_position]
+            item["slot"] = assigned_slot
+            repaired.append(item)
+            if log_errors:
+                print(
+                    "[ILLUST_CONTEXT:CALL2_PLAN] 중복 slot 로컬 보정: "
+                    f"anchor={item.get('anchor_segment')!r}, "
+                    f"server_slot={authoritative_slot}, assigned_slot={assigned_slot}"
+                )
+
+        repaired.append(keeper)
+        if log_errors:
+            print(
+                "[ILLUST_CONTEXT:CALL2_PLAN] 중복 slot 권위 위치 유지: "
+                f"anchor={keeper.get('anchor_segment')!r}, "
+                f"server_slot={authoritative_slot}"
+            )
+        previous_authoritative_position = authoritative_position
+
+    return repaired, dropped_count
+
+
 def parse_call2_plan(
     text: str,
     toggles: dict,
@@ -3792,7 +3892,6 @@ def parse_call2_plan(
     candidates = candidate_slots(target_slotted)
     candidate_set = set(candidates)
     scene_plan = []
-    seen_slots = set()
     for index, item in enumerate(raw.get("scene_plan") or [], start=1):
         if not isinstance(item, dict):
             reason = f"scene_plan[{index}]가 object가 아님"
@@ -3872,12 +3971,6 @@ def parse_call2_plan(
             if log_errors:
                 print(f"[ILLUST_CONTEXT:CALL2_PLAN] {reason}")
             return None, reason
-        if slot in seen_slots:
-            reason = f"scene_plan 중복 slot: {slot}"
-            if log_errors:
-                print(f"[ILLUST_CONTEXT:CALL2_PLAN] {reason}")
-            return None, reason
-        seen_slots.add(slot)
         characters = item.get("characters") or []
         if not isinstance(characters, list):
             characters = [characters]
@@ -3953,6 +4046,12 @@ def parse_call2_plan(
         if log_errors:
             print(f"[ILLUST_CONTEXT:CALL2_PLAN] {reason}")
         return None, reason
+    scene_plan, dropped_collision_count = _repair_call2_plan_slot_collisions(
+        scene_plan,
+        candidates,
+        segment_slot_map=segment_slot_map,
+        log_errors=log_errors,
+    )
     scene_plan.sort(key=lambda item: candidates.index(item["slot"]))
     for index, item in enumerate(scene_plan, start=1):
         item["plan_id"] = f"S{index:03d}"
@@ -3960,10 +4059,11 @@ def parse_call2_plan(
     if str(toggles.get("scene_mode")) != "auto":
         minimum = min(int(toggles["output_count_min"]), len(candidates))
         maximum = min(int(toggles["output_count_max"]), len(candidates))
-        if not minimum <= len(scene_plan) <= maximum:
+        repaired_minimum = max(0, minimum - dropped_collision_count)
+        if not repaired_minimum <= len(scene_plan) <= maximum:
             reason = (
                 f"CALL2-PLAN 장면 수 범위 위반: count={len(scene_plan)}, "
-                f"required={minimum}..{maximum}"
+                f"required={repaired_minimum}..{maximum}"
             )
             if log_errors:
                 print(f"[ILLUST_CONTEXT:CALL2_PLAN] {reason}")
