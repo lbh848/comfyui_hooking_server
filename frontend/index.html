@@ -2074,6 +2074,54 @@
             background: rgba(170, 170, 170, 0.1);
         }
 
+        /* LLM 로그 버튼 + 잠금 버튼을 하나의 캡슐로 묶기.
+           미호버 상태에서도 캡슐 테두리를 항상 보이게 해서 헤더의 다른
+           버튼들과 시각적으로 분리. 본체(main)와 잠금(lock) 사이 분리선은
+           두지 않고 일체형 캡슐로 처리하되, 본체 우측 여백을 줄여 잠금
+           아이콘을 "LLM 로그" 라벨에 밀착. 잠그면 스트림 이벤트가 와도 창이
+           자동으로 뜨지 않고 우하단 버튼(toggleLighbdLlmWidget)으로만 수동 열기. */
+        header.app-header .llm-log-group {
+            display: inline-flex;
+            align-items: stretch;
+            border: 1px solid var(--chrome-border);
+            border-radius: 8px;
+            overflow: hidden;
+            transition: border-color 0.18s ease, background 0.18s ease;
+        }
+        header.app-header .llm-log-group:hover {
+            border-color: var(--chrome-border-strong);
+            background: var(--chrome-panel-hover);
+        }
+        /* 그룹 안 자식 버튼은 개별 테두리/라운드를 없애 캡슐 일체형으로 */
+        header.app-header .llm-log-group .control-btn {
+            border: none;
+            border-radius: 0;
+            background: transparent;
+        }
+        header.app-header .llm-log-group .control-btn:hover {
+            border: none;
+            background: transparent;
+            color: inherit;
+        }
+        /* 본체(main) 우측 여백을 줄여 잠금 아이콘을 라벨에 밀착 */
+        header.app-header .llm-log-group__main {
+            padding-right: 6px;
+        }
+        /* 잠금 영역: 분리선 없이 본체와 일체형, 폭은 아이콘에 맞춰 축소.
+           잠금 시 주황 하이라이트 */
+        header.app-header .llm-log-lock-btn .lock-icon {
+            font-size: 14px;
+            line-height: 1;
+        }
+        header.app-header .llm-log-lock-btn {
+            width: auto;
+            padding: 0 7px;
+        }
+        header.app-header .llm-log-group .llm-log-lock-btn.locked {
+            background: rgba(250, 180, 50, 0.18);
+            color: #f0a020;
+        }
+
         /* 삽화 프롬프트 생성 모달 */
         .illust-prompt-modal-content {
             width: min(1080px, 100%);
@@ -12857,11 +12905,16 @@
                     <span class="control-label">작업 큐</span>
                     <span id="queue-badge" class="header-count-badge"></span>
                 </button>
-                <button type="button" id="lighbd-window-btn" class="control-btn" onclick="toggleLighbdLlmWidget()" title="LLM 로그창 열기/닫기">
-                    <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 17l4-4-4-4M11 17h9"></path><rect x="2" y="3" width="20" height="18" rx="2"></rect></svg>
-                    <span class="control-label">LLM 로그</span>
-                    <span id="lighbd-window-badge" class="header-count-badge"></span>
-                </button>
+                <div class="llm-log-group" role="group" aria-label="LLM 로그">
+                    <button type="button" id="lighbd-window-btn" class="control-btn llm-log-group__main" onclick="toggleLighbdLlmWidget()" title="LLM 로그창 열기/닫기">
+                        <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 17l4-4-4-4M11 17h9"></path><rect x="2" y="3" width="20" height="18" rx="2"></rect></svg>
+                        <span class="control-label">LLM 로그</span>
+                        <span id="lighbd-window-badge" class="header-count-badge"></span>
+                    </button>
+                    <button type="button" id="llm-log-lock-btn" class="control-btn control-btn--icon llm-log-lock-btn" onclick="toggleLlmLogLock()" title="LLM 로그 자동 팝업 잠금" aria-label="LLM 로그 자동 팝업 잠금">
+                        <span class="lock-icon">🔓</span>
+                    </button>
+                </div>
                 <button type="button" class="control-btn" onclick="openModeLogModal()">
                     <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5h11M9 12h11M9 19h11"></path><path d="M4 5h.01M4 12h.01M4 19h.01"></path></svg>
                     <span class="control-label">모드 로그</span>
@@ -22762,6 +22815,7 @@
 
         document.addEventListener('DOMContentLoaded', initializeMemoPadUi);
         document.addEventListener('DOMContentLoaded', initializeModalWorkerUi);
+        document.addEventListener('DOMContentLoaded', _renderLlmLogLock);
 
         function loadCurrentConfig(forceRefresh = false) {
             if (!forceRefresh && currentConfigLoadPromise) {
@@ -31821,6 +31875,92 @@
         const _lighbdLlmStreams = new Map();
         let _lighbdSelectedStreamId = 'legacy';
 
+        // LLM로그 자동 팝업 잠금: 잠그면 스트림 이벤트가 와도 창이 자동으로
+        // 뜨지 않고 우하단 버튼(toggleLighbdLlmWidget)으로만 수동 열기.
+        // 프론트엔드 전용 UI 선호도 → localStorage에 저장.
+        const LLM_LOG_LOCK_KEY = 'lb-llm-log-locked';
+        function _llmLogLocked() {
+            try { return localStorage.getItem(LLM_LOG_LOCK_KEY) === '1'; }
+            catch (_) { return false; }
+        }
+        function toggleLlmLogLock() {
+            const next = !_llmLogLocked();
+            try { localStorage.setItem(LLM_LOG_LOCK_KEY, next ? '1' : '0'); } catch (_) {}
+            _renderLlmLogLock();
+        }
+        function _renderLlmLogLock() {
+            const btn = document.getElementById('llm-log-lock-btn');
+            if (!btn) return;
+            const locked = _llmLogLocked();
+            btn.classList.toggle('locked', locked);
+            const icon = btn.querySelector('.lock-icon');
+            if (icon) icon.textContent = locked ? '🔒' : '🔓';
+            btn.title = locked
+                ? '잠금 중: LLM로그창이 자동으로 뜨지 않습니다 (우하단 버튼으로 수동 열기)'
+                : '잠금 끄기: LLM 로그가 스트림 시작 시 자동으로 표시됩니다';
+        }
+
+        // ──────────────────────────────────────────────────────────────────
+        // 헤더 LLM 로그 그룹 호버 설명 툴팁
+        // ──────────────────────────────────────────────────────────────────
+        // 공용 #ac-tooltip 요소를 재사용해 LLM 로그 버튼·잠금 버튼에 호버 설명을 띄운다.
+        // 잠금 버튼은 현재 잠금 상태에 따라 문구가 바뀐다(textFn 을 매 hover 마다 재평가).
+        // #ac-tooltip 은 pointer-events:none 이라 호버를 뺏지 않으며, 다른 영역(태그칩)
+        // 호버와 동시에 켜질 일이 없어 안전하게 재사용 가능.
+        function _attachHeaderHoverTip(el, textFn) {
+            if (!el) return;
+            let showTimer = null;
+            let hideTimer = null;
+            const SHOW_DELAY = 320;  // 너무 즉발하면 거슬리므로 약간 지연
+            const HIDE_DELAY = 90;   // 인접 버튼으로 옮겨갈 때 깜빡임 방지용 짧은 지연
+            el.addEventListener('mouseenter', () => {
+                if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
+                if (showTimer) clearTimeout(showTimer);
+                showTimer = setTimeout(() => {
+                    showTimer = null;
+                    const tip = document.getElementById('ac-tooltip');
+                    if (!tip || !el.isConnected || !el.matches(':hover')) return;
+                    const text = typeof textFn === 'function' ? textFn() : textFn;
+                    if (!text) return;
+                    tip.textContent = text;
+                    tip.style.display = 'block';
+                    const r = el.getBoundingClientRect();
+                    const tw = tip.getBoundingClientRect().width;
+                    let left = r.left;
+                    // 우측으로 넘치면 좌측으로 밀어 정렬
+                    if (left + tw > window.innerWidth - 8) {
+                        left = Math.max(8, window.innerWidth - tw - 8);
+                    }
+                    tip.style.left = left + 'px';
+                    tip.style.top = (r.bottom + 6) + 'px';
+                }, SHOW_DELAY);
+            });
+            el.addEventListener('mouseleave', () => {
+                if (showTimer) { clearTimeout(showTimer); showTimer = null; }
+                if (hideTimer) clearTimeout(hideTimer);
+                hideTimer = setTimeout(() => {
+                    hideTimer = null;
+                    const tip = document.getElementById('ac-tooltip');
+                    if (tip) tip.style.display = 'none';
+                }, HIDE_DELAY);
+            });
+        }
+
+        function _llmLogMainTipText() {
+            return 'LLM 로그창 열기/닫기 — LLM 호출의 상태·스트림·토큰 통계가 실시간으로 표시됩니다.';
+        }
+        function _llmLogLockTipText() {
+            // 호버 시점의 잠금 상태를 반영
+            return _llmLogLocked()
+                ? '🔒 자동 팝업 잠금 중 — 로그창이 자동으로 뜨지 않습니다. 클릭하면 잠금을 해제합니다.'
+                : '🔓 자동 팝업 잠금 해제 — LLM 스트림 시작 시 로그창이 자동으로 표시됩니다. 클릭하면 잠급니다.';
+        }
+        function _initLlmLogHoverTips() {
+            _attachHeaderHoverTip(document.getElementById('lighbd-window-btn'), _llmLogMainTipText);
+            _attachHeaderHoverTip(document.getElementById('llm-log-lock-btn'), _llmLogLockTipText);
+        }
+        document.addEventListener('DOMContentLoaded', _initLlmLogHoverTips);
+
         function hideLighbdLlmWidget() {
             const w = document.getElementById('lighbd-llm-widget');
             if (w) w.style.display = 'none';
@@ -32127,7 +32267,9 @@
                 _renderLighbdStreamState(
                     _lighbdLlmStreams.get(_lighbdSelectedStreamId) || state
                 );
-                _showLighbdLlmWidget();
+                // 잠금 중에는 자동 팝업 억제. 배지는 갱신되므로 사용자가 우하단
+                // 버튼으로 수동 열기 가능. 이미 열려 있으면 유지.
+                if (!_llmLogLocked()) _showLighbdLlmWidget();
             }
 
             if (t === 'error' && ![..._lighbdLlmStreams.values()].some(s => s.active)) {
