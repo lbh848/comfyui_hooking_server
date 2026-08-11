@@ -19360,6 +19360,19 @@
                         </div>
                         <div class="setting-row">
                             <div class="setting-label">
+                                <div class="title">이미지를 webp으로 압축해서 전송</div>
+                                <div class="desc">토글이 꺼져있다면, 가장 호환성이 좋은 png로 보냅니다.(비전 사용시)</div>
+                            </div>
+                            <div class="setting-control" style="display:flex; align-items:center; gap:8px;">
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="setting-llm-vision-compress4" onchange="updateLlmVisionCompressStatus(4, this.checked)">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                                <span id="setting-llm-vision-compress4-status" class="toggle-status off">OFF</span>
+                            </div>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-label">
                                 <div class="title">LLM4 동시 요청 수</div>
                                 <div class="desc">LLM4에서 동시에 실행할 실제 API 요청 상한입니다. 다른 슬롯과 독립적으로 적용됩니다.</div>
                             </div>
@@ -19482,6 +19495,19 @@
                                     <span class="toggle-slider"></span>
                                 </label>
                                 <span id="setting-llm-stream5-status" class="toggle-status off">OFF</span>
+                            </div>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="title">이미지를 webp으로 압축해서 전송</div>
+                                <div class="desc">토글이 꺼져있다면, 가장 호환성이 좋은 png로 보냅니다.(비전 사용시)</div>
+                            </div>
+                            <div class="setting-control" style="display:flex; align-items:center; gap:8px;">
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="setting-llm-vision-compress5" onchange="updateLlmVisionCompressStatus(5, this.checked)">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                                <span id="setting-llm-vision-compress5-status" class="toggle-status off">OFF</span>
                             </div>
                         </div>
                         <div class="setting-row">
@@ -29151,9 +29177,15 @@
             if (_vc2) _vc2.checked = !!currentConfig.llm_vision_compress2;
             const _vc3 = document.getElementById('setting-llm-vision-compress3');
             if (_vc3) _vc3.checked = !!currentConfig.llm_vision_compress3;
+            const _vc4 = document.getElementById('setting-llm-vision-compress4');
+            if (_vc4) _vc4.checked = !!currentConfig.llm_vision_compress4;
+            const _vc5 = document.getElementById('setting-llm-vision-compress5');
+            if (_vc5) _vc5.checked = !!currentConfig.llm_vision_compress5;
             updateLlmVisionCompressStatus(1, !!currentConfig.llm_vision_compress);
             updateLlmVisionCompressStatus(2, !!currentConfig.llm_vision_compress2);
             updateLlmVisionCompressStatus(3, !!currentConfig.llm_vision_compress3);
+            updateLlmVisionCompressStatus(4, !!currentConfig.llm_vision_compress4);
+            updateLlmVisionCompressStatus(5, !!currentConfig.llm_vision_compress5);
             const llmUrlEl = document.getElementById('setting-llm-url');
             if (llmUrlEl) llmUrlEl.value = currentConfig.llm_url || '';
             const llmUrl2El = document.getElementById('setting-llm-url2');
@@ -30638,6 +30670,8 @@
                 llm_vision_compress: (document.getElementById('setting-llm-vision-compress') || {}).checked,
                 llm_vision_compress2: (document.getElementById('setting-llm-vision-compress2') || {}).checked,
                 llm_vision_compress3: (document.getElementById('setting-llm-vision-compress3') || {}).checked,
+                llm_vision_compress4: (document.getElementById('setting-llm-vision-compress4') || {}).checked,
+                llm_vision_compress5: (document.getElementById('setting-llm-vision-compress5') || {}).checked,
                 llm_url: (document.getElementById('setting-llm-url') || {}).value || '',
                 llm_url2: (document.getElementById('setting-llm-url2') || {}).value || '',
                 llm_url3: (document.getElementById('setting-llm-url3') || {}).value || '',

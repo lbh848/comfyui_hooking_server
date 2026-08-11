@@ -574,7 +574,14 @@ def _base_config_get(key: str, default=None):
 
 
 def _slot_config_overrides(slot: str) -> dict:
-    """LLM2/3 전용 연결 설정을 요청별 LLM1 조회 키로 투영한다."""
+    """LLM2~5 전용 연결 설정을 요청별 LLM1 조회 키로 투영한다.
+
+    llm_vision_compress(비전 webp 압축 토글)만 예외: 전역(LLM1) 상속을 하지 않고
+    슬롯 bool 값을 그대로 따른다 — False 도 유효한 '끄기' 값이므로 truthiness 폴백이
+    이를 무시하면 안 된다(스롯이 false여도 전역 true로 덮어지던 기존 버그 수정).
+    슬롯 키가 없으면 안전 기본 False(PNG 전송). 나머지 키는 기존
+    '빈 값이면 LLM1 재사용' 의미를 유지한다.
+    """
     suffix = _slot_suffix(slot)
     if not suffix:
         return {}
@@ -585,7 +592,6 @@ def _slot_config_overrides(slot: str) -> dict:
         ("llm_reasoning_preset", f"llm_reasoning_preset{suffix}", "auto"),
         ("llm_reasoning_effort", f"llm_reasoning_effort{suffix}", ""),
         ("llm_custom_body", f"llm_custom_body{suffix}", ""),
-        ("llm_vision_compress", f"llm_vision_compress{suffix}", False),
     ):
         slot_value = _base_config_get(slot_key, "")
         overrides[base_key] = (
@@ -593,6 +599,10 @@ def _slot_config_overrides(slot: str) -> dict:
             if slot_value
             else _base_config_get(base_key, base_default)
         )
+    # llm_vision_compress: per-slot 완전 독립(전역/LLM1 상속 없음).
+    overrides["llm_vision_compress"] = bool(
+        _base_config_get(f"llm_vision_compress{suffix}", False)
+    )
     return overrides
 
 
@@ -5150,18 +5160,20 @@ async def _call_llm_slot_vision(slot, messages, image_b64=None, image_mime="imag
     if not use_model:
         return f"[LLM 실패] LLM{slot[-1]} 모델명이 설정되지 않았습니다"
 
-    try:
-        new_messages, log_mime, log_len = _prepare_vision_messages(
-            messages, image_b64, image_mime, images
-        )
-    except ValueError as e:
-        return f"[LLM 실패] {e}"
-
-    _llm_log(f"callLLMVision{slot[-1]}: service={service} model={use_model} mime={log_mime} img_b64_len={log_len} json_mode={json_mode}")
+    # 비전 이미지 정규화(_prepare_vision_messages → _normalize_vision_image)가 슬롯별
+    # llm_vision_compress{N} 값을 읽도록, 정규화 이전에 슬롯 오버라이드를 건다.
     config_token = _request_config_override_ctx.set(_slot_config_overrides(slot))
     slot_token = _llm_slot_ctx.set(slot)
     token = _response_format_ctx.set({"type": "json_object"}) if json_mode else None
     try:
+        try:
+            new_messages, log_mime, log_len = _prepare_vision_messages(
+                messages, image_b64, image_mime, images
+            )
+        except ValueError as e:
+            return f"[LLM 실패] {e}"
+
+        _llm_log(f"callLLMVision{slot[-1]}: service={service} model={use_model} mime={log_mime} img_b64_len={log_len} json_mode={json_mode}")
         if bool(_base_config_get(f"llm_stream{suffix}", False)):
             return await _stream_call_to_text(new_messages, service, use_model, slot)
         return await _dispatch(new_messages, service, use_model)
@@ -5191,17 +5203,24 @@ async def _call_llm_slot_vision_stream(slot, messages, image_b64=None, image_mim
         yield {"type": "error", "error": f"callLLMVision{slot[-1]}Stream: image_b64 가 비어 있습니다."}
         return
 
+    # 비전 이미지 정규화가 슬롯별 llm_vision_compress{N} 값을 읽도록 정규화 이전에 슬롯
+    # 오버라이드를 건다. _call_llm_slot_text_stream 이 동일 슬롯 오버라이드를 다시 세팅하더라도
+    # 같은 값이므로 중복 세팅은 안전하다.
+    config_token = _request_config_override_ctx.set(_slot_config_overrides(slot))
     try:
-        new_messages, log_mime, log_len = _prepare_vision_messages(
-            messages, image_b64, image_mime, images
-        )
-    except ValueError as e:
-        yield {"type": "error", "error": str(e)}
-        return
+        try:
+            new_messages, log_mime, log_len = _prepare_vision_messages(
+                messages, image_b64, image_mime, images
+            )
+        except ValueError as e:
+            yield {"type": "error", "error": str(e)}
+            return
 
-    _llm_log(f"callLLMVision{slot[-1]}Stream: service={service} model={use_model} mime={log_mime} img_b64_len={log_len} json_mode={json_mode}")
-    async for ev in _call_llm_slot_text_stream(slot, new_messages, model=use_model, log_history=log_history, json_mode=json_mode):
-        yield ev
+        _llm_log(f"callLLMVision{slot[-1]}Stream: service={service} model={use_model} mime={log_mime} img_b64_len={log_len} json_mode={json_mode}")
+        async for ev in _call_llm_slot_text_stream(slot, new_messages, model=use_model, log_history=log_history, json_mode=json_mode):
+            yield ev
+    finally:
+        _request_config_override_ctx.reset(config_token)
 
 
 # ─── LLM4 / LLM5 공개 진입점(얇은 래퍼) ──────────────────────
