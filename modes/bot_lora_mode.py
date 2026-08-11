@@ -11,6 +11,7 @@ import json
 import shutil
 import traceback
 from PIL import Image
+from modes.lora_export_utils import format_lora_export_filename
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BOT_DIR = os.path.join(BASE_DIR, "bot")
@@ -1915,7 +1916,7 @@ def export_bot_training_images(bot_name: str, project_name: str, char_name: str,
     errors = []
     for idx, src_path in enumerate(image_files, start=1):
         ext = os.path.splitext(src_path)[1]
-        dest_name = f"[{idx}]{ext}"
+        dest_name = format_lora_export_filename(idx, len(image_files), ext)
         dest_path = os.path.join(target_dir, dest_name)
         try:
             shutil.copy2(src_path, dest_path)

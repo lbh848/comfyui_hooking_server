@@ -10,6 +10,7 @@ import shutil
 import traceback
 from PIL import Image
 from modes.asset_mode import ASSET_DIR, TAGS_FILE, AssetMode
+from modes.lora_export_utils import format_lora_export_filename
 
 LORA_EXTENSIONS = {".safetensors", ".pt", ".ckpt", ".bin"}
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
@@ -1646,7 +1647,7 @@ def export_training_images(
     """
     학습용 이미지를 Comfy Input 폴더 하위로 복사
     - multi_img_folder_name 서브폴더 생성 (없으면 생성, 있으면 내부 비우기)
-    - 이미지를 [1].ext, [2].ext ... 형식으로 이름 변경하여 복사
+    - 이미지를 [00001].ext, [00002].ext ... 형식으로 이름 변경하여 복사
     """
     # 학습 이미지 폴더 확인
     t_dir = _training_dir(character, entry)
@@ -1696,13 +1697,13 @@ def export_training_images(
         os.makedirs(target_dir, exist_ok=True)
         print(f"[LORA_EXPORT] 대상 폴더 생성: {target_dir}")
 
-    # 이미지 복사 ([1].ext, [2].ext ...)
+    # 문자열 정렬에서도 캡션 순서와 일치하도록 0 패딩한 이름으로 복사
     exported = []
     errors = []
     for idx, fname in enumerate(image_files, start=1):
         src_path = os.path.join(t_dir, fname)
         ext = os.path.splitext(fname)[1]
-        dest_name = f"[{idx}]{ext}"
+        dest_name = format_lora_export_filename(idx, len(image_files), ext)
         dest_path = os.path.join(target_dir, dest_name)
         try:
             shutil.copy2(src_path, dest_path)

@@ -24,6 +24,7 @@ from comfy_allocation import (
     normalize_comfy_task_modal_parallel,
 )
 from modes import llm_service
+from modes.lora_export_utils import format_lora_export_filename
 
 
 # priority 0~9는 삽화 요청에 예약한다. illustration/regenerate는 같은 GPU 줄에서
@@ -3552,7 +3553,10 @@ class QueueManager:
             for i, img in enumerate(training_images, start=1):
                 src = get_path_fn(img["filename"])
                 ext = os.path.splitext(img["filename"])[1]
-                dst = os.path.join(export_dir, f"[{i}]{ext}")
+                export_name = format_lora_export_filename(
+                    i, len(training_images), ext
+                )
+                dst = os.path.join(export_dir, export_name)
                 if os.path.isfile(src):
                     shutil.copy2(src, dst)
 
