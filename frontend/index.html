@@ -12906,12 +12906,12 @@
                     <span id="queue-badge" class="header-count-badge"></span>
                 </button>
                 <div class="llm-log-group" role="group" aria-label="LLM 로그">
-                    <button type="button" id="lighbd-window-btn" class="control-btn llm-log-group__main" onclick="toggleLighbdLlmWidget()" title="LLM 로그창 열기/닫기">
+                    <button type="button" id="lighbd-window-btn" class="control-btn llm-log-group__main" onclick="toggleLighbdLlmWidget()" aria-label="LLM 로그">
                         <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 17l4-4-4-4M11 17h9"></path><rect x="2" y="3" width="20" height="18" rx="2"></rect></svg>
                         <span class="control-label">LLM 로그</span>
                         <span id="lighbd-window-badge" class="header-count-badge"></span>
                     </button>
-                    <button type="button" id="llm-log-lock-btn" class="control-btn control-btn--icon llm-log-lock-btn" onclick="toggleLlmLogLock()" title="LLM 로그 자동 팝업 잠금" aria-label="LLM 로그 자동 팝업 잠금">
+                    <button type="button" id="llm-log-lock-btn" class="control-btn control-btn--icon llm-log-lock-btn" onclick="toggleLlmLogLock()" aria-label="LLM 로그 자동 팝업 잠금">
                         <span class="lock-icon">🔓</span>
                     </button>
                 </div>
@@ -31895,9 +31895,8 @@
             btn.classList.toggle('locked', locked);
             const icon = btn.querySelector('.lock-icon');
             if (icon) icon.textContent = locked ? '🔒' : '🔓';
-            btn.title = locked
-                ? '잠금 중: LLM로그창이 자동으로 뜨지 않습니다 (우하단 버튼으로 수동 열기)'
-                : '잠금 끄기: LLM 로그가 스트림 시작 시 자동으로 표시됩니다';
+            // 설명 툴팁은 커스텀 호버 툴팁(_llmLogLockTipText)에서 처리.
+            // 네이티브 title을 쓰면 커스텀 툴팁과 이중으로 떠 버린다.
         }
 
         // ──────────────────────────────────────────────────────────────────
