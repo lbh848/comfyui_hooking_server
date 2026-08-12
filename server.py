@@ -1926,6 +1926,10 @@ async def save_backup(
 
     # 0) 후처리([SPEAK] 합성) — 저장 전 이미지에 적용
     #    postprocess_settings._mode == "bubble" 이면 말풍선 빌더, 아니면 vn 대사창 빌더.
+    #    합성 전 원본을 _raw로 별도 보존하기 위해 합성 전 bytes를 캡처하고 성공 여부를
+    #    추적한다. 합성 실패/스킵 시 .webp 자체가 원본이므로 _raw는 저장하지 않는다.
+    raw_image_bytes = image_bytes
+    composition_applied = False
     if postprocess_settings and speak_text:
         try:
             if postprocess_settings.get("_mode") == "bubble":
@@ -1937,6 +1941,7 @@ async def save_backup(
                 from modes.postprocess import compose_postprocess
                 image_bytes = compose_postprocess(image_bytes, speak_text, postprocess_settings, bot_name)
                 print(f"[BACKUP] 후처리 합성 적용: placement={postprocess_settings.get('placement')}, speak_len={len(speak_text)}")
+            composition_applied = True
         except Exception as e:
             print(f"[BACKUP] ⚠ 후처리 합성 실패, 원본 이미지로 저장: {e}")
             traceback.print_exc()
@@ -1988,6 +1993,38 @@ async def save_backup(
     orig_size = len(image_bytes)
     webp_size = os.path.getsize(webp_path)
     print(f"[BACKUP] 이미지 저장: {base_name}.webp ({orig_size:,}B → {webp_size:,}B)")
+
+    # 후처리가 적용된 백업은 합성 전 원본(대사 없음)을 _raw/{base}.webp로 별도 보존한다.
+    # 용도: 이후 대사 교체/후처리 재적용 시 _info.json의 postprocess_settings·speak_text와
+    #       함께 이 원본에서 재합성. 후처리가 없거나 합성에 실패한 경우 .webp 자체가 원본이라 생략.
+    # _raw는 서브디렉토리에 두어 백업 카운트/필터/정리 glob(메인 폴더 비재귀)에 잡히지 않게 한다.
+    if composition_applied:
+        try:
+            raw_dir = os.path.join(WORKFLOW_BACKUP_DIR, "_raw")
+            os.makedirs(raw_dir, exist_ok=True)
+            raw_path = os.path.join(raw_dir, f"{base_name}.webp")
+            # EXIF(워크플로우 메타)는 빼고 저장 — 메인 .webp/_info.json에 이미 있고,
+            # animated WebP + exif 조합의 PIL 쿼크를 피해 안정적으로 저장하기 위함.
+            raw_save_kwargs = {"format": "WEBP", "quality": get_backup_webp_quality()}
+            if get_backup_webp_lossless():
+                raw_save_kwargs["lossless"] = True
+                del raw_save_kwargs["quality"]
+            with Image.open(BytesIO(raw_image_bytes)) as raw_img:
+                if getattr(raw_img, "is_animated", False):
+                    # 원본이 애니메이션이면 모든 프레임을 보존(충실한 원본).
+                    frames = []
+                    for _i in range(getattr(raw_img, "n_frames", 1)):
+                        raw_img.seek(_i)
+                        frames.append(raw_img.convert("RGBA") if raw_img.mode == "RGBA" else raw_img.convert("RGB"))
+                    frames[0].save(raw_path, save_all=True, append_images=frames[1:], **raw_save_kwargs)
+                elif raw_img.mode == "RGBA":
+                    raw_img.save(raw_path, **raw_save_kwargs)
+                else:
+                    raw_img.convert("RGB").save(raw_path, **raw_save_kwargs)
+            print(f"[BACKUP] 원본 이미지 저장: _raw/{base_name}.webp ({os.path.getsize(raw_path):,}B)")
+        except Exception as e:
+            print(f"[BACKUP] ⚠ 원본(_raw) 저장 실패 (무시, 합성본은 정상 저장됨): {e}")
+            traceback.print_exc()
 
     # 2) 원본 워크플로우 JSON 저장 (긍정/부정 프롬프트만 실제 사용값으로 덮어씌움)
     workflow_path = os.path.join(WORKFLOW_BACKUP_DIR, f"{base_name}.json")
@@ -2119,6 +2156,11 @@ def cleanup_backups():
                 os.remove(base + ext)
             except:
                 pass
+        # 후처리 원본(_raw 서브디렉토리)도 함께 정리 — 고아 원본 방지.
+        try:
+            os.remove(os.path.join(WORKFLOW_BACKUP_DIR, "_raw", base + ".webp"))
+        except:
+            pass
 
 
 # ─── ComfyUI 프록시 ─────────────────────────────────────
@@ -8499,6 +8541,9 @@ async def handle_api_backups(request: web.Request) -> web.Response:
             except:
                 pass
 
+        # 후처리 원본(_raw) 존재 여부 — 후처리 적용 백업에 한해 대사 없는 원본이 보존됨.
+        has_raw = os.path.exists(os.path.join(backup_dir, "_raw", f"{base}.webp"))
+
         backups.append({
             "name": base,
             "image_url": f"/api/backup_image/{base}{ext}",
@@ -8506,6 +8551,9 @@ async def handle_api_backups(request: web.Request) -> web.Response:
             # animated: 정지 poster(첫 프레임) URL. 정적이면 원본과 동일.
             "poster_url": (f"/api/backup_poster/{base}" if is_animated
                            else f"/api/backup_image/{base}{ext}"),
+            # 후처리 원본(대사 없음) URL — 향후 "원본 보기/재편집" UI용. 없으면 None.
+            "raw_url": (f"/api/backup_raw/{base}" if has_raw else None),
+            "has_raw": has_raw,
             "has_prompt": os.path.exists(prompt_path),
             "positive": positive,
             "negative": negative,
@@ -8839,6 +8887,36 @@ async def handle_api_backup_poster(request: web.Request) -> web.Response:
         print(f"[BACKUP_POSTER] ⚠ poster 파일 읽기 실패: {poster_path!r}")
         traceback.print_exc()
         return web.Response(status=500, text="poster read error")
+
+    return web.Response(
+        body=data,
+        content_type="image/webp",
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate"},
+    )
+
+
+async def handle_api_backup_raw(request: web.Request) -> web.Response:
+    """GET /api/backup_raw/{name} — 후처리(대사/말풍선) 적용 전 원본 이미지를 반환한다.
+
+    후처리가 적용된 백업은 합성본(.webp) 외에 대사 없는 원본을 backup_dir/_raw/{name}.webp
+    에 보존한다. 이 엔드포인트는 그 원본을 서빙한다(대사 교체/후처리 재적용·원본 보기용).
+    원본이 없는(후처리 미적용) 백업은 404."""
+    name = request.match_info.get("name", "")
+    if ".." in name or "/" in name or "\\" in name:
+        print(f"[BACKUP_RAW] 잘못된 name 요청 거부: {name!r}")
+        return web.Response(status=400, text="Invalid name")
+
+    raw_path = os.path.join(get_backup_base_dir(), "_raw", f"{name}.webp")
+    if not os.path.exists(raw_path):
+        return web.Response(status=404)
+
+    try:
+        with open(raw_path, "rb") as f:
+            data = f.read()
+    except Exception:
+        print(f"[BACKUP_RAW] 파일 읽기 실패: {raw_path!r}")
+        traceback.print_exc()
+        return web.Response(status=500, text="backup raw read error")
 
     return web.Response(
         body=data,
@@ -12842,6 +12920,7 @@ app.router.add_get("/api/backups/filters", handle_api_backups_filters)
 app.router.add_get("/api/backups/{name}/llm_trace", handle_api_backup_llm_trace)
 app.router.add_get("/api/backup_image/{filename}", handle_api_backup_image)
 app.router.add_get("/api/backup_poster/{name}", handle_api_backup_poster)
+app.router.add_get("/api/backup_raw/{name}", handle_api_backup_raw)
 app.router.add_get("/api/backup_prompt/{name}", handle_api_backup_prompt)
 app.router.add_get("/api/backup_chat", handle_api_backup_chat)
 app.router.add_post("/api/backup_delete/{name}", handle_api_backup_delete)
