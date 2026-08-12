@@ -1086,6 +1086,324 @@
             color: var(--text);
         }
 
+        /* ─── 재사용 선택 카드 / 숫자 스텝퍼 ─── */
+        .option-card-grid {
+            --option-card-columns: 2;
+            display: grid;
+            grid-template-columns: repeat(var(--option-card-columns), minmax(0, 1fr));
+            gap: 8px;
+        }
+        .option-card {
+            display: block;
+            min-width: 0;
+            cursor: pointer;
+            user-select: none;
+        }
+        .option-card > input {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            margin: -1px;
+            opacity: 0;
+            pointer-events: none;
+        }
+        .option-card-surface {
+            position: relative;
+            display: flex;
+            min-height: 66px;
+            box-sizing: border-box;
+            flex-direction: column;
+            justify-content: center;
+            gap: 4px;
+            padding: 11px 12px;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            color: var(--text2);
+            background: color-mix(in srgb, var(--surface2) 70%, var(--surface));
+            transition: border-color .16s ease, background .16s ease, box-shadow .16s ease, transform .16s ease;
+        }
+        .option-card:hover .option-card-surface {
+            border-color: color-mix(in srgb, var(--accent) 52%, var(--border));
+            transform: translateY(-1px);
+        }
+        .option-card > input:focus-visible + .option-card-surface {
+            outline: 2px solid color-mix(in srgb, var(--accent) 72%, white);
+            outline-offset: 2px;
+        }
+        .option-card > input:checked + .option-card-surface {
+            border-color: color-mix(in srgb, var(--accent) 78%, white);
+            color: var(--text);
+            background: color-mix(in srgb, var(--accent) 13%, var(--surface2));
+            box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 25%, transparent) inset;
+        }
+        .option-card > input:checked + .option-card-surface::after {
+            content: "✓";
+            position: absolute;
+            top: 8px;
+            right: 9px;
+            display: grid;
+            width: 18px;
+            height: 18px;
+            place-items: center;
+            border-radius: 50%;
+            color: #fff;
+            background: var(--accent);
+            font-size: .65rem;
+            font-weight: 900;
+        }
+        .option-card-title {
+            padding-right: 22px;
+            color: inherit;
+            font-size: .78rem;
+            font-weight: 750;
+            line-height: 1.3;
+        }
+        .option-card-description {
+            color: var(--text2);
+            font-size: .66rem;
+            line-height: 1.4;
+        }
+        .option-card-badge {
+            align-self: flex-start;
+            padding: 2px 6px;
+            border-radius: 999px;
+            color: color-mix(in srgb, var(--accent) 72%, white);
+            background: color-mix(in srgb, var(--accent) 12%, transparent);
+            font-size: .59rem;
+            font-weight: 750;
+        }
+        .option-card-grid.compact .option-card-surface {
+            min-height: 48px;
+            padding: 9px 11px;
+        }
+        .number-stepper {
+            display: grid;
+            grid-template-columns: 36px minmax(62px, 1fr) 36px;
+            align-items: stretch;
+            overflow: hidden;
+            border: 1px solid var(--border);
+            border-radius: 9px;
+            background: var(--surface2);
+        }
+        .number-stepper button {
+            border: 0;
+            color: var(--text);
+            background: transparent;
+            cursor: pointer;
+            font-size: 1rem;
+        }
+        .number-stepper button:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+        .number-stepper input {
+            min-width: 0;
+            border: 0;
+            border-right: 1px solid var(--border);
+            border-left: 1px solid var(--border);
+            border-radius: 0;
+            color: var(--text);
+            background: transparent;
+            text-align: center;
+            font-weight: 750;
+            -moz-appearance: textfield;
+        }
+        .number-stepper input::-webkit-inner-spin-button,
+        .number-stepper input::-webkit-outer-spin-button { margin: 0; -webkit-appearance: none; }
+
+        @media (max-width: 700px) {
+            .option-card-grid { --option-card-columns: 1 !important; }
+        }
+
+        /* ─── 영상화 워크스페이스 ─── */
+        #video-modal .video-modal-content {
+            width: min(980px, calc(100vw - 32px));
+            max-width: 980px;
+            overflow: hidden;
+        }
+        #video-modal .modal-header h3 { margin: 0; }
+        .video-modal-subtitle {
+            margin-left: 9px;
+            color: var(--text2);
+            font-size: .72rem;
+            font-weight: 500;
+        }
+        .video-modal-body {
+            max-height: 82vh;
+            padding: 18px;
+            overflow-y: auto;
+        }
+        .video-hero-grid {
+            display: grid;
+            grid-template-columns: minmax(250px, .82fr) minmax(360px, 1.3fr);
+            gap: 14px;
+            align-items: stretch;
+            margin-bottom: 14px;
+        }
+        .video-panel {
+            min-width: 0;
+            padding: 13px;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            background: color-mix(in srgb, var(--surface2) 65%, var(--surface));
+        }
+        .video-panel-title-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            margin-bottom: 9px;
+        }
+        .video-panel-title {
+            color: var(--text);
+            font-size: .78rem;
+            font-weight: 750;
+        }
+        .video-panel-hint {
+            color: var(--text2);
+            font-size: .65rem;
+            line-height: 1.35;
+        }
+        .video-source-badge {
+            padding: 3px 7px;
+            border-radius: 999px;
+            color: #7fe8c4;
+            background: rgba(77, 226, 174, .11);
+            font-size: .61rem;
+            font-weight: 750;
+            white-space: nowrap;
+        }
+        .video-source-preview-wrap {
+            display: grid;
+            min-height: 230px;
+            place-items: center;
+            overflow: hidden;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            background: #101318;
+        }
+        .video-source-preview-wrap img {
+            display: none;
+            width: 100%;
+            max-height: 320px;
+            object-fit: contain;
+        }
+        .video-source-empty {
+            padding: 20px;
+            color: var(--text2);
+            font-size: .72rem;
+            line-height: 1.5;
+            text-align: center;
+        }
+        .video-source-name {
+            margin-top: 8px;
+            overflow: hidden;
+            color: var(--text2);
+            font-family: monospace;
+            font-size: .66rem;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .video-controls-stack { display: flex; flex-direction: column; gap: 12px; }
+        .video-field-label {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 8px;
+            margin-bottom: 7px;
+            color: var(--text);
+            font-size: .75rem;
+            font-weight: 750;
+        }
+        .video-field-label small { color: var(--text2); font-size: .62rem; font-weight: 500; }
+        .video-inline-fields {
+            display: grid;
+            grid-template-columns: minmax(150px, .7fr) minmax(220px, 1.3fr);
+            gap: 10px;
+        }
+        .video-select {
+            width: 100%;
+            box-sizing: border-box;
+            padding: 9px 10px;
+            border: 1px solid var(--border);
+            border-radius: 9px;
+            color: var(--text);
+            background: var(--surface2);
+        }
+        .video-mode-note {
+            min-height: 1.35em;
+            margin-top: 7px;
+            color: var(--text2);
+            font-size: .66rem;
+            line-height: 1.45;
+        }
+        .video-last-frame-panel { display: none; margin-bottom: 14px; }
+        .video-last-frame-grid {
+            display: grid;
+            grid-template-columns: minmax(220px, .8fr) minmax(280px, 1.2fr);
+            gap: 12px;
+            align-items: stretch;
+        }
+        .video-last-preview-wrap {
+            display: grid;
+            min-height: 150px;
+            place-items: center;
+            overflow: hidden;
+            border: 1px solid var(--border);
+            border-radius: 9px;
+            background: #101318;
+        }
+        .video-last-preview-wrap img { display: none; width: 100%; max-height: 210px; object-fit: contain; }
+        .video-options-layout {
+            display: grid;
+            grid-template-columns: minmax(0, 1.45fr) minmax(250px, .75fr);
+            gap: 14px;
+            margin-bottom: 14px;
+        }
+        .video-option-section + .video-option-section { margin-top: 12px; }
+        .video-scale-grid.disabled { opacity: .42; pointer-events: none; }
+        .video-secondary-row {
+            display: flex;
+            align-items: center;
+            gap: 9px;
+            cursor: pointer;
+            user-select: none;
+        }
+        .video-secondary-row input { margin: 0; width: auto; }
+        .video-instruction {
+            width: 100%;
+            box-sizing: border-box;
+            min-height: 128px;
+            resize: vertical;
+            padding: 11px;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            color: var(--text);
+            background: var(--surface2);
+            line-height: 1.5;
+        }
+        .video-summary-bar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            margin-top: 12px;
+            padding: 10px 12px;
+            border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
+            border-radius: 9px;
+            color: var(--text2);
+            background: color-mix(in srgb, var(--accent) 6%, var(--surface2));
+            font-size: .68rem;
+            line-height: 1.45;
+        }
+        #video-generation-summary-detail { color: var(--text); font-weight: 700; }
+        @media (max-width: 780px) {
+            #video-modal .video-modal-content { width: min(640px, calc(100vw - 20px)); }
+            .video-hero-grid,
+            .video-options-layout,
+            .video-last-frame-grid,
+            .video-inline-fields { grid-template-columns: 1fr; }
+            .video-source-preview-wrap { min-height: 180px; }
+            .video-summary-bar { align-items: flex-start; flex-direction: column; }
+        }
+
         .form-group textarea {
             width: 100%;
             min-height: 120px;
@@ -13108,95 +13426,162 @@
 
     <!-- 영상화 모달 (CLAUDE.md: ✕/큐 등록 버튼으로만 닫힘, 바깥 클릭 닫기 금지) -->
     <div class="modal" id="video-modal">
-        <div class="modal-content" style="max-width: 880px;">
+        <div class="modal-content video-modal-content">
             <div class="modal-header">
-                <h3>삽화 영상화<span style="color:var(--text2); font-size:.76rem; font-weight:400; margin-left:8px;">MiniMax H3 · 5초</span></h3>
+                <h3>영상화<span id="video-generation-header-summary" class="video-modal-subtitle">MiniMax H3 · 5초</span></h3>
                 <button class="modal-close" onclick="closeVideoModal()">&times;</button>
             </div>
-            <div class="modal-body" style="max-height: 86vh; overflow-y: auto;">
-                <div style="margin-bottom:12px;">
-                    <span style="display:block; font-size:.76rem; font-weight:700; margin-bottom:6px;">영상화 방식</span>
-                    <input id="video-generation-mode" type="hidden" value="i2v">
-                    <div role="tablist" aria-label="영상화 방식" style="display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:6px;">
-                        <button type="button" role="tab" data-video-mode-tab="i2v" aria-selected="true" onclick="selectVideoMode('i2v')" style="padding:9px 6px; border:1px solid #b876d2; border-radius:7px; background:#9b59b6; color:#fff;">I2V</button>
-                        <button type="button" role="tab" data-video-mode-tab="first_last" aria-selected="false" onclick="selectVideoMode('first_last')" style="padding:9px 6px; border:1px solid var(--border); border-radius:7px; background:var(--surface1); color:var(--text2);">FLF2V</button>
-                    </div>
-                </div>
-                <div id="video-generation-mode-note" style="margin:-6px 0 14px; color:var(--text2); font-size:.71rem; line-height:1.45;"></div>
-
-                <div id="video-frames-grid" style="display:grid; grid-template-columns:1fr; gap:14px; margin-bottom:14px;">
-                    <section id="video-frame-first" style="padding:12px; border:1px solid var(--border); border-radius:10px; background:var(--surface2);">
-                        <div style="font-size:.76rem; font-weight:700; margin-bottom:6px;">첫 프레임 백업</div>
-                        <label style="display:block; margin-bottom:8px;">
-                            <select id="video-generation-source" onchange="onVideoSourceChange()" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:7px; background:var(--surface1); color:var(--text);">
-                                <option value="">_raw 보유 백업을 불러오는 중...</option>
-                            </select>
-                        </label>
-                        <div id="video-generation-source-empty" style="display:flex; min-height:180px; align-items:center; justify-content:center; padding:12px; border:1px dashed var(--border); border-radius:8px; color:var(--text2); font-size:.74rem; text-align:center; line-height:1.5;">영상화할 `_raw` 삽화를 선택하세요.</div>
-                        <img id="video-generation-source-preview" src="" alt="첫 프레임 미리보기" style="display:none; width:100%; max-height:280px; object-fit:contain; border-radius:8px; border:1px solid var(--border); background:#111;">
-                        <div id="video-generation-source-name" style="margin-top:8px; font-family:monospace; font-size:.7rem; color:var(--text2); word-break:break-all;"></div>
+            <div class="modal-body video-modal-body">
+                <div class="video-hero-grid">
+                    <section class="video-panel">
+                        <div class="video-panel-title-row">
+                            <span class="video-panel-title">시작 프레임</span>
+                            <span class="video-source-badge">현재 카드</span>
+                        </div>
+                        <input id="video-generation-source" type="hidden" value="">
+                        <div class="video-source-preview-wrap">
+                            <div id="video-generation-source-empty" class="video-source-empty">현재 카드의 `_raw` 원본을 불러오는 중입니다.</div>
+                            <img id="video-generation-source-preview" src="" alt="시작 프레임 미리보기">
+                        </div>
+                        <div id="video-generation-source-name" class="video-source-name"></div>
                     </section>
 
-                    <section id="video-frame-last" style="display:none; padding:12px; border:1px solid var(--border); border-radius:10px; background:var(--surface2);">
-                        <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:6px;">
-                            <span style="font-size:.76rem; font-weight:700;">마지막 프레임 백업</span>
-                            <label style="display:flex; align-items:center; gap:4px; font-size:.71rem; color:var(--text2); cursor:pointer; user-select:none;">
-                                <input type="checkbox" id="video-generation-loop" onchange="onVideoLoopChange()" style="margin:0; width:auto;">
-                                같은 프레임으로 루프
+                    <section class="video-panel video-controls-stack">
+                        <div>
+                            <div class="video-field-label"><span>영상화 방식</span><small>시작·종료 프레임 구성</small></div>
+                            <input id="video-generation-mode" type="hidden" value="i2v">
+                            <div class="option-card-grid compact" style="--option-card-columns:2;" role="radiogroup" aria-label="영상화 방식">
+                                <label class="option-card">
+                                    <input type="radio" name="video-mode-choice" value="i2v" checked onchange="selectVideoMode(this.value)">
+                                    <span class="option-card-surface"><span class="option-card-title">I2V</span><span class="option-card-description">현재 카드에서 자연스럽게 움직임 생성</span></span>
+                                </label>
+                                <label class="option-card">
+                                    <input type="radio" name="video-mode-choice" value="first_last" onchange="selectVideoMode(this.value)">
+                                    <span class="option-card-surface"><span class="option-card-title">FLF2V</span><span class="option-card-description">마지막 프레임까지 하나의 장면으로 연결</span></span>
+                                </label>
+                            </div>
+                            <div id="video-generation-mode-note" class="video-mode-note"></div>
+                        </div>
+
+                        <div class="video-inline-fields">
+                            <div>
+                                <label class="video-field-label" for="video-generation-duration"><span>길이</span><small>1–15초</small></label>
+                                <div class="number-stepper">
+                                    <button type="button" aria-label="1초 줄이기" onclick="adjustVideoDuration(-1)">−</button>
+                                    <input id="video-generation-duration" type="number" min="1" max="15" step="1" value="5" inputmode="numeric" oninput="updateVideoDuration()">
+                                    <button type="button" aria-label="1초 늘리기" onclick="adjustVideoDuration(1)">+</button>
+                                </div>
+                            </div>
+                            <label>
+                                <span class="video-field-label"><span>화면 비율</span><small>H3 FAST</small></span>
+                                <select id="video-generation-preset" class="video-select" onchange="updateVideoGenerationSummary()">
+                                    <option value="auto" selected>자동 · 원본과 가장 가까운 비율</option>
+                                    <option value="1:1">1:1 · 512×512</option>
+                                    <option value="4:3">4:3 · 512×384</option>
+                                    <option value="3:4">3:4 · 384×512</option>
+                                    <option value="16:9">16:9 근사 · 672×384</option>
+                                    <option value="9:16">9:16 근사 · 384×672</option>
+                                    <option value="21:9">21:9 · 672×288</option>
+                                    <option value="9:21">9:21 · 288×672</option>
+                                    <option value="3:2">3:2 · 576×384</option>
+                                    <option value="2:3">2:3 · 384×576</option>
+                                    <option value="5:4">5:4 · 480×384</option>
+                                    <option value="4:5">4:5 · 384×480</option>
+                                </select>
                             </label>
                         </div>
-                        <label style="display:block; margin-bottom:8px;">
-                            <select id="video-generation-last" onchange="onVideoLastFrameChange()" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:7px; background:var(--surface1); color:var(--text);">
-                                <option value="">다른 _raw 백업을 선택하세요.</option>
-                            </select>
-                        </label>
-                        <div id="video-generation-last-empty" style="display:flex; min-height:180px; align-items:center; justify-content:center; padding:12px; border:1px dashed var(--border); border-radius:8px; color:var(--text2); font-size:.74rem; text-align:center; line-height:1.5;">마지막 프레임으로 사용할 `_raw` 삽화를 선택하세요.</div>
-                        <img id="video-generation-last-preview" src="" alt="마지막 프레임 미리보기" style="display:none; width:100%; max-height:280px; object-fit:contain; border-radius:8px; border:1px solid var(--border); background:#111;">
-                        <div id="video-generation-last-name" style="margin-top:8px; font-family:monospace; font-size:.7rem; color:var(--text2); word-break:break-all;"></div>
                     </section>
                 </div>
 
-                <label style="display:block; margin-bottom:12px;">
-                    <span style="display:block; font-size:.76rem; font-weight:700; margin-bottom:5px;">FAST 비율 프리셋</span>
-                    <select id="video-generation-preset" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:7px; background:var(--surface1); color:var(--text);">
-                        <option value="auto" selected>자동 · 원본과 가장 가까운 비율</option>
-                        <option value="1:1">1:1 · 512×512</option>
-                        <option value="4:3">4:3 · 512×384</option>
-                        <option value="3:4">3:4 · 384×512</option>
-                        <option value="16:9">16:9 근사 · 672×384</option>
-                        <option value="9:16">9:16 근사 · 384×672</option>
-                        <option value="21:9">21:9 · 672×288</option>
-                        <option value="9:21">9:21 · 288×672</option>
-                        <option value="3:2">3:2 · 576×384</option>
-                        <option value="2:3">2:3 · 384×576</option>
-                        <option value="5:4">5:4 · 480×384</option>
-                        <option value="4:5">4:5 · 384×480</option>
-                    </select>
-                </label>
+                <section id="video-frame-last" class="video-panel video-last-frame-panel">
+                    <div class="video-panel-title-row">
+                        <span class="video-panel-title">마지막 프레임</span>
+                        <label class="video-secondary-row video-panel-hint">
+                            <input type="checkbox" id="video-generation-loop" onchange="onVideoLoopChange()">
+                            시작 프레임으로 돌아오는 루프
+                        </label>
+                    </div>
+                    <div class="video-last-frame-grid">
+                        <label>
+                            <span class="video-field-label"><span>종료할 카드</span><small>`_raw` 원본 사용</small></span>
+                            <select id="video-generation-last" class="video-select" onchange="onVideoLastFrameChange()">
+                                <option value="">다른 `_raw` 백업을 선택하세요.</option>
+                            </select>
+                            <div id="video-generation-last-name" class="video-source-name"></div>
+                        </label>
+                        <div class="video-last-preview-wrap">
+                            <div id="video-generation-last-empty" class="video-source-empty">마지막 프레임을 선택하세요.</div>
+                            <img id="video-generation-last-preview" src="" alt="마지막 프레임 미리보기">
+                        </div>
+                    </div>
+                </section>
 
-                <div style="display:grid; grid-template-columns:minmax(0, 1fr) 120px; gap:10px; align-items:end; margin-bottom:12px; padding:10px; border:1px solid var(--border); border-radius:8px; background:var(--surface1);">
-                    <label style="display:flex; align-items:center; gap:8px; min-width:0; cursor:pointer;">
-                        <input id="video-generation-upscale-enabled" type="checkbox" checked onchange="updateVideoUpscaleControls()">
-                        <span>
-                            <span style="display:block; font-size:.76rem; font-weight:700;">Real-ESRGAN 영상 업스케일</span>
-                            <span style="display:block; margin-top:2px; color:var(--text2); font-size:.68rem; line-height:1.4;">독립 백그라운드 큐에서 실행</span>
-                        </span>
-                    </label>
-                    <label>
-                        <span style="display:block; font-size:.7rem; color:var(--text2); margin-bottom:5px;">배율</span>
-                        <select id="video-generation-upscale-scale" style="width:100%; padding:7px; border:1px solid var(--border); border-radius:7px; background:var(--surface2); color:var(--text);">
-                            <option value="2" selected>2× 권장</option>
-                            <option value="3">3×</option>
-                            <option value="4">4×</option>
-                        </select>
-                    </label>
+                <div class="video-options-layout">
+                    <section class="video-panel">
+                        <div class="video-option-section">
+                            <div class="video-field-label"><span>업스케일 방식</span><small>후처리 속도와 품질</small></div>
+                            <input id="video-generation-upscale-enabled" type="checkbox" checked hidden>
+                            <div class="option-card-grid" style="--option-card-columns:2;" role="radiogroup" aria-label="업스케일 방식">
+                                <label class="option-card">
+                                    <input type="radio" name="video-upscale-model" value="realesr-animevideov3" checked onchange="updateVideoUpscaleControls()">
+                                    <span class="option-card-surface"><span class="option-card-badge">품질</span><span class="option-card-title">Real-ESRGAN</span><span class="option-card-description">AnimeVideo-v3 · 가장 선명한 복원</span></span>
+                                </label>
+                                <label class="option-card">
+                                    <input type="radio" name="video-upscale-model" value="anime4k-fast-m" onchange="updateVideoUpscaleControls()">
+                                    <span class="option-card-surface"><span class="option-card-badge">고속</span><span class="option-card-title">Anime4K Fast/M</span><span class="option-card-description">GPU 셰이더 · 빠르고 안정적인 선화 확대</span></span>
+                                </label>
+                                <label class="option-card">
+                                    <input type="radio" name="video-upscale-model" value="lanczos" onchange="updateVideoUpscaleControls()">
+                                    <span class="option-card-surface"><span class="option-card-badge">단순 확대</span><span class="option-card-title">Lanczos</span><span class="option-card-description">AI 보정 없이 빠르게 리샘플링</span></span>
+                                </label>
+                                <label class="option-card">
+                                    <input type="radio" name="video-upscale-model" value="none" onchange="updateVideoUpscaleControls()">
+                                    <span class="option-card-surface"><span class="option-card-badge">원본</span><span class="option-card-title">업스케일 안 함</span><span class="option-card-description">H3 출력 크기를 그대로 유지</span></span>
+                                </label>
+                            </div>
+                        </div>
+                        <div class="video-option-section">
+                            <div class="video-field-label"><span>확대 배율</span><small>2× 권장</small></div>
+                            <input id="video-generation-upscale-scale" type="hidden" value="2">
+                            <div id="video-generation-upscale-scale-grid" class="option-card-grid compact video-scale-grid" style="--option-card-columns:3;" role="radiogroup" aria-label="업스케일 배율">
+                                <label class="option-card"><input type="radio" name="video-upscale-scale-choice" value="2" checked onchange="selectVideoUpscaleScale(this.value)"><span class="option-card-surface"><span class="option-card-title">2×</span></span></label>
+                                <label class="option-card"><input type="radio" name="video-upscale-scale-choice" value="3" onchange="selectVideoUpscaleScale(this.value)"><span class="option-card-surface"><span class="option-card-title">3×</span></span></label>
+                                <label class="option-card"><input type="radio" name="video-upscale-scale-choice" value="4" onchange="selectVideoUpscaleScale(this.value)"><span class="option-card-surface"><span class="option-card-title">4×</span></span></label>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section class="video-panel video-controls-stack">
+                        <div>
+                            <div class="video-field-label"><span>출력 형식</span><small>애니메이션 이미지</small></div>
+                            <div class="option-card-grid" style="--option-card-columns:2;" role="radiogroup" aria-label="출력 형식">
+                                <label class="option-card">
+                                    <input type="radio" name="video-output-format" value="avif" checked onchange="updateVideoGenerationSummary()">
+                                    <span class="option-card-surface"><span class="option-card-badge">기본</span><span class="option-card-title">AVIF</span><span class="option-card-description">고효율 · 고화질</span></span>
+                                </label>
+                                <label class="option-card">
+                                    <input type="radio" name="video-output-format" value="webp" onchange="updateVideoGenerationSummary()">
+                                    <span class="option-card-surface"><span class="option-card-badge">호환성</span><span class="option-card-title">WebP</span><span class="option-card-description">폭넓은 환경 지원</span></span>
+                                </label>
+                            </div>
+                        </div>
+                        <div class="video-option-section">
+                            <label class="video-secondary-row">
+                                <input id="video-generation-secondary-motion" type="checkbox" checked onchange="onVideoSecondaryMotionChange()">
+                                <span><span class="video-panel-title">세컨더리 애니메이션</span><span class="video-panel-hint" style="display:block; margin-top:3px;">호흡·머리카락 관성 같은 미세 보조 모션</span></span>
+                            </label>
+                        </div>
+                    </section>
                 </div>
 
-                <label style="display:block; margin-bottom:8px;">
-                    <span style="display:block; font-size:.76rem; font-weight:700; margin-bottom:5px;">영상에서 일어날 일</span>
-                    <textarea id="video-generation-instruction" rows="6" maxlength="12000" placeholder="예: 인물이 천천히 고개를 들어 카메라를 바라보고, 머리카락과 옷자락이 약한 바람에 자연스럽게 흔들린다. 카메라는 아주 조금 천천히 밀고 들어간다." style="width:100%; box-sizing:border-box; resize:vertical; padding:9px; border:1px solid var(--border); border-radius:7px; background:var(--surface1); color:var(--text); line-height:1.5;"></textarea>
-                </label>
-                <div style="font-size:.7rem; color:var(--text2); line-height:1.5;">H3 렌더 후 Real-ESRGAN 업스케일과 변환은 독립 백그라운드 큐에서 이어집니다. 완료본은 animated AVIF 우선, 미지원 시 animated WebP로 저장하며 합성본과 대사 없는 _raw 원본을 함께 보관합니다.</div>
+                <section class="video-panel">
+                    <label for="video-generation-instruction" class="video-field-label"><span>영상에서 일어날 일</span><small>자연어로 자유롭게 작성</small></label>
+                    <textarea id="video-generation-instruction" class="video-instruction" rows="5" maxlength="12000" placeholder="예: 인물이 천천히 고개를 들어 카메라를 바라보고, 머리카락과 옷자락이 약한 바람에 자연스럽게 흔들린다. 카메라는 아주 조금 천천히 밀고 들어간다."></textarea>
+                    <div class="video-summary-bar">
+                        <span id="video-generation-summary-detail" aria-live="polite">5초 · 자동 비율 · 품질 2× · AVIF</span>
+                        <span>렌더와 후처리는 독립 큐에서 이어지며 합성본과 `_raw`를 함께 보관합니다.</span>
+                    </div>
+                </section>
             </div>
             <div class="modal-footer">
                 <button type="button" id="video-generation-submit" class="confirm" onclick="submitVideoGeneration()" style="background:#9b59b6; color:#fff; border-color:#b876d2;">🎬 큐에 등록</button>
@@ -24183,7 +24568,7 @@
                                 🧩 LLM 흐름
                             </button>
                             <button class="video-backup-btn" onclick="event.stopPropagation(); openVideoWorkspace('${escapeAttr(b.name)}')"
-                                    ${b.has_raw ? 'title="_raw 원본으로 MiniMax H3 5초 영상화를 시작합니다"' : 'disabled title="영상화에 필요한 _raw 원본이 없는 백업입니다"'}>
+                                    ${b.has_raw ? 'title="_raw 원본으로 MiniMax H3 영상화를 시작합니다"' : 'disabled title="영상화에 필요한 _raw 원본이 없는 백업입니다"'}>
                                 🎬 영상화
                             </button>
                             <button class="delete-backup-btn" onclick="deleteBackup('${escapeAttr(b.name)}', this)" title="이미지와 메타데이터를 삭제합니다">
@@ -24554,14 +24939,42 @@
         // ─── MiniMax H3 영상화 ───
         let videoReferenceOptions = [];
 
+        const VIDEO_UPSCALE_LABELS = {
+            'realesr-animevideov3': '품질',
+            'anime4k-fast-m': '고속',
+            'lanczos': '단순 확대',
+            'none': '원본 크기',
+        };
+
+        function getSelectedVideoOption(name, fallback = '') {
+            return document.querySelector(`input[name="${name}"]:checked`)?.value || fallback;
+        }
+
+        function selectVideoUpscaleScale(value) {
+            const normalized = ['2', '3', '4'].includes(String(value)) ? String(value) : '2';
+            const hidden = document.getElementById('video-generation-upscale-scale');
+            if (!hidden) {
+                console.error('[VIDEO_UI] 업스케일 배율 값을 저장할 요소가 없습니다.');
+                return;
+            }
+            hidden.value = normalized;
+            const radio = document.querySelector(`input[name="video-upscale-scale-choice"][value="${normalized}"]`);
+            if (radio) radio.checked = true;
+            updateVideoGenerationSummary();
+        }
+
         function updateVideoUpscaleControls() {
             const enabled = document.getElementById('video-generation-upscale-enabled');
-            const scale = document.getElementById('video-generation-upscale-scale');
-            if (!enabled || !scale) {
+            const scaleGrid = document.getElementById('video-generation-upscale-scale-grid');
+            const method = getSelectedVideoOption('video-upscale-model', 'realesr-animevideov3');
+            if (!enabled || !scaleGrid) {
                 console.error('[VIDEO_UI] 업스케일 컨트롤을 찾지 못했습니다.');
                 return;
             }
-            scale.disabled = !enabled.checked;
+            enabled.checked = method !== 'none';
+            scaleGrid.classList.toggle('disabled', !enabled.checked);
+            scaleGrid.setAttribute('aria-disabled', enabled.checked ? 'false' : 'true');
+            updateVideoGenerationSummary();
         }
 
         function applyVideoPostprocessConfig(config) {
@@ -24569,31 +24982,76 @@
                 ? config.video_postprocess
                 : {};
             const enabled = document.getElementById('video-generation-upscale-enabled');
-            const scale = document.getElementById('video-generation-upscale-scale');
-            if (!enabled || !scale) {
+            if (!enabled) {
                 console.error('[VIDEO_UI] 영상 후처리 기본값을 적용할 컨트롤이 없습니다.');
                 return;
             }
             enabled.checked = settings.enabled !== false;
+            const allowedModels = ['realesr-animevideov3', 'anime4k-fast-m', 'lanczos'];
+            const model = enabled.checked && allowedModels.includes(settings.model)
+                ? settings.model
+                : (enabled.checked ? 'realesr-animevideov3' : 'none');
+            const modelRadio = document.querySelector(`input[name="video-upscale-model"][value="${model}"]`);
+            if (modelRadio) modelRadio.checked = true;
             const normalizedScale = [2, 3, 4].includes(Number(settings.scale))
                 ? String(Number(settings.scale))
                 : '2';
-            scale.value = normalizedScale;
+            selectVideoUpscaleScale(normalizedScale);
             updateVideoUpscaleControls();
+        }
+
+        function normalizedVideoDuration() {
+            const input = document.getElementById('video-generation-duration');
+            const parsed = Number.parseInt(input?.value || '5', 10);
+            return Math.max(1, Math.min(15, Number.isFinite(parsed) ? parsed : 5));
+        }
+
+        function updateVideoDuration() {
+            const input = document.getElementById('video-generation-duration');
+            const duration = normalizedVideoDuration();
+            if (input) input.value = String(duration);
+            const header = document.getElementById('video-generation-header-summary');
+            if (header) header.textContent = `MiniMax H3 · ${duration}초`;
+            updateVideoWorkspaceMode();
+            updateVideoGenerationSummary();
+        }
+
+        function adjustVideoDuration(delta) {
+            const input = document.getElementById('video-generation-duration');
+            if (!input) {
+                console.error('[VIDEO_UI] 영상 길이 입력 요소를 찾지 못했습니다.');
+                return;
+            }
+            input.value = String(normalizedVideoDuration() + Number(delta || 0));
+            updateVideoDuration();
+        }
+
+        function updateVideoGenerationSummary() {
+            const target = document.getElementById('video-generation-summary-detail');
+            if (!target) return;
+            const duration = normalizedVideoDuration();
+            const presetSelect = document.getElementById('video-generation-preset');
+            const presetLabel = presetSelect?.selectedOptions?.[0]?.textContent?.split(' · ')[0] || '자동 비율';
+            const method = getSelectedVideoOption('video-upscale-model', 'realesr-animevideov3');
+            const scale = document.getElementById('video-generation-upscale-scale')?.value || '2';
+            const upscaleLabel = method === 'none'
+                ? VIDEO_UPSCALE_LABELS.none
+                : `${VIDEO_UPSCALE_LABELS[method] || method} ${scale}×`;
+            const output = getSelectedVideoOption('video-output-format', 'avif').toUpperCase();
+            target.textContent = `${duration}초 · ${presetLabel} · ${upscaleLabel} · ${output}`;
         }
 
         function updateVideoWorkspaceMode() {
             const mode = document.getElementById('video-generation-mode')?.value || 'i2v';
             const isLast = mode === 'first_last';
             const lastFrame = document.getElementById('video-frame-last');
-            const framesGrid = document.getElementById('video-frames-grid');
             const modeNote = document.getElementById('video-generation-mode-note');
-            if (lastFrame) lastFrame.style.display = isLast ? '' : 'none';
-            if (framesGrid) framesGrid.style.gridTemplateColumns = isLast ? 'repeat(2, minmax(0, 1fr))' : '1fr';
+            const duration = normalizedVideoDuration();
+            if (lastFrame) lastFrame.style.display = isLast ? 'block' : 'none';
             if (modeNote) {
                 modeNote.textContent = isLast
-                    ? '현재 백업 _raw를 0초, 선택한 마지막 백업 _raw를 5초에 정렬해 한 장면으로 이어갑니다.'
-                    : '현재 백업의 _raw를 H3 첫 프레임으로 사용합니다.';
+                    ? `현재 카드의 _raw를 0초, 선택한 마지막 프레임을 ${duration}초에 정렬합니다.`
+                    : `현재 카드의 _raw를 시작 프레임으로 사용해 ${duration}초 영상을 만듭니다.`;
             }
             const loopCheckbox = document.getElementById('video-generation-loop');
             if (loopCheckbox) {
@@ -24612,14 +25070,10 @@
             }
             const input = document.getElementById('video-generation-mode');
             if (input) input.value = mode;
-            document.querySelectorAll('[data-video-mode-tab]').forEach(button => {
-                const active = button.dataset.videoModeTab === mode;
-                button.setAttribute('aria-selected', active ? 'true' : 'false');
-                button.style.background = active ? '#9b59b6' : 'var(--surface1)';
-                button.style.color = active ? '#fff' : 'var(--text2)';
-                button.style.borderColor = active ? '#b876d2' : 'var(--border)';
-            });
+            const radio = document.querySelector(`input[name="video-mode-choice"][value="${mode}"]`);
+            if (radio) radio.checked = true;
             updateVideoWorkspaceMode();
+            updateVideoGenerationSummary();
         }
 
         function refreshVideoLastFrameOptions(sourceName) {
@@ -24762,35 +25216,71 @@
         }
 
         async function loadVideoReferenceOptions(preferredSource = '') {
-            const select = document.getElementById('video-generation-source');
-            if (!select) {
-                console.error('[VIDEO_UI] 기준 삽화 선택기를 찾지 못했습니다.');
+            const sourceInput = document.getElementById('video-generation-source');
+            if (!sourceInput) {
+                console.error('[VIDEO_UI] 현재 카드 원본 값을 저장할 요소가 없습니다.');
                 return;
             }
-            const previous = select.value;
-            select.innerHTML = '<option value="">_raw 보유 백업을 불러오는 중...</option>';
+            const previous = sourceInput.value;
+            sourceInput.value = preferredSource || previous;
+            onVideoSourceChange();
             try {
                 const data = await fetchJSON('/api/video/reference-options');
                 if (!data.success) throw new Error(data.error || '참조 백업 목록 조회 실패');
                 videoReferenceOptions = Array.isArray(data.options) ? data.options : [];
                 if (!videoReferenceOptions.length) {
                     console.error('[VIDEO_UI] 영상화 가능한 _raw 백업이 없습니다.');
-                    select.innerHTML = '<option value="">영상화 가능한 _raw 백업 없음</option>';
+                    sourceInput.value = '';
                     onVideoSourceChange();
                     return;
                 }
-                select.innerHTML = videoReferenceOptions
-                    .map(item => `<option value="${escapeAttr(item.name)}">${escapeHtml(formatDate(item.mtime))} · ${escapeHtml(item.name)}</option>`)
-                    .join('');
                 const requested = preferredSource || previous;
-                if (videoReferenceOptions.some(item => item.name === requested)) select.value = requested;
+                if (!videoReferenceOptions.some(item => item.name === requested)) {
+                    console.error('[VIDEO_UI] 현재 카드가 영상화 참조 목록에 없습니다:', requested);
+                    sourceInput.value = '';
+                } else {
+                    sourceInput.value = requested;
+                }
                 onVideoSourceChange();
             } catch (error) {
                 console.error('[VIDEO_UI] 영상화 참조 백업 목록 로드 실패:', error);
                 videoReferenceOptions = [];
-                select.innerHTML = '<option value="">백업 목록 로드 실패</option>';
+                sourceInput.value = '';
                 onVideoSourceChange();
                 showToast('영상화 참조 백업 목록을 불러오지 못했습니다.', 'error');
+            }
+        }
+
+        function applyVideoSecondaryMotionConfig(cfg) {
+            const el = document.getElementById('video-generation-secondary-motion');
+            if (!el) return;
+            // 기본 True: config 에 명시적 false 가 없으면 켜짐 유지
+            el.checked = cfg?.video_secondary_motion !== false;
+        }
+
+        async function onVideoSecondaryMotionChange() {
+            const el = document.getElementById('video-generation-secondary-motion');
+            if (!el) {
+                console.error('[VIDEO_UI] 세컨더리 애니메이션 체크박스를 찾지 못했습니다.');
+                return;
+            }
+            const checked = el.checked;
+            try {
+                const resp = await fetch('/api/config', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({video_secondary_motion: checked})
+                });
+                if (!resp.ok) {
+                    el.checked = !checked;
+                    showToast('세컨더리 애니메이션 설정 저장 실패: HTTP ' + resp.status, 'error');
+                    return;
+                }
+                showToast(checked ? '세컨더리 애니메이션 포함' : '세컨더리 애니메이션 미포함 (주동작만)', 'info');
+            } catch (error) {
+                console.error('[VIDEO_UI] 세컨더리 애니메이션 토글 저장 실패:', error);
+                el.checked = !checked;
+                showToast('세컨더리 애니메이션 설정 저장 실패: ' + (error?.message || error), 'error');
             }
         }
 
@@ -24807,8 +25297,11 @@
                 return;
             }
             selectVideoMode('i2v');
+            updateVideoDuration();
             try {
-                applyVideoPostprocessConfig(await loadCurrentConfig());
+                const cfg = await loadCurrentConfig();
+                applyVideoPostprocessConfig(cfg);
+                applyVideoSecondaryMotionConfig(cfg);
             } catch (error) {
                 console.error('[VIDEO_UI] 영상 후처리 기본 설정 동기화 실패:', error);
                 updateVideoUpscaleControls();
@@ -24833,8 +25326,11 @@
             const mode = document.getElementById('video-generation-mode')?.value || 'i2v';
             const lastBackup = getEffectiveLastBackup();
             const preset = document.getElementById('video-generation-preset')?.value || 'auto';
+            const duration = normalizedVideoDuration();
             const upscaleEnabled = document.getElementById('video-generation-upscale-enabled')?.checked !== false;
             const upscaleScale = parseInt(document.getElementById('video-generation-upscale-scale')?.value || '2', 10);
+            const upscaleModel = getSelectedVideoOption('video-upscale-model', 'realesr-animevideov3');
+            const outputFormat = getSelectedVideoOption('video-output-format', 'avif');
             const instruction = document.getElementById('video-generation-instruction')?.value.trim() || '';
             const button = document.getElementById('video-generation-submit');
             if (!sourceName) {
@@ -24866,8 +25362,11 @@
                         last_backup: lastBackup,
                         loop: isVideoLoopEnabled(),
                         preset,
+                        duration,
                         upscale_enabled: upscaleEnabled,
                         upscale_scale: upscaleScale,
+                        upscale_model: upscaleEnabled ? upscaleModel : '',
+                        output_format: outputFormat,
                         instruction,
                     }),
                 });

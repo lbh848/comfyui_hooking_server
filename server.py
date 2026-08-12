@@ -90,9 +90,17 @@ from modes import llm_prompt_edit
 from modes import autocomplete_service
 from modes import asset_tool_mode
 from modes.qwen_edit_mode import QwenEditMode
-from modes.video_mode import FAST_PRESETS, VIDEO_MODES, VideoMode
+from modes.video_mode import (
+    FAST_PRESETS,
+    VIDEO_DEFAULT_DURATION_SECONDS,
+    VIDEO_MODES,
+    VideoMode,
+    normalize_video_duration,
+)
 from modes.video_postprocess import (
     DEFAULT_VIDEO_POSTPROCESS_CONFIG,
+    VIDEO_OUTPUT_FORMATS,
+    VIDEO_UPSCALE_MODELS,
     normalize_video_postprocess_config,
 )
 from modes import qwen_composite_items
@@ -244,6 +252,7 @@ DEFAULT_CONFIG = {
     "backup_webp_quality": 80,  # 백업 이미지 저장 WebP 품질 (1-100)
     "backup_webp_lossless": False,  # 백업 저장 무손실 WebP
     "video_postprocess": copy.deepcopy(DEFAULT_VIDEO_POSTPROCESS_CONFIG),
+    "video_secondary_motion": True,  # H3 영상 프롬프트에 secondary character motion 블록 포함 (False=주동작만, 완전 정지 지향)
     "backup_base_dir": "",  # 빈 값이면 WORKFLOW_BACKUP_DIR 사용
     "comfy_input_dir": "",  # ComfyUI input 폴더 경로 (빈값=기본경로)
     "workflow_filename": "",  # 빈 값이면 workflow 폴더의 첫 번째 json 사용
@@ -9349,6 +9358,17 @@ async def handle_api_video_enqueue(request: web.Request) -> web.Response:
         loop_enabled = bool(body.get("loop", False))
         instruction = str(body.get("instruction") or "").strip()
         preset = str(body.get("preset") or "auto").strip().lower()
+        try:
+            duration = normalize_video_duration(
+                body.get("duration", VIDEO_DEFAULT_DURATION_SECONDS)
+            )
+        except ValueError as exc:
+            print(
+                "[VIDEO:API] 영상 길이 오류: "
+                f"value={body.get('duration')!r}, error={exc}"
+            )
+            traceback.print_exc()
+            return web.json_response({"success": False, "error": str(exc)}, status=400)
         postprocess_defaults = normalize_video_postprocess_config(
             load_config().get("video_postprocess")
         )
@@ -9381,6 +9401,30 @@ async def handle_api_video_enqueue(request: web.Request) -> web.Response:
             traceback.print_exc()
             return web.json_response(
                 {"success": False, "error": "업스케일 배율은 2, 3, 4 중 하나여야 합니다"},
+                status=400,
+            )
+        upscale_model = str(
+            body.get("upscale_model") or postprocess_defaults["model"]
+        ).strip().lower()
+        if upscale_enabled and upscale_model not in VIDEO_UPSCALE_MODELS:
+            print(
+                "[VIDEO:API] 업스케일 모델 오류: "
+                f"value={upscale_model!r}, allowed={sorted(VIDEO_UPSCALE_MODELS)!r}"
+            )
+            return web.json_response(
+                {"success": False, "error": "지원하지 않는 영상 업스케일 방식입니다"},
+                status=400,
+            )
+        if not upscale_enabled:
+            upscale_model = ""
+        output_format = str(body.get("output_format") or "avif").strip().lower()
+        if output_format not in VIDEO_OUTPUT_FORMATS:
+            print(
+                "[VIDEO:API] 출력 형식 오류: "
+                f"value={output_format!r}, allowed={sorted(VIDEO_OUTPUT_FORMATS)!r}"
+            )
+            return web.json_response(
+                {"success": False, "error": "영상 출력 형식은 AVIF 또는 WebP여야 합니다"},
                 status=400,
             )
         if mode not in VIDEO_MODES:
@@ -9452,8 +9496,11 @@ async def handle_api_video_enqueue(request: web.Request) -> web.Response:
             "loop": loop_enabled,
             "instruction": instruction,
             "preset": preset,
+            "duration": duration,
             "upscale_enabled": upscale_enabled,
             "upscale_scale": upscale_scale,
+            "upscale_model": upscale_model,
+            "output_format": output_format,
         }
         label = {
             "i2v": "H3 I2V 프롬프트",
@@ -9463,7 +9510,8 @@ async def handle_api_video_enqueue(request: web.Request) -> web.Response:
         print(
             f"[VIDEO:API] 영상화 큐 등록: item={item.id}, mode={mode}, "
             f"source={source_name}, last={last_name or '(none)'}, preset={preset}, "
-            f"upscale={upscale_enabled}x{upscale_scale}"
+            f"duration={duration:g}s, upscale={upscale_model or 'none'}x{upscale_scale}, "
+            f"format={output_format}"
         )
         return web.json_response(
             {"success": True, "item_id": item.id, "label": item.label, "mode": mode}

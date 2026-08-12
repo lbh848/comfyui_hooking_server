@@ -7,16 +7,19 @@ import pytest
 from PIL import Image
 
 import modes.video_mode as video_module
+import modes.video_postprocess as postprocess_module
 from modes.video_mode import (
     FAST_PRESETS,
     FIRST_LAST_ALIGNMENT,
     I2V_ALIGNMENT,
     VideoMode,
+    alignment_for_mode,
     build_i2v_workflow_block,
     center_crop_to_ratio,
     choose_fast_preset,
     compose_h3_prompt,
     normalize_h3_prompt_body,
+    normalize_video_duration,
     normalize_visual_context,
     validate_h3_prompt,
     validate_h3_prompt_body,
@@ -25,6 +28,18 @@ from modes.video_mode import (
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_video_postprocess_accepts_all_three_upscale_models() -> None:
+    for model in ("realesr-animevideov3", "anime4k-fast-m", "lanczos"):
+        normalized = postprocess_module.normalize_video_postprocess_config(
+            {"enabled": True, "scale": 2, "model": model}
+        )
+        assert normalized["model"] == model
+    with pytest.raises(ValueError, match="지원하지 않는"):
+        postprocess_module.normalize_video_postprocess_config(
+            {"enabled": True, "scale": 2, "model": "unknown"}
+        )
 
 
 def _valid_body(prefix: str = "") -> str:
@@ -90,6 +105,34 @@ def test_program_adds_exact_i2v_alignment_without_asking_the_llm_for_it() -> Non
     assert validate_h3_prompt_body(normalized) == (True, "")
     assert final_prompt == f"{I2V_ALIGNMENT}\n\n{body}"
     assert validate_h3_prompt(final_prompt, "i2v") == (True, "")
+
+
+def test_duration_supports_every_whole_second_from_one_through_fifteen() -> None:
+    for duration in range(1, 16):
+        assert normalize_video_duration(duration) == float(duration)
+    for invalid in (0, 16, 1.5, True, "not-a-number"):
+        with pytest.raises(ValueError, match="1초부터 15초"):
+            normalize_video_duration(invalid)
+
+
+def test_dynamic_duration_updates_flf_alignment_and_h3_prompt_context() -> None:
+    duration = 12
+    alignment = alignment_for_mode("first_last", duration)
+    prompt = compose_h3_prompt(_valid_body(), "first_last", duration)
+    messages = VideoMode._prompt_messages(
+        "first_last",
+        "move gently",
+        "",
+        "visual_context:\nPicture 1: start. Picture 2: end.",
+        duration=duration,
+    )
+    combined = "\n".join(str(message["content"]) for message in messages)
+
+    assert "12.00-second mark" in alignment
+    assert prompt.startswith(alignment)
+    assert validate_h3_prompt(prompt, "first_last", duration) == (True, "")
+    assert "final 12-second H3 prompt" in combined
+    assert "by 12.00 seconds" in combined
 
 
 def test_i2v_prompt_messages_exclude_stored_generation_metadata() -> None:
@@ -570,11 +613,9 @@ async def test_render_spools_video_postprocess_before_cleaning_comfy_mp4(
         assert task_key == "video_generation"
         transport = workflow["122"]["inputs"]["value"]
         assert transport.startswith("[PATH]\nsoya_video\n[PROMPT]\n")
-        expected_alignment = (
-            FIRST_LAST_ALIGNMENT if render_mode == "first_last" else I2V_ALIGNMENT
-        )
+        expected_alignment = alignment_for_mode(render_mode, 12)
         assert _valid_body(expected_alignment) in transport
-        assert "\n[W]\n512\n[H]\n512\n[DURATION]\n5.0\n[SEED]\n" in transport
+        assert "\n[W]\n512\n[H]\n512\n[DURATION]\n12.0\n[SEED]\n" in transport
         seed_text = transport.split("\n[SEED]\n", 1)[1].split("\n[END]", 1)[0]
         assert seed_text.isdigit()
         submitted["seed"] = int(seed_text)
@@ -638,9 +679,8 @@ async def test_render_spools_video_postprocess_before_cleaning_comfy_mp4(
         "source_backup": "source",
         "instruction": "move gently",
         "preset": "1:1",
-        "h3_prompt": _valid_body(
-            FIRST_LAST_ALIGNMENT if render_mode == "first_last" else I2V_ALIGNMENT
-        ),
+        "duration": 12,
+        "h3_prompt": _valid_body(alignment_for_mode(render_mode, 12)),
         "llm_trace": ["trace-1"],
     }
     if render_mode == "first_last":
@@ -658,7 +698,7 @@ async def test_render_spools_video_postprocess_before_cleaning_comfy_mp4(
     manifest = json.loads((job_dir / "job.json").read_text(encoding="utf-8"))
     assert manifest["source_backup"] == "source"
     assert manifest["llm_trace"] == ["trace-1"]
-    assert manifest["duration"] == 5.0
+    assert manifest["duration"] == 12.0
     assert manifest["video_seed"] == submitted["seed"]
     assert manifest["upscale_enabled"] is True
     assert manifest["upscale_scale"] == 2
@@ -764,3 +804,80 @@ async def test_video_postprocess_commits_verified_pair_and_metadata(
     assert info["bot_name"] == "test-bot"
     assert not job_dir.exists()
     assert events[-1] == ("backup_created", {"name": base_name})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("model", "expected_runner"),
+    [
+        ("realesr-animevideov3", "realesrgan"),
+        ("anime4k-fast-m", "anime4k"),
+        ("lanczos", "lanczos"),
+        ("", "none"),
+    ],
+)
+async def test_staged_postprocess_routes_upscaler_and_honors_webp_choice(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    model: str,
+    expected_runner: str,
+) -> None:
+    job_dir = tmp_path / "job"
+    job_dir.mkdir()
+    (job_dir / "input.mp4").write_bytes(b"mp4")
+    manifest = {
+        "duration": 1,
+        "fps": 2,
+        "quality": 80,
+        "output_height": 16,
+        "upscale_enabled": bool(model),
+        "upscale_scale": 2,
+        "upscale_model": model,
+        "output_format": "webp",
+    }
+    (job_dir / "job.json").write_text(json.dumps(manifest), encoding="utf-8")
+    runners: list[str] = []
+
+    async def fake_ensure_ffmpeg() -> Path:
+        return tmp_path / "ffmpeg.exe"
+
+    async def fake_command(command, *, label, cwd=None):
+        assert label == "DECODE"
+        output_dir = Path(command[-1]).parent
+        for index in range(2):
+            Image.new("RGB", (8, 8), "blue").save(
+                output_dir / f"frame_{index:08d}.png"
+            )
+        return ""
+
+    async def fake_runner(input_dir, output_dir, **kwargs):
+        runners.append(expected_runner)
+        output_dir.mkdir()
+        for source in sorted(input_dir.glob("*.png")):
+            Image.open(source).resize((16, 16)).save(output_dir / source.name)
+
+    async def fake_encode_pair(frames_dir, directory, **kwargs):
+        assert kwargs["output_format"] == "webp"
+        assert len(list(frames_dir.glob("*.png"))) == 2
+        main = directory / "result_main.webp"
+        raw = directory / "result_raw.webp"
+        main.write_bytes(b"main")
+        raw.write_bytes(b"raw")
+        return main, raw, ".webp"
+
+    monkeypatch.setattr(postprocess_module, "ensure_ffmpeg", fake_ensure_ffmpeg)
+    monkeypatch.setattr(postprocess_module, "_run_command", fake_command)
+    monkeypatch.setattr(postprocess_module, "_encode_pair", fake_encode_pair)
+    monkeypatch.setattr(postprocess_module, "_run_realesrgan", fake_runner)
+    monkeypatch.setattr(postprocess_module, "_run_anime4k", fake_runner)
+    monkeypatch.setattr(postprocess_module, "_run_lanczos", fake_runner)
+
+    result = await postprocess_module.process_staged_video(
+        job_dir,
+        settings={"enabled": True, "scale": 2, "model": "realesr-animevideov3"},
+    )
+
+    assert runners == ([] if expected_runner == "none" else [expected_runner])
+    assert result["extension"] == ".webp"
+    assert result["output_format_requested"] == "webp"
+    assert result["upscale_model"] == model

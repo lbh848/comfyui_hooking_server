@@ -44,7 +44,10 @@ from modes.video_postprocess import (
 )
 
 
-VIDEO_DURATION_SECONDS = 5.0
+VIDEO_DEFAULT_DURATION_SECONDS = 5.0
+VIDEO_DURATION_SECONDS = VIDEO_DEFAULT_DURATION_SECONDS  # 하위 호환용 기본값
+VIDEO_MIN_DURATION_SECONDS = 1
+VIDEO_MAX_DURATION_SECONDS = 15
 VIDEO_FPS = 24
 VIDEO_MODES = frozenset({"i2v", "first_last"})
 I2V_WORKFLOW_INPUT_PATH = "soya_video"
@@ -74,6 +77,41 @@ FIRST_LAST_ALIGNMENT = (
     "Picture 1 (from Shot 1) aligns with the 0.00-second mark of the target video; "
     "Picture 2 (from Shot 1) aligns with the 5.00-second mark of the target video."
 )
+
+
+def normalize_video_duration(value: object) -> float:
+    """요청 duration을 H3가 지원하는 1~15초 정수로 검증한다."""
+
+    try:
+        if isinstance(value, bool):
+            raise TypeError("bool은 duration으로 허용되지 않음")
+        duration = float(value)
+        if not math.isfinite(duration) or not duration.is_integer():
+            raise ValueError("1초 단위 정수여야 함")
+        if not VIDEO_MIN_DURATION_SECONDS <= duration <= VIDEO_MAX_DURATION_SECONDS:
+            raise ValueError("허용 범위 1~15초를 벗어남")
+    except (TypeError, ValueError, OverflowError) as exc:
+        print(f"[VIDEO:DURATION] 영상 길이 검증 실패: value={value!r}, error={exc}")
+        traceback.print_exc()
+        raise ValueError("영상 길이는 1초부터 15초까지 1초 단위로 설정해야 합니다") from exc
+    return duration
+
+
+def alignment_for_mode(
+    mode: str,
+    duration: object = VIDEO_DEFAULT_DURATION_SECONDS,
+) -> str:
+    normalized = normalize_video_duration(duration)
+    if mode == "i2v":
+        return I2V_ALIGNMENT
+    if mode == "first_last":
+        return (
+            "How the reference pictures align with the target video — "
+            "Picture 1 (from Shot 1) aligns with the 0.00-second mark of the target video; "
+            f"Picture 2 (from Shot 1) aligns with the {normalized:.2f}-second mark of the target video."
+        )
+    print(f"[VIDEO:LLM] H3 정렬 문장 모드 오류: mode={mode!r}")
+    raise ValueError(f"지원하지 않는 H3 영상 모드입니다: {mode}")
 
 H3_SYSTEM_PROMPT = """You write the three core body fields of a production prompt for MiniMax H3 video generation.
 Return only the body in English, except that user-provided dialogue and visible text must remain in their original language. Do not write an image-alignment instruction; the program adds the exact mode-specific instruction after validating your body.
@@ -111,6 +149,53 @@ Assign stable speaker IDs such as (S1) and (S2) only to subjects who actually sp
 Include relevant synchronized physical or diegetic sound in the integrated description. Write overall_soundscape as one paragraph of 1-4 sentences summarizing ambience and physical sounds; use N/A only when the user explicitly requests complete silence. Use non_diegetic_music only for score or background music that the audience alone can hear. Do not invent a score merely to fill the field; write N/A when no non-diegetic music is requested or otherwise present.
 
 Do not return JSON, Markdown fences, explanations, alternatives, image-alignment instructions, or headings other than the three required H3 body fields."""
+
+
+# Secondary character motion 4문단. 앞의 "\n\n"은 H3_SYSTEM_PROMPT 내에서
+# "do not invent a larger action or reaction." 과 본문 사이의 빈 줄까지 포함한다.
+# _build_h3_system_prompt(False) 가 이 세그먼트만 정확히 잘라내도록 맞춘 경계.
+_H3_SECONDARY_MOTION_SEGMENT = (
+    "\n\n"
+    "Unless the user explicitly requests complete stillness, automatically add "
+    "restrained, low-amplitude secondary character motion appropriate to the visible "
+    "scene and the requested action. Treat this as non-narrative continuity motion "
+    "rather than a new action.\n\n"
+    "This may include subtle breathing, tiny natural head or upper-body compensation, "
+    "slight inertial movement of loose hair or clothing caused by the primary motion, "
+    "and minimal eye or facial micro-movement when compatible with the requested "
+    "expression. These motions should create the feel of a polished 2D character idle "
+    "animation without changing the meaning of the pose or introducing a new gesture, "
+    "reaction, emotion, interaction, or event.\n\n"
+    "Keep secondary motion noticeably weaker than the user's requested primary action. "
+    "Do not independently move held or contacted objects, change the character's pose, "
+    "add extra gestures, or animate the environment unless requested or physically "
+    "necessary. Keep the camera static unless camera motion is requested.\n\n"
+    "In first-and-last-frame mode, all secondary motion must smoothly settle into the "
+    "exact visible state of Picture 2 by 5.00 seconds. The final-frame alignment always "
+    "takes priority over continuing idle motion."
+)
+
+
+def _build_h3_system_prompt(
+    secondary_motion: bool,
+    duration: object = VIDEO_DEFAULT_DURATION_SECONDS,
+) -> str:
+    """H3 시스템 프롬프트를 조립한다.
+
+    video_secondary_motion 토글이 False면 secondary character motion 4문단을
+    제거해 "animate only what the current direction requests" 원칙만 남긴다
+    (완전 정지 지향). True면 H3_SYSTEM_PROMPT 원본을 그대로 반환한다.
+    """
+    normalized = normalize_video_duration(duration)
+    prompt = (
+        H3_SYSTEM_PROMPT
+        if secondary_motion
+        else H3_SYSTEM_PROMPT.replace(_H3_SECONDARY_MOTION_SEGMENT, "")
+    )
+    return prompt.replace(
+        "one coherent five-second video",
+        f"one coherent {normalized:g}-second video",
+    ).replace("by 5.00 seconds", f"by {normalized:.2f} seconds")
 
 
 VISUAL_CONTEXT_SYSTEM_PROMPT = """You inspect reference images and write a compact factual Visual Context for a later MiniMax H3 video-prompt writer.
@@ -324,7 +409,11 @@ def validate_h3_prompt_body(result: object) -> tuple[bool, str]:
     return True, ""
 
 
-def compose_h3_prompt(result: object, mode: str) -> str:
+def compose_h3_prompt(
+    result: object,
+    mode: str,
+    duration: object = VIDEO_DEFAULT_DURATION_SECONDS,
+) -> str:
     """Build the final prompt with an exact program-owned alignment instruction."""
 
     if mode not in VIDEO_MODES:
@@ -338,27 +427,28 @@ def compose_h3_prompt(result: object, mode: str) -> str:
             f"body={body[:1000]!r}"
         )
         raise ValueError(reason)
-    if mode == "i2v":
-        return f"{I2V_ALIGNMENT}\n\n{body}"
-    if mode == "first_last":
-        return f"{FIRST_LAST_ALIGNMENT}\n\n{body}"
-    return body
+    alignment = alignment_for_mode(mode, duration)
+    return f"{alignment}\n\n{body}"
 
 
-def validate_h3_prompt(result: object, mode: str) -> tuple[bool, str]:
+def validate_h3_prompt(
+    result: object,
+    mode: str,
+    duration: object = VIDEO_DEFAULT_DURATION_SECONDS,
+) -> tuple[bool, str]:
     text = str(result or "").strip()
     if not text or text.startswith("[LLM 실패]"):
         return False, "H3 프롬프트 응답이 비어 있거나 LLM 실패 문자열입니다"
-    if mode == "i2v":
-        if not text.startswith(I2V_ALIGNMENT):
-            return False, "I2V 첫 프레임 정렬 문장이 정확하지 않습니다"
-        body = text[len(I2V_ALIGNMENT) :].strip()
-    elif mode == "first_last":
-        if not text.startswith(FIRST_LAST_ALIGNMENT):
-            return False, "FLF2V 정렬 문장이 정확하지 않습니다"
-        body = text[len(FIRST_LAST_ALIGNMENT) :].strip()
-    else:
+    if mode not in VIDEO_MODES:
         return False, f"지원하지 않는 H3 영상 모드입니다: {mode}"
+    try:
+        alignment = alignment_for_mode(mode, duration)
+    except ValueError as exc:
+        return False, str(exc)
+    if not text.startswith(alignment):
+        label = "I2V 첫 프레임" if mode == "i2v" else "FLF2V"
+        return False, f"{label} 정렬 문장이 정확하지 않습니다"
+    body = text[len(alignment) :].strip()
     return validate_h3_prompt_body(body)
 
 
@@ -518,16 +608,20 @@ class VideoMode:
     def _prompt_messages(
         mode: str,
         instruction: str,
+        _stored_context: str = "",
         visual_context: str = "",
+        secondary_motion: bool = True,
+        duration: object = VIDEO_DEFAULT_DURATION_SECONDS,
     ) -> list[dict]:
+        normalized_duration = normalize_video_duration(duration)
         mode_description = {
             "i2v": "Image-to-video using Picture 1 as the exact first frame.",
             "first_last": (
                 "First-and-last-frame video. Picture 1 is the exact first frame and "
-                "Picture 2 is the exact final frame at 5.00 seconds."
+                f"Picture 2 is the exact final frame at {normalized_duration:.2f} seconds."
             ),
         }[mode]
-        user_content = f"""Create the final five-second H3 prompt.
+        user_content = f"""Create the final {normalized_duration:g}-second H3 prompt.
 
 Mode:
 {mode_description}
@@ -551,7 +645,13 @@ Picture 1 and Picture 2 themselves are the ultimate authorities for the opening 
 Vision-produced static Visual Context:
 {visual_context or '(Visual Context is unavailable.)'}"""
         return [
-            {"role": "system", "content": H3_SYSTEM_PROMPT},
+            {
+                "role": "system",
+                "content": _build_h3_system_prompt(
+                    secondary_motion,
+                    normalized_duration,
+                ),
+            },
             {"role": "user", "content": user_content},
         ]
 
@@ -560,6 +660,9 @@ Vision-produced static Visual Context:
         if mode not in VIDEO_MODES:
             print(f"[VIDEO:LLM] 모드 오류: item={queue_item_id}, mode={mode!r}")
             raise ValueError("영상화 모드는 i2v, FLF2V 중 하나여야 합니다")
+        duration = normalize_video_duration(
+            (params or {}).get("duration", VIDEO_DEFAULT_DURATION_SECONDS)
+        )
         source_name = _safe_backup_name((params or {}).get("source_backup"))
         instruction = str((params or {}).get("instruction") or "").strip()
         if not instruction:
@@ -699,10 +802,19 @@ Vision-produced static Visual Context:
                     f"length={len(visual_context)}, elapsed={visual_elapsed:.2f}s"
                 )
 
+            try:
+                _cfg = self.get_config() if callable(self.get_config) else None
+            except Exception:
+                print("[VIDEO:LLM] 설정 조회 실패 — video_secondary_motion 기본값(True) 사용")
+                traceback.print_exc()
+                _cfg = None
+            secondary_motion = bool((_cfg or {}).get("video_secondary_motion", True))
             messages = self._prompt_messages(
                 mode,
                 instruction,
-                visual_context,
+                visual_context=visual_context,
+                secondary_motion=secondary_motion,
+                duration=duration,
             )
             validator = lambda value: validate_h3_prompt_body(
                 normalize_h3_prompt_body(value)
@@ -716,8 +828,8 @@ Vision-produced static Visual Context:
                 execution_context=execution_context,
             )
             raw_response_text = str(raw_response_text or "").strip()
-            response_text = compose_h3_prompt(raw_response_text, mode)
-            accepted, reason = validate_h3_prompt(response_text, mode)
+            response_text = compose_h3_prompt(raw_response_text, mode, duration)
+            accepted, reason = validate_h3_prompt(response_text, mode, duration)
             if not accepted:
                 print(
                     f"[VIDEO:LLM] 최종 프롬프트 검증 실패: item={queue_item_id}, "
@@ -1007,7 +1119,9 @@ Vision-produced static Visual Context:
         height: int,
         staged_names: dict[str, str],
         job_id: str,
+        duration: object = VIDEO_DEFAULT_DURATION_SECONDS,
     ) -> dict:
+        normalized_duration = normalize_video_duration(duration)
         patched = copy.deepcopy(workflow)
         nodes = patched.get("nodes")
         links = patched.get("links")
@@ -1053,7 +1167,7 @@ Vision-produced static Visual Context:
         core_values[0] = h3_prompt
         core_values[1] = int(width)
         core_values[2] = int(height)
-        core_values[3] = VIDEO_DURATION_SECONDS
+        core_values[3] = normalized_duration
         core_values[4] = int.from_bytes(os.urandom(7), "big") % 1_000_000_000_000_000
 
         # Width/height were linked to ResolutionSelector in the distributed workflow.
@@ -1202,7 +1316,11 @@ Vision-produced static Visual Context:
         return composed
 
     @staticmethod
-    def _decode_mp4_frames(mp4_bytes: bytes) -> list[Image.Image]:
+    def _decode_mp4_frames(
+        mp4_bytes: bytes,
+        duration: object = VIDEO_DEFAULT_DURATION_SECONDS,
+    ) -> list[Image.Image]:
+        normalized_duration = normalize_video_duration(duration)
         ffmpeg = str(ensure_project_ffmpeg())
         with tempfile.TemporaryDirectory(prefix="soya_h3_decode_") as temp_dir:
             input_path = os.path.join(temp_dir, "input.mp4")
@@ -1217,7 +1335,7 @@ Vision-produced static Visual Context:
                 "-i",
                 input_path,
                 "-t",
-                str(VIDEO_DURATION_SECONDS),
+                str(normalized_duration),
                 "-vf",
                 f"fps={VIDEO_FPS}",
                 "-vsync",
@@ -1253,13 +1371,16 @@ Vision-produced static Visual Context:
                     raise
             print(
                 f"[VIDEO:DECODE] MP4 디코드 완료: frames={len(frames)}, "
-                f"size={frames[0].size}, target_duration={VIDEO_DURATION_SECONDS}s"
+                f"size={frames[0].size}, target_duration={normalized_duration}s"
             )
             return frames
 
     @staticmethod
-    def _frame_durations(frame_count: int) -> list[int]:
-        total_ms = int(round(VIDEO_DURATION_SECONDS * 1000))
+    def _frame_durations(
+        frame_count: int,
+        duration: object = VIDEO_DEFAULT_DURATION_SECONDS,
+    ) -> list[int]:
+        total_ms = int(round(normalize_video_duration(duration) * 1000))
         base_ms, remainder = divmod(total_ms, frame_count)
         return [base_ms + (1 if index < remainder else 0) for index in range(frame_count)]
 
@@ -1269,11 +1390,12 @@ Vision-produced static Visual Context:
         main_path_without_extension: str,
         *,
         quality: int,
+        duration: object = VIDEO_DEFAULT_DURATION_SECONDS,
     ) -> tuple[str, str]:
         if len(frames) < 2:
             print(f"[VIDEO:ENCODE] 애니메이션 저장 프레임 부족: count={len(frames)}")
             raise ValueError("애니메이션 저장에는 두 프레임 이상이 필요합니다")
-        durations = VideoMode._frame_durations(len(frames))
+        durations = VideoMode._frame_durations(len(frames), duration)
         attempts = ["AVIF", "WEBP"] if HAS_AVIF else ["WEBP"]
         errors: list[str] = []
         for output_format in attempts:
@@ -1351,6 +1473,8 @@ Vision-produced static Visual Context:
             settings["enabled"] = enabled
         if "upscale_scale" in params:
             settings["scale"] = params.get("upscale_scale")
+        if settings["enabled"] and "upscale_model" in params:
+            settings["model"] = params.get("upscale_model")
         return normalize_video_postprocess_config(settings)
 
     @staticmethod
@@ -1410,6 +1534,8 @@ Vision-produced static Visual Context:
         render_elapsed: float,
         settings: dict,
         quality: int,
+        duration: float,
+        output_format: str,
     ) -> dict:
         backup_dir = self._backup_dir()
         spool_root = os.path.join(backup_dir, "_video_postprocess_spool")
@@ -1463,7 +1589,7 @@ Vision-produced static Visual Context:
                 "output_width": output_width,
                 "output_height": output_height,
                 "raw_output_height": raw_output_height,
-                "duration": VIDEO_DURATION_SECONDS,
+                "duration": duration,
                 "fps": VIDEO_FPS,
                 "video_seed": video_seed,
                 "render_elapsed": render_elapsed,
@@ -1471,6 +1597,7 @@ Vision-produced static Visual Context:
                 "upscale_enabled": settings["enabled"],
                 "upscale_scale": settings["scale"],
                 "upscale_model": settings["model"] if settings["enabled"] else "",
+                "output_format": output_format,
                 "source_info": {
                     key: copy.deepcopy(source_info[key])
                     for key in ("bot_name", "postprocess_settings", "speak_text")
@@ -1661,6 +1788,7 @@ Vision-produced static Visual Context:
                 "video_upscale_enabled": bool(processed["upscale_enabled"]),
                 "video_upscale_scale": int(processed["upscale_scale"]),
                 "video_upscale_model": manifest.get("upscale_model", ""),
+                "video_output_format_requested": manifest.get("output_format", "avif"),
                 "source_backup": manifest.get("source_backup", ""),
                 "last_backup": manifest.get("last_backup", ""),
                 "raw_extension": extension,
@@ -1710,7 +1838,7 @@ Vision-produced static Visual Context:
             print(
                 "[VIDEO:POSTPROCESS] 영상 후처리 완료: "
                 f"item={queue_item_id}, backup={base_name}, format={extension}, "
-                f"upscale={processed['upscale_enabled']}x{processed['upscale_scale']}, "
+                f"upscale={manifest.get('upscale_model') or 'none'}x{processed['upscale_scale']}, "
                 f"elapsed={elapsed:.2f}s"
             )
             return {
@@ -1724,6 +1852,8 @@ Vision-produced static Visual Context:
                 "duration": float(manifest.get("duration") or VIDEO_DURATION_SECONDS),
                 "upscale_enabled": bool(processed["upscale_enabled"]),
                 "upscale_scale": int(processed["upscale_scale"]),
+                "upscale_model": manifest.get("upscale_model", ""),
+                "output_format_requested": manifest.get("output_format", "avif"),
             }
         except Exception as exc:
             print(
@@ -1753,8 +1883,18 @@ Vision-produced static Visual Context:
         if mode not in VIDEO_MODES:
             print(f"[VIDEO:RENDER] 모드 오류: item={queue_item_id}, mode={mode!r}")
             raise ValueError("지원하지 않는 영상화 모드입니다")
+        duration = normalize_video_duration(
+            (params or {}).get("duration", VIDEO_DEFAULT_DURATION_SECONDS)
+        )
+        output_format = str((params or {}).get("output_format") or "avif").strip().lower()
+        if output_format not in {"avif", "webp"}:
+            print(
+                f"[VIDEO:RENDER] 출력 형식 오류: item={queue_item_id}, "
+                f"output_format={output_format!r}"
+            )
+            raise ValueError("영상 출력 형식은 AVIF 또는 WebP여야 합니다")
         h3_prompt = str((params or {}).get("h3_prompt") or "").strip()
-        accepted, reason = validate_h3_prompt(h3_prompt, mode)
+        accepted, reason = validate_h3_prompt(h3_prompt, mode, duration)
         if not accepted:
             print(
                 f"[VIDEO:RENDER] H3 프롬프트 검증 실패: item={queue_item_id}, "
@@ -1849,7 +1989,7 @@ Vision-produced static Visual Context:
                     h3_prompt,
                     target_w,
                     target_h,
-                    VIDEO_DURATION_SECONDS,
+                    duration,
                     video_seed,
                 )
             else:
@@ -1861,6 +2001,7 @@ Vision-produced static Visual Context:
                     target_h,
                     staged_names,
                     job_id,
+                    duration,
                 )
             api_workflow, convert_error = await self.convert_workflow_func(
                 workflow_for_conversion,
@@ -1917,6 +2058,8 @@ Vision-produced static Visual Context:
                 render_elapsed=render_elapsed,
                 settings=settings,
                 quality=quality,
+                duration=duration,
+                output_format=output_format,
             )
 
             # MP4 bytes가 독립 후처리 스풀에 fsync된 뒤에는 Comfy 출력 파일을 정리해도 된다.
@@ -1951,7 +2094,8 @@ Vision-produced static Visual Context:
                 "preset": preset_key,
                 "width": target_w,
                 "height": target_h,
-                "duration": VIDEO_DURATION_SECONDS,
+                "duration": duration,
+                "output_format": output_format,
                 "postprocess_job": postprocess_job,
             }
         except Exception as exc:

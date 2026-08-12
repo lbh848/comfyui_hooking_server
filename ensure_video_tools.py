@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -43,10 +44,61 @@ FFMPEG_DIR = TOOLS_ROOT / "ffmpeg"
 FFMPEG_EXE = FFMPEG_DIR / "bin" / "ffmpeg.exe"
 FFPROBE_EXE = FFMPEG_DIR / "bin" / "ffprobe.exe"
 
+# Anime4K의 mpv 호환 GLSL 셰이더를 FFmpeg libplacebo로 실행할 때만 설치한다.
+# 기본 AVIF/WebP 인코딩은 위 essentials 빌드를 계속 사용한다.
+FFMPEG_FULL_ARCHIVE_NAME = f"ffmpeg-{FFMPEG_VERSION}-full_build.7z"
+FFMPEG_FULL_URL = (
+    "https://www.gyan.dev/ffmpeg/builds/packages/" + FFMPEG_FULL_ARCHIVE_NAME
+)
+FFMPEG_FULL_SHA256 = (
+    "0fff188997a499b5382e0f66e845d4556c48c54f0113ebed4853d556dbdd7059"
+)
+FFMPEG_FULL_DIR = TOOLS_ROOT / "ffmpeg-full"
+FFMPEG_FULL_EXE = FFMPEG_FULL_DIR / "bin" / "ffmpeg.exe"
+
+ANIME4K_VERSION = "4.0.1"
+ANIME4K_DIR = TOOLS_ROOT / f"anime4k-{ANIME4K_VERSION}"
+ANIME4K_SHADER = ANIME4K_DIR / "Anime4K_Fast_M.glsl"
+ANIME4K_SHADER_SHA256 = (
+    "f44632616775fed96e46d9e393eda71332a9cfbcf1e3329d84c0a802a71f9dba"
+)
+ANIME4K_RESOURCES = (
+    (
+        "glsl/Restore/Anime4K_Clamp_Highlights.glsl",
+        "a2a9bf7fbc1d75d09660ca2e701e4d7fb0cf5457b94da47e1825032fa2b3671a",
+    ),
+    (
+        "glsl/Restore/Anime4K_Restore_CNN_M.glsl",
+        "67ea3ed26539e8de3b7d307688535d2ff17e8d147e11dda0247da7770dbecf41",
+    ),
+    (
+        "glsl/Upscale/Anime4K_Upscale_CNN_x2_M.glsl",
+        "716e02098a68f0d648761f2b96b4dd139e1cb09b174bb369fca3aa34328fff7e",
+    ),
+    (
+        "glsl/Upscale/Anime4K_AutoDownscalePre_x2.glsl",
+        "8c58291740146bd766a4d73f132775a797fe80f7d07919b5d767e27a5dc85656",
+    ),
+    (
+        "glsl/Upscale/Anime4K_AutoDownscalePre_x4.glsl",
+        "5af62d8cd844916dc1126613e13bad3beab195787f93a71200b47c6ec78f2e41",
+    ),
+    (
+        "glsl/Upscale/Anime4K_Upscale_CNN_x2_S.glsl",
+        "4c53ec2e287908f7ee7bcB266b0170421626d663576468b7d7dafc62962649a4".lower(),
+    ),
+)
+ANIME4K_LICENSE = (
+    "LICENSE",
+    "5bad448b737378e3d0c977ad0d0521fa37ad279a7e76ea9a31d9257eeb6953f5",
+)
+
 _INSTALL_LOCK = threading.RLock()
 _USER_AGENT = "comfyui-hooking-server-video-tools"
 _REALESRGAN_VERIFIED = False
 _FFMPEG_VERIFIED = False
+_FFMPEG_FULL_VERIFIED = False
+_ANIME4K_VERIFIED = False
 
 
 def _sha256(path: Path) -> str:
@@ -164,6 +216,48 @@ def _extract_zip_safely(archive_path: Path, target_dir: Path, label: str) -> Non
     except Exception as exc:
         print(
             f"[VIDEO_TOOLS:{label}][ERROR] 압축 해제 실패: "
+            f"archive={archive_path}, error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        raise
+
+
+def _extract_7z_safely(archive_path: Path, target_dir: Path, label: str) -> None:
+    """Windows 기본 bsdtar로 7z 항목을 검증한 뒤 정확한 대상에 푼다."""
+
+    tar_executable = shutil.which("tar")
+    if not tar_executable:
+        print(f"[VIDEO_TOOLS:{label}][ERROR] 7z 압축 해제용 tar 실행 파일 없음")
+        raise RuntimeError("영상 도구 7z 압축을 해제할 tar 실행 파일이 없습니다")
+    try:
+        listing = _run_checked(
+            [tar_executable, "-tf", str(archive_path)],
+            f"{label}_LIST",
+            timeout=180,
+        )
+        entries = [line.strip() for line in listing.splitlines() if line.strip()]
+        if not entries:
+            print(f"[VIDEO_TOOLS:{label}][ERROR] 7z 압축 항목이 비어 있음: {archive_path}")
+            raise RuntimeError(f"{label} 7z 패키지가 비어 있습니다")
+        target_dir.mkdir(parents=True, exist_ok=False)
+        target_root = target_dir.resolve()
+        for entry in entries:
+            normalized = entry.replace("\\", "/")
+            if normalized.startswith("/") or re.match(r"^[A-Za-z]:", normalized):
+                print(f"[VIDEO_TOOLS:{label}][ERROR] 절대 경로 7z 항목 거부: {entry!r}")
+                raise RuntimeError(f"{label} 7z 경로 검증에 실패했습니다")
+            destination = (target_root / normalized).resolve()
+            if not _is_within(destination, target_root):
+                print(f"[VIDEO_TOOLS:{label}][ERROR] 안전하지 않은 7z 항목 거부: {entry!r}")
+                raise RuntimeError(f"{label} 7z 경로 검증에 실패했습니다")
+        _run_checked(
+            [tar_executable, "-xf", str(archive_path), "-C", str(target_root)],
+            f"{label}_EXTRACT",
+            timeout=300,
+        )
+    except Exception as exc:
+        print(
+            f"[VIDEO_TOOLS:{label}][ERROR] 7z 압축 해제 실패: "
             f"archive={archive_path}, error={type(exc).__name__}: {exc}"
         )
         traceback.print_exc()
@@ -295,7 +389,7 @@ def ensure_realesrgan() -> Path:
         return REALESRGAN_EXE
 
 
-def _run_checked(command: list[str], label: str) -> str:
+def _run_checked(command: list[str], label: str, *, timeout: int = 60) -> str:
     try:
         completed = subprocess.run(
             command,
@@ -304,7 +398,7 @@ def _run_checked(command: list[str], label: str) -> str:
             text=True,
             encoding="utf-8",
             errors="replace",
-            timeout=60,
+            timeout=timeout,
         )
     except Exception as exc:
         print(
@@ -458,6 +552,206 @@ def ensure_ffmpeg() -> Path:
         )
         _FFMPEG_VERIFIED = True
         return FFMPEG_EXE
+
+
+def _ffmpeg_full_validation_error() -> str | None:
+    if not FFMPEG_FULL_EXE.is_file():
+        return f"ffmpeg full 실행 파일 누락: {FFMPEG_FULL_EXE}"
+    try:
+        version_output = _run_checked(
+            [str(FFMPEG_FULL_EXE), "-hide_banner", "-version"],
+            "FFMPEG_FULL",
+        )
+        filter_output = _run_checked(
+            [str(FFMPEG_FULL_EXE), "-hide_banner", "-filters"],
+            "FFMPEG_FULL_FILTERS",
+        )
+        help_output = _run_checked(
+            [str(FFMPEG_FULL_EXE), "-hide_banner", "-h", "filter=libplacebo"],
+            "FFMPEG_FULL_LIBPLACEBO",
+        )
+        required_tokens = {
+            "version": (version_output.lower(), f"ffmpeg version {FFMPEG_VERSION}"),
+            "libplacebo filter": (filter_output.lower(), "libplacebo"),
+            "custom shader": (help_output.lower(), "custom_shader_path"),
+        }
+        missing = [
+            label
+            for label, (haystack, needle) in required_tokens.items()
+            if needle not in haystack
+        ]
+        if missing:
+            return "Anime4K 필수 기능 누락: " + ", ".join(missing)
+    except Exception as exc:
+        print(
+            "[VIDEO_TOOLS:FFMPEG_FULL][ERROR] 기능 검증 중 예외: "
+            f"error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        return f"기능 검증 실패: {type(exc).__name__}: {exc}"
+    return None
+
+
+def ensure_ffmpeg_full() -> Path:
+    global _FFMPEG_FULL_VERIFIED
+    with _INSTALL_LOCK:
+        if os.name != "nt":
+            message = "Anime4K용 FFmpeg 자동 설치는 Windows에서만 지원합니다"
+            print(f"[VIDEO_TOOLS:FFMPEG_FULL][ERROR] {message}: os.name={os.name!r}")
+            raise RuntimeError(message)
+        if _FFMPEG_FULL_VERIFIED and FFMPEG_FULL_EXE.is_file():
+            return FFMPEG_FULL_EXE
+        validation_error = _ffmpeg_full_validation_error()
+        if validation_error is None:
+            _FFMPEG_FULL_VERIFIED = True
+            print(
+                "[VIDEO_TOOLS:FFMPEG_FULL] Anime4K 런타임 검증 완료: "
+                f"version={FFMPEG_VERSION}, exe={FFMPEG_FULL_EXE}"
+            )
+            return FFMPEG_FULL_EXE
+        print(f"[VIDEO_TOOLS:FFMPEG_FULL] 설치 필요: {validation_error}")
+
+        archive_path = _download_verified(
+            url=FFMPEG_FULL_URL,
+            expected_sha256=FFMPEG_FULL_SHA256,
+            archive_path=TOOLS_ROOT / FFMPEG_FULL_ARCHIVE_NAME,
+            label="FFMPEG_FULL",
+        )
+        try:
+            with tempfile.TemporaryDirectory(
+                prefix="ffmpeg_full_install_", dir=str(TOOLS_ROOT)
+            ) as temp_name:
+                extract_dir = Path(temp_name) / "extracted"
+                _extract_7z_safely(archive_path, extract_dir, "FFMPEG_FULL")
+                candidates = sorted(extract_dir.glob("*/bin/ffmpeg.exe"))
+                if len(candidates) != 1:
+                    print(
+                        "[VIDEO_TOOLS:FFMPEG_FULL][ERROR] 압축 내 실행 파일 탐색 실패: "
+                        f"candidates={[str(path) for path in candidates]!r}"
+                    )
+                    raise RuntimeError("Anime4K용 FFmpeg 패키지 구성이 올바르지 않습니다")
+                _replace_directory(
+                    candidates[0].parent.parent,
+                    FFMPEG_FULL_DIR,
+                    "FFMPEG_FULL",
+                )
+        except Exception as exc:
+            print(
+                "[VIDEO_TOOLS:FFMPEG_FULL][ERROR] 설치 실패: "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            raise
+
+        validation_error = _ffmpeg_full_validation_error()
+        if validation_error is not None:
+            print(
+                "[VIDEO_TOOLS:FFMPEG_FULL][ERROR] 최종 설치 검증 실패: "
+                f"{validation_error}"
+            )
+            raise RuntimeError("Anime4K용 FFmpeg 최종 설치 검증에 실패했습니다")
+        _FFMPEG_FULL_VERIFIED = True
+        print(
+            "[VIDEO_TOOLS:FFMPEG_FULL] 설치 완료: "
+            f"version={FFMPEG_VERSION}, exe={FFMPEG_FULL_EXE}"
+        )
+        return FFMPEG_FULL_EXE
+
+
+def ensure_anime4k_shader() -> Path:
+    global _ANIME4K_VERIFIED
+    with _INSTALL_LOCK:
+        if _ANIME4K_VERIFIED and ANIME4K_SHADER.is_file():
+            return ANIME4K_SHADER
+        if ANIME4K_SHADER.is_file() and _sha256(ANIME4K_SHADER) == ANIME4K_SHADER_SHA256:
+            _ANIME4K_VERIFIED = True
+            print(
+                "[VIDEO_TOOLS:ANIME4K] Fast/M 셰이더 검증 완료: "
+                f"version={ANIME4K_VERSION}, path={ANIME4K_SHADER}"
+            )
+            return ANIME4K_SHADER
+        if ANIME4K_SHADER.exists():
+            print(
+                "[VIDEO_TOOLS:ANIME4K] 조합 셰이더 무결성 불일치, 다시 생성: "
+                f"path={ANIME4K_SHADER}"
+            )
+            _remove_exact_path(ANIME4K_SHADER, TOOLS_ROOT)
+
+        base_url = f"https://raw.githubusercontent.com/bloc97/Anime4K/v{ANIME4K_VERSION}/"
+        source_dir = ANIME4K_DIR / "sources"
+        source_paths: list[Path] = []
+        for relative_path, expected_hash in ANIME4K_RESOURCES:
+            source_paths.append(
+                _download_verified(
+                    url=base_url + relative_path,
+                    expected_sha256=expected_hash,
+                    archive_path=source_dir / Path(relative_path).name,
+                    label="ANIME4K",
+                )
+            )
+        license_relative, license_hash = ANIME4K_LICENSE
+        _download_verified(
+            url=base_url + license_relative,
+            expected_sha256=license_hash,
+            archive_path=ANIME4K_DIR / "LICENSE",
+            label="ANIME4K_LICENSE",
+        )
+
+        shader_bytes = (
+            b"\n".join(path.read_bytes().rstrip(b"\r\n") for path in source_paths)
+            + b"\n"
+        )
+        actual_hash = hashlib.sha256(shader_bytes).hexdigest()
+        if actual_hash != ANIME4K_SHADER_SHA256:
+            print(
+                "[VIDEO_TOOLS:ANIME4K][ERROR] Fast/M 조합 셰이더 해시 불일치: "
+                f"expected={ANIME4K_SHADER_SHA256}, actual={actual_hash}"
+            )
+            raise RuntimeError("Anime4K Fast/M 조합 셰이더 검증에 실패했습니다")
+        part_path = ANIME4K_SHADER.with_suffix(".glsl.part")
+        _remove_exact_path(part_path, TOOLS_ROOT)
+        try:
+            ANIME4K_DIR.mkdir(parents=True, exist_ok=True)
+            with part_path.open("xb") as handle:
+                handle.write(shader_bytes)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(part_path, ANIME4K_SHADER)
+        except Exception as exc:
+            print(
+                "[VIDEO_TOOLS:ANIME4K][ERROR] Fast/M 셰이더 저장 실패: "
+                f"path={ANIME4K_SHADER}, error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            try:
+                _remove_exact_path(part_path, TOOLS_ROOT)
+            except Exception as cleanup_exc:
+                print(
+                    "[VIDEO_TOOLS:ANIME4K][ERROR] 부분 셰이더 정리 실패: "
+                    f"path={part_path}, error={cleanup_exc}"
+                )
+                traceback.print_exc()
+            raise
+        _ANIME4K_VERIFIED = True
+        print(
+            "[VIDEO_TOOLS:ANIME4K] Fast/M 셰이더 설치 완료: "
+            f"version={ANIME4K_VERSION}, bytes={len(shader_bytes):,}, path={ANIME4K_SHADER}"
+        )
+        return ANIME4K_SHADER
+
+
+def ensure_anime4k() -> dict[str, str]:
+    try:
+        ffmpeg = ensure_ffmpeg_full()
+        shader = ensure_anime4k_shader()
+        return {"ffmpeg": str(ffmpeg), "shader": str(shader)}
+    except Exception as exc:
+        print(
+            "[VIDEO_TOOLS:ANIME4K][ERROR] Anime4K 런타임 준비 실패: "
+            f"error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        raise
 
 
 def ensure_video_tools() -> dict[str, str]:

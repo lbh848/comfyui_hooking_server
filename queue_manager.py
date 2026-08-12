@@ -2271,9 +2271,11 @@ class QueueManager:
                 queue_item_id=item.id,
             )
             render_params = {**params, **prompt_result}
+            duration = float(params.get("duration") or 5.0)
+            duration_label = f"{duration:g}초"
             label = {
-                "i2v": "H3 I2V 5초 영상화",
-                "first_last": "H3 FLF2V 5초 영상화",
+                "i2v": f"H3 I2V {duration_label} 영상화",
+                "first_last": f"H3 FLF2V {duration_label} 영상화",
             }[mode]
             render_item = await self.add_item(
                 render_type,

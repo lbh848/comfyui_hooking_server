@@ -29,11 +29,10 @@ def test_video_page_uses_modal_entry_with_two_internal_modes() -> None:
     assert "key: 'video_t2v', label: '영상화" not in FRONTEND
     assert "key: 'video_i2v', label: '영상화" not in FRONTEND
     assert "key: 'video_first_last', label: '영상화" not in FRONTEND
-    assert 'data-video-mode-tab="t2v"' not in FRONTEND
-    assert FRONTEND.count("data-video-mode-tab=") == 2
+    assert 'value="t2v"' not in FRONTEND
+    assert FRONTEND.count('type="radio" name="video-mode-choice"') == 2
     for mode in ("i2v", "first_last"):
-        assert f'data-video-mode-tab="{mode}"' in FRONTEND
-        assert f"selectVideoMode('{mode}')" in FRONTEND
+        assert f'name="video-mode-choice" value="{mode}"' in FRONTEND
     # 첫·마지막 모드에서 마지막 프레임 미리보기가 존재해야 한다
     assert 'id="video-frame-last"' in FRONTEND
     assert 'id="video-generation-last-preview"' in FRONTEND
@@ -57,11 +56,19 @@ def test_video_page_exposes_every_fast_resolution_and_queue_endpoint() -> None:
         assert value in FRONTEND
     assert "/api/video/reference-options" in FRONTEND
     assert "/api/video/enqueue" in FRONTEND
-    assert "animated AVIF 우선" in FRONTEND
+    assert FRONTEND.count('name="video-output-format"') == 2
+    assert 'name="video-output-format" value="avif" checked' in FRONTEND
+    assert 'name="video-output-format" value="webp"' in FRONTEND
+    assert 'id="video-generation-duration" type="number" min="1" max="15" step="1"' in FRONTEND
     assert 'id="video-generation-upscale-enabled"' in FRONTEND
     assert 'id="video-generation-upscale-scale"' in FRONTEND
+    for model in ("realesr-animevideov3", "anime4k-fast-m", "lanczos", "none"):
+        assert f'name="video-upscale-model" value="{model}"' in FRONTEND
     assert "upscale_enabled: upscaleEnabled" in FRONTEND
     assert "upscale_scale: upscaleScale" in FRONTEND
+    assert "upscale_model: upscaleEnabled ? upscaleModel : ''" in FRONTEND
+    assert "output_format: outputFormat" in FRONTEND
+    assert "duration," in FRONTEND
 
 
 def test_video_postprocess_shares_renamed_background_lane() -> None:

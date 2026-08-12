@@ -16,6 +16,7 @@ from PIL import Image
 
 from ensure_video_tools import (
     REALESRGAN_DIR as _TOOL_DIR,
+    ensure_anime4k as _ensure_anime4k_sync,
     ensure_ffmpeg as _ensure_ffmpeg_sync,
     ensure_realesrgan as _ensure_realesrgan_sync,
 )
@@ -28,6 +29,11 @@ except Exception:
 
 
 ProgressCallback = Callable[[dict], Awaitable[None]]
+
+VIDEO_UPSCALE_MODELS = frozenset(
+    {"realesr-animevideov3", "anime4k-fast-m", "lanczos"}
+)
+VIDEO_OUTPUT_FORMATS = frozenset({"avif", "webp"})
 
 DEFAULT_VIDEO_POSTPROCESS_CONFIG = {
     "enabled": True,
@@ -159,7 +165,7 @@ def normalize_video_postprocess_config(raw: object) -> dict:
     normalized["scale"] = scale
 
     model = str(source.get("model", normalized["model"]) or "").strip()
-    if model != "realesr-animevideov3":
+    if model not in VIDEO_UPSCALE_MODELS:
         message = f"지원하지 않는 영상 업스케일 모델입니다: {model!r}"
         print(f"[VIDEO:POSTPROCESS:CONFIG] {message}")
         raise ValueError(message)
@@ -221,6 +227,11 @@ async def ensure_realesrgan() -> Path:
 
 async def ensure_ffmpeg() -> Path:
     return await asyncio.to_thread(_ensure_ffmpeg_sync)
+
+
+async def ensure_anime4k() -> dict[str, Path]:
+    prepared = await asyncio.to_thread(_ensure_anime4k_sync)
+    return {key: Path(value) for key, value in prepared.items()}
 
 
 async def _run_command_on_subprocess_loop(
@@ -379,6 +390,141 @@ async def _run_realesrgan(
         raise RuntimeError("Real-ESRGAN 출력 프레임 수가 원본과 일치하지 않습니다")
 
 
+async def _run_upscale_command_with_progress(
+    command: list[str],
+    output_dir: Path,
+    *,
+    label: str,
+    phase: str,
+    expected_frames: int,
+    progress_callback: ProgressCallback | None,
+) -> None:
+    output_dir.mkdir(parents=True, exist_ok=False)
+    task = asyncio.create_task(_run_command(command, label=label))
+    last_count = -1
+    try:
+        while not task.done():
+            count = len(await asyncio.to_thread(_list_pngs, output_dir))
+            if count != last_count:
+                await _notify(
+                    progress_callback,
+                    phase=phase,
+                    percentage=25 + (min(count, expected_frames) / expected_frames * 50),
+                    current=count,
+                    total=expected_frames,
+                )
+                last_count = count
+            await asyncio.sleep(0.35)
+        await task
+    except Exception:
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        raise
+
+    output_frames = await asyncio.to_thread(_list_pngs, output_dir)
+    if len(output_frames) != expected_frames:
+        print(
+            f"[VIDEO:{label}] 출력 프레임 수 불일치: "
+            f"expected={expected_frames}, actual={len(output_frames)}, "
+            f"output_dir={str(output_dir)!r}"
+        )
+        raise RuntimeError(f"{label} 출력 프레임 수가 원본과 일치하지 않습니다")
+
+
+async def _run_lanczos(
+    input_dir: Path,
+    output_dir: Path,
+    *,
+    expected_frames: int,
+    scale: int,
+    progress_callback: ProgressCallback | None,
+) -> None:
+    ffmpeg = str(await ensure_ffmpeg())
+    command = [
+        ffmpeg,
+        "-y",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-framerate",
+        "24",
+        "-start_number",
+        "0",
+        "-i",
+        str(input_dir / "frame_%08d.png"),
+        "-vf",
+        f"scale=iw*{scale}:ih*{scale}:flags=lanczos",
+        "-frames:v",
+        str(expected_frames),
+        "-start_number",
+        "0",
+        str(output_dir / "frame_%08d.png"),
+    ]
+    await _run_upscale_command_with_progress(
+        command,
+        output_dir,
+        label="LANCZOS",
+        phase="video_upscaling_lanczos",
+        expected_frames=expected_frames,
+        progress_callback=progress_callback,
+    )
+
+
+def _ffmpeg_filter_path(path: Path) -> str:
+    return str(path.resolve()).replace("\\", "/").replace(":", r"\:")
+
+
+async def _run_anime4k(
+    input_dir: Path,
+    output_dir: Path,
+    *,
+    expected_frames: int,
+    scale: int,
+    progress_callback: ProgressCallback | None,
+) -> None:
+    tools = await ensure_anime4k()
+    ffmpeg = str(tools["ffmpeg"])
+    shader = _ffmpeg_filter_path(tools["shader"])
+    video_filter = (
+        "format=rgba,hwupload,"
+        f"libplacebo=w=iw*{scale}:h=ih*{scale}:custom_shader_path='{shader}',"
+        "hwdownload,format=rgba"
+    )
+    command = [
+        ffmpeg,
+        "-y",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-init_hw_device",
+        "vulkan=anime4k",
+        "-filter_hw_device",
+        "anime4k",
+        "-framerate",
+        "24",
+        "-start_number",
+        "0",
+        "-i",
+        str(input_dir / "frame_%08d.png"),
+        "-vf",
+        video_filter,
+        "-frames:v",
+        str(expected_frames),
+        "-start_number",
+        "0",
+        str(output_dir / "frame_%08d.png"),
+    ]
+    await _run_upscale_command_with_progress(
+        command,
+        output_dir,
+        label="ANIME4K",
+        phase="video_upscaling_anime4k",
+        expected_frames=expected_frames,
+        progress_callback=progress_callback,
+    )
+
+
 def _avif_crf(quality: int) -> int:
     return max(0, min(63, round((100 - quality) * 0.8)))
 
@@ -460,10 +606,16 @@ def _encode_command(
                 str(_avif_crf(quality)),
                 "-b:v",
                 "0",
+                # 속도 우선 튜닝: cpu-used 6→8(≈2×), 2타일 열(tile-columns 1)로 프레임 내 병렬화,
+                # threads 0(전체 코어) + row-mt 1. 애니메이션 업스케일 프레임에 품질 저하 미미.
                 "-cpu-used",
-                "6",
+                "8",
                 "-row-mt",
                 "1",
+                "-tile-columns",
+                "1",
+                "-threads",
+                "0",
                 "-loop",
                 "0",
                 "-f",
@@ -497,11 +649,21 @@ async def _encode_pair(
     overlay_path: Path | None,
     canvas_height: int,
     progress_callback: ProgressCallback | None,
+    output_format: str = "avif",
 ) -> tuple[Path, Path, str]:
     ffmpeg = str(await ensure_ffmpeg())
     frame_pattern = frames_dir / "frame_%08d.png"
     errors: list[str] = []
-    for output_format, extension in (("AVIF", ".avif"), ("WEBP", ".webp")):
+    requested_format = str(output_format or "avif").strip().lower()
+    if requested_format not in VIDEO_OUTPUT_FORMATS:
+        print(f"[VIDEO:ENCODE] 지원하지 않는 출력 형식: value={output_format!r}")
+        raise ValueError("영상 출력 형식은 AVIF 또는 WebP여야 합니다")
+    attempts = (
+        (("AVIF", ".avif"), ("WEBP", ".webp"))
+        if requested_format == "avif"
+        else (("WEBP", ".webp"),)
+    )
+    for encoder_format, extension in attempts:
         raw_path = job_dir / f"result_raw{extension}"
         main_path = job_dir / f"result_main{extension}"
         for candidate in (raw_path, main_path):
@@ -512,7 +674,7 @@ async def _encode_pair(
                 progress_callback,
                 phase="video_encoding_raw",
                 percentage=80,
-                format=output_format.lower(),
+                format=encoder_format.lower(),
             )
             await _run_command(
                 _encode_command(
@@ -522,7 +684,7 @@ async def _encode_pair(
                     fps=fps,
                     frame_count=frame_count,
                     quality=quality,
-                    output_format=output_format,
+                    output_format=encoder_format,
                 ),
                 label="ENCODE_RAW",
             )
@@ -532,7 +694,7 @@ async def _encode_pair(
                 progress_callback,
                 phase="video_encoding_composite",
                 percentage=90,
-                format=output_format.lower(),
+                format=encoder_format.lower(),
             )
             if overlay_path is None:
                 await asyncio.to_thread(shutil.copyfile, raw_path, main_path)
@@ -545,7 +707,7 @@ async def _encode_pair(
                         fps=fps,
                         frame_count=frame_count,
                         quality=quality,
-                        output_format=output_format,
+                        output_format=encoder_format,
                         overlay_path=overlay_path,
                         canvas_height=canvas_height,
                     ),
@@ -553,15 +715,15 @@ async def _encode_pair(
                 )
             await asyncio.to_thread(_verify_animation, main_path, frame_count)
             print(
-                f"[VIDEO:ENCODE] {output_format} 2종 저장 검증 완료: "
+                f"[VIDEO:ENCODE] {encoder_format} 2종 저장 검증 완료: "
                 f"frames={frame_count}, raw_bytes={raw_path.stat().st_size:,}, "
                 f"main_bytes={main_path.stat().st_size:,}"
             )
             return main_path, raw_path, extension
         except Exception as exc:
-            errors.append(f"{output_format}: {type(exc).__name__}: {exc}")
+            errors.append(f"{encoder_format}: {type(exc).__name__}: {exc}")
             print(
-                f"[VIDEO:ENCODE] {output_format} 저장 실패, 다음 형식 시도: "
+                f"[VIDEO:ENCODE] {encoder_format} 저장 실패, 다음 형식 시도: "
                 f"error={type(exc).__name__}: {exc}"
             )
             traceback.print_exc()
@@ -609,10 +771,21 @@ async def process_staged_video(
     duration = float(manifest.get("duration") or 5.0)
     expected_frames = max(2, round(fps * duration))
     quality = max(1, min(100, int(manifest.get("quality") or 80)))
+    output_format = str(manifest.get("output_format") or "avif").strip().lower()
+    if output_format not in VIDEO_OUTPUT_FORMATS:
+        print(
+            "[VIDEO:POSTPROCESS] 스풀 출력 형식 오류: "
+            f"value={manifest.get('output_format')!r}, job_dir={str(directory)!r}"
+        )
+        raise ValueError("영상 출력 형식은 AVIF 또는 WebP여야 합니다")
     effective = normalize_video_postprocess_config(settings)
     upscale_enabled = bool(manifest.get("upscale_enabled", effective["enabled"]))
     effective["enabled"] = upscale_enabled
     effective["scale"] = int(manifest.get("upscale_scale") or effective["scale"])
+    if upscale_enabled:
+        effective["model"] = str(
+            manifest.get("upscale_model") or effective["model"]
+        ).strip()
     effective = normalize_video_postprocess_config(effective)
 
     await _notify(
@@ -678,13 +851,36 @@ async def process_staged_video(
                     total=expected_frames,
                 )
                 output_frames = work_dir / "upscaled_frames"
-                await _run_realesrgan(
-                    input_frames,
-                    output_frames,
-                    expected_frames=expected_frames,
-                    settings=effective,
-                    progress_callback=progress_callback,
-                )
+                if effective["model"] == "realesr-animevideov3":
+                    await _run_realesrgan(
+                        input_frames,
+                        output_frames,
+                        expected_frames=expected_frames,
+                        settings=effective,
+                        progress_callback=progress_callback,
+                    )
+                elif effective["model"] == "anime4k-fast-m":
+                    await _run_anime4k(
+                        input_frames,
+                        output_frames,
+                        expected_frames=expected_frames,
+                        scale=effective["scale"],
+                        progress_callback=progress_callback,
+                    )
+                elif effective["model"] == "lanczos":
+                    await _run_lanczos(
+                        input_frames,
+                        output_frames,
+                        expected_frames=expected_frames,
+                        scale=effective["scale"],
+                        progress_callback=progress_callback,
+                    )
+                else:
+                    print(
+                        "[VIDEO:POSTPROCESS] 업스케일러 분기 누락: "
+                        f"model={effective['model']!r}, settings={effective!r}"
+                    )
+                    raise RuntimeError("영상 업스케일러 실행 경로가 없습니다")
             else:
                 output_frames = input_frames
                 await _notify(
@@ -707,6 +903,7 @@ async def process_staged_video(
                 overlay_path=overlay_path,
                 canvas_height=int(manifest.get("output_height") or 1),
                 progress_callback=progress_callback,
+                output_format=output_format,
             )
     except Exception as exc:
         print(
@@ -731,4 +928,6 @@ async def process_staged_video(
         "frame_count": expected_frames,
         "upscale_enabled": effective["enabled"],
         "upscale_scale": effective["scale"] if effective["enabled"] else 1,
+        "upscale_model": effective["model"] if effective["enabled"] else "",
+        "output_format_requested": output_format,
     }
