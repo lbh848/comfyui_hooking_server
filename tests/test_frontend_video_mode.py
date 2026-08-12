@@ -71,6 +71,17 @@ def test_video_page_exposes_every_fast_resolution_and_queue_endpoint() -> None:
     assert "duration," in FRONTEND
 
 
+def test_video_page_can_delegate_direction_to_ai() -> None:
+    assert 'id="video-generation-auto-instruction"' in FRONTEND
+    assert 'aria-pressed="false"' in FRONTEND
+    assert "AI에게 맡기기" in FRONTEND
+    assert "toggleVideoAutoInstruction()" in FRONTEND
+    assert "isVideoAutoInstructionEnabled()" in FRONTEND
+    assert "if (!autoInstruction && !instruction)" in FRONTEND
+    assert "auto_instruction: autoInstruction" in FRONTEND
+    assert "instruction: autoInstruction ? '' : instruction" in FRONTEND
+
+
 def test_video_postprocess_shares_renamed_background_lane() -> None:
     assert "{key: 'background', icon: '⚙️', title: '백그라운드 처리'" in FRONTEND
     assert "Modal 다운로드 · 영상 업스케일/AVIF 변환" in FRONTEND

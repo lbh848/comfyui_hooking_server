@@ -9356,7 +9356,19 @@ async def handle_api_video_enqueue(request: web.Request) -> web.Response:
         source_name = str(body.get("source_backup") or "").strip()
         last_name = str(body.get("last_backup") or "").strip()
         loop_enabled = bool(body.get("loop", False))
+        auto_instruction = body.get("auto_instruction", False)
+        if not isinstance(auto_instruction, bool):
+            print(
+                "[VIDEO:API] AI에게 맡기기 값 형식 오류: "
+                f"value={auto_instruction!r}, body={body!r}"
+            )
+            return web.json_response(
+                {"success": False, "error": "AI에게 맡기기 값은 boolean이어야 합니다"},
+                status=400,
+            )
         instruction = str(body.get("instruction") or "").strip()
+        if auto_instruction:
+            instruction = ""
         preset = str(body.get("preset") or "auto").strip().lower()
         try:
             duration = normalize_video_duration(
@@ -9439,7 +9451,7 @@ async def handle_api_video_enqueue(request: web.Request) -> web.Response:
                 {"success": False, "error": "원본 삽화 백업 이름이 올바르지 않습니다"},
                 status=400,
             )
-        if not instruction:
+        if not auto_instruction and not instruction:
             print(f"[VIDEO:API] 자연어 지시 비어 있음: source={source_name!r}, mode={mode}")
             return web.json_response(
                 {"success": False, "error": "영상에서 일어날 일을 입력하세요"},
@@ -9494,6 +9506,7 @@ async def handle_api_video_enqueue(request: web.Request) -> web.Response:
             "source_backup": source_name,
             "last_backup": last_name,
             "loop": loop_enabled,
+            "auto_instruction": auto_instruction,
             "instruction": instruction,
             "preset": preset,
             "duration": duration,
@@ -9510,7 +9523,8 @@ async def handle_api_video_enqueue(request: web.Request) -> web.Response:
         print(
             f"[VIDEO:API] 영상화 큐 등록: item={item.id}, mode={mode}, "
             f"source={source_name}, last={last_name or '(none)'}, preset={preset}, "
-            f"duration={duration:g}s, upscale={upscale_model or 'none'}x{upscale_scale}, "
+            f"duration={duration:g}s, auto_instruction={auto_instruction}, "
+            f"upscale={upscale_model or 'none'}x{upscale_scale}, "
             f"format={output_format}"
         )
         return web.json_response(

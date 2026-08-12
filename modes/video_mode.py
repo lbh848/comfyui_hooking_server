@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import ast
 import base64
 import copy
 import datetime
@@ -219,6 +220,18 @@ Picture 1: ...
 For two supplied pictures, add a separate "Picture 2: ..." paragraph. Analyze each endpoint independently; do not narrate a transition or infer what happened between them."""
 
 
+AUTO_VISUAL_DIRECTION_SYSTEM_PROMPT = """You inspect reference images for a MiniMax H3 video and perform two distinct tasks in one response.
+
+Return only one valid JSON array containing exactly two strings, with no Markdown fence, labels, keys, commentary, or additional elements:
+["Picture 1: factual static visual context...", "Detailed English natural-language video direction..."]
+
+The first string is the static Visual Context. Describe only facts directly visible in each supplied picture: subjects, appearance, clothing, accessories, pose, hands, contacted objects, expression, environment, lighting, colors, framing, camera angle, visual style, and spatial relationships. Do not infer motion, intentions, causes, past events, future events, dialogue, or off-screen facts. For two pictures, describe Picture 1 and Picture 2 independently in that same first string.
+
+The second string is the suggested video direction. In detailed natural English prose, imagine the coherent motion and events that should occur over the supplied target duration. Use the first string's visible facts as the starting visual state, but keep future invention out of the first string. Calibrate the amount of action, temporal progression, motion speed, camera behavior, environmental response, visible outcome, and synchronized physical sound to what can read clearly within the duration. Follow the practical descriptive density recommended for MiniMax H3: concrete and observable, temporally coherent, detailed enough to direct the shot, and not overloaded with more events than the duration can show. Do not write H3 field headings or an image-alignment instruction.
+
+For image-to-video, imagine what happens immediately after Picture 1 while preserving visible identity, appearance, environment, and object continuity. For first-and-last-frame video, imagine one continuous transition whose action reaches the exact visible state of Picture 2 at the supplied final time; do not invent a conflicting endpoint or a cut."""
+
+
 def _safe_backup_name(value: object) -> str:
     name = str(value or "").strip()
     if not re.fullmatch(r"[A-Za-z0-9_-]+", name):
@@ -386,6 +399,140 @@ def validate_visual_context(result: object) -> tuple[bool, str]:
     context = normalize_visual_context(result)
     if not context:
         return False, "참조 이미지의 정적 Visual Context가 비어 있거나 LLM 실패 문자열입니다"
+    return True, ""
+
+
+def parse_auto_visual_direction(
+    result: object,
+    *,
+    log_repairs: bool = True,
+) -> tuple[str, str]:
+    """Recover the two useful texts locally without issuing another LLM call."""
+
+    text = str(result or "").strip().lstrip("\ufeff")
+    if not text or text.startswith("[LLM 실패]"):
+        raise ValueError("AI 자동 연출 응답이 비어 있거나 LLM 실패 문자열입니다")
+
+    repairs: list[str] = []
+    lines = text.splitlines()
+    if (
+        len(lines) >= 2
+        and lines[0].strip().startswith("```")
+        and lines[-1].strip() == "```"
+    ):
+        text = "\n".join(lines[1:-1]).strip()
+        repairs.append("markdown_fence_removed")
+
+    payload: object | None = None
+    parse_candidates = [text]
+    structured_starts = [
+        position
+        for position in (text.find("["), text.find("{"))
+        if position >= 0
+    ]
+    for start in sorted(set(structured_starts)):
+        if start > 0:
+            parse_candidates.append(text[start:])
+    for candidate in parse_candidates:
+        try:
+            payload, _end = json.JSONDecoder().raw_decode(candidate)
+            if candidate != text or _end < len(candidate.rstrip()):
+                repairs.append("surrounding_text_removed")
+            break
+        except (json.JSONDecodeError, TypeError):
+            continue
+
+    if payload is None:
+        for candidate in parse_candidates:
+            last_square = candidate.rfind("]")
+            last_curly = candidate.rfind("}")
+            last = max(last_square, last_curly)
+            if last < 0:
+                continue
+            repaired_candidate = re.sub(
+                r",\s*([\]}])",
+                r"\1",
+                candidate[: last + 1],
+            )
+            try:
+                payload = json.loads(repaired_candidate)
+                repairs.append("trailing_comma_removed")
+                break
+            except json.JSONDecodeError:
+                try:
+                    payload = ast.literal_eval(repaired_candidate)
+                    repairs.append("python_literal_normalized")
+                    break
+                except (ValueError, SyntaxError):
+                    continue
+
+    if payload is None:
+        payload = ["", text]
+        repairs.append("unstructured_text_used_as_direction")
+    elif isinstance(payload, dict):
+        values = list(payload.values())
+        if len(values) == 1 and isinstance(values[0], (list, tuple)):
+            payload = list(values[0])
+            repairs.append("object_wrapper_removed")
+        else:
+            payload = values
+            repairs.append("object_values_used_in_output_order")
+    elif isinstance(payload, str):
+        payload = ["", payload]
+        repairs.append("single_string_used_as_direction")
+    elif isinstance(payload, tuple):
+        payload = list(payload)
+        repairs.append("tuple_normalized")
+
+    if not isinstance(payload, list) or not payload:
+        raise ValueError("AI 자동 연출 응답에서 사용할 텍스트를 찾지 못했습니다")
+
+    def usable_text(value: object) -> str:
+        return value.strip() if isinstance(value, str) else ""
+
+    visual_text = usable_text(payload[0])
+    direction_parts = [
+        part for part in (usable_text(value) for value in payload[1:]) if part
+    ]
+    direction = "\n\n".join(direction_parts)
+    if len(payload) > 2:
+        repairs.append("split_direction_elements_joined")
+
+    if not visual_text:
+        raise ValueError("AI 자동 연출 응답의 Visual Context가 비어 있습니다")
+    if len(visual_text) > 12000:
+        visual_text = visual_text[:12000].rstrip()
+        repairs.append("visual_context_truncated")
+    visual_context = normalize_visual_context(visual_text)
+    if not direction:
+        direction = (
+            "Using the static Visual Context as the visible starting state, imagine "
+            "and describe one coherent, visually plausible continuation for the full "
+            "target duration at MiniMax H3's recommended level of concrete temporal detail."
+        )
+        repairs.append("empty_direction_delegated_to_h3_writer")
+    elif len(direction) > 12000:
+        direction = direction[:12000].rstrip()
+        repairs.append("video_direction_truncated")
+
+    if repairs and log_repairs:
+        print(
+            "[VIDEO:VISION] AI 자동 연출 응답 로컬 보정 완료: "
+            f"repairs={repairs!r}"
+        )
+    return visual_context, direction
+
+
+def validate_auto_visual_direction(result: object) -> tuple[bool, str]:
+    try:
+        parse_auto_visual_direction(result, log_repairs=False)
+    except Exception as exc:
+        print(
+            "[VIDEO:VISION] AI 자동 연출 2원소 배열 검증 실패: "
+            f"error={type(exc).__name__}: {exc}, response={str(result or '')[:1000]!r}"
+        )
+        traceback.print_exc()
+        return False, str(exc)
     return True, ""
 
 
@@ -581,26 +728,57 @@ class VideoMode:
         return high_res_crop, resized, preset_key, target_w, target_h, raw_path
 
     @staticmethod
-    def _visual_context_messages(mode: str) -> list[dict]:
+    def _visual_context_messages(
+        mode: str,
+        auto_instruction: bool = False,
+        duration: object = VIDEO_DEFAULT_DURATION_SECONDS,
+    ) -> list[dict]:
+        normalized_duration = normalize_video_duration(duration)
         if mode == "i2v":
-            task = (
-                "Analyze the supplied Picture 1 as a static first frame. "
-                "Record only directly visible facts. No illustration-generation "
-                "prompt or prior narrative is available or relevant."
-            )
+            if auto_instruction:
+                task = (
+                    "Analyze the supplied Picture 1 as the exact static first frame, "
+                    f"then imagine what happens immediately next during a coherent "
+                    f"{normalized_duration:g}-second video. Return the exact two-string "
+                    "JSON array contract. No illustration-generation prompt, prior "
+                    "narrative, or user-authored video direction is available."
+                )
+            else:
+                task = (
+                    "Analyze the supplied Picture 1 as a static first frame. "
+                    "Record only directly visible facts. No illustration-generation "
+                    "prompt or prior narrative is available or relevant."
+                )
         elif mode == "first_last":
-            task = (
-                "Analyze the supplied Picture 1 and Picture 2 independently as "
-                "static opening and final frames. Record only directly visible "
-                "facts for each picture. Do not infer a transition between them. "
-                "No illustration-generation prompt or prior narrative is available "
-                "or relevant."
-            )
+            if auto_instruction:
+                task = (
+                    "Analyze supplied Picture 1 and Picture 2 independently as the "
+                    "exact opening and final frames, then imagine a single coherent "
+                    f"transition lasting {normalized_duration:g} seconds and reaching "
+                    f"Picture 2 exactly at {normalized_duration:.2f} seconds. Return "
+                    "the exact two-string JSON array contract. No illustration-generation "
+                    "prompt, prior narrative, or user-authored video direction is available."
+                )
+            else:
+                task = (
+                    "Analyze the supplied Picture 1 and Picture 2 independently as "
+                    "static opening and final frames. Record only directly visible "
+                    "facts for each picture. Do not infer a transition between them. "
+                    "No illustration-generation prompt or prior narrative is available "
+                    "or relevant."
+                )
         else:
             print(f"[VIDEO:VISION] Visual Context 모드 오류: mode={mode!r}")
             raise ValueError("Visual Context는 I2V 또는 FLF2V 모드만 지원합니다")
         return [
-            {"role": "system", "content": VISUAL_CONTEXT_SYSTEM_PROMPT},
+            {
+                "role": "system",
+                "content": (
+                    AUTO_VISUAL_DIRECTION_SYSTEM_PROMPT
+                    if auto_instruction
+                    else VISUAL_CONTEXT_SYSTEM_PROMPT
+                ),
+            },
             {"role": "user", "content": task},
         ]
 
@@ -664,8 +842,17 @@ Vision-produced static Visual Context:
             (params or {}).get("duration", VIDEO_DEFAULT_DURATION_SECONDS)
         )
         source_name = _safe_backup_name((params or {}).get("source_backup"))
+        auto_instruction = (params or {}).get("auto_instruction", False)
+        if not isinstance(auto_instruction, bool):
+            print(
+                f"[VIDEO:LLM] AI 자동 연출 값 형식 오류: item={queue_item_id}, "
+                f"value={auto_instruction!r}"
+            )
+            raise ValueError("AI에게 맡기기 값은 boolean이어야 합니다")
         instruction = str((params or {}).get("instruction") or "").strip()
-        if not instruction:
+        if auto_instruction:
+            instruction = ""
+        elif not instruction:
             print(f"[VIDEO:LLM] 자연어 지시 비어 있음: item={queue_item_id}")
             raise ValueError("영상에서 일어날 일을 자연어로 입력하세요")
         if len(instruction) > 12000:
@@ -739,12 +926,27 @@ Vision-produced static Visual Context:
         raw_response_text = ""
         try:
             if mode in ("i2v", "first_last"):
-                visual_messages = self._visual_context_messages(mode)
-                visual_history_id = f"{history_id}:visual_context"
-                visual_call_label = {
-                    "i2v": "H3 I2V 첫 프레임 정적 분석",
-                    "first_last": "H3 FLF2V 정적 분석",
-                }[mode]
+                visual_messages = self._visual_context_messages(
+                    mode,
+                    auto_instruction=auto_instruction,
+                    duration=duration,
+                )
+                visual_history_id = (
+                    f"{history_id}:visual_context_auto_direction"
+                    if auto_instruction
+                    else f"{history_id}:visual_context"
+                )
+                visual_call_label = (
+                    {
+                        "i2v": "H3 I2V Visual Context·AI 연출 통합 생성",
+                        "first_last": "H3 FLF2V Visual Context·AI 연출 통합 생성",
+                    }[mode]
+                    if auto_instruction
+                    else {
+                        "i2v": "H3 I2V 첫 프레임 정적 분석",
+                        "first_last": "H3 FLF2V 정적 분석",
+                    }[mode]
+                )
                 visual_metadata: dict = {}
                 visual_started = time.time()
                 visual_execution_context = llm_service.create_llm_execution_context(
@@ -758,11 +960,20 @@ Vision-produced static Visual Context:
                     task_key,
                     visual_messages,
                     images=reference_images,
-                    result_validator=validate_visual_context,
+                    result_validator=(
+                        validate_auto_visual_direction
+                        if auto_instruction
+                        else validate_visual_context
+                    ),
                     metadata_sink=visual_metadata,
                     execution_context=visual_execution_context,
                 )
-                visual_context = normalize_visual_context(raw_visual_context)
+                if auto_instruction:
+                    visual_context, instruction = parse_auto_visual_direction(
+                        raw_visual_context
+                    )
+                else:
+                    visual_context = normalize_visual_context(raw_visual_context)
                 if not visual_context:
                     print(
                         f"[VIDEO:VISION] 정적 Visual Context 생성 실패: "
@@ -777,7 +988,7 @@ Vision-produced static Visual Context:
                 )
                 visual_completion_tokens = int(
                     visual_metadata.get("completion_tokens")
-                    or llm_service._approx_tokens(visual_context)
+                    or llm_service._approx_tokens(raw_visual_context)
                 )
                 _log_lighbd_history(
                     {
@@ -788,7 +999,9 @@ Vision-produced static Visual Context:
                         "call_name": visual_call_label,
                         "task_key": task_key,
                         "input": visual_messages,
-                        "output": visual_context,
+                        "output": (
+                            raw_visual_context if auto_instruction else visual_context
+                        ),
                         "prompt_tokens": visual_prompt_tokens,
                         "completion_tokens": visual_completion_tokens,
                         "elapsed": round(visual_elapsed, 3),
@@ -797,9 +1010,12 @@ Vision-produced static Visual Context:
                 )
                 trace_ids.append(visual_history_id)
                 print(
-                    f"[VIDEO:VISION] 정적 Visual Context 완료: "
+                    f"[VIDEO:VISION] "
+                    f"{'Visual Context·AI 연출 통합 생성' if auto_instruction else '정적 Visual Context'} 완료: "
                     f"item={queue_item_id}, mode={mode}, "
-                    f"length={len(visual_context)}, elapsed={visual_elapsed:.2f}s"
+                    f"context_length={len(visual_context)}, "
+                    f"direction_length={len(instruction) if auto_instruction else 0}, "
+                    f"elapsed={visual_elapsed:.2f}s"
                 )
 
             try:
@@ -881,6 +1097,7 @@ Vision-produced static Visual Context:
             return {
                 "success": True,
                 "h3_prompt": response_text,
+                "instruction": instruction,
                 "llm_trace": [*trace_ids, history_id],
                 "history_id": history_id,
             }

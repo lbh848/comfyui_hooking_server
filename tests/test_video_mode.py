@@ -21,8 +21,10 @@ from modes.video_mode import (
     normalize_h3_prompt_body,
     normalize_video_duration,
     normalize_visual_context,
+    parse_auto_visual_direction,
     validate_h3_prompt,
     validate_h3_prompt_body,
+    validate_auto_visual_direction,
     validate_visual_context,
 )
 
@@ -171,6 +173,74 @@ def test_visual_context_stage_describes_static_visible_facts_only() -> None:
         "visual_context:\nPicture 1: A static centered portrait."
     )
     assert validate_visual_context(raw) == (True, "")
+
+
+def test_auto_visual_direction_prefers_two_string_json_array() -> None:
+    raw = json.dumps(
+        [
+            "Picture 1: A centered character holds a closed book at chest height.",
+            "The character slowly looks up, loosens their grip, and takes one measured step forward while the camera gently pushes in.",
+        ]
+    )
+
+    visual_context, direction = parse_auto_visual_direction(raw)
+
+    assert visual_context == (
+        "visual_context:\n"
+        "Picture 1: A centered character holds a closed book at chest height."
+    )
+    assert direction.startswith("The character slowly looks up")
+    assert validate_auto_visual_direction(raw) == (True, "")
+
+
+def test_auto_visual_direction_repairs_usable_response_locally() -> None:
+    context = "Picture 1: A character stands beside a window."
+    object_response = json.dumps(
+        {"misspelled_context_key": context, "anything": "They turn toward the light."}
+    )
+    visual_context, direction = parse_auto_visual_direction(object_response)
+    assert visual_context.endswith(context)
+    assert direction == "They turn toward the light."
+
+    fenced_trailing_comma = (
+        "```json\n"
+        f'["{context}", "They blink.", "The curtain settles.",]\n'
+        "```"
+    )
+    visual_context, direction = parse_auto_visual_direction(fenced_trailing_comma)
+    assert visual_context.endswith(context)
+    assert direction == "They blink.\n\nThe curtain settles."
+
+    visual_context, direction = parse_auto_visual_direction(
+        json.dumps([context, ""])
+    )
+    assert visual_context.endswith(context)
+    assert "imagine and describe one coherent" in direction
+
+
+def test_auto_visual_direction_retries_when_visual_context_is_missing() -> None:
+    for invalid in (
+        '["", "They turn toward the light."]',
+        '["", ""]',
+        "[]",
+        "unstructured response without visual context",
+    ):
+        assert validate_auto_visual_direction(invalid)[0] is False
+
+
+def test_auto_visual_direction_prompt_receives_duration_and_mode_contract() -> None:
+    messages = VideoMode._visual_context_messages(
+        "first_last",
+        auto_instruction=True,
+        duration=12,
+    )
+    combined = "\n".join(str(message["content"]) for message in messages)
+
+    assert "exactly two strings" in combined
+    assert "12 seconds" in combined
+    assert "12.00 seconds" in combined
+    assert "MiniMax H3" in combined
+    assert "user-authored video direction is available" in combined
 
 
 def _synthetic_i2v_api_workflow() -> dict:
@@ -542,6 +612,78 @@ async def test_i2v_build_uses_picture_only_and_program_adds_alignment(
     assert result["llm_trace"] == [
         "video_prompt:i2v:queue-i2v:visual_context",
         "video_prompt:i2v:queue-i2v",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_i2v_auto_instruction_is_generated_in_visual_call_once(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    raw_dir = tmp_path / "_raw"
+    raw_dir.mkdir()
+    Image.new("RGB", (512, 512), "green").save(
+        raw_dir / "source.webp",
+        format="WEBP",
+    )
+    visual_value = "Picture 1: One character stands centered in a quiet room."
+    direction_value = (
+        "The character notices a soft movement off screen, turns toward it, and "
+        "takes a careful step as the camera makes a restrained forward push."
+    )
+    visual_response = json.dumps([visual_value, direction_value])
+    body = _valid_body()
+    calls = []
+
+    async def fake_vision_call(task_key, messages, **kwargs):
+        calls.append("vision")
+        combined = "\n".join(str(message["content"]) for message in messages)
+        assert task_key == "video_prompt_i2v"
+        assert "5-second video" in combined
+        assert kwargs["result_validator"](visual_response) == (True, "")
+        return visual_response
+
+    async def fake_text_call(task_key, messages, **kwargs):
+        calls.append("text")
+        combined = "\n".join(str(message["content"]) for message in messages)
+        assert task_key == "video_prompt_i2v"
+        assert direction_value in combined
+        assert f"visual_context:\n{visual_value}" in combined
+        return body
+
+    monkeypatch.setattr(
+        video_module.llm_service,
+        "callLLMVisionTask",
+        fake_vision_call,
+    )
+    monkeypatch.setattr(video_module.llm_service, "callLLMTask", fake_text_call)
+    monkeypatch.setattr(video_module, "_log_lighbd_history", lambda _record: None)
+
+    async def notify(_event_type, _data):
+        return None
+
+    mode = VideoMode()
+    mode.get_backup_dir = lambda: str(tmp_path)
+    mode.notify_frontend_func = notify
+
+    result = await mode.build_prompt(
+        {
+            "mode": "i2v",
+            "source_backup": "source",
+            "auto_instruction": True,
+            "instruction": "이 값은 자동 모드에서 사용되면 안 된다",
+            "preset": "1:1",
+            "duration": 5,
+        },
+        queue_item_id="queue-auto-i2v",
+    )
+
+    assert calls == ["vision", "text"]
+    assert result["success"] is True
+    assert result["instruction"] == direction_value
+    assert result["llm_trace"] == [
+        "video_prompt:i2v:queue-auto-i2v:visual_context_auto_direction",
+        "video_prompt:i2v:queue-auto-i2v",
     ]
 
 

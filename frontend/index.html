@@ -1379,6 +1379,34 @@
             background: var(--surface2);
             line-height: 1.5;
         }
+        .video-instruction:disabled {
+            opacity: .58;
+            cursor: not-allowed;
+        }
+        .video-auto-direction-toggle {
+            flex: 0 0 auto;
+            padding: 7px 11px;
+            border: 1px solid color-mix(in srgb, #b876d2 55%, var(--border));
+            border-radius: 999px;
+            color: var(--text2);
+            background: color-mix(in srgb, #9b59b6 8%, var(--surface2));
+            font-size: .78rem;
+            font-weight: 700;
+            cursor: pointer;
+            transition: border-color .16s ease, background .16s ease, color .16s ease;
+        }
+        .video-auto-direction-toggle[aria-pressed="true"] {
+            border-color: #b876d2;
+            color: #fff;
+            background: #9b59b6;
+        }
+        .video-auto-direction-note {
+            margin-top: 7px;
+            min-height: 1.3em;
+            color: var(--text2);
+            font-size: .76rem;
+            line-height: 1.35;
+        }
         .video-summary-bar {
             display: flex;
             align-items: center;
@@ -13606,8 +13634,12 @@
                 </div>
 
                 <section class="video-panel">
-                    <label for="video-generation-instruction" class="video-field-label"><span>영상에서 일어날 일</span><small>자연어로 자유롭게 작성</small></label>
+                    <div class="video-panel-title-row">
+                        <label for="video-generation-instruction" class="video-field-label"><span>영상에서 일어날 일</span><small id="video-generation-instruction-hint">자연어로 자유롭게 작성</small></label>
+                        <button type="button" id="video-generation-auto-instruction" class="video-auto-direction-toggle" aria-pressed="false" onclick="toggleVideoAutoInstruction()">✨ AI에게 맡기기</button>
+                    </div>
                     <textarea id="video-generation-instruction" class="video-instruction" rows="5" maxlength="12000" placeholder="예: 인물이 천천히 고개를 들어 카메라를 바라보고, 머리카락과 옷자락이 약한 바람에 자연스럽게 흔들린다. 카메라는 아주 조금 천천히 밀고 들어간다."></textarea>
+                    <div id="video-generation-auto-instruction-note" class="video-auto-direction-note" aria-live="polite"></div>
                     <div class="video-summary-bar">
                         <span id="video-generation-summary-detail" aria-live="polite">5초 · 자동 비율 · 품질 2× · AVIF</span>
                         <span>렌더와 후처리는 독립 큐에서 이어지며 합성본과 `_raw`를 함께 보관합니다.</span>
@@ -24981,6 +25013,45 @@
             return document.querySelector(`input[name="${name}"]:checked`)?.value || fallback;
         }
 
+        function isVideoAutoInstructionEnabled() {
+            return document.getElementById('video-generation-auto-instruction')
+                ?.getAttribute('aria-pressed') === 'true';
+        }
+
+        function updateVideoAutoInstructionPresentation() {
+            const enabled = isVideoAutoInstructionEnabled();
+            const input = document.getElementById('video-generation-instruction');
+            const hint = document.getElementById('video-generation-instruction-hint');
+            const note = document.getElementById('video-generation-auto-instruction-note');
+            if (!input || !hint || !note) {
+                console.error('[VIDEO_UI] AI 자동 연출 UI 요소를 찾지 못했습니다.');
+                return;
+            }
+            input.disabled = enabled;
+            input.placeholder = enabled
+                ? 'Visual Context를 분석한 AI가 이 입력을 대신 작성합니다.'
+                : '예: 인물이 천천히 고개를 들어 카메라를 바라보고, 머리카락과 옷자락이 약한 바람에 자연스럽게 흔들린다. 카메라는 아주 조금 천천히 밀고 들어간다.';
+            hint.textContent = enabled ? 'AI가 영어 영상 지시를 생성' : '자연어로 자유롭게 작성';
+            note.textContent = enabled
+                ? `Visual Context 생성과 동시에 ${normalizedVideoDuration()}초 동안 이어질 장면을 H3 권장 밀도의 영어 자연어로 상상합니다.`
+                : '';
+        }
+
+        function setVideoAutoInstruction(enabled) {
+            const button = document.getElementById('video-generation-auto-instruction');
+            if (!button) {
+                console.error('[VIDEO_UI] AI에게 맡기기 버튼을 찾지 못했습니다.');
+                return;
+            }
+            button.setAttribute('aria-pressed', enabled ? 'true' : 'false');
+            updateVideoAutoInstructionPresentation();
+            updateVideoGenerationSummary();
+        }
+
+        function toggleVideoAutoInstruction() {
+            setVideoAutoInstruction(!isVideoAutoInstructionEnabled());
+        }
+
         function selectVideoUpscaleScale(value) {
             const normalized = ['2', '3', '4'].includes(String(value)) ? String(value) : '2';
             const hidden = document.getElementById('video-generation-upscale-scale');
@@ -25043,6 +25114,7 @@
             if (input) input.value = String(duration);
             const header = document.getElementById('video-generation-header-summary');
             if (header) header.textContent = `MiniMax H3 · ${duration}초`;
+            updateVideoAutoInstructionPresentation();
             updateVideoWorkspaceMode();
             updateVideoGenerationSummary();
         }
@@ -25069,7 +25141,8 @@
                 ? VIDEO_UPSCALE_LABELS.none
                 : `${VIDEO_UPSCALE_LABELS[method] || method} ${scale}×`;
             const output = getSelectedVideoOption('video-output-format', 'avif').toUpperCase();
-            target.textContent = `${duration}초 · ${presetLabel} · ${upscaleLabel} · ${output}`;
+            const directionLabel = isVideoAutoInstructionEnabled() ? ' · AI 연출' : '';
+            target.textContent = `${duration}초 · ${presetLabel} · ${upscaleLabel} · ${output}${directionLabel}`;
         }
 
         function updateVideoWorkspaceMode() {
@@ -25327,6 +25400,7 @@
                 showToast('이 백업에는 영상화에 필요한 _raw 원본이 없습니다.', 'error');
                 return;
             }
+            setVideoAutoInstruction(false);
             selectVideoMode('i2v');
             updateVideoDuration();
             try {
@@ -25363,13 +25437,14 @@
             const upscaleModel = getSelectedVideoOption('video-upscale-model', 'realesr-animevideov3');
             const outputFormat = getSelectedVideoOption('video-output-format', 'avif');
             const instruction = document.getElementById('video-generation-instruction')?.value.trim() || '';
+            const autoInstruction = isVideoAutoInstructionEnabled();
             const button = document.getElementById('video-generation-submit');
             if (!sourceName) {
                 console.error('[VIDEO_UI] 제출 실패: 원본 백업 이름 없음');
                 showToast('원본 백업 정보가 없습니다.', 'error');
                 return;
             }
-            if (!instruction) {
+            if (!autoInstruction && !instruction) {
                 showToast('영상에서 일어날 일을 입력하세요.', 'warning');
                 document.getElementById('video-generation-instruction')?.focus();
                 return;
@@ -25398,7 +25473,8 @@
                         upscale_scale: upscaleScale,
                         upscale_model: upscaleEnabled ? upscaleModel : '',
                         output_format: outputFormat,
-                        instruction,
+                        auto_instruction: autoInstruction,
+                        instruction: autoInstruction ? '' : instruction,
                     }),
                 });
                 if (!data.success) throw new Error(data.error || '영상화 큐 등록 실패');
