@@ -9433,7 +9433,7 @@ async def handle_api_video_enqueue(request: web.Request) -> web.Response:
                     status=400,
                 )
             if last_name == source_name:
-                print(f"[VIDEO:API] 첫/마지막 백업 동일: name={source_name!r}")
+                print(f"[VIDEO:API] FLF2V 백업 동일: name={source_name!r}")
                 return web.json_response(
                     {"success": False, "error": "서로 다른 마지막 프레임을 선택하세요"},
                     status=400,
@@ -9455,7 +9455,7 @@ async def handle_api_video_enqueue(request: web.Request) -> web.Response:
         }
         label = {
             "i2v": "H3 I2V 프롬프트",
-            "first_last": "H3 첫·마지막 프롬프트",
+            "first_last": "H3 FLF2V 프롬프트",
         }[mode]
         item = await queue_manager.add_item("video_prompt_build", label, params)
         print(

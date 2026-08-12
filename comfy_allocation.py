@@ -34,7 +34,7 @@ COMFY_TASK_DEFINITIONS: tuple[tuple[str, str, str], ...] = (
     (
         "video_generation",
         "영상화",
-        "MiniMax H3 I2V·첫/마지막 프레임 영상화",
+        "MiniMax H3 I2V·FLF2V 영상화",
     ),
 )
 

@@ -208,7 +208,7 @@ LLM_TYPES = frozenset({
     "bot_llm_face_tag_analysis",    # 비전 LLM 기반 얼굴/눈 태그 자동 분류
     "character_maker",              # 캐릭터 메이커 draft/feedback LLM 수정 (revise)
     "qwen_edit_translate",          # Qwen Edit 지시문 영어 번역
-    "video_prompt_build",           # H3 I2V/첫·마지막 프롬프트 작성
+    "video_prompt_build",           # H3 I2V/FLF2V 프롬프트 작성
 })
 
 VIDEO_POSTPROCESS_TYPE = "video_postprocess"
@@ -1856,7 +1856,7 @@ class QueueManager:
             mode = str(params.get("mode") or "")
             label = {
                 "i2v": "H3 I2V · Real-ESRGAN→AVIF",
-                "first_last": "H3 첫·마지막 · Real-ESRGAN→AVIF",
+                "first_last": "H3 FLF2V · Real-ESRGAN→AVIF",
             }.get(mode, "영상 · Real-ESRGAN→AVIF")
             await self.add_item(
                 VIDEO_POSTPROCESS_TYPE,
@@ -2273,7 +2273,7 @@ class QueueManager:
             render_params = {**params, **prompt_result}
             label = {
                 "i2v": "H3 I2V 5초 영상화",
-                "first_last": "H3 첫·마지막 5초 영상화",
+                "first_last": "H3 FLF2V 5초 영상화",
             }[mode]
             render_item = await self.add_item(
                 render_type,
@@ -2348,7 +2348,7 @@ class QueueManager:
             mode = str(result.get("mode") or "")
             postprocess_label = {
                 "i2v": "H3 I2V · Real-ESRGAN→AVIF",
-                "first_last": "H3 첫·마지막 · Real-ESRGAN→AVIF",
+                "first_last": "H3 FLF2V · Real-ESRGAN→AVIF",
             }.get(mode, "영상 · Real-ESRGAN→AVIF")
             postprocess_item = await self.add_item(
                 VIDEO_POSTPROCESS_TYPE,

@@ -355,7 +355,7 @@ def validate_h3_prompt(result: object, mode: str) -> tuple[bool, str]:
         body = text[len(I2V_ALIGNMENT) :].strip()
     elif mode == "first_last":
         if not text.startswith(FIRST_LAST_ALIGNMENT):
-            return False, "첫·마지막 프레임 정렬 문장이 정확하지 않습니다"
+            return False, "FLF2V 정렬 문장이 정확하지 않습니다"
         body = text[len(FIRST_LAST_ALIGNMENT) :].strip()
     else:
         return False, f"지원하지 않는 H3 영상 모드입니다: {mode}"
@@ -508,7 +508,7 @@ class VideoMode:
             )
         else:
             print(f"[VIDEO:VISION] Visual Context 모드 오류: mode={mode!r}")
-            raise ValueError("Visual Context는 I2V 또는 첫·마지막 프레임 모드만 지원합니다")
+            raise ValueError("Visual Context는 I2V 또는 FLF2V 모드만 지원합니다")
         return [
             {"role": "system", "content": VISUAL_CONTEXT_SYSTEM_PROMPT},
             {"role": "user", "content": task},
@@ -559,7 +559,7 @@ Vision-produced static Visual Context:
         mode = str((params or {}).get("mode") or "").strip().lower()
         if mode not in VIDEO_MODES:
             print(f"[VIDEO:LLM] 모드 오류: item={queue_item_id}, mode={mode!r}")
-            raise ValueError("영상화 모드는 i2v, first_last 중 하나여야 합니다")
+            raise ValueError("영상화 모드는 i2v, FLF2V 중 하나여야 합니다")
         source_name = _safe_backup_name((params or {}).get("source_backup"))
         instruction = str((params or {}).get("instruction") or "").strip()
         if not instruction:
@@ -584,7 +584,7 @@ Vision-produced static Visual Context:
         if mode == "first_last":
             last_name = _safe_backup_name((params or {}).get("last_backup"))
             if last_name == source_name:
-                print(f"[VIDEO:LLM] 첫/마지막 백업 동일: item={queue_item_id}, name={source_name}")
+                print(f"[VIDEO:LLM] FLF2V 백업 동일: item={queue_item_id}, name={source_name}")
                 raise ValueError("첫 프레임과 마지막 프레임은 서로 다른 백업을 선택하세요")
             first_image = self._load_first_frame(
                 self._find_image_path(self._backup_dir(), source_name, raw=True)
@@ -604,7 +604,7 @@ Vision-produced static Visual Context:
         task_key = f"video_prompt_{mode}"
         call_label = {
             "i2v": "H3 I2V 프롬프트 작성",
-            "first_last": "H3 첫·마지막 프레임 프롬프트 작성",
+            "first_last": "H3 FLF2V 프롬프트 작성",
         }[mode]
         history_id = f"video_prompt:{mode}:{queue_item_id or uuid.uuid4().hex[:12]}"
         messages: list[dict] = []
@@ -639,7 +639,7 @@ Vision-produced static Visual Context:
                 visual_history_id = f"{history_id}:visual_context"
                 visual_call_label = {
                     "i2v": "H3 I2V 첫 프레임 정적 분석",
-                    "first_last": "H3 첫·마지막 프레임 정적 분석",
+                    "first_last": "H3 FLF2V 정적 분석",
                 }[mode]
                 visual_metadata: dict = {}
                 visual_started = time.time()
@@ -1643,7 +1643,7 @@ Vision-produced static Visual Context:
                 "execution_source": "local",
                 "gen_method": {
                     "i2v": "H3 I2V",
-                    "first_last": "H3 첫·마지막 프레임",
+                    "first_last": "H3 FLF2V",
                 }.get(mode, "H3 영상화"),
                 "generation_time": elapsed,
                 "is_video_animation": True,

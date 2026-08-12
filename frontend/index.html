@@ -13119,7 +13119,7 @@
                     <input id="video-generation-mode" type="hidden" value="i2v">
                     <div role="tablist" aria-label="영상화 방식" style="display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:6px;">
                         <button type="button" role="tab" data-video-mode-tab="i2v" aria-selected="true" onclick="selectVideoMode('i2v')" style="padding:9px 6px; border:1px solid #b876d2; border-radius:7px; background:#9b59b6; color:#fff;">I2V</button>
-                        <button type="button" role="tab" data-video-mode-tab="first_last" aria-selected="false" onclick="selectVideoMode('first_last')" style="padding:9px 6px; border:1px solid var(--border); border-radius:7px; background:var(--surface1); color:var(--text2);">첫·마지막</button>
+                        <button type="button" role="tab" data-video-mode-tab="first_last" aria-selected="false" onclick="selectVideoMode('first_last')" style="padding:9px 6px; border:1px solid var(--border); border-radius:7px; background:var(--surface1); color:var(--text2);">FLF2V</button>
                     </div>
                 </div>
                 <div id="video-generation-mode-note" style="margin:-6px 0 14px; color:var(--text2); font-size:.71rem; line-height:1.45;"></div>
@@ -25962,7 +25962,7 @@
             { key: 'instance_lora', label: '인스턴스 / 스타일 LoRA', description: '인스턴스·스타일 LoRA 분석 및 학습', modalSupported: true },
             { key: 'face_extract', label: '얼굴 추출', description: '인스턴스 LoRA 얼굴 추출', modalSupported: false },
             { key: 'utility_debug', label: '유틸리티 / 디버그', description: '데이터 패치, 봇 유틸리티, 디버그 워크플로우', modalSupported: false },
-            { key: 'video_generation', label: '영상화', description: 'MiniMax H3 I2V·첫/마지막 프레임 영상화', modalSupported: false },
+            { key: 'video_generation', label: '영상화', description: 'MiniMax H3 I2V·FLF2V 영상화', modalSupported: false },
         ]);
         let comfyRuntimeActiveInstance = 1;
         let comfyRuntimeActiveView = 'instance';
@@ -34078,7 +34078,7 @@
             {
                 key: 'video_pipeline',
                 label: 'MiniMax H3 영상화',
-                description: 'I2V·첫/마지막 프레임용 공식 H3 프롬프트 작성',
+                description: 'I2V·FLF2V용 공식 H3 프롬프트 작성',
                 color: '#cf6bd6',
             },
         ];
@@ -34106,7 +34106,7 @@
             { key: 'illustration_call3',       label: '삽화 CALL3 (대사 생성)',         kind: '텍스트', group: 'illustration_pipeline' },
             { key: 'illustration_multi_char_mask', label: '삽화 다중 캐릭터 마스크',    kind: 'JSON', group: 'illustration_pipeline' },
             { key: 'video_prompt_i2v',        label: 'H3 I2V 프롬프트', kind: '비전', group: 'video_pipeline' },
-            { key: 'video_prompt_first_last', label: 'H3 첫·마지막 프롬프트', kind: '다중 비전', group: 'video_pipeline' },
+            { key: 'video_prompt_first_last', label: 'H3 FLF2V 프롬프트', kind: '다중 비전', group: 'video_pipeline' },
         ];
 
         function llmRouteNumber(value, fallback, integer = false) {
@@ -77137,7 +77137,7 @@
             qwen_edit_translate: 'EDIT 번역',
             video_prompt_build: 'H3 프롬프트',
             video_i2v: 'H3 I2V',
-            video_first_last: 'H3 첫·마지막',
+            video_first_last: 'H3 FLF2V',
             video_postprocess: '영상 후처리',
             character_maker: '캐릭터 메이커',
             tag_analysis: '태그분석',
