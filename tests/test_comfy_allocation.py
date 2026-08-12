@@ -35,10 +35,22 @@ def test_legacy_illustration_port_is_inherited_only_without_new_mapping() -> Non
     assert explicit["restore_regenerate"] == 1
 
 
-@pytest.mark.parametrize("value", (0, 3, True, 1.5, "02", "second"))
+@pytest.mark.parametrize("value", (0, 4, True, 1.5, "02", "second"))
 def test_allocation_rejects_invalid_instance_values(value) -> None:
     with pytest.raises(ComfyTaskAllocationValidationError):
         normalize_comfy_task_allocations({"illustration": value})
+
+
+def test_every_local_task_can_use_third_instance_and_video_is_one_allocation() -> None:
+    allocations = normalize_comfy_task_allocations(
+        {"illustration": 3, "video_generation": 2}
+    )
+
+    assert allocations["illustration"] == 3
+    assert allocations["video_generation"] == 2
+    assert "video_t2v" not in allocations
+    assert "video_i2v" not in allocations
+    assert "video_first_last" not in allocations
 
 
 def test_exactly_one_running_instance_overrides_configured_allocation() -> None:
@@ -67,8 +79,18 @@ def test_configured_allocation_is_used_when_both_or_neither_are_running() -> Non
     assert select_comfy_instance(
         allocations,
         "asset_generation",
-        {1: False, 2: False},
+        {1: False, 2: False, 3: False},
     ) == 2
+
+
+def test_exactly_one_of_three_running_instances_is_used_as_local_fallback() -> None:
+    allocations = normalize_comfy_task_allocations({"video_generation": 1})
+
+    assert select_comfy_instance(
+        allocations,
+        "video_generation",
+        {1: False, 2: False, 3: True},
+    ) == 3
 
 
 @pytest.mark.parametrize(

@@ -12974,6 +12974,7 @@
         <div class="tab-group tab-group--illustration" role="group" aria-label="삽화 기능">
             <span class="tab-group-label" aria-hidden="true">삽화</span>
             <button type="button" id="tab-btn-backup" class="tab-btn active" onclick="switchTab('backup')">삽화 백업</button>
+            <button type="button" id="tab-btn-video" class="tab-btn" onclick="switchTab('video')">영상화</button>
             <button type="button" id="tab-btn-bot" class="tab-btn" onclick="switchTab('bot')">
                 <span class="tab-title">삽화 모드</span>
                 <span class="tab-status-badges">
@@ -13104,6 +13105,83 @@
                 <div id="active-bot-popover-list" style="display:flex; flex-direction:column; gap:2px;"></div>
             </div>
 
+        </div>
+
+        <!-- 영상화 탭 -->
+        <div id="tab-video-content" class="tab-content">
+            <div class="asset-breadcrumb">
+                <span>영상화</span>
+                <span style="color:var(--text2); font-size:.76rem;">MiniMax H3 · 5초</span>
+            </div>
+            <div style="max-width:980px; margin:0 auto; padding:22px 18px 40px;">
+                <div style="margin-bottom:18px;">
+                    <h2 style="margin:0 0 6px; font-size:1.15rem;">삽화에서 5초 영상 만들기</h2>
+                    <div style="color:var(--text2); font-size:.78rem; line-height:1.5;">LLM이 공식 H3 형식의 제작 명령어를 작성한 뒤, 영상화 작업에 배분된 Comfy #1·#2·#3 중 선택 가능한 인스턴스에서 렌더링합니다.</div>
+                </div>
+                <div style="display:grid; grid-template-columns:minmax(220px, 290px) minmax(0, 1fr); gap:18px; align-items:start;">
+                    <section style="padding:14px; border:1px solid var(--border); border-radius:10px; background:var(--surface2);">
+                        <label style="display:block; margin-bottom:10px;">
+                            <span style="display:block; font-size:.76rem; font-weight:700; margin-bottom:5px;">기준 삽화 백업</span>
+                            <select id="video-generation-source" onchange="onVideoSourceChange()" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:7px; background:var(--surface1); color:var(--text);">
+                                <option value="">_raw 보유 백업을 불러오는 중...</option>
+                            </select>
+                        </label>
+                        <div id="video-generation-source-empty" style="display:flex; min-height:190px; align-items:center; justify-content:center; padding:12px; border:1px dashed var(--border); border-radius:8px; color:var(--text2); font-size:.74rem; text-align:center; line-height:1.5;">영상화할 `_raw` 삽화를 선택하세요.</div>
+                        <img id="video-generation-source-preview" src="" alt="기준 삽화 미리보기" style="display:none; width:100%; max-height:320px; object-fit:contain; border-radius:8px; border:1px solid var(--border); background:#111;">
+                        <div id="video-generation-source-name" style="margin-top:8px; font-family:monospace; font-size:.7rem; color:var(--text2); word-break:break-all;"></div>
+                        <div style="margin-top:10px; color:#ffcf67; font-size:.71rem; line-height:1.5;">대사창과 말풍선은 원본 고해상도에서 먼저 렌더링하고, FAST 크기로 축소한 뒤 모든 프레임에 합성합니다.</div>
+                    </section>
+
+                    <section style="padding:16px; border:1px solid var(--border); border-radius:10px; background:var(--surface2);">
+                        <div style="margin-bottom:12px;">
+                            <span style="display:block; font-size:.76rem; font-weight:700; margin-bottom:6px;">영상화 방식</span>
+                            <input id="video-generation-mode" type="hidden" value="i2v">
+                            <div role="tablist" aria-label="영상화 방식" style="display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:6px;">
+                                <button type="button" role="tab" data-video-mode-tab="t2v" aria-selected="false" onclick="selectVideoMode('t2v')" style="padding:9px 6px; border:1px solid var(--border); border-radius:7px; background:var(--surface1); color:var(--text2);">T2V</button>
+                                <button type="button" role="tab" data-video-mode-tab="i2v" aria-selected="true" onclick="selectVideoMode('i2v')" style="padding:9px 6px; border:1px solid #b876d2; border-radius:7px; background:#9b59b6; color:#fff;">I2V</button>
+                                <button type="button" role="tab" data-video-mode-tab="first_last" aria-selected="false" onclick="selectVideoMode('first_last')" style="padding:9px 6px; border:1px solid var(--border); border-radius:7px; background:var(--surface1); color:var(--text2);">첫·마지막</button>
+                            </div>
+                        </div>
+                        <div id="video-generation-mode-note" style="margin:-6px 0 12px; color:var(--text2); font-size:.71rem; line-height:1.45;"></div>
+
+                        <label id="video-generation-last-row" style="display:none; margin-bottom:12px;">
+                            <span style="display:block; font-size:.76rem; font-weight:700; margin-bottom:5px;">마지막 프레임 백업</span>
+                            <select id="video-generation-last" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:7px; background:var(--surface1); color:var(--text);">
+                                <option value="">다른 _raw 백업을 선택하세요.</option>
+                            </select>
+                        </label>
+
+                        <label style="display:block; margin-bottom:12px;">
+                            <span style="display:block; font-size:.76rem; font-weight:700; margin-bottom:5px;">FAST 비율 프리셋</span>
+                            <select id="video-generation-preset" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:7px; background:var(--surface1); color:var(--text);">
+                                <option value="auto" selected>자동 · 원본과 가장 가까운 비율</option>
+                                <option value="1:1">1:1 · 512×512</option>
+                                <option value="4:3">4:3 · 512×384</option>
+                                <option value="3:4">3:4 · 384×512</option>
+                                <option value="16:9">16:9 근사 · 672×384</option>
+                                <option value="9:16">9:16 근사 · 384×672</option>
+                                <option value="21:9">21:9 · 672×288</option>
+                                <option value="9:21">9:21 · 288×672</option>
+                                <option value="3:2">3:2 · 576×384</option>
+                                <option value="2:3">2:3 · 384×576</option>
+                                <option value="5:4">5:4 · 480×384</option>
+                                <option value="4:5">4:5 · 384×480</option>
+                            </select>
+                        </label>
+
+                        <label style="display:block; margin-bottom:12px;">
+                            <span style="display:block; font-size:.76rem; font-weight:700; margin-bottom:5px;">영상에서 일어날 일</span>
+                            <textarea id="video-generation-instruction" rows="7" maxlength="12000" placeholder="예: 인물이 천천히 고개를 들어 카메라를 바라보고, 머리카락과 옷자락이 약한 바람에 자연스럽게 흔들린다. 카메라는 아주 조금 천천히 밀고 들어간다." style="width:100%; box-sizing:border-box; resize:vertical; padding:9px; border:1px solid var(--border); border-radius:7px; background:var(--surface1); color:var(--text); line-height:1.5;"></textarea>
+                        </label>
+
+                        <div style="font-size:.7rem; color:var(--text2); line-height:1.5; margin-bottom:14px;">완료본은 animated AVIF 우선, 미지원 시 animated WebP로 저장합니다. 합성본과 대사 없는 _raw 원본을 함께 보관하며, 중간 MP4와 오디오는 보관하지 않습니다.</div>
+                        <div style="display:flex; justify-content:flex-end; gap:8px;">
+                            <button type="button" onclick="switchTab('backup')" style="padding:8px 15px;">삽화 백업으로</button>
+                            <button type="button" id="video-generation-submit" onclick="submitVideoGeneration()" style="padding:8px 16px; background:#9b59b6; color:#fff; border-color:#b876d2;">🎬 큐에 등록</button>
+                        </div>
+                    </section>
+                </div>
+            </div>
         </div>
 
         <!-- 삽화 설정 탭 -->
@@ -24084,6 +24162,10 @@
                                     ${b.has_llm_trace ? 'title="이 백업을 만든 LLM 흐름(MULTI-CHAR-MASK~CALL3) 입력/출력을 자르기 없이 보여줍니다"' : 'disabled title="LLM 흐름 기록이 없는 백업입니다(도입 전/재생성/수동 생성)"'}>
                                 🧩 LLM 흐름
                             </button>
+                            <button class="video-backup-btn" onclick="event.stopPropagation(); openVideoWorkspace('${escapeAttr(b.name)}')"
+                                    ${b.has_raw ? 'title="_raw 원본으로 MiniMax H3 5초 영상화를 시작합니다"' : 'disabled title="영상화에 필요한 _raw 원본이 없는 백업입니다"'}>
+                                🎬 영상화
+                            </button>
                             <button class="delete-backup-btn" onclick="deleteBackup('${escapeAttr(b.name)}', this)" title="이미지와 메타데이터를 삭제합니다">
                                 🗑️ 삭제
                             </button>
@@ -24446,6 +24528,190 @@
                     });
             } else {
                 el.style.display = 'none';
+            }
+        }
+
+        // ─── MiniMax H3 영상화 ───
+        let videoReferenceOptions = [];
+        let videoWorkspacePreferredSource = '';
+
+        function updateVideoWorkspaceMode() {
+            const mode = document.getElementById('video-generation-mode')?.value || 'i2v';
+            const lastRow = document.getElementById('video-generation-last-row');
+            const modeNote = document.getElementById('video-generation-mode-note');
+            if (lastRow) lastRow.style.display = mode === 'first_last' ? 'block' : 'none';
+            if (modeNote) {
+                modeNote.textContent = mode === 't2v'
+                    ? '저장된 삽화 프롬프트를 문맥으로 쓰되 이미지는 H3에 참조하지 않습니다. _raw는 비율과 기존 대사 레이어 복원에만 사용합니다.'
+                    : mode === 'first_last'
+                        ? '현재 백업 _raw를 0초, 선택한 마지막 백업 _raw를 5초에 정렬해 한 장면으로 이어갑니다.'
+                        : '현재 백업의 _raw를 H3 첫 프레임으로 사용합니다.';
+            }
+        }
+
+        function selectVideoMode(mode) {
+            if (!['t2v', 'i2v', 'first_last'].includes(mode)) {
+                console.error('[VIDEO_UI] 지원하지 않는 내부 탭:', mode);
+                return;
+            }
+            const input = document.getElementById('video-generation-mode');
+            if (input) input.value = mode;
+            document.querySelectorAll('[data-video-mode-tab]').forEach(button => {
+                const active = button.dataset.videoModeTab === mode;
+                button.setAttribute('aria-selected', active ? 'true' : 'false');
+                button.style.background = active ? '#9b59b6' : 'var(--surface1)';
+                button.style.color = active ? '#fff' : 'var(--text2)';
+                button.style.borderColor = active ? '#b876d2' : 'var(--border)';
+            });
+            updateVideoWorkspaceMode();
+        }
+
+        function refreshVideoLastFrameOptions(sourceName) {
+            const select = document.getElementById('video-generation-last');
+            if (!select) {
+                console.error('[VIDEO_UI] 마지막 프레임 선택기를 찾지 못했습니다.');
+                return;
+            }
+            const previous = select.value;
+            const options = videoReferenceOptions.filter(item => item.name !== sourceName);
+            select.innerHTML = options.length
+                ? options.map(item => `<option value="${escapeAttr(item.name)}">${escapeHtml(formatDate(item.mtime))} · ${escapeHtml(item.name)}</option>`).join('')
+                : '<option value="">선택 가능한 다른 _raw 백업 없음</option>';
+            if (options.some(item => item.name === previous)) select.value = previous;
+        }
+
+        function onVideoSourceChange() {
+            const select = document.getElementById('video-generation-source');
+            const preview = document.getElementById('video-generation-source-preview');
+            const empty = document.getElementById('video-generation-source-empty');
+            const nameLabel = document.getElementById('video-generation-source-name');
+            if (!select || !preview || !empty || !nameLabel) {
+                console.error('[VIDEO_UI] 영상화 원본 UI 요소를 찾지 못했습니다.');
+                return;
+            }
+            const source = videoReferenceOptions.find(item => item.name === select.value);
+            if (!source) {
+                preview.removeAttribute('src');
+                preview.style.display = 'none';
+                empty.style.display = 'flex';
+                nameLabel.textContent = '';
+                refreshVideoLastFrameOptions('');
+                return;
+            }
+            preview.onerror = () => {
+                console.error('[VIDEO_UI] 기준 삽화 미리보기 로드 실패:', source.image_url);
+                preview.style.display = 'none';
+                empty.textContent = '미리보기를 불러오지 못했습니다. 원본 선택은 유지됩니다.';
+                empty.style.display = 'flex';
+            };
+            empty.textContent = '영상화할 `_raw` 삽화를 선택하세요.';
+            preview.src = source.image_url;
+            preview.style.display = 'block';
+            empty.style.display = 'none';
+            nameLabel.textContent = source.name;
+            refreshVideoLastFrameOptions(source.name);
+        }
+
+        async function loadVideoReferenceOptions(preferredSource = '') {
+            const select = document.getElementById('video-generation-source');
+            if (!select) {
+                console.error('[VIDEO_UI] 기준 삽화 선택기를 찾지 못했습니다.');
+                return;
+            }
+            const previous = select.value;
+            select.innerHTML = '<option value="">_raw 보유 백업을 불러오는 중...</option>';
+            try {
+                const data = await fetchJSON('/api/video/reference-options');
+                if (!data.success) throw new Error(data.error || '참조 백업 목록 조회 실패');
+                videoReferenceOptions = Array.isArray(data.options) ? data.options : [];
+                if (!videoReferenceOptions.length) {
+                    console.error('[VIDEO_UI] 영상화 가능한 _raw 백업이 없습니다.');
+                    select.innerHTML = '<option value="">영상화 가능한 _raw 백업 없음</option>';
+                    onVideoSourceChange();
+                    return;
+                }
+                select.innerHTML = videoReferenceOptions
+                    .map(item => `<option value="${escapeAttr(item.name)}">${escapeHtml(formatDate(item.mtime))} · ${escapeHtml(item.name)}</option>`)
+                    .join('');
+                const requested = preferredSource || previous;
+                if (videoReferenceOptions.some(item => item.name === requested)) select.value = requested;
+                onVideoSourceChange();
+            } catch (error) {
+                console.error('[VIDEO_UI] 영상화 참조 백업 목록 로드 실패:', error);
+                videoReferenceOptions = [];
+                select.innerHTML = '<option value="">백업 목록 로드 실패</option>';
+                onVideoSourceChange();
+                showToast('영상화 참조 백업 목록을 불러오지 못했습니다.', 'error');
+            }
+        }
+
+        async function openVideoWorkspace(name) {
+            const source = backupsData.find(item => item.name === name);
+            if (!source) {
+                console.error('[VIDEO_UI] 원본 백업을 찾지 못했습니다:', name);
+                showToast('영상화할 백업 정보를 찾지 못했습니다.', 'error');
+                return;
+            }
+            if (!source.has_raw) {
+                console.error('[VIDEO_UI] _raw 원본 없는 백업:', name);
+                showToast('이 백업에는 영상화에 필요한 _raw 원본이 없습니다.', 'error');
+                return;
+            }
+            videoWorkspacePreferredSource = name;
+            selectVideoMode('i2v');
+            await switchTab('video');
+        }
+
+        async function submitVideoGeneration() {
+            const sourceName = document.getElementById('video-generation-source')?.value || '';
+            const mode = document.getElementById('video-generation-mode')?.value || 'i2v';
+            const lastBackup = document.getElementById('video-generation-last')?.value || '';
+            const preset = document.getElementById('video-generation-preset')?.value || 'auto';
+            const instruction = document.getElementById('video-generation-instruction')?.value.trim() || '';
+            const button = document.getElementById('video-generation-submit');
+            if (!sourceName) {
+                console.error('[VIDEO_UI] 제출 실패: 원본 백업 이름 없음');
+                showToast('원본 백업 정보가 없습니다.', 'error');
+                return;
+            }
+            if (!instruction) {
+                showToast('영상에서 일어날 일을 입력하세요.', 'warning');
+                document.getElementById('video-generation-instruction')?.focus();
+                return;
+            }
+            if (mode === 'first_last' && !lastBackup) {
+                showToast('마지막 프레임 백업을 선택하세요.', 'warning');
+                return;
+            }
+            const originalText = button?.innerHTML || '🎬 큐에 등록';
+            if (button) {
+                button.disabled = true;
+                button.innerHTML = '<span class="spinner"></span> 등록 중';
+            }
+            try {
+                const data = await fetchJSON('/api/video/enqueue', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        mode,
+                        source_backup: sourceName,
+                        last_backup: lastBackup,
+                        preset,
+                        instruction,
+                    }),
+                });
+                if (!data.success) throw new Error(data.error || '영상화 큐 등록 실패');
+                showToast(`영상화 프롬프트 작업을 큐에 등록했습니다. (${data.item_id})`, 'success');
+                const instructionInput = document.getElementById('video-generation-instruction');
+                if (instructionInput) instructionInput.value = '';
+            } catch (error) {
+                console.error('[VIDEO_UI] 영상화 큐 등록 실패:', error);
+                showToast('영상화 큐 등록 실패: ' + (error.message || error), 'error');
+            } finally {
+                if (button) {
+                    button.disabled = false;
+                    button.innerHTML = originalText;
+                }
             }
         }
 
@@ -25601,6 +25867,7 @@
             { key: 'instance_lora', label: '인스턴스 / 스타일 LoRA', description: '인스턴스·스타일 LoRA 분석 및 학습', modalSupported: true },
             { key: 'face_extract', label: '얼굴 추출', description: '인스턴스 LoRA 얼굴 추출', modalSupported: false },
             { key: 'utility_debug', label: '유틸리티 / 디버그', description: '데이터 패치, 봇 유틸리티, 디버그 워크플로우', modalSupported: false },
+            { key: 'video_generation', label: '영상화', description: 'MiniMax H3 T2V·I2V·첫/마지막 프레임 영상화', modalSupported: false },
         ]);
         let comfyRuntimeActiveInstance = 1;
         let comfyRuntimeActiveView = 'instance';
@@ -25617,7 +25884,7 @@
         let comfyRuntimePollBusy = false;
         let comfyRuntimeActionBusy = false;
         let comfyTaskAllocations = Object.fromEntries(
-            COMFY_TASK_DEFINITIONS.map(item => [item.key, 1]),
+            COMFY_TASK_DEFINITIONS.map(item => [item.key, item.defaultInstance || 1]),
         );
         let comfyTaskModalParallel = Object.fromEntries(
             COMFY_TASK_DEFINITIONS.map(item => [item.key, false]),
@@ -25625,7 +25892,7 @@
 
         function comfyAllocationNormalize(raw, legacyIllustrationEnabled = false) {
             const normalized = Object.fromEntries(
-                COMFY_TASK_DEFINITIONS.map(item => [item.key, 1]),
+                COMFY_TASK_DEFINITIONS.map(item => [item.key, item.defaultInstance || 1]),
             );
             const source = raw && typeof raw === 'object' && !Array.isArray(raw)
                 ? raw
@@ -25637,9 +25904,13 @@
             if (source) {
                 for (const item of COMFY_TASK_DEFINITIONS) {
                     const value = String(source[item.key] ?? '').trim().toLowerCase();
+                    const allowedInstances = item.localInstances || [1, 2, 3];
+                    const numericValue = Number(source[item.key]);
                     normalized[item.key] = item.modalSupported && value === 'modal'
                         ? 'modal'
-                        : (Number(source[item.key]) === 2 ? 2 : 1);
+                        : (allowedInstances.includes(numericValue)
+                            ? numericValue
+                            : (item.defaultInstance || 1));
                 }
             }
             return normalized;
@@ -25692,7 +25963,7 @@
                 select.className = 'comfy-allocation-select';
                 select.id = `setting-comfy-allocation-${item.key}`;
                 select.setAttribute('aria-label', `${item.label} Comfy 배분`);
-                for (const instanceId of [1, 2]) {
+                for (const instanceId of (item.localInstances || [1, 2, 3])) {
                     const option = document.createElement('option');
                     option.value = String(instanceId);
                     option.textContent = `Comfy #${instanceId}`;
@@ -25704,7 +25975,7 @@
                     modalOption.textContent = 'MODAL';
                     select.appendChild(modalOption);
                 }
-                select.value = String(comfyTaskAllocations[item.key] || 1);
+                select.value = String(comfyTaskAllocations[item.key] || item.defaultInstance || 1);
 
                 const controls = document.createElement('span');
                 controls.className = 'comfy-allocation-controls';
@@ -25736,7 +26007,7 @@
                 select.addEventListener('change', () => {
                     comfyTaskAllocations[item.key] = select.value === 'modal'
                         ? 'modal'
-                        : (Number(select.value) === 2 ? 2 : 1);
+                        : Number(select.value);
                     comfyAllocationSyncModalParallel(
                         item,
                         select,
@@ -25773,9 +26044,13 @@
             for (const item of COMFY_TASK_DEFINITIONS) {
                 const select = document.getElementById(`setting-comfy-allocation-${item.key}`);
                 const value = String(select?.value || comfyTaskAllocations[item.key]);
+                const allowedInstances = item.localInstances || [1, 2, 3];
+                const numericValue = Number(value);
                 result[item.key] = item.modalSupported && value === 'modal'
                     ? 'modal'
-                    : (Number(value) === 2 ? 2 : 1);
+                    : (allowedInstances.includes(numericValue)
+                        ? numericValue
+                        : (item.defaultInstance || 1));
             }
             comfyTaskAllocations = result;
             return { ...result };
@@ -25799,12 +26074,16 @@
             if (!state) return;
             const running1 = !!comfyRuntimeStatuses[1]?.running;
             const running2 = !!comfyRuntimeStatuses[2]?.running;
-            if (running1 && running2) {
-                state.textContent = 'Comfy #1과 #2 실행 중 · 로컬 선택과 MODAL 선착순 배분을 적용합니다.';
+            const running3 = !!comfyRuntimeStatuses[3]?.running;
+            const runningIds = [running1 && 1, running2 && 2, running3 && 3].filter(Boolean);
+            if (runningIds.length > 1) {
+                state.textContent = `Comfy ${runningIds.map(id => '#' + id).join(', ')} 실행 중 · 작업별 로컬 선택과 MODAL 선착순 배분을 적용합니다.`;
             } else if (running1) {
                 state.textContent = 'Comfy #1만 실행 중 · 로컬 대상 작업은 #1로 폴백하고 MODAL 대상은 원격 대기열을 사용합니다.';
             } else if (running2) {
                 state.textContent = 'Comfy #2만 실행 중 · 로컬 대상 작업은 #2로 폴백하고 MODAL 대상은 원격 대기열을 사용합니다.';
+            } else if (running3) {
+                state.textContent = 'Comfy #3만 실행 중 · 로컬 대상 작업은 #3로 폴백하고 MODAL 대상은 원격 대기열을 사용합니다.';
             } else {
                 state.textContent = '실행 중인 로컬 관리 인스턴스 없음 · 로컬은 선택 포트, MODAL 대상은 원격 대기열을 사용합니다.';
             }
@@ -33693,6 +33972,12 @@
                 description: '삽화 컨텍스트 전처리부터 본문·대사·마스크 생성까지의 호출 단계',
                 color: '#5fbd8b',
             },
+            {
+                key: 'video_pipeline',
+                label: 'MiniMax H3 영상화',
+                description: 'T2V·I2V·첫/마지막 프레임용 공식 H3 프롬프트 작성',
+                color: '#cf6bd6',
+            },
         ];
 
         const LLM_ROUTING_TASKS = [
@@ -33717,6 +34002,9 @@
             { key: 'illustration_call2_fix',   label: '삽화 CALL2-FIX (TOON 교정)',    kind: '텍스트', group: 'illustration_pipeline' },
             { key: 'illustration_call3',       label: '삽화 CALL3 (대사 생성)',         kind: '텍스트', group: 'illustration_pipeline' },
             { key: 'illustration_multi_char_mask', label: '삽화 다중 캐릭터 마스크',    kind: 'JSON', group: 'illustration_pipeline' },
+            { key: 'video_prompt_t2v',        label: 'H3 T2V 프롬프트', kind: '텍스트', group: 'video_pipeline' },
+            { key: 'video_prompt_i2v',        label: 'H3 I2V 프롬프트', kind: '비전', group: 'video_pipeline' },
+            { key: 'video_prompt_first_last', label: 'H3 첫·마지막 프롬프트', kind: '다중 비전', group: 'video_pipeline' },
         ];
 
         function llmRouteNumber(value, fallback, integer = false) {
@@ -45306,57 +45594,61 @@
 
             document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
             document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            const requestedButton = document.querySelector(`.tab-btn[onclick="switchTab('${name}')"]`);
+            if (requestedButton) {
+                requestedButton.classList.add('active');
+            } else {
+                console.error('[TAB] 요청한 탭 버튼을 찾지 못했습니다:', name);
+            }
             if (name === 'backup') {
-                document.querySelectorAll('.tab-btn')[0].classList.add('active');
                 document.getElementById('tab-backup-content').classList.add('active');
                 const sb = document.getElementById('stats-bar');
                 if (sb) sb.style.display = 'flex';
+            } else if (name === 'video') {
+                document.getElementById('tab-video-content').classList.add('active');
+                const sb = document.getElementById('stats-bar');
+                if (sb) sb.style.display = 'none';
+                const preferredSource = videoWorkspacePreferredSource;
+                videoWorkspacePreferredSource = '';
+                updateVideoWorkspaceMode();
+                await loadVideoReferenceOptions(preferredSource);
             } else if (name === 'bot') {
-                document.querySelectorAll('.tab-btn')[1].classList.add('active');
                 document.getElementById('tab-bot-content').classList.add('active');
                 await loadBotData();
                 loadIllustArtistPresets();
             } else if (name === 'asset') {
-                document.querySelectorAll('.tab-btn')[2].classList.add('active');
                 document.getElementById('tab-asset-content').classList.add('active');
                 if (!assetTags) loadAssetData();
             } else if (name === 'asset-upload') {
-                document.querySelectorAll('.tab-btn')[3].classList.add('active');
                 document.getElementById('tab-asset-upload-content').classList.add('active');
                 if (!assetTags) await loadAssetData();
                 auLoadCharacterList();
             } else if (name === 'pose') {
-                document.querySelectorAll('.tab-btn')[4].classList.add('active');
                 document.getElementById('tab-pose-content').classList.add('active');
                 initPoseEditor();
                 loadPoseList();
             } else if (name === 'batch') {
-                document.querySelectorAll('.tab-btn')[5].classList.add('active');
                 document.getElementById('tab-batch-content').classList.add('active');
                 if (!assetTags) loadAssetData();
                 initBatchTab();
             } else if (name === 'smart-asset') {
-                document.querySelectorAll('.tab-btn')[6].classList.add('active');
                 document.getElementById('tab-smart-asset-content').classList.add('active');
                 if (!assetTags) await loadAssetData();
                 await atLoadCharacterList();
                 atSwitchView('upload');
             } else if (name === 'character-maker') {
-                document.querySelectorAll('.tab-btn')[7].classList.add('active');
                 document.getElementById('tab-character-maker-content').classList.add('active');
                 if (!assetTags) await loadAssetData();
                 await initCharacterMaker();
                 const sb = document.getElementById('stats-bar');
                 if (sb) sb.style.display = 'none';
             } else if (name === 'preset-mgmt') {
-                document.querySelectorAll('.tab-btn')[8].classList.add('active');
                 document.getElementById('tab-preset-mgmt-content').classList.add('active');
                 if (!assetTags) loadAssetData();
                 pmLoadData();
                 const sb = document.getElementById('stats-bar');
                 if (sb) sb.style.display = 'none';
             } else if (name === 'lora') {
-                document.querySelectorAll('.tab-btn')[9].classList.add('active');
                 document.getElementById('tab-lora-content').classList.add('active');
                 const savedMode = sessionStorage.getItem('loraMode') || 'asset';
                 switchLoraMode(savedMode);
@@ -76749,6 +77041,10 @@
             lora_prompt_review: '프롬프트 2차 검수',
             bot_llm_face_tag_analysis: 'LLM 얼굴분석',
             qwen_edit_translate: 'EDIT 번역',
+            video_prompt_build: 'H3 프롬프트',
+            video_t2v: 'H3 T2V',
+            video_i2v: 'H3 I2V',
+            video_first_last: 'H3 첫·마지막',
             character_maker: '캐릭터 메이커',
             tag_analysis: '태그분석',
             auto_match_batch: '배치매칭',

@@ -34,6 +34,7 @@ if __name__ == "__main__":
 
 # webp mimetype 등록 (Windows 기본 누락 대응)
 mimetypes.add_type('image/webp', '.webp')
+mimetypes.add_type('image/avif', '.avif')
 import re
 import math
 
@@ -89,6 +90,7 @@ from modes import llm_prompt_edit
 from modes import autocomplete_service
 from modes import asset_tool_mode
 from modes.qwen_edit_mode import QwenEditMode
+from modes.video_mode import FAST_PRESETS, VIDEO_MODES, VideoMode
 from modes import qwen_composite_items
 from modes import bot_mode
 from modes.bot_mode import data_patcher
@@ -391,6 +393,9 @@ DEFAULT_CONFIG = {
         ),
         "edit_illustration_prompt":_llm_route_defaults(json_mode=True),  # 끄면 response_format 미전송(Cerebras/Gemma 루프 회피)
         "qwen_edit_translate":     _llm_route_defaults(max_retries=1),
+        "video_prompt_t2v":        _llm_route_defaults(max_retries=1),
+        "video_prompt_i2v":        _llm_route_defaults(max_retries=1),
+        "video_prompt_first_last": _llm_route_defaults(max_retries=1),
         # 삽화 컨텍스트 파이프라인 역번역/CALL1/2/2-FIX/3. 메인 LLM/폴백은 외부 LLM 분기 탭에서 드롭박스로 선택.
         # 폴백 없음(fallback_target 미지정)이 기본.
         "illustration_call1_backtranslate": _llm_route_defaults(max_retries=1, retry_delay_sec=0.0, fallback_max_retries=1, fallback_retry_delay_sec=0.0),
@@ -791,7 +796,7 @@ def resolve_comfy_instance(task_key: str) -> tuple[int, int]:
         raise ComfyTaskAllocationValidationError(
             f"{task_key} 작업은 Modal 전용으로 배분되어 로컬 포트가 없습니다."
         )
-    running: dict[int, bool] = {1: False, 2: False}
+    running: dict[int, bool] = {1: False, 2: False, 3: False}
     manager = comfy_runtime_manager
     if manager is None:
         print(
@@ -803,6 +808,7 @@ def resolve_comfy_instance(task_key: str) -> tuple[int, int]:
             running = {
                 1: manager.is_running(instance_id=1),
                 2: manager.is_running(instance_id=2),
+                3: manager.is_running(instance_id=3),
             }
         except Exception as e:
             print(
@@ -819,8 +825,12 @@ def resolve_comfy_instance(task_key: str) -> tuple[int, int]:
             f"resolved=Comfy #{selected}"
         )
 
-    port_key = "comfyui_port_2" if selected == 2 else "comfyui_port"
-    fallback_port = 8187 if selected == 2 else 8188
+    port_key = {
+        1: "comfyui_port",
+        2: "comfyui_port_2",
+        3: "comfyui_port_3",
+    }[selected]
+    fallback_port = {1: 8188, 2: 8187, 3: 8186}[selected]
     try:
         port = int(app_config.get(port_key, fallback_port))
         if not 1 <= port <= 65535:
@@ -879,6 +889,11 @@ print(
     "[QWEN_EDIT] 초기화: workflow="
     f"{app_config.get('qwen_edit_workflow_source_path')!r}"
 )
+
+# ─── MiniMax H3 영상화 모드 초기화 ───
+video_mode = VideoMode()
+video_mode.get_config = lambda: load_config()
+print("[VIDEO] MiniMax H3 영상화 모드 초기화 완료")
 
 # ─── 캐릭터 메이커 (단일 영속 세션, 배포 제외 디렉터리) ───
 character_maker = CharacterMakerService(
@@ -2147,20 +2162,40 @@ async def save_backup(
 def cleanup_backups():
     """최대 보관 수를 초과하는 오래된 백업을 삭제한다."""
     max_count = app_config.get("backup_max_count", DEFAULT_MAX_BACKUP_IMAGES)
-    pattern = os.path.join(WORKFLOW_BACKUP_DIR, "*.webp")
-    files = sorted(glob.glob(pattern), key=os.path.getmtime, reverse=True)
+    backup_dir = get_backup_base_dir()
+    files = []
+    for pattern in ("*.webp", "*.avif"):
+        files.extend(glob.glob(os.path.join(backup_dir, pattern)))
+    files = sorted(set(files), key=os.path.getmtime, reverse=True)
     for old_file in files[max_count:]:
-        base = old_file[:-5]  # .webp 제거
-        for ext in [".webp", ".json", ".txt", "_info.json", "_enhanced.txt"]:
+        base, _image_extension = os.path.splitext(old_file)
+        for ext in [".webp", ".avif", ".json", ".txt", "_info.json", "_enhanced.txt", "_chat.txt", "_wildcard.json"]:
             try:
                 os.remove(base + ext)
-            except:
-                pass
+            except FileNotFoundError:
+                continue
+            except Exception as exc:
+                print(f"[BACKUP:CLEANUP] 파일 삭제 실패: path={base + ext!r}, error={exc}")
+                traceback.print_exc()
         # 후처리 원본(_raw 서브디렉토리)도 함께 정리 — 고아 원본 방지.
+        backup_name = os.path.basename(base)
+        for raw_extension in (".webp", ".avif"):
+            raw_path = os.path.join(backup_dir, "_raw", backup_name + raw_extension)
+            try:
+                os.remove(raw_path)
+            except FileNotFoundError:
+                continue
+            except Exception as exc:
+                print(f"[BACKUP:CLEANUP] 원본 삭제 실패: path={raw_path!r}, error={exc}")
+                traceback.print_exc()
+        poster_path = os.path.join(backup_dir, "_posters", backup_name + ".webp")
         try:
-            os.remove(os.path.join(WORKFLOW_BACKUP_DIR, "_raw", base + ".webp"))
-        except:
+            os.remove(poster_path)
+        except FileNotFoundError:
             pass
+        except Exception as exc:
+            print(f"[BACKUP:CLEANUP] poster 삭제 실패: path={poster_path!r}, error={exc}")
+            traceback.print_exc()
 
 
 # ─── ComfyUI 프록시 ─────────────────────────────────────
@@ -2796,7 +2831,185 @@ async def submit_workflow_to_comfy(
         return None, _comfy_connection_error_message(REAL_COMFY_HOST, target_port, e)
     except Exception as e:
         print(f"[ASSET] ComfyUI 제출 예외: {type(e).__name__}: {e}")
+        traceback.print_exc()
         return None, str(e)
+
+
+async def submit_video_workflow_to_comfy(
+    workflow_api: dict,
+    progress_callback=None,
+    *,
+    task_key: str,
+) -> tuple[bytes | None, dict | str]:
+    """Submit a local H3 workflow and return its temporary MP4 plus exact output ref."""
+
+    target_port = resolve_comfy_port(task_key)
+    client_id = f"video_{uuid.uuid4().hex[:10]}"
+    ws_url = f"ws://{REAL_COMFY_HOST}:{target_port}/ws?clientId={client_id}"
+    submit_result: dict = {}
+    try:
+        async with aiohttp.ClientSession() as ws_session:
+            async with ws_session.ws_connect(ws_url) as real_ws:
+                prompt_id, submit_result = await submit_to_real_comfy(
+                    workflow_api,
+                    port=target_port,
+                    client_id=client_id,
+                    task_key=task_key,
+                )
+                node_errors = submit_result.get("node_errors", {})
+                if node_errors:
+                    print(
+                        f"[VIDEO:COMFY] 제출 노드 오류: task={task_key}, "
+                        f"errors={json.dumps(node_errors, ensure_ascii=False)}"
+                    )
+                error_holder: dict = {}
+                total_steps = count_ksampler_total_steps(workflow_api)
+                ws_result = await wait_for_real_comfy(
+                    real_ws,
+                    prompt_id,
+                    progress_callback=progress_callback,
+                    total_steps=total_steps,
+                    error_holder=error_holder,
+                )
+                if ws_result is None:
+                    print(
+                        f"[VIDEO:COMFY] 실행 완료 신호 없음: task={task_key}, "
+                        f"prompt={prompt_id}, detail={error_holder!r}"
+                    )
+                    return None, f"ComfyUI H3 실행 실패: {error_holder}"
+
+        history = await fetch_real_history(prompt_id, port=target_port, task_key=task_key)
+        entry = history.get(prompt_id, {}) if isinstance(history, dict) else {}
+        outputs = entry.get("outputs", {}) if isinstance(entry, dict) else {}
+        print(
+            f"[VIDEO:COMFY] history 조회: task={task_key}, prompt={prompt_id}, "
+            f"output_nodes={list(outputs) if isinstance(outputs, dict) else []}"
+        )
+        references: list[dict] = []
+        if isinstance(outputs, dict):
+            for node_id, output in outputs.items():
+                if not isinstance(output, dict):
+                    print(
+                        f"[VIDEO:COMFY] 출력 노드 형식 오류: node={node_id}, "
+                        f"value={output!r}"
+                    )
+                    continue
+                for output_key in ("videos", "gifs", "images"):
+                    values = output.get(output_key)
+                    if not isinstance(values, list):
+                        continue
+                    for value in values:
+                        if isinstance(value, dict):
+                            references.append({**value, "node_id": str(node_id), "output_key": output_key})
+        video_ref = next(
+            (
+                reference
+                for reference in references
+                if str(reference.get("filename") or "").lower().endswith(".mp4")
+            ),
+            None,
+        )
+        if video_ref is None:
+            status_info = entry.get("status", {}) if isinstance(entry, dict) else {}
+            detail = extract_execution_error(status_info)
+            print(
+                f"[VIDEO:COMFY] MP4 출력 없음: task={task_key}, prompt={prompt_id}, "
+                f"references={references!r}, status={status_info!r}"
+            )
+            return None, f"ComfyUI H3 MP4 출력이 없습니다{detail}"
+        video_bytes = await fetch_real_image(
+            str(video_ref.get("filename") or ""),
+            str(video_ref.get("subfolder") or ""),
+            str(video_ref.get("type") or "output"),
+            port=target_port,
+            task_key=task_key,
+        )
+        if not video_bytes:
+            print(
+                f"[VIDEO:COMFY] MP4 다운로드 결과 비어 있음: "
+                f"task={task_key}, ref={video_ref!r}"
+            )
+            return None, "ComfyUI H3 MP4 다운로드 결과가 비어 있습니다"
+        descriptor = {
+            **video_ref,
+            "prompt_id": prompt_id,
+            "port": target_port,
+        }
+        print(
+            f"[VIDEO:COMFY] MP4 임시 결과 수신: task={task_key}, "
+            f"filename={video_ref.get('filename')!r}, bytes={len(video_bytes):,}"
+        )
+        return video_bytes, descriptor
+    except aiohttp.ClientError as exc:
+        print(
+            f"[VIDEO:COMFY] 연결 실패: task={task_key}, port={target_port}, "
+            f"error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        return None, _comfy_connection_error_message(REAL_COMFY_HOST, target_port, exc)
+    except Exception as exc:
+        print(
+            f"[VIDEO:COMFY] 제출 예외: task={task_key}, port={target_port}, "
+            f"error={type(exc).__name__}: {exc}, submit={submit_result!r}"
+        )
+        traceback.print_exc()
+        return None, str(exc)
+
+
+async def cleanup_comfy_video_output(
+    descriptor: dict | None,
+    *,
+    task_key: str,
+) -> bool:
+    """Delete only the exact local MP4 after animated main/raw backups are durable."""
+
+    if not isinstance(descriptor, dict):
+        print(
+            f"[VIDEO:CLEANUP] MP4 정리 실패: descriptor 형식 오류, "
+            f"task={task_key}, value={descriptor!r}"
+        )
+        return False
+    filename = str(descriptor.get("filename") or "")
+    subfolder = str(descriptor.get("subfolder") or "")
+    output_type = str(descriptor.get("type") or "output")
+    if (
+        output_type != "output"
+        or not filename.lower().endswith(".mp4")
+        or os.path.basename(filename) != filename
+        or ".." in subfolder.replace("\\", "/").split("/")
+    ):
+        print(
+            f"[VIDEO:CLEANUP] 안전하지 않은 MP4 참조 삭제 거부: "
+            f"task={task_key}, descriptor={descriptor!r}"
+        )
+        return False
+    output_root = os.path.realpath(os.path.join(BASE_DIR, "comfy", "output"))
+    target = os.path.realpath(os.path.join(output_root, subfolder, filename))
+    try:
+        if os.path.commonpath([output_root, target]) != output_root:
+            print(
+                f"[VIDEO:CLEANUP] output 루트 밖 MP4 삭제 거부: "
+                f"root={output_root!r}, target={target!r}"
+            )
+            return False
+    except ValueError as exc:
+        print(f"[VIDEO:CLEANUP] 경로 비교 실패: root={output_root!r}, target={target!r}, error={exc}")
+        traceback.print_exc()
+        return False
+    if not os.path.isfile(target):
+        print(
+            f"[VIDEO:CLEANUP] MP4 파일을 로컬에서 찾지 못함: "
+            f"task={task_key}, target={target!r}"
+        )
+        return False
+    try:
+        os.remove(target)
+        print(f"[VIDEO:CLEANUP] 변환 완료 MP4 영구 보관 안 함: {target}")
+        return True
+    except OSError as exc:
+        print(f"[VIDEO:CLEANUP] MP4 삭제 실패: target={target!r}, error={exc}")
+        traceback.print_exc()
+        return False
 
 
 # ─── 워크플로우 능력 테스트 ────────────────────────────────
@@ -2939,6 +3152,7 @@ def init_queue_manager():
     queue_manager.asset_mode = asset_mode
     queue_manager.asset_tool = asset_tool
     queue_manager.qwen_edit_mode = qwen_edit_mode
+    queue_manager.video_mode = video_mode
     queue_manager.submit_to_real_comfy = submit_to_real_comfy
     queue_manager.convert_workflow_via_endpoint = convert_workflow_via_endpoint
     queue_manager.build_lora_training_text = _build_lora_training_text
@@ -3148,6 +3362,14 @@ qwen_edit_mode.submit_workflow_func = lambda workflow, progress_callback=None, i
     input_paths=input_paths,
 )
 qwen_edit_mode.notify_frontend_func = notify_frontend
+# MiniMax H3 영상화 모드 함수 의존성 설정
+video_mode.get_backup_dir = get_backup_base_dir
+video_mode.notify_frontend_func = notify_frontend
+video_mode.convert_workflow_func = convert_workflow_via_endpoint
+video_mode.submit_workflow_func = submit_video_workflow_to_comfy
+video_mode.cleanup_comfy_video_func = cleanup_comfy_video_output
+video_mode.cleanup_backups_func = cleanup_backups
+video_mode.invalidate_backup_cache_func = lambda: _invalidate_backup_filter_cache()
 # 에셋툴 모드 함수 의존성 설정
 asset_tool.convert_workflow_func = lambda workflow, task_key="tag_analysis": convert_workflow_via_endpoint(
     workflow,
@@ -7493,12 +7715,12 @@ def _extract_prompts_from_backup(filepath: str) -> tuple[str, str]:
                     positive = ninfo.get("inputs", {}).get("value", "") or ninfo.get("inputs", {}).get("text", "")
                 elif title == "부정프롬프트":
                     negative = ninfo.get("inputs", {}).get("value", "") or ninfo.get("inputs", {}).get("text", "")
-        elif data.get("provider") == "chansub":
+        elif data.get("provider") in ("chansub", "video") or data.get("kind") == "h3_video":
             positive = data.get("positive", "")
             negative = data.get("negative", "")
             if not isinstance(positive, str) or not isinstance(negative, str):
                 print(
-                    f"[BACKUP] 챈섭 프롬프트 형식 오류: file={filepath}, "
+                    f"[BACKUP] 단순 프롬프트 형식 오류: file={filepath}, "
                     f"positive_type={type(positive).__name__}, negative_type={type(negative).__name__}"
                 )
                 return "", ""
@@ -8446,7 +8668,10 @@ def _ensure_backup_filter_cache(backup_dir: str) -> dict:
     # info 파일을 읽지 않으므로 디렉토리 나열 비용만 들고, UI가 "집계중 0/N"을 바로 보게 함.
     empty = _empty_backup_filter_cache()
     try:
-        empty["total_files"] = len(glob.glob(os.path.join(backup_dir, "*.webp")))
+        empty["total_files"] = sum(
+            len(glob.glob(os.path.join(backup_dir, pattern)))
+            for pattern in ("*.webp", "*.avif")
+        )
     except Exception as e:
         print(f"[BACKUP_FILTER] ⚠ 전체 파일 수 조회 실패: {e}")
     return empty
@@ -8542,7 +8767,17 @@ async def handle_api_backups(request: web.Request) -> web.Response:
                 pass
 
         # 후처리 원본(_raw) 존재 여부 — 후처리 적용 백업에 한해 대사 없는 원본이 보존됨.
-        has_raw = os.path.exists(os.path.join(backup_dir, "_raw", f"{base}.webp"))
+        raw_extension = next(
+            (
+                candidate_extension
+                for candidate_extension in (".avif", ".webp")
+                if os.path.exists(
+                    os.path.join(backup_dir, "_raw", f"{base}{candidate_extension}")
+                )
+            ),
+            "",
+        )
+        has_raw = bool(raw_extension)
 
         backups.append({
             "name": base,
@@ -8554,6 +8789,7 @@ async def handle_api_backups(request: web.Request) -> web.Response:
             # 후처리 원본(대사 없음) URL — 향후 "원본 보기/재편집" UI용. 없으면 None.
             "raw_url": (f"/api/backup_raw/{base}" if has_raw else None),
             "has_raw": has_raw,
+            "raw_extension": raw_extension,
             "has_prompt": os.path.exists(prompt_path),
             "positive": positive,
             "negative": negative,
@@ -8898,16 +9134,27 @@ async def handle_api_backup_poster(request: web.Request) -> web.Response:
 async def handle_api_backup_raw(request: web.Request) -> web.Response:
     """GET /api/backup_raw/{name} — 후처리(대사/말풍선) 적용 전 원본 이미지를 반환한다.
 
-    후처리가 적용된 백업은 합성본(.webp) 외에 대사 없는 원본을 backup_dir/_raw/{name}.webp
-    에 보존한다. 이 엔드포인트는 그 원본을 서빙한다(대사 교체/후처리 재적용·원본 보기용).
+    후처리가 적용된 백업은 합성본 외에 대사 없는 원본을 backup_dir/_raw 아래
+    WebP 또는 AVIF로 보존한다. 이 엔드포인트는 그 원본을 서빙한다
+    (대사 교체/후처리 재적용·원본 보기용).
     원본이 없는(후처리 미적용) 백업은 404."""
     name = request.match_info.get("name", "")
     if ".." in name or "/" in name or "\\" in name:
         print(f"[BACKUP_RAW] 잘못된 name 요청 거부: {name!r}")
         return web.Response(status=400, text="Invalid name")
 
-    raw_path = os.path.join(get_backup_base_dir(), "_raw", f"{name}.webp")
-    if not os.path.exists(raw_path):
+    raw_path = next(
+        (
+            os.path.join(get_backup_base_dir(), "_raw", f"{name}{extension}")
+            for extension in (".avif", ".webp")
+            if os.path.exists(
+                os.path.join(get_backup_base_dir(), "_raw", f"{name}{extension}")
+            )
+        ),
+        "",
+    )
+    if not raw_path:
+        print(f"[BACKUP_RAW] 원본 파일 없음: name={name!r}")
         return web.Response(status=404)
 
     try:
@@ -8920,7 +9167,7 @@ async def handle_api_backup_raw(request: web.Request) -> web.Response:
 
     return web.Response(
         body=data,
-        content_type="image/webp",
+        content_type=mimetypes.guess_type(raw_path)[0] or "application/octet-stream",
         headers={"Cache-Control": "no-store, no-cache, must-revalidate"},
     )
 
@@ -8983,12 +9230,16 @@ async def handle_api_backup_delete(request: web.Request) -> web.Response:
     # 핵심 3개(이미지/워크플로우/변환정보) + 보조 파일 + 구버전 .txt 호환
     candidates = [
         f"{name}.webp",
+        f"{name}.avif",
         f"{name}.json",
         f"{name}_info.json",
         f"{name}_chat.txt",
         f"{name}_enhanced.txt",
         f"{name}_wildcard.json",
         f"{name}.txt",
+        os.path.join("_raw", f"{name}.webp"),
+        os.path.join("_raw", f"{name}.avif"),
+        os.path.join("_posters", f"{name}.webp"),
     ]
     deleted, failed = [], []
     try:
@@ -9019,6 +9270,159 @@ async def handle_api_backup_delete(request: web.Request) -> web.Response:
         print(f"[BACKUP_DELETE] ✗ 예외: {name} -> {e}")
         traceback.print_exc()
         return web.json_response({"error": f"삭제 중 오류: {e}"}, status=500)
+
+
+def _video_backup_has_raw(backup_dir: str, name: str) -> bool:
+    return any(
+        os.path.isfile(os.path.join(backup_dir, "_raw", f"{name}{extension}"))
+        for extension in (".avif", ".webp")
+    )
+
+
+async def handle_api_video_reference_options(request: web.Request) -> web.Response:
+    """List illustration backups that have a raw source suitable for H3 references."""
+
+    try:
+        backup_dir = get_backup_base_dir()
+        files: list[str] = []
+        for pattern in ("*.webp", "*.avif"):
+            files.extend(glob.glob(os.path.join(backup_dir, pattern)))
+        options = []
+        seen: set[str] = set()
+        for path in sorted(set(files), key=os.path.getmtime, reverse=True):
+            name = os.path.splitext(os.path.basename(path))[0]
+            if name in seen or not _video_backup_has_raw(backup_dir, name):
+                continue
+            seen.add(name)
+            animated = _backup_image_kind(path)
+            options.append(
+                {
+                    "name": name,
+                    "mtime": os.path.getmtime(path),
+                    "image_url": (
+                        f"/api/backup_poster/{name}"
+                        if animated
+                        else f"/api/backup_image/{os.path.basename(path)}"
+                    ),
+                    "is_animated": animated,
+                }
+            )
+        return web.json_response({"success": True, "options": options})
+    except Exception as exc:
+        print(f"[VIDEO:API] 참조 백업 목록 조회 실패: error={type(exc).__name__}: {exc}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(exc)}, status=500)
+
+
+async def handle_api_video_enqueue(request: web.Request) -> web.Response:
+    """Validate a backup-card video request and enqueue its LLM stage."""
+
+    try:
+        body = await request.json()
+        if not isinstance(body, dict):
+            print(f"[VIDEO:API] 요청 본문 형식 오류: value={body!r}")
+            return web.json_response(
+                {"success": False, "error": "요청 본문은 객체여야 합니다"},
+                status=400,
+            )
+        mode = str(body.get("mode") or "").strip().lower()
+        source_name = str(body.get("source_backup") or "").strip()
+        last_name = str(body.get("last_backup") or "").strip()
+        instruction = str(body.get("instruction") or "").strip()
+        preset = str(body.get("preset") or "auto").strip().lower()
+        if mode not in VIDEO_MODES:
+            print(f"[VIDEO:API] 지원하지 않는 모드: mode={mode!r}, body={body!r}")
+            return web.json_response(
+                {"success": False, "error": "지원하지 않는 영상화 모드입니다"},
+                status=400,
+            )
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", source_name):
+            print(f"[VIDEO:API] 원본 백업 이름 오류: name={source_name!r}")
+            return web.json_response(
+                {"success": False, "error": "원본 삽화 백업 이름이 올바르지 않습니다"},
+                status=400,
+            )
+        if not instruction:
+            print(f"[VIDEO:API] 자연어 지시 비어 있음: source={source_name!r}, mode={mode}")
+            return web.json_response(
+                {"success": False, "error": "영상에서 일어날 일을 입력하세요"},
+                status=400,
+            )
+        if len(instruction) > 12000:
+            print(
+                f"[VIDEO:API] 자연어 지시 길이 초과: source={source_name!r}, "
+                f"length={len(instruction)}"
+            )
+            return web.json_response(
+                {"success": False, "error": "영상화 지시는 12,000자 이하여야 합니다"},
+                status=400,
+            )
+        if preset != "auto" and preset not in FAST_PRESETS:
+            print(f"[VIDEO:API] FAST 프리셋 오류: preset={preset!r}")
+            return web.json_response(
+                {"success": False, "error": "지원하지 않는 FAST 비율 프리셋입니다"},
+                status=400,
+            )
+        backup_dir = get_backup_base_dir()
+        if not _video_backup_has_raw(backup_dir, source_name):
+            print(f"[VIDEO:API] 원본 _raw 없음: source={source_name!r}")
+            return web.json_response(
+                {
+                    "success": False,
+                    "error": "이 백업에는 영상화에 사용할 _raw 원본이 없습니다",
+                },
+                status=400,
+            )
+        if mode == "first_last":
+            if not re.fullmatch(r"[A-Za-z0-9_-]+", last_name):
+                print(f"[VIDEO:API] 마지막 백업 이름 오류: name={last_name!r}")
+                return web.json_response(
+                    {"success": False, "error": "마지막 프레임 백업을 선택하세요"},
+                    status=400,
+                )
+            if last_name == source_name:
+                print(f"[VIDEO:API] 첫/마지막 백업 동일: name={source_name!r}")
+                return web.json_response(
+                    {"success": False, "error": "서로 다른 마지막 프레임을 선택하세요"},
+                    status=400,
+                )
+            if not _video_backup_has_raw(backup_dir, last_name):
+                print(f"[VIDEO:API] 마지막 _raw 없음: last={last_name!r}")
+                return web.json_response(
+                    {"success": False, "error": "마지막 프레임 백업의 _raw 원본이 없습니다"},
+                    status=400,
+                )
+        params = {
+            "mode": mode,
+            "source_backup": source_name,
+            "last_backup": last_name,
+            "instruction": instruction,
+            "preset": preset,
+        }
+        label = {
+            "t2v": "H3 T2V 프롬프트",
+            "i2v": "H3 I2V 프롬프트",
+            "first_last": "H3 첫·마지막 프롬프트",
+        }[mode]
+        item = await queue_manager.add_item("video_prompt_build", label, params)
+        print(
+            f"[VIDEO:API] 영상화 큐 등록: item={item.id}, mode={mode}, "
+            f"source={source_name}, last={last_name or '(none)'}, preset={preset}"
+        )
+        return web.json_response(
+            {"success": True, "item_id": item.id, "label": item.label, "mode": mode}
+        )
+    except json.JSONDecodeError as exc:
+        print(f"[VIDEO:API] JSON 파싱 실패: error={exc}")
+        traceback.print_exc()
+        return web.json_response(
+            {"success": False, "error": "요청 JSON이 올바르지 않습니다"},
+            status=400,
+        )
+    except Exception as exc:
+        print(f"[VIDEO:API] 큐 등록 실패: error={type(exc).__name__}: {exc}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(exc)}, status=500)
 
 
 async def handle_api_conversion_info(request: web.Request) -> web.Response:
@@ -12924,6 +13328,8 @@ app.router.add_get("/api/backup_raw/{name}", handle_api_backup_raw)
 app.router.add_get("/api/backup_prompt/{name}", handle_api_backup_prompt)
 app.router.add_get("/api/backup_chat", handle_api_backup_chat)
 app.router.add_post("/api/backup_delete/{name}", handle_api_backup_delete)
+app.router.add_get("/api/video/reference-options", handle_api_video_reference_options)
+app.router.add_post("/api/video/enqueue", handle_api_video_enqueue)
 app.router.add_get("/api/conversion_info", handle_api_conversion_info)
 app.router.add_post("/api/regenerate", handle_api_regenerate)
 app.router.add_post("/api/reload_workflow", handle_api_reload_workflow)

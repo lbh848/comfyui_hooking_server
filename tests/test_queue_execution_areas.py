@@ -177,6 +177,50 @@ def test_queue_status_separates_llm_gpu_and_chansub_areas():
     ]
 
 
+def test_video_modes_share_one_comfy_allocation_but_keep_detailed_queue_labels():
+    manager = QueueManager()
+
+    for item_type in ("video_t2v", "video_i2v", "video_first_last"):
+        assert manager._comfy_task_key_for_item(_item(item_type)) == "video_generation"
+        assert manager._item_execution_area(_item(item_type))[0] == "gpu"
+
+    assert manager._item_execution_area(_item("video_prompt_build"))[0] == "llm"
+
+
+@pytest.mark.asyncio
+async def test_video_llm_stage_enqueues_matching_gpu_type_only_after_success():
+    manager = QueueManager()
+    calls = []
+
+    class FakeVideoMode:
+        async def build_prompt(self, params, queue_item_id=""):
+            calls.append(("build", params["mode"], queue_item_id))
+            return {
+                "success": True,
+                "h3_prompt": "synthetic H3 prompt",
+                "llm_trace": ["trace-1"],
+                "history_id": "trace-1",
+            }
+
+    async def fake_add_item(item_type, label, params, **_kwargs):
+        calls.append(("enqueue", item_type, label, params))
+        return _item(item_type)
+
+    manager.video_mode = FakeVideoMode()
+    manager.add_item = fake_add_item
+    item = _item(
+        "video_prompt_build",
+        {"mode": "first_last", "source_backup": "first", "last_backup": "last"},
+    )
+
+    result = await manager._handle_video_prompt_build(item)
+
+    assert calls[0] == ("build", "first_last", item.id)
+    assert calls[1][0:2] == ("enqueue", "video_first_last")
+    assert calls[1][3]["h3_prompt"] == "synthetic H3 prompt"
+    assert result["render_item_id"] == "video_first_last-id"
+
+
 def test_pending_hybrid_item_moves_to_claimed_queue_area():
     manager = QueueManager()
     item = _item("illustration", {

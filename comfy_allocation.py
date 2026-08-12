@@ -31,6 +31,11 @@ COMFY_TASK_DEFINITIONS: tuple[tuple[str, str, str], ...] = (
         "유틸리티 / 디버그",
         "데이터 패치, 봇 유틸리티, 디버그 워크플로우",
     ),
+    (
+        "video_generation",
+        "영상화",
+        "MiniMax H3 T2V·I2V·첫/마지막 프레임 영상화",
+    ),
 )
 
 COMFY_TASK_KEYS = tuple(item[0] for item in COMFY_TASK_DEFINITIONS)
@@ -113,8 +118,9 @@ def normalize_comfy_task_allocations(
                 raise ValueError("정수가 아닌 실수는 허용되지 않음")
             if isinstance(value, str) and value.strip() != str(parsed):
                 raise ValueError("정수 문자열 형식이 아님")
-            if parsed not in (1, 2):
-                raise ValueError("1 또는 2가 아님")
+            allowed_instances = (1, 2, 3)
+            if parsed not in allowed_instances:
+                raise ValueError(f"허용 인스턴스 {allowed_instances!r}에 없음")
         except (TypeError, ValueError, OverflowError) as exc:
             print(
                 "[COMFY_ALLOCATION] 작업 배분 값 검증 실패: "
@@ -122,7 +128,8 @@ def normalize_comfy_task_allocations(
             )
             traceback.print_exc()
             raise ComfyTaskAllocationValidationError(
-                f"comfy_task_allocations.{key} 값은 1, 2 또는 modal이어야 합니다."
+                f"comfy_task_allocations.{key} 값은 1, 2, 3"
+                + (" 또는 modal이어야 합니다." if key in MODAL_SUPPORTED_COMFY_TASK_KEYS else " 중 하나여야 합니다.")
             ) from exc
         normalized[key] = parsed
 
@@ -193,11 +200,17 @@ def normalize_comfy_task_modal_parallel(
     return normalized
 
 
-def comfy_task_definition_payload() -> list[dict[str, str]]:
+def comfy_task_definition_payload() -> list[dict[str, Any]]:
     """프런트엔드가 동일한 작업 목록을 렌더링할 수 있는 JSON 안전 구조."""
 
     return [
-        {"key": key, "label": label, "description": description}
+        {
+            "key": key,
+            "label": label,
+            "description": description,
+            "local_instances": [1, 2, 3],
+            "default_instance": DEFAULT_COMFY_TASK_ALLOCATIONS[key],
+        }
         for key, label, description in COMFY_TASK_DEFINITIONS
     ]
 
@@ -226,7 +239,7 @@ def select_comfy_instance(
         raise ComfyTaskAllocationValidationError(
             f"{task_key} 작업은 Modal 전용으로 배분되어 로컬 포트를 선택할 수 없습니다."
         )
-    running_ids = [instance_id for instance_id in (1, 2) if running.get(instance_id)]
+    running_ids = [instance_id for instance_id in (1, 2, 3) if running.get(instance_id)]
     if len(running_ids) == 1:
         return running_ids[0]
     return configured

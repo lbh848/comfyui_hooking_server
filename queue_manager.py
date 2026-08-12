@@ -208,6 +208,7 @@ LLM_TYPES = frozenset({
     "bot_llm_face_tag_analysis",    # 비전 LLM 기반 얼굴/눈 태그 자동 분류
     "character_maker",              # 캐릭터 메이커 draft/feedback LLM 수정 (revise)
     "qwen_edit_translate",          # Qwen Edit 지시문 영어 번역
+    "video_prompt_build",           # H3 T2V/I2V/첫·마지막 프롬프트 작성
 })
 
 
@@ -291,6 +292,7 @@ class QueueManager:
         self.asset_mode = None       # AssetMode 인스턴스
         self.asset_tool = None       # AssetToolMode 인스턴스 (analyze_image용)
         self.qwen_edit_mode = None   # QwenEditMode 인스턴스
+        self.video_mode = None       # VideoMode 인스턴스
         # 학습 실행 함수들 (server.py에서 주입)
         self.submit_to_real_comfy = None       # async def(prompt_data) -> (prompt_id, result)
         self.convert_workflow_via_endpoint = None  # async def(wf) -> (api_wf, error)
@@ -665,6 +667,9 @@ class QueueManager:
             "restore_manual": "restore_regenerate",
             "asset_generation": "asset_generation",
             "qwen_edit": "qwen_edit",
+            "video_t2v": "video_generation",
+            "video_i2v": "video_generation",
+            "video_first_last": "video_generation",
             "asset_lora_training": "asset_lora_training",
             "bot_lora_training": "bot_lora_training",
             "instance_lora_training": "instance_lora",
@@ -1989,6 +1994,10 @@ class QueueManager:
             "asset_generation": self._handle_asset_generation,
             "qwen_edit": self._handle_qwen_edit,
             "qwen_edit_translate": self._handle_qwen_edit_translate,
+            "video_prompt_build": self._handle_video_prompt_build,
+            "video_t2v": self._handle_video_render,
+            "video_i2v": self._handle_video_render,
+            "video_first_last": self._handle_video_render,
             "asset_lora_training": self._handle_asset_lora_training,
             "bot_lora_training": self._handle_bot_lora_training,
             "instance_lora_training": self._handle_instance_lora_training,
@@ -2080,6 +2089,123 @@ class QueueManager:
                 "[QUEUE:QWEN_EDIT_TRANSLATE] 처리 실패: "
                 f"item={item.id}, input={text!r}, "
                 f"error={type(e).__name__}: {e}"
+            )
+            traceback.print_exc()
+            raise
+
+    async def _handle_video_prompt_build(self, item: QueueItem) -> dict:
+        """Build an official H3 prompt, then enqueue the GPU render only on success."""
+
+        if self.video_mode is None:
+            print(
+                "[QUEUE:VIDEO_LLM] 실행 실패: VideoMode 미주입 "
+                f"item={item.id}, params={item.params!r}"
+            )
+            raise RuntimeError("영상화 모드가 큐에 주입되지 않았습니다")
+        params = dict(item.params or {})
+        mode = str(params.get("mode") or "").strip().lower()
+        render_type = {
+            "t2v": "video_t2v",
+            "i2v": "video_i2v",
+            "first_last": "video_first_last",
+        }.get(mode)
+        if not render_type:
+            print(
+                f"[QUEUE:VIDEO_LLM] 모드 오류: item={item.id}, "
+                f"mode={mode!r}, params={params!r}"
+            )
+            raise ValueError("지원하지 않는 영상화 모드입니다")
+        try:
+            await self._notify_progress(
+                item,
+                {"percentage": 5, "phase": "building_h3_prompt"},
+            )
+            prompt_result = await self.video_mode.build_prompt(
+                params,
+                queue_item_id=item.id,
+            )
+            render_params = {**params, **prompt_result}
+            label = {
+                "t2v": "H3 T2V 5초 영상화",
+                "i2v": "H3 I2V 5초 영상화",
+                "first_last": "H3 첫·마지막 5초 영상화",
+            }[mode]
+            render_item = await self.add_item(
+                render_type,
+                label,
+                render_params,
+            )
+            await self._notify_progress(
+                item,
+                {
+                    "percentage": 100,
+                    "phase": "render_queued",
+                    "render_item_id": render_item.id,
+                },
+            )
+            print(
+                f"[QUEUE:VIDEO_LLM] H3 프롬프트 완료→GPU 큐 등록: "
+                f"llm_item={item.id}, gpu_item={render_item.id}, mode={mode}"
+            )
+            return {
+                "success": True,
+                "mode": mode,
+                "render_item_id": render_item.id,
+                "history_id": prompt_result.get("history_id", ""),
+            }
+        except Exception as exc:
+            print(
+                f"[QUEUE:VIDEO_LLM] 처리 실패: item={item.id}, mode={mode}, "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            raise
+
+    async def _handle_video_render(self, item: QueueItem) -> dict:
+        """Run H3 on the allocated local Comfy instance and archive animated output."""
+
+        if self.video_mode is None:
+            print(
+                "[QUEUE:VIDEO_GPU] 실행 실패: VideoMode 미주입 "
+                f"item={item.id}, type={item.type}, params={item.params!r}"
+            )
+            raise RuntimeError("영상화 모드가 큐에 주입되지 않았습니다")
+
+        async def on_comfy_progress(value: int, maximum: int) -> None:
+            ratio = value / maximum if maximum else 0.0
+            await self._notify_progress(
+                item,
+                {
+                    "percentage": min(85, max(5, round(5 + ratio * 80))),
+                    "phase": "h3_rendering",
+                    "current": value,
+                    "total": maximum,
+                },
+            )
+
+        try:
+            await self._notify_progress(
+                item,
+                {"percentage": 2, "phase": "preparing_references"},
+            )
+            result = await self.video_mode.render_video(
+                dict(item.params or {}),
+                queue_item_id=item.id,
+                progress_callback=on_comfy_progress,
+            )
+            await self._notify_progress(
+                item,
+                {
+                    "percentage": 100,
+                    "phase": "completed",
+                    "backup_name": result.get("backup_name", ""),
+                },
+            )
+            return result
+        except Exception as exc:
+            print(
+                f"[QUEUE:VIDEO_GPU] 처리 실패: item={item.id}, type={item.type}, "
+                f"error={type(exc).__name__}: {exc}"
             )
             traceback.print_exc()
             raise
