@@ -432,6 +432,14 @@ _preacquired_stream_slot_ctx: ContextVar[str | None] = ContextVar(
     "llm_preacquired_stream_slot",
     default=None,
 )
+# 큐(LLM 항목)가 슬롯 게이트를 실제로 획득한 순간을 구독하는 콜백.
+# 통합 큐는 LLM 항목을 워커가 꺼낸 직후 'processing'이 아니라 'waiting'으로 두고,
+# 이 콜백이 발화할 때 비로소 'processing'으로 전환한다. 값은 현재 task에만 전파되므로
+# 서로 다른 큐 항목의 LLM 호출과 섞이지 않는다. None이면 비-큐 LLM 호출(기존 동작).
+_llm_queue_gate_acquired_ctx: ContextVar = ContextVar(
+    "llm_queue_gate_acquired_cb",
+    default=None,
+)
 
 
 class _ContextConfig(dict):
@@ -704,11 +712,48 @@ def _wake_request_limit_waiters() -> None:
         loop.create_task(gate.wake())
 
 
+def set_queue_gate_acquired_callback(cb):
+    """통합 큐가 LLM 항목의 게이트 획득 시점을 구독할 때 사용한다. reset용 토큰 반환.
+
+    큐 워커가 LLM 항목을 꺼낸 직후(await _execute_item 이전)에만 설정하고,
+    핸들러 종료 시 reset 한다. 비-큐 LLM 호출은 이 값을 설정하지 않으므로
+    _fire_queue_gate_acquired 가 no-op 로 동작해 기존 동작이 유지된다.
+    """
+    return _llm_queue_gate_acquired_ctx.set(cb)
+
+
+def reset_queue_gate_acquired_callback(token) -> None:
+    try:
+        _llm_queue_gate_acquired_ctx.reset(token)
+    except (LookupError, ValueError) as e:
+        # 토큰이 잘못된 경우에도 LLM 호출 자체는 영향받지 않도록 로그만 남긴다.
+        print(f"[LLM_GATE] 큐 게이트 콜백 reset 실패: {type(e).__name__}: {e}")
+        traceback.print_exc()
+
+
+async def _fire_queue_gate_acquired() -> None:
+    """게이트 획득 직후 큐 콜백이 등록돼 있으면 실행한다.
+
+    큐 콜백은 idempotent(항목 상태가 waiting일 때만 processing으로 전환)하므로
+    한 항목에서 여러 LLM 호출/병렬 시도가 게이트를 잡아도 안전하다.
+    콜백 실패가 실제 LLM 호출을 막아서는 안 되므로 예외는 로그만 남긴다.
+    """
+    cb = _llm_queue_gate_acquired_ctx.get()
+    if cb is None:
+        return
+    try:
+        await cb()
+    except Exception as e:  # noqa: BLE001 - 큐 콜백 실패가 LLM 호출을 차단하면 안 됨
+        print(f"[LLM_GATE] 큐 게이트 획득 콜백 실패: {type(e).__name__}: {e}")
+        traceback.print_exc()
+
+
 @asynccontextmanager
 async def _limit_llm_request(slot: str | None = None):
     normalized = _normalize_llm_slot(slot or _llm_slot_ctx.get())
     gate = _request_gate(normalized)
     await gate.acquire()
+    await _fire_queue_gate_acquired()
     try:
         yield
     finally:
@@ -3395,6 +3440,10 @@ class _ManualParallelStreamRace:
                 f"source={source_stream_id}, active={gate.active}, limit={limit}"
             )
             return False, message
+        # try_acquire 로 즉시 슬롯을 확보한 경우도 실제 게이트 점유이므로 큐에 알린다.
+        # 이 게이트는 preacquired_gate 로 _consume_stream_attempt 에 전달되어 그 안의
+        # acquire 경로를 건너뛰므로 여기서 명시적으로 발화해야 한다.
+        await _fire_queue_gate_acquired()
 
         first_parallel = not self.parallel_started
         if first_parallel:
@@ -3535,6 +3584,7 @@ async def _consume_stream_attempt(
     gate = preacquired_gate or _request_gate(llm_slot)
     if preacquired_gate is None:
         await gate.acquire()
+        await _fire_queue_gate_acquired()
     gate_token = _preacquired_stream_slot_ctx.set(llm_slot)
     try:
         # 실제 슬롯 용량을 확보한 뒤에만 활성 스트림으로 공개한다. 게이트에서

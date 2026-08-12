@@ -216,7 +216,7 @@ class QueueItem:
     id: str
     type: str  # illustration | asset_generation | qwen_edit | qwen_edit_translate | asset_lora_training | bot_lora_training | instance_lora_training | instance_lora_analysis | tag_analysis | auto_match_batch | data_patch_utility | instance_lora_prompt_refine | lora_prompt_review
     label: str
-    status: str = "pending"  # pending | processing | completed | failed | cancelled
+    status: str = "pending"  # pending | waiting(LLM 게이트 대기) | processing | completed | failed | cancelled
     params: dict = field(default_factory=dict)
     progress: float = 0.0
     progress_detail: dict = field(default_factory=dict)
@@ -851,10 +851,20 @@ class QueueManager:
             "current_external": current_externals[0] if current_externals else None,
             "current_externals": current_externals,
             "processing": self._processing or any(
-                item.status == "processing" for item in self.items
+                item.status in ("processing", "waiting") for item in self.items
             ),
             "paused": self._paused,
             "pending_count": len([i for i in self.items if i.status == "pending"]),
+            # LLM lane: 'processing' = 게이트를 잡아 실제 API 호출 중인 항목 수(=실제 동시 호출 수),
+            # 'waiting' = 워커가 꺼냈지만 슬롯 게이트 대기 중인 항목 수.
+            "llm_running_count": len([
+                i for i in self.items
+                if i.type in LLM_TYPES and i.status == "processing"
+            ]),
+            "llm_waiting_count": len([
+                i for i in self.items
+                if i.type in LLM_TYPES and i.status == "waiting"
+            ]),
             "illust_waiting": self._illust_wait_event is not None,
             "illust_wait_started_at": self._illust_wait_started_at,
             "illust_wait_seconds": self._illust_wait_seconds if self._illust_wait_event is not None else 0,
@@ -1053,7 +1063,7 @@ class QueueManager:
     def _dependencies_ready(self, item: QueueItem) -> bool:
         explicit_ids = set(item.depends_on or [])
         for blocker in self.items:
-            if blocker is item or blocker.status not in ("pending", "processing"):
+            if blocker is item or blocker.status not in ("pending", "processing", "waiting"):
                 continue
             if blocker.id in explicit_ids:
                 return False
@@ -1292,13 +1302,42 @@ class QueueManager:
     async def _run_item_pipeline(self, item: QueueItem, is_gpu: bool):
         """단일 아이템 실행 → 완료/실패 처리 → 정리 공통 파이프라인.
         GPU 메인 루프와 LLM 워커풀이 모두 이 함수를 경유한다."""
-        item.status = "processing"
+        is_llm = item.type in LLM_TYPES
+        # LLM 항목은 슬롯 게이트를 실제로 획득하기 전까지 'waiting'으로 둔다.
+        # 게이트 획득 순간(_execute_item 안의 LLM 호출)에 아래 콜백이 'processing'으로
+        # 전환하므로 'processing' 수 = 실제 동시 LLM API 호출 수가 된다.
+        item.status = "waiting" if is_llm else "processing"
         item.started_at = time.time()
         item.progress = 0.0
         print(f"[QUEUE] 처리 시작: type={item.type}, label={item.label}, id={item.id}")
         await self._notify_queue_updated()
         execution_target = getattr(item, "comfy_execution_target", None)
         context_token = CURRENT_COMFY_EXECUTION_TARGET.set(execution_target)
+        gate_cb_token = None
+        if is_llm:
+            # 게이트 획득 알림을 받아 waiting→processing 으로 전환(idempotent).
+            # 컨텍스트 전파로 handler 내부의 gather/병렬 재시도 LLM 호출까지 모두 커버.
+            async def _on_gate_acquired(it: QueueItem = item) -> None:
+                if it.status == "waiting":
+                    it.status = "processing"
+                    print(
+                        f"[QUEUE:LLM_GATE] 게이트 획득 → processing: "
+                        f"type={it.type}, id={it.id}"
+                    )
+                    await self._notify_queue_updated()
+
+            try:
+                gate_cb_token = llm_service.set_queue_gate_acquired_callback(
+                    _on_gate_acquired
+                )
+            except Exception as e:
+                print(
+                    f"[QUEUE:LLM_GATE] 게이트 콜백 등록 실패, 즉시 processing 전환: "
+                    f"id={item.id}, error={type(e).__name__}: {e}"
+                )
+                traceback.print_exc()
+                item.status = "processing"
+                gate_cb_token = None
         try:
             result = await self._execute_item(item)
             item.status = "completed"
@@ -1312,6 +1351,8 @@ class QueueManager:
             traceback.print_exc()
         finally:
             CURRENT_COMFY_EXECUTION_TARGET.reset(context_token)
+            if gate_cb_token is not None:
+                llm_service.reset_queue_gate_acquired_callback(gate_cb_token)
         item.completed_at = time.time()
         # 대기 중인 HTTP 핸들러 등에게 완료/실패 알림
         self._settle_future(item)
@@ -1669,10 +1710,13 @@ class QueueManager:
         """완료/실패/취소 항목을 UI에 2초간 띄운 뒤 리스트에서 삭제한다.
         _run_item_pipeline의 다음 큐 시작을 막지 않도록 백그라운드에서 실행된다.
         asyncio는 단일 스레드이므로 self.items 필터링은 다른 코루틴과 원자적으로,
-        pending/processing 항목은 항상 보존되어 실행 중인 다음 큐에 영향을 주지 않는다."""
+        pending/processing/waiting 항목은 항상 보존되어 실행 중인 다음 큐에 영향을 주지 않는다."""
         try:
             await asyncio.sleep(2.0)
-            self.items = [i for i in self.items if i.status in ("pending", "processing")]
+            self.items = [
+                i for i in self.items
+                if i.status in ("pending", "processing", "waiting")
+            ]
             await self._notify_queue_updated()
         except Exception as e:
             print(f"[QUEUE] 지연 프룬 실패: item={getattr(item, 'id', '')}, error={e}")
@@ -1878,7 +1922,12 @@ class QueueManager:
         return wid not in keep
 
     def _pop_next_llm_item(self) -> Optional[QueueItem]:
-        """대기 중인 LLM 아이템 중 우선순위가 가장 높은 것을 꺼내 processing 으로 전환."""
+        """대기 중인 LLM 아이템 중 우선순위가 가장 높은 것을 꺼내 waiting 으로 전환.
+
+        워커가 항목을 꺼낸 직후엔 슬롯 게이트 통과 전이므로 'waiting' 상태로 둔다.
+        실제 LLM API 호출을 시작(게이트 획득)하는 순간 _run_item_pipeline 이 등록한
+        게이트 콜백이 'processing'으로 전환한다. 따라서 'processing' 곧 실제 동시 호출 수.
+        """
         pending = [
             i for i in self.items
             if i.status == "pending"
@@ -1889,7 +1938,7 @@ class QueueManager:
             return None
         pending.sort(key=self._sort_key)
         item = pending[0]
-        item.status = "processing"
+        item.status = "waiting"
         item.started_at = time.time()
         item.progress = 0.0
         return item

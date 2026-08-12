@@ -755,7 +755,10 @@ async def test_gpu_and_llm_workers_execute_unrelated_items_concurrently(monkeypa
     try:
         await asyncio.wait_for(both_started.wait(), timeout=1)
         assert gpu_item.status == "processing"
-        assert llm_item.status == "processing"
+        # LLM 항목은 게이트 획득 전까지 'waiting'이다. fake_execute 가 게이트를
+        # 호출하지 않으므로 worker 가 잡고 실행 중(in-flight)인 상태로 'waiting'에 머문다.
+        # 두 레인이 동시에 in-flight(gpu=processing, llm=waiting)인 것이 병렬 실행의 증거.
+        assert llm_item.status == "waiting"
 
         release.set()
         await asyncio.wait_for(
@@ -823,7 +826,9 @@ def test_llm_item_waits_for_explicit_gpu_dependency():
 
     analysis.status = "completed"
     assert manager._pop_next_llm_item() is refine
-    assert refine.status == "processing"
+    # LLM 항목은 게이트 획득 전까지 'waiting', _run_item_pipeline 안에서 실제 API
+    # 호출(게이트 획득) 시 'processing'으로 전환된다.
+    assert refine.status == "waiting"
 
 
 def test_queue_priority_normalization_registers_every_non_illustration_type():
