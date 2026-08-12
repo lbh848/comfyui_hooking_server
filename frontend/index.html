@@ -13138,7 +13138,13 @@
                     </section>
 
                     <section id="video-frame-last" style="display:none; padding:12px; border:1px solid var(--border); border-radius:10px; background:var(--surface2);">
-                        <div style="font-size:.76rem; font-weight:700; margin-bottom:6px;">마지막 프레임 백업</div>
+                        <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:6px;">
+                            <span style="font-size:.76rem; font-weight:700;">마지막 프레임 백업</span>
+                            <label style="display:flex; align-items:center; gap:4px; font-size:.71rem; color:var(--text2); cursor:pointer; user-select:none;">
+                                <input type="checkbox" id="video-generation-loop" onchange="onVideoLoopChange()" style="margin:0; width:auto;">
+                                같은 프레임으로 루프
+                            </label>
+                        </div>
                         <label style="display:block; margin-bottom:8px;">
                             <select id="video-generation-last" onchange="onVideoLastFrameChange()" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:7px; background:var(--surface1); color:var(--text);">
                                 <option value="">다른 _raw 백업을 선택하세요.</option>
@@ -24589,6 +24595,14 @@
                     ? '현재 백업 _raw를 0초, 선택한 마지막 백업 _raw를 5초에 정렬해 한 장면으로 이어갑니다.'
                     : '현재 백업의 _raw를 H3 첫 프레임으로 사용합니다.';
             }
+            const loopCheckbox = document.getElementById('video-generation-loop');
+            if (loopCheckbox) {
+                loopCheckbox.style.visibility = isLast ? 'visible' : 'hidden';
+                if (!isLast) {
+                    loopCheckbox.checked = false;
+                    onVideoLoopChange();
+                }
+            }
         }
 
         function selectVideoMode(mode) {
@@ -24653,6 +24667,66 @@
             nameLabel.textContent = last.name;
         }
 
+        function isVideoLoopEnabled() {
+            const mode = document.getElementById('video-generation-mode')?.value || 'i2v';
+            if (mode !== 'first_last') return false;
+            return document.getElementById('video-generation-loop')?.checked === true;
+        }
+
+        function getEffectiveLastBackup() {
+            const mode = document.getElementById('video-generation-mode')?.value || 'i2v';
+            if (mode !== 'first_last') return '';
+            if (isVideoLoopEnabled()) {
+                return document.getElementById('video-generation-source')?.value || '';
+            }
+            return document.getElementById('video-generation-last')?.value || '';
+        }
+
+        function syncVideoLastPreviewToSource() {
+            const preview = document.getElementById('video-generation-last-preview');
+            const empty = document.getElementById('video-generation-last-empty');
+            const nameLabel = document.getElementById('video-generation-last-name');
+            if (!preview || !empty || !nameLabel) {
+                console.error('[VIDEO_UI] 마지막 프레임 미리보기 UI 요소를 찾지 못했습니다.');
+                return;
+            }
+            const sourceName = document.getElementById('video-generation-source')?.value || '';
+            const source = videoReferenceOptions.find(item => item.name === sourceName);
+            if (!source) {
+                preview.onerror = null;
+                preview.removeAttribute('src');
+                preview.style.display = 'none';
+                empty.textContent = '먼저 첫 프레임 백업을 선택하세요.';
+                empty.style.display = 'flex';
+                nameLabel.textContent = '';
+                return;
+            }
+            preview.onerror = () => {
+                console.error('[VIDEO_UI] 루프 모드 마지막 프레임 미리보기 로드 실패:', source.image_url);
+                preview.style.display = 'none';
+                empty.textContent = '미리보기를 불러오지 못했습니다.';
+                empty.style.display = 'flex';
+            };
+            empty.style.display = 'none';
+            preview.src = source.image_url;
+            preview.style.display = 'block';
+            nameLabel.textContent = source.name + ' · (첫 프레임과 동일 · 루프)';
+        }
+
+        function onVideoLoopChange() {
+            const select = document.getElementById('video-generation-last');
+            if (!select) return;
+            if (isVideoLoopEnabled()) {
+                select.disabled = true;
+                select.innerHTML = '<option value="">첫 프레임과 동일 · 루프</option>';
+                select.value = '';
+                syncVideoLastPreviewToSource();
+            } else {
+                select.disabled = false;
+                refreshVideoLastFrameOptions(document.getElementById('video-generation-source')?.value || '');
+            }
+        }
+
         function onVideoSourceChange() {
             const select = document.getElementById('video-generation-source');
             const preview = document.getElementById('video-generation-source-preview');
@@ -24668,7 +24742,8 @@
                 preview.style.display = 'none';
                 empty.style.display = 'flex';
                 nameLabel.textContent = '';
-                refreshVideoLastFrameOptions('');
+                if (isVideoLoopEnabled()) syncVideoLastPreviewToSource();
+                else refreshVideoLastFrameOptions('');
                 return;
             }
             preview.onerror = () => {
@@ -24682,7 +24757,8 @@
             preview.style.display = 'block';
             empty.style.display = 'none';
             nameLabel.textContent = source.name;
-            refreshVideoLastFrameOptions(source.name);
+            if (isVideoLoopEnabled()) syncVideoLastPreviewToSource();
+            else refreshVideoLastFrameOptions(source.name);
         }
 
         async function loadVideoReferenceOptions(preferredSource = '') {
@@ -24755,7 +24831,7 @@
         async function submitVideoGeneration() {
             const sourceName = document.getElementById('video-generation-source')?.value || '';
             const mode = document.getElementById('video-generation-mode')?.value || 'i2v';
-            const lastBackup = document.getElementById('video-generation-last')?.value || '';
+            const lastBackup = getEffectiveLastBackup();
             const preset = document.getElementById('video-generation-preset')?.value || 'auto';
             const upscaleEnabled = document.getElementById('video-generation-upscale-enabled')?.checked !== false;
             const upscaleScale = parseInt(document.getElementById('video-generation-upscale-scale')?.value || '2', 10);
@@ -24788,6 +24864,7 @@
                         mode,
                         source_backup: sourceName,
                         last_backup: lastBackup,
+                        loop: isVideoLoopEnabled(),
                         preset,
                         upscale_enabled: upscaleEnabled,
                         upscale_scale: upscaleScale,

@@ -583,8 +583,9 @@ Vision-produced static Visual Context:
             )
         if mode == "first_last":
             last_name = _safe_backup_name((params or {}).get("last_backup"))
-            if last_name == source_name:
-                print(f"[VIDEO:LLM] FLF2V 백업 동일: item={queue_item_id}, name={source_name}")
+            loop_enabled = bool((params or {}).get("loop"))
+            if last_name == source_name and not loop_enabled:
+                print(f"[VIDEO:LLM] FLF2V 백업 동일: item={queue_item_id}, name={source_name}, loop={loop_enabled}")
                 raise ValueError("첫 프레임과 마지막 프레임은 서로 다른 백업을 선택하세요")
             first_image = self._load_first_frame(
                 self._find_image_path(self._backup_dir(), source_name, raw=True)

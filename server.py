@@ -9346,6 +9346,7 @@ async def handle_api_video_enqueue(request: web.Request) -> web.Response:
         mode = str(body.get("mode") or "").strip().lower()
         source_name = str(body.get("source_backup") or "").strip()
         last_name = str(body.get("last_backup") or "").strip()
+        loop_enabled = bool(body.get("loop", False))
         instruction = str(body.get("instruction") or "").strip()
         preset = str(body.get("preset") or "auto").strip().lower()
         postprocess_defaults = normalize_video_postprocess_config(
@@ -9432,8 +9433,8 @@ async def handle_api_video_enqueue(request: web.Request) -> web.Response:
                     {"success": False, "error": "마지막 프레임 백업을 선택하세요"},
                     status=400,
                 )
-            if last_name == source_name:
-                print(f"[VIDEO:API] FLF2V 백업 동일: name={source_name!r}")
+            if last_name == source_name and not loop_enabled:
+                print(f"[VIDEO:API] FLF2V 백업 동일: name={source_name!r}, loop={loop_enabled}")
                 return web.json_response(
                     {"success": False, "error": "서로 다른 마지막 프레임을 선택하세요"},
                     status=400,
@@ -9448,6 +9449,7 @@ async def handle_api_video_enqueue(request: web.Request) -> web.Response:
             "mode": mode,
             "source_backup": source_name,
             "last_backup": last_name,
+            "loop": loop_enabled,
             "instruction": instruction,
             "preset": preset,
             "upscale_enabled": upscale_enabled,
