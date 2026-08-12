@@ -80,6 +80,7 @@ def test_video_page_can_delegate_direction_to_ai() -> None:
     assert "if (!autoInstruction && !instruction)" in FRONTEND
     assert "auto_instruction: autoInstruction" in FRONTEND
     assert "instruction: autoInstruction ? '' : instruction" in FRONTEND
+    assert "백업에 대사·감정 정보가 있으면 행동과 표정에 함께 반영합니다" in FRONTEND
 
 
 def test_video_postprocess_shares_renamed_background_lane() -> None:

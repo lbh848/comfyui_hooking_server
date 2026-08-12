@@ -233,6 +233,10 @@ def test_auto_visual_direction_prompt_receives_duration_and_mode_contract() -> N
         "first_last",
         auto_instruction=True,
         duration=12,
+        dialogue_contexts=[
+            ("Picture 1", 'Alice: "기다렸어." #relieved'),
+            ("Picture 2", "Alice: (이제 안심해도 되겠지.) #hopeful"),
+        ],
     )
     combined = "\n".join(str(message["content"]) for message in messages)
 
@@ -241,6 +245,24 @@ def test_auto_visual_direction_prompt_receives_duration_and_mode_contract() -> N
     assert "12.00 seconds" in combined
     assert "MiniMax H3" in combined
     assert "user-authored video direction is available" in combined
+    assert 'Alice: "기다렸어." #relieved' in combined
+    assert "Alice: (이제 안심해도 되겠지.) #hopeful" in combined
+    assert "Picture 1 backup dialogue and emotion context" in combined
+    assert "Picture 2 backup dialogue and emotion context" in combined
+    assert "must never enter the first string" in combined
+    assert "meaningfully consistent" in combined
+    assert "Preserve supplied dialogue verbatim" in combined
+    assert "parenthesized thoughts remain internal" in combined
+
+
+def test_static_visual_context_stage_does_not_receive_backup_dialogue() -> None:
+    messages = VideoMode._visual_context_messages(
+        "i2v",
+        dialogue_contexts=[("Picture 1", 'Alice: "숨겨진 대사" #angry')],
+    )
+    combined = "\n".join(str(message["content"]) for message in messages)
+
+    assert "숨겨진 대사" not in combined
 
 
 def _synthetic_i2v_api_workflow() -> dict:
@@ -626,10 +648,15 @@ async def test_i2v_auto_instruction_is_generated_in_visual_call_once(
         raw_dir / "source.webp",
         format="WEBP",
     )
+    dialogue_context = 'Alice: "괜찮아, 이제 말해도 돼." #reassuring'
+    (tmp_path / "source_info.json").write_text(
+        json.dumps({"speak_text": dialogue_context}, ensure_ascii=False),
+        encoding="utf-8",
+    )
     visual_value = "Picture 1: One character stands centered in a quiet room."
     direction_value = (
-        "The character notices a soft movement off screen, turns toward it, and "
-        "takes a careful step as the camera makes a restrained forward push."
+        'Alice gives a reassuring look and quietly says "괜찮아, 이제 말해도 돼." '
+        "while making a small, inviting hand gesture."
     )
     visual_response = json.dumps([visual_value, direction_value])
     body = _valid_body()
@@ -640,6 +667,9 @@ async def test_i2v_auto_instruction_is_generated_in_visual_call_once(
         combined = "\n".join(str(message["content"]) for message in messages)
         assert task_key == "video_prompt_i2v"
         assert "5-second video" in combined
+        assert dialogue_context in combined
+        assert "semantic authority for the depicted dramatic moment" in combined
+        assert "#emotion annotations as performance guidance" in combined
         assert kwargs["result_validator"](visual_response) == (True, "")
         return visual_response
 
