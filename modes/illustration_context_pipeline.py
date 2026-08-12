@@ -3842,6 +3842,92 @@ def _repair_call2_plan_slot_collisions(
     return repaired, dropped_count
 
 
+def _scene_brief_word_set(item: dict) -> set[str]:
+    """scene_brief를 비교 가능한 단어 집합으로 정규화(소문자, 3자 이상 토큰)."""
+    text = str(item.get("scene_brief") or "").lower()
+    return {tok for tok in re.split(r"[^a-z0-9]+", text) if len(tok) > 2}
+
+
+def _jaccard(a: set, b: set) -> float:
+    if not a and not b:
+        return 1.0
+    if not a or not b:
+        return 0.0
+    return len(a & b) / len(a | b)
+
+
+def _select_diverse_scenes(
+    scene_plan: list[dict],
+    maximum: int,
+    candidates: list[int],
+    *,
+    log_errors: bool = True,
+) -> list[dict]:
+    """PLAN이 max 초과 반환했을 때만 호출하는 다양성 자르기(maximin).
+
+    scene_brief 단어 Jaccard + characters 이름 Jaccard + 원문 인접도(slot 순서)로
+    NxN 유사도 행렬을 만들고, 거리 최댓값 조합(farthest-point sampling)으로
+    maximum개를 고른다. 비슷한 연속 beat 장면은 유사도가 높아 한 개만 생존한다.
+    선택 뒤 candidates 순(원문 순)으로 재정렬한다. 임베딩·외부 호출 없이 순수 파이썬.
+    """
+    n = len(scene_plan)
+    if maximum >= n:
+        return scene_plan
+
+    candidate_positions = {slot: index for index, slot in enumerate(candidates)}
+
+    def order_of(item: dict, fallback: int) -> int:
+        slot = item.get("slot")
+        if slot in candidate_positions:
+            return candidate_positions[slot]
+        return fallback
+
+    orders = [order_of(item, idx) for idx, item in enumerate(scene_plan)]
+    briefs = [_scene_brief_word_set(item) for item in scene_plan]
+    chars = [
+        {str(name).strip().lower() for name in (item.get("characters") or [])}
+        for item in scene_plan
+    ]
+
+    sim = [[0.0] * n for _ in range(n)]
+    for i in range(n):
+        for j in range(i + 1, n):
+            tag_sim = 0.5 * _jaccard(briefs[i], briefs[j]) + 0.5 * _jaccard(chars[i], chars[j])
+            prox = 1.0 / (1.0 + abs(orders[i] - orders[j]))
+            value = 0.7 * tag_sim + 0.3 * prox
+            sim[i][j] = value
+            sim[j][i] = value
+
+    # 시드: 원문 순 가장 첫 장면
+    seed = min(range(n), key=lambda idx: (orders[idx], idx))
+    picked = [seed]
+    remaining = set(range(n))
+    remaining.discard(seed)
+    while len(picked) < maximum:
+        best_idx = None
+        best_score = None
+        for r in remaining:
+            closest = max(sim[r][p] for p in picked)
+            if best_score is None or closest < best_score:
+                best_score = closest
+                best_idx = r
+        picked.append(best_idx)
+        remaining.discard(best_idx)
+
+    picked.sort(key=lambda idx: (orders[idx], idx))
+    result = [scene_plan[idx] for idx in picked]
+    if log_errors:
+        kept_anchors = [
+            str(scene_plan[idx].get("anchor_segment") or "") for idx in picked
+        ]
+        print(
+            "[ILLUST_CONTEXT:CALL2_PLAN] PLAN 과다 반환 → maximin 다양성 자르기: "
+            f"plan={n}, maximum={maximum}, dropped={n - maximum}, "
+            f"kept_anchors={kept_anchors}"
+        )
+    return result
+
+
 def parse_call2_plan(
     text: str,
     toggles: dict,
@@ -4056,13 +4142,27 @@ def parse_call2_plan(
     for index, item in enumerate(scene_plan, start=1):
         item["plan_id"] = f"S{index:03d}"
 
-    if str(toggles.get("scene_mode")) != "auto":
+    scene_mode = str(toggles.get("scene_mode"))
+    maximum = min(int(toggles["output_count_max"]), len(candidates))
+    if len(scene_plan) > maximum:
+        # 모델이 max 초과 반환 → 유사도 maximin으로 maximum개만 남기고 나머지는 자름.
+        # 정상(max 이하)이면 PLAN 결과를 그대로 사용한다.
+        scene_plan = _select_diverse_scenes(
+            scene_plan,
+            maximum,
+            candidates,
+            log_errors=log_errors,
+        )
+        scene_plan.sort(key=lambda item: candidates.index(item["slot"]))
+        for index, item in enumerate(scene_plan, start=1):
+            item["plan_id"] = f"S{index:03d}"
+
+    if scene_mode != "auto":
         minimum = min(int(toggles["output_count_min"]), len(candidates))
-        maximum = min(int(toggles["output_count_max"]), len(candidates))
         repaired_minimum = max(0, minimum - dropped_collision_count)
-        if not repaired_minimum <= len(scene_plan) <= maximum:
+        if len(scene_plan) < repaired_minimum:
             reason = (
-                f"CALL2-PLAN 장면 수 범위 위반: count={len(scene_plan)}, "
+                f"CALL2-PLAN 장면 수 범위 위반(과소): count={len(scene_plan)}, "
                 f"required={repaired_minimum}..{maximum}"
             )
             if log_errors:

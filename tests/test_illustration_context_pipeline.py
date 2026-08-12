@@ -182,6 +182,73 @@ def test_call2_plan_selects_global_slots_and_builds_key_visual():
     assert plan["keyvis_descriptor"]["slot"] == -1
 
 
+def test_call2_plan_trims_overcount_via_diversity_maximin():
+    """PLAN이 maximum 초과 반환하면 유사도 maximin으로 maximum개만 남긴다.
+
+    비슷한 brief/캐릭터의 연속 장면(slot 1, 4는 slot 0과 거의 동일한 묘사)은
+    유사도가 높아 잘리고, 서로 다른 장면이 생존한다. 정상(max 이하)일 때는
+    PLAN 결과를 그대로 쓴다.
+    """
+    slotted = "\n\n".join(
+        ["첫 문단."] + [f"[Slot {index}]\n\n문단 {index + 2}." for index in range(5)]
+    )
+    raw = json.dumps({
+        "scene_plan": [
+            {
+                "slot": 0,
+                "source_segments": ["C001"],
+                "characters": ["Hana"],
+                "scene_brief": "Hana sits at the desk reading a thick book",
+            },
+            {
+                "slot": 1,
+                "source_segments": ["C002"],
+                "characters": ["Hana"],
+                "scene_brief": "Hana sits at the desk reading a thick book closely",
+            },
+            {
+                "slot": 2,
+                "source_segments": ["C003"],
+                "characters": ["Hana"],
+                "scene_brief": "Hana walks alone through a sunny garden",
+            },
+            {
+                "slot": 3,
+                "source_segments": ["C004"],
+                "characters": ["Hana", "Mina"],
+                "scene_brief": "Hana talks with her friend Mina by the window",
+            },
+            {
+                "slot": 4,
+                "source_segments": ["C005"],
+                "characters": ["Hana"],
+                "scene_brief": "Hana sits at the desk reading a thick book again",
+            },
+        ],
+        "keyvis": None,
+        "keyvis_plan": None,
+    }, ensure_ascii=False)
+
+    plan, reason = pipeline.parse_call2_plan(
+        raw,
+        pipeline.merged_toggles({
+            "output_count_min": 1,
+            "output_count_max": 3,
+            "key_visual": False,
+        }),
+        slotted,
+    )
+
+    assert reason == ""
+    kept_slots = [item["slot"] for item in plan["scene_plan"]]
+    assert len(kept_slots) == 3
+    assert len(set(kept_slots)) == 3
+    # 시드(slot 0)는 생존, 유사 연속 beat(slot 1, 4)는 잘린다.
+    assert 0 in kept_slots
+    assert 1 not in kept_slots
+    assert 4 not in kept_slots
+
+
 def test_segment_slot_map_binds_segments_to_following_server_slot():
     slotted = (
         "첫 문단.\n\n[Slot 0]\n\n"
