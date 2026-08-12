@@ -140,6 +140,7 @@ from comfy_installer.workflow_library import migrate_legacy_workflow_layout
 from modal_backend import register_modal_routes
 from modal_backend.settings import ModalSettings
 from comfy_runtime import (
+    COMFY_INSTANCE_IDS,
     DEFAULT_COMFY_LAUNCH_PROFILES,
     ComfyRuntimeValidationError,
     autostart_comfy_instances,
@@ -210,6 +211,7 @@ def _llm_route_defaults(
 DEFAULT_CONFIG = {
     "comfyui_port": 8188,  # ComfyUI 서버 포트
     "comfyui_port_2": 8187,  # 두 번째 ComfyUI 실행 포트
+    "comfyui_port_3": 8186,  # 세 번째 ComfyUI 실행 포트
     "comfyui_port_illustration": None,  # 삽화 전용 포트 (null=메인 포트 사용)
     "comfy_launch_profiles": copy.deepcopy(DEFAULT_COMFY_LAUNCH_PROFILES),
     "comfy_task_allocations": copy.deepcopy(DEFAULT_COMFY_TASK_ALLOCATIONS),
@@ -429,6 +431,11 @@ DEFAULT_CONFIG = {
     "lora_training_workflow_source_paths": {"anima": "", "sdxl": ""},  # 로라 학습 워크플로우 원본 소스 경로 (profile별) - 인스턴스/봇 LoRA
     "style_lora_training_workflow_source_paths": {"anima": "", "sdxl": ""},  # 스타일(그림체) LoRA 학습 워크플로우 원본 소스 경로 (profile별)
     "face_extract_workflow_source_path": "",  # 얼굴 이미지 추출 워크플로우 원본 소스 전체 경로
+    "video_workflow_source_paths": {
+        "t2v": "",
+        "i2v": "",
+        "first_last": "",
+    },  # MiniMax H3 영상 워크플로우 원본 소스 경로
     "lora_load_path": "",  # 로라 모델 로드 폴더 절대 경로 (에셋, SOYA_CHAR_LORA 자동 추가)
     "bot_lora_load_path": "",  # 봇 LoRA 모델 로드 폴더 절대 경로 (SOYA_BOT_LORA 자동 추가)
     "instance_lora_load_path": "",  # 인스턴스 LoRA 모델 로드 폴더 절대 경로 (SOYA_INSTANCE_LORA 자동 추가)
@@ -12868,18 +12875,111 @@ comfy_runtime_manager = register_comfy_runtime_routes(
 )
 
 
+def _pause_managed_comfy_for_update() -> dict[str, Any]:
+    """런타임 파일 교체 전에 현재 실행 중인 관리 인스턴스를 기록·정지한다."""
+
+    instances: dict[str, dict[str, Any]] = {}
+    try:
+        for instance_id in COMFY_INSTANCE_IDS:
+            status = comfy_runtime_manager.status(
+                instance_id=instance_id,
+                after=0,
+            )
+            if status.get("running"):
+                instances[str(instance_id)] = {
+                    "instance_id": instance_id,
+                    "port": status.get("port"),
+                    "profile": status.get("profile"),
+                }
+        comfy_runtime_manager.stop_all()
+        remaining = [
+            instance_id
+            for instance_id in COMFY_INSTANCE_IDS
+            if comfy_runtime_manager.is_running(instance_id=instance_id)
+        ]
+        if remaining:
+            raise RuntimeError(
+                "관리 중인 Comfy 인스턴스를 안전하게 정지하지 못했습니다: "
+                + ", ".join(f"#{value}" for value in remaining)
+            )
+        result = {
+            "status": "paused",
+            "running_instances": sorted(int(value) for value in instances),
+            "instances": instances,
+        }
+        print(
+            "[COMFY_INSTALL][RUNTIME_PAUSE] 관리 Comfy 정지 완료: "
+            f"running_instances={result['running_instances']}"
+        )
+        return result
+    except Exception as exc:
+        print(
+            "[COMFY_INSTALL][RUNTIME_PAUSE] 관리 Comfy 정지 실패: "
+            f"error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        raise
+
+
+def _resume_managed_comfy_after_update(token: Any) -> dict[str, Any]:
+    """업데이트 전 실제로 실행 중이던 인스턴스만 동일 설정으로 복구한다."""
+
+    started: dict[str, dict[str, Any]] = {}
+    try:
+        if not isinstance(token, dict):
+            raise RuntimeError("관리 Comfy 복구 토큰 형식이 올바르지 않습니다.")
+        instances = token.get("instances")
+        if not isinstance(instances, dict):
+            raise RuntimeError("관리 Comfy 복구 토큰에 instances가 없습니다.")
+        for key in sorted(instances, key=int):
+            item = instances[key]
+            if not isinstance(item, dict):
+                raise RuntimeError(f"Comfy #{key} 복구 항목 형식이 잘못되었습니다.")
+            instance_id = int(item["instance_id"])
+            started[key] = comfy_runtime_manager.start(
+                instance_id=instance_id,
+                port=item["port"],
+                profile=item["profile"],
+            )
+        result = {
+            "status": "resumed",
+            "started_instances": sorted(int(value) for value in started),
+            "instances": started,
+        }
+        print(
+            "[COMFY_INSTALL][RUNTIME_RESUME] 관리 Comfy 복구 완료: "
+            f"started_instances={result['started_instances']}"
+        )
+        return result
+    except Exception as exc:
+        print(
+            "[COMFY_INSTALL][RUNTIME_RESUME] 관리 Comfy 복구 실패: "
+            f"error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        try:
+            comfy_runtime_manager.stop_all()
+        except Exception as cleanup_exc:
+            print(
+                "[COMFY_INSTALL][RUNTIME_RESUME] 부분 기동 인스턴스 정리 실패: "
+                f"error={type(cleanup_exc).__name__}: {cleanup_exc}"
+            )
+            traceback.print_exc()
+        raise
+
+
 async def _shutdown_after_successful_comfy_update() -> dict[str, Any]:
     """관리 중인 Comfy를 모두 끈 뒤 응답 전달 후 서버를 정상 종료한다."""
 
     print(
         "[COMFY_INSTALL][SHUTDOWN] 빠른 업데이트 완료: "
-        "관리 중인 Comfy #1, #2 종료 시작"
+        "관리 중인 Comfy #1, #2, #3 종료 시작"
     )
     try:
         await asyncio.to_thread(comfy_runtime_manager.stop_all)
         remaining = [
             instance_id
-            for instance_id in (1, 2)
+            for instance_id in COMFY_INSTANCE_IDS
             if comfy_runtime_manager.is_running(instance_id=instance_id)
         ]
         if remaining:
@@ -12906,7 +13006,7 @@ async def _shutdown_after_successful_comfy_update() -> dict[str, Any]:
 
     loop.call_later(1.0, stop_manager_server)
     return {
-        "managed_comfy_instances": [1, 2],
+        "managed_comfy_instances": list(COMFY_INSTANCE_IDS),
         "manager_shutdown_scheduled": True,
     }
 
@@ -12920,6 +13020,8 @@ comfy_installer_service = register_comfy_installer_routes(
         request.cookies.get(SESSION_COOKIE_NAME)
     ),
     shutdown_after_update=_shutdown_after_successful_comfy_update,
+    pause_managed_comfy=_pause_managed_comfy_for_update,
+    resume_managed_comfy=_resume_managed_comfy_after_update,
 )
 register_patch_import_routes(
     app,
@@ -21281,6 +21383,7 @@ async def on_startup(app):
             ports={
                 1: app_config.get("comfyui_port", 8188),
                 2: app_config.get("comfyui_port_2", 8187),
+                3: app_config.get("comfyui_port_3", 8186),
             },
         )
     except Exception as e:

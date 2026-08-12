@@ -22,6 +22,8 @@ APP_SERVICE_KEY = web.AppKey(
     "comfy_installer_service", ComfyInstallerService
 )
 ShutdownAfterUpdateCallback = Callable[[], Awaitable[dict[str, Any]]]
+PauseManagedComfyCallback = Callable[[], Any]
+ResumeManagedComfyCallback = Callable[[Any], Any]
 
 
 def _json_error(message: str, *, status: int = 400) -> web.Response:
@@ -369,11 +371,15 @@ def register_comfy_installer_routes(
     requirements_dir: str | os.PathLike[str],
     authorize_shutdown: Callable[[web.Request], bool] | None = None,
     shutdown_after_update: ShutdownAfterUpdateCallback | None = None,
+    pause_managed_comfy: PauseManagedComfyCallback | None = None,
+    resume_managed_comfy: ResumeManagedComfyCallback | None = None,
 ) -> ComfyInstallerService:
     service = ComfyInstallerService(
         project_root=project_root,
         config_path=config_path,
         requirements_dir=requirements_dir,
+        pause_managed_comfy=pause_managed_comfy,
+        resume_managed_comfy=resume_managed_comfy,
     )
     app[APP_SERVICE_KEY] = service
     shutdown_requested = False
@@ -404,7 +410,13 @@ def register_comfy_installer_routes(
         status = service.status()
         if status.get("state") != "succeeded" or status.get("operation") != "update":
             return _json_error(
-                "성공한 빠른 업데이트를 확인한 뒤에만 종료할 수 있습니다.",
+                "재시작이 필요한 호환성 업데이트 성공 후에만 종료할 수 있습니다.",
+                status=409,
+            )
+        result = status.get("result")
+        if not isinstance(result, dict) or result.get("restart_required") is not True:
+            return _json_error(
+                "현재 업데이트는 매니저 재시작이 필요하지 않습니다.",
                 status=409,
             )
         if shutdown_after_update is None:

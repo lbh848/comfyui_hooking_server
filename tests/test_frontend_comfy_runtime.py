@@ -18,23 +18,28 @@ def test_comfy_runtime_tab_is_next_to_common_settings() -> None:
     assert 'id="settings-tab-comfy_runtime"' in FRONTEND
 
 
-def test_common_settings_keep_two_independent_comfy_ports() -> None:
+def test_common_settings_keep_three_independent_comfy_ports() -> None:
     assert 'id="setting-comfyui-port"' in FRONTEND
     assert 'id="setting-comfyui-port-2"' in FRONTEND
+    assert 'id="setting-comfyui-port-3"' in FRONTEND
     assert 'placeholder="8188"' in FRONTEND
     assert 'placeholder="8187"' in FRONTEND
+    assert 'placeholder="8186"' in FRONTEND
     assert 'id="setting-illust-port-enabled"' not in FRONTEND
     assert 'id="setting-comfyui-port-illustration"' not in FRONTEND
     assert "comfyui_port_2:" in FRONTEND
+    assert "comfyui_port_3:" in FRONTEND
 
 
-def test_runtime_has_two_instance_tabs_controls_and_raw_terminal() -> None:
+def test_runtime_has_three_instance_tabs_controls_and_raw_terminal() -> None:
     for value in (
         'id="comfy-runtime-tab-1"',
         'id="comfy-runtime-tab-2"',
+        'id="comfy-runtime-tab-3"',
         'id="comfy-runtime-enable-cors" checked',
         'id="comfy-runtime-listen-all" checked',
         'id="comfy-runtime-fast"',
+        'id="comfy-runtime-disable-dynamic-vram"',
         'id="comfy-runtime-vram-mode"',
         'id="comfy-runtime-cuda-device"',
         'id="comfy-runtime-auto-start"',
@@ -64,6 +69,9 @@ def test_runtime_frontend_uses_dedicated_process_apis_and_persists_profiles() ->
     assert "enable_cors: true" in FRONTEND
     assert "listen_all: true" in FRONTEND
     assert "fast: false" in FRONTEND
+    assert "disable_dynamic_vram: false" in FRONTEND
+    assert "disable_dynamic_vram: source.disable_dynamic_vram === true" in FRONTEND
+    assert "'3': comfyRuntimeNormalizeProfile(comfyRuntimeProfiles[3])" in FRONTEND
     assert "vram_mode: 'auto'" in FRONTEND
 
 

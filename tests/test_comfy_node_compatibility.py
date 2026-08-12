@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 from threading import Event
@@ -14,6 +15,7 @@ from comfy_installer.node_compatibility import (
     NodeCompatibilityError,
     apply_instant_lora_python_compatibility,
     remove_instant_lora_python_compatibility,
+    validate_instant_lora_export_order,
 )
 from comfy_installer.node_installer import (
     NodeInstallError,
@@ -306,3 +308,75 @@ def test_instant_lora_patch_is_restored_when_node_update_fails(
         )
 
     assert "_base_executable" in runtime.read_text(encoding="utf-8")
+
+
+def test_instant_lora_export_order_validates_zero_padded_image_caption_pairs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    comfy_root = tmp_path / "comfy"
+    node_root = comfy_root / "custom_nodes" / NODE_NAME
+    node_root.mkdir(parents=True)
+    python = tmp_path / "python.exe"
+    python.write_bytes(b"fixture")
+
+    def fake_run_command(command, *, cwd, cancel_event, log, timeout):
+        assert command[:2] == [str(python), "-c"]
+        assert cwd == comfy_root
+        assert timeout == 300
+        fixture_root = next(
+            (comfy_root / ".installer-state" / "e2e").glob(
+                "lora-export-order-*"
+            )
+        )
+        names = sorted(path.name for path in fixture_root.glob("*.png"))
+        assert names == [f"[{index:05d}].png" for index in range(1, 13)]
+        captions = []
+        entries = []
+        for index, name in enumerate(names, 1):
+            caption = f"caption-{index:02d}"
+            (fixture_root / name).with_suffix(".txt").write_text(
+                caption,
+                encoding="utf-8",
+            )
+            captions.append({"image": name, "caption": caption})
+            entries.append(
+                {
+                    "index": index - 1,
+                    "positive_tags": caption,
+                    "negative_tags": "",
+                }
+            )
+        return [
+            json.dumps(
+                {
+                    "image_count": 12,
+                    "entries": entries,
+                    "captions": captions,
+                }
+            )
+        ]
+
+    monkeypatch.setattr(
+        "comfy_installer.node_compatibility.run_command",
+        fake_run_command,
+    )
+
+    result = validate_instant_lora_export_order(
+        comfy_root=comfy_root,
+        python=python,
+        cancel_event=Event(),
+    )
+
+    assert result == {
+        "image_count": 12,
+        "first": "[00001].png",
+        "tenth": "[00010].png",
+        "last": "[00012].png",
+        "status": "success",
+    }
+    assert not any(
+        (comfy_root / ".installer-state" / "e2e").glob(
+            "lora-export-order-*"
+        )
+    )

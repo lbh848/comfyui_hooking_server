@@ -992,3 +992,93 @@ def restore_config_backup(
         print(f"[COMFY_INSTALL][CONFIG] 설정 복원 실패: {exc}")
         traceback.print_exc()
         raise ConfigUpdateError(f"설정 복원 실패: {exc}") from exc
+
+
+def restore_verified_config_snapshot(
+    *,
+    config_path: str | os.PathLike[str],
+    backup_dir: str | os.PathLike[str],
+    backup_path: str | os.PathLike[str],
+    expected_sha256: str,
+) -> dict:
+    """트랜잭션이 기록한 hash와 경로가 일치하는 config snapshot을 복원한다."""
+
+    config_file = Path(config_path).resolve()
+    backup_root = Path(backup_dir).resolve()
+    source = Path(backup_path).resolve()
+    expected = str(expected_sha256).strip().lower()
+    try:
+        try:
+            source.relative_to(backup_root)
+        except ValueError as exc:
+            raise ConfigUpdateError(
+                f"설정 백업 폴더 밖의 snapshot은 복원할 수 없습니다: {source}"
+            ) from exc
+        if len(expected) != 64 or any(
+            character not in "0123456789abcdef" for character in expected
+        ):
+            raise ConfigUpdateError(
+                f"config snapshot SHA-256 형식이 잘못되었습니다: {expected!r}"
+            )
+        if not source.is_file():
+            raise ConfigUpdateError(f"config snapshot 파일이 없습니다: {source}")
+        _read_json_object(source, "트랜잭션 설정 snapshot")
+        actual_source_hash = _sha256_file(source)
+        if actual_source_hash != expected:
+            raise ConfigUpdateError(
+                "config snapshot SHA-256이 트랜잭션 기록과 다릅니다: "
+                f"expected={expected}, actual={actual_source_hash}"
+            )
+        if config_file.is_file() and _sha256_file(config_file) == expected:
+            print(
+                "[COMFY_INSTALL][CONFIG] 현재 설정이 트랜잭션 snapshot과 "
+                f"동일하여 복사를 생략합니다: {config_file}"
+            )
+            return {
+                "config_path": str(config_file),
+                "source_backup": str(source),
+                "safety_backup": None,
+                "sha256": expected,
+                "already_restored": True,
+            }
+
+        backup_root.mkdir(parents=True, exist_ok=True)
+        if config_file.is_file():
+            stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            safety_backup = (
+                backup_root / f"config_before_transaction_restore_{stamp}.json"
+            )
+            shutil.copy2(config_file, safety_backup)
+            if _sha256_file(safety_backup) != _sha256_file(config_file):
+                raise ConfigUpdateError(
+                    f"트랜잭션 복원 직전 설정 백업 검증 실패: {safety_backup}"
+                )
+        else:
+            safety_backup = None
+            print(
+                "[COMFY_INSTALL][CONFIG] 트랜잭션 복원 대상 config.json이 없어 "
+                "복원 직전 백업을 건너뜁니다."
+            )
+        _copy_file_atomic(source, config_file)
+        restored_hash = _sha256_file(config_file)
+        if restored_hash != expected:
+            raise ConfigUpdateError(
+                "트랜잭션 config snapshot 복원 후 SHA-256이 다릅니다."
+            )
+        print(
+            "[COMFY_INSTALL][CONFIG] 트랜잭션 원래 설정 복원 완료: "
+            f"source={source}, target={config_file}"
+        )
+        return {
+            "config_path": str(config_file),
+            "source_backup": str(source),
+            "safety_backup": str(safety_backup) if safety_backup else None,
+            "sha256": restored_hash,
+            "already_restored": False,
+        }
+    except ConfigUpdateError:
+        raise
+    except Exception as exc:
+        print(f"[COMFY_INSTALL][CONFIG] 트랜잭션 설정 복원 실패: {exc}")
+        traceback.print_exc()
+        raise ConfigUpdateError(f"트랜잭션 설정 복원 실패: {exc}") from exc

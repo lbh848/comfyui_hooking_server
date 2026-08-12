@@ -24,6 +24,8 @@ def _get_dotted(config: dict, dotted_key: str):
 def collect_workflow_bindings(
     config_path: Path,
     manifest: InstallManifest | None = None,
+    *,
+    include_optional: bool = False,
 ) -> dict[str, Path]:
     try:
         config = json.loads(config_path.read_text(encoding="utf-8"))
@@ -38,13 +40,18 @@ def collect_workflow_bindings(
         raise WorkflowPackError("config.json 최상위 값이 객체가 아닙니다.")
 
     manifest = manifest or load_install_manifest()
-    required = manifest.workflows["required_bindings"]
+    required = list(manifest.workflows["required_bindings"])
+    binding_keys = required
+    if include_optional:
+        binding_keys = required + list(
+            manifest.workflows.get("optional_bindings", [])
+        )
     excluded = {
         str(name).casefold()
         for name in manifest.workflows.get("excluded_filenames", [])
     }
     bindings: dict[str, Path] = {}
-    for key in required:
+    for key in binding_keys:
         raw_path = _get_dotted(config, key)
         if not isinstance(raw_path, str) or not raw_path.strip():
             raise WorkflowPackError(f"config.json 워크플로우 경로가 비었습니다: {key}")
@@ -60,7 +67,13 @@ def collect_workflow_bindings(
         bindings[key] = path
 
     unique_files = {path for path in bindings.values()}
-    expected_count = manifest.workflows["expected_count"]
+    binding_key_set = set(binding_keys)
+    latest_release = sorted(manifest.workflows["release_dependencies"])[-1]
+    expected_count = sum(
+        1
+        for entry in manifest.workflows["release_dependencies"][latest_release]
+        if set(entry["bindings"]).issubset(binding_key_set)
+    )
     if len(unique_files) != expected_count:
         raise WorkflowPackError(
             "워크플로우 고유 파일 수가 매니페스트와 다릅니다: "
@@ -116,7 +129,7 @@ def build_workflow_items(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="현재 config.json의 17개 워크플로우를 암호화 팩으로 생성합니다."
+        description="현재 config.json의 배포 워크플로우를 암호화 팩으로 생성합니다."
     )
     parser.add_argument("--config", default="config.json")
     parser.add_argument("--output", required=True)
@@ -134,7 +147,11 @@ def main(argv: list[str] | None = None) -> int:
     try:
         config_path = Path(args.config).resolve()
         manifest = load_install_manifest()
-        bindings = collect_workflow_bindings(config_path, manifest)
+        bindings = collect_workflow_bindings(
+            config_path,
+            manifest,
+            include_optional=True,
+        )
         workflow_items = build_workflow_items(
             bindings, args.release_version, manifest
         )

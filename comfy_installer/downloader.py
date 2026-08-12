@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import time
 import traceback
 import urllib.parse
@@ -31,6 +32,29 @@ class DownloadResult:
 
 ProgressCallback = Callable[[dict], None]
 ClientFactory = Callable[[], httpx.Client]
+
+
+_CONTENT_RANGE_PATTERN = re.compile(
+    r"^bytes\s+(?P<start>\d+)-(?P<end>\d+)/(?P<total>\d+|\*)$",
+    re.IGNORECASE,
+)
+
+
+def _parse_content_range(value: str | None) -> tuple[int, int, int | None] | None:
+    if not isinstance(value, str):
+        return None
+    match = _CONTENT_RANGE_PATTERN.fullmatch(value.strip())
+    if match is None:
+        return None
+    start = int(match.group("start"))
+    end = int(match.group("end"))
+    raw_total = match.group("total")
+    total = None if raw_total == "*" else int(raw_total)
+    if start > end:
+        return None
+    if total is not None and (total <= 0 or end >= total):
+        return None
+    return start, end, total
 
 
 def redact_url(url: str) -> str:
@@ -209,7 +233,53 @@ class ResumableDownloader:
                                 pass
                             else:
                                 response.raise_for_status()
-                                append = offset > 0 and response.status_code == 206
+                                append = False
+                                skip_prefix = 0
+                                if response.status_code == 206:
+                                    parsed_range = _parse_content_range(
+                                        response.headers.get("Content-Range")
+                                    )
+                                    invalid_reason: str | None = None
+                                    if parsed_range is None:
+                                        invalid_reason = (
+                                            "206 응답의 Content-Range가 없거나 "
+                                            "유효하지 않음"
+                                        )
+                                    else:
+                                        range_start, range_end, range_total = (
+                                            parsed_range
+                                        )
+                                        if (
+                                            range_total is not None
+                                            and range_total != expected_size
+                                        ):
+                                            invalid_reason = (
+                                                "Content-Range 전체 크기 불일치 "
+                                                f"expected={expected_size}, "
+                                                f"actual={range_total}"
+                                            )
+                                        elif range_start > offset:
+                                            invalid_reason = (
+                                                "Content-Range 시작점이 요청 offset보다 "
+                                                f"뒤임 offset={offset}, "
+                                                f"start={range_start}"
+                                            )
+                                        elif range_end < offset:
+                                            invalid_reason = (
+                                                "Content-Range가 요청 offset을 포함하지 "
+                                                f"않음 offset={offset}, "
+                                                f"range={range_start}-{range_end}"
+                                            )
+                                        else:
+                                            append = offset > 0
+                                            skip_prefix = offset - range_start
+                                    if invalid_reason is not None:
+                                        if part_path.is_file():
+                                            self._move_invalid(
+                                                part_path,
+                                                invalid_reason,
+                                            )
+                                        raise DownloadError(invalid_reason)
                                 if offset > 0 and response.status_code != 206:
                                     print(
                                         "[COMFY_INSTALL][DOWNLOAD] 서버가 Range를 "
@@ -218,14 +288,24 @@ class ResumableDownloader:
                                     )
                                     offset = 0
                                 mode = "ab" if append else "wb"
+                                remaining_skip = skip_prefix
                                 with part_path.open(mode) as stream:
                                     for chunk in response.iter_bytes(self.chunk_size):
                                         if cancel.is_set():
                                             raise DownloadCancelled(
                                                 "다운로드 중 중단 요청을 받았습니다."
-                                            )
+                                        )
                                         if not chunk:
                                             continue
+                                        if remaining_skip:
+                                            skipped = min(
+                                                remaining_skip,
+                                                len(chunk),
+                                            )
+                                            remaining_skip -= skipped
+                                            chunk = chunk[skipped:]
+                                            if not chunk:
+                                                continue
                                         stream.write(chunk)
                                         downloaded_this_attempt += len(chunk)
                                         now = time.monotonic()
@@ -249,6 +329,12 @@ class ResumableDownloader:
                                             last_reported = now
                                     stream.flush()
                                     os.fsync(stream.fileno())
+                                if remaining_skip:
+                                    raise DownloadError(
+                                        "Content-Range 응답이 요청 offset까지 "
+                                        "도달하지 못했습니다: "
+                                        f"remaining_skip={remaining_skip}"
+                                    )
 
                     actual_size = part_path.stat().st_size
                     if actual_size != expected_size:

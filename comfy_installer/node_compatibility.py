@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import ast
 import hashlib
+import json
 import os
 import shutil
 import traceback
 import uuid
 from pathlib import Path
+from threading import Event
 from typing import Callable
+
+from .operations import run_command
 
 
 class NodeCompatibilityError(RuntimeError):
@@ -310,3 +314,124 @@ def remove_instant_lora_python_compatibility(
         raise NodeCompatibilityError(
             f"Instant LoRA 관리 Python 호환 패치 해제 실패: {exc}"
         ) from exc
+
+
+def validate_instant_lora_export_order(
+    *,
+    comfy_root: Path,
+    python: Path,
+    cancel_event: Event,
+    log: LogCallback | None = None,
+) -> dict[str, object]:
+    """실제 설치 노드가 12장의 zero-padded export 순서를 보존하는지 검증한다."""
+
+    fixture_root = (
+        comfy_root
+        / ".installer-state"
+        / "e2e"
+        / f"lora-export-order-{uuid.uuid4().hex[:10]}"
+    )
+    node_root = comfy_root / "custom_nodes" / INSTANT_LORA_NODE_NAME
+    try:
+        if not node_root.is_dir():
+            raise NodeCompatibilityError(
+                f"Instant LoRA 노드 폴더가 없습니다: {node_root}"
+            )
+        from modes.lora_export_utils import format_lora_export_filename
+
+        fixture_root.mkdir(parents=True, exist_ok=False)
+        expected_names: list[str] = []
+        prompt_groups: list[str] = []
+        for index in range(1, 13):
+            name = format_lora_export_filename(index, 12, ".png")
+            expected_names.append(name)
+            (fixture_root / name).write_bytes(f"fixture-{index}".encode("utf-8"))
+            prompt_groups.append(f"[{index}]caption-{index:02d}")
+
+        script = "\n".join(
+            (
+                "import json,sys,traceback",
+                "from pathlib import Path",
+                f"node_root=Path({str(node_root)!r})",
+                f"fixture_root=Path({str(fixture_root)!r})",
+                "sys.path.insert(0,str(node_root))",
+                "try:",
+                "    from src.nodes import ContextBuilderPathOnlyV1",
+                f"    prompt={chr(10).join(prompt_groups)!r}",
+                "    context=ContextBuilderPathOnlyV1().build(prompt,'',str(fixture_root))[0]",
+                "    captions=[]",
+                "    for image in sorted(fixture_root.glob('*.png'),key=lambda p:p.name):",
+                "        caption=image.with_suffix('.txt')",
+                "        captions.append({'image':image.name,'caption':caption.read_text(encoding='utf-8')})",
+                "    print(json.dumps({'image_count':context['image_count'],'entries':context['entries'],'captions':captions},ensure_ascii=False))",
+                "except Exception:",
+                "    traceback.print_exc()",
+                "    raise",
+            )
+        )
+        lines = run_command(
+            [str(python), "-c", script],
+            cwd=comfy_root,
+            cancel_event=cancel_event,
+            log=log,
+            timeout=300,
+        )
+        if not lines:
+            raise NodeCompatibilityError(
+                "Instant LoRA 12장 순서 검증 결과가 비어 있습니다."
+            )
+        result = json.loads(lines[-1])
+        entries = result.get("entries")
+        captions = result.get("captions")
+        if result.get("image_count") != 12 or not isinstance(entries, list):
+            raise NodeCompatibilityError(
+                f"Instant LoRA 이미지 수가 다릅니다: {result!r}"
+            )
+        expected_prompts = [f"caption-{index:02d}" for index in range(1, 13)]
+        actual_prompts = [str(entry.get("positive_tags")) for entry in entries]
+        if actual_prompts != expected_prompts:
+            raise NodeCompatibilityError(
+                "Instant LoRA prompt 그룹 순서가 다릅니다: "
+                f"expected={expected_prompts}, actual={actual_prompts}"
+            )
+        expected_captions = [
+            {"image": name, "caption": expected_prompts[index]}
+            for index, name in enumerate(expected_names)
+        ]
+        if captions != expected_captions:
+            raise NodeCompatibilityError(
+                "Instant LoRA 이미지/캡션 연결이 다릅니다: "
+                f"expected={expected_captions}, actual={captions}"
+            )
+        if log:
+            log(
+                "[노드 호환] Instant LoRA zero-padded 12장 순서/캡션 검증 완료"
+            )
+        return {
+            "image_count": 12,
+            "first": expected_names[0],
+            "tenth": expected_names[9],
+            "last": expected_names[-1],
+            "status": "success",
+        }
+    except NodeCompatibilityError:
+        raise
+    except Exception as exc:
+        print(
+            "[COMFY_INSTALL][NODE_COMPAT] Instant LoRA 12장 순서 검증 실패: "
+            f"fixture_root={fixture_root}, error={exc}"
+        )
+        traceback.print_exc()
+        raise NodeCompatibilityError(
+            f"Instant LoRA 12장 순서 검증 실패: {exc}"
+        ) from exc
+    finally:
+        if fixture_root.exists():
+            try:
+                shutil.rmtree(fixture_root)
+            except Exception as exc:
+                print(
+                    "[COMFY_INSTALL][NODE_COMPAT] Instant LoRA 검증 픽스처 정리 실패: "
+                    f"path={fixture_root}, error={exc}"
+                )
+                traceback.print_exc()

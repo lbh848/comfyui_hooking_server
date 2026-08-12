@@ -98,6 +98,35 @@ def test_comfy_output_aggregates_repeated_lora_warnings(
     assert "최종 합계 205건" in messages[12]
 
 
+def test_comfy_output_detects_prompt_worker_fatal_exit(tmp_path: Path) -> None:
+    process = ComfyProcess(
+        comfy_root=tmp_path,
+        python=tmp_path / "python.exe",
+        cancel_event=Event(),
+        port=12345,
+    )
+
+    process._emit_output_line("Exception in thread Thread-10 (prompt_worker):")
+    process._emit_output_line("torch.AcceleratorError: CUDA error: out of memory")
+
+    detail = process.fatal_error()
+    assert detail is not None
+    assert "prompt_worker" in detail
+    assert "out of memory" in detail
+
+
+def test_comfy_process_keeps_explicit_extra_launch_args(tmp_path: Path) -> None:
+    process = ComfyProcess(
+        comfy_root=tmp_path,
+        python=tmp_path / "python.exe",
+        cancel_event=Event(),
+        port=12345,
+        extra_args=("--vram-headroom", "2"),
+    )
+
+    assert process.extra_args == ("--vram-headroom", "2")
+
+
 def test_make_e2e_prompt_disables_private_assets_and_minimizes_work() -> None:
     structured = (
         "portrait\n"
@@ -165,6 +194,40 @@ def test_make_e2e_prompt_disables_private_assets_and_minimizes_work() -> None:
         "batch_size": 1,
     }
     assert validation.prompt["2"]["inputs"]["steps"] == 32
+
+
+def test_make_e2e_prompt_accepts_h3_runtime_dimensions_and_steps() -> None:
+    validation = WorkflowValidation(
+        binding_keys=("video_workflow_source_paths.t2v",),
+        filename="h3.json",
+        node_count=1,
+        class_count=1,
+        classes=("MiniMaxH3TextToVideo",),
+        prompt={
+            "1": {
+                "class_type": "MiniMaxH3TextToVideo",
+                "inputs": {
+                    "steps": 20,
+                    "width": 1344,
+                    "height": 768,
+                },
+            }
+        },
+        workflow={"nodes": []},
+    )
+
+    prompt = make_e2e_prompt(
+        validation,
+        sample_steps=8,
+        sample_width=960,
+        sample_height=544,
+    )
+
+    assert prompt["1"]["inputs"] == {
+        "steps": 8,
+        "width": 960,
+        "height": 544,
+    }
 
 
 def test_make_e2e_prompt_keeps_illustration_cache_fields_as_json() -> None:
@@ -417,6 +480,31 @@ def test_validate_prompt_structure_finds_missing_class_and_link() -> None:
             object_info={},
             filename="bad.json",
         )
+
+
+def test_validate_prompt_structure_defers_required_inputs_to_comfy_runtime() -> None:
+    classes = _validate_prompt_structure(
+        prompt={
+            "1": {
+                "class_type": "DynamicNode",
+                "inputs": {"expression": "a + 1"},
+            }
+        },
+        object_info={
+            "DynamicNode": {
+                "input": {
+                    "required": {
+                        "expression": ["STRING", {}],
+                        "values": ["STRING", {}],
+                    }
+                },
+                "output": ["FLOAT"],
+            }
+        },
+        filename="dynamic.json",
+    )
+
+    assert classes == ("DynamicNode",)
 
 
 def test_validate_prompt_structure_finds_bad_output_slot_and_type() -> None:

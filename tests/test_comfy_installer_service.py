@@ -9,6 +9,7 @@ import pytest
 
 import comfy_installer.service as service_module
 from comfy_installer.e2e import ComfyE2EError
+from comfy_installer.crypto import ExtractedWorkflowPack
 from comfy_installer.manifest import load_install_manifest
 from comfy_installer.service import ComfyInstallerService, _INSTALL_PHASES
 from comfy_installer.workflow_library import (
@@ -25,6 +26,229 @@ def test_install_repatch_runs_before_comfy_startup_and_e2e() -> None:
     assert phases.index("repatch") < phases.index("startup")
     assert phases.index("repatch") < phases.index("e2e_static")
     assert phases.index("repatch") < phases.index("e2e_runtime")
+    assert phases.index("e2e_runtime") < phases.index("e2e_video_runtime")
+
+
+def test_video_e2e_uses_only_comfy_three_profile_arguments(
+    tmp_path: Path,
+) -> None:
+    config = tmp_path / "config.json"
+    config.write_text(
+        json.dumps(
+            {
+                "comfy_launch_profiles": {
+                    "1": {"vram_mode": "novram"},
+                    "2": {"cuda_device": 2},
+                    "3": {
+                        "cuda_device": 1,
+                        "vram_mode": "lowvram",
+                        "disable_dynamic_vram": True,
+                        "fast": True,
+                    },
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    service = ComfyInstallerService(
+        project_root=tmp_path,
+        config_path=config,
+        requirements_dir=tmp_path / "requirements",
+    )
+
+    assert service._video_e2e_extra_args() == (
+        "--cuda-device",
+        "1",
+        "--lowvram",
+        "--disable-dynamic-vram",
+        "--fast",
+    )
+
+
+def test_runtime_validations_split_h3_from_legacy(tmp_path: Path) -> None:
+    config = tmp_path / "config.json"
+    config.write_text("{}\n", encoding="utf-8")
+    service = ComfyInstallerService(
+        project_root=tmp_path,
+        config_path=config,
+        requirements_dir=tmp_path / "requirements",
+    )
+    legacy_validation = SimpleNamespace(
+        binding_keys=("illustration_workflow_source_paths.v1",),
+        filename="legacy.json",
+    )
+    video_validation = SimpleNamespace(
+        binding_keys=("video_workflow_source_paths.t2v",),
+        filename="h3.json",
+    )
+
+    legacy, video = service._partition_runtime_validations(
+        [video_validation, legacy_validation]
+    )
+
+    assert legacy == [legacy_validation]
+    assert video == [video_validation]
+
+
+def test_video_runtime_order_is_t2v_then_i2v_then_first_last() -> None:
+    validations = [
+        SimpleNamespace(
+            binding_keys=("video_workflow_source_paths.first_last",),
+            filename="first-last.json",
+        ),
+        SimpleNamespace(
+            binding_keys=("video_workflow_source_paths.i2v",),
+            filename="i2v.json",
+        ),
+        SimpleNamespace(
+            binding_keys=("video_workflow_source_paths.t2v",),
+            filename="t2v.json",
+        ),
+    ]
+
+    ordered = sorted(validations, key=ComfyInstallerService._runtime_order)
+
+    assert [item.filename for item in ordered] == [
+        "t2v.json",
+        "i2v.json",
+        "first-last.json",
+    ]
+
+
+def test_runtime_e2e_applies_h3_manifest_defaults(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config = tmp_path / "config.json"
+    config.write_text("{}\n", encoding="utf-8")
+    service = ComfyInstallerService(
+        project_root=tmp_path,
+        config_path=config,
+        requirements_dir=tmp_path / "requirements",
+    )
+    validation = SimpleNamespace(
+        binding_keys=("video_workflow_source_paths.t2v",),
+        filename="h3.json",
+        prompt={},
+        workflow={"nodes": []},
+    )
+    captured: dict = {}
+    promotion_calls: list[dict] = []
+
+    def fake_make_e2e_prompt(value, **kwargs):
+        captured["validation"] = value
+        captured.update(kwargs)
+        return {}
+
+    monkeypatch.setattr(service_module, "make_e2e_prompt", fake_make_e2e_prompt)
+    monkeypatch.setattr(
+        service_module,
+        "execute_prompt",
+        lambda **_kwargs: {
+            "filename": "h3.json",
+            "prompt_id": "prompt-h3",
+            "status": "success",
+            "outputs": [],
+            "output_data": {},
+        },
+    )
+    monkeypatch.setattr(
+        service_module,
+        "promote_generated_fixture",
+        lambda **kwargs: promotion_calls.append(kwargs),
+    )
+
+    results = service._run_runtime_e2e(
+        process=SimpleNamespace(base_url="http://127.0.0.1:12345"),
+        validations=[validation],
+        fixtures={
+            "training": "fixture/training/sample.png",
+            "face_source": "fixture/fallback/face.webp",
+        },
+    )
+
+    assert len(results) == 1
+    assert captured == {
+        "validation": validation,
+        "sample_steps": 8,
+        "sample_width": 960,
+        "sample_height": 544,
+    }
+    assert promotion_calls == []
+
+
+def test_runtime_e2e_keeps_fixture_promotion_for_legacy_workflow(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config = tmp_path / "config.json"
+    config.write_text("{}\n", encoding="utf-8")
+    service = ComfyInstallerService(
+        project_root=tmp_path,
+        config_path=config,
+        requirements_dir=tmp_path / "requirements",
+    )
+    validation = SimpleNamespace(
+        binding_keys=("illustration_workflow_source_paths.v1",),
+        filename="legacy.json",
+        prompt={},
+        workflow={"nodes": []},
+    )
+    promotion_calls: list[dict] = []
+
+    monkeypatch.setattr(service_module, "make_e2e_prompt", lambda _value: {})
+    monkeypatch.setattr(
+        service_module,
+        "execute_prompt",
+        lambda **_kwargs: {
+            "filename": "legacy.json",
+            "prompt_id": "prompt-legacy",
+            "status": "success",
+            "outputs": [],
+            "output_data": {},
+        },
+    )
+    monkeypatch.setattr(
+        service_module,
+        "promote_generated_fixture",
+        lambda **kwargs: promotion_calls.append(kwargs),
+    )
+
+    results = service._run_runtime_e2e(
+        process=SimpleNamespace(base_url="http://127.0.0.1:12345"),
+        validations=[validation],
+        fixtures={
+            "training": "fixture/training/sample.png",
+            "face_source": "fixture/fallback/face.webp",
+        },
+    )
+
+    assert len(results) == 1
+    assert len(promotion_calls) == 1
+
+
+def test_normal_pack_validation_includes_h3_bindings(tmp_path: Path) -> None:
+    config = tmp_path / "config.json"
+    config.write_text("{}\n", encoding="utf-8")
+    service = ComfyInstallerService(
+        project_root=tmp_path,
+        config_path=config,
+        requirements_dir=tmp_path / "requirements",
+    )
+    bindings: dict[str, str] = {}
+    release = service.manifest.workflows["release_dependencies"]["v1"]
+    for index, entry in enumerate(release):
+        path = str(tmp_path / f"workflow-{index}.json")
+        for binding in entry["bindings"]:
+            bindings[binding] = path
+    extracted = ExtractedWorkflowPack(
+        target_dir=tmp_path,
+        workflow_bindings=bindings,
+        workflow_hashes={},
+        pack_sha256="0" * 64,
+    )
+
+    service._validate_extracted_pack(extracted)
 
 
 def test_service_status_never_contains_credentials(tmp_path: Path) -> None:
@@ -82,9 +306,17 @@ def test_service_startup_migrates_existing_workflow_paths_to_ascii(
     assert (legacy_backup / "main.json").read_text(
         encoding="utf-8"
     ) == '{"legacy":true}'
+    deployment_backups = (
+        tmp_path / "comfy" / ".installer-state" / "backups" / "config"
+    )
     assert len(
-        list(requirements.glob("config_before_workflow_ascii_migration_*.json"))
+        list(
+            deployment_backups.glob(
+                "config_before_workflow_ascii_migration_*.json"
+            )
+        )
     ) == 1
+    assert not requirements.exists()
 
 
 def test_server_runs_workflow_path_migration_before_loading_config() -> None:
@@ -553,10 +785,79 @@ def test_runtime_e2e_records_failure_and_continues_remaining_workflows(
     assert progress["failed_filenames"] == ["a.json"]
 
 
+def test_runtime_e2e_can_isolate_each_workflow_process(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config = tmp_path / "config.json"
+    config.write_text("{}\n", encoding="utf-8")
+    service = ComfyInstallerService(
+        project_root=tmp_path,
+        config_path=config,
+        requirements_dir=tmp_path / "requirements",
+    )
+    validations = [
+        SimpleNamespace(
+            binding_keys=(f"fixture.{name}",),
+            filename=f"{name}.json",
+            prompt={},
+            workflow={"nodes": []},
+        )
+        for name in ("a", "b", "c")
+    ]
+    stopped: list[str] = []
+
+    def process(name: str):
+        return SimpleNamespace(
+            base_url=f"http://{name}",
+            process=SimpleNamespace(poll=lambda: None),
+            stop=lambda: stopped.append(name),
+        )
+
+    created = iter((process("second"), process("third")))
+    calls: list[str] = []
+
+    monkeypatch.setattr(service_module, "make_e2e_prompt", lambda _value: {})
+    monkeypatch.setattr(
+        service_module,
+        "execute_prompt",
+        lambda **kwargs: {
+            "filename": kwargs["filename"],
+            "prompt_id": f"prompt-{kwargs['filename']}",
+            "status": "success",
+            "outputs": [],
+            "output_data": calls.append(kwargs["base_url"]),
+        },
+    )
+    monkeypatch.setattr(
+        service_module,
+        "promote_generated_fixture",
+        lambda **_kwargs: None,
+    )
+
+    results = service._run_runtime_e2e(
+        process=process("first"),
+        process_factory=lambda: next(created),
+        validations=validations,
+        fixtures={
+            "training": "fixture/training/sample.png",
+            "face_source": "fixture/fallback/face.webp",
+        },
+    )
+
+    assert len(results) == 3
+    assert all("duration_seconds" in result for result in results)
+    assert calls == ["http://first", "http://second", "http://third"]
+    assert stopped == ["first", "second", "third"]
+
+
 def test_manifest_has_fully_pinned_windows_runtime_and_assets() -> None:
     manifest = load_install_manifest()
-    assert manifest.comfy["version"] == "0.20.1"
-    assert len(manifest.comfy["ref"]) == 40
+    assert manifest.data["schema_version"] == 2
+    assert manifest.comfy["version"] == "0.31.0"
+    assert manifest.comfy["ref"] == (
+        "62b3c94bd45154f6486c7abf1b9efcacee96ea69"
+    )
     assert manifest.python["version"] == "3.12.11"
     assert manifest.python["compatibility_packages"] == [
         "numpy==1.26.4",
@@ -631,15 +932,17 @@ def test_manifest_has_fully_pinned_windows_runtime_and_assets() -> None:
         for node in manifest.custom_nodes
         if node["name"] in tracking_main_names
     )
-    assert len(manifest.models) == 36
-    assert manifest.workflows["expected_count"] == 17
+    assert len(manifest.models) == 41
+    assert manifest.workflows["expected_count"] == 20
     fixed_v1 = manifest.workflows["release_dependencies"]["v1"]
-    assert len(fixed_v1) == 17
+    assert len(fixed_v1) == 20
     assert {
         binding
         for item in fixed_v1
         for binding in item["bindings"]
-    } == set(manifest.workflows["required_bindings"])
+    } == set(manifest.workflows["required_bindings"]).union(
+        manifest.workflows["optional_bindings"]
+    )
     qwen = next(
         item for item in fixed_v1
         if item["id"] == "qwen_edit_workflow_source_path"
@@ -648,3 +951,35 @@ def test_manifest_has_fully_pinned_windows_runtime_and_assets() -> None:
     assert "캐릭터복장추적_v1.json" in manifest.workflows[
         "excluded_filenames"
     ]
+    h3 = manifest.validation_profiles["minimax_h3"]
+    assert set(h3["workflow_bindings"]) == {
+        "video_workflow_source_paths.t2v",
+        "video_workflow_source_paths.i2v",
+        "video_workflow_source_paths.first_last",
+    }
+    assert set(manifest.workflows["optional_bindings"]) == set(
+        h3["workflow_bindings"]
+    )
+    assert set(h3["model_ids"]) == {
+        "minimax-h3-audio-vae-fp32",
+        "minimax-h3-int8-convrot",
+        "minimax-h3-lightx2v-turbo-8step-v1",
+        "minimax-h3-qwen3vl-nvfp4-awq",
+        "minimax-h3-video-vae-fp16",
+    }
+    h3_models = [
+        model for model in manifest.models if model["id"] in h3["model_ids"]
+    ]
+    assert len(h3_models) == 5
+    assert sum(model["size"] for model in h3_models) == 44_426_778_471
+    assert h3["defaults"] == {
+        "width": 960,
+        "height": 544,
+        "length": 124,
+        "fps": 24,
+        "steps": 8,
+        "sampler": "res_multistep",
+        "scheduler": "simple",
+        "lora_strength": 1.0,
+        "audio": False,
+    }

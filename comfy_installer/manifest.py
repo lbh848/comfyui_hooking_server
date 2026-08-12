@@ -45,6 +45,11 @@ class InstallManifest:
     def workflows(self) -> dict[str, Any]:
         return self.data["workflows"]
 
+    @property
+    def validation_profiles(self) -> dict[str, Any]:
+        value = self.data.get("validation_profiles", {})
+        return value if isinstance(value, dict) else {}
+
 
 def _is_safe_relative_path(value: str) -> bool:
     normalized = value.replace("\\", "/")
@@ -62,7 +67,7 @@ def _require_string(mapping: dict, key: str, context: str) -> str:
 def _validate_manifest(data: dict[str, Any]) -> None:
     if not isinstance(data, dict):
         raise ManifestError("설치 매니페스트 최상위 값은 JSON 객체여야 합니다.")
-    if data.get("schema_version") != 1:
+    if data.get("schema_version") != 2:
         raise ManifestError(
             f"지원하지 않는 설치 매니페스트 버전입니다: {data.get('schema_version')!r}"
         )
@@ -259,9 +264,9 @@ def _validate_manifest(data: dict[str, Any]) -> None:
     if not isinstance(workflows, dict):
         raise ManifestError("workflows 항목이 JSON 객체가 아닙니다.")
     expected_count = workflows.get("expected_count")
-    if expected_count != 17:
+    if expected_count != 20:
         raise ManifestError(
-            f"최초 배포 워크플로우 수는 17이어야 합니다: {expected_count!r}"
+            f"최초 배포 워크플로우 수는 20이어야 합니다: {expected_count!r}"
         )
     excluded = workflows.get("excluded_filenames")
     if not isinstance(excluded, list) or "캐릭터복장추적_v1.json" not in excluded:
@@ -278,12 +283,29 @@ def _validate_manifest(data: dict[str, Any]) -> None:
     if len(set(required_bindings)) != len(required_bindings):
         raise ManifestError("workflows.required_bindings에 중복 값이 있습니다.")
 
+    optional_bindings = workflows.get("optional_bindings", [])
+    if not isinstance(optional_bindings, list) or not all(
+        isinstance(binding, str) and binding.strip()
+        for binding in optional_bindings
+    ):
+        raise ManifestError("workflows.optional_bindings가 문자열 배열이 아닙니다.")
+    if len(set(optional_bindings)) != len(optional_bindings):
+        raise ManifestError("workflows.optional_bindings에 중복 값이 있습니다.")
+    required_binding_set = set(required_bindings)
+    optional_binding_set = set(optional_bindings)
+    overlapping_bindings = required_binding_set.intersection(optional_binding_set)
+    if overlapping_bindings:
+        raise ManifestError(
+            "필수/선택 워크플로 바인딩이 중복됩니다: "
+            f"{sorted(overlapping_bindings)}"
+        )
+    known_binding_set = required_binding_set.union(optional_binding_set)
+
     release_dependencies = workflows.get("release_dependencies")
     if not isinstance(release_dependencies, dict) or not release_dependencies:
         raise ManifestError("workflows.release_dependencies가 비어 있습니다.")
     if "v1" not in release_dependencies:
         raise ManifestError("최초 배포용 workflows.release_dependencies.v1이 없습니다.")
-    required_binding_set = set(required_bindings)
     for release_version, entries in release_dependencies.items():
         context = f"workflows.release_dependencies.{release_version}"
         if not isinstance(release_version, str) or not re.fullmatch(
@@ -320,7 +342,7 @@ def _validate_manifest(data: dict[str, Any]) -> None:
                 raise ManifestError(
                     f"{entry_context}.bindings에 중복 값이 있습니다."
                 )
-            unknown_bindings = set(bindings) - required_binding_set
+            unknown_bindings = set(bindings) - known_binding_set
             if unknown_bindings:
                 raise ManifestError(
                     f"{entry_context}.bindings에 알 수 없는 설정 키가 있습니다: "
@@ -351,10 +373,73 @@ def _validate_manifest(data: dict[str, Any]) -> None:
                     f"{entry_context}.model_ids에 등록되지 않은 모델이 있습니다: "
                     f"{sorted(unknown_models)}"
                 )
-        if covered_bindings != required_binding_set:
+        if covered_bindings != known_binding_set:
             raise ManifestError(
                 f"{context}가 모든 설정 바인딩을 포함하지 않습니다: "
-                f"missing={sorted(required_binding_set - covered_bindings)}"
+                f"missing={sorted(known_binding_set - covered_bindings)}"
+            )
+
+    validation_profiles = data.get("validation_profiles")
+    if not isinstance(validation_profiles, dict):
+        raise ManifestError("validation_profiles가 JSON 객체가 아닙니다.")
+    h3_profile = validation_profiles.get("minimax_h3")
+    if not isinstance(h3_profile, dict):
+        raise ManifestError("validation_profiles.minimax_h3가 없습니다.")
+    expected_h3_bindings = {
+        "video_workflow_source_paths.t2v",
+        "video_workflow_source_paths.i2v",
+        "video_workflow_source_paths.first_last",
+    }
+    h3_bindings = h3_profile.get("workflow_bindings")
+    if not isinstance(h3_bindings, list) or set(h3_bindings) != expected_h3_bindings:
+        raise ManifestError(
+            "validation_profiles.minimax_h3.workflow_bindings가 "
+            "T2V/I2V/First-Last 고정 바인딩과 다릅니다."
+        )
+    if not expected_h3_bindings.issubset(optional_binding_set):
+        raise ManifestError(
+            "MiniMax H3 워크플로 바인딩이 workflows.optional_bindings에 없습니다."
+        )
+
+    expected_h3_models = {
+        "minimax-h3-audio-vae-fp32",
+        "minimax-h3-int8-convrot",
+        "minimax-h3-lightx2v-turbo-8step-v1",
+        "minimax-h3-qwen3vl-nvfp4-awq",
+        "minimax-h3-video-vae-fp16",
+    }
+    h3_model_ids = h3_profile.get("model_ids")
+    if not isinstance(h3_model_ids, list) or set(h3_model_ids) != expected_h3_models:
+        raise ManifestError(
+            "validation_profiles.minimax_h3.model_ids가 H3 고정 모델 5개와 다릅니다."
+        )
+    if not expected_h3_models.issubset(model_ids):
+        raise ManifestError(
+            "MiniMax H3 모델이 공용 models 목록에 모두 등록되지 않았습니다."
+        )
+
+    defaults = h3_profile.get("defaults")
+    if not isinstance(defaults, dict):
+        raise ManifestError(
+            "validation_profiles.minimax_h3.defaults가 JSON 객체가 아닙니다."
+        )
+    expected_defaults = {
+        "width": 960,
+        "height": 544,
+        "length": 124,
+        "fps": 24,
+        "steps": 8,
+        "sampler": "res_multistep",
+        "scheduler": "simple",
+        "lora_strength": 1.0,
+        "audio": False,
+    }
+    for key, expected in expected_defaults.items():
+        if defaults.get(key) != expected:
+            raise ManifestError(
+                "validation_profiles.minimax_h3.defaults 값이 고정 사양과 "
+                f"다릅니다: key={key}, expected={expected!r}, "
+                f"actual={defaults.get(key)!r}"
             )
 
 

@@ -12,9 +12,33 @@ from comfy_runtime import (
     ComfyRuntimeManager,
     ComfyRuntimeValidationError,
     autostart_comfy_instances,
+    comfy_launch_profile_extra_args,
     normalize_comfy_launch_profile,
+    normalize_comfy_launch_profiles,
     register_comfy_runtime_routes,
 )
+
+
+def test_profile_extra_args_exclude_network_and_autostart_options() -> None:
+    arguments = comfy_launch_profile_extra_args(
+        {
+            "auto_start": True,
+            "enable_cors": True,
+            "listen_all": True,
+            "fast": True,
+            "disable_dynamic_vram": True,
+            "vram_mode": "lowvram",
+            "cuda_device": 1,
+        }
+    )
+
+    assert arguments == (
+        "--cuda-device",
+        "1",
+        "--lowvram",
+        "--disable-dynamic-vram",
+        "--fast",
+    )
 
 
 def test_launch_profile_defaults_enable_network_options() -> None:
@@ -25,6 +49,7 @@ def test_launch_profile_defaults_enable_network_options() -> None:
         "enable_cors": True,
         "listen_all": True,
         "fast": False,
+        "disable_dynamic_vram": False,
         "vram_mode": "auto",
         "cuda_device": None,
     }
@@ -39,6 +64,7 @@ def test_build_command_uses_supported_comfy_arguments(tmp_path: Path) -> None:
             "enable_cors": True,
             "listen_all": True,
             "fast": True,
+            "disable_dynamic_vram": True,
             "vram_mode": "lowvram",
             "cuda_device": 1,
         },
@@ -57,7 +83,25 @@ def test_build_command_uses_supported_comfy_arguments(tmp_path: Path) -> None:
     assert command[command.index("--enable-cors-header") + 1] == "*"
     assert command[command.index("--cuda-device") + 1] == "1"
     assert "--lowvram" in command
+    assert "--disable-dynamic-vram" in command
     assert command[-1] == "--fast"
+
+
+def test_launch_profiles_keep_three_instances_independent() -> None:
+    profiles = normalize_comfy_launch_profiles(
+        {
+            "1": {"disable_dynamic_vram": True},
+            "2": {"vram_mode": "lowvram"},
+            "3": {"cuda_device": 0},
+        }
+    )
+
+    assert tuple(profiles) == ("1", "2", "3")
+    assert profiles["1"]["disable_dynamic_vram"] is True
+    assert profiles["2"]["disable_dynamic_vram"] is False
+    assert profiles["2"]["vram_mode"] == "lowvram"
+    assert profiles["3"]["cuda_device"] == 0
+    assert profiles["3"]["vram_mode"] == "auto"
 
 
 @pytest.mark.parametrize(
@@ -65,6 +109,7 @@ def test_build_command_uses_supported_comfy_arguments(tmp_path: Path) -> None:
     (
         {"auto_start": "yes"},
         {"enable_cors": "yes"},
+        {"disable_dynamic_vram": "yes"},
         {"vram_mode": "unknown"},
         {"cuda_device": -1},
     ),
@@ -170,15 +215,21 @@ def test_autostart_keeps_instance_failures_isolated() -> None:
         profiles={
             "1": {"auto_start": True},
             "2": {"auto_start": True, "fast": True},
+            "3": {"auto_start": True, "disable_dynamic_vram": True},
         },
-        ports={1: 8188, 2: 8187},
+        ports={1: 8188, 2: 8187, 3: 8186},
     )
 
-    assert [call["instance_id"] for call in calls] == [1, 2]
+    assert [call["instance_id"] for call in calls] == [1, 2, 3]
     assert calls[0]["port"] == 8188
     assert calls[1]["port"] == 8187
     assert calls[1]["profile"]["fast"] is True
-    assert started == {2: {"instance_id": 2, "running": True}}
+    assert calls[2]["port"] == 8186
+    assert calls[2]["profile"]["disable_dynamic_vram"] is True
+    assert started == {
+        2: {"instance_id": 2, "running": True},
+        3: {"instance_id": 3, "running": True},
+    }
 
 
 @pytest.mark.asyncio
@@ -192,6 +243,14 @@ async def test_runtime_http_status_and_validation(tmp_path: Path) -> None:
         assert response.status == 200
         payload = await response.json()
         assert payload["ok"] is True
+        assert payload["state"] == "stopped"
+
+        response = await client.get(
+            "/api/comfy-runtime/status?instance=3&after=0"
+        )
+        assert response.status == 200
+        payload = await response.json()
+        assert payload["instance_id"] == 3
         assert payload["state"] == "stopped"
 
         response = await client.post(

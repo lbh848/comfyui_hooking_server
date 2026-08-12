@@ -2892,6 +2892,14 @@ def test_modal_runtime_uses_published_multigpu_container_image() -> None:
         / "modal-runtime"
         / "Dockerfile"
     ).read_text(encoding="utf-8")
+    install_manifest = json.loads(
+        (
+            Path(__file__).resolve().parents[1]
+            / "comfy_installer"
+            / "resources"
+            / "install_manifest.json"
+        ).read_text(encoding="utf-8")
+    )
     verify_source = (
         Path(__file__).resolve().parents[1]
         / "docker"
@@ -2929,6 +2937,10 @@ def test_modal_runtime_uses_published_multigpu_container_image() -> None:
         '"python /opt/soya/image_install.py"'
     )
     assert 'ARG SAGEATTENTION_ARCH_LIST="8.0;8.6;8.9;12.0"' in docker_source
+    assert (
+        f'ARG COMFY_REF="{install_manifest["comfy"]["ref"]}"'
+        in docker_source
+    )
     assert "uv pip install" in docker_source
     assert "verify_sageattention_image.py --static" in docker_source
     for cubin in ("sm_80", "sm_86", "sm_89", "sm_120"):

@@ -30,7 +30,7 @@ async def test_installer_status_and_pack_upload_routes(tmp_path: Path) -> None:
         payload = await response.json()
         assert payload["ok"] is True
         assert payload["state"] == "idle"
-        assert payload["manifest"]["workflow_count"] == 17
+        assert payload["manifest"]["workflow_count"] == 20
         assert "civitai_key" not in str(payload)
         assert "workflow_key" not in str(payload)
 
@@ -470,7 +470,13 @@ async def test_shutdown_after_update_runs_once_after_success(
         shutdown_after_update=shutdown_after_update,
     )
     with service._lock:
-        service._state.update({"state": "succeeded", "operation": "update"})
+        service._state.update(
+            {
+                "state": "succeeded",
+                "operation": "update",
+                "result": {"restart_required": True},
+            }
+        )
 
     client = TestClient(TestServer(app))
     await client.start_server()

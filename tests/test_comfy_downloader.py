@@ -44,6 +44,92 @@ def test_downloader_resumes_part_file_and_verifies_hash(tmp_path):
     assert not part.exists()
 
 
+def test_downloader_skips_aligned_content_range_prefix_when_resuming(tmp_path):
+    payload = (b"0123456789abcdef" * 8192) + b"tail"
+    target = tmp_path / "model.bin"
+    part = tmp_path / "model.bin.part"
+    offset = 65536
+    aligned_start = 49152
+    part.write_bytes(payload[:offset])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers.get("Range") == f"bytes={offset}-"
+        return httpx.Response(
+            206,
+            content=payload[aligned_start:],
+            headers={
+                "Content-Range": (
+                    f"bytes {aligned_start}-{len(payload)-1}/{len(payload)}"
+                )
+            },
+        )
+
+    result = ResumableDownloader(
+        client_factory=lambda: httpx.Client(transport=httpx.MockTransport(handler)),
+        chunk_size=65536,
+    ).download(
+        url="https://example.test/model.bin",
+        target=target,
+        expected_size=len(payload),
+        expected_sha256=_sha(payload),
+    )
+
+    assert target.read_bytes() == payload
+    assert result.reused is False
+    assert not part.exists()
+
+
+@pytest.mark.parametrize(
+    ("response_headers", "response_start"),
+    [
+        ({}, 0),
+        ({"Content-Range": "bytes 70000-131075/131076"}, 70000),
+        ({"Content-Range": "bytes 0-131075/999999"}, 0),
+    ],
+    ids=["missing-header", "range-gap", "wrong-total"],
+)
+def test_downloader_preserves_part_and_restarts_on_unsafe_range_response(
+    tmp_path,
+    response_headers,
+    response_start,
+):
+    payload = (b"0123456789abcdef" * 8192) + b"tail"
+    target = tmp_path / "model.bin"
+    part = tmp_path / "model.bin.part"
+    offset = 65536
+    original_part = payload[:offset]
+    part.write_bytes(original_part)
+    seen_ranges = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        range_header = request.headers.get("Range")
+        seen_ranges.append(range_header)
+        if range_header is not None:
+            return httpx.Response(
+                206,
+                content=payload[response_start:],
+                headers=response_headers,
+            )
+        return httpx.Response(200, content=payload)
+
+    result = ResumableDownloader(
+        client_factory=lambda: httpx.Client(transport=httpx.MockTransport(handler)),
+        max_retries=2,
+    ).download(
+        url="https://example.test/model.bin",
+        target=target,
+        expected_size=len(payload),
+        expected_sha256=_sha(payload),
+    )
+
+    invalid = list(tmp_path.glob("model.bin.part.invalid_*"))
+    assert seen_ranges == [f"bytes={offset}-", None]
+    assert len(invalid) == 1
+    assert invalid[0].read_bytes() == original_part
+    assert target.read_bytes() == payload
+    assert result.reused is False
+
+
 def test_downloader_reuses_verified_existing_file_without_http(tmp_path):
     payload = b"already here"
     target = tmp_path / "model.bin"

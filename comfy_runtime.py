@@ -25,17 +25,19 @@ from comfy_installer.python_runtime import (
 
 
 VALID_VRAM_MODES = {"auto", "highvram", "normalvram", "lowvram", "novram"}
+COMFY_INSTANCE_IDS = (1, 2, 3)
 DEFAULT_COMFY_LAUNCH_PROFILE: dict[str, Any] = {
     "auto_start": False,
     "enable_cors": True,
     "listen_all": True,
     "fast": False,
+    "disable_dynamic_vram": False,
     "vram_mode": "auto",
     "cuda_device": None,
 }
 DEFAULT_COMFY_LAUNCH_PROFILES: dict[str, dict[str, Any]] = {
-    "1": copy.deepcopy(DEFAULT_COMFY_LAUNCH_PROFILE),
-    "2": copy.deepcopy(DEFAULT_COMFY_LAUNCH_PROFILE),
+    str(instance_id): copy.deepcopy(DEFAULT_COMFY_LAUNCH_PROFILE)
+    for instance_id in COMFY_INSTANCE_IDS
 }
 
 
@@ -54,7 +56,13 @@ def normalize_comfy_launch_profile(value: Any) -> dict[str, Any]:
         raise ComfyRuntimeValidationError("ComfyUI 실행 옵션은 객체여야 합니다.")
 
     profile = copy.deepcopy(DEFAULT_COMFY_LAUNCH_PROFILE)
-    for key in ("auto_start", "enable_cors", "listen_all", "fast"):
+    for key in (
+        "auto_start",
+        "enable_cors",
+        "listen_all",
+        "fast",
+        "disable_dynamic_vram",
+    ):
         if key not in value:
             continue
         if not isinstance(value[key], bool):
@@ -96,8 +104,24 @@ def normalize_comfy_launch_profiles(value: Any) -> dict[str, dict[str, Any]]:
         raise ComfyRuntimeValidationError("ComfyUI 실행 프로필은 객체여야 합니다.")
     return {
         instance_id: normalize_comfy_launch_profile(value.get(instance_id))
-        for instance_id in ("1", "2")
+        for instance_id in (str(value) for value in COMFY_INSTANCE_IDS)
     }
+
+
+def comfy_launch_profile_extra_args(value: Any) -> tuple[str, ...]:
+    """Return profile-specific Comfy arguments without port/network flags."""
+
+    profile = normalize_comfy_launch_profile(value)
+    arguments: list[str] = []
+    if profile["cuda_device"] is not None:
+        arguments.extend(("--cuda-device", str(profile["cuda_device"])))
+    if profile["vram_mode"] != "auto":
+        arguments.append(f"--{profile['vram_mode']}")
+    if profile["disable_dynamic_vram"]:
+        arguments.append("--disable-dynamic-vram")
+    if profile["fast"]:
+        arguments.append("--fast")
+    return tuple(arguments)
 
 
 @dataclass
@@ -160,7 +184,9 @@ class ComfyRuntimeManager:
         self.main_path = self.comfy_root / "main.py"
         self._popen_factory = popen_factory
         self._manager_lock = threading.RLock()
-        self._states = {index: _RuntimeState(index) for index in (1, 2)}
+        self._states = {
+            index: _RuntimeState(index) for index in COMFY_INSTANCE_IDS
+        }
 
     def _resolve_python_path(self) -> Path:
         if os.name == "nt":
@@ -174,9 +200,9 @@ class ComfyRuntimeManager:
                 raise TypeError("bool은 허용되지 않음")
             instance_id = int(value)
         except (TypeError, ValueError) as exc:
-            raise ComfyRuntimeValidationError("Comfy 번호는 1 또는 2여야 합니다.") from exc
-        if instance_id not in (1, 2):
-            raise ComfyRuntimeValidationError("Comfy 번호는 1 또는 2여야 합니다.")
+            raise ComfyRuntimeValidationError("Comfy 번호는 1, 2, 3 중 하나여야 합니다.") from exc
+        if instance_id not in COMFY_INSTANCE_IDS:
+            raise ComfyRuntimeValidationError("Comfy 번호는 1, 2, 3 중 하나여야 합니다.")
         return instance_id
 
     @staticmethod
@@ -212,12 +238,7 @@ class ComfyRuntimeManager:
             command.extend(("--listen", "0.0.0.0"))
         if normalized_profile["enable_cors"]:
             command.extend(("--enable-cors-header", "*"))
-        if normalized_profile["cuda_device"] is not None:
-            command.extend(("--cuda-device", str(normalized_profile["cuda_device"])))
-        if normalized_profile["vram_mode"] != "auto":
-            command.append(f"--{normalized_profile['vram_mode']}")
-        if normalized_profile["fast"]:
-            command.append("--fast")
+        command.extend(comfy_launch_profile_extra_args(normalized_profile))
         return command, parsed_port, normalized_profile
 
     @staticmethod
@@ -393,7 +414,12 @@ class ComfyRuntimeManager:
             try:
                 repaired = repair_relocated_managed_venv(
                     comfy_root=self.comfy_root,
-                    requirements_dir=self.project_root / "요구사항",
+                    requirements_dir=(
+                        self.comfy_root
+                        / ".installer-state"
+                        / "backups"
+                        / "runtime"
+                    ),
                 )
                 if repaired:
                     print(
@@ -599,7 +625,7 @@ class ComfyRuntimeManager:
             return self.status(instance_id=parsed_instance, after=0)
 
     def stop_all(self) -> None:
-        for instance_id in (1, 2):
+        for instance_id in COMFY_INSTANCE_IDS:
             try:
                 self.stop(instance_id=instance_id)
             except ComfyRuntimeError as exc:
@@ -676,7 +702,7 @@ def autostart_comfy_instances(
 
     normalized_profiles = normalize_comfy_launch_profiles(profiles)
     started: dict[int, dict[str, Any]] = {}
-    for instance_id in (1, 2):
+    for instance_id in COMFY_INSTANCE_IDS:
         profile = normalized_profiles[str(instance_id)]
         if not profile["auto_start"]:
             print(

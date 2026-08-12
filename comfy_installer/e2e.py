@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Event
-from typing import Callable, Iterator, Mapping
+from typing import Callable, Iterator, Mapping, Sequence
 
 import httpx
 from PIL import Image, ImageDraw, ImageOps
@@ -95,6 +95,10 @@ class ComfyProcess:
     _LORA_WARNING_TOKEN = "lora key not loaded:"
     _LORA_WARNING_EXAMPLES = 10
     _LORA_WARNING_SUMMARY_INTERVAL = 100
+    _FATAL_OUTPUT_TOKENS = (
+        "exception in thread thread-",
+        "(prompt_worker)",
+    )
 
     def __init__(
         self,
@@ -104,18 +108,28 @@ class ComfyProcess:
         cancel_event: Event,
         log: LogCallback | None = None,
         port: int | None = None,
+        extra_args: Sequence[str] = (),
     ) -> None:
         self.comfy_root = comfy_root.resolve()
         self.python = python.resolve()
         self.cancel_event = cancel_event
         self.log = log
         self.port = port or find_free_local_port()
+        self.extra_args = tuple(str(value) for value in extra_args)
         self.base_url = f"http://127.0.0.1:{self.port}"
         self.process: subprocess.Popen[str] | None = None
         self._tail: list[str] = []
         self._reader: threading.Thread | None = None
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        self.output_log_path = (
+            self.comfy_root
+            / ".installer-state"
+            / "logs"
+            / f"comfy-e2e-{stamp}-{uuid.uuid4().hex[:8]}.log"
+        )
         self._lora_warning_count = 0
         self._output_callback_failed = False
+        self._fatal_output: str | None = None
 
     def _forward_output(self, message: str) -> None:
         if self.log is None or self._output_callback_failed:
@@ -135,6 +149,10 @@ class ComfyProcess:
         if len(self._tail) > 300:
             del self._tail[: len(self._tail) - 300]
 
+        folded = line.casefold()
+        if all(token in folded for token in self._FATAL_OUTPUT_TOKENS):
+            self._fatal_output = line
+
         if self._LORA_WARNING_TOKEN in line.casefold():
             self._lora_warning_count += 1
             count = self._lora_warning_count
@@ -149,6 +167,15 @@ class ComfyProcess:
 
         self._forward_output(f"[Comfy] {line}")
 
+    def fatal_error(self) -> str | None:
+        if self._fatal_output is None:
+            return None
+        tail = "\n".join(self._tail[-80:])
+        return (
+            "ComfyUI prompt_worker가 치명적으로 종료되었습니다. "
+            f"log={self.output_log_path}\n{tail}"
+        )
+
     def _emit_output_summary(self) -> None:
         if self._lora_warning_count > self._LORA_WARNING_EXAMPLES:
             self._forward_output(
@@ -159,14 +186,40 @@ class ComfyProcess:
     def _read_output(self) -> None:
         assert self.process is not None
         assert self.process.stdout is not None
+        output_log = None
         try:
+            try:
+                self.output_log_path.parent.mkdir(parents=True, exist_ok=True)
+                output_log = self.output_log_path.open(
+                    "x",
+                    encoding="utf-8",
+                    newline="\n",
+                )
+            except Exception as exc:
+                print(
+                    "[COMFY_INSTALL][E2E] Comfy 원문 로그 파일 생성 실패: "
+                    f"path={self.output_log_path}, error={exc}"
+                )
+                traceback.print_exc()
             for raw_line in self.process.stdout:
                 line = raw_line.rstrip("\r\n")
+                if output_log is not None:
+                    output_log.write(line + "\n")
+                    output_log.flush()
                 self._emit_output_line(line)
         except Exception as exc:
             print(f"[COMFY_INSTALL][E2E] Comfy 출력 읽기 실패: {exc}")
             traceback.print_exc()
         finally:
+            if output_log is not None:
+                try:
+                    output_log.close()
+                except Exception as exc:
+                    print(
+                        "[COMFY_INSTALL][E2E] Comfy 원문 로그 파일 닫기 실패: "
+                        f"path={self.output_log_path}, error={exc}"
+                    )
+                    traceback.print_exc()
             self._emit_output_summary()
 
     def start(self, *, timeout: float = 600) -> dict:
@@ -174,6 +227,7 @@ class ComfyProcess:
             raise ComfyE2EError("ComfyUI E2E 프로세스가 이미 시작되었습니다.")
         command = [
             str(self.python),
+            "-u",
             str(self.comfy_root / "main.py"),
             "--listen",
             "127.0.0.1",
@@ -181,9 +235,11 @@ class ComfyProcess:
             str(self.port),
             "--disable-auto-launch",
         ]
+        command.extend(self.extra_args)
         if self.log:
             self.log(
-                f"[E2E] 독립 ComfyUI 기동: 127.0.0.1:{self.port}"
+                f"[E2E] 독립 ComfyUI 기동: 127.0.0.1:{self.port}, "
+                f"log={self.output_log_path}"
             )
         creationflags = (
             getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -377,14 +433,11 @@ def _validate_prompt_structure(
         if not isinstance(inputs, dict):
             problems.append(f"node={node_id}: inputs가 객체가 아님")
             continue
-        required = node_schema.get("input", {}).get("required", {})
-        if isinstance(required, dict):
-            for input_name in required:
-                if input_name not in inputs:
-                    problems.append(
-                        f"node={node_id}({class_type}): "
-                        f"필수 입력 누락={input_name}"
-                    )
+        # ComfyUI의 동적 입력 노드와 비활성 그래프 가지는 object_info의
+        # ``required`` 스키마보다 적은 입력으로 직렬화될 수 있다. 여기서 이를
+        # 다시 판정하면 공식 워크플로우도 오탐하므로, 필수 입력의 실행 가능성은
+        # 곧이어 호출하는 ComfyUI /prompt 검증에 맡긴다. 정적 단계는 클래스와
+        # 실제로 존재하는 링크의 구조·타입만 검사한다.
         for input_name, value in inputs.items():
             if _is_link(value):
                 source_id = str(value[0])
@@ -615,6 +668,7 @@ def execute_prompt(
     cancel_event: Event,
     log: LogCallback | None = None,
     timeout: float = 3600,
+    fatal_error: Callable[[], str | None] | None = None,
 ) -> dict:
     client_id = f"comfy-installer-e2e-{uuid.uuid4().hex}"
     request_payload = _build_prompt_request(
@@ -648,6 +702,14 @@ def execute_prompt(
 
             deadline = time.monotonic() + timeout
             while time.monotonic() < deadline:
+                if fatal_error is not None:
+                    fatal_detail = fatal_error()
+                    if fatal_detail:
+                        raise ComfyE2EError(
+                            "ComfyUI 백그라운드 실행 스레드가 종료되어 "
+                            f"워크플로우를 계속할 수 없습니다: {filename}\n"
+                            f"{fatal_detail}"
+                        )
                 if cancel_event.is_set():
                     try:
                         client.post("/interrupt", json={})
@@ -857,6 +919,9 @@ _E2E_SDXL_TRAINING_BINDINGS = {
 def make_e2e_prompt(
     validation: WorkflowValidation,
     *,
+    sample_steps: int = 1,
+    sample_width: int = 512,
+    sample_height: int = 512,
     training_input_relative: str = "comfy-installer-e2e/training",
     face_input_relative: str = "comfy-installer-e2e/face",
     face_tag_image_relative: str = "comfy-installer-e2e-face.png",
@@ -900,10 +965,11 @@ def make_e2e_prompt(
             if input_name in inputs and isinstance(
                 inputs[input_name], (int, float)
             ):
-                inputs[input_name] = 1
-        for input_name in ("width", "height"):
-            if input_name in inputs and isinstance(inputs[input_name], int):
-                inputs[input_name] = 512
+                inputs[input_name] = sample_steps
+        if "width" in inputs and isinstance(inputs["width"], int):
+            inputs["width"] = sample_width
+        if "height" in inputs and isinstance(inputs["height"], int):
+            inputs["height"] = sample_height
         if "batch_size" in inputs and isinstance(inputs["batch_size"], int):
             inputs["batch_size"] = 1
         if class_type == "md_soya_InstantReferenceLoRA":

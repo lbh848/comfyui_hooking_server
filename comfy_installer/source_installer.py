@@ -124,7 +124,8 @@ def install_comfy_source(
             os.replace(staging, target)
             if log:
                 log(
-                    f"[ComfyUI] v0.20.1 소스 설치 완료: {actual_ref[:12]}"
+                    "[ComfyUI] 매니페스트 고정 소스 설치 완료: "
+                    f"{actual_ref[:12]}"
                 )
             return target
         except Exception:
