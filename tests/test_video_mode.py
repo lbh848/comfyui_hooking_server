@@ -71,20 +71,12 @@ def test_crop_happens_at_source_resolution_before_fast_resize() -> None:
 
 
 def test_h3_prompt_validator_enforces_each_official_mode_header() -> None:
-    assert validate_h3_prompt(_valid_body(), "t2v") == (True, "")
     assert validate_h3_prompt(_valid_body(I2V_ALIGNMENT), "i2v") == (True, "")
     assert validate_h3_prompt(_valid_body(FIRST_LAST_ALIGNMENT), "first_last") == (
         True,
         "",
     )
     assert validate_h3_prompt(_valid_body(), "i2v")[0] is False
-    assert validate_h3_prompt(_valid_body(I2V_ALIGNMENT), "t2v")[0] is False
-    assert validate_h3_prompt(
-        "integrated_multimodal_description:\n[Shot 1] X\n\n"
-        "non_diegetic_music:\nNone\n\n"
-        "overall_soundscape:\nQuiet",
-        "t2v",
-    )[0] is False
 
 
 def test_program_adds_exact_i2v_alignment_without_asking_the_llm_for_it() -> None:
@@ -508,64 +500,6 @@ async def test_i2v_build_uses_picture_only_and_program_adds_alignment(
         "video_prompt:i2v:queue-i2v:visual_context",
         "video_prompt:i2v:queue-i2v",
     ]
-
-
-@pytest.mark.asyncio
-async def test_h3_llm_build_emits_live_events_and_full_history(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    (tmp_path / "source.json").write_text(
-        json.dumps({"provider": "video", "positive": "a stored scene"}),
-        encoding="utf-8",
-    )
-    notifications = []
-    history = []
-
-    async def notify(event_type, data):
-        notifications.append((event_type, dict(data)))
-
-    async def fake_call(task_key, messages, **kwargs):
-        assert task_key == "video_prompt_t2v"
-        assert "a stored scene" in messages[-1]["content"]
-        kwargs["metadata_sink"].update(
-            {"prompt_tokens": 123, "completion_tokens": 45, "ttft": 0.2}
-        )
-        await kwargs["stream_observer"]({"type": "delta", "text": "partial"})
-        return _valid_body()
-
-    monkeypatch.setattr(video_module.llm_service, "callLLMTask", fake_call)
-    monkeypatch.setattr(
-        video_module,
-        "_log_lighbd_history",
-        lambda record: history.append(dict(record)),
-    )
-    mode = VideoMode()
-    mode.get_backup_dir = lambda: str(tmp_path)
-    mode.notify_frontend_func = notify
-
-    result = await mode.build_prompt(
-        {
-            "mode": "t2v",
-            "source_backup": "source",
-            "instruction": "The subject gently turns toward the camera.",
-            "preset": "auto",
-        },
-        queue_item_id="queue-1",
-    )
-
-    assert result["success"] is True
-    assert result["history_id"] == "video_prompt:t2v:queue-1"
-    assert [data["type"] for event, data in notifications if event == "lighbd_llm_stream"] == [
-        "start",
-        "delta",
-        "done",
-    ]
-    assert len(history) == 1
-    assert history[0]["history_id"] == result["history_id"]
-    assert "a stored scene" in history[0]["input"][-1]["content"]
-    assert history[0]["output"] == _valid_body()
-    assert history[0]["status"] == "ok"
 
 
 @pytest.mark.asyncio

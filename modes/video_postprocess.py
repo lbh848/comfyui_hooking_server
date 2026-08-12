@@ -7,6 +7,7 @@ import json
 import os
 import shutil
 import tempfile
+import threading
 import traceback
 from pathlib import Path
 from typing import Awaitable, Callable
@@ -36,6 +37,82 @@ DEFAULT_VIDEO_POSTPROCESS_CONFIG = {
     "tile_size": 0,
     "worker_count": 1,
 }
+
+
+class _WindowsVideoSubprocessLoop:
+    """Windows 영상 도구 실행을 전담하는 Proactor 이벤트 루프."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._ready = threading.Event()
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._startup_error: BaseException | None = None
+        self._thread: threading.Thread | None = None
+
+    def _run(self) -> None:
+        loop: asyncio.AbstractEventLoop | None = None
+        try:
+            # Windows의 SelectorEventLoop는 asyncio subprocess를 지원하지 않는다.
+            # 영상 도구만 별도 Proactor 루프에서 실행해 서버 루프와 격리한다.
+            loop = asyncio.ProactorEventLoop()
+            asyncio.set_event_loop(loop)
+            self._loop = loop
+            self._ready.set()
+            loop.run_forever()
+        except BaseException as exc:
+            self._startup_error = exc
+            print(
+                "[VIDEO:SUBPROCESS] Windows Proactor 루프 시작 실패: "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            self._ready.set()
+        finally:
+            if loop is not None and not loop.is_closed():
+                loop.close()
+
+    def submit(self, coroutine):
+        with self._lock:
+            if self._thread is None or not self._thread.is_alive():
+                self._ready.clear()
+                self._startup_error = None
+                self._loop = None
+                self._thread = threading.Thread(
+                    target=self._run,
+                    name="video-async-subprocess-loop",
+                    daemon=True,
+                )
+                self._thread.start()
+            if not self._ready.wait(timeout=10):
+                coroutine.close()
+                print("[VIDEO:SUBPROCESS] Windows Proactor 루프 시작 시간 초과")
+                raise RuntimeError("영상 도구 실행 루프를 시작하지 못했습니다")
+            if self._startup_error is not None or self._loop is None:
+                coroutine.close()
+                error = self._startup_error
+                print(
+                    "[VIDEO:SUBPROCESS] Windows Proactor 루프를 사용할 수 없음: "
+                    f"error={type(error).__name__ if error else 'unknown'}: {error}"
+                )
+                if error is not None:
+                    traceback.print_exception(type(error), error, error.__traceback__)
+                raise RuntimeError("영상 도구 실행 루프가 준비되지 않았습니다") from error
+            try:
+                return asyncio.run_coroutine_threadsafe(coroutine, self._loop)
+            except Exception as exc:
+                coroutine.close()
+                print(
+                    "[VIDEO:SUBPROCESS] Windows Proactor 루프에 명령 제출 실패: "
+                    f"error={type(exc).__name__}: {exc}"
+                )
+                traceback.print_exc()
+                raise
+
+
+_WINDOWS_VIDEO_SUBPROCESS_LOOP = (
+    _WindowsVideoSubprocessLoop() if os.name == "nt" else None
+)
+
 
 def normalize_video_postprocess_config(raw: object) -> dict:
     """사용자 설정을 검증해 실행 가능한 영상 후처리 설정을 반환한다."""
@@ -146,7 +223,7 @@ async def ensure_ffmpeg() -> Path:
     return await asyncio.to_thread(_ensure_ffmpeg_sync)
 
 
-async def _run_command(
+async def _run_command_on_subprocess_loop(
     command: list[str],
     *,
     label: str,
@@ -199,6 +276,37 @@ async def _run_command(
         )
         raise RuntimeError(f"{label} 프로세스가 종료 코드 {return_code}로 실패했습니다")
     return output
+
+
+async def _run_command(
+    command: list[str],
+    *,
+    label: str,
+    cwd: Path | None = None,
+) -> str:
+    if os.name != "nt":
+        return await _run_command_on_subprocess_loop(
+            command,
+            label=label,
+            cwd=cwd,
+        )
+
+    runner = _WINDOWS_VIDEO_SUBPROCESS_LOOP
+    if runner is None:
+        print(
+            "[VIDEO:SUBPROCESS] Windows 전용 실행 루프가 초기화되지 않음: "
+            f"command={command!r}"
+        )
+        raise RuntimeError("Windows 영상 도구 실행 루프가 초기화되지 않았습니다")
+
+    concurrent_future = runner.submit(
+        _run_command_on_subprocess_loop(command, label=label, cwd=cwd)
+    )
+    try:
+        return await asyncio.wrap_future(concurrent_future)
+    except asyncio.CancelledError:
+        concurrent_future.cancel()
+        raise
 
 
 def _list_pngs(directory: Path) -> list[Path]:

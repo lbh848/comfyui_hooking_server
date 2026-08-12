@@ -9454,7 +9454,6 @@ async def handle_api_video_enqueue(request: web.Request) -> web.Response:
             "upscale_scale": upscale_scale,
         }
         label = {
-            "t2v": "H3 T2V 프롬프트",
             "i2v": "H3 I2V 프롬프트",
             "first_last": "H3 첫·마지막 프롬프트",
         }[mode]

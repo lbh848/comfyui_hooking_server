@@ -208,7 +208,7 @@ LLM_TYPES = frozenset({
     "bot_llm_face_tag_analysis",    # 비전 LLM 기반 얼굴/눈 태그 자동 분류
     "character_maker",              # 캐릭터 메이커 draft/feedback LLM 수정 (revise)
     "qwen_edit_translate",          # Qwen Edit 지시문 영어 번역
-    "video_prompt_build",           # H3 T2V/I2V/첫·마지막 프롬프트 작성
+    "video_prompt_build",           # H3 I2V/첫·마지막 프롬프트 작성
 })
 
 VIDEO_POSTPROCESS_TYPE = "video_postprocess"
@@ -698,7 +698,6 @@ class QueueManager:
             "restore_manual": "restore_regenerate",
             "asset_generation": "asset_generation",
             "qwen_edit": "qwen_edit",
-            "video_t2v": "video_generation",
             "video_i2v": "video_generation",
             "video_first_last": "video_generation",
             "asset_lora_training": "asset_lora_training",
@@ -1856,7 +1855,6 @@ class QueueManager:
                 continue
             mode = str(params.get("mode") or "")
             label = {
-                "t2v": "H3 T2V · Real-ESRGAN→AVIF",
                 "i2v": "H3 I2V · Real-ESRGAN→AVIF",
                 "first_last": "H3 첫·마지막 · Real-ESRGAN→AVIF",
             }.get(mode, "영상 · Real-ESRGAN→AVIF")
@@ -2144,7 +2142,6 @@ class QueueManager:
             "qwen_edit": self._handle_qwen_edit,
             "qwen_edit_translate": self._handle_qwen_edit_translate,
             "video_prompt_build": self._handle_video_prompt_build,
-            "video_t2v": self._handle_video_render,
             "video_i2v": self._handle_video_render,
             "video_first_last": self._handle_video_render,
             VIDEO_POSTPROCESS_TYPE: self._handle_video_postprocess,
@@ -2255,7 +2252,6 @@ class QueueManager:
         params = dict(item.params or {})
         mode = str(params.get("mode") or "").strip().lower()
         render_type = {
-            "t2v": "video_t2v",
             "i2v": "video_i2v",
             "first_last": "video_first_last",
         }.get(mode)
@@ -2276,7 +2272,6 @@ class QueueManager:
             )
             render_params = {**params, **prompt_result}
             label = {
-                "t2v": "H3 T2V 5초 영상화",
                 "i2v": "H3 I2V 5초 영상화",
                 "first_last": "H3 첫·마지막 5초 영상화",
             }[mode]
@@ -2352,7 +2347,6 @@ class QueueManager:
                 raise RuntimeError("H3 결과의 영상 후처리 정보가 없습니다")
             mode = str(result.get("mode") or "")
             postprocess_label = {
-                "t2v": "H3 T2V · Real-ESRGAN→AVIF",
                 "i2v": "H3 I2V · Real-ESRGAN→AVIF",
                 "first_last": "H3 첫·마지막 · Real-ESRGAN→AVIF",
             }.get(mode, "영상 · Real-ESRGAN→AVIF")

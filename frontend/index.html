@@ -12974,7 +12974,6 @@
         <div class="tab-group tab-group--illustration" role="group" aria-label="삽화 기능">
             <span class="tab-group-label" aria-hidden="true">삽화</span>
             <button type="button" id="tab-btn-backup" class="tab-btn active" onclick="switchTab('backup')">삽화 백업</button>
-            <button type="button" id="tab-btn-video" class="tab-btn" onclick="switchTab('video')">영상화</button>
             <button type="button" id="tab-btn-bot" class="tab-btn" onclick="switchTab('bot')">
                 <span class="tab-title">삽화 모드</span>
                 <span class="tab-status-badges">
@@ -13107,100 +13106,97 @@
 
         </div>
 
-        <!-- 영상화 탭 -->
-        <div id="tab-video-content" class="tab-content">
-            <div class="asset-breadcrumb">
-                <span>영상화</span>
-                <span style="color:var(--text2); font-size:.76rem;">MiniMax H3 · 5초</span>
+    <!-- 영상화 모달 (CLAUDE.md: ✕/큐 등록 버튼으로만 닫힘, 바깥 클릭 닫기 금지) -->
+    <div class="modal" id="video-modal">
+        <div class="modal-content" style="max-width: 880px;">
+            <div class="modal-header">
+                <h3>삽화 영상화<span style="color:var(--text2); font-size:.76rem; font-weight:400; margin-left:8px;">MiniMax H3 · 5초</span></h3>
+                <button class="modal-close" onclick="closeVideoModal()">&times;</button>
             </div>
-            <div style="max-width:980px; margin:0 auto; padding:22px 18px 40px;">
-                <div style="margin-bottom:18px;">
-                    <h2 style="margin:0 0 6px; font-size:1.15rem;">삽화에서 5초 영상 만들기</h2>
-                    <div style="color:var(--text2); font-size:.78rem; line-height:1.5;">LLM이 공식 H3 형식의 제작 명령어를 작성한 뒤, 영상화 작업에 배분된 Comfy #1·#2·#3 중 선택 가능한 인스턴스에서 렌더링합니다.</div>
+            <div class="modal-body" style="max-height: 86vh; overflow-y: auto;">
+                <div style="margin-bottom:12px;">
+                    <span style="display:block; font-size:.76rem; font-weight:700; margin-bottom:6px;">영상화 방식</span>
+                    <input id="video-generation-mode" type="hidden" value="i2v">
+                    <div role="tablist" aria-label="영상화 방식" style="display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:6px;">
+                        <button type="button" role="tab" data-video-mode-tab="i2v" aria-selected="true" onclick="selectVideoMode('i2v')" style="padding:9px 6px; border:1px solid #b876d2; border-radius:7px; background:#9b59b6; color:#fff;">I2V</button>
+                        <button type="button" role="tab" data-video-mode-tab="first_last" aria-selected="false" onclick="selectVideoMode('first_last')" style="padding:9px 6px; border:1px solid var(--border); border-radius:7px; background:var(--surface1); color:var(--text2);">첫·마지막</button>
+                    </div>
                 </div>
-                <div style="display:grid; grid-template-columns:minmax(220px, 290px) minmax(0, 1fr); gap:18px; align-items:start;">
-                    <section style="padding:14px; border:1px solid var(--border); border-radius:10px; background:var(--surface2);">
-                        <label style="display:block; margin-bottom:10px;">
-                            <span style="display:block; font-size:.76rem; font-weight:700; margin-bottom:5px;">기준 삽화 백업</span>
+                <div id="video-generation-mode-note" style="margin:-6px 0 14px; color:var(--text2); font-size:.71rem; line-height:1.45;"></div>
+
+                <div id="video-frames-grid" style="display:grid; grid-template-columns:1fr; gap:14px; margin-bottom:14px;">
+                    <section id="video-frame-first" style="padding:12px; border:1px solid var(--border); border-radius:10px; background:var(--surface2);">
+                        <div style="font-size:.76rem; font-weight:700; margin-bottom:6px;">첫 프레임 백업</div>
+                        <label style="display:block; margin-bottom:8px;">
                             <select id="video-generation-source" onchange="onVideoSourceChange()" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:7px; background:var(--surface1); color:var(--text);">
                                 <option value="">_raw 보유 백업을 불러오는 중...</option>
                             </select>
                         </label>
-                        <div id="video-generation-source-empty" style="display:flex; min-height:190px; align-items:center; justify-content:center; padding:12px; border:1px dashed var(--border); border-radius:8px; color:var(--text2); font-size:.74rem; text-align:center; line-height:1.5;">영상화할 `_raw` 삽화를 선택하세요.</div>
-                        <img id="video-generation-source-preview" src="" alt="기준 삽화 미리보기" style="display:none; width:100%; max-height:320px; object-fit:contain; border-radius:8px; border:1px solid var(--border); background:#111;">
+                        <div id="video-generation-source-empty" style="display:flex; min-height:180px; align-items:center; justify-content:center; padding:12px; border:1px dashed var(--border); border-radius:8px; color:var(--text2); font-size:.74rem; text-align:center; line-height:1.5;">영상화할 `_raw` 삽화를 선택하세요.</div>
+                        <img id="video-generation-source-preview" src="" alt="첫 프레임 미리보기" style="display:none; width:100%; max-height:280px; object-fit:contain; border-radius:8px; border:1px solid var(--border); background:#111;">
                         <div id="video-generation-source-name" style="margin-top:8px; font-family:monospace; font-size:.7rem; color:var(--text2); word-break:break-all;"></div>
-                        <div style="margin-top:10px; color:#ffcf67; font-size:.71rem; line-height:1.5;">대사창과 말풍선은 Real-ESRGAN이 영상 프레임을 확대한 뒤 최종 해상도에서 합성하므로 글자와 선이 AI 업스케일의 영향을 받지 않습니다.</div>
                     </section>
 
-                    <section style="padding:16px; border:1px solid var(--border); border-radius:10px; background:var(--surface2);">
-                        <div style="margin-bottom:12px;">
-                            <span style="display:block; font-size:.76rem; font-weight:700; margin-bottom:6px;">영상화 방식</span>
-                            <input id="video-generation-mode" type="hidden" value="i2v">
-                            <div role="tablist" aria-label="영상화 방식" style="display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:6px;">
-                                <button type="button" role="tab" data-video-mode-tab="t2v" aria-selected="false" onclick="selectVideoMode('t2v')" style="padding:9px 6px; border:1px solid var(--border); border-radius:7px; background:var(--surface1); color:var(--text2);">T2V</button>
-                                <button type="button" role="tab" data-video-mode-tab="i2v" aria-selected="true" onclick="selectVideoMode('i2v')" style="padding:9px 6px; border:1px solid #b876d2; border-radius:7px; background:#9b59b6; color:#fff;">I2V</button>
-                                <button type="button" role="tab" data-video-mode-tab="first_last" aria-selected="false" onclick="selectVideoMode('first_last')" style="padding:9px 6px; border:1px solid var(--border); border-radius:7px; background:var(--surface1); color:var(--text2);">첫·마지막</button>
-                            </div>
-                        </div>
-                        <div id="video-generation-mode-note" style="margin:-6px 0 12px; color:var(--text2); font-size:.71rem; line-height:1.45;"></div>
-
-                        <label id="video-generation-last-row" style="display:none; margin-bottom:12px;">
-                            <span style="display:block; font-size:.76rem; font-weight:700; margin-bottom:5px;">마지막 프레임 백업</span>
-                            <select id="video-generation-last" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:7px; background:var(--surface1); color:var(--text);">
+                    <section id="video-frame-last" style="display:none; padding:12px; border:1px solid var(--border); border-radius:10px; background:var(--surface2);">
+                        <div style="font-size:.76rem; font-weight:700; margin-bottom:6px;">마지막 프레임 백업</div>
+                        <label style="display:block; margin-bottom:8px;">
+                            <select id="video-generation-last" onchange="onVideoLastFrameChange()" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:7px; background:var(--surface1); color:var(--text);">
                                 <option value="">다른 _raw 백업을 선택하세요.</option>
                             </select>
                         </label>
-
-                        <label style="display:block; margin-bottom:12px;">
-                            <span style="display:block; font-size:.76rem; font-weight:700; margin-bottom:5px;">FAST 비율 프리셋</span>
-                            <select id="video-generation-preset" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:7px; background:var(--surface1); color:var(--text);">
-                                <option value="auto" selected>자동 · 원본과 가장 가까운 비율</option>
-                                <option value="1:1">1:1 · 512×512</option>
-                                <option value="4:3">4:3 · 512×384</option>
-                                <option value="3:4">3:4 · 384×512</option>
-                                <option value="16:9">16:9 근사 · 672×384</option>
-                                <option value="9:16">9:16 근사 · 384×672</option>
-                                <option value="21:9">21:9 · 672×288</option>
-                                <option value="9:21">9:21 · 288×672</option>
-                                <option value="3:2">3:2 · 576×384</option>
-                                <option value="2:3">2:3 · 384×576</option>
-                                <option value="5:4">5:4 · 480×384</option>
-                                <option value="4:5">4:5 · 384×480</option>
-                            </select>
-                        </label>
-
-                        <div style="display:grid; grid-template-columns:minmax(0, 1fr) 120px; gap:10px; align-items:end; margin-bottom:12px; padding:10px; border:1px solid var(--border); border-radius:8px; background:var(--surface1);">
-                            <label style="display:flex; align-items:center; gap:8px; min-width:0; cursor:pointer;">
-                                <input id="video-generation-upscale-enabled" type="checkbox" checked onchange="updateVideoUpscaleControls()">
-                                <span>
-                                    <span style="display:block; font-size:.76rem; font-weight:700;">Real-ESRGAN 영상 업스케일</span>
-                                    <span style="display:block; margin-top:2px; color:var(--text2); font-size:.68rem; line-height:1.4;">독립 백그라운드 큐에서 실행</span>
-                                </span>
-                            </label>
-                            <label>
-                                <span style="display:block; font-size:.7rem; color:var(--text2); margin-bottom:5px;">배율</span>
-                                <select id="video-generation-upscale-scale" style="width:100%; padding:7px; border:1px solid var(--border); border-radius:7px; background:var(--surface2); color:var(--text);">
-                                    <option value="2" selected>2× 권장</option>
-                                    <option value="3">3×</option>
-                                    <option value="4">4×</option>
-                                </select>
-                            </label>
-                        </div>
-
-                        <label style="display:block; margin-bottom:12px;">
-                            <span style="display:block; font-size:.76rem; font-weight:700; margin-bottom:5px;">영상에서 일어날 일</span>
-                            <textarea id="video-generation-instruction" rows="7" maxlength="12000" placeholder="예: 인물이 천천히 고개를 들어 카메라를 바라보고, 머리카락과 옷자락이 약한 바람에 자연스럽게 흔들린다. 카메라는 아주 조금 천천히 밀고 들어간다." style="width:100%; box-sizing:border-box; resize:vertical; padding:9px; border:1px solid var(--border); border-radius:7px; background:var(--surface1); color:var(--text); line-height:1.5;"></textarea>
-                        </label>
-
-                        <div style="font-size:.7rem; color:var(--text2); line-height:1.5; margin-bottom:14px;">H3 렌더 후 Real-ESRGAN 업스케일과 변환은 독립 백그라운드 큐에서 이어집니다. 완료본은 animated AVIF 우선, 미지원 시 animated WebP로 저장하며 합성본과 대사 없는 _raw 원본을 함께 보관합니다.</div>
-                        <div style="display:flex; justify-content:flex-end; gap:8px;">
-                            <button type="button" onclick="switchTab('backup')" style="padding:8px 15px;">삽화 백업으로</button>
-                            <button type="button" id="video-generation-submit" onclick="submitVideoGeneration()" style="padding:8px 16px; background:#9b59b6; color:#fff; border-color:#b876d2;">🎬 큐에 등록</button>
-                        </div>
+                        <div id="video-generation-last-empty" style="display:flex; min-height:180px; align-items:center; justify-content:center; padding:12px; border:1px dashed var(--border); border-radius:8px; color:var(--text2); font-size:.74rem; text-align:center; line-height:1.5;">마지막 프레임으로 사용할 `_raw` 삽화를 선택하세요.</div>
+                        <img id="video-generation-last-preview" src="" alt="마지막 프레임 미리보기" style="display:none; width:100%; max-height:280px; object-fit:contain; border-radius:8px; border:1px solid var(--border); background:#111;">
+                        <div id="video-generation-last-name" style="margin-top:8px; font-family:monospace; font-size:.7rem; color:var(--text2); word-break:break-all;"></div>
                     </section>
                 </div>
+
+                <label style="display:block; margin-bottom:12px;">
+                    <span style="display:block; font-size:.76rem; font-weight:700; margin-bottom:5px;">FAST 비율 프리셋</span>
+                    <select id="video-generation-preset" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:7px; background:var(--surface1); color:var(--text);">
+                        <option value="auto" selected>자동 · 원본과 가장 가까운 비율</option>
+                        <option value="1:1">1:1 · 512×512</option>
+                        <option value="4:3">4:3 · 512×384</option>
+                        <option value="3:4">3:4 · 384×512</option>
+                        <option value="16:9">16:9 근사 · 672×384</option>
+                        <option value="9:16">9:16 근사 · 384×672</option>
+                        <option value="21:9">21:9 · 672×288</option>
+                        <option value="9:21">9:21 · 288×672</option>
+                        <option value="3:2">3:2 · 576×384</option>
+                        <option value="2:3">2:3 · 384×576</option>
+                        <option value="5:4">5:4 · 480×384</option>
+                        <option value="4:5">4:5 · 384×480</option>
+                    </select>
+                </label>
+
+                <div style="display:grid; grid-template-columns:minmax(0, 1fr) 120px; gap:10px; align-items:end; margin-bottom:12px; padding:10px; border:1px solid var(--border); border-radius:8px; background:var(--surface1);">
+                    <label style="display:flex; align-items:center; gap:8px; min-width:0; cursor:pointer;">
+                        <input id="video-generation-upscale-enabled" type="checkbox" checked onchange="updateVideoUpscaleControls()">
+                        <span>
+                            <span style="display:block; font-size:.76rem; font-weight:700;">Real-ESRGAN 영상 업스케일</span>
+                            <span style="display:block; margin-top:2px; color:var(--text2); font-size:.68rem; line-height:1.4;">독립 백그라운드 큐에서 실행</span>
+                        </span>
+                    </label>
+                    <label>
+                        <span style="display:block; font-size:.7rem; color:var(--text2); margin-bottom:5px;">배율</span>
+                        <select id="video-generation-upscale-scale" style="width:100%; padding:7px; border:1px solid var(--border); border-radius:7px; background:var(--surface2); color:var(--text);">
+                            <option value="2" selected>2× 권장</option>
+                            <option value="3">3×</option>
+                            <option value="4">4×</option>
+                        </select>
+                    </label>
+                </div>
+
+                <label style="display:block; margin-bottom:8px;">
+                    <span style="display:block; font-size:.76rem; font-weight:700; margin-bottom:5px;">영상에서 일어날 일</span>
+                    <textarea id="video-generation-instruction" rows="6" maxlength="12000" placeholder="예: 인물이 천천히 고개를 들어 카메라를 바라보고, 머리카락과 옷자락이 약한 바람에 자연스럽게 흔들린다. 카메라는 아주 조금 천천히 밀고 들어간다." style="width:100%; box-sizing:border-box; resize:vertical; padding:9px; border:1px solid var(--border); border-radius:7px; background:var(--surface1); color:var(--text); line-height:1.5;"></textarea>
+                </label>
+                <div style="font-size:.7rem; color:var(--text2); line-height:1.5;">H3 렌더 후 Real-ESRGAN 업스케일과 변환은 독립 백그라운드 큐에서 이어집니다. 완료본은 animated AVIF 우선, 미지원 시 animated WebP로 저장하며 합성본과 대사 없는 _raw 원본을 함께 보관합니다.</div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" id="video-generation-submit" class="confirm" onclick="submitVideoGeneration()" style="background:#9b59b6; color:#fff; border-color:#b876d2;">🎬 큐에 등록</button>
             </div>
         </div>
+    </div>
 
         <!-- 삽화 설정 탭 -->
         <div id="tab-bot-content" class="tab-content">
@@ -24551,7 +24547,6 @@
 
         // ─── MiniMax H3 영상화 ───
         let videoReferenceOptions = [];
-        let videoWorkspacePreferredSource = '';
 
         function updateVideoUpscaleControls() {
             const enabled = document.getElementById('video-generation-upscale-enabled');
@@ -24583,20 +24578,21 @@
 
         function updateVideoWorkspaceMode() {
             const mode = document.getElementById('video-generation-mode')?.value || 'i2v';
-            const lastRow = document.getElementById('video-generation-last-row');
+            const isLast = mode === 'first_last';
+            const lastFrame = document.getElementById('video-frame-last');
+            const framesGrid = document.getElementById('video-frames-grid');
             const modeNote = document.getElementById('video-generation-mode-note');
-            if (lastRow) lastRow.style.display = mode === 'first_last' ? 'block' : 'none';
+            if (lastFrame) lastFrame.style.display = isLast ? '' : 'none';
+            if (framesGrid) framesGrid.style.gridTemplateColumns = isLast ? 'repeat(2, minmax(0, 1fr))' : '1fr';
             if (modeNote) {
-                modeNote.textContent = mode === 't2v'
-                    ? '저장된 삽화 프롬프트를 문맥으로 쓰되 이미지는 H3에 참조하지 않습니다. _raw는 비율과 기존 대사 레이어 복원에만 사용합니다.'
-                    : mode === 'first_last'
-                        ? '현재 백업 _raw를 0초, 선택한 마지막 백업 _raw를 5초에 정렬해 한 장면으로 이어갑니다.'
-                        : '현재 백업의 _raw를 H3 첫 프레임으로 사용합니다.';
+                modeNote.textContent = isLast
+                    ? '현재 백업 _raw를 0초, 선택한 마지막 백업 _raw를 5초에 정렬해 한 장면으로 이어갑니다.'
+                    : '현재 백업의 _raw를 H3 첫 프레임으로 사용합니다.';
             }
         }
 
         function selectVideoMode(mode) {
-            if (!['t2v', 'i2v', 'first_last'].includes(mode)) {
+            if (!['i2v', 'first_last'].includes(mode)) {
                 console.error('[VIDEO_UI] 지원하지 않는 내부 탭:', mode);
                 return;
             }
@@ -24624,6 +24620,37 @@
                 ? options.map(item => `<option value="${escapeAttr(item.name)}">${escapeHtml(formatDate(item.mtime))} · ${escapeHtml(item.name)}</option>`).join('')
                 : '<option value="">선택 가능한 다른 _raw 백업 없음</option>';
             if (options.some(item => item.name === previous)) select.value = previous;
+            onVideoLastFrameChange();
+        }
+
+        function onVideoLastFrameChange() {
+            const select = document.getElementById('video-generation-last');
+            const preview = document.getElementById('video-generation-last-preview');
+            const empty = document.getElementById('video-generation-last-empty');
+            const nameLabel = document.getElementById('video-generation-last-name');
+            if (!select || !preview || !empty || !nameLabel) {
+                console.error('[VIDEO_UI] 마지막 프레임 미리보기 UI 요소를 찾지 못했습니다.');
+                return;
+            }
+            const last = videoReferenceOptions.find(item => item.name === select.value);
+            if (!last) {
+                preview.removeAttribute('src');
+                preview.style.display = 'none';
+                empty.style.display = 'flex';
+                nameLabel.textContent = '';
+                return;
+            }
+            preview.onerror = () => {
+                console.error('[VIDEO_UI] 마지막 프레임 미리보기 로드 실패:', last.image_url);
+                preview.style.display = 'none';
+                empty.textContent = '미리보기를 불러오지 못했습니다.';
+                empty.style.display = 'flex';
+            };
+            empty.textContent = '마지막 프레임으로 사용할 `_raw` 삽화를 선택하세요.';
+            preview.src = last.image_url;
+            preview.style.display = 'block';
+            empty.style.display = 'none';
+            nameLabel.textContent = last.name;
         }
 
         function onVideoSourceChange() {
@@ -24703,9 +24730,26 @@
                 showToast('이 백업에는 영상화에 필요한 _raw 원본이 없습니다.', 'error');
                 return;
             }
-            videoWorkspacePreferredSource = name;
             selectVideoMode('i2v');
-            await switchTab('video');
+            try {
+                applyVideoPostprocessConfig(await loadCurrentConfig());
+            } catch (error) {
+                console.error('[VIDEO_UI] 영상 후처리 기본 설정 동기화 실패:', error);
+                updateVideoUpscaleControls();
+            }
+            updateVideoWorkspaceMode();
+            await loadVideoReferenceOptions(name);
+            const modal = document.getElementById('video-modal');
+            if (!modal) {
+                console.error('[VIDEO_UI] 영상화 모달을 찾지 못했습니다.');
+                return;
+            }
+            modal.classList.add('visible');
+        }
+
+        function closeVideoModal() {
+            const modal = document.getElementById('video-modal');
+            if (modal) modal.classList.remove('visible');
         }
 
         async function submitVideoGeneration() {
@@ -24754,6 +24798,7 @@
                 showToast(`영상화 프롬프트 작업을 큐에 등록했습니다. (${data.item_id})`, 'success');
                 const instructionInput = document.getElementById('video-generation-instruction');
                 if (instructionInput) instructionInput.value = '';
+                closeVideoModal();
             } catch (error) {
                 console.error('[VIDEO_UI] 영상화 큐 등록 실패:', error);
                 showToast('영상화 큐 등록 실패: ' + (error.message || error), 'error');
@@ -25917,7 +25962,7 @@
             { key: 'instance_lora', label: '인스턴스 / 스타일 LoRA', description: '인스턴스·스타일 LoRA 분석 및 학습', modalSupported: true },
             { key: 'face_extract', label: '얼굴 추출', description: '인스턴스 LoRA 얼굴 추출', modalSupported: false },
             { key: 'utility_debug', label: '유틸리티 / 디버그', description: '데이터 패치, 봇 유틸리티, 디버그 워크플로우', modalSupported: false },
-            { key: 'video_generation', label: '영상화', description: 'MiniMax H3 T2V·I2V·첫/마지막 프레임 영상화', modalSupported: false },
+            { key: 'video_generation', label: '영상화', description: 'MiniMax H3 I2V·첫/마지막 프레임 영상화', modalSupported: false },
         ]);
         let comfyRuntimeActiveInstance = 1;
         let comfyRuntimeActiveView = 'instance';
@@ -34033,7 +34078,7 @@
             {
                 key: 'video_pipeline',
                 label: 'MiniMax H3 영상화',
-                description: 'T2V·I2V·첫/마지막 프레임용 공식 H3 프롬프트 작성',
+                description: 'I2V·첫/마지막 프레임용 공식 H3 프롬프트 작성',
                 color: '#cf6bd6',
             },
         ];
@@ -34060,7 +34105,6 @@
             { key: 'illustration_call2_fix',   label: '삽화 CALL2-FIX (TOON 교정)',    kind: '텍스트', group: 'illustration_pipeline' },
             { key: 'illustration_call3',       label: '삽화 CALL3 (대사 생성)',         kind: '텍스트', group: 'illustration_pipeline' },
             { key: 'illustration_multi_char_mask', label: '삽화 다중 캐릭터 마스크',    kind: 'JSON', group: 'illustration_pipeline' },
-            { key: 'video_prompt_t2v',        label: 'H3 T2V 프롬프트', kind: '텍스트', group: 'video_pipeline' },
             { key: 'video_prompt_i2v',        label: 'H3 I2V 프롬프트', kind: '비전', group: 'video_pipeline' },
             { key: 'video_prompt_first_last', label: 'H3 첫·마지막 프롬프트', kind: '다중 비전', group: 'video_pipeline' },
         ];
@@ -45662,20 +45706,6 @@
                 document.getElementById('tab-backup-content').classList.add('active');
                 const sb = document.getElementById('stats-bar');
                 if (sb) sb.style.display = 'flex';
-            } else if (name === 'video') {
-                document.getElementById('tab-video-content').classList.add('active');
-                const sb = document.getElementById('stats-bar');
-                if (sb) sb.style.display = 'none';
-                try {
-                    applyVideoPostprocessConfig(await loadCurrentConfig());
-                } catch (error) {
-                    console.error('[VIDEO_UI] 영상 후처리 기본 설정 동기화 실패:', error);
-                    updateVideoUpscaleControls();
-                }
-                const preferredSource = videoWorkspacePreferredSource;
-                videoWorkspacePreferredSource = '';
-                updateVideoWorkspaceMode();
-                await loadVideoReferenceOptions(preferredSource);
             } else if (name === 'bot') {
                 document.getElementById('tab-bot-content').classList.add('active');
                 await loadBotData();
@@ -77106,7 +77136,6 @@
             bot_llm_face_tag_analysis: 'LLM 얼굴분석',
             qwen_edit_translate: 'EDIT 번역',
             video_prompt_build: 'H3 프롬프트',
-            video_t2v: 'H3 T2V',
             video_i2v: 'H3 I2V',
             video_first_last: 'H3 첫·마지막',
             video_postprocess: '영상 후처리',

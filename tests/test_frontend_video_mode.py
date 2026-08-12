@@ -16,20 +16,28 @@ def test_backup_card_has_one_video_button_immediately_before_delete() -> None:
     assert "openVideoWorkspace(" in FRONTEND[video_button:delete_button]
 
 
-def test_video_page_uses_one_entry_with_three_internal_tabs() -> None:
-    assert 'id="tab-btn-video"' in FRONTEND
-    assert "switchTab('video')" in FRONTEND
-    assert 'id="tab-video-content" class="tab-content"' in FRONTEND
+def test_video_page_uses_modal_entry_with_two_internal_modes() -> None:
+    assert 'id="video-modal"' in FRONTEND
+    assert "closeVideoModal()" in FRONTEND
+    assert "openVideoWorkspace(" in FRONTEND
+    assert 'id="tab-btn-video"' not in FRONTEND
+    assert "switchTab('video')" not in FRONTEND
+    assert 'id="tab-video-content"' not in FRONTEND
     assert 'id="video-generation-source"' in FRONTEND
     assert "video-generation-overlay" not in FRONTEND
     assert "{ key: 'video_generation', label: '영상화'" in FRONTEND
     assert "key: 'video_t2v', label: '영상화" not in FRONTEND
     assert "key: 'video_i2v', label: '영상화" not in FRONTEND
     assert "key: 'video_first_last', label: '영상화" not in FRONTEND
-    assert FRONTEND.count("data-video-mode-tab=") == 3
-    for mode in ("t2v", "i2v", "first_last"):
+    assert 'data-video-mode-tab="t2v"' not in FRONTEND
+    assert FRONTEND.count("data-video-mode-tab=") == 2
+    for mode in ("i2v", "first_last"):
         assert f'data-video-mode-tab="{mode}"' in FRONTEND
         assert f"selectVideoMode('{mode}')" in FRONTEND
+    # 첫·마지막 모드에서 마지막 프레임 미리보기가 존재해야 한다
+    assert 'id="video-frame-last"' in FRONTEND
+    assert 'id="video-generation-last-preview"' in FRONTEND
+    assert "onVideoLastFrameChange()" in FRONTEND
 
 
 def test_video_page_exposes_every_fast_resolution_and_queue_endpoint() -> None:

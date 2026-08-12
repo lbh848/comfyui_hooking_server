@@ -46,7 +46,7 @@ from modes.video_postprocess import (
 
 VIDEO_DURATION_SECONDS = 5.0
 VIDEO_FPS = 24
-VIDEO_MODES = frozenset({"t2v", "i2v", "first_last"})
+VIDEO_MODES = frozenset({"i2v", "first_last"})
 I2V_WORKFLOW_INPUT_PATH = "soya_video"
 I2V_WORKFLOW_PROMPT_TITLE = "긍정프롬프트"
 
@@ -357,10 +357,6 @@ def validate_h3_prompt(result: object, mode: str) -> tuple[bool, str]:
         if not text.startswith(FIRST_LAST_ALIGNMENT):
             return False, "첫·마지막 프레임 정렬 문장이 정확하지 않습니다"
         body = text[len(FIRST_LAST_ALIGNMENT) :].strip()
-    elif mode == "t2v":
-        if text.startswith(I2V_ALIGNMENT) or text.startswith(FIRST_LAST_ALIGNMENT):
-            return False, "T2V 프롬프트에는 이미지 정렬 문장이 없어야 합니다"
-        body = text
     else:
         return False, f"지원하지 않는 H3 영상 모드입니다: {mode}"
     return validate_h3_prompt_body(body)
@@ -522,11 +518,9 @@ class VideoMode:
     def _prompt_messages(
         mode: str,
         instruction: str,
-        source_prompt: str,
         visual_context: str = "",
     ) -> list[dict]:
         mode_description = {
-            "t2v": "Text-to-video. Do not reference a picture in the output.",
             "i2v": "Image-to-video using Picture 1 as the exact first frame.",
             "first_last": (
                 "First-and-last-frame video. Picture 1 is the exact first frame and "
@@ -540,14 +534,7 @@ Mode:
 
 User's current natural-language direction (the sole authority for new motion and events):
 {instruction}"""
-        if mode == "t2v":
-            user_content += f"""
-
-Stored illustration context:
-{source_prompt or '(No stored illustration context is available.)'}
-
-Use this context only to establish the initial visible scene. Do not animate past actions, dialogue implications, narrative prose, or technical generation metadata unless the current direction explicitly requests them."""
-        elif mode == "i2v":
+        if mode == "i2v":
             user_content += f"""
 
 Reference authority:
@@ -572,7 +559,7 @@ Vision-produced static Visual Context:
         mode = str((params or {}).get("mode") or "").strip().lower()
         if mode not in VIDEO_MODES:
             print(f"[VIDEO:LLM] 모드 오류: item={queue_item_id}, mode={mode!r}")
-            raise ValueError("영상화 모드는 t2v, i2v, first_last 중 하나여야 합니다")
+            raise ValueError("영상화 모드는 i2v, first_last 중 하나여야 합니다")
         source_name = _safe_backup_name((params or {}).get("source_backup"))
         instruction = str((params or {}).get("instruction") or "").strip()
         if not instruction:
@@ -585,9 +572,6 @@ Vision-produced static Visual Context:
             )
             raise ValueError("영상화 지시는 12,000자 이하여야 합니다")
 
-        source_prompt = ""
-        if mode == "t2v":
-            source_prompt, _source_info = self._source_context(source_name)
         last_name = ""
         reference_images: list[tuple[str, str, str]] = []
         if mode in ("i2v", "first_last"):
@@ -619,7 +603,6 @@ Vision-produced static Visual Context:
 
         task_key = f"video_prompt_{mode}"
         call_label = {
-            "t2v": "H3 T2V 프롬프트 작성",
             "i2v": "H3 I2V 프롬프트 작성",
             "first_last": "H3 첫·마지막 프레임 프롬프트 작성",
         }[mode]
@@ -718,7 +701,6 @@ Vision-produced static Visual Context:
             messages = self._prompt_messages(
                 mode,
                 instruction,
-                source_prompt,
                 visual_context,
             )
             validator = lambda value: validate_h3_prompt_body(
@@ -1660,7 +1642,6 @@ Vision-produced static Visual Context:
                 "prompt_provider": "video",
                 "execution_source": "local",
                 "gen_method": {
-                    "t2v": "H3 T2V",
                     "i2v": "H3 I2V",
                     "first_last": "H3 첫·마지막 프레임",
                 }.get(mode, "H3 영상화"),
