@@ -1304,6 +1304,7 @@ class ComfyInstallerService:
                 ref=str(self.manifest.comfy["ref"]),
                 cancel_event=self._cancel,
                 log=self._log,
+                requirements_dir=self.runtime_backup_dir,
             )
 
             self._set_phase("workflows")
@@ -1817,6 +1818,7 @@ class ComfyInstallerService:
                 ref=str(new_manifest.comfy["ref"]),
                 cancel_event=self._cancel,
                 log=self._log,
+                requirements_dir=self.runtime_backup_dir,
             )
 
             self._set_phase("core_dependencies")
@@ -2331,6 +2333,7 @@ class ComfyInstallerService:
                 ref=str(new_manifest.comfy["ref"]),
                 cancel_event=self._cancel,
                 log=self._log,
+                requirements_dir=self.runtime_backup_dir,
             )
 
             self._set_phase("core_dependencies")

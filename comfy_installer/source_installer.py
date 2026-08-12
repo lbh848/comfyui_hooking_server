@@ -8,6 +8,10 @@ from threading import Event
 from typing import Callable
 
 from .operations import CommandError, run_command
+from .source_compatibility import (
+    apply_comfy_system_stats_compatibility,
+    managed_comfy_system_stats_update,
+)
 
 
 class SourceInstallError(RuntimeError):
@@ -72,13 +76,24 @@ def install_comfy_source(
     ref: str,
     cancel_event: Event,
     log: LogCallback | None = None,
+    requirements_dir: Path | None = None,
 ) -> Path:
     target = Path(destination).resolve()
+    backup_root = (
+        requirements_dir.resolve()
+        if requirements_dir is not None
+        else target / ".installer-state" / "backups" / "runtime"
+    )
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
         if _verify_existing(
             target, repository=repository, ref=ref, log=log
         ):
+            apply_comfy_system_stats_compatibility(
+                comfy_root=target,
+                requirements_dir=backup_root,
+                log=log,
+            )
             return target
 
         staging = target.parent / (
@@ -122,6 +137,11 @@ def install_comfy_source(
                     f"expected={ref}, actual={actual_ref}"
                 )
             os.replace(staging, target)
+            apply_comfy_system_stats_compatibility(
+                comfy_root=target,
+                requirements_dir=backup_root,
+                log=log,
+            )
             if log:
                 log(
                     "[ComfyUI] 매니페스트 고정 소스 설치 완료: "
@@ -152,61 +172,72 @@ def update_comfy_source(
     ref: str,
     cancel_event: Event,
     log: LogCallback | None = None,
+    requirements_dir: Path | None = None,
 ) -> Path:
     """사용자가 명시적으로 업데이트한 경우에만 관리 중인 Comfy 소스를 갱신한다."""
 
     target = Path(destination).resolve()
+    backup_root = (
+        requirements_dir.resolve()
+        if requirements_dir is not None
+        else target / ".installer-state" / "backups" / "runtime"
+    )
     try:
-        if not target.is_dir() or not (target / ".git").is_dir():
-            raise SourceInstallError(
-                f"업데이트할 관리형 ComfyUI Git 폴더가 없습니다: {target}"
+        with managed_comfy_system_stats_update(
+            comfy_root=target,
+            requirements_dir=backup_root,
+            log=log,
+        ):
+            if not target.is_dir() or not (target / ".git").is_dir():
+                raise SourceInstallError(
+                    f"업데이트할 관리형 ComfyUI Git 폴더가 없습니다: {target}"
+                )
+            actual_origin = _git_value(target, "remote", "get-url", "origin")
+            if _normalized_git_url(actual_origin) != _normalized_git_url(repository):
+                raise SourceInstallError(
+                    "ComfyUI 원격 저장소가 설치 매니페스트와 달라 업데이트하지 "
+                    f"않습니다: expected={repository}, actual={actual_origin}"
+                )
+            status = run_command(
+                ["git", "status", "--porcelain", "--untracked-files=no"],
+                cwd=target,
             )
-        actual_origin = _git_value(target, "remote", "get-url", "origin")
-        if _normalized_git_url(actual_origin) != _normalized_git_url(repository):
-            raise SourceInstallError(
-                "ComfyUI 원격 저장소가 설치 매니페스트와 달라 업데이트하지 "
-                f"않습니다: expected={repository}, actual={actual_origin}"
-            )
-        status = run_command(
-            ["git", "status", "--porcelain", "--untracked-files=no"],
-            cwd=target,
-        )
-        if status:
-            raise SourceInstallError(
-                "ComfyUI 소스에 로컬 변경이 있어 업데이트하지 않습니다: "
-                + ", ".join(status[:10])
-            )
-        actual_ref = _git_value(target, "rev-parse", "HEAD").lower()
-        if actual_ref == ref.lower():
+            if status:
+                raise SourceInstallError(
+                    "ComfyUI 소스에 로컬 변경이 있어 업데이트하지 않습니다: "
+                    + ", ".join(status[:10])
+                )
+            actual_ref = _git_value(target, "rev-parse", "HEAD").lower()
+            if actual_ref == ref.lower():
+                if log:
+                    log(f"[ComfyUI 업데이트] 이미 최신 고정점: {actual_ref[:12]}")
+                return target
             if log:
-                log(f"[ComfyUI 업데이트] 이미 최신 고정점: {actual_ref[:12]}")
-            return target
-        if log:
-            log(
-                "[ComfyUI 업데이트] 새 고정점 가져오기: "
-                f"{actual_ref[:12]} -> {ref[:12]}"
+                log(
+                    "[ComfyUI 업데이트] 새 고정점 가져오기: "
+                    f"{actual_ref[:12]} -> {ref[:12]}"
+                )
+            run_command(
+                ["git", "fetch", "--depth", "1", "origin", ref],
+                cwd=target,
+                cancel_event=cancel_event,
+                log=log,
+                timeout=900,
             )
-        run_command(
-            ["git", "fetch", "--depth", "1", "origin", ref],
-            cwd=target,
-            cancel_event=cancel_event,
-            log=log,
-            timeout=900,
-        )
-        run_command(
-            ["git", "checkout", "--detach", "FETCH_HEAD"],
-            cwd=target,
-            cancel_event=cancel_event,
-            log=log,
-        )
-        updated_ref = _git_value(target, "rev-parse", "HEAD").lower()
-        if updated_ref != ref.lower():
-            raise SourceInstallError(
-                "ComfyUI 업데이트 고정점 검증 실패: "
-                f"expected={ref}, actual={updated_ref}"
+            run_command(
+                ["git", "checkout", "--detach", "FETCH_HEAD"],
+                cwd=target,
+                cancel_event=cancel_event,
+                log=log,
             )
-        if log:
-            log(f"[ComfyUI 업데이트] 완료: {updated_ref[:12]}")
+            updated_ref = _git_value(target, "rev-parse", "HEAD").lower()
+            if updated_ref != ref.lower():
+                raise SourceInstallError(
+                    "ComfyUI 업데이트 고정점 검증 실패: "
+                    f"expected={ref}, actual={updated_ref}"
+                )
+            if log:
+                log(f"[ComfyUI 업데이트] 완료: {updated_ref[:12]}")
         return target
     except SourceInstallError:
         raise
