@@ -91,6 +91,10 @@ from modes import autocomplete_service
 from modes import asset_tool_mode
 from modes.qwen_edit_mode import QwenEditMode
 from modes.video_mode import FAST_PRESETS, VIDEO_MODES, VideoMode
+from modes.video_postprocess import (
+    DEFAULT_VIDEO_POSTPROCESS_CONFIG,
+    normalize_video_postprocess_config,
+)
 from modes import qwen_composite_items
 from modes import bot_mode
 from modes.bot_mode import data_patcher
@@ -239,6 +243,7 @@ DEFAULT_CONFIG = {
     "webp_quality": 85,
     "backup_webp_quality": 80,  # 백업 이미지 저장 WebP 품질 (1-100)
     "backup_webp_lossless": False,  # 백업 저장 무손실 WebP
+    "video_postprocess": copy.deepcopy(DEFAULT_VIDEO_POSTPROCESS_CONFIG),
     "backup_base_dir": "",  # 빈 값이면 WORKFLOW_BACKUP_DIR 사용
     "comfy_input_dir": "",  # ComfyUI input 폴더 경로 (빈값=기본경로)
     "workflow_filename": "",  # 빈 값이면 workflow 폴더의 첫 번째 json 사용
@@ -717,6 +722,19 @@ def load_config() -> dict:
                     traceback.print_exc()
                     merged["comfy_task_modal_parallel"] = copy.deepcopy(
                         DEFAULT_COMFY_TASK_MODAL_PARALLEL
+                    )
+                try:
+                    merged["video_postprocess"] = normalize_video_postprocess_config(
+                        config.get("video_postprocess")
+                    )
+                except ValueError as e:
+                    print(
+                        "[CONFIG] 영상 후처리 설정 로드 실패, 기본값을 사용합니다: "
+                        f"value={config.get('video_postprocess')!r}, error={e}"
+                    )
+                    traceback.print_exc()
+                    merged["video_postprocess"] = copy.deepcopy(
+                        DEFAULT_VIDEO_POSTPROCESS_CONFIG
                     )
                 for legacy_key in _LEGACY_LLM_RETRY_KEYS:
                     merged.pop(legacy_key, None)
@@ -9330,6 +9348,40 @@ async def handle_api_video_enqueue(request: web.Request) -> web.Response:
         last_name = str(body.get("last_backup") or "").strip()
         instruction = str(body.get("instruction") or "").strip()
         preset = str(body.get("preset") or "auto").strip().lower()
+        postprocess_defaults = normalize_video_postprocess_config(
+            load_config().get("video_postprocess")
+        )
+        upscale_enabled = body.get(
+            "upscale_enabled", postprocess_defaults["enabled"]
+        )
+        if not isinstance(upscale_enabled, bool):
+            print(
+                "[VIDEO:API] 업스케일 토글 형식 오류: "
+                f"value={upscale_enabled!r}, body={body!r}"
+            )
+            return web.json_response(
+                {"success": False, "error": "업스케일 사용 여부가 올바르지 않습니다"},
+                status=400,
+            )
+        raw_upscale_scale = body.get(
+            "upscale_scale", postprocess_defaults["scale"]
+        )
+        try:
+            if isinstance(raw_upscale_scale, bool):
+                raise TypeError("bool은 허용되지 않음")
+            upscale_scale = int(raw_upscale_scale)
+            if upscale_scale not in (2, 3, 4):
+                raise ValueError("허용 배율 2, 3, 4에 없음")
+        except (TypeError, ValueError, OverflowError) as exc:
+            print(
+                "[VIDEO:API] 업스케일 배율 오류: "
+                f"value={raw_upscale_scale!r}, error={exc}"
+            )
+            traceback.print_exc()
+            return web.json_response(
+                {"success": False, "error": "업스케일 배율은 2, 3, 4 중 하나여야 합니다"},
+                status=400,
+            )
         if mode not in VIDEO_MODES:
             print(f"[VIDEO:API] 지원하지 않는 모드: mode={mode!r}, body={body!r}")
             return web.json_response(
@@ -9398,6 +9450,8 @@ async def handle_api_video_enqueue(request: web.Request) -> web.Response:
             "last_backup": last_name,
             "instruction": instruction,
             "preset": preset,
+            "upscale_enabled": upscale_enabled,
+            "upscale_scale": upscale_scale,
         }
         label = {
             "t2v": "H3 T2V 프롬프트",
@@ -9407,7 +9461,8 @@ async def handle_api_video_enqueue(request: web.Request) -> web.Response:
         item = await queue_manager.add_item("video_prompt_build", label, params)
         print(
             f"[VIDEO:API] 영상화 큐 등록: item={item.id}, mode={mode}, "
-            f"source={source_name}, last={last_name or '(none)'}, preset={preset}"
+            f"source={source_name}, last={last_name or '(none)'}, preset={preset}, "
+            f"upscale={upscale_enabled}x{upscale_scale}"
         )
         return web.json_response(
             {"success": True, "item_id": item.id, "label": item.label, "mode": mode}
@@ -11758,6 +11813,19 @@ async def handle_api_config(request: web.Request) -> web.Response:
                     print(
                         "[CONFIG] Comfy 작업 배분 저장 거부: "
                         f"value={body.get('comfy_task_allocations')!r}, error={e}"
+                    )
+                    traceback.print_exc()
+                    return web.json_response({"error": str(e)}, status=400)
+
+            if "video_postprocess" in body:
+                try:
+                    body["video_postprocess"] = normalize_video_postprocess_config(
+                        body.get("video_postprocess")
+                    )
+                except ValueError as e:
+                    print(
+                        "[CONFIG] 영상 후처리 설정 저장 거부: "
+                        f"value={body.get('video_postprocess')!r}, error={e}"
                     )
                     traceback.print_exc()
                     return web.json_response({"error": str(e)}, status=400)
@@ -21953,6 +22021,14 @@ async def on_startup(app):
     global _main_event_loop
     _main_event_loop = asyncio.get_running_loop()
     _backup_data_on_startup()
+    try:
+        await queue_manager.recover_video_postprocess_jobs()
+    except Exception as e:
+        print(
+            "[VIDEO:POSTPROCESS:RECOVERY] 시작 시 큐 복구 실패: "
+            f"error={type(e).__name__}: {e}"
+        )
+        traceback.print_exc()
     asyncio.create_task(_ws_heartbeat())
     try:
         await asyncio.to_thread(
@@ -22085,8 +22161,26 @@ async def _regeneration_background_cleanup(_app: web.Application) -> None:
             traceback.print_exception(type(result), result, result.__traceback__)
 
 
+async def _video_postprocess_background_cleanup(_app: web.Application) -> None:
+    task = queue_manager._video_postprocess_worker_task
+    if task is None or task.done():
+        return
+    print("[VIDEO:POSTPROCESS] 서버 종료로 독립 후처리 워커를 중단합니다")
+    task.cancel()
+    result = await asyncio.gather(task, return_exceptions=True)
+    if result and isinstance(result[0], BaseException) and not isinstance(
+        result[0], asyncio.CancelledError
+    ):
+        print(
+            "[VIDEO:POSTPROCESS] 종료 정리 중 워커 실패: "
+            f"error={type(result[0]).__name__}: {result[0]}"
+        )
+        traceback.print_exception(type(result[0]), result[0], result[0].__traceback__)
+
+
 app.on_startup.append(on_startup)
 app.on_cleanup.append(_regeneration_background_cleanup)
+app.on_cleanup.append(_video_postprocess_background_cleanup)
 app.on_cleanup.append(_tunnel_cleanup)
 app.on_cleanup.append(_character_maker_rag_runtime_cleanup)
 

@@ -50,7 +50,17 @@ def test_video_page_exposes_every_fast_resolution_and_queue_endpoint() -> None:
     assert "/api/video/reference-options" in FRONTEND
     assert "/api/video/enqueue" in FRONTEND
     assert "animated AVIF 우선" in FRONTEND
-    assert "중간 MP4와 오디오는 보관하지 않습니다" in FRONTEND
+    assert 'id="video-generation-upscale-enabled"' in FRONTEND
+    assert 'id="video-generation-upscale-scale"' in FRONTEND
+    assert "upscale_enabled: upscaleEnabled" in FRONTEND
+    assert "upscale_scale: upscaleScale" in FRONTEND
+
+
+def test_video_postprocess_shares_renamed_background_lane() -> None:
+    assert "{key: 'background', icon: '⚙️', title: '백그라운드 처리'" in FRONTEND
+    assert "Modal 다운로드 · 영상 업스케일/AVIF 변환" in FRONTEND
+    assert "area === 'modal_download' || area === 'video_postprocess'" in FRONTEND
+    assert "video_postprocess: '영상 후처리'" in FRONTEND
 
 
 def test_every_comfy_task_allocation_can_select_all_three_instances() -> None:

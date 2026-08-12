@@ -570,7 +570,7 @@ async def test_h3_llm_build_emits_live_events_and_full_history(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("render_mode", ["i2v", "first_last"])
-async def test_render_archives_composite_and_raw_before_cleaning_mp4(
+async def test_render_spools_video_postprocess_before_cleaning_comfy_mp4(
     tmp_path: Path,
     monkeypatch,
     render_mode: str,
@@ -668,16 +668,12 @@ async def test_render_archives_composite_and_raw_before_cleaning_mp4(
     async def cleanup(descriptor, *, task_key):
         assert task_key == "video_generation"
         assert descriptor["filename"] == "temporary.mp4"
-        # Cleanup must happen only after both animated files and metadata exist.
-        assert len(list(backup_dir.glob("*.avif"))) + len(list(backup_dir.glob("*.webp"))) == 1
-        archived_raw = [
-            path
-            for pattern in ("*.avif", "*.webp")
-            for path in raw_dir.glob(pattern)
-            if path.stem not in {"source", "last"}
-        ]
-        assert len(archived_raw) == 1
-        assert len(list(backup_dir.glob("*_info.json"))) == 1
+        # Comfy output cleanup is allowed only after the independent queue spool
+        # has durable MP4 bytes and a recovery manifest.
+        jobs = list((backup_dir / "_video_postprocess_spool").iterdir())
+        assert len(jobs) == 1
+        assert (jobs[0] / "input.mp4").read_bytes() == b"temporary-mp4"
+        assert (jobs[0] / "job.json").is_file()
         events.append("mp4_cleaned")
         return True
 
@@ -724,10 +720,113 @@ async def test_render_archives_composite_and_raw_before_cleaning_mp4(
     assert result["preset"] == "1:1"
     assert not (comfy_input / "soya_video").exists()
     assert events[-1] == "mp4_cleaned"
-    info = json.loads(
-        next(backup_dir.glob("*_info.json")).read_text(encoding="utf-8")
+    job_dir = Path(result["postprocess_job"]["job_dir"])
+    manifest = json.loads((job_dir / "job.json").read_text(encoding="utf-8"))
+    assert manifest["source_backup"] == "source"
+    assert manifest["llm_trace"] == ["trace-1"]
+    assert manifest["duration"] == 5.0
+    assert manifest["video_seed"] == submitted["seed"]
+    assert manifest["upscale_enabled"] is True
+    assert manifest["upscale_scale"] == 2
+    assert manifest["output_width"] == 1024
+    assert not list(backup_dir.glob("*.avif"))
+
+
+@pytest.mark.asyncio
+async def test_video_postprocess_commits_verified_pair_and_metadata(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    backup_dir = tmp_path / "backups"
+    job_dir = backup_dir / "_video_postprocess_spool" / "i2v-job"
+    job_dir.mkdir(parents=True)
+    (job_dir / "input.mp4").write_bytes(b"staged-mp4")
+    manifest = {
+        "version": 1,
+        "spool_id": "i2v-job",
+        "base_name": "20260812_120000_deadbeef",
+        "mode": "i2v",
+        "source_backup": "source",
+        "last_backup": "",
+        "positive": "synthetic H3 prompt",
+        "instruction": "move gently",
+        "llm_trace": ["trace-1"],
+        "preset": "1:1",
+        "source_width": 512,
+        "source_height": 512,
+        "output_width": 1024,
+        "output_height": 1024,
+        "raw_output_height": 1024,
+        "duration": 5.0,
+        "fps": 24,
+        "video_seed": 123,
+        "render_elapsed": 2.5,
+        "quality": 80,
+        "upscale_enabled": True,
+        "upscale_scale": 2,
+        "upscale_model": "realesr-animevideov3",
+        "source_info": {"bot_name": "test-bot"},
+    }
+    (job_dir / "job.json").write_text(
+        json.dumps(manifest),
+        encoding="utf-8",
     )
-    assert info["source_backup"] == "source"
-    assert info["llm_trace"] == ["trace-1"]
-    assert info["video_duration_seconds"] == 5.0
-    assert info["video_seed"] == submitted["seed"]
+
+    async def fake_process(path, *, settings, progress_callback=None):
+        assert Path(path) == job_dir.resolve()
+        assert settings["scale"] == 2
+        main = job_dir / "result_main.avif"
+        raw = job_dir / "result_raw.avif"
+        main.write_bytes(b"verified-main")
+        raw.write_bytes(b"verified-raw")
+        if progress_callback:
+            await progress_callback({"phase": "video_postprocess_validated", "percentage": 97})
+        return {
+            "manifest": manifest,
+            "main_path": str(main),
+            "raw_path": str(raw),
+            "extension": ".avif",
+            "frame_count": 120,
+            "upscale_enabled": True,
+            "upscale_scale": 2,
+        }
+
+    events = []
+    monkeypatch.setattr(video_module, "process_staged_video", fake_process)
+    mode = VideoMode()
+    mode.get_backup_dir = lambda: str(backup_dir)
+    mode.get_config = lambda: {
+        "video_postprocess": {
+            "enabled": True,
+            "scale": 2,
+            "model": "realesr-animevideov3",
+            "gpu_id": "auto",
+            "tile_size": 0,
+            "worker_count": 1,
+        }
+    }
+    mode.cleanup_backups_func = lambda: events.append("retention")
+    mode.invalidate_backup_cache_func = lambda: events.append("invalidate")
+
+    async def notify(event_type, data):
+        events.append((event_type, data))
+
+    mode.notify_frontend_func = notify
+    result = await mode.postprocess_staged_video(
+        {"job_dir": str(job_dir)},
+        queue_item_id="post-1",
+    )
+
+    base_name = manifest["base_name"]
+    assert result["backup_name"] == base_name
+    assert (backup_dir / f"{base_name}.avif").read_bytes() == b"verified-main"
+    assert (backup_dir / "_raw" / f"{base_name}.avif").read_bytes() == b"verified-raw"
+    info = json.loads(
+        (backup_dir / f"{base_name}_info.json").read_text(encoding="utf-8")
+    )
+    assert info["video_source_width"] == 512
+    assert info["video_width"] == 1024
+    assert info["video_upscale_scale"] == 2
+    assert info["bot_name"] == "test-bot"
+    assert not job_dir.exists()
+    assert events[-1] == ("backup_created", {"name": base_name})

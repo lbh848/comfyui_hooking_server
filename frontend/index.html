@@ -1606,7 +1606,7 @@
             border-top: 2px solid #a78bfa;
         }
         .queue-lane.external { border-top:2px solid #38bdf8; }
-        .queue-lane.modal_download { border-top:2px solid #06b6d4; }
+        .queue-lane.background { border-top:2px solid #06b6d4; }
         .queue-modal-item {
             display:flex; align-items:center; gap:10px;
             padding:10px 12px; border-radius:8px;
@@ -13129,7 +13129,7 @@
                         <div id="video-generation-source-empty" style="display:flex; min-height:190px; align-items:center; justify-content:center; padding:12px; border:1px dashed var(--border); border-radius:8px; color:var(--text2); font-size:.74rem; text-align:center; line-height:1.5;">영상화할 `_raw` 삽화를 선택하세요.</div>
                         <img id="video-generation-source-preview" src="" alt="기준 삽화 미리보기" style="display:none; width:100%; max-height:320px; object-fit:contain; border-radius:8px; border:1px solid var(--border); background:#111;">
                         <div id="video-generation-source-name" style="margin-top:8px; font-family:monospace; font-size:.7rem; color:var(--text2); word-break:break-all;"></div>
-                        <div style="margin-top:10px; color:#ffcf67; font-size:.71rem; line-height:1.5;">대사창과 말풍선은 원본 고해상도에서 먼저 렌더링하고, FAST 크기로 축소한 뒤 모든 프레임에 합성합니다.</div>
+                        <div style="margin-top:10px; color:#ffcf67; font-size:.71rem; line-height:1.5;">대사창과 말풍선은 Real-ESRGAN이 영상 프레임을 확대한 뒤 최종 해상도에서 합성하므로 글자와 선이 AI 업스케일의 영향을 받지 않습니다.</div>
                     </section>
 
                     <section style="padding:16px; border:1px solid var(--border); border-radius:10px; background:var(--surface2);">
@@ -13169,12 +13169,30 @@
                             </select>
                         </label>
 
+                        <div style="display:grid; grid-template-columns:minmax(0, 1fr) 120px; gap:10px; align-items:end; margin-bottom:12px; padding:10px; border:1px solid var(--border); border-radius:8px; background:var(--surface1);">
+                            <label style="display:flex; align-items:center; gap:8px; min-width:0; cursor:pointer;">
+                                <input id="video-generation-upscale-enabled" type="checkbox" checked onchange="updateVideoUpscaleControls()">
+                                <span>
+                                    <span style="display:block; font-size:.76rem; font-weight:700;">Real-ESRGAN 영상 업스케일</span>
+                                    <span style="display:block; margin-top:2px; color:var(--text2); font-size:.68rem; line-height:1.4;">독립 백그라운드 큐에서 실행</span>
+                                </span>
+                            </label>
+                            <label>
+                                <span style="display:block; font-size:.7rem; color:var(--text2); margin-bottom:5px;">배율</span>
+                                <select id="video-generation-upscale-scale" style="width:100%; padding:7px; border:1px solid var(--border); border-radius:7px; background:var(--surface2); color:var(--text);">
+                                    <option value="2" selected>2× 권장</option>
+                                    <option value="3">3×</option>
+                                    <option value="4">4×</option>
+                                </select>
+                            </label>
+                        </div>
+
                         <label style="display:block; margin-bottom:12px;">
                             <span style="display:block; font-size:.76rem; font-weight:700; margin-bottom:5px;">영상에서 일어날 일</span>
                             <textarea id="video-generation-instruction" rows="7" maxlength="12000" placeholder="예: 인물이 천천히 고개를 들어 카메라를 바라보고, 머리카락과 옷자락이 약한 바람에 자연스럽게 흔들린다. 카메라는 아주 조금 천천히 밀고 들어간다." style="width:100%; box-sizing:border-box; resize:vertical; padding:9px; border:1px solid var(--border); border-radius:7px; background:var(--surface1); color:var(--text); line-height:1.5;"></textarea>
                         </label>
 
-                        <div style="font-size:.7rem; color:var(--text2); line-height:1.5; margin-bottom:14px;">완료본은 animated AVIF 우선, 미지원 시 animated WebP로 저장합니다. 합성본과 대사 없는 _raw 원본을 함께 보관하며, 중간 MP4와 오디오는 보관하지 않습니다.</div>
+                        <div style="font-size:.7rem; color:var(--text2); line-height:1.5; margin-bottom:14px;">H3 렌더 후 Real-ESRGAN 업스케일과 변환은 독립 백그라운드 큐에서 이어집니다. 완료본은 animated AVIF 우선, 미지원 시 animated WebP로 저장하며 합성본과 대사 없는 _raw 원본을 함께 보관합니다.</div>
                         <div style="display:flex; justify-content:flex-end; gap:8px;">
                             <button type="button" onclick="switchTab('backup')" style="padding:8px 15px;">삽화 백업으로</button>
                             <button type="button" id="video-generation-submit" onclick="submitVideoGeneration()" style="padding:8px 16px; background:#9b59b6; color:#fff; border-color:#b876d2;">🎬 큐에 등록</button>
@@ -24535,6 +24553,34 @@
         let videoReferenceOptions = [];
         let videoWorkspacePreferredSource = '';
 
+        function updateVideoUpscaleControls() {
+            const enabled = document.getElementById('video-generation-upscale-enabled');
+            const scale = document.getElementById('video-generation-upscale-scale');
+            if (!enabled || !scale) {
+                console.error('[VIDEO_UI] 업스케일 컨트롤을 찾지 못했습니다.');
+                return;
+            }
+            scale.disabled = !enabled.checked;
+        }
+
+        function applyVideoPostprocessConfig(config) {
+            const settings = config && typeof config.video_postprocess === 'object'
+                ? config.video_postprocess
+                : {};
+            const enabled = document.getElementById('video-generation-upscale-enabled');
+            const scale = document.getElementById('video-generation-upscale-scale');
+            if (!enabled || !scale) {
+                console.error('[VIDEO_UI] 영상 후처리 기본값을 적용할 컨트롤이 없습니다.');
+                return;
+            }
+            enabled.checked = settings.enabled !== false;
+            const normalizedScale = [2, 3, 4].includes(Number(settings.scale))
+                ? String(Number(settings.scale))
+                : '2';
+            scale.value = normalizedScale;
+            updateVideoUpscaleControls();
+        }
+
         function updateVideoWorkspaceMode() {
             const mode = document.getElementById('video-generation-mode')?.value || 'i2v';
             const lastRow = document.getElementById('video-generation-last-row');
@@ -24667,6 +24713,8 @@
             const mode = document.getElementById('video-generation-mode')?.value || 'i2v';
             const lastBackup = document.getElementById('video-generation-last')?.value || '';
             const preset = document.getElementById('video-generation-preset')?.value || 'auto';
+            const upscaleEnabled = document.getElementById('video-generation-upscale-enabled')?.checked !== false;
+            const upscaleScale = parseInt(document.getElementById('video-generation-upscale-scale')?.value || '2', 10);
             const instruction = document.getElementById('video-generation-instruction')?.value.trim() || '';
             const button = document.getElementById('video-generation-submit');
             if (!sourceName) {
@@ -24697,6 +24745,8 @@
                         source_backup: sourceName,
                         last_backup: lastBackup,
                         preset,
+                        upscale_enabled: upscaleEnabled,
+                        upscale_scale: upscaleScale,
                         instruction,
                     }),
                 });
@@ -31005,6 +31055,14 @@
                 webp_quality: parseInt(document.getElementById('setting-webp-quality').value) || 85,
                 backup_webp_quality: parseInt(document.getElementById('setting-backup-webp-quality').value) || 80,
                 backup_webp_lossless: document.getElementById('setting-backup-webp-lossless').checked,
+                video_postprocess: { ...(currentConfig.video_postprocess || {
+                    enabled: true,
+                    scale: 2,
+                    model: 'realesr-animevideov3',
+                    gpu_id: 'auto',
+                    tile_size: 0,
+                    worker_count: 1,
+                }) },
                 comfy_workflow_source_path: document.getElementById('setting-workflow-path').value || currentConfig.comfy_workflow_source_path || '',
                 illustration_workflow_type: normalizeIllustrationWorkflowType(document.getElementById('setting-illustration-workflow-type').value),
                 illustration_workflow_source_paths: { ...(currentConfig.illustration_workflow_source_paths || {}) },
@@ -45608,6 +45666,12 @@
                 document.getElementById('tab-video-content').classList.add('active');
                 const sb = document.getElementById('stats-bar');
                 if (sb) sb.style.display = 'none';
+                try {
+                    applyVideoPostprocessConfig(await loadCurrentConfig());
+                } catch (error) {
+                    console.error('[VIDEO_UI] 영상 후처리 기본 설정 동기화 실패:', error);
+                    updateVideoUpscaleControls();
+                }
                 const preferredSource = videoWorkspacePreferredSource;
                 videoWorkspacePreferredSource = '';
                 updateVideoWorkspaceMode();
@@ -77045,6 +77109,7 @@
             video_t2v: 'H3 T2V',
             video_i2v: 'H3 I2V',
             video_first_last: 'H3 첫·마지막',
+            video_postprocess: '영상 후처리',
             character_maker: '캐릭터 메이커',
             tag_analysis: '태그분석',
             auto_match_batch: '배치매칭',
@@ -77059,7 +77124,7 @@
             {key: 'hybrid', icon: '⚡', title: '동적 배분', note: '먼저 빈 로컬 GPU/Modal/챈섭이 실행'},
             {key: 'gpu', icon: '🖥️', title: 'GPU', note: '로컬 ComfyUI 작업'},
             {key: 'modal', icon: '☁️', title: 'Modal GPU', note: '원격 ComfyUI 작업'},
-            {key: 'modal_download', icon: '⇩', title: 'Modal 다운로드', note: 'GPU 수와 무관한 LoRA 병렬 다운로드'},
+            {key: 'background', icon: '⚙️', title: '백그라운드 처리', note: 'Modal 다운로드 · 영상 업스케일/AVIF 변환'},
             {key: 'external', icon: '☁️', title: '외부 서비스', note: '챈섭 API 작업'},
         ];
 
@@ -77068,6 +77133,7 @@
             // 로컬 Comfy·Modal 병렬 대기 작업은 실제 워커가 claim하기 전까지
             // 특정 GPU 소속이 아니므로 동적 배분 레인에 표시한다.
             if (area === 'comfy_parallel') return 'hybrid';
+            if (area === 'modal_download' || area === 'video_postprocess') return 'background';
             return _queueAreaDefinitions.some(def => def.key === area) ? area : 'gpu';
         }
 
@@ -77265,6 +77331,23 @@
                     if (total > 0) {
                         progressLabel += ' <span style="font-size:0.65rem;color:var(--text3);">' +
                             comfyInstallerFormatBytes(done) + '/' + comfyInstallerFormatBytes(total) + '</span>';
+                    }
+                } else if (String(d.phase || '').startsWith('video_')) {
+                    const phaseLabels = {
+                        video_postprocess_preparing: '후처리 준비',
+                        video_extracting_frames: '프레임 추출',
+                        video_frames_extracted: '프레임 추출 완료',
+                        video_upscaler_preparing: '업스케일 준비',
+                        video_upscaling: 'Real-ESRGAN',
+                        video_upscale_skipped: '업스케일 생략',
+                        video_encoding_raw: 'AVIF 원본 인코딩',
+                        video_encoding_composite: 'AVIF 합성본 인코딩',
+                        video_postprocess_validated: '결과 검증',
+                        video_postprocess_complete: '후처리 완료',
+                    };
+                    progressLabel = `${phaseLabels[d.phase] || '영상 후처리'} ${pct}%`;
+                    if (Number(d.total || 0) > 0 && Number(d.current || 0) >= 0) {
+                        progressLabel += ` <span style="font-size:0.65rem;color:var(--text3);">${Number(d.current || 0)}/${Number(d.total)}</span>`;
                     }
                 }
             }

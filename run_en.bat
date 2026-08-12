@@ -7,7 +7,7 @@ set "UV_VERSION=0.11.8"
 set "UV_TOOL_DIR=%CD%\.tools\uv-%UV_VERSION%"
 set "UV_EXE=%UV_TOOL_DIR%\uv.exe"
 
-echo [1/6] Checking project-local uv %UV_VERSION%...
+echo [1/7] Checking project-local uv %UV_VERSION%...
 if not exist "%UV_EXE%" (
     echo       Project-local uv not found. Installing pinned version...
     set "UV_INSTALL_DIR=%UV_TOOL_DIR%"
@@ -31,7 +31,7 @@ set "UV_INSTALL_DIR="
 set "UV_NO_MODIFY_PATH="
 set "PATH=%UV_TOOL_DIR%;%PATH%"
 
-echo [2/6] Checking system Git...
+echo [2/7] Checking system Git...
 call :ensure_git
 if errorlevel 1 goto :end
 
@@ -42,7 +42,7 @@ if exist "venv" (
 )
 
 :: Python 3.12 + packages
-echo [3/6] Setting up Python 3.12 environment...
+echo [3/7] Setting up Python 3.12 environment...
 "%UV_EXE%" sync
 if errorlevel 1 (
     echo [ERROR] Failed to set up environment. Check network connection.
@@ -53,17 +53,26 @@ if errorlevel 1 (
 :: uv sync 로 함께 설치됨(DirectML = NVIDIA/AMD/Intel 공통 GPU, 없으면 자동 CPU 폴백).
 :: 별도 runtime 설치 분기는 의존성 충돌(onnxruntime vs -directml)을 유발해 제거.
 
-echo [4/6] Checking model files...
+echo [4/7] Checking project-local video tools...
+"%UV_EXE%" run --no-sync python ensure_video_tools.py
+if errorlevel 1 (
+    echo [ERROR] Failed to prepare Real-ESRGAN or FFmpeg.
+    echo         Check the messages above and network connection.
+    goto :end
+)
+set "PATH=%CD%\.tools\ffmpeg\bin;%PATH%"
+
+echo [5/7] Checking model files...
 "%UV_EXE%" run --no-sync python ensure_models.py
 if errorlevel 1 (
     echo [ERROR] Failed to prepare model files. Check the messages above and network connection.
     goto :end
 )
 
-echo [5/6] Packages and models ready.
+echo [6/7] Packages, models, and video tools ready.
 
 :: Create required folders
-echo [6/6] Creating folders...
+echo [7/7] Creating folders...
 if not exist "workflow" mkdir workflow
 if not exist "current_work" mkdir current_work
 if not exist "workflow_backup" mkdir workflow_backup

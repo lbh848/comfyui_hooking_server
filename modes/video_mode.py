@@ -22,6 +22,8 @@ from typing import Callable
 
 from PIL import Image, ImageChops, ImageFilter
 
+from ensure_video_tools import ensure_ffmpeg as ensure_project_ffmpeg
+
 try:
     import pillow_avif  # noqa: F401 - registers animated AVIF support in Pillow
 
@@ -36,6 +38,10 @@ except Exception:
 
 from modes import llm_service
 from modes.lighbd_service import _log_lighbd_history
+from modes.video_postprocess import (
+    normalize_video_postprocess_config,
+    process_staged_video,
+)
 
 
 VIDEO_DURATION_SECONDS = 5.0
@@ -1204,10 +1210,7 @@ Vision-produced static Visual Context:
 
     @staticmethod
     def _decode_mp4_frames(mp4_bytes: bytes) -> list[Image.Image]:
-        ffmpeg = shutil.which("ffmpeg")
-        if not ffmpeg:
-            print("[VIDEO:DECODE] ffmpeg 실행 파일 없음: PATH를 확인하세요")
-            raise RuntimeError("MP4를 애니메이션 이미지로 변환할 ffmpeg가 없습니다")
+        ffmpeg = str(ensure_project_ffmpeg())
         with tempfile.TemporaryDirectory(prefix="soya_h3_decode_") as temp_dir:
             input_path = os.path.join(temp_dir, "input.mp4")
             with open(input_path, "wb") as handle:
@@ -1339,6 +1342,415 @@ Vision-produced static Visual Context:
             shutil.rmtree(resolved)
             print(f"[VIDEO:CLEANUP] Comfy 입력 임시 폴더 정리: {resolved}")
 
+    @staticmethod
+    def _video_postprocess_settings(config: dict, params: dict) -> dict:
+        settings = normalize_video_postprocess_config(
+            config.get("video_postprocess")
+        )
+        if "upscale_enabled" in params:
+            enabled = params.get("upscale_enabled")
+            if not isinstance(enabled, bool):
+                print(
+                    "[VIDEO:POSTPROCESS] 요청 업스케일 토글 형식 오류: "
+                    f"value={enabled!r}"
+                )
+                raise ValueError("영상 업스케일 사용 여부가 올바르지 않습니다")
+            settings["enabled"] = enabled
+        if "upscale_scale" in params:
+            settings["scale"] = params.get("upscale_scale")
+        return normalize_video_postprocess_config(settings)
+
+    @staticmethod
+    def _save_scaled_overlay_asset(
+        high_res_crop: Image.Image,
+        overlay: Image.Image | None,
+        mask: Image.Image | None,
+        output_width: int,
+        output_height: int,
+        path: str,
+    ) -> int:
+        if overlay is None or mask is None:
+            return output_height
+        if output_width <= 0 or output_height <= 0 or high_res_crop.width <= 0:
+            print(
+                "[VIDEO:COMPOSE] 후처리 레이어 출력 크기 오류: "
+                f"output={output_width}x{output_height}, source={high_res_crop.size}"
+            )
+            raise ValueError("영상 후처리 레이어 출력 크기가 올바르지 않습니다")
+        scale = output_width / high_res_crop.width
+        overlay_height = max(1, round(overlay.height * scale))
+        scaled_overlay = overlay.resize(
+            (output_width, overlay_height), Image.Resampling.LANCZOS
+        )
+        scaled_mask = mask.resize(
+            (output_width, overlay_height), Image.Resampling.LANCZOS
+        )
+        canvas_height = max(output_height, overlay_height)
+        transparent = Image.new(
+            "RGBA", (output_width, canvas_height), (0, 0, 0, 0)
+        )
+        transparent.paste(scaled_overlay, (0, 0), scaled_mask)
+        transparent.save(path, format="PNG")
+        print(
+            "[VIDEO:COMPOSE] 후처리용 정적 레이어 저장: "
+            f"path={path!r}, size={transparent.size}"
+        )
+        return canvas_height
+
+    def _stage_video_postprocess(
+        self,
+        *,
+        mp4_bytes: bytes,
+        mode: str,
+        source_name: str,
+        last_name: str,
+        h3_prompt: str,
+        params: dict,
+        source_info: dict,
+        high_res_crop: Image.Image,
+        overlay: Image.Image | None,
+        overlay_mask: Image.Image | None,
+        preset_key: str,
+        target_w: int,
+        target_h: int,
+        video_seed: int | None,
+        render_elapsed: float,
+        settings: dict,
+        quality: int,
+    ) -> dict:
+        backup_dir = self._backup_dir()
+        spool_root = os.path.join(backup_dir, "_video_postprocess_spool")
+        os.makedirs(spool_root, exist_ok=True)
+        spool_id = f"{mode}_{uuid.uuid4().hex[:12]}"
+        job_dir = os.path.join(spool_root, spool_id)
+        os.makedirs(job_dir, exist_ok=False)
+        try:
+            mp4_path = os.path.join(job_dir, "input.mp4")
+            with open(mp4_path, "xb") as handle:
+                handle.write(mp4_bytes)
+                handle.flush()
+                os.fsync(handle.fileno())
+            if os.path.getsize(mp4_path) != len(mp4_bytes):
+                print(
+                    "[VIDEO:POSTPROCESS] MP4 스풀 크기 검증 실패: "
+                    f"expected={len(mp4_bytes)}, actual={os.path.getsize(mp4_path)}"
+                )
+                raise RuntimeError("영상 후처리 MP4 스풀 저장 검증에 실패했습니다")
+
+            output_scale = settings["scale"] if settings["enabled"] else 1
+            output_width = target_w * output_scale
+            raw_output_height = target_h * output_scale
+            output_height = self._save_scaled_overlay_asset(
+                high_res_crop,
+                overlay,
+                overlay_mask,
+                output_width,
+                raw_output_height,
+                os.path.join(job_dir, "overlay.png"),
+            )
+            stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            base_name = f"{stamp}_{uuid.uuid4().hex[:8]}"
+            manifest = {
+                "version": 1,
+                "spool_id": spool_id,
+                "base_name": base_name,
+                "mode": mode,
+                "source_backup": source_name,
+                "last_backup": last_name,
+                "positive": h3_prompt,
+                "instruction": str((params or {}).get("instruction") or ""),
+                "llm_trace": [
+                    str(item)
+                    for item in ((params or {}).get("llm_trace") or [])
+                    if str(item).strip()
+                ],
+                "preset": preset_key,
+                "source_width": target_w,
+                "source_height": target_h,
+                "output_width": output_width,
+                "output_height": output_height,
+                "raw_output_height": raw_output_height,
+                "duration": VIDEO_DURATION_SECONDS,
+                "fps": VIDEO_FPS,
+                "video_seed": video_seed,
+                "render_elapsed": render_elapsed,
+                "quality": quality,
+                "upscale_enabled": settings["enabled"],
+                "upscale_scale": settings["scale"],
+                "upscale_model": settings["model"] if settings["enabled"] else "",
+                "source_info": {
+                    key: copy.deepcopy(source_info[key])
+                    for key in ("bot_name", "postprocess_settings", "speak_text")
+                    if source_info.get(key) not in (None, "", {})
+                },
+                "created_at": time.time(),
+            }
+            manifest_path = os.path.join(job_dir, "job.json")
+            with open(manifest_path, "x", encoding="utf-8") as handle:
+                json.dump(manifest, handle, indent=2, ensure_ascii=False)
+                handle.flush()
+                os.fsync(handle.fileno())
+            print(
+                "[VIDEO:POSTPROCESS] 독립 큐 스풀 저장 완료: "
+                f"job={spool_id}, mp4_bytes={len(mp4_bytes):,}, "
+                f"upscale={settings['enabled']}x{output_scale}, output={output_width}x{output_height}"
+            )
+            return {
+                "job_dir": job_dir,
+                "spool_id": spool_id,
+                "base_name": base_name,
+                "mode": mode,
+            }
+        except Exception:
+            try:
+                self._remove_exact_tree(job_dir, spool_root)
+            except Exception as cleanup_exc:
+                print(
+                    "[VIDEO:POSTPROCESS] 실패 스풀 정리 실패: "
+                    f"path={job_dir!r}, error={cleanup_exc}"
+                )
+                traceback.print_exc()
+            raise
+
+    def list_staged_video_postprocess_jobs(self) -> list[dict]:
+        spool_root = os.path.realpath(
+            os.path.join(self._backup_dir(), "_video_postprocess_spool")
+        )
+        if not os.path.isdir(spool_root):
+            return []
+        jobs: list[dict] = []
+        try:
+            for entry in sorted(Path(spool_root).iterdir(), key=lambda path: path.name):
+                manifest_path = entry / "job.json"
+                mp4_path = entry / "input.mp4"
+                if not entry.is_dir() or not manifest_path.is_file() or not mp4_path.is_file():
+                    print(
+                        "[VIDEO:POSTPROCESS:RECOVERY] 불완전 스풀 생략: "
+                        f"path={str(entry)!r}, manifest={manifest_path.is_file()}, "
+                        f"mp4={mp4_path.is_file()}"
+                    )
+                    continue
+                try:
+                    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                    jobs.append(
+                        {
+                            "job_dir": str(entry.resolve()),
+                            "spool_id": str(manifest.get("spool_id") or entry.name),
+                            "base_name": str(manifest.get("base_name") or ""),
+                            "mode": str(manifest.get("mode") or ""),
+                        }
+                    )
+                except Exception as exc:
+                    print(
+                        "[VIDEO:POSTPROCESS:RECOVERY] manifest 로드 실패: "
+                        f"path={str(manifest_path)!r}, error={type(exc).__name__}: {exc}"
+                    )
+                    traceback.print_exc()
+        except Exception as exc:
+            print(
+                "[VIDEO:POSTPROCESS:RECOVERY] 스풀 검색 실패: "
+                f"root={spool_root!r}, error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            raise
+        return jobs
+
+    def cleanup_staged_video_postprocess(self, params: dict) -> None:
+        job_dir = os.path.realpath(str((params or {}).get("job_dir") or ""))
+        spool_root = os.path.realpath(
+            os.path.join(self._backup_dir(), "_video_postprocess_spool")
+        )
+        if (
+            not job_dir
+            or os.path.commonpath([job_dir, spool_root]) != spool_root
+            or job_dir == spool_root
+        ):
+            print(
+                "[VIDEO:POSTPROCESS:CLEANUP] 안전하지 않은 스풀 경로 거부: "
+                f"path={job_dir!r}, root={spool_root!r}"
+            )
+            raise ValueError("영상 후처리 스풀 경로가 올바르지 않습니다")
+        if os.path.isdir(job_dir):
+            self._remove_exact_tree(job_dir, spool_root)
+        else:
+            print(
+                "[VIDEO:POSTPROCESS:CLEANUP] 정리할 스풀 폴더 없음: "
+                f"path={job_dir!r}"
+            )
+
+    async def postprocess_staged_video(
+        self,
+        params: dict,
+        queue_item_id: str = "",
+        progress_callback=None,
+    ) -> dict:
+        job_dir = os.path.realpath(str((params or {}).get("job_dir") or ""))
+        spool_root = os.path.realpath(
+            os.path.join(self._backup_dir(), "_video_postprocess_spool")
+        )
+        if (
+            not job_dir
+            or os.path.commonpath([job_dir, spool_root]) != spool_root
+            or job_dir == spool_root
+        ):
+            print(
+                "[VIDEO:POSTPROCESS] 안전하지 않은 스풀 경로 거부: "
+                f"item={queue_item_id}, path={job_dir!r}, root={spool_root!r}"
+            )
+            raise ValueError("영상 후처리 스풀 경로가 올바르지 않습니다")
+
+        config = self._config()
+        settings = normalize_video_postprocess_config(
+            config.get("video_postprocess")
+        )
+        started = time.time()
+        created_files: list[str] = []
+        try:
+            processed = await process_staged_video(
+                job_dir,
+                settings=settings,
+                progress_callback=progress_callback,
+            )
+            manifest = processed["manifest"]
+            extension = processed["extension"]
+            base_name = _safe_backup_name(manifest.get("base_name"))
+            backup_dir = self._backup_dir()
+            raw_dir = os.path.join(backup_dir, "_raw")
+            os.makedirs(raw_dir, exist_ok=True)
+            main_path = os.path.join(backup_dir, f"{base_name}{extension}")
+            raw_path = os.path.join(raw_dir, f"{base_name}{extension}")
+            if os.path.exists(main_path) or os.path.exists(raw_path):
+                print(
+                    "[VIDEO:POSTPROCESS] 최종 백업 이름 충돌: "
+                    f"main={main_path!r}, raw={raw_path!r}"
+                )
+                raise FileExistsError(base_name)
+            os.replace(processed["main_path"], main_path)
+            created_files.append(main_path)
+            os.replace(processed["raw_path"], raw_path)
+            created_files.append(raw_path)
+
+            prompt_record = {
+                "provider": "video",
+                "kind": "h3_video",
+                "mode": manifest.get("mode", ""),
+                "positive": manifest.get("positive", ""),
+                "negative": "",
+                "instruction": manifest.get("instruction", ""),
+                "source_backup": manifest.get("source_backup", ""),
+                "last_backup": manifest.get("last_backup", ""),
+            }
+            elapsed = float(manifest.get("render_elapsed") or 0.0) + (
+                time.time() - started
+            )
+            mode = str(manifest.get("mode") or "")
+            info_record = {
+                "provider": "comfy",
+                "provider_mode": "comfy",
+                "prompt_provider": "video",
+                "execution_source": "local",
+                "gen_method": {
+                    "t2v": "H3 T2V",
+                    "i2v": "H3 I2V",
+                    "first_last": "H3 첫·마지막 프레임",
+                }.get(mode, "H3 영상화"),
+                "generation_time": elapsed,
+                "is_video_animation": True,
+                "video_mode": mode,
+                "video_duration_seconds": float(manifest.get("duration") or VIDEO_DURATION_SECONDS),
+                "video_fps": int(manifest.get("fps") or VIDEO_FPS),
+                "video_fast_preset": manifest.get("preset", ""),
+                "video_source_width": int(manifest.get("source_width") or 0),
+                "video_source_height": int(manifest.get("source_height") or 0),
+                "video_width": int(manifest.get("output_width") or 0),
+                "video_height": int(manifest.get("output_height") or 0),
+                "video_raw_height": int(manifest.get("raw_output_height") or 0),
+                "video_seed": manifest.get("video_seed"),
+                "video_upscale_enabled": bool(processed["upscale_enabled"]),
+                "video_upscale_scale": int(processed["upscale_scale"]),
+                "video_upscale_model": manifest.get("upscale_model", ""),
+                "source_backup": manifest.get("source_backup", ""),
+                "last_backup": manifest.get("last_backup", ""),
+                "raw_extension": extension,
+                "animation_format": extension.lstrip("."),
+                "llm_trace": [
+                    str(item)
+                    for item in (manifest.get("llm_trace") or [])
+                    if str(item).strip()
+                ],
+            }
+            source_info = manifest.get("source_info")
+            if isinstance(source_info, dict):
+                for inherited_key in ("bot_name", "postprocess_settings", "speak_text"):
+                    if source_info.get(inherited_key) not in (None, "", {}):
+                        info_record[inherited_key] = copy.deepcopy(source_info[inherited_key])
+
+            prompt_path = os.path.join(backup_dir, f"{base_name}.json")
+            info_path = os.path.join(backup_dir, f"{base_name}_info.json")
+            with open(prompt_path, "x", encoding="utf-8") as handle:
+                json.dump(prompt_record, handle, indent=2, ensure_ascii=False)
+            created_files.append(prompt_path)
+            with open(info_path, "x", encoding="utf-8") as handle:
+                json.dump(info_record, handle, indent=2, ensure_ascii=False)
+            created_files.append(info_path)
+
+            if callable(self.cleanup_backups_func):
+                self.cleanup_backups_func()
+            else:
+                print("[VIDEO:BACKUP] 오래된 백업 정리 스킵: 콜백 없음")
+            if callable(self.invalidate_backup_cache_func):
+                self.invalidate_backup_cache_func()
+            else:
+                print("[VIDEO:BACKUP] 필터 캐시 무효화 스킵: 콜백 없음")
+            await self._notify("backup_created", {"name": base_name})
+
+            manifest_path = os.path.join(job_dir, "job.json")
+            if os.path.isfile(manifest_path):
+                os.remove(manifest_path)
+            try:
+                self._remove_exact_tree(job_dir, spool_root)
+            except Exception as cleanup_exc:
+                print(
+                    "[VIDEO:POSTPROCESS] 완료 스풀 정리 실패(재등록 방지 manifest는 제거됨): "
+                    f"path={job_dir!r}, error={cleanup_exc}"
+                )
+                traceback.print_exc()
+            print(
+                "[VIDEO:POSTPROCESS] 영상 후처리 완료: "
+                f"item={queue_item_id}, backup={base_name}, format={extension}, "
+                f"upscale={processed['upscale_enabled']}x{processed['upscale_scale']}, "
+                f"elapsed={elapsed:.2f}s"
+            )
+            return {
+                "success": True,
+                "backup_name": base_name,
+                "format": extension.lstrip("."),
+                "mode": mode,
+                "preset": manifest.get("preset", ""),
+                "width": int(manifest.get("output_width") or 0),
+                "height": int(manifest.get("output_height") or 0),
+                "duration": float(manifest.get("duration") or VIDEO_DURATION_SECONDS),
+                "upscale_enabled": bool(processed["upscale_enabled"]),
+                "upscale_scale": int(processed["upscale_scale"]),
+            }
+        except Exception as exc:
+            print(
+                "[VIDEO:POSTPROCESS] 최종 저장 실패: "
+                f"item={queue_item_id}, job_dir={job_dir!r}, "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            for path in reversed(created_files):
+                try:
+                    if os.path.isfile(path):
+                        os.remove(path)
+                except OSError as cleanup_exc:
+                    print(
+                        "[VIDEO:POSTPROCESS] 실패 백업 정리 실패: "
+                        f"path={path!r}, error={cleanup_exc}"
+                    )
+            raise
+
     async def render_video(
         self,
         params: dict,
@@ -1386,7 +1798,6 @@ Vision-produced static Visual Context:
             staging_dir = os.path.join(staging_parent, job_id)
         staged_names: dict[str, str] = {}
         comfy_video_descriptor: dict | None = None
-        created_backup_files: list[str] = []
         staging_created = False
         video_seed: int | None = None
         started = time.time()
@@ -1492,114 +1903,31 @@ Vision-produced static Visual Context:
                 raise RuntimeError(
                     str(comfy_video_descriptor or "ComfyUI에서 영상 결과를 얻지 못했습니다")
                 )
-            frames = await asyncio.to_thread(self._decode_mp4_frames, mp4_bytes)
-            raw_frames = [
-                frame.convert("RGBA").resize((target_w, target_h), Image.Resampling.LANCZOS)
-                if frame.size != (target_w, target_h)
-                else frame.convert("RGBA")
-                for frame in frames
-            ]
-            composite_frames = await asyncio.to_thread(
-                self._apply_overlay_to_frames,
-                raw_frames,
-                high_res_crop,
-                overlay,
-                overlay_mask,
-            )
-
-            backup_dir = self._backup_dir()
-            raw_dir = os.path.join(backup_dir, "_raw")
-            os.makedirs(raw_dir, exist_ok=True)
-            stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            base_name = f"{stamp}_{uuid.uuid4().hex[:8]}"
+            settings = self._video_postprocess_settings(config, dict(params or {}))
             quality = int(config.get("backup_webp_quality", 80) or 80)
-            main_without_extension = os.path.join(backup_dir, base_name)
-            raw_without_extension = os.path.join(raw_dir, base_name)
-            main_path, extension = await asyncio.to_thread(
-                self._save_animation,
-                composite_frames,
-                main_without_extension,
+            render_elapsed = time.time() - started
+            postprocess_job = await asyncio.to_thread(
+                self._stage_video_postprocess,
+                mp4_bytes=mp4_bytes,
+                mode=mode,
+                source_name=source_name,
+                last_name=last_name,
+                h3_prompt=h3_prompt,
+                params=dict(params or {}),
+                source_info=source_info,
+                high_res_crop=high_res_crop,
+                overlay=overlay,
+                overlay_mask=overlay_mask,
+                preset_key=preset_key,
+                target_w=target_w,
+                target_h=target_h,
+                video_seed=video_seed,
+                render_elapsed=render_elapsed,
+                settings=settings,
                 quality=quality,
             )
-            created_backup_files.append(main_path)
-            raw_path, raw_extension = await asyncio.to_thread(
-                self._save_animation,
-                raw_frames,
-                raw_without_extension,
-                quality=quality,
-            )
-            created_backup_files.append(raw_path)
-            if raw_extension != extension:
-                print(
-                    f"[VIDEO:BACKUP] 합성본/원본 확장자 불일치: "
-                    f"main={extension}, raw={raw_extension}"
-                )
-                raise RuntimeError("영상 합성본과 원본의 저장 형식이 일치하지 않습니다")
 
-            prompt_path = os.path.join(backup_dir, f"{base_name}.json")
-            info_path = os.path.join(backup_dir, f"{base_name}_info.json")
-            elapsed = time.time() - started
-            prompt_record = {
-                "provider": "video",
-                "kind": "h3_video",
-                "mode": mode,
-                "positive": h3_prompt,
-                "negative": "",
-                "instruction": str((params or {}).get("instruction") or ""),
-                "source_backup": source_name,
-                "last_backup": last_name,
-            }
-            info_record = {
-                "provider": "comfy",
-                "provider_mode": "comfy",
-                "prompt_provider": "video",
-                "execution_source": "local",
-                "gen_method": {
-                    "t2v": "H3 T2V",
-                    "i2v": "H3 I2V",
-                    "first_last": "H3 첫·마지막 프레임",
-                }[mode],
-                "generation_time": elapsed,
-                "is_video_animation": True,
-                "video_mode": mode,
-                "video_duration_seconds": VIDEO_DURATION_SECONDS,
-                "video_fps": VIDEO_FPS,
-                "video_fast_preset": preset_key,
-                "video_width": target_w,
-                "video_height": target_h,
-                "video_seed": video_seed,
-                "source_backup": source_name,
-                "last_backup": last_name,
-                "raw_extension": extension,
-                "animation_format": extension.lstrip("."),
-                "llm_trace": [
-                    str(item)
-                    for item in ((params or {}).get("llm_trace") or [])
-                    if str(item).strip()
-                ],
-            }
-            for inherited_key in ("bot_name", "postprocess_settings", "speak_text"):
-                if source_info.get(inherited_key) not in (None, "", {}):
-                    info_record[inherited_key] = copy.deepcopy(source_info[inherited_key])
-            with open(prompt_path, "x", encoding="utf-8") as handle:
-                json.dump(prompt_record, handle, indent=2, ensure_ascii=False)
-            created_backup_files.append(prompt_path)
-            with open(info_path, "x", encoding="utf-8") as handle:
-                json.dump(info_record, handle, indent=2, ensure_ascii=False)
-            created_backup_files.append(info_path)
-
-            if callable(self.cleanup_backups_func):
-                self.cleanup_backups_func()
-            else:
-                print("[VIDEO:BACKUP] 오래된 백업 정리 스킵: 콜백 없음")
-            if callable(self.invalidate_backup_cache_func):
-                self.invalidate_backup_cache_func()
-            else:
-                print("[VIDEO:BACKUP] 필터 캐시 무효화 스킵: 콜백 없음")
-            await self._notify("backup_created", {"name": base_name})
-
-            # The MP4 in Comfy output is only an intermediate. Remove it only after
-            # both animated archives and metadata have been validated and committed.
+            # MP4 bytes가 독립 후처리 스풀에 fsync된 뒤에는 Comfy 출력 파일을 정리해도 된다.
             if callable(self.cleanup_comfy_video_func):
                 try:
                     cleaned = await self.cleanup_comfy_video_func(
@@ -1608,12 +1936,12 @@ Vision-produced static Visual Context:
                     )
                     if not cleaned:
                         print(
-                            "[VIDEO:CLEANUP] 변환 완료 후 MP4 정리 미완료: "
+                            "[VIDEO:CLEANUP] 후처리 스풀 저장 후 MP4 정리 미완료: "
                             f"descriptor={comfy_video_descriptor!r}"
                         )
                 except Exception as cleanup_exc:
                     print(
-                        "[VIDEO:CLEANUP] 변환 완료 후 MP4 정리 예외: "
+                        "[VIDEO:CLEANUP] 후처리 스풀 저장 후 MP4 정리 예외: "
                         f"descriptor={comfy_video_descriptor!r}, "
                         f"error={type(cleanup_exc).__name__}: {cleanup_exc}"
                     )
@@ -1621,18 +1949,18 @@ Vision-produced static Visual Context:
             else:
                 print("[VIDEO:CLEANUP] Comfy MP4 정리 스킵: 콜백 없음")
             print(
-                f"[VIDEO:BACKUP] 영상화 완료: item={queue_item_id}, backup={base_name}, "
-                f"format={extension}, mode={mode}, elapsed={elapsed:.2f}s"
+                f"[VIDEO:RENDER] H3 완료→독립 후처리 준비: item={queue_item_id}, "
+                f"job={postprocess_job['spool_id']}, mode={mode}, "
+                f"elapsed={render_elapsed:.2f}s"
             )
             return {
                 "success": True,
-                "backup_name": base_name,
-                "format": extension.lstrip("."),
                 "mode": mode,
                 "preset": preset_key,
                 "width": target_w,
                 "height": target_h,
                 "duration": VIDEO_DURATION_SECONDS,
+                "postprocess_job": postprocess_job,
             }
         except Exception as exc:
             print(
@@ -1640,16 +1968,6 @@ Vision-produced static Visual Context:
                 f"source={source_name!r}, error={type(exc).__name__}: {exc}"
             )
             traceback.print_exc()
-            # A partially written new backup is not a valid user artifact.
-            for path in reversed(created_backup_files):
-                try:
-                    if os.path.isfile(path):
-                        os.remove(path)
-                except OSError as cleanup_exc:
-                    print(
-                        f"[VIDEO:CLEANUP] 실패 백업 파일 정리 실패: "
-                        f"path={path!r}, error={cleanup_exc}"
-                    )
             raise
         finally:
             if staging_created:

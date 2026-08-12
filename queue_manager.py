@@ -211,6 +211,8 @@ LLM_TYPES = frozenset({
     "video_prompt_build",           # H3 T2V/I2V/첫·마지막 프롬프트 작성
 })
 
+VIDEO_POSTPROCESS_TYPE = "video_postprocess"
+
 
 @dataclass
 class QueueItem:
@@ -282,6 +284,11 @@ class QueueManager:
         self._modal_wakeup: asyncio.Event = asyncio.Event()
         # Modal 학습 결과 다운로드는 GPU 워커 수와 무관하게 즉시 병렬 실행한다.
         self._modal_download_tasks: dict[str, asyncio.Task] = {}
+        # 영상 후처리는 Comfy/Modal/LLM/챈섭 레인과 독립된 단일 로컬 Vulkan 워커다.
+        # 대기 항목 수에는 상한을 두지 않되 실제 Real-ESRGAN 프로세스는 하나씩 실행한다.
+        self.current_video_postprocess_item: Optional[QueueItem] = None
+        self._video_postprocess_worker_task: Optional[asyncio.Future] = None
+        self._video_postprocess_wakeup: asyncio.Event = asyncio.Event()
         # 삽화 완료 후 다음 작업 시작 전 대기 (새 삽화 도착 시 즉시 진행)
         self._illust_wait_event: Optional[asyncio.Event] = None
         self._illust_wait_started_at: Optional[float] = None
@@ -351,6 +358,23 @@ class QueueManager:
             traceback.print_exc()
 
     def _cleanup_item_resources(self, item: QueueItem) -> None:
+        if item.type == VIDEO_POSTPROCESS_TYPE:
+            if self.video_mode is None:
+                print(
+                    "[QUEUE:VIDEO_POSTPROCESS] 취소 스풀 정리 스킵: "
+                    f"VideoMode 미주입 item={item.id}"
+                )
+                return
+            try:
+                self.video_mode.cleanup_staged_video_postprocess(item.params)
+            except Exception as exc:
+                print(
+                    "[QUEUE:VIDEO_POSTPROCESS] 취소 스풀 정리 실패: "
+                    f"item={item.id}, params={item.params!r}, "
+                    f"error={type(exc).__name__}: {exc}"
+                )
+                traceback.print_exc()
+            return
         if item.type != "qwen_edit":
             return
         if self.qwen_edit_mode is None:
@@ -513,6 +537,8 @@ class QueueManager:
             )
         ):
             asyncio.ensure_future(self._ensure_modal_workers())
+        if self._item_execution_area(item)[0] == "video_postprocess":
+            asyncio.ensure_future(self._ensure_video_postprocess_worker())
         return item
 
     async def add_items_batch(self, items_spec: list, priority: int = 10) -> list:
@@ -564,6 +590,7 @@ class QueueManager:
             self._llm_wakeup.set()
             self._external_wakeup.set()
             self._modal_wakeup.set()
+            self._video_postprocess_wakeup.set()
         return cancelled
 
     async def cancel_item(self, item_id: str) -> bool:
@@ -580,6 +607,7 @@ class QueueManager:
                     self._llm_wakeup.set()
                     self._external_wakeup.set()
                     self._modal_wakeup.set()
+                    self._video_postprocess_wakeup.set()
                     return True
                 return False
         return False
@@ -617,6 +645,7 @@ class QueueManager:
             self._llm_wakeup.set()
             self._external_wakeup.set()
             self._modal_wakeup.set()
+            self._video_postprocess_wakeup.set()
         return cancelled
 
     async def set_paused(self, paused: bool) -> bool:
@@ -637,6 +666,7 @@ class QueueManager:
             self._llm_wakeup.set()
             self._external_wakeup.set()
             self._modal_wakeup.set()
+            self._video_postprocess_wakeup.set()
         return self._paused
 
     async def cancel_all_pending(self):
@@ -655,6 +685,7 @@ class QueueManager:
             self._llm_wakeup.set()
             self._external_wakeup.set()
             self._modal_wakeup.set()
+            self._video_postprocess_wakeup.set()
 
     @staticmethod
     def _comfy_task_key_for_item(item: QueueItem) -> str | None:
@@ -738,6 +769,8 @@ class QueueManager:
         """큐 실행 영역과 공급자를 반환한다. hybrid는 먼저 빈 실행 레인이 가져간다."""
         if item.type == "modal_lora_download":
             return "modal_download", "modal-volume"
+        if item.type == VIDEO_POSTPROCESS_TYPE:
+            return "video_postprocess", "realesrgan-ncnn-vulkan"
         if item.type in LLM_TYPES:
             return "llm", "llm"
 
@@ -895,6 +928,13 @@ class QueueManager:
                 task for task in self._modal_download_tasks.values()
                 if not task.done()
             ]),
+            "video_postprocess_active": int(
+                self.current_video_postprocess_item is not None
+            ),
+            "video_postprocess_worker_active": bool(
+                self._video_postprocess_worker_task
+                and not self._video_postprocess_worker_task.done()
+            ),
         }
 
     def remove_item(self, item_id: str) -> bool:
@@ -1104,6 +1144,8 @@ class QueueManager:
                     and self._modal_comfy_lane_allowed(item)
                 )
             ):
+                return True
+            if lane == "video_postprocess" and execution_area == "video_postprocess":
                 return True
         return False
 
@@ -1376,6 +1418,7 @@ class QueueManager:
         self._llm_wakeup.set()
         self._external_wakeup.set()
         self._modal_wakeup.set()
+        self._video_postprocess_wakeup.set()
 
     # ─── Modal 원격 Comfy 워커 ─────────────────────────────
 
@@ -1727,6 +1770,112 @@ class QueueManager:
             print(f"[QUEUE] 지연 프룬 실패: item={getattr(item, 'id', '')}, error={e}")
             traceback.print_exc()
 
+    # ─── 로컬 영상 후처리 워커 ──────────────────────────────
+
+    async def _ensure_video_postprocess_worker(self) -> None:
+        task = self._video_postprocess_worker_task
+        if task is None or task.done():
+            self._video_postprocess_worker_task = asyncio.ensure_future(
+                self._video_postprocess_worker_loop()
+            )
+            print("[QUEUE:VIDEO_POSTPROCESS] 독립 Vulkan 워커 시작 (동시 실행 1)")
+        self._video_postprocess_wakeup.set()
+
+    def _pop_next_video_postprocess_item(self) -> Optional[QueueItem]:
+        pending = [
+            item
+            for item in self.items
+            if item.status == "pending"
+            and item.type == VIDEO_POSTPROCESS_TYPE
+            and self._dependencies_ready(item)
+        ]
+        if not pending:
+            return None
+        pending.sort(key=lambda item: (item.priority, item.created_at))
+        item = pending[0]
+        item.status = "processing"
+        item.started_at = time.time()
+        item.progress = 0.0
+        return item
+
+    async def _video_postprocess_worker_loop(self) -> None:
+        try:
+            while True:
+                if self._paused:
+                    self._video_postprocess_wakeup.clear()
+                    print("[QUEUE:VIDEO_POSTPROCESS] 일시정지 대기")
+                    await self._video_postprocess_wakeup.wait()
+                    continue
+                item = self._pop_next_video_postprocess_item()
+                if item is None:
+                    self._video_postprocess_wakeup.clear()
+                    if self._has_ready_pending("video_postprocess"):
+                        continue
+                    await self._video_postprocess_wakeup.wait()
+                    continue
+                self.current_video_postprocess_item = item
+                try:
+                    await self._run_item_pipeline(item, is_gpu=False)
+                finally:
+                    self.current_video_postprocess_item = None
+        except asyncio.CancelledError:
+            print("[QUEUE:VIDEO_POSTPROCESS] 독립 Vulkan 워커 취소")
+            raise
+        except Exception as exc:
+            print(
+                "[QUEUE:VIDEO_POSTPROCESS] 워커 치명적 예외: "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+        finally:
+            self.current_video_postprocess_item = None
+
+    async def recover_video_postprocess_jobs(self) -> int:
+        """서버 재시작 전에 스풀된 미완료 MP4를 독립 후처리 큐에 복구한다."""
+        if self.video_mode is None:
+            print("[QUEUE:VIDEO_POSTPROCESS:RECOVERY] VideoMode 미주입으로 복구 생략")
+            return 0
+        try:
+            staged = self.video_mode.list_staged_video_postprocess_jobs()
+        except Exception as exc:
+            print(
+                "[QUEUE:VIDEO_POSTPROCESS:RECOVERY] 스풀 조회 실패: "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            return 0
+        known_spool_ids = {
+            str((item.params or {}).get("spool_id") or "")
+            for item in self.items
+            if item.type == VIDEO_POSTPROCESS_TYPE
+        }
+        recovered = 0
+        for params in staged:
+            spool_id = str(params.get("spool_id") or "")
+            if not spool_id or spool_id in known_spool_ids:
+                continue
+            mode = str(params.get("mode") or "")
+            label = {
+                "t2v": "H3 T2V · Real-ESRGAN→AVIF",
+                "i2v": "H3 I2V · Real-ESRGAN→AVIF",
+                "first_last": "H3 첫·마지막 · Real-ESRGAN→AVIF",
+            }.get(mode, "영상 · Real-ESRGAN→AVIF")
+            await self.add_item(
+                VIDEO_POSTPROCESS_TYPE,
+                label,
+                dict(params),
+                skip_notify=True,
+            )
+            known_spool_ids.add(spool_id)
+            recovered += 1
+        if recovered:
+            print(
+                "[QUEUE:VIDEO_POSTPROCESS:RECOVERY] 미완료 스풀 큐 복구: "
+                f"count={recovered}"
+            )
+            await self._notify_queue_updated()
+        return recovered
+
     # ─── 챈섭 외부 워커 ─────────────────────────────────────
 
     def _target_external_workers(self) -> int:
@@ -1998,6 +2147,7 @@ class QueueManager:
             "video_t2v": self._handle_video_render,
             "video_i2v": self._handle_video_render,
             "video_first_last": self._handle_video_render,
+            VIDEO_POSTPROCESS_TYPE: self._handle_video_postprocess,
             "asset_lora_training": self._handle_asset_lora_training,
             "bot_lora_training": self._handle_bot_lora_training,
             "instance_lora_training": self._handle_instance_lora_training,
@@ -2193,18 +2343,91 @@ class QueueManager:
                 queue_item_id=item.id,
                 progress_callback=on_comfy_progress,
             )
+            postprocess_params = result.get("postprocess_job")
+            if not isinstance(postprocess_params, dict):
+                print(
+                    "[QUEUE:VIDEO_GPU] 후처리 스풀 정보 없음: "
+                    f"item={item.id}, result={result!r}"
+                )
+                raise RuntimeError("H3 결과의 영상 후처리 정보가 없습니다")
+            mode = str(result.get("mode") or "")
+            postprocess_label = {
+                "t2v": "H3 T2V · Real-ESRGAN→AVIF",
+                "i2v": "H3 I2V · Real-ESRGAN→AVIF",
+                "first_last": "H3 첫·마지막 · Real-ESRGAN→AVIF",
+            }.get(mode, "영상 · Real-ESRGAN→AVIF")
+            postprocess_item = await self.add_item(
+                VIDEO_POSTPROCESS_TYPE,
+                postprocess_label,
+                dict(postprocess_params),
+                priority=item.priority,
+            )
             await self._notify_progress(
                 item,
                 {
                     "percentage": 100,
-                    "phase": "completed",
+                    "phase": "video_postprocess_queued",
+                    "postprocess_item_id": postprocess_item.id,
+                },
+            )
+            print(
+                "[QUEUE:VIDEO_GPU] H3 완료→독립 후처리 큐 등록: "
+                f"gpu_item={item.id}, post_item={postprocess_item.id}, mode={mode}"
+            )
+            return {
+                **{key: value for key, value in result.items() if key != "postprocess_job"},
+                "postprocess_item_id": postprocess_item.id,
+                "postprocess_spool_id": postprocess_params.get("spool_id", ""),
+            }
+        except Exception as exc:
+            print(
+                f"[QUEUE:VIDEO_GPU] 처리 실패: item={item.id}, type={item.type}, "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            raise
+
+    async def _handle_video_postprocess(self, item: QueueItem) -> dict:
+        """Comfy 점유와 무관하게 Real-ESRGAN 업스케일과 AVIF 저장을 수행한다."""
+        if self.video_mode is None:
+            print(
+                "[QUEUE:VIDEO_POSTPROCESS] 실행 실패: VideoMode 미주입 "
+                f"item={item.id}, params={item.params!r}"
+            )
+            raise RuntimeError("영상 후처리 모드가 큐에 주입되지 않았습니다")
+
+        async def on_progress(detail: dict) -> None:
+            if not isinstance(detail, dict):
+                print(
+                    "[QUEUE:VIDEO_POSTPROCESS] 진행 상태 형식 오류: "
+                    f"item={item.id}, detail={detail!r}"
+                )
+                return
+            await self._notify_progress(item, detail)
+
+        try:
+            await self._notify_progress(
+                item,
+                {"percentage": 1, "phase": "video_postprocess_preparing"},
+            )
+            result = await self.video_mode.postprocess_staged_video(
+                dict(item.params or {}),
+                queue_item_id=item.id,
+                progress_callback=on_progress,
+            )
+            await self._notify_progress(
+                item,
+                {
+                    "percentage": 100,
+                    "phase": "video_postprocess_complete",
                     "backup_name": result.get("backup_name", ""),
                 },
             )
             return result
         except Exception as exc:
             print(
-                f"[QUEUE:VIDEO_GPU] 처리 실패: item={item.id}, type={item.type}, "
+                "[QUEUE:VIDEO_POSTPROCESS] 처리 실패: "
+                f"item={item.id}, params={item.params!r}, "
                 f"error={type(exc).__name__}: {exc}"
             )
             traceback.print_exc()

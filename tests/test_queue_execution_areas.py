@@ -185,6 +185,65 @@ def test_video_modes_share_one_comfy_allocation_but_keep_detailed_queue_labels()
         assert manager._item_execution_area(_item(item_type))[0] == "gpu"
 
     assert manager._item_execution_area(_item("video_prompt_build"))[0] == "llm"
+    assert manager._item_execution_area(_item("video_postprocess")) == (
+        "video_postprocess",
+        "realesrgan-ncnn-vulkan",
+    )
+
+
+@pytest.mark.asyncio
+async def test_video_postprocess_worker_overlaps_local_comfy_lane(monkeypatch):
+    manager = QueueManager()
+    manager.get_config = lambda: {"llm_max_concurrency": 1}
+    both_started = asyncio.Event()
+    release = asyncio.Event()
+    started_areas = set()
+
+    async def fake_execute(item):
+        started_areas.add(manager._item_execution_area(item)[0])
+        if started_areas == {"gpu", "video_postprocess"}:
+            both_started.set()
+        await release.wait()
+        return {"success": True}
+
+    async def no_prune(_item):
+        return None
+
+    monkeypatch.setattr(manager, "_execute_item", fake_execute)
+    monkeypatch.setattr(manager, "_deferred_prune", no_prune)
+
+    gpu_item = await manager.add_item("asset_generation", "asset", {})
+    post_item = await manager.add_item(
+        "video_postprocess",
+        "video postprocess",
+        {"job_dir": "synthetic"},
+    )
+
+    try:
+        await asyncio.wait_for(both_started.wait(), timeout=1)
+        assert gpu_item.status == "processing"
+        assert post_item.status == "processing"
+        assert manager.get_status()["video_postprocess_active"] == 1
+
+        release.set()
+        await asyncio.wait_for(
+            asyncio.gather(gpu_item.completion_future, post_item.completion_future),
+            timeout=1,
+        )
+    finally:
+        release.set()
+        tasks = [
+            task
+            for task in (
+                manager._video_postprocess_worker_task,
+                *manager._llm_worker_tasks.values(),
+            )
+            if task is not None and not task.done()
+        ]
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
 
 @pytest.mark.asyncio
