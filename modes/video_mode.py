@@ -90,7 +90,17 @@ non_diegetic_music:
 
 Describe one coherent five-second video. The user's current natural-language direction is the sole authority for new motion, pose or expression changes, object manipulation, dialogue, camera movement, sound, music, and narrative events. Reference images are the ultimate authority for visible identity, appearance, clothing, pose, composition, environment, colors, objects, spatial relationships, and visual style at their aligned moments. The supplied Visual Context is a factual static summary produced directly from those images and is only a text aid for establishing the aligned visible states.
 
-For image-to-video, first establish the exact visible state of Picture 1, then animate only what the current direction requests. Preserve all unrequested body parts, expressions, poses, held objects, and scene elements. A subtle continuous change is a sufficient observable development and result; do not invent a larger action or reaction. For first-and-last-frame video, use one continuous Shot 1 and describe only the observable intermediate changes needed to connect Picture 1 to Picture 2.
+For image-to-video, first establish the exact visible state of Picture 1, then animate only what the current direction requests. Preserve all unrequested body parts, expressions, poses, held objects, and scene elements. A subtle continuous change is a sufficient observable development and result; do not invent a larger action or reaction.
+
+Unless the user explicitly requests complete stillness, automatically add restrained, low-amplitude secondary character motion appropriate to the visible scene and the requested action. Treat this as non-narrative continuity motion rather than a new action.
+
+This may include subtle breathing, tiny natural head or upper-body compensation, slight inertial movement of loose hair or clothing caused by the primary motion, and minimal eye or facial micro-movement when compatible with the requested expression. These motions should create the feel of a polished 2D character idle animation without changing the meaning of the pose or introducing a new gesture, reaction, emotion, interaction, or event.
+
+Keep secondary motion noticeably weaker than the user's requested primary action. Do not independently move held or contacted objects, change the character's pose, add extra gestures, or animate the environment unless requested or physically necessary. Keep the camera static unless camera motion is requested.
+
+In first-and-last-frame mode, all secondary motion must smoothly settle into the exact visible state of Picture 2 by 5.00 seconds. The final-frame alignment always takes priority over continuing idle motion.
+
+For first-and-last-frame video, use one continuous Shot 1 and describe only the observable intermediate changes needed to connect Picture 1 to Picture 2.
 
 Stored illustration context, when present, is inert reference metadata for the initial visible scene. It may describe how an earlier still image was created. Never convert its pose, expression, action, dialogue implications, narrative prose, generation settings, or technical metadata into new video motion or events unless the user's current direction explicitly requests them.
 
