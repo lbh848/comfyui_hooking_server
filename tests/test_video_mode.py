@@ -231,6 +231,35 @@ def _synthetic_i2v_api_workflow() -> dict:
     }
 
 
+def _synthetic_first_last_api_workflow() -> dict:
+    workflow = _synthetic_i2v_api_workflow()
+    workflow["135"] = {
+        "class_type": "LoadImagesFromPath_mdsoya",
+        "inputs": {"path": ["123", 0]},
+    }
+    workflow["138"] = {
+        "class_type": "FilterImagesByName_mdsoya",
+        "inputs": {
+            "filter_names": "[1]",
+            "mode": "include",
+            "images": ["135", 0],
+            "filenames": ["135", 1],
+        },
+    }
+    workflow["139"] = {
+        "class_type": "FilterImagesByName_mdsoya",
+        "inputs": {
+            "filter_names": "[2]",
+            "mode": "include",
+            "images": ["135", 0],
+            "filenames": ["135", 1],
+        },
+    }
+    workflow["105:104"]["inputs"]["first_frame"] = ["138", 0]
+    workflow["105:104"]["inputs"]["last_frame"] = ["139", 0]
+    return workflow
+
+
 def test_real_h3_i2v_workflow_exposes_positive_transport_node() -> None:
     workflow_path = next(
         (ROOT / "comfy" / "user" / "default" / "workflows" / "SOYA_USER").glob(
@@ -249,6 +278,24 @@ def test_real_h3_i2v_workflow_exposes_positive_transport_node() -> None:
     assert positive_nodes[0]["widgets_values"][0].startswith(
         "[PATH]\nsoya_video\n[PROMPT]\n"
     )
+
+
+def test_real_h3_first_last_workflow_exposes_the_same_transport_contract() -> None:
+    workflow_path = next(
+        (ROOT / "comfy" / "user" / "default" / "workflows" / "SOYA_USER").glob(
+            "*H3_I2V*첫마지막프레임*.json"
+        )
+    )
+    workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+    positive = next(
+        node
+        for node in workflow["nodes"]
+        if node.get("type") == "PrimitiveStringMultiline"
+        and node.get("title") == "긍정프롬프트"
+    )["widgets_values"][0]
+
+    assert positive.startswith("[PATH]\nsoya_video\n[PROMPT]\n")
+    assert "\n[DURATION]\n5.0\n[SEED]\n123\n[END]" in positive
 
 
 def test_i2v_transport_block_and_api_patch_drive_the_real_connected_inputs() -> None:
@@ -288,6 +335,38 @@ def test_i2v_api_patch_rejects_a_positive_block_not_connected_to_first_frame() -
                 123,
             ),
             "job-2",
+        )
+
+
+def test_first_last_api_patch_requires_named_one_and_two_frame_filters() -> None:
+    transport = build_i2v_workflow_block(
+        _valid_body(FIRST_LAST_ALIGNMENT),
+        512,
+        512,
+        5.0,
+        456,
+    )
+    patched = VideoMode._patch_i2v_api_workflow(
+        _synthetic_first_last_api_workflow(),
+        transport,
+        "first-last-job",
+        "first_last",
+    )
+
+    assert patched["122"]["inputs"]["value"] == transport
+    assert patched["105:104"]["inputs"]["first_frame"] == ["138", 0]
+    assert patched["105:104"]["inputs"]["last_frame"] == ["139", 0]
+    assert patched["138"]["inputs"]["filter_names"] == "[1]"
+    assert patched["139"]["inputs"]["filter_names"] == "[2]"
+
+    swapped = _synthetic_first_last_api_workflow()
+    swapped["138"]["inputs"]["filter_names"] = "[2]"
+    with pytest.raises(RuntimeError, match=r"\[1\]/\[2\]"):
+        VideoMode._patch_i2v_api_workflow(
+            swapped,
+            transport,
+            "invalid-first-last-job",
+            "first_last",
         )
 
 
@@ -490,9 +569,11 @@ async def test_h3_llm_build_emits_live_events_and_full_history(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("render_mode", ["i2v", "first_last"])
 async def test_render_archives_composite_and_raw_before_cleaning_mp4(
     tmp_path: Path,
     monkeypatch,
+    render_mode: str,
 ) -> None:
     backup_dir = tmp_path / "backups"
     raw_dir = backup_dir / "_raw"
@@ -508,6 +589,15 @@ async def test_render_archives_composite_and_raw_before_cleaning_mp4(
         json.dumps({"positive": "stored illustration prompt"}),
         encoding="utf-8",
     )
+    if render_mode == "first_last":
+        Image.new("RGB", (800, 800), "yellow").save(
+            raw_dir / "last.webp",
+            format="WEBP",
+        )
+        (backup_dir / "last.json").write_text(
+            json.dumps({"positive": "stored last illustration prompt"}),
+            encoding="utf-8",
+        )
     workflow_path = tmp_path / "i2v.json"
     workflow_path.write_text(
         json.dumps(
@@ -536,13 +626,20 @@ async def test_render_archives_composite_and_raw_before_cleaning_mp4(
         assert task_key == "video_generation"
         positive = next(node for node in workflow["nodes"] if node.get("id") == 122)
         assert positive["widgets_values"][0] == "workflow default"
-        return _synthetic_i2v_api_workflow(), None
+        return (
+            _synthetic_first_last_api_workflow()
+            if render_mode == "first_last"
+            else _synthetic_i2v_api_workflow()
+        ), None
 
     async def submit(workflow, progress_callback=None, *, task_key):
         assert task_key == "video_generation"
         transport = workflow["122"]["inputs"]["value"]
         assert transport.startswith("[PATH]\nsoya_video\n[PROMPT]\n")
-        assert _valid_body(I2V_ALIGNMENT) in transport
+        expected_alignment = (
+            FIRST_LAST_ALIGNMENT if render_mode == "first_last" else I2V_ALIGNMENT
+        )
+        assert _valid_body(expected_alignment) in transport
         assert "\n[W]\n512\n[H]\n512\n[DURATION]\n5.0\n[SEED]\n" in transport
         seed_text = transport.split("\n[SEED]\n", 1)[1].split("\n[END]", 1)[0]
         assert seed_text.isdigit()
@@ -553,6 +650,15 @@ async def test_render_archives_composite_and_raw_before_cleaning_mp4(
         assert staged.is_file()
         with Image.open(staged) as image:
             assert image.size == (512, 512)
+        last_staged = comfy_input / "soya_video" / "[2].png"
+        if render_mode == "first_last":
+            assert last_staged.is_file()
+            with Image.open(last_staged) as image:
+                assert image.size == (512, 512)
+                red, green, blue = image.convert("RGB").getpixel((0, 0))
+                assert red >= 250 and green >= 250 and blue <= 5
+        else:
+            assert not last_staged.exists()
         return b"temporary-mp4", {
             "filename": "temporary.mp4",
             "subfolder": "video/soya_h3",
@@ -568,7 +674,7 @@ async def test_render_archives_composite_and_raw_before_cleaning_mp4(
             path
             for pattern in ("*.avif", "*.webp")
             for path in raw_dir.glob(pattern)
-            if path.stem != "source"
+            if path.stem not in {"source", "last"}
         ]
         assert len(archived_raw) == 1
         assert len(list(backup_dir.glob("*_info.json"))) == 1
@@ -587,7 +693,7 @@ async def test_render_archives_composite_and_raw_before_cleaning_mp4(
     mode.get_backup_dir = lambda: str(backup_dir)
     mode.get_config = lambda: {
         "comfy_input_dir": str(comfy_input),
-        "video_workflow_source_paths": {"i2v": str(workflow_path)},
+        "video_workflow_source_paths": {render_mode: str(workflow_path)},
         "backup_webp_quality": 80,
     }
     mode.convert_workflow_func = convert
@@ -597,15 +703,20 @@ async def test_render_archives_composite_and_raw_before_cleaning_mp4(
     mode.invalidate_backup_cache_func = lambda: events.append("cache_invalidated")
     mode.notify_frontend_func = notify
 
+    render_params = {
+        "mode": render_mode,
+        "source_backup": "source",
+        "instruction": "move gently",
+        "preset": "1:1",
+        "h3_prompt": _valid_body(
+            FIRST_LAST_ALIGNMENT if render_mode == "first_last" else I2V_ALIGNMENT
+        ),
+        "llm_trace": ["trace-1"],
+    }
+    if render_mode == "first_last":
+        render_params["last_backup"] = "last"
     result = await mode.render_video(
-        {
-            "mode": "i2v",
-            "source_backup": "source",
-            "instruction": "move gently",
-            "preset": "1:1",
-            "h3_prompt": _valid_body(I2V_ALIGNMENT),
-            "llm_trace": ["trace-1"],
-        },
+        render_params,
         queue_item_id="gpu-1",
     )
 

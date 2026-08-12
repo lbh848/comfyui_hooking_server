@@ -811,8 +811,13 @@ Vision-produced static Visual Context:
         workflow: dict,
         transport_block: str,
         job_id: str,
+        mode: str = "i2v",
     ) -> dict:
-        """Inject the I2V transport block after UI-to-API workflow conversion."""
+        """Inject the image-video transport block after UI-to-API conversion."""
+
+        if mode not in ("i2v", "first_last"):
+            print(f"[VIDEO:WORKFLOW] 이미지 영상 API 모드 오류: mode={mode!r}")
+            raise ValueError("이미지 영상 워크플로우 모드가 올바르지 않습니다")
 
         if not isinstance(workflow, dict) or not workflow:
             print(
@@ -890,7 +895,10 @@ Vision-produced static Visual Context:
             print(f"[VIDEO:WORKFLOW] H3 I2V inputs 형식 오류: node={h3_id}")
             raise RuntimeError("H3 I2V 노드 입력이 올바르지 않습니다")
         disconnected = []
-        for input_name in ("prompt", "width", "height", "first_frame"):
+        required_h3_inputs = ["prompt", "width", "height", "first_frame"]
+        if mode == "first_last":
+            required_h3_inputs.append("last_frame")
+        for input_name in required_h3_inputs:
             source_id = linked_node_id(h3_inputs.get(input_name))
             if not source_id or not depends_on(source_id, prompt_id):
                 disconnected.append(input_name)
@@ -902,6 +910,32 @@ Vision-produced static Visual Context:
             raise RuntimeError(
                 "H3 I2V 긍정프롬프트 블록이 프롬프트·크기·시작 이미지에 연결되지 않았습니다"
             )
+
+        expected_frame_filters = (
+            {"first_frame": "[1]", "last_frame": "[2]"}
+            if mode == "first_last"
+            else {}
+        )
+        invalid_frame_filters = []
+        for input_name, expected_name in expected_frame_filters.items():
+            filter_id = linked_node_id(h3_inputs.get(input_name))
+            filter_node = patched.get(filter_id)
+            filter_inputs = filter_node.get("inputs") if isinstance(filter_node, dict) else None
+            if (
+                not isinstance(filter_node, dict)
+                or str(filter_node.get("class_type") or "") != "FilterImagesByName_mdsoya"
+                or not isinstance(filter_inputs, dict)
+                or str(filter_inputs.get("filter_names") or "") != expected_name
+            ):
+                invalid_frame_filters.append(
+                    f"{input_name}:{filter_id or 'missing'}->{expected_name}"
+                )
+        if invalid_frame_filters:
+            print(
+                f"[VIDEO:WORKFLOW] [1]/[2] 프레임 필터 검증 실패: "
+                f"mode={mode}, invalid={invalid_frame_filters}"
+            )
+            raise RuntimeError("H3 시작·마지막 프레임 [1]/[2] 연결이 올바르지 않습니다")
 
         duration_id, duration_node = duration_nodes[0]
         noise_id, noise_node = noise_nodes[0]
@@ -959,7 +993,7 @@ Vision-produced static Visual Context:
         save_inputs["filename_prefix"] = f"video/soya_h3/{job_id}"
         print(
             f"[VIDEO:WORKFLOW] I2V 전송 블록 주입 완료: "
-            f"prompt_node={prompt_id}, h3_node={h3_id}, "
+            f"mode={mode}, prompt_node={prompt_id}, h3_node={h3_id}, "
             f"duration_node={duration_id}, noise_node={noise_id}, "
             f"size_block={len(transport_block)}, job={job_id}"
         )
@@ -1344,7 +1378,7 @@ Vision-produced static Visual Context:
             print(f"[VIDEO:RENDER] Comfy input 폴더 오류: path={comfy_input_dir!r}")
             raise FileNotFoundError("설정된 ComfyUI input 폴더가 없습니다")
         job_id = f"{mode}_{queue_item_id or uuid.uuid4().hex[:12]}_{uuid.uuid4().hex[:6]}"
-        if mode == "i2v":
+        if mode in ("i2v", "first_last"):
             staging_parent = comfy_input_dir
             staging_dir = os.path.join(comfy_input_dir, I2V_WORKFLOW_INPUT_PATH.rstrip("/"))
         else:
@@ -1357,21 +1391,18 @@ Vision-produced static Visual Context:
         video_seed: int | None = None
         started = time.time()
         try:
-            if mode == "i2v" and os.path.isdir(staging_dir):
+            if mode in ("i2v", "first_last") and os.path.isdir(staging_dir):
                 self._remove_exact_tree(staging_dir, staging_parent)
             os.makedirs(staging_dir, exist_ok=False)
             staging_created = True
-            if mode == "i2v":
+            if mode in ("i2v", "first_last"):
                 first_path = os.path.join(staging_dir, "[1].png")
                 first_resized.save(first_path, format="PNG")
                 print(
-                    f"[VIDEO:WORKFLOW] I2V 시작 이미지 스테이징 완료: "
+                    f"[VIDEO:WORKFLOW] 시작 이미지 [1] 스테이징 완료: "
+                    f"mode={mode}, "
                     f"path={first_path!r}, size={first_resized.size}"
                 )
-            elif mode == "first_last":
-                first_path = os.path.join(staging_dir, "first.png")
-                first_resized.save(first_path, format="PNG")
-                staged_names["first"] = f"soya_h3/{job_id}/first.png"
             if mode == "first_last":
                 _last_crop, last_resized, _last_key, _lw, _lh, _last_path = (
                     self._prepared_reference(
@@ -1380,9 +1411,12 @@ Vision-produced static Visual Context:
                         target_size=(target_w, target_h),
                     )
                 )
-                last_path = os.path.join(staging_dir, "last.png")
+                last_path = os.path.join(staging_dir, "[2].png")
                 last_resized.save(last_path, format="PNG")
-                staged_names["last"] = f"soya_h3/{job_id}/last.png"
+                print(
+                    f"[VIDEO:WORKFLOW] 마지막 이미지 [2] 스테이징 완료: "
+                    f"path={last_path!r}, size={last_resized.size}"
+                )
 
             workflow_paths = config.get("video_workflow_source_paths")
             workflow_path = (
@@ -1404,7 +1438,7 @@ Vision-produced static Visual Context:
 
             workflow_for_conversion = ui_workflow
             i2v_transport_block = ""
-            if mode == "i2v":
+            if mode in ("i2v", "first_last"):
                 video_seed = (
                     int.from_bytes(os.urandom(7), "big") % 1_000_000_000_000_000
                 )
@@ -1435,11 +1469,12 @@ Vision-produced static Visual Context:
                     f"error={convert_error!r}"
                 )
                 raise RuntimeError(f"H3 워크플로우 변환 실패: {convert_error}")
-            if mode == "i2v":
+            if mode in ("i2v", "first_last"):
                 api_workflow = self._patch_i2v_api_workflow(
                     api_workflow,
                     i2v_transport_block,
                     job_id,
+                    mode,
                 )
             if not callable(self.submit_workflow_func):
                 print("[VIDEO:WORKFLOW] 영상 제출 콜백 없음")
