@@ -450,13 +450,13 @@
             display: flex;
             justify-content: center;
             align-items: center;
-            min-height: 200px;
+            height: 400px; /* 고정 높이 — 원본 해상도가 작아도 모든 카드 이미지 영역을 동일하게. */
         }
 
         .card-image-area img {
-            max-width: 100%;
-            max-height: 400px;
-            object-fit: contain;
+            width: 100%;
+            height: 100%;
+            object-fit: contain; /* 비율 유지하며 400px 영역을 채운다. 작은 이미지도 확대 표시. */
             cursor: pointer;
         }
 
@@ -498,11 +498,20 @@
         /* 실행 출처 딱지: 썸네일 좌상단 M(Modal)/S(챈섭). 분석·식별용이므로
            라이트박스(이미지 확대)에는 표시하지 않는다 — openLightbox는 이 배지 없이
            img.src 만 확대한다. 로컬 GPU 백업은 배지 없음. */
-        .card-image-area .source-badge {
+        /* 딱지(M/S/A) 묶음. 위치(top/left)는 여기서 고정하고, 자식 badge는 세로로 쌓는다.
+           M 아래에 A가 이어 붙도록 flex-direction: column. */
+        .card-image-area .badge-stack {
             position: absolute;
             top: 6px;
             left: 6px;
             z-index: 3;
+            display: flex;
+            flex-direction: column;
+            gap: 3px;
+            pointer-events: none;
+            user-select: none;
+        }
+        .card-image-area .source-badge {
             padding: 1px 6px;
             border-radius: 4px;
             font-size: 0.66rem;
@@ -510,8 +519,6 @@
             line-height: 1.5;
             color: #fff;
             background: rgba(0,0,0,0.6);
-            pointer-events: none;
-            user-select: none;
             letter-spacing: 0.5px;
         }
         .card-image-area .source-badge.source-modal {
@@ -519,6 +526,13 @@
         }
         .card-image-area .source-badge.source-chansub {
             background: rgba(236,72,153,0.92);
+        }
+        .card-image-area .source-badge.source-anim {
+            background: rgba(245,158,11,0.92);
+        }
+        /* animated 카드: 기본은 정지 poster, 호버 시 원본으로 src 교체해 재생. */
+        .card-image-area .backup-img.is-anim {
+            cursor: pointer;
         }
 
         .card-body {
@@ -24012,6 +24026,18 @@
                 const sourceBadge = sourceKind
                     ? `<span class="source-badge source-${sourceKind}" title="${sourceKind === 'modal' ? 'Modal 원격 ComfyUI 생성' : '챈섭 API 생성'}">${sourceKind === 'modal' ? 'M' : 'S'}</span>`
                     : '';
+                // animated 삽화: A 딱지(M 아래 고정 위치). 기본은 정지 poster(첫 프레임),
+                // 호버 시 원본(animated)으로 src 교체 → 한 번에 한 장만 움직여 력 방지.
+                const animBadge = b.is_animated
+                    ? `<span class="source-badge source-anim" title="animated">A</span>`
+                    : '';
+                const badges = (sourceBadge || animBadge)
+                    ? `<div class="badge-stack">${sourceBadge}${animBadge}</div>`
+                    : '';
+                const posterSrc = b.poster_url || b.image_url;
+                const animAttrs = b.is_animated
+                    ? `data-poster-src="${escapeAttr(posterSrc)}" data-anim-src="${escapeAttr(b.image_url)}" onmouseenter="this.src=this.dataset.animSrc" onmouseleave="this.src=this.dataset.posterSrc"`
+                    : '';
 
                 // Store prompt data in Map (avoids data-attribute truncation issues)
                 promptDataMap.set(b.name, { positive, negative, enhanced_positive: b.enhanced_positive || '', wildcard_info: b.wildcard_info || {}, conversion_info: b.conversion_info || {} });
@@ -24021,9 +24047,11 @@
                 html += `
                 <div class="${cardClass}" data-name="${escapeAttr(b.name)}">
                     <div class="card-image-area">
-                        ${sourceBadge}
-                        <img src="${escapeAttr(b.image_url)}" alt="${escapeAttr(b.name)}"
-                             loading="lazy" onclick="openLightbox(this.src)">
+                        ${badges}
+                        <img class="backup-img${b.is_animated ? ' is-anim' : ''}"
+                             src="${escapeAttr(posterSrc)}" alt="${escapeAttr(b.name)}"
+                             loading="lazy" ${animAttrs}
+                             onclick="openLightbox('${escapeAttr(b.image_url)}')">
                         <div class="regen-result" id="regen-${escapeAttr(b.name)}">
                             <img src="" alt="재생성 결과">
                             <button class="close-btn" onclick="closeRegen('${escapeAttr(b.name)}')">&times;</button>

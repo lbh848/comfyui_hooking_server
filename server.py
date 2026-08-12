@@ -7483,6 +7483,28 @@ _BACKUP_FILTER_BUILD_BATCH = 100
 _main_event_loop = None  # on_startup 에서 메인 asyncio 루프 보관 (백그라운드 스레드용)
 
 
+# {path: (mtime, is_animated)} — 백업 이미지 animated 여부 캐시. mtime 변경시 자동 갱신.
+_BACKUP_ANIM_CACHE: dict = {}
+
+
+def _backup_image_kind(path: str) -> bool:
+    """백업 이미지가 animated인지 판별한다. mtime 기반 in-memory 캐시로 매번 PIL open 비용을 절약.
+    정적 webp/avif는 헤더(ANIM chunk 등)만 읽어 빠르다. 실패/정적이면 False."""
+    try:
+        mt = os.path.getmtime(path)
+        cached = _BACKUP_ANIM_CACHE.get(path)
+        if cached and cached[0] == mt:
+            return cached[1]
+        with Image.open(path) as img:
+            is_anim = bool(getattr(img, "is_animated", False))
+        _BACKUP_ANIM_CACHE[path] = (mt, is_anim)
+        return is_anim
+    except Exception:
+        print(f"[BACKUP_ANIM] ⚠ animated 판별 실패: {path!r}")
+        traceback.print_exc()
+        return False
+
+
 def _invalidate_backup_filter_cache():
     """백업 추가/삭제 후 캐시를 무효화한다. 진행 중인 빌드는 세대가 바뀌어 자동 중단되며,
     다음 조회 시 새 빌드가 시작된다."""
@@ -7528,7 +7550,9 @@ def _build_backup_filter_cache_background(backup_dir: str, my_gen: int):
     global _backup_filter_cache, _backup_filter_building
     try:
         t0 = time.time()
-        files = glob.glob(os.path.join(backup_dir, "*.webp"))
+        files = []
+        for _pat in ("*.webp", "*.avif"):
+            files.extend(glob.glob(os.path.join(backup_dir, _pat)))
         total = len(files)
         name_to_bot = {}
         name_to_method = {}
@@ -8401,8 +8425,10 @@ async def handle_api_backups(request: web.Request) -> web.Response:
     filter_param = request.query.get("filter", "all") or "all"
 
     backup_dir = get_backup_base_dir()
-    pattern = os.path.join(backup_dir, "*.webp")
-    files = sorted(glob.glob(pattern), key=os.path.getmtime, reverse=True)
+    files = []
+    for _pat in ("*.webp", "*.avif"):
+        files.extend(glob.glob(os.path.join(backup_dir, _pat)))
+    files = sorted(set(files), key=os.path.getmtime, reverse=True)
 
     # ─── 필터 적용 ───
     if filter_param == "bot_none" or filter_param.startswith("bot:"):
@@ -8431,7 +8457,8 @@ async def handle_api_backups(request: web.Request) -> web.Response:
     
     backups = []
     for f in files:
-        base = os.path.splitext(os.path.basename(f))[0]
+        base, ext = os.path.splitext(os.path.basename(f))  # ext: 실제 파일 확장자 (.webp / .avif)
+        is_animated = _backup_image_kind(f)
         info_path = os.path.join(backup_dir, f"{base}_info.json")
         prompt_path_json = os.path.join(backup_dir, f"{base}.json")
         prompt_path_txt = os.path.join(backup_dir, f"{base}.txt")
@@ -8474,7 +8501,11 @@ async def handle_api_backups(request: web.Request) -> web.Response:
 
         backups.append({
             "name": base,
-            "image_url": f"/api/backup_image/{base}.webp",
+            "image_url": f"/api/backup_image/{base}{ext}",
+            "is_animated": is_animated,
+            # animated: 정지 poster(첫 프레임) URL. 정적이면 원본과 동일.
+            "poster_url": (f"/api/backup_poster/{base}" if is_animated
+                           else f"/api/backup_image/{base}{ext}"),
             "has_prompt": os.path.exists(prompt_path),
             "positive": positive,
             "negative": negative,
@@ -8734,6 +8765,7 @@ async def handle_api_backup_image(request: web.Request) -> web.Response:
     ext = os.path.splitext(filename)[1].lower()
     content_type = {
         ".webp": "image/webp",
+        ".avif": "image/avif",
         ".png": "image/png",
         ".jpg": "image/jpeg",
         ".jpeg": "image/jpeg",
@@ -8750,6 +8782,67 @@ async def handle_api_backup_image(request: web.Request) -> web.Response:
     return web.Response(
         body=data,
         content_type=content_type,
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate"},
+    )
+
+
+async def handle_api_backup_poster(request: web.Request) -> web.Response:
+    """GET /api/backup_poster/{name} — animated 삽화의 첫 프레임 정적 poster를 반환한다.
+
+    호버 재생 UI가 기본으로 보여줄 "정지 첫 프레임" 용도. 원본(animated webp/avif)에서
+    첫 프레임을 뽑아 정적 webp로 변환해 backup_dir/_posters/{name}.webp에 mtime 캐싱한다.
+    원본이 갱신되면(mtime이 poster보다 새면) 다시 생성한다. 정적 원본이 들어오면 그냥
+    첫(유일) 프레임을 저장한다."""
+    name = request.match_info.get("name", "")
+    if ".." in name or "/" in name or "\\" in name:
+        print(f"[BACKUP_POSTER] 잘못된 name 요청 거부: {name!r}")
+        return web.Response(status=400, text="Invalid name")
+
+    backup_dir = get_backup_base_dir()
+    src_path = None
+    for _ext in (".webp", ".avif"):
+        _p = os.path.join(backup_dir, f"{name}{_ext}")
+        if os.path.exists(_p):
+            src_path = _p
+            break
+    if src_path is None:
+        return web.Response(status=404)
+
+    poster_dir = os.path.join(backup_dir, "_posters")
+    try:
+        os.makedirs(poster_dir, exist_ok=True)
+    except Exception:
+        print(f"[BACKUP_POSTER] ⚠ poster 폴더 생성 실패: {poster_dir!r}")
+        traceback.print_exc()
+        return web.Response(status=500, text="poster dir error")
+
+    poster_path = os.path.join(poster_dir, f"{name}.webp")
+    try:
+        src_mt = os.path.getmtime(src_path)
+        # 캐시 hit: poster가 원본보다 새로 작성되었으면 재사용
+        if not (os.path.exists(poster_path) and os.path.getmtime(poster_path) >= src_mt):
+            with Image.open(src_path) as img:
+                if getattr(img, "is_animated", False):
+                    img.seek(0)  # 첫 프레임으로
+                poster = img.convert("RGB")
+            poster.save(poster_path, format="WEBP", quality=80)
+            print(f"[BACKUP_POSTER] poster 생성: {name}.webp ({src_path})")
+    except Exception:
+        print(f"[BACKUP_POSTER] ⚠ poster 생성 실패: {src_path!r}")
+        traceback.print_exc()
+        return web.Response(status=500, text="poster gen error")
+
+    try:
+        with open(poster_path, "rb") as fp:
+            data = fp.read()
+    except Exception:
+        print(f"[BACKUP_POSTER] ⚠ poster 파일 읽기 실패: {poster_path!r}")
+        traceback.print_exc()
+        return web.Response(status=500, text="poster read error")
+
+    return web.Response(
+        body=data,
+        content_type="image/webp",
         headers={"Cache-Control": "no-store, no-cache, must-revalidate"},
     )
 
@@ -12748,6 +12841,7 @@ app.router.add_get("/api/backups", handle_api_backups)
 app.router.add_get("/api/backups/filters", handle_api_backups_filters)
 app.router.add_get("/api/backups/{name}/llm_trace", handle_api_backup_llm_trace)
 app.router.add_get("/api/backup_image/{filename}", handle_api_backup_image)
+app.router.add_get("/api/backup_poster/{name}", handle_api_backup_poster)
 app.router.add_get("/api/backup_prompt/{name}", handle_api_backup_prompt)
 app.router.add_get("/api/backup_chat", handle_api_backup_chat)
 app.router.add_post("/api/backup_delete/{name}", handle_api_backup_delete)
