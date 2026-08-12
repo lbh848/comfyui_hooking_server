@@ -7493,6 +7493,37 @@
             display: flex;
             min-height: calc(100vh - 200px);
         }
+        .independent-scroll-container {
+            height: var(--independent-scroll-height, calc(100dvh - 200px));
+            min-height: 0;
+            overflow: hidden;
+        }
+        .independent-scroll-container > .asset-main,
+        .independent-scroll-container > .asset-sidebar {
+            min-height: 0;
+            overflow-x: hidden;
+            overflow-y: auto;
+            overscroll-behavior-y: contain;
+            scrollbar-width: thin;
+            scrollbar-color: var(--accent) transparent;
+        }
+        .independent-scroll-container > .asset-main::-webkit-scrollbar,
+        .independent-scroll-container > .asset-sidebar::-webkit-scrollbar {
+            width: 6px;
+        }
+        .independent-scroll-container > .asset-main::-webkit-scrollbar-track,
+        .independent-scroll-container > .asset-sidebar::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        .independent-scroll-container > .asset-main::-webkit-scrollbar-thumb,
+        .independent-scroll-container > .asset-sidebar::-webkit-scrollbar-thumb {
+            background: var(--accent);
+            border-radius: 3px;
+        }
+        .independent-scroll-container > .asset-main::-webkit-scrollbar-thumb:hover,
+        .independent-scroll-container > .asset-sidebar::-webkit-scrollbar-thumb:hover {
+            background: var(--accent);
+        }
         /* ─── Pose 편집 스타일 ──────────────────────────────── */
         .pose-container {
             display: flex;
@@ -13617,7 +13648,7 @@
                 <span style="font-size:0.85rem;">디버깅</span>
                 <span id="debug-mode-status" class="toggle-status off">OFF</span>
             </div>
-            <div class="asset-container">
+            <div class="asset-container independent-scroll-container">
                 <div class="asset-main" id="bot-main">
                     <div class="asset-loading" id="bot-loading" style="display:none;">
                         <div class="spinner" style="width:32px;height:32px;border-width:3px;"></div>
@@ -13906,7 +13937,7 @@
             <div class="asset-breadcrumb" id="asset-breadcrumb">
                 <span>에셋</span>
             </div>
-            <div class="asset-container">
+            <div class="asset-container independent-scroll-container">
                 <div class="asset-main" id="asset-main">
                     <div class="asset-loading" id="asset-loading" style="display:none;">
                         <div class="spinner" style="width:32px;height:32px;border-width:3px;"></div>
@@ -14460,7 +14491,7 @@
             <div class="asset-breadcrumb" id="au-breadcrumb">
                 <span>에셋</span>
             </div>
-            <div class="asset-container">
+            <div class="asset-container independent-scroll-container">
                 <div class="asset-main" id="au-main">
                     <div class="asset-loading" id="au-loading" style="display:none;">
                         <div class="spinner" style="width:32px;height:32px;border-width:3px;"></div>
@@ -46260,6 +46291,39 @@
         let assetNavOutfit = '';
         let assetNavExpression = '';
 
+        const INDEPENDENT_SCROLL_CONTAINER_SELECTOR = [
+            '#tab-bot-content.active > .independent-scroll-container',
+            '#tab-asset-content.active > .independent-scroll-container',
+            '#tab-asset-upload-content.active > .independent-scroll-container',
+        ].join(', ');
+        let independentScrollResizeFrame = 0;
+
+        function syncIndependentScrollHeight() {
+            const container = document.querySelector(INDEPENDENT_SCROLL_CONTAINER_SELECTOR);
+            if (!container) return;
+
+            const containerTop = Math.max(0, container.getBoundingClientRect().top);
+            const mainElement = container.closest('main');
+            const mainBottomPadding = mainElement
+                ? (Number.parseFloat(window.getComputedStyle(mainElement).paddingBottom) || 0)
+                : 0;
+            const availableHeight = Math.max(
+                160,
+                Math.floor(window.innerHeight - containerTop - mainBottomPadding),
+            );
+            container.style.setProperty('--independent-scroll-height', `${availableHeight}px`);
+        }
+
+        function scheduleIndependentScrollHeightSync() {
+            if (independentScrollResizeFrame) return;
+            independentScrollResizeFrame = window.requestAnimationFrame(() => {
+                independentScrollResizeFrame = 0;
+                syncIndependentScrollHeight();
+            });
+        }
+
+        window.addEventListener('resize', scheduleIndependentScrollHeightSync);
+
         async function switchTab(name) {
             if (name === 'bot') {
                 try {
@@ -46284,13 +46348,16 @@
                 if (sb) sb.style.display = 'flex';
             } else if (name === 'bot') {
                 document.getElementById('tab-bot-content').classList.add('active');
+                scheduleIndependentScrollHeightSync();
                 await loadBotData();
                 loadIllustArtistPresets();
             } else if (name === 'asset') {
                 document.getElementById('tab-asset-content').classList.add('active');
+                scheduleIndependentScrollHeightSync();
                 if (!assetTags) loadAssetData();
             } else if (name === 'asset-upload') {
                 document.getElementById('tab-asset-upload-content').classList.add('active');
+                scheduleIndependentScrollHeightSync();
                 if (!assetTags) await loadAssetData();
                 auLoadCharacterList();
             } else if (name === 'pose') {
