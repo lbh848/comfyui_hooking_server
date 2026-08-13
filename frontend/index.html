@@ -8123,6 +8123,49 @@
         .asset-image-card .card-actions .qwen-edit-btn:hover {
             background: rgba(14, 165, 233, 0.2);
         }
+        .asset-image-card .card-actions .asset-video-btn {
+            flex: 0 0 100%;
+            border-color: rgba(184, 118, 210, 0.7);
+            color: #e9b6ff;
+            font-weight: 750;
+        }
+        .asset-image-card .card-actions .asset-video-btn:hover:not(:disabled) {
+            background: rgba(155, 89, 182, 0.22);
+        }
+        .asset-image-card .source-badge.source-anim,
+        .asset-gallery-card > .source-badge.source-anim {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            z-index: 3;
+            padding: 2px 7px;
+            border-radius: 4px;
+            color: #fff;
+            background: rgba(245, 158, 11, 0.92);
+            font-size: 0.68rem;
+            font-weight: 750;
+            pointer-events: none;
+        }
+        .asset-gallery-card > .source-badge.source-anim {
+            top: 36px;
+        }
+        .asset-gallery-card .gallery-video-btn {
+            position: absolute;
+            right: 8px;
+            bottom: 48px;
+            z-index: 3;
+            padding: 5px 9px;
+            border: 1px solid rgba(184, 118, 210, 0.8);
+            border-radius: 6px;
+            color: #fff;
+            background: rgba(116, 64, 138, 0.9);
+            font-size: 0.72rem;
+            font-weight: 750;
+            cursor: pointer;
+        }
+        .asset-gallery-card .gallery-video-btn:hover {
+            background: rgba(155, 89, 182, 0.98);
+        }
         .asset-image-card .prompt-info {
             margin: 0 8px 8px;
             font-size: 0.68rem;
@@ -24230,6 +24273,9 @@
                         case 'asset_generation_completed':
                             handleAssetWsEvent(msg.type, msg.data);
                             break;
+                        case 'asset_video_created':
+                            handleAssetVideoCreated(msg.data);
+                            break;
                         case 'qwen_edit_started':
                         case 'qwen_edit_progress':
                         case 'qwen_edit_completed':
@@ -25115,6 +25161,7 @@
 
         // ─── MiniMax H3 영상화 ───
         let videoReferenceOptions = [];
+        let videoWorkspaceSourceRef = null;
 
         const VIDEO_UPSCALE_LABELS = {
             'realesr-animevideov3': '품질',
@@ -25122,6 +25169,45 @@
             'lanczos': '단순 확대',
             'none': '원본 크기',
         };
+
+        function videoReferenceKey(reference) {
+            if (!reference || typeof reference !== 'object') return '';
+            if (reference.kind === 'backup') {
+                return `backup:${String(reference.name || '')}`;
+            }
+            if (reference.kind === 'asset') {
+                return `asset:${JSON.stringify([
+                    String(reference.character || ''),
+                    String(reference.outfit || ''),
+                    String(reference.expression || ''),
+                    String(reference.filename || ''),
+                ])}`;
+            }
+            console.error('[VIDEO_UI] 지원하지 않는 영상 참조:', reference);
+            return '';
+        }
+
+        function normalizeVideoReferenceOption(item) {
+            const reference = item?.reference || (
+                item?.name ? {kind: 'backup', name: item.name} : null
+            );
+            const key = videoReferenceKey(reference);
+            if (!key) {
+                console.error('[VIDEO_UI] 영상 참조 옵션 정규화 실패:', item);
+                return null;
+            }
+            return {
+                ...item,
+                reference,
+                key,
+                label: item.label || item.name || reference.filename || key,
+                image_url: item.poster_url || item.image_url || '',
+            };
+        }
+
+        function getVideoReferenceByKey(key) {
+            return videoReferenceOptions.find(item => item.key === key) || null;
+        }
 
         function getSelectedVideoOption(name, fallback = '') {
             return document.querySelector(`input[name="${name}"]:checked`)?.value || fallback;
@@ -25267,9 +25353,12 @@
             const duration = normalizedVideoDuration();
             if (lastFrame) lastFrame.style.display = isLast ? 'block' : 'none';
             if (modeNote) {
+                const sourceLabel = videoWorkspaceSourceRef?.kind === 'asset'
+                    ? '현재 에셋'
+                    : '현재 카드의 _raw';
                 modeNote.textContent = isLast
-                    ? `현재 카드의 _raw를 0초, 선택한 마지막 프레임을 ${duration}초에 정렬합니다.`
-                    : `현재 카드의 _raw를 시작 프레임으로 사용해 ${duration}초 영상을 만듭니다.`;
+                    ? `${sourceLabel}을 0초, 선택한 마지막 프레임을 ${duration}초에 정렬합니다.`
+                    : `${sourceLabel}을 시작 프레임으로 사용해 ${duration}초 영상을 만듭니다.`;
             }
             const loopCheckbox = document.getElementById('video-generation-loop');
             if (loopCheckbox) {
@@ -25294,18 +25383,18 @@
             updateVideoGenerationSummary();
         }
 
-        function refreshVideoLastFrameOptions(sourceName) {
+        function refreshVideoLastFrameOptions(sourceKey) {
             const select = document.getElementById('video-generation-last');
             if (!select) {
                 console.error('[VIDEO_UI] 마지막 프레임 선택기를 찾지 못했습니다.');
                 return;
             }
             const previous = select.value;
-            const options = videoReferenceOptions.filter(item => item.name !== sourceName);
+            const options = videoReferenceOptions.filter(item => item.key !== sourceKey);
             select.innerHTML = options.length
-                ? options.map(item => `<option value="${escapeAttr(item.name)}">${escapeHtml(formatDate(item.mtime))} · ${escapeHtml(item.name)}</option>`).join('')
-                : '<option value="">선택 가능한 다른 _raw 백업 없음</option>';
-            if (options.some(item => item.name === previous)) select.value = previous;
+                ? options.map(item => `<option value="${escapeAttr(item.key)}">${escapeHtml(formatDate(item.mtime))} · ${escapeHtml(item.label)}</option>`).join('')
+                : '<option value="">선택 가능한 다른 프레임 없음</option>';
+            if (options.some(item => item.key === previous)) select.value = previous;
             onVideoLastFrameChange();
         }
 
@@ -25318,7 +25407,7 @@
                 console.error('[VIDEO_UI] 마지막 프레임 미리보기 UI 요소를 찾지 못했습니다.');
                 return;
             }
-            const last = videoReferenceOptions.find(item => item.name === select.value);
+            const last = getVideoReferenceByKey(select.value);
             if (!last) {
                 preview.removeAttribute('src');
                 preview.style.display = 'none';
@@ -25332,11 +25421,11 @@
                 empty.textContent = '미리보기를 불러오지 못했습니다.';
                 empty.style.display = 'flex';
             };
-            empty.textContent = '마지막 프레임으로 사용할 `_raw` 삽화를 선택하세요.';
+            empty.textContent = '마지막 프레임으로 사용할 이미지를 선택하세요.';
             preview.src = last.image_url;
             preview.style.display = 'block';
             empty.style.display = 'none';
-            nameLabel.textContent = last.name;
+            nameLabel.textContent = last.label;
         }
 
         function isVideoLoopEnabled() {
@@ -25345,13 +25434,17 @@
             return document.getElementById('video-generation-loop')?.checked === true;
         }
 
-        function getEffectiveLastBackup() {
+        function getEffectiveLastVideoReference() {
             const mode = document.getElementById('video-generation-mode')?.value || 'i2v';
-            if (mode !== 'first_last') return '';
+            if (mode !== 'first_last') return null;
             if (isVideoLoopEnabled()) {
-                return document.getElementById('video-generation-source')?.value || '';
+                return getVideoReferenceByKey(
+                    document.getElementById('video-generation-source')?.value || ''
+                )?.reference || null;
             }
-            return document.getElementById('video-generation-last')?.value || '';
+            return getVideoReferenceByKey(
+                document.getElementById('video-generation-last')?.value || ''
+            )?.reference || null;
         }
 
         function syncVideoLastPreviewToSource() {
@@ -25362,8 +25455,8 @@
                 console.error('[VIDEO_UI] 마지막 프레임 미리보기 UI 요소를 찾지 못했습니다.');
                 return;
             }
-            const sourceName = document.getElementById('video-generation-source')?.value || '';
-            const source = videoReferenceOptions.find(item => item.name === sourceName);
+            const sourceKey = document.getElementById('video-generation-source')?.value || '';
+            const source = getVideoReferenceByKey(sourceKey);
             if (!source) {
                 preview.onerror = null;
                 preview.removeAttribute('src');
@@ -25382,7 +25475,7 @@
             empty.style.display = 'none';
             preview.src = source.image_url;
             preview.style.display = 'block';
-            nameLabel.textContent = source.name + ' · (첫 프레임과 동일 · 루프)';
+            nameLabel.textContent = source.label + ' · (첫 프레임과 동일 · 루프)';
         }
 
         function onVideoLoopChange() {
@@ -25408,7 +25501,7 @@
                 console.error('[VIDEO_UI] 영상화 원본 UI 요소를 찾지 못했습니다.');
                 return;
             }
-            const source = videoReferenceOptions.find(item => item.name === select.value);
+            const source = getVideoReferenceByKey(select.value);
             if (!source) {
                 preview.removeAttribute('src');
                 preview.style.display = 'none';
@@ -25424,48 +25517,53 @@
                 empty.textContent = '미리보기를 불러오지 못했습니다. 원본 선택은 유지됩니다.';
                 empty.style.display = 'flex';
             };
-            empty.textContent = '영상화할 `_raw` 삽화를 선택하세요.';
+            empty.textContent = '영상화할 원본 이미지를 선택하세요.';
             preview.src = source.image_url;
             preview.style.display = 'block';
             empty.style.display = 'none';
-            nameLabel.textContent = source.name;
+            nameLabel.textContent = source.label;
             if (isVideoLoopEnabled()) syncVideoLastPreviewToSource();
-            else refreshVideoLastFrameOptions(source.name);
+            else refreshVideoLastFrameOptions(source.key);
         }
 
-        async function loadVideoReferenceOptions(preferredSource = '') {
+        async function loadVideoReferenceOptions(preferredReference) {
             const sourceInput = document.getElementById('video-generation-source');
             if (!sourceInput) {
                 console.error('[VIDEO_UI] 현재 카드 원본 값을 저장할 요소가 없습니다.');
                 return;
             }
-            const previous = sourceInput.value;
-            sourceInput.value = preferredSource || previous;
+            const preferredKey = videoReferenceKey(preferredReference);
+            const endpoint = preferredReference?.kind === 'asset'
+                ? `/api/asset_mode/characters/${encodeURIComponent(preferredReference.character)}/video_references`
+                : '/api/video/reference-options';
+            videoReferenceOptions = [];
+            sourceInput.value = '';
             onVideoSourceChange();
             try {
-                const data = await fetchJSON('/api/video/reference-options');
-                if (!data.success) throw new Error(data.error || '참조 백업 목록 조회 실패');
-                videoReferenceOptions = Array.isArray(data.options) ? data.options : [];
+                const data = await fetchJSON(endpoint);
+                if (!data.success) throw new Error(data.error || '영상 참조 목록 조회 실패');
+                videoReferenceOptions = (Array.isArray(data.options) ? data.options : [])
+                    .map(normalizeVideoReferenceOption)
+                    .filter(Boolean);
                 if (!videoReferenceOptions.length) {
-                    console.error('[VIDEO_UI] 영상화 가능한 _raw 백업이 없습니다.');
+                    console.error('[VIDEO_UI] 영상화 가능한 참조 이미지가 없습니다.');
                     sourceInput.value = '';
                     onVideoSourceChange();
                     return;
                 }
-                const requested = preferredSource || previous;
-                if (!videoReferenceOptions.some(item => item.name === requested)) {
-                    console.error('[VIDEO_UI] 현재 카드가 영상화 참조 목록에 없습니다:', requested);
+                if (!videoReferenceOptions.some(item => item.key === preferredKey)) {
+                    console.error('[VIDEO_UI] 현재 카드가 영상화 참조 목록에 없습니다:', preferredReference);
                     sourceInput.value = '';
                 } else {
-                    sourceInput.value = requested;
+                    sourceInput.value = preferredKey;
                 }
                 onVideoSourceChange();
             } catch (error) {
-                console.error('[VIDEO_UI] 영상화 참조 백업 목록 로드 실패:', error);
+                console.error('[VIDEO_UI] 영상화 참조 목록 로드 실패:', error);
                 videoReferenceOptions = [];
                 sourceInput.value = '';
                 onVideoSourceChange();
-                showToast('영상화 참조 백업 목록을 불러오지 못했습니다.', 'error');
+                showToast('영상화 참조 이미지 목록을 불러오지 못했습니다.', 'error');
             }
         }
 
@@ -25514,6 +25612,35 @@
                 showToast('이 백업에는 영상화에 필요한 _raw 원본이 없습니다.', 'error');
                 return;
             }
+            await openVideoWorkspaceForReference({kind: 'backup', name});
+        }
+
+        async function openAssetVideoWorkspace(data) {
+            const reference = {
+                kind: 'asset',
+                character: String(data?.character || ''),
+                outfit: String(data?.outfit || ''),
+                expression: String(data?.expression || ''),
+                filename: String(data?.filename || ''),
+            };
+            if (!reference.character || !reference.outfit || !reference.expression || !reference.filename) {
+                console.error('[ASSET_VIDEO_UI] 영상화 에셋 참조 누락:', data);
+                showToast('영상화할 에셋 정보를 찾지 못했습니다.', 'error');
+                return;
+            }
+            await openVideoWorkspaceForReference(reference);
+        }
+
+        async function openVideoWorkspaceForReference(reference) {
+            videoWorkspaceSourceRef = reference;
+            const badge = document.querySelector('#video-modal .video-source-badge');
+            if (badge) badge.textContent = reference.kind === 'asset' ? '현재 에셋' : '현재 카드';
+            const sourceEmpty = document.getElementById('video-generation-source-empty');
+            if (sourceEmpty) {
+                sourceEmpty.textContent = reference.kind === 'asset'
+                    ? '현재 에셋 원본을 불러오는 중입니다.'
+                    : '현재 카드의 `_raw` 원본을 불러오는 중입니다.';
+            }
             setVideoAutoInstruction(false);
             selectVideoMode('i2v');
             updateVideoDuration();
@@ -25526,7 +25653,7 @@
                 updateVideoUpscaleControls();
             }
             updateVideoWorkspaceMode();
-            await loadVideoReferenceOptions(name);
+            await loadVideoReferenceOptions(reference);
             const modal = document.getElementById('video-modal');
             if (!modal) {
                 console.error('[VIDEO_UI] 영상화 모달을 찾지 못했습니다.');
@@ -25541,9 +25668,10 @@
         }
 
         async function submitVideoGeneration() {
-            const sourceName = document.getElementById('video-generation-source')?.value || '';
+            const sourceKey = document.getElementById('video-generation-source')?.value || '';
+            const sourceRef = getVideoReferenceByKey(sourceKey)?.reference || null;
             const mode = document.getElementById('video-generation-mode')?.value || 'i2v';
-            const lastBackup = getEffectiveLastBackup();
+            const lastRef = getEffectiveLastVideoReference();
             const preset = document.getElementById('video-generation-preset')?.value || 'auto';
             const duration = normalizedVideoDuration();
             const upscaleEnabled = document.getElementById('video-generation-upscale-enabled')?.checked !== false;
@@ -25553,9 +25681,9 @@
             const instruction = document.getElementById('video-generation-instruction')?.value.trim() || '';
             const autoInstruction = isVideoAutoInstructionEnabled();
             const button = document.getElementById('video-generation-submit');
-            if (!sourceName) {
-                console.error('[VIDEO_UI] 제출 실패: 원본 백업 이름 없음');
-                showToast('원본 백업 정보가 없습니다.', 'error');
+            if (!sourceRef) {
+                console.error('[VIDEO_UI] 제출 실패: 원본 참조 없음', {sourceKey});
+                showToast('원본 이미지 정보가 없습니다.', 'error');
                 return;
             }
             if (!autoInstruction && !instruction) {
@@ -25563,8 +25691,8 @@
                 document.getElementById('video-generation-instruction')?.focus();
                 return;
             }
-            if (mode === 'first_last' && !lastBackup) {
-                showToast('마지막 프레임 백업을 선택하세요.', 'warning');
+            if (mode === 'first_last' && !lastRef) {
+                showToast('마지막 프레임을 선택하세요.', 'warning');
                 return;
             }
             const originalText = button?.innerHTML || '🎬 큐에 등록';
@@ -25578,8 +25706,10 @@
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({
                         mode,
-                        source_backup: sourceName,
-                        last_backup: lastBackup,
+                        source_ref: sourceRef,
+                        last_ref: lastRef,
+                        source_backup: sourceRef.kind === 'backup' ? sourceRef.name : '',
+                        last_backup: lastRef?.kind === 'backup' ? lastRef.name : '',
                         loop: isVideoLoopEnabled(),
                         preset,
                         duration,
@@ -73326,15 +73456,36 @@
                     let thumbHtml;
                     if (item.representative) {
                         const thumbUrl = `/api/asset_mode/characters/${enc(charName)}/outfits/${enc(item.outfit)}/expressions/${enc(item.expression)}/images/${enc(item.representative)}`;
-                        thumbHtml = `<img class="gallery-thumb" src="${thumbUrl}" loading="lazy">`;
+                        const posterUrl = item.representative_is_animated
+                            ? `${thumbUrl}/poster`
+                            : thumbUrl;
+                        const animationAttrs = item.representative_is_animated
+                            ? `data-poster-src="${posterUrl}" data-anim-src="${thumbUrl}" onmouseenter="this.src=this.dataset.animSrc" onmouseleave="this.src=this.dataset.posterSrc"`
+                            : '';
+                        thumbHtml = `
+                            ${item.representative_is_animated ? '<span class="source-badge source-anim" title="영상 · 마우스를 올려 재생">A</span>' : ''}
+                            <img class="gallery-thumb${item.representative_is_animated ? ' is-anim' : ''}" src="${posterUrl}" loading="lazy" ${animationAttrs}>`;
                     } else {
                         thumbHtml = `<div class="gallery-thumb-placeholder">이미지 없음</div>`;
                     }
 
                     card.innerHTML = `
                         ${thumbHtml}
+                        ${item.representative ? '<button type="button" class="gallery-video-btn">🎬 영상화</button>' : ''}
                         <div class="gallery-title">${escapeHtml(item.outfit)} - ${escapeHtml(item.expression)}</div>
                         ${item.image_count > 0 ? `<div class="gallery-count">${item.image_count}장</div>` : ''}`;
+                    const videoButton = card.querySelector('.gallery-video-btn');
+                    if (videoButton) {
+                        videoButton.addEventListener('click', (event) => {
+                            event.stopPropagation();
+                            openAssetVideoWorkspace({
+                                character: charName,
+                                outfit: item.outfit,
+                                expression: item.expression,
+                                filename: item.representative,
+                            });
+                        });
+                    }
                     card.onclick = () => auNavigateToImages(charName, item.outfit, item.expression);
                     grid.appendChild(card);
                 });
@@ -73378,6 +73529,10 @@
                 grid.innerHTML = '';
                 images.forEach(img => {
                     const imgUrl = `/api/asset_mode/characters/${enc(charName)}/outfits/${enc(outfit)}/expressions/${enc(expression)}/images/${enc(img.filename)}`;
+                    const posterUrl = img.is_animated ? `${imgUrl}/poster` : imgUrl;
+                    const animationAttrs = img.is_animated
+                        ? `data-poster-src="${posterUrl}" data-anim-src="${imgUrl}" onmouseenter="this.src=this.dataset.animSrc" onmouseleave="this.src=this.dataset.posterSrc"`
+                        : '';
                     const card = document.createElement('div');
                     card.className = 'asset-image-card';
                     card.dataset.imgUrl = imgUrl;
@@ -73387,7 +73542,8 @@
                         <div class="au-select-check" onclick="event.stopPropagation(); auToggleSelect(this, '${imgUrl}')" title="선택">☐</div>
                         ${img.is_representative ? '<div class="rep-badge">대표</div>' : ''}
                         <div class="asset-img-frame">
-                            <img src="${imgUrl}" onclick="openLightbox(this.src)" loading="lazy">
+                            ${img.is_animated ? '<span class="source-badge source-anim" title="영상 · 마우스를 올려 재생">A</span>' : ''}
+                            <img src="${posterUrl}" data-full-src="${imgUrl}" ${animationAttrs} onclick="openLightbox(this.dataset.fullSrc)" loading="lazy">
                             ${img.is_edited ? '<div class="edit-badge">EDIT됨</div>' : ''}
                         </div>
                         <div class="card-actions">
@@ -73397,7 +73553,8 @@
                             </button>
                             <button onclick="deleteAssetImage('${enc(charName)}','${enc(outfit)}','${enc(expression)}','${enc(img.filename)}'); auRenderImages('${escapeHtml(charName)}','${escapeHtml(outfit)}','${escapeHtml(expression)}')" style="color:var(--error);">삭제</button>
                             <button onclick="sendAssetToPoseEditor('${imgUrl}','${enc(img.filename)}')">포즈 편집</button>
-                            <button type="button" class="qwen-edit-btn">EDIT 툴 호출</button>
+                            <button type="button" class="qwen-edit-btn" ${img.is_animated ? 'disabled title="영상 에셋에는 EDIT 툴을 사용할 수 없습니다"' : ''}>EDIT 툴 호출</button>
+                            <button type="button" class="asset-video-btn">영상화</button>
                         </div>
                         ${hasPrompt ? `
                         <div class="prompt-info">
@@ -73413,7 +73570,7 @@
                             </div>
                         </div>` : ''}`;
                     const qwenButton = card.querySelector('.qwen-edit-btn');
-                    if (qwenButton) {
+                    if (qwenButton && !img.is_animated) {
                         qwenButton.addEventListener('click', (event) => {
                             event.stopPropagation();
                             auOpenQwenEdit({
@@ -73426,8 +73583,22 @@
                                 negative: img.edit_negative_prompt || img.negative || '',
                             });
                         });
-                    } else {
+                    } else if (!qwenButton) {
                         console.error('[QWEN_EDIT] 카드 버튼 생성 실패:', img.filename);
+                    }
+                    const videoButton = card.querySelector('.asset-video-btn');
+                    if (videoButton) {
+                        videoButton.addEventListener('click', (event) => {
+                            event.stopPropagation();
+                            openAssetVideoWorkspace({
+                                character: charName,
+                                outfit,
+                                expression,
+                                filename: img.filename,
+                            });
+                        });
+                    } else {
+                        console.error('[ASSET_VIDEO_UI] 카드 버튼 생성 실패:', img.filename);
                     }
                     grid.appendChild(card);
                 });
@@ -77051,7 +77222,15 @@
                     let thumbHtml;
                     if (item.representative) {
                         const thumbUrl = `/api/asset_mode/characters/${enc(charName)}/outfits/${enc(item.outfit)}/expressions/${enc(item.expression)}/images/${enc(item.representative)}`;
-                        thumbHtml = `<img class="gallery-thumb" src="${thumbUrl}" loading="lazy">`;
+                        const posterUrl = item.representative_is_animated
+                            ? `${thumbUrl}/poster`
+                            : thumbUrl;
+                        const animationAttrs = item.representative_is_animated
+                            ? `data-poster-src="${posterUrl}" data-anim-src="${thumbUrl}" onmouseenter="this.src=this.dataset.animSrc" onmouseleave="this.src=this.dataset.posterSrc"`
+                            : '';
+                        thumbHtml = `
+                            ${item.representative_is_animated ? '<span class="source-badge source-anim" title="영상 · 마우스를 올려 재생">A</span>' : ''}
+                            <img class="gallery-thumb${item.representative_is_animated ? ' is-anim' : ''}" src="${posterUrl}" loading="lazy" ${animationAttrs}>`;
                     } else {
                         thumbHtml = `<div class="gallery-thumb-placeholder">이미지 없음</div>`;
                     }
@@ -77065,6 +77244,7 @@
                         <button class="gallery-delete-btn" onclick="event.stopPropagation(); deleteAssetCombination('${enc(charName)}','${enc(item.outfit)}','${enc(item.expression)}',${item.image_count})">삭제</button>
                         ${removeGroupBtn}
                         ${thumbHtml}
+                        ${item.representative ? '<button type="button" class="gallery-video-btn">🎬 영상화</button>' : ''}
                         <div class="gallery-title">${escapeHtml(item.outfit)} - ${escapeHtml(item.expression)}</div>
                         ${item.image_count > 0 ? `<div class="gallery-count">${item.image_count}장</div>` : ''}
                     `;
@@ -77082,6 +77262,19 @@
                                 }).then(() => renderCharacterGallery(charName));
                             });
                         }
+                    }
+
+                    const videoButton = card.querySelector('.gallery-video-btn');
+                    if (videoButton) {
+                        videoButton.addEventListener('click', e => {
+                            e.stopPropagation();
+                            openAssetVideoWorkspace({
+                                character: charName,
+                                outfit: item.outfit,
+                                expression: item.expression,
+                                filename: item.representative,
+                            });
+                        });
                     }
 
                     card.onclick = (e) => {
@@ -77918,13 +78111,18 @@
 
                 images.forEach(img => {
                     const imgUrl = `/api/asset_mode/characters/${enc(char)}/outfits/${enc(outfit)}/expressions/${enc(expr)}/images/${enc(img.filename)}`;
+                    const posterUrl = img.is_animated ? `${imgUrl}/poster` : imgUrl;
+                    const animationAttrs = img.is_animated
+                        ? `data-poster-src="${posterUrl}" data-anim-src="${imgUrl}" onmouseenter="this.src=this.dataset.animSrc" onmouseleave="this.src=this.dataset.posterSrc"`
+                        : '';
                     const card = document.createElement('div');
                     card.className = 'asset-image-card';
                     const hasPrompt = img.positive || img.negative || img.edit_prompt;
                     card.innerHTML = `
                         ${img.is_representative ? '<div class="rep-badge">대표</div>' : ''}
                         <div class="asset-img-frame">
-                            <img src="${imgUrl}" onclick="openLightbox(this.src)" loading="lazy">
+                            ${img.is_animated ? '<span class="source-badge source-anim" title="영상 · 마우스를 올려 재생">A</span>' : ''}
+                            <img src="${posterUrl}" data-full-src="${imgUrl}" ${animationAttrs} onclick="openLightbox(this.dataset.fullSrc)" loading="lazy">
                             ${img.is_edited ? '<div class="edit-badge">EDIT됨</div>' : ''}
                         </div>
                         <div class="card-actions">
@@ -77934,7 +78132,8 @@
                             </button>
                             <button onclick="deleteAssetImage('${enc(char)}','${enc(outfit)}','${enc(expr)}','${enc(img.filename)}')" style="color:var(--error);">삭제</button>
                             <button onclick="sendAssetToPoseEditor('${imgUrl}','${enc(img.filename)}')">포즈 편집</button>
-                            <button type="button" class="qwen-edit-btn">EDIT 툴 호출</button>
+                            <button type="button" class="qwen-edit-btn" ${img.is_animated ? 'disabled title="영상 에셋에는 EDIT 툴을 사용할 수 없습니다"' : ''}>EDIT 툴 호출</button>
+                            <button type="button" class="asset-video-btn">영상화</button>
                         </div>
                         ${hasPrompt ? `
                         <div class="prompt-info">
@@ -77949,7 +78148,7 @@
                             </div>
                         </div>` : ''}`;
                     const qwenButton = card.querySelector('.qwen-edit-btn');
-                    if (qwenButton) {
+                    if (qwenButton && !img.is_animated) {
                         qwenButton.addEventListener('click', (event) => {
                             event.stopPropagation();
                             auOpenQwenEdit({
@@ -77962,8 +78161,22 @@
                                 negative: img.edit_negative_prompt || img.negative || '',
                             });
                         });
-                    } else {
+                    } else if (!qwenButton) {
                         console.error('[QWEN_EDIT] 에셋 생성 LV2 카드 버튼 생성 실패:', img.filename);
+                    }
+                    const videoButton = card.querySelector('.asset-video-btn');
+                    if (videoButton) {
+                        videoButton.addEventListener('click', (event) => {
+                            event.stopPropagation();
+                            openAssetVideoWorkspace({
+                                character: char,
+                                outfit,
+                                expression: expr,
+                                filename: img.filename,
+                            });
+                        });
+                    } else {
+                        console.error('[ASSET_VIDEO_UI] 에셋 생성 LV2 카드 버튼 생성 실패:', img.filename);
                     }
                     grid.appendChild(card);
                 });
@@ -78055,6 +78268,42 @@
         }
 
         // 에셋 모드 WebSocket 이벤트 핸들링 (기존 ws 핸들러에 추가)
+        async function handleAssetVideoCreated(data) {
+            if (!data || !data.character || !data.outfit || !data.expression) {
+                console.error('[ASSET_VIDEO_UI] 완료 이벤트 필수값 누락:', data);
+                return;
+            }
+            showToast(`영상 에셋 추가 완료: ${data.filename || ''}`, 'success');
+            const assetTabActive = document.getElementById('tab-asset-content')?.classList.contains('active');
+            const uploadTabActive = document.getElementById('tab-asset-upload-content')?.classList.contains('active');
+            try {
+                if (assetTabActive && assetNavCharacter === data.character) {
+                    if (
+                        assetNavLevel === 2
+                        && assetNavOutfit === data.outfit
+                        && assetNavExpression === data.expression
+                    ) {
+                        await loadAssetImages();
+                    } else if (assetNavLevel === 1) {
+                        await renderCharacterGallery(assetNavCharacter);
+                    }
+                }
+                if (uploadTabActive && auNavCharacter === data.character) {
+                    if (
+                        auNavLevel === 2
+                        && auNavOutfit === data.outfit
+                        && auNavExpression === data.expression
+                    ) {
+                        await auRenderImages(auNavCharacter, auNavOutfit, auNavExpression);
+                    } else if (auNavLevel === 1) {
+                        await auRenderGallery(auNavCharacter);
+                    }
+                }
+            } catch (error) {
+                console.error('[ASSET_VIDEO_UI] 영상 완료 후 목록 갱신 실패:', error, data);
+            }
+        }
+
         function handleAssetWsEvent(type, data) {
             if (type === 'asset_generation_progress') {
                 // 큐에서 현재 에셋 생성 항목 찾아서 진행률 업데이트

@@ -2348,10 +2348,13 @@ class QueueManager:
                 )
                 raise RuntimeError("H3 결과의 영상 후처리 정보가 없습니다")
             mode = str(result.get("mode") or "")
+            output_label = str(
+                (item.params or {}).get("output_format") or "avif"
+            ).strip().upper()
             postprocess_label = {
-                "i2v": "H3 I2V · Real-ESRGAN→AVIF",
-                "first_last": "H3 FLF2V · Real-ESRGAN→AVIF",
-            }.get(mode, "영상 · Real-ESRGAN→AVIF")
+                "i2v": f"H3 I2V · Real-ESRGAN→{output_label}",
+                "first_last": f"H3 FLF2V · Real-ESRGAN→{output_label}",
+            }.get(mode, f"영상 · Real-ESRGAN→{output_label}")
             postprocess_item = await self.add_item(
                 VIDEO_POSTPROCESS_TYPE,
                 postprocess_label,

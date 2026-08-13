@@ -119,6 +119,32 @@ def test_video_page_can_delegate_direction_to_ai() -> None:
     assert "백업에 대사·감정 정보가 있으면 행동과 표정에 함께 반영합니다" in FRONTEND
 
 
+def test_asset_lv1_and_lv2_cards_support_video_and_block_edit_for_animations() -> None:
+    upload_lv2 = FRONTEND[
+        FRONTEND.index("async function auRenderImages("):
+        FRONTEND.index("let auQwenEditState")
+    ]
+    generation_lv2 = FRONTEND[
+        FRONTEND.index("async function loadAssetImages()"):
+        FRONTEND.index("async function setAssetRepresentative(")
+    ]
+    for section in (upload_lv2, generation_lv2):
+        edit_button = section.index('class="qwen-edit-btn"')
+        video_button = section.index('class="asset-video-btn"', edit_button)
+        assert edit_button < video_button
+        assert "영상 에셋에는 EDIT 툴을 사용할 수 없습니다" in section
+        assert "openAssetVideoWorkspace({" in section
+        assert "data-anim-src" in section
+        assert "data-poster-src" in section
+
+    assert FRONTEND.count('class="gallery-video-btn"') >= 2
+    assert "representative_is_animated" in FRONTEND
+    assert "/video_references`" in FRONTEND
+    assert "source_ref: sourceRef" in FRONTEND
+    assert "last_ref: lastRef" in FRONTEND
+    assert "case 'asset_video_created':" in FRONTEND
+
+
 def test_video_postprocess_shares_renamed_background_lane() -> None:
     assert "{key: 'background', icon: '⚙️', title: '백그라운드 처리'" in FRONTEND
     assert "Modal 다운로드 · 영상 업스케일/AVIF 변환" in FRONTEND

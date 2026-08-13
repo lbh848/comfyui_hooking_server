@@ -637,6 +637,8 @@ class VideoMode:
         self.cleanup_comfy_video_func = None
         self.cleanup_backups_func = None
         self.invalidate_backup_cache_func = None
+        self.resolve_asset_reference_func = None
+        self.commit_asset_video_func = None
 
     def _config(self) -> dict:
         if not callable(self.get_config):
@@ -710,10 +712,110 @@ class VideoMode:
                 raise
             return {}
 
-    def _source_context(self, name: str) -> tuple[str, dict]:
-        directory = self._backup_dir()
-        prompt_data = self._read_json(os.path.join(directory, f"{name}.json"))
-        info = self._read_json(os.path.join(directory, f"{name}_info.json"))
+    @staticmethod
+    def normalize_reference(
+        reference: object = None,
+        *,
+        fallback_backup: object = "",
+    ) -> dict:
+        if reference in (None, ""):
+            name = _safe_backup_name(fallback_backup)
+            return {"kind": "backup", "name": name}
+        if not isinstance(reference, dict):
+            print(f"[VIDEO:REFERENCE] 참조 형식 오류: value={reference!r}")
+            raise ValueError("영상 참조 형식이 올바르지 않습니다")
+        kind = str(reference.get("kind") or "").strip().lower()
+        if kind == "backup":
+            return {
+                "kind": "backup",
+                "name": _safe_backup_name(reference.get("name")),
+            }
+        if kind == "asset":
+            normalized = {
+                "kind": "asset",
+                "character": str(reference.get("character") or "").strip(),
+                "outfit": str(reference.get("outfit") or "").strip(),
+                "expression": str(reference.get("expression") or "").strip(),
+                "filename": str(reference.get("filename") or "").strip(),
+            }
+            if not all(normalized[field] for field in (
+                "character", "outfit", "expression", "filename"
+            )):
+                print(f"[VIDEO:REFERENCE] 에셋 참조 필수값 누락: value={reference!r}")
+                raise ValueError("에셋 영상 참조에 필요한 값이 없습니다")
+            return normalized
+        print(f"[VIDEO:REFERENCE] 지원하지 않는 참조 종류: value={reference!r}")
+        raise ValueError("지원하지 않는 영상 참조 종류입니다")
+
+    def _reference_from_params(self, params: dict, role: str) -> dict:
+        if role not in ("source", "last"):
+            print(f"[VIDEO:REFERENCE] 참조 역할 오류: role={role!r}")
+            raise ValueError("영상 참조 역할이 올바르지 않습니다")
+        return self.normalize_reference(
+            (params or {}).get(f"{role}_ref"),
+            fallback_backup=(params or {}).get(f"{role}_backup"),
+        )
+
+    @staticmethod
+    def _reference_label(reference: dict) -> str:
+        if reference.get("kind") == "asset":
+            return (
+                f"{reference.get('character', '')}/"
+                f"{reference.get('outfit', '')}/"
+                f"{reference.get('expression', '')}/"
+                f"{reference.get('filename', '')}"
+            )
+        return str(reference.get("name") or "")
+
+    def _resolve_reference(self, reference: dict, *, raw: bool = True) -> dict:
+        normalized = self.normalize_reference(reference)
+        if normalized["kind"] == "backup":
+            name = normalized["name"]
+            directory = self._backup_dir()
+            prompt_data = self._read_json(os.path.join(directory, f"{name}.json"))
+            info = self._read_json(os.path.join(directory, f"{name}_info.json"))
+            path = self._find_image_path(directory, name, raw=raw)
+            return {
+                "reference": normalized,
+                "path": path,
+                "prompt_data": prompt_data,
+                "info": info,
+                "label": name,
+            }
+        if not callable(self.resolve_asset_reference_func):
+            print(
+                "[VIDEO:REFERENCE] 에셋 참조 해석 실패: callback 없음, "
+                f"reference={normalized!r}"
+            )
+            raise RuntimeError("에셋 영상 참조 함수가 연결되지 않았습니다")
+        resolved = self.resolve_asset_reference_func(normalized)
+        if not isinstance(resolved, dict) or not os.path.isfile(
+            str(resolved.get("path") or "")
+        ):
+            print(
+                "[VIDEO:REFERENCE] 에셋 참조 해석 결과 오류: "
+                f"reference={normalized!r}, resolved={resolved!r}"
+            )
+            raise FileNotFoundError("영상화할 에셋 원본을 찾지 못했습니다")
+        return {
+            "reference": normalized,
+            "path": os.path.realpath(str(resolved["path"])),
+            "prompt_data": {
+                "positive": str(resolved.get("positive") or ""),
+            },
+            "info": resolved.get("info") if isinstance(resolved.get("info"), dict) else {},
+            "label": str(resolved.get("label") or self._reference_label(normalized)),
+        }
+
+    def validate_reference(self, reference: dict) -> dict:
+        return self._resolve_reference(reference, raw=True)
+
+    def _source_context(self, reference: dict | str) -> tuple[str, dict]:
+        if isinstance(reference, str):
+            reference = self.normalize_reference(fallback_backup=reference)
+        resolved = self._resolve_reference(reference, raw=True)
+        prompt_data = resolved["prompt_data"]
+        info = resolved["info"]
         positive = str(prompt_data.get("positive") or "").strip()
         if not positive:
             nodes = prompt_data.get("nodes")
@@ -731,46 +833,52 @@ class VideoMode:
 
     def _backup_dialogue_context(self, name: str) -> str:
         """Read verbatim SPEAK text for auto direction without loading image prompts."""
+        return self._reference_dialogue_context(
+            self.normalize_reference(fallback_backup=name)
+        )
 
-        directory = self._backup_dir()
-        info_path = os.path.join(directory, f"{name}_info.json")
-        info = self._read_json(info_path)
+    def _reference_dialogue_context(self, reference: dict) -> str:
+        resolved = self._resolve_reference(reference, raw=True)
+        label = resolved["label"]
+        info = resolved["info"]
         raw_speak = info.get("speak_text")
         if raw_speak is None:
             print(
-                "[VIDEO:VISION] 백업 대사·감정 문맥 없음: "
-                f"backup={name!r}, path={info_path!r}"
+                "[VIDEO:VISION] 참조 대사·감정 문맥 없음: "
+                f"reference={label!r}"
             )
             return ""
         if not isinstance(raw_speak, str):
             print(
-                "[VIDEO:VISION] 백업 대사·감정 문맥 형식 오류: "
-                f"backup={name!r}, type={type(raw_speak).__name__}, "
+                "[VIDEO:VISION] 참조 대사·감정 문맥 형식 오류: "
+                f"reference={label!r}, type={type(raw_speak).__name__}, "
                 f"value={raw_speak!r}"
             )
             return ""
         speak_text = raw_speak.strip()
         if not speak_text:
             print(
-                "[VIDEO:VISION] 백업 대사·감정 문맥 비어 있음: "
-                f"backup={name!r}, path={info_path!r}"
+                "[VIDEO:VISION] 참조 대사·감정 문맥 비어 있음: "
+                f"reference={label!r}"
             )
             return ""
         print(
-            "[VIDEO:VISION] 백업 대사·감정 문맥 사용: "
-            f"backup={name!r}, length={len(speak_text)}"
+            "[VIDEO:VISION] 참조 대사·감정 문맥 사용: "
+            f"reference={label!r}, length={len(speak_text)}"
         )
         return speak_text
 
     def _prepared_reference(
         self,
-        name: str,
+        reference: dict | str,
         preset: object,
         *,
         target_size: tuple[int, int] | None = None,
     ) -> tuple[Image.Image, Image.Image, str, int, int, str]:
-        directory = self._backup_dir()
-        raw_path = self._find_image_path(directory, name, raw=True)
+        if isinstance(reference, str):
+            reference = self.normalize_reference(fallback_backup=reference)
+        resolved = self._resolve_reference(reference, raw=True)
+        raw_path = resolved["path"]
         source = self._load_first_frame(raw_path)
         if target_size is None:
             preset_key, target_w, target_h = resolve_fast_preset(
@@ -927,7 +1035,8 @@ Vision-produced static Visual Context:
         duration = normalize_video_duration(
             (params or {}).get("duration", VIDEO_DEFAULT_DURATION_SECONDS)
         )
-        source_name = _safe_backup_name((params or {}).get("source_backup"))
+        source_ref = self._reference_from_params(params or {}, "source")
+        source_label = self._reference_label(source_ref)
         auto_instruction = (params or {}).get("auto_instruction", False)
         if not isinstance(auto_instruction, bool):
             print(
@@ -948,29 +1057,32 @@ Vision-produced static Visual Context:
             )
             raise ValueError("영상화 지시는 12,000자 이하여야 합니다")
 
-        last_name = ""
+        last_ref: dict | None = None
         reference_images: list[tuple[str, str, str]] = []
         if mode in ("i2v", "first_last"):
             _crop, resized, _key, _w, _h, _path = self._prepared_reference(
-                source_name, (params or {}).get("preset", "auto")
+                source_ref, (params or {}).get("preset", "auto")
             )
             reference_images.append(
                 (base64.b64encode(_image_to_png_bytes(resized)).decode("ascii"), "image/png", "Picture 1 (first frame)")
             )
         if mode == "first_last":
-            last_name = _safe_backup_name((params or {}).get("last_backup"))
+            last_ref = self._reference_from_params(params or {}, "last")
             loop_enabled = bool((params or {}).get("loop"))
-            if last_name == source_name and not loop_enabled:
-                print(f"[VIDEO:LLM] FLF2V 백업 동일: item={queue_item_id}, name={source_name}, loop={loop_enabled}")
-                raise ValueError("첫 프레임과 마지막 프레임은 서로 다른 백업을 선택하세요")
+            if last_ref == source_ref and not loop_enabled:
+                print(
+                    f"[VIDEO:LLM] FLF2V 참조 동일: item={queue_item_id}, "
+                    f"reference={source_label}, loop={loop_enabled}"
+                )
+                raise ValueError("첫 프레임과 마지막 프레임은 서로 다른 참조를 선택하세요")
             first_image = self._load_first_frame(
-                self._find_image_path(self._backup_dir(), source_name, raw=True)
+                self._resolve_reference(source_ref, raw=True)["path"]
             )
             preset_key, target_w, target_h = resolve_fast_preset(
                 (params or {}).get("preset", "auto"), first_image.width, first_image.height
             )
             _crop2, resized2, _key2, _w2, _h2, _path2 = self._prepared_reference(
-                last_name,
+                last_ref,
                 preset_key,
                 target_size=(target_w, target_h),
             )
@@ -995,7 +1107,7 @@ Vision-produced static Visual Context:
             task_key,
             call_name=call_label,
             execution_id=history_id,
-            metadata={"prompt_id": history_id, "source_backup": source_name},
+            metadata={"prompt_id": history_id, "source_reference": source_label},
         )
 
         async def stream_observer(event: dict) -> None:
@@ -1014,11 +1126,11 @@ Vision-produced static Visual Context:
             if mode in ("i2v", "first_last"):
                 dialogue_contexts: list[tuple[str, str]] = []
                 if auto_instruction:
-                    source_dialogue = self._backup_dialogue_context(source_name)
+                    source_dialogue = self._reference_dialogue_context(source_ref)
                     if source_dialogue:
                         dialogue_contexts.append(("Picture 1", source_dialogue))
-                    if mode == "first_last":
-                        last_dialogue = self._backup_dialogue_context(last_name)
+                    if mode == "first_last" and last_ref is not None:
+                        last_dialogue = self._reference_dialogue_context(last_ref)
                         if last_dialogue:
                             dialogue_contexts.append(("Picture 2", last_dialogue))
                 visual_messages = self._visual_context_messages(
@@ -1050,7 +1162,7 @@ Vision-produced static Visual Context:
                     call_name=visual_call_label,
                     execution_id=visual_history_id,
                     parent_execution_id=history_id,
-                    metadata={"prompt_id": visual_history_id, "source_backup": source_name},
+                    metadata={"prompt_id": visual_history_id, "source_reference": source_label},
                 )
                 raw_visual_context = await llm_service.callLLMVisionTask(
                     task_key,
@@ -1832,8 +1944,8 @@ Vision-produced static Visual Context:
         *,
         mp4_bytes: bytes,
         mode: str,
-        source_name: str,
-        last_name: str,
+        source_ref: dict,
+        last_ref: dict | None,
         h3_prompt: str,
         params: dict,
         source_info: dict,
@@ -1887,8 +1999,18 @@ Vision-produced static Visual Context:
                 "spool_id": spool_id,
                 "base_name": base_name,
                 "mode": mode,
-                "source_backup": source_name,
-                "last_backup": last_name,
+                "source_ref": copy.deepcopy(source_ref),
+                "last_ref": copy.deepcopy(last_ref) if last_ref else {},
+                "source_backup": (
+                    source_ref.get("name", "")
+                    if source_ref.get("kind") == "backup"
+                    else ""
+                ),
+                "last_backup": (
+                    last_ref.get("name", "")
+                    if last_ref and last_ref.get("kind") == "backup"
+                    else ""
+                ),
                 "positive": h3_prompt,
                 "instruction": str((params or {}).get("instruction") or ""),
                 "llm_trace": [
@@ -2047,6 +2169,71 @@ Vision-produced static Visual Context:
             manifest = processed["manifest"]
             extension = processed["extension"]
             base_name = _safe_backup_name(manifest.get("base_name"))
+            source_ref = self.normalize_reference(
+                manifest.get("source_ref"),
+                fallback_backup=manifest.get("source_backup"),
+            )
+            mode = str(manifest.get("mode") or "")
+            elapsed = float(manifest.get("render_elapsed") or 0.0) + (
+                time.time() - started
+            )
+            if source_ref.get("kind") == "asset":
+                if not callable(self.commit_asset_video_func):
+                    print(
+                        "[VIDEO:POSTPROCESS] 에셋 결과 저장 실패: callback 없음, "
+                        f"item={queue_item_id}, source={source_ref!r}"
+                    )
+                    raise RuntimeError("에셋 영상 결과 저장 함수가 연결되지 않았습니다")
+                asset_result = self.commit_asset_video_func(
+                    source_ref,
+                    processed["main_path"],
+                    processed["raw_path"],
+                    extension,
+                    manifest,
+                )
+                if not isinstance(asset_result, dict) or not asset_result.get("success"):
+                    print(
+                        "[VIDEO:POSTPROCESS] 에셋 결과 저장 응답 오류: "
+                        f"item={queue_item_id}, result={asset_result!r}"
+                    )
+                    raise RuntimeError("에셋 영상 결과를 저장하지 못했습니다")
+                await self._notify("asset_video_created", dict(asset_result))
+                manifest_path = os.path.join(job_dir, "job.json")
+                if os.path.isfile(manifest_path):
+                    os.remove(manifest_path)
+                try:
+                    self._remove_exact_tree(job_dir, spool_root)
+                except Exception as cleanup_exc:
+                    print(
+                        "[VIDEO:POSTPROCESS] 에셋 완료 스풀 정리 실패"
+                        "(재등록 방지 manifest는 제거됨): "
+                        f"path={job_dir!r}, error={cleanup_exc}"
+                    )
+                    traceback.print_exc()
+                print(
+                    "[VIDEO:POSTPROCESS] 에셋 영상 후처리 완료: "
+                    f"item={queue_item_id}, result={asset_result.get('filename')!r}, "
+                    f"source={self._reference_label(source_ref)!r}, "
+                    f"format={extension}, elapsed={elapsed:.2f}s"
+                )
+                return {
+                    **asset_result,
+                    "format": extension.lstrip("."),
+                    "mode": mode,
+                    "preset": manifest.get("preset", ""),
+                    "width": int(manifest.get("output_width") or 0),
+                    "height": int(manifest.get("output_height") or 0),
+                    "duration": float(
+                        manifest.get("duration") or VIDEO_DURATION_SECONDS
+                    ),
+                    "upscale_enabled": bool(processed["upscale_enabled"]),
+                    "upscale_scale": int(processed["upscale_scale"]),
+                    "upscale_model": manifest.get("upscale_model", ""),
+                    "output_format_requested": manifest.get(
+                        "output_format", "avif"
+                    ),
+                }
+
             backup_dir = self._backup_dir()
             raw_dir = os.path.join(backup_dir, "_raw")
             os.makedirs(raw_dir, exist_ok=True)
@@ -2073,10 +2260,6 @@ Vision-produced static Visual Context:
                 "source_backup": manifest.get("source_backup", ""),
                 "last_backup": manifest.get("last_backup", ""),
             }
-            elapsed = float(manifest.get("render_elapsed") or 0.0) + (
-                time.time() - started
-            )
-            mode = str(manifest.get("mode") or "")
             info_record = {
                 "provider": "comfy",
                 "provider_mode": "comfy",
@@ -2214,14 +2397,15 @@ Vision-produced static Visual Context:
                 f"mode={mode}, reason={reason}"
             )
             raise ValueError(reason)
-        source_name = _safe_backup_name((params or {}).get("source_backup"))
-        last_name = ""
+        source_ref = self._reference_from_params(params or {}, "source")
+        source_label = self._reference_label(source_ref)
+        last_ref: dict | None = None
         if mode == "first_last":
-            last_name = _safe_backup_name((params or {}).get("last_backup"))
+            last_ref = self._reference_from_params(params or {}, "last")
 
-        source_prompt, source_info = self._source_context(source_name)
+        source_prompt, source_info = self._source_context(source_ref)
         high_res_crop, first_resized, preset_key, target_w, target_h, _raw_path = (
-            self._prepared_reference(source_name, (params or {}).get("preset", "auto"))
+            self._prepared_reference(source_ref, (params or {}).get("preset", "auto"))
         )
         overlay, overlay_mask = await asyncio.to_thread(
             self._build_high_res_overlay,
@@ -2262,7 +2446,7 @@ Vision-produced static Visual Context:
             if mode == "first_last":
                 _last_crop, last_resized, _last_key, _lw, _lh, _last_path = (
                     self._prepared_reference(
-                        last_name,
+                        last_ref,
                         preset_key,
                         target_size=(target_w, target_h),
                     )
@@ -2356,8 +2540,8 @@ Vision-produced static Visual Context:
                 self._stage_video_postprocess,
                 mp4_bytes=mp4_bytes,
                 mode=mode,
-                source_name=source_name,
-                last_name=last_name,
+                source_ref=source_ref,
+                last_ref=last_ref,
                 h3_prompt=h3_prompt,
                 params=dict(params or {}),
                 source_info=source_info,
@@ -2414,7 +2598,7 @@ Vision-produced static Visual Context:
         except Exception as exc:
             print(
                 f"[VIDEO:RENDER] 영상화 실패: item={queue_item_id}, mode={mode}, "
-                f"source={source_name!r}, error={type(exc).__name__}: {exc}"
+                f"source={source_label!r}, error={type(exc).__name__}: {exc}"
             )
             traceback.print_exc()
             raise

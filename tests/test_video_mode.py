@@ -1010,6 +1010,115 @@ async def test_video_postprocess_commits_verified_pair_and_metadata(
 
 
 @pytest.mark.asyncio
+async def test_video_postprocess_routes_asset_result_to_asset_commit_without_backup_copy(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    backup_dir = tmp_path / "backups"
+    job_dir = backup_dir / "_video_postprocess_spool" / "asset-i2v-job"
+    job_dir.mkdir(parents=True)
+    (job_dir / "input.mp4").write_bytes(b"staged-mp4")
+    source_ref = {
+        "kind": "asset",
+        "character": "alice",
+        "outfit": "uniform",
+        "expression": "smile",
+        "filename": "source.webp",
+    }
+    manifest = {
+        "version": 1,
+        "spool_id": "asset-i2v-job",
+        "base_name": "20260813_120000_assetvideo",
+        "mode": "i2v",
+        "source_ref": source_ref,
+        "last_ref": {},
+        "source_backup": "",
+        "last_backup": "",
+        "positive": "synthetic H3 prompt",
+        "instruction": "move gently",
+        "preset": "1:1",
+        "source_width": 512,
+        "source_height": 512,
+        "output_width": 512,
+        "output_height": 512,
+        "raw_output_height": 512,
+        "duration": 5.0,
+        "fps": 24,
+        "video_seed": 123,
+        "render_elapsed": 2.5,
+        "quality": 80,
+        "upscale_enabled": False,
+        "upscale_scale": 2,
+        "upscale_model": "",
+        "output_format": "webp",
+        "source_info": {},
+    }
+    (job_dir / "job.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    async def fake_process(path, *, settings, progress_callback=None):
+        assert Path(path) == job_dir.resolve()
+        main = job_dir / "result_main.webp"
+        raw = job_dir / "result_raw.webp"
+        main.write_bytes(b"asset-main")
+        raw.write_bytes(b"asset-raw")
+        return {
+            "manifest": manifest,
+            "main_path": str(main),
+            "raw_path": str(raw),
+            "extension": ".webp",
+            "frame_count": 120,
+            "upscale_enabled": False,
+            "upscale_scale": 1,
+        }
+
+    commits = []
+    events = []
+
+    def commit_asset(reference, main_path, raw_path, extension, metadata):
+        commits.append((reference, main_path, raw_path, extension, metadata))
+        assert Path(main_path).read_bytes() == b"asset-main"
+        assert Path(raw_path).read_bytes() == b"asset-raw"
+        return {
+            "success": True,
+            "character": "alice",
+            "outfit": "uniform",
+            "expression": "smile",
+            "filename": "new-video.webp",
+            "source_filename": "source.webp",
+            "is_video_animation": True,
+        }
+
+    monkeypatch.setattr(video_module, "process_staged_video", fake_process)
+    mode = VideoMode()
+    mode.get_backup_dir = lambda: str(backup_dir)
+    mode.get_config = lambda: {"video_postprocess": {"enabled": False}}
+    mode.commit_asset_video_func = commit_asset
+
+    async def notify(event_type, data):
+        events.append((event_type, data))
+
+    mode.notify_frontend_func = notify
+    result = await mode.postprocess_staged_video(
+        {"job_dir": str(job_dir)},
+        queue_item_id="asset-post-1",
+    )
+
+    assert result["filename"] == "new-video.webp"
+    assert commits[0][0] == source_ref
+    assert events == [("asset_video_created", {
+        "success": True,
+        "character": "alice",
+        "outfit": "uniform",
+        "expression": "smile",
+        "filename": "new-video.webp",
+        "source_filename": "source.webp",
+        "is_video_animation": True,
+    })]
+    assert not job_dir.exists()
+    assert not list(backup_dir.glob("*.webp"))
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("model", "expected_runner"),
     [

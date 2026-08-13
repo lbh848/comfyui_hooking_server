@@ -3395,6 +3395,8 @@ video_mode.submit_workflow_func = submit_video_workflow_to_comfy
 video_mode.cleanup_comfy_video_func = cleanup_comfy_video_output
 video_mode.cleanup_backups_func = cleanup_backups
 video_mode.invalidate_backup_cache_func = lambda: _invalidate_backup_filter_cache()
+video_mode.resolve_asset_reference_func = asset_mode.resolve_video_reference
+video_mode.commit_asset_video_func = asset_mode.commit_video_result
 # 에셋툴 모드 함수 의존성 설정
 asset_tool.convert_workflow_func = lambda workflow, task_key="tag_analysis": convert_workflow_via_endpoint(
     workflow,
@@ -9323,6 +9325,8 @@ async def handle_api_video_reference_options(request: web.Request) -> web.Respon
             options.append(
                 {
                     "name": name,
+                    "label": name,
+                    "reference": {"kind": "backup", "name": name},
                     "mtime": os.path.getmtime(path),
                     "image_url": (
                         f"/api/backup_poster/{name}"
@@ -9340,7 +9344,7 @@ async def handle_api_video_reference_options(request: web.Request) -> web.Respon
 
 
 async def handle_api_video_enqueue(request: web.Request) -> web.Response:
-    """Validate a backup-card video request and enqueue its LLM stage."""
+    """Validate a backup or asset-card video request and enqueue its LLM stage."""
 
     try:
         body = await request.json()
@@ -9353,6 +9357,21 @@ async def handle_api_video_enqueue(request: web.Request) -> web.Response:
         mode = str(body.get("mode") or "").strip().lower()
         source_name = str(body.get("source_backup") or "").strip()
         last_name = str(body.get("last_backup") or "").strip()
+        try:
+            source_ref = video_mode.normalize_reference(
+                body.get("source_ref"),
+                fallback_backup=source_name,
+            )
+        except (TypeError, ValueError) as exc:
+            print(
+                "[VIDEO:API] 원본 참조 오류: "
+                f"value={body.get('source_ref')!r}, fallback={source_name!r}, "
+                f"error={exc}"
+            )
+            return web.json_response(
+                {"success": False, "error": str(exc)},
+                status=400,
+            )
         loop_enabled = bool(body.get("loop", False))
         auto_instruction = body.get("auto_instruction", False)
         if not isinstance(auto_instruction, bool):
@@ -9443,21 +9462,16 @@ async def handle_api_video_enqueue(request: web.Request) -> web.Response:
                 {"success": False, "error": "지원하지 않는 영상화 모드입니다"},
                 status=400,
             )
-        if not re.fullmatch(r"[A-Za-z0-9_-]+", source_name):
-            print(f"[VIDEO:API] 원본 백업 이름 오류: name={source_name!r}")
-            return web.json_response(
-                {"success": False, "error": "원본 삽화 백업 이름이 올바르지 않습니다"},
-                status=400,
-            )
+        source_label = video_mode._reference_label(source_ref)
         if not auto_instruction and not instruction:
-            print(f"[VIDEO:API] 자연어 지시 비어 있음: source={source_name!r}, mode={mode}")
+            print(f"[VIDEO:API] 자연어 지시 비어 있음: source={source_label!r}, mode={mode}")
             return web.json_response(
                 {"success": False, "error": "영상에서 일어날 일을 입력하세요"},
                 status=400,
             )
         if len(instruction) > 12000:
             print(
-                f"[VIDEO:API] 자연어 지시 길이 초과: source={source_name!r}, "
+                f"[VIDEO:API] 자연어 지시 길이 초과: source={source_label!r}, "
                 f"length={len(instruction)}"
             )
             return web.json_response(
@@ -9470,39 +9484,64 @@ async def handle_api_video_enqueue(request: web.Request) -> web.Response:
                 {"success": False, "error": "지원하지 않는 FAST 비율 프리셋입니다"},
                 status=400,
             )
-        backup_dir = get_backup_base_dir()
-        if not _video_backup_has_raw(backup_dir, source_name):
-            print(f"[VIDEO:API] 원본 _raw 없음: source={source_name!r}")
+        try:
+            video_mode.validate_reference(source_ref)
+        except (ValueError, FileNotFoundError, RuntimeError) as exc:
+            print(
+                "[VIDEO:API] 원본 참조 검증 실패: "
+                f"source={source_ref!r}, error={type(exc).__name__}: {exc}"
+            )
             return web.json_response(
-                {
-                    "success": False,
-                    "error": "이 백업에는 영상화에 사용할 _raw 원본이 없습니다",
-                },
+                {"success": False, "error": str(exc)},
                 status=400,
             )
+        last_ref = None
         if mode == "first_last":
-            if not re.fullmatch(r"[A-Za-z0-9_-]+", last_name):
-                print(f"[VIDEO:API] 마지막 백업 이름 오류: name={last_name!r}")
+            try:
+                last_ref = video_mode.normalize_reference(
+                    body.get("last_ref"),
+                    fallback_backup=last_name,
+                )
+            except (TypeError, ValueError) as exc:
+                print(
+                    "[VIDEO:API] 마지막 프레임 참조 오류: "
+                    f"value={body.get('last_ref')!r}, fallback={last_name!r}, "
+                    f"error={exc}"
+                )
                 return web.json_response(
-                    {"success": False, "error": "마지막 프레임 백업을 선택하세요"},
+                    {"success": False, "error": "마지막 프레임을 선택하세요"},
                     status=400,
                 )
-            if last_name == source_name and not loop_enabled:
-                print(f"[VIDEO:API] FLF2V 백업 동일: name={source_name!r}, loop={loop_enabled}")
+            if last_ref == source_ref and not loop_enabled:
+                print(
+                    "[VIDEO:API] FLF2V 참조 동일: "
+                    f"reference={source_ref!r}, loop={loop_enabled}"
+                )
                 return web.json_response(
                     {"success": False, "error": "서로 다른 마지막 프레임을 선택하세요"},
                     status=400,
                 )
-            if not _video_backup_has_raw(backup_dir, last_name):
-                print(f"[VIDEO:API] 마지막 _raw 없음: last={last_name!r}")
+            try:
+                video_mode.validate_reference(last_ref)
+            except (ValueError, FileNotFoundError, RuntimeError) as exc:
+                print(
+                    "[VIDEO:API] 마지막 프레임 참조 검증 실패: "
+                    f"last={last_ref!r}, error={type(exc).__name__}: {exc}"
+                )
                 return web.json_response(
-                    {"success": False, "error": "마지막 프레임 백업의 _raw 원본이 없습니다"},
+                    {"success": False, "error": str(exc)},
                     status=400,
                 )
         params = {
             "mode": mode,
-            "source_backup": source_name,
-            "last_backup": last_name,
+            "source_ref": source_ref,
+            "last_ref": last_ref or {},
+            "source_backup": source_ref.get("name", "") if source_ref["kind"] == "backup" else "",
+            "last_backup": (
+                last_ref.get("name", "")
+                if last_ref and last_ref.get("kind") == "backup"
+                else ""
+            ),
             "loop": loop_enabled,
             "auto_instruction": auto_instruction,
             "instruction": instruction,
@@ -9520,7 +9559,7 @@ async def handle_api_video_enqueue(request: web.Request) -> web.Response:
         item = await queue_manager.add_item("video_prompt_build", label, params)
         print(
             f"[VIDEO:API] 영상화 큐 등록: item={item.id}, mode={mode}, "
-            f"source={source_name}, last={last_name or '(none)'}, preset={preset}, "
+            f"source={source_ref!r}, last={last_ref or '(none)'}, preset={preset}, "
             f"duration={duration:g}s, auto_instruction={auto_instruction}, "
             f"upscale={upscale_model or 'none'}x{upscale_scale}, "
             f"format={output_format}"
@@ -14606,6 +14645,37 @@ async def handle_api_qwen_edit_enqueue(request: web.Request) -> web.Response:
                 status=400,
             )
 
+        source_reference = {
+            "kind": "asset",
+            "character": fields.get("character", ""),
+            "outfit": fields.get("outfit", ""),
+            "expression": fields.get("expression", ""),
+            "filename": fields.get("filename", ""),
+        }
+        try:
+            source_media = asset_mode.resolve_video_reference(source_reference)
+        except (ValueError, FileNotFoundError) as exc:
+            print(
+                "[QWEN_EDIT_API] 편집 원본 검증 실패: "
+                f"reference={source_reference!r}, error={type(exc).__name__}: {exc}"
+            )
+            return web.json_response(
+                {"success": False, "error": str(exc)},
+                status=400,
+            )
+        if source_media.get("is_animated"):
+            print(
+                "[QWEN_EDIT_API] 영상 에셋 편집 요청 거부: "
+                f"reference={source_reference!r}"
+            )
+            return web.json_response(
+                {
+                    "success": False,
+                    "error": "영상 에셋에는 EDIT 툴을 사용할 수 없습니다",
+                },
+                status=400,
+            )
+
         selected_edit_tool = qwen_edit_mode.normalize_edit_tool(
             app_config.get("asset_edit_tool", "qwen")
         )
@@ -14956,6 +15026,46 @@ async def handle_api_asset_mode_images(request: web.Request) -> web.Response:
     expression = request.match_info.get("expression", "")
     return web.json_response(asset_mode.list_images(character, outfit, expression))
 
+
+async def handle_api_asset_mode_video_references(request: web.Request) -> web.Response:
+    """Return video first/last-frame choices from one asset character."""
+    character = request.match_info.get("character", "")
+    try:
+        from urllib.parse import quote
+
+        options = []
+        for item in asset_mode.list_video_references(character):
+            reference = item["reference"]
+            encoded = {
+                key: quote(str(reference[key]), safe="")
+                for key in ("character", "outfit", "expression", "filename")
+            }
+            image_url = (
+                f"/api/asset_mode/characters/{encoded['character']}"
+                f"/outfits/{encoded['outfit']}/expressions/{encoded['expression']}"
+                f"/images/{encoded['filename']}"
+            )
+            options.append({
+                **item,
+                "image_url": image_url,
+                "poster_url": (
+                    f"{image_url}/poster"
+                    if item.get("is_animated")
+                    else image_url
+                ),
+            })
+        return web.json_response({"success": True, "options": options})
+    except Exception as exc:
+        print(
+            "[ASSET_VIDEO:API] 참조 목록 조회 실패: "
+            f"character={character!r}, error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        return web.json_response(
+            {"success": False, "error": str(exc), "options": []},
+            status=500,
+        )
+
 async def handle_api_asset_mode_automatch_compare(request: web.Request) -> web.Response:
     try:
         character = request.match_info.get("character", "")
@@ -15047,6 +15157,41 @@ async def handle_api_asset_mode_image(request: web.Request) -> web.Response:
     if filepath and os.path.isfile(filepath):
         return web.FileResponse(filepath)
     return web.Response(text="Not found", status=404)
+
+
+async def handle_api_asset_mode_video_poster(request: web.Request) -> web.Response:
+    reference = {
+        "kind": "asset",
+        "character": request.match_info.get("character", ""),
+        "outfit": request.match_info.get("outfit", ""),
+        "expression": request.match_info.get("expression", ""),
+        "filename": request.match_info.get("filename", ""),
+    }
+    try:
+        poster_path = asset_mode.get_video_poster_path(reference)
+        if not os.path.isfile(poster_path):
+            print(
+                "[ASSET_VIDEO:API] poster 결과 파일 없음: "
+                f"reference={reference!r}, path={poster_path!r}"
+            )
+            return web.Response(text="Not found", status=404)
+        return web.FileResponse(
+            poster_path,
+            headers={"Cache-Control": "no-store, no-cache, must-revalidate"},
+        )
+    except (ValueError, FileNotFoundError) as exc:
+        print(
+            "[ASSET_VIDEO:API] poster 요청 오류: "
+            f"reference={reference!r}, error={type(exc).__name__}: {exc}"
+        )
+        return web.Response(text=str(exc), status=404)
+    except Exception as exc:
+        print(
+            "[ASSET_VIDEO:API] poster 생성 실패: "
+            f"reference={reference!r}, error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        return web.Response(text="Poster generation failed", status=500)
 
 async def handle_api_asset_mode_delete_combination(request: web.Request) -> web.Response:
     try:
@@ -17876,11 +18021,13 @@ app.router.add_get("/api/asset_mode/characters/{character}/gallery", handle_api_
 app.router.add_get("/api/asset_mode/characters/{character}/outfits", handle_api_asset_mode_outfits)
 app.router.add_get("/api/asset_mode/characters/{character}/expressions", handle_api_asset_mode_expressions)
 app.router.add_get("/api/asset_mode/characters/{character}/outfits/{outfit}/expressions/{expression}/images", handle_api_asset_mode_images)
+app.router.add_get("/api/asset_mode/characters/{character}/video_references", handle_api_asset_mode_video_references)
 app.router.add_get("/api/asset_mode/characters/{character}/automatch_compare", handle_api_asset_mode_automatch_compare)
 app.router.add_get("/api/asset_mode/characters/{character}/automatch_defaults", handle_api_asset_mode_automatch_defaults)
 app.router.add_post("/api/asset_mode/automatch_defaults/delete", handle_api_asset_mode_delete_automatch_default)
 app.router.add_post("/api/asset_mode/set_representative", handle_api_asset_mode_set_representative)
 app.router.add_get("/api/asset_mode/characters/{character}/outfits/{outfit}/expressions/{expression}/images/{filename}", handle_api_asset_mode_image)
+app.router.add_get("/api/asset_mode/characters/{character}/outfits/{outfit}/expressions/{expression}/images/{filename}/poster", handle_api_asset_mode_video_poster)
 app.router.add_post("/api/asset_mode/delete_combination", handle_api_asset_mode_delete_combination)
 app.router.add_post("/api/asset_mode/delete_image", handle_api_asset_mode_delete_image)
 app.router.add_post("/api/asset_mode/upload_image", handle_api_asset_mode_upload_image)

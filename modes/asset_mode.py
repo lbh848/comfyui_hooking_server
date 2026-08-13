@@ -38,12 +38,18 @@ NAME_MAPPING_FILE = os.path.join(ASSET_DATA_DIR, "name_mapping.json")
 NAME_MAPPING_BACKUP_DIR = os.path.join(BASE_DIR, "요구사항")
 
 EXPORT_NAMING_BLOCKS = ("character", "outfit", "expression")
+ASSET_MEDIA_EXTENSIONS = (".png", ".jpg", ".jpeg", ".webp", ".avif")
+ASSET_ANIMATION_EXTENSIONS = (".webp", ".avif")
 _INVALID_EXPORT_TOKEN_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _WINDOWS_RESERVED_NAMES = {
     "CON", "PRN", "AUX", "NUL",
     *(f"COM{i}" for i in range(1, 10)),
     *(f"LPT{i}" for i in range(1, 10)),
 }
+
+# {absolute_path: (mtime_ns, size, is_animated)}. 에셋 LV1/LV2를 다시 열 때
+# 모든 WebP/AVIF를 Pillow로 반복 디코딩하지 않도록 파일 상태와 함께 캐시한다.
+_ASSET_ANIMATION_CACHE: dict[str, tuple[int, int, bool]] = {}
 
 # 프리셋매니징 대상 카테고리
 PRESET_MGMT_CATEGORIES = [
@@ -1838,6 +1844,356 @@ class AssetMode:
         return safe or f"unknown_{hash(name) % 10000}"
 
     @staticmethod
+    def _asset_prompt_path(image_dir: str, filename: str) -> str:
+        return os.path.join(
+            image_dir,
+            f"{os.path.splitext(filename)[0]}_prompt.json",
+        )
+
+    @staticmethod
+    def _load_asset_prompt_metadata(image_dir: str, filename: str) -> dict:
+        prompt_path = AssetMode._asset_prompt_path(image_dir, filename)
+        if not os.path.isfile(prompt_path):
+            return {}
+        try:
+            with open(prompt_path, "r", encoding="utf-8") as prompt_file:
+                payload = json.load(prompt_file)
+            if not isinstance(payload, dict):
+                print(
+                    "[ASSET_MEDIA] 프롬프트 메타데이터 형식 오류: "
+                    f"path={prompt_path!r}, type={type(payload).__name__}"
+                )
+                return {}
+            return payload
+        except Exception as exc:
+            print(
+                "[ASSET_MEDIA] 프롬프트 메타데이터 로드 실패: "
+                f"path={prompt_path!r}, error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            return {}
+
+    @staticmethod
+    def _looks_like_supported_animation_container(path: str) -> bool:
+        """Avoid opening obvious non-images while still detecting legacy animations."""
+        extension = os.path.splitext(path)[1].lower()
+        if extension not in ASSET_ANIMATION_EXTENSIONS:
+            return False
+        try:
+            with open(path, "rb") as media_file:
+                header = media_file.read(16)
+        except Exception as exc:
+            print(
+                "[ASSET_MEDIA] 애니메이션 헤더 읽기 실패: "
+                f"path={path!r}, error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            return False
+        if extension == ".webp":
+            return len(header) >= 12 and header[:4] == b"RIFF" and header[8:12] == b"WEBP"
+        return len(header) >= 12 and header[4:8] == b"ftyp"
+
+    @classmethod
+    def _is_animated_asset(cls, path: str, prompt_data: dict | None = None) -> bool:
+        if isinstance(prompt_data, dict) and "is_video_animation" in prompt_data:
+            return prompt_data.get("is_video_animation") is True
+        if not cls._looks_like_supported_animation_container(path):
+            return False
+        try:
+            stat = os.stat(path)
+            cache_key = os.path.realpath(path)
+            cached = _ASSET_ANIMATION_CACHE.get(cache_key)
+            signature = (stat.st_mtime_ns, stat.st_size)
+            if cached and cached[:2] == signature:
+                return cached[2]
+            from PIL import Image
+
+            with Image.open(path) as media:
+                animated = bool(getattr(media, "is_animated", False))
+            _ASSET_ANIMATION_CACHE[cache_key] = (*signature, animated)
+            return animated
+        except Exception as exc:
+            print(
+                "[ASSET_MEDIA] 애니메이션 판별 실패: "
+                f"path={path!r}, error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            return False
+
+    def _resolve_asset_reference_parts(self, reference: dict) -> tuple[dict, str, str]:
+        if not isinstance(reference, dict):
+            print(f"[ASSET_VIDEO] 에셋 참조 형식 오류: value={reference!r}")
+            raise ValueError("에셋 영상 참조가 올바르지 않습니다")
+        normalized = {
+            "kind": "asset",
+            "character": str(reference.get("character") or "").strip(),
+            "outfit": str(reference.get("outfit") or "").strip(),
+            "expression": str(reference.get("expression") or "").strip(),
+            "filename": str(reference.get("filename") or "").strip(),
+        }
+        for field in ("character", "outfit", "expression"):
+            value = normalized[field]
+            if not value or self._safe_dirname(value) != value:
+                print(
+                    "[ASSET_VIDEO] 에셋 참조 디렉터리명 오류: "
+                    f"field={field}, value={value!r}, reference={reference!r}"
+                )
+                raise ValueError("에셋 영상 참조 경로가 올바르지 않습니다")
+        filename = normalized["filename"]
+        extension = os.path.splitext(filename)[1].lower()
+        if (
+            not filename
+            or os.path.basename(filename) != filename
+            or filename in (".", "..")
+            or extension not in ASSET_MEDIA_EXTENSIONS
+        ):
+            print(
+                "[ASSET_VIDEO] 에셋 참조 파일명 오류: "
+                f"filename={filename!r}, reference={reference!r}"
+            )
+            raise ValueError("에셋 영상 참조 파일명이 올바르지 않습니다")
+        image_dir = os.path.realpath(os.path.join(
+            ASSET_DIR,
+            normalized["character"],
+            normalized["outfit"],
+            normalized["expression"],
+        ))
+        asset_root = os.path.realpath(ASSET_DIR)
+        try:
+            if os.path.commonpath([asset_root, image_dir]) != asset_root:
+                raise ValueError("에셋 루트 밖 경로")
+        except Exception as exc:
+            print(
+                "[ASSET_VIDEO] 에셋 참조 경로 검증 실패: "
+                f"root={asset_root!r}, directory={image_dir!r}, error={exc}"
+            )
+            traceback.print_exc()
+            raise ValueError("에셋 영상 참조 경로가 안전하지 않습니다") from exc
+        image_path = os.path.realpath(os.path.join(image_dir, filename))
+        if os.path.dirname(image_path) != image_dir or not os.path.isfile(image_path):
+            print(
+                "[ASSET_VIDEO] 에셋 참조 파일 없음: "
+                f"reference={normalized!r}, path={image_path!r}"
+            )
+            raise FileNotFoundError("영상화할 에셋 파일을 찾지 못했습니다")
+        return normalized, image_dir, image_path
+
+    def resolve_video_reference(self, reference: dict) -> dict:
+        normalized, image_dir, image_path = self._resolve_asset_reference_parts(reference)
+        prompt_data = self._load_asset_prompt_metadata(
+            image_dir,
+            normalized["filename"],
+        )
+        return {
+            "reference": normalized,
+            "path": image_path,
+            "positive": str(prompt_data.get("positive") or "").strip(),
+            "info": prompt_data,
+            "is_animated": self._is_animated_asset(image_path, prompt_data),
+            "label": (
+                f"{normalized['outfit']} / {normalized['expression']} / "
+                f"{normalized['filename']}"
+            ),
+        }
+
+    def list_video_references(self, character: str) -> list[dict]:
+        safe_character = self._safe_dirname(str(character or "").strip())
+        if not character or safe_character != character:
+            print(f"[ASSET_VIDEO] 참조 목록 캐릭터명 오류: character={character!r}")
+            raise ValueError("에셋 캐릭터명이 올바르지 않습니다")
+        char_dir = os.path.join(ASSET_DIR, safe_character)
+        if not os.path.isdir(char_dir):
+            print(f"[ASSET_VIDEO] 참조 목록 캐릭터 폴더 없음: path={char_dir!r}")
+            return []
+        references = []
+        for outfit in sorted(os.listdir(char_dir)):
+            outfit_dir = os.path.join(char_dir, outfit)
+            if outfit in ("Lora", AUTOMATCH_DEFAULT_OUTFIT_DIR) or not os.path.isdir(outfit_dir):
+                continue
+            for expression in sorted(os.listdir(outfit_dir)):
+                expression_dir = os.path.join(outfit_dir, expression)
+                if not os.path.isdir(expression_dir):
+                    continue
+                listing = self.list_images(character, outfit, expression)
+                for media in listing.get("images", []):
+                    reference = {
+                        "kind": "asset",
+                        "character": character,
+                        "outfit": outfit,
+                        "expression": expression,
+                        "filename": media["filename"],
+                    }
+                    references.append({
+                        "reference": reference,
+                        "label": f"{outfit} / {expression} / {media['filename']}",
+                        "is_animated": bool(media.get("is_animated")),
+                        "mtime": os.path.getmtime(media["local_path"]),
+                    })
+        references.sort(key=lambda item: item["mtime"], reverse=True)
+        return references
+
+    def get_video_poster_path(self, reference: dict) -> str:
+        resolved = self.resolve_video_reference(reference)
+        source_path = resolved["path"]
+        if not resolved["is_animated"]:
+            return source_path
+        image_dir = os.path.dirname(source_path)
+        poster_dir = os.path.join(image_dir, "_posters")
+        os.makedirs(poster_dir, exist_ok=True)
+        poster_path = os.path.join(
+            poster_dir,
+            f"{os.path.splitext(os.path.basename(source_path))[0]}.webp",
+        )
+        try:
+            if (
+                not os.path.isfile(poster_path)
+                or os.path.getmtime(poster_path) < os.path.getmtime(source_path)
+            ):
+                from PIL import Image
+
+                with Image.open(source_path) as media:
+                    if getattr(media, "is_animated", False):
+                        media.seek(0)
+                    poster = media.convert("RGB")
+                temp_path = f"{poster_path}.{uuid.uuid4().hex[:8]}.tmp"
+                try:
+                    poster.save(temp_path, format="WEBP", quality=82, method=4)
+                    os.replace(temp_path, poster_path)
+                finally:
+                    if os.path.isfile(temp_path):
+                        os.remove(temp_path)
+                print(
+                    "[ASSET_VIDEO] 애니메이션 poster 생성: "
+                    f"source={source_path!r}, poster={poster_path!r}"
+                )
+            return poster_path
+        except Exception as exc:
+            print(
+                "[ASSET_VIDEO] 애니메이션 poster 생성 실패: "
+                f"source={source_path!r}, poster={poster_path!r}, "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            raise
+
+    def commit_video_result(
+        self,
+        source_reference: dict,
+        main_path: str,
+        raw_path: str,
+        extension: str,
+        metadata: dict,
+    ) -> dict:
+        """Commit a completed animation beside its source without replacing it."""
+        normalized, image_dir, source_path = self._resolve_asset_reference_parts(
+            source_reference
+        )
+        normalized_extension = str(extension or "").lower()
+        if normalized_extension not in ASSET_ANIMATION_EXTENSIONS:
+            print(
+                "[ASSET_VIDEO] 결과 확장자 오류: "
+                f"extension={extension!r}, source={normalized!r}"
+            )
+            raise ValueError("에셋 영상 결과는 AVIF 또는 WebP여야 합니다")
+        for label, staged_path in (("합성본", main_path), ("원본", raw_path)):
+            if not os.path.isfile(staged_path):
+                print(
+                    f"[ASSET_VIDEO] 스테이징 {label} 없음: "
+                    f"path={staged_path!r}, source={normalized!r}"
+                )
+                raise FileNotFoundError(f"에셋 영상 {label} 결과가 없습니다")
+
+        requested_base = str((metadata or {}).get("base_name") or "").strip()
+        safe_base = re.sub(r"[^A-Za-z0-9_-]", "", requested_base)
+        if not safe_base:
+            safe_base = f"video_{int(time.time())}_{uuid.uuid4().hex[:8]}"
+        raw_dir = os.path.join(image_dir, "_raw")
+        filename = f"{safe_base}{normalized_extension}"
+        target_path = os.path.join(image_dir, filename)
+        prompt_path = self._asset_prompt_path(image_dir, filename)
+        target_raw_path = os.path.join(raw_dir, filename)
+        while any(os.path.exists(path) for path in (
+            target_path,
+            prompt_path,
+            target_raw_path,
+        )):
+            filename = f"{safe_base}_{uuid.uuid4().hex[:6]}{normalized_extension}"
+            target_path = os.path.join(image_dir, filename)
+            prompt_path = self._asset_prompt_path(image_dir, filename)
+            target_raw_path = os.path.join(raw_dir, filename)
+
+        os.makedirs(raw_dir, exist_ok=True)
+        created_paths: list[str] = []
+        try:
+            os.replace(main_path, target_path)
+            created_paths.append(target_path)
+            os.replace(raw_path, target_raw_path)
+            created_paths.append(target_raw_path)
+            prompt_record = {
+                "positive": str((metadata or {}).get("positive") or ""),
+                "negative": "",
+                "character": normalized["character"],
+                "appearance": "",
+                "outfit": normalized["outfit"],
+                "expression": normalized["expression"],
+                "is_video_animation": True,
+                "video_source_filename": normalized["filename"],
+                "video_source_ref": normalized,
+                "video_last_ref": copy.deepcopy((metadata or {}).get("last_ref") or {}),
+                "video_mode": str((metadata or {}).get("mode") or ""),
+                "video_duration_seconds": float((metadata or {}).get("duration") or 0),
+                "video_fps": int((metadata or {}).get("fps") or 0),
+                "video_seed": (metadata or {}).get("video_seed"),
+                "video_width": int((metadata or {}).get("output_width") or 0),
+                "video_height": int((metadata or {}).get("output_height") or 0),
+                "video_upscale_enabled": bool((metadata or {}).get("upscale_enabled")),
+                "video_upscale_scale": int((metadata or {}).get("upscale_scale") or 1),
+                "video_upscale_model": str((metadata or {}).get("upscale_model") or ""),
+                "video_output_format_requested": str(
+                    (metadata or {}).get("output_format") or normalized_extension.lstrip(".")
+                ),
+                "animation_format": normalized_extension.lstrip("."),
+                "created_at": float((metadata or {}).get("created_at") or time.time()),
+            }
+            with open(prompt_path, "x", encoding="utf-8") as prompt_file:
+                json.dump(prompt_record, prompt_file, ensure_ascii=False, indent=2)
+                prompt_file.flush()
+                os.fsync(prompt_file.fileno())
+            created_paths.append(prompt_path)
+            _ASSET_ANIMATION_CACHE.pop(os.path.realpath(target_path), None)
+            print(
+                "[ASSET_VIDEO] 새 영상 에셋 저장 완료: "
+                f"source={source_path!r}, result={target_path!r}, raw={target_raw_path!r}"
+            )
+            return {
+                "success": True,
+                "character": normalized["character"],
+                "outfit": normalized["outfit"],
+                "expression": normalized["expression"],
+                "filename": filename,
+                "source_filename": normalized["filename"],
+                "is_video_animation": True,
+            }
+        except Exception as exc:
+            print(
+                "[ASSET_VIDEO] 새 영상 에셋 저장 실패: "
+                f"source={normalized!r}, target={target_path!r}, "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            for created_path in reversed(created_paths):
+                try:
+                    if os.path.isfile(created_path):
+                        os.remove(created_path)
+                except Exception as cleanup_exc:
+                    print(
+                        "[ASSET_VIDEO] 실패 결과 정리 실패: "
+                        f"path={created_path!r}, error={cleanup_exc}"
+                    )
+                    traceback.print_exc()
+            raise
+
+    @staticmethod
     def update_prompt_negative_metadata(
         prompt_path: str,
         negative_prompt: str,
@@ -1912,24 +2268,18 @@ class AssetMode:
             if not os.path.isfile(fpath):
                 continue
             ext = os.path.splitext(fname)[1].lower()
-            if ext not in (".png", ".jpg", ".jpeg", ".webp"):
+            if ext not in ASSET_MEDIA_EXTENSIONS:
                 continue
-            prompt_data = {}
-            prompt_path = os.path.join(img_dir, f"{os.path.splitext(fname)[0]}_prompt.json")
-            if os.path.isfile(prompt_path):
-                try:
-                    with open(prompt_path, "r", encoding="utf-8") as pf:
-                        prompt_data = json.load(pf)
-                except Exception as e:
-                    print(
-                        f"[ASSET_MODE] 이미지 프롬프트 로드 실패: "
-                        f"path={prompt_path!r}, error={type(e).__name__}: {e}"
-                    )
-                    traceback.print_exc()
+            prompt_data = self._load_asset_prompt_metadata(img_dir, fname)
+            is_animated = self._is_animated_asset(fpath, prompt_data)
 
             images.append({
                 "filename": fname,
                 "is_representative": fname == representative,
+                "is_animated": is_animated,
+                "is_video_animation": bool(
+                    prompt_data.get("is_video_animation", is_animated)
+                ),
                 "has_prompt": bool(prompt_data),
                 "positive": prompt_data.get("positive", ""),
                 "negative": prompt_data.get("negative", ""),
@@ -2340,12 +2690,28 @@ class AssetMode:
             return {"success": False, "error": "파일이 존재하지 않음"}
 
         os.remove(fpath)
+        _ASSET_ANIMATION_CACHE.pop(os.path.realpath(fpath), None)
 
         # 프롬프트 JSON 삭제
         base, _ = os.path.splitext(filename)
         prompt_path = os.path.join(img_dir, f"{base}_prompt.json")
         if os.path.isfile(prompt_path):
             os.remove(prompt_path)
+
+        # 영상화 결과의 숨김 원본과 hover poster도 함께 정리한다.
+        for companion_path in (
+            os.path.join(img_dir, "_raw", filename),
+            os.path.join(img_dir, "_posters", f"{base}.webp"),
+        ):
+            try:
+                if os.path.isfile(companion_path):
+                    os.remove(companion_path)
+            except Exception as exc:
+                print(
+                    "[ASSET_MODE] 영상 보조 파일 삭제 실패: "
+                    f"path={companion_path!r}, error={type(exc).__name__}: {exc}"
+                )
+                traceback.print_exc()
 
         rep_path = os.path.join(img_dir, "_representative.json")
         if os.path.isfile(rep_path):
@@ -2435,18 +2801,30 @@ class AssetMode:
                     if fname.startswith("_"):
                         continue
                     ext = os.path.splitext(fname)[1].lower()
-                    if ext in (".png", ".jpg", ".jpeg", ".webp"):
+                    if ext in ASSET_MEDIA_EXTENSIONS:
                         image_count += 1
 
                 if image_count > 0:
                     local_path = self.get_image_path(character, outfit_dir_name, expr_dir_name, rep_file) if rep_file else ""
-                    results.append({
+                    representative_prompt = (
+                        self._load_asset_prompt_metadata(expr_path, rep_file)
+                        if rep_file and local_path
+                        else {}
+                    )
+                    representative_is_animated = bool(
+                        local_path
+                        and self._is_animated_asset(local_path, representative_prompt)
+                    )
+                    gallery_item = {
                         "outfit": outfit_dir_name,
                         "expression": expr_dir_name,
                         "representative": rep_file,
                         "image_count": image_count,
                         "local_path": local_path,
-                    })
+                    }
+                    if representative_is_animated:
+                        gallery_item["representative_is_animated"] = True
+                    results.append(gallery_item)
         return results
 
     def batch_analyze_representatives(self, character: str) -> list[dict]:
@@ -2851,11 +3229,17 @@ class AssetMode:
                 if not rep_file or not os.path.isfile(os.path.join(expression_path, rep_file)):
                     missing_representatives.append({"outfit": outfit_name, "expression": expression_name})
                     continue
+                image_path = os.path.join(expression_path, rep_file)
+                prompt_data = self._load_asset_prompt_metadata(expression_path, rep_file)
                 raw_candidates.append({
                     "outfit": outfit_name,
                     "expression": expression_name,
                     "source_filename": rep_file,
-                    "image_path": os.path.join(expression_path, rep_file),
+                    "image_path": image_path,
+                    "is_video_animation": self._is_animated_asset(
+                        image_path,
+                        prompt_data,
+                    ),
                 })
 
         if missing_representatives:
@@ -2921,7 +3305,12 @@ class AssetMode:
                 parts.append(token)
             if not valid or not parts:
                 continue
-            filename = "_".join(parts) + extension
+            candidate_extension = (
+                os.path.splitext(candidate["source_filename"])[1].lower()
+                if candidate.get("is_video_animation")
+                else extension
+            )
+            filename = "_".join(parts) + candidate_extension
             if len(filename) > 240:
                 errors.append(self._export_issue(
                     "filename_too_long",
@@ -3043,6 +3432,7 @@ class AssetMode:
                     "outfit": item.get("outfit", ""),
                     "expression": item.get("expression", ""),
                     "filename": item.get("filename", ""),
+                    "is_video_animation": bool(item.get("is_video_animation")),
                 }
                 for item in plan.get("files", [])
             ],
@@ -3238,7 +3628,13 @@ class AssetMode:
                 used_names.add(collision_key)
 
                 orig_ext = os.path.splitext(rep_file)[1].lower()
-                if orig_ext == ext and not need_recompress:
+                if item.get("is_video_animation"):
+                    zf.write(img_path, zip_name)
+                    log.info(
+                        f"[ZIP 내보내기] [{added + 1}] 영상 원본 그대로 추가: "
+                        f"{zip_name} (포맷·품질 설정 무시)"
+                    )
+                elif orig_ext == ext and not need_recompress:
                     zf.write(img_path, zip_name)
                     log.info(f"[ZIP 내보내기] [{added + 1}] 원본 그대로 추가: {zip_name}")
                 else:
