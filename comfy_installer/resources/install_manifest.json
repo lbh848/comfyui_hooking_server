@@ -505,7 +505,7 @@
     }
   ],
   "workflows": {
-    "expected_count": 20,
+    "expected_count": 19,
     "release_dependencies": {
       "v1": [
         {
@@ -716,17 +716,6 @@
           "model_ids": []
         },
         {
-          "id": "video_workflow_source_paths.t2v",
-          "bindings": ["video_workflow_source_paths.t2v"],
-          "model_ids": [
-            "minimax-h3-audio-vae-fp32",
-            "minimax-h3-int8-convrot",
-            "minimax-h3-lightx2v-turbo-8step-v1",
-            "minimax-h3-qwen3vl-nvfp4-awq",
-            "minimax-h3-video-vae-fp16"
-          ]
-        },
-        {
           "id": "video_workflow_source_paths.i2v",
           "bindings": ["video_workflow_source_paths.i2v"],
           "model_ids": [
@@ -771,7 +760,6 @@
       "debug_workflow_source_path"
     ],
     "optional_bindings": [
-      "video_workflow_source_paths.t2v",
       "video_workflow_source_paths.i2v",
       "video_workflow_source_paths.first_last"
     ],
@@ -782,7 +770,6 @@
   "validation_profiles": {
     "minimax_h3": {
       "workflow_bindings": [
-        "video_workflow_source_paths.t2v",
         "video_workflow_source_paths.i2v",
         "video_workflow_source_paths.first_last"
       ],

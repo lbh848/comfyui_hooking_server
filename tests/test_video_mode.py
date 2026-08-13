@@ -409,11 +409,16 @@ def _synthetic_first_last_api_workflow() -> dict:
 
 
 def test_real_h3_i2v_workflow_exposes_positive_transport_node() -> None:
-    workflow_path = next(
-        (ROOT / "comfy" / "user" / "default" / "workflows" / "SOYA_USER").glob(
-            "*H3_I2V*첫프레임*.json"
-        )
+    workflow_path = (
+        ROOT
+        / "comfy"
+        / "user"
+        / "default"
+        / "workflows"
+        / "SOYA_USER"
+        / "배포_영상_H3_I2V_v1.json"
     )
+    assert workflow_path.is_file()
     workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
 
     positive_nodes = [
@@ -429,11 +434,16 @@ def test_real_h3_i2v_workflow_exposes_positive_transport_node() -> None:
 
 
 def test_real_h3_first_last_workflow_exposes_the_same_transport_contract() -> None:
-    workflow_path = next(
-        (ROOT / "comfy" / "user" / "default" / "workflows" / "SOYA_USER").glob(
-            "*H3_I2V*첫마지막프레임*.json"
-        )
+    workflow_path = (
+        ROOT
+        / "comfy"
+        / "user"
+        / "default"
+        / "workflows"
+        / "SOYA_USER"
+        / "배포_영상_H3_FLF2V_v1.json"
     )
+    assert workflow_path.is_file()
     workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
     positive = next(
         node

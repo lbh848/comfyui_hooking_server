@@ -899,9 +899,8 @@ class ComfyInstallerService:
             "style_lora_training_workflow_source_paths.anima": 150,
             "style_lora_training_workflow_source_paths.sdxl": 160,
             "debug_workflow_source_path": 170,
-            "video_workflow_source_paths.t2v": 180,
-            "video_workflow_source_paths.i2v": 190,
-            "video_workflow_source_paths.first_last": 200,
+            "video_workflow_source_paths.i2v": 180,
+            "video_workflow_source_paths.first_last": 190,
         }
         return (
             min((priorities.get(key, 999) for key in keys), default=999),

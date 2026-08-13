@@ -934,7 +934,6 @@ E2E_PROFILE_BY_BINDING = {
     ),
     "face_extract_workflow_source_path": E2E_PROFILE_EMBED_FILTER,
     "debug_workflow_source_path": E2E_PROFILE_STANDARD,
-    "video_workflow_source_paths.t2v": E2E_PROFILE_MINIMAX_H3,
     "video_workflow_source_paths.i2v": E2E_PROFILE_MINIMAX_H3,
     "video_workflow_source_paths.first_last": E2E_PROFILE_MINIMAX_H3,
 }

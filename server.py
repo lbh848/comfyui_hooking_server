@@ -407,7 +407,6 @@ DEFAULT_CONFIG = {
         ),
         "edit_illustration_prompt":_llm_route_defaults(json_mode=True),  # 끄면 response_format 미전송(Cerebras/Gemma 루프 회피)
         "qwen_edit_translate":     _llm_route_defaults(max_retries=1),
-        "video_prompt_t2v":        _llm_route_defaults(max_retries=1),
         "video_prompt_i2v":        _llm_route_defaults(max_retries=1),
         "video_prompt_first_last": _llm_route_defaults(max_retries=1),
         # 삽화 컨텍스트 파이프라인 역번역/CALL1/2/2-FIX/3. 메인 LLM/폴백은 외부 LLM 분기 탭에서 드롭박스로 선택.
@@ -451,7 +450,6 @@ DEFAULT_CONFIG = {
     "style_lora_training_workflow_source_paths": {"anima": "", "sdxl": ""},  # 스타일(그림체) LoRA 학습 워크플로우 원본 소스 경로 (profile별)
     "face_extract_workflow_source_path": "",  # 얼굴 이미지 추출 워크플로우 원본 소스 전체 경로
     "video_workflow_source_paths": {
-        "t2v": "",
         "i2v": "",
         "first_last": "",
     },  # MiniMax H3 영상 워크플로우 원본 소스 경로

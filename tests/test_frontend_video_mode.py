@@ -39,6 +39,42 @@ def test_video_page_uses_modal_entry_with_two_internal_modes() -> None:
     assert "onVideoLastFrameChange()" in FRONTEND
 
 
+def test_settings_expose_i2v_and_flf2v_workflows_without_card_selection() -> None:
+    asset_tab = FRONTEND.index("switchSettingsTab('asset')")
+    video_tab = FRONTEND.index("switchSettingsTab('video')", asset_tab)
+    rag_tab = FRONTEND.index("switchSettingsTab('character_maker')", video_tab)
+
+    assert asset_tab < video_tab < rag_tab
+    assert 'id="settings-tab-video"' in FRONTEND
+    assert 'id="setting-video-i2v-workflow-filename"' in FRONTEND
+    assert 'id="setting-video-first-last-workflow-filename"' in FRONTEND
+    assert "배포_영상_H3_I2V_v1.json" in FRONTEND
+    assert "배포_영상_H3_FLF2V_v1.json" in FRONTEND
+    assert "onVideoWorkflowFilenameInput('i2v', this.value)" in FRONTEND
+    assert "onVideoWorkflowFilenameInput('first_last', this.value)" in FRONTEND
+    assert 'data-video-workflow-mode="i2v"' in FRONTEND
+    assert 'data-video-workflow-mode="first_last"' in FRONTEND
+    assert "selectVideoWorkflowFile(list.dataset.videoWorkflowMode, path, filename);" in FRONTEND
+
+    panel = FRONTEND.split('id="settings-tab-video"', 1)[1].split(
+        'id="settings-tab-character_maker"', 1
+    )[0]
+    assert "asset-workflow-selector" not in panel
+    assert "option-card" not in panel
+
+
+def test_video_workflow_settings_load_and_save_only_supported_paths() -> None:
+    assert "const videoWorkflowPaths = currentConfig.video_workflow_source_paths || {};" in FRONTEND
+    assert "for (const mode of ['i2v', 'first_last'])" in FRONTEND
+    assert "video_workflow_source_paths: {" in FRONTEND
+    assert "...(currentConfig.video_workflow_source_paths || {})," not in FRONTEND
+    assert "i2v: document.getElementById('setting-video-i2v-workflow-source-path').value" in FRONTEND
+    assert "first_last: document.getElementById('setting-video-first-last-workflow-source-path').value" in FRONTEND
+    assert "updateVideoWorkflowPath('i2v');" in FRONTEND
+    assert "updateVideoWorkflowPath('first_last');" in FRONTEND
+    assert "[VIDEO_SETTINGS] ${mode} 워크플로우 파일 검색 실패:" in FRONTEND
+
+
 def test_video_page_exposes_every_fast_resolution_and_queue_endpoint() -> None:
     for value in (
         "512×512",

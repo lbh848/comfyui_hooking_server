@@ -208,7 +208,7 @@ def test_make_e2e_prompt_disables_private_assets_and_minimizes_work() -> None:
 
 def test_make_e2e_prompt_accepts_h3_runtime_dimensions_and_steps() -> None:
     validation = WorkflowValidation(
-        binding_keys=("video_workflow_source_paths.t2v",),
+        binding_keys=("video_workflow_source_paths.i2v",),
         filename="h3.json",
         node_count=1,
         class_count=1,

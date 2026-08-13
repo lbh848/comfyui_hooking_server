@@ -19139,6 +19139,7 @@
                         <button class="settings-tab-btn" onclick="switchSettingsTab('api_route')">외부 LLM 분기</button>
                         <button class="settings-tab-btn" onclick="switchSettingsTab('illustration')">삽화</button>
                         <button class="settings-tab-btn" onclick="switchSettingsTab('asset')">에셋</button>
+                        <button class="settings-tab-btn" onclick="switchSettingsTab('video')">영상</button>
                         <button class="settings-tab-btn" onclick="switchSettingsTab('character_maker')">단부르 RAG</button>
                         <button class="settings-tab-btn" onclick="switchSettingsTab('lora')">로라</button>
                         <button class="settings-tab-btn" onclick="switchSettingsTab('queue')">큐</button>
@@ -20943,6 +20944,47 @@
                             </section>
                         </div>
                     </div>
+                </div>
+
+                <!-- 영상 워크플로우 설정 -->
+                <div class="settings-tab-panel" id="settings-tab-video">
+                    <div class="setting-row">
+                        <div class="setting-label">
+                            <div class="title">🎬 I2V 워크플로우</div>
+                            <div class="desc">첫 프레임 이미지에서 영상을 생성할 때 사용할 워크플로우 파일 (공통설정 탭 베이스 경로 공유)</div>
+                        </div>
+                    </div>
+                    <div class="form-group" style="margin-top: -8px;">
+                        <div class="autocomplete-wrapper">
+                            <input type="text" id="setting-video-i2v-workflow-filename"
+                                   placeholder="예: 배포_영상_H3_I2V_v1.json"
+                                   oninput="onVideoWorkflowFilenameInput('i2v', this.value)"
+                                   onfocus="onVideoWorkflowFilenameInput('i2v', this.value)">
+                            <div class="autocomplete-list" id="video-i2v-workflow-autocomplete"
+                                 data-video-workflow-mode="i2v"></div>
+                        </div>
+                        <div class="hint">공통설정 탭의 '베이스 경로'에서 검색됩니다</div>
+                    </div>
+                    <input type="hidden" id="setting-video-i2v-workflow-source-path">
+
+                    <div class="setting-row" style="margin-top: 12px;">
+                        <div class="setting-label">
+                            <div class="title">🎞️ FLF2V 워크플로우</div>
+                            <div class="desc">첫 프레임과 마지막 프레임을 연결해 영상을 생성할 때 사용할 워크플로우 파일 (공통설정 탭 베이스 경로 공유)</div>
+                        </div>
+                    </div>
+                    <div class="form-group" style="margin-top: -8px;">
+                        <div class="autocomplete-wrapper">
+                            <input type="text" id="setting-video-first-last-workflow-filename"
+                                   placeholder="예: 배포_영상_H3_FLF2V_v1.json"
+                                   oninput="onVideoWorkflowFilenameInput('first_last', this.value)"
+                                   onfocus="onVideoWorkflowFilenameInput('first_last', this.value)">
+                            <div class="autocomplete-list" id="video-first-last-workflow-autocomplete"
+                                 data-video-workflow-mode="first_last"></div>
+                        </div>
+                        <div class="hint">공통설정 탭의 '베이스 경로'에서 검색됩니다</div>
+                    </div>
+                    <input type="hidden" id="setting-video-first-last-workflow-source-path">
                 </div>
 
                 <!-- 캐릭터 메이커 설정 -->
@@ -30773,6 +30815,17 @@
             document.getElementById('setting-asset-tag-analysis-workflow-filename').value = assetTagAnalysisSplit.filename;
             document.getElementById('setting-asset-tag-analysis-workflow-source-path').value = assetTagAnalysisPath;
 
+            // 영상 워크플로우 (I2V / FLF2V)
+            const videoWorkflowPaths = currentConfig.video_workflow_source_paths || {};
+            for (const mode of ['i2v', 'first_last']) {
+                const videoPath = videoWorkflowPaths[mode] || '';
+                const videoSplit = splitWorkflowPath(videoPath);
+                document.getElementById(`setting-video-${mode.replace('_', '-')}-workflow-filename`).value =
+                    videoSplit.filename;
+                document.getElementById(`setting-video-${mode.replace('_', '-')}-workflow-source-path`).value =
+                    videoPath;
+            }
+
             // 디버그 워크플로우
             const debugWfPath = currentConfig.debug_workflow_source_path || '';
             const debugWfSplit = splitWorkflowPath(debugWfPath);
@@ -30864,6 +30917,8 @@
             updateAnimaInpaintingWorkflowPath();
             updateTagAnalysisWorkflowPath();
             updateAssetTagAnalysisWorkflowPath();
+            updateVideoWorkflowPath('i2v');
+            updateVideoWorkflowPath('first_last');
             updateLoraAnimaWorkflowPath();
             updateLoraSdxlWorkflowPath();
             updateStyleLoraAnimaWorkflowPath();
@@ -32076,6 +32131,10 @@
                 tag_analysis_workflow_source_path: document.getElementById('setting-tag-analysis-workflow-source-path').value,
                 asset_tag_analysis_workflow_source_path: document.getElementById('setting-asset-tag-analysis-workflow-source-path').value,
                 use_builtin_tagger: document.getElementById('setting-use-builtin-tagger').checked,
+                video_workflow_source_paths: {
+                    i2v: document.getElementById('setting-video-i2v-workflow-source-path').value,
+                    first_last: document.getElementById('setting-video-first-last-workflow-source-path').value
+                },
                 lora_training_workflow_source_paths: {
                     anima: document.getElementById('setting-lora-workflow-anima-source-path').value,
                     sdxl: document.getElementById('setting-lora-workflow-sdxl-source-path').value
@@ -32343,6 +32402,8 @@
                         selectAnimaInpaintingWorkflowFile(path, filename);
                     } else if (list.id === 'asset-tag-analysis-workflow-autocomplete') {
                         selectAssetTagAnalysisWorkflowFile(path, filename);
+                    } else if (list.dataset.videoWorkflowMode) {
+                        selectVideoWorkflowFile(list.dataset.videoWorkflowMode, path, filename);
                     } else if (list.id === 'debug-workflow-autocomplete') {
                         selectDebugWorkflowFile(path, filename);
                     }
@@ -35990,6 +36051,53 @@
             const baseDir = document.getElementById('setting-workflow-base-dir').value;
             const filename = document.getElementById('setting-asset-tag-analysis-workflow-filename').value;
             document.getElementById('setting-asset-tag-analysis-workflow-source-path').value = combineWorkflowPath(baseDir, filename);
+        }
+
+        // 영상 워크플로우 자동완성 (I2V / FLF2V)
+        const videoWorkflowAutocompleteTimeouts = {};
+
+        function videoWorkflowSettingKey(mode) {
+            if (!['i2v', 'first_last'].includes(mode)) {
+                console.error('[VIDEO_SETTINGS] 지원하지 않는 워크플로우 모드:', mode);
+                return '';
+            }
+            return mode.replace('_', '-');
+        }
+
+        function updateVideoWorkflowPath(mode) {
+            const key = videoWorkflowSettingKey(mode);
+            if (!key) return;
+            const baseDir = document.getElementById('setting-workflow-base-dir').value;
+            const filename = document.getElementById(`setting-video-${key}-workflow-filename`).value;
+            document.getElementById(`setting-video-${key}-workflow-source-path`).value =
+                combineWorkflowPath(baseDir, filename);
+        }
+
+        async function onVideoWorkflowFilenameInput(mode, value) {
+            const key = videoWorkflowSettingKey(mode);
+            if (!key) return;
+            updateVideoWorkflowPath(mode);
+            const list = document.getElementById(`video-${key}-workflow-autocomplete`);
+            const baseDir = document.getElementById('setting-workflow-base-dir').value.trim();
+            clearTimeout(videoWorkflowAutocompleteTimeouts[mode]);
+            videoWorkflowAutocompleteTimeouts[mode] = setTimeout(async () => {
+                try {
+                    const params = new URLSearchParams({ search: value, base_dir: baseDir });
+                    const data = await fetchJSON(`/api/workflow_files?${params}`);
+                    renderAutocompleteItems(data.files, list);
+                } catch (e) {
+                    console.error(`[VIDEO_SETTINGS] ${mode} 워크플로우 파일 검색 실패:`, e);
+                    list.classList.remove('visible');
+                }
+            }, 300);
+        }
+
+        function selectVideoWorkflowFile(mode, fullPath, filename) {
+            const key = videoWorkflowSettingKey(mode);
+            if (!key) return;
+            document.getElementById(`setting-video-${key}-workflow-filename`).value = filename;
+            document.getElementById(`setting-video-${key}-workflow-source-path`).value = fullPath;
+            document.getElementById(`video-${key}-workflow-autocomplete`).classList.remove('visible');
         }
 
         // 내장 WD Tagger 사용 시 태그 분석 워크플로우 입력란(스마트매치/폴백) 비활성화/활성화

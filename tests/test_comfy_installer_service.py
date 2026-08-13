@@ -168,7 +168,7 @@ def test_runtime_validations_split_h3_from_legacy(tmp_path: Path) -> None:
         filename="legacy.json",
     )
     video_validation = SimpleNamespace(
-        binding_keys=("video_workflow_source_paths.t2v",),
+        binding_keys=("video_workflow_source_paths.i2v",),
         filename="h3.json",
     )
 
@@ -180,7 +180,7 @@ def test_runtime_validations_split_h3_from_legacy(tmp_path: Path) -> None:
     assert video == [video_validation]
 
 
-def test_video_runtime_order_is_t2v_then_i2v_then_first_last() -> None:
+def test_video_runtime_order_is_i2v_then_first_last() -> None:
     validations = [
         SimpleNamespace(
             binding_keys=("video_workflow_source_paths.first_last",),
@@ -190,16 +190,11 @@ def test_video_runtime_order_is_t2v_then_i2v_then_first_last() -> None:
             binding_keys=("video_workflow_source_paths.i2v",),
             filename="i2v.json",
         ),
-        SimpleNamespace(
-            binding_keys=("video_workflow_source_paths.t2v",),
-            filename="t2v.json",
-        ),
     ]
 
     ordered = sorted(validations, key=ComfyInstallerService._runtime_order)
 
     assert [item.filename for item in ordered] == [
-        "t2v.json",
         "i2v.json",
         "first-last.json",
     ]
@@ -217,7 +212,7 @@ def test_runtime_e2e_applies_h3_manifest_defaults(
         requirements_dir=tmp_path / "requirements",
     )
     validation = SimpleNamespace(
-        binding_keys=("video_workflow_source_paths.t2v",),
+        binding_keys=("video_workflow_source_paths.i2v",),
         filename="h3.json",
         prompt={},
         workflow={"nodes": []},
@@ -1023,9 +1018,9 @@ def test_manifest_has_fully_pinned_windows_runtime_and_assets() -> None:
         if node["name"] in tracking_main_names
     )
     assert len(manifest.models) == 41
-    assert manifest.workflows["expected_count"] == 20
+    assert manifest.workflows["expected_count"] == 19
     fixed_v1 = manifest.workflows["release_dependencies"]["v1"]
-    assert len(fixed_v1) == 20
+    assert len(fixed_v1) == 19
     assert {
         binding
         for item in fixed_v1
@@ -1043,7 +1038,6 @@ def test_manifest_has_fully_pinned_windows_runtime_and_assets() -> None:
     ]
     h3 = manifest.validation_profiles["minimax_h3"]
     assert set(h3["workflow_bindings"]) == {
-        "video_workflow_source_paths.t2v",
         "video_workflow_source_paths.i2v",
         "video_workflow_source_paths.first_last",
     }

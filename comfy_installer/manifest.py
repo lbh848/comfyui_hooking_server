@@ -264,9 +264,9 @@ def _validate_manifest(data: dict[str, Any]) -> None:
     if not isinstance(workflows, dict):
         raise ManifestError("workflows 항목이 JSON 객체가 아닙니다.")
     expected_count = workflows.get("expected_count")
-    if expected_count != 20:
+    if expected_count != 19:
         raise ManifestError(
-            f"최초 배포 워크플로우 수는 20이어야 합니다: {expected_count!r}"
+            f"최초 배포 워크플로우 수는 19여야 합니다: {expected_count!r}"
         )
     excluded = workflows.get("excluded_filenames")
     if not isinstance(excluded, list) or "캐릭터복장추적_v1.json" not in excluded:
@@ -386,7 +386,6 @@ def _validate_manifest(data: dict[str, Any]) -> None:
     if not isinstance(h3_profile, dict):
         raise ManifestError("validation_profiles.minimax_h3가 없습니다.")
     expected_h3_bindings = {
-        "video_workflow_source_paths.t2v",
         "video_workflow_source_paths.i2v",
         "video_workflow_source_paths.first_last",
     }
@@ -394,7 +393,7 @@ def _validate_manifest(data: dict[str, Any]) -> None:
     if not isinstance(h3_bindings, list) or set(h3_bindings) != expected_h3_bindings:
         raise ManifestError(
             "validation_profiles.minimax_h3.workflow_bindings가 "
-            "T2V/I2V/First-Last 고정 바인딩과 다릅니다."
+            "I2V/First-Last 고정 바인딩과 다릅니다."
         )
     if not expected_h3_bindings.issubset(optional_binding_set):
         raise ManifestError(
