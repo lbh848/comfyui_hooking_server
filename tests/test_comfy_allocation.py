@@ -103,6 +103,7 @@ def test_exactly_one_of_three_running_instances_is_used_as_local_fallback() -> N
         "asset_lora_training",
         "bot_lora_training",
         "instance_lora",
+        "video_generation",
     ),
 )
 def test_modal_is_accepted_for_every_supported_task(task_key: str) -> None:

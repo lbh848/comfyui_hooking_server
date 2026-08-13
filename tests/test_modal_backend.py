@@ -791,6 +791,75 @@ async def test_modal_run_workflow_includes_soya_cache_inputs(
     ]
 
 
+@pytest.mark.asyncio
+async def test_modal_run_workflow_requests_one_deferred_video_artifact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = ModalService(tmp_path, lambda: {"modal_enabled": True})
+    observed: dict = {}
+    video_bytes = b"modal-video"
+    video_artifact = {
+        "remote_path": "SOYA_VIDEO_OUTPUT/video_job/result.mp4",
+        "filename": "result.mp4",
+        "size": len(video_bytes),
+        "sha256": hashlib.sha256(video_bytes).hexdigest(),
+        "node_id": "42",
+    }
+
+    async def connected(_settings: ModalSettings) -> bool:
+        return True
+
+    async def assets(_workflows: list[dict]) -> dict:
+        return {"model_files": [], "lora_files": []}
+
+    async def successful_command(*_args, **kwargs) -> tuple[int, str, str]:
+        observed.update(kwargs["stdin_payload"])
+        return (
+            0,
+            json.dumps(
+                {
+                    "ok": True,
+                    "result": {
+                        "prompt_id": "prompt-video",
+                        "outputs": [],
+                        "artifacts": [],
+                        "video_artifacts": [video_artifact],
+                    },
+                }
+            ),
+            "",
+        )
+
+    monkeypatch.setattr(service, "account_connected", connected)
+    monkeypatch.setattr(service, "_resolve_local_workflow_assets", assets)
+    monkeypatch.setattr(service, "_run_command", successful_command)
+
+    result = await service.run_workflow(
+        {"1": {"class_type": "Test", "inputs": {}}},
+        require_images=False,
+        video_job_id="video_job",
+    )
+
+    assert observed["video_job_id"] == "video_job"
+    assert observed["require_images"] is False
+    assert result["video_artifacts"] == [video_artifact]
+
+
+def test_modal_worker_persists_video_and_cleans_uploaded_inputs() -> None:
+    source = (
+        Path(__file__).resolve().parents[1] / "modal_backend" / "modal_app.py"
+    ).read_text(encoding="utf-8")
+
+    assert 'videos_volume = modal.Volume.from_name(f"{APP_NAME}-videos"' in source
+    assert '"/video-artifacts": videos_volume' in source
+    assert "videos_volume.commit()" in source
+    assert '"video_artifacts": video_artifacts' in source
+    assert "finally:\n            cleanup_staged_inputs()" in source
+    assert 'comfy_output_root = Path("/root/ComfyUI/output").resolve()' in source
+    assert "comfy_output.unlink()" in source
+
+
 def test_manifest_catalog_does_not_use_local_install_model_spec_for_modal() -> None:
     catalog = {item["id"]: item for item in workflow_catalog(PROJECT_ROOT)}
 

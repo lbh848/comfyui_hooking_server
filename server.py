@@ -3168,8 +3168,67 @@ async def submit_video_workflow_to_comfy(
     progress_callback=None,
     *,
     task_key: str,
+    input_paths: list[str] | tuple[str, ...] | None = None,
 ) -> tuple[bytes | None, dict | str]:
-    """Submit a local H3 workflow and return its temporary MP4 plus exact output ref."""
+    """Run H3 on the allocated Comfy target and return its verified temporary MP4."""
+
+    if CURRENT_COMFY_EXECUTION_TARGET.get() == MODAL_COMFY_TARGET:
+        async def forward_modal_progress(event: dict) -> None:
+            if progress_callback is None:
+                return
+            payload = event.get("data") if isinstance(event.get("data"), dict) else event
+            if not isinstance(payload, dict):
+                print(
+                    "[VIDEO:MODAL] 진행 이벤트 형식 오류: "
+                    f"task={task_key}, event={event!r}"
+                )
+                return
+            current = payload.get("value", payload.get("step", payload.get("current")))
+            maximum = payload.get("max", payload.get("total", payload.get("maximum")))
+            if current is None or maximum is None:
+                return
+            try:
+                callback_result = progress_callback(int(current), int(maximum))
+                if asyncio.iscoroutine(callback_result):
+                    await callback_result
+            except Exception as exc:
+                print(
+                    "[VIDEO:MODAL] 진행 콜백 전달 실패: "
+                    f"task={task_key}, payload={payload!r}, "
+                    f"error={type(exc).__name__}: {exc}"
+                )
+                traceback.print_exc()
+
+        try:
+            print(
+                "[VIDEO:MODAL] 원격 H3 실행 시작: "
+                f"task={task_key}, inputs={list(input_paths or [])!r}"
+            )
+            video_bytes, descriptor = await modal_service.generate_video(
+                workflow_api,
+                input_paths=input_paths,
+                progress_callback=forward_modal_progress,
+            )
+            if not video_bytes:
+                print(
+                    "[VIDEO:MODAL] 다운로드된 MP4가 비어 있음: "
+                    f"task={task_key}, descriptor={descriptor!r}"
+                )
+                return None, "Modal H3 MP4 다운로드 결과가 비어 있습니다"
+            print(
+                "[VIDEO:MODAL] 원격 H3 MP4 다운로드 완료: "
+                f"task={task_key}, prompt={descriptor.get('prompt_id')!r}, "
+                f"bytes={len(video_bytes):,}, "
+                f"remote={descriptor.get('artifact', {}).get('remote_path')!r}"
+            )
+            return video_bytes, descriptor
+        except Exception as exc:
+            print(
+                "[VIDEO:MODAL] 원격 H3 실행 또는 다운로드 실패: "
+                f"task={task_key}, error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            return None, f"Modal H3 영상 생성 실패: {type(exc).__name__}: {exc}"
 
     target_port = resolve_comfy_port(task_key)
     client_id = f"video_{uuid.uuid4().hex[:10]}"
@@ -3262,6 +3321,7 @@ async def submit_video_workflow_to_comfy(
             **video_ref,
             "prompt_id": prompt_id,
             "port": target_port,
+            "execution_source": "local",
         }
         print(
             f"[VIDEO:COMFY] MP4 임시 결과 수신: task={task_key}, "
@@ -3289,7 +3349,7 @@ async def cleanup_comfy_video_output(
     *,
     task_key: str,
 ) -> bool:
-    """Delete only the exact local MP4 after animated main/raw backups are durable."""
+    """Delete the exact local/Modal MP4 only after the postprocess spool is durable."""
 
     if not isinstance(descriptor, dict):
         print(
@@ -3297,6 +3357,33 @@ async def cleanup_comfy_video_output(
             f"task={task_key}, value={descriptor!r}"
         )
         return False
+    if descriptor.get("execution_source") == "modal":
+        artifact = descriptor.get("artifact")
+        if not isinstance(artifact, dict):
+            print(
+                "[VIDEO:CLEANUP:MODAL] 원격 MP4 artifact 누락: "
+                f"task={task_key}, descriptor={descriptor!r}"
+            )
+            return False
+        try:
+            deleted = await modal_service.delete_video_artifacts_after_spool(
+                [artifact]
+            )
+            if not deleted:
+                print(
+                    "[VIDEO:CLEANUP:MODAL] 원격 MP4 즉시 삭제 미완료, "
+                    "내구성 outbox에 보존: "
+                    f"task={task_key}, remote={artifact.get('remote_path')!r}"
+                )
+            return deleted
+        except Exception as exc:
+            print(
+                "[VIDEO:CLEANUP:MODAL] 원격 MP4 검증 삭제 예외: "
+                f"task={task_key}, artifact={artifact!r}, "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            return False
     filename = str(descriptor.get("filename") or "")
     subfolder = str(descriptor.get("subfolder") or "")
     output_type = str(descriptor.get("type") or "output")

@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import io
+import os
 from pathlib import Path, PurePosixPath
 import sys
 import time
@@ -421,6 +422,25 @@ def _safe_managed_lora_path(value: str) -> str:
     return path
 
 
+def _safe_managed_video_path(value: str) -> str:
+    path = _safe_remote_path(value).rstrip("/")
+    if not path.startswith("SOYA_VIDEO_OUTPUT/"):
+        print(
+            f"[MODAL_CLIENT] 관리 대상 밖의 영상 경로 거부: {value!r}",
+            file=sys.stderr,
+        )
+        raise ValueError(
+            f"SOYA_VIDEO_OUTPUT 밖의 원격 영상은 관리할 수 없습니다: {value!r}"
+        )
+    if not path.casefold().endswith(".mp4"):
+        print(
+            f"[MODAL_CLIENT] MP4가 아닌 영상 artifact 경로 거부: {value!r}",
+            file=sys.stderr,
+        )
+        raise ValueError(f"원격 영상 artifact는 MP4여야 합니다: {value!r}")
+    return path
+
+
 def _safe_workflow_name(value: str) -> str:
     raw = str(value or "").strip()
     path = PurePosixPath(raw.replace("\\", "/"))
@@ -664,6 +684,14 @@ def _lora_volume(payload: dict, *, create_if_missing: bool) -> modal.Volume:
     )
 
 
+def _video_volume(payload: dict, *, create_if_missing: bool) -> modal.Volume:
+    return modal.Volume.from_name(
+        f"{str(payload['app_name'])}-videos",
+        environment_name=str(payload["environment"]),
+        create_if_missing=create_if_missing,
+    )
+
+
 def _is_lora_manager_metadata(path: str) -> bool:
     return str(path).casefold().endswith(LORA_MANAGER_METADATA_SUFFIX)
 
@@ -864,6 +892,7 @@ def generate(payload: dict) -> dict:
         list(payload.get("artifact_prefixes") or []),
         bool(payload.get("require_images", True)),
         bool(payload.get("defer_artifacts", False)),
+        payload.get("video_job_id"),
     )
     try:
         remote_result = _wait_for_call_with_start_retry_limit(
@@ -931,10 +960,65 @@ def generate(payload: dict) -> dict:
                 "size": target.stat().st_size,
             }
         )
+    video_artifacts = []
+    for artifact in remote_result.get("video_artifacts") or []:
+        if not isinstance(artifact, dict):
+            print(
+                "[MODAL_CLIENT:VIDEO] 원격 영상 artifact 형식 오류: "
+                f"type={type(artifact).__name__}, value={artifact!r}",
+                file=sys.stderr,
+            )
+            raise TypeError("Modal 영상 artifact는 객체여야 합니다.")
+        remote_path = _safe_managed_video_path(
+            str(artifact.get("remote_path") or "")
+        )
+        filename = Path(str(artifact.get("filename") or "")).name
+        sha256 = str(artifact.get("sha256") or "").strip().lower()
+        try:
+            size = int(artifact.get("size"))
+        except (TypeError, ValueError) as exc:
+            print(
+                "[MODAL_CLIENT:VIDEO] 원격 영상 artifact 크기 형식 오류: "
+                f"remote={remote_path!r}, size={artifact.get('size')!r}",
+                file=sys.stderr,
+            )
+            traceback.print_exc(file=sys.stderr)
+            raise ValueError("Modal 영상 artifact 크기가 올바르지 않습니다.") from exc
+        if (
+            not filename
+            or not filename.casefold().endswith(".mp4")
+            or len(sha256) != 64
+            or any(character not in "0123456789abcdef" for character in sha256)
+            or size <= 0
+        ):
+            print(
+                "[MODAL_CLIENT:VIDEO] 원격 영상 artifact 메타데이터 오류: "
+                f"remote={remote_path!r}, filename={filename!r}, "
+                f"size={size}, sha256={sha256!r}",
+                file=sys.stderr,
+            )
+            raise ValueError("Modal 영상 artifact 메타데이터가 올바르지 않습니다.")
+        video_artifacts.append(
+            {
+                "remote_path": remote_path,
+                "filename": filename,
+                "size": size,
+                "sha256": sha256,
+                "node_id": str(artifact.get("node_id") or ""),
+            }
+        )
+    if payload.get("video_job_id") and len(video_artifacts) != 1:
+        print(
+            "[MODAL_CLIENT:VIDEO] 원격 영상 artifact 수 검증 실패: "
+            f"job={payload.get('video_job_id')!r}, count={len(video_artifacts)}",
+            file=sys.stderr,
+        )
+        raise RuntimeError("Modal 영상 생성 결과 MP4 artifact가 정확히 하나가 아닙니다.")
     return {
         "prompt_id": remote_result.get("prompt_id"),
         "outputs": outputs,
         "artifacts": artifacts,
+        "video_artifacts": video_artifacts,
         "text_outputs": list(remote_result.get("text_outputs") or []),
         **sync,
     }
@@ -1068,6 +1152,106 @@ def download_lora_artifacts(payload: dict) -> dict:
         downloaded_bytes=downloaded_bytes,
     )
     return {"artifacts": downloaded}
+
+
+def download_video_artifact(payload: dict) -> dict:
+    artifact = payload.get("artifact")
+    if not isinstance(artifact, dict):
+        print(
+            "[MODAL_CLIENT:VIDEO] 다운로드할 영상 artifact 형식 오류: "
+            f"type={type(artifact).__name__}, value={artifact!r}",
+            file=sys.stderr,
+        )
+        raise TypeError("다운로드할 Modal 영상 artifact가 올바르지 않습니다.")
+    output_dir_raw = str(payload.get("output_dir") or "").strip()
+    if not output_dir_raw:
+        print("[MODAL_CLIENT:VIDEO] 영상 다운로드 output_dir가 비어 있습니다.", file=sys.stderr)
+        raise ValueError("Modal 영상 다운로드 폴더가 비어 있습니다.")
+    remote_path = _safe_managed_video_path(str(artifact.get("remote_path") or ""))
+    filename = Path(str(artifact.get("filename") or "")).name
+    expected_sha256 = str(artifact.get("sha256") or "").strip().lower()
+    try:
+        expected_size = int(artifact.get("size"))
+    except (TypeError, ValueError) as exc:
+        print(
+            "[MODAL_CLIENT:VIDEO] 영상 다운로드 크기 형식 오류: "
+            f"remote={remote_path!r}, size={artifact.get('size')!r}",
+            file=sys.stderr,
+        )
+        traceback.print_exc(file=sys.stderr)
+        raise ValueError("Modal 영상 artifact 크기가 올바르지 않습니다.") from exc
+    if (
+        not filename
+        or not filename.casefold().endswith(".mp4")
+        or len(expected_sha256) != 64
+        or any(character not in "0123456789abcdef" for character in expected_sha256)
+        or expected_size <= 0
+    ):
+        print(
+            "[MODAL_CLIENT:VIDEO] 영상 다운로드 메타데이터 오류: "
+            f"remote={remote_path!r}, filename={filename!r}, "
+            f"size={expected_size}, sha256={expected_sha256!r}",
+            file=sys.stderr,
+        )
+        raise ValueError("Modal 영상 artifact 메타데이터가 올바르지 않습니다.")
+
+    output_dir = Path(output_dir_raw).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    target = output_dir / filename
+    part_path = target.with_name(f".{target.name}.part")
+    part_path.unlink(missing_ok=True)
+    volume = _video_volume(payload, create_if_missing=False)
+    digest = hashlib.sha256()
+    downloaded_size = 0
+    try:
+        with part_path.open("xb") as handle:
+            for chunk in volume.read_file(f"/{remote_path}"):
+                if not isinstance(chunk, bytes):
+                    raise TypeError(
+                        "Modal Video Volume 다운로드 chunk가 bytes가 아닙니다: "
+                        f"type={type(chunk).__name__}"
+                    )
+                handle.write(chunk)
+                digest.update(chunk)
+                downloaded_size += len(chunk)
+            handle.flush()
+            os.fsync(handle.fileno())
+        actual_sha256 = digest.hexdigest()
+        if downloaded_size != expected_size or actual_sha256 != expected_sha256:
+            print(
+                "[MODAL_CLIENT:VIDEO] MP4 다운로드 검증 실패: "
+                f"remote={remote_path!r}, expected_size={expected_size}, "
+                f"actual_size={downloaded_size}, expected_sha256={expected_sha256}, "
+                f"actual_sha256={actual_sha256}",
+                file=sys.stderr,
+            )
+            raise RuntimeError("Modal MP4 다운로드의 크기 또는 SHA256이 일치하지 않습니다.")
+        part_path.replace(target)
+    except Exception as exc:
+        part_path.unlink(missing_ok=True)
+        print(
+            "[MODAL_CLIENT:VIDEO] MP4 artifact 다운로드 실패: "
+            f"remote={remote_path!r}, target={target}, "
+            f"error={type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
+        traceback.print_exc(file=sys.stderr)
+        raise
+    print(
+        "[MODAL_CLIENT:VIDEO] MP4 다운로드 및 검증 완료: "
+        f"remote={remote_path!r}, bytes={downloaded_size}, sha256={expected_sha256}",
+        file=sys.stderr,
+    )
+    return {
+        "artifact": {
+            "path": str(target),
+            "remote_path": remote_path,
+            "filename": filename,
+            "size": downloaded_size,
+            "sha256": expected_sha256,
+            "node_id": str(artifact.get("node_id") or ""),
+        }
+    }
 
 
 def convert_workflow(payload: dict) -> dict:
@@ -1567,6 +1751,118 @@ def delete_lora_artifacts(payload: dict) -> dict:
     }
 
 
+def delete_video_artifacts(payload: dict) -> dict:
+    """로컬 다운로드와 동일한 원격 MP4만 Video Volume에서 삭제한다."""
+
+    raw_artifacts = payload.get("remote_artifacts") or []
+    if not isinstance(raw_artifacts, list) or not raw_artifacts:
+        print(
+            "[MODAL_CLIENT:VIDEO] 검증 삭제할 원격 영상 목록이 비어 있습니다.",
+            file=sys.stderr,
+        )
+        raise ValueError("검증 삭제할 원격 영상 artifact가 없습니다.")
+    volume = _video_volume(payload, create_if_missing=False)
+    deleted: list[str] = []
+    skipped_changed: list[str] = []
+    already_missing: list[str] = []
+    for artifact in raw_artifacts:
+        if not isinstance(artifact, dict):
+            print(
+                "[MODAL_CLIENT:VIDEO] 검증 삭제 artifact 형식 오류: "
+                f"type={type(artifact).__name__}, value={artifact!r}",
+                file=sys.stderr,
+            )
+            raise TypeError("검증 삭제할 원격 영상 artifact는 객체여야 합니다.")
+        remote_path = _safe_managed_video_path(
+            str(artifact.get("remote_path") or "")
+        )
+        expected_sha256 = str(artifact.get("sha256") or "").strip().lower()
+        try:
+            expected_size = int(artifact.get("size"))
+        except (TypeError, ValueError) as exc:
+            print(
+                "[MODAL_CLIENT:VIDEO] 검증 삭제 크기 형식 오류: "
+                f"path={remote_path!r}, size={artifact.get('size')!r}",
+                file=sys.stderr,
+            )
+            traceback.print_exc(file=sys.stderr)
+            raise ValueError("원격 영상 삭제 검증 크기가 올바르지 않습니다.") from exc
+        if (
+            len(expected_sha256) != 64
+            or any(character not in "0123456789abcdef" for character in expected_sha256)
+            or expected_size <= 0
+        ):
+            print(
+                "[MODAL_CLIENT:VIDEO] 검증 삭제 메타데이터 오류: "
+                f"path={remote_path!r}, size={expected_size}, "
+                f"sha256={expected_sha256!r}",
+                file=sys.stderr,
+            )
+            raise ValueError("원격 영상 삭제 검증 정보가 올바르지 않습니다.")
+        digest = hashlib.sha256()
+        actual_size = 0
+        try:
+            for chunk in volume.read_file(f"/{remote_path}"):
+                if not isinstance(chunk, bytes):
+                    raise TypeError(
+                        "Modal Video Volume 검증 chunk가 bytes가 아닙니다: "
+                        f"type={type(chunk).__name__}"
+                    )
+                digest.update(chunk)
+                actual_size += len(chunk)
+        except (FileNotFoundError, modal.exception.NotFoundError):
+            print(
+                "[MODAL_CLIENT:VIDEO] 원격 영상 검증 삭제 대상이 이미 없음: "
+                f"{remote_path}",
+                file=sys.stderr,
+            )
+            already_missing.append(remote_path)
+            continue
+        except Exception as exc:
+            print(
+                "[MODAL_CLIENT:VIDEO] 원격 영상 삭제 전 검증 실패: "
+                f"path={remote_path}, error={type(exc).__name__}: {exc}",
+                file=sys.stderr,
+            )
+            traceback.print_exc(file=sys.stderr)
+            raise
+        actual_sha256 = digest.hexdigest()
+        if actual_size != expected_size or actual_sha256 != expected_sha256:
+            print(
+                "[MODAL_CLIENT:VIDEO] 원격 MP4가 다운로드본과 달라 삭제 생략: "
+                f"path={remote_path}, expected_size={expected_size}, "
+                f"actual_size={actual_size}, expected_sha256={expected_sha256}, "
+                f"actual_sha256={actual_sha256}",
+                file=sys.stderr,
+            )
+            skipped_changed.append(remote_path)
+            continue
+        try:
+            volume.remove_file(f"/{remote_path}", recursive=False)
+            deleted.append(remote_path)
+        except (FileNotFoundError, modal.exception.NotFoundError):
+            print(
+                "[MODAL_CLIENT:VIDEO] 검증 후 원격 영상이 이미 삭제됨: "
+                f"{remote_path}",
+                file=sys.stderr,
+            )
+            already_missing.append(remote_path)
+        except Exception as exc:
+            print(
+                "[MODAL_CLIENT:VIDEO] 검증된 원격 영상 삭제 실패: "
+                f"path={remote_path}, error={type(exc).__name__}: {exc}",
+                file=sys.stderr,
+            )
+            traceback.print_exc(file=sys.stderr)
+            raise
+    return {
+        "deleted": deleted,
+        "deleted_count": len(deleted),
+        "skipped_changed": skipped_changed,
+        "already_missing": already_missing,
+    }
+
+
 def main() -> int:
     try:
         payload = _read_payload()
@@ -1581,6 +1877,8 @@ def main() -> int:
             result = generate(payload)
         elif action == "download_lora_artifacts":
             result = download_lora_artifacts(payload)
+        elif action == "download_video_artifact":
+            result = download_video_artifact(payload)
         elif action == "convert_workflow":
             result = convert_workflow(payload)
         elif action == "update_autoscaler":
@@ -1605,6 +1903,8 @@ def main() -> int:
             result = delete_lora_paths(payload)
         elif action == "delete_lora_artifacts":
             result = delete_lora_artifacts(payload)
+        elif action == "delete_video_artifacts":
+            result = delete_video_artifacts(payload)
         else:
             raise ValueError(f"지원하지 않는 Modal 클라이언트 동작입니다: {action}")
         print(json.dumps({"ok": True, "result": result}, ensure_ascii=False))

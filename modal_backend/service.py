@@ -267,6 +267,11 @@ class ModalService:
         self._delete_outbox_path = self.project_root / "modal_lora_delete_outbox.json"
         self._delete_lock = asyncio.Lock()
         self._delete_flush_task: asyncio.Task | None = None
+        self._video_delete_outbox_path = (
+            self.project_root / "modal_video_delete_outbox.json"
+        )
+        self._video_delete_lock = asyncio.Lock()
+        self._video_delete_flush_task: asyncio.Task | None = None
         self._billing_lock = asyncio.Lock()
         self._billing_cache: dict[str, Any] | None = None
         self._model_sync_lock = asyncio.Lock()
@@ -1169,9 +1174,14 @@ class ModalService:
         # 기능이 꺼져 있어도 "방금 인증한 토큰이 등록됐는지" 확인할 수 있어야 한다.
         connection_checked = True
         connected = await self.account_connected(settings)
-        pending_deletes = await asyncio.to_thread(self._delete_outbox_count)
+        pending_deletes, pending_video_deletes = await asyncio.gather(
+            asyncio.to_thread(self._delete_outbox_count),
+            asyncio.to_thread(self._video_delete_outbox_count),
+        )
         if settings.enabled and connected and pending_deletes:
             self._schedule_delete_flush()
+        if settings.enabled and connected and pending_video_deletes:
+            self._schedule_video_delete_flush()
         runtime: dict[str, Any] | None = None
         web_runtime: dict[str, Any] | None = None
         if include_runtime:
@@ -1263,6 +1273,7 @@ class ModalService:
             "cost": cost_summary(settings),
             "billing": billing,
             "pending_lora_deletes": pending_deletes,
+            "pending_video_deletes": pending_video_deletes,
             "runtime": runtime,
             "web": web_runtime,
             "workflow_runs": self.recent_workflow_runs(),
@@ -3966,6 +3977,7 @@ class ModalService:
         input_paths: list[str] | tuple[str, ...] | None = None,
         artifact_prefixes: list[str] | tuple[str, ...] | None = None,
         require_images: bool = True,
+        video_job_id: str | None = None,
         progress_callback: Callable[[dict[str, Any]], Any] | None = None,
     ) -> dict[str, Any]:
         config = self.get_config()
@@ -4086,6 +4098,7 @@ class ModalService:
                 "artifact_prefixes": list(artifact_prefixes or []),
                 "require_images": bool(require_images),
                 "defer_artifacts": deferred_artifacts,
+                "video_job_id": video_job_id,
                 "timeout_seconds": max(30, min(int(timeout_seconds), 3_300)),
                 "container_start_max_retries": (
                     settings.container_start_max_retries
@@ -4179,6 +4192,16 @@ class ModalService:
                     }
                 )
             raw_artifacts = list(result.get("artifacts") or [])
+            video_artifacts = list(result.get("video_artifacts") or [])
+            if video_job_id and len(video_artifacts) != 1:
+                print(
+                    "[MODAL:VIDEO] 원격 MP4 artifact 수 검증 실패: "
+                    f"prompt_id={result.get('prompt_id')}, job={video_job_id!r}, "
+                    f"count={len(video_artifacts)}, artifacts={video_artifacts!r}"
+                )
+                raise RuntimeError(
+                    "Modal 영상 생성 결과 MP4 artifact가 정확히 하나가 아닙니다."
+                )
             stored_artifacts = (
                 []
                 if deferred_artifacts
@@ -4188,6 +4211,7 @@ class ModalService:
                 f"[MODAL] 원격 워크플로우 완료: app={settings.deployment_name}, "
                 f"prompt_id={result.get('prompt_id')}, images={len(images)}, "
                 f"artifacts={len(stored_artifacts)}, "
+                f"video_artifacts={len(video_artifacts)}, "
                 f"model_sync={result.get('model_sync')}, "
                 f"lora_sync={result.get('lora_sync')}"
             )
@@ -4198,8 +4222,221 @@ class ModalService:
                 "images": images,
                 "artifacts": stored_artifacts,
                 "deferred_artifacts": raw_artifacts if deferred_artifacts else [],
+                "video_artifacts": video_artifacts,
                 "text_outputs": list(result.get("text_outputs") or []),
             }
+
+    @staticmethod
+    def _normalize_video_artifact(artifact: Mapping[str, Any]) -> dict[str, Any]:
+        if not isinstance(artifact, Mapping):
+            print(
+                "[MODAL:VIDEO] 영상 artifact 형식 오류: "
+                f"type={type(artifact).__name__}, value={artifact!r}"
+            )
+            raise TypeError("Modal 영상 artifact는 객체여야 합니다.")
+        remote_path = (
+            str(artifact.get("remote_path") or "")
+            .strip()
+            .replace("\\", "/")
+            .strip("/")
+        )
+        parts = remote_path.split("/") if remote_path else []
+        filename = Path(str(artifact.get("filename") or "")).name
+        sha256 = str(artifact.get("sha256") or "").strip().lower()
+        try:
+            size = int(artifact.get("size"))
+        except (TypeError, ValueError) as exc:
+            print(
+                "[MODAL:VIDEO] 영상 artifact 크기 형식 오류: "
+                f"remote={remote_path!r}, size={artifact.get('size')!r}"
+            )
+            traceback.print_exc()
+            raise ValueError("Modal 영상 artifact 크기가 올바르지 않습니다.") from exc
+        if (
+            len(parts) < 3
+            or parts[0] != "SOYA_VIDEO_OUTPUT"
+            or any(part in ("", ".", "..") for part in parts)
+            or not remote_path.casefold().endswith(".mp4")
+            or not filename.casefold().endswith(".mp4")
+            or len(sha256) != 64
+            or any(character not in "0123456789abcdef" for character in sha256)
+            or size <= 0
+        ):
+            print(
+                "[MODAL:VIDEO] 안전하지 않은 영상 artifact: "
+                f"remote={remote_path!r}, filename={filename!r}, "
+                f"size={size}, sha256={sha256!r}"
+            )
+            raise ValueError("Modal 영상 artifact 메타데이터가 올바르지 않습니다.")
+        return {
+            "remote_path": remote_path,
+            "filename": filename,
+            "size": size,
+            "sha256": sha256,
+            "node_id": str(artifact.get("node_id") or ""),
+        }
+
+    async def download_video_artifact(
+        self,
+        artifact: Mapping[str, Any],
+    ) -> tuple[bytes, dict[str, Any]]:
+        """Video Volume의 MP4를 크기·SHA256 검증 후 로컬 메모리로 가져온다."""
+
+        settings = ModalSettings.from_mapping(self.get_config())
+        if not settings.enabled:
+            print("[MODAL:VIDEO] MP4 다운로드 실패: Modal이 비활성화되어 있습니다.")
+            raise RuntimeError("Modal 영상 다운로드 중 Modal이 비활성화되었습니다.")
+        if not await self.account_connected(settings):
+            print(
+                "[MODAL:VIDEO] MP4 다운로드 실패: Modal 계정이 연결되지 않았습니다. "
+                f"profile={settings.profile}"
+            )
+            raise RuntimeError("Modal 계정이 연결되어 있지 않습니다.")
+        normalized = self._normalize_video_artifact(artifact)
+        with tempfile.TemporaryDirectory(prefix="soya-modal-video-download-") as output_dir:
+            payload = {
+                "action": "download_video_artifact",
+                "app_name": settings.deployment_name,
+                "environment": settings.environment,
+                "artifact": normalized,
+                "output_dir": output_dir,
+            }
+            code, stdout, stderr = await self._run_command(
+                [sys.executable, "-m", "modal_backend.client_cli"],
+                env=self._subprocess_env(settings.profile),
+                stdin_payload=payload,
+                timeout=3_600,
+            )
+            if code != 0:
+                failure: dict[str, Any] = {}
+                if stdout.strip():
+                    try:
+                        parsed = json.loads(stdout)
+                        if isinstance(parsed, dict):
+                            failure = parsed
+                        else:
+                            print(
+                                "[MODAL:VIDEO] 다운로드 실패 응답 형식 오류: "
+                                f"type={type(parsed).__name__}"
+                            )
+                    except Exception as exc:
+                        print(
+                            "[MODAL:VIDEO] 다운로드 실패 응답 파싱 실패: "
+                            f"error={type(exc).__name__}: {exc}, "
+                            f"stdout_length={len(stdout)}"
+                        )
+                        traceback.print_exc()
+                error = str(
+                    failure.get("error")
+                    or "Modal Video Volume MP4 다운로드에 실패했습니다."
+                )
+                print(
+                    "[MODAL:VIDEO] MP4 다운로드 client 실패: "
+                    f"exit_code={code}, remote={normalized['remote_path']!r}, "
+                    f"error={error}, stderr={stderr[-2000:]}"
+                )
+                raise RuntimeError(error)
+            try:
+                response = json.loads(stdout)
+            except Exception as exc:
+                print(
+                    "[MODAL:VIDEO] 다운로드 응답 파싱 실패: "
+                    f"error={type(exc).__name__}: {exc}, stdout_length={len(stdout)}"
+                )
+                traceback.print_exc()
+                raise RuntimeError("Modal MP4 다운로드 응답 형식이 올바르지 않습니다.") from exc
+            if not isinstance(response, dict):
+                print(
+                    "[MODAL:VIDEO] 다운로드 응답 루트 형식 오류: "
+                    f"type={type(response).__name__}, value={response!r}"
+                )
+                raise RuntimeError("Modal MP4 다운로드 응답 형식이 올바르지 않습니다.")
+            if not response.get("ok"):
+                error = str(response.get("error") or "Modal MP4 다운로드 실패")
+                print(f"[MODAL:VIDEO] MP4 다운로드 응답 실패: error={error}")
+                raise RuntimeError(error)
+            result_payload = response.get("result")
+            if not isinstance(result_payload, Mapping):
+                print(
+                    "[MODAL:VIDEO] 다운로드 result 형식 오류: "
+                    f"type={type(result_payload).__name__}, value={result_payload!r}"
+                )
+                raise RuntimeError("Modal MP4 다운로드 결과 형식이 올바르지 않습니다.")
+            downloaded = result_payload.get("artifact")
+            if not isinstance(downloaded, Mapping):
+                print(
+                    "[MODAL:VIDEO] 다운로드 artifact 응답 누락: "
+                    f"response={response!r}"
+                )
+                raise RuntimeError("Modal MP4 다운로드 결과가 없습니다.")
+            local_path = Path(str(downloaded.get("path") or ""))
+            if not local_path.is_file():
+                print(
+                    "[MODAL:VIDEO] 다운로드된 로컬 MP4 없음: "
+                    f"path={local_path}, remote={normalized['remote_path']!r}"
+                )
+                raise FileNotFoundError("다운로드된 Modal MP4 임시 파일이 없습니다.")
+            actual_size = local_path.stat().st_size
+            actual_sha256 = await asyncio.to_thread(self._sha256_file, local_path)
+            if (
+                actual_size != normalized["size"]
+                or actual_sha256 != normalized["sha256"]
+            ):
+                print(
+                    "[MODAL:VIDEO] 로컬 MP4 재검증 실패: "
+                    f"path={local_path}, expected_size={normalized['size']}, "
+                    f"actual_size={actual_size}, expected_sha256={normalized['sha256']}, "
+                    f"actual_sha256={actual_sha256}"
+                )
+                raise RuntimeError("다운로드된 Modal MP4의 검증 정보가 일치하지 않습니다.")
+            video_bytes = local_path.read_bytes()
+            if len(video_bytes) != actual_size:
+                print(
+                    "[MODAL:VIDEO] MP4 메모리 로드 크기 불일치: "
+                    f"path={local_path}, expected={actual_size}, actual={len(video_bytes)}"
+                )
+                raise RuntimeError("다운로드된 Modal MP4를 완전하게 읽지 못했습니다.")
+            print(
+                "[MODAL:VIDEO] MP4 다운로드 및 이중 검증 완료: "
+                f"remote={normalized['remote_path']!r}, bytes={actual_size:,}, "
+                f"sha256={actual_sha256}"
+            )
+            return video_bytes, dict(normalized)
+
+    async def generate_video(
+        self,
+        workflow: dict[str, Any],
+        *,
+        timeout_seconds: int = 3_300,
+        input_paths: list[str] | tuple[str, ...] | None = None,
+        progress_callback: Callable[[dict[str, Any]], Any] | None = None,
+    ) -> tuple[bytes, dict[str, Any]]:
+        video_job_id = f"video_{uuid.uuid4().hex}"
+        result = await self.run_workflow(
+            workflow,
+            timeout_seconds=timeout_seconds,
+            input_paths=input_paths,
+            require_images=False,
+            video_job_id=video_job_id,
+            progress_callback=progress_callback,
+        )
+        artifacts = result.get("video_artifacts") or []
+        if len(artifacts) != 1:
+            print(
+                "[MODAL:VIDEO] 생성 결과 MP4 artifact 누락: "
+                f"prompt_id={result.get('prompt_id')}, artifacts={artifacts!r}"
+            )
+            raise RuntimeError("Modal 영상 생성 결과 MP4 artifact가 없습니다.")
+        video_bytes, artifact = await self.download_video_artifact(artifacts[0])
+        return video_bytes, {
+            "execution_source": "modal",
+            "prompt_id": result.get("prompt_id"),
+            "model_sync": result.get("model_sync") or {},
+            "lora_sync": result.get("lora_sync") or {},
+            "artifact": artifact,
+            "filename": artifact["filename"],
+            "type": "output",
+        }
 
     async def download_lora_artifacts(
         self,
@@ -4446,6 +4683,283 @@ class ModalService:
             "lora_sync": result.get("lora_sync") or {},
             "content_type": first.get("content_type"),
         }
+
+    def _load_video_delete_outbox(self) -> list[dict[str, Any]]:
+        if not self._video_delete_outbox_path.is_file():
+            return []
+        try:
+            data = json.loads(
+                self._video_delete_outbox_path.read_text(encoding="utf-8")
+            )
+            if not isinstance(data, list):
+                raise ValueError("영상 삭제 outbox 루트는 배열이어야 합니다.")
+            return [item for item in data if isinstance(item, dict)]
+        except Exception as exc:
+            print(
+                "[MODAL:VIDEO] 삭제 outbox 읽기 실패: "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            return []
+
+    def _video_delete_outbox_count(self) -> int:
+        return len(self._load_video_delete_outbox())
+
+    def _save_video_delete_outbox(self, items: list[dict[str, Any]]) -> None:
+        target = self._video_delete_outbox_path
+        if target.exists():
+            backup_root = self.project_root / "backups" / "modal"
+            backup_root.mkdir(parents=True, exist_ok=True)
+            stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            backup = backup_root / f"modal_video_delete_outbox_before_save_{stamp}.json"
+            shutil.copy2(target, backup)
+            print(f"[MODAL:VIDEO] 삭제 outbox 백업: {backup}")
+        temp_path = target.with_name(f".{target.name}.{os.getpid()}.tmp")
+        try:
+            temp_path.write_text(
+                json.dumps(items, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            os.replace(temp_path, target)
+        except Exception as exc:
+            temp_path.unlink(missing_ok=True)
+            print(
+                "[MODAL:VIDEO] 삭제 outbox 저장 실패: "
+                f"path={target}, error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            raise
+
+    @staticmethod
+    def _video_delete_item_key(item: Mapping[str, Any]) -> tuple[tuple[str, str, int], ...]:
+        artifacts = item.get("remote_artifacts")
+        if not isinstance(artifacts, list):
+            return ()
+        return tuple(
+            sorted(
+                (
+                    str(artifact.get("remote_path") or ""),
+                    str(artifact.get("sha256") or ""),
+                    int(artifact.get("size") or 0),
+                )
+                for artifact in artifacts
+                if isinstance(artifact, Mapping)
+            )
+        )
+
+    async def _send_video_delete(
+        self,
+        settings: ModalSettings,
+        artifacts: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        payload = {
+            "action": "delete_video_artifacts",
+            "app_name": settings.deployment_name,
+            "environment": settings.environment,
+            "remote_artifacts": artifacts,
+        }
+        code, stdout, stderr = await self._run_command(
+            [sys.executable, "-m", "modal_backend.client_cli"],
+            env=self._subprocess_env(settings.profile),
+            stdin_payload=payload,
+            timeout=120,
+        )
+        try:
+            response = json.loads(stdout) if stdout.strip() else {}
+        except Exception as exc:
+            print(
+                "[MODAL:VIDEO] 삭제 응답 파싱 실패: "
+                f"error={type(exc).__name__}: {exc}, stdout_length={len(stdout)}"
+            )
+            traceback.print_exc()
+            raise RuntimeError("Modal 영상 삭제 응답 형식이 올바르지 않습니다.") from exc
+        if not isinstance(response, dict):
+            print(
+                "[MODAL:VIDEO] 삭제 응답 루트 형식 오류: "
+                f"type={type(response).__name__}, value={response!r}"
+            )
+            raise RuntimeError("Modal 영상 삭제 응답 형식이 올바르지 않습니다.")
+        if code != 0 or not response.get("ok"):
+            error = str(
+                response.get("error")
+                or f"Modal client exit_code={code}, stderr={stderr[-1000:]}"
+            )
+            print(
+                "[MODAL:VIDEO] 원격 MP4 검증 삭제 client 실패: "
+                f"count={len(artifacts)}, error={error}, stderr={stderr[-2000:]}"
+            )
+            raise RuntimeError(error)
+        result = response.get("result") or {}
+        if not isinstance(result, dict):
+            print(
+                "[MODAL:VIDEO] 삭제 결과 형식 오류: "
+                f"type={type(result).__name__}, value={result!r}"
+            )
+            raise RuntimeError("Modal 영상 삭제 결과가 올바르지 않습니다.")
+        return result
+
+    async def _remove_video_delete_outbox_item(
+        self,
+        item_key: tuple[tuple[str, str, int], ...],
+    ) -> None:
+        async with self._video_delete_lock:
+            current = await asyncio.to_thread(self._load_video_delete_outbox)
+            filtered = [
+                item
+                for item in current
+                if self._video_delete_item_key(item) != item_key
+            ]
+            await asyncio.to_thread(self._save_video_delete_outbox, filtered)
+
+    def _schedule_video_delete_flush(self) -> None:
+        if (
+            self._video_delete_flush_task
+            and not self._video_delete_flush_task.done()
+        ):
+            return
+        self._video_delete_flush_task = asyncio.create_task(
+            self._flush_video_delete_outbox()
+        )
+
+    async def delete_video_artifacts_after_spool(
+        self,
+        remote_artifacts: list[dict[str, Any]],
+    ) -> bool:
+        """스풀 저장 뒤 원격 MP4를 즉시 검증 삭제하고 실패는 outbox에 남긴다."""
+
+        if not isinstance(remote_artifacts, list) or not remote_artifacts:
+            print(
+                "[MODAL:VIDEO] 삭제할 영상 artifact가 비어 있음: "
+                f"artifacts={remote_artifacts!r}"
+            )
+            raise ValueError("삭제할 Modal 영상 artifact가 없습니다.")
+        normalized = [
+            self._normalize_video_artifact(artifact)
+            for artifact in remote_artifacts
+        ]
+        unique = {
+            (item["remote_path"], item["sha256"], item["size"]): item
+            for item in normalized
+        }
+        normalized = [unique[key] for key in sorted(unique)]
+        queued_item = {
+            "remote_artifacts": normalized,
+            "created_at": datetime.datetime.now(
+                datetime.timezone.utc
+            ).isoformat(),
+            "attempts": 0,
+        }
+        item_key = self._video_delete_item_key(queued_item)
+        async with self._video_delete_lock:
+            current = await asyncio.to_thread(self._load_video_delete_outbox)
+            if not any(self._video_delete_item_key(item) == item_key for item in current):
+                current.append(queued_item)
+                await asyncio.to_thread(self._save_video_delete_outbox, current)
+                print(
+                    "[MODAL:VIDEO] 원격 MP4 검증 삭제 outbox 기록: "
+                    f"paths={[item['remote_path'] for item in normalized]!r}"
+                )
+            else:
+                print(
+                    "[MODAL:VIDEO] 원격 MP4 삭제가 이미 outbox에 기록됨: "
+                    f"paths={[item['remote_path'] for item in normalized]!r}"
+                )
+
+        settings = ModalSettings.from_mapping(self.get_config())
+        if not settings.enabled:
+            print(
+                "[MODAL:VIDEO] Modal 비활성화로 원격 MP4 즉시 삭제 보류: "
+                f"paths={[item['remote_path'] for item in normalized]!r}"
+            )
+            return False
+        if not await self.account_connected(settings):
+            print(
+                "[MODAL:VIDEO] 계정 미연결로 원격 MP4 즉시 삭제 보류: "
+                f"profile={settings.profile}"
+            )
+            return False
+        try:
+            result = await self._send_video_delete(settings, normalized)
+            await self._remove_video_delete_outbox_item(item_key)
+            skipped = list(result.get("skipped_changed") or [])
+            if skipped:
+                print(
+                    "[MODAL:VIDEO] 원격 MP4 변경 감지로 삭제하지 않음: "
+                    f"paths={skipped!r}"
+                )
+                return False
+            print(
+                "[MODAL:VIDEO] 다운로드·스풀 확인 후 원격 MP4 삭제 완료: "
+                f"deleted={result.get('deleted_count', 0)}, "
+                f"already_missing={result.get('already_missing') or []}"
+            )
+            return True
+        except Exception as exc:
+            print(
+                "[MODAL:VIDEO] 원격 MP4 즉시 삭제 실패, outbox 재시도 예약: "
+                f"paths={[item['remote_path'] for item in normalized]!r}, "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            self._schedule_video_delete_flush()
+            return False
+
+    async def _flush_video_delete_outbox(self) -> None:
+        settings = ModalSettings.from_mapping(self.get_config())
+        if not settings.enabled:
+            print("[MODAL:VIDEO] Modal 비활성화로 영상 삭제 outbox 전송을 보류합니다.")
+            return
+        if not await self.account_connected(settings):
+            print("[MODAL:VIDEO] 계정 미연결로 영상 삭제 outbox 전송을 보류합니다.")
+            return
+        while True:
+            async with self._video_delete_lock:
+                items = await asyncio.to_thread(self._load_video_delete_outbox)
+                if not items:
+                    return
+                item = dict(items[0])
+            artifacts = item.get("remote_artifacts")
+            if not isinstance(artifacts, list) or not artifacts:
+                print(f"[MODAL:VIDEO] 삭제 outbox artifact 누락: item={item!r}")
+                async with self._video_delete_lock:
+                    current = await asyncio.to_thread(self._load_video_delete_outbox)
+                    await asyncio.to_thread(self._save_video_delete_outbox, current[1:])
+                continue
+            try:
+                normalized = [
+                    self._normalize_video_artifact(artifact)
+                    for artifact in artifacts
+                ]
+                item_key = self._video_delete_item_key(item)
+                result = await self._send_video_delete(settings, normalized)
+                await self._remove_video_delete_outbox_item(item_key)
+                print(
+                    "[MODAL:VIDEO] outbox 원격 MP4 삭제 처리 완료: "
+                    f"deleted={result.get('deleted_count', 0)}, "
+                    f"skipped={result.get('skipped_changed') or []}, "
+                    f"already_missing={result.get('already_missing') or []}"
+                )
+            except Exception as exc:
+                print(
+                    "[MODAL:VIDEO] 원격 MP4 삭제 재시도 실패, outbox 유지: "
+                    f"error={type(exc).__name__}: {exc}"
+                )
+                traceback.print_exc()
+                attempts = int(item.get("attempts") or 0) + 1
+                async with self._video_delete_lock:
+                    current = await asyncio.to_thread(self._load_video_delete_outbox)
+                    item_key = self._video_delete_item_key(item)
+                    for queued in current:
+                        if self._video_delete_item_key(queued) == item_key:
+                            queued["attempts"] = attempts
+                            queued["last_error"] = f"{type(exc).__name__}: {exc}"
+                    await asyncio.to_thread(self._save_video_delete_outbox, current)
+                retry_seconds = min(60.0, 2.0 ** min(attempts, 6))
+                print(
+                    "[MODAL:VIDEO] 원격 MP4 삭제 재시도 대기: "
+                    f"attempts={attempts}, retry_seconds={retry_seconds:.0f}"
+                )
+                await asyncio.sleep(retry_seconds)
 
     def _load_delete_outbox(self) -> list[dict[str, Any]]:
         if not self._delete_outbox_path.is_file():

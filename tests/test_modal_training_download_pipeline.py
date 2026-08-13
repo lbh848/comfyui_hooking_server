@@ -445,3 +445,276 @@ async def test_verified_lora_delete_outbox_uses_hash_guarded_action(
     assert observed_payloads[0]["action"] == "delete_lora_artifacts"
     assert observed_payloads[0]["remote_artifacts"] == [artifact]
     assert service._load_delete_outbox() == []
+
+
+def test_modal_client_downloads_and_hash_verifies_video_artifact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    video_bytes = b"verified-modal-mp4"
+    remote_path = "SOYA_VIDEO_OUTPUT/video_job/result.mp4"
+
+    class FakeVolume:
+        def read_file(self, path: str):
+            assert path == f"/{remote_path}"
+            return [video_bytes[:8], video_bytes[8:]]
+
+    monkeypatch.setattr(
+        client_cli,
+        "_video_volume",
+        lambda _payload, *, create_if_missing: FakeVolume(),
+    )
+    artifact = {
+        "remote_path": remote_path,
+        "filename": "result.mp4",
+        "size": len(video_bytes),
+        "sha256": hashlib.sha256(video_bytes).hexdigest(),
+    }
+
+    result = client_cli.download_video_artifact(
+        {
+            "app_name": "test-app",
+            "environment": "main",
+            "output_dir": str(tmp_path),
+            "artifact": artifact,
+        }
+    )
+
+    target = tmp_path / "result.mp4"
+    assert target.read_bytes() == video_bytes
+    assert result["artifact"]["path"] == str(target.resolve())
+    assert result["artifact"]["sha256"] == artifact["sha256"]
+
+
+def test_modal_client_rejects_corrupt_video_download_without_completed_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeVolume:
+        def read_file(self, _path: str):
+            return [b"corrupt"]
+
+    monkeypatch.setattr(
+        client_cli,
+        "_video_volume",
+        lambda _payload, *, create_if_missing: FakeVolume(),
+    )
+    with pytest.raises(RuntimeError, match="SHA256"):
+        client_cli.download_video_artifact(
+            {
+                "app_name": "test-app",
+                "environment": "main",
+                "output_dir": str(tmp_path),
+                "artifact": {
+                    "remote_path": "SOYA_VIDEO_OUTPUT/video_job/result.mp4",
+                    "filename": "result.mp4",
+                    "size": len(b"corrupt"),
+                    "sha256": hashlib.sha256(b"expected").hexdigest(),
+                },
+            }
+        )
+
+    assert not (tmp_path / "result.mp4").exists()
+    assert not (tmp_path / ".result.mp4.part").exists()
+
+
+def test_modal_client_deletes_only_hash_matching_video_artifact(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected = b"verified-modal-mp4"
+    remote_path = "SOYA_VIDEO_OUTPUT/video_job/result.mp4"
+
+    class FakeVolume:
+        def __init__(self) -> None:
+            self.deleted: list[tuple[str, bool]] = []
+
+        def read_file(self, path: str):
+            assert path == f"/{remote_path}"
+            return [expected]
+
+        def remove_file(self, path: str, *, recursive: bool) -> None:
+            self.deleted.append((path, recursive))
+
+    volume = FakeVolume()
+    monkeypatch.setattr(
+        client_cli,
+        "_video_volume",
+        lambda _payload, *, create_if_missing: volume,
+    )
+    result = client_cli.delete_video_artifacts(
+        {
+            "remote_artifacts": [
+                {
+                    "remote_path": remote_path,
+                    "filename": "result.mp4",
+                    "size": len(expected),
+                    "sha256": hashlib.sha256(expected).hexdigest(),
+                }
+            ]
+        }
+    )
+
+    assert result["deleted"] == [remote_path]
+    assert volume.deleted == [(f"/{remote_path}", False)]
+
+
+def test_modal_client_preserves_changed_remote_video(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    remote_path = "SOYA_VIDEO_OUTPUT/video_job/result.mp4"
+
+    class FakeVolume:
+        def read_file(self, _path: str):
+            return [b"changed"]
+
+        def remove_file(self, *_args, **_kwargs) -> None:
+            raise AssertionError("해시가 달라진 원격 MP4를 삭제하면 안 됩니다.")
+
+    monkeypatch.setattr(
+        client_cli,
+        "_video_volume",
+        lambda _payload, *, create_if_missing: FakeVolume(),
+    )
+    result = client_cli.delete_video_artifacts(
+        {
+            "remote_artifacts": [
+                {
+                    "remote_path": remote_path,
+                    "filename": "result.mp4",
+                    "size": len(b"expected"),
+                    "sha256": hashlib.sha256(b"expected").hexdigest(),
+                }
+            ]
+        }
+    )
+
+    assert result["deleted_count"] == 0
+    assert result["skipped_changed"] == [remote_path]
+
+
+@pytest.mark.asyncio
+async def test_service_downloads_video_without_deleting_before_spool(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = ModalService(tmp_path, lambda: {"modal_enabled": True})
+    video_bytes = b"verified-modal-mp4"
+    artifact = {
+        "remote_path": "SOYA_VIDEO_OUTPUT/video_job/result.mp4",
+        "filename": "result.mp4",
+        "size": len(video_bytes),
+        "sha256": hashlib.sha256(video_bytes).hexdigest(),
+        "node_id": "42",
+    }
+    observed_actions: list[str] = []
+
+    async def connected(_settings: ModalSettings) -> bool:
+        return True
+
+    async def run_command(*_args, **kwargs):
+        payload = kwargs["stdin_payload"]
+        observed_actions.append(payload["action"])
+        target = Path(payload["output_dir"]) / "result.mp4"
+        target.write_bytes(video_bytes)
+        return (
+            0,
+            json.dumps(
+                {
+                    "ok": True,
+                    "result": {
+                        "artifact": {**artifact, "path": str(target)},
+                    },
+                }
+            ),
+            "",
+        )
+
+    monkeypatch.setattr(service, "account_connected", connected)
+    monkeypatch.setattr(service, "_run_command", run_command)
+
+    downloaded, descriptor = await service.download_video_artifact(artifact)
+
+    assert downloaded == video_bytes
+    assert descriptor == artifact
+    assert observed_actions == ["download_video_artifact"]
+    assert service._load_video_delete_outbox() == []
+
+
+@pytest.mark.asyncio
+async def test_service_video_delete_records_outbox_before_exact_remote_delete(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = ModalService(tmp_path, lambda: {"modal_enabled": True})
+    observed_payloads: list[dict] = []
+
+    async def connected(_settings: ModalSettings) -> bool:
+        return True
+
+    async def run_command(*_args, **kwargs):
+        observed_payloads.append(dict(kwargs["stdin_payload"]))
+        assert service._load_video_delete_outbox()
+        return (
+            0,
+            json.dumps(
+                {
+                    "ok": True,
+                    "result": {
+                        "deleted_count": 1,
+                        "skipped_changed": [],
+                        "already_missing": [],
+                    },
+                }
+            ),
+            "",
+        )
+
+    monkeypatch.setattr(service, "account_connected", connected)
+    monkeypatch.setattr(service, "_run_command", run_command)
+    artifact = {
+        "remote_path": "SOYA_VIDEO_OUTPUT/video_job/result.mp4",
+        "filename": "result.mp4",
+        "size": 6,
+        "sha256": hashlib.sha256(b"abcdef").hexdigest(),
+    }
+
+    assert await service.delete_video_artifacts_after_spool([artifact]) is True
+    assert observed_payloads[0]["action"] == "delete_video_artifacts"
+    assert observed_payloads[0]["remote_artifacts"] == [
+        {**artifact, "node_id": ""}
+    ]
+    assert service._load_video_delete_outbox() == []
+
+
+@pytest.mark.asyncio
+async def test_service_video_delete_failure_keeps_retry_outbox(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = ModalService(tmp_path, lambda: {"modal_enabled": True})
+    scheduled: list[bool] = []
+
+    async def connected(_settings: ModalSettings) -> bool:
+        return True
+
+    async def failed_command(*_args, **_kwargs):
+        return 1, json.dumps({"ok": False, "error": "network down"}), ""
+
+    monkeypatch.setattr(service, "account_connected", connected)
+    monkeypatch.setattr(service, "_run_command", failed_command)
+    monkeypatch.setattr(
+        service,
+        "_schedule_video_delete_flush",
+        lambda: scheduled.append(True),
+    )
+    artifact = {
+        "remote_path": "SOYA_VIDEO_OUTPUT/video_job/result.mp4",
+        "filename": "result.mp4",
+        "size": 6,
+        "sha256": hashlib.sha256(b"abcdef").hexdigest(),
+    }
+
+    assert await service.delete_video_artifacts_after_spool([artifact]) is False
+    assert scheduled == [True]
+    queued = service._load_video_delete_outbox()
+    assert queued[0]["remote_artifacts"][0]["remote_path"] == artifact["remote_path"]

@@ -50,6 +50,7 @@ MODAL_SUPPORTED_COMFY_TASK_KEYS = frozenset(
         "asset_lora_training",
         "bot_lora_training",
         "instance_lora",
+        "video_generation",
     }
 )
 DEFAULT_COMFY_TASK_MODAL_PARALLEL = {key: False for key in COMFY_TASK_KEYS}

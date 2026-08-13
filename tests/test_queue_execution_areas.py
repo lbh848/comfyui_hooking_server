@@ -192,6 +192,19 @@ def test_video_modes_share_one_comfy_allocation_but_keep_detailed_queue_labels()
     )
 
 
+def test_video_render_can_be_claimed_by_modal_lane() -> None:
+    manager = QueueManager()
+    manager.get_config = lambda: {
+        "modal_enabled": True,
+        "comfy_task_allocations": {"video_generation": "modal"},
+    }
+    item = _item("video_first_last")
+
+    assert manager._item_execution_area(item) == ("modal", "modal")
+    assert manager._modal_comfy_lane_allowed(item) is True
+    assert manager._local_comfy_lane_allowed(item) is False
+
+
 @pytest.mark.asyncio
 async def test_video_postprocess_worker_overlaps_local_comfy_lane(monkeypatch):
     manager = QueueManager()

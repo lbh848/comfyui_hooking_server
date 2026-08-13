@@ -941,23 +941,31 @@ async def test_render_spools_video_postprocess_before_cleaning_comfy_mp4(
             else _synthetic_i2v_api_workflow()
         ), None
 
-    async def submit(workflow, progress_callback=None, *, task_key):
+    async def submit(workflow, progress_callback=None, *, task_key, input_paths=None):
         assert task_key == "video_generation"
+        assert isinstance(input_paths, list) and len(input_paths) == 1
+        staged_root = Path(input_paths[0])
+        assert staged_root.parent == comfy_input / "soya_video"
+        assert staged_root.name.startswith(f"{render_mode}_gpu-1_")
         transport = workflow["122"]["inputs"]["value"]
-        assert transport.startswith("[PATH]\nsoya_video\n[PROMPT]\n")
+        expected_transport_path = staged_root.relative_to(comfy_input).as_posix()
+        assert transport.startswith(
+            f"[PATH]\n{expected_transport_path}\n[PROMPT]\n"
+        )
         expected_alignment = alignment_for_mode(render_mode, 12)
         assert _valid_body(expected_alignment) in transport
         assert "\n[W]\n576\n[H]\n576\n[DURATION]\n12.0\n[SEED]\n" in transport
         seed_text = transport.split("\n[SEED]\n", 1)[1].split("\n[END]", 1)[0]
         assert seed_text.isdigit()
         submitted["seed"] = int(seed_text)
+        submitted["staged_root"] = str(staged_root)
         assert workflow["105:111"]["inputs"]["value"] == ["133", 0]
         assert workflow["105:15"]["inputs"]["noise_seed"] == ["137", 0]
-        staged = comfy_input / "soya_video" / "[1].png"
+        staged = staged_root / "[1].png"
         assert staged.is_file()
         with Image.open(staged) as image:
             assert image.size == (576, 576)
-        last_staged = comfy_input / "soya_video" / "[2].png"
+        last_staged = staged_root / "[2].png"
         if render_mode == "first_last":
             assert last_staged.is_file()
             with Image.open(last_staged) as image:
@@ -970,6 +978,7 @@ async def test_render_spools_video_postprocess_before_cleaning_comfy_mp4(
             "filename": "temporary.mp4",
             "subfolder": "video/soya_h3",
             "type": "output",
+            "execution_source": "modal",
         }
 
     async def cleanup(descriptor, *, task_key):
@@ -1029,7 +1038,7 @@ async def test_render_spools_video_postprocess_before_cleaning_comfy_mp4(
     assert result["preset"] == "1:1"
     assert result["aspect_ratio"] == "1:1"
     assert result["quality_level"] == "medium"
-    assert not (comfy_input / "soya_video").exists()
+    assert not Path(submitted["staged_root"]).exists()
     assert events[-1] == "mp4_cleaned"
     job_dir = Path(result["postprocess_job"]["job_dir"])
     manifest = json.loads((job_dir / "job.json").read_text(encoding="utf-8"))
@@ -1042,6 +1051,7 @@ async def test_render_spools_video_postprocess_before_cleaning_comfy_mp4(
     assert manifest["duration"] == 12.0
     assert manifest["aspect_ratio"] == "1:1"
     assert manifest["quality_level"] == "medium"
+    assert manifest["execution_source"] == "modal"
     assert manifest["target_mp"] == 0.35
     assert manifest["actual_mp"] == 0.331776
     assert manifest["video_seed"] == submitted["seed"]
@@ -1086,6 +1096,7 @@ async def test_video_postprocess_commits_verified_pair_and_metadata(
         "duration": 5.0,
         "fps": 24,
         "video_seed": 123,
+        "execution_source": "modal",
         "render_elapsed": 2.5,
         "quality": 80,
         "upscale_enabled": True,
@@ -1157,6 +1168,7 @@ async def test_video_postprocess_commits_verified_pair_and_metadata(
     assert info["video_target_mp"] == 0.3
     assert info["video_actual_mp"] == 0.295936
     assert info["video_upscale_scale"] == 2
+    assert info["execution_source"] == "modal"
     assert info["bot_name"] == "test-bot"
     prompt = json.loads(
         (backup_dir / f"{base_name}.json").read_text(encoding="utf-8")

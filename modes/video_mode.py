@@ -601,6 +601,7 @@ def build_i2v_workflow_block(
     height: int,
     duration: float,
     seed: int,
+    input_path: str = I2V_WORKFLOW_INPUT_PATH,
 ) -> str:
     """Build the text transport consumed by the distributed H3 I2V workflow."""
 
@@ -625,6 +626,20 @@ def build_i2v_workflow_block(
     if seed_value < 0:
         print(f"[VIDEO:WORKFLOW] I2V 전송 블록 seed 오류: seed={seed!r}")
         raise ValueError("H3 I2V seed가 올바르지 않습니다")
+    normalized_input_path = str(input_path or "").strip().replace("\\", "/")
+    input_relative = Path(normalized_input_path)
+    if (
+        not normalized_input_path
+        or "\n" in normalized_input_path
+        or "\r" in normalized_input_path
+        or input_relative.is_absolute()
+        or ".." in input_relative.parts
+    ):
+        print(
+            "[VIDEO:WORKFLOW] I2V 입력 경로 오류: "
+            f"input_path={input_path!r}"
+        )
+        raise ValueError("H3 I2V 입력 경로가 올바르지 않습니다")
     reserved_line = re.search(
         r"(?m)^\s*\[(?:PATH|PROMPT|W|H|DURATION|SEED|END)\]\s*$",
         prompt,
@@ -638,7 +653,7 @@ def build_i2v_workflow_block(
     return "\n".join(
         [
             "[PATH]",
-            I2V_WORKFLOW_INPUT_PATH,
+            normalized_input_path,
             "[PROMPT]",
             prompt,
             "[W]",
@@ -3110,6 +3125,7 @@ Vision-produced static Visual Context:
         target_w: int,
         target_h: int,
         video_seed: int | None,
+        execution_source: str,
         render_elapsed: float,
         settings: dict,
         quality: int,
@@ -3217,6 +3233,7 @@ Vision-produced static Visual Context:
                 "duration": duration,
                 "fps": VIDEO_FPS,
                 "video_seed": video_seed,
+                "execution_source": execution_source,
                 "render_elapsed": render_elapsed,
                 "quality": quality,
                 "upscale_enabled": settings["enabled"],
@@ -3535,11 +3552,20 @@ Vision-produced static Visual Context:
                     self._reference_label(source_ref) if is_reprocess else ""
                 ),
             }
+            execution_source = str(
+                manifest.get("execution_source") or "local"
+            ).strip().lower()
+            if execution_source not in {"local", "modal"}:
+                print(
+                    "[VIDEO:POSTPROCESS] 실행 출처 값 오류, local로 복구: "
+                    f"value={execution_source!r}, mode={mode!r}"
+                )
+                execution_source = "local"
             info_record = {
                 "provider": "comfy",
                 "provider_mode": "comfy",
                 "prompt_provider": "video",
-                "execution_source": "local",
+                "execution_source": execution_source,
                 "gen_method": {
                     "i2v": "H3 I2V",
                     "first_last": "H3 FLF2V",
@@ -3747,10 +3773,17 @@ Vision-produced static Visual Context:
         job_id = f"{mode}_{queue_item_id or uuid.uuid4().hex[:12]}_{uuid.uuid4().hex[:6]}"
         if mode in ("i2v", "first_last"):
             staging_parent = comfy_input_dir
-            staging_dir = os.path.join(comfy_input_dir, I2V_WORKFLOW_INPUT_PATH.rstrip("/"))
+            workflow_input_path = (
+                f"{I2V_WORKFLOW_INPUT_PATH.rstrip('/')}/{job_id}"
+            )
+            staging_dir = os.path.join(
+                comfy_input_dir,
+                *Path(workflow_input_path).parts,
+            )
         else:
             staging_parent = os.path.join(comfy_input_dir, "soya_h3")
             staging_dir = os.path.join(staging_parent, job_id)
+            workflow_input_path = ""
         staged_names: dict[str, str] = {}
         comfy_video_descriptor: dict | None = None
         staging_created = False
@@ -3822,6 +3855,7 @@ Vision-produced static Visual Context:
                     target_h,
                     duration,
                     video_seed,
+                    workflow_input_path,
                 )
             else:
                 workflow_for_conversion = self._patch_ui_workflow(
@@ -3858,6 +3892,7 @@ Vision-produced static Visual Context:
                 api_workflow,
                 progress_callback=progress_callback,
                 task_key="video_generation",
+                input_paths=[staging_dir],
             )
             if not mp4_bytes:
                 print(
@@ -3870,6 +3905,20 @@ Vision-produced static Visual Context:
             settings = self._video_postprocess_settings(config, dict(params or {}))
             quality = int(config.get("backup_webp_quality", 80) or 80)
             render_elapsed = time.time() - started
+            execution_source = (
+                str(comfy_video_descriptor.get("execution_source") or "local")
+                .strip()
+                .lower()
+                if isinstance(comfy_video_descriptor, dict)
+                else "local"
+            )
+            if execution_source not in {"local", "modal"}:
+                print(
+                    "[VIDEO:RENDER] MP4 실행 출처 값 오류, local로 복구: "
+                    f"item={queue_item_id}, value={execution_source!r}, "
+                    f"descriptor={comfy_video_descriptor!r}"
+                )
+                execution_source = "local"
             postprocess_job = await asyncio.to_thread(
                 self._stage_video_postprocess,
                 mp4_bytes=mp4_bytes,
@@ -3887,6 +3936,7 @@ Vision-produced static Visual Context:
                 target_w=target_w,
                 target_h=target_h,
                 video_seed=video_seed,
+                execution_source=execution_source,
                 render_elapsed=render_elapsed,
                 settings=settings,
                 quality=quality,

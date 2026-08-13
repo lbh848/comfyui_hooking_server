@@ -262,6 +262,7 @@ app = modal.App(APP_NAME)
 models_volume = modal.Volume.from_name(f"{APP_NAME}-models", create_if_missing=True)
 loras_volume = modal.Volume.from_name(f"{APP_NAME}-loras", create_if_missing=True)
 workflows_volume = modal.Volume.from_name(f"{APP_NAME}-workflows", create_if_missing=True)
+videos_volume = modal.Volume.from_name(f"{APP_NAME}-videos", create_if_missing=True)
 
 runtime_image = (
     # CUDA 12.8, PyTorch 2.11, ComfyUI와 SageAttention sm_80/86/89/120
@@ -481,6 +482,7 @@ def _write_extra_model_paths() -> Path:
         COMFY_MODELS_MOUNT_PATH: models_volume,
         "/loras": loras_volume,
         "/workflows": workflows_volume,
+        "/video-artifacts": videos_volume,
     },
 )
 @modal.concurrent(max_inputs=1)
@@ -615,8 +617,10 @@ class ComfyWorker:
         artifact_prefixes: list[str] | None = None,
         require_images: bool = True,
         defer_artifacts: bool = False,
+        video_job_id: str | None = None,
     ) -> dict:
         _announce_call_started("generate")
+        import hashlib
         import requests
 
         if not isinstance(workflow, dict) or not workflow:
@@ -634,16 +638,22 @@ class ComfyWorker:
         timeout_seconds = max(30, min(int(timeout_seconds), 3_300))
         input_root = Path("/root/ComfyUI/input")
         input_root.mkdir(parents=True, exist_ok=True)
-        for filename, content in (input_files or {}).items():
-            normalized_name = str(filename).replace("\\", "/")
-            relative = Path(normalized_name)
-            if relative.is_absolute() or not relative.parts or ".." in relative.parts:
-                raise ValueError(f"안전하지 않은 입력 이미지 파일명입니다: {filename!r}")
-            if not isinstance(content, bytes):
-                raise TypeError(f"입력 이미지 바이트가 아닙니다: {filename}")
-            target = input_root.joinpath(*relative.parts)
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(content)
+
+        normalized_video_job_id = ""
+        if video_job_id is not None:
+            normalized_video_job_id = str(video_job_id).strip().replace("\\", "/")
+            job_path = Path(normalized_video_job_id)
+            if (
+                not normalized_video_job_id
+                or job_path.is_absolute()
+                or len(job_path.parts) != 1
+                or job_path.parts[0] in ("", ".", "..")
+            ):
+                print(
+                    "[MODAL_COMFY:VIDEO] 안전하지 않은 영상 작업 ID: "
+                    f"value={video_job_id!r}"
+                )
+                raise ValueError(f"안전하지 않은 Modal 영상 작업 ID입니다: {video_job_id!r}")
 
         # md_soya_InstantReferenceLoRA는 첫 번째 LoRA 검색 경로 아래의
         # SOYA_CHAR_LORA 폴더에 학습 결과를 저장한다. /loras를 is_default로
@@ -676,6 +686,51 @@ class ComfyWorker:
                         stat.st_size,
                     )
 
+        staged_input_paths: list[Path] = []
+
+        def cleanup_staged_inputs() -> None:
+            for target in reversed(staged_input_paths):
+                try:
+                    target.unlink(missing_ok=True)
+                except Exception as exc:
+                    print(
+                        "[MODAL_COMFY:INPUT] 원격 입력 파일 정리 실패: "
+                        f"path={target}, error={type(exc).__name__}: {exc}"
+                    )
+                    traceback.print_exc()
+                    continue
+                parent = target.parent
+                while parent != input_root:
+                    try:
+                        parent.rmdir()
+                    except OSError:
+                        break
+                    parent = parent.parent
+
+        try:
+            for filename, content in (input_files or {}).items():
+                normalized_name = str(filename).replace("\\", "/")
+                relative = Path(normalized_name)
+                if relative.is_absolute() or not relative.parts or ".." in relative.parts:
+                    print(
+                        "[MODAL_COMFY:INPUT] 안전하지 않은 입력 파일명: "
+                        f"value={filename!r}"
+                    )
+                    raise ValueError(f"안전하지 않은 입력 이미지 파일명입니다: {filename!r}")
+                if not isinstance(content, bytes):
+                    print(
+                        "[MODAL_COMFY:INPUT] 입력 파일 바이트 형식 오류: "
+                        f"name={filename!r}, type={type(content).__name__}"
+                    )
+                    raise TypeError(f"입력 이미지 바이트가 아닙니다: {filename}")
+                target = input_root.joinpath(*relative.parts)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(content)
+                staged_input_paths.append(target)
+        except Exception:
+            cleanup_staged_inputs()
+            raise
+
         progress_sequence = 0
 
         def emit_progress(data: dict) -> None:
@@ -683,13 +738,16 @@ class ComfyWorker:
             progress_sequence += 1
             _emit_workflow_progress(progress_sequence, data)
 
-        prompt_id, history = asyncio.run(
-            _execute_comfy_workflow(
-                workflow,
-                timeout_seconds,
-                emit_progress,
+        try:
+            prompt_id, history = asyncio.run(
+                _execute_comfy_workflow(
+                    workflow,
+                    timeout_seconds,
+                    emit_progress,
+                )
             )
-        )
+        finally:
+            cleanup_staged_inputs()
 
         status = history.get("status") or {}
         if status.get("status_str") == "error" or not status.get("completed", False):
@@ -699,6 +757,8 @@ class ComfyWorker:
         images: list[dict] = []
         for node_id, output in (history.get("outputs") or {}).items():
             for image in output.get("images", []):
+                if str(image.get("filename") or "").lower().endswith(".mp4"):
+                    continue
                 view = requests.get(
                     "http://127.0.0.1:8188/view",
                     params={
@@ -719,6 +779,168 @@ class ComfyWorker:
                 )
         if require_images and not images:
             raise RuntimeError(f"ComfyUI 작업은 완료됐지만 출력 이미지가 없습니다: prompt_id={prompt_id}")
+
+        video_artifacts: list[dict] = []
+        if normalized_video_job_id:
+            video_references: list[tuple[str, dict]] = []
+            for node_id, output in (history.get("outputs") or {}).items():
+                if not isinstance(output, dict):
+                    print(
+                        "[MODAL_COMFY:VIDEO] 출력 노드 형식 오류: "
+                        f"node={node_id}, value={output!r}"
+                    )
+                    continue
+                for output_key in ("videos", "gifs", "images"):
+                    values = output.get(output_key)
+                    if not isinstance(values, list):
+                        continue
+                    for value in values:
+                        if (
+                            isinstance(value, dict)
+                            and str(value.get("filename") or "").lower().endswith(".mp4")
+                        ):
+                            video_references.append((str(node_id), value))
+            if not video_references:
+                print(
+                    "[MODAL_COMFY:VIDEO] MP4 출력 없음: "
+                    f"prompt_id={prompt_id}, output_nodes={list((history.get('outputs') or {}))}"
+                )
+                raise RuntimeError(
+                    f"ComfyUI 영상 작업은 완료됐지만 MP4 출력이 없습니다: prompt_id={prompt_id}"
+                )
+            if len(video_references) > 1:
+                print(
+                    "[MODAL_COMFY:VIDEO] MP4 출력이 여러 개여서 첫 결과만 보관: "
+                    f"prompt_id={prompt_id}, count={len(video_references)}"
+                )
+            node_id, video = video_references[0]
+            filename = Path(str(video.get("filename") or "")).name
+            if not filename or not filename.lower().endswith(".mp4"):
+                print(
+                    "[MODAL_COMFY:VIDEO] 안전하지 않은 MP4 파일명: "
+                    f"prompt_id={prompt_id}, value={video.get('filename')!r}"
+                )
+                raise ValueError("Modal 영상 결과 파일명이 올바르지 않습니다.")
+            remote_relative = Path(
+                "SOYA_VIDEO_OUTPUT",
+                normalized_video_job_id,
+                filename,
+            )
+            video_root = Path("/video-artifacts").resolve()
+            target = video_root.joinpath(*remote_relative.parts).resolve()
+            if video_root not in target.parents:
+                print(
+                    "[MODAL_COMFY:VIDEO] Video Volume 밖의 저장 경로 거부: "
+                    f"root={video_root}, target={target}"
+                )
+                raise ValueError("Modal 영상 결과 저장 경로가 올바르지 않습니다.")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if target.exists():
+                print(
+                    "[MODAL_COMFY:VIDEO] 원격 MP4 경로 충돌: "
+                    f"prompt_id={prompt_id}, target={target}"
+                )
+                raise FileExistsError(f"Modal 영상 결과 경로가 이미 존재합니다: {target}")
+            digest = hashlib.sha256()
+            size = 0
+            part_path = target.with_name(f".{target.name}.part")
+            try:
+                with requests.get(
+                    "http://127.0.0.1:8188/view",
+                    params={
+                        "filename": video["filename"],
+                        "subfolder": video.get("subfolder", ""),
+                        "type": video.get("type", "output"),
+                    },
+                    timeout=120,
+                    stream=True,
+                ) as view:
+                    view.raise_for_status()
+                    with part_path.open("xb") as handle:
+                        for chunk in view.iter_content(chunk_size=8 * 1024 * 1024):
+                            if not chunk:
+                                continue
+                            handle.write(chunk)
+                            digest.update(chunk)
+                            size += len(chunk)
+                if size <= 0:
+                    print(
+                        "[MODAL_COMFY:VIDEO] 원격 MP4 저장 결과가 비어 있음: "
+                        f"prompt_id={prompt_id}, filename={filename!r}"
+                    )
+                    raise RuntimeError("Modal 영상 결과 MP4가 비어 있습니다.")
+                part_path.replace(target)
+            except Exception as exc:
+                part_path.unlink(missing_ok=True)
+                print(
+                    "[MODAL_COMFY:VIDEO] MP4 Volume 저장 실패: "
+                    f"prompt_id={prompt_id}, target={target}, "
+                    f"error={type(exc).__name__}: {exc}"
+                )
+                traceback.print_exc()
+                raise
+            videos_volume.commit()
+            video_artifacts.append(
+                {
+                    "remote_path": remote_relative.as_posix(),
+                    "filename": filename,
+                    "size": size,
+                    "sha256": digest.hexdigest(),
+                    "node_id": node_id,
+                }
+            )
+            output_type = str(video.get("type") or "output")
+            original_filename = str(video.get("filename") or "")
+            original_subfolder = str(video.get("subfolder") or "").replace(
+                "\\", "/"
+            )
+            original_subfolder_path = Path(original_subfolder)
+            if (
+                output_type != "output"
+                or Path(original_filename).name != original_filename
+                or original_subfolder_path.is_absolute()
+                or ".." in original_subfolder_path.parts
+            ):
+                print(
+                    "[MODAL_COMFY:VIDEO] 안전하지 않은 Comfy MP4 임시 경로로 "
+                    "컨테이너 정리 생략: "
+                    f"prompt_id={prompt_id}, filename={original_filename!r}, "
+                    f"subfolder={original_subfolder!r}, type={output_type!r}"
+                )
+            else:
+                comfy_output_root = Path("/root/ComfyUI/output").resolve()
+                comfy_output = comfy_output_root.joinpath(
+                    *original_subfolder_path.parts,
+                    original_filename,
+                ).resolve()
+                if comfy_output_root not in comfy_output.parents:
+                    print(
+                        "[MODAL_COMFY:VIDEO] Comfy output 밖의 MP4 정리 거부: "
+                        f"root={comfy_output_root}, target={comfy_output}"
+                    )
+                else:
+                    try:
+                        comfy_output.unlink()
+                        print(
+                            "[MODAL_COMFY:VIDEO] Volume 커밋 후 컨테이너 MP4 정리: "
+                            f"path={comfy_output}"
+                        )
+                    except FileNotFoundError:
+                        print(
+                            "[MODAL_COMFY:VIDEO] 정리할 컨테이너 MP4가 이미 없음: "
+                            f"path={comfy_output}"
+                        )
+                    except Exception as exc:
+                        print(
+                            "[MODAL_COMFY:VIDEO] 컨테이너 MP4 정리 실패: "
+                            f"path={comfy_output}, error={type(exc).__name__}: {exc}"
+                        )
+                        traceback.print_exc()
+            print(
+                "[MODAL_COMFY:VIDEO] MP4 Volume 저장 완료: "
+                f"prompt_id={prompt_id}, remote={remote_relative.as_posix()!r}, "
+                f"bytes={size:,}, sha256={digest.hexdigest()}"
+            )
 
         artifacts: list[dict] = []
         for _prefix, target_root in normalized_artifact_roots:
@@ -752,5 +974,6 @@ class ComfyWorker:
             "prompt_id": prompt_id,
             "images": images,
             "artifacts": artifacts,
+            "video_artifacts": video_artifacts,
             "text_outputs": list(self.text_outputs),
         }
