@@ -123,6 +123,21 @@ def test_video_page_separates_fast_aspect_ratio_and_mp_level() -> None:
     assert "duration," in FRONTEND
 
 
+def test_video_modal_opens_before_async_loading_and_keeps_session_upscaler() -> None:
+    modal_open = FRONTEND.split(
+        "async function openVideoWorkspaceForReference(reference)", 1
+    )[1].split("function closeVideoModal()", 1)[0]
+
+    assert modal_open.index("modal.classList.add('visible');") < modal_open.index(
+        "await Promise.all(["
+    )
+    assert "if (!videoPostprocessSynced) applyVideoPostprocessConfig(cfg);" in modal_open
+    assert FRONTEND.count('onchange="onVideoUpscaleModelChange()"') == 4
+    assert FRONTEND.count('onchange="selectVideoUpscaleScale(this.value, true)"') == 3
+    assert "function onVideoUpscaleModelChange()" in FRONTEND
+    assert "videoPostprocessSynced = true;" in FRONTEND
+
+
 def test_video_page_can_delegate_direction_to_ai() -> None:
     assert "AI 맡기기 설정" in FRONTEND
     assert 'id="video-generation-auto-instruction"' in FRONTEND

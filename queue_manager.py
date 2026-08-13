@@ -213,6 +213,45 @@ LLM_TYPES = frozenset({
 
 VIDEO_POSTPROCESS_TYPE = "video_postprocess"
 
+# 영상 업스케일러 모델값 -> 화면 표시명. 라벨에 사용자가 선택한 업스케일러를 반영하기 위함.
+VIDEO_UPSCALER_DISPLAY = {
+    "realesr-animevideov3": "Real-ESRGAN",
+    "anime4k-fast-m": "Anime4K",
+    "lanczos": "Lanczos",
+}
+
+# 출력 포맷값 -> 표준 표기명(AVIF는 전대문자, WebP는 카멜표기가 공식 브랜딩).
+VIDEO_OUTPUT_FORMAT_DISPLAY = {
+    "avif": "AVIF",
+    "webp": "WebP",
+}
+
+
+def video_postprocess_label(params: dict) -> str:
+    """스풀 params에서 영상 후처리 큐 라벨을 만든다.
+
+    종전에는 라벨이 항상 'Real-ESRGAN'으로 고정되어, 사용자가 Anime4K/Lanczos를
+    고르거나 업스케일을 껐을 때도 Real-ESRGAN으로 표시되는 버그가 있었다.
+    업스케일러 종류·배율·출력 포맷·ON/OFF를 모두 반영한다.
+    """
+    mode = str((params or {}).get("mode") or "")
+    prefix = {
+        "i2v": "H3 I2V",
+        "first_last": "H3 FLF2V",
+    }.get(mode, "영상")
+
+    if bool((params or {}).get("upscale_enabled")):
+        model = str((params or {}).get("upscale_model") or "")
+        upscaler = VIDEO_UPSCALER_DISPLAY.get(model, (model or "업스케일"))
+        scale = int((params or {}).get("upscale_scale") or 1)
+        upscaler_part = f"{upscaler} {scale}x"
+    else:
+        upscaler_part = "원본"
+
+    output_format = str((params or {}).get("output_format") or "avif").strip().lower()
+    display_format = VIDEO_OUTPUT_FORMAT_DISPLAY.get(output_format, "AVIF")
+    return f"{prefix} · {upscaler_part}→{display_format}"
+
 
 @dataclass
 class QueueItem:
@@ -1853,11 +1892,7 @@ class QueueManager:
             spool_id = str(params.get("spool_id") or "")
             if not spool_id or spool_id in known_spool_ids:
                 continue
-            mode = str(params.get("mode") or "")
-            label = {
-                "i2v": "H3 I2V · Real-ESRGAN→AVIF",
-                "first_last": "H3 FLF2V · Real-ESRGAN→AVIF",
-            }.get(mode, "영상 · Real-ESRGAN→AVIF")
+            label = video_postprocess_label(params)
             await self.add_item(
                 VIDEO_POSTPROCESS_TYPE,
                 label,
@@ -2348,13 +2383,7 @@ class QueueManager:
                 )
                 raise RuntimeError("H3 결과의 영상 후처리 정보가 없습니다")
             mode = str(result.get("mode") or "")
-            output_label = str(
-                (item.params or {}).get("output_format") or "avif"
-            ).strip().upper()
-            postprocess_label = {
-                "i2v": f"H3 I2V · Real-ESRGAN→{output_label}",
-                "first_last": f"H3 FLF2V · Real-ESRGAN→{output_label}",
-            }.get(mode, f"영상 · Real-ESRGAN→{output_label}")
+            postprocess_label = video_postprocess_label(postprocess_params)
             postprocess_item = await self.add_item(
                 VIDEO_POSTPROCESS_TYPE,
                 postprocess_label,
@@ -2371,7 +2400,8 @@ class QueueManager:
             )
             print(
                 "[QUEUE:VIDEO_GPU] H3 완료→독립 후처리 큐 등록: "
-                f"gpu_item={item.id}, post_item={postprocess_item.id}, mode={mode}"
+                f"gpu_item={item.id}, post_item={postprocess_item.id}, mode={mode}, "
+                f"label={postprocess_label!r}"
             )
             return {
                 **{key: value for key, value in result.items() if key != "postprocess_job"},

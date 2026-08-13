@@ -13694,19 +13694,19 @@
                             <input id="video-generation-upscale-enabled" type="checkbox" checked hidden>
                             <div class="option-card-grid" style="--option-card-columns:2;" role="radiogroup" aria-label="업스케일 방식">
                                 <label class="option-card">
-                                    <input type="radio" name="video-upscale-model" value="realesr-animevideov3" checked onchange="updateVideoUpscaleControls()">
+                                    <input type="radio" name="video-upscale-model" value="realesr-animevideov3" checked onchange="onVideoUpscaleModelChange()">
                                     <span class="option-card-surface"><span class="option-card-badge">품질</span><span class="option-card-title">Real-ESRGAN</span><span class="option-card-description">AnimeVideo-v3 · 가장 선명한 복원</span></span>
                                 </label>
                                 <label class="option-card">
-                                    <input type="radio" name="video-upscale-model" value="anime4k-fast-m" onchange="updateVideoUpscaleControls()">
+                                    <input type="radio" name="video-upscale-model" value="anime4k-fast-m" onchange="onVideoUpscaleModelChange()">
                                     <span class="option-card-surface"><span class="option-card-badge">고속</span><span class="option-card-title">Anime4K Fast/M</span><span class="option-card-description">GPU 셰이더 · 빠르고 안정적인 선화 확대</span></span>
                                 </label>
                                 <label class="option-card">
-                                    <input type="radio" name="video-upscale-model" value="lanczos" onchange="updateVideoUpscaleControls()">
+                                    <input type="radio" name="video-upscale-model" value="lanczos" onchange="onVideoUpscaleModelChange()">
                                     <span class="option-card-surface"><span class="option-card-badge">단순 확대</span><span class="option-card-title">Lanczos</span><span class="option-card-description">AI 보정 없이 빠르게 리샘플링</span></span>
                                 </label>
                                 <label class="option-card">
-                                    <input type="radio" name="video-upscale-model" value="none" onchange="updateVideoUpscaleControls()">
+                                    <input type="radio" name="video-upscale-model" value="none" onchange="onVideoUpscaleModelChange()">
                                     <span class="option-card-surface"><span class="option-card-badge">원본</span><span class="option-card-title">업스케일 안 함</span><span class="option-card-description">H3 출력 크기를 그대로 유지</span></span>
                                 </label>
                             </div>
@@ -13715,9 +13715,9 @@
                             <div class="video-field-label"><span>확대 배율</span><small>2× 권장</small></div>
                             <input id="video-generation-upscale-scale" type="hidden" value="2">
                             <div id="video-generation-upscale-scale-grid" class="option-card-grid compact video-scale-grid" style="--option-card-columns:3;" role="radiogroup" aria-label="업스케일 배율">
-                                <label class="option-card"><input type="radio" name="video-upscale-scale-choice" value="2" checked onchange="selectVideoUpscaleScale(this.value)"><span class="option-card-surface"><span class="option-card-title">2×</span></span></label>
-                                <label class="option-card"><input type="radio" name="video-upscale-scale-choice" value="3" onchange="selectVideoUpscaleScale(this.value)"><span class="option-card-surface"><span class="option-card-title">3×</span></span></label>
-                                <label class="option-card"><input type="radio" name="video-upscale-scale-choice" value="4" onchange="selectVideoUpscaleScale(this.value)"><span class="option-card-surface"><span class="option-card-title">4×</span></span></label>
+                                <label class="option-card"><input type="radio" name="video-upscale-scale-choice" value="2" checked onchange="selectVideoUpscaleScale(this.value, true)"><span class="option-card-surface"><span class="option-card-title">2×</span></span></label>
+                                <label class="option-card"><input type="radio" name="video-upscale-scale-choice" value="3" onchange="selectVideoUpscaleScale(this.value, true)"><span class="option-card-surface"><span class="option-card-title">3×</span></span></label>
+                                <label class="option-card"><input type="radio" name="video-upscale-scale-choice" value="4" onchange="selectVideoUpscaleScale(this.value, true)"><span class="option-card-surface"><span class="option-card-title">4×</span></span></label>
                             </div>
                         </div>
                     </section>
@@ -25418,17 +25418,24 @@
             updateVideoGenerationSummary();
         }
 
-        function selectVideoUpscaleScale(value) {
+        function selectVideoUpscaleScale(value, userInitiated = false) {
             const normalized = ['2', '3', '4'].includes(String(value)) ? String(value) : '2';
             const hidden = document.getElementById('video-generation-upscale-scale');
             if (!hidden) {
                 console.error('[VIDEO_UI] 업스케일 배율 값을 저장할 요소가 없습니다.');
                 return;
             }
+            if (userInitiated) videoPostprocessSynced = true;
             hidden.value = normalized;
             const radio = document.querySelector(`input[name="video-upscale-scale-choice"][value="${normalized}"]`);
             if (radio) radio.checked = true;
             updateVideoGenerationSummary();
+        }
+
+        function onVideoUpscaleModelChange() {
+            // 서버 기본값은 최초 한 번만 적용하고, 이후에는 현재 페이지에서 고른 값을 유지한다.
+            videoPostprocessSynced = true;
+            updateVideoUpscaleControls();
         }
 
         function updateVideoUpscaleControls() {
@@ -25826,6 +25833,11 @@
         }
 
         async function openVideoWorkspaceForReference(reference) {
+            const modal = document.getElementById('video-modal');
+            if (!modal) {
+                console.error('[VIDEO_UI] 영상화 모달을 찾지 못했습니다.');
+                return;
+            }
             videoWorkspaceSourceRef = reference;
             const badge = document.querySelector('#video-modal .video-source-badge');
             if (badge) badge.textContent = reference.kind === 'asset' ? '현재 에셋' : '현재 카드';
@@ -25839,22 +25851,26 @@
             setVideoAutoInstruction(false);
             selectVideoMode('i2v');
             updateVideoDuration();
-            try {
-                const cfg = await loadCurrentConfig();
-                applyVideoPostprocessConfig(cfg);
-                applyVideoSecondaryMotionConfig(cfg);
-            } catch (error) {
-                console.error('[VIDEO_UI] 영상 후처리 기본 설정 동기화 실패:', error);
-                updateVideoUpscaleControls();
-            }
             updateVideoWorkspaceMode();
-            await loadVideoReferenceOptions(reference);
-            const modal = document.getElementById('video-modal');
-            if (!modal) {
-                console.error('[VIDEO_UI] 영상화 모달을 찾지 못했습니다.');
-                return;
-            }
+
+            // 참조 목록이나 설정 응답을 기다리지 않고 모달부터 표시한다.
             modal.classList.add('visible');
+
+            const configSync = (async () => {
+                try {
+                    const cfg = await loadCurrentConfig();
+                    // 사용자가 이미 선택했거나 한 번 동기화했다면 현재 세션 값을 덮어쓰지 않는다.
+                    if (!videoPostprocessSynced) applyVideoPostprocessConfig(cfg);
+                    applyVideoSecondaryMotionConfig(cfg);
+                } catch (error) {
+                    console.error('[VIDEO_UI] 영상 후처리 기본 설정 동기화 실패:', error);
+                    updateVideoUpscaleControls();
+                }
+            })();
+            await Promise.all([
+                configSync,
+                loadVideoReferenceOptions(reference),
+            ]);
         }
 
         function closeVideoModal() {

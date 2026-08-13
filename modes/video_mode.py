@@ -2237,6 +2237,12 @@ Vision-produced static Visual Context:
                 "spool_id": spool_id,
                 "base_name": base_name,
                 "mode": mode,
+                # 라벨 빌드용 스냅샷. 실행 워커는 이 값을 무시하고 manifest에서
+                # 설정을 다시 읽으므로, 표시 전용으로만 안전하게 사용된다.
+                "upscale_enabled": settings["enabled"],
+                "upscale_scale": settings["scale"],
+                "upscale_model": settings["model"] if settings["enabled"] else "",
+                "output_format": output_format,
             }
         except Exception:
             try:
@@ -2275,6 +2281,11 @@ Vision-produced static Visual Context:
                             "spool_id": str(manifest.get("spool_id") or entry.name),
                             "base_name": str(manifest.get("base_name") or ""),
                             "mode": str(manifest.get("mode") or ""),
+                            # 라벨 빌드용 스냅샷 (manifest에서 읽음).
+                            "upscale_enabled": bool(manifest.get("upscale_enabled", False)),
+                            "upscale_scale": int(manifest.get("upscale_scale") or 1),
+                            "upscale_model": str(manifest.get("upscale_model") or ""),
+                            "output_format": str(manifest.get("output_format") or "avif"),
                         }
                     )
                 except Exception as exc:
