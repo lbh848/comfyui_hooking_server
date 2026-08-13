@@ -168,31 +168,36 @@ def select_gpu_profile(
 ) -> dict[str, Any]:
     mode = normalize_install_mode(install_mode)
     profiles = manifest.python["gpu_profiles"]
-    if not nvidia.get("available"):
-        if mode == INSTALL_MODE_NVIDIA_COMPATIBILITY:
-            message = (
-                "NVIDIA 호환 설치를 선택했지만 NVIDIA GPU를 찾지 "
-                "못했습니다."
-            )
-            print(f"[COMFY_INSTALL][PROBE] GPU 프로필 선택 실패: {message}")
-            raise SystemProbeError(message)
+
+    def cpu_fallback(reason: str) -> dict[str, Any]:
         for profile in profiles:
             if profile.get("kind") == "cpu":
+                selected = dict(profile)
+                selected["fallback_reason"] = reason
                 print(
-                    "[COMFY_INSTALL][PROBE] NVIDIA GPU가 없어 CPU 프로필을 "
-                    f"선택합니다: profile={profile.get('id')}"
+                    "[COMFY_INSTALL][PROBE][WARNING] GPU 가속 프로필을 "
+                    "사용할 수 없어 CPU 프로필로 설치를 계속합니다: "
+                    f"profile={selected.get('id')}, reason={reason}"
                 )
-                return profile
-        print("[COMFY_INSTALL][PROBE] CPU 설치 프로필이 없습니다.")
-        raise SystemProbeError("NVIDIA GPU가 없고 CPU 설치 프로필도 없습니다.")
+                return selected
+        print(
+            "[COMFY_INSTALL][PROBE] CPU 설치 폴백 실패: "
+            f"reason={reason}, profiles={profiles!r}"
+        )
+        raise SystemProbeError("설치를 계속할 CPU 프로필이 없습니다.")
+
+    if not nvidia.get("available"):
+        return cpu_fallback(
+            "지원되는 NVIDIA GPU를 감지하지 못했습니다. "
+            "AMD·Intel·GPU 없음 환경도 CPU 런타임으로 설치할 수 있습니다."
+        )
 
     gpus = nvidia.get("gpus")
     if not isinstance(gpus, list) or not gpus:
-        print(
-            "[COMFY_INSTALL][PROBE] NVIDIA 사용 가능 상태이지만 GPU 정보가 "
-            f"비어 있습니다: nvidia={nvidia!r}"
+        return cpu_fallback(
+            "nvidia-smi는 응답했지만 사용할 GPU 상세 정보가 비어 있습니다: "
+            f"{nvidia!r}"
         )
-        raise SystemProbeError("NVIDIA GPU 상세 정보를 확인하지 못했습니다.")
 
     detected: list[tuple[tuple[int, ...], tuple[int, ...], dict[str, Any]]] = []
     for index, gpu in enumerate(gpus):
@@ -201,17 +206,31 @@ def select_gpu_profile(
                 "[COMFY_INSTALL][PROBE] NVIDIA GPU 정보 형식 오류: "
                 f"index={index}, value={gpu!r}"
             )
-            raise SystemProbeError("NVIDIA GPU 정보 형식이 잘못되었습니다.")
-        driver = _parse_numeric_version(
-            gpu.get("driver_version"),
-            label=f"GPU {index} NVIDIA 드라이버",
-        )
-        compute = _parse_numeric_version(
-            gpu.get("compute_capability"),
-            label=f"GPU {index} compute capability",
-            width=2,
-        )
+            continue
+        try:
+            driver = _parse_numeric_version(
+                gpu.get("driver_version"),
+                label=f"GPU {index} NVIDIA 드라이버",
+            )
+            compute = _parse_numeric_version(
+                gpu.get("compute_capability"),
+                label=f"GPU {index} compute capability",
+                width=2,
+            )
+        except SystemProbeError as exc:
+            print(
+                "[COMFY_INSTALL][PROBE][WARNING] 형식을 해석할 수 없는 GPU를 "
+                f"가속 후보에서 제외합니다: index={index}, gpu={gpu!r}, "
+                f"error={exc}"
+            )
+            continue
         detected.append((driver, compute, gpu))
+
+    if not detected:
+        return cpu_fallback(
+            "감지된 NVIDIA GPU의 드라이버 또는 아키텍처 정보를 해석할 수 "
+            "없습니다."
+        )
 
     candidates = []
     for base_profile in profiles:
@@ -298,8 +317,7 @@ def select_gpu_profile(
                 "CUDA Toolkit을 설치하지 말고 NVIDIA 그래픽 드라이버를 "
                 "업데이트한 뒤 다시 시도하세요."
             )
-        print(f"[COMFY_INSTALL][PROBE] GPU 프로필 선택 실패: {message}")
-        raise SystemProbeError(message)
+        return cpu_fallback(message)
 
     selected = sorted(
         candidates,
@@ -369,6 +387,8 @@ def probe_system(
             },
             "nvidia": nvidia,
             "gpu_profile": profile["id"],
+            "gpu_profile_kind": profile.get("kind"),
+            "gpu_fallback_reason": profile.get("fallback_reason"),
             "install_mode": mode,
             "uv": uv_version,
             "git": _tool_version(["git", "--version"]),

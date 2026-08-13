@@ -39,15 +39,8 @@ def effective_gpu_profile(
     mode = normalize_install_mode(install_mode)
     effective = copy.deepcopy(profile)
     effective["install_mode"] = mode
-    if mode == INSTALL_MODE_STANDARD:
+    if mode == INSTALL_MODE_STANDARD or effective.get("kind") != "nvidia":
         return effective
-    if effective.get("kind") != "nvidia":
-        print(
-            "[COMFY_INSTALL][MODE] NVIDIA 호환 설치에 NVIDIA 프로필이 "
-            f"아닌 값이 전달되었습니다: profile={effective.get('id')!r}, "
-            f"kind={effective.get('kind')!r}"
-        )
-        raise ValueError("NVIDIA 호환 설치에는 NVIDIA GPU 프로필이 필요합니다.")
 
     effective["minimum_compute_capability"] = (
         NVIDIA_COMPATIBILITY_MINIMUM_COMPUTE

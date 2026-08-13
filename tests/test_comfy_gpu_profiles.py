@@ -6,7 +6,7 @@ from comfy_installer.manifest import load_install_manifest
 from comfy_installer.install_modes import (
     INSTALL_MODE_NVIDIA_COMPATIBILITY,
 )
-from comfy_installer.system_probe import SystemProbeError, select_gpu_profile
+from comfy_installer.system_probe import select_gpu_profile
 
 
 def _nvidia(
@@ -69,24 +69,28 @@ def test_gpu_profile_does_not_require_nvidia_smi_cuda_summary() -> None:
     assert selected["id"] == "nvidia-cu130"
 
 
-def test_gpu_profile_rejects_old_driver_with_driver_only_guidance() -> None:
+def test_gpu_profile_falls_back_to_cpu_for_old_driver() -> None:
     manifest = load_install_manifest()
 
-    with pytest.raises(SystemProbeError, match="CUDA Toolkit을 설치하지 말고"):
-        select_gpu_profile(
-            manifest,
-            _nvidia(driver="570.64", compute="8.6", driver_cuda="12.8"),
-        )
+    selected = select_gpu_profile(
+        manifest,
+        _nvidia(driver="570.64", compute="8.6", driver_cuda="12.8"),
+    )
+
+    assert selected["id"] == "cpu"
+    assert "NVIDIA 그래픽 드라이버" in selected["fallback_reason"]
 
 
-def test_gpu_profile_rejects_turing_compute_capability() -> None:
+def test_standard_gpu_profile_falls_back_to_cpu_for_turing() -> None:
     manifest = load_install_manifest()
 
-    with pytest.raises(SystemProbeError, match=r"RTX 30\(Ampere, sm86\) 이상"):
-        select_gpu_profile(
-            manifest,
-            _nvidia(driver="591.74", compute="7.5", driver_cuda="13.0"),
-        )
+    selected = select_gpu_profile(
+        manifest,
+        _nvidia(driver="591.74", compute="7.5", driver_cuda="13.0"),
+    )
+
+    assert selected["id"] == "cpu"
+    assert "SageAttention" in selected["fallback_reason"]
 
 
 @pytest.mark.parametrize(
@@ -115,26 +119,30 @@ def test_nvidia_compatibility_profile_accepts_turing_without_sageattention(
     assert "triton_package" not in selected
 
 
-def test_nvidia_compatibility_profile_rejects_pre_turing_gpu() -> None:
+def test_nvidia_compatibility_profile_falls_back_for_pre_turing_gpu() -> None:
     manifest = load_install_manifest()
 
-    with pytest.raises(SystemProbeError, match=r"RTX 20\(Turing, sm75\) 이상"):
-        select_gpu_profile(
-            manifest,
-            _nvidia(driver="591.74", compute="6.1", driver_cuda="13.0"),
-            install_mode=INSTALL_MODE_NVIDIA_COMPATIBILITY,
-        )
+    selected = select_gpu_profile(
+        manifest,
+        _nvidia(driver="591.74", compute="6.1", driver_cuda="13.0"),
+        install_mode=INSTALL_MODE_NVIDIA_COMPATIBILITY,
+    )
+
+    assert selected["id"] == "cpu"
+    assert "Turing" in selected["fallback_reason"]
 
 
-def test_nvidia_compatibility_profile_requires_nvidia_gpu() -> None:
+def test_nvidia_compatibility_profile_allows_no_gpu_with_cpu_fallback() -> None:
     manifest = load_install_manifest()
 
-    with pytest.raises(SystemProbeError, match="NVIDIA GPU를 찾지 못했습니다"):
-        select_gpu_profile(
-            manifest,
-            {"available": False, "gpus": [], "driver_cuda": None},
-            install_mode=INSTALL_MODE_NVIDIA_COMPATIBILITY,
-        )
+    selected = select_gpu_profile(
+        manifest,
+        {"available": False, "gpus": [], "driver_cuda": None},
+        install_mode=INSTALL_MODE_NVIDIA_COMPATIBILITY,
+    )
+
+    assert selected["id"] == "cpu"
+    assert "GPU 없음" in selected["fallback_reason"]
 
 
 def test_gpu_profile_uses_cpu_only_when_nvidia_is_absent() -> None:
