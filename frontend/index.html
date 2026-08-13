@@ -1407,6 +1407,23 @@
             font-size: .76rem;
             line-height: 1.35;
         }
+        .video-ai-settings {
+            border-color: color-mix(in srgb, #b876d2 34%, var(--border));
+            background: color-mix(in srgb, #9b59b6 4%, var(--surface));
+        }
+        .video-ai-context-option {
+            justify-content: space-between;
+            margin-top: 11px;
+            padding-top: 11px;
+            border-top: 1px solid color-mix(in srgb, #b876d2 18%, var(--border));
+            transition: opacity .16s ease;
+        }
+        .video-ai-context-option[aria-disabled="true"] {
+            opacity: .48;
+            cursor: not-allowed;
+        }
+        .video-ai-context-copy { flex: 1 1 auto; }
+        .video-ai-context-option .toggle-switch { flex: 0 0 50px; }
         .video-summary-bar {
             display: flex;
             align-items: center;
@@ -13719,13 +13736,29 @@
                     </section>
                 </div>
 
+                <section class="video-panel video-ai-settings" aria-labelledby="video-ai-settings-title">
+                    <div class="video-panel-title-row">
+                        <div>
+                            <span id="video-ai-settings-title" class="video-panel-title">AI 맡기기 설정</span>
+                            <span class="video-panel-hint" style="display:block; margin-top:3px;">영상 연출 생성과 백업 문맥 사용을 선택합니다.</span>
+                        </div>
+                        <button type="button" id="video-generation-auto-instruction" class="video-auto-direction-toggle" aria-pressed="false" onclick="toggleVideoAutoInstruction()">✨ AI에게 맡기기</button>
+                    </div>
+                    <label id="video-dialogue-context-option" class="video-secondary-row video-ai-context-option" aria-disabled="true">
+                        <span class="video-ai-context-copy"><span class="video-panel-title">대사·감정 정보 전달</span><span class="video-panel-hint" style="display:block; margin-top:3px;">백업에 정보가 있으면 AI가 행동·표정·발화 연출에 참고합니다.</span></span>
+                        <span class="toggle-switch">
+                            <input id="video-generation-include-dialogue-context" type="checkbox" checked disabled onchange="onVideoDialogueContextChange()">
+                            <span class="toggle-slider"></span>
+                        </span>
+                    </label>
+                    <div id="video-generation-auto-instruction-note" class="video-auto-direction-note" aria-live="polite"></div>
+                </section>
+
                 <section class="video-panel">
                     <div class="video-panel-title-row">
                         <label for="video-generation-instruction" class="video-field-label"><span>영상에서 일어날 일</span><small id="video-generation-instruction-hint">자연어로 자유롭게 작성</small></label>
-                        <button type="button" id="video-generation-auto-instruction" class="video-auto-direction-toggle" aria-pressed="false" onclick="toggleVideoAutoInstruction()">✨ AI에게 맡기기</button>
                     </div>
                     <textarea id="video-generation-instruction" class="video-instruction" rows="5" maxlength="12000" placeholder="예: 인물이 천천히 고개를 들어 카메라를 바라보고, 머리카락과 옷자락이 약한 바람에 자연스럽게 흔들린다. 카메라는 아주 조금 천천히 밀고 들어간다."></textarea>
-                    <div id="video-generation-auto-instruction-note" class="video-auto-direction-note" aria-live="polite"></div>
                     <div class="video-summary-bar">
                         <span id="video-generation-summary-detail" aria-live="polite">5초 · 자동 비율 · 품질 2× · AVIF</span>
                         <span>렌더와 후처리는 독립 큐에서 이어지며 합성본과 `_raw`를 함께 보관합니다.</span>
@@ -25218,22 +25251,34 @@
                 ?.getAttribute('aria-pressed') === 'true';
         }
 
+        function isVideoDialogueContextEnabled() {
+            return document.getElementById('video-generation-include-dialogue-context')
+                ?.checked === true;
+        }
+
         function updateVideoAutoInstructionPresentation() {
             const enabled = isVideoAutoInstructionEnabled();
+            const includeDialogueContext = isVideoDialogueContextEnabled();
             const input = document.getElementById('video-generation-instruction');
             const hint = document.getElementById('video-generation-instruction-hint');
             const note = document.getElementById('video-generation-auto-instruction-note');
-            if (!input || !hint || !note) {
+            const dialogueToggle = document.getElementById('video-generation-include-dialogue-context');
+            const dialogueOption = document.getElementById('video-dialogue-context-option');
+            if (!input || !hint || !note || !dialogueToggle || !dialogueOption) {
                 console.error('[VIDEO_UI] AI 자동 연출 UI 요소를 찾지 못했습니다.');
                 return;
             }
             input.disabled = enabled;
+            dialogueToggle.disabled = !enabled;
+            dialogueOption.setAttribute('aria-disabled', enabled ? 'false' : 'true');
             input.placeholder = enabled
                 ? 'Visual Context를 분석한 AI가 이 입력을 대신 작성합니다.'
                 : '예: 인물이 천천히 고개를 들어 카메라를 바라보고, 머리카락과 옷자락이 약한 바람에 자연스럽게 흔들린다. 카메라는 아주 조금 천천히 밀고 들어간다.';
             hint.textContent = enabled ? 'AI가 영어 영상 지시를 생성' : '자연어로 자유롭게 작성';
             note.textContent = enabled
-                ? `Visual Context 생성과 동시에 ${normalizedVideoDuration()}초 동안 이어질 장면을 상상합니다. 백업에 대사·감정 정보가 있으면 행동과 표정에 함께 반영합니다.`
+                ? includeDialogueContext
+                    ? `Visual Context 생성과 동시에 ${normalizedVideoDuration()}초 동안 이어질 장면을 상상합니다. 백업에 대사·감정 정보가 있으면 AI에 전달합니다.`
+                    : `Visual Context 생성과 동시에 ${normalizedVideoDuration()}초 동안 이어질 장면을 상상합니다. 대사·감정 정보는 전달하지 않습니다.`
                 : '';
         }
 
@@ -25250,6 +25295,22 @@
 
         function toggleVideoAutoInstruction() {
             setVideoAutoInstruction(!isVideoAutoInstructionEnabled());
+        }
+
+        function setVideoDialogueContextEnabled(enabled) {
+            const toggle = document.getElementById('video-generation-include-dialogue-context');
+            if (!toggle) {
+                console.error('[VIDEO_UI] 대사·감정 정보 전달 토글을 찾지 못했습니다.');
+                return;
+            }
+            toggle.checked = Boolean(enabled);
+            updateVideoAutoInstructionPresentation();
+            updateVideoGenerationSummary();
+        }
+
+        function onVideoDialogueContextChange() {
+            updateVideoAutoInstructionPresentation();
+            updateVideoGenerationSummary();
         }
 
         function selectVideoUpscaleScale(value) {
@@ -25341,8 +25402,12 @@
                 ? VIDEO_UPSCALE_LABELS.none
                 : `${VIDEO_UPSCALE_LABELS[method] || method} ${scale}×`;
             const output = getSelectedVideoOption('video-output-format', 'avif').toUpperCase();
-            const directionLabel = isVideoAutoInstructionEnabled() ? ' · AI 연출' : '';
-            target.textContent = `${duration}초 · ${presetLabel} · ${upscaleLabel} · ${output}${directionLabel}`;
+            const autoInstruction = isVideoAutoInstructionEnabled();
+            const directionLabel = autoInstruction ? ' · AI 연출' : '';
+            const dialogueLabel = autoInstruction && isVideoDialogueContextEnabled()
+                ? ' · 대사·감정 참고'
+                : '';
+            target.textContent = `${duration}초 · ${presetLabel} · ${upscaleLabel} · ${output}${directionLabel}${dialogueLabel}`;
         }
 
         function updateVideoWorkspaceMode() {
@@ -25641,6 +25706,7 @@
                     ? '현재 에셋 원본을 불러오는 중입니다.'
                     : '현재 카드의 `_raw` 원본을 불러오는 중입니다.';
             }
+            setVideoDialogueContextEnabled(true);
             setVideoAutoInstruction(false);
             selectVideoMode('i2v');
             updateVideoDuration();
@@ -25680,6 +25746,7 @@
             const outputFormat = getSelectedVideoOption('video-output-format', 'avif');
             const instruction = document.getElementById('video-generation-instruction')?.value.trim() || '';
             const autoInstruction = isVideoAutoInstructionEnabled();
+            const includeDialogueContext = autoInstruction && isVideoDialogueContextEnabled();
             const button = document.getElementById('video-generation-submit');
             if (!sourceRef) {
                 console.error('[VIDEO_UI] 제출 실패: 원본 참조 없음', {sourceKey});
@@ -25718,6 +25785,7 @@
                         upscale_model: upscaleEnabled ? upscaleModel : '',
                         output_format: outputFormat,
                         auto_instruction: autoInstruction,
+                        include_dialogue_context: includeDialogueContext,
                         instruction: autoInstruction ? '' : instruction,
                     }),
                 });

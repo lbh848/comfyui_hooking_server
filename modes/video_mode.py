@@ -1044,6 +1044,13 @@ Vision-produced static Visual Context:
                 f"value={auto_instruction!r}"
             )
             raise ValueError("AI에게 맡기기 값은 boolean이어야 합니다")
+        include_dialogue_context = (params or {}).get("include_dialogue_context", True)
+        if not isinstance(include_dialogue_context, bool):
+            print(
+                f"[VIDEO:LLM] 대사·감정 정보 전달 값 형식 오류: item={queue_item_id}, "
+                f"value={include_dialogue_context!r}"
+            )
+            raise ValueError("대사·감정 정보 전달 값은 boolean이어야 합니다")
         instruction = str((params or {}).get("instruction") or "").strip()
         if auto_instruction:
             instruction = ""
@@ -1125,7 +1132,7 @@ Vision-produced static Visual Context:
         try:
             if mode in ("i2v", "first_last"):
                 dialogue_contexts: list[tuple[str, str]] = []
-                if auto_instruction:
+                if auto_instruction and include_dialogue_context:
                     source_dialogue = self._reference_dialogue_context(source_ref)
                     if source_dialogue:
                         dialogue_contexts.append(("Picture 1", source_dialogue))
@@ -1133,6 +1140,11 @@ Vision-produced static Visual Context:
                         last_dialogue = self._reference_dialogue_context(last_ref)
                         if last_dialogue:
                             dialogue_contexts.append(("Picture 2", last_dialogue))
+                elif auto_instruction:
+                    print(
+                        "[VIDEO:VISION] 대사·감정 문맥 전달 비활성: "
+                        f"item={queue_item_id}, mode={mode}, source={source_label!r}"
+                    )
                 visual_messages = self._visual_context_messages(
                     mode,
                     auto_instruction=auto_instruction,

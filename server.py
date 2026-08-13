@@ -9383,6 +9383,16 @@ async def handle_api_video_enqueue(request: web.Request) -> web.Response:
                 {"success": False, "error": "AI에게 맡기기 값은 boolean이어야 합니다"},
                 status=400,
             )
+        include_dialogue_context = body.get("include_dialogue_context", True)
+        if not isinstance(include_dialogue_context, bool):
+            print(
+                "[VIDEO:API] 대사·감정 정보 전달 값 형식 오류: "
+                f"value={include_dialogue_context!r}, body={body!r}"
+            )
+            return web.json_response(
+                {"success": False, "error": "대사·감정 정보 전달 값은 boolean이어야 합니다"},
+                status=400,
+            )
         instruction = str(body.get("instruction") or "").strip()
         if auto_instruction:
             instruction = ""
@@ -9544,6 +9554,7 @@ async def handle_api_video_enqueue(request: web.Request) -> web.Response:
             ),
             "loop": loop_enabled,
             "auto_instruction": auto_instruction,
+            "include_dialogue_context": include_dialogue_context,
             "instruction": instruction,
             "preset": preset,
             "duration": duration,
@@ -9561,6 +9572,7 @@ async def handle_api_video_enqueue(request: web.Request) -> web.Response:
             f"[VIDEO:API] 영상화 큐 등록: item={item.id}, mode={mode}, "
             f"source={source_ref!r}, last={last_ref or '(none)'}, preset={preset}, "
             f"duration={duration:g}s, auto_instruction={auto_instruction}, "
+            f"include_dialogue_context={include_dialogue_context}, "
             f"upscale={upscale_model or 'none'}x{upscale_scale}, "
             f"format={output_format}"
         )

@@ -669,9 +669,15 @@ async def test_i2v_build_uses_picture_only_and_program_adds_alignment(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("include_dialogue_context", "expect_dialogue_context"),
+    [(None, True), (True, True), (False, False)],
+)
 async def test_i2v_auto_instruction_is_generated_in_visual_call_once(
     tmp_path: Path,
     monkeypatch,
+    include_dialogue_context: bool | None,
+    expect_dialogue_context: bool,
 ) -> None:
     raw_dir = tmp_path / "_raw"
     raw_dir.mkdir()
@@ -698,9 +704,11 @@ async def test_i2v_auto_instruction_is_generated_in_visual_call_once(
         combined = "\n".join(str(message["content"]) for message in messages)
         assert task_key == "video_prompt_i2v"
         assert "5-second video" in combined
-        assert dialogue_context in combined
+        assert (dialogue_context in combined) is expect_dialogue_context
         assert "semantic authority for the depicted dramatic moment" in combined
-        assert "#emotion annotations as performance guidance" in combined
+        assert (
+            "#emotion annotations as performance guidance" in combined
+        ) is expect_dialogue_context
         assert kwargs["result_validator"](visual_response) == (True, "")
         return visual_response
 
@@ -727,15 +735,19 @@ async def test_i2v_auto_instruction_is_generated_in_visual_call_once(
     mode.get_backup_dir = lambda: str(tmp_path)
     mode.notify_frontend_func = notify
 
+    params = {
+        "mode": "i2v",
+        "source_backup": "source",
+        "auto_instruction": True,
+        "instruction": "이 값은 자동 모드에서 사용되면 안 된다",
+        "preset": "1:1",
+        "duration": 5,
+    }
+    if include_dialogue_context is not None:
+        params["include_dialogue_context"] = include_dialogue_context
+
     result = await mode.build_prompt(
-        {
-            "mode": "i2v",
-            "source_backup": "source",
-            "auto_instruction": True,
-            "instruction": "이 값은 자동 모드에서 사용되면 안 된다",
-            "preset": "1:1",
-            "duration": 5,
-        },
+        params,
         queue_item_id="queue-auto-i2v",
     )
 

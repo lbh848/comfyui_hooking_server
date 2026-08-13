@@ -108,6 +108,7 @@ def test_video_page_exposes_every_fast_resolution_and_queue_endpoint() -> None:
 
 
 def test_video_page_can_delegate_direction_to_ai() -> None:
+    assert "AI 맡기기 설정" in FRONTEND
     assert 'id="video-generation-auto-instruction"' in FRONTEND
     assert 'aria-pressed="false"' in FRONTEND
     assert "AI에게 맡기기" in FRONTEND
@@ -116,7 +117,11 @@ def test_video_page_can_delegate_direction_to_ai() -> None:
     assert "if (!autoInstruction && !instruction)" in FRONTEND
     assert "auto_instruction: autoInstruction" in FRONTEND
     assert "instruction: autoInstruction ? '' : instruction" in FRONTEND
-    assert "백업에 대사·감정 정보가 있으면 행동과 표정에 함께 반영합니다" in FRONTEND
+    assert 'id="video-generation-include-dialogue-context" type="checkbox" checked disabled' in FRONTEND
+    assert "include_dialogue_context: includeDialogueContext" in FRONTEND
+    assert "const includeDialogueContext = autoInstruction && isVideoDialogueContextEnabled()" in FRONTEND
+    assert "대사·감정 정보 전달" in FRONTEND
+    assert "대사·감정 정보는 전달하지 않습니다" in FRONTEND
 
 
 def test_asset_lv1_and_lv2_cards_support_video_and_block_edit_for_animations() -> None:
