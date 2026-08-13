@@ -13655,8 +13655,9 @@
                                 <span class="video-field-label"><span>해상도</span><small>H3 FAST</small></span>
                                 <select id="video-generation-quality-level" class="video-select" onchange="updateVideoGenerationSummary()">
                                     <option value="low">FAST 저화질 · 0.2 MP</option>
-                                    <option value="medium" selected>FAST 기본 · 0.3 MP</option>
-                                    <option value="high">FAST 고화질 · 0.4 MP</option>
+                                    <option value="medium" selected>FAST 기본 · 0.35 MP</option>
+                                    <option value="high">FAST 고화질 · 0.5 MP</option>
+                                    <option value="native">Native 최대 · 비율별</option>
                                 </select>
                             </label>
                         </div>
@@ -25203,6 +25204,7 @@
         // ─── MiniMax H3 영상화 ───
         let videoReferenceOptions = [];
         let videoWorkspaceSourceRef = null;
+        let videoPostprocessSynced = false;
 
         const VIDEO_UPSCALE_LABELS = {
             'realesr-animevideov3': '품질',
@@ -25226,10 +25228,13 @@
         });
         const VIDEO_FAST_QUALITY_MP = Object.freeze({
             low: 0.2,
-            medium: 0.3,
-            high: 0.4,
+            medium: 0.35,
+            high: 0.5,
+            native: null,
         });
         const VIDEO_FAST_RESOLUTION_MULTIPLE = 32;
+        const VIDEO_FAST_NATIVE_MAX_SHORT_EDGE = 768;
+        const VIDEO_FAST_NATIVE_MAX_LONG_EDGE = 1344;
 
         function snapVideoFastDimension(value) {
             if (!Number.isFinite(value) || value <= 0) {
@@ -25258,12 +25263,28 @@
         function calculateVideoFastResolution(aspectRatio, qualityLevel) {
             const pair = VIDEO_FAST_ASPECT_RATIOS[aspectRatio];
             const targetMp = VIDEO_FAST_QUALITY_MP[qualityLevel];
-            if (!pair || !targetMp) {
+            if (!pair || targetMp === undefined) {
                 console.error('[VIDEO_UI] FAST 해상도 계산 선택값 오류:', {
                     aspectRatio,
                     qualityLevel,
                 });
                 return null;
+            }
+            if (qualityLevel === 'native') {
+                const nativeScale = Math.min(
+                    VIDEO_FAST_NATIVE_MAX_LONG_EDGE / Math.max(...pair),
+                    VIDEO_FAST_NATIVE_MAX_SHORT_EDGE / Math.min(...pair),
+                );
+                const width = snapVideoFastDimension(pair[0] * nativeScale);
+                const height = snapVideoFastDimension(pair[1] * nativeScale);
+                if (!width || !height) return null;
+                return {
+                    aspectRatio,
+                    qualityLevel,
+                    targetMp: Math.round(width * height) / 1000000,
+                    width,
+                    height,
+                };
             }
             const squareEdge = snapVideoFastDimension(Math.sqrt(targetMp * 1000000));
             const ratio = pair[0] / pair[1];
@@ -25445,6 +25466,7 @@
                 : '2';
             selectVideoUpscaleScale(normalizedScale);
             updateVideoUpscaleControls();
+            videoPostprocessSynced = true;
         }
 
         function normalizedVideoDuration() {
@@ -25486,7 +25508,7 @@
                 ? resolution ? `자동→${resolution.aspectRatio}` : '자동'
                 : requestedAspect;
             const qualityLabel = qualitySelect?.selectedOptions?.[0]?.textContent
-                ?.replace(' · ', ' ') || 'FAST 기본 0.3 MP';
+                ?.replace(' · ', ' ') || 'FAST 기본 0.35 MP';
             const resolutionLabel = resolution
                 ? `${resolution.width}×${resolution.height}`
                 : '원본 분석 후 결정';
@@ -32358,14 +32380,27 @@
                 webp_quality: parseInt(document.getElementById('setting-webp-quality').value) || 85,
                 backup_webp_quality: parseInt(document.getElementById('setting-backup-webp-quality').value) || 80,
                 backup_webp_lossless: document.getElementById('setting-backup-webp-lossless').checked,
-                video_postprocess: { ...(currentConfig.video_postprocess || {
-                    enabled: true,
-                    scale: 2,
-                    model: 'realesr-animevideov3',
-                    gpu_id: 'auto',
-                    tile_size: 0,
-                    worker_count: 1,
-                }) },
+                video_postprocess: (() => {
+                    const vpBase = currentConfig.video_postprocess || {
+                        enabled: true,
+                        scale: 2,
+                        model: 'realesr-animevideov3',
+                        gpu_id: 'auto',
+                        tile_size: 0,
+                        worker_count: 1,
+                    };
+                    // 영상 모달을 한 번이라도 열어 config와 동기화한 뒤에만 UI 선택값을 반영.
+                    // 동기화 전(HTML 기본 라디오)에는 기존 config를 그대로 유지해 의도치 않은 덮어쓰기를 막는다.
+                    if (!videoPostprocessSynced) return { ...vpBase };
+                    const vpChecked = document.querySelector('input[name="video-upscale-model"]:checked');
+                    if (!vpChecked) return { ...vpBase };
+                    const enabled = vpChecked.value !== 'none';
+                    const model = enabled
+                        ? vpChecked.value
+                        : (vpBase.model || 'realesr-animevideov3');
+                    const scale = Number(document.getElementById('video-generation-upscale-scale')?.value) || vpBase.scale || 2;
+                    return { ...vpBase, enabled, model, scale };
+                })(),
                 comfy_workflow_source_path: document.getElementById('setting-workflow-path').value || currentConfig.comfy_workflow_source_path || '',
                 illustration_workflow_type: normalizeIllustrationWorkflowType(document.getElementById('setting-illustration-workflow-type').value),
                 illustration_workflow_source_paths: { ...(currentConfig.illustration_workflow_source_paths || {}) },
@@ -73674,7 +73709,13 @@
         }
 
         async function auNavigateToImages(charName, outfit, expression) {
-            _auScrollCache[1] = window.scrollY;
+            const main = document.getElementById('au-main');
+            if (main) {
+                _auScrollCache[1] = main.scrollTop;
+            } else {
+                console.error('[AU] LV1 스크롤 저장 실패: au-main 요소가 없습니다.');
+                _auScrollCache[1] = 0;
+            }
             auNavLevel = 2;
             auNavOutfit = outfit;
             auNavExpression = expression;
@@ -76793,11 +76834,20 @@
                 auUpdateAnalyzeBtn();
             auUpdateUploadBtn();
                 auUpdateBreadcrumb();
-                const savedScroll = _auScrollCache[1] || 0;
+                const savedScroll = _auScrollCache[1];
                 await auRenderGallery(auNavCharacter);
-                if (savedScroll > 0) {
+                if (savedScroll !== undefined) {
+                    const main = document.getElementById('au-main');
+                    if (!main) {
+                        console.error('[AU] LV1 스크롤 복원 실패: au-main 요소가 없습니다.');
+                        return;
+                    }
                     requestAnimationFrame(() => {
-                        window.scrollTo(0, savedScroll);
+                        if (!main.isConnected) {
+                            console.error('[AU] LV1 스크롤 복원 실패: au-main 요소가 DOM에서 분리되었습니다.');
+                            return;
+                        }
+                        main.scrollTop = savedScroll;
                     });
                 }
             }
@@ -77322,7 +77372,7 @@
         }
 
         async function renderCharacterGallery(charName) {
-            const savedScroll = _assetScrollCache[1] || 0;
+            const savedScroll = _assetScrollCache[1];
             showAssetView('loading');
             try {
                 const enc = encodeURIComponent;
@@ -77523,9 +77573,18 @@
                 });
 
                 showAssetView('gallery');
-                if (savedScroll > 0) {
+                if (savedScroll !== undefined) {
+                    const main = document.getElementById('asset-main');
+                    if (!main) {
+                        console.error('[ASSET] LV1 스크롤 복원 실패: asset-main 요소가 없습니다.');
+                        return;
+                    }
                     requestAnimationFrame(() => {
-                        window.scrollTo(0, savedScroll);
+                        if (!main.isConnected) {
+                            console.error('[ASSET] LV1 스크롤 복원 실패: asset-main 요소가 DOM에서 분리되었습니다.');
+                            return;
+                        }
+                        main.scrollTop = savedScroll;
                     });
                 }
             } catch (e) {
@@ -77536,7 +77595,13 @@
         let _assetScrollCache = {};
 
         function navigateToImages(charName, outfit, expression) {
-            _assetScrollCache[1] = window.scrollY;
+            const main = document.getElementById('asset-main');
+            if (main) {
+                _assetScrollCache[1] = main.scrollTop;
+            } else {
+                console.error('[ASSET] LV1 스크롤 저장 실패: asset-main 요소가 없습니다.');
+                _assetScrollCache[1] = 0;
+            }
             const sidebar = document.getElementById('asset-sidebar');
             if (sidebar) _assetScrollCache['sidebar_1'] = sidebar.scrollTop;
             assetNavLevel = 2;

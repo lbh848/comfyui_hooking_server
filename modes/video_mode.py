@@ -69,13 +69,16 @@ FAST_ASPECT_RATIOS: dict[str, tuple[int, int]] = {
     "5:4": (5, 4),
     "4:5": (4, 5),
 }
-FAST_QUALITY_LEVELS: dict[str, float] = {
+FAST_QUALITY_LEVELS: dict[str, float | None] = {
     "low": 0.2,
-    "medium": 0.3,
-    "high": 0.4,
+    "medium": 0.35,
+    "high": 0.5,
+    "native": None,
 }
 FAST_DEFAULT_QUALITY_LEVEL = "medium"
 FAST_RESOLUTION_MULTIPLE = 32
+FAST_NATIVE_MAX_SHORT_EDGE = 768
+FAST_NATIVE_MAX_LONG_EDGE = 1344
 
 I2V_ALIGNMENT = (
     "For the target video, at 0.00 seconds into the target video, "
@@ -299,7 +302,7 @@ def _snap_fast_dimension(value: float) -> int:
 
 
 def calculate_fast_dimensions(aspect_ratio: str, quality_level: str) -> tuple[int, int]:
-    """MP 단계의 1:1 기준변에 비율을 적용하고 두 변을 32배수로 스냅한다."""
+    """MP 단계 또는 H3 네이티브 상한으로 32배수 해상도를 계산한다."""
 
     if aspect_ratio not in FAST_ASPECT_RATIOS:
         print(
@@ -309,12 +312,42 @@ def calculate_fast_dimensions(aspect_ratio: str, quality_level: str) -> tuple[in
         raise ValueError("지원하지 않는 영상 화면 비율입니다")
     quality_key = normalize_fast_quality_level(quality_level)
     target_mp = FAST_QUALITY_LEVELS[quality_key]
-    square_edge = _snap_fast_dimension(math.sqrt(target_mp * 1_000_000))
     ratio_w, ratio_h = FAST_ASPECT_RATIOS[aspect_ratio]
+
+    if target_mp is None:
+        native_scale = min(
+            FAST_NATIVE_MAX_LONG_EDGE / max(ratio_w, ratio_h),
+            FAST_NATIVE_MAX_SHORT_EDGE / min(ratio_w, ratio_h),
+        )
+        target_w = _snap_fast_dimension(ratio_w * native_scale)
+        target_h = _snap_fast_dimension(ratio_h * native_scale)
+        return target_w, target_h
+
+    square_edge = _snap_fast_dimension(math.sqrt(target_mp * 1_000_000))
     ratio = ratio_w / ratio_h
     target_w = _snap_fast_dimension(square_edge * math.sqrt(ratio))
     target_h = _snap_fast_dimension(square_edge / math.sqrt(ratio))
     return target_w, target_h
+
+
+def resolved_fast_target_mp(
+    quality_level: str,
+    width: int,
+    height: int,
+) -> float:
+    """고정 MP는 목표값, Native 최대는 비율별 실제 상한 MP를 반환한다."""
+
+    quality_key = normalize_fast_quality_level(quality_level)
+    target_mp = FAST_QUALITY_LEVELS[quality_key]
+    if target_mp is not None:
+        return target_mp
+    if width <= 0 or height <= 0:
+        print(
+            "[VIDEO:RESOLUTION] Native 최대 MP 계산용 크기 오류: "
+            f"width={width!r}, height={height!r}"
+        )
+        raise ValueError("영상 해상도 계산값이 올바르지 않습니다")
+    return round((width * height) / 1_000_000, 6)
 
 
 def resolve_fast_resolution(
@@ -2162,7 +2195,11 @@ Vision-produced static Visual Context:
                 "preset": aspect_ratio_key,
                 "aspect_ratio": aspect_ratio_key,
                 "quality_level": quality_level,
-                "target_mp": FAST_QUALITY_LEVELS[quality_level],
+                "target_mp": resolved_fast_target_mp(
+                    quality_level,
+                    target_w,
+                    target_h,
+                ),
                 "actual_mp": round((target_w * target_h) / 1_000_000, 6),
                 "source_width": target_w,
                 "source_height": target_h,
@@ -2776,7 +2813,11 @@ Vision-produced static Visual Context:
                 "preset": aspect_ratio_key,
                 "aspect_ratio": aspect_ratio_key,
                 "quality_level": quality_level,
-                "target_mp": FAST_QUALITY_LEVELS[quality_level],
+                "target_mp": resolved_fast_target_mp(
+                    quality_level,
+                    target_w,
+                    target_h,
+                ),
                 "actual_mp": round((target_w * target_h) / 1_000_000, 6),
                 "width": target_w,
                 "height": target_h,

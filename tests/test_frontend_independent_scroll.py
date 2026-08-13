@@ -34,3 +34,45 @@ def test_independent_scroll_height_updates_on_tab_switch_and_resize():
         in FRONTEND
     )
     assert FRONTEND.count("scheduleIndependentScrollHeightSync();") >= 3
+
+
+def _function_source(signature: str, next_signature: str) -> str:
+    start = FRONTEND.index(signature)
+    end = FRONTEND.index(next_signature, start)
+    return FRONTEND[start:end]
+
+
+def test_asset_generation_restores_lv1_main_scroll_container():
+    navigate = _function_source(
+        "function navigateToImages(charName, outfit, expression)",
+        "function syncAssetSelectFromDirname(selectId, dirname)",
+    )
+    render = _function_source(
+        "async function renderCharacterGallery(charName)",
+        "let _assetScrollCache = {};",
+    )
+
+    assert "document.getElementById('asset-main')" in navigate
+    assert "_assetScrollCache[1] = main.scrollTop;" in navigate
+    assert "document.getElementById('asset-main')" in render
+    assert "main.scrollTop = savedScroll;" in render
+    assert "window.scrollY" not in navigate
+    assert "window.scrollTo" not in render
+
+
+def test_asset_upload_restores_lv1_main_scroll_container():
+    navigate = _function_source(
+        "async function auNavigateToImages(charName, outfit, expression)",
+        "async function auRenderImages(charName, outfit, expression)",
+    )
+    breadcrumb = _function_source(
+        "async function auNavigateBreadcrumb(level)",
+        "function auOnCharacterChange()",
+    )
+
+    assert "document.getElementById('au-main')" in navigate
+    assert "_auScrollCache[1] = main.scrollTop;" in navigate
+    assert "document.getElementById('au-main')" in breadcrumb
+    assert "main.scrollTop = savedScroll;" in breadcrumb
+    assert "window.scrollY" not in navigate
+    assert "window.scrollTo" not in breadcrumb

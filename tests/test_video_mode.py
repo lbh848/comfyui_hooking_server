@@ -25,6 +25,7 @@ from modes.video_mode import (
     normalize_visual_context,
     parse_auto_visual_direction,
     resolve_fast_resolution,
+    resolved_fast_target_mp,
     validate_h3_prompt,
     validate_h3_prompt_body,
     validate_auto_visual_direction,
@@ -72,7 +73,12 @@ def test_fast_aspect_ratios_and_quality_levels_are_independent() -> None:
         "5:4": (5, 4),
         "4:5": (4, 5),
     }
-    assert FAST_QUALITY_LEVELS == {"low": 0.2, "medium": 0.3, "high": 0.4}
+    assert FAST_QUALITY_LEVELS == {
+        "low": 0.2,
+        "medium": 0.35,
+        "high": 0.5,
+        "native": None,
+    }
     assert choose_fast_preset(1536, 1536) == "1:1"
     assert choose_fast_preset(1536, 864) == "16:9"
     assert choose_fast_preset(864, 1536) == "9:16"
@@ -81,12 +87,17 @@ def test_fast_aspect_ratios_and_quality_levels_are_independent() -> None:
 def test_fast_resolution_calculation_matches_h3_examples_and_32_grid() -> None:
     assert [
         calculate_fast_dimensions("1:1", level)
-        for level in ("low", "medium", "high")
-    ] == [(448, 448), (544, 544), (640, 640)]
+        for level in ("low", "medium", "high", "native")
+    ] == [(448, 448), (576, 576), (704, 704), (768, 768)]
     assert [
         calculate_fast_dimensions("16:9", level)
-        for level in ("low", "medium", "high")
-    ] == [(608, 352), (736, 416), (864, 480)]
+        for level in ("low", "medium", "high", "native")
+    ] == [(608, 352), (768, 448), (928, 544), (1344, 768)]
+
+    assert calculate_fast_dimensions("21:9", "native") == (1344, 576)
+    assert calculate_fast_dimensions("9:21", "native") == (576, 1344)
+    assert resolved_fast_target_mp("medium", 576, 576) == 0.35
+    assert resolved_fast_target_mp("native", 768, 768) == 0.589824
 
     for aspect_ratio in FAST_ASPECT_RATIOS:
         for quality_level in FAST_QUALITY_LEVELS:
@@ -94,11 +105,22 @@ def test_fast_resolution_calculation_matches_h3_examples_and_32_grid() -> None:
             assert width % 32 == 0
             assert height % 32 == 0
 
-    assert resolve_fast_resolution("auto", "high", 1536, 864) == (
+        native_width, native_height = calculate_fast_dimensions(
+            aspect_ratio,
+            "native",
+        )
+        assert max(native_width, native_height) <= 1344
+        assert min(native_width, native_height) <= 768
+        assert 1344 in (native_width, native_height) or 768 in (
+            native_width,
+            native_height,
+        )
+
+    assert resolve_fast_resolution("auto", "native", 1536, 864) == (
         "16:9",
-        "high",
-        864,
-        480,
+        "native",
+        1344,
+        768,
     )
 
 
@@ -860,7 +882,7 @@ async def test_render_spools_video_postprocess_before_cleaning_comfy_mp4(
         assert transport.startswith("[PATH]\nsoya_video\n[PROMPT]\n")
         expected_alignment = alignment_for_mode(render_mode, 12)
         assert _valid_body(expected_alignment) in transport
-        assert "\n[W]\n544\n[H]\n544\n[DURATION]\n12.0\n[SEED]\n" in transport
+        assert "\n[W]\n576\n[H]\n576\n[DURATION]\n12.0\n[SEED]\n" in transport
         seed_text = transport.split("\n[SEED]\n", 1)[1].split("\n[END]", 1)[0]
         assert seed_text.isdigit()
         submitted["seed"] = int(seed_text)
@@ -869,12 +891,12 @@ async def test_render_spools_video_postprocess_before_cleaning_comfy_mp4(
         staged = comfy_input / "soya_video" / "[1].png"
         assert staged.is_file()
         with Image.open(staged) as image:
-            assert image.size == (544, 544)
+            assert image.size == (576, 576)
         last_staged = comfy_input / "soya_video" / "[2].png"
         if render_mode == "first_last":
             assert last_staged.is_file()
             with Image.open(last_staged) as image:
-                assert image.size == (544, 544)
+                assert image.size == (576, 576)
                 red, green, blue = image.convert("RGB").getpixel((0, 0))
                 assert red >= 250 and green >= 250 and blue <= 5
         else:
@@ -949,12 +971,12 @@ async def test_render_spools_video_postprocess_before_cleaning_comfy_mp4(
     assert manifest["duration"] == 12.0
     assert manifest["aspect_ratio"] == "1:1"
     assert manifest["quality_level"] == "medium"
-    assert manifest["target_mp"] == 0.3
-    assert manifest["actual_mp"] == 0.295936
+    assert manifest["target_mp"] == 0.35
+    assert manifest["actual_mp"] == 0.331776
     assert manifest["video_seed"] == submitted["seed"]
     assert manifest["upscale_enabled"] is True
     assert manifest["upscale_scale"] == 2
-    assert manifest["output_width"] == 1088
+    assert manifest["output_width"] == 1152
     assert not list(backup_dir.glob("*.avif"))
 
 

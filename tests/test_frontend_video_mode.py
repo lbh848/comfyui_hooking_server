@@ -98,8 +98,9 @@ def test_video_page_separates_fast_aspect_ratio_and_mp_level() -> None:
         assert f'<option value="{value}"' in FRONTEND
     assert 'id="video-generation-quality-level"' in FRONTEND
     assert '<option value="low">FAST 저화질 · 0.2 MP</option>' in FRONTEND
-    assert '<option value="medium" selected>FAST 기본 · 0.3 MP</option>' in FRONTEND
-    assert '<option value="high">FAST 고화질 · 0.4 MP</option>' in FRONTEND
+    assert '<option value="medium" selected>FAST 기본 · 0.35 MP</option>' in FRONTEND
+    assert '<option value="high">FAST 고화질 · 0.5 MP</option>' in FRONTEND
+    assert '<option value="native">Native 최대 · 비율별</option>' in FRONTEND
     assert "calculateVideoFastResolution(aspectRatio, qualityLevel)" in FRONTEND
     assert "aspect_ratio: aspectRatio" in FRONTEND
     assert "quality_level: qualityLevel" in FRONTEND
