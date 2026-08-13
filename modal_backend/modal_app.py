@@ -13,7 +13,9 @@ from pathlib import Path
 
 import modal
 
+from modal_backend.comfy_http import raise_for_comfy_status
 from modal_backend.custom_nodes import LOCAL_COPY_IGNORE_PATTERNS
+
 APP_NAME = os.environ.get("SOYA_MODAL_APP_NAME", "soya-comfy-worker")
 MAX_CONTAINERS = int(os.environ.get("SOYA_MODAL_MAX_CONTAINERS", "2"))
 SCALEDOWN_WINDOW_SECONDS = int(os.environ.get("SOYA_MODAL_SCALEDOWN_WINDOW", "15"))
@@ -28,7 +30,7 @@ TORCH_VERSION = "2.11.0"
 SAGEATTENTION_VERSION = "2.2.0"
 RUNTIME_IMAGE_REF = (
     "docker.io/bh848/soya-comfy-runtime@"
-    "sha256:eeddc7dc532d612746ecd0d701ceab15605dfee6ec714414af20e854420096ec"
+    "sha256:2f63f258f60614cb15bad285e41bff11643fb46a88b19419b974931bc5e4b135"
 )
 FORCE_CUSTOM_NODE_BUILD = os.environ.get("SOYA_MODAL_FORCE_CUSTOM_NODE_BUILD", "0") == "1"
 CALL_STARTED_LOG_PREFIX = "@@SOYA_MODAL_CALL_STARTED@@"
@@ -81,7 +83,10 @@ async def _execute_comfy_workflow(
                     json={"prompt": workflow, "client_id": client_id},
                     timeout=aiohttp.ClientTimeout(total=30),
                 ) as response:
-                    response.raise_for_status()
+                    await raise_for_comfy_status(
+                        response,
+                        operation="prompt 제출",
+                    )
                     payload = await response.json()
                 prompt_id = str(payload.get("prompt_id") or "")
                 if not prompt_id:
@@ -106,7 +111,10 @@ async def _execute_comfy_workflow(
                                 f"http://127.0.0.1:8188/history/{prompt_id}",
                                 timeout=aiohttp.ClientTimeout(total=15),
                             ) as history_response:
-                                history_response.raise_for_status()
+                                await raise_for_comfy_status(
+                                    history_response,
+                                    operation=f"history 조회({prompt_id})",
+                                )
                                 interim_history = (await history_response.json()).get(
                                     prompt_id
                                 )
@@ -189,7 +197,10 @@ async def _execute_comfy_workflow(
                     f"http://127.0.0.1:8188/history/{prompt_id}",
                     timeout=aiohttp.ClientTimeout(total=15),
                 ) as response:
-                    response.raise_for_status()
+                    await raise_for_comfy_status(
+                        response,
+                        operation=f"history 조회({prompt_id})",
+                    )
                     history = (await response.json()).get(prompt_id)
             except Exception as exc:
                 print(
@@ -207,7 +218,10 @@ async def _execute_comfy_workflow(
                 "http://127.0.0.1:8188/interrupt",
                 timeout=aiohttp.ClientTimeout(total=10),
             ) as response:
-                response.raise_for_status()
+                await raise_for_comfy_status(
+                    response,
+                    operation=f"작업 중단({prompt_id})",
+                )
         except Exception as exc:
             print(
                 "[MODAL_COMFY] 제한 시간 초과 후 interrupt 요청 실패: "
@@ -574,8 +588,20 @@ class ComfyWorker:
             try:
                 response = requests.get("http://127.0.0.1:8188/system_stats", timeout=2)
                 if response.ok:
+                    parsed_stats = response.json()
+                    system = (
+                        parsed_stats.get("system")
+                        if isinstance(parsed_stats, dict)
+                        else None
+                    )
+                    comfy_version = (
+                        str(system.get("comfyui_version") or "unknown")
+                        if isinstance(system, dict)
+                        else "unknown"
+                    )
                     print(
-                        f"[MODAL_COMFY] ComfyUI {device_name} 워커 준비 완료",
+                        f"[MODAL_COMFY] ComfyUI {device_name} 워커 준비 완료: "
+                        f"version={comfy_version}",
                         flush=True,
                     )
                     return
@@ -583,6 +609,10 @@ class ComfyWorker:
             except Exception as exc:
                 last_error = f"{type(exc).__name__}: {exc}"
             time.sleep(1)
+        print(
+            "[MODAL_COMFY] ComfyUI 시작 제한 시간 초과: "
+            f"last_error={last_error}"
+        )
         raise TimeoutError(f"ComfyUI 시작 제한 시간 초과: last_error={last_error}")
 
     @modal.method()

@@ -2981,7 +2981,7 @@ def test_modal_runtime_uses_published_multigpu_container_image() -> None:
     assert 'RUNTIME_IMAGE_REF = (' in source
     assert '"docker.io/bh848/soya-comfy-runtime@"' in source
     assert (
-        '"sha256:eeddc7dc532d612746ecd0d701ceab15605dfee6ec714414af20e854420096ec"'
+        '"sha256:2f63f258f60614cb15bad285e41bff11643fb46a88b19419b974931bc5e4b135"'
         in source
     )
     assert "modal.Image.from_registry(RUNTIME_IMAGE_REF)" in source
