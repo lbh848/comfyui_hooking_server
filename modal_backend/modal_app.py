@@ -142,6 +142,45 @@ async def _execute_comfy_workflow(
                             continue
                         event_type = str(event.get("type") or "")
                         event_data = event.get("data") or {}
+                        if event_type in ("progress", "progress_state"):
+                            if not isinstance(event_data, dict):
+                                print(
+                                    "[MODAL_COMFY] 표준 진행 이벤트 data 형식 오류: "
+                                    f"prompt_id={prompt_id}, type={event_type}, "
+                                    f"data={event_data!r}"
+                                )
+                                continue
+                            event_prompt_id = str(event_data.get("prompt_id") or "")
+                            if event_prompt_id and event_prompt_id != prompt_id:
+                                print(
+                                    "[MODAL_COMFY] 다른 prompt의 진행 이벤트 제외: "
+                                    f"expected={prompt_id}, actual={event_prompt_id}, "
+                                    f"type={event_type}"
+                                )
+                                continue
+                            current = event_data.get(
+                                "value",
+                                event_data.get("step", event_data.get("current")),
+                            )
+                            maximum = event_data.get(
+                                "max",
+                                event_data.get("total", event_data.get("maximum")),
+                            )
+                            if current is None or maximum is None:
+                                print(
+                                    "[MODAL_COMFY] 표준 진행 이벤트 단계값 누락: "
+                                    f"prompt_id={prompt_id}, type={event_type}, "
+                                    f"data={event_data!r}"
+                                )
+                                continue
+                            progress_callback(
+                                {
+                                    **event_data,
+                                    "prompt_id": prompt_id,
+                                    "event_type": event_type,
+                                }
+                            )
+                            continue
                         if event_type == "md_soya_progress" and isinstance(event_data, dict):
                             progress_callback({"prompt_id": prompt_id, **event_data})
                             continue

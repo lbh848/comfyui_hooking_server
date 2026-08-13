@@ -72,6 +72,106 @@ async def test_server_routes_video_to_modal_and_forwards_staged_inputs(
 
 
 @pytest.mark.asyncio
+async def test_server_accumulates_modal_video_progress_across_samplers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    progress: list[tuple[int, int]] = []
+    video_bytes = b"modal-mp4"
+    artifact = {
+        "remote_path": "SOYA_VIDEO_OUTPUT/video_job/result.mp4",
+        "filename": "result.mp4",
+        "size": len(video_bytes),
+        "sha256": hashlib.sha256(video_bytes).hexdigest(),
+    }
+
+    class FakeModalService:
+        async def generate_video(self, _workflow, **kwargs):
+            callback = kwargs["progress_callback"]
+            await callback(
+                {
+                    "event_type": "progress",
+                    "prompt_id": "prompt-video",
+                    "node": "999",
+                    "value": 50,
+                    "max": 100,
+                }
+            )
+            await callback(
+                {
+                    "event_type": "progress",
+                    "prompt_id": "prompt-video",
+                    "node": "10",
+                    "value": 1,
+                    "max": 4,
+                }
+            )
+            await callback(
+                {
+                    "event_type": "progress_state",
+                    "prompt_id": "prompt-video",
+                    "node": "10",
+                    "value": 4,
+                    "max": 4,
+                }
+            )
+            await callback(
+                {
+                    "event_type": "progress",
+                    "prompt_id": "prompt-video",
+                    "node": "20",
+                    "value": 2,
+                    "max": 6,
+                }
+            )
+            return video_bytes, {
+                "execution_source": "modal",
+                "prompt_id": "prompt-video",
+                "filename": "result.mp4",
+                "type": "output",
+                "artifact": artifact,
+            }
+
+    async def on_progress(value: int, maximum: int) -> None:
+        progress.append((value, maximum))
+
+    # H3는 SamplerCustomAdvanced의 단계 수를 BasicScheduler에 보관한다.
+    workflow = {
+        "9": {"class_type": "BasicScheduler", "inputs": {"steps": 4}},
+        "10": {"class_type": "SamplerCustomAdvanced", "inputs": {}},
+        "19": {"class_type": "BasicScheduler", "inputs": {"steps": 6}},
+        "20": {"class_type": "SamplerCustomAdvanced", "inputs": {}},
+    }
+    monkeypatch.setattr(server, "modal_service", FakeModalService())
+    token = CURRENT_COMFY_EXECUTION_TARGET.set(MODAL_COMFY_TARGET)
+    try:
+        received, descriptor = await server.submit_video_workflow_to_comfy(
+            workflow,
+            progress_callback=on_progress,
+            task_key="video_generation",
+        )
+    finally:
+        CURRENT_COMFY_EXECUTION_TARGET.reset(token)
+
+    assert received == video_bytes
+    assert descriptor["execution_source"] == "modal"
+    assert progress == [(1, 10), (4, 10), (6, 10)]
+
+
+def test_modal_worker_forwards_standard_comfy_progress_events() -> None:
+    worker_source = (
+        Path(__file__).resolve().parents[1] / "modal_backend" / "modal_app.py"
+    ).read_text(encoding="utf-8")
+    frontend_source = (
+        Path(__file__).resolve().parents[1] / "frontend" / "index.html"
+    ).read_text(encoding="utf-8")
+
+    assert 'event_type in ("progress", "progress_state")' in worker_source
+    assert '"event_type": event_type' in worker_source
+    assert "d.phase === 'h3_rendering'" in frontend_source
+    assert "H3 생성 ${renderPct}%" in frontend_source
+
+
+@pytest.mark.asyncio
 async def test_server_modal_cleanup_uses_verified_artifact(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -80950,6 +80950,16 @@
                         progressLabel += ' <span style="font-size:0.65rem;color:var(--text3);">' +
                             comfyInstallerFormatBytes(done) + '/' + comfyInstallerFormatBytes(total) + '</span>';
                     }
+                } else if (d.phase === 'h3_rendering') {
+                    const current = Math.max(0, Number(d.current || 0));
+                    const total = Math.max(0, Number(d.total || 0));
+                    const renderPct = total > 0
+                        ? Math.min(100, Math.round(current / total * 100))
+                        : pct;
+                    progressLabel = `H3 생성 ${renderPct}%`;
+                    if (total > 0) {
+                        progressLabel += ` <span style="font-size:0.65rem;color:var(--text3);">${current}/${total} 단계</span>`;
+                    }
                 } else if (String(d.phase || '').startsWith('video_')) {
                     const phaseLabels = {
                         video_postprocess_preparing: '후처리 준비',

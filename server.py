@@ -2597,7 +2597,7 @@ async def submit_to_real_comfy(
 
 
 def count_ksampler_total_steps(workflow: dict) -> int:
-    """워크플로우의 모든 KSampler 노드 steps를 합산한다."""
+    """워크플로우의 KSampler·분리형 Scheduler에 설정된 steps를 합산한다."""
     total = 0
     if not workflow:
         return 0
@@ -2605,7 +2605,8 @@ def count_ksampler_total_steps(workflow: dict) -> int:
         if not isinstance(node, dict):
             continue
         cls = node.get("class_type", "")
-        if "sampler" in cls.lower():
+        cls_lower = cls.lower()
+        if "sampler" in cls_lower or "scheduler" in cls_lower:
             steps = node.get("inputs", {}).get("steps", 0)
             if isinstance(steps, (int, float)) and steps > 0:
                 total += int(steps)
@@ -3173,6 +3174,22 @@ async def submit_video_workflow_to_comfy(
     """Run H3 on the allocated Comfy target and return its verified temporary MP4."""
 
     if CURRENT_COMFY_EXECUTION_TARGET.get() == MODAL_COMFY_TARGET:
+        modal_total_steps = count_ksampler_total_steps(workflow_api)
+        modal_sampler_node_ids = {
+            str(node_id)
+            for node_id, node in workflow_api.items()
+            if isinstance(node, dict)
+            and "sampler" in str(node.get("class_type") or "").lower()
+        }
+        modal_ignored_progress_nodes: set[str] = set()
+        modal_progress_state = {
+            "cumulative_steps": 0,
+            "previous_max": 0,
+            "previous_node": "",
+            "dynamic_total": modal_total_steps,
+            "last_ratio": 0.0,
+        }
+
         async def forward_modal_progress(event: dict) -> None:
             if progress_callback is None:
                 return
@@ -3186,9 +3203,79 @@ async def submit_video_workflow_to_comfy(
             current = payload.get("value", payload.get("step", payload.get("current")))
             maximum = payload.get("max", payload.get("total", payload.get("maximum")))
             if current is None or maximum is None:
+                print(
+                    "[VIDEO:MODAL] 단계값 없는 진행 이벤트 제외: "
+                    f"task={task_key}, payload={payload!r}"
+                )
                 return
             try:
-                callback_result = progress_callback(int(current), int(maximum))
+                if isinstance(current, bool) or isinstance(maximum, bool):
+                    raise TypeError("진행 단계값은 bool일 수 없습니다")
+                current_step = int(current)
+                maximum_step = int(maximum)
+                if current_step < 0 or maximum_step <= 0:
+                    raise ValueError(
+                        f"진행 단계 범위 오류: current={current_step}, maximum={maximum_step}"
+                    )
+                current_step = min(current_step, maximum_step)
+                node = str(payload.get("node") or "")
+                if (
+                    node
+                    and modal_sampler_node_ids
+                    and node not in modal_sampler_node_ids
+                ):
+                    if node not in modal_ignored_progress_nodes:
+                        print(
+                            "[VIDEO:MODAL] 샘플러 외 진행 이벤트 제외: "
+                            f"task={task_key}, node={node}, "
+                            f"sampler_nodes={sorted(modal_sampler_node_ids)}"
+                        )
+                        modal_ignored_progress_nodes.add(node)
+                    return
+                previous_node = str(modal_progress_state["previous_node"] or "")
+                previous_max = int(modal_progress_state["previous_max"] or 0)
+                cumulative_steps = int(modal_progress_state["cumulative_steps"] or 0)
+                dynamic_total = int(modal_progress_state["dynamic_total"] or 0)
+
+                if node and previous_node and node != previous_node and previous_max > 0:
+                    cumulative_steps += previous_max
+                elif (
+                    not node
+                    and previous_max > 0
+                    and maximum_step != previous_max
+                    and current_step < maximum_step
+                ):
+                    cumulative_steps += previous_max
+
+                if dynamic_total > 0:
+                    dynamic_total = max(
+                        dynamic_total,
+                        cumulative_steps + maximum_step,
+                    )
+                    overall_current = min(
+                        cumulative_steps + current_step,
+                        dynamic_total,
+                    )
+                    overall_total = dynamic_total
+                else:
+                    overall_current = current_step
+                    overall_total = maximum_step
+
+                ratio = overall_current / overall_total
+                ratio = max(float(modal_progress_state["last_ratio"] or 0.0), ratio)
+                overall_current = min(
+                    overall_total,
+                    max(overall_current, round(ratio * overall_total)),
+                )
+                modal_progress_state.update(
+                    cumulative_steps=cumulative_steps,
+                    previous_max=maximum_step,
+                    previous_node=node or previous_node,
+                    dynamic_total=dynamic_total,
+                    last_ratio=ratio,
+                )
+
+                callback_result = progress_callback(overall_current, overall_total)
                 if asyncio.iscoroutine(callback_result):
                     await callback_result
             except Exception as exc:
