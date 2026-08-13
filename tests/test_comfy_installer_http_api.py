@@ -61,6 +61,70 @@ async def test_installer_status_and_pack_upload_routes(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_e2e_catalog_and_start_routes_use_selected_originals(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = tmp_path / "config.json"
+    config.write_text("{}\n", encoding="utf-8")
+    app = web.Application()
+    service = register_comfy_installer_routes(
+        app,
+        project_root=tmp_path,
+        config_path=config,
+        requirements_dir=tmp_path / "requirements",
+    )
+    catalog = {
+        "release_version": "v1",
+        "source_kind": "read_only_distribution_original",
+        "items": [
+            {
+                "id": "debug_workflow_source_path",
+                "e2e_profiles": ["standard"],
+            }
+        ],
+        "skipped_count": 0,
+    }
+    received: list[dict] = []
+    monkeypatch.setattr(service, "e2e_workflow_catalog", lambda: catalog)
+
+    def fake_start_e2e(**kwargs):
+        received.append(kwargs)
+        return {"state": "running", "operation": "e2e"}
+
+    monkeypatch.setattr(service, "start_e2e", fake_start_e2e)
+    client = TestClient(TestServer(app))
+    await client.start_server()
+    try:
+        response = await client.get("/api/comfy-installer/e2e-catalog")
+        assert response.status == 200
+        payload = await response.json()
+        assert payload == {"ok": True, "catalog": catalog}
+
+        response = await client.post(
+            "/api/comfy-installer/e2e",
+            json={
+                "release_version": "v1",
+                "selected_item_ids": ["debug_workflow_source_path"],
+            },
+        )
+        assert response.status == 200
+        assert await response.json() == {
+            "ok": True,
+            "state": "running",
+            "operation": "e2e",
+        }
+        assert received == [
+            {
+                "release_version": "v1",
+                "selected_item_ids": ["debug_workflow_source_path"],
+            }
+        ]
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
 async def test_installer_rejects_non_pack_upload(tmp_path: Path) -> None:
     config = tmp_path / "config.json"
     config.write_text("{}\n", encoding="utf-8")

@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Event
-from typing import Callable, Iterator, Mapping, Sequence
+from typing import Callable, Iterable, Iterator, Mapping, Sequence
 
 import httpx
 from PIL import Image, ImageDraw, ImageOps
@@ -892,28 +892,65 @@ _E2E_SECTION_VALUES = {
 }
 
 
-_E2E_REFERENCE_DIRECTORY_BINDINGS = {
-    "asset_workflow_source_path",
-    "anima_asset_workflow_source_path",
-    "anima_only_asset_workflow_source_path",
+E2E_PROFILE_STANDARD = "standard"
+E2E_PROFILE_REFERENCE_DIRECTORY = "reference_directory"
+E2E_PROFILE_EMBED_FILTER = "embedding_filter"
+E2E_PROFILE_IMAGE_EDIT = "image_edit"
+E2E_PROFILE_FACE_TAG = "face_tag_fixture"
+E2E_PROFILE_TRAINING_ANIMA = "training_anima"
+E2E_PROFILE_TRAINING_SDXL = "training_sdxl"
+E2E_PROFILE_MINIMAX_H3 = "minimax_h3"
+
+
+# E2E 지원 여부를 파일명 추측으로 판단하지 않는다. 배포 바인딩별로
+# 테스트 입력 생성 방법을 명시적으로 등록하며, 이 표에 없는 바인딩은
+# 원본 파일이 존재하더라도 선택형 E2E 목록에 노출하지 않는다.
+E2E_PROFILE_BY_BINDING = {
+    "comfy_workflow_source_path": E2E_PROFILE_STANDARD,
+    "illustration_workflow_source_paths.v1": E2E_PROFILE_STANDARD,
+    "illustration_workflow_source_paths.v3": E2E_PROFILE_STANDARD,
+    "illustration_workflow_source_paths.v3_anima": E2E_PROFILE_STANDARD,
+    "utility_workflow_source_path": E2E_PROFILE_EMBED_FILTER,
+    "asset_workflow_source_path": E2E_PROFILE_REFERENCE_DIRECTORY,
+    "anima_asset_workflow_source_path": E2E_PROFILE_REFERENCE_DIRECTORY,
+    "anima_only_asset_workflow_source_path": (
+        E2E_PROFILE_REFERENCE_DIRECTORY
+    ),
+    "qwen_edit_workflow_source_path": E2E_PROFILE_IMAGE_EDIT,
+    "anima_inpainting_workflow_source_path": E2E_PROFILE_IMAGE_EDIT,
+    "tag_analysis_workflow_source_path": E2E_PROFILE_FACE_TAG,
+    "asset_tag_analysis_workflow_source_path": E2E_PROFILE_STANDARD,
+    "lora_training_workflow_source_paths.anima": (
+        E2E_PROFILE_TRAINING_ANIMA
+    ),
+    "lora_training_workflow_source_paths.sdxl": (
+        E2E_PROFILE_TRAINING_SDXL
+    ),
+    "style_lora_training_workflow_source_paths.anima": (
+        E2E_PROFILE_TRAINING_ANIMA
+    ),
+    "style_lora_training_workflow_source_paths.sdxl": (
+        E2E_PROFILE_TRAINING_SDXL
+    ),
+    "face_extract_workflow_source_path": E2E_PROFILE_EMBED_FILTER,
+    "debug_workflow_source_path": E2E_PROFILE_STANDARD,
+    "video_workflow_source_paths.t2v": E2E_PROFILE_MINIMAX_H3,
+    "video_workflow_source_paths.i2v": E2E_PROFILE_MINIMAX_H3,
+    "video_workflow_source_paths.first_last": E2E_PROFILE_MINIMAX_H3,
 }
 
-_E2E_EMBED_FILTER_BINDINGS = {
-    "utility_workflow_source_path",
-    "face_extract_workflow_source_path",
-}
 
-_E2E_TRAINING_BINDINGS = {
-    "lora_training_workflow_source_paths.anima",
-    "lora_training_workflow_source_paths.sdxl",
-    "style_lora_training_workflow_source_paths.anima",
-    "style_lora_training_workflow_source_paths.sdxl",
-}
+def e2e_profiles_for_bindings(binding_keys: Iterable[str]) -> tuple[str, ...]:
+    """Return the explicitly registered E2E methods for binding keys."""
 
-_E2E_SDXL_TRAINING_BINDINGS = {
-    "lora_training_workflow_source_paths.sdxl",
-    "style_lora_training_workflow_source_paths.sdxl",
-}
+    profiles: list[str] = []
+    for raw_key in binding_keys:
+        profile = E2E_PROFILE_BY_BINDING.get(str(raw_key))
+        if profile is None:
+            continue
+        if profile not in profiles:
+            profiles.append(profile)
+    return tuple(profiles)
 
 
 def make_e2e_prompt(
@@ -931,27 +968,17 @@ def make_e2e_prompt(
 
     prompt = copy.deepcopy(validation.prompt)
     binding_key = validation.binding_keys[0]
-    uses_reference_directories = bool(
-        _E2E_REFERENCE_DIRECTORY_BINDINGS.intersection(
-            validation.binding_keys
-        )
-    )
-    uses_embedding_filter = bool(
-        _E2E_EMBED_FILTER_BINDINGS.intersection(
-            validation.binding_keys
-        )
-    )
+    profiles = set(e2e_profiles_for_bindings(validation.binding_keys))
+    uses_reference_directories = E2E_PROFILE_REFERENCE_DIRECTORY in profiles
+    uses_embedding_filter = E2E_PROFILE_EMBED_FILTER in profiles
     is_training_workflow = bool(
-        _E2E_TRAINING_BINDINGS.intersection(validation.binding_keys)
+        {
+            E2E_PROFILE_TRAINING_ANIMA,
+            E2E_PROFILE_TRAINING_SDXL,
+        }.intersection(profiles)
     )
-    is_sdxl_training_workflow = bool(
-        _E2E_SDXL_TRAINING_BINDINGS.intersection(
-            validation.binding_keys
-        )
-    )
-    uses_face_tag_fixture = (
-        "tag_analysis_workflow_source_path" in validation.binding_keys
-    )
+    is_sdxl_training_workflow = E2E_PROFILE_TRAINING_SDXL in profiles
+    uses_face_tag_fixture = E2E_PROFILE_FACE_TAG in profiles
     safe_output_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", binding_key)
     for node in prompt.values():
         if not isinstance(node, dict) or not isinstance(

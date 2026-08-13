@@ -6218,7 +6218,8 @@
         }
         #comfy-installer-start-btn,
         #comfy-installer-compat-start-btn,
-        #comfy-installer-update-btn {
+        #comfy-installer-update-btn,
+        #comfy-installer-e2e-btn {
             min-width: 120px;
         }
         #comfy-installer-compat-start-btn {
@@ -6230,6 +6231,48 @@
             border-color: color-mix(in srgb, #8d70ff 48%, var(--border));
             color: color-mix(in srgb, #b9a9ff 78%, var(--text));
             background: color-mix(in srgb, #8d70ff 10%, var(--surface2));
+        }
+        #comfy-installer-e2e-btn {
+            border-color: color-mix(in srgb, #55d69e 52%, var(--border));
+            color: color-mix(in srgb, #8ce8bb 82%, var(--text));
+            background: color-mix(in srgb, #55d69e 9%, var(--surface2));
+        }
+        #comfy-installer-e2e-modal { z-index: 1900; }
+        .comfy-installer-e2e-content {
+            width: min(680px, calc(100vw - 28px));
+            max-height: min(760px, calc(100vh - 28px));
+            overflow: hidden;
+        }
+        .comfy-installer-e2e-body {
+            display: flex;
+            min-height: 0;
+            flex: 1 1 auto;
+            flex-direction: column;
+            gap: 11px;
+            padding: 16px 20px;
+        }
+        .comfy-installer-e2e-toolbar {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 8px;
+        }
+        .comfy-installer-e2e-release {
+            margin-right: auto;
+            color: var(--text2);
+            font-size: .72rem;
+        }
+        .comfy-installer-e2e-release strong { color: var(--text); }
+        #comfy-installer-e2e-list {
+            min-height: 160px;
+            max-height: 410px;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            background: color-mix(in srgb, var(--surface2) 18%, transparent);
+        }
+        .comfy-installer-e2e-summary {
+            color: var(--text2);
+            font-size: .7rem;
         }
         .comfy-installer-monitor-card {
             border-color: color-mix(in srgb, #8d70ff 25%, var(--border));
@@ -21241,8 +21284,8 @@
                                 <span class="comfy-installer-eyebrow">COMFYUI MANAGER</span>
                                 <h3 class="comfy-installer-title">ComfyUI 업데이트 및 설치</h3>
                                 <p class="comfy-installer-copy">
-                                    <strong>새로 설치</strong>는 독립 Python 환경과 선택한 워크플로우·모델을 준비하고, input 리패치 후 전체 실행 검증을 진행합니다.
-                                    <strong>업데이트</strong>는 먼저 새 업데이터를 적용하고, 재시작 후 변경된 Comfy 구성요소와 설치된 워크플로를 검증합니다.
+                                    <strong>새로 설치</strong>는 GPU 종류와 유무에 관계없이 독립 Python 환경과 선택한 워크플로우·모델을 준비합니다.
+                                    <strong>업데이트</strong>와 워크플로우 <strong>E2E 검사</strong>는 서로 독립적으로 실행됩니다.
                                 </p>
                             </div>
                             <div class="comfy-installer-hero-badges" aria-label="설치 방식">
@@ -21257,7 +21300,7 @@
                                 <span class="comfy-installer-step" aria-hidden="true">01</span>
                                 <div class="comfy-installer-section-heading">
                                     <h3 class="comfy-installer-title">시스템 검사</h3>
-                                    <p class="comfy-installer-section-copy">설치 전에 GPU, 필수 도구와 저장 공간을 확인합니다.</p>
+                                    <p class="comfy-installer-section-copy">GPU 가속 가능 여부, 필수 도구와 저장 공간을 확인합니다. GPU가 맞지 않거나 없어도 CPU 프로필로 설치합니다.</p>
                                 </div>
                             </div>
                             <div class="comfy-installer-status-grid">
@@ -21268,7 +21311,7 @@
                             </div>
                             <div class="comfy-installer-actions">
                                 <button type="button" class="comfy-installer-btn" id="comfy-installer-preflight-btn" onclick="comfyInstallerRunPreflight()">다시 검사</button>
-                                <span class="comfy-installer-note" id="comfy-installer-preflight-note">NVIDIA 드라이버·uv·Git과 여유 공간(런타임 최소 30 GiB)을 검사합니다. 상세 요구량은 선택 워크플로우 기준으로 설치 시 재검사합니다.</span>
+                                <span class="comfy-installer-note" id="comfy-installer-preflight-note">NVIDIA 가속을 사용할 수 없으면 CPU 프로필로 자동 전환합니다. uv·Git과 여유 공간(런타임 최소 30 GiB)은 계속 검사합니다.</span>
                             </div>
                         </section>
 
@@ -21345,15 +21388,16 @@
                                 <button type="button" class="comfy-installer-btn primary" id="comfy-installer-start-btn" onclick="comfyInstallerStart('standard')">새로 설치</button>
                                 <button type="button" class="comfy-installer-btn" id="comfy-installer-compat-start-btn" onclick="comfyInstallerStart('nvidia_compatibility')">호환 설치</button>
                                 <button type="button" class="comfy-installer-btn" id="comfy-installer-update-btn" onclick="comfyInstallerStartUpdate()">업데이트</button>
+                                <button type="button" class="comfy-installer-btn" id="comfy-installer-e2e-btn" onclick="comfyInstallerOpenE2EModal()">E2E 검사</button>
                                 <button type="button" class="comfy-installer-btn danger" id="comfy-installer-cancel-btn" onclick="comfyInstallerCancel()" disabled>안전하게 중단</button>
                             </div>
                             <p class="comfy-installer-note" style="margin-top:9px;">
-                                설치는 선택한 워크플로우에 필요한 모델만 받고 선택 항목을 E2E 합니다. 업데이트는 버튼을 누른 경우에만 실행되며,
-                                후킹 서버가 바뀌면 재시작 후 한 번 더 눌러야 합니다. Comfy/Python/노드 변경 시 설치된 레거시 워크플로 전체를 실행하고 실패하면 자동 복원합니다.
+                                설치는 선택한 워크플로우에 필요한 모델만 받고 E2E 없이 완료됩니다. 업데이트도 워크플로우 실행 검사를 하지 않으며,
+                                후킹 서버가 바뀌면 재시작 후 한 번 더 눌러야 합니다. E2E 검사는 설치 완료 후 별도 버튼에서 읽기 전용 배포 원본 중 지원되는 워크플로우만 선택해 실행하거나 전부 건너뛸 수 있습니다.
                             </p>
                             <p class="comfy-installer-note" id="comfy-installer-compatibility-note" style="margin-top:7px;">
                                 <strong>호환 설치:</strong> RTX 2070/2080 같은 Turing(sm75)부터 사용할 수 있도록 SageAttention과 전용 Triton을 제외합니다.
-                                이 모드로 설치했다면 사용하는 워크플로우에서 SageAttention 노드를 제거하거나 해당 노드를 <code>disabled</code>로 설정해야 합니다.
+                                지원되지 않는 NVIDIA·AMD·Intel·GPU 없음 환경은 CPU 프로필로 설치를 계속합니다. NVIDIA 호환 프로필을 사용했다면 워크플로우에서 SageAttention 노드를 제거하거나 해당 노드를 <code>disabled</code>로 설정해야 합니다.
                             </p>
                         </section>
 
@@ -21393,7 +21437,7 @@
                             </div>
                             <div class="comfy-installer-status-grid">
                                 <div class="comfy-installer-metric"><small>상태</small><strong id="comfy-installer-state">대기</strong></div>
-                                <div class="comfy-installer-metric"><small>단계</small><strong id="comfy-installer-phase">0 / 16</strong></div>
+                                <div class="comfy-installer-metric"><small>단계</small><strong id="comfy-installer-phase">0 / 0</strong></div>
                                 <div class="comfy-installer-metric"><small>현재 항목</small><strong id="comfy-installer-item">-</strong></div>
                                 <div class="comfy-installer-metric"><small>선택 E2E</small><strong id="comfy-installer-e2e">0 / 0</strong></div>
                             </div>
@@ -21526,6 +21570,34 @@
                 <button class="cancel" onclick="previewConfig()">📋 Config 미리보기</button>
                 <button class="cancel" onclick="closeSettingsModal()">취소</button>
                 <button class="confirm" onclick="saveSettings()">저장</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ComfyUI 배포 워크플로우 E2E 선택 모달 -->
+    <div class="modal" id="comfy-installer-e2e-modal" onclick="if (event.target === this) comfyInstallerCloseE2EModal()">
+        <div class="modal-content comfy-installer-e2e-content" role="dialog" aria-modal="true" aria-labelledby="comfy-installer-e2e-title">
+            <div class="modal-header">
+                <div>
+                    <h2 id="comfy-installer-e2e-title">배포 워크플로우 E2E 검사</h2>
+                    <div class="comfy-installer-note" style="margin-top:5px;">별도 보관된 읽기 전용 배포 원본 중 파일이 실제 존재하고 E2E 검사 방법이 등록된 항목만 표시합니다.</div>
+                </div>
+                <button class="modal-close" onclick="comfyInstallerCloseE2EModal()" aria-label="E2E 검사 건너뛰기">&times;</button>
+            </div>
+            <div class="comfy-installer-e2e-body">
+                <div class="comfy-installer-e2e-toolbar">
+                    <span class="comfy-installer-e2e-release">원본 버전 <strong id="comfy-installer-e2e-release">확인 중</strong></span>
+                    <button type="button" class="comfy-installer-btn" onclick="comfyInstallerToggleAllE2E(true)">전체 선택</button>
+                    <button type="button" class="comfy-installer-btn" onclick="comfyInstallerToggleAllE2E(false)">전체 해제</button>
+                </div>
+                <div class="comfy-workflow-list" id="comfy-installer-e2e-list">
+                    <div class="comfy-workflow-empty">읽기 전용 배포 원본을 확인하고 있습니다.</div>
+                </div>
+                <div class="comfy-installer-e2e-summary" id="comfy-installer-e2e-summary">검사할 항목을 선택하지 않았습니다.</div>
+            </div>
+            <div class="modal-footer">
+                <button class="cancel" type="button" onclick="comfyInstallerCloseE2EModal()">검사 안 함</button>
+                <button class="confirm" type="button" id="comfy-installer-e2e-run-btn" onclick="comfyInstallerStartE2E()" disabled>선택 항목 검사</button>
             </div>
         </div>
     </div>
@@ -27329,6 +27401,7 @@
         let comfyInstallerStatusBusy = false;
         let comfyInstallerPreflightLoaded = false;
         let comfyInstallerLibrary = { releases: [], user_files: [] };
+        let comfyInstallerE2ECatalog = { release_version: '', items: [] };
         let comfyInstallerLastState = 'idle';
         let comfyInstallerShutdownRequested = false;
 
@@ -27537,6 +27610,127 @@
             }
         }
 
+        function comfyInstallerSelectedE2EIds() {
+            return Array.from(document.querySelectorAll('#comfy-installer-e2e-list input[type="checkbox"]:checked'))
+                .map(input => input.dataset.e2eItemId)
+                .filter(Boolean);
+        }
+
+        function comfyInstallerUpdateE2ESummary() {
+            const selected = comfyInstallerSelectedE2EIds();
+            const total = Number((comfyInstallerE2ECatalog.items || []).length);
+            const skipped = Number(comfyInstallerE2ECatalog.skipped_count || 0);
+            const summary = document.getElementById('comfy-installer-e2e-summary');
+            const runButton = document.getElementById('comfy-installer-e2e-run-btn');
+            if (summary) {
+                const hidden = skipped ? ` · 지원 불가 또는 손상된 원본 ${skipped}개 숨김` : '';
+                summary.textContent = (selected.length
+                    ? `${selected.length}/${total}개 워크플로우를 검사합니다. 선택하지 않은 항목은 건너뜁니다.`
+                    : `0/${total}개 선택 · 검사 안 함으로 모두 건너뛸 수 있습니다.`) + hidden;
+            }
+            if (runButton) runButton.disabled = selected.length === 0;
+        }
+
+        function comfyInstallerE2EProfileLabel(profile) {
+            const labels = {
+                standard: '공통 생성 검사',
+                reference_directory: '참조 폴더 검사',
+                embedding_filter: '임베딩 필터 검사',
+                image_edit: '이미지 편집 검사',
+                face_tag_fixture: '태그 이미지 검사',
+                training_anima: 'Anima 학습 검사',
+                training_sdxl: 'SDXL 학습 검사',
+                minimax_h3: 'MiniMax H3 영상 검사',
+            };
+            return labels[profile] || profile;
+        }
+
+        function comfyInstallerRenderE2ECatalog() {
+            const release = document.getElementById('comfy-installer-e2e-release');
+            const list = document.getElementById('comfy-installer-e2e-list');
+            if (release) release.textContent = comfyInstallerE2ECatalog.release_version || '-';
+            if (!list) return;
+            const items = comfyInstallerE2ECatalog.items || [];
+            list.innerHTML = items.length ? items.map(item => `
+                <label class="comfy-workflow-item">
+                    <input type="checkbox" data-e2e-item-id="${escapeHtml(item.id)}" onchange="comfyInstallerUpdateE2ESummary()">
+                    <span>
+                        <strong>${escapeHtml(item.name || item.filename || item.id)}</strong>
+                        <small>${escapeHtml(item.filename || item.id)} · ${escapeHtml((item.e2e_profiles || []).map(comfyInstallerE2EProfileLabel).join(', ') || '검사 방법 미등록')}</small>
+                    </span>
+                </label>`).join('')
+                : '<div class="comfy-workflow-empty">실제 존재하면서 E2E 검사 방법이 등록된 배포 원본이 없습니다.</div>';
+            comfyInstallerUpdateE2ESummary();
+        }
+
+        async function comfyInstallerOpenE2EModal() {
+            const modal = document.getElementById('comfy-installer-e2e-modal');
+            const release = document.getElementById('comfy-installer-e2e-release');
+            const list = document.getElementById('comfy-installer-e2e-list');
+            const runButton = document.getElementById('comfy-installer-e2e-run-btn');
+            modal?.classList.add('visible');
+            if (release) release.textContent = '확인 중';
+            if (list) list.innerHTML = '<div class="comfy-workflow-empty">읽기 전용 배포 원본을 확인하고 있습니다.</div>';
+            if (runButton) runButton.disabled = true;
+            try {
+                const data = await fetchJSON('/api/comfy-installer/e2e-catalog');
+                comfyInstallerE2ECatalog = data.catalog || { release_version: '', items: [], skipped_count: 0 };
+                comfyInstallerRenderE2ECatalog();
+            } catch (error) {
+                console.error('[COMFY_INSTALL] E2E 워크플로우 목록 조회 실패:', error);
+                if (release) release.textContent = '조회 실패';
+                if (list) list.innerHTML = `<div class="comfy-workflow-empty">${escapeHtml(error.message || error)}</div>`;
+                const summary = document.getElementById('comfy-installer-e2e-summary');
+                if (summary) summary.textContent = '설치와 워크플로우 원본 풀기를 완료한 뒤 다시 시도하세요.';
+                showToast(`E2E 목록 조회 실패: ${error.message || error}`, 'error');
+            }
+        }
+
+        function comfyInstallerCloseE2EModal() {
+            document.getElementById('comfy-installer-e2e-modal')?.classList.remove('visible');
+        }
+
+        function comfyInstallerToggleAllE2E(checked) {
+            document.querySelectorAll('#comfy-installer-e2e-list input[type="checkbox"]').forEach(input => {
+                input.checked = Boolean(checked);
+            });
+            comfyInstallerUpdateE2ESummary();
+        }
+
+        async function comfyInstallerStartE2E() {
+            const selectedItemIds = comfyInstallerSelectedE2EIds();
+            const releaseVersion = String(comfyInstallerE2ECatalog.release_version || '');
+            if (!selectedItemIds.length) {
+                showToast('E2E 검사할 워크플로우를 하나 이상 선택하세요', 'warning');
+                return;
+            }
+            const button = document.getElementById('comfy-installer-e2e-run-btn');
+            if (button) button.disabled = true;
+            comfyInstallerSetError('');
+            try {
+                comfyInstallerLastLogSeq = 0;
+                document.getElementById('comfy-installer-log').textContent = '';
+                const started = await fetchJSON('/api/comfy-installer/e2e', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        release_version: releaseVersion,
+                        selected_item_ids: selectedItemIds,
+                    }),
+                });
+                comfyInstallerRenderStatus(started);
+                comfyInstallerCloseE2EModal();
+                showToast(`선택한 ${selectedItemIds.length}개 워크플로우 E2E를 시작했습니다`, 'success');
+                clearTimeout(comfyInstallerPollTimer);
+                comfyInstallerPollTimer = setTimeout(() => comfyInstallerRefreshStatus(false), 500);
+            } catch (error) {
+                console.error('[COMFY_INSTALL] E2E 시작 실패:', error);
+                comfyInstallerSetError(error.message || error);
+                showToast(`E2E 시작 실패: ${error.message || error}`, 'error');
+                if (button) button.disabled = false;
+            }
+        }
+
         function comfyInstallerToggleAllWorkflows(checked) {
             document.querySelectorAll('#comfy-installer-pack-workflows input[type="checkbox"]').forEach(input => {
                 input.checked = Boolean(checked);
@@ -27616,9 +27810,12 @@
                 if (note) {
                     const probeCommon =
                         `드라이버 CUDA 상한 ${driverCuda || '-'} · ${probe.uv || 'uv 확인'} · ${probe.git || 'Git 확인'}`;
+                    const fallback = String(probe.gpu_fallback_reason || '').trim();
                     note.textContent = diskEnough === false
                         ? `여유 공간 런타임 최소치(30 GiB) 미만 · 선택 워크플로우 기준은 설치 시 재검사 · ${probeCommon}`
-                        : `검사 통과 · ${probeCommon}`;
+                        : (fallback
+                            ? `설치 가능 · CPU 프로필 자동 전환 · ${fallback} · ${probeCommon}`
+                            : `검사 통과 · ${probeCommon}`);
                 }
                 comfyInstallerPreflightLoaded = true;
                 comfyInstallerSetError('');
@@ -27640,7 +27837,9 @@
                 idle: '대기',
                 running: data.operation === 'update'
                     ? '업데이트 중'
-                    : (data.operation === 'migrate' ? '이사 중' : '설치 중'),
+                    : (data.operation === 'migrate'
+                        ? '이사 중'
+                        : (data.operation === 'e2e' ? 'E2E 검사 중' : '설치 중')),
                 succeeded: '성공',
                 failed: '실패',
                 cancelled: '중단됨',
@@ -27656,6 +27855,11 @@
                 state === 'succeeded' &&
                 data.operation === 'migrate'
             );
+            const e2eJustSucceeded = (
+                comfyInstallerLastState === 'running' &&
+                state === 'succeeded' &&
+                data.operation === 'e2e'
+            );
             const compatibilityInstallJustSucceeded = (
                 comfyInstallerLastState === 'running' &&
                 state === 'succeeded' &&
@@ -27668,6 +27872,7 @@
             const startButton = document.getElementById('comfy-installer-start-btn');
             const compatibilityStartButton = document.getElementById('comfy-installer-compat-start-btn');
             const updateButton = document.getElementById('comfy-installer-update-btn');
+            const e2eButton = document.getElementById('comfy-installer-e2e-btn');
             const unpackButton = document.getElementById('comfy-installer-unpack-btn');
             const migrateButton = document.getElementById('comfy-installer-migrate-btn');
             const retargetConfigButton = document.getElementById('comfy-installer-retarget-config-btn');
@@ -27711,17 +27916,19 @@
             }
             document.getElementById('comfy-installer-progress-note').textContent = progressText;
 
-            const selectedCount = comfyInstallerSelectedIds().length;
             let e2eCurrent = 0;
-            let e2eTotal = selectedCount;
-            if (progress.event === 'workflow_execution') e2eCurrent = Number(progress.current || 0);
-            if (data.result && Array.isArray(data.result.workflow_runtime)) {
-                e2eCurrent = data.result.workflow_runtime.length;
-                e2eTotal = Number((data.result.selected_workflow_ids || []).length || e2eCurrent);
-            }
-            if (data.operation === 'migrate') e2eTotal = 0;
-            if (data.operation === 'update' && data.result && Array.isArray(data.result.workflow_static)) {
-                e2eTotal = data.result.workflow_static.length;
+            let e2eTotal = 0;
+            if (data.operation === 'e2e') {
+                e2eTotal = Number(
+                    (data.result?.selected_workflow_ids || []).length
+                    || (data.selected_item_ids || []).length
+                    || comfyInstallerSelectedE2EIds().length
+                );
+                if (progress.event === 'workflow_execution') {
+                    e2eCurrent = Number(progress.current || 0);
+                } else if (data.result && Array.isArray(data.result.workflow_runtime)) {
+                    e2eCurrent = data.result.workflow_runtime.length;
+                }
             }
             document.getElementById('comfy-installer-e2e').textContent = `${e2eCurrent} / ${e2eTotal}`;
 
@@ -27751,6 +27958,7 @@
             if (startButton) startButton.disabled = running;
             if (compatibilityStartButton) compatibilityStartButton.disabled = running;
             if (updateButton) updateButton.disabled = running;
+            if (e2eButton) e2eButton.disabled = running;
             if (unpackButton) unpackButton.disabled = running;
             if (migrateButton) migrateButton.disabled = running;
             if (retargetConfigButton) retargetConfigButton.disabled = running;
@@ -27770,6 +27978,11 @@
                 showToast(`이사 완료 · ${configLabel} · 복사 ${Number((result.copied || []).length)}개 · 기존 유지 ${Number((result.skipped || []).length)}개${missingLabel}`, 'success');
                 void comfyInstallerReloadSettingsAfterConfigChange();
             }
+            if (e2eJustSucceeded) {
+                const passed = Number((data.result?.workflow_runtime || []).length);
+                const selected = Number((data.result?.selected_workflow_ids || []).length);
+                showToast(`선택 E2E 완료 · ${passed}/${selected}개 통과`, 'success');
+            }
             if (compatibilityInstallJustSucceeded) {
                 const warning = data.result?.compatibility_warning ||
                     '사용하는 워크플로우에서 SageAttention 노드를 제거하거나 disabled로 설정하세요.';
@@ -27781,7 +27994,7 @@
                 if (data.result?.restart_required) {
                     void comfyInstallerShutdownAfterUpdate();
                 } else if (data.result?.update_kind === 'runtime_compatibility') {
-                    showToast(`Comfy 업데이트 완료 · E2E ${Number((data.result.workflow_runtime || []).length)}개 통과`, 'success');
+                    showToast('Comfy 업데이트 완료 · E2E 검사는 별도 실행할 수 있습니다', 'success');
                 } else {
                     showToast('Comfy 런타임이 이미 최신 상태입니다', 'success');
                 }
@@ -27886,7 +28099,7 @@
             if (!window.confirm(
                 '업데이트를 시작할까요?\n\n' +
                 '후킹 서버 코드가 바뀌면 먼저 재시작한 뒤 업데이트를 한 번 더 실행합니다.\n' +
-                'Comfy/Python/커스텀 노드가 바뀌면 input 리패치와 설치된 레거시 워크플로 전체 E2E를 수행하며, 실패 시 이전 환경을 자동 복원합니다.'
+                'Comfy/Python/커스텀 노드 변경과 기동 상태를 검증하며, 워크플로우 E2E는 업데이트 완료 후 별도 버튼에서 선택 실행합니다.'
             )) return;
             const button = document.getElementById('comfy-installer-update-btn');
             let accepted = false;
@@ -28108,7 +28321,7 @@
         }
 
         async function comfyInstallerCancel() {
-            if (!window.confirm('현재 설치·업데이트·이사 작업을 안전하게 중단할까요? 다운로드 .part 파일은 재시도에 사용하고, 이사 중 생성된 불완전 파일은 정리합니다.')) return;
+            if (!window.confirm('현재 설치·업데이트·E2E·이사 작업을 안전하게 중단할까요? 다운로드 .part 파일은 재시도에 사용하고, 이사 중 생성된 불완전 파일은 정리합니다.')) return;
             try {
                 const data = await fetchJSON('/api/comfy-installer/cancel', { method: 'POST' });
                 comfyInstallerRenderStatus(data);

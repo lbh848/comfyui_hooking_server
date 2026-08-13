@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import stat
 from pathlib import Path
 from threading import Event
 from types import SimpleNamespace
@@ -11,22 +13,110 @@ import comfy_installer.service as service_module
 from comfy_installer.e2e import ComfyE2EError
 from comfy_installer.crypto import ExtractedWorkflowPack
 from comfy_installer.manifest import load_install_manifest
-from comfy_installer.service import ComfyInstallerService, _INSTALL_PHASES
+from comfy_installer.operations import uv_python_path
+from comfy_installer.service import (
+    ComfyInstallerService,
+    _E2E_PHASES,
+    _INSTALL_PHASES,
+    _UPDATE_PHASES,
+)
 from comfy_installer.workflow_library import (
+    DISTRIBUTION_LIBRARY_DIRNAME,
     LEGACY_USER_WORKFLOW_DIRNAME,
     USER_WORKFLOW_DIRNAME,
     WorkflowSelection,
 )
 
 
-def test_install_repatch_runs_before_comfy_startup_and_e2e() -> None:
-    phases = [phase for phase, _label in _INSTALL_PHASES]
+def test_install_and_update_do_not_embed_workflow_e2e() -> None:
+    install_phases = [phase for phase, _label in _INSTALL_PHASES]
+    update_phases = [phase for phase, _label in _UPDATE_PHASES]
+    e2e_phases = [phase for phase, _label in _E2E_PHASES]
 
-    assert phases.index("models") < phases.index("repatch")
-    assert phases.index("repatch") < phases.index("startup")
-    assert phases.index("repatch") < phases.index("e2e_static")
-    assert phases.index("repatch") < phases.index("e2e_runtime")
-    assert phases.index("e2e_runtime") < phases.index("e2e_video_runtime")
+    assert install_phases.index("models") < install_phases.index("repatch")
+    assert install_phases.index("repatch") < install_phases.index("startup")
+    assert "e2e_static" not in install_phases
+    assert "e2e_runtime" not in install_phases
+    assert "e2e_static" not in update_phases
+    assert "e2e_runtime" not in update_phases
+    assert e2e_phases.index("e2e_static") < e2e_phases.index("e2e_runtime")
+    assert e2e_phases.index("e2e_runtime") < e2e_phases.index(
+        "e2e_video_runtime"
+    )
+
+
+def test_e2e_catalog_uses_distribution_originals_without_runtime_receipt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = tmp_path / "config.json"
+    config.write_text("{}\n", encoding="utf-8")
+    service = ComfyInstallerService(
+        project_root=tmp_path,
+        config_path=config,
+        requirements_dir=tmp_path / "requirements",
+    )
+    python = uv_python_path(service.comfy_root / ".venv")
+    python.parent.mkdir(parents=True)
+    python.write_bytes(b"")
+    release_root = (
+        service.workflow_library_root
+        / DISTRIBUTION_LIBRARY_DIRNAME
+        / "v1"
+    )
+    release_root.mkdir(parents=True)
+    workflow = release_root / "debug.json"
+    workflow.write_text('{"nodes": []}\n', encoding="utf-8")
+    state = {
+        "schema_version": 2,
+        "release_version": "v1",
+        "items": [
+            {
+                "id": "debug_workflow_source_path",
+                "name": "디버그",
+                "filename": workflow.name,
+                "sha256": hashlib.sha256(workflow.read_bytes()).hexdigest(),
+                "bindings": ["debug_workflow_source_path"],
+                "model_ids": [],
+            }
+        ],
+    }
+    state_path = release_root / ".soya-pack.json"
+    state_path.write_text(
+        json.dumps(state, ensure_ascii=False), encoding="utf-8"
+    )
+
+    try:
+        catalog = service.e2e_workflow_catalog()
+        assert catalog["release_version"] == "v1"
+        assert catalog["source_kind"] == (
+            "read_only_distribution_original"
+        )
+        assert [item["id"] for item in catalog["items"]] == [
+            "debug_workflow_source_path"
+        ]
+        assert not (
+            service.comfy_root / ".installer-state" / "runtime-receipt.json"
+        ).exists()
+
+        monkeypatch.setattr(
+            service,
+            "_start_operation",
+            lambda **kwargs: kwargs,
+        )
+        started = service.start_e2e(
+            release_version="v1",
+            selected_item_ids=["debug_workflow_source_path"],
+        )
+        assert started["operation"] == "e2e"
+        assert started["kwargs"] == {
+            "release_version": "v1",
+            "selected_item_ids": ["debug_workflow_source_path"],
+        }
+    finally:
+        for path in release_root.rglob("*"):
+            if path.is_file():
+                path.chmod(path.stat().st_mode | stat.S_IWRITE)
 
 
 def test_video_e2e_uses_only_comfy_three_profile_arguments(

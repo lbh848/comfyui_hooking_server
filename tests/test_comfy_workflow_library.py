@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import stat
 from pathlib import Path
 
 from comfy_installer.crypto import create_workflow_pack
@@ -11,6 +12,7 @@ from comfy_installer.workflow_library import (
     LEGACY_DISTRIBUTION_LIBRARY_DIRNAME,
     LEGACY_USER_WORKFLOW_DIRNAME,
     USER_WORKFLOW_DIRNAME,
+    distribution_e2e_catalog,
     embedded_workflow_base_dir,
     import_default_user_copies,
     import_user_copies,
@@ -72,6 +74,48 @@ def _write_library_release(
         ),
         encoding="utf-8",
     )
+
+
+def test_distribution_e2e_catalog_uses_intact_supported_originals_only(
+    tmp_path: Path,
+) -> None:
+    library_root = tmp_path / "library"
+    _write_library_release(
+        library_root,
+        "v1",
+        [
+            ("supported", ["debug_workflow_source_path"]),
+            ("unsupported", ["unknown_workflow_source_path"]),
+            ("missing", ["comfy_workflow_source_path"]),
+        ],
+    )
+    release_root = library_root / DISTRIBUTION_LIBRARY_DIRNAME / "v1"
+    (release_root / "missing.json").unlink()
+
+    try:
+        catalog = distribution_e2e_catalog(
+            library_root=library_root,
+            release_version="v1",
+            profile_by_binding={
+                "debug_workflow_source_path": "standard",
+                "comfy_workflow_source_path": "standard",
+            },
+        )
+
+        assert catalog["source_kind"] == (
+            "read_only_distribution_original"
+        )
+        assert [item["id"] for item in catalog["items"]] == ["supported"]
+        assert catalog["items"][0]["read_only"] is True
+        assert catalog["items"][0]["e2e_profiles"] == ["standard"]
+        assert {item["id"] for item in catalog["skipped"]} == {
+            "unsupported",
+            "missing",
+        }
+    finally:
+        for path in release_root.rglob("*"):
+            if path.is_file():
+                path.chmod(path.stat().st_mode | stat.S_IWRITE)
 
 
 def test_default_workflow_copies_use_latest_release_metadata_as_source_of_truth(
@@ -164,6 +208,16 @@ def test_versioned_library_never_overwrites_edited_user_copy(tmp_path: Path) -> 
         manifest=manifest,
     )
     assert Path(unpacked["directory"]).parent.name == DISTRIBUTION_LIBRARY_DIRNAME
+    original_files = [
+        path for path in Path(unpacked["directory"]).rglob("*") if path.is_file()
+    ]
+    assert original_files
+    assert all(
+        not path.stat().st_mode
+        & (stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH)
+        for path in original_files
+    )
+    assert unpacked["read_only"] is True
     item_id = "qwen_edit_workflow_source_path"
     requirements = selection_requirements(
         library_root=library_root,
@@ -199,6 +253,8 @@ def test_versioned_library_never_overwrites_edited_user_copy(tmp_path: Path) -> 
     assert len(status["user_files"]) == 2
     assert Path(status["distributed_root"]).name == DISTRIBUTION_LIBRARY_DIRNAME
     assert Path(status["user_root"]).name == USER_WORKFLOW_DIRNAME
+    for path in original_files:
+        path.chmod(path.stat().st_mode | stat.S_IWRITE)
 
 
 def test_legacy_korean_layout_migrates_to_ascii_without_data_loss(

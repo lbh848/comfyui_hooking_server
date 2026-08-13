@@ -104,6 +104,21 @@ async def handle_workflow_library(request: web.Request) -> web.Response:
         return _json_error(str(exc), status=500)
 
 
+async def handle_e2e_catalog(request: web.Request) -> web.Response:
+    service = request.app[APP_SERVICE_KEY]
+    try:
+        result = await asyncio.to_thread(service.e2e_workflow_catalog)
+        return web.json_response({"ok": True, "catalog": result})
+    except InstallerServiceError as exc:
+        print(f"[COMFY_INSTALL][API] E2E 목록 조회 거부: {exc}")
+        traceback.print_exc()
+        return _json_error(str(exc), status=409)
+    except Exception as exc:
+        print(f"[COMFY_INSTALL][API] E2E 목록 조회 실패: {exc}")
+        traceback.print_exc()
+        return _json_error(str(exc), status=500)
+
+
 async def handle_pack_upload(request: web.Request) -> web.Response:
     service = request.app[APP_SERVICE_KEY]
     upload_id = uuid.uuid4().hex
@@ -211,6 +226,35 @@ async def handle_start(request: web.Request) -> web.Response:
         return _json_error(str(exc), status=409)
     except Exception as exc:
         print(f"[COMFY_INSTALL][API] 설치 시작 실패: {exc}")
+        traceback.print_exc()
+        return _json_error(str(exc), status=500)
+
+
+async def handle_e2e_start(request: web.Request) -> web.Response:
+    service = request.app[APP_SERVICE_KEY]
+    try:
+        body = await _read_json_object(request)
+        release_version = body.get("release_version")
+        selected_item_ids = body.get("selected_item_ids")
+        if not isinstance(release_version, str):
+            raise InstallerServiceError("release_version은 문자열이어야 합니다.")
+        if not isinstance(selected_item_ids, list) or not all(
+            isinstance(value, str) for value in selected_item_ids
+        ):
+            raise InstallerServiceError(
+                "selected_item_ids는 문자열 배열이어야 합니다."
+            )
+        result = service.start_e2e(
+            release_version=release_version,
+            selected_item_ids=selected_item_ids,
+        )
+        return web.json_response({"ok": True, **result})
+    except InstallerServiceError as exc:
+        print(f"[COMFY_INSTALL][API] E2E 시작 거부: {exc}")
+        traceback.print_exc()
+        return _json_error(str(exc), status=409)
+    except Exception as exc:
+        print(f"[COMFY_INSTALL][API] E2E 시작 실패: {exc}")
         traceback.print_exc()
         return _json_error(str(exc), status=500)
 
@@ -453,10 +497,14 @@ def register_comfy_installer_routes(
     app.router.add_get(
         "/api/comfy-installer/workflow-library", handle_workflow_library
     )
+    app.router.add_get(
+        "/api/comfy-installer/e2e-catalog", handle_e2e_catalog
+    )
     app.router.add_post(
         "/api/comfy-installer/workflow-pack", handle_pack_upload
     )
     app.router.add_post("/api/comfy-installer/start", handle_start)
+    app.router.add_post("/api/comfy-installer/e2e", handle_e2e_start)
     app.router.add_post(
         "/api/comfy-installer/unpack-workflow-pack",
         handle_unpack_workflow_pack,

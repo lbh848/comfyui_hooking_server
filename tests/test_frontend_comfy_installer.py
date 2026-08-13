@@ -21,6 +21,8 @@ def test_settings_has_comfy_installer_tab_and_key_inputs() -> None:
     assert 'id="comfy-installer-pack"' in FRONTEND
     assert 'id="comfy-installer-unpack-btn"' in FRONTEND
     assert 'id="comfy-installer-update-btn"' in FRONTEND
+    assert 'id="comfy-installer-e2e-btn"' in FRONTEND
+    assert 'id="comfy-installer-e2e-modal"' in FRONTEND
     assert 'id="comfy-installer-compat-start-btn"' in FRONTEND
     assert 'id="comfy-installer-migrate-btn"' in FRONTEND
     assert 'id="comfy-installer-retarget-config-btn"' in FRONTEND
@@ -48,6 +50,8 @@ def test_frontend_uses_dedicated_installer_apis_and_does_not_persist_keys() -> N
         "/api/comfy-installer/workflow-pack",
         "/api/comfy-installer/start",
         "/api/comfy-installer/update",
+        "/api/comfy-installer/e2e-catalog",
+        "/api/comfy-installer/e2e",
         "/api/comfy-installer/shutdown-after-update",
         "/api/comfy-installer/status",
         "/api/comfy-installer/cancel",
@@ -66,6 +70,18 @@ def test_frontend_uses_dedicated_installer_apis_and_does_not_persist_keys() -> N
     assert "install_mode: installMode" in FRONTEND
     assert "restore_config_after_success" not in FRONTEND
     assert "workflowKeyInput.value = ''" in FRONTEND
+
+
+def test_workflow_e2e_is_optional_and_uses_read_only_originals_modal() -> None:
+    assert "async function comfyInstallerOpenE2EModal()" in FRONTEND
+    assert "async function comfyInstallerStartE2E()" in FRONTEND
+    assert "읽기 전용 배포 원본 중 파일이 실제 존재" in FRONTEND
+    assert "comfyInstallerE2EProfileLabel" in FRONTEND
+    assert "item.e2e_profiles" in FRONTEND
+    assert ">검사 안 함</button>" in FRONTEND
+    assert "선택하지 않은 항목은 건너뜁니다" in FRONTEND
+    assert "E2E 검사는 별도 실행할 수 있습니다" in FRONTEND
+    assert "설치는 선택한 워크플로우에 필요한 모델만 받고 E2E 없이 완료" in FRONTEND
 
 
 def test_troubleshooting_civitai_key_replacement_requires_comfy_restart() -> None:

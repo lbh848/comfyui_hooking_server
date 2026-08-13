@@ -10,6 +10,7 @@ from PIL import Image
 
 import comfy_installer.e2e as e2e_module
 from comfy_installer.e2e import (
+    E2E_PROFILE_BY_BINDING,
     ComfyE2EError,
     ComfyProcess,
     WorkflowValidation,
@@ -21,6 +22,15 @@ from comfy_installer.e2e import (
     promote_generated_fixture,
     protected_e2e_fixtures,
 )
+from comfy_installer.manifest import load_install_manifest
+
+
+def test_every_distributed_workflow_binding_has_an_explicit_e2e_profile() -> None:
+    manifest = load_install_manifest()
+    distributed_bindings = set(manifest.workflows["required_bindings"])
+    distributed_bindings.update(manifest.workflows["optional_bindings"])
+
+    assert set(E2E_PROFILE_BY_BINDING) == distributed_bindings
 
 
 def test_compatibility_e2e_bypasses_sageattention_without_mutating_prompt() -> None:

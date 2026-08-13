@@ -6,11 +6,12 @@ import json
 import os
 import re
 import shutil
+import stat
 import traceback
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Iterable
+from typing import Callable, Iterable, Mapping
 
 from .crypto import ExtractedWorkflowPack, extract_workflow_pack
 from .manifest import InstallManifest
@@ -83,6 +84,46 @@ def _files_identical(first: Path, second: Path) -> bool:
     if first.stat().st_size != second.stat().st_size:
         return False
     return _sha256_bytes(first.read_bytes()) == _sha256_bytes(second.read_bytes())
+
+
+def _mark_distribution_files_read_only(release_root: Path) -> None:
+    """Protect immutable distribution originals from accidental edits."""
+
+    current_path: Path | None = None
+    try:
+        for path in sorted(
+            release_root.rglob("*"), key=lambda value: str(value).casefold()
+        ):
+            current_path = path
+            if path.is_symlink():
+                raise WorkflowLibraryError(
+                    f"배포 원본 폴더에 심볼릭 링크가 있습니다: {path}"
+                )
+            if not path.is_file():
+                continue
+            try:
+                path.resolve().relative_to(release_root.resolve())
+            except ValueError as exc:
+                raise WorkflowLibraryError(
+                    f"배포 원본 파일이 원본 폴더 밖을 가리킵니다: {path}"
+                ) from exc
+            writable_bits = stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH
+            path.chmod(path.stat().st_mode & ~writable_bits)
+    except Exception as exc:
+        print(
+            "[COMFY_INSTALL][WORKFLOW_LIBRARY] 배포 원본 읽기 전용 "
+            "설정 실패: "
+            f"root={release_root}, path={current_path}, error={exc}"
+        )
+        traceback.print_exc()
+        raise WorkflowLibraryError(
+            f"배포 원본을 읽기 전용으로 보호하지 못했습니다: {exc}"
+        ) from exc
+
+
+def _is_read_only_file(path: Path) -> bool:
+    writable_bits = stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH
+    return not bool(path.stat().st_mode & writable_bits)
 
 
 def _legacy_collision_destination(source: Path, destination: Path) -> Path:
@@ -530,9 +571,16 @@ def unpack_to_library(
                     f"[워크플로우] 배포 원본 풀기 완료: {release}, "
                     f"{len(catalog)}개"
                 )
+        _mark_distribution_files_read_only(destination)
+        if log:
+            log(
+                "[워크플로우] 배포 원본 읽기 전용 보호 완료: "
+                f"{destination}"
+            )
         return {
             **state,
             "directory": str(destination),
+            "read_only": True,
         }
     except WorkflowLibraryError:
         raise
@@ -564,6 +612,145 @@ def _load_release(library_root: Path, release_version: str) -> tuple[Path, dict]
             f"워크플로우 팩 폴더와 상태 버전이 다릅니다: {root}"
         )
     return root, state
+
+
+def distribution_e2e_catalog(
+    *,
+    library_root: str | os.PathLike[str],
+    release_version: str,
+    profile_by_binding: Mapping[str, str],
+    excluded_filenames: Iterable[str] = (),
+) -> dict:
+    """List intact distribution originals with an explicit E2E method."""
+
+    release_root, state = _load_release(
+        Path(library_root).resolve(), release_version
+    )
+    _mark_distribution_files_read_only(release_root)
+    items = state.get("items")
+    if not isinstance(items, list):
+        print(
+            "[COMFY_INSTALL][WORKFLOW_LIBRARY] E2E 원본 목록 조회 실패: "
+            f"release={release_version}, items 형식 오류"
+        )
+        raise WorkflowLibraryError("워크플로우 팩 항목 목록이 손상되었습니다.")
+
+    excluded = {str(value).casefold() for value in excluded_filenames}
+    available: list[dict] = []
+    skipped: list[dict[str, str]] = []
+    for raw_item in items:
+        item_id = (
+            str(raw_item.get("id", ""))
+            if isinstance(raw_item, dict)
+            else ""
+        )
+        reason = ""
+        source: Path | None = None
+        profiles: list[str] = []
+        bindings: list[str] = []
+        try:
+            if not isinstance(raw_item, dict) or not item_id:
+                reason = "배포 메타데이터 형식이 올바르지 않습니다."
+            else:
+                raw_filename = str(raw_item.get("filename", ""))
+                filename = Path(raw_filename).name
+                raw_bindings = raw_item.get("bindings")
+                if not filename or raw_filename != filename:
+                    reason = "배포 원본 파일명이 올바르지 않습니다."
+                elif filename.casefold() in excluded:
+                    reason = "E2E 제외 워크플로우입니다."
+                elif not isinstance(raw_bindings, list) or not raw_bindings:
+                    reason = "배포 바인딩 정보가 없습니다."
+                elif not all(
+                    isinstance(value, str) and value for value in raw_bindings
+                ):
+                    reason = "배포 바인딩 형식이 올바르지 않습니다."
+                else:
+                    bindings = [str(value) for value in raw_bindings]
+                    unsupported = [
+                        value
+                        for value in bindings
+                        if value not in profile_by_binding
+                    ]
+                    if unsupported:
+                        reason = (
+                            "등록된 E2E 검사 방법이 없는 바인딩입니다: "
+                            + ", ".join(unsupported)
+                        )
+                    else:
+                        profiles = list(
+                            dict.fromkeys(
+                                str(profile_by_binding[value])
+                                for value in bindings
+                            )
+                        )
+                        source = release_root / filename
+                        if source.is_symlink() or not source.is_file():
+                            reason = "배포 원본 파일이 실제로 존재하지 않습니다."
+                        else:
+                            expected_hash = str(raw_item.get("sha256", ""))
+                            if not expected_hash:
+                                reason = "배포 원본 SHA-256 기록이 없습니다."
+                            elif _sha256_bytes(source.read_bytes()) != expected_hash:
+                                reason = "배포 원본 SHA-256이 일치하지 않습니다."
+            if reason:
+                print(
+                    "[COMFY_INSTALL][WORKFLOW_LIBRARY] E2E 대상 제외: "
+                    f"release={release_version}, item={item_id or '<unknown>'}, "
+                    f"reason={reason}"
+                )
+                skipped.append({"id": item_id, "reason": reason})
+                continue
+
+            assert isinstance(raw_item, dict)
+            assert source is not None
+            model_ids = raw_item.get("model_ids", [])
+            available.append(
+                {
+                    "id": item_id,
+                    "name": str(
+                        raw_item.get("name")
+                        or raw_item.get("filename")
+                        or item_id
+                    ),
+                    "filename": source.name,
+                    "bindings": bindings,
+                    "e2e_profiles": profiles,
+                    "model_count": int(
+                        raw_item.get("model_count")
+                        or (
+                            len(model_ids)
+                            if isinstance(model_ids, list)
+                            else 0
+                        )
+                    ),
+                    "model_bytes": int(raw_item.get("model_bytes") or 0),
+                    "read_only": _is_read_only_file(source),
+                }
+            )
+        except Exception as exc:
+            print(
+                "[COMFY_INSTALL][WORKFLOW_LIBRARY] E2E 원본 항목 검사 실패: "
+                f"release={release_version}, item={item_id or '<unknown>'}, "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            skipped.append(
+                {
+                    "id": item_id,
+                    "reason": f"원본 검사 오류: {exc}",
+                }
+            )
+
+    return {
+        "release_version": release_version,
+        "directory": str(release_root),
+        "source_kind": "read_only_distribution_original",
+        "items": available,
+        "available_count": len(available),
+        "skipped": skipped,
+        "skipped_count": len(skipped),
+    }
 
 
 def latest_release_version(
@@ -684,6 +871,96 @@ def import_user_copies(
         model_ids=tuple(sorted(model_ids)),
         user_files=tuple(user_files),
     )
+
+
+def resolve_distribution_selection(
+    *,
+    library_root: str | os.PathLike[str],
+    release_version: str,
+    selected_item_ids: Iterable[str],
+) -> WorkflowSelection:
+    """Resolve immutable distribution originals without creating user copies."""
+    try:
+        release_root, state = _load_release(
+            Path(library_root).resolve(), release_version
+        )
+        requested = tuple(
+            dict.fromkeys(str(value) for value in selected_item_ids)
+        )
+        if not requested:
+            raise WorkflowLibraryError(
+                "E2E 검사할 배포 워크플로우를 하나 이상 선택하세요."
+            )
+        items = state.get("items")
+        if not isinstance(items, list):
+            raise WorkflowLibraryError(
+                "워크플로우 팩 항목 목록이 손상되었습니다."
+            )
+        items_by_id = {
+            str(item.get("id")): item
+            for item in items
+            if isinstance(item, dict)
+        }
+        missing = [
+            item_id for item_id in requested if item_id not in items_by_id
+        ]
+        if missing:
+            raise WorkflowLibraryError(
+                "선택한 E2E 워크플로우가 배포 팩에 없습니다: "
+                + ", ".join(missing)
+            )
+
+        bindings: dict[str, str] = {}
+        model_ids: set[str] = set()
+        source_files: list[str] = []
+        for item_id in requested:
+            item = items_by_id[item_id]
+            filename = Path(str(item.get("filename", ""))).name
+            source = release_root / filename
+            if not source.is_file():
+                raise WorkflowLibraryError(
+                    f"E2E 배포 워크플로우 원본이 없습니다: {source}"
+                )
+            payload = source.read_bytes()
+            expected_hash = str(item.get("sha256", ""))
+            if _sha256_bytes(payload) != expected_hash:
+                raise WorkflowLibraryError(
+                    f"E2E 배포 워크플로우 원본 해시가 손상되었습니다: {source}"
+                )
+            raw_bindings = item.get("bindings")
+            if not isinstance(raw_bindings, list) or not raw_bindings:
+                raise WorkflowLibraryError(
+                    "E2E 배포 워크플로우 바인딩이 비어 있습니다: "
+                    f"{item_id}"
+                )
+            for binding_key in raw_bindings:
+                bindings[str(binding_key)] = str(source)
+            model_ids.update(str(value) for value in item.get("model_ids", []))
+            source_files.append(str(source))
+        return WorkflowSelection(
+            release_version=release_version,
+            selected_item_ids=requested,
+            workflow_bindings=bindings,
+            model_ids=tuple(sorted(model_ids)),
+            user_files=tuple(source_files),
+        )
+    except WorkflowLibraryError as exc:
+        print(
+            "[COMFY_INSTALL][WORKFLOW_LIBRARY] E2E 배포 원본 선택 실패: "
+            f"release={release_version!r}, selected={list(selected_item_ids)!r}, "
+            f"error={exc}"
+        )
+        raise
+    except Exception as exc:
+        print(
+            "[COMFY_INSTALL][WORKFLOW_LIBRARY] E2E 배포 원본 선택 중 "
+            "예상하지 못한 실패: "
+            f"release={release_version!r}, error={exc}"
+        )
+        traceback.print_exc()
+        raise WorkflowLibraryError(
+            f"E2E 배포 워크플로우 선택 실패: {exc}"
+        ) from exc
 
 
 def import_default_user_copies(

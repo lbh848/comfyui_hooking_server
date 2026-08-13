@@ -41,6 +41,7 @@ from .dependency_installer import (
 )
 from .downloader import DownloadCancelled, ResumableDownloader
 from .e2e import (
+    E2E_PROFILE_BY_BINDING,
     bypass_sageattention_nodes,
     ComfyE2ECancelled,
     ComfyE2EError,
@@ -81,11 +82,14 @@ from .updater import update_hooking_server_main
 from .workflow_library import (
     WorkflowSelection,
     WorkflowLibraryError,
+    distribution_e2e_catalog,
     embedded_workflow_base_dir,
     import_default_user_copies,
     import_user_copies,
     library_status,
+    latest_release_version,
     migrate_legacy_workflow_layout,
+    resolve_distribution_selection,
     selection_requirements,
     unpack_to_library,
 )
@@ -108,9 +112,6 @@ _INSTALL_PHASES = (
     ("models", "선택 워크플로우 모델 다운로드·검증"),
     ("repatch", "Comfy input 설치 리패치"),
     ("startup", "독립 ComfyUI 기동·노드 로드 확인"),
-    ("e2e_static", "선택 워크플로우 변환·구조 검증"),
-    ("e2e_runtime", "선택 레거시 워크플로우 실제 실행"),
-    ("e2e_video_runtime", "선택 MiniMax H3 워크플로우 별도 실행"),
     ("config", "config.json 백업·설치 경로 적용"),
     ("complete", "설치 결과 기록"),
 )
@@ -130,11 +131,18 @@ _UPDATE_PHASES = (
     ("runtime_isolation", "독립 Python/GPU 빠른 검증"),
     ("repatch", "Comfy input 설치 리패치"),
     ("startup", "ComfyUI 기동·노드 로드 확인"),
-    ("e2e_static", "설치된 레거시 워크플로우 변환·구조 검증"),
-    ("e2e_runtime", "설치된 레거시 워크플로우 실제 실행"),
     ("config", "검증된 내장 Comfy 경로 적용"),
     ("runtime_resume", "업데이트 전 실행 중이던 관리 Comfy 복구"),
     ("complete", "업데이트 결과 기록"),
+)
+
+_E2E_PHASES = (
+    ("selection", "읽기 전용 배포 원본 선택 확인"),
+    ("startup", "독립 ComfyUI 기동·노드 로드 확인"),
+    ("e2e_static", "선택 워크플로우 변환·구조 검증"),
+    ("e2e_runtime", "선택 레거시 워크플로우 실제 실행"),
+    ("e2e_video_runtime", "선택 MiniMax H3 워크플로우 별도 실행"),
+    ("complete", "선택 E2E 결과 기록"),
 )
 
 _MIGRATE_PHASES = (
@@ -372,6 +380,53 @@ class ComfyInstallerService:
             self.comfy_root,
             self.workflow_library_root,
         )
+
+    def e2e_workflow_catalog(self) -> dict:
+        python = uv_python_path(self.comfy_root / ".venv")
+        if not python.is_file():
+            print(
+                "[COMFY_INSTALL][SERVICE] E2E 목록 조회 실패: "
+                f"내장 Comfy Python 없음: {python}"
+            )
+            raise InstallerServiceError(
+                "내장 ComfyUI가 설치되지 않았습니다. 먼저 설치를 완료하세요."
+            )
+        try:
+            release_version = latest_release_version(
+                self.workflow_library_root
+            )
+            catalog = distribution_e2e_catalog(
+                library_root=self.workflow_library_root,
+                release_version=release_version,
+                profile_by_binding=E2E_PROFILE_BY_BINDING,
+                excluded_filenames=self.manifest.workflows[
+                    "excluded_filenames"
+                ],
+            )
+            if not catalog["items"]:
+                raise InstallerServiceError(
+                    "읽기 전용 배포 원본 중 실행 방법이 등록된 E2E "
+                    "워크플로우가 없습니다."
+                )
+            return catalog
+        except WorkflowLibraryError as exc:
+            print(f"[COMFY_INSTALL][SERVICE] E2E 원본 목록 조회 실패: {exc}")
+            traceback.print_exc()
+            raise InstallerServiceError(
+                f"E2E 배포 원본 목록을 조회하지 못했습니다: {exc}"
+            ) from exc
+        except InstallerServiceError as exc:
+            print(f"[COMFY_INSTALL][SERVICE] E2E 목록 조회 실패: {exc}")
+            raise
+        except Exception as exc:
+            print(
+                "[COMFY_INSTALL][SERVICE] E2E 목록 조회 중 예상하지 못한 "
+                f"실패: {type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            raise InstallerServiceError(
+                f"E2E 워크플로우 목록을 조회하지 못했습니다: {exc}"
+            ) from exc
 
     def _prepare_default_workflows(
         self,
@@ -1072,7 +1127,7 @@ class ComfyInstallerService:
         with self._lock:
             if self._thread is not None and self._thread.is_alive():
                 raise InstallerServiceError(
-                    "ComfyUI 설치·업데이트·이사 작업이 이미 진행 중입니다."
+                    "ComfyUI 설치·업데이트·E2E·이사 작업이 이미 진행 중입니다."
                 )
             self._cancel = Event()
             self._logs.clear()
@@ -1083,6 +1138,11 @@ class ComfyInstallerService:
                     "state": "running",
                     "operation": operation,
                     "install_mode": kwargs.get("install_mode"),
+                    "selected_item_ids": (
+                        list(kwargs.get("selected_item_ids", []))
+                        if operation == "e2e"
+                        else None
+                    ),
                     "phase": None,
                     "phase_index": 0,
                     "phase_count": len(phases),
@@ -1143,6 +1203,51 @@ class ComfyInstallerService:
             kwargs={"install_mode": install_mode},
         )
 
+    def start_e2e(
+        self,
+        *,
+        release_version: str,
+        selected_item_ids: list[str],
+    ) -> dict:
+        if not isinstance(release_version, str) or not release_version:
+            raise InstallerServiceError("E2E 배포 버전이 비어 있습니다.")
+        if not isinstance(selected_item_ids, list) or not selected_item_ids:
+            raise InstallerServiceError(
+                "E2E 검사할 배포 워크플로우를 하나 이상 선택하세요."
+            )
+        if not all(
+            isinstance(value, str) and value for value in selected_item_ids
+        ):
+            raise InstallerServiceError(
+                "E2E selected_item_ids는 비어 있지 않은 문자열 배열이어야 합니다."
+            )
+        catalog = self.e2e_workflow_catalog()
+        if catalog["release_version"] != release_version:
+            raise InstallerServiceError(
+                "현재 읽기 전용 배포 원본 버전과 E2E 요청 버전이 "
+                "다릅니다: "
+                f"available={catalog['release_version']}, "
+                f"requested={release_version}"
+            )
+        available_ids = {str(item["id"]) for item in catalog["items"]}
+        requested = list(dict.fromkeys(selected_item_ids))
+        unavailable = [value for value in requested if value not in available_ids]
+        if unavailable:
+            raise InstallerServiceError(
+                "원본 파일 또는 등록된 검사 방법이 없는 워크플로우는 "
+                "E2E 검사할 수 없습니다: "
+                + ", ".join(unavailable)
+            )
+        return self._start_operation(
+            operation="e2e",
+            phases=_E2E_PHASES,
+            target=self._run_e2e,
+            kwargs={
+                "release_version": release_version,
+                "selected_item_ids": requested,
+            },
+        )
+
     def start_migration(
         self, old_comfy_root: str | os.PathLike[str]
     ) -> dict:
@@ -1155,6 +1260,208 @@ class ComfyInstallerService:
             target=self._run_migration,
             kwargs={"old_comfy_root": old_root},
         )
+
+    def _run_e2e(
+        self,
+        *,
+        release_version: str,
+        selected_item_ids: list[str],
+    ) -> None:
+        process: ComfyProcess | None = None
+        legacy_runtime_e2e: list[dict] = []
+        video_runtime_e2e: list[dict] = []
+        started_monotonic = time.monotonic()
+        try:
+            self._set_phase("selection")
+            selection = resolve_distribution_selection(
+                library_root=self.workflow_library_root,
+                release_version=release_version,
+                selected_item_ids=selected_item_ids,
+            )
+            self._log(
+                "[E2E] 설치된 배포 원본 선택 완료: "
+                f"release={release_version}, selected="
+                f"{len(selection.selected_item_ids)}"
+            )
+            python = uv_python_path(self.comfy_root / ".venv")
+            if not python.is_file():
+                raise InstallerServiceError(
+                    f"E2E를 실행할 내장 Comfy Python이 없습니다: {python}"
+                )
+            install_mode = self._installed_install_mode()
+
+            with protected_e2e_fixtures(
+                comfy_root=self.comfy_root,
+                requirements_dir=self.runtime_backup_dir / "e2e-fixtures",
+            ) as fixtures:
+                try:
+                    self._set_phase("startup")
+                    process = ComfyProcess(
+                        comfy_root=self.comfy_root,
+                        python=python,
+                        cancel_event=self._cancel,
+                        log=self._log_comfy,
+                        extra_args=_WINDOWS_E2E_EXTRA_ARGS,
+                    )
+                    stats = process.start(timeout=900)
+                    actual_version = (
+                        stats.get("system", {}).get("comfyui_version")
+                        if isinstance(stats, dict)
+                        else None
+                    )
+                    if actual_version != self.manifest.comfy["version"]:
+                        raise ComfyE2EError(
+                            "E2E ComfyUI 버전이 매니페스트와 다릅니다: "
+                            f"expected={self.manifest.comfy['version']}, "
+                            f"actual={actual_version}"
+                        )
+                    actual_ref = git_head(self.comfy_root)
+                    expected_ref = str(self.manifest.comfy["ref"]).lower()
+                    if actual_ref != expected_ref:
+                        raise ComfyE2EError(
+                            "E2E ComfyUI Git SHA가 매니페스트와 다릅니다: "
+                            f"expected={expected_ref}, actual={actual_ref}"
+                        )
+
+                    self._set_phase("e2e_static")
+                    validations, _ = validate_all_workflows(
+                        base_url=process.base_url,
+                        workflow_bindings=selection.workflow_bindings,
+                        expected_count=len(selection.selected_item_ids),
+                        excluded_filenames=list(
+                            self.manifest.workflows["excluded_filenames"]
+                        ),
+                        cancel_event=self._cancel,
+                        log=self._log,
+                        progress=self._set_progress,
+                    )
+                    legacy_validations, video_validations = (
+                        self._partition_runtime_validations(validations)
+                    )
+                    if legacy_validations:
+                        self._set_phase("e2e_runtime")
+                        legacy_runtime_e2e = self._run_runtime_e2e(
+                            process=process,
+                            validations=legacy_validations,
+                            fixtures=fixtures,
+                            bypass_sageattention=(
+                                install_mode
+                                == INSTALL_MODE_NVIDIA_COMPATIBILITY
+                            ),
+                            process_factory=lambda: self._start_e2e_process(
+                                python=python,
+                                extra_args=_WINDOWS_E2E_EXTRA_ARGS,
+                            ),
+                        )
+                    else:
+                        self._log(
+                            "[E2E] 선택된 레거시 워크플로우가 없어 실제 "
+                            "실행을 건너뜁니다."
+                        )
+
+                    if video_validations:
+                        process.stop()
+                        process = self._start_e2e_process(
+                            python=python,
+                            extra_args=(
+                                *_WINDOWS_E2E_EXTRA_ARGS,
+                                *self._video_e2e_extra_args(),
+                            ),
+                        )
+                        self._set_phase("e2e_video_runtime")
+                        video_runtime_e2e = self._run_runtime_e2e(
+                            process=process,
+                            validations=video_validations,
+                            fixtures=fixtures,
+                            bypass_sageattention=(
+                                install_mode
+                                == INSTALL_MODE_NVIDIA_COMPATIBILITY
+                            ),
+                            process_factory=lambda: self._start_e2e_process(
+                                python=python,
+                                extra_args=(
+                                    *_WINDOWS_E2E_EXTRA_ARGS,
+                                    *self._video_e2e_extra_args(),
+                                ),
+                            ),
+                        )
+                    else:
+                        self._log(
+                            "[H3 E2E] 선택된 영상 워크플로우가 없어 실제 "
+                            "실행을 건너뜁니다."
+                        )
+                finally:
+                    if process is not None:
+                        process.stop()
+                        process = None
+
+            runtime_e2e = legacy_runtime_e2e + video_runtime_e2e
+            self._set_phase("complete")
+            result = {
+                "operation": "e2e",
+                "release_version": selection.release_version,
+                "selected_workflow_ids": list(selection.selected_item_ids),
+                "install_mode": install_mode,
+                "completed_at": _now_iso(),
+                "duration_seconds": round(
+                    time.monotonic() - started_monotonic, 3
+                ),
+                "comfy_version": actual_version,
+                "comfy_ref": actual_ref,
+                "workflow_static": [
+                    validation.public_result() for validation in validations
+                ],
+                "workflow_runtime": runtime_e2e,
+                "workflow_runtime_sections": {
+                    "legacy": legacy_runtime_e2e,
+                    "minimax_h3": video_runtime_e2e,
+                },
+            }
+            result_path = self._write_result(result, prefix="e2e-result")
+            result["result_path"] = str(result_path)
+            with self._lock:
+                self._state.update(
+                    {
+                        "state": "succeeded",
+                        "finished_at": _now_iso(),
+                        "progress": {
+                            "event": "complete",
+                            "current": len(runtime_e2e),
+                            "total": len(selection.selected_item_ids),
+                        },
+                        "error": None,
+                        "result": result,
+                    }
+                )
+            self._log(
+                "[완료] 선택한 배포 워크플로우 E2E 성공: "
+                f"{len(runtime_e2e)}개, {result_path}"
+            )
+        except ComfyE2ECancelled as exc:
+            self._log(f"[중단] {exc}", "warning")
+            with self._lock:
+                self._state.update(
+                    {
+                        "state": "cancelled",
+                        "finished_at": _now_iso(),
+                        "error": str(exc),
+                    }
+                )
+        except Exception as exc:
+            print(f"[COMFY_INSTALL][SERVICE] 독립 E2E 검사 실패: {exc}")
+            traceback.print_exc()
+            self._log(f"[실패] {exc}", "error")
+            with self._lock:
+                self._state.update(
+                    {
+                        "state": "failed",
+                        "finished_at": _now_iso(),
+                        "error": str(exc),
+                    }
+                )
+        finally:
+            if process is not None:
+                process.stop()
 
     def _run_migration(self, *, old_comfy_root: str) -> None:
         started_monotonic = time.monotonic()
@@ -1235,11 +1542,16 @@ class ComfyInstallerService:
         self._log("[중단] 안전한 중단을 요청했습니다.", "warning")
         return self.status()
 
-    def _write_result(self, result: dict) -> Path:
+    def _write_result(
+        self,
+        result: dict,
+        *,
+        prefix: str = "install-result",
+    ) -> Path:
         state_root = self.comfy_root / ".installer-state"
         state_root.mkdir(parents=True, exist_ok=True)
         stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-        result_path = state_root / f"install-result-{stamp}.json"
+        result_path = state_root / f"{prefix}-{stamp}.json"
         payload = (
             json.dumps(result, ensure_ascii=False, indent=2) + "\n"
         ).encode("utf-8")
@@ -1272,8 +1584,6 @@ class ComfyInstallerService:
         config_update: ConfigUpdateResult | None = None
         selection: WorkflowSelection | None = None
         civitai_key = ""
-        legacy_runtime_e2e: list[dict] = []
-        video_runtime_e2e: list[dict] = []
         started_monotonic = time.monotonic()
         try:
             warning = compatibility_warning(install_mode)
@@ -1428,107 +1738,41 @@ class ComfyInstallerService:
             )
 
             self._set_phase("startup")
-            with protected_e2e_fixtures(
-                comfy_root=self.comfy_root,
-                requirements_dir=(
-                    self.runtime_backup_dir / "e2e-fixtures"
-                ),
-            ) as fixtures:
-                try:
-                    process = ComfyProcess(
-                        comfy_root=self.comfy_root,
-                        python=python,
-                        cancel_event=self._cancel,
-                        log=self._log_comfy,
-                        extra_args=_WINDOWS_E2E_EXTRA_ARGS,
+            try:
+                process = ComfyProcess(
+                    comfy_root=self.comfy_root,
+                    python=python,
+                    cancel_event=self._cancel,
+                    log=self._log_comfy,
+                    extra_args=_WINDOWS_E2E_EXTRA_ARGS,
+                )
+                stats = process.start(timeout=900)
+                actual_version = (
+                    stats.get("system", {}).get("comfyui_version")
+                    if isinstance(stats, dict)
+                    else None
+                )
+                if actual_version != self.manifest.comfy["version"]:
+                    raise ComfyE2EError(
+                        "기동된 ComfyUI 버전이 고정값과 다릅니다: "
+                        f"expected={self.manifest.comfy['version']}, "
+                        f"actual={actual_version}"
                     )
-                    stats = process.start(timeout=900)
-                    actual_version = (
-                        stats.get("system", {}).get("comfyui_version")
-                        if isinstance(stats, dict)
-                        else None
+                actual_ref = git_head(self.comfy_root)
+                expected_ref = str(self.manifest.comfy["ref"]).lower()
+                if actual_ref != expected_ref:
+                    raise ComfyE2EError(
+                        "기동된 ComfyUI Git SHA가 고정값과 다릅니다: "
+                        f"expected={expected_ref}, actual={actual_ref}"
                     )
-                    if actual_version != self.manifest.comfy["version"]:
-                        raise ComfyE2EError(
-                            "기동된 ComfyUI 버전이 고정값과 다릅니다: "
-                            f"expected={self.manifest.comfy['version']}, "
-                            f"actual={actual_version}"
-                        )
-                    actual_ref = git_head(self.comfy_root)
-                    expected_ref = str(self.manifest.comfy["ref"]).lower()
-                    if actual_ref != expected_ref:
-                        raise ComfyE2EError(
-                            "기동된 ComfyUI Git SHA가 고정값과 다릅니다: "
-                            f"expected={expected_ref}, actual={actual_ref}"
-                        )
-                    self._log(
-                        "[E2E] ComfyUI 버전/SHA 확인 완료: "
-                        f"version={actual_version}, ref={actual_ref}"
-                    )
-
-                    self._set_phase("e2e_static")
-                    validations, _ = validate_all_workflows(
-                        base_url=process.base_url,
-                        workflow_bindings=selection.workflow_bindings,
-                        expected_count=len(selection.selected_item_ids),
-                        excluded_filenames=list(
-                            self.manifest.workflows["excluded_filenames"]
-                        ),
-                        cancel_event=self._cancel,
-                        log=self._log,
-                        progress=self._set_progress,
-                    )
-
-                    legacy_validations, video_validations = (
-                        self._partition_runtime_validations(validations)
-                    )
-
-                    if legacy_validations:
-                        self._set_phase("e2e_runtime")
-                        legacy_runtime_e2e = self._run_runtime_e2e(
-                            process=process,
-                            validations=legacy_validations,
-                            fixtures=fixtures,
-                            bypass_sageattention=(
-                                install_mode
-                                == INSTALL_MODE_NVIDIA_COMPATIBILITY
-                            ),
-                        )
-                    else:
-                        self._log(
-                            "[E2E] 선택된 레거시 워크플로우가 없어 "
-                            "레거시 실제 실행을 건너뜁니다."
-                        )
-
-                    if video_validations:
-                        process.stop()
-                        process = self._start_e2e_process(
-                            python=python,
-                            extra_args=(
-                                *_WINDOWS_E2E_EXTRA_ARGS,
-                                *self._video_e2e_extra_args(),
-                            ),
-                        )
-                        self._set_phase("e2e_video_runtime")
-                        video_runtime_e2e = self._run_runtime_e2e(
-                            process=process,
-                            validations=video_validations,
-                            fixtures=fixtures,
-                            bypass_sageattention=(
-                                install_mode
-                                == INSTALL_MODE_NVIDIA_COMPATIBILITY
-                            ),
-                        )
-                    else:
-                        self._log(
-                            "[H3 E2E] 선택된 영상 워크플로우가 없어 "
-                            "별도 실제 실행을 건너뜁니다."
-                        )
-                    runtime_e2e = legacy_runtime_e2e + video_runtime_e2e
-                finally:
-                    if process is not None:
-                        process.stop()
-                        process = None
+                self._log(
+                    "[기동 검사] ComfyUI 버전/SHA 확인 완료: "
+                    f"version={actual_version}, ref={actual_ref}"
+                )
+            finally:
+                if process is not None:
+                    process.stop()
+                    process = None
 
             self._set_phase("config")
             default_workflows = self._prepare_default_workflows(
@@ -1581,15 +1825,9 @@ class ComfyInstallerService:
                 "selected_workflow_ids": list(selection.selected_item_ids),
                 "selected_model_ids": list(selection.model_ids),
                 "user_workflow_files": list(selection.user_files),
-                "workflow_static": [
-                    validation.public_result()
-                    for validation in validations
-                ],
-                "workflow_runtime": runtime_e2e,
-                "workflow_runtime_sections": {
-                    "legacy": legacy_runtime_e2e,
-                    "minimax_h3": video_runtime_e2e,
-                },
+                "workflow_e2e_deferred": True,
+                "workflow_static": None,
+                "workflow_runtime": None,
                 "config": {
                     "backup_path": str(config_update.backup_path),
                     "before_sha256": config_update.before_sha256,
@@ -1616,8 +1854,8 @@ class ComfyInstallerService:
                     }
                 )
             self._log(
-                "[완료] ComfyUI 설치 및 선택 워크플로우 E2E 성공: "
-                f"{len(selection.selected_item_ids)}개, "
+                "[완료] ComfyUI 설치 성공. 워크플로우 E2E는 별도 "
+                "검사 버튼에서 선택 실행할 수 있습니다: "
                 f"{result_path}"
             )
             if warning:
@@ -2279,7 +2517,6 @@ class ComfyInstallerService:
             workflow_bindings = {
                 key: str(path) for key, path in workflow_paths.items()
             }
-            unique_workflow_count = len(set(workflow_paths.values()))
 
             self._set_phase("runtime_pause")
             if self.pause_managed_comfy is not None:
@@ -2423,72 +2660,41 @@ class ComfyInstallerService:
             )
 
             self._set_phase("startup")
-            with protected_e2e_fixtures(
-                comfy_root=self.comfy_root,
-                requirements_dir=self.runtime_backup_dir / "e2e-fixtures",
-            ) as fixtures:
-                try:
-                    process = ComfyProcess(
-                        comfy_root=self.comfy_root,
-                        python=python,
-                        cancel_event=self._cancel,
-                        log=self._log_comfy,
-                        extra_args=_WINDOWS_E2E_EXTRA_ARGS,
+            try:
+                process = ComfyProcess(
+                    comfy_root=self.comfy_root,
+                    python=python,
+                    cancel_event=self._cancel,
+                    log=self._log_comfy,
+                    extra_args=_WINDOWS_E2E_EXTRA_ARGS,
+                )
+                stats = process.start(timeout=900)
+                actual_version = (
+                    stats.get("system", {}).get("comfyui_version")
+                    if isinstance(stats, dict)
+                    else None
+                )
+                actual_ref = git_head(self.comfy_root)
+                expected_ref = str(new_manifest.comfy["ref"]).lower()
+                if actual_version != new_manifest.comfy["version"]:
+                    raise ComfyE2EError(
+                        "업데이트 후 ComfyUI 버전이 매니페스트와 다릅니다: "
+                        f"expected={new_manifest.comfy['version']}, "
+                        f"actual={actual_version}"
                     )
-                    stats = process.start(timeout=900)
-                    actual_version = (
-                        stats.get("system", {}).get("comfyui_version")
-                        if isinstance(stats, dict)
-                        else None
+                if actual_ref != expected_ref:
+                    raise ComfyE2EError(
+                        "업데이트 후 ComfyUI Git SHA가 매니페스트와 다릅니다: "
+                        f"expected={expected_ref}, actual={actual_ref}"
                     )
-                    actual_ref = git_head(self.comfy_root)
-                    expected_ref = str(new_manifest.comfy["ref"]).lower()
-                    if actual_version != new_manifest.comfy["version"]:
-                        raise ComfyE2EError(
-                            "업데이트 후 ComfyUI 버전이 매니페스트와 다릅니다: "
-                            f"expected={new_manifest.comfy['version']}, "
-                            f"actual={actual_version}"
-                        )
-                    if actual_ref != expected_ref:
-                        raise ComfyE2EError(
-                            "업데이트 후 ComfyUI Git SHA가 매니페스트와 다릅니다: "
-                            f"expected={expected_ref}, actual={actual_ref}"
-                        )
-                    self._log(
-                        "[E2E] 업데이트 ComfyUI 버전/SHA 확인 완료: "
-                        f"version={actual_version}, ref={actual_ref}"
-                    )
-
-                    self._set_phase("e2e_static")
-                    validations, _ = validate_all_workflows(
-                        base_url=process.base_url,
-                        workflow_bindings=workflow_bindings,
-                        expected_count=unique_workflow_count,
-                        excluded_filenames=list(
-                            new_manifest.workflows["excluded_filenames"]
-                        ),
-                        cancel_event=self._cancel,
-                        log=self._log,
-                        progress=self._set_progress,
-                    )
-
-                    self._set_phase("e2e_runtime")
-                    runtime_e2e = self._run_runtime_e2e(
-                        process=process,
-                        validations=validations,
-                        fixtures=fixtures,
-                        bypass_sageattention=(
-                            mode == INSTALL_MODE_NVIDIA_COMPATIBILITY
-                        ),
-                        process_factory=lambda: self._start_e2e_process(
-                            python=python,
-                            extra_args=_WINDOWS_E2E_EXTRA_ARGS,
-                        ),
-                    )
-                finally:
-                    if process is not None:
-                        process.stop()
-                        process = None
+                self._log(
+                    "[기동 검사] 업데이트 ComfyUI 버전/SHA 확인 완료: "
+                    f"version={actual_version}, ref={actual_ref}"
+                )
+            finally:
+                if process is not None:
+                    process.stop()
+                    process = None
 
             self._set_phase("config")
             config_update = apply_installed_config(
@@ -2568,14 +2774,9 @@ class ComfyInstallerService:
                 "comfy_version": actual_version,
                 "comfy_ref": actual_ref,
                 "repatch": repatch,
-                "workflow_static": [
-                    validation.public_result() for validation in validations
-                ],
-                "workflow_runtime": runtime_e2e,
-                "workflow_runtime_sections": {
-                    "legacy": runtime_e2e,
-                    "minimax_h3": [],
-                },
+                "workflow_e2e_deferred": True,
+                "workflow_static": None,
+                "workflow_runtime": None,
                 "runtime_receipt": runtime_receipt,
                 "managed_comfy": {
                     "pause": runtime_pause_token,
@@ -2600,16 +2801,16 @@ class ComfyInstallerService:
                         "finished_at": _now_iso(),
                         "progress": {
                             "event": "complete",
-                            "current": len(runtime_e2e),
-                            "total": len(validations),
+                            "current": 1,
+                            "total": 1,
                         },
                         "error": None,
                         "result": result,
                     }
                 )
             self._log(
-                "[완료] Comfy 호환성 업데이트와 전체 레거시 E2E 성공: "
-                f"{len(runtime_e2e)}개, {result_path}"
+                "[완료] Comfy 업데이트 성공. 워크플로우 E2E는 별도 "
+                f"검사 버튼에서 선택 실행할 수 있습니다: {result_path}"
             )
         except (ComfyE2ECancelled, DownloadCancelled) as exc:
             self._log(f"[중단] {exc}", "warning")
