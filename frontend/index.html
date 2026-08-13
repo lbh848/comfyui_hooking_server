@@ -21242,7 +21242,7 @@
                                 <h3 class="comfy-installer-title">ComfyUI 업데이트 및 설치</h3>
                                 <p class="comfy-installer-copy">
                                     <strong>새로 설치</strong>는 독립 Python 환경과 선택한 워크플로우·모델을 준비하고, input 리패치 후 전체 실행 검증을 진행합니다.
-                                    <strong>호환성 업데이트</strong>는 먼저 새 업데이터를 적용하고, 재시작 후 변경된 Comfy 구성요소와 설치된 워크플로를 검증합니다.
+                                    <strong>업데이트</strong>는 먼저 새 업데이터를 적용하고, 재시작 후 변경된 Comfy 구성요소와 설치된 워크플로를 검증합니다.
                                 </p>
                             </div>
                             <div class="comfy-installer-hero-badges" aria-label="설치 방식">
@@ -21344,7 +21344,7 @@
                             <div class="comfy-installer-actions">
                                 <button type="button" class="comfy-installer-btn primary" id="comfy-installer-start-btn" onclick="comfyInstallerStart('standard')">새로 설치</button>
                                 <button type="button" class="comfy-installer-btn" id="comfy-installer-compat-start-btn" onclick="comfyInstallerStart('nvidia_compatibility')">호환 설치</button>
-                                <button type="button" class="comfy-installer-btn" id="comfy-installer-update-btn" onclick="comfyInstallerStartUpdate()">호환성 업데이트</button>
+                                <button type="button" class="comfy-installer-btn" id="comfy-installer-update-btn" onclick="comfyInstallerStartUpdate()">업데이트</button>
                                 <button type="button" class="comfy-installer-btn danger" id="comfy-installer-cancel-btn" onclick="comfyInstallerCancel()" disabled>안전하게 중단</button>
                             </div>
                             <p class="comfy-installer-note" style="margin-top:9px;">
@@ -27781,7 +27781,7 @@
                 if (data.result?.restart_required) {
                     void comfyInstallerShutdownAfterUpdate();
                 } else if (data.result?.update_kind === 'runtime_compatibility') {
-                    showToast(`Comfy 호환성 업데이트 완료 · E2E ${Number((data.result.workflow_runtime || []).length)}개 통과`, 'success');
+                    showToast(`Comfy 업데이트 완료 · E2E ${Number((data.result.workflow_runtime || []).length)}개 통과`, 'success');
                 } else {
                     showToast('Comfy 런타임이 이미 최신 상태입니다', 'success');
                 }
@@ -27884,7 +27884,7 @@
 
         async function comfyInstallerStartUpdate() {
             if (!window.confirm(
-                '호환성 업데이트를 시작할까요?\n\n' +
+                '업데이트를 시작할까요?\n\n' +
                 '후킹 서버 코드가 바뀌면 먼저 재시작한 뒤 업데이트를 한 번 더 실행합니다.\n' +
                 'Comfy/Python/커스텀 노드가 바뀌면 input 리패치와 설치된 레거시 워크플로 전체 E2E를 수행하며, 실패 시 이전 환경을 자동 복원합니다.'
             )) return;
@@ -27899,7 +27899,7 @@
                 const started = await fetchJSON('/api/comfy-installer/update', { method: 'POST' });
                 accepted = true;
                 comfyInstallerRenderStatus(started);
-                showToast('호환성 업데이트를 시작했습니다', 'success');
+                showToast('업데이트를 시작했습니다', 'success');
                 clearTimeout(comfyInstallerPollTimer);
                 comfyInstallerPollTimer = setTimeout(() => comfyInstallerRefreshStatus(false), 500);
             } catch (error) {

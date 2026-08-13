@@ -410,7 +410,7 @@ def register_comfy_installer_routes(
         status = service.status()
         if status.get("state") != "succeeded" or status.get("operation") != "update":
             return _json_error(
-                "재시작이 필요한 호환성 업데이트 성공 후에만 종료할 수 있습니다.",
+                "재시작이 필요한 업데이트 성공 후에만 종료할 수 있습니다.",
                 status=409,
             )
         result = status.get("result")
