@@ -435,14 +435,38 @@ def parse_auto_visual_direction(
     for start in sorted(set(structured_starts)):
         if start > 0:
             parse_candidates.append(text[start:])
+    decoder = json.JSONDecoder()
     for candidate in parse_candidates:
-        try:
-            payload, _end = json.JSONDecoder().raw_decode(candidate)
-            if candidate != text or _end < len(candidate.rstrip()):
-                repairs.append("surrounding_text_removed")
-            break
-        except (json.JSONDecodeError, TypeError):
+        decoded_values: list[object] = []
+        cursor = 0
+        candidate_length = len(candidate)
+        while cursor < candidate_length:
+            whitespace = re.match(r"\s*", candidate[cursor:])
+            cursor += len(whitespace.group(0)) if whitespace else 0
+            if cursor >= candidate_length:
+                break
+            try:
+                decoded_value, cursor = decoder.raw_decode(candidate, cursor)
+                decoded_values.append(decoded_value)
+            except (json.JSONDecodeError, TypeError):
+                break
+        if not decoded_values:
             continue
+        if (
+            len(decoded_values) > 1
+            and all(isinstance(value, (list, tuple)) for value in decoded_values)
+        ):
+            payload = [
+                item
+                for decoded_value in decoded_values
+                for item in decoded_value
+            ]
+            repairs.append("adjacent_json_arrays_joined")
+        else:
+            payload = decoded_values[0]
+        if candidate != text or cursor < len(candidate.rstrip()):
+            repairs.append("surrounding_text_removed")
+        break
 
     if payload is None:
         for candidate in parse_candidates:

@@ -193,6 +193,27 @@ def test_auto_visual_direction_prefers_two_string_json_array() -> None:
     assert validate_auto_visual_direction(raw) == (True, "")
 
 
+def test_auto_visual_direction_joins_adjacent_single_item_arrays(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    context = (
+        "Picture 1: A shy young woman holds a red-bound book in a sunlit library."
+    )
+    direction = (
+        "The young woman glances down at the book, steadies her breath, then "
+        "looks up and delivers her line with a determined nod."
+    )
+    raw = f"{json.dumps([context])}\n\n{json.dumps([direction])}"
+
+    visual_context, parsed_direction = parse_auto_visual_direction(raw)
+
+    assert visual_context == f"visual_context:\n{context}"
+    assert parsed_direction == direction
+    assert "imagine and describe one coherent" not in parsed_direction
+    assert validate_auto_visual_direction(raw) == (True, "")
+    assert "adjacent_json_arrays_joined" in capsys.readouterr().out
+
+
 def test_auto_visual_direction_repairs_usable_response_locally() -> None:
     context = "Picture 1: A character stands beside a window."
     object_response = json.dumps(
