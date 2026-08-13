@@ -185,6 +185,7 @@ def test_video_modes_share_one_comfy_allocation_but_keep_detailed_queue_labels()
         assert manager._item_execution_area(_item(item_type))[0] == "gpu"
 
     assert manager._item_execution_area(_item("video_prompt_build"))[0] == "llm"
+    assert manager._item_execution_area(_item("video_instruction_draft"))[0] == "llm"
     assert manager._item_execution_area(_item("video_postprocess")) == (
         "video_postprocess",
         "realesrgan-ncnn-vulkan",
@@ -278,6 +279,33 @@ async def test_video_llm_stage_enqueues_matching_gpu_type_only_after_success():
     assert calls[1][0:2] == ("enqueue", "video_first_last")
     assert calls[1][3]["h3_prompt"] == "synthetic H3 prompt"
     assert result["render_item_id"] == "video_first_last-id"
+
+
+@pytest.mark.asyncio
+async def test_video_instruction_draft_returns_text_without_enqueuing_gpu_work():
+    manager = QueueManager()
+    calls = []
+
+    class FakeVideoMode:
+        async def build_instruction_draft(self, params, queue_item_id=""):
+            calls.append(("draft", params["mode"], queue_item_id))
+            return {
+                "success": True,
+                "draft": "인물이 천천히 미소 짓는다.",
+                "language": "ko",
+            }
+
+    async def reject_add_item(*_args, **_kwargs):
+        raise AssertionError("draft handler must not enqueue GPU work")
+
+    manager.video_mode = FakeVideoMode()
+    manager.add_item = reject_add_item
+    item = _item("video_instruction_draft", {"mode": "i2v"})
+
+    result = await manager._handle_video_instruction_draft(item)
+
+    assert calls == [("draft", "i2v", item.id)]
+    assert result["draft"] == "인물이 천천히 미소 짓는다."
 
 
 def test_pending_hybrid_item_moves_to_claimed_queue_area():

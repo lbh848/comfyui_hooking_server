@@ -16,6 +16,19 @@ def test_backup_card_has_one_video_button_immediately_before_delete() -> None:
     assert "openVideoWorkspace(" in FRONTEND[video_button:delete_button]
 
 
+def test_animated_cards_expose_existing_video_postprocess_action() -> None:
+    backup_button = FRONTEND.index('class="video-reprocess-btn"')
+    delete_button = FRONTEND.index('class="delete-backup-btn"', backup_button)
+    backup_section = FRONTEND[backup_button:delete_button]
+    assert "영상 후처리" in backup_section
+    assert "openBackupVideoReprocess(" in backup_section
+    assert "b.is_animated" in backup_section
+
+    assert FRONTEND.count('class="asset-video-postprocess-btn"') == 2
+    assert FRONTEND.count("openAssetVideoReprocess({") >= 2
+    assert "img.is_animated" in FRONTEND
+
+
 def test_backup_card_disables_regen_and_edit_for_animated_backups() -> None:
     """영상(is_animated) 백업 카드의 재생성/수정 버튼은 회색 disabled로 막힌다.
     에셋 카드의 EDIT 툴 차단과 같은 패턴(b.is_animated 우선 평가)."""
@@ -54,6 +67,20 @@ def test_video_page_uses_modal_entry_with_two_internal_modes() -> None:
     assert 'id="video-frame-last"' in FRONTEND
     assert 'id="video-generation-last-preview"' in FRONTEND
     assert "onVideoLastFrameChange()" in FRONTEND
+
+
+def test_existing_video_postprocess_modal_collects_requested_controls() -> None:
+    assert 'id="video-reprocess-modal"' in FRONTEND
+    assert 'id="video-reprocess-target-size"' in FRONTEND
+    assert 'id="video-reprocess-fps"' in FRONTEND
+    assert 'id="video-reprocess-upscale-enabled"' in FRONTEND
+    assert 'id="video-reprocess-upscale-model"' in FRONTEND
+    assert 'id="video-reprocess-upscale-scale"' in FRONTEND
+    assert FRONTEND.count('name="video-reprocess-output-format"') == 2
+    assert "/api/video/reprocess/enqueue" in FRONTEND
+    assert "target_size_mb: targetSizeMb" in FRONTEND
+    assert "fps," in FRONTEND
+    assert "원본을 보존하고 새 결과 생성" in FRONTEND
 
 
 def test_video_prompt_diagnostics_are_rendered_for_backups_and_assets() -> None:
@@ -149,21 +176,42 @@ def test_video_modal_opens_before_async_loading_and_keeps_session_upscaler() -> 
     assert "videoPostprocessSynced = true;" in FRONTEND
 
 
-def test_video_page_can_delegate_direction_to_ai() -> None:
+def test_video_page_generates_editable_direction_draft_in_separate_llm_queue() -> None:
     assert 'id="video-ai-settings-title" class="video-panel-title">AI 연출 문맥</span>' in FRONTEND
-    assert 'id="video-generation-auto-instruction"' in FRONTEND
-    assert 'aria-pressed="false"' in FRONTEND
-    assert "AI에게 맡기기" in FRONTEND
-    assert "toggleVideoAutoInstruction()" in FRONTEND
-    assert "isVideoAutoInstructionEnabled()" in FRONTEND
-    assert "if (!autoInstruction && !instruction)" in FRONTEND
-    assert "auto_instruction: autoInstruction" in FRONTEND
-    assert "instruction: autoInstruction ? '' : instruction" in FRONTEND
-    assert 'id="video-generation-include-dialogue-context" type="checkbox" checked disabled' in FRONTEND
-    assert "include_dialogue_context: includeDialogueContext" in FRONTEND
-    assert "const includeDialogueContext = autoInstruction && isVideoDialogueContextEnabled()" in FRONTEND
+    assert 'class="video-ai-subgroup"' in FRONTEND
+    assert 'id="video-ai-draft-title" class="video-panel-title">AI에게 맡기기</span>' in FRONTEND
+    assert 'id="video-generation-draft-button"' in FRONTEND
+    assert "requestVideoInstructionDraft()" in FRONTEND
+    assert "/api/video/instruction-draft" in FRONTEND
+    assert "LLM 큐 대기 및 참조 이미지 분석 중" in FRONTEND
+    assert "instructionInput.value = String(data.draft).trim()" in FRONTEND
+    assert "자동 제출되지 않습니다" in FRONTEND
+    assert "if (!instruction)" in FRONTEND
+    assert "instruction," in FRONTEND
+    assert "auto_instruction: autoInstruction" not in FRONTEND
+    assert 'id="video-generation-instruction-language"' in FRONTEND
+    assert '<option value="ko" selected>한국어</option>' in FRONTEND
+    assert '<option value="en">English</option>' in FRONTEND
+    assert 'id="video-generation-include-dialogue-context" type="checkbox" checked' in FRONTEND
+    assert "include_dialogue_context: isVideoDialogueContextEnabled()" in FRONTEND
     assert "대사·감정 정보 전달" in FRONTEND
-    assert "대사·감정 정보는 전달하지 않습니다" in FRONTEND
+    assert 'id="video-generation-allow-camera-motion" type="checkbox" checked' in FRONTEND
+    assert "allow_camera_motion: isVideoCameraMotionAllowed()" in FRONTEND
+    assert 'id="video-generation-allow-background-change" type="checkbox"' in FRONTEND
+    assert "allow_background_change: isVideoBackgroundChangeAllowed()" in FRONTEND
+
+
+def test_secondary_animation_is_inside_ai_direction_context_panel() -> None:
+    modal = FRONTEND.split('id="video-modal"', 1)[1].split(
+        '<!-- 기존 animated AVIF/WebP 재후처리 모달 -->', 1
+    )[0]
+    ai_panel = modal.split('id="video-ai-settings-title"', 1)[1].split(
+        '<div class="video-options-layout">', 1
+    )[0]
+
+    assert 'id="video-generation-secondary-motion"' in ai_panel
+    assert ai_panel.count('id="video-generation-secondary-motion"') == 1
+    assert "세컨더리 애니메이션" in ai_panel
 
 
 def test_video_modal_orders_direction_and_pipeline_before_postprocess() -> None:

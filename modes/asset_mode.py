@@ -2155,7 +2155,7 @@ class AssetMode:
                 )
             prompt_record = {
                 "positive": str((metadata or {}).get("positive") or ""),
-                "negative": "",
+                "negative": str((metadata or {}).get("negative") or ""),
                 "character": normalized["character"],
                 "appearance": "",
                 "outfit": normalized["outfit"],
@@ -2175,6 +2175,19 @@ class AssetMode:
                 "video_upscale_model": str((metadata or {}).get("upscale_model") or ""),
                 "video_output_format_requested": str(
                     (metadata or {}).get("output_format") or normalized_extension.lstrip(".")
+                ),
+                "video_target_size_bytes": int(
+                    (metadata or {}).get("target_size_bytes") or 0
+                ),
+                "video_output_size_bytes": int(
+                    (metadata or {}).get("output_size_bytes") or 0
+                ),
+                "video_encode_quality": int((metadata or {}).get("quality") or 0),
+                "video_reprocess_source": (
+                    normalized["filename"]
+                    if str((metadata or {}).get("job_kind") or "")
+                    == "existing_animation"
+                    else ""
                 ),
                 "video_instruction": str((metadata or {}).get("instruction") or ""),
                 "video_instruction_source": instruction_source,
@@ -2341,6 +2354,11 @@ class AssetMode:
                 "video_visual_context_source": prompt_data.get(
                     "video_visual_context_source", ""
                 ),
+                "video_fps": prompt_data.get("video_fps") or 0,
+                "video_duration_seconds": prompt_data.get("video_duration_seconds") or 0,
+                "video_width": prompt_data.get("video_width") or 0,
+                "video_height": prompt_data.get("video_height") or 0,
+                "file_size_bytes": os.path.getsize(fpath),
                 "local_path": fpath,
             })
         return {"images": images, "representative": representative}

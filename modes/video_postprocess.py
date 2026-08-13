@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import bisect
 import json
 import os
 import shutil
@@ -34,6 +35,10 @@ VIDEO_UPSCALE_MODELS = frozenset(
     {"realesr-animevideov3", "anime4k-fast-m", "lanczos"}
 )
 VIDEO_OUTPUT_FORMATS = frozenset({"avif", "webp"})
+VIDEO_REPROCESS_MIN_FPS = 1
+VIDEO_REPROCESS_MAX_FPS = 60
+VIDEO_REPROCESS_MIN_TARGET_MB = 0.1
+VIDEO_REPROCESS_MAX_TARGET_MB = 2048.0
 
 DEFAULT_VIDEO_POSTPROCESS_CONFIG = {
     "enabled": True,
@@ -43,6 +48,54 @@ DEFAULT_VIDEO_POSTPROCESS_CONFIG = {
     "tile_size": 0,
     "worker_count": 1,
 }
+
+
+def normalize_video_reprocess_fps(value: object) -> int:
+    """Validate the output FPS used when reprocessing an existing animation."""
+
+    try:
+        if isinstance(value, bool):
+            raise TypeError("bool은 FPS로 허용되지 않음")
+        fps = int(value)
+        if isinstance(value, float) and not value.is_integer():
+            raise ValueError("정수가 아닌 FPS는 허용되지 않음")
+        if isinstance(value, str) and value.strip() != str(fps):
+            raise ValueError("정수 문자열 형식이 아님")
+        if not VIDEO_REPROCESS_MIN_FPS <= fps <= VIDEO_REPROCESS_MAX_FPS:
+            raise ValueError("허용 범위를 벗어남")
+        return fps
+    except (TypeError, ValueError, OverflowError) as exc:
+        print(
+            "[VIDEO:REPROCESS] FPS 검증 실패: "
+            f"value={value!r}, error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        raise ValueError(
+            f"영상 FPS는 {VIDEO_REPROCESS_MIN_FPS}부터 "
+            f"{VIDEO_REPROCESS_MAX_FPS}까지의 정수여야 합니다"
+        ) from exc
+
+
+def normalize_video_reprocess_target_bytes(value: object) -> int:
+    """Validate an MB target and return its byte ceiling."""
+
+    try:
+        if isinstance(value, bool):
+            raise TypeError("bool은 목표 용량으로 허용되지 않음")
+        target_mb = float(value)
+        if not VIDEO_REPROCESS_MIN_TARGET_MB <= target_mb <= VIDEO_REPROCESS_MAX_TARGET_MB:
+            raise ValueError("허용 범위를 벗어남")
+        return max(1, int(target_mb * 1024 * 1024))
+    except (TypeError, ValueError, OverflowError) as exc:
+        print(
+            "[VIDEO:REPROCESS] 목표 용량 검증 실패: "
+            f"value={value!r}, error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        raise ValueError(
+            f"목표 용량은 {VIDEO_REPROCESS_MIN_TARGET_MB:g}MB부터 "
+            f"{VIDEO_REPROCESS_MAX_TARGET_MB:g}MB까지 설정해야 합니다"
+        ) from exc
 
 
 class _WindowsVideoSubprocessLoop:
@@ -529,6 +582,165 @@ def _avif_crf(quality: int) -> int:
     return max(0, min(63, round((100 - quality) * 0.8)))
 
 
+def inspect_animation(
+    path: str | os.PathLike[str],
+    *,
+    fallback_duration: float = 0.0,
+) -> dict:
+    """Return validated animation timing without retaining decoded frames."""
+
+    source_path = Path(path).resolve()
+    if not source_path.is_file():
+        print(f"[VIDEO:REPROCESS] 원본 애니메이션 없음: path={str(source_path)!r}")
+        raise FileNotFoundError("후처리할 영상 파일을 찾지 못했습니다")
+    try:
+        fallback_seconds = float(fallback_duration or 0.0)
+        if fallback_seconds < 0:
+            raise ValueError("fallback_duration은 0 이상이어야 함")
+    except (TypeError, ValueError, OverflowError) as exc:
+        print(
+            "[VIDEO:REPROCESS] 원본 재생 시간 형식 오류: "
+            f"value={fallback_duration!r}, path={str(source_path)!r}, error={exc}"
+        )
+        traceback.print_exc()
+        raise ValueError("원본 영상 재생 시간이 올바르지 않습니다") from exc
+
+    try:
+        with Image.open(source_path) as image:
+            frame_count = int(getattr(image, "n_frames", 1))
+            if not bool(getattr(image, "is_animated", False)) or frame_count < 2:
+                print(
+                    "[VIDEO:REPROCESS] animated 파일 아님: "
+                    f"path={str(source_path)!r}, frames={frame_count}"
+                )
+                raise ValueError("영상 후처리는 animated AVIF/WebP 파일에만 사용할 수 있습니다")
+            width, height = image.size
+            raw_durations: list[float | None] = []
+            for index in range(frame_count):
+                image.seek(index)
+                # Pillow WebP populates per-frame timestamp/duration only after load().
+                image.load()
+                raw_value = image.info.get("duration")
+                try:
+                    duration_ms = float(raw_value)
+                    if duration_ms <= 0:
+                        raise ValueError("프레임 duration은 0보다 커야 함")
+                    raw_durations.append(duration_ms)
+                except (TypeError, ValueError, OverflowError):
+                    raw_durations.append(None)
+    except ValueError:
+        raise
+    except Exception as exc:
+        print(
+            "[VIDEO:REPROCESS] 원본 애니메이션 검사 실패: "
+            f"path={str(source_path)!r}, error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        raise RuntimeError("후처리할 영상 파일을 읽지 못했습니다") from exc
+
+    known = [value for value in raw_durations if value is not None]
+    fallback_frame_ms = (
+        fallback_seconds * 1000.0 / frame_count
+        if fallback_seconds > 0
+        else (sum(known) / len(known) if known else 1000.0 / 24.0)
+    )
+    durations_ms = [
+        float(value if value is not None else fallback_frame_ms)
+        for value in raw_durations
+    ]
+    measured_seconds = sum(durations_ms) / 1000.0
+    # 일부 디코더는 duration 메타데이터를 누락하거나 비정상적으로 짧게 보고한다.
+    # 생성 당시 메타데이터가 있으면 그 길이를 진실 소스로 삼아 프레임 간격만 균등 보정한다.
+    if fallback_seconds > 0 and (
+        measured_seconds < 0.1
+        or abs(measured_seconds - fallback_seconds) > max(0.25, fallback_seconds * 0.1)
+    ):
+        durations_ms = [fallback_seconds * 1000.0 / frame_count] * frame_count
+        measured_seconds = fallback_seconds
+        print(
+            "[VIDEO:REPROCESS] 원본 duration 메타데이터 보정: "
+            f"path={str(source_path)!r}, fallback={fallback_seconds:.3f}s, "
+            f"frames={frame_count}"
+        )
+
+    result = {
+        "path": str(source_path),
+        "width": int(width),
+        "height": int(height),
+        "frame_count": frame_count,
+        "duration": measured_seconds,
+        "source_fps": frame_count / measured_seconds,
+        "durations_ms": durations_ms,
+        "size_bytes": source_path.stat().st_size,
+    }
+    print(
+        "[VIDEO:REPROCESS] 원본 애니메이션 확인: "
+        f"path={str(source_path)!r}, size={width}x{height}, frames={frame_count}, "
+        f"duration={measured_seconds:.3f}s, bytes={result['size_bytes']:,}"
+    )
+    return result
+
+
+def _extract_animation_frames(
+    source_path: Path,
+    output_dir: Path,
+    *,
+    fps: int,
+    fallback_duration: float,
+) -> dict:
+    """Resample an animated AVIF/WebP onto a constant-FPS PNG sequence."""
+
+    timing = inspect_animation(source_path, fallback_duration=fallback_duration)
+    duration = float(timing["duration"])
+    target_count = max(2, round(duration * fps))
+    cumulative_ms: list[float] = []
+    elapsed_ms = 0.0
+    for frame_duration in timing["durations_ms"]:
+        elapsed_ms += float(frame_duration)
+        cumulative_ms.append(elapsed_ms)
+    total_ms = cumulative_ms[-1]
+    source_indices = [
+        min(
+            int(timing["frame_count"]) - 1,
+            bisect.bisect_right(cumulative_ms, (index + 0.5) * total_ms / target_count),
+        )
+        for index in range(target_count)
+    ]
+
+    try:
+        with Image.open(source_path) as image:
+            loaded_index = -1
+            loaded_frame: Image.Image | None = None
+            for output_index, source_index in enumerate(source_indices):
+                if source_index != loaded_index:
+                    image.seek(source_index)
+                    loaded_frame = image.convert("RGBA")
+                    loaded_index = source_index
+                if loaded_frame is None:
+                    print(
+                        "[VIDEO:REPROCESS] 프레임 추출 내부 상태 오류: "
+                        f"source={str(source_path)!r}, output_index={output_index}"
+                    )
+                    raise RuntimeError("영상 프레임을 추출하지 못했습니다")
+                loaded_frame.save(
+                    output_dir / f"frame_{output_index:08d}.png",
+                    format="PNG",
+                )
+    except Exception as exc:
+        print(
+            "[VIDEO:REPROCESS] animated 프레임 추출 실패: "
+            f"path={str(source_path)!r}, fps={fps}, error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        raise
+    print(
+        "[VIDEO:REPROCESS] FPS 재샘플링 완료: "
+        f"source_frames={timing['frame_count']}, output_frames={target_count}, "
+        f"fps={fps}, duration={duration:.3f}s"
+    )
+    return {**timing, "output_frame_count": target_count}
+
+
 def _verify_animation(path: Path, expected_frames: int) -> None:
     try:
         with Image.open(path) as image:
@@ -739,6 +951,117 @@ async def _encode_pair(
     raise RuntimeError("애니메이션 저장 실패: " + " / ".join(errors))
 
 
+async def _encode_pair_to_target_size(
+    frames_dir: Path,
+    job_dir: Path,
+    *,
+    fps: int,
+    frame_count: int,
+    target_bytes: int,
+    progress_callback: ProgressCallback | None,
+    output_format: str,
+) -> tuple[Path, Path, str, int, int]:
+    """Find the highest encoder quality whose main output fits the byte ceiling."""
+
+    if target_bytes <= 0:
+        print(f"[VIDEO:REPROCESS] 목표 바이트 오류: value={target_bytes!r}")
+        raise ValueError("영상 목표 용량이 올바르지 않습니다")
+
+    attempts = 0
+
+    async def encode(quality: int) -> tuple[Path, Path, str, int]:
+        nonlocal attempts
+        attempts += 1
+        await _notify(
+            progress_callback,
+            phase="video_target_size_search",
+            percentage=min(96, 78 + attempts * 2),
+            quality=quality,
+            attempt=attempts,
+            target_bytes=target_bytes,
+        )
+        main_path, raw_path, extension = await _encode_pair(
+            frames_dir,
+            job_dir,
+            fps=fps,
+            frame_count=frame_count,
+            quality=quality,
+            overlay_path=None,
+            canvas_height=1,
+            progress_callback=None,
+            output_format=output_format,
+        )
+        size_bytes = main_path.stat().st_size
+        print(
+            "[VIDEO:REPROCESS] 목표 용량 탐색: "
+            f"attempt={attempts}, quality={quality}, bytes={size_bytes:,}, "
+            f"target={target_bytes:,}, format={extension}"
+        )
+        return main_path, raw_path, extension, size_bytes
+
+    high_main, high_raw, high_extension, high_size = await encode(100)
+    if high_size <= target_bytes:
+        return high_main, high_raw, high_extension, 100, high_size
+
+    low_main, low_raw, low_extension, low_size = await encode(1)
+    if low_size > target_bytes:
+        minimum_mb = low_size / (1024 * 1024)
+        target_mb = target_bytes / (1024 * 1024)
+        print(
+            "[VIDEO:REPROCESS] 목표 용량 달성 불가: "
+            f"minimum={minimum_mb:.3f}MB, target={target_mb:.3f}MB, "
+            f"fps={fps}, frames={frame_count}, format={low_extension}"
+        )
+        raise ValueError(
+            f"선택한 FPS·해상도에서는 최소 약 {minimum_mb:.2f}MB가 필요합니다. "
+            "목표 용량을 늘리거나 업스케일을 끄세요."
+        )
+
+    best_quality = 1
+    best_size = low_size
+    best_extension = low_extension
+    best_main = job_dir / f"target_best_main{best_extension}"
+    best_raw = job_dir / f"target_best_raw{best_extension}"
+    await asyncio.to_thread(shutil.copyfile, low_main, best_main)
+    await asyncio.to_thread(shutil.copyfile, low_raw, best_raw)
+
+    search_low = 2
+    search_high = 99
+    while search_low <= search_high:
+        quality = (search_low + search_high) // 2
+        main_path, raw_path, extension, size_bytes = await encode(quality)
+        if size_bytes <= target_bytes:
+            for candidate in (best_main, best_raw):
+                if candidate.is_file():
+                    candidate.unlink()
+            best_quality = quality
+            best_size = size_bytes
+            best_extension = extension
+            best_main = job_dir / f"target_best_main{best_extension}"
+            best_raw = job_dir / f"target_best_raw{best_extension}"
+            await asyncio.to_thread(shutil.copyfile, main_path, best_main)
+            await asyncio.to_thread(shutil.copyfile, raw_path, best_raw)
+            search_low = quality + 1
+        else:
+            search_high = quality - 1
+
+    final_main = job_dir / f"result_main{best_extension}"
+    final_raw = job_dir / f"result_raw{best_extension}"
+    for extension in (".avif", ".webp"):
+        for prefix in ("result_main", "result_raw"):
+            candidate = job_dir / f"{prefix}{extension}"
+            if candidate.is_file():
+                candidate.unlink()
+    os.replace(best_main, final_main)
+    os.replace(best_raw, final_raw)
+    print(
+        "[VIDEO:REPROCESS] 목표 용량 탐색 완료: "
+        f"quality={best_quality}, bytes={best_size:,}, target={target_bytes:,}, "
+        f"attempts={attempts}, format={best_extension}"
+    )
+    return final_main, final_raw, best_extension, best_quality, best_size
+
+
 async def process_staged_video(
     job_dir: str | os.PathLike[str],
     *,
@@ -749,12 +1072,10 @@ async def process_staged_video(
 
     directory = Path(job_dir).resolve()
     manifest_path = directory / "job.json"
-    mp4_path = directory / "input.mp4"
-    if not manifest_path.is_file() or not mp4_path.is_file():
+    if not manifest_path.is_file():
         print(
             "[VIDEO:POSTPROCESS] 스풀 파일 누락: "
-            f"job_dir={str(directory)!r}, manifest={manifest_path.is_file()}, "
-            f"mp4={mp4_path.is_file()}"
+            f"job_dir={str(directory)!r}, manifest={manifest_path.is_file()}"
         )
         raise FileNotFoundError("영상 후처리 스풀 파일이 완전하지 않습니다")
     try:
@@ -767,7 +1088,36 @@ async def process_staged_video(
         traceback.print_exc()
         raise
 
-    fps = int(manifest.get("fps") or 24)
+    job_kind = str(manifest.get("job_kind") or "h3_render").strip().lower()
+    is_existing_animation = job_kind == "existing_animation"
+    if is_existing_animation:
+        input_filename = str(manifest.get("input_filename") or "").strip()
+        if (
+            not input_filename
+            or os.path.basename(input_filename) != input_filename
+            or Path(input_filename).suffix.lower() not in {".avif", ".webp"}
+        ):
+            print(
+                "[VIDEO:REPROCESS] 스풀 입력 파일명 오류: "
+                f"value={input_filename!r}, job_dir={str(directory)!r}"
+            )
+            raise ValueError("영상 후처리 스풀 입력 파일명이 올바르지 않습니다")
+        input_path = directory / input_filename
+    else:
+        input_path = directory / "input.mp4"
+    if not input_path.is_file():
+        print(
+            "[VIDEO:POSTPROCESS] 스풀 입력 파일 누락: "
+            f"job_dir={str(directory)!r}, job_kind={job_kind!r}, "
+            f"input={str(input_path)!r}"
+        )
+        raise FileNotFoundError("영상 후처리 스풀 입력 파일이 없습니다")
+
+    fps = (
+        normalize_video_reprocess_fps(manifest.get("fps"))
+        if is_existing_animation
+        else int(manifest.get("fps") or 24)
+    )
     duration = float(manifest.get("duration") or 5.0)
     expected_frames = max(2, round(fps * duration))
     quality = max(1, min(100, int(manifest.get("quality") or 80)))
@@ -795,7 +1145,6 @@ async def process_staged_video(
         current=0,
         total=expected_frames,
     )
-    ffmpeg = str(await ensure_ffmpeg())
 
     try:
         with tempfile.TemporaryDirectory(
@@ -805,35 +1154,50 @@ async def process_staged_video(
             work_dir = Path(work_name)
             input_frames = work_dir / "input_frames"
             input_frames.mkdir()
-            await _run_command(
-                [
-                    ffmpeg,
-                    "-y",
-                    "-hide_banner",
-                    "-loglevel",
-                    "error",
-                    "-i",
-                    str(mp4_path),
-                    "-t",
-                    str(duration),
-                    "-vf",
-                    f"fps={fps}",
-                    "-vsync",
-                    "0",
-                    "-start_number",
-                    "0",
-                    str(input_frames / "frame_%08d.png"),
-                ],
-                label="DECODE",
-            )
+            if is_existing_animation:
+                timing = await asyncio.to_thread(
+                    _extract_animation_frames,
+                    input_path,
+                    input_frames,
+                    fps=fps,
+                    fallback_duration=duration,
+                )
+                duration = float(timing["duration"])
+                expected_frames = int(timing["output_frame_count"])
+                manifest["duration"] = duration
+                manifest["source_frame_count"] = int(timing["frame_count"])
+                manifest["source_fps"] = float(timing["source_fps"])
+            else:
+                ffmpeg = str(await ensure_ffmpeg())
+                await _run_command(
+                    [
+                        ffmpeg,
+                        "-y",
+                        "-hide_banner",
+                        "-loglevel",
+                        "error",
+                        "-i",
+                        str(input_path),
+                        "-t",
+                        str(duration),
+                        "-vf",
+                        f"fps={fps}",
+                        "-vsync",
+                        "0",
+                        "-start_number",
+                        "0",
+                        str(input_frames / "frame_%08d.png"),
+                    ],
+                    label="DECODE",
+                )
             extracted = await asyncio.to_thread(_list_pngs, input_frames)
             if len(extracted) != expected_frames:
                 print(
                     "[VIDEO:DECODE] 프레임 수 불일치: "
                     f"expected={expected_frames}, actual={len(extracted)}, "
-                    f"mp4={str(mp4_path)!r}"
+                    f"input={str(input_path)!r}, job_kind={job_kind!r}"
                 )
-                raise RuntimeError("MP4에서 예상한 수의 프레임을 얻지 못했습니다")
+                raise RuntimeError("영상에서 예상한 수의 프레임을 얻지 못했습니다")
             await _notify(
                 progress_callback,
                 phase="video_frames_extracted",
@@ -894,17 +1258,53 @@ async def process_staged_video(
             overlay_path = directory / "overlay.png"
             if not overlay_path.is_file():
                 overlay_path = None
-            main_path, raw_path, extension = await _encode_pair(
-                output_frames,
-                directory,
-                fps=fps,
-                frame_count=expected_frames,
-                quality=quality,
-                overlay_path=overlay_path,
-                canvas_height=int(manifest.get("output_height") or 1),
-                progress_callback=progress_callback,
-                output_format=output_format,
-            )
+            output_frame_paths = await asyncio.to_thread(_list_pngs, output_frames)
+            if not output_frame_paths:
+                print(
+                    "[VIDEO:POSTPROCESS] 인코딩할 프레임 없음: "
+                    f"job_dir={str(directory)!r}, output_dir={str(output_frames)!r}"
+                )
+                raise RuntimeError("인코딩할 영상 프레임이 없습니다")
+            try:
+                with Image.open(output_frame_paths[0]) as output_frame:
+                    manifest["output_width"], manifest["output_height"] = output_frame.size
+                    manifest["raw_output_height"] = output_frame.height
+            except Exception as exc:
+                print(
+                    "[VIDEO:POSTPROCESS] 출력 프레임 크기 확인 실패: "
+                    f"path={str(output_frame_paths[0])!r}, error={type(exc).__name__}: {exc}"
+                )
+                traceback.print_exc()
+                raise
+
+            if is_existing_animation:
+                target_bytes = int(manifest.get("target_size_bytes") or 0)
+                main_path, raw_path, extension, quality, output_size_bytes = (
+                    await _encode_pair_to_target_size(
+                        output_frames,
+                        directory,
+                        fps=fps,
+                        frame_count=expected_frames,
+                        target_bytes=target_bytes,
+                        progress_callback=progress_callback,
+                        output_format=output_format,
+                    )
+                )
+                manifest["quality"] = quality
+                manifest["output_size_bytes"] = output_size_bytes
+            else:
+                main_path, raw_path, extension = await _encode_pair(
+                    output_frames,
+                    directory,
+                    fps=fps,
+                    frame_count=expected_frames,
+                    quality=quality,
+                    overlay_path=overlay_path,
+                    canvas_height=int(manifest.get("output_height") or 1),
+                    progress_callback=progress_callback,
+                    output_format=output_format,
+                )
+                output_size_bytes = main_path.stat().st_size
     except Exception as exc:
         print(
             "[VIDEO:POSTPROCESS] 작업 실패: "
@@ -930,4 +1330,7 @@ async def process_staged_video(
         "upscale_scale": effective["scale"] if effective["enabled"] else 1,
         "upscale_model": effective["model"] if effective["enabled"] else "",
         "output_format_requested": output_format,
+        "quality": quality,
+        "output_size_bytes": output_size_bytes,
+        "target_size_bytes": int(manifest.get("target_size_bytes") or 0),
     }

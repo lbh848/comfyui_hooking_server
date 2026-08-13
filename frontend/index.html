@@ -706,6 +706,21 @@
             border-color: #d32f2f;
         }
 
+        .card-actions button.video-backup-btn,
+        .card-actions button.video-reprocess-btn {
+            flex: 1 1 calc(50% - 4px);
+            border-color: rgba(184, 118, 210, 0.7);
+            color: #e9b6ff;
+            font-weight: 750;
+        }
+        .card-actions button.video-reprocess-btn {
+            border-color: rgba(34, 211, 238, 0.68);
+            color: #8be9f7;
+        }
+        .card-actions button.video-reprocess-btn:hover:not(:disabled) {
+            background: rgba(6, 182, 212, 0.18);
+        }
+
         /* ─── 변환 정보 영역 ─── */
         .conversion-info {
             background: var(--bg);
@@ -1287,6 +1302,68 @@
             max-width: 980px;
             overflow: hidden;
         }
+        #video-reprocess-modal .video-modal-content {
+            width: min(820px, calc(100vw - 32px));
+            max-width: 820px;
+            overflow: hidden;
+        }
+        .video-reprocess-grid {
+            display: grid;
+            grid-template-columns: minmax(230px, .75fr) minmax(360px, 1.25fr);
+            gap: 14px;
+            align-items: start;
+        }
+        .video-reprocess-controls { display: flex; flex-direction: column; gap: 12px; }
+        .video-reprocess-number-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 10px;
+        }
+        .video-reprocess-input {
+            width: 100%;
+            box-sizing: border-box;
+            padding: 10px;
+            border: 1px solid var(--border);
+            border-radius: 9px;
+            color: var(--text);
+            background: var(--surface2);
+        }
+        .video-reprocess-source-meta {
+            margin-top: 10px;
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 8px;
+        }
+        .video-source-stat {
+            display: flex;
+            flex-direction: column;
+            gap: 3px;
+            min-width: 0;
+            padding: 8px 10px;
+            border: 1px solid var(--border);
+            border-radius: 9px;
+            background: var(--surface2);
+        }
+        .video-source-stat-label {
+            color: var(--text2);
+            font-size: .62rem;
+            font-weight: 600;
+            letter-spacing: .03em;
+        }
+        .video-source-stat-value {
+            color: var(--text);
+            font-size: .82rem;
+            font-weight: 700;
+            line-height: 1.25;
+            overflow-wrap: anywhere;
+        }
+        .video-reprocess-upscale-fields {
+            display: grid;
+            grid-template-columns: minmax(0, 1.3fr) minmax(110px, .7fr);
+            gap: 10px;
+            margin-top: 10px;
+        }
+        .video-reprocess-upscale-fields.disabled { opacity: .45; pointer-events: none; }
         #video-modal .modal-header h3 { margin: 0; }
         .video-modal-subtitle {
             margin-left: 9px;
@@ -1453,7 +1530,7 @@
             cursor: not-allowed;
         }
         .video-instruction-panel { margin-bottom: 14px; }
-        .video-auto-direction-toggle {
+        .video-draft-button {
             flex: 0 0 auto;
             padding: 7px 11px;
             border: 1px solid color-mix(in srgb, #b876d2 55%, var(--border));
@@ -1465,12 +1542,13 @@
             cursor: pointer;
             transition: border-color .16s ease, background .16s ease, color .16s ease;
         }
-        .video-auto-direction-toggle[aria-pressed="true"] {
+        .video-draft-button:hover:not(:disabled) {
             border-color: #b876d2;
             color: #fff;
-            background: #9b59b6;
+            background: color-mix(in srgb, #9b59b6 68%, var(--surface2));
         }
-        .video-auto-direction-note {
+        .video-draft-button:disabled { opacity: .58; cursor: wait; }
+        .video-draft-note {
             margin-top: 7px;
             min-height: 1.3em;
             color: var(--text2);
@@ -1489,9 +1567,32 @@
             border-top: 1px solid color-mix(in srgb, #b876d2 18%, var(--border));
             transition: opacity .16s ease;
         }
-        .video-ai-context-option[aria-disabled="true"] {
-            opacity: .48;
-            cursor: not-allowed;
+        .video-ai-subgroup {
+            margin-top: 12px;
+            padding: 12px;
+            border: 1px solid color-mix(in srgb, #b876d2 28%, var(--border));
+            border-radius: 10px;
+            background: color-mix(in srgb, #9b59b6 6%, var(--surface2));
+        }
+        .video-ai-subgroup-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+        .video-draft-option-grid {
+            display: grid;
+            grid-template-columns: minmax(160px, .8fr) minmax(0, 1.2fr);
+            gap: 9px 14px;
+            align-items: center;
+        }
+        .video-draft-language { min-width: 0; }
+        .video-draft-language .video-field-label { margin-bottom: 5px; }
+        .video-draft-option {
+            justify-content: space-between;
+            min-width: 0;
+            padding: 7px 0;
         }
         .video-ai-context-copy { flex: 1 1 auto; }
         .video-ai-context-option .toggle-switch { flex: 0 0 50px; }
@@ -1527,10 +1628,13 @@
         #video-generation-summary-detail { color: var(--text); font-weight: 700; }
         @media (max-width: 780px) {
             #video-modal .video-modal-content { width: min(640px, calc(100vw - 20px)); }
+            #video-reprocess-modal .video-modal-content { width: min(640px, calc(100vw - 20px)); }
             .video-hero-grid,
+            .video-reprocess-grid,
             .video-options-layout,
             .video-last-frame-grid,
-            .video-inline-fields { grid-template-columns: 1fr; }
+            .video-inline-fields,
+            .video-draft-option-grid { grid-template-columns: 1fr; }
             .video-source-preview-wrap { min-height: 180px; }
             .video-summary-bar { align-items: flex-start; flex-direction: column; }
         }
@@ -8224,6 +8328,7 @@
             flex: 1 1 100px;
         }
         .asset-image-card .card-actions .qwen-edit-btn {
+            flex: 1 1 100%;
             border-color: rgba(14, 165, 233, 0.65);
             color: #7dd3fc;
             font-weight: 700;
@@ -8232,13 +8337,22 @@
             background: rgba(14, 165, 233, 0.2);
         }
         .asset-image-card .card-actions .asset-video-btn {
-            flex: 0 0 100%;
+            flex: 1 1 calc(50% - 3px);
             border-color: rgba(184, 118, 210, 0.7);
             color: #e9b6ff;
             font-weight: 750;
         }
         .asset-image-card .card-actions .asset-video-btn:hover:not(:disabled) {
             background: rgba(155, 89, 182, 0.22);
+        }
+        .asset-image-card .card-actions .asset-video-postprocess-btn {
+            flex: 1 1 calc(50% - 3px);
+            border-color: rgba(34, 211, 238, 0.68);
+            color: #8be9f7;
+            font-weight: 750;
+        }
+        .asset-image-card .card-actions .asset-video-postprocess-btn:hover:not(:disabled) {
+            background: rgba(6, 182, 212, 0.18);
         }
         .asset-image-card .source-badge.source-anim,
         .asset-gallery-card > .source-badge.source-anim {
@@ -9570,6 +9684,31 @@
             font-size: 0.7rem;
             padding: 2px 8px;
             border-radius: 4px;
+        }
+        .asset-gallery-card .gallery-video-actions {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 6px;
+            padding: 0 10px 10px;
+        }
+        .asset-gallery-card .gallery-video-actions button {
+            min-width: 0;
+            padding: 6px 7px;
+            border: 1px solid rgba(184, 118, 210, 0.65);
+            border-radius: 6px;
+            color: #e9b6ff;
+            background: var(--surface2);
+            cursor: pointer;
+            font-size: 0.7rem;
+            font-weight: 700;
+        }
+        .asset-gallery-card .gallery-video-actions .gallery-video-postprocess-btn {
+            border-color: rgba(34, 211, 238, 0.68);
+            color: #8be9f7;
+        }
+        .asset-gallery-card .gallery-video-actions button:disabled {
+            opacity: .45;
+            cursor: not-allowed;
         }
         .asset-gallery-card .gallery-delete-btn {
             position: absolute;
@@ -13863,17 +14002,15 @@
                 <section class="video-panel video-instruction-panel">
                     <div class="video-panel-title-row">
                         <label for="video-generation-instruction" class="video-field-label"><span>영상에서 일어날 일</span><small id="video-generation-instruction-hint">자연어로 자유롭게 작성</small></label>
-                        <button type="button" id="video-generation-auto-instruction" class="video-auto-direction-toggle" aria-pressed="false" onclick="toggleVideoAutoInstruction()">✨ AI에게 맡기기</button>
                     </div>
                     <textarea id="video-generation-instruction" class="video-instruction" rows="5" maxlength="12000" placeholder="예: 인물이 천천히 고개를 들어 카메라를 바라보고, 머리카락과 옷자락이 약한 바람에 자연스럽게 흔들린다. 카메라는 아주 조금 천천히 밀고 들어간다."></textarea>
-                    <div id="video-generation-auto-instruction-note" class="video-auto-direction-note" aria-live="polite"></div>
                 </section>
 
                 <section class="video-panel video-ai-settings" aria-labelledby="video-ai-settings-title">
                     <div class="video-panel-title-row">
                         <div>
                             <span id="video-ai-settings-title" class="video-panel-title">AI 연출 문맥</span>
-                            <span class="video-panel-hint" style="display:block; margin-top:3px;">영상 연출 생성 시 AI가 참고할 시각·대사 문맥을 선택합니다.</span>
+                            <span class="video-panel-hint" style="display:block; margin-top:3px;">Visual Context 분석과 편집용 AI 연출 초안의 문맥을 각각 설정합니다.</span>
                         </div>
                     </div>
                     <label class="video-secondary-row video-ai-context-option">
@@ -13887,10 +14024,50 @@
                             <span class="toggle-slider"></span>
                         </span>
                     </label>
-                    <label id="video-dialogue-context-option" class="video-secondary-row video-ai-context-option" aria-disabled="true">
-                        <span class="video-ai-context-copy"><span class="video-panel-title">대사·감정 정보 전달</span><span class="video-panel-hint" style="display:block; margin-top:3px;">백업에 정보가 있으면 AI가 행동·표정·발화 연출에 참고합니다.</span></span>
+                    <div class="video-ai-subgroup" aria-labelledby="video-ai-draft-title">
+                        <div class="video-ai-subgroup-header">
+                            <div>
+                                <span id="video-ai-draft-title" class="video-panel-title">AI에게 맡기기</span>
+                                <span class="video-panel-hint" style="display:block; margin-top:3px;">별도 비전 LLM이 편집 가능한 연출 초안만 작성합니다.</span>
+                            </div>
+                            <button type="button" id="video-generation-draft-button" class="video-draft-button" onclick="requestVideoInstructionDraft()">✨ 초안 만들기</button>
+                        </div>
+                        <div class="video-draft-option-grid">
+                            <label class="video-draft-language">
+                                <span class="video-field-label"><span>지시 언어</span><small>초안 출력</small></span>
+                                <select id="video-generation-instruction-language" class="video-select" onchange="updateVideoInstructionDraftPresentation()">
+                                    <option value="ko" selected>한국어</option>
+                                    <option value="en">English</option>
+                                </select>
+                            </label>
+                            <label class="video-secondary-row video-draft-option">
+                                <span class="video-ai-context-copy"><span class="video-panel-title">대사·감정 정보 전달</span><span class="video-panel-hint" style="display:block; margin-top:3px;">백업에 정보가 있으면 행동·표정·발화 연출에 참고</span></span>
+                                <span class="toggle-switch">
+                                    <input id="video-generation-include-dialogue-context" type="checkbox" checked onchange="onVideoDraftOptionChange()">
+                                    <span class="toggle-slider"></span>
+                                </span>
+                            </label>
+                            <label class="video-secondary-row video-draft-option">
+                                <span class="video-ai-context-copy"><span class="video-panel-title">카메라 이동 허용</span><span class="video-panel-hint" style="display:block; margin-top:3px;">장면에 맞는 팬·틸트·줌·달리 등 허용</span></span>
+                                <span class="toggle-switch">
+                                    <input id="video-generation-allow-camera-motion" type="checkbox" checked onchange="onVideoDraftOptionChange()">
+                                    <span class="toggle-slider"></span>
+                                </span>
+                            </label>
+                            <label class="video-secondary-row video-draft-option">
+                                <span class="video-ai-context-copy"><span class="video-panel-title">배경 변화 허용</span><span class="video-panel-hint" style="display:block; margin-top:3px;">공간 연속성을 지키는 배경·환경 상태 변화 허용</span></span>
+                                <span class="toggle-switch">
+                                    <input id="video-generation-allow-background-change" type="checkbox" onchange="onVideoDraftOptionChange()">
+                                    <span class="toggle-slider"></span>
+                                </span>
+                            </label>
+                        </div>
+                        <div id="video-generation-draft-note" class="video-draft-note" aria-live="polite"></div>
+                    </div>
+                    <label class="video-secondary-row video-ai-context-option">
+                        <span class="video-ai-context-copy"><span class="video-panel-title">세컨더리 애니메이션</span><span class="video-panel-hint" style="display:block; margin-top:3px;">최종 H3 프롬프트에 호흡·머리카락 관성 같은 미세 보조 모션 포함</span></span>
                         <span class="toggle-switch">
-                            <input id="video-generation-include-dialogue-context" type="checkbox" checked disabled onchange="onVideoDialogueContextChange()">
+                            <input id="video-generation-secondary-motion" type="checkbox" checked onchange="onVideoSecondaryMotionChange()">
                             <span class="toggle-slider"></span>
                         </span>
                     </label>
@@ -13945,12 +14122,6 @@
                                 </label>
                             </div>
                         </div>
-                        <div class="video-option-section">
-                            <label class="video-secondary-row">
-                                <input id="video-generation-secondary-motion" type="checkbox" checked onchange="onVideoSecondaryMotionChange()">
-                                <span><span class="video-panel-title">세컨더리 애니메이션</span><span class="video-panel-hint" style="display:block; margin-top:3px;">호흡·머리카락 관성 같은 미세 보조 모션</span></span>
-                            </label>
-                        </div>
                     </section>
                 </div>
                 <div class="video-summary-bar">
@@ -13960,6 +14131,107 @@
             </div>
             <div class="modal-footer">
                 <button type="button" id="video-generation-submit" class="confirm" onclick="submitVideoGeneration()" style="background:#9b59b6; color:#fff; border-color:#b876d2;">🎬 큐에 등록</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 기존 animated AVIF/WebP 재후처리 모달 -->
+    <div class="modal" id="video-reprocess-modal">
+        <div class="modal-content video-modal-content">
+            <div class="modal-header">
+                <h3>영상 후처리<span class="video-modal-subtitle">원본을 보존하고 새 결과 생성</span></h3>
+                <button class="modal-close" onclick="closeVideoReprocessModal()">&times;</button>
+            </div>
+            <div class="modal-body video-modal-body">
+                <div class="video-reprocess-grid">
+                    <section class="video-panel">
+                        <div class="video-panel-title-row">
+                            <span class="video-panel-title">후처리 원본</span>
+                            <span class="video-source-badge">animated 카드</span>
+                        </div>
+                        <div class="video-source-preview-wrap">
+                            <div id="video-reprocess-source-empty" class="video-source-empty">원본 영상을 불러오는 중입니다.</div>
+                            <img id="video-reprocess-source-preview" src="" alt="후처리 원본 미리보기">
+                        </div>
+                        <div id="video-reprocess-source-name" class="video-source-name"></div>
+                        <div id="video-reprocess-source-meta" class="video-reprocess-source-meta">
+                            <div class="video-source-stat">
+                                <span class="video-source-stat-label">용량</span>
+                                <span class="video-source-stat-value" id="video-reprocess-stat-size">—</span>
+                            </div>
+                            <div class="video-source-stat">
+                                <span class="video-source-stat-label">FPS</span>
+                                <span class="video-source-stat-value" id="video-reprocess-stat-fps">—</span>
+                            </div>
+                            <div class="video-source-stat">
+                                <span class="video-source-stat-label">해상도</span>
+                                <span class="video-source-stat-value" id="video-reprocess-stat-dim">—</span>
+                            </div>
+                        </div>
+                    </section>
+
+                    <div class="video-reprocess-controls">
+                        <section class="video-panel">
+                            <div class="video-reprocess-number-grid">
+                                <div>
+                                    <label class="video-field-label" for="video-reprocess-target-size"><span>목표 용량</span><small>MB · 상한</small></label>
+                                    <input id="video-reprocess-target-size" class="video-reprocess-input" type="number" min="0.1" max="2048" step="0.1" value="10" inputmode="decimal" oninput="updateVideoReprocessSummary()">
+                                </div>
+                                <div>
+                                    <label class="video-field-label" for="video-reprocess-fps"><span>FPS</span><small>1–60</small></label>
+                                    <input id="video-reprocess-fps" class="video-reprocess-input" type="number" min="1" max="60" step="1" value="24" inputmode="numeric" oninput="updateVideoReprocessSummary()">
+                                </div>
+                            </div>
+                            <div class="video-mode-note">선택한 FPS와 해상도를 유지한 채 목표 용량 이하에서 가능한 최고 인코딩 품질을 찾습니다.</div>
+                        </section>
+
+                        <section class="video-panel">
+                            <label class="video-secondary-row">
+                                <input id="video-reprocess-upscale-enabled" type="checkbox" onchange="updateVideoReprocessUpscaleControls()">
+                                <span><span class="video-panel-title">업스케일</span><span class="video-panel-hint" style="display:block; margin-top:3px;">작은 영상의 프레임을 먼저 확대한 뒤 인코딩합니다.</span></span>
+                            </label>
+                            <div id="video-reprocess-upscale-fields" class="video-reprocess-upscale-fields disabled">
+                                <div>
+                                    <label class="video-field-label" for="video-reprocess-upscale-model"><span>방식</span></label>
+                                    <select id="video-reprocess-upscale-model" class="video-select" onchange="updateVideoReprocessSummary()">
+                                        <option value="realesr-animevideov3">Real-ESRGAN · 애니메이션</option>
+                                        <option value="anime4k-fast-m">Anime4K · 빠른 선명화</option>
+                                        <option value="lanczos">Lanczos · 일반 확대</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="video-field-label" for="video-reprocess-upscale-scale"><span>배율</span></label>
+                                    <select id="video-reprocess-upscale-scale" class="video-select" onchange="updateVideoReprocessSummary()">
+                                        <option value="2" selected>2×</option>
+                                        <option value="3">3×</option>
+                                        <option value="4">4×</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </section>
+
+                        <section class="video-panel">
+                            <div class="video-field-label"><span>출력 형식</span><small>animated 이미지</small></div>
+                            <div class="option-card-grid compact" style="--option-card-columns:2;" role="radiogroup" aria-label="후처리 출력 형식">
+                                <label class="option-card">
+                                    <input type="radio" name="video-reprocess-output-format" value="avif" checked onchange="updateVideoReprocessSummary()">
+                                    <span class="option-card-surface"><span class="option-card-title">AVIF</span><span class="option-card-description">고효율 · 고화질</span></span>
+                                </label>
+                                <label class="option-card">
+                                    <input type="radio" name="video-reprocess-output-format" value="webp" onchange="updateVideoReprocessSummary()">
+                                    <span class="option-card-surface"><span class="option-card-title">WebP</span><span class="option-card-description">폭넓은 호환성</span></span>
+                                </label>
+                            </div>
+                        </section>
+                    </div>
+                </div>
+                <div class="video-summary-bar">
+                    <span id="video-reprocess-summary-detail" aria-live="polite">10MB 이하 · 24FPS · 원본 크기 · AVIF</span>
+                    <span>목표를 달성할 수 없으면 FPS나 해상도를 임의로 낮추지 않고 작업을 실패 처리합니다.</span>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" id="video-reprocess-submit" class="confirm" onclick="submitVideoReprocess()" style="background:#0891b2; color:#fff; border-color:#22d3ee;">영상 후처리 큐에 등록</button>
             </div>
         </div>
     </div>
@@ -16176,7 +16448,7 @@
                         <div style="display:flex; flex-direction:column; gap:6px;">
                             <div>
                                 <label style="font-size:0.7rem; color:var(--text-secondary); display:block; margin-bottom:2px;">PROFILE</label>
-                                <select id="lora-cfg-profile" style="width:100%; padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); font-size:0.8rem; box-sizing:border-box;">
+                                <select id="lora-cfg-profile" onchange="applyLoraProfileDefaults('lora-cfg')" style="width:100%; padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); font-size:0.8rem; box-sizing:border-box;">
                                     <option value="anima">anima</option>
                                     <option value="sdxl">sdxl</option>
                                 </select>
@@ -16397,7 +16669,7 @@
                                 <div style="display:flex; flex-direction:column; gap:6px;">
                                     <div>
                                         <label style="font-size:0.7rem; color:var(--text-secondary); display:block; margin-bottom:2px;">PROFILE</label>
-                                        <select id="bot-lora-cfg-profile" style="width:100%; padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); font-size:0.8rem; box-sizing:border-box;">
+                                        <select id="bot-lora-cfg-profile" onchange="applyLoraProfileDefaults('bot-lora-cfg')" style="width:100%; padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text); font-size:0.8rem; box-sizing:border-box;">
                                             <option value="anima">anima</option>
                                             <option value="sdxl">sdxl</option>
                                         </select>
@@ -17194,7 +17466,7 @@
                         </button>
                         <button class="pm-sidebar-btn" id="pm-sidebar-import" onclick="pmSwitchView('import')">
                             <span class="pm-sidebar-icon">⇲</span>
-                            <span class="pm-sidebar-label">프리셋 가져오기</span>
+                            <span class="pm-sidebar-label">SD studio<br>프리셋 임포트</span>
                         </button>
                     </div>
                     <div class="pm-main">
@@ -17459,7 +17731,7 @@
                                             <aside class="pmi-item-nav">
                                                 <div class="pmi-item-nav-head">
                                                     <input class="pm-input" id="pmi-item-search" type="search" placeholder="항목 이름 검색" oninput="pmiRenderItemList()">
-                                                    <div class="pmi-filter-row" id="pmi-item-filters"><button class="pm-filter-btn active" data-filter="all" onclick="pmiSetItemFilter('all')">전체</button><button class="pm-filter-btn" data-filter="unassigned" onclick="pmiSetItemFilter('unassigned')">미분류</button><button class="pm-filter-btn" data-filter="modified" onclick="pmiSetItemFilter('modified')">변경됨</button></div>
+                                                    <div class="pmi-filter-row" id="pmi-item-filters"><button class="pm-filter-btn active" data-filter="modified" onclick="pmiSetItemFilter('modified')">변경됨</button><button class="pm-filter-btn" data-filter="unassigned" onclick="pmiSetItemFilter('unassigned')">미분류</button><button class="pm-filter-btn" data-filter="all" onclick="pmiSetItemFilter('all')">전체</button></div>
                                                 </div>
                                                 <div class="pmi-item-list" id="pmi-item-list"></div>
                                             </aside>
@@ -19581,8 +19853,13 @@
                     <div class="form-group" style="margin-top: -8px;">
                         <label style="font-size: 0.8rem; margin-bottom: 4px;">베이스 경로 (폴더)</label>
                         <input type="text" id="setting-workflow-base-dir" placeholder="워크플로우 파일이 있는 폴더 경로 입력"
-                               oninput="updateWorkflowPath()">
-                        <div class="hint" style="margin-bottom: 8px;">워크플로우 파일이 있는 폴더 경로</div>
+                               oninput="updateWorkflowPath()" disabled>
+                        <div class="hint" id="setting-workflow-base-dir-hint" style="margin-bottom: 8px;">워크플로우 파일이 있는 폴더 경로</div>
+                        <label style="display:flex; align-items:center; gap:6px; font-size:0.75rem; color:var(--text-secondary); margin-bottom:8px; cursor:pointer;">
+                            <input type="checkbox" id="setting-workflow-base-dir-manual"
+                                   onchange="toggleAutoPathField('setting-workflow-base-dir')">
+                            직접 지정 (원격/사용자 지정 위치를 쓸 때만 체크)
+                        </label>
                     </div>
                     <input type="hidden" id="setting-workflow-path">
 
@@ -19594,10 +19871,15 @@
                     </div>
                     <div class="form-group" style="margin-top: -8px;">
                         <div style="display: flex; gap: 8px; align-items: center;">
-                            <input type="text" id="setting-comfy-input-dir" placeholder="예: C:\ComfyUI\input" style="flex: 1;">
+                            <input type="text" id="setting-comfy-input-dir" placeholder="예: C:\ComfyUI\input" style="flex: 1;" disabled>
                             <button type="button" class="btn-patch-comfy-input" onclick="patchComfyInput()" title="Comfy Input 폴더에 soya_char_ref/fallback, soya_style_ref/fallback, soya_lora 폴더를 비우고 다시 fallback 이미지를 복사합니다.">리패치</button>
                         </div>
-                        <div class="hint">절대 경로를 입력하세요</div>
+                        <div class="hint" id="setting-comfy-input-dir-hint">절대 경로를 입력하세요</div>
+                        <label style="display:flex; align-items:center; gap:6px; font-size:0.75rem; color:var(--text-secondary); margin-top:6px; cursor:pointer;">
+                            <input type="checkbox" id="setting-comfy-input-dir-manual"
+                                   onchange="toggleAutoPathField('setting-comfy-input-dir')">
+                            직접 지정 (ComfyUI가 다른 PC/위치에 있을 때만 체크)
+                        </label>
                     </div>
 
                     <div class="setting-row">
@@ -25159,6 +25441,10 @@
                                     ${b.has_raw ? 'title="_raw 원본으로 MiniMax H3 영상화를 시작합니다"' : 'disabled title="영상화에 필요한 _raw 원본이 없는 백업입니다"'}>
                                 🎬 영상화
                             </button>
+                            <button class="video-reprocess-btn" onclick="event.stopPropagation(); openBackupVideoReprocess('${escapeAttr(b.name)}')"
+                                    ${b.is_animated ? 'title="이 animated 백업을 새 파일로 후처리합니다"' : 'disabled title="영상 후처리는 animated AVIF/WebP 백업에서만 사용할 수 있습니다"'}>
+                                영상 후처리
+                            </button>
                             <button class="delete-backup-btn" onclick="deleteBackup('${escapeAttr(b.name)}', this)" title="이미지와 메타데이터를 삭제합니다">
                                 🗑️ 삭제
                             </button>
@@ -25528,6 +25814,9 @@
         let videoReferenceOptions = [];
         let videoWorkspaceSourceRef = null;
         let videoPostprocessSynced = false;
+        let videoReprocessSource = null;
+        let videoInstructionDraftRequestId = 0;
+        let videoInstructionDraftBusy = false;
 
         const VIDEO_UPSCALE_LABELS = {
             'realesr-animevideov3': '품질',
@@ -25674,14 +25963,29 @@
             return document.querySelector(`input[name="${name}"]:checked`)?.value || fallback;
         }
 
-        function isVideoAutoInstructionEnabled() {
-            return document.getElementById('video-generation-auto-instruction')
-                ?.getAttribute('aria-pressed') === 'true';
-        }
-
         function isVideoDialogueContextEnabled() {
             return document.getElementById('video-generation-include-dialogue-context')
                 ?.checked === true;
+        }
+
+        function isVideoCameraMotionAllowed() {
+            return document.getElementById('video-generation-allow-camera-motion')
+                ?.checked === true;
+        }
+
+        function isVideoBackgroundChangeAllowed() {
+            return document.getElementById('video-generation-allow-background-change')
+                ?.checked === true;
+        }
+
+        function selectedVideoInstructionLanguage() {
+            const language = document.getElementById('video-generation-instruction-language')
+                ?.value || 'ko';
+            if (!['ko', 'en'].includes(language)) {
+                console.error('[VIDEO_UI] 지원하지 않는 AI 연출 초안 언어:', language);
+                return 'ko';
+            }
+            return language;
         }
 
         function isVideoVisualContextFromImage() {
@@ -25716,58 +26020,33 @@
             }
             toggle.checked = Boolean(enabled);
             updateVideoVisualContextSourcePresentation();
-            updateVideoAutoInstructionPresentation();
+            updateVideoInstructionDraftPresentation();
             updateVideoGenerationSummary();
         }
 
         function onVideoVisualContextSourceChange() {
             updateVideoVisualContextSourcePresentation();
-            updateVideoAutoInstructionPresentation();
+            updateVideoInstructionDraftPresentation();
             updateVideoGenerationSummary();
         }
 
-        function updateVideoAutoInstructionPresentation() {
-            const enabled = isVideoAutoInstructionEnabled();
+        function updateVideoInstructionDraftPresentation(statusText = '') {
             const includeDialogueContext = isVideoDialogueContextEnabled();
-            const visualContextAction = isVideoVisualContextFromImage()
-                ? '그림을 직접 분석해 Visual Context를 만들면서'
-                : '핵심 생성 프롬프트에서 Visual Context를 구축하면서';
-            const input = document.getElementById('video-generation-instruction');
-            const hint = document.getElementById('video-generation-instruction-hint');
-            const note = document.getElementById('video-generation-auto-instruction-note');
-            const dialogueToggle = document.getElementById('video-generation-include-dialogue-context');
-            const dialogueOption = document.getElementById('video-dialogue-context-option');
-            if (!input || !hint || !note || !dialogueToggle || !dialogueOption) {
-                console.error('[VIDEO_UI] AI 자동 연출 UI 요소를 찾지 못했습니다.');
+            const cameraMotion = isVideoCameraMotionAllowed();
+            const backgroundChange = isVideoBackgroundChangeAllowed();
+            const language = selectedVideoInstructionLanguage() === 'en' ? '영어' : '한국어';
+            const note = document.getElementById('video-generation-draft-note');
+            if (!note) {
+                console.error('[VIDEO_UI] AI 연출 초안 상태 요소를 찾지 못했습니다.');
                 return;
             }
-            input.disabled = enabled;
-            dialogueToggle.disabled = !enabled;
-            dialogueOption.setAttribute('aria-disabled', enabled ? 'false' : 'true');
-            input.placeholder = enabled
-                ? 'Visual Context를 분석한 AI가 이 입력을 대신 작성합니다.'
-                : '예: 인물이 천천히 고개를 들어 카메라를 바라보고, 머리카락과 옷자락이 약한 바람에 자연스럽게 흔들린다. 카메라는 아주 조금 천천히 밀고 들어간다.';
-            hint.textContent = enabled ? 'AI가 영어 영상 지시를 생성' : '자연어로 자유롭게 작성';
-            note.textContent = enabled
-                ? includeDialogueContext
-                    ? `${visualContextAction} ${normalizedVideoDuration()}초 동안 이어질 장면을 상상합니다. 백업에 대사·감정 정보가 있으면 AI에 전달합니다.`
-                    : `${visualContextAction} ${normalizedVideoDuration()}초 동안 이어질 장면을 상상합니다. 대사·감정 정보는 전달하지 않습니다.`
-                : '';
-        }
-
-        function setVideoAutoInstruction(enabled) {
-            const button = document.getElementById('video-generation-auto-instruction');
-            if (!button) {
-                console.error('[VIDEO_UI] AI에게 맡기기 버튼을 찾지 못했습니다.');
-                return;
-            }
-            button.setAttribute('aria-pressed', enabled ? 'true' : 'false');
-            updateVideoAutoInstructionPresentation();
-            updateVideoGenerationSummary();
-        }
-
-        function toggleVideoAutoInstruction() {
-            setVideoAutoInstruction(!isVideoAutoInstructionEnabled());
+            note.textContent = statusText || (
+                `선택 프레임을 직접 분석해 ${normalizedVideoDuration()}초 ${language} 초안을 만듭니다. `
+                + `${includeDialogueContext ? '대사·감정 참고' : '대사·감정 제외'} · `
+                + `${cameraMotion ? '카메라 이동 허용' : '고정 카메라'} · `
+                + `${backgroundChange ? '배경 변화 허용' : '배경 유지'}. `
+                + '완성된 초안은 입력란에만 채워지며 자동 제출되지 않습니다.'
+            );
         }
 
         function setVideoDialogueContextEnabled(enabled) {
@@ -25777,13 +26056,140 @@
                 return;
             }
             toggle.checked = Boolean(enabled);
-            updateVideoAutoInstructionPresentation();
-            updateVideoGenerationSummary();
+            updateVideoInstructionDraftPresentation();
         }
 
-        function onVideoDialogueContextChange() {
-            updateVideoAutoInstructionPresentation();
-            updateVideoGenerationSummary();
+        function setVideoInstructionDraftDefaults() {
+            const language = document.getElementById('video-generation-instruction-language');
+            const cameraMotion = document.getElementById('video-generation-allow-camera-motion');
+            const backgroundChange = document.getElementById('video-generation-allow-background-change');
+            if (!language || !cameraMotion || !backgroundChange) {
+                console.error('[VIDEO_UI] AI 연출 초안 기본값 요소를 찾지 못했습니다.');
+                return;
+            }
+            language.value = 'ko';
+            setVideoDialogueContextEnabled(true);
+            cameraMotion.checked = true;
+            backgroundChange.checked = false;
+            updateVideoInstructionDraftPresentation();
+        }
+
+        function onVideoDraftOptionChange() {
+            updateVideoInstructionDraftPresentation();
+        }
+
+        function resetVideoInstructionDraftRequest() {
+            videoInstructionDraftRequestId += 1;
+            videoInstructionDraftBusy = false;
+            const button = document.getElementById('video-generation-draft-button');
+            if (button) {
+                button.disabled = false;
+                button.innerHTML = '✨ 초안 만들기';
+            }
+        }
+
+        function videoInstructionDraftSelectionKey() {
+            const sourceKey = document.getElementById('video-generation-source')?.value || '';
+            const lastRef = getEffectiveLastVideoReference();
+            return JSON.stringify({
+                sourceKey,
+                mode: document.getElementById('video-generation-mode')?.value || 'i2v',
+                last: videoReferenceKey(lastRef),
+                loop: isVideoLoopEnabled(),
+                duration: normalizedVideoDuration(),
+                aspectRatio: document.getElementById('video-generation-aspect-ratio')?.value || 'auto',
+                qualityLevel: document.getElementById('video-generation-quality-level')?.value || 'medium',
+                language: selectedVideoInstructionLanguage(),
+                dialogue: isVideoDialogueContextEnabled(),
+                cameraMotion: isVideoCameraMotionAllowed(),
+                backgroundChange: isVideoBackgroundChangeAllowed(),
+                instruction: document.getElementById('video-generation-instruction')?.value || '',
+            });
+        }
+
+        async function requestVideoInstructionDraft() {
+            if (videoInstructionDraftBusy) return;
+            const sourceKey = document.getElementById('video-generation-source')?.value || '';
+            const sourceRef = getVideoReferenceByKey(sourceKey)?.reference || null;
+            const mode = document.getElementById('video-generation-mode')?.value || 'i2v';
+            const lastRef = getEffectiveLastVideoReference();
+            if (!sourceRef) {
+                console.error('[VIDEO_UI] AI 연출 초안 요청 실패: 원본 참조 없음', {sourceKey});
+                showToast('AI 초안을 만들 원본 이미지 정보가 없습니다.', 'error');
+                return;
+            }
+            if (mode === 'first_last' && !lastRef) {
+                console.error('[VIDEO_UI] AI 연출 초안 요청 실패: 마지막 프레임 없음');
+                showToast('AI 초안을 만들 마지막 프레임을 선택하세요.', 'warning');
+                return;
+            }
+            const requestId = ++videoInstructionDraftRequestId;
+            const selectionKey = videoInstructionDraftSelectionKey();
+            const button = document.getElementById('video-generation-draft-button');
+            videoInstructionDraftBusy = true;
+            if (button) {
+                button.disabled = true;
+                button.innerHTML = '<span class="spinner"></span> 초안 생성 중';
+            }
+            updateVideoInstructionDraftPresentation('LLM 큐 대기 및 참조 이미지 분석 중...');
+            try {
+                const data = await fetchJSON('/api/video/instruction-draft', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        mode,
+                        source_ref: sourceRef,
+                        last_ref: lastRef,
+                        source_backup: sourceRef.kind === 'backup' ? sourceRef.name : '',
+                        last_backup: lastRef?.kind === 'backup' ? lastRef.name : '',
+                        loop: isVideoLoopEnabled(),
+                        aspect_ratio: document.getElementById('video-generation-aspect-ratio')?.value || 'auto',
+                        quality_level: document.getElementById('video-generation-quality-level')?.value || 'medium',
+                        duration: normalizedVideoDuration(),
+                        language: selectedVideoInstructionLanguage(),
+                        include_dialogue_context: isVideoDialogueContextEnabled(),
+                        allow_camera_motion: isVideoCameraMotionAllowed(),
+                        allow_background_change: isVideoBackgroundChangeAllowed(),
+                    }),
+                });
+                if (requestId !== videoInstructionDraftRequestId) {
+                    console.error('[VIDEO_UI] 닫히거나 교체된 AI 연출 초안 응답 무시:', data);
+                    return;
+                }
+                if (!data.success || !String(data.draft || '').trim()) {
+                    throw new Error(data.error || 'AI 연출 초안 생성 실패');
+                }
+                if (selectionKey !== videoInstructionDraftSelectionKey()) {
+                    console.error('[VIDEO_UI] 선택 변경 후 도착한 AI 연출 초안 미적용:', data);
+                    updateVideoInstructionDraftPresentation('선택값이 바뀌어 도착한 초안을 적용하지 않았습니다. 다시 만들어 주세요.');
+                    showToast('영상화 선택값이 바뀌어 AI 초안을 적용하지 않았습니다.', 'warning');
+                    return;
+                }
+                const instructionInput = document.getElementById('video-generation-instruction');
+                if (!instructionInput) {
+                    console.error('[VIDEO_UI] AI 연출 초안을 채울 입력란을 찾지 못했습니다.', data);
+                    throw new Error('영상 지시 입력란을 찾지 못했습니다');
+                }
+                instructionInput.value = String(data.draft).trim();
+                instructionInput.focus();
+                updateVideoInstructionDraftPresentation(
+                    `초안 작성 완료 · 큐 ${data.item_id || ''}. 내용을 수정한 뒤 큐에 등록하세요.`
+                );
+                showToast('AI 연출 초안을 입력란에 채웠습니다.', 'success');
+            } catch (error) {
+                if (requestId !== videoInstructionDraftRequestId) return;
+                console.error('[VIDEO_UI] AI 연출 초안 생성 실패:', error, {sourceRef, lastRef, mode});
+                updateVideoInstructionDraftPresentation(`초안 생성 실패: ${error.message || error}`);
+                showToast('AI 연출 초안 생성 실패: ' + (error.message || error), 'error');
+            } finally {
+                if (requestId === videoInstructionDraftRequestId) {
+                    videoInstructionDraftBusy = false;
+                    if (button) {
+                        button.disabled = false;
+                        button.innerHTML = '✨ 초안 만들기';
+                    }
+                }
+            }
         }
 
         function selectVideoUpscaleScale(value, userInitiated = false) {
@@ -25856,7 +26262,7 @@
             if (input) input.value = String(duration);
             const header = document.getElementById('video-generation-header-summary');
             if (header) header.textContent = `MiniMax H3 · ${duration}초`;
-            updateVideoAutoInstructionPresentation();
+            updateVideoInstructionDraftPresentation();
             updateVideoWorkspaceMode();
             updateVideoGenerationSummary();
         }
@@ -25893,15 +26299,10 @@
                 ? VIDEO_UPSCALE_LABELS.none
                 : `${VIDEO_UPSCALE_LABELS[method] || method} ${scale}×`;
             const output = getSelectedVideoOption('video-output-format', 'avif').toUpperCase();
-            const autoInstruction = isVideoAutoInstructionEnabled();
             const visualContextLabel = isVideoVisualContextFromImage()
                 ? ' · VC 그림 분석'
                 : ' · VC 프롬프트';
-            const directionLabel = autoInstruction ? ' · AI 연출' : '';
-            const dialogueLabel = autoInstruction && isVideoDialogueContextEnabled()
-                ? ' · 대사·감정 참고'
-                : '';
-            target.textContent = `${duration}초 · ${aspectLabel} · ${qualityLabel} · ${resolutionLabel} · ${upscaleLabel} · ${output}${visualContextLabel}${directionLabel}${dialogueLabel}`;
+            target.textContent = `${duration}초 · ${aspectLabel} · ${qualityLabel} · ${resolutionLabel} · ${upscaleLabel} · ${output}${visualContextLabel}`;
         }
 
         function updateVideoWorkspaceMode() {
@@ -25939,6 +26340,7 @@
             const radio = document.querySelector(`input[name="video-mode-choice"][value="${mode}"]`);
             if (radio) radio.checked = true;
             updateVideoWorkspaceMode();
+            updateVideoInstructionDraftPresentation();
             updateVideoGenerationSummary();
         }
 
@@ -25972,6 +26374,7 @@
                 preview.style.display = 'none';
                 empty.style.display = 'flex';
                 nameLabel.textContent = '';
+                updateVideoInstructionDraftPresentation();
                 return;
             }
             preview.onerror = () => {
@@ -25985,6 +26388,7 @@
             preview.style.display = 'block';
             empty.style.display = 'none';
             nameLabel.textContent = last.label;
+            updateVideoInstructionDraftPresentation();
         }
 
         function isVideoLoopEnabled() {
@@ -26049,6 +26453,7 @@
                 select.disabled = false;
                 refreshVideoLastFrameOptions(document.getElementById('video-generation-source')?.value || '');
             }
+            updateVideoInstructionDraftPresentation();
         }
 
         function onVideoSourceChange() {
@@ -26069,6 +26474,7 @@
                 nameLabel.textContent = '';
                 if (isVideoLoopEnabled()) syncVideoLastPreviewToSource();
                 else refreshVideoLastFrameOptions('');
+                updateVideoInstructionDraftPresentation();
                 updateVideoGenerationSummary();
                 return;
             }
@@ -26095,6 +26501,7 @@
             nameLabel.textContent = source.label;
             if (isVideoLoopEnabled()) syncVideoLastPreviewToSource();
             else refreshVideoLastFrameOptions(source.key);
+            updateVideoInstructionDraftPresentation();
             updateVideoGenerationSummary();
         }
 
@@ -26210,6 +26617,7 @@
                 return;
             }
             videoWorkspaceSourceRef = reference;
+            resetVideoInstructionDraftRequest();
             const badge = document.querySelector('#video-modal .video-source-badge');
             if (badge) badge.textContent = reference.kind === 'asset' ? '현재 에셋' : '현재 카드';
             const sourceEmpty = document.getElementById('video-generation-source-empty');
@@ -26219,8 +26627,7 @@
                     : '현재 카드의 `_raw` 원본을 불러오는 중입니다.';
             }
             setVideoVisualContextFromImage(true);
-            setVideoDialogueContextEnabled(true);
-            setVideoAutoInstruction(false);
+            setVideoInstructionDraftDefaults();
             selectVideoMode('i2v');
             updateVideoDuration();
             updateVideoWorkspaceMode();
@@ -26248,6 +26655,7 @@
         function closeVideoModal() {
             const modal = document.getElementById('video-modal');
             if (modal) modal.classList.remove('visible');
+            resetVideoInstructionDraftRequest();
         }
 
         async function submitVideoGeneration() {
@@ -26263,8 +26671,6 @@
             const upscaleModel = getSelectedVideoOption('video-upscale-model', 'realesr-animevideov3');
             const outputFormat = getSelectedVideoOption('video-output-format', 'avif');
             const instruction = document.getElementById('video-generation-instruction')?.value.trim() || '';
-            const autoInstruction = isVideoAutoInstructionEnabled();
-            const includeDialogueContext = autoInstruction && isVideoDialogueContextEnabled();
             const visualContextSource = selectedVideoVisualContextSource();
             const button = document.getElementById('video-generation-submit');
             if (!sourceRef) {
@@ -26272,7 +26678,7 @@
                 showToast('원본 이미지 정보가 없습니다.', 'error');
                 return;
             }
-            if (!autoInstruction && !instruction) {
+            if (!instruction) {
                 showToast('영상에서 일어날 일을 입력하세요.', 'warning');
                 document.getElementById('video-generation-instruction')?.focus();
                 return;
@@ -26304,10 +26710,8 @@
                         upscale_scale: upscaleScale,
                         upscale_model: upscaleEnabled ? upscaleModel : '',
                         output_format: outputFormat,
-                        auto_instruction: autoInstruction,
-                        include_dialogue_context: includeDialogueContext,
                         visual_context_source: visualContextSource,
-                        instruction: autoInstruction ? '' : instruction,
+                        instruction,
                     }),
                 });
                 if (!data.success) throw new Error(data.error || '영상화 큐 등록 실패');
@@ -26318,6 +26722,211 @@
             } catch (error) {
                 console.error('[VIDEO_UI] 영상화 큐 등록 실패:', error);
                 showToast('영상화 큐 등록 실패: ' + (error.message || error), 'error');
+            } finally {
+                if (button) {
+                    button.disabled = false;
+                    button.innerHTML = originalText;
+                }
+            }
+        }
+
+        function formatVideoReprocessBytes(value) {
+            const bytes = Number(value || 0);
+            if (!Number.isFinite(bytes) || bytes <= 0) return '용량 정보 없음';
+            return bytes >= 1024 * 1024
+                ? `${(bytes / (1024 * 1024)).toFixed(2)}MB`
+                : `${Math.max(1, Math.round(bytes / 1024))}KB`;
+        }
+
+        function openBackupVideoReprocess(name) {
+            const source = backupsData.find(item => item.name === name);
+            if (!source) {
+                console.error('[VIDEO_REPROCESS_UI] 원본 백업을 찾지 못했습니다:', name);
+                showToast('후처리할 백업 정보를 찾지 못했습니다.', 'error');
+                return;
+            }
+            if (!source.is_animated) {
+                console.error('[VIDEO_REPROCESS_UI] animated 백업이 아닙니다:', source);
+                showToast('영상 후처리는 animated 백업에서만 사용할 수 있습니다.', 'warning');
+                return;
+            }
+            const info = source.conversion_info || {};
+            openVideoReprocessModal({
+                reference: {kind: 'backup', name: source.name},
+                label: source.name,
+                previewUrl: source.poster_url || source.image_url,
+                animatedUrl: source.image_url,
+                sizeBytes: source.file_size_bytes || 0,
+                fps: info.video_fps || 24,
+                width: info.video_width || 0,
+                height: info.video_height || 0,
+            });
+        }
+
+        function openAssetVideoReprocess(reference, media, posterUrl, animatedUrl) {
+            if (!media?.is_animated) {
+                console.error('[VIDEO_REPROCESS_UI] animated 에셋이 아닙니다:', {reference, media});
+                showToast('영상 후처리는 animated 에셋에서만 사용할 수 있습니다.', 'warning');
+                return;
+            }
+            const normalizedReference = {
+                kind: 'asset',
+                character: String(reference?.character || ''),
+                outfit: String(reference?.outfit || ''),
+                expression: String(reference?.expression || ''),
+                filename: String(reference?.filename || ''),
+            };
+            if (!normalizedReference.character || !normalizedReference.outfit || !normalizedReference.expression || !normalizedReference.filename) {
+                console.error('[VIDEO_REPROCESS_UI] 에셋 참조 필수값 누락:', reference);
+                showToast('후처리할 에셋 정보를 찾지 못했습니다.', 'error');
+                return;
+            }
+            openVideoReprocessModal({
+                reference: normalizedReference,
+                label: `${normalizedReference.outfit} / ${normalizedReference.expression} / ${normalizedReference.filename}`,
+                previewUrl: posterUrl,
+                animatedUrl,
+                sizeBytes: media.file_size_bytes || 0,
+                fps: media.video_fps || 24,
+                width: media.video_width || 0,
+                height: media.video_height || 0,
+            });
+        }
+
+        function openVideoReprocessModal(source) {
+            const modal = document.getElementById('video-reprocess-modal');
+            if (!modal) {
+                console.error('[VIDEO_REPROCESS_UI] 영상 후처리 모달을 찾지 못했습니다.');
+                showToast('영상 후처리 화면을 열지 못했습니다.', 'error');
+                return;
+            }
+            if (!source?.reference || !source?.animatedUrl) {
+                console.error('[VIDEO_REPROCESS_UI] 후처리 원본 정보 누락:', source);
+                showToast('후처리할 영상 정보가 없습니다.', 'error');
+                return;
+            }
+            videoReprocessSource = source;
+            const preview = document.getElementById('video-reprocess-source-preview');
+            const empty = document.getElementById('video-reprocess-source-empty');
+            if (preview) {
+                preview.src = source.previewUrl || source.animatedUrl;
+                preview.style.display = 'block';
+            } else {
+                console.error('[VIDEO_REPROCESS_UI] 원본 미리보기 요소가 없습니다.');
+            }
+            if (empty) empty.style.display = 'none';
+            const name = document.getElementById('video-reprocess-source-name');
+            if (name) name.textContent = source.label || '';
+            const sourceFps = Number(source.fps || 0);
+            const fpsInput = document.getElementById('video-reprocess-fps');
+            if (fpsInput && Number.isInteger(sourceFps) && sourceFps >= 1 && sourceFps <= 60) {
+                fpsInput.value = String(sourceFps);
+            }
+            const sizeStat = document.getElementById('video-reprocess-stat-size');
+            const fpsStat = document.getElementById('video-reprocess-stat-fps');
+            const dimStat = document.getElementById('video-reprocess-stat-dim');
+            if (sizeStat) {
+                sizeStat.textContent = Number(source.sizeBytes) > 0
+                    ? formatVideoReprocessBytes(source.sizeBytes)
+                    : '—';
+            }
+            if (fpsStat) {
+                fpsStat.textContent = sourceFps > 0 ? String(sourceFps) : '—';
+            }
+            if (dimStat) {
+                dimStat.textContent = Number(source.width) > 0 && Number(source.height) > 0
+                    ? `${source.width}×${source.height}`
+                    : '—';
+            }
+            updateVideoReprocessUpscaleControls();
+            updateVideoReprocessSummary();
+            modal.classList.add('visible');
+        }
+
+        function closeVideoReprocessModal() {
+            const modal = document.getElementById('video-reprocess-modal');
+            if (modal) modal.classList.remove('visible');
+            videoReprocessSource = null;
+        }
+
+        function updateVideoReprocessUpscaleControls() {
+            const enabled = document.getElementById('video-reprocess-upscale-enabled')?.checked === true;
+            const fields = document.getElementById('video-reprocess-upscale-fields');
+            if (!fields) {
+                console.error('[VIDEO_REPROCESS_UI] 업스케일 상세 설정 요소가 없습니다.');
+                return;
+            }
+            fields.classList.toggle('disabled', !enabled);
+            fields.setAttribute('aria-disabled', enabled ? 'false' : 'true');
+            updateVideoReprocessSummary();
+        }
+
+        function updateVideoReprocessSummary() {
+            const summary = document.getElementById('video-reprocess-summary-detail');
+            if (!summary) return;
+            const targetSize = Number(document.getElementById('video-reprocess-target-size')?.value || 0);
+            const fps = Number(document.getElementById('video-reprocess-fps')?.value || 0);
+            const enabled = document.getElementById('video-reprocess-upscale-enabled')?.checked === true;
+            const model = document.getElementById('video-reprocess-upscale-model')?.value || 'realesr-animevideov3';
+            const scale = document.getElementById('video-reprocess-upscale-scale')?.value || '2';
+            const format = getSelectedVideoOption('video-reprocess-output-format', 'avif').toUpperCase();
+            const upscale = enabled
+                ? `${VIDEO_UPSCALE_LABELS[model] || model} ${scale}×`
+                : '원본 크기';
+            summary.textContent = `${targetSize || '-'}MB 이하 · ${fps || '-'}FPS · ${upscale} · ${format}`;
+        }
+
+        async function submitVideoReprocess() {
+            const sourceRef = videoReprocessSource?.reference || null;
+            const targetSizeMb = Number(document.getElementById('video-reprocess-target-size')?.value || 0);
+            const fps = Number(document.getElementById('video-reprocess-fps')?.value || 0);
+            const upscaleEnabled = document.getElementById('video-reprocess-upscale-enabled')?.checked === true;
+            const upscaleScale = Number(document.getElementById('video-reprocess-upscale-scale')?.value || 2);
+            const upscaleModel = document.getElementById('video-reprocess-upscale-model')?.value || 'realesr-animevideov3';
+            const outputFormat = getSelectedVideoOption('video-reprocess-output-format', 'avif');
+            const button = document.getElementById('video-reprocess-submit');
+            if (!sourceRef) {
+                console.error('[VIDEO_REPROCESS_UI] 제출 실패: 원본 참조 없음');
+                showToast('후처리할 영상 정보가 없습니다.', 'error');
+                return;
+            }
+            if (!Number.isFinite(targetSizeMb) || targetSizeMb < 0.1 || targetSizeMb > 2048) {
+                console.error('[VIDEO_REPROCESS_UI] 목표 용량 입력 오류:', targetSizeMb);
+                showToast('목표 용량은 0.1MB부터 2048MB까지 입력하세요.', 'warning');
+                document.getElementById('video-reprocess-target-size')?.focus();
+                return;
+            }
+            if (!Number.isInteger(fps) || fps < 1 || fps > 60) {
+                console.error('[VIDEO_REPROCESS_UI] FPS 입력 오류:', fps);
+                showToast('FPS는 1부터 60까지의 정수로 입력하세요.', 'warning');
+                document.getElementById('video-reprocess-fps')?.focus();
+                return;
+            }
+            const originalText = button?.innerHTML || '영상 후처리 큐에 등록';
+            if (button) {
+                button.disabled = true;
+                button.innerHTML = '<span class="spinner"></span> 등록 중';
+            }
+            try {
+                const data = await fetchJSON('/api/video/reprocess/enqueue', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        source_ref: sourceRef,
+                        target_size_mb: targetSizeMb,
+                        fps,
+                        upscale_enabled: upscaleEnabled,
+                        upscale_scale: upscaleScale,
+                        upscale_model: upscaleEnabled ? upscaleModel : '',
+                        output_format: outputFormat,
+                    }),
+                });
+                if (!data.success) throw new Error(data.error || '영상 후처리 큐 등록 실패');
+                showToast(`영상 후처리를 큐에 등록했습니다. (${data.item_id})`, 'success');
+                closeVideoReprocessModal();
+            } catch (error) {
+                console.error('[VIDEO_REPROCESS_UI] 큐 등록 실패:', error);
+                showToast('영상 후처리 큐 등록 실패: ' + (error.message || error), 'error');
             } finally {
                 if (button) {
                     button.disabled = false;
@@ -31260,6 +31869,16 @@
             document.getElementById('setting-utility-workflow-source-path').value = utilityPath;
 
             document.getElementById('setting-comfy-input-dir').value = currentConfig.comfy_input_dir || '';
+            refreshAutoPathField(
+                'setting-workflow-base-dir',
+                '워크플로우 팩을 먼저 가져오세요',
+                '"삽화 워크플로 가져오기"로 팩을 임포트하면 자동으로 채워집니다.'
+            );
+            refreshAutoPathField(
+                'setting-comfy-input-dir',
+                'ComfyUI를 먼저 설치/업데이트하세요',
+                'ComfyUI 설치·업데이트를 실행하면 자동으로 채워집니다.'
+            );
             document.getElementById('setting-backup-dir').value = currentConfig.backup_base_dir || '';
             document.getElementById('setting-backup-max-count').value = currentConfig.backup_max_count || 500;
 
@@ -31619,6 +32238,51 @@
                 baseDir: fullPath.substring(0, lastSepIndex),
                 filename: fullPath.substring(lastSepIndex + 1)
             };
+        }
+
+        // 설치기/워크플로우 임포터가 관리하는 경로는 기본 잠금하고,
+        // 명시적으로 직접 지정을 선택한 경우에만 편집을 허용한다.
+        function toggleAutoPathField(inputId) {
+            const input = document.getElementById(inputId);
+            const checkbox = document.getElementById(inputId + '-manual');
+            if (!input || !checkbox) {
+                console.error('[SETTINGS] 자동 경로 필드 토글 대상 없음:', inputId, {
+                    inputFound: !!input,
+                    checkboxFound: !!checkbox
+                });
+                return;
+            }
+            input.disabled = !checkbox.checked;
+            input.style.opacity = checkbox.checked ? '' : '0.6';
+            if (checkbox.checked) input.focus();
+        }
+
+        function refreshAutoPathField(inputId, emptyMessage, emptyHint) {
+            const input = document.getElementById(inputId);
+            const checkbox = document.getElementById(inputId + '-manual');
+            const hint = document.getElementById(inputId + '-hint');
+            if (!input || !checkbox) {
+                console.error('[SETTINGS] 자동 경로 필드 갱신 대상 없음:', inputId, {
+                    inputFound: !!input,
+                    checkboxFound: !!checkbox
+                });
+                return;
+            }
+
+            const hasValue = !!String(input.value || '').trim();
+            checkbox.checked = false;
+            input.disabled = true;
+            input.style.opacity = '0.6';
+            if (!hasValue) {
+                input.placeholder = emptyMessage;
+                if (hint) {
+                    hint.textContent = emptyHint;
+                    hint.style.color = 'var(--text-secondary)';
+                }
+            } else if (hint) {
+                hint.textContent = '자동 설정됨 — 수정하려면 아래 "직접 지정"을 체크하세요.';
+                hint.style.color = '';
+            }
         }
 
         // 워크플로우 경로 업데이트
@@ -41906,7 +42570,7 @@
         let loraCurrentCharacter = '';
         let loraCurrentEntry = '';
         let loraPickerTarget = 'training'; // 'training' or 'test'
-        let loraPickerState = { level: 'characters', pickerCharacter: '', outfit: '', expression: '', selected: new Set() };
+        let loraPickerState = { level: 'characters', pickerCharacter: '', outfit: '', expression: '', selected: new Set(), scroll: {} };
 
         function _loraHideAll() {
             document.getElementById('lora-loading').style.display = 'none';
@@ -44471,7 +45135,7 @@
         function openLoraImagePicker(target = 'training') {
             if (!loraCurrentCharacter) { showToast('먼저 캐릭터를 선택하세요', 'error'); return; }
             loraPickerTarget = target;
-            loraPickerState = { level: 'characters', pickerCharacter: loraCurrentCharacter, outfit: '', expression: '', selected: new Set() };
+            loraPickerState = { level: 'characters', pickerCharacter: loraCurrentCharacter, outfit: '', expression: '', selected: new Set(), scroll: {} };
             document.getElementById('lora-picker-title').textContent = target === 'test' ? '테스트 이미지 선택' : '학습용 이미지 선택';
             document.getElementById('lora-picker-footer').style.display = 'flex';
             document.getElementById('lora-picker-footer').innerHTML = `
@@ -44480,32 +45144,128 @@
             `;
             const modal = document.getElementById('lora-image-picker-modal');
             modal.style.display = 'flex';
-            // 캐릭터 그리드 로드
+            loadLoraPickerCharacters();
+        }
+
+        function _loraPickerSearchHtml(id, placeholder) {
+            return '<div style="margin-bottom:10px;">'
+                + '<input type="text" id="' + id + '" placeholder="' + placeholder + '" autocomplete="off" '
+                + 'style="width:100%; padding:7px 10px; border:1px solid var(--border); border-radius:6px; '
+                + 'background:var(--surface2); color:var(--text); font-size:0.85rem; box-sizing:border-box;">'
+                + '<div id="' + id + '-empty" style="display:none; text-align:center; padding:20px; '
+                + 'color:var(--text-secondary); font-size:0.85rem;">검색 결과가 없습니다.</div>'
+                + '</div>';
+        }
+
+        function _loraPickerSaveScroll() {
             const body = document.getElementById('lora-picker-body');
-            body.innerHTML = '<div style="text-align:center; padding:32px;"><div class="spinner" style="width:32px;height:32px;border-width:3px;margin:0 auto;"></div></div>';
-            fetchJSON('/api/lora/characters').then(function(resp) {
-                if (!resp || !resp.success || !resp.characters || resp.characters.length === 0) {
-                    body.innerHTML = '<div style="text-align:center; padding:32px; color:var(--text-secondary);">캐릭터가 없습니다.</div>';
-                    return;
-                }
-                var countInfo = loraPickerState.selected.size > 0 ? ' (현재 ' + loraPickerState.selected.size + '장 선택됨)' : '';
-                var html = '<div style="margin-bottom:8px; font-size:0.85rem; color:var(--text-secondary);">에셋을 탐색할 캐릭터를 선택하세요' + countInfo + '</div>';
-                html += '<div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(120px, 1fr)); gap:10px;">';
-                resp.characters.forEach(function(name) {
-                    var border = name === loraPickerState.pickerCharacter ? 'border-color:var(--accent);' : '';
-                    html += '<div class="asset-folder-card" onclick="enterLoraPickerCharacter(\'' + escapeHtml(name) + '\')" style="' + border + '">';
-                    html += '<div class="folder-icon">📁</div>';
-                    html += '<div class="folder-name">' + escapeHtml(name) + '</div>';
-                    html += '</div>';
+            if (!body || !loraPickerState) {
+                console.error('[LORA] 피커 스크롤 저장 대상 없음:', {
+                    bodyFound: !!body,
+                    stateFound: !!loraPickerState
                 });
-                html += '</div>';
-                body.innerHTML = html;
-                loraPickerState.level = 'characters';
-                loraPickerUpdateCount();
-            }).catch(function(e) {
-                console.error('[LORA] 캐릭터 목록 로드 실패:', e);
-                body.innerHTML = '<div style="text-align:center; padding:32px; color:var(--error);">로드 실패</div>';
+                return;
+            }
+            if (!loraPickerState.scroll) loraPickerState.scroll = {};
+            let key = loraPickerState.level;
+            if (key === 'images') {
+                key = 'images:' + loraPickerState.outfit + '|||' + loraPickerState.expression;
+            }
+            loraPickerState.scroll[key] = body.scrollTop;
+        }
+
+        function _loraPickerRestoreScroll(key) {
+            const body = document.getElementById('lora-picker-body');
+            if (!body || !loraPickerState) {
+                console.error('[LORA] 피커 스크롤 복원 대상 없음:', key, {
+                    bodyFound: !!body,
+                    stateFound: !!loraPickerState
+                });
+                return;
+            }
+            const targetY = (loraPickerState.scroll || {})[key] || 0;
+            if (!targetY) return;
+
+            const images = Array.from(body.querySelectorAll('img'));
+            const previousOverflowAnchor = body.style.overflowAnchor;
+            let tries = 0;
+            let stable = 0;
+            let cancelled = false;
+
+            const assertPosition = function() {
+                if (!cancelled && Math.abs(body.scrollTop - targetY) > 2) body.scrollTop = targetY;
+            };
+            const stop = function() {
+                if (cancelled) return;
+                cancelled = true;
+                body.removeEventListener('wheel', stop);
+                body.removeEventListener('touchstart', stop);
+                images.forEach(function(image) { image.removeEventListener('load', assertPosition); });
+                body.style.overflowAnchor = previousOverflowAnchor;
+            };
+
+            body.style.overflowAnchor = 'none';
+            body.addEventListener('wheel', stop, { passive: true });
+            body.addEventListener('touchstart', stop, { passive: true });
+            images.forEach(function(image) {
+                if (!image.complete) image.addEventListener('load', assertPosition);
             });
+
+            const tick = function() {
+                if (cancelled) return;
+                if (Math.abs(body.scrollTop - targetY) <= 2) {
+                    if (++stable >= 3) {
+                        stop();
+                        return;
+                    }
+                } else {
+                    stable = 0;
+                    body.scrollTop = targetY;
+                }
+                if (++tries < 60) setTimeout(tick, 50);
+                else stop();
+            };
+            requestAnimationFrame(tick);
+        }
+
+        function _loraPickerNorm(value) {
+            return String(value == null ? '' : value)
+                .toLowerCase()
+                .replace(/[\s\-_/\\.,()\[\]|]+/g, '');
+        }
+
+        function _loraPickerBindSearch(inputId, itemSelector, textOf) {
+            const input = document.getElementById(inputId);
+            if (!input) {
+                console.error('[LORA] 피커 검색 입력칸 없음:', inputId);
+                return;
+            }
+            const emptyElement = document.getElementById(inputId + '-empty');
+            const apply = function() {
+                const raw = input.value.trim();
+                const tokens = raw ? raw.split(/\s+/).map(_loraPickerNorm).filter(Boolean) : [];
+                let shown = 0;
+                document.querySelectorAll(itemSelector).forEach(function(element) {
+                    const haystack = _loraPickerNorm(textOf(element));
+                    const matches = tokens.length === 0 || tokens.every(function(token) {
+                        return haystack.includes(token);
+                    });
+                    element.style.display = matches ? '' : 'none';
+                    if (matches) shown++;
+                });
+                if (emptyElement) {
+                    emptyElement.style.display = tokens.length && shown === 0 ? 'block' : 'none';
+                }
+            };
+            input.addEventListener('input', apply);
+            input.addEventListener('compositionupdate', apply);
+            input.addEventListener('compositionend', apply);
+            try {
+                input.focus({ preventScroll: true });
+            } catch (error) {
+                console.warn('[LORA] preventScroll 포커스 미지원, 기본 포커스 사용:', error);
+                input.focus();
+            }
         }
 
         function closeLoraImagePicker() {
@@ -44526,56 +45286,83 @@
         }
 
         function loadLoraPickerCharacters() {
-            var body = document.getElementById('lora-picker-body');
+            const state = loraPickerState;
+            const body = document.getElementById('lora-picker-body');
+            state.level = 'characters';
             body.innerHTML = '<div style="text-align:center; padding:32px;"><div class="spinner" style="width:32px;height:32px;border-width:3px;margin:0 auto;"></div></div>';
             fetchJSON('/api/lora/characters').then(function(resp) {
+                if (loraPickerState !== state || state.level !== 'characters') {
+                    console.warn('[LORA] 만료된 캐릭터 목록 응답 폐기');
+                    return;
+                }
                 if (!resp || !resp.success || !resp.characters || resp.characters.length === 0) {
                     body.innerHTML = '<div style="text-align:center; padding:32px; color:var(--text-secondary);">캐릭터가 없습니다.</div>';
                     return;
                 }
-                var countInfo = loraPickerState.selected.size > 0 ? ' (현재 ' + loraPickerState.selected.size + '장 선택됨)' : '';
-                var html = '<div style="margin-bottom:8px; font-size:0.85rem; color:var(--text-secondary);">에셋을 탐색할 캐릭터를 선택하세요' + countInfo + '</div>';
-                html += '<div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(120px, 1fr)); gap:10px;">';
+                const countInfo = state.selected.size > 0 ? ' (현재 ' + state.selected.size + '장 선택됨)' : '';
+                let html = '<div style="margin-bottom:8px; font-size:0.85rem; color:var(--text-secondary);">에셋을 탐색할 캐릭터를 선택하세요' + countInfo + '</div>';
+                html += _loraPickerSearchHtml('lora-picker-char-search', '캐릭터 검색...');
+                html += '<div id="lora-picker-char-grid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(120px, 1fr)); gap:10px;">';
                 resp.characters.forEach(function(name) {
-                    var border = name === loraPickerState.pickerCharacter ? 'border-color:var(--accent);' : '';
-                    html += '<div class="asset-folder-card" onclick="enterLoraPickerCharacter(\'' + escapeHtml(name) + '\')" style="' + border + '">';
+                    const border = name === state.pickerCharacter ? 'border-color:var(--accent);' : '';
+                    html += '<div class="asset-folder-card" data-name="' + escapeHtml(name) + '" onclick="enterLoraPickerCharacter(\'' + escapeHtml(name) + '\')" style="' + border + '">';
                     html += '<div class="folder-icon">📁</div>';
                     html += '<div class="folder-name">' + escapeHtml(name) + '</div>';
                     html += '</div>';
                 });
                 html += '</div>';
                 body.innerHTML = html;
-                loraPickerState.level = 'characters';
+                _loraPickerBindSearch(
+                    'lora-picker-char-search',
+                    '#lora-picker-char-grid .asset-folder-card',
+                    function(element) { return element.getAttribute('data-name') || ''; }
+                );
                 loraPickerUpdateCount();
+                _loraPickerRestoreScroll('characters');
             }).catch(function(e) {
                 console.error('[LORA] 캐릭터 목록 로드 실패:', e);
+                if (loraPickerState !== state || state.level !== 'characters') {
+                    console.warn('[LORA] 만료된 캐릭터 실패 응답 화면 반영 생략');
+                    return;
+                }
                 body.innerHTML = '<div style="text-align:center; padding:32px; color:var(--error);">로드 실패</div>';
             });
         }
 
         function enterLoraPickerCharacter(character) {
+            _loraPickerSaveScroll();
             loraPickerState.pickerCharacter = character;
             loadLoraPickerGallery();
         }
 
         function loadLoraPickerGallery() {
-            var body = document.getElementById('lora-picker-body');
-            var enc = encodeURIComponent;
-            var pickerChar = loraPickerState.pickerCharacter;
+            const state = loraPickerState;
+            const body = document.getElementById('lora-picker-body');
+            const enc = encodeURIComponent;
+            const pickerChar = state.pickerCharacter;
+            state.level = 'gallery';
             body.innerHTML = '<div style="text-align:center; padding:32px;"><div class="spinner" style="width:32px;height:32px;border-width:3px;margin:0 auto;"></div></div>';
 
             fetchJSON('/api/asset_mode/characters/' + enc(pickerChar) + '/gallery').then(function(resp) {
+                if (loraPickerState !== state || state.level !== 'gallery' || state.pickerCharacter !== pickerChar) {
+                    console.warn('[LORA] 만료된 갤러리 응답 폐기:', pickerChar);
+                    return;
+                }
                 if (!resp || !resp.gallery || resp.gallery.length === 0) {
                     body.innerHTML = '<div style="margin-bottom:12px;"><button id="lora-picker-back-chars" style="padding:4px 12px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:4px; cursor:pointer; font-size:0.8rem;">&larr; 캐릭터 선택</button></div><div style="text-align:center; padding:32px; color:var(--text-secondary);">표시할 이미지가 없습니다.</div>';
-                    document.getElementById('lora-picker-back-chars').addEventListener('click', loadLoraPickerCharacters);
+                    document.getElementById('lora-picker-back-chars').addEventListener('click', function() {
+                        _loraPickerSaveScroll();
+                        loadLoraPickerCharacters();
+                    });
                     return;
                 }
 
-                var html = '<div style="margin-bottom:12px; display:flex; align-items:center; gap:8px;">';
+                let html = '<div style="margin-bottom:12px; display:flex; align-items:center; gap:8px;">';
                 html += '<button id="lora-picker-back-chars" style="padding:4px 12px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:4px; cursor:pointer; font-size:0.8rem;">&larr; 캐릭터 선택</button>';
                 html += '<span style="font-size:0.85rem; color:var(--text-secondary);">' + escapeHtml(pickerChar) + '</span>';
                 html += '<button id="lora-picker-toggle-all" style="padding:4px 12px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:4px; cursor:pointer; font-size:0.8rem; margin-left:auto;">전체 선택/해제</button>';
                 html += '</div>';
+                html += _loraPickerSearchHtml('lora-picker-gallery-search', '의상 / 표정 검색...');
                 html += '<div class="asset-gallery-grid" id="lora-picker-gallery-grid">';
                 resp.gallery.forEach(function(item) {
                     html += '<div class="asset-gallery-item" data-outfit="' + escapeHtml(item.outfit) + '" data-expression="' + escapeHtml(item.expression) + '" style="cursor:pointer;">';
@@ -44593,64 +45380,93 @@
                 body.innerHTML = html;
 
                 // 이벤트 리스너 부착
-                var backBtn = document.getElementById('lora-picker-back-chars');
+                const backBtn = document.getElementById('lora-picker-back-chars');
                 if (backBtn) {
                     backBtn.addEventListener('click', function() {
+                        _loraPickerSaveScroll();
                         loadLoraPickerCharacters();
                     });
                 }
                 document.getElementById('lora-picker-toggle-all').addEventListener('click', loraPickerToggleSelectAll);
                 document.querySelectorAll('#lora-picker-gallery-grid .asset-gallery-item').forEach(function(el) {
                     el.addEventListener('click', function() {
+                        _loraPickerSaveScroll();
                         loadLoraPickerImages(this.getAttribute('data-outfit'), this.getAttribute('data-expression'));
                     });
                 });
+                _loraPickerBindSearch(
+                    'lora-picker-gallery-search',
+                    '#lora-picker-gallery-grid .asset-gallery-item',
+                    function(element) {
+                        return (element.getAttribute('data-outfit') || '') + ' '
+                            + (element.getAttribute('data-expression') || '');
+                    }
+                );
 
-                loraPickerState.level = 'gallery';
                 loraPickerUpdateCount();
+                _loraPickerRestoreScroll('gallery');
             }).catch(function(e) {
                 console.error('[LORA] 갤러리 로드 실패:', e);
+                if (loraPickerState !== state || state.level !== 'gallery') {
+                    console.warn('[LORA] 만료된 갤러리 실패 응답 화면 반영 생략:', pickerChar);
+                    return;
+                }
                 body.innerHTML = '<div style="text-align:center; padding:32px; color:var(--error);">로드 실패</div>';
             });
         }
 
         function loadLoraPickerImages(outfit, expression) {
-            var body = document.getElementById('lora-picker-body');
-            var enc = encodeURIComponent;
-            var pickerChar = loraPickerState.pickerCharacter;
-            loraPickerState.outfit = outfit;
-            loraPickerState.expression = expression;
-            loraPickerState.level = 'images';
+            const state = loraPickerState;
+            const body = document.getElementById('lora-picker-body');
+            const enc = encodeURIComponent;
+            const pickerChar = state.pickerCharacter;
+            state.outfit = outfit;
+            state.expression = expression;
+            state.level = 'images';
 
-            var headerHtml = '<div style="margin-bottom:12px; display:flex; align-items:center; gap:8px;">';
+            let headerHtml = '<div style="margin-bottom:12px; display:flex; align-items:center; gap:8px;">';
             headerHtml += '<button id="lora-picker-back-gallery" style="padding:4px 12px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:4px; cursor:pointer; font-size:0.8rem;">&larr; 갤러리</button>';
             headerHtml += '<span style="font-size:0.85rem; color:var(--text-secondary);">' + escapeHtml(pickerChar) + ' / ' + escapeHtml(outfit) + ' / ' + escapeHtml(expression) + '</span>';
             headerHtml += '<button id="lora-picker-img-toggle-all" style="padding:4px 12px; background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:4px; cursor:pointer; font-size:0.8rem; margin-left:auto;">전체 선택/해제</button>';
             headerHtml += '</div>';
+            headerHtml += _loraPickerSearchHtml('lora-picker-img-search', '파일명 검색...');
             headerHtml += '<div id="lora-picker-images-grid" style="display:grid; grid-template-columns:repeat(3, 1fr); gap:8px;">';
             headerHtml += '<div class="spinner" style="width:32px;height:32px;border-width:3px;margin:16px auto;"></div>';
             headerHtml += '</div>';
             body.innerHTML = headerHtml;
 
-            document.getElementById('lora-picker-back-gallery').addEventListener('click', loadLoraPickerGallery);
+            document.getElementById('lora-picker-back-gallery').addEventListener('click', function() {
+                _loraPickerSaveScroll();
+                loadLoraPickerGallery();
+            });
             document.getElementById('lora-picker-img-toggle-all').addEventListener('click', loraPickerToggleSelectAll);
 
             fetchJSON('/api/asset_mode/characters/' + enc(pickerChar) + '/outfits/' + enc(outfit) + '/expressions/' + enc(expression) + '/images').then(function(resp) {
+                if (
+                    loraPickerState !== state
+                    || state.level !== 'images'
+                    || state.pickerCharacter !== pickerChar
+                    || state.outfit !== outfit
+                    || state.expression !== expression
+                ) {
+                    console.warn('[LORA] 만료된 이미지 목록 응답 폐기:', pickerChar, outfit, expression);
+                    return;
+                }
                 if (!resp || !resp.images || resp.images.length === 0) {
                     document.getElementById('lora-picker-images-grid').innerHTML = '<div style="text-align:center; padding:16px; color:var(--text-secondary); grid-column:1/-1;">이미지가 없습니다.</div>';
                     return;
                 }
 
-                var grid = document.getElementById('lora-picker-images-grid');
-                var html = '';
+                const grid = document.getElementById('lora-picker-images-grid');
+                let html = '';
                 resp.images.forEach(function(img) {
-                    var key = pickerChar + '|||' + outfit + '|||' + expression + '|||' + img.filename;
-                    var checked = loraPickerState.selected.has(key);
-                    var imgUrl = '/api/asset_mode/characters/' + enc(pickerChar) + '/outfits/' + enc(outfit) + '/expressions/' + enc(expression) + '/images/' + enc(img.filename);
-                    var borderColor = checked ? 'var(--accent)' : 'transparent';
-                    var bgColor = checked ? 'var(--accent)' : 'rgba(0,0,0,0.3)';
-                    var checkMark = checked ? '&#10003;' : '';
-                    html += '<div data-key="' + escapeHtml(key) + '" style="position:relative; cursor:pointer; border-radius:6px; overflow:hidden; border:2px solid ' + borderColor + '; transition:border-color 0.15s;">';
+                    const key = pickerChar + '|||' + outfit + '|||' + expression + '|||' + img.filename;
+                    const checked = state.selected.has(key);
+                    const imgUrl = '/api/asset_mode/characters/' + enc(pickerChar) + '/outfits/' + enc(outfit) + '/expressions/' + enc(expression) + '/images/' + enc(img.filename);
+                    const borderColor = checked ? 'var(--accent)' : 'transparent';
+                    const bgColor = checked ? 'var(--accent)' : 'rgba(0,0,0,0.3)';
+                    const checkMark = checked ? '&#10003;' : '';
+                    html += '<div data-key="' + escapeHtml(key) + '" data-filename="' + escapeHtml(img.filename) + '" style="position:relative; cursor:pointer; border-radius:6px; overflow:hidden; border:2px solid ' + borderColor + '; transition:border-color 0.15s;">';
                     html += '<img src="' + imgUrl + '" style="width:100%; display:block;">';
                     html += '<div style="position:absolute; top:4px; right:4px; width:20px; height:20px; border-radius:50%; background:' + bgColor + '; display:flex; align-items:center; justify-content:center; color:#fff; font-size:0.7rem;">' + checkMark + '</div>';
                     if (img.is_representative) {
@@ -44665,8 +45481,27 @@
                         loraPickerToggle(this, this.getAttribute('data-key'));
                     });
                 });
+                _loraPickerBindSearch(
+                    'lora-picker-img-search',
+                    '#lora-picker-images-grid [data-filename]',
+                    function(element) { return element.getAttribute('data-filename') || ''; }
+                );
+                _loraPickerRestoreScroll('images:' + outfit + '|||' + expression);
             }).catch(function(e) {
                 console.error('[LORA] 이미지 로드 실패:', e);
+                if (
+                    loraPickerState !== state
+                    || state.level !== 'images'
+                    || state.outfit !== outfit
+                    || state.expression !== expression
+                ) {
+                    console.warn('[LORA] 만료된 이미지 실패 응답 화면 반영 생략:', pickerChar, outfit, expression);
+                    return;
+                }
+                const grid = document.getElementById('lora-picker-images-grid');
+                if (grid) {
+                    grid.innerHTML = '<div style="text-align:center; padding:16px; color:var(--error); grid-column:1/-1;">로드 실패</div>';
+                }
             });
         }
 
@@ -44685,9 +45520,175 @@
             loraPickerUpdateCount();
         }
 
-        function loraPickerToggleSelectAll() {
-            // 현재 보이는 갤러리의 모든 이미지를 선택/해제
-            // 갤러리 레벨에서는 의미가 없으므로 아무것도 하지 않음
+        async function _loraPickerLoadGalleryKeys(groups, pickerCharacter, maxConcurrency = 4) {
+            const specs = groups.map(function(element) {
+                return {
+                    outfit: element.getAttribute('data-outfit') || '',
+                    expression: element.getAttribute('data-expression') || ''
+                };
+            });
+            const keys = new Set();
+            const failures = [];
+            let nextIndex = 0;
+
+            const worker = async function() {
+                while (nextIndex < specs.length) {
+                    const spec = specs[nextIndex++];
+                    if (!spec.outfit || !spec.expression) {
+                        const error = new Error('의상 또는 표정 식별자가 비어 있습니다.');
+                        console.error('[LORA] 전체 선택 그룹 식별 실패:', spec, error);
+                        failures.push({ ...spec, error: error.message });
+                        continue;
+                    }
+                    const url = '/api/asset_mode/characters/' + encodeURIComponent(pickerCharacter)
+                        + '/outfits/' + encodeURIComponent(spec.outfit)
+                        + '/expressions/' + encodeURIComponent(spec.expression) + '/images';
+                    try {
+                        const response = await fetchJSON(url);
+                        if (!response || !Array.isArray(response.images)) {
+                            throw new Error('이미지 목록 응답 형식이 올바르지 않습니다.');
+                        }
+                        response.images.forEach(function(image) {
+                            if (!image || !image.filename) {
+                                console.error('[LORA] 전체 선택 이미지 파일명 누락:', spec, image);
+                                failures.push({ ...spec, error: '이미지 파일명 누락' });
+                                return;
+                            }
+                            keys.add(
+                                pickerCharacter + '|||' + spec.outfit + '|||'
+                                + spec.expression + '|||' + image.filename
+                            );
+                        });
+                    } catch (error) {
+                        console.error('[LORA] 전체 선택 이미지 목록 로드 실패:', spec, url, error);
+                        failures.push({
+                            ...spec,
+                            error: error && error.message ? error.message : String(error)
+                        });
+                    }
+                }
+            };
+
+            const workerCount = Math.min(Math.max(1, maxConcurrency), specs.length);
+            await Promise.all(Array.from({ length: workerCount }, worker));
+            return { keys: Array.from(keys), failures };
+        }
+
+        async function loraPickerToggleSelectAll() {
+            if (!loraPickerState) {
+                console.error('[LORA] 전체 선택 실패: 피커 상태가 없습니다.');
+                return;
+            }
+
+            if (loraPickerState.level === 'images') {
+                const items = Array.from(
+                    document.querySelectorAll('#lora-picker-images-grid [data-key]')
+                ).filter(function(element) {
+                    return element.style.display !== 'none';
+                });
+                if (!items.length) {
+                    console.error('[LORA] 전체 선택 실패: 현재 보이는 이미지가 없습니다.');
+                    showToast('선택할 이미지가 없습니다', 'error');
+                    return;
+                }
+                const allSelected = items.every(function(element) {
+                    return loraPickerState.selected.has(element.getAttribute('data-key'));
+                });
+                items.forEach(function(element) {
+                    const key = element.getAttribute('data-key');
+                    if (loraPickerState.selected.has(key) === allSelected) {
+                        loraPickerToggle(element, key);
+                    }
+                });
+                showToast(
+                    (allSelected ? '전체 해제' : '전체 선택') + ' (' + items.length + '장)',
+                    'success'
+                );
+                return;
+            }
+
+            if (loraPickerState.level !== 'gallery') {
+                console.error('[LORA] 전체 선택 실패: 지원하지 않는 피커 단계:', loraPickerState.level);
+                return;
+            }
+
+            const groups = Array.from(
+                document.querySelectorAll('#lora-picker-gallery-grid .asset-gallery-item')
+            ).filter(function(element) {
+                return element.style.display !== 'none';
+            });
+            if (!groups.length) {
+                console.error('[LORA] 전체 선택 실패: 현재 보이는 갤러리 항목이 없습니다.');
+                showToast('선택할 항목이 없습니다', 'error');
+                return;
+            }
+
+            const button = document.getElementById('lora-picker-toggle-all');
+            if (!button) {
+                console.error('[LORA] 전체 선택 실패: 실행 버튼을 찾을 수 없습니다.');
+                showToast('전체 선택 버튼을 찾을 수 없습니다', 'error');
+                return;
+            }
+            const originalText = button.textContent;
+            const requestState = loraPickerState;
+            const pickerCharacter = requestState.pickerCharacter;
+            const modal = document.getElementById('lora-image-picker-modal');
+            button.disabled = true;
+            button.textContent = '불러오는 중...';
+
+            try {
+                const result = await _loraPickerLoadGalleryKeys(groups, pickerCharacter, 4);
+                if (
+                    loraPickerState !== requestState
+                    || requestState.level !== 'gallery'
+                    || (modal && modal.style.display === 'none')
+                ) {
+                    console.warn('[LORA] 전체 선택 결과 폐기: 처리 중 피커 상태가 변경되었습니다.', {
+                        pickerCharacter,
+                        currentLevel: loraPickerState && loraPickerState.level
+                    });
+                    return;
+                }
+                if (result.failures.length > 0) {
+                    console.error('[LORA] 전체 선택 중 일부 그룹 로드 실패, 선택 변경 취소:', result.failures);
+                    showToast(
+                        '전체 선택 실패: ' + result.failures.length
+                            + '개 항목을 불러오지 못해 선택을 변경하지 않았습니다',
+                        'error'
+                    );
+                    return;
+                }
+                if (!result.keys.length) {
+                    console.error('[LORA] 전체 선택 실패: 불러온 이미지 키가 없습니다.', {
+                        pickerCharacter,
+                        groupCount: groups.length
+                    });
+                    showToast('불러온 이미지가 없습니다', 'error');
+                    return;
+                }
+
+                const allSelected = result.keys.every(function(key) {
+                    return requestState.selected.has(key);
+                });
+                result.keys.forEach(function(key) {
+                    if (allSelected) requestState.selected.delete(key);
+                    else requestState.selected.add(key);
+                });
+                loraPickerUpdateCount();
+                showToast(
+                    (allSelected ? '전체 해제' : '전체 선택') + ' (' + result.keys.length + '장)',
+                    'success'
+                );
+            } catch (error) {
+                console.error('[LORA] 전체 선택 처리 중 예외:', {
+                    pickerCharacter,
+                    groupCount: groups.length
+                }, error);
+                showToast('전체 선택 처리에 실패했습니다', 'error');
+            } finally {
+                button.disabled = false;
+                button.textContent = originalText;
+            }
         }
 
         function loraPickerUpdateCount() {
@@ -50065,7 +51066,7 @@
         function openStyleTestImagePicker() {
             if (!_styleNeedProject()) return;
             loraPickerTarget = 'style_test';
-            loraPickerState = { level: 'characters', pickerCharacter: '', outfit: '', expression: '', selected: new Set() };
+            loraPickerState = { level: 'characters', pickerCharacter: '', outfit: '', expression: '', selected: new Set(), scroll: {} };
             document.getElementById('lora-picker-title').textContent = '테스트 이미지 — 에셋에서 선택';
             const footer = document.getElementById('lora-picker-footer');
             footer.style.display = 'flex';
@@ -51616,7 +52617,7 @@
         function openBotLoraCharImagePicker(charName) {
             botLoraCharTestTarget = charName;
             loraPickerTarget = 'bot_char_test';
-            loraPickerState = { level: 'characters', pickerCharacter: '', outfit: '', expression: '', selected: new Set() };
+            loraPickerState = { level: 'characters', pickerCharacter: '', outfit: '', expression: '', selected: new Set(), scroll: {} };
             document.getElementById('lora-image-picker-modal').style.display = 'flex';
             loadLoraPickerCharacters();
         }
@@ -52638,7 +53639,7 @@
         function openBotLoraImagePicker() {
             // 기존 lora-image-picker-modal 재사용
             loraPickerTarget = 'bot_test';
-            loraPickerState = { level: 'characters', pickerCharacter: '', outfit: '', expression: '', selected: new Set() };
+            loraPickerState = { level: 'characters', pickerCharacter: '', outfit: '', expression: '', selected: new Set(), scroll: {} };
             document.getElementById('lora-picker-title').textContent = '에셋에서 이미지 선택';
             document.getElementById('lora-picker-footer').style.display = 'flex';
             document.getElementById('lora-picker-footer').innerHTML = `
@@ -74112,9 +75113,11 @@
                     card.dataset.expression = item.expression;
 
                     let thumbHtml;
+                    let thumbUrl = '';
+                    let posterUrl = '';
                     if (item.representative) {
-                        const thumbUrl = `/api/asset_mode/characters/${enc(charName)}/outfits/${enc(item.outfit)}/expressions/${enc(item.expression)}/images/${enc(item.representative)}`;
-                        const posterUrl = item.representative_is_animated
+                        thumbUrl = `/api/asset_mode/characters/${enc(charName)}/outfits/${enc(item.outfit)}/expressions/${enc(item.expression)}/images/${enc(item.representative)}`;
+                        posterUrl = item.representative_is_animated
                             ? `${thumbUrl}/poster`
                             : thumbUrl;
                         const animationAttrs = item.representative_is_animated
@@ -74217,6 +75220,7 @@
                             <button onclick="sendAssetToPoseEditor('${imgUrl}','${enc(img.filename)}')">포즈 편집</button>
                             <button type="button" class="qwen-edit-btn" ${img.is_animated ? 'disabled title="영상 에셋에는 EDIT 툴을 사용할 수 없습니다"' : ''}>EDIT 툴 호출</button>
                             <button type="button" class="asset-video-btn">영상화</button>
+                            <button type="button" class="asset-video-postprocess-btn" ${img.is_animated ? 'title="이 animated 에셋을 새 파일로 후처리합니다"' : 'disabled title="영상 후처리는 animated AVIF/WebP 에셋에서만 사용할 수 있습니다"'}>영상 후처리</button>
                         </div>
                         ${hasPrompt ? `
                         <div class="prompt-info">
@@ -74255,6 +75259,20 @@
                         });
                     } else {
                         console.error('[ASSET_VIDEO_UI] 카드 버튼 생성 실패:', img.filename);
+                    }
+                    const videoPostprocessButton = card.querySelector('.asset-video-postprocess-btn');
+                    if (videoPostprocessButton && img.is_animated) {
+                        videoPostprocessButton.addEventListener('click', (event) => {
+                            event.stopPropagation();
+                            openAssetVideoReprocess({
+                                character: charName,
+                                outfit,
+                                expression,
+                                filename: img.filename,
+                            }, img, posterUrl, imgUrl);
+                        });
+                    } else if (!videoPostprocessButton) {
+                        console.error('[ASSET_VIDEO_REPROCESS_UI] 카드 버튼 생성 실패:', img.filename);
                     }
                     grid.appendChild(card);
                 });
@@ -77885,9 +78903,11 @@
 
                     const enc = encodeURIComponent;
                     let thumbHtml;
+                    let thumbUrl = '';
+                    let posterUrl = '';
                     if (item.representative) {
-                        const thumbUrl = `/api/asset_mode/characters/${enc(charName)}/outfits/${enc(item.outfit)}/expressions/${enc(item.expression)}/images/${enc(item.representative)}`;
-                        const posterUrl = item.representative_is_animated
+                        thumbUrl = `/api/asset_mode/characters/${enc(charName)}/outfits/${enc(item.outfit)}/expressions/${enc(item.expression)}/images/${enc(item.representative)}`;
+                        posterUrl = item.representative_is_animated
                             ? `${thumbUrl}/poster`
                             : thumbUrl;
                         const animationAttrs = item.representative_is_animated
@@ -78810,6 +79830,7 @@
                             <button onclick="sendAssetToPoseEditor('${imgUrl}','${enc(img.filename)}')">포즈 편집</button>
                             <button type="button" class="qwen-edit-btn" ${img.is_animated ? 'disabled title="영상 에셋에는 EDIT 툴을 사용할 수 없습니다"' : ''}>EDIT 툴 호출</button>
                             <button type="button" class="asset-video-btn">영상화</button>
+                            <button type="button" class="asset-video-postprocess-btn" ${img.is_animated ? 'title="이 animated 에셋을 새 파일로 후처리합니다"' : 'disabled title="영상 후처리는 animated AVIF/WebP 에셋에서만 사용할 수 있습니다"'}>영상 후처리</button>
                         </div>
                         ${hasPrompt ? `
                         <div class="prompt-info">
@@ -78848,6 +79869,20 @@
                         });
                     } else {
                         console.error('[ASSET_VIDEO_UI] 에셋 생성 LV2 카드 버튼 생성 실패:', img.filename);
+                    }
+                    const videoPostprocessButton = card.querySelector('.asset-video-postprocess-btn');
+                    if (videoPostprocessButton && img.is_animated) {
+                        videoPostprocessButton.addEventListener('click', (event) => {
+                            event.stopPropagation();
+                            openAssetVideoReprocess({
+                                character: char,
+                                outfit,
+                                expression: expr,
+                                filename: img.filename,
+                            }, img, posterUrl, imgUrl);
+                        });
+                    } else if (!videoPostprocessButton) {
+                        console.error('[ASSET_VIDEO_REPROCESS_UI] 에셋 생성 LV2 카드 버튼 생성 실패:', img.filename);
                     }
                     grid.appendChild(card);
                 });
@@ -79095,6 +80130,7 @@
             lora_prompt_review: '프롬프트 2차 검수',
             bot_llm_face_tag_analysis: 'LLM 얼굴분석',
             qwen_edit_translate: 'EDIT 번역',
+            video_instruction_draft: 'H3 AI 초안',
             video_prompt_build: 'H3 프롬프트',
             video_i2v: 'H3 I2V',
             video_first_last: 'H3 FLF2V',
@@ -79328,9 +80364,12 @@
                         video_frames_extracted: '프레임 추출 완료',
                         video_upscaler_preparing: '업스케일 준비',
                         video_upscaling: 'Real-ESRGAN',
+                        video_upscaling_anime4k: 'Anime4K',
+                        video_upscaling_lanczos: 'Lanczos',
                         video_upscale_skipped: '업스케일 생략',
-                        video_encoding_raw: 'AVIF 원본 인코딩',
-                        video_encoding_composite: 'AVIF 합성본 인코딩',
+                        video_encoding_raw: '원본 인코딩',
+                        video_encoding_composite: '합성본 인코딩',
+                        video_target_size_search: '목표 용량 탐색',
                         video_postprocess_validated: '결과 검증',
                         video_postprocess_complete: '후처리 완료',
                     };
@@ -85700,7 +86739,7 @@
         let pmImportBaseline = null;
         let pmImportStep = 1;
         let pmImportSelectedItemId = '';
-        let pmImportItemFilter = 'all';
+        let pmImportItemFilter = 'modified';
         let pmImportValidation = null;
         let pmImportBusy = false;
         let pmImportCommitted = false;
@@ -87152,13 +88191,13 @@
         }
 
         function pmiSetItemFilter(filter) {
-            pmImportItemFilter = ['all', 'unassigned', 'modified'].includes(filter) ? filter : 'all';
-            document.querySelectorAll('#pmi-item-filters .pm-filter-btn').forEach(button => button.classList.toggle('active', button.dataset.filter === pmImportItemFilter));
+            pmImportItemFilter = ['all', 'unassigned', 'modified'].includes(filter) ? filter : 'modified';
             pmiRenderItemList();
         }
 
         function pmiRenderItemList() {
             if (!pmImportAnalysis) return;
+            document.querySelectorAll('#pmi-item-filters .pm-filter-btn').forEach(button => button.classList.toggle('active', button.dataset.filter === pmImportItemFilter));
             const query = (document.getElementById('pmi-item-search').value || '').trim().toLocaleLowerCase();
             const items = pmImportAnalysis.items.filter(item => {
                 if (query && !`${item.target_name} ${item.source_name}`.toLocaleLowerCase().includes(query)) return false;
@@ -87501,7 +88540,7 @@
             pmImportBaseline = null;
             pmImportValidation = null;
             pmImportSelectedItemId = '';
-            pmImportItemFilter = 'all';
+            pmImportItemFilter = 'modified';
             pmImportCommitted = false;
             const input = document.getElementById('pmi-file-input');
             if (input) input.value = '';
@@ -87524,6 +88563,90 @@
             [1600, 0.000142], [1700, 0.000131], [1800, 0.000121], [1900, 0.000111],
             [2000, 0.000100, true]
         ];
+
+        function _animaIlRateForStep(step) {
+            const row = IL_RATE_RECOMMEND.find(function(candidate) {
+                return candidate[0] === step;
+            });
+            if (!row) {
+                console.error('[LORA] Anima IL_RATE 추천값 없음:', step);
+                return 0.0005;
+            }
+            return row[1];
+        }
+
+        function loraProfileDefaults(profile) {
+            const normalized = String(profile || '').toLowerCase();
+            if (normalized === 'sdxl') {
+                return {
+                    step: 400,
+                    ilrate: 0.0002,
+                    genw: 1024,
+                    genh: 1536,
+                    resolution: 1024
+                };
+            }
+            if (normalized === 'anima') {
+                return {
+                    step: 200,
+                    ilrate: _animaIlRateForStep(200),
+                    genw: 704,
+                    genh: 1024,
+                    resolution: 1024
+                };
+            }
+            console.error('[LORA] 추천값을 지원하지 않는 PROFILE:', profile);
+            return null;
+        }
+
+        function applyLoraProfileDefaults(prefix) {
+            const profileSelect = document.getElementById(prefix + '-profile');
+            if (!profileSelect) {
+                console.error('[LORA] PROFILE 추천값 적용 대상 없음:', prefix);
+                return;
+            }
+            const defaults = loraProfileDefaults(profileSelect.value);
+            if (!defaults) return;
+
+            const setValue = function(suffix, value) {
+                const element = document.getElementById(prefix + '-' + suffix);
+                if (!element) {
+                    console.error('[LORA] PROFILE 추천값 입력 대상 없음:', prefix, suffix, value);
+                    return false;
+                }
+                element.value = value;
+                return true;
+            };
+            const updated = [
+                setValue('step', defaults.step),
+                setValue('ilrate', defaults.ilrate),
+                setValue('genw', defaults.genw),
+                setValue('genh', defaults.genh),
+                setValue('resolution', defaults.resolution)
+            ];
+            if (updated.some(function(success) { return !success; })) {
+                showToast('일부 PROFILE 추천값을 적용하지 못했습니다', 'error');
+                return;
+            }
+
+            if (prefix === 'lora-cfg') {
+                try {
+                    updateSaveAfterDropdown();
+                } catch (error) {
+                    console.error('[LORA] PROFILE 변경 후 SAVE_AFTER 갱신 실패:', prefix, error);
+                    showToast('추천값 적용 후 SAVE_AFTER 갱신에 실패했습니다', 'error');
+                    return;
+                }
+            }
+            showToast(
+                profileSelect.value + ' 추천값 적용: STEP ' + defaults.step
+                    + ' · IL_RATE ' + defaults.ilrate
+                    + ' · ' + defaults.genw + 'x' + defaults.genh
+                    + ' · RES ' + defaults.resolution,
+                'success'
+            );
+        }
+
         // IL_RATE 추천값 표 모달 열기 (에셋/봇/인스턴스/그림체 공용)
         function showIlRateRecommend() {
             const tbody = document.getElementById('ilrate-recommend-tbody');

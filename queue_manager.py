@@ -208,6 +208,7 @@ LLM_TYPES = frozenset({
     "bot_llm_face_tag_analysis",    # 비전 LLM 기반 얼굴/눈 태그 자동 분류
     "character_maker",              # 캐릭터 메이커 draft/feedback LLM 수정 (revise)
     "qwen_edit_translate",          # Qwen Edit 지시문 영어 번역
+    "video_instruction_draft",      # H3 I2V/FLF2V 편집용 AI 연출 초안
     "video_prompt_build",           # H3 I2V/FLF2V 프롬프트 작성
 })
 
@@ -235,9 +236,11 @@ def video_postprocess_label(params: dict) -> str:
     업스케일러 종류·배율·출력 포맷·ON/OFF를 모두 반영한다.
     """
     mode = str((params or {}).get("mode") or "")
+    job_kind = str((params or {}).get("job_kind") or "")
     prefix = {
         "i2v": "H3 I2V",
         "first_last": "H3 FLF2V",
+        "reprocess": "영상 재후처리",
     }.get(mode, "영상")
 
     if bool((params or {}).get("upscale_enabled")):
@@ -250,6 +253,14 @@ def video_postprocess_label(params: dict) -> str:
 
     output_format = str((params or {}).get("output_format") or "avif").strip().lower()
     display_format = VIDEO_OUTPUT_FORMAT_DISPLAY.get(output_format, "AVIF")
+    if job_kind == "existing_animation":
+        fps = int((params or {}).get("fps") or 24)
+        target_bytes = int((params or {}).get("target_size_bytes") or 0)
+        target_mb = target_bytes / (1024 * 1024)
+        return (
+            f"{prefix} · {fps}FPS · {target_mb:g}MB · "
+            f"{upscaler_part}→{display_format}"
+        )
     return f"{prefix} · {upscaler_part}→{display_format}"
 
 
@@ -2176,6 +2187,7 @@ class QueueManager:
             "asset_generation": self._handle_asset_generation,
             "qwen_edit": self._handle_qwen_edit,
             "qwen_edit_translate": self._handle_qwen_edit_translate,
+            "video_instruction_draft": self._handle_video_instruction_draft,
             "video_prompt_build": self._handle_video_prompt_build,
             "video_i2v": self._handle_video_render,
             "video_first_last": self._handle_video_render,
@@ -2271,6 +2283,49 @@ class QueueManager:
                 "[QUEUE:QWEN_EDIT_TRANSLATE] 처리 실패: "
                 f"item={item.id}, input={text!r}, "
                 f"error={type(e).__name__}: {e}"
+            )
+            traceback.print_exc()
+            raise
+
+    async def _handle_video_instruction_draft(self, item: QueueItem) -> dict:
+        """Generate an editable direction in the LLM lane without enqueueing render."""
+
+        if self.video_mode is None:
+            print(
+                "[QUEUE:VIDEO_DRAFT] 실행 실패: VideoMode 미주입 "
+                f"item={item.id}, params={item.params!r}"
+            )
+            raise RuntimeError("영상화 모드가 큐에 주입되지 않았습니다")
+        params = dict(item.params or {})
+        mode = str(params.get("mode") or "").strip().lower()
+        try:
+            await self._notify_progress(
+                item,
+                {"percentage": 5, "phase": "building_video_instruction_draft"},
+            )
+            result = await self.video_mode.build_instruction_draft(
+                params,
+                queue_item_id=item.id,
+            )
+            if not isinstance(result, dict) or not result.get("draft"):
+                print(
+                    "[QUEUE:VIDEO_DRAFT] 결과 형식 오류: "
+                    f"item={item.id}, mode={mode!r}, result={result!r}"
+                )
+                raise RuntimeError("AI 연출 초안 결과 형식이 올바르지 않습니다")
+            await self._notify_progress(
+                item,
+                {"percentage": 100, "phase": "video_instruction_draft_completed"},
+            )
+            print(
+                "[QUEUE:VIDEO_DRAFT] 생성 완료: "
+                f"item={item.id}, mode={mode}, length={len(str(result['draft']))}"
+            )
+            return result
+        except Exception as exc:
+            print(
+                f"[QUEUE:VIDEO_DRAFT] 처리 실패: item={item.id}, mode={mode}, "
+                f"error={type(exc).__name__}: {exc}"
             )
             traceback.print_exc()
             raise
@@ -2460,6 +2515,15 @@ class QueueManager:
                 f"error={type(exc).__name__}: {exc}"
             )
             traceback.print_exc()
+            if str((item.params or {}).get("job_kind") or "") == "existing_animation":
+                try:
+                    self.video_mode.cleanup_staged_video_postprocess(item.params)
+                except Exception as cleanup_exc:
+                    print(
+                        "[QUEUE:VIDEO_POSTPROCESS] 재후처리 실패 스풀 정리 실패: "
+                        f"item={item.id}, error={type(cleanup_exc).__name__}: {cleanup_exc}"
+                    )
+                    traceback.print_exc()
             raise
 
     async def _handle_illustration(self, item: QueueItem) -> dict:

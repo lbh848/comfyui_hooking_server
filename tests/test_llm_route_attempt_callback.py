@@ -223,8 +223,8 @@ async def test_vision_uses_same_execution_result_shape(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_auto_visual_format_repairs_do_not_trigger_llm_retry(monkeypatch):
-    from modes.video_mode import validate_auto_visual_direction
+async def test_instruction_draft_plain_text_does_not_trigger_llm_retry(monkeypatch):
+    from modes.video_mode import validate_instruction_draft
 
     monkeypatch.setattr(llm_service, "_current_config", {"llm_routing": {}})
     monkeypatch.setattr(llm_service, "_routing_for", lambda _task: ("llm1", "llm2"))
@@ -242,11 +242,11 @@ async def test_auto_visual_format_repairs_do_not_trigger_llm_retry(monkeypatch):
 
     async def primary(*_args, **_kwargs):
         calls.append("llm1")
-        return "```json\n['Picture 1: A quiet room.', '',]\n```"
+        return "인물이 천천히 고개를 들고 창밖을 바라본다."
 
     async def fallback(*_args, **_kwargs):
         calls.append("llm2")
-        return '["Picture 1: fallback", "fallback direction"]'
+        return "대체 지시"
 
     monkeypatch.setattr(llm_service, "callLLMVision", primary)
     monkeypatch.setattr(llm_service, "callLLMVision2", fallback)
@@ -255,7 +255,7 @@ async def test_auto_visual_format_repairs_do_not_trigger_llm_retry(monkeypatch):
         "video_prompt_i2v",
         [{"role": "user", "content": "look"}],
         image_b64="AA==",
-        result_validator=validate_auto_visual_direction,
+        result_validator=validate_instruction_draft,
     )
 
     assert calls == ["llm1"]
@@ -263,8 +263,8 @@ async def test_auto_visual_format_repairs_do_not_trigger_llm_retry(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_auto_visual_missing_context_retries_same_model(monkeypatch):
-    from modes.video_mode import validate_auto_visual_direction
+async def test_instruction_draft_empty_result_retries_same_model(monkeypatch):
+    from modes.video_mode import validate_instruction_draft
 
     monkeypatch.setattr(llm_service, "_current_config", {"llm_routing": {}})
     monkeypatch.setattr(llm_service, "_routing_for", lambda _task: ("llm1", "llm2"))
@@ -280,8 +280,8 @@ async def test_auto_visual_missing_context_retries_same_model(monkeypatch):
     )
     responses = iter(
         [
-            '["", "A valid direction without context."]',
-            '["Picture 1: A recovered context.", "A recovered direction."]',
+            "   ",
+            "The subject slowly turns toward the window.",
         ]
     )
     calls = []
@@ -292,7 +292,7 @@ async def test_auto_visual_missing_context_retries_same_model(monkeypatch):
 
     async def fallback(*_args, **_kwargs):
         calls.append("llm2")
-        return '["Picture 1: fallback", "fallback direction"]'
+        return "Fallback direction."
 
     monkeypatch.setattr(llm_service, "callLLMVision", primary)
     monkeypatch.setattr(llm_service, "callLLMVision2", fallback)
@@ -301,7 +301,7 @@ async def test_auto_visual_missing_context_retries_same_model(monkeypatch):
         "video_prompt_i2v",
         [{"role": "user", "content": "look"}],
         image_b64="AA==",
-        result_validator=validate_auto_visual_direction,
+        result_validator=validate_instruction_draft,
     )
 
     assert calls == ["llm1", "llm1"]
