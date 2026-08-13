@@ -7759,6 +7759,72 @@ def _extract_prompts_from_backup(filepath: str) -> tuple[str, str]:
     return positive, negative
 
 
+def _extract_video_prompt_metadata(filepath: str) -> dict:
+    """영상 프롬프트 레코드의 진단 메타데이터를 정규화해 반환한다."""
+    empty = {
+        "is_video_prompt": False,
+        "video_instruction": "",
+        "video_instruction_source": "",
+        "video_auto_instruction": None,
+        "video_visual_context": "",
+    }
+    try:
+        with open(filepath, "r", encoding="utf-8") as fp:
+            data = json.load(fp)
+    except Exception as exc:
+        print(
+            "[BACKUP:VIDEO_PROMPT] 영상 프롬프트 메타데이터 읽기 실패: "
+            f"file={filepath!r}, error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        return empty
+
+    if not isinstance(data, dict):
+        print(
+            "[BACKUP:VIDEO_PROMPT] 프롬프트 레코드가 객체가 아님: "
+            f"file={filepath!r}, type={type(data).__name__}"
+        )
+        return empty
+    if data.get("provider") != "video" and data.get("kind") != "h3_video":
+        return empty
+
+    instruction = data.get("video_instruction", data.get("instruction", ""))
+    source = data.get("video_instruction_source", "")
+    auto_instruction = data.get("video_auto_instruction")
+    visual_context = data.get("video_visual_context", "")
+    invalid_fields = []
+    if not isinstance(instruction, str):
+        invalid_fields.append(("video_instruction", type(instruction).__name__))
+        instruction = ""
+    if not isinstance(source, str):
+        invalid_fields.append(("video_instruction_source", type(source).__name__))
+        source = ""
+    source = source.strip().lower()
+    if source not in {"", "user", "llm"}:
+        invalid_fields.append(("video_instruction_source", repr(source)))
+        source = ""
+    if auto_instruction is not None and not isinstance(auto_instruction, bool):
+        invalid_fields.append(("video_auto_instruction", type(auto_instruction).__name__))
+        auto_instruction = None
+    if not source and isinstance(auto_instruction, bool):
+        source = "llm" if auto_instruction else "user"
+    if not isinstance(visual_context, str):
+        invalid_fields.append(("video_visual_context", type(visual_context).__name__))
+        visual_context = ""
+    if invalid_fields:
+        print(
+            "[BACKUP:VIDEO_PROMPT] 영상 진단 메타데이터 형식 오류, 안전한 값 사용: "
+            f"file={filepath!r}, fields={invalid_fields!r}"
+        )
+    return {
+        "is_video_prompt": True,
+        "video_instruction": instruction,
+        "video_instruction_source": source,
+        "video_auto_instruction": auto_instruction,
+        "video_visual_context": visual_context,
+    }
+
+
 # ─── 백업 필터용 bot_name 인덱스 캐시 ──────────────────────────
 # 백업이 수천 개일 때 info 파일 전체 스캔이 수 초~수십 초 걸린다(환경/디스크에 따라).
 # 페이지네이션/자동새로고침 때마다 반복 스캔하지 않도록 bot_name 인덱스를 캐싱하고
@@ -8769,8 +8835,16 @@ async def handle_api_backups(request: web.Request) -> web.Response:
                 pass
 
         positive, negative = "", ""
+        video_prompt_metadata = {
+            "is_video_prompt": False,
+            "video_instruction": "",
+            "video_instruction_source": "",
+            "video_auto_instruction": None,
+            "video_visual_context": "",
+        }
         if os.path.exists(prompt_path):
             positive, negative = _extract_prompts_from_backup(prompt_path)
+            video_prompt_metadata = _extract_video_prompt_metadata(prompt_path)
 
         # Check if this backup is scheduled for reschedule
         is_scheduled = reschedule_queue is not None and reschedule_queue["name"] == base
@@ -8822,6 +8896,7 @@ async def handle_api_backups(request: web.Request) -> web.Response:
             "has_prompt": os.path.exists(prompt_path),
             "positive": positive,
             "negative": negative,
+            **video_prompt_metadata,
             "enhanced_positive": enhanced_positive,
             "wildcard_info": wildcard_info,
             "conversion_info": info,

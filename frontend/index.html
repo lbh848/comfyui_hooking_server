@@ -24749,6 +24749,31 @@
             loadBackups(true);
         }
 
+        function renderVideoPromptDetails(record, finalPrompt) {
+            const source = String(record?.video_instruction_source || '').trim().toLowerCase();
+            const sourceLabel = source === 'llm'
+                ? 'LLM 자동 생성'
+                : source === 'user'
+                    ? '유저 입력'
+                    : record?.video_auto_instruction === true
+                        ? 'LLM 자동 생성'
+                        : record?.video_auto_instruction === false
+                            ? '유저 입력'
+                            : '기록 없음';
+            const instruction = String(record?.video_instruction || '').trim();
+            const visualContext = String(record?.video_visual_context || '').trim();
+            const prompt = String(finalPrompt || '').trim();
+            const renderValue = (value) => value
+                ? escapeHtml(value).replace(/\n/g, '<br>')
+                : '<span style="color:var(--text2)">(기록 없음)</span>';
+            return `
+                <b>[연출 지시 출처]</b><br>${escapeHtml(sourceLabel)}<br><br>
+                <b>[연출 지시]</b><br>${renderValue(instruction)}<br><br>
+                <b>[Vision 해석]</b><br>${renderValue(visualContext)}<br><br>
+                <b>[최종 H3 프롬프트]</b><br>${renderValue(prompt)}
+            `;
+        }
+
         function renderBackups(backups) {
             const content = document.getElementById('content');
             if (!backups || backups.length === 0) {
@@ -24763,6 +24788,7 @@
                 const positive = b.positive || '';
                 const negative = b.negative || '';
                 const hasPrompt = positive || negative;
+                const isVideoPrompt = b.is_video_prompt === true;
                 const isScheduled = b.is_scheduled || false;
 
                 // 실행 출처 딱지: Modal=M, 챈섭=S, 로컬 GPU=배지 없음.
@@ -24788,7 +24814,7 @@
                     : '';
 
                 // Store prompt data in Map (avoids data-attribute truncation issues)
-                promptDataMap.set(b.name, { positive, negative, enhanced_positive: b.enhanced_positive || '', wildcard_info: b.wildcard_info || {}, conversion_info: b.conversion_info || {} });
+                promptDataMap.set(b.name, { positive, negative, enhanced_positive: b.enhanced_positive || '', wildcard_info: b.wildcard_info || {}, conversion_info: b.conversion_info || {}, video_instruction: b.video_instruction || '', video_instruction_source: b.video_instruction_source || '', video_auto_instruction: b.video_auto_instruction, video_visual_context: b.video_visual_context || '' });
 
                 const cardClass = 'backup-card';
 
@@ -24845,7 +24871,7 @@
                                 <button class="prompt-toggle-btn" onclick="togglePrompt('${escapeAttr(b.name)}')" id="prompt-btn-${escapeAttr(b.name)}">📝 프롬프트 펼치기</button>
                                 ${b.enhanced_positive ? `<button class="enhanced-toggle-btn" onclick="toggleEnhancedPrompt('${escapeAttr(b.name)}')" id="enhanced-btn-${escapeAttr(b.name)}">✨ 강화 프롬프트</button><button class="enhanced-report-btn" onclick="openEnhanceReportModal('${escapeAttr(b.name)}')">📋 리포트</button>` : ''}
                             </div>
-                            <div class="prompt-preview" id="prompt-${escapeAttr(b.name)}">[긍정]\n${escapeHtml(positive)}\n\n[부정]\n${escapeHtml(negative)}</div>
+                            <div class="prompt-preview" id="prompt-${escapeAttr(b.name)}">${isVideoPrompt ? renderVideoPromptDetails(b, positive) : `[긍정]\n${escapeHtml(positive)}\n\n[부정]\n${escapeHtml(negative)}`}</div>
                             ${b.enhanced_positive ? `<div class="enhanced-preview" id="enhanced-${escapeAttr(b.name)}"></div>` : ''}
                         ` : '<div class="prompt-preview" style="color:var(--text2)">프롬프트 없음</div>'}
                         <div class="conversion-info" id="conv-${escapeAttr(b.name)}" style="display:none; margin-top:8px;">
@@ -73771,7 +73797,18 @@
                     card.className = 'asset-image-card';
                     card.dataset.imgUrl = imgUrl;
                     card.dataset.filename = img.filename;
-                    const hasPrompt = img.has_prompt || img.positive || img.negative || img.edit_prompt;
+                    const hasPrompt = img.has_prompt || img.positive || img.negative || img.edit_prompt || img.is_video_animation;
+                    const promptDetails = img.is_video_animation === true
+                        ? renderVideoPromptDetails(img, img.positive)
+                        : `
+                            ${img.positive ? `<b>긍정:</b> ${escapeHtml(img.positive).replace(/\n/g, '<br>')}` : '<span style="color:var(--text3)">긍정: (비어있음)</span>'}
+                            ${img.negative ? `<br><b>부정:</b> ${escapeHtml(img.negative).replace(/\n/g, '<br>')}` : ''}
+                            ${img.edit_prompt ? `<br><b>Edit:</b> ${escapeHtml(img.edit_prompt).replace(/\n/g, '<br>')}` : ''}
+                            ${img.edit_prompt_original && img.edit_prompt_original !== img.edit_prompt ? `<br><b>Edit 원문:</b> ${escapeHtml(img.edit_prompt_original).replace(/\n/g, '<br>')}` : ''}
+                            ${img.edit_negative_prompt ? `<br><b>Edit 부정:</b> ${escapeHtml(img.edit_negative_prompt).replace(/\n/g, '<br>')}` : ''}
+                            ${img.edit_source_filename ? `<br><b>Edit 원본:</b> ${escapeHtml(img.edit_source_filename)}` : ''}
+                            ${img.prompt_character || img.prompt_outfit || img.prompt_expression ? `<br><b>메타:</b> ${[img.prompt_character, img.prompt_outfit, img.prompt_expression].filter(Boolean).map(escapeHtml).join(' / ')}` : ''}
+                        `;
                     card.innerHTML = `
                         <div class="au-select-check" onclick="event.stopPropagation(); auToggleSelect(this, '${imgUrl}')" title="선택">☐</div>
                         ${img.is_representative ? '<div class="rep-badge">대표</div>' : ''}
@@ -73794,13 +73831,7 @@
                         <div class="prompt-info">
                             <div class="prompt-label" onclick="this.parentElement.classList.toggle('expanded')">프롬프트 ▾</div>
                             <div class="prompt-text">
-                                ${img.positive ? `<b>긍정:</b> ${escapeHtml(img.positive).replace(/\n/g, '<br>')}` : '<span style="color:var(--text3)">긍정: (비어있음)</span>'}
-                                ${img.negative ? `<br><b>부정:</b> ${escapeHtml(img.negative).replace(/\n/g, '<br>')}` : ''}
-                                ${img.edit_prompt ? `<br><b>Edit:</b> ${escapeHtml(img.edit_prompt).replace(/\n/g, '<br>')}` : ''}
-                                ${img.edit_prompt_original && img.edit_prompt_original !== img.edit_prompt ? `<br><b>Edit 원문:</b> ${escapeHtml(img.edit_prompt_original).replace(/\n/g, '<br>')}` : ''}
-                                ${img.edit_negative_prompt ? `<br><b>Edit 부정:</b> ${escapeHtml(img.edit_negative_prompt).replace(/\n/g, '<br>')}` : ''}
-                                ${img.edit_source_filename ? `<br><b>Edit 원본:</b> ${escapeHtml(img.edit_source_filename)}` : ''}
-                                ${img.prompt_character || img.prompt_outfit || img.prompt_expression ? `<br><b>메타:</b> ${[img.prompt_character, img.prompt_outfit, img.prompt_expression].filter(Boolean).map(escapeHtml).join(' / ')}` : ''}
+                                ${promptDetails}
                             </div>
                         </div>` : ''}`;
                     const qwenButton = card.querySelector('.qwen-edit-btn');
@@ -78375,7 +78406,17 @@
                         : '';
                     const card = document.createElement('div');
                     card.className = 'asset-image-card';
-                    const hasPrompt = img.positive || img.negative || img.edit_prompt;
+                    const hasPrompt = img.positive || img.negative || img.edit_prompt || img.is_video_animation;
+                    const promptDetails = img.is_video_animation === true
+                        ? renderVideoPromptDetails(img, img.positive)
+                        : `
+                            ${img.positive ? `<b>긍정:</b> ${escapeHtml(img.positive).replace(/\n/g, '<br>')}` : ''}
+                            ${img.negative ? `<br><b>부정:</b> ${escapeHtml(img.negative).replace(/\n/g, '<br>')}` : ''}
+                            ${img.edit_prompt ? `<br><b>Edit:</b> ${escapeHtml(img.edit_prompt).replace(/\n/g, '<br>')}` : ''}
+                            ${img.edit_prompt_original && img.edit_prompt_original !== img.edit_prompt ? `<br><b>Edit 원문:</b> ${escapeHtml(img.edit_prompt_original).replace(/\n/g, '<br>')}` : ''}
+                            ${img.edit_negative_prompt ? `<br><b>Edit 부정:</b> ${escapeHtml(img.edit_negative_prompt).replace(/\n/g, '<br>')}` : ''}
+                            ${img.edit_source_filename ? `<br><b>Edit 원본:</b> ${escapeHtml(img.edit_source_filename)}` : ''}
+                        `;
                     card.innerHTML = `
                         ${img.is_representative ? '<div class="rep-badge">대표</div>' : ''}
                         <div class="asset-img-frame">
@@ -78397,12 +78438,7 @@
                         <div class="prompt-info">
                             <div class="prompt-label" onclick="this.parentElement.classList.toggle('expanded')">프롬프트 ▾</div>
                             <div class="prompt-text">
-                                ${img.positive ? `<b>긍정:</b> ${escapeHtml(img.positive).replace(/\n/g, '<br>')}` : ''}
-                                ${img.negative ? `<br><b>부정:</b> ${escapeHtml(img.negative).replace(/\n/g, '<br>')}` : ''}
-                                ${img.edit_prompt ? `<br><b>Edit:</b> ${escapeHtml(img.edit_prompt).replace(/\n/g, '<br>')}` : ''}
-                                ${img.edit_prompt_original && img.edit_prompt_original !== img.edit_prompt ? `<br><b>Edit 원문:</b> ${escapeHtml(img.edit_prompt_original).replace(/\n/g, '<br>')}` : ''}
-                                ${img.edit_negative_prompt ? `<br><b>Edit 부정:</b> ${escapeHtml(img.edit_negative_prompt).replace(/\n/g, '<br>')}` : ''}
-                                ${img.edit_source_filename ? `<br><b>Edit 원본:</b> ${escapeHtml(img.edit_source_filename)}` : ''}
+                                ${promptDetails}
                             </div>
                         </div>` : ''}`;
                     const qwenButton = card.querySelector('.qwen-edit-btn');

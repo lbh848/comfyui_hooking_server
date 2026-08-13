@@ -2129,6 +2129,30 @@ class AssetMode:
             created_paths.append(target_path)
             os.replace(raw_path, target_raw_path)
             created_paths.append(target_raw_path)
+            instruction_source = str(
+                (metadata or {}).get("instruction_source") or ""
+            ).strip().lower()
+            raw_auto_instruction = (metadata or {}).get("auto_instruction")
+            auto_instruction = (
+                raw_auto_instruction if isinstance(raw_auto_instruction, bool) else None
+            )
+            if raw_auto_instruction is not None and auto_instruction is None:
+                print(
+                    "[ASSET_VIDEO] AI 자동 연출 값 형식 오류, 출처 미상으로 보존: "
+                    f"value={raw_auto_instruction!r}, source={normalized!r}"
+                )
+            if instruction_source not in {"user", "llm"}:
+                if instruction_source:
+                    print(
+                        "[ASSET_VIDEO] 연출 지시 출처 값 오류, 실행 모드로 복구: "
+                        f"value={instruction_source!r}, auto_instruction={auto_instruction!r}, "
+                        f"source={normalized!r}"
+                    )
+                instruction_source = (
+                    "llm" if auto_instruction else "user"
+                    if isinstance(auto_instruction, bool)
+                    else ""
+                )
             prompt_record = {
                 "positive": str((metadata or {}).get("positive") or ""),
                 "negative": "",
@@ -2152,6 +2176,17 @@ class AssetMode:
                 "video_output_format_requested": str(
                     (metadata or {}).get("output_format") or normalized_extension.lstrip(".")
                 ),
+                "video_instruction": str((metadata or {}).get("instruction") or ""),
+                "video_instruction_source": instruction_source,
+                "video_auto_instruction": auto_instruction,
+                "video_visual_context": str(
+                    (metadata or {}).get("visual_context") or ""
+                ),
+                "llm_trace": [
+                    str(item)
+                    for item in ((metadata or {}).get("llm_trace") or [])
+                    if str(item).strip()
+                ],
                 "animation_format": normalized_extension.lstrip("."),
                 "created_at": float((metadata or {}).get("created_at") or time.time()),
             }
@@ -2294,6 +2329,12 @@ class AssetMode:
                 "edit_source_filename": prompt_data.get("edit_source_filename", ""),
                 "edit_model": prompt_data.get("edit_model", ""),
                 "edited_at": prompt_data.get("edited_at", ""),
+                "video_instruction": prompt_data.get("video_instruction", ""),
+                "video_instruction_source": prompt_data.get(
+                    "video_instruction_source", ""
+                ),
+                "video_auto_instruction": prompt_data.get("video_auto_instruction"),
+                "video_visual_context": prompt_data.get("video_visual_context", ""),
                 "local_path": fpath,
             })
         return {"images": images, "representative": representative}

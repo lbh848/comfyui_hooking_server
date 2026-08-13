@@ -56,6 +56,16 @@ def test_video_page_uses_modal_entry_with_two_internal_modes() -> None:
     assert "onVideoLastFrameChange()" in FRONTEND
 
 
+def test_video_prompt_diagnostics_are_rendered_for_backups_and_assets() -> None:
+    assert "function renderVideoPromptDetails(record, finalPrompt)" in FRONTEND
+    assert "[연출 지시 출처]" in FRONTEND
+    assert "[연출 지시]" in FRONTEND
+    assert "[Vision 해석]" in FRONTEND
+    assert "[최종 H3 프롬프트]" in FRONTEND
+    assert "b.is_video_prompt === true" in FRONTEND
+    assert "img.is_video_animation === true" in FRONTEND
+
+
 def test_settings_expose_i2v_and_flf2v_workflows_without_card_selection() -> None:
     asset_tab = FRONTEND.index("switchSettingsTab('asset')")
     video_tab = FRONTEND.index("switchSettingsTab('video')", asset_tab)

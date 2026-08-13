@@ -714,6 +714,9 @@ async def test_i2v_build_uses_picture_only_and_program_adds_alignment(
     assert calls == ["vision", "text"]
     assert result["success"] is True
     assert result["h3_prompt"] == f"{I2V_ALIGNMENT}\n\n{body}"
+    assert result["instruction"] == "머리카락과 옷이 약한 바람에 흔들린다"
+    assert result["instruction_source"] == "user"
+    assert result["visual_context"] == visual_context
     assert result["llm_trace"] == [
         "video_prompt:i2v:queue-i2v:visual_context",
         "video_prompt:i2v:queue-i2v",
@@ -806,6 +809,8 @@ async def test_i2v_auto_instruction_is_generated_in_visual_call_once(
     assert calls == ["vision", "text"]
     assert result["success"] is True
     assert result["instruction"] == direction_value
+    assert result["instruction_source"] == "llm"
+    assert result["visual_context"] == f"visual_context:\n{visual_value}"
     assert result["llm_trace"] == [
         "video_prompt:i2v:queue-auto-i2v:visual_context_auto_direction",
         "video_prompt:i2v:queue-auto-i2v",
@@ -945,6 +950,8 @@ async def test_render_spools_video_postprocess_before_cleaning_comfy_mp4(
         "mode": render_mode,
         "source_backup": "source",
         "instruction": "move gently",
+        "instruction_source": "user",
+        "visual_context": "visual_context:\nOne character stands still.",
         "aspect_ratio": "1:1",
         "quality_level": "medium",
         "duration": 12,
@@ -967,6 +974,10 @@ async def test_render_spools_video_postprocess_before_cleaning_comfy_mp4(
     job_dir = Path(result["postprocess_job"]["job_dir"])
     manifest = json.loads((job_dir / "job.json").read_text(encoding="utf-8"))
     assert manifest["source_backup"] == "source"
+    assert manifest["instruction"] == "move gently"
+    assert manifest["instruction_source"] == "user"
+    assert manifest["auto_instruction"] is False
+    assert manifest["visual_context"] == "visual_context:\nOne character stands still."
     assert manifest["llm_trace"] == ["trace-1"]
     assert manifest["duration"] == 12.0
     assert manifest["aspect_ratio"] == "1:1"
@@ -998,6 +1009,9 @@ async def test_video_postprocess_commits_verified_pair_and_metadata(
         "last_backup": "",
         "positive": "synthetic H3 prompt",
         "instruction": "move gently",
+        "instruction_source": "llm",
+        "auto_instruction": True,
+        "visual_context": "visual_context:\nOne character stands still.",
         "llm_trace": ["trace-1"],
         "preset": "1:1",
         "aspect_ratio": "1:1",
@@ -1084,6 +1098,14 @@ async def test_video_postprocess_commits_verified_pair_and_metadata(
     assert info["video_actual_mp"] == 0.295936
     assert info["video_upscale_scale"] == 2
     assert info["bot_name"] == "test-bot"
+    prompt = json.loads(
+        (backup_dir / f"{base_name}.json").read_text(encoding="utf-8")
+    )
+    assert prompt["instruction"] == "move gently"
+    assert prompt["video_instruction"] == "move gently"
+    assert prompt["video_instruction_source"] == "llm"
+    assert prompt["video_auto_instruction"] is True
+    assert prompt["video_visual_context"] == "visual_context:\nOne character stands still."
     assert not job_dir.exists()
     assert events[-1] == ("backup_created", {"name": base_name})
 

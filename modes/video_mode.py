@@ -1478,6 +1478,8 @@ Vision-produced static Visual Context:
                 "success": True,
                 "h3_prompt": response_text,
                 "instruction": instruction,
+                "instruction_source": "llm" if auto_instruction else "user",
+                "visual_context": visual_context,
                 "llm_trace": [*trace_ids, history_id],
                 "history_id": history_id,
             }
@@ -2167,6 +2169,20 @@ Vision-produced static Visual Context:
             )
             stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
             base_name = f"{stamp}_{uuid.uuid4().hex[:8]}"
+            auto_instruction = (params or {}).get("auto_instruction", False) is True
+            instruction = str((params or {}).get("instruction") or "")
+            instruction_source = str(
+                (params or {}).get("instruction_source")
+                or ("llm" if auto_instruction else "user")
+            ).strip().lower()
+            if instruction_source not in {"user", "llm"}:
+                print(
+                    "[VIDEO:POSTPROCESS] 연출 지시 출처 값 오류, 실행 모드로 복구: "
+                    f"value={instruction_source!r}, auto_instruction={auto_instruction}, "
+                    f"mode={mode!r}"
+                )
+                instruction_source = "llm" if auto_instruction else "user"
+            visual_context = str((params or {}).get("visual_context") or "")
             manifest = {
                 "version": 1,
                 "spool_id": spool_id,
@@ -2185,7 +2201,10 @@ Vision-produced static Visual Context:
                     else ""
                 ),
                 "positive": h3_prompt,
-                "instruction": str((params or {}).get("instruction") or ""),
+                "instruction": instruction,
+                "instruction_source": instruction_source,
+                "auto_instruction": auto_instruction,
+                "visual_context": visual_context,
                 "llm_trace": [
                     str(item)
                     for item in ((params or {}).get("llm_trace") or [])
@@ -2443,13 +2462,42 @@ Vision-produced static Visual Context:
             os.replace(processed["raw_path"], raw_path)
             created_files.append(raw_path)
 
+            instruction = str(manifest.get("instruction") or "")
+            instruction_source = str(manifest.get("instruction_source") or "").strip().lower()
+            raw_auto_instruction = manifest.get("auto_instruction")
+            auto_instruction = (
+                raw_auto_instruction if isinstance(raw_auto_instruction, bool) else None
+            )
+            if raw_auto_instruction is not None and auto_instruction is None:
+                print(
+                    "[VIDEO:POSTPROCESS] AI 자동 연출 값 형식 오류, 출처 미상으로 보존: "
+                    f"value={raw_auto_instruction!r}, mode={mode!r}"
+                )
+            if instruction_source not in {"user", "llm"}:
+                if instruction_source:
+                    print(
+                        "[VIDEO:POSTPROCESS] 연출 지시 출처 값 오류, 출처 미상으로 보존: "
+                        f"value={instruction_source!r}, mode={mode!r}"
+                    )
+                instruction_source = (
+                    "llm" if auto_instruction else "user"
+                    if isinstance(auto_instruction, bool)
+                    else ""
+                )
+            visual_context = str(manifest.get("visual_context") or "")
             prompt_record = {
                 "provider": "video",
                 "kind": "h3_video",
                 "mode": manifest.get("mode", ""),
                 "positive": manifest.get("positive", ""),
                 "negative": "",
-                "instruction": manifest.get("instruction", ""),
+                # instruction은 기존 소비자 호환용이다. video_* 필드는 영상 진단 UI의
+                # 명시적 스키마로, 최종 H3 프롬프트와 생성 근거를 분리 보존한다.
+                "instruction": instruction,
+                "video_instruction": instruction,
+                "video_instruction_source": instruction_source,
+                "video_auto_instruction": auto_instruction,
+                "video_visual_context": visual_context,
                 "source_backup": manifest.get("source_backup", ""),
                 "last_backup": manifest.get("last_backup", ""),
             }
