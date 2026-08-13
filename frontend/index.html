@@ -276,6 +276,11 @@
             font-weight: 700;
         }
 
+        /* OOM 임박 경고 — RAM/VRAM 여유 1GB 미만일 때 값 색을 경고색(빨강)으로. 회복하면 자동 해제. */
+        .sysmon-value.sysmon-crit {
+            color: var(--error);
+        }
+
         /* GPU/VRAM 동적 줄 컨테이너 — 자식 row가 strip의 flex item이 되도록 contents */
         .sysmon-gpu-rows {
             display: contents;
@@ -48998,9 +49003,15 @@
                 }
                 if (vramRow) {
                     vramRow.querySelector('.sysmon-label').textContent = multi ? `VRAM${i}` : 'VRAM';
-                    vramRow.querySelector('.sysmon-value').textContent = gpu.vram_total_gb
-                        ? `${_fmtSysmonNum(gpu.vram_used_gb, 1)} / ${_fmtSysmonNum(gpu.vram_total_gb, 0)} GB`
-                        : '—';
+                    const vramVal = vramRow.querySelector('.sysmon-value');
+                    if (gpu.vram_total_gb) {
+                        vramVal.textContent = `${_fmtSysmonNum(gpu.vram_used_gb, 1)} / ${_fmtSysmonNum(gpu.vram_total_gb, 0)} GB`;
+                        // 여유 1GB 미만 → OOM 임박 경고(빨강). 1GB 이상 회복 시 원래 색으로 복귀.
+                        vramVal.classList.toggle('sysmon-crit', (gpu.vram_total_gb - gpu.vram_used_gb) < 1);
+                    } else {
+                        vramVal.textContent = '—';
+                        vramVal.classList.remove('sysmon-crit');
+                    }
                 }
             });
             container.style.display = want > 0 ? '' : 'none';
@@ -49018,9 +49029,14 @@
                         : '—';
                 }
                 if (_SYSMON_ELS.ram) {
-                    _SYSMON_ELS.ram.textContent = data.ram_total_gb
-                        ? `${_fmtSysmonNum(data.ram_used_gb, 1)} / ${_fmtSysmonNum(data.ram_total_gb, 0)} GB`
-                        : '—';
+                    if (data.ram_total_gb) {
+                        _SYSMON_ELS.ram.textContent = `${_fmtSysmonNum(data.ram_used_gb, 1)} / ${_fmtSysmonNum(data.ram_total_gb, 0)} GB`;
+                        // 여유 1GB 미만 → OOM 임박 경고(빨강). 1GB 이상 회복 시 원래 색으로 복귀.
+                        _SYSMON_ELS.ram.classList.toggle('sysmon-crit', (data.ram_total_gb - data.ram_used_gb) < 1);
+                    } else {
+                        _SYSMON_ELS.ram.textContent = '—';
+                        _SYSMON_ELS.ram.classList.remove('sysmon-crit');
+                    }
                 }
 
                 const gpus = Array.isArray(data.gpus)
