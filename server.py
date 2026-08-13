@@ -1234,13 +1234,13 @@ try:
     import psutil as _sysmon_psutil
 except Exception:  # 의존성 누락 — 서버는 정상 동작(CPU/RAM 항목만 숨김)
     _sysmon_psutil = None
-    print("[SYSMON] psutil 을 불러오지 못했습니다 — CPU/RAM 통계가 비활성화됩니다.")
+    print("[SYSMON] psutil 을 불러오지 못했습니다 - CPU/RAM 통계가 비활성화됩니다.")
 
 try:
     import pynvml as _sysmon_pynvml
 except Exception:
     _sysmon_pynvml = None
-    print("[SYSMON] pynvml(nvidia-ml-py) 을 불러오지 못했습니다 — GPU/VRAM 통계가 비활성화됩니다.")
+    print("[SYSMON] pynvml(nvidia-ml-py) 을 불러오지 못했습니다 - GPU/VRAM 통계가 비활성화됩니다.")
 
 SYSTEM_STATS_INTERVAL = 1.0  # 초 — 헤더 시스템 통계 갱신 주기 (0.5 로 줄이면 더 잦음)
 _sysmon_stop_event = threading.Event()
@@ -1257,7 +1257,7 @@ def _init_sysmon_nvml() -> None:
     _sysmon_nvml_handles = []
     _sysmon_nvml_names = []
     if _sysmon_pynvml is None:
-        print("[SYSMON] pynvml 미설치 — GPU/VRAM 통계가 비활성화됩니다 (uv add nvidia-ml-py 확인)")
+        print("[SYSMON] pynvml 미설치 - GPU/VRAM 통계가 비활성화됩니다 (uv add nvidia-ml-py 확인)")
         return
     try:
         _sysmon_pynvml.nvmlInit()
@@ -1279,7 +1279,7 @@ def _init_sysmon_nvml() -> None:
                 print(f"[SYSMON] GPU[{idx}] 핸들 획득 실패: {type(e).__name__}: {e}")
         if _sysmon_nvml_handles:
             _sysmon_nvml_ready = True
-            print(f"[SYSMON] NVML 초기화 성공 — {len(_sysmon_nvml_handles)}개 GPU: "
+            print(f"[SYSMON] NVML 초기화 성공 - {len(_sysmon_nvml_handles)}개 GPU: "
                   f"{', '.join(_sysmon_nvml_names)}")
         else:
             _sysmon_nvml_ready = False
@@ -1337,7 +1337,7 @@ def _collect_system_stats() -> dict:
 
 def _system_monitor_loop(stop_event: threading.Event) -> None:
     """(백그라운드 daemon 스레드) SYSTEM_STATS_INTERVAL 마다 통계를 수집해 WS push 한다."""
-    print(f"[SYSMON] 시스템 모니터 스레드 시작 — interval={SYSTEM_STATS_INTERVAL}s")
+    print(f"[SYSMON] 시스템 모니터 스레드 시작 - interval={SYSTEM_STATS_INTERVAL}s")
     _init_sysmon_nvml()
     while not stop_event.is_set():
         try:
