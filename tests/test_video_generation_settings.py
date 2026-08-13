@@ -1,0 +1,165 @@
+from __future__ import annotations
+
+import copy
+import json
+import sys
+from pathlib import Path
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+import server
+
+
+class _ConfigRequest:
+    method = "POST"
+
+    def __init__(self, body: object):
+        self._body = body
+
+    async def json(self):
+        return self._body
+
+
+def test_video_generation_defaults_normalize_every_persisted_option() -> None:
+    normalized = server.normalize_video_generation_defaults(
+        {
+            "mode": "first_last",
+            "duration": 12,
+            "aspect_ratio": "16:9",
+            "quality_level": "high",
+            "loop": True,
+            "visual_context_source": "prompt",
+            "instruction_language": "en",
+            "include_dialogue_context": False,
+            "allow_camera_motion": False,
+            "allow_background_change": True,
+            "upscale_model": "none",
+            "upscale_scale": 4,
+            "output_format": "webp",
+        }
+    )
+
+    assert normalized == {
+        "mode": "first_last",
+        "duration": 12,
+        "aspect_ratio": "16:9",
+        "quality_level": "high",
+        "loop": True,
+        "visual_context_source": "prompt",
+        "instruction_language": "en",
+        "include_dialogue_context": False,
+        "allow_camera_motion": False,
+        "allow_background_change": True,
+        "upscale_model": "none",
+        "upscale_scale": 4,
+        "output_format": "webp",
+    }
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("mode", "t2v"),
+        ("duration", 16),
+        ("aspect_ratio", "8:5"),
+        ("quality_level", "ultra"),
+        ("loop", "true"),
+        ("visual_context_source", "metadata"),
+        ("instruction_language", "ja"),
+        ("upscale_model", "unknown"),
+        ("upscale_scale", 8),
+        ("output_format", "gif"),
+    ],
+)
+def test_video_generation_defaults_reject_invalid_values(field: str, value: object) -> None:
+    settings = copy.deepcopy(server.DEFAULT_VIDEO_GENERATION_DEFAULTS)
+    settings[field] = value
+
+    with pytest.raises(ValueError):
+        server.normalize_video_generation_defaults(settings)
+
+
+def test_load_config_inherits_legacy_video_postprocess_defaults(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "video_postprocess": {
+                    "enabled": False,
+                    "scale": 4,
+                    "model": "anime4k-fast-m",
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(server, "CONFIG_FILE", str(config_path))
+
+    loaded = server.load_config()
+
+    assert loaded["video_generation_defaults"]["upscale_model"] == "none"
+    assert loaded["video_generation_defaults"]["upscale_scale"] == 4
+
+
+@pytest.mark.asyncio
+async def test_config_api_persists_video_generation_defaults(monkeypatch) -> None:
+    config = copy.deepcopy(server.DEFAULT_CONFIG)
+    saved = []
+    monkeypatch.setattr(server, "app_config", config)
+    monkeypatch.setattr(
+        server,
+        "save_config",
+        lambda value: saved.append(copy.deepcopy(value)),
+    )
+    defaults = copy.deepcopy(server.DEFAULT_VIDEO_GENERATION_DEFAULTS)
+    defaults.update(
+        {
+            "duration": 9,
+            "quality_level": "native",
+            "allow_background_change": True,
+            "output_format": "webp",
+        }
+    )
+
+    response = await server.handle_api_config(
+        _ConfigRequest(
+            {
+                "video_generation_defaults": defaults,
+                "video_secondary_motion": False,
+            }
+        )
+    )
+
+    payload = json.loads(response.text)
+    assert response.status == 200
+    assert payload["success"] is True
+    assert saved[-1]["video_generation_defaults"] == defaults
+    assert saved[-1]["video_secondary_motion"] is False
+
+
+@pytest.mark.asyncio
+async def test_config_api_rejects_invalid_video_generation_defaults(monkeypatch) -> None:
+    config = copy.deepcopy(server.DEFAULT_CONFIG)
+    saved = []
+    monkeypatch.setattr(server, "app_config", config)
+    monkeypatch.setattr(server, "save_config", lambda value: saved.append(value))
+
+    response = await server.handle_api_config(
+        _ConfigRequest(
+            {
+                "video_generation_defaults": {
+                    **server.DEFAULT_VIDEO_GENERATION_DEFAULTS,
+                    "duration": 0,
+                }
+            }
+        )
+    )
+
+    assert response.status == 400
+    assert saved == []

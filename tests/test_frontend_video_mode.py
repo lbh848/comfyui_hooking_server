@@ -146,7 +146,7 @@ def test_video_page_separates_fast_aspect_ratio_and_mp_level() -> None:
     assert "최소 중앙 크롭" in FRONTEND
     assert "/api/video/reference-options" in FRONTEND
     assert "/api/video/enqueue" in FRONTEND
-    assert FRONTEND.count('name="video-output-format"') == 2
+    assert FRONTEND.count('type="radio" name="video-output-format"') == 2
     assert 'name="video-output-format" value="avif" checked' in FRONTEND
     assert 'name="video-output-format" value="webp"' in FRONTEND
     assert 'id="video-generation-duration" type="number" min="1" max="15" step="1"' in FRONTEND
@@ -158,10 +158,11 @@ def test_video_page_separates_fast_aspect_ratio_and_mp_level() -> None:
     assert "upscale_scale: upscaleScale" in FRONTEND
     assert "upscale_model: upscaleEnabled ? upscaleModel : ''" in FRONTEND
     assert "output_format: outputFormat" in FRONTEND
+    assert "secondary_motion: secondaryMotion" in FRONTEND
     assert "duration," in FRONTEND
 
 
-def test_video_modal_opens_before_async_loading_and_keeps_session_upscaler() -> None:
+def test_video_modal_opens_before_async_loading_and_applies_saved_defaults() -> None:
     modal_open = FRONTEND.split(
         "async function openVideoWorkspaceForReference(reference)", 1
     )[1].split("function closeVideoModal()", 1)[0]
@@ -169,11 +170,54 @@ def test_video_modal_opens_before_async_loading_and_keeps_session_upscaler() -> 
     assert modal_open.index("modal.classList.add('visible');") < modal_open.index(
         "await Promise.all(["
     )
-    assert "if (!videoPostprocessSynced) applyVideoPostprocessConfig(cfg);" in modal_open
+    assert "applyVideoGenerationDefaults(currentConfig);" in modal_open
+    assert "applyVideoGenerationDefaults(cfg);" in modal_open
     assert FRONTEND.count('onchange="onVideoUpscaleModelChange()"') == 4
     assert FRONTEND.count('onchange="selectVideoUpscaleScale(this.value, true)"') == 3
     assert "function onVideoUpscaleModelChange()" in FRONTEND
     assert "videoPostprocessSynced = true;" in FRONTEND
+
+
+def test_video_modal_can_persist_non_content_defaults() -> None:
+    modal = FRONTEND.split('id="video-modal"', 1)[1].split(
+        '<!-- 기존 animated AVIF/WebP 재후처리 모달 -->', 1
+    )[0]
+    assert 'id="video-generation-save-settings"' in modal
+    assert "saveVideoGenerationDefaults()" in modal
+    assert modal.index('id="video-generation-save-settings"') < modal.index(
+        'id="video-generation-submit"'
+    )
+
+    collector = FRONTEND.split("function collectVideoGenerationDefaults()", 1)[1].split(
+        "async function saveVideoGenerationDefaults()", 1
+    )[0]
+    for field in (
+        "mode",
+        "duration",
+        "aspect_ratio",
+        "quality_level",
+        "loop",
+        "visual_context_source",
+        "instruction_language",
+        "include_dialogue_context",
+        "allow_camera_motion",
+        "allow_background_change",
+        "upscale_model",
+        "upscale_scale",
+        "output_format",
+    ):
+        assert f"{field}:" in collector
+    assert "video-generation-instruction')?.value" not in collector
+    assert "video-generation-source" not in collector
+    assert "video-generation-last" not in collector
+
+    saver = FRONTEND.split("async function saveVideoGenerationDefaults()", 1)[1].split(
+        "function normalizedVideoDuration()", 1
+    )[0]
+    assert "video_generation_defaults: collected.defaults" in saver
+    assert "video_secondary_motion: collected.secondaryMotion" in saver
+    assert "currentConfigLoadPromise = Promise.resolve(currentConfig);" in saver
+    assert "영상화 설정을 영구 저장했습니다." in saver
 
 
 def test_video_page_generates_editable_direction_draft_in_separate_llm_queue() -> None:

@@ -28,6 +28,7 @@ def _video_request(**overrides) -> dict:
         "upscale_enabled": False,
         "upscale_scale": 2,
         "output_format": "avif",
+        "secondary_motion": False,
     }
     body.update(overrides)
     return body
@@ -75,6 +76,29 @@ async def test_video_enqueue_passes_confirmed_instruction_to_prompt_queue(
     assert captured["params"]["visual_context_source"] == "image"
     assert captured["params"]["aspect_ratio"] == "16:9"
     assert captured["params"]["quality_level"] == "high"
+    assert captured["params"]["secondary_motion"] is False
+
+
+@pytest.mark.asyncio
+async def test_video_enqueue_rejects_non_boolean_secondary_motion(monkeypatch) -> None:
+    called = False
+
+    async def fake_add_item(_item_type, _label, _params):
+        nonlocal called
+        called = True
+        raise AssertionError("invalid request must not be queued")
+
+    monkeypatch.setattr(server.queue_manager, "add_item", fake_add_item)
+
+    response = await server.handle_api_video_enqueue(
+        _JsonRequest(_video_request(secondary_motion="false"))
+    )
+    payload = json.loads(response.text)
+
+    assert response.status == 400
+    assert payload["success"] is False
+    assert "boolean" in payload["error"]
+    assert called is False
 
 
 @pytest.mark.asyncio

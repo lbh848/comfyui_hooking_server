@@ -228,6 +228,116 @@ def _llm_route_defaults(
     return route
 
 
+DEFAULT_VIDEO_GENERATION_DEFAULTS = {
+    "mode": "i2v",
+    "duration": int(VIDEO_DEFAULT_DURATION_SECONDS),
+    "aspect_ratio": "auto",
+    "quality_level": FAST_DEFAULT_QUALITY_LEVEL,
+    "loop": False,
+    "visual_context_source": "image",
+    "instruction_language": "ko",
+    "include_dialogue_context": True,
+    "allow_camera_motion": True,
+    "allow_background_change": False,
+    "upscale_model": DEFAULT_VIDEO_POSTPROCESS_CONFIG["model"],
+    "upscale_scale": DEFAULT_VIDEO_POSTPROCESS_CONFIG["scale"],
+    "output_format": "avif",
+}
+
+
+def normalize_video_generation_defaults(raw: object) -> dict:
+    """영상화 모달에서 영구 저장하는 작업 기본값을 검증한다."""
+
+    if raw is None:
+        source = {}
+    elif isinstance(raw, dict):
+        source = raw
+    else:
+        message = (
+            "video_generation_defaults 설정은 객체여야 합니다: "
+            f"type={type(raw).__name__}, value={raw!r}"
+        )
+        print(f"[VIDEO:DEFAULTS] {message}")
+        raise ValueError(message)
+
+    unknown_fields = sorted(set(source) - set(DEFAULT_VIDEO_GENERATION_DEFAULTS))
+    if unknown_fields:
+        message = f"지원하지 않는 영상화 기본 설정 필드입니다: {unknown_fields!r}"
+        print(f"[VIDEO:DEFAULTS] {message}; value={raw!r}")
+        raise ValueError(message)
+
+    normalized = copy.deepcopy(DEFAULT_VIDEO_GENERATION_DEFAULTS)
+
+    enum_fields = {
+        "mode": set(VIDEO_MODES),
+        "aspect_ratio": {"auto", *FAST_ASPECT_RATIOS.keys()},
+        "quality_level": set(FAST_QUALITY_LEVELS),
+        "visual_context_source": {"image", "prompt"},
+        "instruction_language": {"ko", "en"},
+        "upscale_model": {"none", *VIDEO_UPSCALE_MODELS},
+        "output_format": set(VIDEO_OUTPUT_FORMATS),
+    }
+    for field, allowed in enum_fields.items():
+        value = str(source.get(field, normalized[field]) or "").strip().lower()
+        if value not in allowed:
+            message = (
+                f"video_generation_defaults.{field} 값이 올바르지 않습니다: "
+                f"value={source.get(field)!r}, allowed={sorted(allowed)!r}"
+            )
+            print(f"[VIDEO:DEFAULTS] {message}")
+            raise ValueError(message)
+        normalized[field] = value
+
+    try:
+        normalized["duration"] = int(
+            normalize_video_duration(source.get("duration", normalized["duration"]))
+        )
+    except (TypeError, ValueError, OverflowError) as exc:
+        print(
+            "[VIDEO:DEFAULTS] 영상 길이 기본값 검증 실패: "
+            f"value={source.get('duration')!r}, error={exc}"
+        )
+        raise
+
+    raw_scale = source.get("upscale_scale", normalized["upscale_scale"])
+    try:
+        if isinstance(raw_scale, bool):
+            raise TypeError("bool은 허용되지 않음")
+        scale = int(raw_scale)
+        if isinstance(raw_scale, float) and not raw_scale.is_integer():
+            raise ValueError("정수가 아닌 실수는 허용되지 않음")
+        if isinstance(raw_scale, str) and raw_scale.strip() != str(scale):
+            raise ValueError("정수 문자열 형식이 아님")
+        if scale not in (2, 3, 4):
+            raise ValueError("허용 배율 2, 3, 4에 없음")
+    except (TypeError, ValueError, OverflowError) as exc:
+        print(
+            "[VIDEO:DEFAULTS] 업스케일 배율 기본값 검증 실패: "
+            f"value={raw_scale!r}, error={exc}"
+        )
+        traceback.print_exc()
+        raise ValueError("영상화 기본 업스케일 배율은 2, 3, 4 중 하나여야 합니다") from exc
+    normalized["upscale_scale"] = scale
+
+    for field in (
+        "loop",
+        "include_dialogue_context",
+        "allow_camera_motion",
+        "allow_background_change",
+    ):
+        value = source.get(field, normalized[field])
+        if not isinstance(value, bool):
+            message = (
+                f"video_generation_defaults.{field}는 true/false여야 합니다: "
+                f"value={value!r}"
+            )
+            print(f"[VIDEO:DEFAULTS] {message}")
+            raise ValueError(message)
+        normalized[field] = value
+
+    return normalized
+
+
 # 기본 설정값
 DEFAULT_CONFIG = {
     "comfyui_port": 8188,  # ComfyUI 서버 포트
@@ -259,6 +369,7 @@ DEFAULT_CONFIG = {
     "backup_webp_quality": 80,  # 백업 이미지 저장 WebP 품질 (1-100)
     "backup_webp_lossless": False,  # 백업 저장 무손실 WebP
     "video_postprocess": copy.deepcopy(DEFAULT_VIDEO_POSTPROCESS_CONFIG),
+    "video_generation_defaults": copy.deepcopy(DEFAULT_VIDEO_GENERATION_DEFAULTS),
     "video_secondary_motion": True,  # H3 영상 프롬프트에 secondary character motion 블록 포함 (False=주동작만, 완전 정지 지향)
     "backup_base_dir": "",  # 빈 값이면 WORKFLOW_BACKUP_DIR 사용
     "comfy_input_dir": "",  # ComfyUI input 폴더 경로 (빈값=기본경로)
@@ -752,6 +863,38 @@ def load_config() -> dict:
                     traceback.print_exc()
                     merged["video_postprocess"] = copy.deepcopy(
                         DEFAULT_VIDEO_POSTPROCESS_CONFIG
+                    )
+                try:
+                    if "video_generation_defaults" in config:
+                        merged["video_generation_defaults"] = (
+                            normalize_video_generation_defaults(
+                                config.get("video_generation_defaults")
+                            )
+                        )
+                    else:
+                        # 새 설정 키가 없는 기존 설치는 현재 영상 후처리 기본값을
+                        # 영상화 모달의 최초 업스케일 기본값으로 승계한다.
+                        inherited_defaults = copy.deepcopy(
+                            DEFAULT_VIDEO_GENERATION_DEFAULTS
+                        )
+                        inherited_postprocess = merged["video_postprocess"]
+                        inherited_defaults["upscale_model"] = (
+                            inherited_postprocess["model"]
+                            if inherited_postprocess["enabled"]
+                            else "none"
+                        )
+                        inherited_defaults["upscale_scale"] = (
+                            inherited_postprocess["scale"]
+                        )
+                        merged["video_generation_defaults"] = inherited_defaults
+                except ValueError as e:
+                    print(
+                        "[CONFIG] 영상화 모달 기본 설정 로드 실패, 기본값을 사용합니다: "
+                        f"value={config.get('video_generation_defaults')!r}, error={e}"
+                    )
+                    traceback.print_exc()
+                    merged["video_generation_defaults"] = copy.deepcopy(
+                        DEFAULT_VIDEO_GENERATION_DEFAULTS
                     )
                 for legacy_key in _LEGACY_LLM_RETRY_KEYS:
                     merged.pop(legacy_key, None)
@@ -9671,6 +9814,239 @@ async def handle_api_video_instruction_draft(request: web.Request) -> web.Respon
         )
 
 
+async def handle_api_video_instruction_refine(request: web.Request) -> web.Response:
+    """Queue a dedicated vision refine call that expands the user's brief direction."""
+
+    try:
+        body = await request.json()
+        if not isinstance(body, dict):
+            print(
+                "[VIDEO:REFINE:API] 요청 본문 형식 오류: "
+                f"type={type(body).__name__}, value={body!r}"
+            )
+            return web.json_response(
+                {"success": False, "error": "요청 본문은 객체여야 합니다"},
+                status=400,
+            )
+        mode = str(body.get("mode") or "").strip().lower()
+        if mode not in VIDEO_MODES:
+            print(
+                f"[VIDEO:REFINE:API] 지원하지 않는 모드: mode={mode!r}, body={body!r}"
+            )
+            return web.json_response(
+                {"success": False, "error": "지원하지 않는 영상화 모드입니다"},
+                status=400,
+            )
+        language = str(body.get("language") or "ko").strip().lower()
+        if language not in {"ko", "en"}:
+            print(
+                "[VIDEO:REFINE:API] 출력 언어 오류: "
+                f"value={language!r}, body={body!r}"
+            )
+            return web.json_response(
+                {"success": False, "error": "AI 연출 입력 다듬기 언어는 ko 또는 en이어야 합니다"},
+                status=400,
+            )
+        instruction = str(body.get("instruction") or "").strip()
+        if not instruction:
+            print(
+                "[VIDEO:REFINE:API] 사용자 입력(다듬을 상황) 비어 있음: "
+                f"mode={mode!r}, body={body!r}"
+            )
+            return web.json_response(
+                {"success": False, "error": "다듬을 상황을 먼저 입력란에 적어주세요"},
+                status=400,
+            )
+        if len(instruction) > 12000:
+            print(
+                "[VIDEO:REFINE:API] 사용자 입력 길이 초과: "
+                f"length={len(instruction)}, mode={mode!r}"
+            )
+            return web.json_response(
+                {"success": False, "error": "입력이 너무 깁니다(12000자 이내)"},
+                status=400,
+            )
+        boolean_options = {
+            "include_dialogue_context": body.get("include_dialogue_context", True),
+            "allow_camera_motion": body.get("allow_camera_motion", True),
+            "allow_background_change": body.get("allow_background_change", False),
+        }
+        invalid_boolean = next(
+            (
+                (name, value)
+                for name, value in boolean_options.items()
+                if not isinstance(value, bool)
+            ),
+            None,
+        )
+        if invalid_boolean is not None:
+            option_name, option_value = invalid_boolean
+            print(
+                "[VIDEO:REFINE:API] boolean 옵션 형식 오류: "
+                f"name={option_name}, value={option_value!r}, body={body!r}"
+            )
+            return web.json_response(
+                {"success": False, "error": f"{option_name} 값은 boolean이어야 합니다"},
+                status=400,
+            )
+
+        source_name = str(body.get("source_backup") or "").strip()
+        last_name = str(body.get("last_backup") or "").strip()
+        try:
+            source_ref = video_mode.normalize_reference(
+                body.get("source_ref"),
+                fallback_backup=source_name,
+            )
+            video_mode.validate_reference(source_ref)
+        except (TypeError, ValueError, FileNotFoundError, RuntimeError) as exc:
+            print(
+                "[VIDEO:REFINE:API] 원본 참조 검증 실패: "
+                f"value={body.get('source_ref')!r}, fallback={source_name!r}, "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            return web.json_response(
+                {"success": False, "error": str(exc)},
+                status=400,
+            )
+        loop_enabled = bool(body.get("loop", False))
+        last_ref = None
+        if mode == "first_last":
+            try:
+                last_ref = video_mode.normalize_reference(
+                    body.get("last_ref"),
+                    fallback_backup=last_name,
+                )
+                if last_ref == source_ref and not loop_enabled:
+                    raise ValueError("서로 다른 마지막 프레임을 선택하세요")
+                video_mode.validate_reference(last_ref)
+            except (TypeError, ValueError, FileNotFoundError, RuntimeError) as exc:
+                print(
+                    "[VIDEO:REFINE:API] 마지막 프레임 참조 검증 실패: "
+                    f"value={body.get('last_ref')!r}, fallback={last_name!r}, "
+                    f"error={type(exc).__name__}: {exc}"
+                )
+                traceback.print_exc()
+                return web.json_response(
+                    {"success": False, "error": str(exc)},
+                    status=400,
+                )
+        try:
+            duration = normalize_video_duration(
+                body.get("duration", VIDEO_DEFAULT_DURATION_SECONDS)
+            )
+        except ValueError as exc:
+            print(
+                "[VIDEO:REFINE:API] 영상 길이 오류: "
+                f"value={body.get('duration')!r}, error={exc}"
+            )
+            traceback.print_exc()
+            return web.json_response(
+                {"success": False, "error": str(exc)},
+                status=400,
+            )
+        aspect_ratio = str(
+            body.get("aspect_ratio", body.get("preset", "auto")) or "auto"
+        ).strip().lower()
+        if aspect_ratio != "auto" and aspect_ratio not in FAST_ASPECT_RATIOS:
+            print(
+                "[VIDEO:REFINE:API] 화면 비율 오류: "
+                f"value={aspect_ratio!r}, body={body!r}"
+            )
+            return web.json_response(
+                {"success": False, "error": "지원하지 않는 FAST 화면 비율입니다"},
+                status=400,
+            )
+        quality_level = str(
+            body.get("quality_level") or FAST_DEFAULT_QUALITY_LEVEL
+        ).strip().lower()
+        if quality_level not in FAST_QUALITY_LEVELS:
+            print(
+                "[VIDEO:REFINE:API] 화질 단계 오류: "
+                f"value={quality_level!r}, body={body!r}"
+            )
+            return web.json_response(
+                {"success": False, "error": "지원하지 않는 FAST 화질 단계입니다"},
+                status=400,
+            )
+        params = {
+            "mode": mode,
+            "instruction": instruction,
+            "source_ref": source_ref,
+            "last_ref": last_ref or {},
+            "source_backup": (
+                source_ref.get("name", "")
+                if source_ref.get("kind") == "backup"
+                else ""
+            ),
+            "last_backup": (
+                last_ref.get("name", "")
+                if last_ref and last_ref.get("kind") == "backup"
+                else ""
+            ),
+            "loop": loop_enabled,
+            "duration": duration,
+            "preset": aspect_ratio,
+            "aspect_ratio": aspect_ratio,
+            "quality_level": quality_level,
+            "language": language,
+            **boolean_options,
+        }
+        label = {
+            "i2v": "H3 I2V 입력 다듬기",
+            "first_last": "H3 FLF2V 입력 다듬기",
+        }[mode]
+        item = await queue_manager.add_item(
+            "video_instruction_refine",
+            label,
+            params,
+        )
+        print(
+            "[VIDEO:REFINE:API] 큐 등록 후 결과 대기: "
+            f"item={item.id}, mode={mode}, language={language}, "
+            f"seed_length={len(instruction)}, "
+            f"dialogue={boolean_options['include_dialogue_context']}, "
+            f"camera_motion={boolean_options['allow_camera_motion']}, "
+            f"background_change={boolean_options['allow_background_change']}"
+        )
+        result = await item.completion_future
+        if not isinstance(result, dict) or not result.get("success") or not result.get("draft"):
+            print(
+                "[VIDEO:REFINE:API] 큐 결과 형식 오류: "
+                f"item={item.id}, result={result!r}"
+            )
+            return web.json_response(
+                {
+                    "success": False,
+                    "error": "AI 연출 입력 다듬기 결과가 올바르지 않습니다",
+                    "item_id": item.id,
+                },
+                status=500,
+            )
+        print(
+            "[VIDEO:REFINE:API] 다듬기 반환 완료: "
+            f"item={item.id}, length={len(str(result['draft']))}"
+        )
+        return web.json_response({"item_id": item.id, **result})
+    except json.JSONDecodeError as exc:
+        print(f"[VIDEO:REFINE:API] JSON 파싱 실패: error={exc}")
+        traceback.print_exc()
+        return web.json_response(
+            {"success": False, "error": "요청 JSON이 올바르지 않습니다"},
+            status=400,
+        )
+    except Exception as exc:
+        print(
+            "[VIDEO:REFINE:API] 입력 다듬기 요청 실패: "
+            f"error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        return web.json_response(
+            {"success": False, "error": str(exc)},
+            status=500,
+        )
+
+
 async def handle_api_video_enqueue(request: web.Request) -> web.Response:
     """Validate a backup or asset-card video request and enqueue its LLM stage."""
 
@@ -9735,6 +10111,22 @@ async def handle_api_video_enqueue(request: web.Request) -> web.Response:
                 {
                     "success": False,
                     "error": "Visual Context 입력 방식은 image 또는 prompt여야 합니다",
+                },
+                status=400,
+            )
+        secondary_motion = body.get(
+            "secondary_motion",
+            app_config.get("video_secondary_motion", True),
+        )
+        if not isinstance(secondary_motion, bool):
+            print(
+                "[VIDEO:API] 세컨더리 애니메이션 값 형식 오류: "
+                f"value={secondary_motion!r}, body={body!r}"
+            )
+            return web.json_response(
+                {
+                    "success": False,
+                    "error": "세컨더리 애니메이션 값은 boolean이어야 합니다",
                 },
                 status=400,
             )
@@ -9910,6 +10302,7 @@ async def handle_api_video_enqueue(request: web.Request) -> web.Response:
             # 저장 스키마의 레거시 video_auto_instruction 필드를 false로 유지한다.
             "auto_instruction": False,
             "visual_context_source": visual_context_source,
+            "secondary_motion": secondary_motion,
             "instruction": instruction,
             # preset은 구형 큐/백업 소비자를 위한 화면 비율 별칭이다.
             "preset": aspect_ratio,
@@ -12458,6 +12851,35 @@ async def handle_api_config(request: web.Request) -> web.Response:
                     traceback.print_exc()
                     return web.json_response({"error": str(e)}, status=400)
 
+            if "video_generation_defaults" in body:
+                try:
+                    body["video_generation_defaults"] = (
+                        normalize_video_generation_defaults(
+                            body.get("video_generation_defaults")
+                        )
+                    )
+                except (TypeError, ValueError) as e:
+                    print(
+                        "[CONFIG] 영상화 모달 기본 설정 저장 거부: "
+                        f"value={body.get('video_generation_defaults')!r}, error={e}"
+                    )
+                    traceback.print_exc()
+                    return web.json_response({"error": str(e)}, status=400)
+
+            if (
+                "video_secondary_motion" in body
+                and not isinstance(body.get("video_secondary_motion"), bool)
+            ):
+                print(
+                    "[CONFIG] 세컨더리 애니메이션 설정 저장 거부: "
+                    f"value={body.get('video_secondary_motion')!r}, "
+                    f"type={type(body.get('video_secondary_motion')).__name__}"
+                )
+                return web.json_response(
+                    {"error": "세컨더리 애니메이션 설정은 true/false여야 합니다."},
+                    status=400,
+                )
+
             modal_settings_in_body = any(
                 str(key).startswith("modal_") for key in body
             )
@@ -14026,6 +14448,7 @@ app.router.add_get("/api/backup_chat", handle_api_backup_chat)
 app.router.add_post("/api/backup_delete/{name}", handle_api_backup_delete)
 app.router.add_get("/api/video/reference-options", handle_api_video_reference_options)
 app.router.add_post("/api/video/instruction-draft", handle_api_video_instruction_draft)
+app.router.add_post("/api/video/instruction-refine", handle_api_video_instruction_refine)
 app.router.add_post("/api/video/enqueue", handle_api_video_enqueue)
 app.router.add_post("/api/video/reprocess/enqueue", handle_api_video_reprocess_enqueue)
 app.router.add_get("/api/conversion_info", handle_api_conversion_info)

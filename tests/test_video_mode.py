@@ -259,6 +259,7 @@ def test_i2v_prompt_messages_exclude_stored_generation_metadata() -> None:
     assert I2V_ALIGNMENT not in combined
     assert "Picture 1 itself is the ultimate authority" in combined
     assert "sole authority for new motion and events" in combined
+    assert "restrained, low-amplitude secondary character motion" in combined
     assert visual_context in combined
 
 
@@ -665,6 +666,7 @@ async def test_i2v_build_uses_picture_only_and_program_adds_alignment(
         assert "lowering book" not in combined
         assert "secret/path.safetensors" not in combined
         assert "머리카락과 옷이 약한 바람에 흔들린다" in combined
+        assert "restrained, low-amplitude secondary character motion" not in combined
         assert visual_context in combined
         assert "images" not in kwargs
         assert kwargs["result_validator"](body) == (True, "")
@@ -695,6 +697,7 @@ async def test_i2v_build_uses_picture_only_and_program_adds_alignment(
             "mode": "i2v",
             "source_backup": "source",
             "instruction": "머리카락과 옷이 약한 바람에 흔들린다",
+            "secondary_motion": False,
             "preset": "1:1",
         },
         queue_item_id="queue-i2v",

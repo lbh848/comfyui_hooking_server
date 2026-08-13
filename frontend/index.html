@@ -1548,6 +1548,44 @@
             background: color-mix(in srgb, #9b59b6 68%, var(--surface2));
         }
         .video-draft-button:disabled { opacity: .58; cursor: wait; }
+        .video-draft-actions {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+        }
+        .video-refine-button {
+            flex: 0 0 auto;
+            padding: 7px 11px;
+            border: 1px solid color-mix(in srgb, #5b9bd5 55%, var(--border));
+            border-radius: 999px;
+            color: var(--text2);
+            background: color-mix(in srgb, #5b9bd5 8%, var(--surface2));
+            font-size: .78rem;
+            font-weight: 700;
+            cursor: pointer;
+            transition: border-color .16s ease, background .16s ease, color .16s ease;
+        }
+        .video-refine-button:hover:not(:disabled) {
+            border-color: #5b9bd5;
+            color: #fff;
+            background: color-mix(in srgb, #5b9bd5 68%, var(--surface2));
+        }
+        .video-refine-button:disabled { opacity: .58; cursor: wait; }
+        .video-refine-undo { margin-top: 6px; }
+        .video-refine-undo-btn {
+            border: none;
+            background: transparent;
+            color: var(--text2);
+            font-size: .82rem;
+            font-weight: 700;
+            cursor: pointer;
+            padding: 2px 4px;
+            text-decoration: underline;
+            text-underline-offset: 2px;
+            transition: color .16s ease;
+        }
+        .video-refine-undo-btn:hover { color: #5b9bd5; }
         .video-draft-note {
             margin-top: 7px;
             min-height: 1.3em;
@@ -1583,12 +1621,25 @@
         }
         .video-draft-option-grid {
             display: grid;
-            grid-template-columns: minmax(160px, .8fr) minmax(0, 1.2fr);
-            gap: 9px 14px;
+            grid-template-columns: 1fr;
+            gap: 9px;
             align-items: center;
         }
-        .video-draft-language { min-width: 0; }
-        .video-draft-language .video-field-label { margin-bottom: 5px; }
+        .video-draft-language {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            min-width: 0;
+        }
+        .video-draft-language .video-field-label {
+            justify-content: flex-start;
+            gap: 6px;
+            margin-bottom: 0;
+            flex: 0 1 auto;
+            min-width: 0;
+        }
+        .video-draft-language .video-select { width: auto; flex: 0 0 auto; }
         .video-draft-option {
             justify-content: space-between;
             min-width: 0;
@@ -14002,8 +14053,13 @@
                 <section class="video-panel video-instruction-panel">
                     <div class="video-panel-title-row">
                         <label for="video-generation-instruction" class="video-field-label"><span>영상에서 일어날 일</span><small id="video-generation-instruction-hint">자연어로 자유롭게 작성</small></label>
+                        <div class="video-draft-actions">
+                            <button type="button" id="video-generation-draft-button" class="video-draft-button" onclick="requestVideoInstructionDraft()">✨ 초안 만들기</button>
+                            <button type="button" id="video-generation-refine-button" class="video-refine-button" onclick="requestVideoInstructionRefine()">✍️ 입력 다듬기</button>
+                        </div>
                     </div>
                     <textarea id="video-generation-instruction" class="video-instruction" rows="5" maxlength="12000" placeholder="예: 인물이 천천히 고개를 들어 카메라를 바라보고, 머리카락과 옷자락이 약한 바람에 자연스럽게 흔들린다. 카메라는 아주 조금 천천히 밀고 들어간다."></textarea>
+                    <div id="video-generation-refine-undo" class="video-refine-undo" hidden><button type="button" class="video-refine-undo-btn" onclick="undoVideoInstructionRefine()">↩ 원문으로 되돌리기</button></div>
                 </section>
 
                 <section class="video-panel video-ai-settings" aria-labelledby="video-ai-settings-title">
@@ -14030,7 +14086,6 @@
                                 <span id="video-ai-draft-title" class="video-panel-title">AI에게 맡기기</span>
                                 <span class="video-panel-hint" style="display:block; margin-top:3px;">별도 비전 LLM이 편집 가능한 연출 초안만 작성합니다.</span>
                             </div>
-                            <button type="button" id="video-generation-draft-button" class="video-draft-button" onclick="requestVideoInstructionDraft()">✨ 초안 만들기</button>
                         </div>
                         <div class="video-draft-option-grid">
                             <label class="video-draft-language">
@@ -14130,6 +14185,7 @@
                 </div>
             </div>
             <div class="modal-footer">
+                <button type="button" id="video-generation-save-settings" class="cancel" onclick="saveVideoGenerationDefaults()">💾 설정 저장</button>
                 <button type="button" id="video-generation-submit" class="confirm" onclick="submitVideoGeneration()" style="background:#9b59b6; color:#fff; border-color:#b876d2;">🎬 큐에 등록</button>
             </div>
         </div>
@@ -25817,6 +25873,9 @@
         let videoReprocessSource = null;
         let videoInstructionDraftRequestId = 0;
         let videoInstructionDraftBusy = false;
+        let videoInstructionRefineRequestId = 0;
+        let videoInstructionRefineBusy = false;
+        let videoInstructionRefineUndoSnapshot = null;
 
         const VIDEO_UPSCALE_LABELS = {
             'realesr-animevideov3': '품질',
@@ -26172,6 +26231,7 @@
                 }
                 instructionInput.value = String(data.draft).trim();
                 instructionInput.focus();
+                clearVideoInstructionRefineUndo();
                 updateVideoInstructionDraftPresentation(
                     `초안 작성 완료 · 큐 ${data.item_id || ''}. 내용을 수정한 뒤 큐에 등록하세요.`
                 );
@@ -26187,6 +26247,150 @@
                     if (button) {
                         button.disabled = false;
                         button.innerHTML = '✨ 초안 만들기';
+                    }
+                }
+            }
+        }
+
+        function resetVideoInstructionRefineRequest() {
+            videoInstructionRefineRequestId += 1;
+            videoInstructionRefineBusy = false;
+            const button = document.getElementById('video-generation-refine-button');
+            if (button) {
+                button.disabled = false;
+                button.innerHTML = '✍️ 입력 다듬기';
+            }
+            clearVideoInstructionRefineUndo();
+        }
+
+        function clearVideoInstructionRefineUndo() {
+            videoInstructionRefineUndoSnapshot = null;
+            const undo = document.getElementById('video-generation-refine-undo');
+            if (undo) undo.hidden = true;
+        }
+
+        function showVideoInstructionRefineUndo() {
+            const undo = document.getElementById('video-generation-refine-undo');
+            if (undo) undo.hidden = false;
+        }
+
+        function undoVideoInstructionRefine() {
+            if (videoInstructionRefineUndoSnapshot == null) return;
+            const input = document.getElementById('video-generation-instruction');
+            if (input) {
+                input.value = videoInstructionRefineUndoSnapshot;
+                input.focus();
+            }
+            clearVideoInstructionRefineUndo();
+            updateVideoInstructionDraftPresentation('원문으로 되돌렸습니다. 내용을 수정한 뒤 큐에 등록하세요.');
+            showToast('원문으로 되돌렸습니다.', 'info');
+        }
+
+        let _videoInstructionRefineUndoListenerAttached = false;
+        function ensureVideoInstructionRefineUndoListener() {
+            if (_videoInstructionRefineUndoListenerAttached) return;
+            const input = document.getElementById('video-generation-instruction');
+            if (!input) return;
+            _videoInstructionRefineUndoListenerAttached = true;
+            input.addEventListener('input', () => {
+                if (videoInstructionRefineUndoSnapshot != null) clearVideoInstructionRefineUndo();
+            });
+        }
+
+        async function requestVideoInstructionRefine() {
+            if (videoInstructionDraftBusy || videoInstructionRefineBusy) return;
+            const instructionInput = document.getElementById('video-generation-instruction');
+            const instruction = (instructionInput?.value || '').trim();
+            if (!instruction) {
+                showToast('다듬을 상황을 먼저 입력란에 적어주세요.', 'warning');
+                instructionInput?.focus();
+                return;
+            }
+            const sourceKey = document.getElementById('video-generation-source')?.value || '';
+            const sourceRef = getVideoReferenceByKey(sourceKey)?.reference || null;
+            const mode = document.getElementById('video-generation-mode')?.value || 'i2v';
+            const lastRef = getEffectiveLastVideoReference();
+            if (!sourceRef) {
+                console.error('[VIDEO_UI] AI 연출 입력 다듬기 요청 실패: 원본 참조 없음', {sourceKey});
+                showToast('다듬기를 위한 원본 이미지 정보가 없습니다.', 'error');
+                return;
+            }
+            if (mode === 'first_last' && !lastRef) {
+                console.error('[VIDEO_UI] AI 연출 입력 다듬기 요청 실패: 마지막 프레임 없음');
+                showToast('다듬기를 위한 마지막 프레임을 선택하세요.', 'warning');
+                return;
+            }
+            const requestId = ++videoInstructionRefineRequestId;
+            const selectionKey = videoInstructionDraftSelectionKey();
+            const draftButton = document.getElementById('video-generation-draft-button');
+            const button = document.getElementById('video-generation-refine-button');
+            videoInstructionRefineBusy = true;
+            if (draftButton) draftButton.disabled = true;
+            if (button) {
+                button.disabled = true;
+                button.innerHTML = '<span class="spinner"></span> 다듬는 중';
+            }
+            clearVideoInstructionRefineUndo();
+            updateVideoInstructionDraftPresentation('사용자 입력을 바탕으로 참조 이미지와 함께 다듬는 중...');
+            try {
+                const data = await fetchJSON('/api/video/instruction-refine', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        mode,
+                        instruction,
+                        source_ref: sourceRef,
+                        last_ref: lastRef,
+                        source_backup: sourceRef.kind === 'backup' ? sourceRef.name : '',
+                        last_backup: lastRef?.kind === 'backup' ? lastRef.name : '',
+                        loop: isVideoLoopEnabled(),
+                        aspect_ratio: document.getElementById('video-generation-aspect-ratio')?.value || 'auto',
+                        quality_level: document.getElementById('video-generation-quality-level')?.value || 'medium',
+                        duration: normalizedVideoDuration(),
+                        language: selectedVideoInstructionLanguage(),
+                        include_dialogue_context: isVideoDialogueContextEnabled(),
+                        allow_camera_motion: isVideoCameraMotionAllowed(),
+                        allow_background_change: isVideoBackgroundChangeAllowed(),
+                    }),
+                });
+                if (requestId !== videoInstructionRefineRequestId) {
+                    console.error('[VIDEO_UI] 닫히거나 교체된 AI 연출 입력 다듬기 응답 무시:', data);
+                    return;
+                }
+                if (!data.success || !String(data.draft || '').trim()) {
+                    throw new Error(data.error || 'AI 연출 입력 다듬기 실패');
+                }
+                if (selectionKey !== videoInstructionDraftSelectionKey()) {
+                    console.error('[VIDEO_UI] 선택 변경 후 도착한 AI 연출 입력 다듬기 미적용:', data);
+                    updateVideoInstructionDraftPresentation('선택값이 바뀌어 도착한 결과를 적용하지 않았습니다. 다시 다듬어 주세요.');
+                    showToast('영상화 선택값이 바뀌어 다듬기 결과를 적용하지 않았습니다.', 'warning');
+                    return;
+                }
+                const target = document.getElementById('video-generation-instruction');
+                if (!target) {
+                    console.error('[VIDEO_UI] AI 연출 입력 다듬기를 채울 입력란을 찾지 못했습니다.', data);
+                    throw new Error('영상 지시 입력란을 찾지 못했습니다');
+                }
+                videoInstructionRefineUndoSnapshot = target.value;
+                target.value = String(data.draft).trim();
+                showVideoInstructionRefineUndo();
+                target.focus();
+                updateVideoInstructionDraftPresentation(
+                    `입력 다듬기 완료 · 큐 ${data.item_id || ''}. ↩ 원문으로 되돌리기로 원문 복구 가능.`
+                );
+                showToast('입력을 풍부하게 다듬아 입력란에 채웠습니다.', 'success');
+            } catch (error) {
+                if (requestId !== videoInstructionRefineRequestId) return;
+                console.error('[VIDEO_UI] AI 연출 입력 다듬기 실패:', error, {sourceRef, lastRef, mode, instruction});
+                updateVideoInstructionDraftPresentation(`입력 다듬기 실패: ${error.message || error}`);
+                showToast('AI 연출 입력 다듬기 실패: ' + (error.message || error), 'error');
+            } finally {
+                if (requestId === videoInstructionRefineRequestId) {
+                    videoInstructionRefineBusy = false;
+                    if (draftButton) draftButton.disabled = false;
+                    if (button) {
+                        button.disabled = false;
+                        button.innerHTML = '✍️ 입력 다듬기';
                     }
                 }
             }
@@ -26226,28 +26430,136 @@
             updateVideoGenerationSummary();
         }
 
-        function applyVideoPostprocessConfig(config) {
-            const settings = config && typeof config.video_postprocess === 'object'
-                ? config.video_postprocess
-                : {};
-            const enabled = document.getElementById('video-generation-upscale-enabled');
-            if (!enabled) {
-                console.error('[VIDEO_UI] 영상 후처리 기본값을 적용할 컨트롤이 없습니다.');
+        function applyVideoGenerationDefaults(config) {
+            const settings = config && typeof config.video_generation_defaults === 'object'
+                ? config.video_generation_defaults
+                : null;
+            if (!settings) {
+                console.error('[VIDEO_UI] 영상화 모달 기본 설정이 없거나 형식이 올바르지 않습니다:', config);
                 return;
             }
-            enabled.checked = settings.enabled !== false;
-            const allowedModels = ['realesr-animevideov3', 'anime4k-fast-m', 'lanczos'];
-            const model = enabled.checked && allowedModels.includes(settings.model)
-                ? settings.model
-                : (enabled.checked ? 'realesr-animevideov3' : 'none');
+            const duration = document.getElementById('video-generation-duration');
+            const aspectRatio = document.getElementById('video-generation-aspect-ratio');
+            const qualityLevel = document.getElementById('video-generation-quality-level');
+            const loop = document.getElementById('video-generation-loop');
+            const language = document.getElementById('video-generation-instruction-language');
+            const cameraMotion = document.getElementById('video-generation-allow-camera-motion');
+            const backgroundChange = document.getElementById('video-generation-allow-background-change');
+            const enabled = document.getElementById('video-generation-upscale-enabled');
+            if (!duration || !aspectRatio || !qualityLevel || !loop || !language
+                    || !cameraMotion || !backgroundChange || !enabled) {
+                console.error('[VIDEO_UI] 영상화 기본 설정을 적용할 컨트롤이 누락되었습니다.', {
+                    duration: !!duration,
+                    aspectRatio: !!aspectRatio,
+                    qualityLevel: !!qualityLevel,
+                    loop: !!loop,
+                    language: !!language,
+                    cameraMotion: !!cameraMotion,
+                    backgroundChange: !!backgroundChange,
+                    upscaleEnabled: !!enabled,
+                });
+                return;
+            }
+
+            duration.value = String(settings.duration);
+            aspectRatio.value = settings.aspect_ratio;
+            qualityLevel.value = settings.quality_level;
+            updateVideoDuration();
+            selectVideoMode(settings.mode);
+            loop.checked = settings.loop === true;
+            onVideoLoopChange();
+
+            setVideoVisualContextFromImage(settings.visual_context_source !== 'prompt');
+            language.value = settings.instruction_language;
+            setVideoDialogueContextEnabled(settings.include_dialogue_context === true);
+            cameraMotion.checked = settings.allow_camera_motion === true;
+            backgroundChange.checked = settings.allow_background_change === true;
+            applyVideoSecondaryMotionConfig(config);
+            updateVideoInstructionDraftPresentation();
+
+            const model = settings.upscale_model;
             const modelRadio = document.querySelector(`input[name="video-upscale-model"][value="${model}"]`);
-            if (modelRadio) modelRadio.checked = true;
-            const normalizedScale = [2, 3, 4].includes(Number(settings.scale))
-                ? String(Number(settings.scale))
-                : '2';
+            if (!modelRadio) {
+                console.error('[VIDEO_UI] 저장된 업스케일 방식에 대응하는 컨트롤이 없습니다:', model);
+                return;
+            }
+            modelRadio.checked = true;
+            enabled.checked = model !== 'none';
+            const normalizedScale = String(settings.upscale_scale);
             selectVideoUpscaleScale(normalizedScale);
             updateVideoUpscaleControls();
+
+            const outputRadio = document.querySelector(
+                `input[name="video-output-format"][value="${settings.output_format}"]`
+            );
+            if (!outputRadio) {
+                console.error('[VIDEO_UI] 저장된 출력 형식에 대응하는 컨트롤이 없습니다:', settings.output_format);
+                return;
+            }
+            outputRadio.checked = true;
             videoPostprocessSynced = true;
+            updateVideoGenerationSummary();
+        }
+
+        function collectVideoGenerationDefaults() {
+            const secondaryMotion = document.getElementById('video-generation-secondary-motion');
+            if (!secondaryMotion) {
+                console.error('[VIDEO_UI] 세컨더리 애니메이션 설정 컨트롤이 없습니다.');
+                throw new Error('세컨더리 애니메이션 설정 컨트롤을 찾지 못했습니다.');
+            }
+            return {
+                defaults: {
+                    mode: document.getElementById('video-generation-mode')?.value || 'i2v',
+                    duration: normalizedVideoDuration(),
+                    aspect_ratio: document.getElementById('video-generation-aspect-ratio')?.value || 'auto',
+                    quality_level: document.getElementById('video-generation-quality-level')?.value || 'medium',
+                    loop: document.getElementById('video-generation-loop')?.checked === true,
+                    visual_context_source: selectedVideoVisualContextSource(),
+                    instruction_language: selectedVideoInstructionLanguage(),
+                    include_dialogue_context: isVideoDialogueContextEnabled(),
+                    allow_camera_motion: isVideoCameraMotionAllowed(),
+                    allow_background_change: isVideoBackgroundChangeAllowed(),
+                    upscale_model: getSelectedVideoOption('video-upscale-model', 'realesr-animevideov3'),
+                    upscale_scale: Number(document.getElementById('video-generation-upscale-scale')?.value || 2),
+                    output_format: getSelectedVideoOption('video-output-format', 'avif'),
+                },
+                secondaryMotion: secondaryMotion.checked,
+            };
+        }
+
+        async function saveVideoGenerationDefaults() {
+            const button = document.getElementById('video-generation-save-settings');
+            if (!button) {
+                console.error('[VIDEO_UI] 영상화 설정 저장 버튼을 찾지 못했습니다.');
+                return;
+            }
+            const originalText = button.innerHTML;
+            button.disabled = true;
+            button.innerHTML = '<span class="spinner"></span> 저장 중';
+            try {
+                const collected = collectVideoGenerationDefaults();
+                const result = await fetchJSON('/api/config', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        video_generation_defaults: collected.defaults,
+                        video_secondary_motion: collected.secondaryMotion,
+                    }),
+                });
+                if (!result?.success || !result.config) {
+                    console.error('[VIDEO_UI] 영상화 설정 저장 응답 형식 오류:', result);
+                    throw new Error(result?.error || '설정 저장 응답이 올바르지 않습니다.');
+                }
+                currentConfig = result.config;
+                currentConfigLoadPromise = Promise.resolve(currentConfig);
+                showToast('영상화 설정을 영구 저장했습니다.', 'success');
+            } catch (error) {
+                console.error('[VIDEO_UI] 영상화 설정 저장 실패:', error);
+                showToast('영상화 설정 저장 실패: ' + (error?.message || error), 'error');
+            } finally {
+                button.disabled = false;
+                button.innerHTML = originalText;
+            }
         }
 
         function normalizedVideoDuration() {
@@ -26548,35 +26860,21 @@
 
         function applyVideoSecondaryMotionConfig(cfg) {
             const el = document.getElementById('video-generation-secondary-motion');
-            if (!el) return;
+            if (!el) {
+                console.error('[VIDEO_UI] 세컨더리 애니메이션 설정 컨트롤이 없습니다.');
+                return;
+            }
             // 기본 True: config 에 명시적 false 가 없으면 켜짐 유지
             el.checked = cfg?.video_secondary_motion !== false;
         }
 
-        async function onVideoSecondaryMotionChange() {
+        function onVideoSecondaryMotionChange() {
             const el = document.getElementById('video-generation-secondary-motion');
             if (!el) {
                 console.error('[VIDEO_UI] 세컨더리 애니메이션 체크박스를 찾지 못했습니다.');
                 return;
             }
-            const checked = el.checked;
-            try {
-                const resp = await fetch('/api/config', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({video_secondary_motion: checked})
-                });
-                if (!resp.ok) {
-                    el.checked = !checked;
-                    showToast('세컨더리 애니메이션 설정 저장 실패: HTTP ' + resp.status, 'error');
-                    return;
-                }
-                showToast(checked ? '세컨더리 애니메이션 포함' : '세컨더리 애니메이션 미포함 (주동작만)', 'info');
-            } catch (error) {
-                console.error('[VIDEO_UI] 세컨더리 애니메이션 토글 저장 실패:', error);
-                el.checked = !checked;
-                showToast('세컨더리 애니메이션 설정 저장 실패: ' + (error?.message || error), 'error');
-            }
+            updateVideoGenerationSummary();
         }
 
         async function openVideoWorkspace(name) {
@@ -26618,6 +26916,8 @@
             }
             videoWorkspaceSourceRef = reference;
             resetVideoInstructionDraftRequest();
+            resetVideoInstructionRefineRequest();
+            ensureVideoInstructionRefineUndoListener();
             const badge = document.querySelector('#video-modal .video-source-badge');
             if (badge) badge.textContent = reference.kind === 'asset' ? '현재 에셋' : '현재 카드';
             const sourceEmpty = document.getElementById('video-generation-source-empty');
@@ -26626,11 +26926,15 @@
                     ? '현재 에셋 원본을 불러오는 중입니다.'
                     : '현재 카드의 `_raw` 원본을 불러오는 중입니다.';
             }
-            setVideoVisualContextFromImage(true);
-            setVideoInstructionDraftDefaults();
-            selectVideoMode('i2v');
-            updateVideoDuration();
-            updateVideoWorkspaceMode();
+            if (currentConfig && typeof currentConfig.video_generation_defaults === 'object') {
+                applyVideoGenerationDefaults(currentConfig);
+            } else {
+                setVideoVisualContextFromImage(true);
+                setVideoInstructionDraftDefaults();
+                selectVideoMode('i2v');
+                updateVideoDuration();
+                updateVideoWorkspaceMode();
+            }
 
             // 참조 목록이나 설정 응답을 기다리지 않고 모달부터 표시한다.
             modal.classList.add('visible');
@@ -26638,11 +26942,9 @@
             const configSync = (async () => {
                 try {
                     const cfg = await loadCurrentConfig();
-                    // 사용자가 이미 선택했거나 한 번 동기화했다면 현재 세션 값을 덮어쓰지 않는다.
-                    if (!videoPostprocessSynced) applyVideoPostprocessConfig(cfg);
-                    applyVideoSecondaryMotionConfig(cfg);
+                    applyVideoGenerationDefaults(cfg);
                 } catch (error) {
-                    console.error('[VIDEO_UI] 영상 후처리 기본 설정 동기화 실패:', error);
+                    console.error('[VIDEO_UI] 영상화 모달 기본 설정 동기화 실패:', error);
                     updateVideoUpscaleControls();
                 }
             })();
@@ -26656,6 +26958,7 @@
             const modal = document.getElementById('video-modal');
             if (modal) modal.classList.remove('visible');
             resetVideoInstructionDraftRequest();
+            resetVideoInstructionRefineRequest();
         }
 
         async function submitVideoGeneration() {
@@ -26672,6 +26975,7 @@
             const outputFormat = getSelectedVideoOption('video-output-format', 'avif');
             const instruction = document.getElementById('video-generation-instruction')?.value.trim() || '';
             const visualContextSource = selectedVideoVisualContextSource();
+            const secondaryMotion = document.getElementById('video-generation-secondary-motion')?.checked !== false;
             const button = document.getElementById('video-generation-submit');
             if (!sourceRef) {
                 console.error('[VIDEO_UI] 제출 실패: 원본 참조 없음', {sourceKey});
@@ -26711,6 +27015,7 @@
                         upscale_model: upscaleEnabled ? upscaleModel : '',
                         output_format: outputFormat,
                         visual_context_source: visualContextSource,
+                        secondary_motion: secondaryMotion,
                         instruction,
                     }),
                 });
