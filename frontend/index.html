@@ -8183,23 +8183,6 @@
         .asset-gallery-card > .source-badge.source-anim {
             top: 36px;
         }
-        .asset-gallery-card .gallery-video-btn {
-            position: absolute;
-            right: 8px;
-            bottom: 48px;
-            z-index: 3;
-            padding: 5px 9px;
-            border: 1px solid rgba(184, 118, 210, 0.8);
-            border-radius: 6px;
-            color: #fff;
-            background: rgba(116, 64, 138, 0.9);
-            font-size: 0.72rem;
-            font-weight: 750;
-            cursor: pointer;
-        }
-        .asset-gallery-card .gallery-video-btn:hover {
-            background: rgba(155, 89, 182, 0.98);
-        }
         .asset-image-card .prompt-info {
             margin: 0 8px 8px;
             font-size: 0.68rem;
@@ -73810,21 +73793,8 @@
 
                     card.innerHTML = `
                         ${thumbHtml}
-                        ${item.representative ? '<button type="button" class="gallery-video-btn">🎬 영상화</button>' : ''}
                         <div class="gallery-title">${escapeHtml(item.outfit)} - ${escapeHtml(item.expression)}</div>
                         ${item.image_count > 0 ? `<div class="gallery-count">${item.image_count}장</div>` : ''}`;
-                    const videoButton = card.querySelector('.gallery-video-btn');
-                    if (videoButton) {
-                        videoButton.addEventListener('click', (event) => {
-                            event.stopPropagation();
-                            openAssetVideoWorkspace({
-                                character: charName,
-                                outfit: item.outfit,
-                                expression: item.expression,
-                                filename: item.representative,
-                            });
-                        });
-                    }
                     card.onclick = () => auNavigateToImages(charName, item.outfit, item.expression);
                     grid.appendChild(card);
                 });
@@ -77603,7 +77573,6 @@
                         <button class="gallery-delete-btn" onclick="event.stopPropagation(); deleteAssetCombination('${enc(charName)}','${enc(item.outfit)}','${enc(item.expression)}',${item.image_count})">삭제</button>
                         ${removeGroupBtn}
                         ${thumbHtml}
-                        ${item.representative ? '<button type="button" class="gallery-video-btn">🎬 영상화</button>' : ''}
                         <div class="gallery-title">${escapeHtml(item.outfit)} - ${escapeHtml(item.expression)}</div>
                         ${item.image_count > 0 ? `<div class="gallery-count">${item.image_count}장</div>` : ''}
                     `;
@@ -77621,19 +77590,6 @@
                                 }).then(() => renderCharacterGallery(charName));
                             });
                         }
-                    }
-
-                    const videoButton = card.querySelector('.gallery-video-btn');
-                    if (videoButton) {
-                        videoButton.addEventListener('click', e => {
-                            e.stopPropagation();
-                            openAssetVideoWorkspace({
-                                character: charName,
-                                outfit: item.outfit,
-                                expression: item.expression,
-                                filename: item.representative,
-                            });
-                        });
                     }
 
                     card.onclick = (e) => {
