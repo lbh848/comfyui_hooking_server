@@ -12339,11 +12339,96 @@
         .pm-card-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-weight: 650; font-size: 0.76rem; white-space: nowrap; }
         .pm-card-count { margin-top: 3px; color: var(--text2); font-size: 0.65rem; }
 
+        /* ─── 하이브리드 프리셋 가져오기 (pmi-*) ─── */
+        .pmi-view { height: 100%; overflow: hidden; }
+        .pmi-shell { height: 100%; display: flex; flex-direction: column; min-height: 0; }
+        .pmi-stepper { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; padding: 11px 14px; border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--surface) 88%, transparent); }
+        .pmi-step { min-width: 0; display: flex; align-items: center; gap: 7px; padding: 8px 9px; border: 1px solid var(--border); border-radius: 9px; background: transparent; color: var(--text2); cursor: pointer; text-align: left; }
+        .pmi-step:hover:not(:disabled) { color: var(--text); border-color: color-mix(in srgb, var(--accent) 42%, var(--border)); }
+        .pmi-step:disabled { cursor: not-allowed; opacity: 0.46; }
+        .pmi-step.active { color: var(--text); border-color: color-mix(in srgb, var(--accent) 58%, var(--border)); background: color-mix(in srgb, var(--accent) 13%, var(--surface)); }
+        .pmi-step.done { color: color-mix(in srgb, var(--success) 75%, var(--text)); }
+        .pmi-step-num { width: 22px; height: 22px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 50%; background: color-mix(in srgb, var(--surface2) 82%, var(--bg)); font-size: 0.66rem; font-weight: 750; }
+        .pmi-step.active .pmi-step-num { background: var(--accent); color: #fff; }
+        .pmi-step-copy { min-width: 0; }
+        .pmi-step-title { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.73rem; font-weight: 680; }
+        .pmi-step-note { display: block; margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.61rem; }
+        .pmi-stage-wrap { flex: 1; min-height: 0; overflow: hidden; }
+        .pmi-stage { height: 100%; overflow-y: auto; padding: 18px; }
+        .pmi-stage-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; margin-bottom: 15px; }
+        .pmi-stage-title { font-size: 1.02rem; font-weight: 760; }
+        .pmi-stage-note { max-width: 760px; margin-top: 4px; color: var(--text2); font-size: 0.74rem; line-height: 1.55; }
+        .pmi-actions { display: flex; align-items: center; justify-content: flex-end; gap: 7px; flex-wrap: wrap; }
+        .pmi-upload { display: grid; place-items: center; min-height: 260px; padding: 28px; border: 1px dashed color-mix(in srgb, var(--accent) 55%, var(--border)); border-radius: 14px; background: radial-gradient(circle at 50% 18%, color-mix(in srgb, var(--accent) 10%, transparent), transparent 52%), color-mix(in srgb, var(--surface) 88%, transparent); text-align: center; }
+        .pmi-upload-icon { width: 58px; height: 58px; display: grid; place-items: center; margin: 0 auto 13px; border-radius: 18px; background: color-mix(in srgb, var(--accent) 17%, var(--surface2)); color: var(--accent); font-size: 1.6rem; }
+        .pmi-upload-title { font-size: 0.98rem; font-weight: 720; }
+        .pmi-upload-note { margin: 7px auto 16px; max-width: 600px; color: var(--text2); font-size: 0.73rem; line-height: 1.55; }
+        .pmi-file-name { margin-top: 10px; color: var(--text2); font-size: 0.7rem; overflow-wrap: anywhere; }
+        .pmi-summary { display: grid; grid-template-columns: repeat(5, minmax(110px, 1fr)); gap: 8px; margin-bottom: 14px; }
+        .pmi-summary-card { padding: 11px; border: 1px solid var(--border); border-radius: 9px; background: color-mix(in srgb, var(--surface) 84%, transparent); }
+        .pmi-summary-label { color: var(--text2); font-size: 0.65rem; }
+        .pmi-summary-value { margin-top: 4px; font-size: 0.92rem; font-weight: 760; }
+        .pmi-warning-box, .pmi-error-box, .pmi-info-box { padding: 10px 12px; border: 1px solid var(--border); border-radius: 9px; font-size: 0.72rem; line-height: 1.5; }
+        .pmi-warning-box { border-color: color-mix(in srgb, #ffb020 42%, var(--border)); background: color-mix(in srgb, #ffb020 8%, transparent); }
+        .pmi-error-box { border-color: color-mix(in srgb, var(--error) 44%, var(--border)); background: color-mix(in srgb, var(--error) 8%, transparent); }
+        .pmi-info-box { border-color: color-mix(in srgb, var(--accent) 38%, var(--border)); background: color-mix(in srgb, var(--accent) 7%, transparent); }
+        .pmi-group-list { display: grid; gap: 8px; }
+        .pmi-group { border: 1px solid var(--border); border-radius: 10px; background: color-mix(in srgb, var(--surface) 86%, transparent); overflow: hidden; }
+        .pmi-group-head { display: flex; align-items: center; gap: 9px; padding: 10px 12px; cursor: pointer; }
+        .pmi-group-head input, .pmi-item-check { accent-color: var(--accent); }
+        .pmi-group-name { min-width: 0; flex: 1; font-size: 0.78rem; font-weight: 680; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .pmi-group-meta { color: var(--text2); font-size: 0.66rem; white-space: nowrap; }
+        .pmi-group-items { display: grid; gap: 5px; max-height: 240px; overflow-y: auto; padding: 0 11px 11px 35px; }
+        .pmi-scope-item { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 7px 8px; border: 1px solid color-mix(in srgb, var(--border) 76%, transparent); border-radius: 7px; color: var(--text2); font-size: 0.7rem; }
+        .pmi-scope-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+        .pmi-llm-panel { display: grid; grid-template-columns: minmax(250px, .72fr) minmax(340px, 1.28fr); gap: 12px; }
+        .pmi-llm-list { max-height: calc(100vh - 345px); overflow-y: auto; display: grid; gap: 5px; }
+        .pmi-llm-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 9px; border: 1px solid var(--border); border-radius: 7px; font-size: 0.7rem; }
+        .pmi-progress { height: 7px; overflow: hidden; margin: 12px 0 6px; border-radius: 999px; background: color-mix(in srgb, var(--bg) 78%, var(--surface)); }
+        .pmi-progress > div { height: 100%; width: 0; border-radius: inherit; background: linear-gradient(90deg, var(--accent), var(--accent2)); transition: width .18s ease; }
+        .pmi-edit-layout { height: calc(100% - 72px); min-height: 460px; display: grid; grid-template-columns: minmax(250px, 330px) minmax(0, 1fr); gap: 12px; }
+        .pmi-item-nav, .pmi-editor { min-height: 0; border: 1px solid var(--border); border-radius: 11px; background: color-mix(in srgb, var(--surface) 86%, transparent); overflow: hidden; }
+        .pmi-item-nav { display: flex; flex-direction: column; }
+        .pmi-item-nav-head { display: grid; gap: 8px; padding: 11px; border-bottom: 1px solid var(--border); }
+        .pmi-filter-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; }
+        .pmi-item-list { flex: 1; min-height: 0; overflow-y: auto; padding: 7px; display: grid; align-content: start; gap: 5px; }
+        .pmi-item-button { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 8px; padding: 9px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--text); cursor: pointer; text-align: left; }
+        .pmi-item-button:hover { background: var(--surface2); }
+        .pmi-item-button.active { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); background: color-mix(in srgb, var(--accent) 12%, var(--surface)); }
+        .pmi-item-button.unselected { opacity: .58; }
+        .pmi-item-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.72rem; font-weight: 650; }
+        .pmi-item-sub { grid-column: 1 / -1; color: var(--text2); font-size: 0.62rem; }
+        .pmi-badge { display: inline-flex; align-items: center; width: fit-content; padding: 2px 6px; border: 1px solid var(--border); border-radius: 999px; color: var(--text2); font-size: 0.58rem; font-weight: 700; white-space: nowrap; }
+        .pmi-badge.llm { color: #71b9ff; border-color: color-mix(in srgb, #71b9ff 46%, var(--border)); }
+        .pmi-badge.nai { color: #b58cff; border-color: color-mix(in srgb, #b58cff 48%, var(--border)); }
+        .pmi-badge.user { color: #f1b65f; border-color: color-mix(in srgb, #f1b65f 46%, var(--border)); }
+        .pmi-badge.error { color: var(--error); border-color: color-mix(in srgb, var(--error) 46%, var(--border)); }
+        .pmi-editor { overflow-y: auto; padding: 13px; }
+        .pmi-editor-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+        .pmi-source { max-height: 116px; overflow-y: auto; margin: 7px 0 12px; padding: 9px; border: 1px dashed var(--border); border-radius: 8px; background: color-mix(in srgb, var(--bg) 76%, transparent); color: var(--text2); font: 0.68rem/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+        .pmi-fragments { display: grid; gap: 7px; }
+        .pmi-fragment { display: grid; grid-template-columns: auto minmax(180px, 1fr) minmax(145px, .38fr) auto; align-items: center; gap: 7px; padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: color-mix(in srgb, var(--surface2) 54%, transparent); }
+        .pmi-fragment.excluded { opacity: .52; border-style: dashed; }
+        .pmi-fragment input, .pmi-fragment select { width: 100%; min-width: 0; }
+        .pmi-fragment-copy { min-width: 0; display: grid; gap: 4px; }
+        .pmi-fragment-source { color: var(--text2); font: 0.6rem/1.35 ui-monospace, SFMono-Regular, Consolas, monospace; overflow-wrap: anywhere; }
+        .pmi-fragment-controls { display: flex; gap: 4px; }
+        .pmi-mini-btn { width: 27px; height: 27px; padding: 0; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 6px; background: transparent; color: var(--text2); cursor: pointer; }
+        .pmi-mini-btn:hover { color: var(--text); background: var(--surface); }
+        .pmi-validation-grid { display: grid; grid-template-columns: minmax(280px, .8fr) minmax(360px, 1.2fr); gap: 12px; }
+        .pmi-result-list { display: grid; gap: 6px; max-height: calc(100vh - 370px); overflow-y: auto; }
+        .pmi-result-row { padding: 9px 10px; border: 1px solid var(--border); border-radius: 8px; background: color-mix(in srgb, var(--surface) 82%, transparent); font-size: 0.7rem; line-height: 1.45; }
+        .pmi-conflict { display: grid; gap: 7px; padding: 10px; border: 1px solid color-mix(in srgb, #ffb020 42%, var(--border)); border-radius: 9px; background: color-mix(in srgb, #ffb020 7%, transparent); }
+        .pmi-conflict-controls { display: grid; grid-template-columns: minmax(140px, .4fr) minmax(180px, 1fr); gap: 7px; }
+
         @media (max-width: 1120px) {
             .pm-sidebar { width: 58px; align-items: stretch; padding-inline: 8px; }
             .pm-sidebar-btn { justify-content: center; padding: 0; }
             .pm-sidebar-label { display: none; }
             .pm-editor-grid { grid-template-columns: 1fr; }
+            .pmi-step-note { display: none; }
+            .pmi-fragment { grid-template-columns: auto minmax(170px, 1fr) minmax(130px, .45fr); }
+            .pmi-fragment-controls { grid-column: 2 / -1; justify-content: flex-end; }
         }
         @media (max-width: 780px) {
             .pm-container { min-height: 560px; }
@@ -12356,6 +12441,14 @@
             .pm-hide-grid, .pm-compare-columns { grid-template-columns: 1fr; }
             .pm-trace-row { grid-template-columns: 94px minmax(0, 1fr); }
             .pm-trace-img { width: 94px; height: 94px; }
+            .pmi-stepper { grid-template-columns: repeat(5, 1fr); padding-inline: 7px; }
+            .pmi-step { justify-content: center; padding-inline: 5px; }
+            .pmi-step-copy { display: none; }
+            .pmi-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .pmi-llm-panel, .pmi-edit-layout, .pmi-validation-grid { grid-template-columns: 1fr; }
+            .pmi-edit-layout { height: auto; }
+            .pmi-item-nav { min-height: 280px; max-height: 350px; }
+            .pmi-editor { min-height: 440px; }
         }
 
         /* ─── 그림 일괄생성 탭 ─── */
@@ -17099,6 +17192,10 @@
                             <span class="pm-sidebar-icon">◐</span>
                             <span class="pm-sidebar-label">숨김 관리</span>
                         </button>
+                        <button class="pm-sidebar-btn" id="pm-sidebar-import" onclick="pmSwitchView('import')">
+                            <span class="pm-sidebar-icon">⇲</span>
+                            <span class="pm-sidebar-label">프리셋 가져오기</span>
+                        </button>
                     </div>
                     <div class="pm-main">
                         <!-- 통합 추가 / 조회 / 수정 / 추적 -->
@@ -17279,6 +17376,109 @@
                                     </div>
                                     <div class="pm-hide-list" id="pm-hide-hidden-grid"></div>
                                 </section>
+                            </div>
+                        </div>
+
+                        <!-- SDStudio 하이브리드 가져오기 -->
+                        <div id="pm-view-import" class="pm-view pmi-view" style="display:none;">
+                            <div class="pmi-shell">
+                                <div class="pmi-stepper" id="pmi-stepper" aria-label="프리셋 가져오기 단계">
+                                    <button class="pmi-step active" data-step="1" onclick="pmiGoStep(1)">
+                                        <span class="pmi-step-num">1</span><span class="pmi-step-copy"><span class="pmi-step-title">파일 분석</span><span class="pmi-step-note">원본 구조 확인</span></span>
+                                    </button>
+                                    <button class="pmi-step" data-step="2" onclick="pmiGoStep(2)" disabled>
+                                        <span class="pmi-step-num">2</span><span class="pmi-step-copy"><span class="pmi-step-title">범위 선택</span><span class="pmi-step-note">그룹·항목 선택</span></span>
+                                    </button>
+                                    <button class="pmi-step" data-step="3" onclick="pmiGoStep(3)" disabled>
+                                        <span class="pmi-step-num">3</span><span class="pmi-step-copy"><span class="pmi-step-title">LLM 분류</span><span class="pmi-step-note">선택 실행 가능</span></span>
+                                    </button>
+                                    <button class="pmi-step" data-step="4" onclick="pmiGoStep(4)" disabled>
+                                        <span class="pmi-step-num">4</span><span class="pmi-step-copy"><span class="pmi-step-title">직접 편집</span><span class="pmi-step-note">항목별 검토</span></span>
+                                    </button>
+                                    <button class="pmi-step" data-step="5" onclick="pmiGoStep(5)" disabled>
+                                        <span class="pmi-step-num">5</span><span class="pmi-step-copy"><span class="pmi-step-title">검증·저장</span><span class="pmi-step-note">충돌 해결</span></span>
+                                    </button>
+                                </div>
+                                <div class="pmi-stage-wrap">
+                                    <section class="pmi-stage" id="pmi-stage-1">
+                                        <div class="pmi-stage-head">
+                                            <div><div class="pmi-stage-title">SDStudio · NAI JSON 파일 분석</div><div class="pmi-stage-note">이 단계에서는 파일을 저장하지 않습니다. 자체 참조를 펼친 뒤 NAI 문법을 Canonical AST로 해석하고 ANIMA용 명시적 weight로 변환합니다.</div></div>
+                                        </div>
+                                        <div class="pmi-upload">
+                                            <div>
+                                                <div class="pmi-upload-icon">JSON</div>
+                                                <div class="pmi-upload-title">가져올 프리셋 파일을 선택하세요</div>
+                                                <div class="pmi-upload-note">SDStudio의 NAI 프롬프트를 지원합니다. { }·[ ]·숫자 emphasis의 중첩 weight를 계산하고, artist: 태그를 ANIMA @artist 형식으로 바꾸며 최종 강도는 ±1.5로 제한한 뒤 소수 첫째 자리로 반올림합니다.</div>
+                                                <input id="pmi-file-input" type="file" accept="application/json,.json" hidden onchange="pmiFileChanged()">
+                                                <div class="pmi-actions" style="justify-content:center;">
+                                                    <button class="pm-btn" onclick="document.getElementById('pmi-file-input').click()">파일 선택</button>
+                                                    <button class="pm-btn pm-btn-primary" id="pmi-analyze-btn" onclick="pmiAnalyzeFile()" disabled>구조 분석</button>
+                                                </div>
+                                                <div class="pmi-file-name" id="pmi-file-name">선택한 파일 없음</div>
+                                            </div>
+                                        </div>
+                                        <div id="pmi-analysis-result" style="margin-top:12px;"></div>
+                                    </section>
+
+                                    <section class="pmi-stage" id="pmi-stage-2" style="display:none;">
+                                        <div class="pmi-stage-head">
+                                            <div><div class="pmi-stage-title">가져올 그룹과 항목 선택</div><div class="pmi-stage-note">씬은 원래 그룹 경계를 그대로 사용합니다. 그룹 전체 또는 전개된 변형 하나씩 선택할 수 있습니다.</div></div>
+                                            <div class="pmi-actions"><button class="pm-btn pm-btn-quiet" onclick="pmiSelectAll(false)">전체 해제</button><button class="pm-btn" onclick="pmiSelectAll(true)">전체 선택</button><button class="pm-btn pm-btn-primary" onclick="pmiGoStep(3)">다음: LLM 분류</button></div>
+                                        </div>
+                                        <div id="pmi-scope-summary"></div>
+                                        <div class="pmi-group-list" id="pmi-group-list"></div>
+                                    </section>
+
+                                    <section class="pmi-stage" id="pmi-stage-3" style="display:none;">
+                                        <div class="pmi-stage-head">
+                                            <div><div class="pmi-stage-title">문맥 기반 LLM 분류</div><div class="pmi-stage-note">변환된 ANIMA 태그를 30개 조각씩 나누되 원본 NAI·전체 프롬프트 문맥을 함께 전달합니다. LLM은 카테고리만 제안하며 결과는 직접 바꿀 수 있습니다.</div></div>
+                                            <div class="pmi-actions"><button class="pm-btn pm-btn-quiet" onclick="pmiGoStep(2)">이전</button><button class="pm-btn" onclick="pmiSkipLlm()">LLM 없이 직접 편집</button><button class="pm-btn pm-btn-primary" id="pmi-llm-btn" onclick="pmiStartLlm()">선택 항목 LLM 분석</button></div>
+                                        </div>
+                                        <div class="pmi-llm-panel">
+                                            <section class="pm-section">
+                                                <div class="pm-section-title">분류 대상</div>
+                                                <div class="pm-section-note" id="pmi-llm-count"></div>
+                                                <div class="pmi-actions" style="margin-top:8px;justify-content:flex-start;"><button class="pm-btn pm-btn-quiet" onclick="pmiSetAllLlm(false)">분석 전체 해제</button><button class="pm-btn" onclick="pmiSetAllLlm(true)">분석 전체 선택</button></div>
+                                                <div class="pmi-llm-list" id="pmi-llm-list" style="margin-top:10px;"></div>
+                                            </section>
+                                            <section class="pm-section">
+                                                <div class="pm-section-title">진행 상태</div>
+                                                <div class="pm-section-note" id="pmi-llm-status">아직 LLM 분석을 시작하지 않았습니다.</div>
+                                                <div class="pmi-progress"><div id="pmi-llm-progress"></div></div>
+                                                <div id="pmi-llm-detail" class="pmi-info-box" style="margin-top:12px;">요청당 실제 분류 대상은 최대 30개입니다. 같은 항목이 여러 요청으로 나뉘어도 원본 NAI와 변환된 전체 ANIMA 프롬프트를 매번 문맥으로 전달합니다.</div>
+                                            </section>
+                                        </div>
+                                    </section>
+
+                                    <section class="pmi-stage" id="pmi-stage-4" style="display:none;">
+                                        <div class="pmi-stage-head">
+                                            <div><div class="pmi-stage-title">항목별 직접 검토·수정</div><div class="pmi-stage-note">이름, 태그 원문, 카테고리, 순서를 모두 수정할 수 있습니다. 원본 태그 제외는 삭제 대신 명시적인 제외 상태로 기록됩니다.</div></div>
+                                            <div class="pmi-actions"><button class="pm-btn pm-btn-quiet" onclick="pmiGoStep(3)">이전</button><button class="pm-btn pm-btn-primary" onclick="pmiValidateAndOpen()">검증 단계로</button></div>
+                                        </div>
+                                        <div class="pmi-edit-layout">
+                                            <aside class="pmi-item-nav">
+                                                <div class="pmi-item-nav-head">
+                                                    <input class="pm-input" id="pmi-item-search" type="search" placeholder="항목 이름 검색" oninput="pmiRenderItemList()">
+                                                    <div class="pmi-filter-row" id="pmi-item-filters"><button class="pm-filter-btn active" data-filter="all" onclick="pmiSetItemFilter('all')">전체</button><button class="pm-filter-btn" data-filter="unassigned" onclick="pmiSetItemFilter('unassigned')">미분류</button><button class="pm-filter-btn" data-filter="modified" onclick="pmiSetItemFilter('modified')">변경됨</button></div>
+                                                </div>
+                                                <div class="pmi-item-list" id="pmi-item-list"></div>
+                                            </aside>
+                                            <main class="pmi-editor" id="pmi-item-editor"><div class="pm-empty">왼쪽에서 항목을 선택하세요.</div></main>
+                                        </div>
+                                    </section>
+
+                                    <section class="pmi-stage" id="pmi-stage-5" style="display:none;">
+                                        <div class="pmi-stage-head">
+                                            <div><div class="pmi-stage-title">최종 검증과 저장</div><div class="pmi-stage-note">누락·미분류·중복을 검사하고 기존 활성/숨김 프리셋과의 충돌을 항목별로 해결한 뒤 저장합니다.</div></div>
+                                            <div class="pmi-actions"><button class="pm-btn pm-btn-quiet" onclick="pmiGoStep(4)">편집으로 돌아가기</button><button class="pm-btn" onclick="pmiValidate()">다시 검증</button><button class="pm-btn pm-btn-primary" id="pmi-commit-btn" onclick="pmiCommit()" disabled>검증 결과 저장</button></div>
+                                        </div>
+                                        <div id="pmi-save-summary"></div>
+                                        <div class="pmi-validation-grid" style="margin-top:12px;">
+                                            <section class="pm-section"><div class="pm-section-title">검증 메시지</div><div class="pmi-result-list" id="pmi-validation-errors" style="margin-top:10px;"></div></section>
+                                            <section class="pm-section"><div class="pm-section-head"><div><div class="pm-section-title">저장 대상·충돌 처리</div><div class="pm-section-note">일괄 선택 후 각 항목을 다시 바꿀 수 있습니다.</div></div><div class="pmi-actions"><button class="pm-btn pm-btn-quiet" onclick="pmiSetAllResolutions('keep')">모두 유지</button><button class="pm-btn" onclick="pmiSetAllResolutions('overwrite')">모두 덮어쓰기</button><button class="pm-btn" onclick="pmiSetAllResolutions('rename')">모두 새 이름</button></div></div><div class="pmi-result-list" id="pmi-validation-records"></div></section>
+                                        </div>
+                                    </section>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -35583,6 +35783,7 @@
             { key: 'lora_prompt_review',       label: 'LoRA 프롬프트 2차 검수', kind: '비전/JSON', group: 'asset_management', json: true },
             { key: 'asset_name_mapping_auto_fix', label: '에셋 이름 자동 수정', kind: 'JSON', group: 'asset_management', json: true },
             { key: 'asset_name_mapping_full',  label: '에셋 이름 전체 매핑', kind: 'JSON', group: 'asset_management', json: true },
+            { key: 'preset_import_classify',   label: '프리셋 가져오기 분류', kind: 'JSON', group: 'asset_management', json: true },
             { key: 'edit_illustration_prompt', label: '삽화 편하게 수정', kind: '비전/JSON', group: 'image_editing' },
             { key: 'qwen_edit_translate',      label: 'EDIT 지시 영어 번역', kind: '텍스트', group: 'image_editing' },
             { key: 'character_maker_draft',    label: '캐릭터 메이커 초안', kind: '텍스트/JSON', group: 'character_maker', json: true },
@@ -85495,6 +85696,14 @@
         let pmSelectedActive = new Set();
         let pmSelectedHidden = new Set();
         let pmTraceAbortController = null;
+        let pmImportAnalysis = null;
+        let pmImportBaseline = null;
+        let pmImportStep = 1;
+        let pmImportSelectedItemId = '';
+        let pmImportItemFilter = 'all';
+        let pmImportValidation = null;
+        let pmImportBusy = false;
+        let pmImportCommitted = false;
 
         const PM_CATEGORIES = {
             appearances: '외모',
@@ -85511,6 +85720,17 @@
         const PM_HIDE_CATEGORIES = {
             ...PM_CATEGORIES,
             [PM_CHAIN_CATEGORY]: '체인 프리셋',
+        };
+        const PM_IMPORT_CATEGORIES = {
+            expressions: '표정',
+            composition_presets: '구도',
+            appearances: '외모',
+            outfits: '복장',
+            artist_presets: '아티스트',
+            quality_presets: '품질',
+            negative_presets: '네거티브',
+            character_negative_presets: '캐릭터 네거티브',
+            unassigned: '미분류',
         };
 
         function pmEscapeHtml(value) {
@@ -85715,12 +85935,14 @@
         }
 
         function pmSwitchView(view) {
-            pmCurrentView = view === 'hide' ? 'hide' : 'manage';
+            pmCurrentView = ['manage', 'hide', 'import'].includes(view) ? view : 'manage';
             document.querySelectorAll('.pm-sidebar-btn').forEach(button => button.classList.remove('active'));
             document.getElementById(`pm-sidebar-${pmCurrentView}`).classList.add('active');
             document.getElementById('pm-view-manage').style.display = pmCurrentView === 'manage' ? '' : 'none';
             document.getElementById('pm-view-hide').style.display = pmCurrentView === 'hide' ? '' : 'none';
+            document.getElementById('pm-view-import').style.display = pmCurrentView === 'import' ? '' : 'none';
             if (pmCurrentView === 'hide') pmRenderHideView();
+            else if (pmCurrentView === 'import') pmiRenderCurrentStep();
             else pmRenderLibrary();
         }
 
@@ -86484,6 +86706,809 @@
             document.getElementById('pm-trace-progress-bar').style.width = '0';
             document.getElementById('pm-btn-clear').style.display = 'none';
             document.getElementById('pm-trace-results').innerHTML = '<div class="pm-empty">아직 추적 결과가 없습니다.</div>';
+        }
+
+        // ─── SDStudio 하이브리드 프리셋 가져오기 ───────────
+        function pmiClone(value) {
+            if (typeof structuredClone === 'function') return structuredClone(value);
+            return JSON.parse(JSON.stringify(value));
+        }
+
+        async function pmiRequest(path, body, acceptedStatuses = []) {
+            let response;
+            try {
+                response = await fetch(path, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body),
+                });
+            } catch (error) {
+                console.error('[PM_IMPORT] API 연결 실패:', { path, error });
+                error.pmiStage = 'api_fetch';
+                error.pmiDetailLogged = false;
+                throw error;
+            }
+            let payload = null;
+            try {
+                payload = await response.json();
+            } catch (error) {
+                console.error('[PM_IMPORT] JSON 응답 파싱 실패:', { path, status: response.status, error });
+                const responseError = new Error(`서버 응답을 읽지 못했습니다. (HTTP ${response.status})`);
+                responseError.pmiStage = 'api_response_json';
+                responseError.pmiDetailLogged = false;
+                throw responseError;
+            }
+            if (!response.ok && !acceptedStatuses.includes(response.status)) {
+                console.error('[PM_IMPORT] API 실패:', { path, status: response.status, payload });
+                const responseError = new Error(payload.error || `HTTP ${response.status}`);
+                responseError.pmiStage = payload.phase || 'api_response';
+                responseError.pmiDetailLogged = payload.detail_logged === true;
+                throw responseError;
+            }
+            return payload;
+        }
+
+        async function pmiRecordClientDiagnostic(details) {
+            try {
+                const response = await fetch('/api/asset_mode/preset_import/client_log', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(details || {}),
+                });
+                let payload = null;
+                try {
+                    payload = await response.json();
+                } catch (error) {
+                    console.error('[PM_IMPORT] 자세히 기록 응답 파싱 실패:', { status: response.status, error });
+                    return false;
+                }
+                if (!response.ok || payload.detail_logged !== true) {
+                    console.error('[PM_IMPORT] 자세히 기록 API 실패:', { status: response.status, payload });
+                    return false;
+                }
+                return true;
+            } catch (error) {
+                console.error('[PM_IMPORT] 자세히 기록 연결 실패:', error);
+                return false;
+            }
+        }
+
+        function pmiJsonErrorExcerpt(source, error) {
+            if (!source) return '';
+            const match = String(error && error.message || '').match(/position\s+(\d+)/i);
+            if (!match) return source.slice(0, 1200);
+            const position = Number(match[1]);
+            if (!Number.isFinite(position)) return source.slice(0, 1200);
+            const start = Math.max(0, position - 600);
+            const end = Math.min(source.length, position + 600);
+            return `${start > 0 ? '…' : ''}${source.slice(start, end)}${end < source.length ? '…' : ''}`;
+        }
+
+        function pmiFileChanged() {
+            const file = document.getElementById('pmi-file-input').files[0];
+            document.getElementById('pmi-file-name').textContent = file
+                ? `${file.name} · ${(file.size / 1024).toFixed(1)} KB`
+                : '선택한 파일 없음';
+            document.getElementById('pmi-analyze-btn').disabled = !file || pmImportBusy;
+        }
+
+        async function pmiAnalyzeFile() {
+            const input = document.getElementById('pmi-file-input');
+            const file = input.files[0];
+            if (!file || pmImportBusy) {
+                if (!file) showToast('분석할 JSON 파일을 선택해주세요.', 'warning');
+                return;
+            }
+            const button = document.getElementById('pmi-analyze-btn');
+            pmImportBusy = true;
+            button.disabled = true;
+            button.textContent = '분석 중...';
+            let fileText = '';
+            try {
+                let documentData;
+                try {
+                    fileText = await file.text();
+                    documentData = JSON.parse(fileText);
+                } catch (error) {
+                    console.error('[PM_IMPORT] 로컬 JSON 파싱 실패:', { filename: file.name, error });
+                    const parseError = new Error(`JSON 파일 형식이 올바르지 않습니다: ${error.message}`);
+                    parseError.pmiStage = 'browser_json_parse';
+                    parseError.pmiDetailLogged = await pmiRecordClientDiagnostic({
+                        stage: 'browser_json_parse',
+                        filename: file.name,
+                        file_size: file.size,
+                        error_name: error.name || 'Error',
+                        message: error.message || String(error),
+                        stack: error.stack || '',
+                        source_excerpt: pmiJsonErrorExcerpt(fileText, error),
+                    });
+                    throw parseError;
+                }
+                const analysis = await pmiRequest('/api/asset_mode/preset_import/analyze', {
+                    filename: file.name,
+                    document: documentData,
+                });
+                analysis.items.forEach(item => {
+                    item.llm_selected = !!item.selected && item.fragments.some(fragment => fragment.llm_eligible);
+                });
+                pmImportAnalysis = analysis;
+                pmImportBaseline = pmiClone(analysis);
+                pmImportValidation = null;
+                pmImportCommitted = false;
+                pmImportSelectedItemId = (analysis.items.find(item => item.selected) || analysis.items[0] || {}).id || '';
+                pmiRenderAnalysisResult();
+                pmiShowStep(2);
+                showToast(`${analysis.items.length}개 항목의 구조를 분석했습니다.`, 'success');
+            } catch (error) {
+                console.error('[PM_IMPORT] 파일 분석 실패:', error);
+                if (error.pmiDetailLogged !== true) {
+                    error.pmiDetailLogged = await pmiRecordClientDiagnostic({
+                        stage: error.pmiStage || 'browser_analysis_request',
+                        filename: file.name,
+                        file_size: file.size,
+                        error_name: error.name || 'Error',
+                        message: error.message || String(error),
+                        stack: error.stack || '',
+                    });
+                }
+                const logState = error.pmiDetailLogged
+                    ? '실패 원인과 스택 트레이스를 자세히에 기록했습니다.'
+                    : '서버에 연결할 수 없어 자세히 기록도 실패했습니다.';
+                document.getElementById('pmi-analysis-result').innerHTML = `<div class="pmi-error-box">${pmEscapeHtml(error.message)}<br><span style="color:var(--text2);">${pmEscapeHtml(logState)}</span><div class="pmi-actions" style="margin-top:9px;justify-content:flex-start;"><button class="pm-btn" onclick="openLighbdHistoryModal()">LLM 로그 자세히 열기</button></div></div>`;
+                showToast(error.message, 'error');
+            } finally {
+                pmImportBusy = false;
+                button.disabled = !input.files[0];
+                button.textContent = '구조 분석';
+            }
+        }
+
+        function pmiRenderAnalysisResult() {
+            const target = document.getElementById('pmi-analysis-result');
+            if (!target || !pmImportAnalysis) return;
+            const summary = pmImportAnalysis.summary;
+            const warningHtml = pmiWarningsHtml(pmImportAnalysis.warnings);
+            target.innerHTML = `<div class="pmi-summary">
+                <div class="pmi-summary-card"><div class="pmi-summary-label">씬 그룹</div><div class="pmi-summary-value">${summary.scene_group_count}</div></div>
+                <div class="pmi-summary-card"><div class="pmi-summary-label">생성/공유</div><div class="pmi-summary-value">${summary.generation_group_count + (summary.shared_group_count || 0)}</div></div>
+                <div class="pmi-summary-card"><div class="pmi-summary-label">전개 항목</div><div class="pmi-summary-value">${pmImportAnalysis.items.length}</div></div>
+                <div class="pmi-summary-card"><div class="pmi-summary-label">태그 조각</div><div class="pmi-summary-value">${summary.fragment_count}</div></div>
+                <div class="pmi-summary-card"><div class="pmi-summary-label">검토 경고</div><div class="pmi-summary-value">${summary.warning_count}</div></div>
+            </div><div class="pmi-info-box"><strong>${pmEscapeHtml(pmImportAnalysis.source.name)}</strong> · 원본 해시 ${pmEscapeHtml(pmImportAnalysis.source.sha256.slice(0, 12))}…<br>분석 결과는 아직 디스크에 저장되지 않았습니다.</div>${warningHtml}`;
+        }
+
+        function pmiWarningsHtml(warnings, limit = 12) {
+            if (!Array.isArray(warnings) || !warnings.length) return '';
+            const unique = Array.from(new Set(warnings.map(warning => warning && warning.message).filter(Boolean)));
+            const visible = unique.slice(0, limit).map(message => `• ${pmEscapeHtml(message)}`).join('<br>');
+            const rest = unique.length > limit ? `<br>외 ${unique.length - limit}개 경고` : '';
+            return `<div class="pmi-warning-box" style="margin-top:10px;"><strong>직접 확인이 필요한 원본 데이터</strong><br>${visible}${rest}</div>`;
+        }
+
+        function pmiUpdateStepper() {
+            document.querySelectorAll('#pmi-stepper .pmi-step').forEach(button => {
+                const step = Number(button.dataset.step);
+                button.disabled = step > 1 && !pmImportAnalysis;
+                button.classList.toggle('active', step === pmImportStep);
+                button.classList.toggle('done', step < pmImportStep && !!pmImportAnalysis);
+            });
+        }
+
+        function pmiShowStep(step) {
+            if (step > 1 && !pmImportAnalysis) {
+                showToast('먼저 JSON 파일을 분석해주세요.', 'warning');
+                step = 1;
+            }
+            pmImportStep = Math.max(1, Math.min(5, Number(step) || 1));
+            for (let index = 1; index <= 5; index++) {
+                const stage = document.getElementById(`pmi-stage-${index}`);
+                if (stage) stage.style.display = index === pmImportStep ? '' : 'none';
+            }
+            pmiUpdateStepper();
+            pmiRenderCurrentStep();
+        }
+
+        function pmiGoStep(step) {
+            if (Number(step) === 5 && pmImportStep !== 5) {
+                pmiValidateAndOpen();
+                return;
+            }
+            pmiShowStep(step);
+        }
+
+        function pmiRenderCurrentStep() {
+            pmiUpdateStepper();
+            if (!pmImportAnalysis) return;
+            if (pmImportStep === 1) pmiRenderAnalysisResult();
+            if (pmImportStep === 2) pmiRenderScope();
+            if (pmImportStep === 3) pmiRenderLlmStage();
+            if (pmImportStep === 4) {
+                pmiRenderItemList();
+                pmiRenderItemEditor();
+            }
+            if (pmImportStep === 5) pmiRenderValidation();
+        }
+
+        function pmiSelectedItems() {
+            return pmImportAnalysis ? pmImportAnalysis.items.filter(item => item.selected) : [];
+        }
+
+        function pmiRenderScopeSummary() {
+            if (!pmImportAnalysis) return;
+            const selected = pmiSelectedItems();
+            const fragments = selected.reduce((count, item) => count + item.fragments.length, 0);
+            const llm = selected.reduce((count, item) => count + item.fragments.filter(fragment => fragment.llm_eligible).length, 0);
+            document.getElementById('pmi-scope-summary').innerHTML = `<div class="pmi-summary">
+                <div class="pmi-summary-card"><div class="pmi-summary-label">전체 그룹</div><div class="pmi-summary-value">${pmImportAnalysis.groups.length}</div></div>
+                <div class="pmi-summary-card"><div class="pmi-summary-label">선택 항목</div><div class="pmi-summary-value">${selected.length}</div></div>
+                <div class="pmi-summary-card"><div class="pmi-summary-label">선택 태그</div><div class="pmi-summary-value">${fragments}</div></div>
+                <div class="pmi-summary-card"><div class="pmi-summary-label">LLM 대상</div><div class="pmi-summary-value">${llm}</div></div>
+                <div class="pmi-summary-card"><div class="pmi-summary-label">경고</div><div class="pmi-summary-value">${pmImportAnalysis.warnings.length}</div></div>
+            </div>${pmiWarningsHtml(pmImportAnalysis.warnings, 8)}`;
+        }
+
+        function pmiRenderScope() {
+            if (!pmImportAnalysis) return;
+            pmiRenderScopeSummary();
+            const list = document.getElementById('pmi-group-list');
+            list.innerHTML = pmImportAnalysis.groups.map((group, groupIndex) => {
+                const groupItems = group.item_ids.map(id => pmImportAnalysis.items.find(item => item.id === id)).filter(Boolean);
+                const selectedCount = groupItems.filter(item => item.selected).length;
+                const warning = group.warnings && group.warnings.length
+                    ? `<div class="pmi-warning-box" style="margin:0 11px 10px 35px;">${group.warnings.map(item => pmEscapeHtml(item.message)).join('<br>')}</div>`
+                    : '';
+                const itemRows = groupItems.map(item => {
+                    const itemIndex = pmImportAnalysis.items.indexOf(item);
+                    return `<label class="pmi-scope-item"><input class="pmi-item-check" type="checkbox" ${item.selected ? 'checked' : ''} onchange="pmiToggleScopeItem(${itemIndex}, this.checked)"><span class="pmi-scope-name">${pmEscapeHtml(item.target_name)}</span><span>${item.fragments.length}개 태그</span></label>`;
+                }).join('') || '<div class="pm-empty" style="min-height:60px;">전개할 수 있는 항목이 없습니다.</div>';
+                return `<div class="pmi-group">
+                    <label class="pmi-group-head"><input type="checkbox" data-pmi-group="${groupIndex}" ${selectedCount && selectedCount === groupItems.length ? 'checked' : ''} onchange="pmiToggleGroup(${groupIndex}, this.checked)"><span class="pmi-group-name">${pmEscapeHtml(group.name)}</span><span class="pmi-group-meta">${group.kind === 'scene' ? '씬' : pmEscapeHtml(group.workflow_type || '생성 프리셋')} · ${selectedCount}/${groupItems.length} 선택</span></label>
+                    ${warning}<div class="pmi-group-items">${itemRows}</div>
+                </div>`;
+            }).join('');
+            pmImportAnalysis.groups.forEach((group, groupIndex) => {
+                const items = group.item_ids.map(id => pmImportAnalysis.items.find(item => item.id === id)).filter(Boolean);
+                const selected = items.filter(item => item.selected).length;
+                const checkbox = list.querySelector(`[data-pmi-group="${groupIndex}"]`);
+                if (checkbox) checkbox.indeterminate = selected > 0 && selected < items.length;
+            });
+        }
+
+        function pmiToggleGroup(groupIndex, checked) {
+            const group = pmImportAnalysis && pmImportAnalysis.groups[groupIndex];
+            if (!group) return;
+            const ids = new Set(group.item_ids);
+            pmImportAnalysis.items.forEach(item => {
+                if (ids.has(item.id)) {
+                    item.selected = !!checked;
+                    item.llm_selected = !!checked && item.fragments.some(fragment => fragment.llm_eligible);
+                }
+            });
+            pmImportValidation = null;
+            pmiRenderScope();
+        }
+
+        function pmiToggleScopeItem(itemIndex, checked) {
+            const item = pmImportAnalysis && pmImportAnalysis.items[itemIndex];
+            if (!item) return;
+            item.selected = !!checked;
+            item.llm_selected = !!checked && item.fragments.some(fragment => fragment.llm_eligible);
+            pmImportValidation = null;
+            pmiRenderScope();
+        }
+
+        function pmiSelectAll(selected) {
+            if (!pmImportAnalysis) return;
+            pmImportAnalysis.items.forEach(item => {
+                item.selected = !!selected && item.fragments.length > 0;
+                item.llm_selected = item.selected && item.fragments.some(fragment => fragment.llm_eligible);
+            });
+            pmImportValidation = null;
+            pmiRenderScope();
+        }
+
+        function pmiRenderLlmStage() {
+            if (!pmImportAnalysis) return;
+            const candidates = pmiSelectedItems().filter(item => item.fragments.some(fragment => fragment.llm_eligible));
+            const items = candidates.filter(item => item.llm_selected);
+            const fragmentCount = items.reduce((count, item) => count + item.fragments.filter(fragment => fragment.llm_eligible).length, 0);
+            document.getElementById('pmi-llm-count').textContent = `가져올 ${candidates.length}개 중 ${items.length}개 분석 · ${fragmentCount}개 태그 조각`;
+            document.getElementById('pmi-llm-list').innerHTML = candidates.length ? candidates.map(item => {
+                const itemIndex = pmImportAnalysis.items.indexOf(item);
+                const eligible = item.fragments.filter(fragment => fragment.llm_eligible);
+                const done = eligible.filter(fragment => fragment.llm_category).length;
+                return `<label class="pmi-llm-row"><input type="checkbox" class="pmi-item-check" ${item.llm_selected ? 'checked' : ''} onchange="pmiToggleLlmItem(${itemIndex}, this.checked)"><span style="min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${pmEscapeHtml(item.target_name)}</span><span class="pmi-badge ${done === eligible.length ? 'llm' : ''}">${done}/${eligible.length}</span></label>`;
+            }).join('') : '<div class="pm-empty">선택된 LLM 분석 대상이 없습니다.</div>';
+            document.getElementById('pmi-llm-btn').disabled = pmImportBusy || items.length === 0;
+        }
+
+        function pmiToggleLlmItem(itemIndex, checked) {
+            const item = pmImportAnalysis && pmImportAnalysis.items[itemIndex];
+            if (!item || !item.selected || !item.fragments.some(fragment => fragment.llm_eligible)) return;
+            item.llm_selected = !!checked;
+            pmiRenderLlmStage();
+        }
+
+        function pmiSetAllLlm(selected) {
+            if (!pmImportAnalysis || pmImportBusy) return;
+            pmiSelectedItems().forEach(item => {
+                item.llm_selected = !!selected && item.fragments.some(fragment => fragment.llm_eligible);
+            });
+            pmiRenderLlmStage();
+        }
+
+        async function pmiStartLlm() {
+            if (!pmImportAnalysis || pmImportBusy) return;
+            const items = pmiSelectedItems().filter(item => item.llm_selected && item.fragments.some(fragment => fragment.llm_eligible));
+            if (!items.length) {
+                showToast('LLM으로 분류할 선택 항목이 없습니다.', 'warning');
+                return;
+            }
+            const hasPriorEdits = items.some(item => item.fragments.some(fragment =>
+                fragment.llm_eligible && (fragment.llm_category || fragment.category !== 'unassigned')
+            ));
+            if (hasPriorEdits && !confirm('기존 LLM 또는 수동 카테고리 선택을 새 분석 결과로 바꿀까요? 태그 원문은 바뀌지 않습니다.')) return;
+
+            pmImportBusy = true;
+            const button = document.getElementById('pmi-llm-btn');
+            button.disabled = true;
+            button.textContent = '분석 중...';
+            const progress = document.getElementById('pmi-llm-progress');
+            const status = document.getElementById('pmi-llm-status');
+            const detail = document.getElementById('pmi-llm-detail');
+            const flatTargets = items.flatMap(item => item.fragments
+                .filter(fragment => fragment.llm_eligible)
+                .map(fragment => ({ item_id: item.id, fragment_id: fragment.id })));
+            const chunks = [];
+            for (let index = 0; index < flatTargets.length; index += 30) {
+                const grouped = new Map();
+                for (const target of flatTargets.slice(index, index + 30)) {
+                    if (!grouped.has(target.item_id)) grouped.set(target.item_id, []);
+                    grouped.get(target.item_id).push(target.fragment_id);
+                }
+                chunks.push(Array.from(grouped, ([item_id, fragment_ids]) => ({ item_id, fragment_ids })));
+            }
+            let completed = 0;
+            let completedFragments = 0;
+            try {
+                for (const chunk of chunks) {
+                    const chunkFragmentCount = chunk.reduce((count, target) => count + target.fragment_ids.length, 0);
+                    status.textContent = `${completed + 1}/${chunks.length} 배치 · 태그 ${chunkFragmentCount}개를 문맥과 함께 분석하는 중...`;
+                    const result = await pmiRequest('/api/asset_mode/preset_import/classify', {
+                        import_id: pmImportAnalysis.import_id,
+                        targets: chunk,
+                    });
+                    for (const [itemId, assignments] of Object.entries(result.assignments || {})) {
+                        const item = pmImportAnalysis.items.find(candidate => candidate.id === itemId);
+                        if (!item) {
+                            console.error('[PM_IMPORT] LLM 응답의 항목을 찾지 못함:', itemId);
+                            continue;
+                        }
+                        for (const [fragmentId, category] of Object.entries(assignments || {})) {
+                            const fragment = item.fragments.find(candidate => candidate.id === fragmentId);
+                            if (!fragment) {
+                                console.error('[PM_IMPORT] LLM 응답의 태그 조각을 찾지 못함:', { itemId, fragmentId });
+                                continue;
+                            }
+                            fragment.llm_category = category;
+                            fragment.category = category;
+                        }
+                    }
+                    completed++;
+                    completedFragments += chunkFragmentCount;
+                    progress.style.width = `${Math.round(completed / chunks.length * 100)}%`;
+                    pmiRenderLlmStage();
+                }
+                pmImportValidation = null;
+                status.textContent = `${items.length}개 항목 · ${completedFragments}개 태그 조각의 분류가 끝났습니다.`;
+                detail.innerHTML = `LLM 결과가 적용되었습니다. 미분류 항목과 제안 결과를 직접 검토하세요.<div class="pmi-actions" style="margin-top:10px;"><button class="pm-btn pm-btn-primary" onclick="pmiGoStep(4)">직접 편집으로 이동</button></div>`;
+                showToast('LLM 분류가 완료되었습니다. 결과를 직접 검토해주세요.', 'success');
+            } catch (error) {
+                console.error('[PM_IMPORT] LLM 분류 실패:', { completed, chunks: chunks.length, error });
+                status.textContent = `${completed}/${chunks.length} 배치 완료 후 중단되었습니다.`;
+                detail.innerHTML = `<div class="pmi-error-box">${pmEscapeHtml(error.message)}<br>완료된 배치 결과는 유지되며 직접 편집할 수 있습니다.<div class="pmi-actions" style="margin-top:9px;justify-content:flex-start;"><button class="pm-btn" onclick="openLighbdHistoryModal()">LLM 로그 자세히 열기</button></div></div>`;
+                showToast(error.message, 'error');
+            } finally {
+                pmImportBusy = false;
+                button.disabled = false;
+                button.textContent = '선택 항목 LLM 분석';
+                pmiRenderLlmStage();
+            }
+        }
+
+        function pmiSkipLlm() {
+            if (!pmiSelectedItems().length) {
+                showToast('가져올 항목을 하나 이상 선택해주세요.', 'warning');
+                pmiShowStep(2);
+                return;
+            }
+            pmiShowStep(4);
+        }
+
+        function pmiBaselineItem(itemId) {
+            return pmImportBaseline && pmImportBaseline.items.find(item => item.id === itemId);
+        }
+
+        function pmiItemModified(item) {
+            const baseline = pmiBaselineItem(item.id);
+            if (!baseline) return true;
+            const compact = value => ({
+                selected: value.selected,
+                target_name: value.target_name,
+                fragments: value.fragments.map(fragment => ({
+                    id: fragment.id,
+                    text: fragment.text,
+                    category: fragment.category,
+                    llm_category: fragment.llm_category,
+                    origin: fragment.origin,
+                    excluded: !!fragment.excluded,
+                })),
+            });
+            return JSON.stringify(compact(item)) !== JSON.stringify(compact(baseline));
+        }
+
+        function pmiItemHasUnassigned(item) {
+            return item.selected && item.fragments.some(fragment => !fragment.excluded && fragment.category === 'unassigned');
+        }
+
+        function pmiSetItemFilter(filter) {
+            pmImportItemFilter = ['all', 'unassigned', 'modified'].includes(filter) ? filter : 'all';
+            document.querySelectorAll('#pmi-item-filters .pm-filter-btn').forEach(button => button.classList.toggle('active', button.dataset.filter === pmImportItemFilter));
+            pmiRenderItemList();
+        }
+
+        function pmiRenderItemList() {
+            if (!pmImportAnalysis) return;
+            const query = (document.getElementById('pmi-item-search').value || '').trim().toLocaleLowerCase();
+            const items = pmImportAnalysis.items.filter(item => {
+                if (query && !`${item.target_name} ${item.source_name}`.toLocaleLowerCase().includes(query)) return false;
+                if (pmImportItemFilter === 'unassigned') return pmiItemHasUnassigned(item);
+                if (pmImportItemFilter === 'modified') return pmiItemModified(item);
+                return true;
+            });
+            document.getElementById('pmi-item-list').innerHTML = items.length ? items.map(item => {
+                const itemIndex = pmImportAnalysis.items.indexOf(item);
+                const unassigned = item.fragments.filter(fragment => !fragment.excluded && fragment.category === 'unassigned').length;
+                const badge = unassigned ? `<span class="pmi-badge error">미분류 ${unassigned}</span>` : (pmiItemModified(item) ? '<span class="pmi-badge user">변경됨</span>' : '<span class="pmi-badge">원본</span>');
+                const sourceLabel = item.source_kind === 'scene' ? '씬' : (item.source_kind === 'workflow_shared' ? '워크플로 공유 설정' : '생성 프리셋');
+                return `<button class="pmi-item-button ${item.id === pmImportSelectedItemId ? 'active' : ''} ${item.selected ? '' : 'unselected'}" onclick="pmiSelectEditorItem(${itemIndex})"><span class="pmi-item-name">${pmEscapeHtml(item.target_name)}</span>${badge}<span class="pmi-item-sub">${sourceLabel} · ${item.fragments.length}개 태그${item.selected ? '' : ' · 가져오기 제외'}</span></button>`;
+            }).join('') : '<div class="pm-empty">조건에 맞는 항목이 없습니다.</div>';
+        }
+
+        function pmiSelectEditorItem(itemIndex) {
+            const item = pmImportAnalysis && pmImportAnalysis.items[itemIndex];
+            if (!item) return;
+            pmImportSelectedItemId = item.id;
+            pmiRenderItemList();
+            pmiRenderItemEditor();
+        }
+
+        function pmiFragmentBadge(fragment) {
+            if (fragment.origin === 'user') return '<span class="pmi-badge user">USER</span>';
+            const baselineItem = pmiBaselineItem(pmImportSelectedItemId);
+            const baseline = baselineItem && baselineItem.fragments.find(candidate => candidate.id === fragment.id);
+            const baselineText = (baseline && (baseline.import_text || baseline.text)) || fragment.import_text || fragment.original_text;
+            const baselineCategory = (baseline && baseline.category) || 'unassigned';
+            if (!fragment.excluded && fragment.llm_category && fragment.category === fragment.llm_category && fragment.text === baselineText) return '<span class="pmi-badge llm">LLM</span>';
+            if (fragment.text !== baselineText || fragment.category !== (fragment.llm_category || baselineCategory) || fragment.excluded) return '<span class="pmi-badge user">USER</span>';
+            if (fragment.normalization && fragment.normalization.changed) return '<span class="pmi-badge nai">NAI</span>';
+            return '<span class="pmi-badge">SOURCE</span>';
+        }
+
+        function pmiRenderItemEditor() {
+            const editor = document.getElementById('pmi-item-editor');
+            if (!pmImportAnalysis) return;
+            let item = pmImportAnalysis.items.find(candidate => candidate.id === pmImportSelectedItemId);
+            if (!item) {
+                item = pmImportAnalysis.items.find(candidate => candidate.selected) || pmImportAnalysis.items[0];
+                pmImportSelectedItemId = item ? item.id : '';
+            }
+            if (!item) {
+                editor.innerHTML = '<div class="pm-empty">편집할 항목이 없습니다.</div>';
+                return;
+            }
+            const itemIndex = pmImportAnalysis.items.indexOf(item);
+            const categoryOptions = Object.entries(PM_IMPORT_CATEGORIES).map(([key, label]) => ({ key, label }));
+            const fragments = item.fragments.map((fragment, index) => {
+                const options = categoryOptions.map(option => `<option value="${option.key}" ${option.key === fragment.category ? 'selected' : ''}>${option.label}</option>`).join('');
+                const removeTitle = fragment.origin === 'user' ? '추가한 태그 삭제' : (fragment.excluded ? '원본 태그 복원' : '원본 태그 제외');
+                const normalization = fragment.normalization || {};
+                const rawWeight = normalization.raw_weight || normalization.weight || '1';
+                const outputWeight = normalization.weight || '1.0';
+                const sourceNote = fragment.origin === 'source' && normalization.changed
+                    ? `<div class="pmi-fragment-source">NAI ${pmEscapeHtml(fragment.original_text)} → ANIMA ${pmEscapeHtml(fragment.import_text || fragment.text)} · canonical ${pmEscapeHtml(rawWeight)} → 출력 ${pmEscapeHtml(outputWeight)}${normalization.clamped ? ' · clamp' : ''}</div>`
+                    : '';
+                return `<div class="pmi-fragment ${fragment.excluded ? 'excluded' : ''}">
+                    ${pmiFragmentBadge(fragment)}
+                    <div class="pmi-fragment-copy"><input class="pm-input" type="text" value="${pmEscapeHtml(fragment.text)}" ${fragment.excluded ? 'disabled' : ''} oninput="pmiUpdateFragmentText(${index}, this.value)" title="NAI 원문: ${pmEscapeHtml(fragment.original_text || '사용자 추가')}">${sourceNote}</div>
+                    <select class="pm-input" ${fragment.excluded ? 'disabled' : ''} onchange="pmiUpdateFragmentCategory(${index}, this.value)">${options}</select>
+                    <div class="pmi-fragment-controls"><button class="pmi-mini-btn" onclick="pmiMoveFragment(${index}, -1)" ${index === 0 ? 'disabled' : ''} title="위로">↑</button><button class="pmi-mini-btn" onclick="pmiMoveFragment(${index}, 1)" ${index === item.fragments.length - 1 ? 'disabled' : ''} title="아래로">↓</button><button class="pmi-mini-btn" onclick="pmiRemoveOrExcludeFragment(${index})" title="${removeTitle}">${fragment.origin === 'user' ? '×' : (fragment.excluded ? '↺' : '−')}</button></div>
+                </div>`;
+            }).join('') || '<div class="pm-empty">태그 조각이 없습니다. 아래에서 직접 추가할 수 있습니다.</div>';
+            editor.innerHTML = `<div class="pmi-editor-top"><div><div class="pm-section-title">${pmEscapeHtml(item.source_name)}</div><div class="pm-section-note">${item.source_kind === 'scene' ? `씬 변형 ${item.variant_index + 1}` : pmEscapeHtml(item.workflow_type || '생성 프리셋')}</div></div><div class="pmi-actions"><label class="pm-btn pm-btn-quiet" style="display:flex;align-items:center;gap:6px;"><input type="checkbox" ${item.selected ? 'checked' : ''} onchange="pmiToggleEditorItem(${itemIndex}, this.checked)"> 가져오기</label><button class="pm-btn pm-btn-quiet" onclick="pmiResetCurrentItem()">항목 초기화</button></div></div>
+                <div class="pm-field"><label>저장할 프리셋 이름 <span class="pm-field-hint">카테고리별 동일 이름으로 저장</span></label><input type="text" value="${pmEscapeHtml(item.target_name)}" oninput="pmiUpdateTargetName(this.value)"></div>
+                <label style="font-size:.72rem;font-weight:650;">NAI 원본 전체 프롬프트</label><div class="pmi-source">${pmEscapeHtml(item.source_prompt || '(비어 있음)')}</div>
+                <label style="font-size:.72rem;font-weight:650;">ANIMA 변환 전체 프롬프트 · weight 최대 ±1.5 · 소수 첫째 자리 반올림</label><div class="pmi-source">${pmEscapeHtml(item.target_prompt || '(비어 있음)')}</div>
+                ${item.warnings && item.warnings.length ? `<div class="pmi-warning-box" style="margin-bottom:10px;">${item.warnings.map(warning => pmEscapeHtml(warning.message)).join('<br>')}</div>` : ''}
+                <div class="pm-section-head"><div><div class="pm-section-title">태그 조각</div><div class="pm-section-note">LLM 배지는 제안 그대로, USER 배지는 직접 변경되었음을 뜻합니다.</div></div><button class="pm-btn" onclick="pmiAddFragment()">＋ 태그 추가</button></div>
+                <div class="pmi-fragments">${fragments}</div>`;
+        }
+
+        function pmiCurrentItem() {
+            return pmImportAnalysis && pmImportAnalysis.items.find(item => item.id === pmImportSelectedItemId);
+        }
+
+        function pmiInvalidateValidation() {
+            pmImportValidation = null;
+            pmImportCommitted = false;
+            const button = document.getElementById('pmi-commit-btn');
+            if (button) button.disabled = true;
+        }
+
+        function pmiToggleEditorItem(itemIndex, checked) {
+            const item = pmImportAnalysis && pmImportAnalysis.items[itemIndex];
+            if (!item) return;
+            item.selected = !!checked;
+            if (!item.selected) item.llm_selected = false;
+            else if (item.llm_selected == null) item.llm_selected = item.fragments.some(fragment => fragment.llm_eligible);
+            pmiInvalidateValidation();
+            pmiRenderItemList();
+            pmiRenderItemEditor();
+        }
+
+        function pmiUpdateTargetName(value) {
+            const item = pmiCurrentItem();
+            if (!item) return;
+            item.target_name = value;
+            pmiInvalidateValidation();
+            pmiRenderItemList();
+        }
+
+        function pmiUpdateFragmentText(index, value) {
+            const item = pmiCurrentItem();
+            if (!item || !item.fragments[index]) return;
+            item.fragments[index].text = value;
+            pmiInvalidateValidation();
+            pmiRenderItemList();
+        }
+
+        function pmiUpdateFragmentCategory(index, category) {
+            const item = pmiCurrentItem();
+            if (!item || !item.fragments[index] || !Object.prototype.hasOwnProperty.call(PM_IMPORT_CATEGORIES, category)) return;
+            item.fragments[index].category = category;
+            pmiInvalidateValidation();
+            pmiRenderItemList();
+            pmiRenderItemEditor();
+        }
+
+        function pmiMoveFragment(index, direction) {
+            const item = pmiCurrentItem();
+            if (!item) return;
+            const target = index + direction;
+            if (target < 0 || target >= item.fragments.length) return;
+            [item.fragments[index], item.fragments[target]] = [item.fragments[target], item.fragments[index]];
+            pmiInvalidateValidation();
+            pmiRenderItemList();
+            pmiRenderItemEditor();
+        }
+
+        function pmiRemoveOrExcludeFragment(index) {
+            const item = pmiCurrentItem();
+            const fragment = item && item.fragments[index];
+            if (!fragment) return;
+            if (fragment.origin === 'user') item.fragments.splice(index, 1);
+            else fragment.excluded = !fragment.excluded;
+            pmiInvalidateValidation();
+            pmiRenderItemList();
+            pmiRenderItemEditor();
+        }
+
+        function pmiAddFragment() {
+            const item = pmiCurrentItem();
+            if (!item) return;
+            const unique = globalThis.crypto && typeof globalThis.crypto.randomUUID === 'function'
+                ? globalThis.crypto.randomUUID()
+                : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+            item.fragments.push({
+                id: `user-${unique}`,
+                original_text: '',
+                text: '',
+                source_field: 'user',
+                category: 'unassigned',
+                llm_category: null,
+                llm_eligible: false,
+                origin: 'user',
+                excluded: false,
+            });
+            pmiInvalidateValidation();
+            pmiRenderItemList();
+            pmiRenderItemEditor();
+            const inputs = document.querySelectorAll('#pmi-item-editor .pmi-fragment input[type="text"]');
+            if (inputs.length) inputs[inputs.length - 1].focus();
+        }
+
+        function pmiResetCurrentItem() {
+            const item = pmiCurrentItem();
+            const baseline = item && pmiBaselineItem(item.id);
+            if (!item || !baseline) return;
+            if (pmiItemModified(item) && !confirm('이 항목의 LLM 결과와 직접 수정 내용을 원본 분석 상태로 되돌릴까요?')) return;
+            const selected = item.selected;
+            const llmSelected = item.llm_selected;
+            const replacement = pmiClone(baseline);
+            replacement.selected = selected;
+            replacement.llm_selected = selected && !!llmSelected;
+            const index = pmImportAnalysis.items.indexOf(item);
+            pmImportAnalysis.items[index] = replacement;
+            pmiInvalidateValidation();
+            pmiRenderItemList();
+            pmiRenderItemEditor();
+        }
+
+        function pmiBuildDraft() {
+            return {
+                import_id: pmImportAnalysis.import_id,
+                items: pmImportAnalysis.items.map(item => ({
+                    id: item.id,
+                    selected: !!item.selected,
+                    target_name: item.target_name,
+                    fragments: item.fragments.map(fragment => ({
+                        id: fragment.id,
+                        text: fragment.text,
+                        category: fragment.category,
+                        llm_category: fragment.llm_category,
+                        origin: fragment.origin,
+                        excluded: !!fragment.excluded,
+                    })),
+                })),
+            };
+        }
+
+        async function pmiValidateAndOpen() {
+            if (!pmImportAnalysis || pmImportBusy) return;
+            pmiShowStep(5);
+            await pmiValidate();
+        }
+
+        async function pmiValidate() {
+            if (!pmImportAnalysis || pmImportBusy) return;
+            pmImportBusy = true;
+            document.getElementById('pmi-commit-btn').disabled = true;
+            document.getElementById('pmi-save-summary').innerHTML = '<div class="pmi-info-box">초안과 현재 프리셋 저장소를 대조하는 중...</div>';
+            try {
+                pmImportValidation = await pmiRequest(
+                    '/api/asset_mode/preset_import/validate',
+                    { draft: pmiBuildDraft() },
+                    [422],
+                );
+                pmiRenderValidation();
+                if (pmImportValidation.success) showToast('최종 검증을 통과했습니다.', 'success');
+                else showToast(`${pmImportValidation.errors.length}개 항목을 수정해주세요.`, 'warning');
+            } catch (error) {
+                console.error('[PM_IMPORT] 초안 검증 실패:', error);
+                pmImportValidation = null;
+                document.getElementById('pmi-save-summary').innerHTML = `<div class="pmi-error-box">${pmEscapeHtml(error.message)}</div>`;
+                showToast(error.message, 'error');
+            } finally {
+                pmImportBusy = false;
+            }
+        }
+
+        function pmiOpenValidationItem(itemId) {
+            if (!pmImportAnalysis || !itemId) return;
+            const item = pmImportAnalysis.items.find(candidate => candidate.id === itemId);
+            if (!item) return;
+            pmImportSelectedItemId = itemId;
+            pmiShowStep(4);
+        }
+
+        function pmiRenderValidation() {
+            const summaryTarget = document.getElementById('pmi-save-summary');
+            const errorsTarget = document.getElementById('pmi-validation-errors');
+            const recordsTarget = document.getElementById('pmi-validation-records');
+            const commitButton = document.getElementById('pmi-commit-btn');
+            if (!pmImportValidation) {
+                summaryTarget.innerHTML = '<div class="pmi-info-box">검증을 실행하면 누락, 미분류, 이름 충돌과 저장 대상을 표시합니다.</div>';
+                errorsTarget.innerHTML = '<div class="pm-empty">아직 검증하지 않았습니다.</div>';
+                recordsTarget.innerHTML = '<div class="pm-empty">아직 저장 대상이 없습니다.</div>';
+                commitButton.disabled = true;
+                return;
+            }
+            const result = pmImportValidation;
+            const summary = result.summary || {};
+            summaryTarget.innerHTML = `<div class="pmi-summary">
+                <div class="pmi-summary-card"><div class="pmi-summary-label">선택 항목</div><div class="pmi-summary-value">${summary.selected_item_count || 0}</div></div>
+                <div class="pmi-summary-card"><div class="pmi-summary-label">저장 레코드</div><div class="pmi-summary-value">${summary.record_count || 0}</div></div>
+                <div class="pmi-summary-card"><div class="pmi-summary-label">신규</div><div class="pmi-summary-value">${summary.new_count || 0}</div></div>
+                <div class="pmi-summary-card"><div class="pmi-summary-label">충돌</div><div class="pmi-summary-value">${summary.conflict_count || 0}</div></div>
+                <div class="pmi-summary-card"><div class="pmi-summary-label">직접 수정/제외</div><div class="pmi-summary-value">${(summary.edited_fragment_count || 0) + (summary.excluded_fragment_count || 0)}</div></div>
+            </div><div class="${result.success ? 'pmi-info-box' : 'pmi-error-box'}">${result.success ? '검증을 통과했습니다. 충돌 처리 방식을 확인한 뒤 저장하세요.' : `저장 전에 ${result.errors.length}개 오류를 수정해야 합니다.`}</div>`;
+
+            errorsTarget.innerHTML = result.errors.length ? result.errors.map(error => `<button class="pmi-result-row" style="width:100%;color:var(--text);text-align:left;cursor:${error.item_id ? 'pointer' : 'default'};" ${error.item_id ? `onclick="pmiOpenValidationItem('${pmEscapeHtml(error.item_id)}')"` : ''}><span class="pmi-badge error">${pmEscapeHtml(error.code)}</span><div style="margin-top:5px;">${pmEscapeHtml(error.message)}</div></button>`).join('') : '<div class="pmi-info-box">누락이나 미분류 오류가 없습니다.</div>';
+
+            const conflicts = new Map((result.conflicts || []).map(conflict => [conflict.record_id, conflict]));
+            recordsTarget.innerHTML = result.records.length ? result.records.map(record => {
+                const conflict = conflicts.get(record.id);
+                const preview = record.values.slice(0, 5).map(value => pmEscapeHtml(value)).join(', ') + (record.values.length > 5 ? ` 외 ${record.values.length - 5}개` : '');
+                if (!conflict) {
+                    const label = record.status === 'same' ? '동일값 유지' : '신규';
+                    return `<div class="pmi-result-row"><span class="pmi-badge ${record.status === 'same' ? '' : 'llm'}">${label}</span><div style="margin-top:5px;font-weight:650;">${pmEscapeHtml(PM_IMPORT_CATEGORIES[record.category] || record.category)} / ${pmEscapeHtml(record.name)}</div><div style="margin-top:4px;color:var(--text2);">${preview}</div></div>`;
+                }
+                const suggested = `${record.name}_가져오기`;
+                return `<div class="pmi-conflict" data-record-id="${record.id}"><div><span class="pmi-badge user">${conflict.state === 'hidden' ? '숨김 충돌' : '활성 충돌'}</span><div style="margin-top:5px;font-weight:650;">${pmEscapeHtml(PM_IMPORT_CATEGORIES[record.category] || record.category)} / ${pmEscapeHtml(record.name)}</div><div style="margin-top:4px;color:var(--text2);">가져올 값: ${preview}</div></div><div class="pmi-conflict-controls"><select class="pm-input" id="pmi-resolution-${record.id}" onchange="pmiResolutionChanged('${record.id}')"><option value="keep">기존 값 유지</option><option value="overwrite">가져온 값으로 덮어쓰기${conflict.state === 'hidden' ? '·활성화' : ''}</option><option value="rename">새 이름으로 추가</option></select><input class="pm-input" id="pmi-rename-${record.id}" value="${pmEscapeHtml(suggested)}" placeholder="새 프리셋 이름" style="display:none;"></div></div>`;
+            }).join('') : '<div class="pm-empty">생성할 저장 레코드가 없습니다.</div>';
+            commitButton.disabled = !result.success || pmImportCommitted;
+        }
+
+        function pmiResolutionChanged(recordId) {
+            const select = document.getElementById(`pmi-resolution-${recordId}`);
+            const rename = document.getElementById(`pmi-rename-${recordId}`);
+            if (select && rename) rename.style.display = select.value === 'rename' ? '' : 'none';
+        }
+
+        function pmiSetAllResolutions(choice) {
+            if (!pmImportValidation || !['keep', 'overwrite', 'rename'].includes(choice)) return;
+            for (const conflict of pmImportValidation.conflicts || []) {
+                const select = document.getElementById(`pmi-resolution-${conflict.record_id}`);
+                if (!select) continue;
+                select.value = choice;
+                pmiResolutionChanged(conflict.record_id);
+            }
+        }
+
+        function pmiCollectResolutions() {
+            return (pmImportValidation.conflicts || []).map(conflict => {
+                const select = document.getElementById(`pmi-resolution-${conflict.record_id}`);
+                const rename = document.getElementById(`pmi-rename-${conflict.record_id}`);
+                return {
+                    record_id: conflict.record_id,
+                    choice: select ? select.value : 'keep',
+                    new_name: rename ? rename.value : '',
+                };
+            });
+        }
+
+        async function pmiCommit() {
+            if (!pmImportValidation || !pmImportValidation.success || pmImportBusy || pmImportCommitted) return;
+            pmImportBusy = true;
+            const button = document.getElementById('pmi-commit-btn');
+            button.disabled = true;
+            button.textContent = '백업·저장 중...';
+            try {
+                const result = await pmiRequest('/api/asset_mode/preset_import/commit', {
+                    draft: pmiBuildDraft(),
+                    resolutions: pmiCollectResolutions(),
+                });
+                pmImportCommitted = true;
+                document.getElementById('pmi-save-summary').innerHTML = `<div class="pmi-info-box"><strong>${result.target_count}개 프리셋 레코드를 저장했습니다.</strong><br>매니페스트 ID: ${pmEscapeHtml(result.manifest_id)} · 기존 데이터는 프로그램의 asset_data/backup 폴더에 백업되었습니다.<div class="pmi-actions" style="margin-top:10px;"><button class="pm-btn pm-btn-primary" onclick="pmiResetImport(true)">새 파일 가져오기</button><button class="pm-btn" onclick="pmSwitchView('manage')">프리셋 편집에서 확인</button></div></div>`;
+                const errorsTarget = document.getElementById('pmi-validation-errors');
+                if (errorsTarget) errorsTarget.innerHTML = '<div class="pmi-info-box">저장이 완료되었습니다.</div>';
+                await pmLoadData();
+                showToast('프리셋 가져오기가 완료되었습니다.', 'success');
+            } catch (error) {
+                console.error('[PM_IMPORT] 최종 저장 실패:', error);
+                document.getElementById('pmi-save-summary').innerHTML = `<div class="pmi-error-box">${pmEscapeHtml(error.message)}<br>저장에 실패했으며 서버가 기존 파일로 롤백을 시도했습니다.</div>`;
+                button.disabled = false;
+                showToast(error.message, 'error');
+            } finally {
+                pmImportBusy = false;
+                button.textContent = '검증 결과 저장';
+            }
+        }
+
+        function pmiResetImport(force = false) {
+            if (!force && pmImportAnalysis && !pmImportCommitted && !confirm('현재 가져오기 분석과 편집 내용을 모두 지울까요?')) return;
+            pmImportAnalysis = null;
+            pmImportBaseline = null;
+            pmImportValidation = null;
+            pmImportSelectedItemId = '';
+            pmImportItemFilter = 'all';
+            pmImportCommitted = false;
+            const input = document.getElementById('pmi-file-input');
+            if (input) input.value = '';
+            document.getElementById('pmi-file-name').textContent = '선택한 파일 없음';
+            document.getElementById('pmi-analyze-btn').disabled = true;
+            document.getElementById('pmi-analysis-result').innerHTML = '';
+            pmiShowStep(1);
         }
 
         TagAutocomplete.attach('pm-editor-content', 'ac-pm-editor-content', 'textarea', {

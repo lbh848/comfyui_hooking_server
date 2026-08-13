@@ -71,6 +71,7 @@ HAS_PIEXIF = True
 from modes import outfit_mode
 from modes import enhance_mode
 from modes import asset_mode
+from modes import preset_importer
 from modes import pose_mode
 from modes import chain_preset_mode
 from modes import mode_logger
@@ -396,6 +397,9 @@ DEFAULT_CONFIG = {
             max_retries=1, fallback_max_retries=1, json_mode=True
         ),
         "asset_name_mapping_full": _llm_route_defaults(
+            max_retries=1, fallback_max_retries=1, json_mode=True
+        ),
+        "preset_import_classify": _llm_route_defaults(
             max_retries=1, fallback_max_retries=1, json_mode=True
         ),
         "character_maker_draft": _llm_route_defaults(
@@ -14191,6 +14195,472 @@ async def handle_api_asset_mode_tags_get(request: web.Request) -> web.Response:
 async def handle_api_asset_mode_hidden_tags_get(request: web.Request) -> web.Response:
     return web.json_response(asset_mode.get_hidden_tags())
 
+
+_PRESET_IMPORT_COMMIT_LOCK = asyncio.Lock()
+
+
+def _preset_import_document_diagnostic(filename: Any, document: Any) -> dict:
+    """프리셋 원문 전체를 복제하지 않고 구조 분석에 필요한 진단값만 만든다."""
+    diagnostic: dict[str, Any] = {
+        "filename": str(filename or "preset.json"),
+        "document_type": type(document).__name__,
+    }
+    if not isinstance(document, dict):
+        return diagnostic
+    try:
+        encoded_size = len(
+            json.dumps(document, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        )
+    except Exception as exc:
+        print(
+            "[PRESET_IMPORT_DETAIL] 문서 크기 계산 실패: "
+            f"filename={diagnostic['filename']!r}, error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        encoded_size = None
+    scenes = document.get("scenes")
+    presets = document.get("presets")
+    diagnostic.update({
+        "document_keys": [str(key) for key in document.keys()],
+        "project_name": document.get("name"),
+        "version": document.get("version"),
+        "utf8_bytes": encoded_size,
+        "scenes_type": type(scenes).__name__,
+        "scene_count": len(scenes) if isinstance(scenes, dict) else None,
+        "presets_type": type(presets).__name__,
+        "preset_group_count": len(presets) if isinstance(presets, (dict, list)) else None,
+    })
+    return diagnostic
+
+
+def _record_preset_import_detail(
+    phase: str,
+    *,
+    status: str,
+    detail_input: Any,
+    output: Any = "",
+    error: str = "",
+    started_at: float | None = None,
+    extra: dict | None = None,
+) -> bool:
+    """프리셋 임포트 진단을 우하단 LLM 로그의 '자세히' 이력에 기록한다."""
+    try:
+        if isinstance(detail_input, list):
+            input_messages = detail_input
+        else:
+            input_messages = [{
+                "role": "user",
+                "content": json.dumps(
+                    detail_input,
+                    ensure_ascii=False,
+                    indent=2,
+                    default=str,
+                ),
+            }]
+        output_text = (
+            output
+            if isinstance(output, str)
+            else json.dumps(output, ensure_ascii=False, indent=2, default=str)
+        )
+        metadata = dict(extra or {})
+        elapsed = (
+            round(max(0.0, time.perf_counter() - started_at), 3)
+            if started_at is not None
+            else round(float(metadata.pop("elapsed", 0.0) or 0.0), 3)
+        )
+        history_id = str(metadata.pop("history_id", "") or uuid.uuid4().hex)
+        call_name = str(metadata.pop("call_name", "") or f"프리셋 임포트 · {phase}")
+        record = {
+            "ts": datetime.datetime.now().isoformat(timespec="seconds"),
+            "history_id": history_id,
+            "prompt_id": str(metadata.pop("prompt_id", "") or f"preset_import:{phase}"),
+            "call_name": call_name,
+            "task_key": str(metadata.pop("task_key", "") or "preset_import_diagnostic"),
+            "service": str(metadata.pop("service", "") or "local-parser"),
+            "model": str(metadata.pop("model", "") or "NAI parser / ANIMA adapter"),
+            "input": input_messages,
+            "output": output_text,
+            "completion_tokens": int(metadata.pop("completion_tokens", 0) or 0),
+            "prompt_tokens": int(metadata.pop("prompt_tokens", 0) or 0),
+            "elapsed": elapsed,
+            "tps": round(float(metadata.pop("tps", 0.0) or 0.0), 1),
+            "status": "error" if status == "error" else "ok",
+            "diagnostic_phase": phase,
+            **metadata,
+        }
+        if error:
+            record["error"] = str(error)
+        lighbd_service._log_lighbd_history(record)
+        print(
+            "[PRESET_IMPORT_DETAIL] 자세히 기록 완료: "
+            f"phase={phase}, status={record['status']}, history_id={history_id}"
+        )
+        return True
+    except Exception as exc:
+        print(
+            "[PRESET_IMPORT_DETAIL] 자세히 기록 실패: "
+            f"phase={phase}, status={status}, error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        return False
+
+
+def _preset_import_error_response(
+    phase: str,
+    exc: Exception,
+    *,
+    status: int,
+    detail_input: Any = None,
+    detail_output: Any = "",
+    detail_started_at: float | None = None,
+    detail_extra: dict | None = None,
+) -> web.Response:
+    traceback_text = traceback.format_exc()
+    print(
+        f"[PRESET_IMPORT_API] {phase} 실패: "
+        f"error={type(exc).__name__}: {exc}"
+    )
+    traceback.print_exc()
+    detail_logged = False
+    if detail_input is not None:
+        detail_logged = _record_preset_import_detail(
+            phase,
+            status="error",
+            detail_input=detail_input,
+            output=detail_output,
+            error=(
+                f"{type(exc).__name__}: {exc}\n\n"
+                f"{traceback_text}"
+            ),
+            started_at=detail_started_at,
+            extra=detail_extra,
+        )
+    return web.json_response(
+        {
+            "success": False,
+            "error": str(exc),
+            "phase": phase,
+            "detail_logged": detail_logged,
+        },
+        status=status,
+    )
+
+
+async def handle_api_preset_import_analyze(request: web.Request) -> web.Response:
+    """업로드 JSON을 저장하지 않고 메모리 분석 세션으로 변환한다."""
+    started_at = time.perf_counter()
+    diagnostic: dict[str, Any] = {
+        "stage": "request_json",
+        "http_content_length": request.content_length,
+    }
+    try:
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise preset_importer.PresetImportError("요청 본문이 객체가 아닙니다.")
+        diagnostic.update(_preset_import_document_diagnostic(
+            body.get("filename", "preset.json"),
+            body.get("document"),
+        ))
+        diagnostic["stage"] = "nai_structure_analysis"
+        result = await asyncio.to_thread(
+            preset_importer.analyze_document,
+            body.get("filename", "preset.json"),
+            body.get("document"),
+        )
+        detail_logged = _record_preset_import_detail(
+            "구조 분석",
+            status="ok",
+            detail_input=diagnostic,
+            output={
+                "import_id": result.get("import_id"),
+                "source": result.get("source"),
+                "target": result.get("target"),
+                "summary": result.get("summary"),
+                "warnings": result.get("warnings"),
+            },
+            started_at=started_at,
+        )
+        result["detail_logged"] = detail_logged
+        return web.json_response(result)
+    except preset_importer.PresetImportError as exc:
+        return _preset_import_error_response(
+            "구조 분석",
+            exc,
+            status=400,
+            detail_input=diagnostic,
+            detail_started_at=started_at,
+        )
+    except Exception as exc:
+        return _preset_import_error_response(
+            "구조 분석",
+            exc,
+            status=500,
+            detail_input=diagnostic,
+            detail_started_at=started_at,
+        )
+
+
+async def handle_api_preset_import_client_log(request: web.Request) -> web.Response:
+    """서버 호출 전 브라우저에서 난 파일 읽기/JSON 파싱 실패를 자세히에 남긴다."""
+    started_at = time.perf_counter()
+    try:
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise preset_importer.PresetImportError("클라이언트 진단 본문이 객체가 아닙니다.")
+        diagnostic = {
+            "stage": str(body.get("stage") or "browser")[:80],
+            "filename": str(body.get("filename") or "preset.json")[:300],
+            "file_size": body.get("file_size"),
+            "error_name": str(body.get("error_name") or "Error")[:120],
+            "message": str(body.get("message") or "")[:4000],
+            "stack": str(body.get("stack") or "")[:12000],
+            "source_excerpt": str(body.get("source_excerpt") or "")[:4000],
+        }
+        logged = _record_preset_import_detail(
+            "브라우저 파일 분석",
+            status="error",
+            detail_input=diagnostic,
+            error=(
+                f"{diagnostic['error_name']}: {diagnostic['message']}\n\n"
+                f"{diagnostic['stack']}"
+            ),
+            started_at=started_at,
+            extra={"source": "browser"},
+        )
+        return web.json_response({"success": logged, "detail_logged": logged})
+    except preset_importer.PresetImportError as exc:
+        return _preset_import_error_response("브라우저 진단", exc, status=400)
+    except Exception as exc:
+        return _preset_import_error_response("브라우저 진단", exc, status=500)
+
+
+async def handle_api_preset_import_classify(request: web.Request) -> web.Response:
+    """선택 항목만 LLM으로 의미 분류하고 원문 변경 없는 결과를 반환한다."""
+    started_at = time.perf_counter()
+    import_id = ""
+    messages: list[dict] = []
+    raw: Any = ""
+    usage_sink: dict[str, Any] = {}
+    execution_context = None
+    detail_input: Any = {"stage": "request_json"}
+    try:
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise preset_importer.PresetImportError("요청 본문이 객체가 아닙니다.")
+        import_id = body.get("import_id", "")
+        payload = preset_importer.build_classification_payload(
+            import_id,
+            body.get("targets", body.get("item_ids")),
+        )
+        messages = preset_importer.build_classification_messages(payload)
+        detail_input = messages
+        accepted: dict[str, dict] = {}
+
+        def classification_result_validator(raw_result):
+            parsed_result = llm_prompt_edit.parse_llm_json(raw_result)
+            valid, reason = preset_importer.validate_classification_response(
+                parsed_result,
+                payload,
+            )
+            if not valid:
+                print(
+                    "[PRESET_IMPORT_LLM] 응답 구조 검증 실패: "
+                    f"import_id={import_id!r}, reason={reason}, "
+                    f"raw_preview={str(raw_result)[:300]!r}"
+                )
+                return False, reason
+            accepted["parsed"] = parsed_result
+            return True, ""
+
+        print(
+            "[PRESET_IMPORT_LLM] 분류 호출: "
+            f"import_id={import_id!r}, items={len(payload['items'])}"
+        )
+        execution_context = llm_service.create_llm_execution_context(
+            "preset_import_classify",
+            call_name="프리셋 임포트 · LLM 분류",
+            json_mode=True,
+            metadata={"prompt_id": f"preset_import:{import_id}"},
+        )
+        execution_result = await llm_service.callLLMTaskResult(
+            "preset_import_classify",
+            messages,
+            json_mode=True,
+            result_validator=classification_result_validator,
+            metadata_sink=usage_sink,
+            execution_context=execution_context,
+        )
+        raw = (
+            execution_result.raw_response
+            if execution_result.raw_response is not None
+            else execution_result.text
+        )
+        if not execution_result.accepted:
+            failure_reason = (
+                execution_result.reason
+                or (
+                    f"{type(execution_result.exception).__name__}: "
+                    f"{execution_result.exception}"
+                    if execution_result.exception is not None
+                    else "LLM 분류 응답 검증에 실패했습니다."
+                )
+            )
+            print(
+                "[PRESET_IMPORT_LLM] 최종 실행 실패: "
+                f"import_id={import_id!r}, phase={execution_result.final_phase}, "
+                f"slot={execution_result.final_slot}, reason={failure_reason}"
+            )
+            raise preset_importer.PresetImportError(failure_reason)
+        parsed = accepted.get("parsed")
+        if parsed is None:
+            parsed = llm_prompt_edit.parse_llm_json(raw)
+            valid, reason = preset_importer.validate_classification_response(
+                parsed,
+                payload,
+            )
+            if not valid:
+                print(
+                    "[PRESET_IMPORT_LLM] 최종 응답 검증 실패: "
+                    f"import_id={import_id!r}, reason={reason}, "
+                    f"raw_preview={str(raw)[:300]!r}"
+                )
+                raise preset_importer.PresetImportError(
+                    reason or "LLM 분류 결과를 검증하지 못했습니다."
+                )
+        assignments = preset_importer.classification_assignments(parsed)
+        detail_extra = {
+            "history_id": execution_context.execution_id,
+            "execution_id": execution_context.execution_id,
+            "parent_execution_id": execution_context.parent_execution_id,
+            "prompt_id": f"preset_import:{import_id}",
+            "task_key": "preset_import_classify",
+            "call_name": "프리셋 임포트 · LLM 분류",
+            "service": llm_service.routing_primary_service("preset_import_classify"),
+            "model": llm_service.routing_primary_model("preset_import_classify"),
+            "llm_slot": execution_result.final_slot,
+            "phase": execution_result.final_phase,
+            "prompt_tokens": int(usage_sink.get("prompt_tokens") or 0),
+            "completion_tokens": int(usage_sink.get("completion_tokens") or 0),
+            "tps": float(usage_sink.get("tps") or 0.0),
+        }
+        detail_logged = _record_preset_import_detail(
+            "LLM 분류",
+            status="ok",
+            detail_input=messages,
+            output=raw,
+            started_at=started_at,
+            extra=detail_extra,
+        )
+        return web.json_response({
+            "success": True,
+            "import_id": import_id,
+            "assignments": assignments,
+            "detail_logged": detail_logged,
+        })
+    except preset_importer.PresetImportError as exc:
+        detail_extra = {
+            "prompt_id": f"preset_import:{import_id or 'unknown'}",
+            "task_key": "preset_import_classify",
+            "call_name": "프리셋 임포트 · LLM 분류",
+            "service": llm_service.routing_primary_service("preset_import_classify"),
+            "model": llm_service.routing_primary_model("preset_import_classify"),
+            "prompt_tokens": int(usage_sink.get("prompt_tokens") or 0),
+            "completion_tokens": int(usage_sink.get("completion_tokens") or 0),
+            "tps": float(usage_sink.get("tps") or 0.0),
+        }
+        if execution_context is not None:
+            detail_extra.update({
+                "history_id": execution_context.execution_id,
+                "execution_id": execution_context.execution_id,
+                "parent_execution_id": execution_context.parent_execution_id,
+            })
+        return _preset_import_error_response(
+            "LLM 분류",
+            exc,
+            status=422 if messages else 400,
+            detail_input=detail_input,
+            detail_output=raw,
+            detail_started_at=started_at,
+            detail_extra=detail_extra,
+        )
+    except Exception as exc:
+        detail_extra = {
+            "prompt_id": f"preset_import:{import_id or 'unknown'}",
+            "task_key": "preset_import_classify",
+            "call_name": "프리셋 임포트 · LLM 분류",
+            "service": llm_service.routing_primary_service("preset_import_classify"),
+            "model": llm_service.routing_primary_model("preset_import_classify"),
+            "prompt_tokens": int(usage_sink.get("prompt_tokens") or 0),
+            "completion_tokens": int(usage_sink.get("completion_tokens") or 0),
+            "tps": float(usage_sink.get("tps") or 0.0),
+        }
+        if execution_context is not None:
+            detail_extra.update({
+                "history_id": execution_context.execution_id,
+                "execution_id": execution_context.execution_id,
+                "parent_execution_id": execution_context.parent_execution_id,
+            })
+        return _preset_import_error_response(
+            "LLM 분류",
+            exc,
+            status=502,
+            detail_input=detail_input,
+            detail_output=raw,
+            detail_started_at=started_at,
+            detail_extra=detail_extra,
+        )
+
+
+async def handle_api_preset_import_validate(request: web.Request) -> web.Response:
+    """수동 편집까지 반영된 초안을 기존 프리셋과 대조한다."""
+    try:
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise preset_importer.PresetImportError("요청 본문이 객체가 아닙니다.")
+        draft = body.get("draft", body)
+        result = preset_importer.validate_draft(
+            draft,
+            asset_mode.get_tags(),
+            asset_mode.load_hidden_tags(),
+        )
+        if not result["success"]:
+            print(
+                "[PRESET_IMPORT_API] 초안 검증 거부: "
+                f"import_id={result.get('import_id', '')!r}, "
+                f"errors={result.get('errors', [])!r}"
+            )
+        return web.json_response(result, status=200 if result["success"] else 422)
+    except preset_importer.PresetImportError as exc:
+        return _preset_import_error_response("검증", exc, status=400)
+    except Exception as exc:
+        return _preset_import_error_response("검증", exc, status=500)
+
+
+async def handle_api_preset_import_commit(request: web.Request) -> web.Response:
+    """재검증, 충돌 해결, 백업, 원자적 파일 저장을 하나의 잠금에서 수행한다."""
+    try:
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise preset_importer.PresetImportError("요청 본문이 객체가 아닙니다.")
+        async with _PRESET_IMPORT_COMMIT_LOCK:
+            # 기존 프리셋 편집 API도 이벤트 루프에서 동기 저장하므로, 이 짧은
+            # 트랜잭션 역시 이벤트 루프에서 끝내야 중간에 다른 저장이 끼지 않는다.
+            result = preset_importer.commit_draft(
+                body.get("draft"),
+                body.get("resolutions", []),
+                asset_mode.get_tags(),
+                asset_mode.load_hidden_tags(),
+            )
+            # commit_draft가 디스크에 저장한 것과 실행 중 캐시를 즉시 일치시킨다.
+            asset_mode._tags = result.pop("active_tags")
+            asset_mode._tags_loaded = True
+            result.pop("hidden_tags", None)
+        return web.json_response(result)
+    except preset_importer.PresetImportError as exc:
+        return _preset_import_error_response("저장", exc, status=422)
+    except Exception as exc:
+        return _preset_import_error_response("저장", exc, status=500)
+
 async def handle_api_asset_mode_tags_post(request: web.Request) -> web.Response:
     try:
         body = await request.json()
@@ -18172,6 +18642,11 @@ app.router.add_get("/api/asset_mode/status", handle_api_asset_mode_status)
 app.router.add_get("/api/asset_mode/tags", handle_api_asset_mode_tags_get)
 app.router.add_get("/api/asset_mode/hidden_tags", handle_api_asset_mode_hidden_tags_get)
 app.router.add_post("/api/asset_mode/tags", handle_api_asset_mode_tags_post)
+app.router.add_post("/api/asset_mode/preset_import/analyze", handle_api_preset_import_analyze)
+app.router.add_post("/api/asset_mode/preset_import/client_log", handle_api_preset_import_client_log)
+app.router.add_post("/api/asset_mode/preset_import/classify", handle_api_preset_import_classify)
+app.router.add_post("/api/asset_mode/preset_import/validate", handle_api_preset_import_validate)
+app.router.add_post("/api/asset_mode/preset_import/commit", handle_api_preset_import_commit)
 app.router.add_post("/api/asset_mode/trace_stream", handle_api_asset_mode_trace_stream)
 app.router.add_post("/api/asset_mode/generate", handle_api_asset_mode_generate)
 app.router.add_post("/api/asset_mode/qwen_edit/translate", handle_api_qwen_edit_translate)

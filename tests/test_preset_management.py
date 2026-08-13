@@ -157,3 +157,27 @@ def test_frontend_uses_unified_preset_workspace_and_explicit_save_action():
     assert "replace(/_/g, ' ').replace(/\\s+/g, ' ')" in source
     assert 'id="pm-view-batch"' not in source
     assert 'id="pm-view-trace"' not in source
+
+
+def test_frontend_has_stagewise_hybrid_import_and_manual_fragment_editor():
+    source = FRONTEND_HTML.read_text(encoding="utf-8")
+
+    assert 'id="pm-sidebar-import"' in source
+    assert 'id="pm-view-import"' in source
+    assert 'id="pmi-stage-1"' in source
+    assert 'id="pmi-stage-5"' in source
+    assert "'/api/asset_mode/preset_import/analyze'" in source
+    assert "'/api/asset_mode/preset_import/client_log'" in source
+    assert "'/api/asset_mode/preset_import/classify'" in source
+    assert "'/api/asset_mode/preset_import/validate'" in source
+    assert "'/api/asset_mode/preset_import/commit'" in source
+    assert "function pmiUpdateFragmentText" in source
+    assert "function pmiUpdateFragmentCategory" in source
+    assert "function pmiRemoveOrExcludeFragment" in source
+    assert "function pmiResetCurrentItem" in source
+    assert "key: 'preset_import_classify'" in source
+    assert "index += 30" in source
+    assert "targets: chunk" in source
+    assert "ANIMA 변환 전체 프롬프트" in source
+    assert "소수 첫째 자리 반올림" in source
+    assert "LLM 로그 자세히 열기" in source
