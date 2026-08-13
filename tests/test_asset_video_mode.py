@@ -107,6 +107,7 @@ def test_asset_video_commit_adds_new_file_without_touching_source_or_representat
             "instruction_source": "llm",
             "auto_instruction": True,
             "visual_context": "visual_context:\nAlice stands by a window.",
+            "visual_context_source": "prompt",
             "llm_trace": ["video-trace-1"],
             "mode": "i2v",
             "last_ref": {},
@@ -142,6 +143,7 @@ def test_asset_video_commit_adds_new_file_without_touching_source_or_representat
     assert output_record["video_instruction_source"] == "llm"
     assert output_record["video_auto_instruction"] is True
     assert output_record["video_visual_context"] == "visual_context:\nAlice stands by a window."
+    assert output_record["video_visual_context_source"] == "prompt"
     prompt = json.loads(
         (expression_dir / "20260813_120000_newvideo_prompt.json").read_text(
             encoding="utf-8"
@@ -153,6 +155,7 @@ def test_asset_video_commit_adds_new_file_without_touching_source_or_representat
     assert prompt["video_instruction_source"] == "llm"
     assert prompt["video_auto_instruction"] is True
     assert prompt["video_visual_context"] == "visual_context:\nAlice stands by a window."
+    assert prompt["video_visual_context_source"] == "prompt"
     assert prompt["llm_trace"] == ["video-trace-1"]
 
 

@@ -7767,6 +7767,7 @@ def _extract_video_prompt_metadata(filepath: str) -> dict:
         "video_instruction_source": "",
         "video_auto_instruction": None,
         "video_visual_context": "",
+        "video_visual_context_source": "",
     }
     try:
         with open(filepath, "r", encoding="utf-8") as fp:
@@ -7792,6 +7793,7 @@ def _extract_video_prompt_metadata(filepath: str) -> dict:
     source = data.get("video_instruction_source", "")
     auto_instruction = data.get("video_auto_instruction")
     visual_context = data.get("video_visual_context", "")
+    visual_context_source = data.get("video_visual_context_source", "")
     invalid_fields = []
     if not isinstance(instruction, str):
         invalid_fields.append(("video_instruction", type(instruction).__name__))
@@ -7811,6 +7813,15 @@ def _extract_video_prompt_metadata(filepath: str) -> dict:
     if not isinstance(visual_context, str):
         invalid_fields.append(("video_visual_context", type(visual_context).__name__))
         visual_context = ""
+    if not isinstance(visual_context_source, str):
+        invalid_fields.append(
+            ("video_visual_context_source", type(visual_context_source).__name__)
+        )
+        visual_context_source = ""
+    visual_context_source = visual_context_source.strip().lower()
+    if visual_context_source not in {"", "image", "prompt"}:
+        invalid_fields.append(("video_visual_context_source", repr(visual_context_source)))
+        visual_context_source = ""
     if invalid_fields:
         print(
             "[BACKUP:VIDEO_PROMPT] 영상 진단 메타데이터 형식 오류, 안전한 값 사용: "
@@ -7822,6 +7833,7 @@ def _extract_video_prompt_metadata(filepath: str) -> dict:
         "video_instruction_source": source,
         "video_auto_instruction": auto_instruction,
         "video_visual_context": visual_context,
+        "video_visual_context_source": visual_context_source,
     }
 
 
@@ -8841,6 +8853,7 @@ async def handle_api_backups(request: web.Request) -> web.Response:
             "video_instruction_source": "",
             "video_auto_instruction": None,
             "video_visual_context": "",
+            "video_visual_context_source": "",
         }
         if os.path.exists(prompt_path):
             positive, negative = _extract_prompts_from_backup(prompt_path)
@@ -9487,6 +9500,21 @@ async def handle_api_video_enqueue(request: web.Request) -> web.Response:
                 {"success": False, "error": "대사·감정 정보 전달 값은 boolean이어야 합니다"},
                 status=400,
             )
+        visual_context_source = str(
+            body.get("visual_context_source") or "image"
+        ).strip().lower()
+        if visual_context_source not in {"image", "prompt"}:
+            print(
+                "[VIDEO:API] Visual Context 입력 방식 오류: "
+                f"value={visual_context_source!r}, body={body!r}"
+            )
+            return web.json_response(
+                {
+                    "success": False,
+                    "error": "Visual Context 입력 방식은 image 또는 prompt여야 합니다",
+                },
+                status=400,
+            )
         instruction = str(body.get("instruction") or "").strip()
         if auto_instruction:
             instruction = ""
@@ -9660,6 +9688,7 @@ async def handle_api_video_enqueue(request: web.Request) -> web.Response:
             "loop": loop_enabled,
             "auto_instruction": auto_instruction,
             "include_dialogue_context": include_dialogue_context,
+            "visual_context_source": visual_context_source,
             "instruction": instruction,
             # preset은 구형 큐/백업 소비자를 위한 화면 비율 별칭이다.
             "preset": aspect_ratio,
@@ -9682,6 +9711,7 @@ async def handle_api_video_enqueue(request: web.Request) -> web.Response:
             f"aspect_ratio={aspect_ratio}, quality_level={quality_level}, "
             f"duration={duration:g}s, auto_instruction={auto_instruction}, "
             f"include_dialogue_context={include_dialogue_context}, "
+            f"visual_context_source={visual_context_source}, "
             f"upscale={upscale_model or 'none'}x{upscale_scale}, "
             f"format={output_format}"
         )

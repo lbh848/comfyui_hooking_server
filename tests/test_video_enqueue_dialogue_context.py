@@ -54,8 +54,51 @@ async def test_video_enqueue_passes_dialogue_context_choice_to_prompt_queue(
     assert payload["success"] is True
     assert captured["item_type"] == "video_prompt_build"
     assert captured["params"]["include_dialogue_context"] is False
+    assert captured["params"]["visual_context_source"] == "image"
     assert captured["params"]["aspect_ratio"] == "16:9"
     assert captured["params"]["quality_level"] == "high"
+
+
+@pytest.mark.asyncio
+async def test_video_enqueue_passes_prompt_visual_context_choice(monkeypatch) -> None:
+    captured: dict = {}
+
+    async def fake_add_item(item_type, label, params):
+        captured.update(item_type=item_type, label=label, params=params)
+        return SimpleNamespace(id="prompt-context-id", label=label)
+
+    monkeypatch.setattr(server.video_mode, "validate_reference", lambda _reference: None)
+    monkeypatch.setattr(server.queue_manager, "add_item", fake_add_item)
+    monkeypatch.setattr(server, "load_config", lambda: {})
+
+    response = await server.handle_api_video_enqueue(
+        _JsonRequest(_video_request(visual_context_source="prompt"))
+    )
+
+    assert response.status == 200
+    assert captured["params"]["visual_context_source"] == "prompt"
+
+
+@pytest.mark.asyncio
+async def test_video_enqueue_rejects_unknown_visual_context_source(monkeypatch) -> None:
+    called = False
+
+    async def fake_add_item(_item_type, _label, _params):
+        nonlocal called
+        called = True
+        raise AssertionError("invalid request must not be queued")
+
+    monkeypatch.setattr(server.queue_manager, "add_item", fake_add_item)
+
+    response = await server.handle_api_video_enqueue(
+        _JsonRequest(_video_request(visual_context_source="metadata"))
+    )
+    payload = json.loads(response.text)
+
+    assert response.status == 400
+    assert payload["success"] is False
+    assert "image 또는 prompt" in payload["error"]
+    assert called is False
 
 
 @pytest.mark.asyncio

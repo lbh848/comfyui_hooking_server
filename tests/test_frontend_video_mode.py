@@ -60,7 +60,8 @@ def test_video_prompt_diagnostics_are_rendered_for_backups_and_assets() -> None:
     assert "function renderVideoPromptDetails(record, finalPrompt)" in FRONTEND
     assert "[연출 지시 출처]" in FRONTEND
     assert "[연출 지시]" in FRONTEND
-    assert "[Vision 해석]" in FRONTEND
+    assert "Visual Context · 그림 직접 분석" in FRONTEND
+    assert "Visual Context · 생성 프롬프트 해석" in FRONTEND
     assert "[최종 H3 프롬프트]" in FRONTEND
     assert "b.is_video_prompt === true" in FRONTEND
     assert "img.is_video_animation === true" in FRONTEND
@@ -149,7 +150,7 @@ def test_video_modal_opens_before_async_loading_and_keeps_session_upscaler() -> 
 
 
 def test_video_page_can_delegate_direction_to_ai() -> None:
-    assert "AI 맡기기 설정" in FRONTEND
+    assert 'id="video-ai-settings-title" class="video-panel-title">AI 연출 문맥</span>' in FRONTEND
     assert 'id="video-generation-auto-instruction"' in FRONTEND
     assert 'aria-pressed="false"' in FRONTEND
     assert "AI에게 맡기기" in FRONTEND
@@ -163,6 +164,23 @@ def test_video_page_can_delegate_direction_to_ai() -> None:
     assert "const includeDialogueContext = autoInstruction && isVideoDialogueContextEnabled()" in FRONTEND
     assert "대사·감정 정보 전달" in FRONTEND
     assert "대사·감정 정보는 전달하지 않습니다" in FRONTEND
+
+
+def test_video_modal_orders_direction_and_pipeline_before_postprocess() -> None:
+    modal = FRONTEND.split('id="video-modal"', 1)[1].split(
+        '<!-- 삽화 설정 탭 -->', 1
+    )[0]
+    last_frame = modal.index('id="video-frame-last"')
+    direction = modal.index('id="video-generation-instruction"')
+    pipeline = modal.index('id="video-ai-settings-title"')
+    upscale = modal.index('id="video-generation-upscale-enabled"')
+    output = modal.index('name="video-output-format"')
+
+    assert last_frame < direction < pipeline < upscale < output
+    assert 'id="video-generation-visual-context-from-image" type="checkbox" checked' in modal
+    assert "그림 직접 분석" in modal
+    assert "생성 프롬프트에서 구축" in FRONTEND
+    assert "visual_context_source: visualContextSource" in FRONTEND
 
 
 def test_asset_lv1_and_lv2_cards_support_video_and_block_edit_for_animations() -> None:

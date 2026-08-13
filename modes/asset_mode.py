@@ -2182,6 +2182,9 @@ class AssetMode:
                 "video_visual_context": str(
                     (metadata or {}).get("visual_context") or ""
                 ),
+                "video_visual_context_source": str(
+                    (metadata or {}).get("visual_context_source") or "image"
+                ),
                 "llm_trace": [
                     str(item)
                     for item in ((metadata or {}).get("llm_trace") or [])
@@ -2335,6 +2338,9 @@ class AssetMode:
                 ),
                 "video_auto_instruction": prompt_data.get("video_auto_instruction"),
                 "video_visual_context": prompt_data.get("video_visual_context", ""),
+                "video_visual_context_source": prompt_data.get(
+                    "video_visual_context_source", ""
+                ),
                 "local_path": fpath,
             })
         return {"images": images, "representative": representative}
