@@ -20,7 +20,7 @@ import uuid
 from pathlib import Path
 from typing import Callable
 
-from PIL import Image, ImageChops, ImageFilter
+from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
 from ensure_video_tools import ensure_ffmpeg as ensure_project_ffmpeg
 
@@ -82,6 +82,21 @@ FAST_DEFAULT_QUALITY_LEVEL = "medium"
 FAST_RESOLUTION_MULTIPLE = 32
 FAST_NATIVE_MAX_SHORT_EDGE = 768
 FAST_NATIVE_MAX_LONG_EDGE = 1344
+
+# 영상화 다운스케일 후 약한 Unsharp Mask pre-sharpen 옵션.
+# amount는 0~1.5 비율이며 PIL UnsharpMask의 percent(%)로는 amount×100으로 매핑한다.
+VIDEO_SHARPEN_RADIUS_MIN = 0.3
+VIDEO_SHARPEN_RADIUS_MAX = 2.0
+VIDEO_SHARPEN_AMOUNT_MIN = 0.0
+VIDEO_SHARPEN_AMOUNT_MAX = 1.5
+VIDEO_SHARPEN_THRESHOLD_MIN = 0
+VIDEO_SHARPEN_THRESHOLD_MAX = 15
+DEFAULT_VIDEO_SHARPEN: dict[str, object] = {
+    "enabled": False,
+    "radius": 0.8,
+    "amount": 0.5,
+    "threshold": 4,
+}
 
 I2V_ALIGNMENT = (
     "For the target video, at 0.00 seconds into the target video, "
@@ -360,6 +375,102 @@ def normalize_fast_quality_level(value: object) -> str:
         )
         raise ValueError("지원하지 않는 FAST 화질 단계입니다")
     return key
+
+
+def normalize_sharpen_params(params: object) -> dict:
+    """영상화 pre-sharpen(Unsharp Mask) 설정을 정규화·클램프한다.
+
+    입력은 평면 키(sharpen_enabled / sharpen_radius / sharpen_amount /
+    sharpen_threshold)를 가진 dict, 또는 None/빈값. 반환은 항상 네 키
+    (enabled / radius / amount / threshold)를 갖는 정규화 dict.
+    """
+
+    fallback = dict(DEFAULT_VIDEO_SHARPEN)
+    if not isinstance(params, dict) or not params:
+        return fallback
+    try:
+        enabled = bool(params.get("sharpen_enabled", fallback["enabled"]))
+    except Exception as exc:
+        print(
+            "[VIDEO:SHARPEN] enabled 변환 실패: "
+            f"value={params.get('sharpen_enabled')!r}, error={exc}"
+        )
+        traceback.print_exc()
+        enabled = False
+
+    def _clamp_number(name, default, min_value, max_value, *, as_int=False):
+        raw = params.get(name, default)
+        try:
+            if isinstance(raw, bool):
+                raise TypeError("bool은 허용되지 않음")
+            value = float(raw)
+            if not math.isfinite(value):
+                raise ValueError("유한값이 아님")
+        except (TypeError, ValueError, OverflowError) as exc:
+            print(
+                f"[VIDEO:SHARPEN] {name} 변환 실패: value={raw!r}, "
+                f"error={exc}; 기본값 {default} 사용"
+            )
+            traceback.print_exc()
+            return default
+        if value < min_value:
+            value = min_value
+        elif value > max_value:
+            value = max_value
+        return int(round(value)) if as_int else value
+
+    return {
+        "enabled": enabled,
+        "radius": _clamp_number(
+            "sharpen_radius",
+            fallback["radius"],
+            VIDEO_SHARPEN_RADIUS_MIN,
+            VIDEO_SHARPEN_RADIUS_MAX,
+        ),
+        "amount": _clamp_number(
+            "sharpen_amount",
+            fallback["amount"],
+            VIDEO_SHARPEN_AMOUNT_MIN,
+            VIDEO_SHARPEN_AMOUNT_MAX,
+        ),
+        "threshold": _clamp_number(
+            "sharpen_threshold",
+            fallback["threshold"],
+            VIDEO_SHARPEN_THRESHOLD_MIN,
+            VIDEO_SHARPEN_THRESHOLD_MAX,
+            as_int=True,
+        ),
+    }
+
+
+def apply_unsharp_mask(image: Image.Image, params: dict | None) -> Image.Image:
+    """resized 영상 프레임에 약한 Unsharp Mask pre-sharpen을 적용한다.
+
+    params는 normalize_sharpen_params 결과(또는 None). enabled가 아니면 원본
+    이미지를 그대로 반환한다. PIL UnsharpMask의 percent는 amount×100으로
+    매핑한다(amount 0.5 → 50%). 적용에 실패하면 원본을 유지하고 로그만 남긴다.
+    """
+
+    if not params or not params.get("enabled"):
+        return image
+    try:
+        radius = float(params.get("radius", DEFAULT_VIDEO_SHARPEN["radius"]))
+        amount = float(params.get("amount", DEFAULT_VIDEO_SHARPEN["amount"]))
+        threshold = int(params.get("threshold", DEFAULT_VIDEO_SHARPEN["threshold"]))
+        return image.filter(
+            ImageFilter.UnsharpMask(
+                radius=radius,
+                percent=int(round(amount * 100.0)),
+                threshold=threshold,
+            )
+        )
+    except (TypeError, ValueError) as exc:
+        print(
+            "[VIDEO:SHARPEN] Unsharp Mask 적용 실패, 원본 유지: "
+            f"params={params!r}, error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        return image
 
 
 def _snap_fast_dimension(value: float) -> int:
@@ -939,6 +1050,7 @@ class VideoMode:
         quality_level: object = FAST_DEFAULT_QUALITY_LEVEL,
         *,
         target_size: tuple[int, int] | None = None,
+        sharpen: dict | None = None,
     ) -> tuple[Image.Image, Image.Image, str, str, int, int, str]:
         if isinstance(reference, str):
             reference = self.normalize_reference(fallback_backup=reference)
@@ -964,6 +1076,8 @@ class VideoMode:
             quality_key = normalize_fast_quality_level(quality_level)
         high_res_crop = center_crop_to_ratio(source, target_w, target_h)
         resized = high_res_crop.resize((target_w, target_h), Image.Resampling.LANCZOS)
+        if sharpen:
+            resized = apply_unsharp_mask(resized, sharpen)
         return (
             high_res_crop,
             resized,
@@ -1051,6 +1165,70 @@ class VideoMode:
                 )
             )
         return source_ref, last_ref, source_label, reference_images
+
+    def render_sharpen_preview(self, params: dict) -> bytes:
+        """리사이즈 결과(Before)와 거기에 샤프닝을 더한 결과(After)를 좌우로
+        나란히 합성한 PNG bytes를 반환한다.
+
+        영상화 제출용 first_resized와 동일한 빌더(_prepared_reference)를 경유한다.
+        미리보기이므로 실제 워크플로우 스테이징은 하지 않고 메모리에서만 합성한다.
+        """
+
+        if not isinstance(params, dict):
+            print(f"[VIDEO:SHARPEN] 미리보기 params 오류: params={params!r}")
+            raise ValueError("샤프닝 미리보기 파라미터가 올바르지 않습니다")
+        source_ref = self._reference_from_params(params, "source")
+        if not source_ref:
+            print("[VIDEO:SHARPEN] 미리보기 source 참조 없음")
+            raise ValueError("시작 프레임 참조를 먼저 선택하세요")
+        aspect_ratio = params.get("aspect_ratio", params.get("preset", "auto"))
+        quality_level = params.get("quality_level", FAST_DEFAULT_QUALITY_LEVEL)
+        (
+            _high_res_crop,
+            resized,
+            _key,
+            _quality,
+            _w,
+            _h,
+            _path,
+        ) = self._prepared_reference(
+            source_ref,
+            aspect_ratio,
+            quality_level,
+            sharpen=None,
+        )
+        before = resized.convert("RGBA")
+        sharpen_params = normalize_sharpen_params(params)
+        after = apply_unsharp_mask(resized.convert("RGBA"), sharpen_params)
+        w1, h1 = before.size
+        w2, h2 = after.size
+        gap = 16
+        border = 10
+        label_band = 24
+        total_w = border * 2 + w1 + gap + w2
+        max_h = max(h1, h2)
+        canvas = Image.new(
+            "RGBA",
+            (total_w, label_band + max_h + border * 2),
+            (24, 24, 28, 255),
+        )
+        canvas.alpha_composite(
+            before, (border, label_band + border + (max_h - h1) // 2)
+        )
+        canvas.alpha_composite(
+            after, (border + w1 + gap, label_band + border + (max_h - h2) // 2)
+        )
+        draw = ImageDraw.Draw(canvas)
+        draw.text((border, 4), "Before (resize)", fill=(235, 235, 235, 255))
+        after_label = "After (+sharpen)" + (
+            "" if sharpen_params.get("enabled") else " (off)"
+        )
+        draw.text(
+            (border + w1 + gap, 4),
+            after_label,
+            fill=(235, 235, 235, 255),
+        )
+        return _image_to_png_bytes(canvas.convert("RGB"))
 
     @staticmethod
     def _visual_context_messages(mode: str) -> list[dict]:
@@ -3539,6 +3717,8 @@ Vision-produced static Visual Context:
             "quality_level",
             FAST_DEFAULT_QUALITY_LEVEL,
         )
+        sharpen_params = normalize_sharpen_params(params)
+        sharpen_for_reference = sharpen_params if sharpen_params.get("enabled") else None
         (
             high_res_crop,
             first_resized,
@@ -3551,6 +3731,7 @@ Vision-produced static Visual Context:
             source_ref,
             requested_aspect_ratio,
             requested_quality_level,
+            sharpen=sharpen_for_reference,
         )
         overlay, overlay_mask = await asyncio.to_thread(
             self._build_high_res_overlay,
@@ -3602,6 +3783,7 @@ Vision-produced static Visual Context:
                     aspect_ratio_key,
                     quality_level,
                     target_size=(target_w, target_h),
+                    sharpen=sharpen_for_reference,
                 )
                 last_path = os.path.join(staging_dir, "[2].png")
                 last_resized.save(last_path, format="PNG")

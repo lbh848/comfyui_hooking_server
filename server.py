@@ -100,6 +100,7 @@ from modes.video_mode import (
     VIDEO_DEFAULT_DURATION_SECONDS,
     VIDEO_MODES,
     VideoMode,
+    normalize_sharpen_params,
     normalize_video_duration,
 )
 from modes.video_postprocess import (
@@ -242,6 +243,10 @@ DEFAULT_VIDEO_GENERATION_DEFAULTS = {
     "upscale_model": DEFAULT_VIDEO_POSTPROCESS_CONFIG["model"],
     "upscale_scale": DEFAULT_VIDEO_POSTPROCESS_CONFIG["scale"],
     "output_format": "avif",
+    "sharpen_enabled": False,
+    "sharpen_radius": 0.8,
+    "sharpen_amount": 0.5,
+    "sharpen_threshold": 4,
 }
 
 
@@ -318,6 +323,12 @@ def normalize_video_generation_defaults(raw: object) -> dict:
         traceback.print_exc()
         raise ValueError("영상화 기본 업스케일 배율은 2, 3, 4 중 하나여야 합니다") from exc
     normalized["upscale_scale"] = scale
+
+    sharpen = normalize_sharpen_params(source)
+    normalized["sharpen_enabled"] = sharpen["enabled"]
+    normalized["sharpen_radius"] = sharpen["radius"]
+    normalized["sharpen_amount"] = sharpen["amount"]
+    normalized["sharpen_threshold"] = sharpen["threshold"]
 
     for field in (
         "loop",
@@ -10047,6 +10058,51 @@ async def handle_api_video_instruction_refine(request: web.Request) -> web.Respo
         )
 
 
+async def handle_api_video_sharpen_preview(request: web.Request) -> web.Response:
+    """영상화 다운스케일 후 Unsharp Mask pre-sharpen 미리보기.
+
+    리사이즈 결과(Before)와 샤프닝 적용(After)을 좌우로 합성한 PNG를 반환한다.
+    미리보기는 실제 제출과 동일한 빌더(_prepared_reference)를 경유한다
+    (CLAUDE.md: 미리보기와 실제 전송은 동일 빌더).
+    요청: {source_ref/source_backup, aspect_ratio/preset, quality_level,
+           sharpen_enabled, sharpen_radius, sharpen_amount, sharpen_threshold}
+    """
+
+    try:
+        body = await request.json()
+        if not isinstance(body, dict):
+            print(f"[VIDEO:API] 샤프닝 미리보기 본문 형식 오류: value={body!r}")
+            return web.json_response(
+                {"success": False, "error": "요청 본문은 객체여야 합니다"},
+                status=400,
+            )
+        png_bytes = await asyncio.to_thread(video_mode.render_sharpen_preview, body)
+        return web.Response(body=png_bytes, content_type="image/png")
+    except (TypeError, ValueError) as exc:
+        print(
+            "[VIDEO:API] 샤프닝 미리보기 실패(잘못된 파라미터): "
+            f"error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        return web.json_response(
+            {"success": False, "error": str(exc)},
+            status=400,
+        )
+    except Exception as exc:
+        print(
+            "[VIDEO:API] 샤프닝 미리보기 실패: "
+            f"error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        return web.json_response(
+            {
+                "success": False,
+                "error": f"샤프닝 미리보기 생성에 실패했습니다: {exc}",
+            },
+            status=500,
+        )
+
+
 async def handle_api_video_enqueue(request: web.Request) -> web.Response:
     """Validate a backup or asset-card video request and enqueue its LLM stage."""
 
@@ -10288,6 +10344,7 @@ async def handle_api_video_enqueue(request: web.Request) -> web.Response:
                     {"success": False, "error": str(exc)},
                     status=400,
                 )
+        sharpen_params = normalize_sharpen_params(body)
         params = {
             "mode": mode,
             "source_ref": source_ref,
@@ -10313,6 +10370,10 @@ async def handle_api_video_enqueue(request: web.Request) -> web.Response:
             "upscale_scale": upscale_scale,
             "upscale_model": upscale_model,
             "output_format": output_format,
+            "sharpen_enabled": sharpen_params["enabled"],
+            "sharpen_radius": sharpen_params["radius"],
+            "sharpen_amount": sharpen_params["amount"],
+            "sharpen_threshold": sharpen_params["threshold"],
         }
         label = {
             "i2v": "H3 I2V 프롬프트",
@@ -10326,7 +10387,8 @@ async def handle_api_video_enqueue(request: web.Request) -> web.Response:
             f"duration={duration:g}s, direction_source=user_confirmed, "
             f"visual_context_source={visual_context_source}, "
             f"upscale={upscale_model or 'none'}x{upscale_scale}, "
-            f"format={output_format}"
+            f"format={output_format}, "
+            f"sharpen={'on' if sharpen_params.get('enabled') else 'off'}"
         )
         return web.json_response(
             {"success": True, "item_id": item.id, "label": item.label, "mode": mode}
@@ -14450,6 +14512,7 @@ app.router.add_get("/api/video/reference-options", handle_api_video_reference_op
 app.router.add_post("/api/video/instruction-draft", handle_api_video_instruction_draft)
 app.router.add_post("/api/video/instruction-refine", handle_api_video_instruction_refine)
 app.router.add_post("/api/video/enqueue", handle_api_video_enqueue)
+app.router.add_post("/api/video/sharpen_preview", handle_api_video_sharpen_preview)
 app.router.add_post("/api/video/reprocess/enqueue", handle_api_video_reprocess_enqueue)
 app.router.add_get("/api/conversion_info", handle_api_conversion_info)
 app.router.add_post("/api/regenerate", handle_api_regenerate)
