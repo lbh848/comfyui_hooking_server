@@ -1179,15 +1179,21 @@ async def notify_frontend(event_type: str, data: dict = None):
     message = {"type": event_type, "data": data or {}}
     now = time.time()
     client_count = len(frontend_ws_connections)
-    quiet_stream_delta = (
-        event_type == "lighbd_llm_stream"
-        and isinstance(data, dict)
-        and data.get("type") == "delta"
+    # 고빈도/스트림 이벤트는 매 전송마다 로그를 찍지 않는다
+    # - system_stats: 매초 호출되는 헤더 시스템 통계
+    # - lighbd_llm_stream delta: 토큰 단위 스트림 조각
+    quiet_notify = (
+        event_type == "system_stats"
+        or (
+            event_type == "lighbd_llm_stream"
+            and isinstance(data, dict)
+            and data.get("type") == "delta"
+        )
     )
-    if not quiet_stream_delta:
+    if not quiet_notify:
         print(f"[WS-NOTIFY] event={event_type} clients={client_count}")
     if client_count == 0:
-        if not quiet_stream_delta:
+        if not quiet_notify:
             print(f"[WS-NOTIFY] ⚠️ 클라이언트 0명 — event={event_type}, 현재 frontend_ws_connections 비어있음")
         return
     for client_id, entry in list(frontend_ws_connections.items()):
@@ -1205,19 +1211,152 @@ async def notify_frontend(event_type: str, data: dict = None):
                 traceback.print_exc()
                 peer = ""
             ws_closed = ws.closed
-            if not quiet_stream_delta:
+            if not quiet_notify:
                 print(f"[WS-NOTIFY] [SEND] client={client_id[:8]} peer={peer} pong_age={pong_age:.1f}s ws.closed={ws_closed}")
             if ws_closed:
                 print(f"[WS-NOTIFY] [CLOSED] 이미 닫힌 ws 제거 ({client_id[:8]})")
                 frontend_ws_connections.pop(client_id, None)
                 continue
             await ws.send_json(message)
-            if not quiet_stream_delta:
+            if not quiet_notify:
                 print(f"[WS-NOTIFY] [OK] 송신 성공 ({client_id[:8]})")
         except Exception as e:
             print(f"[WS-NOTIFY] [FAIL] 송신 실패 client={client_id[:8]} err={type(e).__name__}: {e}")
             frontend_ws_connections.pop(client_id, None)
             traceback.print_exc()
+
+
+# ─── 시스템 모니터 (RAM/VRAM/CPU/GPU) ───────────────────
+# 헤더 참고용 시스템 통계를 백그라운드 daemon 스레드에서 수집해
+# /api/frontend_ws 로 매초 push 한다. 메인 asyncio 루프는 잠그지 않는다.
+# psutil / pynvml 은 모두 optional — 누락 또는 NVIDIA GPU 비활성 시 해당 항목은 숨김.
+try:
+    import psutil as _sysmon_psutil
+except Exception:  # 의존성 누락 — 서버는 정상 동작(CPU/RAM 항목만 숨김)
+    _sysmon_psutil = None
+    print("[SYSMON] psutil 을 불러오지 못했습니다 — CPU/RAM 통계가 비활성화됩니다.")
+
+try:
+    import pynvml as _sysmon_pynvml
+except Exception:
+    _sysmon_pynvml = None
+    print("[SYSMON] pynvml(nvidia-ml-py) 을 불러오지 못했습니다 — GPU/VRAM 통계가 비활성화됩니다.")
+
+SYSTEM_STATS_INTERVAL = 1.0  # 초 — 헤더 시스템 통계 갱신 주기 (0.5 로 줄이면 더 잦음)
+_sysmon_stop_event = threading.Event()
+_sysmon_nvml_ready = False
+_sysmon_nvml_handles: list = []   # 모든 NVIDIA 디바이스 핸들
+_sysmon_nvml_names: list = []     # 디바이스 이름 (핸들과 동일 순서)
+_sysmon_cpu_baseline_set = False
+
+
+def _init_sysmon_nvml() -> None:
+    """daemon 스레드 시작 시 NVML 을 1회 초기화한다. 모든 NVIDIA 디바이스를 수집한다.
+    pynvml 누락 또는 NVIDIA GPU 없으면 GPU/VRAM 은 비활성화된다."""
+    global _sysmon_nvml_ready, _sysmon_nvml_handles, _sysmon_nvml_names
+    _sysmon_nvml_handles = []
+    _sysmon_nvml_names = []
+    if _sysmon_pynvml is None:
+        print("[SYSMON] pynvml 미설치 — GPU/VRAM 통계가 비활성화됩니다 (uv add nvidia-ml-py 확인)")
+        return
+    try:
+        _sysmon_pynvml.nvmlInit()
+        count = _sysmon_pynvml.nvmlDeviceGetCount()
+        for idx in range(count):
+            try:
+                handle = _sysmon_pynvml.nvmlDeviceGetHandleByIndex(idx)
+                name = ""
+                try:
+                    raw = _sysmon_pynvml.nvmlDeviceGetName(handle)
+                    if isinstance(raw, bytes):
+                        raw = raw.decode("utf-8", "replace")
+                    name = str(raw)
+                except Exception:
+                    name = f"GPU{idx}"
+                _sysmon_nvml_handles.append(handle)
+                _sysmon_nvml_names.append(name)
+            except Exception as e:
+                print(f"[SYSMON] GPU[{idx}] 핸들 획득 실패: {type(e).__name__}: {e}")
+        if _sysmon_nvml_handles:
+            _sysmon_nvml_ready = True
+            print(f"[SYSMON] NVML 초기화 성공 — {len(_sysmon_nvml_handles)}개 GPU: "
+                  f"{', '.join(_sysmon_nvml_names)}")
+        else:
+            _sysmon_nvml_ready = False
+            print("[SYSMON] NVML 초기화는 됐으나 사용 가능 GPU가 없습니다")
+    except Exception as e:
+        _sysmon_nvml_ready = False
+        print(f"[SYSMON] NVML 초기화 실패 (NVIDIA GPU 없음 또는 드라이버 미지원): {type(e).__name__}: {e}")
+
+
+def _collect_system_stats() -> dict:
+    """psutil + NVML 로 시스템 통계를 수집한다. 각 섹션은 독립적으로 가드된다.
+    GPU가 여러 대면 gpus 배열로 모두 전달한다."""
+    global _sysmon_cpu_baseline_set
+    stats: dict = {"cpu_available": False, "gpu_available": False, "gpus": []}
+
+    if _sysmon_psutil is not None:
+        try:
+            if not _sysmon_cpu_baseline_set:
+                # 첫 호출은 베이스라인만 설정(반환값 버림) — 이후 호출부터 실제 사용률
+                _sysmon_psutil.cpu_percent(interval=None)
+                _sysmon_cpu_baseline_set = True
+            vm = _sysmon_psutil.virtual_memory()
+            stats.update({
+                "cpu_available": True,
+                "cpu_percent": round(_sysmon_psutil.cpu_percent(interval=None), 1),
+                "ram_used_gb": round(vm.used / 1024 ** 3, 1),
+                "ram_total_gb": round(vm.total / 1024 ** 3, 1),
+                "ram_percent": round(vm.percent, 1),
+            })
+        except Exception as e:
+            print(f"[SYSMON] CPU/RAM 수집 실패: {type(e).__name__}: {e}")
+            traceback.print_exc()
+
+    if _sysmon_nvml_ready and _sysmon_pynvml is not None:
+        try:
+            gpus = []
+            for idx, handle in enumerate(_sysmon_nvml_handles):
+                util = _sysmon_pynvml.nvmlDeviceGetUtilizationRates(handle)
+                mem = _sysmon_pynvml.nvmlDeviceGetMemoryInfo(handle)
+                total = mem.total or 0
+                gpus.append({
+                    "name": _sysmon_nvml_names[idx] if idx < len(_sysmon_nvml_names) else f"GPU{idx}",
+                    "percent": round(float(util.gpu), 1),
+                    "vram_used_gb": round(mem.used / 1024 ** 3, 2),
+                    "vram_total_gb": round(total / 1024 ** 3, 1),
+                    "vram_percent": round((mem.used / total * 100) if total else 0.0, 1),
+                })
+            stats.update({"gpu_available": len(gpus) > 0, "gpus": gpus})
+        except Exception as e:
+            print(f"[SYSMON] GPU/VRAM 수집 실패: {type(e).__name__}: {e}")
+            traceback.print_exc()
+
+    return stats
+
+
+def _system_monitor_loop(stop_event: threading.Event) -> None:
+    """(백그라운드 daemon 스레드) SYSTEM_STATS_INTERVAL 마다 통계를 수집해 WS push 한다."""
+    print(f"[SYSMON] 시스템 모니터 스레드 시작 — interval={SYSTEM_STATS_INTERVAL}s")
+    _init_sysmon_nvml()
+    while not stop_event.is_set():
+        try:
+            stats = _collect_system_stats()
+            if _main_event_loop is not None and not _main_event_loop.is_closed():
+                asyncio.run_coroutine_threadsafe(
+                    notify_frontend("system_stats", stats), _main_event_loop
+                )
+        except Exception:
+            print("[SYSMON] 수집/전송 루프 예외")
+            traceback.print_exc()
+        # interruptible sleep — 종료 시그널에 즉시 반응
+        stop_event.wait(SYSTEM_STATS_INTERVAL)
+    print("[SYSMON] 시스템 모니터 스레드 종료")
+
+
+def _system_monitor_cleanup(_app: web.Application) -> None:
+    """서버 종료 시 모니터 daemon 스레드에 종료 시그널을 보낸다."""
+    _sysmon_stop_event.set()
 
 
 async def _notify_llm_stream_event(event: dict):
@@ -23729,6 +23868,17 @@ async def on_startup(app):
     # 백그라운드 스레드에서 notify_frontend 호출을 위해 메인 루프 참조 보관
     global _main_event_loop
     _main_event_loop = asyncio.get_running_loop()
+    # 시스템 모니터 daemon 스레드 시작 (메인 루프 참조 보관 직후)
+    try:
+        threading.Thread(
+            target=_system_monitor_loop,
+            args=(_sysmon_stop_event,),
+            daemon=True,
+            name="system-monitor",
+        ).start()
+    except Exception as e:
+        print(f"[SYSMON] 모니터 스레드 시작 실패: {type(e).__name__}: {e}")
+        traceback.print_exc()
     _backup_data_on_startup()
     try:
         await queue_manager.recover_video_postprocess_jobs()
@@ -23892,6 +24042,7 @@ app.on_cleanup.append(_regeneration_background_cleanup)
 app.on_cleanup.append(_video_postprocess_background_cleanup)
 app.on_cleanup.append(_tunnel_cleanup)
 app.on_cleanup.append(_character_maker_rag_runtime_cleanup)
+app.on_cleanup.append(_system_monitor_cleanup)
 
 if __name__ == "__main__":
     init_queue_manager()

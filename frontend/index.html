@@ -239,6 +239,48 @@
             display: none !important;
         }
 
+        /* 헤더 시스템 모니터 스트립 — 작게 참고용 4줄 (CPU/RAM/GPU/VRAM) */
+        .sysmon-strip {
+            display: inline-flex;
+            flex-direction: column;
+            gap: 1px;
+            flex: 0 0 auto;
+            padding: 3px 8px;
+            border: 1px solid rgba(174, 204, 194, 0.18);
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.035);
+            line-height: 1;
+            user-select: none;
+        }
+
+        .sysmon-row {
+            display: inline-flex;
+            align-items: baseline;
+            gap: 5px;
+            font-size: 0.52rem;
+            font-weight: 600;
+            line-height: 1.2;
+            color: #71827c;
+            white-space: nowrap;
+        }
+
+        .sysmon-label {
+            min-width: 3em;
+            opacity: 0.7;
+            letter-spacing: 0.04em;
+        }
+
+        .sysmon-value {
+            color: #8b9a93;
+            font-variant-numeric: tabular-nums;
+            font-weight: 700;
+        }
+
+        /* GPU/VRAM 동적 줄 컨테이너 — 자식 row가 strip의 flex item이 되도록 contents */
+        .sysmon-gpu-rows {
+            display: contents;
+        }
+
         header.app-header .controls {
             display: flex;
             min-width: 0;
@@ -13749,6 +13791,11 @@
                         <span class="workspace-chrome-toggle-label">탭 접기</span>
                         <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 15 6-6 6 6"></path></svg>
                     </button>
+                    <div id="sysmon-strip" class="sysmon-strip" title="시스템 리소스 사용량 (참고용)">
+                        <span class="sysmon-row"><span class="sysmon-label">CPU</span><span class="sysmon-value" id="sysmon-cpu">—</span></span>
+                        <span class="sysmon-row"><span class="sysmon-label">RAM</span><span class="sysmon-value" id="sysmon-ram">—</span></span>
+                        <div id="sysmon-gpu-rows" class="sysmon-gpu-rows"></div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -14024,6 +14071,37 @@
                                 </select>
                             </label>
                         </div>
+
+                        <div class="video-ai-subgroup" aria-labelledby="video-sharpen-title">
+                            <div class="video-ai-subgroup-header">
+                                <div>
+                                    <span id="video-sharpen-title" class="video-panel-title">시작 프레임 선명화</span>
+                                    <span class="video-panel-hint" style="display:block; margin-top:3px;">다운스케일 후 Unsharp Mask로 약해진 엣지를 약하게 복원</span>
+                                </div>
+                                <label class="toggle-switch" title="선명화 적용">
+                                    <input id="video-generation-sharpen-enabled" type="checkbox" onchange="onVideoSharpenToggle()">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                            <div id="video-sharpen-controls" hidden style="display:flex; flex-direction:column; gap:10px; margin-top:4px;">
+                                <div class="quality-slider" style="width:auto; display:flex; align-items:center; gap:8px;">
+                                    <span style="min-width:104px;">반경 radius</span>
+                                    <input type="range" id="video-generation-sharpen-radius" min="0.3" max="2.0" step="0.1" value="0.8" style="flex:1;" oninput="onVideoSharpenSliderInput('radius', this.value)">
+                                    <span class="quality-value" id="video-generation-sharpen-radius-val" style="min-width:34px; text-align:right;">0.8</span>
+                                </div>
+                                <div class="quality-slider" style="width:auto; display:flex; align-items:center; gap:8px;">
+                                    <span style="min-width:104px;">강도 amount</span>
+                                    <input type="range" id="video-generation-sharpen-amount" min="0.0" max="1.5" step="0.05" value="0.5" style="flex:1;" oninput="onVideoSharpenSliderInput('amount', this.value)">
+                                    <span class="quality-value" id="video-generation-sharpen-amount-val" style="min-width:34px; text-align:right;">0.50</span>
+                                </div>
+                                <div class="quality-slider" style="width:auto; display:flex; align-items:center; gap:8px;">
+                                    <span style="min-width:104px;">임계값 threshold</span>
+                                    <input type="range" id="video-generation-sharpen-threshold" min="0" max="15" step="1" value="4" style="flex:1;" oninput="onVideoSharpenSliderInput('threshold', this.value)">
+                                    <span class="quality-value" id="video-generation-sharpen-threshold-val" style="min-width:34px; text-align:right;">4</span>
+                                </div>
+                                <button type="button" id="video-generation-sharpen-preview" class="cancel" style="align-self:flex-start;" onclick="previewVideoSharpen()">🔍 리사이즈·샤프닝 미리보기</button>
+                            </div>
+                        </div>
                     </section>
                 </div>
 
@@ -14175,40 +14253,6 @@
                                     <input type="radio" name="video-output-format" value="webp" onchange="updateVideoGenerationSummary()">
                                     <span class="option-card-surface"><span class="option-card-badge">호환성</span><span class="option-card-title">WebP</span><span class="option-card-description">폭넓은 환경 지원</span></span>
                                 </label>
-                            </div>
-                        </div>
-                    </section>
-
-                    <section class="video-panel video-controls-stack">
-                        <div>
-                            <div class="video-field-label"><span>시작 프레임 선명화</span><small>다운스케일 후 Unsharp Mask</small></div>
-                            <label class="video-secondary-row video-ai-context-option">
-                                <span class="video-ai-context-copy">
-                                    <span class="video-panel-title">선명화 적용</span>
-                                    <span class="video-panel-hint" style="display:block; margin-top:3px;">다운스케일로 약해진 엣지를 약하게 복원합니다</span>
-                                </span>
-                                <span class="toggle-switch">
-                                    <input id="video-generation-sharpen-enabled" type="checkbox" onchange="onVideoSharpenToggle()">
-                                    <span class="toggle-slider"></span>
-                                </span>
-                            </label>
-                            <div id="video-sharpen-controls" hidden style="display:flex; flex-direction:column; gap:10px; margin-top:12px;">
-                                <div class="quality-slider" style="width:auto; display:flex; align-items:center; gap:8px;">
-                                    <span style="min-width:104px;">반경 radius</span>
-                                    <input type="range" id="video-generation-sharpen-radius" min="0.3" max="2.0" step="0.1" value="0.8" style="flex:1;" oninput="onVideoSharpenSliderInput('radius', this.value)">
-                                    <span class="quality-value" id="video-generation-sharpen-radius-val" style="min-width:34px; text-align:right;">0.8</span>
-                                </div>
-                                <div class="quality-slider" style="width:auto; display:flex; align-items:center; gap:8px;">
-                                    <span style="min-width:104px;">강도 amount</span>
-                                    <input type="range" id="video-generation-sharpen-amount" min="0.0" max="1.5" step="0.05" value="0.5" style="flex:1;" oninput="onVideoSharpenSliderInput('amount', this.value)">
-                                    <span class="quality-value" id="video-generation-sharpen-amount-val" style="min-width:34px; text-align:right;">0.50</span>
-                                </div>
-                                <div class="quality-slider" style="width:auto; display:flex; align-items:center; gap:8px;">
-                                    <span style="min-width:104px;">임계값 threshold</span>
-                                    <input type="range" id="video-generation-sharpen-threshold" min="0" max="15" step="1" value="4" style="flex:1;" oninput="onVideoSharpenSliderInput('threshold', this.value)">
-                                    <span class="quality-value" id="video-generation-sharpen-threshold-val" style="min-width:34px; text-align:right;">4</span>
-                                </div>
-                                <button type="button" id="video-generation-sharpen-preview" class="cancel" style="align-self:flex-start;" onclick="previewVideoSharpen()">🔍 리사이즈·샤프닝 미리보기</button>
                             </div>
                         </div>
                     </section>
@@ -25035,6 +25079,10 @@
                         // 활성봇 변경(플러그인/프론트 양쪽에서 발생) — 삽화 백업 탭 동기화
                         case 'bot_selected_changed':
                             handleBotSelectedChanged(msg.data);
+                            break;
+                        // 헤더 시스템 모니터 갱신 (RAM/VRAM/CPU/GPU)
+                        case 'system_stats':
+                            updateSysmon(msg.data);
                             break;
                     }
                 } catch (e) {
@@ -48890,6 +48938,103 @@
                 independentScrollResizeFrame = 0;
                 syncIndependentScrollHeight();
             });
+        }
+
+        // ─── 헤더 시스템 모니터 (RAM/VRAM/CPU/GPU) ───────────────────
+        // 서버의 system_stats WS 이벤트로 갱신. GPU 개수만큼 동적으로 GPU{i}/VRAM{i} 줄 생성.
+        const _SYSMON_ELS = { strip: null, cpu: null, ram: null, gpuRows: null };
+
+        function _ensureSysmonEls() {
+            if (_SYSMON_ELS.strip) return;
+            _SYSMON_ELS.strip = document.getElementById('sysmon-strip');
+            _SYSMON_ELS.cpu = document.getElementById('sysmon-cpu');
+            _SYSMON_ELS.ram = document.getElementById('sysmon-ram');
+            _SYSMON_ELS.gpuRows = document.getElementById('sysmon-gpu-rows');
+        }
+
+        function _fmtSysmonNum(value, digits) {
+            const n = Number(value);
+            return Number.isFinite(n) ? n.toFixed(digits) : '—';
+        }
+
+        // GPU 한 대당 GPU/VRAM 2줄. gpus 배열 길이에 맞춰 줄을 추가/제거/갱신한다.
+        function _renderSysmonGpuRows(gpus) {
+            const container = _SYSMON_ELS.gpuRows;
+            if (!container) return;
+            const want = gpus.length;
+            const multi = want > 1;
+
+            while (container.children.length < want * 2) {
+                const gpuRow = document.createElement('span');
+                gpuRow.className = 'sysmon-row sysmon-gpu-row';
+                const gpuLbl = document.createElement('span');
+                gpuLbl.className = 'sysmon-label';
+                const gpuVal = document.createElement('span');
+                gpuVal.className = 'sysmon-value';
+                gpuRow.appendChild(gpuLbl);
+                gpuRow.appendChild(gpuVal);
+                container.appendChild(gpuRow);
+
+                const vramRow = document.createElement('span');
+                vramRow.className = 'sysmon-row sysmon-gpu-row';
+                const vramLbl = document.createElement('span');
+                vramLbl.className = 'sysmon-label';
+                const vramVal = document.createElement('span');
+                vramVal.className = 'sysmon-value';
+                vramRow.appendChild(vramLbl);
+                vramRow.appendChild(vramVal);
+                container.appendChild(vramRow);
+            }
+            while (container.children.length > want * 2) {
+                container.removeChild(container.lastChild);
+            }
+            gpus.forEach((gpu, i) => {
+                const gpuRow = container.children[i * 2];
+                const vramRow = container.children[i * 2 + 1];
+                if (gpuRow) {
+                    gpuRow.querySelector('.sysmon-label').textContent = multi ? `GPU${i}` : 'GPU';
+                    gpuRow.querySelector('.sysmon-value').textContent = `${_fmtSysmonNum(gpu.percent, 0)}%`;
+                    gpuRow.title = gpu.name ? String(gpu.name) : '';
+                }
+                if (vramRow) {
+                    vramRow.querySelector('.sysmon-label').textContent = multi ? `VRAM${i}` : 'VRAM';
+                    vramRow.querySelector('.sysmon-value').textContent = gpu.vram_total_gb
+                        ? `${_fmtSysmonNum(gpu.vram_used_gb, 1)} / ${_fmtSysmonNum(gpu.vram_total_gb, 0)} GB`
+                        : '—';
+                }
+            });
+            container.style.display = want > 0 ? '' : 'none';
+        }
+
+        function updateSysmon(data) {
+            if (!data || typeof data !== 'object') return;
+            try {
+                _ensureSysmonEls();
+                if (!_SYSMON_ELS.strip) return;
+
+                if (_SYSMON_ELS.cpu) {
+                    _SYSMON_ELS.cpu.textContent = data.cpu_available
+                        ? `${_fmtSysmonNum(data.cpu_percent, 0)}%`
+                        : '—';
+                }
+                if (_SYSMON_ELS.ram) {
+                    _SYSMON_ELS.ram.textContent = data.ram_total_gb
+                        ? `${_fmtSysmonNum(data.ram_used_gb, 1)} / ${_fmtSysmonNum(data.ram_total_gb, 0)} GB`
+                        : '—';
+                }
+
+                const gpus = Array.isArray(data.gpus)
+                    ? data.gpus.filter((g) => g && typeof g === 'object')
+                    : [];
+                _renderSysmonGpuRows(data.gpu_available ? gpus : []);
+
+                const names = gpus.map((g) => g.name).filter(Boolean).join(', ');
+                _SYSMON_ELS.strip.title = names
+                    ? `시스템 리소스 (참고용) — ${names}`
+                    : '시스템 리소스 (참고용)';
+            } catch (e) {
+                console.error('[SYSMON] 시스템 통계 갱신 실패:', e);
+            }
         }
 
         const WORKSPACE_CHROME_SESSION_KEY = 'workspaceChromeCollapsed';
