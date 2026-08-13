@@ -7603,8 +7603,9 @@
             min-height: 0;
             overflow: hidden;
         }
-        .independent-scroll-container > .asset-main,
-        .independent-scroll-container > .asset-sidebar {
+        .independent-scroll-container .asset-main,
+        .independent-scroll-container .asset-sidebar,
+        #style-lora-project-grid {
             min-height: 0;
             overflow-x: hidden;
             overflow-y: auto;
@@ -7612,21 +7613,25 @@
             scrollbar-width: thin;
             scrollbar-color: var(--accent) transparent;
         }
-        .independent-scroll-container > .asset-main::-webkit-scrollbar,
-        .independent-scroll-container > .asset-sidebar::-webkit-scrollbar {
+        .independent-scroll-container .asset-main::-webkit-scrollbar,
+        .independent-scroll-container .asset-sidebar::-webkit-scrollbar,
+        #style-lora-project-grid::-webkit-scrollbar {
             width: 6px;
         }
-        .independent-scroll-container > .asset-main::-webkit-scrollbar-track,
-        .independent-scroll-container > .asset-sidebar::-webkit-scrollbar-track {
+        .independent-scroll-container .asset-main::-webkit-scrollbar-track,
+        .independent-scroll-container .asset-sidebar::-webkit-scrollbar-track,
+        #style-lora-project-grid::-webkit-scrollbar-track {
             background: transparent;
         }
-        .independent-scroll-container > .asset-main::-webkit-scrollbar-thumb,
-        .independent-scroll-container > .asset-sidebar::-webkit-scrollbar-thumb {
+        .independent-scroll-container .asset-main::-webkit-scrollbar-thumb,
+        .independent-scroll-container .asset-sidebar::-webkit-scrollbar-thumb,
+        #style-lora-project-grid::-webkit-scrollbar-thumb {
             background: var(--accent);
             border-radius: 3px;
         }
-        .independent-scroll-container > .asset-main::-webkit-scrollbar-thumb:hover,
-        .independent-scroll-container > .asset-sidebar::-webkit-scrollbar-thumb:hover {
+        .independent-scroll-container .asset-main::-webkit-scrollbar-thumb:hover,
+        .independent-scroll-container .asset-sidebar::-webkit-scrollbar-thumb:hover,
+        #style-lora-project-grid::-webkit-scrollbar-thumb:hover {
             background: var(--accent);
         }
         /* ─── Pose 편집 스타일 ──────────────────────────────── */
