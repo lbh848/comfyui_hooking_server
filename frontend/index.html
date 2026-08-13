@@ -1315,7 +1315,7 @@
         .video-field-label small { color: var(--text2); font-size: .62rem; font-weight: 500; }
         .video-inline-fields {
             display: grid;
-            grid-template-columns: minmax(150px, .7fr) minmax(220px, 1.3fr);
+            grid-template-columns: minmax(125px, .55fr) minmax(180px, 1fr) minmax(190px, 1.1fr);
             gap: 10px;
         }
         .video-select {
@@ -13635,20 +13635,28 @@
                                 </div>
                             </div>
                             <label>
-                                <span class="video-field-label"><span>화면 비율</span><small>H3 FAST</small></span>
-                                <select id="video-generation-preset" class="video-select" onchange="updateVideoGenerationSummary()">
-                                    <option value="auto" selected>자동 · 원본과 가장 가까운 비율</option>
-                                    <option value="1:1">1:1 · 512×512</option>
-                                    <option value="4:3">4:3 · 512×384</option>
-                                    <option value="3:4">3:4 · 384×512</option>
-                                    <option value="16:9">16:9 근사 · 672×384</option>
-                                    <option value="9:16">9:16 근사 · 384×672</option>
-                                    <option value="21:9">21:9 · 672×288</option>
-                                    <option value="9:21">9:21 · 288×672</option>
-                                    <option value="3:2">3:2 · 576×384</option>
-                                    <option value="2:3">2:3 · 384×576</option>
-                                    <option value="5:4">5:4 · 480×384</option>
-                                    <option value="4:5">4:5 · 384×480</option>
+                                <span class="video-field-label"><span>화면 비율</span><small>최소 중앙 크롭</small></span>
+                                <select id="video-generation-aspect-ratio" class="video-select" onchange="updateVideoGenerationSummary()">
+                                    <option value="auto" selected>자동</option>
+                                    <option value="1:1">1:1</option>
+                                    <option value="4:3">4:3</option>
+                                    <option value="3:4">3:4</option>
+                                    <option value="16:9">16:9</option>
+                                    <option value="9:16">9:16</option>
+                                    <option value="21:9">21:9</option>
+                                    <option value="9:21">9:21</option>
+                                    <option value="3:2">3:2</option>
+                                    <option value="2:3">2:3</option>
+                                    <option value="5:4">5:4</option>
+                                    <option value="4:5">4:5</option>
+                                </select>
+                            </label>
+                            <label>
+                                <span class="video-field-label"><span>해상도</span><small>H3 FAST</small></span>
+                                <select id="video-generation-quality-level" class="video-select" onchange="updateVideoGenerationSummary()">
+                                    <option value="low">FAST 저화질 · 0.2 MP</option>
+                                    <option value="medium" selected>FAST 기본 · 0.3 MP</option>
+                                    <option value="high">FAST 고화질 · 0.4 MP</option>
                                 </select>
                             </label>
                         </div>
@@ -24800,13 +24808,13 @@
                         <div class="card-meta">${info.bot_name ? `<span class="bot-badge">${escapeHtml(info.bot_name)}</span> ` : ''}${info.gen_method ? `<span class="gen-method-badge">${escapeHtml(info.gen_method)}</span> ` : ''}${escapeHtml(dateStr)} &mdash; ${escapeHtml(b.name)}${info.generation_time ? ` · ⏱️ ${info.generation_time.toFixed(1)}초` : ''}</div>
                         <div class="card-actions">
                             <button class="regen-btn" onclick="regenerate('${escapeAttr(b.name)}', this)"
-                                    ${b.has_prompt ? '' : 'disabled title="프롬프트 없음"'}>
+                                    ${b.is_animated ? 'disabled title="영상 백업에는 재생성을 사용할 수 없습니다"' : (b.has_prompt ? '' : 'disabled title="프롬프트 없음"')}>
                                 🔄 재생성
                             </button>
                             <button class="edit-prompt-btn" onclick="event.stopPropagation(); openPromptModal(this)"
                                     data-name="${escapeAttr(b.name)}"
                                     data-image-url="${escapeAttr(b.image_url)}"
-                                    ${b.has_prompt ? '' : 'disabled title="프롬프트 없음"'}>
+                                    ${b.is_animated ? 'disabled title="영상 백업에는 프롬프트 수정을 사용할 수 없습니다"' : (b.has_prompt ? '' : 'disabled title="프롬프트 없음"')}>
                                 ✏️ 수정
                             </button>
                             <button class="reschedule-btn ${isScheduled ? 'scheduled' : ''}" onclick="reschedule('${escapeAttr(b.name)}', this)"
@@ -25203,6 +25211,82 @@
             'none': '원본 크기',
         };
 
+        const VIDEO_FAST_ASPECT_RATIOS = Object.freeze({
+            '1:1': [1, 1],
+            '4:3': [4, 3],
+            '3:4': [3, 4],
+            '16:9': [16, 9],
+            '9:16': [9, 16],
+            '21:9': [21, 9],
+            '9:21': [9, 21],
+            '3:2': [3, 2],
+            '2:3': [2, 3],
+            '5:4': [5, 4],
+            '4:5': [4, 5],
+        });
+        const VIDEO_FAST_QUALITY_MP = Object.freeze({
+            low: 0.2,
+            medium: 0.3,
+            high: 0.4,
+        });
+        const VIDEO_FAST_RESOLUTION_MULTIPLE = 32;
+
+        function snapVideoFastDimension(value) {
+            if (!Number.isFinite(value) || value <= 0) {
+                console.error('[VIDEO_UI] FAST 해상도 스냅값 오류:', value);
+                return null;
+            }
+            return Math.max(
+                VIDEO_FAST_RESOLUTION_MULTIPLE,
+                Math.floor(value / VIDEO_FAST_RESOLUTION_MULTIPLE + 0.5)
+                    * VIDEO_FAST_RESOLUTION_MULTIPLE,
+            );
+        }
+
+        function chooseVideoFastAspectRatio(width, height) {
+            if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+                console.error('[VIDEO_UI] 자동 화면 비율 계산용 원본 크기 오류:', {width, height});
+                return '';
+            }
+            const sourceRatio = width / height;
+            return Object.entries(VIDEO_FAST_ASPECT_RATIOS).reduce((best, [key, pair]) => {
+                const distance = Math.abs(Math.log(sourceRatio / (pair[0] / pair[1])));
+                return !best || distance < best.distance ? {key, distance} : best;
+            }, null)?.key || '';
+        }
+
+        function calculateVideoFastResolution(aspectRatio, qualityLevel) {
+            const pair = VIDEO_FAST_ASPECT_RATIOS[aspectRatio];
+            const targetMp = VIDEO_FAST_QUALITY_MP[qualityLevel];
+            if (!pair || !targetMp) {
+                console.error('[VIDEO_UI] FAST 해상도 계산 선택값 오류:', {
+                    aspectRatio,
+                    qualityLevel,
+                });
+                return null;
+            }
+            const squareEdge = snapVideoFastDimension(Math.sqrt(targetMp * 1000000));
+            const ratio = pair[0] / pair[1];
+            const width = snapVideoFastDimension(squareEdge * Math.sqrt(ratio));
+            const height = snapVideoFastDimension(squareEdge / Math.sqrt(ratio));
+            if (!width || !height) return null;
+            return {aspectRatio, qualityLevel, targetMp, width, height};
+        }
+
+        function getVideoFastResolutionPreview() {
+            const aspectInput = document.getElementById('video-generation-aspect-ratio')?.value || 'auto';
+            const qualityLevel = document.getElementById('video-generation-quality-level')?.value || 'medium';
+            let aspectRatio = aspectInput;
+            if (aspectRatio === 'auto') {
+                const sourceKey = document.getElementById('video-generation-source')?.value || '';
+                const source = getVideoReferenceByKey(sourceKey);
+                if (!source?.source_width || !source?.source_height) return null;
+                aspectRatio = chooseVideoFastAspectRatio(source.source_width, source.source_height);
+                if (!aspectRatio) return null;
+            }
+            return calculateVideoFastResolution(aspectRatio, qualityLevel);
+        }
+
         function videoReferenceKey(reference) {
             if (!reference || typeof reference !== 'object') return '';
             if (reference.kind === 'backup') {
@@ -25394,8 +25478,18 @@
             const target = document.getElementById('video-generation-summary-detail');
             if (!target) return;
             const duration = normalizedVideoDuration();
-            const presetSelect = document.getElementById('video-generation-preset');
-            const presetLabel = presetSelect?.selectedOptions?.[0]?.textContent?.split(' · ')[0] || '자동 비율';
+            const aspectSelect = document.getElementById('video-generation-aspect-ratio');
+            const qualitySelect = document.getElementById('video-generation-quality-level');
+            const requestedAspect = aspectSelect?.value || 'auto';
+            const resolution = getVideoFastResolutionPreview();
+            const aspectLabel = requestedAspect === 'auto'
+                ? resolution ? `자동→${resolution.aspectRatio}` : '자동'
+                : requestedAspect;
+            const qualityLabel = qualitySelect?.selectedOptions?.[0]?.textContent
+                ?.replace(' · ', ' ') || 'FAST 기본 0.3 MP';
+            const resolutionLabel = resolution
+                ? `${resolution.width}×${resolution.height}`
+                : '원본 분석 후 결정';
             const method = getSelectedVideoOption('video-upscale-model', 'realesr-animevideov3');
             const scale = document.getElementById('video-generation-upscale-scale')?.value || '2';
             const upscaleLabel = method === 'none'
@@ -25407,7 +25501,7 @@
             const dialogueLabel = autoInstruction && isVideoDialogueContextEnabled()
                 ? ' · 대사·감정 참고'
                 : '';
-            target.textContent = `${duration}초 · ${presetLabel} · ${upscaleLabel} · ${output}${directionLabel}${dialogueLabel}`;
+            target.textContent = `${duration}초 · ${aspectLabel} · ${qualityLabel} · ${resolutionLabel} · ${upscaleLabel} · ${output}${directionLabel}${dialogueLabel}`;
         }
 
         function updateVideoWorkspaceMode() {
@@ -25568,19 +25662,31 @@
             }
             const source = getVideoReferenceByKey(select.value);
             if (!source) {
+                preview.onload = null;
                 preview.removeAttribute('src');
                 preview.style.display = 'none';
                 empty.style.display = 'flex';
                 nameLabel.textContent = '';
                 if (isVideoLoopEnabled()) syncVideoLastPreviewToSource();
                 else refreshVideoLastFrameOptions('');
+                updateVideoGenerationSummary();
                 return;
             }
+            preview.onload = () => {
+                if (!preview.naturalWidth || !preview.naturalHeight) {
+                    console.error('[VIDEO_UI] 기준 삽화 원본 크기를 읽지 못했습니다:', source);
+                    return;
+                }
+                source.source_width = preview.naturalWidth;
+                source.source_height = preview.naturalHeight;
+                updateVideoGenerationSummary();
+            };
             preview.onerror = () => {
                 console.error('[VIDEO_UI] 기준 삽화 미리보기 로드 실패:', source.image_url);
                 preview.style.display = 'none';
                 empty.textContent = '미리보기를 불러오지 못했습니다. 원본 선택은 유지됩니다.';
                 empty.style.display = 'flex';
+                updateVideoGenerationSummary();
             };
             empty.textContent = '영상화할 원본 이미지를 선택하세요.';
             preview.src = source.image_url;
@@ -25589,6 +25695,7 @@
             nameLabel.textContent = source.label;
             if (isVideoLoopEnabled()) syncVideoLastPreviewToSource();
             else refreshVideoLastFrameOptions(source.key);
+            updateVideoGenerationSummary();
         }
 
         async function loadVideoReferenceOptions(preferredReference) {
@@ -25738,7 +25845,8 @@
             const sourceRef = getVideoReferenceByKey(sourceKey)?.reference || null;
             const mode = document.getElementById('video-generation-mode')?.value || 'i2v';
             const lastRef = getEffectiveLastVideoReference();
-            const preset = document.getElementById('video-generation-preset')?.value || 'auto';
+            const aspectRatio = document.getElementById('video-generation-aspect-ratio')?.value || 'auto';
+            const qualityLevel = document.getElementById('video-generation-quality-level')?.value || 'medium';
             const duration = normalizedVideoDuration();
             const upscaleEnabled = document.getElementById('video-generation-upscale-enabled')?.checked !== false;
             const upscaleScale = parseInt(document.getElementById('video-generation-upscale-scale')?.value || '2', 10);
@@ -25778,7 +25886,8 @@
                         source_backup: sourceRef.kind === 'backup' ? sourceRef.name : '',
                         last_backup: lastRef?.kind === 'backup' ? lastRef.name : '',
                         loop: isVideoLoopEnabled(),
-                        preset,
+                        aspect_ratio: aspectRatio,
+                        quality_level: qualityLevel,
                         duration,
                         upscale_enabled: upscaleEnabled,
                         upscale_scale: upscaleScale,

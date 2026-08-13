@@ -54,20 +54,28 @@ VIDEO_MODES = frozenset({"i2v", "first_last"})
 I2V_WORKFLOW_INPUT_PATH = "soya_video"
 I2V_WORKFLOW_PROMPT_TITLE = "긍정프롬프트"
 
-# All dimensions are multiples of 32 and intentionally stay in the H3 FAST range.
-FAST_PRESETS: dict[str, tuple[int, int]] = {
-    "1:1": (512, 512),
-    "4:3": (512, 384),
-    "3:4": (384, 512),
-    "16:9": (672, 384),
-    "9:16": (384, 672),
-    "21:9": (672, 288),
-    "9:21": (288, 672),
-    "3:2": (576, 384),
-    "2:3": (384, 576),
-    "5:4": (480, 384),
-    "4:5": (384, 480),
+# H3 FAST 화면 비율과 픽셀 예산은 서로 독립적으로 관리한다. 최종 해상도는
+# 아래 비율과 MP 단계만으로 계산하며, 모든 변은 워크플로우 요구에 맞춰 32배수다.
+FAST_ASPECT_RATIOS: dict[str, tuple[int, int]] = {
+    "1:1": (1, 1),
+    "4:3": (4, 3),
+    "3:4": (3, 4),
+    "16:9": (16, 9),
+    "9:16": (9, 16),
+    "21:9": (21, 9),
+    "9:21": (9, 21),
+    "3:2": (3, 2),
+    "2:3": (2, 3),
+    "5:4": (5, 4),
+    "4:5": (4, 5),
 }
+FAST_QUALITY_LEVELS: dict[str, float] = {
+    "low": 0.2,
+    "medium": 0.3,
+    "high": 0.4,
+}
+FAST_DEFAULT_QUALITY_LEVEL = "medium"
+FAST_RESOLUTION_MULTIPLE = 32
 
 I2V_ALIGNMENT = (
     "For the target video, at 0.00 seconds into the target video, "
@@ -242,35 +250,117 @@ def _safe_backup_name(value: object) -> str:
     return name
 
 
-def choose_fast_preset(width: int, height: int) -> str:
-    """Pick the closest FAST aspect ratio without changing semantic content."""
+def choose_fast_aspect_ratio(width: int, height: int) -> str:
+    """원본에 가장 가까운 FAST 화면 비율을 고른다."""
 
     if width <= 0 or height <= 0:
-        print(f"[VIDEO:PRESET] 원본 크기 오류: width={width}, height={height}")
+        print(f"[VIDEO:RESOLUTION] 원본 크기 오류: width={width}, height={height}")
         raise ValueError("원본 이미지 크기가 올바르지 않습니다")
     source_ratio = width / height
     return min(
-        FAST_PRESETS,
-        key=lambda key: abs(math.log(source_ratio / (FAST_PRESETS[key][0] / FAST_PRESETS[key][1]))),
+        FAST_ASPECT_RATIOS,
+        key=lambda key: abs(
+            math.log(
+                source_ratio
+                / (FAST_ASPECT_RATIOS[key][0] / FAST_ASPECT_RATIOS[key][1])
+            )
+        ),
     )
 
 
-def resolve_fast_preset(preset: object, width: int, height: int) -> tuple[str, int, int]:
-    key = str(preset or "auto").strip().lower()
-    if key == "auto":
-        key = choose_fast_preset(width, height)
-    if key not in FAST_PRESETS:
+def choose_fast_preset(width: int, height: int) -> str:
+    """구형 호출자를 위한 화면 비율 선택 함수 별칭."""
+
+    return choose_fast_aspect_ratio(width, height)
+
+
+def normalize_fast_quality_level(value: object) -> str:
+    key = str(value or FAST_DEFAULT_QUALITY_LEVEL).strip().lower()
+    if key not in FAST_QUALITY_LEVELS:
         print(
-            f"[VIDEO:PRESET] 지원하지 않는 프리셋: value={preset!r}, "
-            f"supported={tuple(FAST_PRESETS)!r}"
+            f"[VIDEO:RESOLUTION] 지원하지 않는 FAST 화질 단계: value={value!r}, "
+            f"supported={tuple(FAST_QUALITY_LEVELS)!r}"
         )
-        raise ValueError("지원하지 않는 영상 비율 프리셋입니다")
-    target_w, target_h = FAST_PRESETS[key]
+        raise ValueError("지원하지 않는 FAST 화질 단계입니다")
+    return key
+
+
+def _snap_fast_dimension(value: float) -> int:
+    """양의 길이를 가장 가까운 32배수로 반올림한다(정확한 절반은 올림)."""
+
+    if not math.isfinite(value) or value <= 0:
+        print(f"[VIDEO:RESOLUTION] 스냅할 길이 오류: value={value!r}")
+        raise ValueError("영상 해상도 계산값이 올바르지 않습니다")
+    return max(
+        FAST_RESOLUTION_MULTIPLE,
+        int(math.floor(value / FAST_RESOLUTION_MULTIPLE + 0.5))
+        * FAST_RESOLUTION_MULTIPLE,
+    )
+
+
+def calculate_fast_dimensions(aspect_ratio: str, quality_level: str) -> tuple[int, int]:
+    """MP 단계의 1:1 기준변에 비율을 적용하고 두 변을 32배수로 스냅한다."""
+
+    if aspect_ratio not in FAST_ASPECT_RATIOS:
+        print(
+            f"[VIDEO:RESOLUTION] 해상도 계산 비율 오류: aspect_ratio={aspect_ratio!r}, "
+            f"supported={tuple(FAST_ASPECT_RATIOS)!r}"
+        )
+        raise ValueError("지원하지 않는 영상 화면 비율입니다")
+    quality_key = normalize_fast_quality_level(quality_level)
+    target_mp = FAST_QUALITY_LEVELS[quality_key]
+    square_edge = _snap_fast_dimension(math.sqrt(target_mp * 1_000_000))
+    ratio_w, ratio_h = FAST_ASPECT_RATIOS[aspect_ratio]
+    ratio = ratio_w / ratio_h
+    target_w = _snap_fast_dimension(square_edge * math.sqrt(ratio))
+    target_h = _snap_fast_dimension(square_edge / math.sqrt(ratio))
+    return target_w, target_h
+
+
+def resolve_fast_resolution(
+    aspect_ratio: object,
+    quality_level: object,
+    width: int,
+    height: int,
+) -> tuple[str, str, int, int]:
+    key = str(aspect_ratio or "auto").strip().lower()
+    if key == "auto":
+        key = choose_fast_aspect_ratio(width, height)
+    if key not in FAST_ASPECT_RATIOS:
+        print(
+            f"[VIDEO:RESOLUTION] 지원하지 않는 화면 비율: value={aspect_ratio!r}, "
+            f"supported={tuple(FAST_ASPECT_RATIOS)!r}"
+        )
+        raise ValueError("지원하지 않는 영상 화면 비율입니다")
+    quality_key = normalize_fast_quality_level(quality_level)
+    target_w, target_h = calculate_fast_dimensions(key, quality_key)
+    return key, quality_key, target_w, target_h
+
+
+def resolve_fast_preset(
+    preset: object,
+    width: int,
+    height: int,
+    quality_level: object = FAST_DEFAULT_QUALITY_LEVEL,
+) -> tuple[str, int, int]:
+    """구형 preset 호출을 새 비율·화질 계산으로 연결한다."""
+
+    key, _quality_key, target_w, target_h = resolve_fast_resolution(
+        preset,
+        quality_level,
+        width,
+        height,
+    )
     return key, target_w, target_h
 
 
 def center_crop_to_ratio(image: Image.Image, target_w: int, target_h: int) -> Image.Image:
-    """Center-crop at the source resolution; resizing is deliberately a later step."""
+    """cover 리사이즈와 같은 최소 영역을 원본 해상도에서 중앙 크롭한다.
+
+    목표 비율을 덮도록 비율 유지 리사이즈한 뒤 넘치는 한 축을 자르는 것과
+    기하학적으로 같다. 원본에서 먼저 자르면 보간을 한 번만 수행하므로 세부가
+    덜 뭉개진다.
+    """
 
     source = image.convert("RGBA")
     width, height = source.size
@@ -871,28 +961,44 @@ class VideoMode:
     def _prepared_reference(
         self,
         reference: dict | str,
-        preset: object,
+        aspect_ratio: object,
+        quality_level: object = FAST_DEFAULT_QUALITY_LEVEL,
         *,
         target_size: tuple[int, int] | None = None,
-    ) -> tuple[Image.Image, Image.Image, str, int, int, str]:
+    ) -> tuple[Image.Image, Image.Image, str, str, int, int, str]:
         if isinstance(reference, str):
             reference = self.normalize_reference(fallback_backup=reference)
         resolved = self._resolve_reference(reference, raw=True)
         raw_path = resolved["path"]
         source = self._load_first_frame(raw_path)
         if target_size is None:
-            preset_key, target_w, target_h = resolve_fast_preset(
-                preset, source.width, source.height
+            aspect_ratio_key, quality_key, target_w, target_h = resolve_fast_resolution(
+                aspect_ratio,
+                quality_level,
+                source.width,
+                source.height,
             )
         else:
             target_w, target_h = target_size
-            preset_key = next(
-                (key for key, value in FAST_PRESETS.items() if value == target_size),
-                str(preset),
-            )
+            aspect_ratio_key = str(aspect_ratio or "").strip().lower()
+            if aspect_ratio_key not in FAST_ASPECT_RATIOS:
+                print(
+                    "[VIDEO:RESOLUTION] 고정 대상 크기의 화면 비율 오류: "
+                    f"aspect_ratio={aspect_ratio!r}, target_size={target_size!r}"
+                )
+                raise ValueError("지원하지 않는 영상 화면 비율입니다")
+            quality_key = normalize_fast_quality_level(quality_level)
         high_res_crop = center_crop_to_ratio(source, target_w, target_h)
         resized = high_res_crop.resize((target_w, target_h), Image.Resampling.LANCZOS)
-        return high_res_crop, resized, preset_key, target_w, target_h, raw_path
+        return (
+            high_res_crop,
+            resized,
+            aspect_ratio_key,
+            quality_key,
+            target_w,
+            target_h,
+            raw_path,
+        )
 
     @staticmethod
     def _visual_context_messages(
@@ -1064,11 +1170,29 @@ Vision-produced static Visual Context:
             )
             raise ValueError("영상화 지시는 12,000자 이하여야 합니다")
 
+        aspect_ratio = (params or {}).get(
+            "aspect_ratio",
+            (params or {}).get("preset", "auto"),
+        )
+        quality_level = (params or {}).get(
+            "quality_level",
+            FAST_DEFAULT_QUALITY_LEVEL,
+        )
         last_ref: dict | None = None
         reference_images: list[tuple[str, str, str]] = []
         if mode in ("i2v", "first_last"):
-            _crop, resized, _key, _w, _h, _path = self._prepared_reference(
-                source_ref, (params or {}).get("preset", "auto")
+            (
+                _crop,
+                resized,
+                resolved_aspect_ratio,
+                resolved_quality_level,
+                target_w,
+                target_h,
+                _path,
+            ) = self._prepared_reference(
+                source_ref,
+                aspect_ratio,
+                quality_level,
             )
             reference_images.append(
                 (base64.b64encode(_image_to_png_bytes(resized)).decode("ascii"), "image/png", "Picture 1 (first frame)")
@@ -1082,15 +1206,18 @@ Vision-produced static Visual Context:
                     f"reference={source_label}, loop={loop_enabled}"
                 )
                 raise ValueError("첫 프레임과 마지막 프레임은 서로 다른 참조를 선택하세요")
-            first_image = self._load_first_frame(
-                self._resolve_reference(source_ref, raw=True)["path"]
-            )
-            preset_key, target_w, target_h = resolve_fast_preset(
-                (params or {}).get("preset", "auto"), first_image.width, first_image.height
-            )
-            _crop2, resized2, _key2, _w2, _h2, _path2 = self._prepared_reference(
+            (
+                _crop2,
+                resized2,
+                _key2,
+                _quality2,
+                _w2,
+                _h2,
+                _path2,
+            ) = self._prepared_reference(
                 last_ref,
-                preset_key,
+                resolved_aspect_ratio,
+                resolved_quality_level,
                 target_size=(target_w, target_h),
             )
             reference_images.append(
@@ -1964,7 +2091,8 @@ Vision-produced static Visual Context:
         high_res_crop: Image.Image,
         overlay: Image.Image | None,
         overlay_mask: Image.Image | None,
-        preset_key: str,
+        aspect_ratio_key: str,
+        quality_level: str,
         target_w: int,
         target_h: int,
         video_seed: int | None,
@@ -2030,7 +2158,12 @@ Vision-produced static Visual Context:
                     for item in ((params or {}).get("llm_trace") or [])
                     if str(item).strip()
                 ],
-                "preset": preset_key,
+                # preset은 기존 백업 소비자를 위한 화면 비율 별칭이다.
+                "preset": aspect_ratio_key,
+                "aspect_ratio": aspect_ratio_key,
+                "quality_level": quality_level,
+                "target_mp": FAST_QUALITY_LEVELS[quality_level],
+                "actual_mp": round((target_w * target_h) / 1_000_000, 6),
                 "source_width": target_w,
                 "source_height": target_h,
                 "output_width": output_width,
@@ -2286,7 +2419,15 @@ Vision-produced static Visual Context:
                 "video_mode": mode,
                 "video_duration_seconds": float(manifest.get("duration") or VIDEO_DURATION_SECONDS),
                 "video_fps": int(manifest.get("fps") or VIDEO_FPS),
-                "video_fast_preset": manifest.get("preset", ""),
+                "video_fast_preset": manifest.get(
+                    "aspect_ratio", manifest.get("preset", "")
+                ),
+                "video_aspect_ratio": manifest.get(
+                    "aspect_ratio", manifest.get("preset", "")
+                ),
+                "video_quality_level": manifest.get("quality_level", ""),
+                "video_target_mp": manifest.get("target_mp"),
+                "video_actual_mp": manifest.get("actual_mp"),
                 "video_source_width": int(manifest.get("source_width") or 0),
                 "video_source_height": int(manifest.get("source_height") or 0),
                 "video_width": int(manifest.get("output_width") or 0),
@@ -2355,6 +2496,12 @@ Vision-produced static Visual Context:
                 "format": extension.lstrip("."),
                 "mode": mode,
                 "preset": manifest.get("preset", ""),
+                "aspect_ratio": manifest.get(
+                    "aspect_ratio", manifest.get("preset", "")
+                ),
+                "quality_level": manifest.get("quality_level", ""),
+                "target_mp": manifest.get("target_mp"),
+                "actual_mp": manifest.get("actual_mp"),
                 "width": int(manifest.get("output_width") or 0),
                 "height": int(manifest.get("output_height") or 0),
                 "duration": float(manifest.get("duration") or VIDEO_DURATION_SECONDS),
@@ -2415,9 +2562,27 @@ Vision-produced static Visual Context:
         if mode == "first_last":
             last_ref = self._reference_from_params(params or {}, "last")
 
-        source_prompt, source_info = self._source_context(source_ref)
-        high_res_crop, first_resized, preset_key, target_w, target_h, _raw_path = (
-            self._prepared_reference(source_ref, (params or {}).get("preset", "auto"))
+        _source_prompt, source_info = self._source_context(source_ref)
+        requested_aspect_ratio = (params or {}).get(
+            "aspect_ratio",
+            (params or {}).get("preset", "auto"),
+        )
+        requested_quality_level = (params or {}).get(
+            "quality_level",
+            FAST_DEFAULT_QUALITY_LEVEL,
+        )
+        (
+            high_res_crop,
+            first_resized,
+            aspect_ratio_key,
+            quality_level,
+            target_w,
+            target_h,
+            _raw_path,
+        ) = self._prepared_reference(
+            source_ref,
+            requested_aspect_ratio,
+            requested_quality_level,
         )
         overlay, overlay_mask = await asyncio.to_thread(
             self._build_high_res_overlay,
@@ -2456,12 +2621,19 @@ Vision-produced static Visual Context:
                     f"path={first_path!r}, size={first_resized.size}"
                 )
             if mode == "first_last":
-                _last_crop, last_resized, _last_key, _lw, _lh, _last_path = (
-                    self._prepared_reference(
-                        last_ref,
-                        preset_key,
-                        target_size=(target_w, target_h),
-                    )
+                (
+                    _last_crop,
+                    last_resized,
+                    _last_key,
+                    _last_quality,
+                    _lw,
+                    _lh,
+                    _last_path,
+                ) = self._prepared_reference(
+                    last_ref,
+                    aspect_ratio_key,
+                    quality_level,
+                    target_size=(target_w, target_h),
                 )
                 last_path = os.path.join(staging_dir, "[2].png")
                 last_resized.save(last_path, format="PNG")
@@ -2560,7 +2732,8 @@ Vision-produced static Visual Context:
                 high_res_crop=high_res_crop,
                 overlay=overlay,
                 overlay_mask=overlay_mask,
-                preset_key=preset_key,
+                aspect_ratio_key=aspect_ratio_key,
+                quality_level=quality_level,
                 target_w=target_w,
                 target_h=target_h,
                 video_seed=video_seed,
@@ -2600,7 +2773,11 @@ Vision-produced static Visual Context:
             return {
                 "success": True,
                 "mode": mode,
-                "preset": preset_key,
+                "preset": aspect_ratio_key,
+                "aspect_ratio": aspect_ratio_key,
+                "quality_level": quality_level,
+                "target_mp": FAST_QUALITY_LEVELS[quality_level],
+                "actual_mp": round((target_w * target_h) / 1_000_000, 6),
                 "width": target_w,
                 "height": target_h,
                 "duration": duration,

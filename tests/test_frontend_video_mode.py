@@ -16,6 +16,23 @@ def test_backup_card_has_one_video_button_immediately_before_delete() -> None:
     assert "openVideoWorkspace(" in FRONTEND[video_button:delete_button]
 
 
+def test_backup_card_disables_regen_and_edit_for_animated_backups() -> None:
+    """영상(is_animated) 백업 카드의 재생성/수정 버튼은 회색 disabled로 막힌다.
+    에셋 카드의 EDIT 툴 차단과 같은 패턴(b.is_animated 우선 평가)."""
+    regen = FRONTEND.index('class="regen-btn"')
+    edit = FRONTEND.index('class="edit-prompt-btn"', regen)
+    assert regen < edit
+
+    assert "영상 백업에는 재생성을 사용할 수 없습니다" in FRONTEND[regen:edit]
+    assert "b.is_animated ?" in FRONTEND[regen:edit]
+    # 영상이 아닐 때 기존 '프롬프트 없음' 분기는 유지
+    assert 'disabled title="프롬프트 없음"' in FRONTEND[regen:edit]
+
+    assert "영상 백업에는 프롬프트 수정을 사용할 수 없습니다" in FRONTEND[edit:]
+    assert "b.is_animated ?" in FRONTEND[edit:]
+    assert 'disabled title="프롬프트 없음"' in FRONTEND[edit:]
+
+
 def test_video_page_uses_modal_entry_with_two_internal_modes() -> None:
     assert 'id="video-modal"' in FRONTEND
     assert "closeVideoModal()" in FRONTEND
@@ -75,21 +92,19 @@ def test_video_workflow_settings_load_and_save_only_supported_paths() -> None:
     assert "[VIDEO_SETTINGS] ${mode} 워크플로우 파일 검색 실패:" in FRONTEND
 
 
-def test_video_page_exposes_every_fast_resolution_and_queue_endpoint() -> None:
-    for value in (
-        "512×512",
-        "512×384",
-        "384×512",
-        "672×384",
-        "384×672",
-        "672×288",
-        "288×672",
-        "576×384",
-        "384×576",
-        "480×384",
-        "384×480",
-    ):
-        assert value in FRONTEND
+def test_video_page_separates_fast_aspect_ratio_and_mp_level() -> None:
+    assert 'id="video-generation-aspect-ratio"' in FRONTEND
+    for value in ("auto", "1:1", "4:3", "3:4", "16:9", "9:16", "21:9", "9:21", "3:2", "2:3", "5:4", "4:5"):
+        assert f'<option value="{value}"' in FRONTEND
+    assert 'id="video-generation-quality-level"' in FRONTEND
+    assert '<option value="low">FAST 저화질 · 0.2 MP</option>' in FRONTEND
+    assert '<option value="medium" selected>FAST 기본 · 0.3 MP</option>' in FRONTEND
+    assert '<option value="high">FAST 고화질 · 0.4 MP</option>' in FRONTEND
+    assert "calculateVideoFastResolution(aspectRatio, qualityLevel)" in FRONTEND
+    assert "aspect_ratio: aspectRatio" in FRONTEND
+    assert "quality_level: qualityLevel" in FRONTEND
+    assert "원본 분석 후 결정" in FRONTEND
+    assert "최소 중앙 크롭" in FRONTEND
     assert "/api/video/reference-options" in FRONTEND
     assert "/api/video/enqueue" in FRONTEND
     assert FRONTEND.count('name="video-output-format"') == 2

@@ -91,7 +91,9 @@ from modes import autocomplete_service
 from modes import asset_tool_mode
 from modes.qwen_edit_mode import QwenEditMode
 from modes.video_mode import (
-    FAST_PRESETS,
+    FAST_ASPECT_RATIOS,
+    FAST_DEFAULT_QUALITY_LEVEL,
+    FAST_QUALITY_LEVELS,
     VIDEO_DEFAULT_DURATION_SECONDS,
     VIDEO_MODES,
     VideoMode,
@@ -9322,6 +9324,21 @@ async def handle_api_video_reference_options(request: web.Request) -> web.Respon
                 continue
             seen.add(name)
             animated = _backup_image_kind(path)
+            source_width = 0
+            source_height = 0
+            try:
+                resolved_source = video_mode._resolve_reference(
+                    {"kind": "backup", "name": name},
+                    raw=True,
+                )
+                with Image.open(resolved_source["path"]) as source_image:
+                    source_width, source_height = source_image.size
+            except Exception as exc:
+                print(
+                    "[VIDEO:API] 참조 백업 원본 크기 조회 실패: "
+                    f"name={name!r}, error={type(exc).__name__}: {exc}"
+                )
+                traceback.print_exc()
             options.append(
                 {
                     "name": name,
@@ -9334,6 +9351,8 @@ async def handle_api_video_reference_options(request: web.Request) -> web.Respon
                         else f"/api/backup_image/{os.path.basename(path)}"
                     ),
                     "is_animated": animated,
+                    "source_width": source_width,
+                    "source_height": source_height,
                 }
             )
         return web.json_response({"success": True, "options": options})
@@ -9396,7 +9415,12 @@ async def handle_api_video_enqueue(request: web.Request) -> web.Response:
         instruction = str(body.get("instruction") or "").strip()
         if auto_instruction:
             instruction = ""
-        preset = str(body.get("preset") or "auto").strip().lower()
+        aspect_ratio = str(
+            body.get("aspect_ratio", body.get("preset", "auto")) or "auto"
+        ).strip().lower()
+        quality_level = str(
+            body.get("quality_level") or FAST_DEFAULT_QUALITY_LEVEL
+        ).strip().lower()
         try:
             duration = normalize_video_duration(
                 body.get("duration", VIDEO_DEFAULT_DURATION_SECONDS)
@@ -9488,10 +9512,16 @@ async def handle_api_video_enqueue(request: web.Request) -> web.Response:
                 {"success": False, "error": "영상화 지시는 12,000자 이하여야 합니다"},
                 status=400,
             )
-        if preset != "auto" and preset not in FAST_PRESETS:
-            print(f"[VIDEO:API] FAST 프리셋 오류: preset={preset!r}")
+        if aspect_ratio != "auto" and aspect_ratio not in FAST_ASPECT_RATIOS:
+            print(f"[VIDEO:API] FAST 화면 비율 오류: aspect_ratio={aspect_ratio!r}")
             return web.json_response(
-                {"success": False, "error": "지원하지 않는 FAST 비율 프리셋입니다"},
+                {"success": False, "error": "지원하지 않는 FAST 화면 비율입니다"},
+                status=400,
+            )
+        if quality_level not in FAST_QUALITY_LEVELS:
+            print(f"[VIDEO:API] FAST 화질 단계 오류: quality_level={quality_level!r}")
+            return web.json_response(
+                {"success": False, "error": "지원하지 않는 FAST 화질 단계입니다"},
                 status=400,
             )
         try:
@@ -9556,7 +9586,10 @@ async def handle_api_video_enqueue(request: web.Request) -> web.Response:
             "auto_instruction": auto_instruction,
             "include_dialogue_context": include_dialogue_context,
             "instruction": instruction,
-            "preset": preset,
+            # preset은 구형 큐/백업 소비자를 위한 화면 비율 별칭이다.
+            "preset": aspect_ratio,
+            "aspect_ratio": aspect_ratio,
+            "quality_level": quality_level,
             "duration": duration,
             "upscale_enabled": upscale_enabled,
             "upscale_scale": upscale_scale,
@@ -9570,7 +9603,8 @@ async def handle_api_video_enqueue(request: web.Request) -> web.Response:
         item = await queue_manager.add_item("video_prompt_build", label, params)
         print(
             f"[VIDEO:API] 영상화 큐 등록: item={item.id}, mode={mode}, "
-            f"source={source_ref!r}, last={last_ref or '(none)'}, preset={preset}, "
+            f"source={source_ref!r}, last={last_ref or '(none)'}, "
+            f"aspect_ratio={aspect_ratio}, quality_level={quality_level}, "
             f"duration={duration:g}s, auto_instruction={auto_instruction}, "
             f"include_dialogue_context={include_dialogue_context}, "
             f"upscale={upscale_model or 'none'}x{upscale_scale}, "
@@ -15048,6 +15082,18 @@ async def handle_api_asset_mode_video_references(request: web.Request) -> web.Re
         options = []
         for item in asset_mode.list_video_references(character):
             reference = item["reference"]
+            source_width = 0
+            source_height = 0
+            try:
+                resolved_source = asset_mode.resolve_video_reference(reference)
+                with Image.open(resolved_source["path"]) as source_image:
+                    source_width, source_height = source_image.size
+            except Exception as exc:
+                print(
+                    "[ASSET_VIDEO_API] 참조 원본 크기 조회 실패: "
+                    f"reference={reference!r}, error={type(exc).__name__}: {exc}"
+                )
+                traceback.print_exc()
             encoded = {
                 key: quote(str(reference[key]), safe="")
                 for key in ("character", "outfit", "expression", "filename")
@@ -15065,6 +15111,8 @@ async def handle_api_asset_mode_video_references(request: web.Request) -> web.Re
                     if item.get("is_animated")
                     else image_url
                 ),
+                "source_width": source_width,
+                "source_height": source_height,
             })
         return web.json_response({"success": True, "options": options})
     except Exception as exc:

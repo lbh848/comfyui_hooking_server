@@ -9,12 +9,14 @@ from PIL import Image
 import modes.video_mode as video_module
 import modes.video_postprocess as postprocess_module
 from modes.video_mode import (
-    FAST_PRESETS,
+    FAST_ASPECT_RATIOS,
+    FAST_QUALITY_LEVELS,
     FIRST_LAST_ALIGNMENT,
     I2V_ALIGNMENT,
     VideoMode,
     alignment_for_mode,
     build_i2v_workflow_block,
+    calculate_fast_dimensions,
     center_crop_to_ratio,
     choose_fast_preset,
     compose_h3_prompt,
@@ -22,6 +24,7 @@ from modes.video_mode import (
     normalize_video_duration,
     normalize_visual_context,
     parse_auto_visual_direction,
+    resolve_fast_resolution,
     validate_h3_prompt,
     validate_h3_prompt_body,
     validate_auto_visual_direction,
@@ -55,36 +58,63 @@ def _valid_body(prefix: str = "") -> str:
     )
 
 
-def test_fast_presets_match_product_contract() -> None:
-    assert FAST_PRESETS == {
-        "1:1": (512, 512),
-        "4:3": (512, 384),
-        "3:4": (384, 512),
-        "16:9": (672, 384),
-        "9:16": (384, 672),
-        "21:9": (672, 288),
-        "9:21": (288, 672),
-        "3:2": (576, 384),
-        "2:3": (384, 576),
-        "5:4": (480, 384),
-        "4:5": (384, 480),
+def test_fast_aspect_ratios_and_quality_levels_are_independent() -> None:
+    assert FAST_ASPECT_RATIOS == {
+        "1:1": (1, 1),
+        "4:3": (4, 3),
+        "3:4": (3, 4),
+        "16:9": (16, 9),
+        "9:16": (9, 16),
+        "21:9": (21, 9),
+        "9:21": (9, 21),
+        "3:2": (3, 2),
+        "2:3": (2, 3),
+        "5:4": (5, 4),
+        "4:5": (4, 5),
     }
+    assert FAST_QUALITY_LEVELS == {"low": 0.2, "medium": 0.3, "high": 0.4}
     assert choose_fast_preset(1536, 1536) == "1:1"
     assert choose_fast_preset(1536, 864) == "16:9"
     assert choose_fast_preset(864, 1536) == "9:16"
 
 
-def test_crop_happens_at_source_resolution_before_fast_resize() -> None:
+def test_fast_resolution_calculation_matches_h3_examples_and_32_grid() -> None:
+    assert [
+        calculate_fast_dimensions("1:1", level)
+        for level in ("low", "medium", "high")
+    ] == [(448, 448), (544, 544), (640, 640)]
+    assert [
+        calculate_fast_dimensions("16:9", level)
+        for level in ("low", "medium", "high")
+    ] == [(608, 352), (736, 416), (864, 480)]
+
+    for aspect_ratio in FAST_ASPECT_RATIOS:
+        for quality_level in FAST_QUALITY_LEVELS:
+            width, height = calculate_fast_dimensions(aspect_ratio, quality_level)
+            assert width % 32 == 0
+            assert height % 32 == 0
+
+    assert resolve_fast_resolution("auto", "high", 1536, 864) == (
+        "16:9",
+        "high",
+        864,
+        480,
+    )
+
+
+def test_crop_uses_cover_geometry_at_source_resolution_before_one_resize() -> None:
     source = Image.new("RGB", (1536, 1024), "red")
 
-    cropped = center_crop_to_ratio(source, 512, 512)
+    cropped = center_crop_to_ratio(source, 544, 544)
 
     assert cropped.size == (1024, 1024)
-    assert cropped.size != FAST_PRESETS["1:1"]
-    assert cropped.resize(FAST_PRESETS["1:1"], Image.Resampling.LANCZOS).size == (
-        512,
-        512,
-    )
+    assert cropped.size != (544, 544)
+    assert cropped.resize((544, 544), Image.Resampling.LANCZOS).size == (544, 544)
+
+    portrait = Image.new("RGB", (1024, 1536), "blue")
+    wide_crop = center_crop_to_ratio(portrait, 736, 416)
+    assert wide_crop.width == portrait.width
+    assert wide_crop.height == round(portrait.width / (736 / 416))
 
 
 def test_h3_prompt_validator_enforces_each_official_mode_header() -> None:
@@ -830,7 +860,7 @@ async def test_render_spools_video_postprocess_before_cleaning_comfy_mp4(
         assert transport.startswith("[PATH]\nsoya_video\n[PROMPT]\n")
         expected_alignment = alignment_for_mode(render_mode, 12)
         assert _valid_body(expected_alignment) in transport
-        assert "\n[W]\n512\n[H]\n512\n[DURATION]\n12.0\n[SEED]\n" in transport
+        assert "\n[W]\n544\n[H]\n544\n[DURATION]\n12.0\n[SEED]\n" in transport
         seed_text = transport.split("\n[SEED]\n", 1)[1].split("\n[END]", 1)[0]
         assert seed_text.isdigit()
         submitted["seed"] = int(seed_text)
@@ -839,12 +869,12 @@ async def test_render_spools_video_postprocess_before_cleaning_comfy_mp4(
         staged = comfy_input / "soya_video" / "[1].png"
         assert staged.is_file()
         with Image.open(staged) as image:
-            assert image.size == (512, 512)
+            assert image.size == (544, 544)
         last_staged = comfy_input / "soya_video" / "[2].png"
         if render_mode == "first_last":
             assert last_staged.is_file()
             with Image.open(last_staged) as image:
-                assert image.size == (512, 512)
+                assert image.size == (544, 544)
                 red, green, blue = image.convert("RGB").getpixel((0, 0))
                 assert red >= 250 and green >= 250 and blue <= 5
         else:
@@ -893,7 +923,8 @@ async def test_render_spools_video_postprocess_before_cleaning_comfy_mp4(
         "mode": render_mode,
         "source_backup": "source",
         "instruction": "move gently",
-        "preset": "1:1",
+        "aspect_ratio": "1:1",
+        "quality_level": "medium",
         "duration": 12,
         "h3_prompt": _valid_body(alignment_for_mode(render_mode, 12)),
         "llm_trace": ["trace-1"],
@@ -907,6 +938,8 @@ async def test_render_spools_video_postprocess_before_cleaning_comfy_mp4(
 
     assert result["success"] is True
     assert result["preset"] == "1:1"
+    assert result["aspect_ratio"] == "1:1"
+    assert result["quality_level"] == "medium"
     assert not (comfy_input / "soya_video").exists()
     assert events[-1] == "mp4_cleaned"
     job_dir = Path(result["postprocess_job"]["job_dir"])
@@ -914,10 +947,14 @@ async def test_render_spools_video_postprocess_before_cleaning_comfy_mp4(
     assert manifest["source_backup"] == "source"
     assert manifest["llm_trace"] == ["trace-1"]
     assert manifest["duration"] == 12.0
+    assert manifest["aspect_ratio"] == "1:1"
+    assert manifest["quality_level"] == "medium"
+    assert manifest["target_mp"] == 0.3
+    assert manifest["actual_mp"] == 0.295936
     assert manifest["video_seed"] == submitted["seed"]
     assert manifest["upscale_enabled"] is True
     assert manifest["upscale_scale"] == 2
-    assert manifest["output_width"] == 1024
+    assert manifest["output_width"] == 1088
     assert not list(backup_dir.glob("*.avif"))
 
 
@@ -941,6 +978,10 @@ async def test_video_postprocess_commits_verified_pair_and_metadata(
         "instruction": "move gently",
         "llm_trace": ["trace-1"],
         "preset": "1:1",
+        "aspect_ratio": "1:1",
+        "quality_level": "medium",
+        "target_mp": 0.3,
+        "actual_mp": 0.295936,
         "source_width": 512,
         "source_height": 512,
         "output_width": 1024,
@@ -1015,6 +1056,10 @@ async def test_video_postprocess_commits_verified_pair_and_metadata(
     )
     assert info["video_source_width"] == 512
     assert info["video_width"] == 1024
+    assert info["video_aspect_ratio"] == "1:1"
+    assert info["video_quality_level"] == "medium"
+    assert info["video_target_mp"] == 0.3
+    assert info["video_actual_mp"] == 0.295936
     assert info["video_upscale_scale"] == 2
     assert info["bot_name"] == "test-bot"
     assert not job_dir.exists()
