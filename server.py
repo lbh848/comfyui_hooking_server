@@ -3874,6 +3874,7 @@ video_mode.cleanup_backups_func = cleanup_backups
 video_mode.invalidate_backup_cache_func = lambda: _invalidate_backup_filter_cache()
 video_mode.resolve_asset_reference_func = asset_mode.resolve_video_reference
 video_mode.commit_asset_video_func = asset_mode.commit_video_result
+video_mode.commit_export_video_func = asset_mode.commit_export_video_result
 # 에셋툴 모드 함수 의존성 설정
 asset_tool.convert_workflow_func = lambda workflow, task_key="tag_analysis": convert_workflow_via_endpoint(
     workflow,
@@ -17778,6 +17779,311 @@ async def handle_api_ep_settings_post(request: web.Request) -> web.Response:
     except Exception as e:
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
+
+async def handle_api_asset_export_video_session_create(
+    request: web.Request,
+) -> web.Response:
+    """현재 이름 치환 draft와 선택 범위로 ZIP 전용 영상 임시 저장소를 만든다."""
+    try:
+        body = await request.json()
+        character, outfits, expressions, mapping = _asset_name_mapping_request_parts(body)
+        plan = await asyncio.to_thread(
+            asset_mode.build_character_export_plan,
+            character,
+            outfits,
+            expressions,
+            mapping,
+        )
+        if not plan.get("success"):
+            public_plan = asset_mode.public_export_plan(plan)
+            print(
+                f"[ASSET_EXPORT_VIDEO_API] 세션 생성 사전 검증 실패: "
+                f"character={character!r}, errors={public_plan.get('errors', [])!r}"
+            )
+            return web.json_response(public_plan, status=409)
+        result = await asyncio.to_thread(
+            asset_mode.create_export_video_session,
+            character,
+            outfits,
+            expressions,
+            mapping,
+        )
+        return web.json_response(result)
+    except json.JSONDecodeError as exc:
+        print(f"[ASSET_EXPORT_VIDEO_API] 세션 생성 JSON 파싱 실패: {exc}")
+        traceback.print_exc()
+        return web.json_response(
+            {"success": False, "error": "요청 JSON이 올바르지 않습니다"},
+            status=400,
+        )
+    except (ValueError, FileNotFoundError) as exc:
+        print(f"[ASSET_EXPORT_VIDEO_API] 세션 생성 요청 거부: {exc}")
+        return web.json_response(
+            {"success": False, "error": str(exc)},
+            status=400,
+        )
+    except Exception as exc:
+        print(
+            f"[ASSET_EXPORT_VIDEO_API] 세션 생성 실패: "
+            f"error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        return web.json_response(
+            {"success": False, "error": str(exc)},
+            status=500,
+        )
+
+
+async def handle_api_asset_export_video_session_get(
+    request: web.Request,
+) -> web.Response:
+    session_id = request.match_info.get("session_id", "")
+    try:
+        result = await asyncio.to_thread(
+            asset_mode.get_export_video_session,
+            session_id,
+        )
+        return web.json_response(result)
+    except (ValueError, FileNotFoundError) as exc:
+        print(
+            f"[ASSET_EXPORT_VIDEO_API] 세션 조회 실패: "
+            f"session={session_id!r}, error={exc}"
+        )
+        return web.json_response(
+            {"success": False, "error": str(exc)},
+            status=404,
+        )
+    except Exception as exc:
+        print(
+            f"[ASSET_EXPORT_VIDEO_API] 세션 조회 예외: "
+            f"session={session_id!r}, error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        return web.json_response(
+            {"success": False, "error": str(exc)},
+            status=500,
+        )
+
+
+async def handle_api_asset_export_video_result_get(
+    request: web.Request,
+) -> web.StreamResponse:
+    session_id = request.match_info.get("session_id", "")
+    slot_id = request.match_info.get("slot_id", "")
+    try:
+        result_path = await asyncio.to_thread(
+            asset_mode.get_export_video_result_path,
+            session_id,
+            slot_id,
+        )
+        return web.FileResponse(result_path)
+    except (ValueError, FileNotFoundError) as exc:
+        print(
+            f"[ASSET_EXPORT_VIDEO_API] 임시 결과 조회 실패: "
+            f"session={session_id!r}, slot={slot_id!r}, error={exc}"
+        )
+        return web.json_response(
+            {"success": False, "error": str(exc)},
+            status=404,
+        )
+    except Exception as exc:
+        print(
+            f"[ASSET_EXPORT_VIDEO_API] 임시 결과 조회 예외: "
+            f"session={session_id!r}, slot={slot_id!r}, "
+            f"error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        return web.json_response(
+            {"success": False, "error": str(exc)},
+            status=500,
+        )
+
+
+async def handle_api_asset_export_video_session_apply(
+    request: web.Request,
+) -> web.Response:
+    session_id = request.match_info.get("session_id", "")
+    prepared_jobs: list[dict] = []
+    staged_jobs: list[dict] = []
+    queued_items: list = []
+    try:
+        body = await request.json()
+        if not isinstance(body, dict):
+            print(
+                f"[ASSET_EXPORT_VIDEO_API] 일괄 적용 본문 형식 오류: "
+                f"session={session_id!r}, value={body!r}"
+            )
+            return web.json_response(
+                {"success": False, "error": "요청 본문은 객체여야 합니다"},
+                status=400,
+            )
+        slot_ids = body.get("slot_ids")
+        if not isinstance(slot_ids, list):
+            print(
+                f"[ASSET_EXPORT_VIDEO_API] 일괄 적용 선택 형식 오류: "
+                f"session={session_id!r}, value={slot_ids!r}"
+            )
+            return web.json_response(
+                {"success": False, "error": "후처리 대상은 문자열 배열이어야 합니다"},
+                status=400,
+            )
+        postprocess_settings = normalize_video_postprocess_config(
+            load_config().get("video_postprocess")
+        )
+        prepared_jobs = await asyncio.to_thread(
+            asset_mode.prepare_export_video_jobs,
+            session_id,
+            slot_ids,
+        )
+        for job in prepared_jobs:
+            params = {
+                "source_ref": job["source_ref"],
+                "fps": postprocess_settings["fps"],
+                "target_size_mb": postprocess_settings["target_size_mb"],
+                "upscale_enabled": postprocess_settings["enabled"],
+                "upscale_scale": postprocess_settings["scale"],
+                "upscale_model": (
+                    postprocess_settings["model"]
+                    if postprocess_settings["enabled"]
+                    else ""
+                ),
+                "output_format": postprocess_settings["output_format"],
+                "export_video_session_id": session_id,
+                "export_video_slot_id": job["slot_id"],
+                "export_video_revision": job["revision"],
+            }
+            staged = await asyncio.to_thread(
+                video_mode.stage_existing_animation_postprocess,
+                params,
+            )
+            staged_jobs.append(staged)
+        items_spec = [
+            {
+                "type": VIDEO_POSTPROCESS_TYPE,
+                "label": video_postprocess_label(staged),
+                "batch_label": f"ZIP 영상 일괄 후처리 ({len(staged_jobs)}개)",
+                "params": dict(staged),
+            }
+            for staged in staged_jobs
+        ]
+        queued_items = await queue_manager.add_items_batch(items_spec)
+        queue_map = {
+            str((item.params or {}).get("export_video_slot_id") or ""): item.id
+            for item in queued_items
+        }
+        try:
+            await asyncio.to_thread(
+                asset_mode.mark_export_video_jobs_queued,
+                session_id,
+                queue_map,
+            )
+        except Exception as state_exc:
+            print(
+                f"[ASSET_EXPORT_VIDEO_API] 큐 등록 후 세션 상태 저장 실패: "
+                f"session={session_id!r}, queue_map={queue_map!r}, "
+                f"error={type(state_exc).__name__}: {state_exc}"
+            )
+            traceback.print_exc()
+        print(
+            f"[ASSET_EXPORT_VIDEO_API] 일괄 적용 큐 등록 완료: "
+            f"session={session_id!r}, count={len(queued_items)}, "
+            f"batch={queued_items[0].batch_id if queued_items else ''!r}"
+        )
+        return web.json_response({
+            "success": True,
+            "session_id": session_id,
+            "batch_id": queued_items[0].batch_id if queued_items else "",
+            "item_ids": [item.id for item in queued_items],
+            "settings": {
+                "target_size_mb": postprocess_settings["target_size_mb"],
+                "fps": postprocess_settings["fps"],
+                "enabled": postprocess_settings["enabled"],
+                "scale": postprocess_settings["scale"],
+                "model": postprocess_settings["model"],
+                "output_format": postprocess_settings["output_format"],
+            },
+        })
+    except json.JSONDecodeError as exc:
+        print(
+            f"[ASSET_EXPORT_VIDEO_API] 일괄 적용 JSON 파싱 실패: "
+            f"session={session_id!r}, error={exc}"
+        )
+        traceback.print_exc()
+        return web.json_response(
+            {"success": False, "error": "요청 JSON이 올바르지 않습니다"},
+            status=400,
+        )
+    except (ValueError, FileNotFoundError, RuntimeError) as exc:
+        print(
+            f"[ASSET_EXPORT_VIDEO_API] 일괄 적용 요청 실패: "
+            f"session={session_id!r}, error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        if not queued_items:
+            for staged in staged_jobs:
+                try:
+                    video_mode.cleanup_staged_video_postprocess(staged)
+                except Exception as cleanup_exc:
+                    print(
+                        f"[ASSET_EXPORT_VIDEO_API] 실패 스풀 정리 실패: "
+                        f"spool={staged!r}, error={cleanup_exc}"
+                    )
+                    traceback.print_exc()
+        for job in ([] if queued_items else prepared_jobs):
+            try:
+                await asyncio.to_thread(
+                    asset_mode.mark_export_video_job_failed,
+                    session_id,
+                    job.get("slot_id", ""),
+                    job.get("revision", 0),
+                    str(exc),
+                )
+            except Exception as state_exc:
+                print(
+                    f"[ASSET_EXPORT_VIDEO_API] 실패 상태 저장 실패: "
+                    f"job={job!r}, error={state_exc}"
+                )
+                traceback.print_exc()
+        return web.json_response(
+            {"success": False, "error": str(exc)},
+            status=400,
+        )
+    except Exception as exc:
+        print(
+            f"[ASSET_EXPORT_VIDEO_API] 일괄 적용 예외: "
+            f"session={session_id!r}, error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        if not queued_items:
+            for staged in staged_jobs:
+                try:
+                    video_mode.cleanup_staged_video_postprocess(staged)
+                except Exception as cleanup_exc:
+                    print(
+                        f"[ASSET_EXPORT_VIDEO_API] 예외 스풀 정리 실패: "
+                        f"spool={staged!r}, error={cleanup_exc}"
+                    )
+                    traceback.print_exc()
+        for job in ([] if queued_items else prepared_jobs):
+            try:
+                await asyncio.to_thread(
+                    asset_mode.mark_export_video_job_failed,
+                    session_id,
+                    job.get("slot_id", ""),
+                    job.get("revision", 0),
+                    str(exc),
+                )
+            except Exception as state_exc:
+                print(
+                    f"[ASSET_EXPORT_VIDEO_API] 예외 실패 상태 저장 실패: "
+                    f"job={job!r}, error={state_exc}"
+                )
+                traceback.print_exc()
+        return web.json_response(
+            {"success": False, "error": str(exc)},
+            status=500,
+        )
+
 async def handle_api_asset_mode_export(request: web.Request) -> web.Response:
     character = request.match_info.get("character", "")
     if not character:
@@ -17836,8 +18142,63 @@ async def handle_api_asset_mode_export_post(request: web.Request) -> web.Respons
     outfits = body.get("outfits") if isinstance(body, dict) else None
     expressions = body.get("expressions") if isinstance(body, dict) else None
     mapping = body.get("mapping") if isinstance(body, dict) else None
-    log.info(f"[ZIP 내보내기] POST 요청 수신 — 캐릭터: {character}, 복장={outfits}, 표정={expressions}")
+    export_video_session_id = str(
+        body.get("export_video_session_id") or ""
+    ).strip() if isinstance(body, dict) else ""
+    log.info(
+        f"[ZIP 내보내기] POST 요청 수신 — 캐릭터: {character}, "
+        f"복장={outfits}, 표정={expressions}, 영상세션={export_video_session_id or '(none)'}"
+    )
     try:
+        if export_video_session_id:
+            manifest, plan, video_overrides = await asyncio.to_thread(
+                asset_mode.build_export_video_session_plan,
+                export_video_session_id,
+            )
+            session_character = str(manifest.get("character") or "")
+            if session_character != character:
+                print(
+                    f"[ZIP 내보내기] 영상 세션 캐릭터 불일치: "
+                    f"request={character!r}, session={session_character!r}, "
+                    f"session_id={export_video_session_id!r}"
+                )
+                return web.json_response(
+                    {"error": "영상 후처리 임시 저장소의 캐릭터가 현재 내보내기 대상과 다릅니다"},
+                    status=409,
+                )
+            buf = await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: asset_mode.export_character_zip(
+                    character,
+                    export_plan=plan,
+                    video_overrides=video_overrides,
+                ),
+            )
+            if buf is None:
+                log.warning(
+                    f"[ZIP 내보내기] 영상 세션에서 내보낼 이미지 없음 — "
+                    f"캐릭터: {character}, 세션={export_video_session_id}"
+                )
+                return web.json_response(
+                    {"error": "내보낼 대표 이미지가 없습니다."},
+                    status=404,
+                )
+            await asyncio.to_thread(
+                asset_mode.delete_export_video_session,
+                export_video_session_id,
+            )
+            from urllib.parse import quote
+            filename = quote(f"{character}.zip")
+            size_kb = buf.getbuffer().nbytes / 1024
+            log.info(
+                f"[ZIP 내보내기] 영상 세션 응답 전송 — {character}.zip "
+                f"({size_kb:.1f}KB), 세션={export_video_session_id}"
+            )
+            return web.Response(
+                body=buf.getvalue(),
+                content_type="application/zip",
+                headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"},
+            )
         plan = asset_mode.build_character_export_plan(
             character,
             outfits,
@@ -17873,6 +18234,16 @@ async def handle_api_asset_mode_export_post(request: web.Request) -> web.Respons
             content_type="application/zip",
             headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"},
         )
+    except (ValueError, FileNotFoundError) as e:
+        if export_video_session_id:
+            print(
+                f"[ZIP 내보내기] 영상 세션 요청 거부: "
+                f"session={export_video_session_id!r}, error={e}"
+            )
+            return web.json_response({"error": str(e)}, status=409)
+        log.error(f"[ZIP 내보내기] 요청 오류 — {e}")
+        traceback.print_exc()
+        return web.json_response({"error": str(e)}, status=400)
     except Exception as e:
         log.error(f"[ZIP 내보내기] 오류 — {e}")
         traceback.print_exc()
@@ -19887,6 +20258,10 @@ app.router.add_get("/api/asset_mode/name_mapping/{character}", handle_api_asset_
 app.router.add_post("/api/asset_mode/name_mapping", handle_api_asset_mode_name_mapping_post)
 app.router.add_post("/api/asset_mode/name_mapping/validate", handle_api_asset_mode_name_mapping_validate)
 app.router.add_post("/api/asset_mode/name_mapping/llm", handle_api_asset_mode_name_mapping_llm)
+app.router.add_post("/api/asset_mode/export_video_sessions", handle_api_asset_export_video_session_create)
+app.router.add_get("/api/asset_mode/export_video_sessions/{session_id}", handle_api_asset_export_video_session_get)
+app.router.add_post("/api/asset_mode/export_video_sessions/{session_id}/apply", handle_api_asset_export_video_session_apply)
+app.router.add_get("/api/asset_mode/export_video_sessions/{session_id}/results/{slot_id}", handle_api_asset_export_video_result_get)
 app.router.add_get("/api/asset_mode/ep_settings/{character}", handle_api_ep_settings_get)
 app.router.add_get("/api/asset_mode/ep_settings_last", handle_api_ep_settings_last_get)
 app.router.add_post("/api/asset_mode/ep_settings", handle_api_ep_settings_post)

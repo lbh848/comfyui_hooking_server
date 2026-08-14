@@ -14,6 +14,7 @@ import hashlib
 import shutil
 import traceback
 import re
+import threading
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional, Callable, Awaitable
@@ -36,6 +37,8 @@ TAGS_FILE = os.path.join(ASSET_DATA_DIR, "tags.json")
 HIDDEN_TAGS_FILE = os.path.join(ASSET_DATA_DIR, "hidden_tags.json")
 NAME_MAPPING_FILE = os.path.join(ASSET_DATA_DIR, "name_mapping.json")
 NAME_MAPPING_BACKUP_DIR = os.path.join(BASE_DIR, "요구사항")
+EXPORT_VIDEO_SESSION_DIR = os.path.join(ASSET_DATA_DIR, "export_video_sessions")
+EXPORT_VIDEO_SESSION_TTL_SECONDS = 24 * 60 * 60
 
 EXPORT_NAMING_BLOCKS = ("character", "outfit", "expression")
 ASSET_MEDIA_EXTENSIONS = (".png", ".jpg", ".jpeg", ".webp", ".avif")
@@ -263,6 +266,7 @@ class AssetMode:
         self._tags_loaded: bool = False
         self._is_generating: bool = False
         self._lock = asyncio.Lock()
+        self._export_video_session_lock = threading.RLock()
         self._save_generated_workflow_cache: bool = True
 
         # 콜백
@@ -3043,6 +3047,19 @@ class AssetMode:
         return unicodedata.normalize("NFC", filename).rstrip(" .").casefold()
 
     @staticmethod
+    def _export_video_slot_id(
+        outfit: str,
+        expression: str,
+        source_filename: str,
+    ) -> str:
+        raw = json.dumps(
+            [str(outfit), str(expression), str(source_filename)],
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:20]
+
+    @staticmethod
     def _validate_export_token(value, label: str) -> list[dict]:
         errors = []
         if not isinstance(value, str):
@@ -3100,6 +3117,7 @@ class AssetMode:
         selected_outfits=None,
         selected_expressions=None,
         mapping_override: dict | None = None,
+        video_overrides: dict | None = None,
     ) -> dict:
         """실제 대표 이미지와 최종 파일명을 기준으로 내보내기를 사전 검증한다."""
         errors = []
@@ -3296,11 +3314,20 @@ class AssetMode:
                     continue
                 image_path = os.path.join(expression_path, rep_file)
                 prompt_data = self._load_asset_prompt_metadata(expression_path, rep_file)
+                source_stat = os.stat(image_path)
+                slot_id = self._export_video_slot_id(
+                    outfit_name,
+                    expression_name,
+                    rep_file,
+                )
                 raw_candidates.append({
+                    "slot_id": slot_id,
                     "outfit": outfit_name,
                     "expression": expression_name,
                     "source_filename": rep_file,
                     "image_path": image_path,
+                    "source_size_bytes": int(source_stat.st_size),
+                    "source_mtime_ns": int(source_stat.st_mtime_ns),
                     "is_video_animation": self._is_animated_asset(
                         image_path,
                         prompt_data,
@@ -3370,11 +3397,21 @@ class AssetMode:
                 parts.append(token)
             if not valid or not parts:
                 continue
-            candidate_extension = (
-                os.path.splitext(candidate["source_filename"])[1].lower()
-                if candidate.get("is_video_animation")
-                else extension
-            )
+            candidate_extension = extension
+            if candidate.get("is_video_animation"):
+                candidate_extension = os.path.splitext(
+                    candidate["source_filename"]
+                )[1].lower()
+                override = (
+                    video_overrides.get(candidate["slot_id"])
+                    if isinstance(video_overrides, dict)
+                    else None
+                )
+                override_extension = str(
+                    (override or {}).get("extension") or ""
+                ).strip().lower()
+                if override_extension in ASSET_ANIMATION_EXTENSIONS:
+                    candidate_extension = override_extension
             filename = "_".join(parts) + candidate_extension
             if len(filename) > 240:
                 errors.append(self._export_issue(
@@ -3494,15 +3531,739 @@ class AssetMode:
             "file_count": int(plan.get("file_count", 0)),
             "files": [
                 {
+                    "slot_id": item.get("slot_id", ""),
                     "outfit": item.get("outfit", ""),
                     "expression": item.get("expression", ""),
                     "filename": item.get("filename", ""),
+                    "source_size_bytes": int(item.get("source_size_bytes", 0)),
                     "is_video_animation": bool(item.get("is_video_animation")),
                 }
                 for item in plan.get("files", [])
             ],
             "selection": plan.get("selection", {}),
         }
+
+    @staticmethod
+    def _validate_export_video_session_id(session_id: str) -> str:
+        normalized = str(session_id or "").strip().lower()
+        if not re.fullmatch(r"[0-9a-f]{16}", normalized):
+            print(
+                f"[ASSET_EXPORT_VIDEO] 세션 id 검증 실패: "
+                f"value={session_id!r}"
+            )
+            raise ValueError("영상 후처리 임시 저장소 식별자가 올바르지 않습니다")
+        return normalized
+
+    def _export_video_session_path(self, session_id: str) -> str:
+        normalized = self._validate_export_video_session_id(session_id)
+        root = os.path.realpath(EXPORT_VIDEO_SESSION_DIR)
+        path = os.path.realpath(os.path.join(root, normalized))
+        if os.path.commonpath([path, root]) != root or path == root:
+            print(
+                f"[ASSET_EXPORT_VIDEO] 안전하지 않은 세션 경로 거부: "
+                f"session={session_id!r}, path={path!r}, root={root!r}"
+            )
+            raise ValueError("영상 후처리 임시 저장소 경로가 올바르지 않습니다")
+        return path
+
+    def _write_export_video_session(self, manifest: dict) -> None:
+        session_id = self._validate_export_video_session_id(
+            manifest.get("session_id", "")
+        )
+        session_path = self._export_video_session_path(session_id)
+        os.makedirs(session_path, exist_ok=True)
+        manifest["updated_at"] = time.time()
+        manifest["expires_at"] = (
+            manifest["updated_at"] + EXPORT_VIDEO_SESSION_TTL_SECONDS
+        )
+        manifest_path = os.path.join(session_path, "session.json")
+        temp_path = f"{manifest_path}.{uuid.uuid4().hex}.tmp"
+        try:
+            with open(temp_path, "x", encoding="utf-8") as handle:
+                json.dump(manifest, handle, ensure_ascii=False, indent=2)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temp_path, manifest_path)
+        except Exception as exc:
+            print(
+                f"[ASSET_EXPORT_VIDEO] 세션 저장 실패: session={session_id!r}, "
+                f"path={manifest_path!r}, error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            if os.path.isfile(temp_path):
+                try:
+                    os.remove(temp_path)
+                except Exception as cleanup_exc:
+                    print(
+                        f"[ASSET_EXPORT_VIDEO] 실패 임시 manifest 정리 실패: "
+                        f"path={temp_path!r}, error={cleanup_exc}"
+                    )
+                    traceback.print_exc()
+            raise
+
+    def _load_export_video_session(self, session_id: str) -> dict:
+        normalized = self._validate_export_video_session_id(session_id)
+        manifest_path = os.path.join(
+            self._export_video_session_path(normalized),
+            "session.json",
+        )
+        if not os.path.isfile(manifest_path):
+            print(
+                f"[ASSET_EXPORT_VIDEO] 세션 manifest 없음: "
+                f"session={normalized!r}, path={manifest_path!r}"
+            )
+            raise FileNotFoundError("영상 후처리 임시 저장소를 찾을 수 없습니다")
+        try:
+            with open(manifest_path, "r", encoding="utf-8") as handle:
+                manifest = json.load(handle)
+        except Exception as exc:
+            print(
+                f"[ASSET_EXPORT_VIDEO] 세션 manifest 로드 실패: "
+                f"session={normalized!r}, path={manifest_path!r}, error={exc}"
+            )
+            traceback.print_exc()
+            raise RuntimeError("영상 후처리 임시 저장소를 읽지 못했습니다") from exc
+        if not isinstance(manifest, dict) or manifest.get("session_id") != normalized:
+            print(
+                f"[ASSET_EXPORT_VIDEO] 세션 manifest 형식 오류: "
+                f"session={normalized!r}, value={manifest!r}"
+            )
+            raise RuntimeError("영상 후처리 임시 저장소 정보가 손상되었습니다")
+        return manifest
+
+    def _remove_export_video_session_path(self, session_path: str) -> None:
+        root = os.path.realpath(EXPORT_VIDEO_SESSION_DIR)
+        resolved = os.path.realpath(session_path)
+        if os.path.commonpath([resolved, root]) != root or resolved == root:
+            print(
+                f"[ASSET_EXPORT_VIDEO] 안전하지 않은 세션 삭제 거부: "
+                f"path={resolved!r}, root={root!r}"
+            )
+            raise ValueError("삭제할 영상 후처리 임시 저장소 경로가 올바르지 않습니다")
+        if os.path.isdir(resolved):
+            shutil.rmtree(resolved)
+
+    def cleanup_expired_export_video_sessions(self) -> int:
+        root = os.path.realpath(EXPORT_VIDEO_SESSION_DIR)
+        if not os.path.isdir(root):
+            print(
+                f"[ASSET_EXPORT_VIDEO] 만료 세션 정리 스킵: 저장소 없음, root={root!r}"
+            )
+            return 0
+        removed = 0
+        now = time.time()
+        with self._export_video_session_lock:
+            for entry in os.scandir(root):
+                if not entry.is_dir(follow_symlinks=False):
+                    print(
+                        f"[ASSET_EXPORT_VIDEO] 세션 외 파일 정리 스킵: path={entry.path!r}"
+                    )
+                    continue
+                try:
+                    manifest_path = os.path.join(entry.path, "session.json")
+                    expires_at = 0.0
+                    if os.path.isfile(manifest_path):
+                        with open(manifest_path, "r", encoding="utf-8") as handle:
+                            value = json.load(handle)
+                        expires_at = float((value or {}).get("expires_at") or 0)
+                    if expires_at > now:
+                        continue
+                    self._remove_export_video_session_path(entry.path)
+                    removed += 1
+                    print(
+                        f"[ASSET_EXPORT_VIDEO] 만료 세션 정리 완료: path={entry.path!r}"
+                    )
+                except Exception as exc:
+                    print(
+                        f"[ASSET_EXPORT_VIDEO] 만료 세션 정리 실패: "
+                        f"path={entry.path!r}, error={type(exc).__name__}: {exc}"
+                    )
+                    traceback.print_exc()
+        return removed
+
+    @staticmethod
+    def _export_video_plan_signature(
+        character: str,
+        plan: dict,
+        mapping: dict,
+    ) -> str:
+        payload = {
+            "character": character,
+            "selection": plan.get("selection", {}),
+            "mapping": mapping,
+            "files": [
+                {
+                    "slot_id": item.get("slot_id", ""),
+                    "source_filename": item.get("source_filename", ""),
+                    "source_size_bytes": int(item.get("source_size_bytes", 0)),
+                    "source_mtime_ns": int(item.get("source_mtime_ns", 0)),
+                    "filename": item.get("filename", ""),
+                    "is_video_animation": bool(item.get("is_video_animation")),
+                }
+                for item in plan.get("files", [])
+            ],
+        }
+        encoded = json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
+    def _public_export_video_session(self, manifest: dict) -> dict:
+        session_id = manifest.get("session_id", "")
+        items = []
+        for item in manifest.get("items", []):
+            result_filename = str(item.get("result_filename") or "")
+            result_url = ""
+            if result_filename:
+                result_url = (
+                    f"/api/asset_mode/export_video_sessions/{session_id}/"
+                    f"results/{item.get('slot_id', '')}?v={int(item.get('revision') or 0)}"
+                )
+            items.append({
+                "slot_id": item.get("slot_id", ""),
+                "outfit": item.get("outfit", ""),
+                "expression": item.get("expression", ""),
+                "source_filename": item.get("source_filename", ""),
+                "export_filename": item.get("export_filename", ""),
+                "source_size_bytes": int(item.get("source_size_bytes", 0)),
+                "status": item.get("status", "idle"),
+                "progress": float(item.get("progress", 0)),
+                "phase": item.get("phase", ""),
+                "error": item.get("error", ""),
+                "queue_item_id": item.get("queue_item_id", ""),
+                "result_url": result_url,
+                "result_size_bytes": int(item.get("result_size_bytes", 0)),
+                "result_fps": int(item.get("result_fps", 0)),
+                "result_width": int(item.get("result_width", 0)),
+                "result_height": int(item.get("result_height", 0)),
+                "result_format": item.get("result_format", ""),
+            })
+        return {
+            "success": True,
+            "session_id": session_id,
+            "character": manifest.get("character", ""),
+            "created_at": float(manifest.get("created_at", 0)),
+            "updated_at": float(manifest.get("updated_at", 0)),
+            "expires_at": float(manifest.get("expires_at", 0)),
+            "items": items,
+        }
+
+    def create_export_video_session(
+        self,
+        character: str,
+        selected_outfits: list,
+        selected_expressions: list,
+        mapping: dict,
+    ) -> dict:
+        plan = self.build_character_export_plan(
+            character,
+            selected_outfits,
+            selected_expressions,
+            mapping_override=mapping,
+        )
+        if not plan.get("success"):
+            print(
+                f"[ASSET_EXPORT_VIDEO] 세션 생성 검증 실패: "
+                f"character={character!r}, errors={plan.get('errors', [])!r}"
+            )
+            raise ValueError("영상 후처리 단계로 이동하기 전에 이름 치환 규칙을 확인하세요")
+        video_files = [
+            item for item in plan.get("files", [])
+            if item.get("is_video_animation")
+        ]
+        if not video_files:
+            print(
+                f"[ASSET_EXPORT_VIDEO] 세션 생성 거부: 영상 대표 없음, "
+                f"character={character!r}, selection={plan.get('selection', {})!r}"
+            )
+            raise ValueError("선택한 대표 이미지에 영상이 없습니다")
+        signature = self._export_video_plan_signature(character, plan, mapping)
+        now = time.time()
+        os.makedirs(EXPORT_VIDEO_SESSION_DIR, exist_ok=True)
+        self.cleanup_expired_export_video_sessions()
+        with self._export_video_session_lock:
+            for entry in os.scandir(EXPORT_VIDEO_SESSION_DIR):
+                if not entry.is_dir(follow_symlinks=False):
+                    continue
+                try:
+                    existing = self._load_export_video_session(entry.name)
+                    if existing.get("plan_signature") == signature:
+                        print(
+                            f"[ASSET_EXPORT_VIDEO] 기존 세션 재사용: "
+                            f"session={existing.get('session_id')!r}, character={character!r}"
+                        )
+                        return self._public_export_video_session(existing)
+                except Exception as exc:
+                    print(
+                        f"[ASSET_EXPORT_VIDEO] 재사용 후보 세션 확인 실패: "
+                        f"path={entry.path!r}, error={type(exc).__name__}: {exc}"
+                    )
+                    traceback.print_exc()
+            session_id = uuid.uuid4().hex[:16]
+            manifest = {
+                "version": 1,
+                "session_id": session_id,
+                "character": character,
+                "selection": copy.deepcopy(plan.get("selection", {})),
+                "mapping": copy.deepcopy(mapping),
+                "plan_signature": signature,
+                "created_at": now,
+                "updated_at": now,
+                "expires_at": now + EXPORT_VIDEO_SESSION_TTL_SECONDS,
+                "items": [
+                    {
+                        "slot_id": item["slot_id"],
+                        "outfit": item["outfit"],
+                        "expression": item["expression"],
+                        "source_filename": item["source_filename"],
+                        "export_filename": item["filename"],
+                        "source_size_bytes": int(item.get("source_size_bytes", 0)),
+                        "source_mtime_ns": int(item.get("source_mtime_ns", 0)),
+                        "status": "idle",
+                        "progress": 0.0,
+                        "phase": "",
+                        "error": "",
+                        "queue_item_id": "",
+                        "revision": 0,
+                        "result_filename": "",
+                        "result_size_bytes": 0,
+                        "result_fps": 0,
+                        "result_width": 0,
+                        "result_height": 0,
+                        "result_format": "",
+                    }
+                    for item in video_files
+                ],
+            }
+            self._write_export_video_session(manifest)
+            print(
+                f"[ASSET_EXPORT_VIDEO] 세션 생성 완료: session={session_id!r}, "
+                f"character={character!r}, videos={len(video_files)}"
+            )
+            return self._public_export_video_session(manifest)
+
+    def get_export_video_session(self, session_id: str) -> dict:
+        with self._export_video_session_lock:
+            return self._public_export_video_session(
+                self._load_export_video_session(session_id)
+            )
+
+    def prepare_export_video_jobs(
+        self,
+        session_id: str,
+        slot_ids: list[str],
+    ) -> list[dict]:
+        normalized_slots = list(dict.fromkeys(
+            str(value or "").strip() for value in slot_ids
+            if str(value or "").strip()
+        ))
+        if not normalized_slots:
+            print(
+                f"[ASSET_EXPORT_VIDEO] 일괄 적용 거부: 선택 영상 없음, "
+                f"session={session_id!r}, values={slot_ids!r}"
+            )
+            raise ValueError("후처리할 영상을 하나 이상 선택하세요")
+        with self._export_video_session_lock:
+            manifest = self._load_export_video_session(session_id)
+            items = {
+                item.get("slot_id", ""): item
+                for item in manifest.get("items", [])
+            }
+            unknown = [slot_id for slot_id in normalized_slots if slot_id not in items]
+            if unknown:
+                print(
+                    f"[ASSET_EXPORT_VIDEO] 일괄 적용 대상 불일치: "
+                    f"session={session_id!r}, unknown={unknown!r}"
+                )
+                raise ValueError("선택한 영상 중 현재 임시 저장소에 없는 항목이 있습니다")
+            active = [
+                slot_id for slot_id in normalized_slots
+                if items[slot_id].get("status") in {"staging", "queued", "processing"}
+            ]
+            if active:
+                print(
+                    f"[ASSET_EXPORT_VIDEO] 중복 실행 거부: "
+                    f"session={session_id!r}, slots={active!r}"
+                )
+                raise ValueError("이미 후처리 중인 영상은 다시 등록할 수 없습니다")
+            jobs = []
+            for slot_id in normalized_slots:
+                item = items[slot_id]
+                revision = int(item.get("revision") or 0) + 1
+                item.update({
+                    "status": "staging",
+                    "progress": 0.0,
+                    "phase": "video_postprocess_preparing",
+                    "error": "",
+                    "queue_item_id": "",
+                    "revision": revision,
+                })
+                jobs.append({
+                    "slot_id": slot_id,
+                    "revision": revision,
+                    "source_ref": {
+                        "kind": "asset",
+                        "character": manifest.get("character", ""),
+                        "outfit": item.get("outfit", ""),
+                        "expression": item.get("expression", ""),
+                        "filename": item.get("source_filename", ""),
+                    },
+                    "label": (
+                        f"{item.get('outfit', '')} / {item.get('expression', '')} / "
+                        f"{item.get('source_filename', '')}"
+                    ),
+                })
+            self._write_export_video_session(manifest)
+            return jobs
+
+    def mark_export_video_jobs_queued(
+        self,
+        session_id: str,
+        queue_items: dict[str, str],
+    ) -> None:
+        with self._export_video_session_lock:
+            manifest = self._load_export_video_session(session_id)
+            matched_slots = set()
+            for item in manifest.get("items", []):
+                slot_id = str(item.get("slot_id") or "")
+                queue_id = str(queue_items.get(slot_id) or "")
+                if not queue_id:
+                    continue
+                matched_slots.add(slot_id)
+                item.update({
+                    "status": "queued",
+                    "phase": "video_postprocess_queued",
+                    "queue_item_id": queue_id,
+                    "error": "",
+                })
+            unmatched = sorted(set(queue_items) - matched_slots)
+            if unmatched:
+                print(
+                    f"[ASSET_EXPORT_VIDEO] 큐 상태 저장 대상 누락: "
+                    f"session={session_id!r}, slots={unmatched!r}"
+                )
+            self._write_export_video_session(manifest)
+
+    def update_export_video_job_progress(
+        self,
+        session_id: str,
+        slot_id: str,
+        revision: int,
+        detail: dict,
+    ) -> None:
+        with self._export_video_session_lock:
+            manifest = self._load_export_video_session(session_id)
+            item = next(
+                (value for value in manifest.get("items", []) if value.get("slot_id") == slot_id),
+                None,
+            )
+            if not item:
+                print(
+                    f"[ASSET_EXPORT_VIDEO] 진행 상태 대상 없음: "
+                    f"session={session_id!r}, slot={slot_id!r}"
+                )
+                return
+            if int(item.get("revision") or 0) != int(revision):
+                print(
+                    f"[ASSET_EXPORT_VIDEO] 오래된 진행 상태 무시: "
+                    f"session={session_id!r}, slot={slot_id!r}, revision={revision!r}, "
+                    f"current={item.get('revision')!r}"
+                )
+                return
+            percentage = float((detail or {}).get("percentage") or 0)
+            normalized_progress = max(0.0, min(100.0, percentage))
+            phase = str((detail or {}).get("phase") or "")
+            if (
+                phase == str(item.get("phase") or "")
+                and abs(normalized_progress - float(item.get("progress") or 0)) < 1.0
+            ):
+                return
+            item["status"] = "processing" if percentage < 100 else item.get("status", "processing")
+            item["progress"] = normalized_progress
+            item["phase"] = phase
+            self._write_export_video_session(manifest)
+
+    def mark_export_video_job_failed(
+        self,
+        session_id: str,
+        slot_id: str,
+        revision: int,
+        error: str,
+    ) -> None:
+        with self._export_video_session_lock:
+            manifest = self._load_export_video_session(session_id)
+            item = next(
+                (value for value in manifest.get("items", []) if value.get("slot_id") == slot_id),
+                None,
+            )
+            if not item or int(item.get("revision") or 0) != int(revision):
+                print(
+                    f"[ASSET_EXPORT_VIDEO] 실패 상태 대상 없음/교체됨: "
+                    f"session={session_id!r}, slot={slot_id!r}, revision={revision!r}"
+                )
+                return
+            result_filename = str(item.get("result_filename") or "")
+            has_existing_result = False
+            if result_filename:
+                result_path = os.path.realpath(os.path.join(
+                    self._export_video_session_path(session_id),
+                    "results",
+                    result_filename,
+                ))
+                result_root = os.path.realpath(os.path.join(
+                    self._export_video_session_path(session_id),
+                    "results",
+                ))
+                has_existing_result = (
+                    os.path.commonpath([result_path, result_root]) == result_root
+                    and os.path.isfile(result_path)
+                )
+            item.update({
+                "status": "completed" if has_existing_result else "failed",
+                "progress": 100.0 if has_existing_result else 0.0,
+                "phase": "error",
+                "error": (
+                    "새 후처리에 실패해 기존 임시 결과를 유지했습니다: "
+                    if has_existing_result else ""
+                ) + str(error or "영상 후처리 실패"),
+            })
+            self._write_export_video_session(manifest)
+
+    def commit_export_video_result(
+        self,
+        session_id: str,
+        slot_id: str,
+        revision: int,
+        source_reference: dict,
+        main_path: str,
+        raw_path: str,
+        extension: str,
+        metadata: dict,
+    ) -> dict:
+        normalized_extension = str(extension or "").strip().lower()
+        if normalized_extension not in ASSET_ANIMATION_EXTENSIONS:
+            print(
+                f"[ASSET_EXPORT_VIDEO] 결과 확장자 오류: extension={extension!r}, "
+                f"session={session_id!r}, slot={slot_id!r}"
+            )
+            raise ValueError("영상 후처리 임시 결과는 AVIF 또는 WebP여야 합니다")
+        for label, path in (("합성본", main_path), ("원본", raw_path)):
+            if not os.path.isfile(path):
+                print(
+                    f"[ASSET_EXPORT_VIDEO] 스테이징 {label} 누락: path={path!r}, "
+                    f"session={session_id!r}, slot={slot_id!r}"
+                )
+                raise FileNotFoundError(f"영상 후처리 {label} 결과가 없습니다")
+        with self._export_video_session_lock:
+            manifest = self._load_export_video_session(session_id)
+            item = next(
+                (value for value in manifest.get("items", []) if value.get("slot_id") == slot_id),
+                None,
+            )
+            if not item:
+                print(
+                    f"[ASSET_EXPORT_VIDEO] 결과 저장 대상 없음: "
+                    f"session={session_id!r}, slot={slot_id!r}"
+                )
+                raise FileNotFoundError("영상 후처리 임시 저장 대상을 찾을 수 없습니다")
+            if int(item.get("revision") or 0) != int(revision):
+                print(
+                    f"[ASSET_EXPORT_VIDEO] 오래된 결과 폐기: session={session_id!r}, "
+                    f"slot={slot_id!r}, revision={revision!r}, current={item.get('revision')!r}"
+                )
+                for path in (main_path, raw_path):
+                    if os.path.isfile(path):
+                        os.remove(path)
+                return {"success": True, "discarded": True, "slot_id": slot_id}
+            expected_ref = {
+                "kind": "asset",
+                "character": manifest.get("character", ""),
+                "outfit": item.get("outfit", ""),
+                "expression": item.get("expression", ""),
+                "filename": item.get("source_filename", ""),
+            }
+            if any(
+                str(source_reference.get(key) or "") != str(value or "")
+                for key, value in expected_ref.items()
+            ):
+                print(
+                    f"[ASSET_EXPORT_VIDEO] 결과 원본 참조 불일치: "
+                    f"expected={expected_ref!r}, actual={source_reference!r}"
+                )
+                raise ValueError("영상 후처리 결과의 원본 정보가 임시 저장소와 다릅니다")
+            session_path = self._export_video_session_path(session_id)
+            result_dir = os.path.join(session_path, "results")
+            os.makedirs(result_dir, exist_ok=True)
+            result_filename = f"{slot_id}{normalized_extension}"
+            result_path = os.path.join(result_dir, result_filename)
+            previous_filename = str(item.get("result_filename") or "")
+            os.replace(main_path, result_path)
+            try:
+                os.remove(raw_path)
+            except Exception as exc:
+                print(
+                    f"[ASSET_EXPORT_VIDEO] 불필요한 raw 결과 정리 실패: "
+                    f"path={raw_path!r}, error={exc}"
+                )
+                traceback.print_exc()
+            if previous_filename and previous_filename != result_filename:
+                previous_path = os.path.realpath(os.path.join(result_dir, previous_filename))
+                if (
+                    os.path.commonpath([previous_path, os.path.realpath(result_dir)])
+                    == os.path.realpath(result_dir)
+                    and os.path.isfile(previous_path)
+                ):
+                    try:
+                        os.remove(previous_path)
+                    except Exception as exc:
+                        print(
+                            f"[ASSET_EXPORT_VIDEO] 이전 결과 정리 실패: "
+                            f"path={previous_path!r}, error={exc}"
+                        )
+                        traceback.print_exc()
+            item.update({
+                "status": "completed",
+                "progress": 100.0,
+                "phase": "video_postprocess_complete",
+                "error": "",
+                "result_filename": result_filename,
+                "result_size_bytes": os.path.getsize(result_path),
+                "result_fps": int((metadata or {}).get("fps") or 0),
+                "result_width": int((metadata or {}).get("output_width") or 0),
+                "result_height": int((metadata or {}).get("output_height") or 0),
+                "result_format": normalized_extension.lstrip("."),
+            })
+            self._write_export_video_session(manifest)
+            print(
+                f"[ASSET_EXPORT_VIDEO] 임시 결과 저장 완료: session={session_id!r}, "
+                f"slot={slot_id!r}, result={result_path!r}"
+            )
+            return {
+                "success": True,
+                "export_video_session_id": session_id,
+                "export_video_slot_id": slot_id,
+                "filename": result_filename,
+                "is_video_animation": True,
+            }
+
+    def get_export_video_result_path(self, session_id: str, slot_id: str) -> str:
+        with self._export_video_session_lock:
+            manifest = self._load_export_video_session(session_id)
+            item = next(
+                (value for value in manifest.get("items", []) if value.get("slot_id") == slot_id),
+                None,
+            )
+            if not item or not item.get("result_filename"):
+                print(
+                    f"[ASSET_EXPORT_VIDEO] 임시 결과 없음: "
+                    f"session={session_id!r}, slot={slot_id!r}"
+                )
+                raise FileNotFoundError("영상 후처리 임시 결과가 없습니다")
+            result_dir = os.path.realpath(os.path.join(
+                self._export_video_session_path(session_id),
+                "results",
+            ))
+            result_path = os.path.realpath(os.path.join(
+                result_dir,
+                str(item.get("result_filename") or ""),
+            ))
+            if (
+                os.path.commonpath([result_path, result_dir]) != result_dir
+                or not os.path.isfile(result_path)
+            ):
+                print(
+                    f"[ASSET_EXPORT_VIDEO] 임시 결과 경로 오류/누락: "
+                    f"session={session_id!r}, slot={slot_id!r}, path={result_path!r}"
+                )
+                raise FileNotFoundError("영상 후처리 임시 결과 파일이 없습니다")
+            return result_path
+
+    def build_export_video_session_plan(
+        self,
+        session_id: str,
+    ) -> tuple[dict, dict, dict]:
+        with self._export_video_session_lock:
+            manifest = self._load_export_video_session(session_id)
+            active_items = [
+                item for item in manifest.get("items", [])
+                if item.get("status") in {"staging", "queued", "processing"}
+            ]
+            if active_items:
+                labels = [
+                    f"{item.get('outfit', '')} / {item.get('expression', '')}"
+                    for item in active_items
+                ]
+                print(
+                    f"[ASSET_EXPORT_VIDEO] 처리 중 ZIP 생성 거부: "
+                    f"session={session_id!r}, active={labels!r}"
+                )
+                raise ValueError("영상 후처리가 끝난 뒤 ZIP으로 내보내세요")
+            overrides = {}
+            for item in manifest.get("items", []):
+                if item.get("status") != "completed" or not item.get("result_filename"):
+                    continue
+                result_path = self.get_export_video_result_path(
+                    session_id,
+                    item.get("slot_id", ""),
+                )
+                overrides[item["slot_id"]] = {
+                    "path": result_path,
+                    "extension": os.path.splitext(result_path)[1].lower(),
+                }
+            selection = manifest.get("selection", {})
+            plan = self.build_character_export_plan(
+                manifest.get("character", ""),
+                selection.get("outfits", []),
+                selection.get("expressions", []),
+                mapping_override=manifest.get("mapping", {}),
+                video_overrides=overrides,
+            )
+            if not plan.get("success"):
+                print(
+                    f"[ASSET_EXPORT_VIDEO] ZIP 직전 재검증 실패: "
+                    f"session={session_id!r}, errors={plan.get('errors', [])!r}"
+                )
+                raise ValueError("임시 저장소 생성 후 대표 이미지나 이름 치환 규칙이 변경되었습니다")
+            expected_sources = {
+                item.get("slot_id", ""): (
+                    item.get("source_filename", ""),
+                    int(item.get("source_size_bytes", 0)),
+                    int(item.get("source_mtime_ns", 0)),
+                )
+                for item in manifest.get("items", [])
+            }
+            current_sources = {
+                item.get("slot_id", ""): (
+                    item.get("source_filename", ""),
+                    int(item.get("source_size_bytes", 0)),
+                    int(item.get("source_mtime_ns", 0)),
+                )
+                for item in plan.get("files", [])
+                if item.get("is_video_animation")
+            }
+            if expected_sources != current_sources:
+                print(
+                    f"[ASSET_EXPORT_VIDEO] 대표 영상 변경 감지: session={session_id!r}, "
+                    f"expected={expected_sources!r}, current={current_sources!r}"
+                )
+                raise ValueError("영상 후처리 중 대표 영상이 변경되었습니다. 새 임시 저장소를 시작하세요")
+            return manifest, plan, overrides
+
+    def delete_export_video_session(self, session_id: str) -> None:
+        with self._export_video_session_lock:
+            session_path = self._export_video_session_path(session_id)
+            if not os.path.isdir(session_path):
+                print(
+                    f"[ASSET_EXPORT_VIDEO] 정리할 세션 없음: session={session_id!r}"
+                )
+                return
+            self._remove_export_video_session_path(session_path)
+            print(
+                f"[ASSET_EXPORT_VIDEO] ZIP 완료 세션 정리: session={session_id!r}"
+            )
 
     def save_character_name_mapping(self, character: str, export_name: str,
                                     outfit_mapping: dict, expression_mapping: dict,
@@ -3634,6 +4395,7 @@ class AssetMode:
         selected_expressions=None,
         mapping_override: dict | None = None,
         export_plan: dict | None = None,
+        video_overrides: dict | None = None,
     ):
         """캐릭터의 대표 이미지를 이름 치환 규칙에 따라 이름_복장_표정.ext로 만들어 zip 반환.
         selected_outfits / selected_expressions(디렉터리명 리스트)가 주어지면 해당 항목만 내보낸다.
@@ -3647,6 +4409,7 @@ class AssetMode:
             selected_outfits,
             selected_expressions,
             mapping_override,
+            video_overrides,
         )
         if not plan.get("success"):
             for issue in plan.get("errors", []):
@@ -3694,9 +4457,30 @@ class AssetMode:
 
                 orig_ext = os.path.splitext(rep_file)[1].lower()
                 if item.get("is_video_animation"):
-                    zf.write(img_path, zip_name)
+                    override = (
+                        video_overrides.get(item.get("slot_id", ""))
+                        if isinstance(video_overrides, dict)
+                        else None
+                    )
+                    override_path = os.path.realpath(
+                        str((override or {}).get("path") or "")
+                    )
+                    source_for_zip = img_path
+                    if override_path and os.path.isfile(override_path):
+                        source_for_zip = override_path
+                    elif override:
+                        print(
+                            f"[ZIP 내보내기] 영상 임시 결과 누락: "
+                            f"slot={item.get('slot_id', '')!r}, path={override_path!r}, "
+                            f"source={img_path!r}"
+                        )
+                        raise FileNotFoundError(
+                            "영상 후처리 임시 결과 파일이 없어 ZIP을 만들 수 없습니다"
+                        )
+                    zf.write(source_for_zip, zip_name)
                     log.info(
-                        f"[ZIP 내보내기] [{added + 1}] 영상 원본 그대로 추가: "
+                        f"[ZIP 내보내기] [{added + 1}] 영상 "
+                        f"{'후처리 결과' if source_for_zip != img_path else '원본'} 추가: "
                         f"{zip_name} (포맷·품질 설정 무시)"
                     )
                 elif orig_ext == ext and not need_recompress:

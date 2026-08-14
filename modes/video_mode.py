@@ -829,6 +829,7 @@ class VideoMode:
         self.invalidate_backup_cache_func = None
         self.resolve_asset_reference_func = None
         self.commit_asset_video_func = None
+        self.commit_export_video_func = None
 
     def _config(self) -> dict:
         if not callable(self.get_config):
@@ -3065,6 +3066,28 @@ Vision-produced static Visual Context:
                 "source_info": copy.deepcopy(original_metadata),
                 "created_at": time.time(),
             }
+            export_session_id = str(
+                (params or {}).get("export_video_session_id") or ""
+            ).strip()
+            export_slot_id = str(
+                (params or {}).get("export_video_slot_id") or ""
+            ).strip()
+            export_revision = int(
+                (params or {}).get("export_video_revision") or 0
+            )
+            if export_session_id:
+                if not export_slot_id or export_revision <= 0:
+                    print(
+                        "[VIDEO:REPROCESS] ZIP 임시 저장소 문맥 누락: "
+                        f"session={export_session_id!r}, slot={export_slot_id!r}, "
+                        f"revision={export_revision!r}"
+                    )
+                    raise ValueError("ZIP 영상 후처리 임시 저장소 정보가 올바르지 않습니다")
+                manifest.update({
+                    "export_video_session_id": export_session_id,
+                    "export_video_slot_id": export_slot_id,
+                    "export_video_revision": export_revision,
+                })
             manifest_path = os.path.join(job_dir, "job.json")
             with open(manifest_path, "x", encoding="utf-8") as handle:
                 json.dump(manifest, handle, indent=2, ensure_ascii=False)
@@ -3076,7 +3099,7 @@ Vision-produced static Visual Context:
                 f"fps={fps}, target={target_size_bytes:,}, "
                 f"upscale={settings['enabled']}x{output_scale}, format={output_format}"
             )
-            return {
+            staged_result = {
                 "job_dir": job_dir,
                 "job_kind": "existing_animation",
                 "spool_id": spool_id,
@@ -3090,6 +3113,13 @@ Vision-produced static Visual Context:
                 "fps": fps,
                 "target_size_bytes": target_size_bytes,
             }
+            if export_session_id:
+                staged_result.update({
+                    "export_video_session_id": export_session_id,
+                    "export_video_slot_id": export_slot_id,
+                    "export_video_revision": export_revision,
+                })
+            return staged_result
         except Exception as exc:
             print(
                 "[VIDEO:REPROCESS] 스풀 저장 실패: "
@@ -3335,6 +3365,15 @@ Vision-produced static Visual Context:
                                     fallback_backup=manifest.get("source_backup"),
                                 )
                             ),
+                            "export_video_session_id": str(
+                                manifest.get("export_video_session_id") or ""
+                            ),
+                            "export_video_slot_id": str(
+                                manifest.get("export_video_slot_id") or ""
+                            ),
+                            "export_video_revision": int(
+                                manifest.get("export_video_revision") or 0
+                            ),
                         }
                     )
                 except Exception as exc:
@@ -3417,10 +3456,85 @@ Vision-produced static Visual Context:
                 manifest.get("source_ref"),
                 fallback_backup=manifest.get("source_backup"),
             )
+            export_session_id = str(
+                manifest.get("export_video_session_id") or ""
+            ).strip()
+            export_slot_id = str(
+                manifest.get("export_video_slot_id") or ""
+            ).strip()
+            export_revision = int(
+                manifest.get("export_video_revision") or 0
+            )
             mode = str(manifest.get("mode") or "")
             elapsed = float(manifest.get("render_elapsed") or 0.0) + (
                 time.time() - started
             )
+            if export_session_id:
+                if source_ref.get("kind") != "asset":
+                    print(
+                        "[VIDEO:POSTPROCESS] ZIP 임시 결과 원본 종류 오류: "
+                        f"item={queue_item_id}, source={source_ref!r}, "
+                        f"session={export_session_id!r}"
+                    )
+                    raise ValueError("ZIP 영상 후처리는 에셋 대표 영상만 지원합니다")
+                if not callable(self.commit_export_video_func):
+                    print(
+                        "[VIDEO:POSTPROCESS] ZIP 임시 결과 저장 실패: callback 없음, "
+                        f"item={queue_item_id}, session={export_session_id!r}, "
+                        f"slot={export_slot_id!r}"
+                    )
+                    raise RuntimeError("ZIP 영상 후처리 임시 저장 함수가 연결되지 않았습니다")
+                export_result = self.commit_export_video_func(
+                    export_session_id,
+                    export_slot_id,
+                    export_revision,
+                    source_ref,
+                    processed["main_path"],
+                    processed["raw_path"],
+                    extension,
+                    {
+                        **manifest,
+                        "output_size_bytes": int(processed.get("output_size_bytes") or 0),
+                        "quality": int(processed.get("quality") or 0),
+                    },
+                )
+                if not isinstance(export_result, dict) or not export_result.get("success"):
+                    print(
+                        "[VIDEO:POSTPROCESS] ZIP 임시 결과 저장 응답 오류: "
+                        f"item={queue_item_id}, result={export_result!r}"
+                    )
+                    raise RuntimeError("ZIP 영상 후처리 임시 결과를 저장하지 못했습니다")
+                manifest_path = os.path.join(job_dir, "job.json")
+                if os.path.isfile(manifest_path):
+                    os.remove(manifest_path)
+                try:
+                    self._remove_exact_tree(job_dir, spool_root)
+                except Exception as cleanup_exc:
+                    print(
+                        "[VIDEO:POSTPROCESS] ZIP 임시 결과 스풀 정리 실패"
+                        "(재등록 방지 manifest는 제거됨): "
+                        f"path={job_dir!r}, error={cleanup_exc}"
+                    )
+                    traceback.print_exc()
+                print(
+                    "[VIDEO:POSTPROCESS] ZIP 임시 영상 후처리 완료: "
+                    f"item={queue_item_id}, session={export_session_id!r}, "
+                    f"slot={export_slot_id!r}, format={extension}, elapsed={elapsed:.2f}s"
+                )
+                return {
+                    **export_result,
+                    "format": extension.lstrip("."),
+                    "mode": mode,
+                    "width": int(manifest.get("output_width") or 0),
+                    "height": int(manifest.get("output_height") or 0),
+                    "upscale_enabled": bool(processed["upscale_enabled"]),
+                    "upscale_scale": int(processed["upscale_scale"]),
+                    "upscale_model": manifest.get("upscale_model", ""),
+                    "fps": int(manifest.get("fps") or VIDEO_FPS),
+                    "target_size_bytes": int(manifest.get("target_size_bytes") or 0),
+                    "output_size_bytes": int(processed.get("output_size_bytes") or 0),
+                    "quality": int(processed.get("quality") or 0),
+                }
             if source_ref.get("kind") == "asset":
                 if not callable(self.commit_asset_video_func):
                     print(

@@ -100,6 +100,25 @@ def test_video_postprocess_accepts_all_three_upscale_models() -> None:
         )
 
 
+def test_video_postprocess_global_defaults_include_batch_export_controls() -> None:
+    normalized = postprocess_module.normalize_video_postprocess_config(
+        {
+            "enabled": False,
+            "scale": 3,
+            "model": "anime4k-fast-m",
+            "target_size_mb": 18.5,
+            "fps": 30,
+            "output_format": "webp",
+        }
+    )
+
+    assert normalized["target_size_mb"] == 18.5
+    assert normalized["fps"] == 30
+    assert normalized["output_format"] == "webp"
+    assert normalized["enabled"] is False
+    assert normalized["scale"] == 3
+
+
 def _valid_body(prefix: str = "") -> str:
     return (
         prefix
@@ -1287,6 +1306,96 @@ async def test_video_postprocess_routes_asset_result_to_asset_commit_without_bac
         "source_filename": "source.webp",
         "is_video_animation": True,
     })]
+    assert not job_dir.exists()
+    assert not list(backup_dir.glob("*.webp"))
+
+
+@pytest.mark.asyncio
+async def test_video_postprocess_routes_export_session_result_to_temporary_commit(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    backup_dir = tmp_path / "backups"
+    job_dir = backup_dir / "_video_postprocess_spool" / "export-session-job"
+    job_dir.mkdir(parents=True)
+    (job_dir / "input.webp").write_bytes(b"animated-source")
+    source_ref = {
+        "kind": "asset",
+        "character": "alice",
+        "outfit": "uniform",
+        "expression": "smile",
+        "filename": "source.webp",
+    }
+    manifest = {
+        "version": 1,
+        "job_kind": "existing_animation",
+        "spool_id": "export-session-job",
+        "base_name": "temporary-export",
+        "mode": "reprocess",
+        "source_ref": source_ref,
+        "source_backup": "",
+        "output_width": 64,
+        "output_height": 64,
+        "duration": 2.0,
+        "fps": 24,
+        "target_size_bytes": 1024 * 1024,
+        "upscale_enabled": False,
+        "upscale_scale": 2,
+        "upscale_model": "",
+        "output_format": "webp",
+        "export_video_session_id": "0123456789abcdef",
+        "export_video_slot_id": "slot-1",
+        "export_video_revision": 2,
+    }
+    (job_dir / "job.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    async def fake_process(path, *, settings, progress_callback=None):
+        main = job_dir / "result_main.webp"
+        raw = job_dir / "result_raw.webp"
+        main.write_bytes(b"temporary-main")
+        raw.write_bytes(b"temporary-raw")
+        return {
+            "manifest": manifest,
+            "main_path": str(main),
+            "raw_path": str(raw),
+            "extension": ".webp",
+            "upscale_enabled": False,
+            "upscale_scale": 1,
+            "output_size_bytes": len(b"temporary-main"),
+            "quality": 82,
+        }
+
+    temporary_commits = []
+
+    def commit_temporary(session_id, slot_id, revision, reference, main, raw, extension, metadata):
+        temporary_commits.append((session_id, slot_id, revision, reference, extension))
+        assert Path(main).read_bytes() == b"temporary-main"
+        assert Path(raw).read_bytes() == b"temporary-raw"
+        return {
+            "success": True,
+            "export_video_session_id": session_id,
+            "export_video_slot_id": slot_id,
+            "filename": "slot-1.webp",
+        }
+
+    monkeypatch.setattr(video_module, "process_staged_video", fake_process)
+    mode = VideoMode()
+    mode.get_backup_dir = lambda: str(backup_dir)
+    mode.get_config = lambda: {"video_postprocess": {"enabled": False}}
+    mode.commit_export_video_func = commit_temporary
+    mode.commit_asset_video_func = lambda *args: pytest.fail(
+        "ZIP 임시 결과가 영구 에셋 저장으로 라우팅됨"
+    )
+
+    result = await mode.postprocess_staged_video(
+        {"job_dir": str(job_dir)},
+        queue_item_id="export-post-1",
+    )
+
+    assert result["export_video_session_id"] == "0123456789abcdef"
+    assert temporary_commits == [
+        ("0123456789abcdef", "slot-1", 2, source_ref, ".webp")
+    ]
     assert not job_dir.exists()
     assert not list(backup_dir.glob("*.webp"))
 

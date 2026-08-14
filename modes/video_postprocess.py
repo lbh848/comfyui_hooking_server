@@ -44,6 +44,9 @@ DEFAULT_VIDEO_POSTPROCESS_CONFIG = {
     "enabled": True,
     "scale": 2,
     "model": "realesr-animevideov3",
+    "target_size_mb": 10.0,
+    "fps": 24,
+    "output_format": "avif",
     "gpu_id": "auto",
     "tile_size": 0,
     "worker_count": 1,
@@ -223,6 +226,24 @@ def normalize_video_postprocess_config(raw: object) -> dict:
         print(f"[VIDEO:POSTPROCESS:CONFIG] {message}")
         raise ValueError(message)
     normalized["model"] = model
+
+    target_size_bytes = normalize_video_reprocess_target_bytes(
+        source.get("target_size_mb", normalized["target_size_mb"])
+    )
+    normalized["target_size_mb"] = target_size_bytes / (1024 * 1024)
+
+    normalized["fps"] = normalize_video_reprocess_fps(
+        source.get("fps", normalized["fps"])
+    )
+
+    output_format = str(
+        source.get("output_format", normalized["output_format"]) or ""
+    ).strip().lower()
+    if output_format not in VIDEO_OUTPUT_FORMATS:
+        message = f"지원하지 않는 영상 출력 형식입니다: {output_format!r}"
+        print(f"[VIDEO:POSTPROCESS:CONFIG] {message}")
+        raise ValueError(message)
+    normalized["output_format"] = output_format
 
     raw_gpu_id = source.get("gpu_id", normalized["gpu_id"])
     if isinstance(raw_gpu_id, str) and raw_gpu_id.strip().lower() == "auto":

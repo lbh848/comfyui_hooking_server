@@ -29,6 +29,27 @@ def test_animated_cards_expose_existing_video_postprocess_action() -> None:
     assert "img.is_animated" in FRONTEND
 
 
+def test_name_mapping_wizard_adds_zip_only_batch_video_postprocess_step() -> None:
+    wizard = FRONTEND.split("async function openNameMappingModal()", 1)[1].split(
+        "let assetRefPickerSelected", 1
+    )[0]
+
+    assert 'data-step="4"' in wizard
+    assert 'id="nm-page-4"' in wizard
+    assert 'id="nm-video-store"' in wizard
+    assert "영상 후처리 설정" in wizard
+    assert "일괄 적용" in wizard
+    assert "function nmHandleFinalAction()" in wizard
+    assert "videoFiles.length" in wizard
+    assert "/api/asset_mode/export_video_sessions" in wizard
+    assert "export_video_session_id: exportVideoSessionId" in wizard
+    assert ".nm-nested-overlay" in FRONTEND
+    assert "z-index: 10020" in FRONTEND
+    # 기존 카드/백업 단일 후처리는 새 단계와 병행해 그대로 유지한다.
+    assert FRONTEND.count('class="asset-video-postprocess-btn"') == 2
+    assert "openBackupVideoReprocess(" in FRONTEND
+
+
 def test_backup_card_disables_regen_and_edit_for_animated_backups() -> None:
     """영상(is_animated) 백업 카드의 재생성/수정 버튼은 회색 disabled로 막힌다.
     에셋 카드의 EDIT 툴 차단과 같은 패턴(b.is_animated 우선 평가)."""
@@ -269,9 +290,9 @@ def test_video_modal_orders_direction_and_pipeline_before_postprocess() -> None:
     output = modal.index('name="video-output-format"')
 
     assert last_frame < direction < pipeline < upscale < output
-    assert 'id="video-generation-visual-context-from-image" type="checkbox" checked' in modal
-    assert "그림 직접 분석" in modal
-    assert "생성 프롬프트에서 구축" in FRONTEND
+    assert 'id="video-generation-visual-context-source"' in modal
+    assert '<option value="image" selected>그림 직접 분석</option>' in modal
+    assert '<option value="prompt">생성 프롬프트에서 구축</option>' in modal
     assert "visual_context_source: visualContextSource" in FRONTEND
 
 

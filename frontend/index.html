@@ -1694,21 +1694,7 @@
         }
         .video-ai-context-copy { flex: 1 1 auto; }
         .video-ai-context-option .toggle-switch { flex: 0 0 50px; }
-        .video-context-source-status {
-            display: inline-block;
-            margin-left: 7px;
-            padding: 2px 7px;
-            border-radius: 999px;
-            color: #7fe8c4;
-            background: rgba(77, 226, 174, .11);
-            font-size: .61rem;
-            font-weight: 750;
-            vertical-align: 1px;
-        }
-        .video-context-source-status.prompt {
-            color: #d8b4ed;
-            background: rgba(184, 118, 210, .13);
-        }
+        .video-ai-context-option .video-select { width: auto; flex: 0 0 auto; }
         .video-summary-bar {
             display: flex;
             align-items: center;
@@ -3207,7 +3193,7 @@
         }
         .nm-stepper {
             display: grid;
-            grid-template-columns: repeat(3, minmax(0, 1fr));
+            grid-template-columns: repeat(4, minmax(0, 1fr));
             margin: 0;
             padding: 0;
             list-style: none;
@@ -3703,6 +3689,111 @@
             background: var(--warn);
             box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 13%, transparent);
         }
+        .nm-video-toolbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-bottom: 12px;
+            padding: 11px 12px;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            background: color-mix(in srgb, var(--surface2) 52%, var(--surface));
+        }
+        .nm-video-toolbar-copy { min-width: 0; }
+        .nm-video-toolbar-title { font-size: 0.82rem; font-weight: 800; }
+        .nm-video-toolbar-summary { margin-top: 3px; color: var(--text2); font-size: 0.7rem; }
+        .nm-video-toolbar-actions { display: flex; flex-wrap: wrap; gap: 7px; }
+        .nm-video-store {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+            gap: 11px;
+        }
+        .nm-video-card {
+            overflow: hidden;
+            border: 1px solid var(--border);
+            border-radius: 11px;
+            background: color-mix(in srgb, var(--surface2) 38%, var(--surface));
+        }
+        .nm-video-preview {
+            position: relative;
+            aspect-ratio: 16 / 10;
+            overflow: hidden;
+            background: #07090f;
+        }
+        .nm-video-preview img { width: 100%; height: 100%; object-fit: contain; display: block; }
+        .nm-video-preview-badge {
+            position: absolute;
+            top: 7px;
+            left: 7px;
+            padding: 3px 7px;
+            border-radius: 999px;
+            background: rgba(0, 0, 0, 0.72);
+            color: #fff;
+            font-size: 0.62rem;
+            font-weight: 800;
+        }
+        .nm-video-card-body { padding: 9px 10px 10px; }
+        .nm-video-card-title { overflow: hidden; font-size: 0.76rem; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
+        .nm-video-card-file { overflow: hidden; margin-top: 3px; color: var(--text2); font-size: 0.66rem; text-overflow: ellipsis; white-space: nowrap; }
+        .nm-video-status-row { display: flex; align-items: center; gap: 7px; margin-top: 8px; }
+        .nm-video-status {
+            padding: 3px 7px;
+            border-radius: 999px;
+            background: color-mix(in srgb, var(--border) 45%, transparent);
+            color: var(--text2);
+            font-size: 0.63rem;
+            font-weight: 800;
+        }
+        .nm-video-status.completed { color: #a7f3d0; background: rgba(16, 185, 129, 0.16); }
+        .nm-video-status.processing,
+        .nm-video-status.queued,
+        .nm-video-status.staging { color: #93c5fd; background: rgba(59, 130, 246, 0.16); }
+        .nm-video-status.failed { color: #fecaca; background: rgba(239, 68, 68, 0.16); }
+        .nm-video-progress { flex: 1; height: 5px; overflow: hidden; border-radius: 999px; background: var(--border); }
+        .nm-video-progress > span { display: block; height: 100%; background: var(--accent); transition: width .2s; }
+        .nm-video-error { margin-top: 7px; color: var(--error); font-size: 0.66rem; line-height: 1.4; }
+        .nm-video-empty { padding: 42px 18px; color: var(--text2); text-align: center; }
+        .nm-nested-overlay {
+            position: fixed;
+            inset: 0;
+            z-index: 10020;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 22px;
+            background: rgba(2, 6, 18, 0.76);
+            backdrop-filter: blur(4px);
+        }
+        .nm-nested-dialog {
+            display: flex;
+            flex-direction: column;
+            width: min(720px, 100%);
+            max-height: min(820px, calc(100vh - 44px));
+            overflow: hidden;
+            border: 1px solid var(--border);
+            border-radius: 15px;
+            background: var(--surface);
+            box-shadow: 0 26px 72px rgba(0, 0, 0, .52);
+        }
+        .nm-nested-header,
+        .nm-nested-footer { display: flex; align-items: center; gap: 10px; padding: 14px 16px; border-color: var(--border); }
+        .nm-nested-header { border-bottom: 1px solid var(--border); }
+        .nm-nested-header h4 { flex: 1; margin: 0; font-size: .98rem; }
+        .nm-nested-footer { justify-content: flex-end; border-top: 1px solid var(--border); }
+        .nm-nested-body { flex: 1; min-height: 0; overflow-y: auto; padding: 16px; }
+        .nm-video-settings-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+        .nm-video-setting { display: grid; gap: 6px; padding: 11px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface2); }
+        .nm-video-setting > span { font-size: .72rem; font-weight: 800; }
+        .nm-video-setting input,
+        .nm-video-setting select { width: 100%; padding: 7px 8px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); color: var(--text); }
+        .nm-video-choice-list { display: grid; gap: 8px; }
+        .nm-video-choice { display: grid; grid-template-columns: auto 72px minmax(0, 1fr); align-items: center; gap: 10px; padding: 8px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface2); }
+        .nm-video-choice img { width: 72px; height: 48px; object-fit: cover; border-radius: 6px; background: #000; }
+        .nm-video-choice strong,
+        .nm-video-choice small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .nm-video-choice small { margin-top: 3px; color: var(--text2); }
         @media (max-width: 760px) {
             .nm-overlay {
                 align-items: stretch;
@@ -3730,7 +3821,8 @@
                 padding: 17px 16px 20px;
             }
             .nm-select-grid,
-            .nm-settings-grid {
+            .nm-settings-grid,
+            .nm-video-settings-grid {
                 grid-template-columns: 1fr;
             }
             .nm-dialog-footer,
@@ -10523,7 +10615,7 @@
             position: fixed;
             bottom: 18px;
             left: 0;
-            z-index: 9000;
+            z-index: 2147483647;
             display: flex;
             flex-direction: column;
             align-items: flex-start;
@@ -14152,14 +14244,20 @@
                             <span class="video-panel-hint" style="display:block; margin-top:3px;">Visual Context 분석과 편집용 AI 연출 초안의 문맥을 각각 설정합니다.</span>
                         </div>
                     </div>
-                    <label class="video-secondary-row video-ai-context-option">
+                    <label class="video-secondary-row video-ai-context-option video-visual-context-row">
                         <span class="video-ai-context-copy">
                             <span class="video-panel-title">Visual Context 입력</span>
-                            <span id="video-visual-context-source-status" class="video-context-source-status">그림 직접 분석</span>
                             <span id="video-visual-context-source-hint" class="video-panel-hint" style="display:block; margin-top:3px;">LLM이 시작·마지막 프레임을 직접 보고 정적 문맥을 만듭니다.</span>
                         </span>
+                        <select id="video-generation-visual-context-source" class="video-select" onchange="onVideoVisualContextSourceChange()">
+                            <option value="image" selected>그림 직접 분석</option>
+                            <option value="prompt">생성 프롬프트에서 구축</option>
+                        </select>
+                    </label>
+                    <label class="video-secondary-row video-ai-context-option">
+                        <span class="video-ai-context-copy"><span class="video-panel-title">세컨더리 애니메이션</span><span class="video-panel-hint" style="display:block; margin-top:3px;">최종 H3 프롬프트에 호흡·머리카락 관성 같은 미세 보조 모션 포함</span></span>
                         <span class="toggle-switch">
-                            <input id="video-generation-visual-context-from-image" type="checkbox" checked onchange="onVideoVisualContextSourceChange()">
+                            <input id="video-generation-secondary-motion" type="checkbox" checked onchange="onVideoSecondaryMotionChange()">
                             <span class="toggle-slider"></span>
                         </span>
                     </label>
@@ -14202,13 +14300,6 @@
                         </div>
                         <div id="video-generation-draft-note" class="video-draft-note" aria-live="polite"></div>
                     </div>
-                    <label class="video-secondary-row video-ai-context-option">
-                        <span class="video-ai-context-copy"><span class="video-panel-title">세컨더리 애니메이션</span><span class="video-panel-hint" style="display:block; margin-top:3px;">최종 H3 프롬프트에 호흡·머리카락 관성 같은 미세 보조 모션 포함</span></span>
-                        <span class="toggle-switch">
-                            <input id="video-generation-secondary-motion" type="checkbox" checked onchange="onVideoSecondaryMotionChange()">
-                            <span class="toggle-slider"></span>
-                        </span>
-                    </label>
                 </section>
 
                 <div class="video-options-layout">
@@ -26134,37 +26225,39 @@
             return language;
         }
 
-        function isVideoVisualContextFromImage() {
-            return document.getElementById('video-generation-visual-context-from-image')
-                ?.checked !== false;
+        function selectedVideoVisualContextSource() {
+            const select = document.getElementById('video-generation-visual-context-source');
+            if (!select) {
+                console.error('[VIDEO_UI] Visual Context 입력 방식 셀렉트를 찾지 못했습니다.');
+                return 'image';
+            }
+            const value = String(select.value || '').trim().toLowerCase();
+            return value === 'prompt' ? 'prompt' : 'image';
         }
 
-        function selectedVideoVisualContextSource() {
-            return isVideoVisualContextFromImage() ? 'image' : 'prompt';
+        function isVideoVisualContextFromImage() {
+            return selectedVideoVisualContextSource() === 'image';
         }
 
         function updateVideoVisualContextSourcePresentation() {
             const fromImage = isVideoVisualContextFromImage();
-            const status = document.getElementById('video-visual-context-source-status');
             const hint = document.getElementById('video-visual-context-source-hint');
-            if (!status || !hint) {
+            if (!hint) {
                 console.error('[VIDEO_UI] Visual Context 입력 방식 표시 요소를 찾지 못했습니다.');
                 return;
             }
-            status.textContent = fromImage ? '그림 직접 분석' : '생성 프롬프트에서 구축';
-            status.classList.toggle('prompt', !fromImage);
             hint.textContent = fromImage
                 ? 'LLM이 시작·마지막 프레임을 직접 보고 정적 문맥을 만듭니다.'
-                : '핵심 positive prompt만 추려 LLM이 정적 문맥으로 다시 씁니다.';
+                : '핵심 positive prompt만 추려 LLM이 정적 문맥으로 다시 씁니다. 검열 시 유용합니다.';
         }
 
         function setVideoVisualContextFromImage(enabled) {
-            const toggle = document.getElementById('video-generation-visual-context-from-image');
-            if (!toggle) {
-                console.error('[VIDEO_UI] Visual Context 입력 방식 토글을 찾지 못했습니다.');
+            const select = document.getElementById('video-generation-visual-context-source');
+            if (!select) {
+                console.error('[VIDEO_UI] Visual Context 입력 방식 셀렉트를 찾지 못했습니다.');
                 return;
             }
-            toggle.checked = Boolean(enabled);
+            select.value = Boolean(enabled) ? 'image' : 'prompt';
             updateVideoVisualContextSourcePresentation();
             updateVideoInstructionDraftPresentation();
             updateVideoGenerationSummary();
@@ -73402,6 +73495,11 @@
         }
 
         function closeNameMappingModal() {
+            if (window._nmVideoPollTimer) {
+                clearTimeout(window._nmVideoPollTimer);
+                window._nmVideoPollTimer = null;
+            }
+            document.querySelectorAll('.nm-nested-overlay').forEach(node => node.remove());
             const overlay = document.getElementById('name-mapping-overlay');
             if (overlay) overlay.remove();
             if (window._nmPreviousBodyOverflow !== undefined) {
@@ -73456,6 +73554,10 @@
             (info.outfits || []).forEach(o => { window._nmSelectedOutfits[o] = true; });
             (info.expressions || []).forEach(e => { window._nmSelectedExpressions[e] = true; });
             window._nmCurrentPage = 1;
+            window._nmVideoCandidates = [];
+            window._nmVideoAvailabilityRequestId = 0;
+            window._nmExportVideoSession = null;
+            window._nmVideoPollTimer = null;
 
             overlay.innerHTML = `
                 <div class="nm-dialog" role="dialog" aria-modal="true" aria-labelledby="nm-dialog-title">
@@ -73482,8 +73584,12 @@
                                 <span class="nm-step-number">3</span>
                                 <span class="nm-step-copy"><strong>이름 설정</strong><small>파일명과 출력</small></span>
                             </li>
+                            <li class="nm-step" data-step="4">
+                                <span class="nm-step-number">4</span>
+                                <span class="nm-step-copy"><strong>영상 후처리</strong><small>영상이 있을 때만</small></span>
+                            </li>
                         </ol>
-                        <div id="nm-step-label" class="nm-current-step">1/3 표정 선택</div>
+                        <div id="nm-step-label" class="nm-current-step">1/4 표정 선택</div>
                     </div>
 
                     <div class="nm-dialog-body">
@@ -73554,6 +73660,29 @@
                             <!-- 네이밍 블록 (체크박스로 선택한 항목만 표시) -->
                             <div id="nm-naming-blocks"></div>
                         </section>
+                        <!-- 페이지 4: ZIP 전용 영상 일괄 후처리 -->
+                        <section id="nm-page-4" class="nm-page" hidden>
+                            <div class="nm-page-heading">
+                                <div>
+                                    <div class="nm-page-kicker">STEP 4</div>
+                                    <h4 class="nm-page-title">영상 대표 이미지를 일괄 후처리하세요</h4>
+                                    <p class="nm-page-description">완료 결과는 에셋 카드에 추가되지 않고 이 ZIP 임시 저장소에만 보관됩니다. 처리하지 않은 영상은 원본으로 내보냅니다.</p>
+                                </div>
+                            </div>
+                            <div class="nm-video-toolbar">
+                                <div class="nm-video-toolbar-copy">
+                                    <div class="nm-video-toolbar-title">임시 저장소</div>
+                                    <div id="nm-video-settings-summary" class="nm-video-toolbar-summary">전역 후처리 설정을 불러오는 중입니다.</div>
+                                </div>
+                                <div class="nm-video-toolbar-actions">
+                                    <button class="nm-btn" type="button" onclick="openNmVideoSettingsModal()">영상 후처리 설정</button>
+                                    <button id="nm-video-batch-btn" class="nm-btn nm-btn-primary" type="button" onclick="openNmVideoBatchModal()">일괄 적용</button>
+                                </div>
+                            </div>
+                            <div id="nm-video-store" class="nm-video-store">
+                                <div class="nm-video-empty">임시 저장소를 준비하는 중입니다.</div>
+                            </div>
+                        </section>
                     </div>
 
                     <!-- 하단 작업 영역 -->
@@ -73561,7 +73690,7 @@
                         <button id="nm-prev-btn" class="nm-btn" type="button" onclick="nmGoToPage(window._nmCurrentPage - 1)">이전</button>
                         <button id="nm-next-btn" class="nm-btn nm-btn-primary nm-next-btn" type="button" onclick="nmGoToPage(window._nmCurrentPage + 1)">다음 단계</button>
                         <div id="nm-final-btns" class="nm-final-actions">
-                            <div class="nm-tool-actions" aria-label="이름 치환 도구">
+                            <div id="nm-tool-actions" class="nm-tool-actions" aria-label="이름 치환 도구">
                                 <button id="nm-llm-auto-fix-btn" class="nm-btn nm-btn-ai" type="button" onclick="runNameMappingLlm('auto_fix')">LLM 자동 수정 <span class="nm-help-tip" onclick="event.stopPropagation()" tabindex="0">?<span class="nm-help-tip-bubble">기존 정상 매핑은 그대로 유지합니다. 빈 태그와 충돌 태그만 LLM에 전달합니다.</span></span></button>
                                 <button id="nm-llm-full-btn" class="nm-btn nm-btn-ai" type="button" onclick="runNameMappingLlm('full')">LLM 전체 매핑 <span class="nm-help-tip" onclick="event.stopPropagation()" tabindex="0">?<span class="nm-help-tip-bubble">기존 매핑을 모두 무시하고 선택 범위 전체를 새 추천으로 교체합니다.</span></span></button>
                                 <button class="nm-btn" type="button" onclick="exportNameMappingRule()">규칙 내보내기</button>
@@ -73571,7 +73700,7 @@
                             <div class="nm-primary-actions">
                                 <span id="nm-save-status" class="nm-save-status" role="status">변경 사항 저장됨</span>
                                 <button id="nm-save-btn" class="nm-btn nm-btn-primary" type="button" onclick="saveNameMapping(window._nmCharName)">저장</button>
-                                <button id="nm-export-btn" class="nm-btn nm-btn-success" type="button" onclick="exportCharacterAsset(window._nmCharName)">ZIP 내보내기</button>
+                                <button id="nm-export-btn" class="nm-btn nm-btn-success" type="button" onclick="nmHandleFinalAction()">ZIP 내보내기</button>
                             </div>
                         </div>
                     </footer>
@@ -73592,13 +73721,18 @@
 
         // ─── 마법사 페이지 전환 ──────────────────────────────
         function nmGoToPage(n) {
-            if (n < 1 || n > 3) return;
+            if (n < 1 || n > 4) return;
+            if (n === 4 && !window._nmExportVideoSession) {
+                console.error('[ASSET_EXPORT_VIDEO_UI] 준비된 임시 저장소 없이 4단계 진입 거부');
+                showToast('영상 후처리 임시 저장소를 먼저 준비하세요.', 'error');
+                return;
+            }
             window._nmCurrentPage = n;
-            for (let i = 1; i <= 3; i++) {
+            for (let i = 1; i <= 4; i++) {
                 const sec = document.getElementById('nm-page-' + i);
                 if (sec) sec.hidden = (i !== n);
             }
-            const labels = ['', '1/3 표정 선택', '2/3 복장 선택', '3/3 이름 치환 규칙'];
+            const labels = ['', '1/4 표정 선택', '2/4 복장 선택', '3/4 이름 치환 규칙', '4/4 영상 일괄 후처리'];
             const lab = document.getElementById('nm-step-label');
             if (lab) lab.textContent = labels[n];
             document.querySelectorAll('.nm-step').forEach(step => {
@@ -73612,12 +73746,21 @@
             const nextBtn = document.getElementById('nm-next-btn');
             const finalBtns = document.getElementById('nm-final-btns');
             if (prevBtn) prevBtn.style.visibility = (n === 1) ? 'hidden' : 'visible';
-            if (nextBtn) nextBtn.style.display = (n === 3) ? 'none' : '';
-            if (finalBtns) finalBtns.style.display = (n === 3) ? 'flex' : 'none';
+            if (nextBtn) nextBtn.style.display = (n >= 3) ? 'none' : '';
+            if (finalBtns) finalBtns.style.display = (n >= 3) ? 'flex' : 'none';
             const saveStatus = document.getElementById('nm-save-status');
+            const saveBtn = document.getElementById('nm-save-btn');
+            const toolActions = document.getElementById('nm-tool-actions');
             if (saveStatus) saveStatus.style.display = (n === 3) ? '' : 'none';
+            if (saveBtn) saveBtn.style.display = (n === 3) ? '' : 'none';
+            if (toolActions) toolActions.style.display = (n === 3) ? 'flex' : 'none';
             if (n === 3) {
                 renderNmBlocks();
+                refreshNmVideoStepAvailability();
+            } else if (n === 4) {
+                renderNmVideoStore(window._nmExportVideoSession);
+                refreshNmVideoSettingsSummary();
+                scheduleNmVideoSessionPoll(250);
             }
             const dialogBody = document.querySelector('#name-mapping-overlay .nm-dialog-body');
             if (dialogBody) dialogBody.scrollTop = 0;
@@ -73693,7 +73836,7 @@
                             <span class="nm-source-name" title="${escapeHtml(o)}">${escapeHtml(o)}</span>
                             <span class="nm-mapping-arrow" aria-hidden="true">→</span>
                             <input type="text" class="nm-outfit-input nm-text-input" data-original="${escapeHtml(o)}" value="${escapeHtml(mapped)}"
-                                placeholder="치환 이름 입력" aria-label="${escapeHtml(o)} 치환 이름" oninput="updateNmSaveStatus()" />
+                                placeholder="치환 이름 입력" aria-label="${escapeHtml(o)} 치환 이름" oninput="updateNmSaveStatus(); scheduleNmVideoAvailabilityRefresh()" />
                         </div>`;
                 }
             }
@@ -73712,7 +73855,7 @@
                             <span class="nm-source-name" title="${escapeHtml(e)}">${escapeHtml(e)}</span>
                             <span class="nm-mapping-arrow" aria-hidden="true">→</span>
                             <input type="text" class="nm-expr-input nm-text-input" data-original="${escapeHtml(e)}" value="${escapeHtml(mapped)}"
-                                placeholder="치환 이름 입력" aria-label="${escapeHtml(e)} 치환 이름" oninput="updateNmSaveStatus()" />
+                                placeholder="치환 이름 입력" aria-label="${escapeHtml(e)} 치환 이름" oninput="updateNmSaveStatus(); scheduleNmVideoAvailabilityRefresh()" />
                         </div>`;
                 }
             }
@@ -73727,7 +73870,7 @@
                             <span class="nm-source-name" title="${escapeHtml(window._nmCharName)}">${escapeHtml(window._nmCharName)}</span>
                             <span class="nm-mapping-arrow" aria-hidden="true">→</span>
                             <input type="text" id="nm-export-name" class="nm-text-input" value="${escapeHtml(info.export_name || '')}"
-                                placeholder="내보낼 이름 입력" aria-label="캐릭터 치환 이름" oninput="updateNmSaveStatus()" />
+                                placeholder="내보낼 이름 입력" aria-label="캐릭터 치환 이름" oninput="updateNmSaveStatus(); scheduleNmVideoAvailabilityRefresh()" />
                         </div>`
                 },
                 outfit: {
@@ -73777,6 +73920,7 @@
             if (container) container.innerHTML = namingBlocksHtml;
             updateNamePreview();
             updateNmSaveStatus();
+            scheduleNmVideoAvailabilityRefresh();
         }
 
         // ─── 네이밍 블록 헬퍼 ──────────────────────────────
@@ -73787,6 +73931,7 @@
             if (block) block.classList.toggle('is-disabled', !checked);
             updateNamePreview();
             updateNmSaveStatus();
+            scheduleNmVideoAvailabilityRefresh();
         }
 
         function updateNmOrderBadges() {
@@ -73810,6 +73955,7 @@
             updateNmOrderBadges();
             updateNamePreview();
             updateNmSaveStatus();
+            scheduleNmVideoAvailabilityRefresh();
         }
 
         function updateNamePreview() {
@@ -73849,6 +73995,374 @@
                 outfits: Object.keys(outfitMap).filter(name => !!outfitMap[name]),
                 expressions: Object.keys(expressionMap).filter(name => !!expressionMap[name]),
             };
+        }
+
+        function scheduleNmVideoAvailabilityRefresh() {
+            if (window._nmCurrentPage !== 3) return;
+            if (window._nmVideoAvailabilityTimer) {
+                clearTimeout(window._nmVideoAvailabilityTimer);
+            }
+            window._nmVideoAvailabilityTimer = setTimeout(() => {
+                window._nmVideoAvailabilityTimer = null;
+                refreshNmVideoStepAvailability();
+            }, 220);
+        }
+
+        async function refreshNmVideoStepAvailability() {
+            const button = document.getElementById('nm-export-btn');
+            if (!button || window._nmCurrentPage !== 3) return;
+            const character = window._nmCharName;
+            const selection = getNameMappingSelection();
+            if (!character || !selection.outfits.length || !selection.expressions.length) {
+                window._nmVideoCandidates = [];
+                button.textContent = 'ZIP 내보내기';
+                button.disabled = false;
+                return;
+            }
+            const requestId = Number(window._nmVideoAvailabilityRequestId || 0) + 1;
+            window._nmVideoAvailabilityRequestId = requestId;
+            const originalText = button.textContent;
+            button.disabled = true;
+            button.textContent = '대표 이미지 확인 중...';
+            try {
+                const validation = await validateNameMappingDraft(
+                    character,
+                    collectNameMappingDraft(),
+                    selection,
+                );
+                if (requestId !== window._nmVideoAvailabilityRequestId) return;
+                if (!validation.ok) {
+                    window._nmVideoCandidates = [];
+                    button.textContent = 'ZIP 내보내기';
+                    return;
+                }
+                const files = Array.isArray(validation.data?.files) ? validation.data.files : [];
+                window._nmVideoCandidates = files.filter(item => item.is_video_animation === true);
+                button.textContent = window._nmVideoCandidates.length
+                    ? '다음 단계'
+                    : 'ZIP 내보내기';
+            } catch (error) {
+                console.error('[ASSET_EXPORT_VIDEO_UI] 대표 영상 확인 실패:', error);
+                window._nmVideoCandidates = [];
+                button.textContent = originalText || 'ZIP 내보내기';
+            } finally {
+                if (requestId === window._nmVideoAvailabilityRequestId) button.disabled = false;
+            }
+        }
+
+        async function nmHandleFinalAction() {
+            if (window._nmCurrentPage === 4) {
+                await exportCharacterAsset(window._nmCharName, window._nmExportVideoSession?.session_id || '');
+                return;
+            }
+            const button = document.getElementById('nm-export-btn');
+            if (button) button.disabled = true;
+            try {
+                const character = window._nmCharName;
+                const selection = getNameMappingSelection();
+                const draft = collectNameMappingDraft();
+                const validation = await validateNameMappingDraft(character, draft, selection);
+                if (!validation.ok) {
+                    showToast(formatNameMappingIssues(validation.data), 'error', 15000);
+                    return;
+                }
+                const videoFiles = (validation.data.files || []).filter(item => item.is_video_animation === true);
+                window._nmVideoCandidates = videoFiles;
+                if (!videoFiles.length) {
+                    await exportCharacterAsset(character);
+                    return;
+                }
+                const result = await fetchJSON('/api/asset_mode/export_video_sessions', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        character,
+                        outfits: selection.outfits,
+                        expressions: selection.expressions,
+                        mapping: draft,
+                    }),
+                });
+                if (!result?.success || !result.session_id) {
+                    console.error('[ASSET_EXPORT_VIDEO_UI] 임시 저장소 생성 응답 오류:', result);
+                    throw new Error(result?.error || '영상 후처리 임시 저장소를 만들지 못했습니다.');
+                }
+                window._nmExportVideoSession = result;
+                nmGoToPage(4);
+            } catch (error) {
+                console.error('[ASSET_EXPORT_VIDEO_UI] 다음 단계 진입 실패:', error);
+                showToast('영상 후처리 단계 진입 실패: ' + (error.message || error), 'error', 12000);
+            } finally {
+                if (button) button.disabled = false;
+            }
+        }
+
+        function nmAssetVideoUrl(item, poster = false) {
+            const enc = encodeURIComponent;
+            const base = `/api/asset_mode/characters/${enc(window._nmCharName || '')}/outfits/${enc(item.outfit || '')}/expressions/${enc(item.expression || '')}/images/${enc(item.source_filename || '')}`;
+            return poster ? `${base}/poster` : base;
+        }
+
+        function formatNmVideoBytes(value) {
+            return formatVideoReprocessBytes(value);
+        }
+
+        function nmVideoStatusCopy(item) {
+            const labels = {
+                idle: '원본 유지',
+                staging: '준비 중',
+                queued: '큐 대기',
+                processing: '후처리 중',
+                completed: '결과 저장됨',
+                failed: '실패',
+            };
+            return labels[item.status] || item.status || '원본 유지';
+        }
+
+        function renderNmVideoStore(session) {
+            const container = document.getElementById('nm-video-store');
+            if (!container) {
+                console.error('[ASSET_EXPORT_VIDEO_UI] 임시 저장소 표시 영역이 없습니다.');
+                return;
+            }
+            const items = Array.isArray(session?.items) ? session.items : [];
+            if (!items.length) {
+                container.innerHTML = '<div class="nm-video-empty">후처리할 대표 영상이 없습니다.</div>';
+                return;
+            }
+            container.innerHTML = items.map(item => {
+                const resultReady = !!item.result_url;
+                const previewUrl = resultReady ? item.result_url : nmAssetVideoUrl(item, true);
+                const animatedUrl = resultReady ? item.result_url : nmAssetVideoUrl(item, false);
+                const busy = ['staging', 'queued', 'processing'].includes(item.status);
+                const size = resultReady ? item.result_size_bytes : item.source_size_bytes;
+                const resultMeta = resultReady
+                    ? `${formatNmVideoBytes(size)} · ${(item.result_format || '').toUpperCase()}${item.result_width ? ` · ${item.result_width}×${item.result_height}` : ''}`
+                    : `${formatNmVideoBytes(size)} · 미처리 시 원본 사용`;
+                return `
+                    <article class="nm-video-card">
+                        <div class="nm-video-preview">
+                            <span class="nm-video-preview-badge">${resultReady ? (busy ? '기존 결과 · 재처리 중' : '후처리 결과') : '대표 영상 원본'}</span>
+                            <img src="${previewUrl}" data-poster-src="${previewUrl}" data-anim-src="${animatedUrl}" onmouseenter="this.src=this.dataset.animSrc" onmouseleave="this.src=this.dataset.posterSrc" alt="${escapeHtml(item.outfit)} ${escapeHtml(item.expression)}">
+                        </div>
+                        <div class="nm-video-card-body">
+                            <div class="nm-video-card-title" title="${escapeHtml(item.outfit)} / ${escapeHtml(item.expression)}">${escapeHtml(item.outfit)} / ${escapeHtml(item.expression)}</div>
+                            <div class="nm-video-card-file" title="${escapeHtml(item.source_filename)}">${escapeHtml(item.source_filename)}</div>
+                            <div class="nm-video-card-file">${resultMeta}</div>
+                            <div class="nm-video-status-row">
+                                <span class="nm-video-status ${escapeHtml(item.status || 'idle')}">${nmVideoStatusCopy(item)}</span>
+                                ${busy ? `<span class="nm-video-progress"><span style="width:${Math.max(2, Number(item.progress || 0))}%"></span></span>` : ''}
+                            </div>
+                            ${item.error ? `<div class="nm-video-error">${escapeHtml(item.error)}</div>` : ''}
+                        </div>
+                    </article>`;
+            }).join('');
+            const hasBusy = items.some(item => ['staging', 'queued', 'processing'].includes(item.status));
+            const exportButton = document.getElementById('nm-export-btn');
+            if (exportButton && window._nmCurrentPage === 4) {
+                exportButton.textContent = 'ZIP 내보내기';
+                exportButton.disabled = hasBusy;
+                exportButton.title = hasBusy ? '영상 후처리가 끝난 뒤 내보낼 수 있습니다.' : '';
+            }
+            const batchButton = document.getElementById('nm-video-batch-btn');
+            if (batchButton) batchButton.disabled = items.every(item => ['staging', 'queued', 'processing'].includes(item.status));
+        }
+
+        async function refreshNmVideoSession() {
+            const sessionId = window._nmExportVideoSession?.session_id;
+            if (!sessionId || window._nmCurrentPage !== 4) return;
+            try {
+                const result = await fetchJSON(`/api/asset_mode/export_video_sessions/${encodeURIComponent(sessionId)}`);
+                if (!result?.success) throw new Error(result?.error || '임시 저장소 조회 실패');
+                window._nmExportVideoSession = result;
+                renderNmVideoStore(result);
+            } catch (error) {
+                console.error('[ASSET_EXPORT_VIDEO_UI] 임시 저장소 갱신 실패:', error);
+                showToast('영상 임시 저장소 갱신 실패: ' + (error.message || error), 'error');
+            }
+        }
+
+        function scheduleNmVideoSessionPoll(delay = 1200) {
+            if (window._nmVideoPollTimer) clearTimeout(window._nmVideoPollTimer);
+            window._nmVideoPollTimer = setTimeout(async () => {
+                window._nmVideoPollTimer = null;
+                if (window._nmCurrentPage !== 4 || !window._nmExportVideoSession) return;
+                await refreshNmVideoSession();
+                const hasBusy = (window._nmExportVideoSession.items || []).some(item =>
+                    ['staging', 'queued', 'processing'].includes(item.status)
+                );
+                if (hasBusy) scheduleNmVideoSessionPoll(1200);
+            }, delay);
+        }
+
+        async function refreshNmVideoSettingsSummary() {
+            const target = document.getElementById('nm-video-settings-summary');
+            try {
+                const config = await loadCurrentConfig();
+                const value = config.video_postprocess || {};
+                const upscale = value.enabled
+                    ? `${VIDEO_UPSCALE_LABELS[value.model] || value.model} ${value.scale || 2}×`
+                    : '원본 크기';
+                if (target) target.textContent = `${value.target_size_mb || 10}MB 이하 · ${value.fps || 24}FPS · ${upscale} · ${(value.output_format || 'avif').toUpperCase()}`;
+            } catch (error) {
+                console.error('[ASSET_EXPORT_VIDEO_UI] 전역 후처리 설정 표시 실패:', error);
+                if (target) target.textContent = '전역 후처리 설정을 불러오지 못했습니다.';
+            }
+        }
+
+        function closeNmNestedModal() {
+            document.querySelectorAll('.nm-nested-overlay').forEach(node => node.remove());
+        }
+
+        async function openNmVideoSettingsModal() {
+            try {
+                const config = await loadCurrentConfig(true);
+                const value = config.video_postprocess || {};
+                closeNmNestedModal();
+                const overlay = document.createElement('div');
+                overlay.className = 'nm-nested-overlay';
+                overlay.innerHTML = `
+                    <div class="nm-nested-dialog" role="dialog" aria-modal="true" aria-labelledby="nm-video-settings-title">
+                        <header class="nm-nested-header">
+                            <h4 id="nm-video-settings-title">영상 후처리 설정 · 전역 저장</h4>
+                            <button class="nm-close-btn" type="button" onclick="closeNmNestedModal()">×</button>
+                        </header>
+                        <div class="nm-nested-body">
+                            <div class="nm-video-settings-grid">
+                                <label class="nm-video-setting"><span>목표 용량 (MB)</span><input id="nm-vp-target" type="number" min="0.1" max="2048" step="0.1" value="${Number(value.target_size_mb || 10)}"></label>
+                                <label class="nm-video-setting"><span>FPS</span><input id="nm-vp-fps" type="number" min="1" max="60" step="1" value="${Number(value.fps || 24)}"></label>
+                                <label class="nm-video-setting"><span>업스케일</span><select id="nm-vp-enabled"><option value="true" ${value.enabled !== false ? 'selected' : ''}>사용</option><option value="false" ${value.enabled === false ? 'selected' : ''}>사용 안 함</option></select></label>
+                                <label class="nm-video-setting"><span>업스케일 방식</span><select id="nm-vp-model"><option value="realesr-animevideov3" ${value.model === 'realesr-animevideov3' ? 'selected' : ''}>Real-ESRGAN</option><option value="anime4k-fast-m" ${value.model === 'anime4k-fast-m' ? 'selected' : ''}>Anime4K Fast/M</option><option value="lanczos" ${value.model === 'lanczos' ? 'selected' : ''}>Lanczos</option></select></label>
+                                <label class="nm-video-setting"><span>확대 배율</span><select id="nm-vp-scale"><option value="2" ${Number(value.scale) === 2 ? 'selected' : ''}>2×</option><option value="3" ${Number(value.scale) === 3 ? 'selected' : ''}>3×</option><option value="4" ${Number(value.scale) === 4 ? 'selected' : ''}>4×</option></select></label>
+                                <label class="nm-video-setting"><span>출력 형식</span><select id="nm-vp-format"><option value="avif" ${value.output_format !== 'webp' ? 'selected' : ''}>AVIF</option><option value="webp" ${value.output_format === 'webp' ? 'selected' : ''}>WebP</option></select></label>
+                            </div>
+                        </div>
+                        <footer class="nm-nested-footer">
+                            <button class="nm-btn" type="button" onclick="closeNmNestedModal()">취소</button>
+                            <button id="nm-vp-save-btn" class="nm-btn nm-btn-primary" type="button" onclick="saveNmVideoSettings()">전역 설정 저장</button>
+                        </footer>
+                    </div>`;
+                document.body.appendChild(overlay);
+            } catch (error) {
+                console.error('[ASSET_EXPORT_VIDEO_UI] 설정 모달 열기 실패:', error);
+                showToast('영상 후처리 설정을 불러오지 못했습니다: ' + (error.message || error), 'error');
+            }
+        }
+
+        async function saveNmVideoSettings() {
+            const button = document.getElementById('nm-vp-save-btn');
+            const targetSize = Number(document.getElementById('nm-vp-target')?.value || 0);
+            const fps = Number(document.getElementById('nm-vp-fps')?.value || 0);
+            if (!Number.isFinite(targetSize) || targetSize < 0.1 || targetSize > 2048) {
+                console.error('[ASSET_EXPORT_VIDEO_UI] 목표 용량 입력 오류:', targetSize);
+                showToast('목표 용량은 0.1MB부터 2048MB까지 입력하세요.', 'warning');
+                return;
+            }
+            if (!Number.isInteger(fps) || fps < 1 || fps > 60) {
+                console.error('[ASSET_EXPORT_VIDEO_UI] FPS 입력 오류:', fps);
+                showToast('FPS는 1부터 60까지의 정수로 입력하세요.', 'warning');
+                return;
+            }
+            if (button) button.disabled = true;
+            try {
+                const base = currentConfig.video_postprocess || {};
+                const videoPostprocess = {
+                    ...base,
+                    target_size_mb: targetSize,
+                    fps,
+                    enabled: document.getElementById('nm-vp-enabled')?.value === 'true',
+                    model: document.getElementById('nm-vp-model')?.value || 'realesr-animevideov3',
+                    scale: Number(document.getElementById('nm-vp-scale')?.value || 2),
+                    output_format: document.getElementById('nm-vp-format')?.value || 'avif',
+                };
+                const result = await fetchJSON('/api/config', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({video_postprocess: videoPostprocess}),
+                });
+                if (!result?.success || !result.config) {
+                    console.error('[ASSET_EXPORT_VIDEO_UI] 전역 설정 저장 응답 오류:', result);
+                    throw new Error(result?.error || '전역 설정 저장 응답이 올바르지 않습니다.');
+                }
+                currentConfig = result.config;
+                currentConfigLoadPromise = Promise.resolve(currentConfig);
+                closeNmNestedModal();
+                await refreshNmVideoSettingsSummary();
+                showToast('영상 후처리 전역 설정을 저장했습니다.', 'success');
+            } catch (error) {
+                console.error('[ASSET_EXPORT_VIDEO_UI] 전역 설정 저장 실패:', error);
+                showToast('영상 후처리 설정 저장 실패: ' + (error.message || error), 'error');
+            } finally {
+                if (button) button.disabled = false;
+            }
+        }
+
+        function openNmVideoBatchModal() {
+            const items = (window._nmExportVideoSession?.items || []).filter(item =>
+                !['staging', 'queued', 'processing'].includes(item.status)
+            );
+            if (!items.length) {
+                showToast('현재 일괄 적용할 수 있는 영상이 없습니다.', 'warning');
+                return;
+            }
+            closeNmNestedModal();
+            const overlay = document.createElement('div');
+            overlay.className = 'nm-nested-overlay';
+            overlay.innerHTML = `
+                <div class="nm-nested-dialog" role="dialog" aria-modal="true" aria-labelledby="nm-video-batch-title">
+                    <header class="nm-nested-header">
+                        <h4 id="nm-video-batch-title">후처리할 대표 영상 선택</h4>
+                        <button class="nm-close-btn" type="button" onclick="closeNmNestedModal()">×</button>
+                    </header>
+                    <div class="nm-nested-body">
+                        <div class="nm-video-choice-list">
+                            ${items.map(item => `
+                                <label class="nm-video-choice">
+                                    <input class="nm-video-batch-check" type="checkbox" value="${escapeHtml(item.slot_id)}" checked>
+                                    <img src="${item.result_url || nmAssetVideoUrl(item, true)}" alt="">
+                                    <span><strong>${escapeHtml(item.outfit)} / ${escapeHtml(item.expression)}</strong><small>${item.status === 'completed' ? '기존 임시 결과를 새 결과로 교체' : item.status === 'failed' ? '이전 실패 후 다시 처리' : '원본에서 후처리'}</small></span>
+                                </label>`).join('')}
+                        </div>
+                    </div>
+                    <footer class="nm-nested-footer">
+                        <button class="nm-btn" type="button" onclick="document.querySelectorAll('.nm-video-batch-check').forEach(node => node.checked = true)">모두 선택</button>
+                        <button class="nm-btn" type="button" onclick="closeNmNestedModal()">취소</button>
+                        <button id="nm-video-apply-submit" class="nm-btn nm-btn-primary" type="button" onclick="submitNmVideoBatch()">선택 영상 일괄 적용</button>
+                    </footer>
+                </div>`;
+            document.body.appendChild(overlay);
+        }
+
+        async function submitNmVideoBatch() {
+            const sessionId = window._nmExportVideoSession?.session_id;
+            const slotIds = [...document.querySelectorAll('.nm-video-batch-check:checked')].map(node => node.value);
+            if (!sessionId) {
+                console.error('[ASSET_EXPORT_VIDEO_UI] 일괄 적용 세션 없음');
+                showToast('영상 후처리 임시 저장소 정보가 없습니다.', 'error');
+                return;
+            }
+            if (!slotIds.length) {
+                showToast('후처리할 영상을 하나 이상 선택하세요.', 'warning');
+                return;
+            }
+            const button = document.getElementById('nm-video-apply-submit');
+            if (button) button.disabled = true;
+            try {
+                const result = await fetchJSON(`/api/asset_mode/export_video_sessions/${encodeURIComponent(sessionId)}/apply`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({slot_ids: slotIds}),
+                });
+                if (!result?.success) throw new Error(result?.error || '영상 일괄 후처리 등록 실패');
+                closeNmNestedModal();
+                await refreshNmVideoSession();
+                scheduleNmVideoSessionPoll(800);
+                showToast(`영상 ${slotIds.length}개를 후처리 큐에 등록했습니다.`, 'success');
+            } catch (error) {
+                console.error('[ASSET_EXPORT_VIDEO_UI] 일괄 적용 실패:', error);
+                showToast('영상 일괄 후처리 등록 실패: ' + (error.message || error), 'error');
+            } finally {
+                if (button) button.disabled = false;
+            }
         }
 
         function collectNameMappingDraft() {
@@ -74202,7 +74716,7 @@
             input.click();
         }
 
-        async function exportCharacterAsset(character) {
+        async function exportCharacterAsset(character, exportVideoSessionId = '') {
             const btn = document.getElementById('nm-export-btn');
             // 1·2페이지에서 선택한 표정/복장만 내보내기
             const selection = getNameMappingSelection();
@@ -74224,13 +74738,19 @@
                 const resp = await fetch('/api/asset_mode/export', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ character, outfits, expressions, mapping: draft }),
+                    body: JSON.stringify({
+                        character,
+                        outfits,
+                        expressions,
+                        mapping: draft,
+                        export_video_session_id: exportVideoSessionId || undefined,
+                    }),
                 });
                 if (!resp.ok) {
                     const data = await resp.json().catch(() => ({}));
                     showToast(formatNameMappingIssues(data, data.error || '내보내기 실패'), 'error', 15000);
                     btn.disabled = false;
-                    btn.textContent = '내보내기 (ZIP)';
+                    btn.textContent = 'ZIP 내보내기';
                     return;
                 }
                 const blob = await resp.blob();
@@ -74242,6 +74762,9 @@
                 a.click();
                 a.remove();
                 URL.revokeObjectURL(url);
+                if (exportVideoSessionId) {
+                    window._nmExportVideoSession = null;
+                }
                 const warnings = (validation.data && validation.data.warnings) || [];
                 if (warnings.length) {
                     showToast(
@@ -74253,11 +74776,12 @@
                     showToast('내보내기 완료!', 'success');
                 }
                 btn.disabled = false;
-                btn.textContent = '내보내기 (ZIP)';
+                btn.textContent = 'ZIP 내보내기';
+                closeNameMappingModal();
             } catch (e) {
                 showToast('내보내기 실패: ' + e.message, 'error');
                 btn.disabled = false;
-                btn.textContent = '내보내기 (ZIP)';
+                btn.textContent = 'ZIP 내보내기';
             }
         }
 

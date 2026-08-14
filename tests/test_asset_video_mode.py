@@ -77,6 +77,24 @@ def _mapping(export_format="png", export_quality=12):
     }
 
 
+def _make_animated_representative(asset_root: Path) -> tuple[Path, dict]:
+    expression_dir = asset_root / "alice" / "uniform" / "smile"
+    expression_dir.mkdir(parents=True, exist_ok=True)
+    source_path = expression_dir / "representative.webp"
+    source_path.write_bytes(_animated_webp_bytes())
+    (expression_dir / "_representative.json").write_text(
+        json.dumps({"filename": source_path.name}),
+        encoding="utf-8",
+    )
+    return source_path, {
+        "kind": "asset",
+        "character": "alice",
+        "outfit": "uniform",
+        "expression": "smile",
+        "filename": source_path.name,
+    }
+
+
 def test_asset_video_commit_adds_new_file_without_touching_source_or_representative(
     tmp_path: Path,
     monkeypatch,
@@ -157,6 +175,132 @@ def test_asset_video_commit_adds_new_file_without_touching_source_or_representat
     assert prompt["video_visual_context"] == "visual_context:\nAlice stands by a window."
     assert prompt["video_visual_context_source"] == "prompt"
     assert prompt["llm_trace"] == ["video-trace-1"]
+
+
+def test_export_video_session_keeps_one_temporary_result_and_zip_uses_it(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    asset_root = tmp_path / "asset"
+    session_root = tmp_path / "asset_data" / "export_video_sessions"
+    monkeypatch.setattr(asset_mode_module, "ASSET_DIR", str(asset_root))
+    monkeypatch.setattr(
+        asset_mode_module,
+        "EXPORT_VIDEO_SESSION_DIR",
+        str(session_root),
+    )
+    mode = AssetMode()
+    source_path, reference = _make_animated_representative(asset_root)
+    mapping = _mapping(export_format="png", export_quality=40)
+
+    session = mode.create_export_video_session(
+        "alice",
+        ["uniform"],
+        ["smile"],
+        mapping,
+    )
+    assert len(session["items"]) == 1
+    item = session["items"][0]
+    assert item["status"] == "idle"
+
+    job = mode.prepare_export_video_jobs(
+        session["session_id"],
+        [item["slot_id"]],
+    )[0]
+    mode.mark_export_video_jobs_queued(
+        session["session_id"],
+        {item["slot_id"]: "queue-1"},
+    )
+    mode.update_export_video_job_progress(
+        session["session_id"],
+        item["slot_id"],
+        job["revision"],
+        {"percentage": 50, "phase": "video_upscale"},
+    )
+
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    main_path = staging / "main.webp"
+    raw_path = staging / "raw.webp"
+    first_result = b"first-temporary-animation"
+    main_path.write_bytes(first_result)
+    raw_path.write_bytes(b"unused-raw")
+    mode.commit_export_video_result(
+        session["session_id"],
+        item["slot_id"],
+        job["revision"],
+        reference,
+        str(main_path),
+        str(raw_path),
+        ".webp",
+        {"fps": 24, "output_width": 48, "output_height": 48},
+    )
+
+    completed = mode.get_export_video_session(session["session_id"])["items"][0]
+    assert completed["status"] == "completed"
+    result_path = Path(
+        mode.get_export_video_result_path(
+            session["session_id"],
+            item["slot_id"],
+        )
+    )
+    assert result_path.read_bytes() == first_result
+    assert list(result_path.parent.iterdir()) == [result_path]
+    assert list(source_path.parent.glob("*_prompt.json")) == []
+
+    retry = mode.prepare_export_video_jobs(
+        session["session_id"],
+        [item["slot_id"]],
+    )[0]
+    retry_main = staging / "retry.webp"
+    retry_raw = staging / "retry_raw.webp"
+    second_result = b"replacement-temporary-animation"
+    retry_main.write_bytes(second_result)
+    retry_raw.write_bytes(b"unused-retry-raw")
+    mode.commit_export_video_result(
+        session["session_id"],
+        item["slot_id"],
+        retry["revision"],
+        reference,
+        str(retry_main),
+        str(retry_raw),
+        ".webp",
+        {"fps": 30, "output_width": 72, "output_height": 72},
+    )
+    assert result_path.read_bytes() == second_result
+    assert list(result_path.parent.iterdir()) == [result_path]
+
+    failed_retry = mode.prepare_export_video_jobs(
+        session["session_id"],
+        [item["slot_id"]],
+    )[0]
+    mode.mark_export_video_job_failed(
+        session["session_id"],
+        item["slot_id"],
+        failed_retry["revision"],
+        "encoder failed",
+    )
+    preserved = mode.get_export_video_session(session["session_id"])["items"][0]
+    assert preserved["status"] == "completed"
+    assert "기존 임시 결과를 유지" in preserved["error"]
+    assert result_path.read_bytes() == second_result
+
+    manifest, plan, overrides = mode.build_export_video_session_plan(
+        session["session_id"]
+    )
+    archive = mode.export_character_zip(
+        manifest["character"],
+        export_plan=plan,
+        video_overrides=overrides,
+    )
+    assert archive is not None
+    with zipfile.ZipFile(archive) as zipped:
+        assert zipped.namelist() == ["hero_school_happy.webp"]
+        assert zipped.read("hero_school_happy.webp") == second_result
+
+    mode.delete_export_video_session(session["session_id"])
+    assert not (session_root / session["session_id"]).exists()
+    assert source_path.exists()
 
 
 def test_representative_animation_is_playable_and_exported_verbatim(

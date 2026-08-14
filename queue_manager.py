@@ -425,6 +425,24 @@ class QueueManager:
                     f"error={type(exc).__name__}: {exc}"
                 )
                 traceback.print_exc()
+            export_session_id = str(
+                (item.params or {}).get("export_video_session_id") or ""
+            ).strip()
+            if export_session_id and self.asset_mode is not None:
+                try:
+                    self.asset_mode.mark_export_video_job_failed(
+                        export_session_id,
+                        str((item.params or {}).get("export_video_slot_id") or ""),
+                        int((item.params or {}).get("export_video_revision") or 0),
+                        "영상 후처리 작업이 취소되었습니다",
+                    )
+                except Exception as exc:
+                    print(
+                        "[QUEUE:VIDEO_POSTPROCESS] 취소 상태 저장 실패: "
+                        f"item={item.id}, session={export_session_id!r}, "
+                        f"error={type(exc).__name__}: {exc}"
+                    )
+                    traceback.print_exc()
             return
         if item.type != "qwen_edit":
             return
@@ -1905,12 +1923,31 @@ class QueueManager:
             if not spool_id or spool_id in known_spool_ids:
                 continue
             label = video_postprocess_label(params)
-            await self.add_item(
+            recovered_item = await self.add_item(
                 VIDEO_POSTPROCESS_TYPE,
                 label,
                 dict(params),
                 skip_notify=True,
             )
+            export_session_id = str(
+                params.get("export_video_session_id") or ""
+            ).strip()
+            if export_session_id and self.asset_mode is not None:
+                try:
+                    self.asset_mode.mark_export_video_jobs_queued(
+                        export_session_id,
+                        {
+                            str(params.get("export_video_slot_id") or ""):
+                            recovered_item.id,
+                        },
+                    )
+                except Exception as exc:
+                    print(
+                        "[QUEUE:VIDEO_POSTPROCESS:RECOVERY] ZIP 임시 저장소 상태 복구 실패: "
+                        f"session={export_session_id!r}, spool={spool_id!r}, "
+                        f"error={type(exc).__name__}: {exc}"
+                    )
+                    traceback.print_exc()
             known_spool_ids.add(spool_id)
             recovered += 1
         if recovered:
@@ -2525,6 +2562,16 @@ class QueueManager:
             )
             raise RuntimeError("영상 후처리 모드가 큐에 주입되지 않았습니다")
 
+        export_session_id = str(
+            (item.params or {}).get("export_video_session_id") or ""
+        ).strip()
+        export_slot_id = str(
+            (item.params or {}).get("export_video_slot_id") or ""
+        ).strip()
+        export_revision = int(
+            (item.params or {}).get("export_video_revision") or 0
+        )
+
         async def on_progress(detail: dict) -> None:
             if not isinstance(detail, dict):
                 print(
@@ -2533,6 +2580,28 @@ class QueueManager:
                 )
                 return
             await self._notify_progress(item, detail)
+            if export_session_id:
+                if self.asset_mode is None:
+                    print(
+                        "[QUEUE:VIDEO_POSTPROCESS] ZIP 임시 진행 상태 저장 스킵: "
+                        f"AssetMode 미주입, item={item.id}"
+                    )
+                else:
+                    try:
+                        self.asset_mode.update_export_video_job_progress(
+                            export_session_id,
+                            export_slot_id,
+                            export_revision,
+                            detail,
+                        )
+                    except Exception as progress_exc:
+                        print(
+                            "[QUEUE:VIDEO_POSTPROCESS] ZIP 임시 진행 상태 저장 실패: "
+                            f"item={item.id}, session={export_session_id!r}, "
+                            f"slot={export_slot_id!r}, error={type(progress_exc).__name__}: "
+                            f"{progress_exc}"
+                        )
+                        traceback.print_exc()
 
         try:
             await self._notify_progress(
@@ -2560,6 +2629,21 @@ class QueueManager:
                 f"error={type(exc).__name__}: {exc}"
             )
             traceback.print_exc()
+            if export_session_id and self.asset_mode is not None:
+                try:
+                    self.asset_mode.mark_export_video_job_failed(
+                        export_session_id,
+                        export_slot_id,
+                        export_revision,
+                        str(exc),
+                    )
+                except Exception as state_exc:
+                    print(
+                        "[QUEUE:VIDEO_POSTPROCESS] ZIP 임시 실패 상태 저장 실패: "
+                        f"item={item.id}, session={export_session_id!r}, "
+                        f"slot={export_slot_id!r}, error={type(state_exc).__name__}: {state_exc}"
+                    )
+                    traceback.print_exc()
             if str((item.params or {}).get("job_kind") or "") == "existing_animation":
                 try:
                     self.video_mode.cleanup_staged_video_postprocess(item.params)
