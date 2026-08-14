@@ -10681,12 +10681,77 @@
         .vast-launch-progress-head {
             display: flex;
             justify-content: space-between;
+            align-items: flex-start;
             gap: 10px;
             margin-bottom: 8px;
             color: var(--text2);
             font-size: 0.72rem;
         }
+        .vast-launch-progress-head-main {
+            display: flex;
+            min-width: 0;
+            flex-direction: column;
+            gap: 3px;
+        }
         .vast-launch-progress-head strong { color: var(--text); font-size: 0.82rem; }
+        .vast-launch-destroy {
+            flex: 0 0 auto;
+            padding: 6px 10px;
+            border: 1px solid color-mix(in srgb, var(--error) 70%, var(--border));
+            border-radius: 7px;
+            background: color-mix(in srgb, var(--error) 72%, #45131c);
+            color: #fff;
+            font-size: 0.68rem;
+            font-weight: 800;
+            cursor: pointer;
+        }
+        .vast-launch-destroy:hover:not(:disabled) { filter: brightness(1.12); }
+        .vast-launch-destroy:disabled { cursor: wait; opacity: 0.6; }
+        .vast-launch-guard-grid {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 5px;
+            margin-bottom: 8px;
+        }
+        .vast-launch-guard-item {
+            padding: 5px 7px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: color-mix(in srgb, var(--surface) 80%, transparent);
+            color: var(--text2);
+            font-size: 0.62rem;
+        }
+        .vast-launch-guard-item strong {
+            display: block;
+            margin-top: 2px;
+            color: var(--text);
+            font-size: 0.69rem;
+        }
+        .vast-launch-warning {
+            margin-bottom: 8px;
+            padding: 7px 9px;
+            border: 1px solid color-mix(in srgb, var(--warn) 60%, var(--border));
+            border-radius: 7px;
+            background: color-mix(in srgb, var(--warn) 10%, var(--surface));
+            color: var(--warn);
+            font-size: 0.68rem;
+            line-height: 1.45;
+        }
+        .vast-launch-warning.critical {
+            border-color: color-mix(in srgb, var(--error) 70%, var(--border));
+            background: color-mix(in srgb, var(--error) 10%, var(--surface));
+            color: var(--error);
+        }
+        .vast-launch-raw-status {
+            margin-bottom: 8px;
+            padding: 6px 8px;
+            border-left: 3px solid #38bdf8;
+            background: color-mix(in srgb, #38bdf8 7%, var(--surface));
+            color: var(--text2);
+            font: 0.64rem/1.45 Consolas, 'Courier New', monospace;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
         .vast-launch-steps {
             display: flex;
             flex-direction: column;
@@ -10715,7 +10780,24 @@
         .vast-launch-step.state-done::before { content: '●'; color: #38bdf8; }
         .vast-launch-step.state-error { color: #f87171; }
         .vast-launch-step.state-error::before { content: '✕'; color: #ef4444; }
+        .vast-launch-step.state-stuck { color: var(--warn); background: color-mix(in srgb, var(--warn) 8%, transparent); }
+        .vast-launch-step.state-stuck::before { content: '⚠'; color: var(--warn); }
         .vast-launch-step .vast-launch-step-detail { color: var(--text2); font-size: 0.62rem; margin-left: auto; }
+        .vast-launch-terminal {
+            min-height: 88px;
+            max-height: 260px;
+            margin-top: 8px;
+            overflow: auto;
+            padding: 9px 10px;
+            border: 1px solid #263846;
+            border-radius: 7px;
+            background: #071017;
+            color: #b8d7cc;
+            font: 0.64rem/1.48 Consolas, 'Courier New', monospace;
+            white-space: pre-wrap;
+            word-break: break-word;
+            scrollbar-color: #35505d #071017;
+        }
         .vast-launch-comfy {
             margin-top: 8px;
             padding: 8px 10px;
@@ -10742,6 +10824,7 @@
             #vast-search-btn { justify-self: stretch; }
             .vast-offer-row { grid-template-columns: auto minmax(0, 1fr); }
             .vast-offer-price { grid-column: 2; text-align: left; }
+            .vast-launch-guard-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
         }
         .memo-launcher {
             position: relative;
@@ -21142,10 +21225,22 @@
 
                                 <div class="vast-launch-progress" id="vast-launch-progress" hidden>
                                     <div class="vast-launch-progress-head">
-                                        <strong id="vast-launch-progress-title">VAST 빌드 준비</strong>
-                                        <span id="vast-launch-progress-state"></span>
+                                        <div class="vast-launch-progress-head-main">
+                                            <strong id="vast-launch-progress-title">VAST 빌드 준비</strong>
+                                            <span id="vast-launch-progress-state"></span>
+                                        </div>
+                                        <button type="button" class="vast-launch-destroy" id="vast-launch-destroy-btn" onclick="vastDestroyActive()" hidden>즉시 파괴</button>
                                     </div>
+                                    <div class="vast-launch-guard-grid" aria-label="VAST 비용 보호 상태">
+                                        <div class="vast-launch-guard-item">경과<strong id="vast-launch-elapsed">-</strong></div>
+                                        <div class="vast-launch-guard-item">예상 비용<strong id="vast-launch-cost">-</strong></div>
+                                        <div class="vast-launch-guard-item">시간당<strong id="vast-launch-rate">-</strong></div>
+                                        <div class="vast-launch-guard-item">자동 파괴까지<strong id="vast-launch-deadline">-</strong></div>
+                                    </div>
+                                    <div class="vast-launch-warning" id="vast-launch-warning" hidden></div>
+                                    <div class="vast-launch-raw-status" id="vast-launch-raw-status">Vast 원본 상태 대기 중</div>
                                     <ol class="vast-launch-steps" id="vast-launch-steps" aria-label="VAST 빌드 단계"></ol>
+                                    <pre class="vast-launch-terminal" id="vast-launch-terminal" aria-label="VAST 빌드 상세 로그">[VAST] 빌드 로그 대기 중...</pre>
                                     <div class="vast-launch-comfy" id="vast-launch-comfy" hidden>
                                         <span id="vast-launch-comfy-url"></span>
                                         <a id="vast-launch-comfy-link" href="#" target="_blank" rel="noopener" hidden>ComfyUI 접속</a>
@@ -25251,6 +25346,7 @@
         let vastSelectedWorkflowPaths = new Set();
         let vastPlan = null;
         let vastLaunchPollTimer = null;
+        let vastLastLaunchErrorToast = '';
         // LoRA 선택 상태
         let vastLoraCatalog = [];
         let vastLoraCatalogLoading = false;
@@ -25364,9 +25460,9 @@
                 vastWorkerActiveRefreshSeconds = refreshSeconds;
             }
             let widgetState = 'off';
-            if (launchState === 'creating' || launchState === 'preparing') widgetState = 'checking';
+            if (launchState === 'creating' || launchState === 'preparing' || launchState === 'destroying' || launchState === 'recovered') widgetState = 'checking';
             else if (launchState === 'ready') widgetState = 'on';
-            else if (launchState === 'error') widgetState = 'error';
+            else if (launchState === 'error' || launchState === 'destroy_failed') widgetState = 'error';
             e.widget.dataset.state = widgetState;
             e.heading.textContent = 'VAST GPU';
             const stateLabel = ({
@@ -25376,6 +25472,9 @@
                 ready: 'ComfyUI 준비 완료',
                 error: '빌드 오류',
                 destroyed: '파괴됨',
+                destroying: '파괴 확인 중',
+                destroy_failed: '파괴 확인 실패',
+                recovered: '재시작 감시 복구',
             })[launchState] || launchState;
             e.state.textContent = stateLabel;
             e.state.title = launch.error ? String(launch.error) : stateLabel;
@@ -25384,6 +25483,7 @@
             e.instance.textContent = instanceId ? `#${instanceId}` : '-';
             e.stateShort.textContent = ({
                 idle: '대기', creating: '생성', preparing: '준비', ready: 'ON', error: '오류', destroyed: '파괴',
+                destroying: '파괴중', destroy_failed: '확인실패', recovered: '복구',
             })[launchState] || '-';
             const nextSeconds = vastWorkerActiveRefreshSeconds;
             e.checked.textContent = `credit $${credit.toFixed(2)} · ${stateLabel} · ${nextSeconds}초 주기`;
@@ -26018,17 +26118,19 @@
             });
             const loras = vastSelectedLoraFiles();
             try {
-                await fetchJSON('/api/vast/launch', {
+                const result = await fetchJSON('/api/vast/launch', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         ask_id: vastSelectedOfferId,
                         disk_gb: diskGb,
+                        hourly_price_usd: Number(vastSelectedOffer?.dph_total || 0),
                         plan: vastPlan || {},
                         loras,
                         workflows,
                     }),
                 });
+                if (result?.launch) vastRenderLaunchSteps(result.launch);
                 showToast('VAST 인스턴스 빌드를 시작했습니다.', 'success');
                 vastRefreshLaunchPolling();
             } catch (error) {
@@ -26064,7 +26166,24 @@
             download: '원격 모델 다운로드',
             tunnel: 'SSH 로컬 터널',
             comfy: 'ComfyUI 기동',
+            recovered: '재시작 복구',
         };
+
+        function vastFormatDuration(totalSeconds) {
+            const value = Math.max(0, Math.floor(Number(totalSeconds) || 0));
+            const hours = Math.floor(value / 3600);
+            const minutes = Math.floor((value % 3600) / 60);
+            const seconds = value % 60;
+            if (hours) return `${hours}시간 ${minutes}분 ${seconds}초`;
+            if (minutes) return `${minutes}분 ${seconds}초`;
+            return `${seconds}초`;
+        }
+
+        function vastEventTimeLabel(value) {
+            const date = new Date(value);
+            if (Number.isNaN(date.getTime())) return '--:--:--';
+            return date.toLocaleTimeString('ko-KR', { hour12: false });
+        }
 
         async function vastPollLaunch() {
             try {
@@ -26074,9 +26193,13 @@
                 // 메인 패널/위젯 상태 동기화
                 const st = document.getElementById('vast-runtime-state');
                 const ins = document.getElementById('vast-runtime-instance');
-                const stateLabel = ({
+                const stateLabel = launch.state === 'destroyed' && launch.destroy_automatic
+                    ? '비용 보호 자동 파괴됨'
+                    : ({
                     idle: '대기', creating: '생성 중', preparing: '준비 중',
                     ready: '준비 완료', error: '오류', destroyed: '파괴됨',
+                    destroying: '파괴 확인 중', destroy_failed: '파괴 확인 실패',
+                    recovered: '재시작 복구',
                 })[launch.state] || launch.state;
                 if (st) st.textContent = `● ${stateLabel}`;
                 if (ins) ins.textContent = launch.instance_id ? `#${launch.instance_id} ${stateLabel}` : '없음';
@@ -26084,7 +26207,7 @@
                 console.error('[VAST] 빌드 상태 조회 실패:', error);
             } finally {
                 const launch = window.__vastLastLaunch || {};
-                const done = launch.state === 'ready' || launch.state === 'error' || launch.state === 'idle' || launch.state === 'destroyed';
+                const done = launch.state === 'ready' || launch.state === 'error' || launch.state === 'idle' || launch.state === 'destroyed' || launch.state === 'destroy_failed';
                 const panelActive = document.getElementById('comfy-vast-panel')?.classList.contains('active');
                 if (panelActive && !done) {
                     vastLaunchPollTimer = window.setTimeout(() => void vastPollLaunch(), 3000);
@@ -26101,11 +26224,23 @@
             const comfyBox = document.getElementById('vast-launch-comfy');
             const comfyUrl = document.getElementById('vast-launch-comfy-url');
             const comfyLink = document.getElementById('vast-launch-comfy-link');
+            const destroyBtn = document.getElementById('vast-launch-destroy-btn');
+            const elapsedEl = document.getElementById('vast-launch-elapsed');
+            const costEl = document.getElementById('vast-launch-cost');
+            const rateEl = document.getElementById('vast-launch-rate');
+            const deadlineEl = document.getElementById('vast-launch-deadline');
+            const warningEl = document.getElementById('vast-launch-warning');
+            const rawStatusEl = document.getElementById('vast-launch-raw-status');
+            const terminalEl = document.getElementById('vast-launch-terminal');
             if (!box || !stepsEl) return;
             box.hidden = false;
-            const stateLabel = ({
+            const stateLabel = launch.state === 'destroyed' && launch.destroy_automatic
+                ? '비용 보호 자동 파괴됨'
+                : ({
                 idle: '대기', creating: '인스턴스 생성 중', preparing: '준비 중',
                 ready: 'ComfyUI 준비 완료', error: '빌드 오류', destroyed: '파괴됨',
+                destroying: '파괴 요청 및 소멸 확인 중', destroy_failed: '파괴 확인 실패',
+                recovered: '서버 재시작 후 감시 복구',
             })[launch.state] || launch.state;
             if (title) title.textContent = `VAST 빌드 ${launch.instance_id ? `#${launch.instance_id}` : ''}`;
             if (stateEl) {
@@ -26113,11 +26248,53 @@
                     ? `오류: ${launch.error}`
                     : stateLabel;
             }
+            const instanceId = Number(launch.instance_id || 0);
+            if (destroyBtn) {
+                destroyBtn.hidden = !(instanceId > 0);
+                destroyBtn.disabled = launch.state === 'destroying';
+                destroyBtn.textContent = launch.state === 'destroying' ? '파괴 확인 중…' : '즉시 파괴';
+            }
+            if (elapsedEl) elapsedEl.textContent = launch.contract_started_at_epoch
+                ? vastFormatDuration(launch.elapsed_seconds)
+                : '계약 생성 전';
+            if (costEl) costEl.textContent = `$${Number(launch.estimated_cost_usd || 0).toFixed(4)}`;
+            if (rateEl) rateEl.textContent = Number(launch.hourly_price_usd || 0) > 0
+                ? `$${Number(launch.hourly_price_usd).toFixed(4)}/hr`
+                : '확인 중';
+            if (deadlineEl) {
+                const remaining = launch.auto_destroy_remaining_seconds;
+                deadlineEl.textContent = remaining === null || remaining === undefined
+                    ? (launch.state === 'ready' ? '빌드 보호 해제' : '-')
+                    : `${vastFormatDuration(remaining)} (${launch.auto_destroy_limit_name || '보호 제한'})`;
+            }
+            if (rawStatusEl) {
+                rawStatusEl.textContent = [
+                    `actual_status: ${launch.instance_status || '(아직 없음)'}`,
+                    `status_msg: ${launch.instance_status_msg || '(아직 없음)'}`,
+                    `마지막 진행 변화: ${vastFormatDuration(launch.progress_stale_seconds || 0)} 전`,
+                ].join('\n');
+            }
+            if (warningEl) {
+                const critical = launch.state === 'destroy_failed' || launch.protection_state === 'critical';
+                const warning = critical
+                    ? (launch.protection_reason || launch.error || '파괴 확인 실패 — 과금 가능성이 있습니다.')
+                    : launch.stuck
+                        ? launch.stuck_reason
+                        : launch.state === 'destroyed' && launch.destroy_automatic
+                            ? (launch.destroy_reason || '비용 보호 제한으로 자동 파괴됐습니다.')
+                        : launch.state === 'recovered'
+                            ? (launch.protection_reason || '서버 재시작 뒤 복구된 인스턴스입니다. 상태를 확인하세요.')
+                            : '';
+                warningEl.hidden = !warning;
+                warningEl.classList.toggle('critical', critical);
+                warningEl.textContent = warning;
+            }
             const steps = Array.isArray(launch.steps) ? launch.steps : [];
             stepsEl.replaceChildren();
             for (const s of steps) {
                 const li = document.createElement('li');
-                li.className = `vast-launch-step state-${s.state || 'pending'}`;
+                const isCurrentStuck = launch.stuck && s.key === launch.current_step && s.state === 'running';
+                li.className = `vast-launch-step state-${isCurrentStuck ? 'stuck' : (s.state || 'pending')}`;
                 const label = document.createElement('span');
                 label.textContent = VAST_LAUNCH_STEP_LABELS[s.key] || s.key;
                 const detail = document.createElement('span');
@@ -26125,6 +26302,14 @@
                 detail.textContent = s.detail || '';
                 li.append(label, detail);
                 stepsEl.append(li);
+            }
+            if (terminalEl) {
+                const nearBottom = terminalEl.scrollHeight - terminalEl.scrollTop - terminalEl.clientHeight < 36;
+                const events = Array.isArray(launch.events) ? launch.events : [];
+                terminalEl.textContent = events.length
+                    ? events.map(event => `[${vastEventTimeLabel(event.at)}] [${String(event.level || 'info').toUpperCase()}] ${event.message || ''}`).join('\n')
+                    : '[VAST] 아직 기록된 빌드 이벤트가 없습니다.';
+                if (nearBottom) terminalEl.scrollTop = terminalEl.scrollHeight;
             }
             if (launch.state === 'ready' && launch.comfy_base_url) {
                 if (comfyBox) comfyBox.hidden = false;
@@ -26135,8 +26320,25 @@
                 if (comfyLink) comfyLink.hidden = true;
             }
             if (launch.state === 'error') {
-                showToast('VAST 빌드 오류: ' + (launch.error || '알 수 없음'), 'error');
+                const signature = String(launch.error || '알 수 없음');
+                if (signature !== vastLastLaunchErrorToast) {
+                    vastLastLaunchErrorToast = signature;
+                    showToast('VAST 빌드 오류: ' + signature, 'error');
+                }
+            } else if (launch.state !== 'destroy_failed') {
+                vastLastLaunchErrorToast = '';
             }
+        }
+
+        async function vastDestroyActive() {
+            const launch = window.__vastLastLaunch || {};
+            const instanceId = Number(launch.instance_id || 0);
+            if (!(instanceId > 0)) {
+                console.error('[VAST] 진행 패널 파괴 요청 실패: 활성 instance_id 없음', launch);
+                showToast('파괴할 활성 Vast 인스턴스가 없습니다.', 'error');
+                return;
+            }
+            await vastDestroy(instanceId);
         }
 
         // ── 인스턴스 목록/파괴 ──
@@ -26164,7 +26366,7 @@
                     strong.textContent = `#${i.id} ${i.gpu_name || 'GPU'}${i.label ? ` · ${i.label}` : ''}`;
                     const meta = document.createElement('div');
                     meta.className = 'vast-offer-meta';
-                    [i.actual_status ? `상태 ${i.actual_status}` : null, `cur ${i.cur_state || ''}`, i.dph_total ? `$${Number(i.dph_total).toFixed(3)}/hr` : null]
+                    [i.actual_status ? `상태 ${i.actual_status}` : null, `cur ${i.cur_state || ''}`, i.dph_total ? `$${Number(i.dph_total).toFixed(3)}/hr` : null, i.status_msg ? `Vast: ${i.status_msg}` : null]
                         .filter(Boolean).forEach(t => { const s = document.createElement('span'); s.textContent = t; meta.append(s); });
                     main.append(strong, meta);
                     const actions = document.createElement('div');
@@ -26186,19 +26388,31 @@
         }
 
         async function vastDestroy(instanceId) {
-            if (!confirm(`Vast 인스턴스 #${instanceId} 를 파괴할까요? 과금이 즉시 중단됩니다.`)) return;
+            const launch = window.__vastLastLaunch || {};
+            const costText = Number(launch.instance_id) === Number(instanceId)
+                ? `\n현재 예상 비용: $${Number(launch.estimated_cost_usd || 0).toFixed(4)}\n진행 단계: ${launch.current_step || '-'}`
+                : '';
+            if (!confirm(`Vast 인스턴스 #${instanceId} 를 즉시 파괴할까요?${costText}\n\n데이터는 삭제되며, Vast 목록에서 소멸을 확인한 뒤 완료로 표시합니다.`)) return;
+            const activeButton = document.getElementById('vast-launch-destroy-btn');
+            if (activeButton && Number(launch.instance_id) === Number(instanceId)) {
+                activeButton.disabled = true;
+                activeButton.textContent = '파괴 확인 중…';
+            }
             try {
-                await fetchJSON('/api/vast/destroy', {
+                const result = await fetchJSON('/api/vast/destroy', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ instance_id: instanceId }),
                 });
-                showToast(`Vast 인스턴스 #${instanceId} 파괴 요청 완료`, 'success');
-                vastLoadInstances();
+                if (result?.launch) vastRenderLaunchSteps(result.launch);
+                showToast(`Vast 인스턴스 #${instanceId} 파괴·소멸 확인 완료`, 'success');
+                await vastLoadInstances();
                 void refreshVastStatus(true);
+                vastRefreshLaunchPolling();
             } catch (error) {
                 console.error('[VAST] 인스턴스 파괴 실패:', error);
-                showToast('VAST 인스턴스 파괴 실패: ' + (error.message || error), 'error');
+                showToast('VAST 인스턴스 파괴 확인 실패 — 과금 가능성 있음: ' + (error.message || error), 'error');
+                vastRefreshLaunchPolling();
             }
         }
 

@@ -113,10 +113,13 @@ def register_vast_routes(
             body = await request.json()
             ask_id = int(body.get("ask_id") or 0)
             disk_gb = int(body.get("disk_gb") or 0)
+            hourly_price_usd = float(body.get("hourly_price_usd") or 0.0)
             if ask_id <= 0:
                 raise ValueError("ask_id(오퍼 ID)가 필요합니다.")
             if disk_gb < 10:
                 raise ValueError("disk_gb는 10GB 이상이어야 합니다.")
+            if not 0.0 <= hourly_price_usd <= 20.0:
+                raise ValueError("hourly_price_usd는 0~20 사이여야 합니다.")
             install_payload = await asyncio.get_running_loop().run_in_executor(
                 None, service.prepare_install_payload
             )
@@ -126,6 +129,7 @@ def register_vast_routes(
                 model_plan=body.get("plan") or {},
                 lora_files=body.get("loras") or [],
                 install_payload=install_payload,
+                hourly_price_usd=hourly_price_usd,
             )
             return web.json_response({"ok": True, "launch": state})
         except (ValueError, FileNotFoundError, RuntimeError) as exc:
@@ -208,6 +212,16 @@ def register_vast_routes(
             )
             traceback.print_exc()
 
+    async def startup(_app: web.Application) -> None:
+        try:
+            await service.startup()
+        except Exception as exc:
+            print(
+                "[VAST_API] 시작 시 비용 보호 복구 실패: "
+                f"{type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+
     app.router.add_get("/api/vast/status", status)
     app.router.add_get("/api/vast/offers", offers)
     app.router.add_post("/api/vast/plan", plan)
@@ -218,5 +232,6 @@ def register_vast_routes(
     app.router.add_get("/api/vast/model-sources", model_sources_get)
     app.router.add_post("/api/vast/model-sources", model_sources_put)
     app.router.add_post("/api/vast/workflow/run", run_workflow)
+    app.on_startup.append(startup)
     app.on_cleanup.append(cleanup)
     return service

@@ -1,17 +1,27 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 import socket
 import socketserver
 import threading
+import time
 from typing import Any
 
 import pytest
 
 from vast_backend.client import VastApiError, VastClient
 from vast_backend.model_sources import build_download_plan, save_mapping
-from vast_backend.service import MODELS_DONE_FLAG, VastService
+from vast_backend.service import (
+    BUILD_COMPLETE_FLAG,
+    BUILD_TIMEOUT_SECONDS,
+    MAX_BUILD_COST_USD,
+    MODELS_DONE_FLAG,
+    NO_PROGRESS_WARNING_SECONDS,
+    SSH_WAIT_TIMEOUT_SECONDS,
+    VastService,
+)
 from vast_backend.ssh_tunnel import ComfySshTunnel
 
 
@@ -188,6 +198,185 @@ def test_vast_comfy_url_uses_public_ip_and_mapped_port(tmp_path: Path) -> None:
             },
         }
     ) == "http://203.0.113.10:34567"
+
+
+def test_vast_launch_status_exposes_cost_deadline_and_stale_warning(
+    tmp_path: Path,
+) -> None:
+    service = VastService(tmp_path, lambda: {"vast_api_key": "test-key"})
+    service.launch = service._new_launch_state(
+        state="preparing",
+        launch_id="launch-test",
+        label="soya-vast-launch-test",
+        hourly_price_usd=0.40,
+    )
+    service.launch["instance_id"] = 123
+    service.launch["contract_started_at_epoch"] = time.time() - 300
+    service.launch["last_progress_at_epoch"] = (
+        time.time() - NO_PROGRESS_WARNING_SECONDS - 1
+    )
+    service.launch["current_step"] = "ssh"
+
+    status = service.launch_status()
+
+    assert 299 <= status["elapsed_seconds"] <= 301
+    assert status["estimated_cost_usd"] == pytest.approx(0.033333, abs=0.00001)
+    assert status["stuck"] is True
+    assert "진행 변화" in status["stuck_reason"]
+    assert status["auto_destroy_limit_name"] == "SSH 준비 제한"
+    assert 899 <= status["auto_destroy_remaining_seconds"] <= 901
+    assert status["limits"] == {
+        "ssh_wait_seconds": SSH_WAIT_TIMEOUT_SECONDS,
+        "build_seconds": BUILD_TIMEOUT_SECONDS,
+        "max_build_cost_usd": MAX_BUILD_COST_USD,
+        "no_progress_warning_seconds": NO_PROGRESS_WARNING_SECONDS,
+    }
+
+
+def test_vast_onstart_has_independent_build_ttl_without_logging_secret(
+    tmp_path: Path,
+) -> None:
+    service = VastService(tmp_path, lambda: {})
+
+    script = service._build_onstart()
+
+    assert str(BUILD_TIMEOUT_SECONDS) in script
+    assert BUILD_COMPLETE_FLAG in script
+    assert "CONTAINER_API_KEY" in script
+    assert "CONTAINER_ID" in script
+    assert "--request DELETE" in script
+    assert "echo ${CONTAINER_API_KEY}" not in script
+
+
+def test_vast_cmd_events_redact_known_api_keys(tmp_path: Path) -> None:
+    service = VastService(tmp_path, lambda: {})
+    service._log_secrets.add("secret-token-value")
+
+    service._event(
+        "remote", "download https://example.test/model?token=secret-token-value"
+    )
+
+    message = service.launch["events"][-1]["message"]
+    assert "secret-token-value" not in message
+    assert "<redacted>" in message
+
+
+class _DestroyClient:
+    def __init__(self, *, remains: bool = False) -> None:
+        self.remains = remains
+        self.destroy_calls: list[int] = []
+
+    async def destroy_instance(self, instance_id: int) -> dict[str, Any]:
+        self.destroy_calls.append(instance_id)
+        return {"success": True}
+
+    async def list_instances(self) -> list[dict[str, Any]]:
+        return [{"id": 321}] if self.remains else []
+
+    async def get_instance(self, instance_id: int) -> dict[str, Any]:
+        return {
+            "id": instance_id,
+            "actual_status": "running",
+            "status_msg": "container running",
+            "dph_total": 0.40,
+        }
+
+
+@pytest.mark.asyncio
+async def test_vast_manual_destroy_cancels_launch_and_verifies_disappearance(
+    tmp_path: Path,
+) -> None:
+    service = VastService(tmp_path, lambda: {"vast_api_key": "test-key"})
+    client = _DestroyClient()
+    service._client = client  # type: ignore[assignment]
+    service.launch = service._new_launch_state(
+        state="preparing", launch_id="manual", label="soya-vast-manual"
+    )
+    service.launch["instance_id"] = 321
+    cancel_event = threading.Event()
+    service._cancel_events["manual"] = cancel_event
+    launch_task = asyncio.create_task(asyncio.Event().wait())
+    service._launch_task = launch_task
+
+    result = await service.destroy(321)
+    await asyncio.gather(launch_task, return_exceptions=True)
+
+    assert result["ok"] is True
+    assert result["verified"] is True
+    assert client.destroy_calls == [321]
+    assert cancel_event.is_set() is True
+    assert launch_task.cancelled() is True
+    assert service.launch["state"] == "destroyed"
+    assert service.launch["instance_id"] is None
+    assert service.launch["destroyed_instance_id"] == 321
+    assert any("소멸 확인 완료" in event["message"] for event in service.launch["events"])
+
+
+@pytest.mark.asyncio
+async def test_vast_destroy_failure_keeps_instance_id_and_critical_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = VastService(tmp_path, lambda: {"vast_api_key": "test-key"})
+    client = _DestroyClient(remains=True)
+    service._client = client  # type: ignore[assignment]
+    service.launch = service._new_launch_state(
+        state="preparing", launch_id="failure", label="soya-vast-failure"
+    )
+    service.launch["instance_id"] = 321
+    service._cancel_events["failure"] = threading.Event()
+
+    async def no_sleep(_seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr(asyncio, "sleep", no_sleep)
+
+    with pytest.raises(VastApiError, match="파괴를 확인하지 못했습니다"):
+        await service.destroy(321)
+
+    assert client.destroy_calls == [321, 321, 321]
+    assert service.launch["state"] == "destroy_failed"
+    assert service.launch["instance_id"] == 321
+    assert service.launch["protection_state"] == "critical"
+
+
+@pytest.mark.asyncio
+async def test_vast_watchdog_auto_destroys_build_over_total_limit(
+    tmp_path: Path,
+) -> None:
+    service = VastService(tmp_path, lambda: {"vast_api_key": "test-key"})
+    client = _DestroyClient()
+    service._client = client  # type: ignore[assignment]
+    service.launch = service._new_launch_state(
+        state="preparing",
+        launch_id="auto",
+        label="soya-vast-auto",
+        hourly_price_usd=0.01,
+    )
+    service.launch["instance_id"] = 321
+    service.launch["contract_started_at_epoch"] = (
+        time.time() - BUILD_TIMEOUT_SECONDS - 1
+    )
+    service.launch["ssh_ready_at_epoch"] = time.time() - BUILD_TIMEOUT_SECONDS
+    service._cancel_events["auto"] = threading.Event()
+
+    await service._watchdog_loop("auto")
+
+    assert client.destroy_calls == [321]
+    assert service.launch["state"] == "destroyed"
+    assert service.launch["destroy_automatic"] is True
+    assert "전체 빌드 제한" in service.launch["destroy_reason"]
+
+
+def test_vast_frontend_has_manual_destroy_guard_and_cmd_log() -> None:
+    html = (
+        Path(__file__).resolve().parents[1] / "frontend" / "index.html"
+    ).read_text(encoding="utf-8")
+
+    assert 'id="vast-launch-destroy-btn"' in html
+    assert 'onclick="vastDestroyActive()"' in html
+    assert 'id="vast-launch-terminal"' in html
+    assert "launch.instance_status_msg" in html
+    assert "launch.auto_destroy_remaining_seconds" in html
 
 
 def test_civitai_plan_has_download_url_even_without_key() -> None:
