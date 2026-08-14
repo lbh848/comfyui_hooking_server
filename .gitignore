@@ -84,3 +84,7 @@ modal_lora_delete_outbox.json
 
 # Modal 원격 영상 삭제 예약 outbox(런타임 상태 파일)
 modal_video_delete_outbox.json
+
+# Vast SSH 키 (보안상 git에 포함하지 않음)
+vast_ssh_key
+vast_ssh_key.pub
