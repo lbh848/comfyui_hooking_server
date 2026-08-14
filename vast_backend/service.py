@@ -13,7 +13,9 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextvars
+import hashlib
 import json
 import os
 import posixpath
@@ -62,6 +64,9 @@ NO_PROGRESS_WARNING_SECONDS = 180
 WATCHDOG_POLL_SECONDS = 10
 SSH_CONNECT_TIMEOUT_SECONDS = 60
 SSH_STATUS_POLL_SECONDS = 10
+SSH_CONNECT_ATTEMPTS = 10
+SSH_INITIAL_AUTH_ATTEMPTS = 4
+SSH_KEY_REATTACH_SETTLE_SECONDS = 5
 WATCHDOG_STATUS_MAX_AGE_SECONDS = 25
 ACCOUNT_STATUS_CACHE_SECONDS = 60
 ACCOUNT_STATUS_ERROR_CACHE_SECONDS = 15
@@ -80,6 +85,10 @@ _LAUNCH_CONTEXT: contextvars.ContextVar[str] = contextvars.ContextVar(
 
 class LaunchCancelled(RuntimeError):
     """사용자 파괴/서버 종료로 중단된 launch 작업."""
+
+
+class SshAuthenticationError(VastApiError):
+    """SSH 서버에는 도달했지만 지정한 공개키 인증이 거부된 상태."""
 
 
 def _log(message: str) -> None:
@@ -1356,14 +1365,19 @@ class VastService:
         self._set_step("ssh", "running", "SSH 키 부착 완료 · 실제 인증 확인 중")
 
         # 주소 노출만으로 준비 완료를 판단하지 않고 실제 인증과 명령 실행을 확인한다.
-        await asyncio.to_thread(
-            self._run_preflight,
+        # Vast의 연결 레코드와 실제 authorized_keys 반영이 어긋난 경우에만 키를
+        # 한 번 분리·재부착한 뒤 인증을 다시 확인한다.
+        ssh_host, ssh_port = await self._run_preflight_with_ssh_recovery(
+            client,
+            instance_id,
             ssh_host,
             ssh_port,
             private_key_path,
+            public_key,
             model_plan,
             lora_files,
         )
+        self._active_ssh_endpoint = (ssh_host, ssh_port, private_key_path)
         self._set_step("ssh", "done", f"{ssh_host}:{ssh_port} · 인증 확인 완료")
         self._initialize_actual_transfer_tracking(model_plan, lora_files)
 
@@ -1424,11 +1438,14 @@ class VastService:
             await asyncio.sleep(SSH_STATUS_POLL_SECONDS)
 
     async def _attach_key_with_retry(
-        self, client: VastClient, instance_id: int, public_key: str
+        self,
+        client: VastClient,
+        instance_id: int,
+        public_key: str,
+        *,
+        accept_already_associated: bool = True,
     ) -> None:
         """running 직후 부착 API는 일시적 서버 오류를 낼 수 있어 재시도한다."""
-        import time
-
         last_error: Exception | None = None
         for attempt in range(6):
             try:
@@ -1439,11 +1456,21 @@ class VastService:
                 )
                 return
             except VastApiError as exc:
-                if "already associated" in str(exc):
-                    self._event(
-                        "ssh", f"SSH 키 이미 등록됨(성공으로 간주): {instance_id}"
+                if "already associated" in str(exc).lower():
+                    if accept_already_associated:
+                        self._event(
+                            "ssh", f"SSH 키 이미 등록됨(성공으로 간주): {instance_id}"
+                        )
+                        return
+                    print(
+                        "[VAST][SSH_RECOVERY][ERROR] 키 분리 후에도 이미 연결된 상태: "
+                        f"instance={instance_id}, error={exc}"
                     )
-                    return
+                    traceback.print_exc()
+                    raise VastApiError(
+                        "Vast SSH 키 복구 중 기존 키 연결이 제거되지 않았습니다: "
+                        f"instance={instance_id}"
+                    ) from exc
                 last_error = exc
                 print(
                     f"[VAST] SSH 키 부착 재시도({attempt + 1}/6): "
@@ -1459,14 +1486,199 @@ class VastService:
             f"SSH 키 부착 실패: instance={instance_id}, last={last_error}"
         )
 
-    def _ssh_connect(self, host: str, port: int, private_key_path: str):
-        """SSH 접속 — 키 부착 직후 데몬 재시작으로 일시 거부될 수 있어 재시도한다."""
-        import time
+    @staticmethod
+    def _ssh_key_identity(public_key: str) -> tuple[str, str]:
+        fields = str(public_key or "").strip().split()
+        return (fields[0], fields[1]) if len(fields) >= 2 else ("", "")
 
+    @classmethod
+    def _ssh_key_fingerprint(cls, public_key: str) -> str:
+        key_type, encoded = cls._ssh_key_identity(public_key)
+        if not key_type or not encoded:
+            print("[VAST][SSH_KEY][ERROR] 지문을 계산할 공개키 형식이 올바르지 않습니다.")
+            return "invalid"
+        try:
+            padded = encoded + ("=" * (-len(encoded) % 4))
+            digest = hashlib.sha256(base64.b64decode(padded, validate=True)).digest()
+            return "SHA256:" + base64.b64encode(digest).decode("ascii").rstrip("=")
+        except Exception as exc:
+            print(
+                "[VAST][SSH_KEY][ERROR] 공개키 지문 계산 실패: "
+                f"key_type={key_type}, error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            return "invalid"
+
+    async def _recover_instance_ssh_key(
+        self,
+        client: VastClient,
+        instance_id: int,
+        public_key: str,
+    ) -> tuple[str, int]:
+        """인증 거부 시 해당 인스턴스의 키 연결만 한 번 재생성한다."""
+        self._check_cancelled()
+        expected_identity = self._ssh_key_identity(public_key)
+        fingerprint = self._ssh_key_fingerprint(public_key)
+        account_keys = await client.list_account_ssh_keys()
+        matching = next(
+            (
+                item
+                for item in account_keys
+                if self._ssh_key_identity(str(item.get("public_key") or ""))
+                == expected_identity
+            ),
+            None,
+        )
+        try:
+            ssh_key_id = int((matching or {}).get("id") or 0)
+        except (TypeError, ValueError) as exc:
+            print(
+                "[VAST][SSH_RECOVERY][ERROR] 계정 SSH 키 ID 해석 실패: "
+                f"instance={instance_id}, fingerprint={fingerprint}, "
+                f"value={(matching or {}).get('id')!r}, error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            raise VastApiError("Vast 계정 SSH 키 ID를 해석할 수 없습니다.") from exc
+        if ssh_key_id <= 0:
+            print(
+                "[VAST][SSH_RECOVERY][ERROR] 로컬 공개키와 일치하는 계정 키 없음: "
+                f"instance={instance_id}, fingerprint={fingerprint}, "
+                f"account_key_count={len(account_keys)}"
+            )
+            raise VastApiError(
+                "SSH 인증 복구에 필요한 Vast 계정 공개키를 찾을 수 없습니다."
+            )
+
+        info, _refreshed = await self._get_instance_status(
+            instance_id, max_age_seconds=0
+        )
+        machine_id = info.get("machine_id")
+        host_id = info.get("host_id")
+        recovery_detail = (
+            f"instance={instance_id}, machine={machine_id or '(없음)'}, "
+            f"host={host_id or '(없음)'}, key_id={ssh_key_id}, "
+            f"fingerprint={fingerprint}"
+        )
+        print(f"[VAST][SSH_RECOVERY] 키 연결 재생성 시작: {recovery_detail}")
+        self._event("ssh-recovery", f"SSH 키 연결 재생성 시작: {recovery_detail}")
+
+        detached = False
+        try:
+            await client.detach_ssh_key(instance_id, ssh_key_id)
+            detached = True
+            self._event(
+                "ssh-recovery",
+                f"SSH 키 분리 완료: instance={instance_id}, key_id={ssh_key_id}",
+            )
+        except VastApiError as exc:
+            print(
+                "[VAST][SSH_RECOVERY][ERROR] SSH 키 분리 실패 · 재부착은 계속 시도: "
+                f"instance={instance_id}, key_id={ssh_key_id}, "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            self._event(
+                "ssh-recovery",
+                f"SSH 키 분리 실패 · 재부착 계속: instance={instance_id}, "
+                f"key_id={ssh_key_id}, error={exc}",
+            )
+
+        if detached:
+            await asyncio.sleep(SSH_KEY_REATTACH_SETTLE_SECONDS)
+        await self._attach_key_with_retry(
+            client,
+            instance_id,
+            public_key,
+            accept_already_associated=False,
+        )
+        await asyncio.sleep(SSH_KEY_REATTACH_SETTLE_SECONDS)
+        self._instance_status_cache.pop(int(instance_id), None)
+        ssh_host, ssh_port = await self._wait_ssh(instance_id)
+        self._event(
+            "ssh-recovery",
+            f"SSH 키 재부착 완료 · 인증 재시도: {ssh_host}:{ssh_port}",
+        )
+        return ssh_host, ssh_port
+
+    async def _run_preflight_with_ssh_recovery(
+        self,
+        client: VastClient,
+        instance_id: int,
+        host: str,
+        port: int,
+        private_key_path: str,
+        public_key: str,
+        model_plan: dict[str, Any],
+        lora_files: list[dict[str, Any]],
+    ) -> tuple[str, int]:
+        """초기 인증 거부에 한해서만 키 연결을 한 번 복구하고 재검사한다."""
+        try:
+            await asyncio.to_thread(
+                self._run_preflight,
+                host,
+                port,
+                private_key_path,
+                model_plan,
+                lora_files,
+                authentication_attempt_limit=SSH_INITIAL_AUTH_ATTEMPTS,
+                defer_auth_failure=True,
+            )
+            return host, port
+        except SshAuthenticationError as exc:
+            print(
+                "[VAST][SSH_RECOVERY] 초기 SSH 인증 거부 · 키 재부착 복구 시작: "
+                f"instance={instance_id}, endpoint={host}:{port}, error={exc}"
+            )
+            self._set_step("ssh", "running", "SSH 인증 거부 · 키 재부착 복구 중")
+            self._event(
+                "ssh-recovery",
+                f"초기 인증 거부 · 키 재부착 복구 시작: instance={instance_id}, "
+                f"endpoint={host}:{port}",
+            )
+
+        recovered_host, recovered_port = await self._recover_instance_ssh_key(
+            client, instance_id, public_key
+        )
+        self._active_ssh_endpoint = (
+            recovered_host,
+            recovered_port,
+            private_key_path,
+        )
+        self._set_step("ssh", "running", "SSH 키 재부착 완료 · 실제 인증 재확인 중")
+        await asyncio.to_thread(
+            self._run_preflight,
+            recovered_host,
+            recovered_port,
+            private_key_path,
+            model_plan,
+            lora_files,
+        )
+        self._event(
+            "ssh-recovery",
+            f"SSH 키 자동 복구 성공: instance={instance_id}, "
+            f"endpoint={recovered_host}:{recovered_port}",
+        )
+        return recovered_host, recovered_port
+
+    def _ssh_connect(
+        self,
+        host: str,
+        port: int,
+        private_key_path: str,
+        *,
+        authentication_attempt_limit: int | None = None,
+    ):
+        """SSH 접속 — 키 부착 직후 데몬 재시작으로 일시 거부될 수 있어 재시도한다."""
         import paramiko
 
         last_error: Exception | None = None
-        for attempt in range(10):
+        authentication_failures = 0
+        auth_limit = (
+            max(1, int(authentication_attempt_limit))
+            if authentication_attempt_limit is not None
+            else None
+        )
+        for attempt in range(SSH_CONNECT_ATTEMPTS):
             self._check_cancelled()
             client = paramiko.SSHClient()
             client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -1479,6 +1691,8 @@ class VastService:
                     timeout=SSH_CONNECT_TIMEOUT_SECONDS,
                     banner_timeout=SSH_CONNECT_TIMEOUT_SECONDS,
                     auth_timeout=SSH_CONNECT_TIMEOUT_SECONDS,
+                    allow_agent=False,
+                    look_for_keys=False,
                 )
                 if attempt:
                     self._event(
@@ -1487,21 +1701,45 @@ class VastService:
                 return client
             except (paramiko.ssh_exception.SSHException, OSError) as exc:
                 last_error = exc
+                is_auth_failure = isinstance(
+                    exc, paramiko.ssh_exception.AuthenticationException
+                )
+                authentication_failures = (
+                    authentication_failures + 1 if is_auth_failure else 0
+                )
                 print(
-                    f"[VAST] SSH 접속 재시도({attempt + 1}/10): {host}:{port}, "
-                    f"error={type(exc).__name__}: {exc}"
+                    f"[VAST] SSH 접속 재시도({attempt + 1}/{SSH_CONNECT_ATTEMPTS}): "
+                    f"{host}:{port}, error={type(exc).__name__}: {exc}, "
+                    f"auth_failures={authentication_failures}"
                 )
                 self._event(
                     "ssh-retry",
-                    f"SSH 접속 재시도 {attempt + 1}/10: {host}:{port} — "
+                    f"SSH 접속 재시도 {attempt + 1}/{SSH_CONNECT_ATTEMPTS}: "
+                    f"{host}:{port} — "
                     f"{type(exc).__name__}: {exc}",
                 )
                 try:
                     client.close()
                 except Exception:
                     pass
+                if (
+                    is_auth_failure
+                    and auth_limit is not None
+                    and authentication_failures >= auth_limit
+                ):
+                    raise SshAuthenticationError(
+                        f"SSH 공개키 인증이 {authentication_failures}회 연속 거부됨: "
+                        f"{host}:{port}, last={type(exc).__name__}: {exc}"
+                    ) from exc
+                if attempt + 1 >= SSH_CONNECT_ATTEMPTS:
+                    break
                 self._wait_sync(10)
-        raise VastApiError(
+        error_type = (
+            SshAuthenticationError
+            if isinstance(last_error, paramiko.ssh_exception.AuthenticationException)
+            else VastApiError
+        )
+        raise error_type(
             f"SSH 접속 실패: {host}:{port}, last={type(last_error).__name__}: {last_error}"
         )
 
@@ -1832,6 +2070,9 @@ class VastService:
         private_key_path: str,
         model_plan: dict[str, Any],
         lora_files: list[dict[str, Any]],
+        *,
+        authentication_attempt_limit: int | None = None,
+        defer_auth_failure: bool = False,
     ) -> None:
         started_at_epoch = time.time()
         state = empty_preflight_state()
@@ -1851,7 +2092,15 @@ class VastService:
             tests.append(docker_result)
             self._record_preflight_test(docker_result)
             auth_started = time.perf_counter()
-            ssh = self._ssh_connect(host, port, private_key_path)
+            if authentication_attempt_limit is None:
+                ssh = self._ssh_connect(host, port, private_key_path)
+            else:
+                ssh = self._ssh_connect(
+                    host,
+                    port,
+                    private_key_path,
+                    authentication_attempt_limit=authentication_attempt_limit,
+                )
             _stdin, stdout, stderr = ssh.exec_command("printf '__SOYA_SSH_READY__'")
             stdout_text = stdout.read().decode("utf-8", "replace")
             stderr_text = stderr.read().decode("utf-8", "replace").strip()
@@ -1896,6 +2145,9 @@ class VastService:
             )
             raise
         except Exception as exc:
+            auth_recovery_pending = bool(
+                defer_auth_failure and isinstance(exc, SshAuthenticationError)
+            )
             print(
                 "[VAST][PREFLIGHT][ERROR] SSH 준비 확인 실패: "
                 f"host={host}, port={port}, error={type(exc).__name__}: {exc}"
@@ -1910,15 +2162,22 @@ class VastService:
                 tests.append(ssh_result)
                 self._record_preflight_test(ssh_result)
             self._store_preflight(
-                state="failed",
+                state="running" if auth_recovery_pending else "failed",
                 completed_at=self._utc_now(),
                 elapsed_seconds=round(max(0.0, time.time() - started_at_epoch), 1),
                 tests=tests,
                 estimate=empty_preflight_state()["estimate"],
                 error=f"{type(exc).__name__}: {str(exc)[:500]}",
             )
-            self._set_step("preflight", "error", "SSH 인증 확인 실패")
-            self._event("preflight-error", f"SSH 인증 확인 실패: {exc}")
+            if auth_recovery_pending:
+                self._set_step("preflight", "running", "SSH 인증 거부 · 키 자동 복구 대기")
+                self._event(
+                    "ssh-recovery",
+                    f"SSH 인증 거부 감지 · 키 자동 복구 대기: {exc}",
+                )
+            else:
+                self._set_step("preflight", "error", "SSH 인증 확인 실패")
+                self._event("preflight-error", f"SSH 인증 확인 실패: {exc}")
             raise
         finally:
             if ssh is not None:

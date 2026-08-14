@@ -1310,8 +1310,21 @@ async def process_staged_video(
                 raise RuntimeError("인코딩할 영상 프레임이 없습니다")
             try:
                 with Image.open(output_frame_paths[0]) as output_frame:
-                    manifest["output_width"], manifest["output_height"] = output_frame.size
-                    manifest["raw_output_height"] = output_frame.height
+                    frame_width, frame_height = output_frame.size
+                manifest["output_width"] = frame_width
+                manifest["raw_output_height"] = frame_height
+                manifest["output_height"] = frame_height
+                if overlay_path is not None:
+                    # 대사 extend 스트립은 프레임 아래로 내려오므로 합성 캔버스 높이는
+                    # 프레임 높이가 아니라 오버레이 높이까지 포함해야 한다(415921a 회귀 복구).
+                    with Image.open(overlay_path) as overlay_image:
+                        overlay_height = overlay_image.height
+                    manifest["output_height"] = max(frame_height, overlay_height)
+                    print(
+                        "[VIDEO:POSTPROCESS] 합성 캔버스 높이 확정: "
+                        f"frame={frame_height}, overlay={overlay_height}, "
+                        f"canvas={manifest['output_height']}"
+                    )
             except Exception as exc:
                 print(
                     "[VIDEO:POSTPROCESS] 출력 프레임 크기 확인 실패: "

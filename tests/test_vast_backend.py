@@ -32,6 +32,7 @@ from vast_backend.service import (
     MODELS_DONE_FLAG,
     NO_PROGRESS_WARNING_SECONDS,
     READY_FLAG,
+    SshAuthenticationError,
     WATCHDOG_STATUS_MAX_AGE_SECONDS,
     VastService,
 )
@@ -172,6 +173,39 @@ async def test_vast_ssh_endpoints_match_current_api(
     assert requests == [
         ("POST", "/ssh/", {"ssh_key": "ssh-rsa test"}),
         ("POST", "/instances/44/ssh/", {"ssh_key": "ssh-rsa test"}),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_vast_ssh_recovery_endpoints_list_and_detach_account_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = VastClient("test-key")
+    requests: list[tuple[str, str, dict[str, Any] | None]] = []
+
+    async def fake_request(
+        method: str,
+        path: str,
+        *,
+        json_body: dict[str, Any] | None = None,
+        query: dict[str, str] | None = None,
+        api_version: str = "v0",
+    ) -> Any:
+        requests.append((method, path, json_body))
+        if method == "GET":
+            return [{"id": 12, "public_key": "ssh-rsa test"}]
+        return {"success": True}
+
+    monkeypatch.setattr(client, "_request", fake_request)
+
+    assert await client.list_account_ssh_keys() == [
+        {"id": 12, "public_key": "ssh-rsa test"}
+    ]
+    await client.detach_ssh_key(44, 12)
+
+    assert requests == [
+        ("GET", "/ssh/", None),
+        ("DELETE", "/instances/44/ssh/12/", None),
     ]
 
 
@@ -1009,6 +1043,156 @@ def test_vast_readiness_check_does_not_continue_after_ssh_auth_failure(
     assert tests["ssh"]["status"] == "error"
     steps = {item["key"]: item for item in service.launch["steps"]}
     assert steps["preflight"]["state"] == "error"
+
+
+def test_vast_ssh_connect_classifies_repeated_authentication_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import paramiko
+
+    service = VastService(tmp_path, lambda: {})
+    connect_options: list[dict[str, Any]] = []
+
+    class _RejectingClient:
+        def set_missing_host_key_policy(self, _policy: object) -> None:
+            return None
+
+        def connect(self, *_args: object, **kwargs: Any) -> None:
+            connect_options.append(dict(kwargs))
+            raise paramiko.AuthenticationException("Authentication failed")
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(paramiko, "SSHClient", _RejectingClient)
+    monkeypatch.setattr(service, "_wait_sync", lambda _seconds: None)
+
+    with pytest.raises(SshAuthenticationError, match="4회 연속 거부"):
+        service._ssh_connect(
+            "ssh2.vast.ai",
+            18160,
+            "unused-key",
+            authentication_attempt_limit=4,
+        )
+
+    assert len(connect_options) == 4
+    assert all(item["allow_agent"] is False for item in connect_options)
+    assert all(item["look_for_keys"] is False for item in connect_options)
+
+
+@pytest.mark.asyncio
+async def test_vast_preflight_auth_failure_repairs_key_once_and_retries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = VastService(tmp_path, lambda: {})
+    service.launch = service._new_launch_state(
+        state="preparing", launch_id="ssh-recovery", label="soya-vast-ssh-recovery"
+    )
+    service.launch["instance_id"] = 44
+    preflight_calls: list[tuple[str, int, dict[str, Any]]] = []
+    recoveries: list[tuple[int, str]] = []
+
+    def fake_preflight(
+        host: str,
+        port: int,
+        _private_key_path: str,
+        _model_plan: dict[str, Any],
+        _lora_files: list[dict[str, Any]],
+        **kwargs: Any,
+    ) -> None:
+        preflight_calls.append((host, port, dict(kwargs)))
+        if len(preflight_calls) == 1:
+            raise SshAuthenticationError("Authentication failed")
+
+    async def fake_recover(
+        _client: object, instance_id: int, public_key: str
+    ) -> tuple[str, int]:
+        recoveries.append((instance_id, public_key))
+        return "direct.example", 22022
+
+    monkeypatch.setattr(service, "_run_preflight", fake_preflight)
+    monkeypatch.setattr(service, "_recover_instance_ssh_key", fake_recover)
+
+    endpoint = await service._run_preflight_with_ssh_recovery(
+        object(),
+        44,
+        "ssh2.vast.ai",
+        18160,
+        "unused-key",
+        "ssh-rsa AQIDBA== test",
+        {"models": []},
+        [],
+    )
+
+    assert endpoint == ("direct.example", 22022)
+    assert recoveries == [(44, "ssh-rsa AQIDBA== test")]
+    assert len(preflight_calls) == 2
+    assert preflight_calls[0][2]["authentication_attempt_limit"] == 4
+    assert preflight_calls[0][2]["defer_auth_failure"] is True
+    assert preflight_calls[1] == ("direct.example", 22022, {})
+    assert service._active_ssh_endpoint == (
+        "direct.example",
+        22022,
+        "unused-key",
+    )
+
+
+@pytest.mark.asyncio
+async def test_vast_ssh_key_recovery_detaches_and_reattaches_matching_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = VastService(tmp_path, lambda: {})
+    service.launch = service._new_launch_state(
+        state="preparing", launch_id="key-reset", label="soya-vast-key-reset"
+    )
+    service.launch["instance_id"] = 44
+    actions: list[tuple[Any, ...]] = []
+    public_key = "ssh-rsa AQIDBA== soya-vast"
+
+    class _RecoveryClient:
+        async def list_account_ssh_keys(self) -> list[dict[str, Any]]:
+            actions.append(("list",))
+            return [{"id": 12, "public_key": public_key}]
+
+        async def detach_ssh_key(self, instance_id: int, key_id: int) -> dict[str, Any]:
+            actions.append(("detach", instance_id, key_id))
+            return {"success": True}
+
+        async def attach_ssh_key(self, instance_id: int, key: str) -> dict[str, Any]:
+            actions.append(("attach", instance_id, key))
+            return {"success": True}
+
+        async def get_instance(self, instance_id: int) -> dict[str, Any]:
+            actions.append(("status", instance_id))
+            return {
+                "id": instance_id,
+                "actual_status": "running",
+                "ssh_host": "root@ssh2.vast.ai",
+                "ssh_port": 18160,
+                "machine_id": 99,
+                "host_id": 88,
+            }
+
+    async def no_sleep(_seconds: float) -> None:
+        return None
+
+    client = _RecoveryClient()
+    service._client = client  # type: ignore[assignment]
+    monkeypatch.setattr(service, "_client_or_raise", lambda: client)
+    monkeypatch.setattr("vast_backend.service.asyncio.sleep", no_sleep)
+
+    endpoint = await service._recover_instance_ssh_key(
+        client, 44, public_key  # type: ignore[arg-type]
+    )
+
+    assert endpoint == ("ssh2.vast.ai", 18160)
+    assert actions == [
+        ("list",),
+        ("status", 44),
+        ("detach", 44, 12),
+        ("attach", 44, public_key),
+        ("status", 44),
+    ]
 
 
 def test_civitai_plan_has_download_url_even_without_key() -> None:

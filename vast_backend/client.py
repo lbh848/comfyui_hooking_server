@@ -543,6 +543,24 @@ class VastClient:
             json_body={"ssh_key": ssh_key},
         )
 
+    async def detach_ssh_key(self, instance_id: int, ssh_key_id: int) -> dict[str, Any]:
+        """인스턴스에서 계정 SSH 키 연결을 제거한다."""
+        return await self._request(
+            "DELETE",
+            f"/instances/{instance_id}/ssh/{ssh_key_id}/",
+        )
+
+    async def list_account_ssh_keys(self) -> list[dict[str, Any]]:
+        """현재 계정에 등록된 SSH 공개키 목록을 반환한다."""
+        data = await self._request("GET", "/ssh/")
+        if not isinstance(data, list):
+            print(
+                "[VAST_API] SSH 키 목록 응답 형식 이상: "
+                f"type={type(data).__name__}"
+            )
+            raise VastApiError("Vast 계정 SSH 키 목록 응답이 배열이 아닙니다.")
+        return [dict(item) for item in data if isinstance(item, dict)]
+
     async def register_account_ssh_key(self, ssh_key: str) -> dict[str, Any]:
         """계정에 SSH 공개키를 등록한다 — 이후 생성되는 인스턴스에 자동 적용."""
         return await self._request(

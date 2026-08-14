@@ -10797,6 +10797,11 @@
         }
         .vast-launch-favorite:hover:not(:disabled) { filter: brightness(1.15); }
         .vast-launch-favorite:disabled { cursor: default; opacity: 0.72; }
+        .vast-launch-favorite.is-favorite {
+            border-color: color-mix(in srgb, #fbbf24 85%, var(--border));
+            background: color-mix(in srgb, #fbbf24 32%, var(--surface2));
+            color: #fef3c7;
+        }
         .vast-launch-guard-grid {
             display: grid;
             grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -26609,9 +26614,10 @@
                 );
                 const isFavorite = instance?.favorite === true;
                 favoriteBtn.hidden = !(instanceId > 0);
-                favoriteBtn.disabled = launch.state === 'destroying' || isFavorite;
+                favoriteBtn.disabled = launch.state === 'destroying';
+                favoriteBtn.classList.toggle('is-favorite', isFavorite);
                 favoriteBtn.textContent = isFavorite
-                    ? '★ 즐겨찾기 등록됨'
+                    ? '★ 즐겨찾기 해제'
                     : '이 머신을 즐겨찾기에 등록';
             }
             if (elapsedEl) elapsedEl.textContent = launch.contract_started_at_epoch
@@ -26777,7 +26783,15 @@
                 showToast('즐겨찾기에 등록할 활성 Vast 인스턴스가 없습니다.', 'error');
                 return;
             }
-            await vastFavoriteInstance(instanceId, document.getElementById('vast-launch-favorite-btn'));
+            const button = document.getElementById('vast-launch-favorite-btn');
+            const instance = (window.__vastInstances || []).find(
+                item => Number(item.id) === instanceId,
+            );
+            if (instance?.favorite === true) {
+                await vastUnfavoriteMachine(instance.machine_id, button);
+                return;
+            }
+            await vastFavoriteInstance(instanceId, button);
         }
 
         async function vastFavoriteInstance(instanceId, button = null) {
@@ -26816,6 +26830,41 @@
             }
         }
 
+        async function vastUnfavoriteMachine(machineId, button = null) {
+            if (!(Number(machineId) > 0)) {
+                console.error('[VAST_FAVORITE] 잘못된 머신 ID:', machineId);
+                showToast('즐겨찾기를 해제할 Vast 머신 ID가 올바르지 않습니다.', 'error');
+                return;
+            }
+            if (button) {
+                button.disabled = true;
+                button.textContent = '즐겨찾기 해제 중…';
+            }
+            try {
+                const result = await fetchJSON('/api/vast/favorites', {
+                    method: 'DELETE',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ machine_id: Number(machineId) }),
+                });
+                showToast(
+                    result?.removed
+                        ? `Vast 머신 #${machineId} 즐겨찾기 해제 완료`
+                        : `Vast 머신 #${machineId}는 즐겨찾기에 없습니다.`,
+                    'success',
+                );
+                await vastLoadInstances();
+                if (vastOffers.length) await vastSearchOffers();
+                vastRenderLaunchSteps(window.__vastLastLaunch || {});
+            } catch (error) {
+                console.error('[VAST_FAVORITE] 해제 실패:', error);
+                showToast('Vast 머신 즐겨찾기 해제 실패: ' + (error.message || error), 'error');
+                if (button) {
+                    button.disabled = false;
+                    button.textContent = '★ 즐겨찾기 해제';
+                }
+            }
+        }
+
         // ── 인스턴스 목록/파괴 ──
         async function vastLoadInstances() {
             const container = document.getElementById('vast-instance-catalog');
@@ -26849,10 +26898,13 @@
                     actions.className = 'vast-offer-price';
                     const favoriteBtn = document.createElement('button');
                     favoriteBtn.type = 'button';
-                    favoriteBtn.textContent = i.favorite ? '★ 등록됨' : '즐겨찾기 등록';
-                    favoriteBtn.className = 'vast-launch-favorite';
-                    favoriteBtn.disabled = i.favorite === true;
-                    favoriteBtn.addEventListener('click', () => void vastFavoriteInstance(i.id, favoriteBtn));
+                    favoriteBtn.textContent = i.favorite ? '★ 즐겨찾기 해제' : '즐겨찾기 등록';
+                    favoriteBtn.className = 'vast-launch-favorite'
+                        + (i.favorite === true ? ' is-favorite' : '');
+                    favoriteBtn.addEventListener('click', () => {
+                        if (i.favorite === true) void vastUnfavoriteMachine(i.machine_id, favoriteBtn);
+                        else void vastFavoriteInstance(i.id, favoriteBtn);
+                    });
                     const btn = document.createElement('button');
                     btn.type = 'button';
                     btn.textContent = '파괴';
