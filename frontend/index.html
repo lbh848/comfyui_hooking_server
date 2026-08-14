@@ -3722,7 +3722,7 @@
             overflow: hidden;
             background: #07090f;
         }
-        .nm-video-preview img { width: 100%; height: 100%; object-fit: contain; display: block; }
+        .nm-video-preview img { width: 100%; height: 100%; object-fit: contain; display: block; cursor: pointer; }
         .nm-video-preview-badge {
             position: absolute;
             top: 7px;
@@ -74131,7 +74131,11 @@
             }
             container.innerHTML = items.map(item => {
                 const resultReady = !!item.result_url;
-                const previewUrl = resultReady ? item.result_url : nmAssetVideoUrl(item, true);
+                // 기본 미리보기는 항상 정지 첫 프레임(원본 poster)로 통일.
+                // 후처리 결과(result_url)는 애니메이션 WebP라 previewUrl 자리에 넣으면
+                // hover와 무관하게 항상 재생(일괄 재생 버그)되므로, 결과 유무와 상관없이
+                // 정지 poster를 기본으로 두고 hover 시에만 animated로 교체한다.
+                const posterUrl = nmAssetVideoUrl(item, true);
                 const animatedUrl = resultReady ? item.result_url : nmAssetVideoUrl(item, false);
                 const busy = ['staging', 'queued', 'processing'].includes(item.status);
                 const size = resultReady ? item.result_size_bytes : item.source_size_bytes;
@@ -74142,7 +74146,7 @@
                     <article class="nm-video-card">
                         <div class="nm-video-preview">
                             <span class="nm-video-preview-badge">${resultReady ? (busy ? '기존 결과 · 재처리 중' : '후처리 결과') : '대표 영상 원본'}</span>
-                            <img src="${previewUrl}" data-poster-src="${previewUrl}" data-anim-src="${animatedUrl}" onmouseenter="this.src=this.dataset.animSrc" onmouseleave="this.src=this.dataset.posterSrc" alt="${escapeHtml(item.outfit)} ${escapeHtml(item.expression)}">
+                            <img src="${escapeAttr(posterUrl)}" data-poster-src="${escapeAttr(posterUrl)}" data-anim-src="${escapeAttr(animatedUrl)}" onmouseenter="this.src=this.dataset.animSrc" onmouseleave="this.src=this.dataset.posterSrc" onclick="openLightbox('${escapeAttr(animatedUrl)}')" alt="${escapeHtml(item.outfit)} ${escapeHtml(item.expression)}">
                         </div>
                         <div class="nm-video-card-body">
                             <div class="nm-video-card-title" title="${escapeHtml(item.outfit)} / ${escapeHtml(item.expression)}">${escapeHtml(item.outfit)} / ${escapeHtml(item.expression)}</div>
