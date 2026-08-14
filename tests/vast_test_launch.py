@@ -1,12 +1,17 @@
-"""Vast 인스턴스 풀플로우 테스트 — 생성→준비→ready 까지 (테스트 후 수동 파괴)."""
+"""Vast 인스턴스 수동 E2E 테스트 — 실제 비용 발생, 성공 후 수동 파괴."""
 import asyncio
+from pathlib import Path
 import sys
 
-from vast_backend.service import VastService
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from vast_backend.service import VastService  # noqa: E402
 
 WORKFLOW = "comfy/user/default/workflows/SOYA_USER/배포_영상_H3_I2V_v1.json"
 
-s = VastService(".", lambda: {"vast_enabled": True})
+s = VastService(PROJECT_ROOT, lambda: {"vast_enabled": True})
 
 
 async def main() -> None:
@@ -90,4 +95,5 @@ async def main() -> None:
     await s.close()
 
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())

@@ -15,6 +15,29 @@ from vast_backend.service import MODELS_DONE_FLAG, VastService
 from vast_backend.ssh_tunnel import ComfySshTunnel
 
 
+def test_vast_ssh_keypair_is_created_and_loaded_from_key_directory(
+    tmp_path: Path,
+) -> None:
+    service = VastService(tmp_path, lambda: {})
+
+    private_path_text, first_public_key = service.ensure_ssh_keypair()
+    private_path = Path(private_path_text)
+    public_path = Path(str(private_path) + ".pub")
+    first_private_key = private_path.read_bytes()
+
+    second_private_path, second_public_key = service.ensure_ssh_keypair()
+
+    assert private_path == tmp_path / "key" / "vast_ssh_key"
+    assert public_path == tmp_path / "key" / "vast_ssh_key.pub"
+    assert private_path.is_file()
+    assert public_path.is_file()
+    assert second_private_path == str(private_path)
+    assert private_path.read_bytes() == first_private_key
+    assert second_public_key == first_public_key
+    assert not (tmp_path / "vast_ssh_key").exists()
+    assert not (tmp_path / "vast_ssh_key.pub").exists()
+
+
 @pytest.mark.asyncio
 async def test_vast_instance_list_uses_v1_and_follows_pagination(
     monkeypatch: pytest.MonkeyPatch,

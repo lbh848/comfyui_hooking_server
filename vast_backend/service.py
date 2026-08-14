@@ -244,7 +244,7 @@ class VastService:
     # ── SSH 키 관리 ─────────────────────────────────────────
 
     def _ssh_key_paths(self) -> tuple[Path, Path]:
-        private = self.project_root / "vast_ssh_key"
+        private = self.project_root / "key" / "vast_ssh_key"
         return private, Path(str(private) + ".pub")
 
     def ensure_ssh_keypair(self) -> tuple[str, str]:
@@ -260,11 +260,21 @@ class VastService:
                 )
                 print(f"[VAST][SSH_KEY][ERROR] {message}")
                 raise VastApiError(message)
-            _log(f"SSH 키페어 생성: {private_path}")
-            key = paramiko.RSAKey.generate(2048)
-            key.write_private_key_file(str(private_path))
-            with open(str(public_path), "w", encoding="utf-8") as fh:
-                fh.write(f"{key.get_name()} {key.get_base64()} soya-vast\n")
+            try:
+                private_path.parent.mkdir(parents=True, exist_ok=True)
+                _log(f"SSH 키페어 생성: {private_path}")
+                key = paramiko.RSAKey.generate(2048)
+                key.write_private_key_file(str(private_path))
+                with open(str(public_path), "w", encoding="utf-8") as fh:
+                    fh.write(f"{key.get_name()} {key.get_base64()} soya-vast\n")
+            except Exception as exc:
+                print(
+                    "[VAST][SSH_KEY][ERROR] SSH 키페어 생성 실패: "
+                    f"private={private_path}, public={public_path}, "
+                    f"error={type(exc).__name__}: {exc}"
+                )
+                traceback.print_exc()
+                raise VastApiError(f"Vast SSH 키페어를 생성할 수 없습니다: {exc}") from exc
         try:
             key = paramiko.RSAKey.from_private_key_file(str(private_path))
             expected = f"{key.get_name()} {key.get_base64()} soya-vast"
