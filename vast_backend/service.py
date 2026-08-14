@@ -3,10 +3,11 @@
 준비 흐름(마법사 ④단계):
   1. 인스턴스 생성 (이미지: Modal과 동일한 bh848/soya-comfy-runtime, onstart 대기 스크립트)
   2. SSH 키 부착 → paramiko 접속
-  3. 병렬 A: sftp 업로드 — custom_nodes 압축본 + 선택 LoRA + 'upload' 배정 모델
+  3. 짧은 실사용 전송 프리플라이트 + 워크플로우 기준 남은 전송 ETA
+  4. 병렬 A: sftp 업로드 — custom_nodes 압축본 + 선택 LoRA + 'upload' 배정 모델
      병렬 B: 원격 다운로드 스크립트 — HF/Civitai/URL 모델
-  4. SSH 로컬 터널 생성 + /tmp/soya_ready 터치 → ComfyUI(8188) 기동
-  5. 로컬 터널 헬스체크 → 'ready'
+  5. SSH 로컬 터널 생성 + /tmp/soya_ready 터치 → ComfyUI(8188) 기동
+  6. 로컬 터널 헬스체크 → 'ready'
 """
 from __future__ import annotations
 
@@ -26,10 +27,19 @@ from typing import Any, Callable
 import aiohttp
 
 from .client import VastApiError, VastClient
+from .image_pull_progress import build_pull_progress, parse_daemon_pull_states
 from .model_sources import (
     build_download_plan,
     defaults_from_manifest,
     load_mapping,
+)
+from .preflight import (
+    calculate_transfer_estimate,
+    empty_preflight_state,
+    failed_result,
+    informational_result,
+    parse_curl_speed_probe,
+    speed_result,
 )
 from .settings import VastSettings, load_key_files
 from .ssh_tunnel import ComfySshTunnel
@@ -38,14 +48,27 @@ COMFY_ROOT_REMOTE = "/root/ComfyUI"
 READY_FLAG = "/tmp/soya_ready"
 MODELS_DONE_FLAG = "/tmp/soya_models_done"
 BUILD_COMPLETE_FLAG = "/tmp/soya_build_complete"
-HEALTH_TIMEOUT_SECONDS = 900
-# 비용 보호 기본값. UI/프롬프트 문구를 해석하지 않고 시간·가격·공식 상태만 사용한다.
-SSH_WAIT_TIMEOUT_SECONDS = 1200
-BUILD_TIMEOUT_SECONDS = 3600
+# 비용 보호 기본값. 시간 제한은 없고 예상 빌드비 상한만 존재한다.
 MAX_BUILD_COST_USD = 0.25
 NO_PROGRESS_WARNING_SECONDS = 180
 WATCHDOG_POLL_SECONDS = 10
 SSH_CONNECT_TIMEOUT_SECONDS = 60
+SSH_STATUS_POLL_SECONDS = 10
+WATCHDOG_STATUS_MAX_AGE_SECONDS = 25
+ACCOUNT_STATUS_CACHE_SECONDS = 60
+ACCOUNT_STATUS_ERROR_CACHE_SECONDS = 15
+IMAGE_PULL_POLL_SECONDS = 20
+IMAGE_PULL_LOG_TAIL = 1000
+PREFLIGHT_DOWNLOAD_BYTES = 32 * 1024 * 1024
+PREFLIGHT_UPLOAD_BYTES = 16 * 1024 * 1024
+PREFLIGHT_CURL_MAX_SECONDS = 15
+PREFLIGHT_CLOUDFLARE_URL = "https://speed.cloudflare.com/__down"
+PREFLIGHT_HF_FALLBACK_URL = (
+    "https://huggingface.co/openai-community/gpt2/resolve/main/model.safetensors"
+)
+# 고정 런타임 이미지는 CUDA 12.8 바이너리를 사용한다. 오퍼 검색에서 이보다
+# 낮은 cuda_max_good 머신을 제외해 호환성 문제로 유료 빌드가 실패하지 않게 한다.
+MIN_RUNTIME_CUDA_VERSION = 12.8
 SERVICE_LABEL_PREFIX = "soya-vast-"
 _LAUNCH_CONTEXT: contextvars.ContextVar[str] = contextvars.ContextVar(
     "vast_launch_id", default=""
@@ -71,6 +94,15 @@ class VastService:
         self._watchdog_launch_id = ""
         self._launch_lock = asyncio.Lock()
         self._destroy_lock = asyncio.Lock()
+        self._instance_status_lock = asyncio.Lock()
+        self._instance_status_cache: dict[
+            int, tuple[float, dict[str, Any]]
+        ] = {}
+        self._account_status_lock = asyncio.Lock()
+        self._account_status_cache: tuple[float, dict[str, Any]] | None = None
+        self._image_pull_lock = asyncio.Lock()
+        self._image_pull_last_poll_monotonic = 0.0
+        self._image_manifest_cache: dict[str, dict[str, Any]] = {}
         self._cancel_events: dict[str, threading.Event] = {}
         self._log_secrets: set[str] = set()
         self._state_lock = threading.RLock()
@@ -109,6 +141,26 @@ class VastService:
             "last_progress_at_epoch": now if state != "idle" else 0.0,
             "instance_status": "",
             "instance_status_msg": "",
+            "image_pull": {
+                "available": False,
+                "exact_progress_available": False,
+                "phase": "waiting",
+                "image": "",
+                "total_bytes": 0,
+                "confirmed_bytes": 0,
+                "pending_bytes": 0,
+                "minimum_percent": 0.0,
+                "total_layers": 0,
+                "confirmed_layers": 0,
+                "pending_layers": [],
+                "observed_layers": 0,
+                "complete": False,
+                "last_checked_at": "",
+                "last_observed_progress_at_epoch": 0.0,
+                "error": "",
+                "_signature": "",
+            },
+            "preflight": empty_preflight_state(),
             "hourly_price_usd": max(0.0, float(hourly_price_usd or 0.0)),
             "status_history": [],
             "events": [],
@@ -121,8 +173,6 @@ class VastService:
             "destroy_reason": "",
             "destroy_automatic": False,
             "limits": {
-                "ssh_wait_seconds": SSH_WAIT_TIMEOUT_SECONDS,
-                "build_seconds": BUILD_TIMEOUT_SECONDS,
                 "max_build_cost_usd": MAX_BUILD_COST_USD,
                 "no_progress_warning_seconds": NO_PROGRESS_WARNING_SECONDS,
             },
@@ -430,6 +480,177 @@ class VastService:
                 f"status={status or '(없음)'}, message={status_msg or '(없음)'}"
             )
 
+    async def _get_instance_status(
+        self,
+        instance_id: int,
+        *,
+        max_age_seconds: float,
+    ) -> tuple[dict[str, Any], bool]:
+        """단일 Vast 상태 조회 경로.
+
+        SSH 대기와 비용 watchdog가 같은 캐시와 lock을 공유한다. 반환값의 두 번째
+        항목은 이번 호출이 실제 Vast API를 갱신했는지를 나타낸다.
+        """
+        target = int(instance_id)
+        if target <= 0:
+            print(f"[VAST_STATUS][ERROR] 잘못된 인스턴스 ID: {instance_id!r}")
+            raise VastApiError(f"잘못된 Vast 인스턴스 ID: {instance_id!r}")
+
+        def cached_status() -> dict[str, Any] | None:
+            cached = self._instance_status_cache.get(target)
+            if cached is None:
+                return None
+            fetched_at, info = cached
+            age = max(0.0, time.monotonic() - fetched_at)
+            if age >= max(0.0, float(max_age_seconds)):
+                return None
+            return dict(info)
+
+        cached = cached_status()
+        if cached is not None:
+            return cached, False
+
+        async with self._instance_status_lock:
+            cached = cached_status()
+            if cached is not None:
+                return cached, False
+            info = await self._client_or_raise().get_instance(target)
+            snapshot = dict(info) if isinstance(info, dict) else {}
+            self._instance_status_cache[target] = (time.monotonic(), snapshot)
+            if int(self.launch.get("instance_id") or 0) == target:
+                self._update_instance_status(snapshot)
+            return dict(snapshot), True
+
+    async def _refresh_image_pull_progress(
+        self, instance_id: int, info: dict[str, Any]
+    ) -> None:
+        """loading 동안 daemon log와 manifest를 결합해 최소 완료량을 갱신한다."""
+        target = int(instance_id)
+        if target <= 0:
+            print(f"[VAST_PULL][ERROR] 잘못된 인스턴스 ID: {instance_id!r}")
+            return
+        status = str(info.get("actual_status") or "").lower()
+        current = dict(self.launch.get("image_pull") or {})
+        if status != "loading":
+            if status == "running" and current.get("available") and not current.get("complete"):
+                now = time.time()
+                current.update(
+                    phase="complete",
+                    complete=True,
+                    confirmed_bytes=int(current.get("total_bytes") or 0),
+                    pending_bytes=0,
+                    minimum_percent=100.0,
+                    confirmed_layers=int(current.get("total_layers") or 0),
+                    pending_layers=[],
+                    last_checked_at=self._utc_now(),
+                    last_observed_progress_at_epoch=now,
+                    error="",
+                )
+                self.launch["image_pull"] = current
+                self.launch["last_progress_at_epoch"] = now
+                self.launch["updated_at"] = self._utc_now()
+            return
+
+        now_monotonic = time.monotonic()
+        if (
+            now_monotonic - self._image_pull_last_poll_monotonic
+            < IMAGE_PULL_POLL_SECONDS
+        ):
+            return
+
+        async with self._image_pull_lock:
+            now_monotonic = time.monotonic()
+            if (
+                now_monotonic - self._image_pull_last_poll_monotonic
+                < IMAGE_PULL_POLL_SECONDS
+            ):
+                return
+            self._image_pull_last_poll_monotonic = now_monotonic
+            image_reference = str(
+                info.get("image_uuid") or self.settings().runtime_image or ""
+            ).strip()
+            architecture = str(info.get("cpu_arch") or "amd64").strip().lower()
+            if not image_reference:
+                print(
+                    "[VAST_PULL][ERROR] 이미지 pull 진행률을 계산할 이미지 참조 없음: "
+                    f"instance={target}"
+                )
+                current.update(
+                    phase="unavailable",
+                    last_checked_at=self._utc_now(),
+                    error="인스턴스 응답에 이미지 참조가 없습니다.",
+                )
+                self.launch["image_pull"] = current
+                return
+            try:
+                client = self._client_or_raise()
+                daemon_log = await client.get_instance_logs(
+                    target, daemon_logs=True, tail=IMAGE_PULL_LOG_TAIL
+                )
+                manifest_key = f"{image_reference}|{architecture}"
+                manifest = self._image_manifest_cache.get(manifest_key)
+                if manifest is None:
+                    manifest = await client.get_docker_hub_manifest_layers(
+                        image_reference, architecture=architecture, os_name="linux"
+                    )
+                    self._image_manifest_cache[manifest_key] = dict(manifest)
+                layer_states = parse_daemon_pull_states(daemon_log)
+                progress = build_pull_progress(
+                    list(manifest.get("layers") or []), layer_states
+                )
+            except Exception as exc:
+                print(
+                    "[VAST_PULL][ERROR] 이미지 pull 관측 갱신 실패: "
+                    f"instance={target}, image={image_reference}, "
+                    f"error={type(exc).__name__}: {exc}"
+                )
+                traceback.print_exc()
+                current.update(
+                    phase="unavailable" if not current.get("available") else current.get("phase", "tracking"),
+                    image=image_reference,
+                    last_checked_at=self._utc_now(),
+                    error=str(exc),
+                )
+                self.launch["image_pull"] = current
+                return
+
+            if int(self.launch.get("instance_id") or 0) != target:
+                print(
+                    "[VAST_PULL] 관측 중 대상 인스턴스가 변경되어 결과를 폐기합니다: "
+                    f"observed={target}, current={self.launch.get('instance_id')}"
+                )
+                return
+
+            now = time.time()
+            previous_signature = str(current.get("_signature") or "")
+            signature = str(progress.get("_signature") or "")
+            observed_progress = bool(signature and signature != previous_signature)
+            last_observed = float(
+                current.get("last_observed_progress_at_epoch") or 0.0
+            )
+            if observed_progress:
+                last_observed = now
+                self.launch["last_progress_at_epoch"] = now
+                self.launch["updated_at"] = self._utc_now()
+
+            progress.update(
+                phase="complete" if progress.get("complete") else "tracking",
+                image=image_reference,
+                last_checked_at=self._utc_now(),
+                last_observed_progress_at_epoch=last_observed,
+                error="",
+            )
+            self.launch["image_pull"] = progress
+            if observed_progress:
+                self._event(
+                    "pull",
+                    f"#{target} Docker 이미지 최소 진행률 "
+                    f"{float(progress.get('minimum_percent') or 0.0):.1f}% "
+                    f"({int(progress.get('confirmed_layers') or 0)}/"
+                    f"{int(progress.get('total_layers') or 0)} layers, "
+                    f"confirmed={int(progress.get('confirmed_bytes') or 0)} bytes)",
+                )
+
     def _ensure_watchdog(self, launch_id: str) -> None:
         if self._watchdog_task is not None and not self._watchdog_task.done():
             if self._watchdog_launch_id == launch_id:
@@ -449,11 +670,14 @@ class VastService:
             instance_id = int(self.launch.get("instance_id") or 0)
             if instance_id:
                 try:
-                    info = await self._client_or_raise().get_instance(instance_id)
+                    info, refreshed = await self._get_instance_status(
+                        instance_id,
+                        max_age_seconds=WATCHDOG_STATUS_MAX_AGE_SECONDS,
+                    )
                     if info.get("id"):
                         missing_count = 0
-                        self._update_instance_status(info)
-                    else:
+                        await self._refresh_image_pull_progress(instance_id, info)
+                    elif refreshed:
                         missing_count += 1
                         print(
                             "[VAST_GUARD] 단일 상태 응답에 인스턴스가 없음: "
@@ -513,21 +737,13 @@ class VastService:
                     )
                     elapsed = max(0.0, now - contract_at)
                     reason = ""
-                    if (
-                        not self.launch.get("ssh_ready_at_epoch")
-                        and elapsed >= SSH_WAIT_TIMEOUT_SECONDS
-                    ):
-                        reason = f"SSH 준비 제한 {SSH_WAIT_TIMEOUT_SECONDS // 60}분 초과"
-                    elif elapsed >= BUILD_TIMEOUT_SECONDS:
-                        reason = f"전체 빌드 제한 {BUILD_TIMEOUT_SECONDS // 60}분 초과"
-                    else:
-                        hourly = float(self.launch.get("hourly_price_usd") or 0.0)
-                        estimated = hourly * elapsed / 3600 if hourly > 0 else 0.0
-                        if estimated >= MAX_BUILD_COST_USD:
-                            reason = (
-                                f"예상 빌드비 ${estimated:.3f}가 "
-                                f"상한 ${MAX_BUILD_COST_USD:.2f}에 도달"
-                            )
+                    hourly = float(self.launch.get("hourly_price_usd") or 0.0)
+                    estimated = hourly * elapsed / 3600 if hourly > 0 else 0.0
+                    if estimated >= MAX_BUILD_COST_USD:
+                        reason = (
+                            f"예상 빌드비 ${estimated:.3f}가 "
+                            f"상한 ${MAX_BUILD_COST_USD:.2f}에 도달"
+                        )
                     if reason:
                         print(
                             "[VAST_GUARD] 비용 보호 자동 파괴 시작: "
@@ -553,14 +769,13 @@ class VastService:
                     elapsed = max(0.0, now - contract_at)
                     hourly = float(self.launch.get("hourly_price_usd") or 0.0)
                     estimated = hourly * elapsed / 3600 if hourly > 0 else 0.0
-                    build_left = max(0, int(BUILD_TIMEOUT_SECONDS - elapsed))
                     self.launch["last_watchdog_log_at_epoch"] = now
                     self._event(
                         "watch",
                         f"#{instance_id} step={self.launch.get('current_step') or '-'} "
                         f"vast={self.launch.get('instance_status') or '-'} "
                         f"elapsed={int(elapsed)}s estimated=${estimated:.4f} "
-                        f"build_limit_left={build_left}s "
+                        f"cost_limit_left=${max(0.0, MAX_BUILD_COST_USD - estimated):.4f} "
                         f"status_msg={str(self.launch.get('instance_status_msg') or '(없음)')[-600:]}",
                     )
             await asyncio.sleep(WATCHDOG_POLL_SECONDS)
@@ -574,6 +789,10 @@ class VastService:
                 # 실행 중인 이벤트 루프가 없으면 동기적으로 닫을 수 없다 — GC에 맡긴다.
                 pass
         self._client = None
+        self._instance_status_cache.clear()
+        self._account_status_cache = None
+        self._image_manifest_cache.clear()
+        self._image_pull_last_poll_monotonic = 0.0
 
     def _close_comfy_tunnel(self) -> None:
         tunnel = self._comfy_tunnel
@@ -613,20 +832,45 @@ class VastService:
     # ── 계정/오퍼 ───────────────────────────────────────────
 
     async def account_status(self) -> dict[str, Any]:
-        try:
-            client = self._client_or_raise()
-            data = await client.account()
-            return {
-                "ok": True,
-                "username": data.get("username"),
-                # 잔액 필드는 credit이다 (balance는 별도 의미).
-                "balance_usd": data.get("credit") or 0.0,
-                "api_key_valid": True,
-            }
-        except VastApiError as exc:
-            _log(f"계정 확인 실패: {exc}")
-            traceback.print_exc()
-            return {"ok": False, "error": str(exc), "api_key_valid": False}
+        def cached_status() -> dict[str, Any] | None:
+            cached = self._account_status_cache
+            if cached is None:
+                return None
+            expires_at, payload = cached
+            if time.monotonic() >= expires_at:
+                return None
+            return dict(payload)
+
+        cached = cached_status()
+        if cached is not None:
+            return cached
+
+        async with self._account_status_lock:
+            cached = cached_status()
+            if cached is not None:
+                return cached
+            try:
+                client = self._client_or_raise()
+                data = await client.account()
+                result = {
+                    "ok": True,
+                    "username": data.get("username"),
+                    # 잔액 필드는 credit이다 (balance는 별도 의미).
+                    "balance_usd": data.get("credit") or 0.0,
+                    "api_key_valid": True,
+                }
+                ttl = ACCOUNT_STATUS_CACHE_SECONDS
+            except VastApiError as exc:
+                _log(f"계정 확인 실패: {exc}")
+                traceback.print_exc()
+                result = {
+                    "ok": False,
+                    "error": str(exc),
+                    "api_key_valid": False,
+                }
+                ttl = ACCOUNT_STATUS_ERROR_CACHE_SECONDS
+            self._account_status_cache = (time.monotonic() + ttl, result)
+            return dict(result)
 
     async def offers(
         self,
@@ -647,6 +891,10 @@ class VastService:
     ) -> dict[str, Any]:
         cfg = self.settings()
         client = self._client_or_raise()
+        requested_min_cuda = (
+            float(min_cuda_version) if min_cuda_version is not None else 0.0
+        )
+        applied_min_cuda = max(MIN_RUNTIME_CUDA_VERSION, requested_min_cuda)
         offers = await client.search_offers(
             gpu_names=gpu_names,
             min_cpu_ram_gb=cfg.min_cpu_ram_gb if min_cpu_ram_gb is None else min_cpu_ram_gb,
@@ -657,13 +905,14 @@ class VastService:
             min_gpu_ram_gb=min_gpu_ram_gb if min_gpu_ram_gb is not None else 0,
             inet_down_min_mbps=inet_down_min_mbps if inet_down_min_mbps is not None else 1000,
             inet_up_min_mbps=inet_up_min_mbps if inet_up_min_mbps is not None else 0,
-            min_direct_port_count=min_direct_port_count if min_direct_port_count is not None else 1,
+            min_direct_port_count=min_direct_port_count if min_direct_port_count is not None else 0,
             min_reliability=min_reliability if min_reliability is not None else 0.0,
-            min_cuda_version=min_cuda_version if min_cuda_version is not None else 0.0,
+            min_cuda_version=applied_min_cuda,
             limit=limit,
         )
         return {
             "ok": True,
+            "min_cuda_version": applied_min_cuda,
             "offers": [
                 {
                     "id": o.get("id"),
@@ -673,6 +922,13 @@ class VastService:
                     "gpu_ram_gb": round(float(o.get("gpu_ram") or 0) / 1024, 1),
                     "disk_gb": float(o.get("disk_space") or 0),
                     "dph_total": float(o.get("dph_total") or 0),
+                    # dph_total은 Vast 기본 디스크 할당(약 8GB) 기준이라
+                    # 실제 요금 예측엔 GPU 단가(dph_base) + 저장 단가가 필요하다.
+                    # storage_cost는 $/GB·월, 저장료는 이를 720hr/월으로 나눠 과금.
+                    "dph_base": float(o.get("dph_base") or 0),
+                    "storage_cost_usd_per_gb_month": float(o.get("storage_cost") or 0),
+                    "inet_cost_usd_per_tb_down": float(o.get("internet_down_cost_per_tb") or 0),
+                    "inet_cost_usd_per_tb_up": float(o.get("internet_up_cost_per_tb") or 0),
                     "inet_down_mbps": float(o.get("inet_down") or 0),
                     "inet_up_mbps": float(o.get("inet_up") or 0),
                     "direct_port_count": int(o.get("direct_port_count") or 0),
@@ -737,7 +993,9 @@ class VastService:
             manifest_defaults=defaults,
             civitai_api_key=settings.civitai_api_key,
         )
-        lora_gb = sum(int(f.get("size_bytes") or 0) for f in lora_files) / 1024**3
+        lora_gb = sum(
+            int(f.get("size_bytes") or f.get("size") or 0) for f in lora_files
+        ) / 1024**3
         includes_video = any("영상" in str(wf.get("name", "")) for wf in workflow_files)
         return {
             "ok": True,
@@ -821,29 +1079,10 @@ class VastService:
         self._set_step_unchecked(key, state, detail)
 
     def _build_onstart(self) -> str:
-        """컨테이너 내부 독립 build TTL watchdog과 ComfyUI 시작 스크립트."""
+        """ComfyUI 시작 스크립트. 빌드 시간 제한은 없다(비용 상한은 서버 watchdog이 담당)."""
         return (
             "#!/bin/bash\n"
             "echo '[onstart] 빌드 완료 신호 대기 중' >> /tmp/soya_onstart.log\n"
-            "(\n"
-            f"  deadline=$(( $(date +%s) + {BUILD_TIMEOUT_SECONDS} ))\n"
-            f"  while [ ! -f {BUILD_COMPLETE_FLAG} ]; do\n"
-            "    if [ \"$(date +%s)\" -ge \"$deadline\" ]; then\n"
-            "      echo '[watchdog] build TTL 초과 — 자체 파괴 요청' >> /tmp/soya_watchdog.log\n"
-            "      if [ -z \"${CONTAINER_API_KEY:-}\" ] || [ -z \"${CONTAINER_ID:-}\" ]; then\n"
-            "        echo '[watchdog][ERROR] 인스턴스 전용 키 또는 ID 없음' >> /tmp/soya_watchdog.log\n"
-            "      elif ! curl --fail --silent --show-error --request DELETE "
-            "--header \"Authorization: Bearer ${CONTAINER_API_KEY}\" "
-            "\"https://console.vast.ai/api/v0/instances/${CONTAINER_ID}/\" "
-            ">> /tmp/soya_watchdog.log 2>&1; then\n"
-            "        echo '[watchdog][ERROR] 자체 파괴 API 요청 실패' >> /tmp/soya_watchdog.log\n"
-            "      fi\n"
-            "      exit 0\n"
-            "    fi\n"
-            "    sleep 15\n"
-            "  done\n"
-            "  echo '[watchdog] 빌드 완료 — TTL 해제' >> /tmp/soya_watchdog.log\n"
-            ") &\n"
             f"while [ ! -f {READY_FLAG} ]; do sleep 2; done\n"
             f"cd {COMFY_ROOT_REMOTE}\n"
             "exec python main.py --listen 0.0.0.0 --port 8188"
@@ -906,6 +1145,8 @@ class VastService:
                     f"먼저 파괴하거나 확인하세요: {owned_ids}"
                 )
         self._close_comfy_tunnel()
+        self._instance_status_cache.clear()
+        self._image_pull_last_poll_monotonic = 0.0
         launch_id = uuid.uuid4().hex[:12]
         label = f"{SERVICE_LABEL_PREFIX}{launch_id}"
         self.launch = self._new_launch_state(
@@ -918,8 +1159,7 @@ class VastService:
             "start",
             f"launch={launch_id} ask={ask_id} disk={disk_gb}GB "
             f"rate=${float(hourly_price_usd or 0.0):.4f}/hr, "
-            f"limits=ssh:{SSH_WAIT_TIMEOUT_SECONDS}s/build:{BUILD_TIMEOUT_SECONDS}s/"
-            f"cost:${MAX_BUILD_COST_USD:.2f}",
+            f"limits=cost:${MAX_BUILD_COST_USD:.2f}",
         )
         self._cancel_events[launch_id] = threading.Event()
         task = asyncio.create_task(
@@ -1056,11 +1296,22 @@ class VastService:
             self._persist_guard_state()
 
         self._set_step("ssh", "running", "SSH 대기")
-        ssh_host, ssh_port = await self._wait_ssh(client, instance_id)
+        ssh_host, ssh_port = await self._wait_ssh(instance_id)
         self.launch["ssh_ready_at_epoch"] = time.time()
         # 생성 요청의 ssh_key 필드는 무시되므로(검증됨) running 후 부착 API로 등록한다.
         await self._attach_key_with_retry(client, instance_id, public_key)
         self._set_step("ssh", "done", f"{ssh_host}:{ssh_port}")
+
+        # Docker/SSH 준비 뒤 실제 원격 경로와 로컬 SFTP를 짧게 측정한다.
+        # 측정 실패는 결과에 남기되 본 빌드를 차단하지 않는다.
+        await asyncio.to_thread(
+            self._run_preflight,
+            ssh_host,
+            ssh_port,
+            private_key_path,
+            model_plan,
+            lora_files,
+        )
 
         upload_task = asyncio.to_thread(
             self._upload_all,
@@ -1081,19 +1332,21 @@ class VastService:
         self.launch["comfy_base_url"] = comfy_url
         self.launch["state"] = "ready"
         self.launch["protection_state"] = "ready"
-        self.launch["protection_reason"] = "빌드 비용 보호 TTL 해제"
+        self.launch["protection_reason"] = "빌드 완료 — 비용 보호 해제"
         self._set_step("comfy", "done", comfy_url)
         self._persist_guard_state()
 
-    async def _wait_ssh(self, client: VastClient, instance_id: int) -> tuple[str, int]:
-        deadline = time.time() + SSH_WAIT_TIMEOUT_SECONDS
+    async def _wait_ssh(self, instance_id: int) -> tuple[str, int]:
+        # 시간 제한 없이 running+SSH 정보를 기다린다. 비용 상한은 watchdog이 담당.
         last_status = ""
-        while time.time() < deadline:
+        while True:
             self._check_cancelled()
-            info = await client.get_instance(instance_id)
+            info, _refreshed = await self._get_instance_status(
+                instance_id,
+                max_age_seconds=max(1.0, SSH_STATUS_POLL_SECONDS - 1.0),
+            )
             status = str(info.get("actual_status") or "").lower()
             status_msg = str(info.get("status_msg") or "")
-            self._update_instance_status(info)
             status_signature = f"{status}|{status_msg}"
             if status_signature != last_status:
                 print(
@@ -1113,10 +1366,7 @@ class VastService:
                 ssh_port = 0
             if status == "running" and ssh_host and ssh_port:
                 return ssh_host, ssh_port
-            await asyncio.sleep(5)
-        raise VastApiError(
-            f"Vast 인스턴스 SSH 준비 시간 초과(instance_id={instance_id})"
-        )
+            await asyncio.sleep(SSH_STATUS_POLL_SECONDS)
 
     async def _attach_key_with_retry(
         self, client: VastClient, instance_id: int, public_key: str
@@ -1153,35 +1403,6 @@ class VastService:
         raise VastApiError(
             f"SSH 키 부착 실패: instance={instance_id}, last={last_error}"
         )
-
-    def _proxy_url(self, info: dict[str, Any]) -> str:
-        """8188 포트의 외부 URL을 응답에서 추출한다.
-
-        Vast 인스턴스 응답의 ports는 {'8188/tcp': [{'HostIp','HostPort'}, ...]}
-        형태다. 애플리케이션 포트는 ``public_ipaddr:HostPort``로 접근한다.
-        """
-        public_host = str(info.get("public_ipaddr") or "").strip()
-        ports = info.get("ports") or {}
-        if not isinstance(ports, dict):
-            print(
-                "[VAST] 포트 응답 형식 이상: "
-                f"type={type(ports).__name__}, value={str(ports)[:300]}"
-            )
-            return ""
-        for entry in ports.get("8188/tcp") or []:
-            if isinstance(entry, dict):
-                host_port = entry.get("HostPort") or entry.get("port")
-                entry_host = str(entry.get("HostIp") or "").strip()
-                host = public_host or (
-                    entry_host if entry_host not in {"", "0.0.0.0", "::"} else ""
-                )
-                if host and host_port:
-                    return f"http://{host}:{host_port}"
-        print(
-            "[VAST] 8188 외부 포트 매핑 없음: "
-            f"public_ipaddr={public_host or '(없음)'}, ports={str(ports)[:500]}"
-        )
-        return ""
 
     def _ssh_connect(self, host: str, port: int, private_key_path: str):
         """SSH 접속 — 키 부착 직후 데몬 재시작으로 일시 거부될 수 있어 재시도한다."""
@@ -1228,6 +1449,368 @@ class VastService:
         raise VastApiError(
             f"SSH 접속 실패: {host}:{port}, last={type(last_error).__name__}: {last_error}"
         )
+
+    def _store_preflight(self, **updates: Any) -> None:
+        with self._state_lock:
+            current = dict(self.launch.get("preflight") or empty_preflight_state())
+            current.update(updates)
+            self.launch["preflight"] = current
+            self.launch["last_progress_at_epoch"] = time.time()
+            self.launch["updated_at"] = self._utc_now()
+
+    def _record_preflight_test(self, result: dict[str, Any]) -> None:
+        key = str(result.get("key") or "")
+        with self._state_lock:
+            current = dict(self.launch.get("preflight") or empty_preflight_state())
+            tests_by_key = {
+                str(item.get("key") or ""): dict(item)
+                for item in current.get("tests") or []
+                if isinstance(item, dict)
+            }
+            tests_by_key[key] = dict(result)
+            order = ("docker", "cloudflare", "huggingface", "upload")
+            current["tests"] = [
+                tests_by_key[item_key]
+                for item_key in order
+                if item_key in tests_by_key
+            ] + [
+                value
+                for item_key, value in tests_by_key.items()
+                if item_key not in order
+            ]
+            self.launch["preflight"] = current
+            self.launch["last_progress_at_epoch"] = time.time()
+            self.launch["updated_at"] = self._utc_now()
+        speed = float(result.get("mbps") or 0.0)
+        speed_text = f"{speed:.1f} Mbps" if speed > 0 else str(result.get("detail") or "-")
+        self._event(
+            "preflight",
+            f"{result.get('label') or key}: {result.get('status') or '?'} — {speed_text}",
+        )
+
+    def _docker_preflight_result(self) -> dict[str, Any]:
+        contract_at = float(self.launch.get("contract_started_at_epoch") or 0.0)
+        ssh_ready_at = float(self.launch.get("ssh_ready_at_epoch") or time.time())
+        pull_started_at = contract_at
+        for item in self.launch.get("status_history") or []:
+            if str(item.get("status") or "").lower() != "loading":
+                continue
+            try:
+                observed_at = datetime.fromisoformat(str(item.get("at") or "")).timestamp()
+            except (TypeError, ValueError):
+                print(
+                    "[VAST][PREFLIGHT][ERROR] Docker loading 시각 해석 실패: "
+                    f"item={item!r}"
+                )
+                traceback.print_exc()
+                continue
+            if observed_at > 0:
+                pull_started_at = observed_at
+                break
+        seconds = max(0.001, ssh_ready_at - pull_started_at) if pull_started_at else 0.0
+        pull = self.launch.get("image_pull") or {}
+        try:
+            total_bytes = max(0, int(pull.get("total_bytes") or 0))
+            observed_layers = max(0, int(pull.get("observed_layers") or 0))
+        except (TypeError, ValueError):
+            print(
+                "[VAST][PREFLIGHT][ERROR] Docker pull 수치 해석 실패: "
+                f"total={pull.get('total_bytes')!r}, observed={pull.get('observed_layers')!r}"
+            )
+            traceback.print_exc()
+            total_bytes = 0
+            observed_layers = 0
+        if total_bytes > 0 and observed_layers > 0 and seconds > 0:
+            return speed_result(
+                key="docker",
+                label="Docker 준비",
+                transferred_bytes=total_bytes,
+                seconds=seconds,
+                detail="Vast daemon에서 관측된 압축 레이어 기준 실효 속도",
+            )
+        return informational_result(
+            key="docker",
+            label="Docker 준비",
+            seconds=seconds,
+            detail=(
+                f"런타임 준비 {seconds:.1f}초 · 캐시/레이어 바이트 미관측으로 속도 계산 제외"
+            ),
+        )
+
+    @staticmethod
+    def _preflight_huggingface_target(
+        model_plan: dict[str, Any],
+    ) -> tuple[str, int, str]:
+        from urllib.parse import quote
+
+        candidates: list[tuple[int, str, str]] = []
+        for item in model_plan.get("models") or []:
+            if not isinstance(item, dict):
+                continue
+            source = item.get("source") or {}
+            if str(source.get("source_type") or "") != "hf":
+                continue
+            repo_id = str(source.get("repo_id") or "").strip()
+            filename = str(source.get("hf_filename") or "").strip()
+            if not repo_id or not filename:
+                print(
+                    "[VAST][PREFLIGHT][ERROR] HF 측정 대상 필드 누락: "
+                    f"key={item.get('key')!r}, repo_id={repo_id!r}, filename={filename!r}"
+                )
+                continue
+            try:
+                size_bytes = max(0, int(item.get("size_bytes") or 0))
+            except (TypeError, ValueError):
+                print(
+                    "[VAST][PREFLIGHT][ERROR] HF 측정 대상 크기 해석 실패: "
+                    f"key={item.get('key')!r}, size={item.get('size_bytes')!r}"
+                )
+                traceback.print_exc()
+                size_bytes = 0
+            url = (
+                f"https://huggingface.co/{quote(repo_id, safe='/')}"
+                f"/resolve/main/{quote(filename, safe='/')}"
+            )
+            candidates.append((size_bytes, url, str(item.get("filename") or filename)))
+        if candidates:
+            size_bytes, url, filename = max(candidates, key=lambda item: item[0])
+            requested_bytes = min(
+                PREFLIGHT_DOWNLOAD_BYTES,
+                size_bytes if size_bytes > 0 else PREFLIGHT_DOWNLOAD_BYTES,
+            )
+            return url, max(1, requested_bytes), f"선택 모델 구간 측정: {filename}"
+        print(
+            "[VAST][PREFLIGHT] HF 직접 다운로드 모델이 없어 공개 기준 파일로 측정합니다."
+        )
+        return (
+            PREFLIGHT_HF_FALLBACK_URL,
+            PREFLIGHT_DOWNLOAD_BYTES,
+            "공개 기준 파일 구간 측정",
+        )
+
+    def _run_curl_speed_probe(
+        self,
+        ssh,
+        *,
+        key: str,
+        label: str,
+        url: str,
+        requested_bytes: int,
+        detail: str,
+    ) -> dict[str, Any]:
+        import shlex
+
+        self._check_cancelled()
+        upper_byte = max(0, int(requested_bytes) - 1)
+        write_out = (
+            "\\n__SOYA_SPEED__:%{size_download}:%{time_total}:"
+            "%{http_code}:%{speed_download}\\n"
+        )
+        command = (
+            "curl --location --silent --show-error --output /dev/null "
+            "--connect-timeout 8 "
+            f"--max-time {PREFLIGHT_CURL_MAX_SECONDS} "
+            f"--max-filesize {max(1, int(requested_bytes) * 2)} "
+            f"--range 0-{upper_byte} "
+            "--user-agent soya-vast-preflight/1 "
+            f"--write-out {shlex.quote(write_out)} {shlex.quote(url)}"
+        )
+        _stdin, stdout, stderr = ssh.exec_command(command)
+        stdout_text = stdout.read().decode("utf-8", "replace")
+        stderr_text = stderr.read().decode("utf-8", "replace").strip()
+        exit_code = stdout.channel.recv_exit_status()
+        if stderr_text:
+            print(
+                f"[VAST][PREFLIGHT] {label} curl stderr: "
+                f"exit={exit_code}, detail={stderr_text[-800:]}"
+            )
+        self._check_cancelled()
+        return parse_curl_speed_probe(
+            stdout_text,
+            exit_code=exit_code,
+            key=key,
+            label=label,
+            detail=detail,
+        )
+
+    def _run_sftp_speed_probe(self, ssh) -> dict[str, Any]:
+        import io
+
+        self._check_cancelled()
+        remote_path = f"/tmp/soya_preflight_upload_{self.launch.get('launch_id') or 'test'}.bin"
+        payload = io.BytesIO(os.urandom(PREFLIGHT_UPLOAD_BYTES))
+        sftp = ssh.open_sftp()
+        try:
+            channel = sftp.get_channel()
+            channel.settimeout(PREFLIGHT_CURL_MAX_SECONDS + 10)
+            started = time.perf_counter()
+            sftp.putfo(
+                payload,
+                remote_path,
+                file_size=PREFLIGHT_UPLOAD_BYTES,
+                confirm=True,
+            )
+            seconds = time.perf_counter() - started
+            self._check_cancelled()
+            return speed_result(
+                key="upload",
+                label="로컬→Vast",
+                transferred_bytes=PREFLIGHT_UPLOAD_BYTES,
+                seconds=seconds,
+                detail="임시 SFTP 업로드",
+            )
+        finally:
+            try:
+                sftp.remove(remote_path)
+            except OSError as exc:
+                print(
+                    "[VAST][PREFLIGHT][ERROR] 임시 SFTP 파일 삭제 실패: "
+                    f"path={remote_path}, error={type(exc).__name__}: {exc}"
+                )
+                traceback.print_exc()
+            try:
+                sftp.close()
+            except Exception as exc:
+                print(
+                    "[VAST][PREFLIGHT][ERROR] SFTP 측정 채널 종료 실패: "
+                    f"error={type(exc).__name__}: {exc}"
+                )
+                traceback.print_exc()
+
+    def _run_preflight(
+        self,
+        host: str,
+        port: int,
+        private_key_path: str,
+        model_plan: dict[str, Any],
+        lora_files: list[dict[str, Any]],
+    ) -> None:
+        started_at_epoch = time.time()
+        state = empty_preflight_state()
+        state.update(state="running", started_at=self._utc_now())
+        self._store_preflight(**state)
+        self._set_step("preflight", "running", "실사용 전송 속도 측정")
+        self._event(
+            "preflight",
+            f"자동 프리플라이트 시작: ssh={host}:{port}, "
+            f"download_sample={PREFLIGHT_DOWNLOAD_BYTES}, upload_sample={PREFLIGHT_UPLOAD_BYTES}",
+        )
+
+        ssh = None
+        tests: list[dict[str, Any]] = []
+
+        def run_one(key: str, label: str, callback) -> None:
+            self._check_cancelled()
+            try:
+                result = callback()
+            except LaunchCancelled:
+                raise
+            except Exception as exc:
+                print(
+                    f"[VAST][PREFLIGHT][ERROR] {label} 측정 실패: "
+                    f"key={key}, host={host}, port={port}, "
+                    f"error={type(exc).__name__}: {exc}"
+                )
+                traceback.print_exc()
+                result = failed_result(
+                    key=key,
+                    label=label,
+                    detail=f"{type(exc).__name__}: {str(exc)[:240]}",
+                )
+            tests.append(result)
+            self._record_preflight_test(result)
+
+        try:
+            run_one("docker", "Docker 준비", self._docker_preflight_result)
+            ssh = self._ssh_connect(host, port, private_key_path)
+            run_one(
+                "cloudflare",
+                "Cloudflare",
+                lambda: self._run_curl_speed_probe(
+                    ssh,
+                    key="cloudflare",
+                    label="Cloudflare",
+                    url=f"{PREFLIGHT_CLOUDFLARE_URL}?bytes={PREFLIGHT_DOWNLOAD_BYTES}",
+                    requested_bytes=PREFLIGHT_DOWNLOAD_BYTES,
+                    detail="Cloudflare edge 제한 구간 측정",
+                ),
+            )
+            hf_url, hf_bytes, hf_detail = self._preflight_huggingface_target(model_plan)
+            run_one(
+                "huggingface",
+                "Hugging Face",
+                lambda: self._run_curl_speed_probe(
+                    ssh,
+                    key="huggingface",
+                    label="Hugging Face",
+                    url=hf_url,
+                    requested_bytes=hf_bytes,
+                    detail=hf_detail,
+                ),
+            )
+            run_one("upload", "로컬→Vast", lambda: self._run_sftp_speed_probe(ssh))
+
+            estimate = calculate_transfer_estimate(model_plan, lora_files, tests)
+            if not estimate.get("available"):
+                print(
+                    "[VAST][PREFLIGHT][ERROR] 전송 ETA 계산 불가: "
+                    f"download_bytes={estimate.get('download_bytes')}, "
+                    f"upload_bytes={estimate.get('upload_bytes')}, "
+                    f"note={estimate.get('note')}"
+                )
+            has_failure = any(item.get("status") == "error" for item in tests)
+            final_state = "partial" if has_failure else "complete"
+            elapsed = max(0.0, time.time() - started_at_epoch)
+            self._store_preflight(
+                state=final_state,
+                completed_at=self._utc_now(),
+                elapsed_seconds=round(elapsed, 1),
+                tests=tests,
+                estimate=estimate,
+                error="",
+            )
+            remaining = estimate.get("remaining_seconds")
+            if remaining is None:
+                step_detail = "일부 측정 실패 · ETA 없음 · 빌드 자동 계속"
+            else:
+                step_detail = f"예상 남은 전송 {int(remaining)}초 · 빌드 자동 계속"
+            self._set_step("preflight", "done", step_detail)
+            self._event("preflight", step_detail)
+        except LaunchCancelled:
+            self._store_preflight(
+                state="cancelled",
+                completed_at=self._utc_now(),
+                elapsed_seconds=round(max(0.0, time.time() - started_at_epoch), 1),
+                error="사용자 요청으로 취소됨",
+            )
+            raise
+        except Exception as exc:
+            print(
+                "[VAST][PREFLIGHT][ERROR] 자동 프리플라이트 전체 실패(빌드 계속): "
+                f"host={host}, port={port}, error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            estimate = calculate_transfer_estimate(model_plan, lora_files, tests)
+            self._store_preflight(
+                state="failed",
+                completed_at=self._utc_now(),
+                elapsed_seconds=round(max(0.0, time.time() - started_at_epoch), 1),
+                tests=tests,
+                estimate=estimate,
+                error=f"{type(exc).__name__}: {str(exc)[:500]}",
+            )
+            self._set_step("preflight", "done", "측정 실패 · 빌드 자동 계속")
+            self._event("preflight-error", f"측정 실패 · 빌드 자동 계속: {exc}")
+        finally:
+            if ssh is not None:
+                try:
+                    ssh.close()
+                except Exception as exc:
+                    print(
+                        "[VAST][PREFLIGHT][ERROR] SSH 측정 연결 종료 실패: "
+                        f"host={host}, port={port}, error={type(exc).__name__}: {exc}"
+                    )
+                    traceback.print_exc()
 
     def _upload_all(
         self,
@@ -1411,9 +1994,7 @@ class VastService:
                 raise VastApiError(
                     f"원격 모델 다운로드 프로세스 시작 실패: exit={launch_code}"
                 )
-            import time
-
-            deadline = time.time() + HEALTH_TIMEOUT_SECONDS * 4
+            # 시간 제한 없이 다운로드 완료를 기다린다. 비용 상한은 watchdog이 담당.
             download_paths = [
                 path
                 for item in downloads
@@ -1424,7 +2005,7 @@ class VastService:
             ]
             quoted_paths = " ".join(shlex.quote(path) for path in download_paths)
             last_downloaded_bytes = -1
-            while time.time() < deadline:
+            while True:
                 self._check_cancelled()
                 _stdin, stdout, stderr = ssh.exec_command(
                     f"if [ -s {MODELS_DONE_FLAG}.fail ]; then "
@@ -1487,11 +2068,6 @@ class VastService:
                 if visible_tail:
                     self._event("remote", "download: " + " | ".join(visible_tail[-3:])[-1000:])
                 self._wait_sync(10)
-            print(
-                "[VAST][DOWNLOAD][ERROR] 원격 모델 다운로드 시간 초과: "
-                f"host={host}, port={port}, count={len(downloads)}"
-            )
-            raise VastApiError("원격 모델 다운로드 시간 초과")
         finally:
             ssh.close()
 
@@ -1502,12 +2078,12 @@ class VastService:
 
         if not comfy_url:
             print(
-                "[VAST][COMFY][ERROR] 8188 외부 URL이 없어 ComfyUI 상태를 확인할 수 "
+                "[VAST][COMFY][ERROR] SSH 로컬 터널 URL이 없어 ComfyUI 상태를 확인할 수 "
                 f"없습니다: ssh={host}:{port}"
             )
             raise VastApiError(
-                "Vast 인스턴스에 8188 외부 포트가 배정되지 않았습니다. "
-                "오퍼의 direct_port_count와 생성 env 포트 매핑을 확인하세요."
+                "ComfyUI SSH 로컬 터널을 만들지 못했습니다. "
+                "Vast SSH 상태와 로컬 터널 로그를 확인하세요."
             )
         def touch_ready() -> None:
             self._check_cancelled()
@@ -1526,34 +2102,30 @@ class VastService:
                 if code != 0:
                     error_text = stderr.read().decode("utf-8", "replace")[-500:]
                     print(
-                        "[VAST][COMFY][ERROR] build TTL 해제 신호 기록 실패: "
+                        "[VAST][COMFY][ERROR] 빌드 완료 플래그 기록 실패: "
                         f"exit={code}, stderr={error_text}"
                     )
                     raise VastApiError(
-                        f"컨테이너 build TTL 해제 신호 기록 실패: exit={code}"
+                        f"컨테이너 빌드 완료 플래그 기록 실패: exit={code}"
                     )
             finally:
                 ssh.close()
 
         await asyncio.to_thread(touch_ready)
         self._event("remote", f"{READY_FLAG} 생성 — ComfyUI 시작 요청")
-        deadline = time.time() + HEALTH_TIMEOUT_SECONDS
+        # 시간 제한 없이 ComfyUI 기동을 기다린다. 비용 상한은 watchdog이 담당.
         async with aiohttp.ClientSession(
             timeout=aiohttp.ClientTimeout(total=10)
         ) as session:
             last_error = ""
             last_log_at = 0.0
-            while time.time() < deadline:
+            while True:
                 self._check_cancelled()
                 try:
                     async with session.get(f"{comfy_url}/system_stats") as resp:
                         if resp.status == 200:
                             self._event("health", f"ComfyUI health HTTP 200: {comfy_url}")
                             await asyncio.to_thread(mark_build_complete)
-                            self._event(
-                                "guard",
-                                f"{BUILD_COMPLETE_FLAG} 생성 — 컨테이너 build TTL 해제",
-                            )
                             return
                         last_error = f"HTTP {resp.status}"
                 except aiohttp.ClientError as exc:
@@ -1571,11 +2143,6 @@ class VastService:
                     )
                     last_log_at = now
                 await asyncio.sleep(5)
-        print(
-            "[VAST][COMFY][ERROR] ComfyUI 기동 대기 시간 초과: "
-            f"url={comfy_url}, last={last_error or '(응답 없음)'}"
-        )
-        raise VastApiError(f"ComfyUI 기동 대기 시간 초과: {comfy_url}")
 
     # ── 상태/제어 ───────────────────────────────────────────
 
@@ -1586,6 +2153,18 @@ class VastService:
         result["status_history"] = [
             dict(item) for item in self.launch.get("status_history") or []
         ]
+        image_pull = dict(self.launch.get("image_pull") or {})
+        image_pull["pending_layers"] = [
+            dict(layer) for layer in image_pull.get("pending_layers") or []
+        ]
+        image_pull.pop("_signature", None)
+        result["image_pull"] = image_pull
+        preflight = dict(self.launch.get("preflight") or empty_preflight_state())
+        preflight["tests"] = [
+            dict(item) for item in preflight.get("tests") or [] if isinstance(item, dict)
+        ]
+        preflight["estimate"] = dict(preflight.get("estimate") or {})
+        result["preflight"] = preflight
         now = time.time()
         contract_at = float(self.launch.get("contract_started_at_epoch") or 0.0)
         elapsed = max(0.0, now - contract_at) if contract_at else 0.0
@@ -1599,27 +2178,58 @@ class VastService:
         result["progress_stale_seconds"] = int(stale_seconds)
         active_build = result.get("state") in {"creating", "preparing", "recovered"}
         active_build = active_build and not bool(result.get("recovered_was_ready"))
-        result["stuck"] = bool(
-            active_build and stale_seconds >= NO_PROGRESS_WARNING_SECONDS
+        pull_last_observed = float(
+            image_pull.get("last_observed_progress_at_epoch") or contract_at or 0.0
         )
-        result["stuck_reason"] = (
-            f"관찰 가능한 진행 변화가 {int(stale_seconds)}초 동안 없습니다. "
-            "원본 상태를 확인하고 필요하면 즉시 파괴하세요."
-            if result["stuck"]
-            else ""
+        pull_stale_seconds = (
+            max(0.0, now - pull_last_observed) if pull_last_observed else 0.0
         )
+        pull_active = active_build and str(result.get("instance_status") or "").lower() == "loading"
+        pull_unobserved = bool(
+            pull_active and pull_stale_seconds >= NO_PROGRESS_WARNING_SECONDS
+        )
+        image_pull["activity_stale_seconds"] = int(pull_stale_seconds)
+        image_pull["activity_unobserved"] = pull_unobserved
+        if image_pull.get("complete"):
+            image_pull["activity_state"] = "complete"
+        elif image_pull.get("error") and not image_pull.get("available"):
+            image_pull["activity_state"] = "unavailable"
+        elif pull_unobserved:
+            image_pull["activity_state"] = "unobserved"
+        elif image_pull.get("available"):
+            image_pull["activity_state"] = "observed"
+        else:
+            image_pull["activity_state"] = "waiting"
+
+        general_unobserved = bool(
+            active_build
+            and not pull_active
+            and stale_seconds >= NO_PROGRESS_WARNING_SECONDS
+        )
+        result["activity_unobserved"] = pull_unobserved or general_unobserved
+        result["activity_unobserved_reason"] = (
+            f"관찰 가능한 진행 신호가 {int(pull_stale_seconds)}초 동안 없습니다. "
+            "Vast가 현재 레이어의 수신 바이트를 제공하지 않아 다운로드 중인지 "
+            "정지했는지는 판별할 수 없습니다."
+            if pull_unobserved
+            else (
+                f"관찰 가능한 진행 신호가 {int(stale_seconds)}초 동안 없습니다. "
+                "현재 단계의 상세 상태를 확인하세요."
+                if general_unobserved
+                else ""
+            )
+        )
+        # 과거 API 필드는 호환을 위해 남기되 관측 공백을 실제 정지로 단정하지 않는다.
+        result["stuck"] = False
+        result["stuck_reason"] = ""
         deadlines: list[tuple[str, float]] = []
-        if active_build and contract_at:
-            deadlines.append(("전체 빌드 제한", contract_at + BUILD_TIMEOUT_SECONDS))
-            if not result.get("ssh_ready_at_epoch"):
-                deadlines.append(("SSH 준비 제한", contract_at + SSH_WAIT_TIMEOUT_SECONDS))
-            if hourly > 0:
-                deadlines.append(
-                    (
-                        "예상 빌드비 상한",
-                        contract_at + (MAX_BUILD_COST_USD / hourly * 3600),
-                    )
+        if active_build and contract_at and hourly > 0:
+            deadlines.append(
+                (
+                    "예상 빌드비 상한",
+                    contract_at + (MAX_BUILD_COST_USD / hourly * 3600),
                 )
+            )
         if deadlines:
             deadline_name, deadline_at = min(deadlines, key=lambda item: item[1])
             result["auto_destroy_deadline"] = datetime.fromtimestamp(
@@ -1778,6 +2388,7 @@ class VastService:
                     and watchdog_task is not asyncio.current_task()
                 ):
                     watchdog_task.cancel()
+            self._instance_status_cache.pop(target, None)
             _log(f"인스턴스 파괴 및 소멸 확인 완료: {target}")
             return {
                 "ok": True,

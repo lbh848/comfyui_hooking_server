@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 from pathlib import Path
 import socket
@@ -11,15 +12,26 @@ from typing import Any
 
 import pytest
 
-from vast_backend.client import VastApiError, VastClient
+from vast_backend.client import VastApiError, VastClient, _rate_limit_delay
+from vast_backend.image_pull_progress import (
+    build_pull_progress,
+    parse_daemon_pull_states,
+    parse_docker_hub_reference,
+)
 from vast_backend.model_sources import build_download_plan, save_mapping
+from vast_backend.preflight import (
+    calculate_transfer_estimate,
+    parse_curl_speed_probe,
+    speed_result,
+)
 from vast_backend.service import (
-    BUILD_COMPLETE_FLAG,
-    BUILD_TIMEOUT_SECONDS,
+    ACCOUNT_STATUS_CACHE_SECONDS,
     MAX_BUILD_COST_USD,
+    MIN_RUNTIME_CUDA_VERSION,
     MODELS_DONE_FLAG,
     NO_PROGRESS_WARNING_SECONDS,
-    SSH_WAIT_TIMEOUT_SECONDS,
+    READY_FLAG,
+    WATCHDOG_STATUS_MAX_AGE_SECONDS,
     VastService,
 )
 from vast_backend.ssh_tunnel import ComfySshTunnel
@@ -126,7 +138,7 @@ async def test_vast_create_instance_uses_current_api_fields(
     assert observed["api_version"] == "v0"
     body = observed["json_body"]
     assert body["onstart"] == "echo ready"
-    assert body["env"] == {"-p 8188:8188": "1"}
+    assert "env" not in body
     assert body["runtype"] == "ssh"
     assert "onstart_cmd" not in body
     assert "ports" not in body
@@ -163,7 +175,7 @@ async def test_vast_ssh_endpoints_match_current_api(
 
 
 @pytest.mark.asyncio
-async def test_vast_offer_search_requires_an_application_port(
+async def test_vast_offer_search_does_not_require_a_direct_port_for_ssh_tunnel(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client = VastClient("test-key")
@@ -183,22 +195,286 @@ async def test_vast_offer_search_requires_an_application_port(
     monkeypatch.setattr(client, "_request", fake_request)
 
     assert await client.search_offers() == []
-    assert observed["json_body"]["direct_port_count"] == {"gte": 1}
+    assert "direct_port_count" not in observed["json_body"]
+
+    assert await client.search_offers(min_direct_port_count=2) == []
+    assert observed["json_body"]["direct_port_count"] == {"gte": 2}
 
 
-def test_vast_comfy_url_uses_public_ip_and_mapped_port(tmp_path: Path) -> None:
-    service = VastService(tmp_path, lambda: {})
+@pytest.mark.asyncio
+async def test_vast_service_enforces_runtime_cuda_minimum(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = VastService(tmp_path, lambda: {"vast_api_key": "test-key"})
+    client = VastClient("test-key")
+    observed_cuda: list[float] = []
 
-    assert service._proxy_url(
-        {
-            "machine_id": 777,
-            "public_ipaddr": "203.0.113.10",
-            "ports": {
-                "8188/tcp": [{"HostIp": "0.0.0.0", "HostPort": "34567"}]
-            },
+    async def fake_search_offers(**kwargs: Any) -> list[dict[str, Any]]:
+        observed_cuda.append(kwargs["min_cuda_version"])
+        return []
+
+    monkeypatch.setattr(client, "search_offers", fake_search_offers)
+    service._client = client
+
+    default_result = await service.offers()
+    lowered_result = await service.offers(min_cuda_version=11.8)
+    raised_result = await service.offers(min_cuda_version=13.0)
+
+    assert observed_cuda == [12.8, 12.8, 13.0]
+    assert default_result["min_cuda_version"] == MIN_RUNTIME_CUDA_VERSION
+    assert lowered_result["min_cuda_version"] == MIN_RUNTIME_CUDA_VERSION
+    assert raised_result["min_cuda_version"] == 13.0
+
+
+@pytest.mark.asyncio
+async def test_vast_instance_status_concurrent_callers_share_one_api_request(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = VastService(tmp_path, lambda: {"vast_api_key": "test-key"})
+    client = VastClient("test-key")
+    api_calls = 0
+
+    async def fake_get_instance(instance_id: int) -> dict[str, Any]:
+        nonlocal api_calls
+        api_calls += 1
+        await asyncio.sleep(0.01)
+        return {
+            "id": instance_id,
+            "actual_status": "loading",
+            "status_msg": "Pulling image",
         }
-    ) == "http://203.0.113.10:34567"
 
+    monkeypatch.setattr(client, "get_instance", fake_get_instance)
+    service._client = client
+    service.launch = service._new_launch_state(state="preparing", launch_id="poll")
+    service.launch["instance_id"] = 321
+
+    results = await asyncio.gather(
+        *(
+            service._get_instance_status(
+                321, max_age_seconds=WATCHDOG_STATUS_MAX_AGE_SECONDS
+            )
+            for _ in range(8)
+        )
+    )
+
+    assert api_calls == 1
+    assert sum(1 for _info, refreshed in results if refreshed) == 1
+    assert all(info["status_msg"] == "Pulling image" for info, _ in results)
+    assert service.launch["instance_status"] == "loading"
+
+    cached_info = service._instance_status_cache[321][1]
+    service._instance_status_cache[321] = (
+        time.monotonic() - WATCHDOG_STATUS_MAX_AGE_SECONDS - 1,
+        cached_info,
+    )
+    _info, refreshed = await service._get_instance_status(
+        321, max_age_seconds=WATCHDOG_STATUS_MAX_AGE_SECONDS
+    )
+
+    assert refreshed is True
+    assert api_calls == 2
+
+
+@pytest.mark.asyncio
+async def test_vast_account_status_uses_sixty_second_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = VastService(tmp_path, lambda: {"vast_api_key": "test-key"})
+    client = VastClient("test-key")
+    api_calls = 0
+
+    async def fake_account() -> dict[str, Any]:
+        nonlocal api_calls
+        api_calls += 1
+        await asyncio.sleep(0.01)
+        return {"username": "tester", "credit": 12.34}
+
+    monkeypatch.setattr(client, "account", fake_account)
+    service._client = client
+
+    results = await asyncio.gather(*(service.account_status() for _ in range(6)))
+
+    assert api_calls == 1
+    assert all(result["balance_usd"] == 12.34 for result in results)
+    expires_at, payload = service._account_status_cache or (0.0, {})
+    remaining = expires_at - time.monotonic()
+    assert ACCOUNT_STATUS_CACHE_SECONDS - 1 <= remaining <= ACCOUNT_STATUS_CACHE_SECONDS
+
+    service._account_status_cache = (time.monotonic() - 1, payload)
+    await service.account_status()
+    assert api_calls == 2
+
+
+def test_vast_rate_limit_backoff_is_exponential_and_jittered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "vast_backend.client.random.uniform", lambda _low, high: high
+    )
+
+    assert _rate_limit_delay("API requests too frequent", 0) == 6.0
+    assert _rate_limit_delay("API requests too frequent", 1) == 11.0
+    assert _rate_limit_delay('{"retry_after": 2}', 0) == 2.4
+
+
+@pytest.mark.asyncio
+async def test_vast_daemon_logs_use_async_result_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = VastClient("test-key")
+    observed: dict[str, Any] = {}
+
+    async def fake_request(
+        method: str,
+        path: str,
+        *,
+        json_body: dict[str, Any] | None = None,
+        query: dict[str, str] | None = None,
+        api_version: str = "v0",
+    ) -> dict[str, Any]:
+        observed.update(
+            method=method,
+            path=path,
+            json_body=json_body,
+            query=query,
+            api_version=api_version,
+        )
+        return {"result_url": "https://example.test/result"}
+
+    async def fake_poll(result_url: str) -> str:
+        observed["result_url"] = result_url
+        return "abc123def456: Download complete\n"
+
+    monkeypatch.setattr(client, "_request", fake_request)
+    monkeypatch.setattr(client, "_poll_result_text", fake_poll)
+
+    result = await client.get_instance_logs(321, daemon_logs=True, tail=250)
+
+    assert result == "abc123def456: Download complete\n"
+    assert observed == {
+        "method": "PUT",
+        "path": "/instances/request_logs/321/",
+        "json_body": {"tail": "250", "daemon_logs": "true"},
+        "query": None,
+        "api_version": "v0",
+        "result_url": "https://example.test/result",
+    }
+
+
+def test_vast_pull_progress_is_a_byte_weighted_lower_bound() -> None:
+    assert parse_docker_hub_reference(
+        "docker.io/bh848/soya-comfy-runtime@sha256:abc"
+    ) == ("bh848/soya-comfy-runtime", "sha256:abc")
+    logs = """
+2026-08-14 15:04:08 UTC: aaaaaaaaaaaa: Already exists
+bbbbbbbbbbbb: Pulling fs layer
+cccccccccccc: Pulling fs layer
+bbbbbbbbbbbb: Download complete
+"""
+    states = parse_daemon_pull_states(logs)
+    progress = build_pull_progress(
+        [
+            {"digest": "sha256:" + "a" * 64, "size": 100},
+            {"digest": "sha256:" + "b" * 64, "size": 300},
+            {"digest": "sha256:" + "c" * 64, "size": 600},
+        ],
+        states,
+    )
+
+    assert states == {
+        "aaaaaaaaaaaa": "available",
+        "bbbbbbbbbbbb": "downloaded",
+        "cccccccccccc": "pulling",
+    }
+    assert progress["total_bytes"] == 1000
+    assert progress["confirmed_bytes"] == 400
+    assert progress["pending_bytes"] == 600
+    assert progress["minimum_percent"] == 40.0
+    assert progress["confirmed_layers"] == 2
+    assert progress["pending_layers"] == [
+        {"id": "cccccccccccc", "size_bytes": 600, "state": "pulling"}
+    ]
+    assert progress["exact_progress_available"] is False
+
+
+def test_vast_pull_progress_uses_latest_layer_state_after_retry() -> None:
+    states = parse_daemon_pull_states(
+        "dddddddddddd: Download complete\n"
+        "2026-08-14 15:04:56 UTC: dddddddddddd: Pulling fs layer\n"
+    )
+    progress = build_pull_progress(
+        [{"digest": "sha256:" + "d" * 64, "size": 900}],
+        states,
+    )
+
+    assert states == {"dddddddddddd": "pulling"}
+    assert progress["confirmed_bytes"] == 0
+    assert progress["pending_bytes"] == 900
+    assert progress["minimum_percent"] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_vast_service_refreshes_image_pull_progress_without_claiming_stuck(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = VastService(tmp_path, lambda: {"vast_api_key": "test-key"})
+    client = VastClient("test-key")
+
+    async def fake_logs(
+        instance_id: int, *, daemon_logs: bool = False, tail: int = 1000
+    ) -> str:
+        assert instance_id == 321
+        assert daemon_logs is True
+        assert tail == 1000
+        return "aaaaaaaaaaaa: Already exists\nbbbbbbbbbbbb: Pulling fs layer\n"
+
+    async def fake_manifest(
+        image_reference: str,
+        *,
+        architecture: str = "amd64",
+        os_name: str = "linux",
+    ) -> dict[str, Any]:
+        assert image_reference == "docker.io/example/runtime@sha256:index"
+        assert architecture == "amd64"
+        assert os_name == "linux"
+        return {
+            "layers": [
+                {"digest": "sha256:" + "a" * 64, "size": 400},
+                {"digest": "sha256:" + "b" * 64, "size": 600},
+            ]
+        }
+
+    monkeypatch.setattr(client, "get_instance_logs", fake_logs)
+    monkeypatch.setattr(client, "get_docker_hub_manifest_layers", fake_manifest)
+    service._client = client
+    service.launch = service._new_launch_state(state="preparing", launch_id="pull")
+    service.launch["instance_id"] = 321
+    service.launch["instance_status"] = "loading"
+    service.launch["contract_started_at_epoch"] = time.time() - 300
+
+    await service._refresh_image_pull_progress(
+        321,
+        {
+            "id": 321,
+            "actual_status": "loading",
+            "image_uuid": "docker.io/example/runtime@sha256:index",
+            "cpu_arch": "amd64",
+        },
+    )
+
+    pull = service.launch["image_pull"]
+    assert pull["minimum_percent"] == 40.0
+    assert pull["confirmed_bytes"] == 400
+    assert pull["pending_bytes"] == 600
+    pull["last_observed_progress_at_epoch"] = (
+        time.time() - NO_PROGRESS_WARNING_SECONDS - 1
+    )
+    status = service.launch_status()
+    assert status["activity_unobserved"] is True
+    assert status["image_pull"]["activity_state"] == "unobserved"
+    assert "판별할 수 없습니다" in status["activity_unobserved_reason"]
+    assert status["stuck"] is False
 
 def test_vast_launch_status_exposes_cost_deadline_and_stale_warning(
     tmp_path: Path,
@@ -221,31 +497,30 @@ def test_vast_launch_status_exposes_cost_deadline_and_stale_warning(
 
     assert 299 <= status["elapsed_seconds"] <= 301
     assert status["estimated_cost_usd"] == pytest.approx(0.033333, abs=0.00001)
-    assert status["stuck"] is True
-    assert "진행 변화" in status["stuck_reason"]
-    assert status["auto_destroy_limit_name"] == "SSH 준비 제한"
-    assert 899 <= status["auto_destroy_remaining_seconds"] <= 901
+    assert status["activity_unobserved"] is True
+    assert "진행 신호" in status["activity_unobserved_reason"]
+    assert status["stuck"] is False
+    assert status["stuck_reason"] == ""
+    assert status["auto_destroy_limit_name"] == "예상 빌드비 상한"
+    # 상한 $0.25 ÷ 시간당 $0.40 × 3600s = 2250s, 300s 경과 → 1950s 남음
+    assert 1949 <= status["auto_destroy_remaining_seconds"] <= 1951
     assert status["limits"] == {
-        "ssh_wait_seconds": SSH_WAIT_TIMEOUT_SECONDS,
-        "build_seconds": BUILD_TIMEOUT_SECONDS,
         "max_build_cost_usd": MAX_BUILD_COST_USD,
         "no_progress_warning_seconds": NO_PROGRESS_WARNING_SECONDS,
     }
 
 
-def test_vast_onstart_has_independent_build_ttl_without_logging_secret(
+def test_vast_onstart_has_no_self_destroy_and_waits_ready_flag(
     tmp_path: Path,
 ) -> None:
     service = VastService(tmp_path, lambda: {})
 
     script = service._build_onstart()
 
-    assert str(BUILD_TIMEOUT_SECONDS) in script
-    assert BUILD_COMPLETE_FLAG in script
-    assert "CONTAINER_API_KEY" in script
-    assert "CONTAINER_ID" in script
-    assert "--request DELETE" in script
-    assert "echo ${CONTAINER_API_KEY}" not in script
+    assert READY_FLAG in script
+    assert "--request DELETE" not in script
+    assert "CONTAINER_API_KEY" not in script
+    assert "CONTAINER_ID" not in script
 
 
 def test_vast_cmd_events_redact_known_api_keys(tmp_path: Path) -> None:
@@ -262,8 +537,9 @@ def test_vast_cmd_events_redact_known_api_keys(tmp_path: Path) -> None:
 
 
 class _DestroyClient:
-    def __init__(self, *, remains: bool = False) -> None:
+    def __init__(self, *, remains: bool = False, dph_total: float = 0.40) -> None:
         self.remains = remains
+        self.dph_total = dph_total
         self.destroy_calls: list[int] = []
 
     async def destroy_instance(self, instance_id: int) -> dict[str, Any]:
@@ -278,7 +554,7 @@ class _DestroyClient:
             "id": instance_id,
             "actual_status": "running",
             "status_msg": "container running",
-            "dph_total": 0.40,
+            "dph_total": self.dph_total,
         }
 
 
@@ -340,7 +616,7 @@ async def test_vast_destroy_failure_keeps_instance_id_and_critical_state(
 
 
 @pytest.mark.asyncio
-async def test_vast_watchdog_auto_destroys_build_over_total_limit(
+async def test_vast_watchdog_auto_destroys_build_over_cost_cap(
     tmp_path: Path,
 ) -> None:
     service = VastService(tmp_path, lambda: {"vast_api_key": "test-key"})
@@ -350,13 +626,12 @@ async def test_vast_watchdog_auto_destroys_build_over_total_limit(
         state="preparing",
         launch_id="auto",
         label="soya-vast-auto",
-        hourly_price_usd=0.01,
+        hourly_price_usd=0.40,
     )
     service.launch["instance_id"] = 321
-    service.launch["contract_started_at_epoch"] = (
-        time.time() - BUILD_TIMEOUT_SECONDS - 1
-    )
-    service.launch["ssh_ready_at_epoch"] = time.time() - BUILD_TIMEOUT_SECONDS
+    # 2400초 × $0.40/hr ≈ $0.27 → 상한 $0.25 초과
+    service.launch["contract_started_at_epoch"] = time.time() - 2400
+    service.launch["ssh_ready_at_epoch"] = time.time() - 2350
     service._cancel_events["auto"] = threading.Event()
 
     await service._watchdog_loop("auto")
@@ -364,7 +639,45 @@ async def test_vast_watchdog_auto_destroys_build_over_total_limit(
     assert client.destroy_calls == [321]
     assert service.launch["state"] == "destroyed"
     assert service.launch["destroy_automatic"] is True
-    assert "전체 빌드 제한" in service.launch["destroy_reason"]
+    assert "예상 빌드비" in service.launch["destroy_reason"]
+
+
+@pytest.mark.asyncio
+async def test_vast_watchdog_tolerates_long_build_under_cost_cap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class _StopLoop(Exception):
+        pass
+
+    service = VastService(tmp_path, lambda: {"vast_api_key": "test-key"})
+    client = _DestroyClient(dph_total=0.01)
+    service._client = client  # type: ignore[assignment]
+    service.launch = service._new_launch_state(
+        state="preparing",
+        launch_id="long",
+        label="soya-vast-long",
+        hourly_price_usd=0.01,
+    )
+    service.launch["instance_id"] = 321
+    # 24시간 경과(구 SSH 20분/빌드 60분 제한을 훨씬 초과)해도
+    # 예상 빌드비 $0.24 < 상한 $0.25면 파괴하지 않는다.
+    service.launch["contract_started_at_epoch"] = time.time() - 86400
+    service._cancel_events["long"] = threading.Event()
+
+    sleep_calls = {"count": 0}
+
+    async def stop_after_second_sleep(_seconds: float) -> None:
+        sleep_calls["count"] += 1
+        if sleep_calls["count"] >= 2:
+            raise _StopLoop
+
+    monkeypatch.setattr(asyncio, "sleep", stop_after_second_sleep)
+
+    with pytest.raises(_StopLoop):
+        await service._watchdog_loop("long")
+
+    assert client.destroy_calls == []
+    assert service.launch["state"] == "preparing"
 
 
 def test_vast_frontend_has_manual_destroy_guard_and_cmd_log() -> None:
@@ -377,6 +690,179 @@ def test_vast_frontend_has_manual_destroy_guard_and_cmd_log() -> None:
     assert 'id="vast-launch-terminal"' in html
     assert "launch.instance_status_msg" in html
     assert "launch.auto_destroy_remaining_seconds" in html
+    assert 'id="vast-image-pull"' in html
+    assert "imagePull.minimum_percent" in html
+    assert "launch.activity_unobserved" in html
+    assert 'id="vast-search-cuda" min="12.8"' in html
+    assert 'value="12.8" title="런타임 이미지 요구사항' in html
+    assert 'id="vast-preflight-card"' in html
+    assert 'data-vast-preflight-key="cloudflare"' in html
+    assert 'data-vast-preflight-key="huggingface"' in html
+    assert 'data-vast-preflight-key="upload"' in html
+    assert "function vastRenderPreflight(launch)" in html
+
+
+def test_vast_curl_preflight_accepts_completed_and_timeout_samples() -> None:
+    complete = parse_curl_speed_probe(
+        "__SOYA_SPEED__:33554432:4.000:206:8388608",
+        exit_code=0,
+        key="huggingface",
+        label="Hugging Face",
+        detail="선택 모델",
+    )
+    partial = parse_curl_speed_probe(
+        "__SOYA_SPEED__:10485760:15.000:200:699050",
+        exit_code=28,
+        key="cloudflare",
+        label="Cloudflare",
+        detail="제한 시간 도달",
+    )
+
+    assert complete["status"] == "done"
+    assert complete["mbps"] == pytest.approx(67.11)
+    assert partial["status"] == "partial"
+    assert partial["bytes"] == 10 * 1024**2
+    assert partial["mbps"] == pytest.approx(5.59)
+
+
+def test_vast_curl_preflight_rejects_http_error() -> None:
+    with pytest.raises(ValueError, match="HTTP 오류"):
+        parse_curl_speed_probe(
+            "__SOYA_SPEED__:123:0.500:403:246",
+            exit_code=22,
+            key="huggingface",
+            label="Hugging Face",
+            detail="실패",
+        )
+
+
+def test_vast_transfer_eta_uses_parallel_branch_bottleneck() -> None:
+    cloudflare = speed_result(
+        key="cloudflare",
+        label="Cloudflare",
+        transferred_bytes=50 * 1024**2,
+        seconds=1,
+        detail="test",
+    )
+    huggingface = speed_result(
+        key="huggingface",
+        label="Hugging Face",
+        transferred_bytes=100 * 1024**2,
+        seconds=1,
+        detail="test",
+    )
+    upload = speed_result(
+        key="upload",
+        label="로컬→Vast",
+        transferred_bytes=20 * 1024**2,
+        seconds=1,
+        detail="test",
+    )
+    estimate = calculate_transfer_estimate(
+        {
+            "models": [
+                {"size_bytes": 1024**3, "source": {"source_type": "hf"}},
+                {"size_bytes": 512 * 1024**2, "source": {"source_type": "url"}},
+                {"size_bytes": 2 * 1024**3, "source": {"source_type": "upload"}},
+            ]
+        },
+        [{"size": 1024**3}],
+        [cloudflare, huggingface, upload],
+    )
+
+    assert estimate["available"] is True
+    assert estimate["download_seconds"] == pytest.approx(20.5, abs=0.1)
+    assert estimate["upload_seconds"] == pytest.approx(153.6, abs=0.1)
+    assert estimate["remaining_seconds"] == 154
+
+
+def test_vast_preflight_uses_selected_huggingface_model() -> None:
+    url, requested_bytes, detail = VastService._preflight_huggingface_target(
+        {
+            "models": [
+                {
+                    "filename": "small model.safetensors",
+                    "size_bytes": 8 * 1024**2,
+                    "source": {
+                        "source_type": "hf",
+                        "repo_id": "org/model",
+                        "hf_filename": "folder/small model.safetensors",
+                    },
+                }
+            ]
+        }
+    )
+
+    assert url == (
+        "https://huggingface.co/org/model/resolve/main/"
+        "folder/small%20model.safetensors"
+    )
+    assert requested_bytes == 8 * 1024**2
+    assert "small model.safetensors" in detail
+
+
+def test_vast_automatic_preflight_runs_before_parallel_build(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class _PreflightSsh:
+        closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    service = VastService(tmp_path, lambda: {})
+    service.launch = service._new_launch_state(
+        state="preparing", launch_id="preflight", label="soya-vast-preflight"
+    )
+    service.launch["contract_started_at_epoch"] = time.time() - 10
+    service.launch["ssh_ready_at_epoch"] = time.time()
+    ssh = _PreflightSsh()
+    monkeypatch.setattr(service, "_ssh_connect", lambda *_args: ssh)
+
+    def fake_curl(_ssh: Any, *, key: str, label: str, detail: str, **_kwargs: Any):
+        return speed_result(
+            key=key,
+            label=label,
+            transferred_bytes=50 * 1024**2,
+            seconds=1,
+            detail=detail,
+        )
+
+    monkeypatch.setattr(service, "_run_curl_speed_probe", fake_curl)
+    monkeypatch.setattr(
+        service,
+        "_run_sftp_speed_probe",
+        lambda _ssh: speed_result(
+            key="upload",
+            label="로컬→Vast",
+            transferred_bytes=25 * 1024**2,
+            seconds=1,
+            detail="test",
+        ),
+    )
+    model_plan = {
+        "models": [
+            {
+                "filename": "model.safetensors",
+                "size_bytes": 500 * 1024**2,
+                "source": {
+                    "source_type": "hf",
+                    "repo_id": "org/model",
+                    "hf_filename": "model.safetensors",
+                },
+            }
+        ]
+    }
+
+    service._run_preflight("ssh.example", 1234, "unused-key", model_plan, [])
+
+    assert service.launch["preflight"]["state"] == "complete"
+    assert service.launch["preflight"]["estimate"]["remaining_seconds"] == 10
+    assert ssh.closed is True
+    launch_source = inspect.getsource(VastService._launch_inner)
+    assert launch_source.index("self._run_preflight") < launch_source.index(
+        "upload_task = asyncio.to_thread"
+    )
 
 
 def test_civitai_plan_has_download_url_even_without_key() -> None:
@@ -535,10 +1021,12 @@ def test_remote_download_rejects_missing_civitai_url(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_comfy_wait_fails_immediately_without_public_port(tmp_path: Path) -> None:
+async def test_comfy_wait_fails_immediately_without_local_ssh_tunnel(
+    tmp_path: Path,
+) -> None:
     service = VastService(tmp_path, lambda: {})
 
-    with pytest.raises(VastApiError, match="8188 외부 포트"):
+    with pytest.raises(VastApiError, match="SSH 로컬 터널"):
         await service._start_comfy_and_wait(
             "ssh.example", 1234, "unused-key", ""
         )

@@ -7,13 +7,43 @@ from __future__ import annotations
 
 import asyncio
 import json
+import random
 import traceback
 from typing import Any
 
 import aiohttp
 
+from .image_pull_progress import parse_docker_hub_reference
+
 API_ROOT = "https://console.vast.ai/api"
 REQUEST_TIMEOUT_SECONDS = 30
+LOG_RESULT_POLL_ATTEMPTS = 30
+LOG_RESULT_POLL_SECONDS = 0.3
+DOCKER_HUB_AUTH_URL = "https://auth.docker.io/token"
+DOCKER_HUB_REGISTRY_ROOT = "https://registry-1.docker.io"
+DOCKER_MANIFEST_ACCEPT = ", ".join(
+    (
+        "application/vnd.oci.image.manifest.v1+json",
+        "application/vnd.docker.distribution.manifest.v2+json",
+        "application/vnd.oci.image.index.v1+json",
+        "application/vnd.docker.distribution.manifest.list.v2+json",
+    )
+)
+
+
+def _rate_limit_delay(raw: str, attempt: int) -> float:
+    """Vast 429 재시도 간격 — 응답 힌트를 우선하고 지터로 재충돌을 피한다."""
+    base_wait = min(5.0 * (2 ** max(0, int(attempt))), 30.0)
+    try:
+        payload = json.loads(raw)
+        if isinstance(payload, dict):
+            hinted = float(payload.get("retry_after") or 0.0)
+            if hinted > 0:
+                base_wait = min(hinted, 30.0)
+    except (TypeError, ValueError):
+        pass
+    jitter = random.uniform(0.0, min(1.0, base_wait * 0.2))
+    return min(base_wait + jitter, 30.0)
 
 
 class VastApiError(RuntimeError):
@@ -75,15 +105,13 @@ class VastClient:
                 ) as resp:
                     raw = await resp.text()
                     if resp.status == 429:
-                        # 레이트리밋(초당 5회) — retry_after 만큼 기다려 재시도.
-                        wait = 5.0
-                        try:
-                            wait = min(float(json.loads(raw).get("retry_after") or 5), 30)
-                        except ValueError:
-                            pass
+                        # Vast는 endpoint/identity별 최소 간격과 짧은 버스트를
+                        # 제한한다. 고정 간격 재시도는 동시 poll과 다시 충돌하므로
+                        # 응답 힌트 또는 지수 백오프에 지터를 더한다.
+                        wait = _rate_limit_delay(raw, attempt)
                         last_rate_error = raw[:200]
                         print(
-                            f"[VAST_API] 레이트리밋(429) — {wait}초 후 재시도 "
+                            f"[VAST_API] 레이트리밋(429) — {wait:.1f}초 후 재시도 "
                             f"({attempt + 1}/4): {method} /api/{api_version}{path}"
                         )
                         await asyncio.sleep(wait)
@@ -156,16 +184,17 @@ class VastClient:
         on_demand: bool = True,
         inet_down_min_mbps: int = 1000,
         inet_up_min_mbps: float = 0,
-        min_direct_port_count: int = 1,
+        min_direct_port_count: int = 0,
         min_reliability: float = 0.0,
         min_cuda_version: float = 0.0,
         limit: int = 60,
     ) -> list[dict[str, Any]]:
         """bundles 검색. dph_total 오름차순으로 오퍼 리스트를 반환한다.
 
-        네트워크 조건(inet_down/inet_up/direct_port_count)은 Vast bundles 쿼리의
-        숫자 필드에 gte 로 전달된다(검증됨). reliability(0~1)·cuda_max_good
-        (float) 도 gte 로 필터링한다. 0 이하는 조건을 생략해 과도한 필터를 피한다.
+        네트워크 조건(inet_down/inet_up)은 Vast bundles 쿼리의 숫자 필드에
+        gte 로 전달된다(검증됨). ComfyUI는 SSH 터널로 연결하므로 직접 포트는
+        기본 요구하지 않는다. 호출자가 명시한 경우에만 direct_port_count를
+        필터링한다. reliability(0~1)·cuda_max_good(float)도 같은 방식이다.
         """
         query: dict[str, Any] = {
             "rentable": {"eq": True},
@@ -175,13 +204,14 @@ class VastClient:
             "disk_space": {"gte": min_disk_gb},
             "dph_total": {"lte": max_price_usd_hr},
             "inet_down": {"gte": inet_down_min_mbps},
-            "direct_port_count": {"gte": min_direct_port_count},
             "order": [["dph_total", "asc"]],
             "limit": limit,
             "type": "on-demand" if on_demand else "bid",
         }
         if inet_up_min_mbps and inet_up_min_mbps > 0:
             query["inet_up"] = {"gte": inet_up_min_mbps}
+        if min_direct_port_count and min_direct_port_count > 0:
+            query["direct_port_count"] = {"gte": min_direct_port_count}
         if min_reliability and min_reliability > 0:
             # bundles 쿼리에서 필터 가능한 신뢰도 필드는 reliability 다
             # (reliability2는 응답에만 포함).
@@ -219,20 +249,21 @@ class VastClient:
     ) -> dict[str, Any]:
         """오퍼(ask)를 수락해 인스턴스를 생성한다. new_contract(id)를 반환.
 
-        커스텀 포트는 Vast API의 env 딕셔너리에 Docker ``-p`` 옵션으로
-        전달해야 한다. ``ports``나 ``onstart_cmd`` 필드는 생성 API에서
-        사용되지 않는다.
+        ComfyUI는 SSH 로컬 터널로만 연결하므로 기본 생성 요청은 공개 포트를
+        열지 않는다. 호출자가 별도 env를 명시했을 때만 그대로 전달한다.
+        ``ports``나 ``onstart_cmd`` 필드는 생성 API에서 사용되지 않는다.
         """
         body: dict[str, Any] = {
             "image": image,
             "disk": disk_gb,
             "onstart": onstart_cmd,
             "label": label,
-            "env": env or {"-p 8188:8188": "1"},
             # SSH 프록시를 사용하고 ComfyUI 연결은 서비스의 SSH 터널로 유지한다.
             "runtype": "ssh",
             "python_utf8": True,
         }
+        if env:
+            body["env"] = dict(env)
         data = await self._request("PUT", f"/asks/{ask_id}/", json_body=body)
         if not isinstance(data, dict) or "new_contract" not in data:
             print(f"[VAST_API] 인스턴스 생성 응답 형식 이상: {str(data)[:300]}")
@@ -270,6 +301,225 @@ class VastClient:
         if isinstance(data, dict) and isinstance(data.get("instances"), dict):
             return data["instances"]
         return data if isinstance(data, dict) else {}
+
+    async def _poll_result_text(self, result_url: str) -> str:
+        """Vast 비동기 로그 결과 URL이 준비될 때까지 짧게 polling한다."""
+        if not str(result_url).startswith("https://"):
+            print(
+                "[VAST_API][ERROR] 로그 결과 URL이 안전한 HTTPS URL이 아님: "
+                f"url={str(result_url)[:300]}"
+            )
+            raise VastApiError("Vast 로그 결과 URL 형식이 잘못되었습니다.")
+        session = await self._ensure_session()
+        last_status = 0
+        for _attempt in range(LOG_RESULT_POLL_ATTEMPTS):
+            await asyncio.sleep(LOG_RESULT_POLL_SECONDS)
+            try:
+                async with session.get(result_url) as resp:
+                    last_status = resp.status
+                    if resp.status == 200:
+                        return await resp.text()
+                    # 결과 저장소의 signed URL은 객체가 게시되기 전 403/404를
+                    # 반환할 수 있다. Vast 공식 CLI도 이 상태들을 재시도한다.
+                    if resp.status not in {202, 403, 404}:
+                        body = await resp.text()
+                        print(
+                            "[VAST_API] 로그 결과 대기 중 비정상 응답: "
+                            f"http={resp.status}, body={body[:300]}"
+                        )
+            except aiohttp.ClientError as exc:
+                print(
+                    "[VAST_API][ERROR] 로그 결과 조회 네트워크 오류: "
+                    f"error={type(exc).__name__}: {exc}"
+                )
+                traceback.print_exc()
+                raise VastApiError(
+                    f"Vast 로그 결과 조회 네트워크 오류: {type(exc).__name__}: {exc}"
+                ) from exc
+        print(
+            "[VAST_API][ERROR] 로그 결과 준비 시간 초과: "
+            f"attempts={LOG_RESULT_POLL_ATTEMPTS}, last_http={last_status}"
+        )
+        raise VastApiError("Vast 로그 결과가 제한 시간 안에 준비되지 않았습니다.")
+
+    async def get_instance_logs(
+        self,
+        instance_id: int,
+        *,
+        daemon_logs: bool = False,
+        tail: int = 1000,
+    ) -> str:
+        """컨테이너 또는 호스트 daemon log 원문을 요청한다."""
+        target = int(instance_id)
+        if target <= 0:
+            print(f"[VAST_API][ERROR] 로그 요청 인스턴스 ID 오류: {instance_id!r}")
+            raise VastApiError(f"잘못된 Vast 인스턴스 ID: {instance_id!r}")
+        body = {
+            "tail": str(max(1, int(tail))),
+            "daemon_logs": "true" if daemon_logs else "false",
+        }
+        data = await self._request(
+            "PUT", f"/instances/request_logs/{target}/", json_body=body
+        )
+        result_url = str(data.get("result_url") or "") if isinstance(data, dict) else ""
+        if not result_url:
+            print(
+                "[VAST_API][ERROR] 로그 요청 응답에 result_url 없음: "
+                f"instance={target}, response_type={type(data).__name__}"
+            )
+            raise VastApiError("Vast 로그 요청 응답에 result_url이 없습니다.")
+        return await self._poll_result_text(result_url)
+
+    async def get_docker_hub_manifest_layers(
+        self,
+        image_reference: str,
+        *,
+        architecture: str = "amd64",
+        os_name: str = "linux",
+    ) -> dict[str, Any]:
+        """Docker Hub OCI manifest에서 플랫폼별 압축 레이어 크기를 가져온다."""
+        try:
+            repository, reference = parse_docker_hub_reference(image_reference)
+        except ValueError as exc:
+            print(
+                "[VAST_REGISTRY][ERROR] 이미지 참조 해석 실패: "
+                f"image={image_reference!r}, error={exc}"
+            )
+            raise VastApiError(str(exc)) from exc
+
+        session = await self._ensure_session()
+        try:
+            async with session.get(
+                DOCKER_HUB_AUTH_URL,
+                params={
+                    "service": "registry.docker.io",
+                    "scope": f"repository:{repository}:pull",
+                },
+            ) as resp:
+                raw = await resp.text()
+                if resp.status >= 400:
+                    print(
+                        "[VAST_REGISTRY][ERROR] Docker Hub 토큰 요청 실패: "
+                        f"repository={repository}, http={resp.status}, body={raw[:300]}"
+                    )
+                    raise VastApiError(
+                        f"Docker Hub 토큰 요청 실패: HTTP {resp.status}"
+                    )
+                try:
+                    token_data = json.loads(raw)
+                except ValueError as exc:
+                    print(
+                        "[VAST_REGISTRY][ERROR] Docker Hub 토큰 JSON 파싱 실패: "
+                        f"repository={repository}, body={raw[:300]}"
+                    )
+                    traceback.print_exc()
+                    raise VastApiError("Docker Hub 토큰 응답을 해석할 수 없습니다.") from exc
+                registry_token = str(token_data.get("token") or "")
+                if not registry_token:
+                    print(
+                        "[VAST_REGISTRY][ERROR] Docker Hub 토큰 응답이 비어 있음: "
+                        f"repository={repository}"
+                    )
+                    raise VastApiError("Docker Hub manifest 조회 토큰이 비어 있습니다.")
+
+            async def fetch_manifest(target_reference: str) -> dict[str, Any]:
+                url = (
+                    f"{DOCKER_HUB_REGISTRY_ROOT}/v2/{repository}/manifests/"
+                    f"{target_reference}"
+                )
+                headers = {
+                    "Authorization": f"Bearer {registry_token}",
+                    "Accept": DOCKER_MANIFEST_ACCEPT,
+                }
+                async with session.get(url, headers=headers) as manifest_resp:
+                    manifest_raw = await manifest_resp.text()
+                    if manifest_resp.status >= 400:
+                        print(
+                            "[VAST_REGISTRY][ERROR] manifest 요청 실패: "
+                            f"repository={repository}, reference={target_reference}, "
+                            f"http={manifest_resp.status}, body={manifest_raw[:300]}"
+                        )
+                        raise VastApiError(
+                            f"Docker Hub manifest 요청 실패: HTTP {manifest_resp.status}"
+                        )
+                    try:
+                        payload = json.loads(manifest_raw)
+                    except ValueError as exc:
+                        print(
+                            "[VAST_REGISTRY][ERROR] manifest JSON 파싱 실패: "
+                            f"repository={repository}, reference={target_reference}, "
+                            f"body={manifest_raw[:300]}"
+                        )
+                        traceback.print_exc()
+                        raise VastApiError(
+                            "Docker Hub manifest 응답을 해석할 수 없습니다."
+                        ) from exc
+                    if not isinstance(payload, dict):
+                        print(
+                            "[VAST_REGISTRY][ERROR] manifest 응답 형식 오류: "
+                            f"repository={repository}, type={type(payload).__name__}"
+                        )
+                        raise VastApiError("Docker Hub manifest 응답 형식이 잘못되었습니다.")
+                    return payload
+
+            manifest = await fetch_manifest(reference)
+            descriptors = manifest.get("manifests")
+            selected_reference = reference
+            if isinstance(descriptors, list):
+                selected = next(
+                    (
+                        item
+                        for item in descriptors
+                        if isinstance(item, dict)
+                        and str((item.get("platform") or {}).get("os") or "").lower()
+                        == str(os_name).lower()
+                        and str(
+                            (item.get("platform") or {}).get("architecture") or ""
+                        ).lower()
+                        == str(architecture).lower()
+                    ),
+                    None,
+                )
+                selected_reference = str((selected or {}).get("digest") or "")
+                if not selected_reference:
+                    print(
+                        "[VAST_REGISTRY][ERROR] 요청 플랫폼 manifest 없음: "
+                        f"repository={repository}, os={os_name}, arch={architecture}"
+                    )
+                    raise VastApiError(
+                        f"Docker Hub 이미지에 {os_name}/{architecture} manifest가 없습니다."
+                    )
+                manifest = await fetch_manifest(selected_reference)
+
+            raw_layers = manifest.get("layers")
+            if not isinstance(raw_layers, list) or not raw_layers:
+                print(
+                    "[VAST_REGISTRY][ERROR] manifest 레이어 목록 없음: "
+                    f"repository={repository}, reference={selected_reference}"
+                )
+                raise VastApiError("Docker Hub manifest에 레이어 목록이 없습니다.")
+            layers = [
+                {"digest": item.get("digest"), "size": item.get("size")}
+                for item in raw_layers
+                if isinstance(item, dict)
+            ]
+            return {
+                "repository": repository,
+                "reference": reference,
+                "platform_reference": selected_reference,
+                "layers": layers,
+            }
+        except VastApiError:
+            raise
+        except aiohttp.ClientError as exc:
+            print(
+                "[VAST_REGISTRY][ERROR] Docker Hub 네트워크 오류: "
+                f"repository={repository}, error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            raise VastApiError(
+                f"Docker Hub 네트워크 오류: {type(exc).__name__}: {exc}"
+            ) from exc
 
     async def set_instance_state(self, instance_id: int, state: str) -> dict[str, Any]:
         """state: 'running' | 'stopped' | 'rebooting'."""

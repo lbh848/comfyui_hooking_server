@@ -88,3 +88,7 @@ modal_video_delete_outbox.json
 # Vast SSH 키 (보안상 git에 포함하지 않음)
 vast_ssh_key
 vast_ssh_key.pub
+
+# Vast 비용 보호/재시작 복구 상태(런타임 생성)
+/runtime/vast_launch_guard.json
+/runtime/vast_launch_guard.json.tmp

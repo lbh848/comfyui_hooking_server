@@ -10670,6 +10670,75 @@
         }
         .vast-plan-model strong { color: var(--text); }
 
+        .vast-preflight-card {
+            border-color: color-mix(in srgb, #22c55e 32%, var(--border));
+            background: color-mix(in srgb, #22c55e 3%, var(--surface));
+        }
+        .vast-preflight-state {
+            margin-left: auto;
+            padding: 3px 8px;
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            color: var(--text2);
+            font-size: 0.64rem;
+            font-weight: 700;
+            white-space: nowrap;
+        }
+        .vast-preflight-state[data-state="running"] { color: #38bdf8; }
+        .vast-preflight-state[data-state="complete"] { color: #4ade80; }
+        .vast-preflight-state[data-state="partial"],
+        .vast-preflight-state[data-state="failed"] { color: var(--warn); }
+        .vast-preflight-grid {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 7px;
+            margin-top: 10px;
+        }
+        .vast-preflight-metric {
+            min-width: 0;
+            padding: 8px 9px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface2);
+        }
+        .vast-preflight-metric small,
+        .vast-preflight-metric span,
+        .vast-preflight-metric strong { display: block; }
+        .vast-preflight-metric small {
+            color: var(--text2);
+            font-size: 0.6rem;
+            font-weight: 700;
+        }
+        .vast-preflight-metric strong {
+            margin-top: 3px;
+            overflow: hidden;
+            color: var(--text);
+            font-size: 0.82rem;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .vast-preflight-metric span {
+            margin-top: 2px;
+            overflow: hidden;
+            color: var(--text2);
+            font-size: 0.58rem;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .vast-preflight-metric[data-state="done"] strong,
+        .vast-preflight-metric[data-state="partial"] strong { color: #4ade80; }
+        .vast-preflight-metric[data-state="error"] strong { color: #f87171; }
+        .vast-preflight-estimate {
+            margin-top: 8px;
+            padding: 8px 10px;
+            border-radius: 8px;
+            background: color-mix(in srgb, #22c55e 8%, var(--surface2));
+            color: var(--text2);
+            font-size: 0.68rem;
+            line-height: 1.45;
+        }
+        .vast-preflight-estimate strong { color: var(--text); }
+
         .vast-launch-progress {
             margin-top: 10px;
             padding: 12px;
@@ -10742,6 +10811,49 @@
             background: color-mix(in srgb, var(--error) 10%, var(--surface));
             color: var(--error);
         }
+        .vast-image-pull {
+            margin-bottom: 8px;
+            padding: 9px;
+            border: 1px solid color-mix(in srgb, #38bdf8 34%, var(--border));
+            border-radius: 7px;
+            background: color-mix(in srgb, #38bdf8 6%, var(--surface));
+        }
+        .vast-image-pull[hidden] { display: none; }
+        .vast-image-pull-head {
+            display: flex;
+            justify-content: space-between;
+            gap: 10px;
+            margin-bottom: 6px;
+            color: var(--text);
+            font-size: 0.7rem;
+            font-weight: 700;
+        }
+        .vast-image-pull-head span:last-child { color: #38bdf8; }
+        .vast-image-pull[data-state="unobserved"] .vast-image-pull-head span:last-child {
+            color: var(--warn);
+        }
+        .vast-image-pull-meter {
+            height: 7px;
+            overflow: hidden;
+            border-radius: 999px;
+            background: color-mix(in srgb, var(--border) 72%, transparent);
+        }
+        .vast-image-pull-meter > span {
+            display: block;
+            width: 0;
+            height: 100%;
+            border-radius: inherit;
+            background: linear-gradient(90deg, #0284c7, #38bdf8);
+            transition: width 240ms ease;
+        }
+        .vast-image-pull-detail,
+        .vast-image-pull-note {
+            margin-top: 6px;
+            color: var(--text2);
+            font-size: 0.64rem;
+            line-height: 1.45;
+        }
+        .vast-image-pull-note { opacity: 0.82; }
         .vast-launch-raw-status {
             margin-bottom: 8px;
             padding: 6px 8px;
@@ -10780,8 +10892,8 @@
         .vast-launch-step.state-done::before { content: '●'; color: #38bdf8; }
         .vast-launch-step.state-error { color: #f87171; }
         .vast-launch-step.state-error::before { content: '✕'; color: #ef4444; }
-        .vast-launch-step.state-stuck { color: var(--warn); background: color-mix(in srgb, var(--warn) 8%, transparent); }
-        .vast-launch-step.state-stuck::before { content: '⚠'; color: var(--warn); }
+        .vast-launch-step.state-unobserved { color: var(--warn); background: color-mix(in srgb, var(--warn) 8%, transparent); }
+        .vast-launch-step.state-unobserved::before { content: '⚠'; color: var(--warn); }
         .vast-launch-step .vast-launch-step-detail { color: var(--text2); font-size: 0.62rem; margin-left: auto; }
         .vast-launch-terminal {
             min-height: 88px;
@@ -10824,6 +10936,7 @@
             #vast-search-btn { justify-self: stretch; }
             .vast-offer-row { grid-template-columns: auto minmax(0, 1fr); }
             .vast-offer-price { grid-column: 2; text-align: left; }
+            .vast-preflight-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
             .vast-launch-guard-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
         }
         .memo-launcher {
@@ -21140,16 +21253,12 @@
                                             <input type="number" id="vast-search-inetup" min="0" max="100000" step="10" value="0" title="네트워크 업로드 대역 하한. 0 = 조건 없음">
                                         </label>
                                         <label class="vast-search-field">
-                                            <span>직접 포트 수 ≥</span>
-                                            <input type="number" id="vast-search-ports" min="0" max="64" step="1" value="1" title="외부 직접 포트 수 하한 (SSH/ComfyUI 직접 노출용). 0 = 조건 없음">
-                                        </label>
-                                        <label class="vast-search-field">
                                             <span>최소 신뢰도 (0~1)</span>
                                             <input type="number" id="vast-search-reliability" min="0" max="1" step="0.01" value="0" title="호스트 신뢰도 하한. 0 = 조건 없음">
                                         </label>
                                         <label class="vast-search-field">
                                             <span>최소 CUDA 버전</span>
-                                            <input type="number" id="vast-search-cuda" min="0" max="20" step="0.1" value="0" title="지원 CUDA 최소 버전. 0 = 조건 없음">
+                                            <input type="number" id="vast-search-cuda" min="12.8" max="20" step="0.1" value="12.8" title="런타임 이미지 요구사항으로 CUDA 12.8 이상만 검색합니다. 더 높은 버전은 지정할 수 있습니다.">
                                         </label>
                                         <label class="vast-search-field">
                                             <span>검색 결과 수</span>
@@ -21168,6 +21277,34 @@
                                     <div class="vast-offer-summary" id="vast-offer-summary" hidden></div>
                                     <div id="vast-offer-catalog" class="vast-offer-catalog">
                                         <div class="modal-lora-empty">검색 조건을 설정하고 검색 버튼을 누르세요.</div>
+                                    </div>
+                                </section>
+
+                                <section class="comfy-installer-card vast-preflight-card" id="vast-preflight-card">
+                                    <div class="comfy-installer-section-head">
+                                        <span class="comfy-installer-step" aria-hidden="true">T</span>
+                                        <div class="comfy-installer-section-heading">
+                                            <h3 class="comfy-installer-title">실사용 속도 자동 프리플라이트</h3>
+                                            <p class="comfy-installer-section-copy">빌드 시작 후 SSH가 열리면 짧게 실측하고 예상 남은 전송 시간을 계산한 뒤 자동으로 빌드를 계속합니다.</p>
+                                        </div>
+                                        <span class="vast-preflight-state" id="vast-preflight-state" data-state="waiting">빌드 대기</span>
+                                    </div>
+                                    <div class="vast-preflight-grid" id="vast-preflight-grid">
+                                        <div class="vast-preflight-metric" data-vast-preflight-key="docker" data-state="waiting">
+                                            <small>Docker 준비</small><strong>대기</strong><span>실제 pull 관측값</span>
+                                        </div>
+                                        <div class="vast-preflight-metric" data-vast-preflight-key="cloudflare" data-state="waiting">
+                                            <small>Cloudflare</small><strong>대기</strong><span>edge 다운로드</span>
+                                        </div>
+                                        <div class="vast-preflight-metric" data-vast-preflight-key="huggingface" data-state="waiting">
+                                            <small>Hugging Face</small><strong>대기</strong><span>모델 경로 다운로드</span>
+                                        </div>
+                                        <div class="vast-preflight-metric" data-vast-preflight-key="upload" data-state="waiting">
+                                            <small>로컬 → Vast</small><strong>대기</strong><span>임시 SFTP 업로드</span>
+                                        </div>
+                                    </div>
+                                    <div class="vast-preflight-estimate" id="vast-preflight-estimate">
+                                        워크플로우를 선택하고 빌드를 시작하면 실측 결과와 예상 시간이 표시됩니다.
                                     </div>
                                 </section>
 
@@ -21199,6 +21336,7 @@
                                             <span>빌드 디스크 (GB)</span>
                                             <input type="number" id="vast-build-disk" min="10" max="2000" step="1" value="50">
                                         </label>
+                                        <p class="comfy-installer-note" id="vast-disk-cost-note" style="margin-top:6px;">오퍼를 선택하면 디스크 저장 요금 예상이 표시됩니다.</p>
                                     </div>
                                 </section>
 
@@ -21238,6 +21376,17 @@
                                         <div class="vast-launch-guard-item">자동 파괴까지<strong id="vast-launch-deadline">-</strong></div>
                                     </div>
                                     <div class="vast-launch-warning" id="vast-launch-warning" hidden></div>
+                                    <div class="vast-image-pull" id="vast-image-pull" hidden>
+                                        <div class="vast-image-pull-head">
+                                            <span id="vast-image-pull-summary">Docker 이미지 진행 관측 대기 중</span>
+                                            <span id="vast-image-pull-state">대기</span>
+                                        </div>
+                                        <div class="vast-image-pull-meter" id="vast-image-pull-meter" role="progressbar" aria-label="Docker 이미지 최소 확인 진행률" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                                            <span id="vast-image-pull-meter-fill"></span>
+                                        </div>
+                                        <div class="vast-image-pull-detail" id="vast-image-pull-detail"></div>
+                                        <div class="vast-image-pull-note" id="vast-image-pull-note">현재 레이어 내부의 수신 바이트는 VAST에서 제공하지 않습니다.</div>
+                                    </div>
                                     <div class="vast-launch-raw-status" id="vast-launch-raw-status">Vast 원본 상태 대기 중</div>
                                     <ol class="vast-launch-steps" id="vast-launch-steps" aria-label="VAST 빌드 단계"></ol>
                                     <pre class="vast-launch-terminal" id="vast-launch-terminal" aria-label="VAST 빌드 상세 로그">[VAST] 빌드 로그 대기 중...</pre>
@@ -25654,6 +25803,9 @@
             vastRefreshLaunchPolling();
         }
 
+        // 빌드 디스크 입력 변경 시 저장 요금 예상을 즉시 다시 계산한다.
+        document.getElementById('vast-build-disk')?.addEventListener('input', () => vastUpdateLaunchSummary());
+
         // ── 오퍼 검색 ──
         function vastSelectedGpuNames() {
             const boxes = document.querySelectorAll('#vast-search-gpus input[type="checkbox"]');
@@ -25688,8 +25840,6 @@
             if (Number.isFinite(inetdown) && inetdown > 0) params.set('inet_down_min_mbps', String(inetdown));
             const inetup = parseFloat(document.getElementById('vast-search-inetup')?.value || '');
             if (Number.isFinite(inetup) && inetup > 0) params.set('inet_up_min_mbps', String(inetup));
-            const ports = parseInt(document.getElementById('vast-search-ports')?.value || '', 10);
-            if (Number.isFinite(ports) && ports > 0) params.set('min_direct_port_count', String(ports));
             const reliability = parseFloat(document.getElementById('vast-search-reliability')?.value || '');
             if (Number.isFinite(reliability) && reliability > 0) params.set('min_reliability', String(reliability));
             const cuda = parseFloat(document.getElementById('vast-search-cuda')?.value || '');
@@ -25753,7 +25903,12 @@
                     `디스크 ${o.disk_gb || 0}GB`,
                     o.inet_down_mbps ? `↓${Math.round(o.inet_down_mbps)}Mbps` : null,
                     o.inet_up_mbps ? `↑${Math.round(o.inet_up_mbps)}Mbps` : null,
-                    (o.direct_port_count || o.direct_port_count === 0) ? `포트 ${o.direct_port_count}` : null,
+                    o.storage_cost_usd_per_gb_month ? `저장 $${Number(o.storage_cost_usd_per_gb_month).toFixed(2)}/GB·월` : null,
+                    (o.inet_cost_usd_per_tb_down || o.inet_cost_usd_per_tb_up)
+                        ? (o.inet_cost_usd_per_tb_down === o.inet_cost_usd_per_tb_up
+                            ? `대역폭 $${Number(o.inet_cost_usd_per_tb_down || 0).toFixed(1)}/TB`
+                            : `대역폭 ↓$${Number(o.inet_cost_usd_per_tb_down || 0).toFixed(1)}/TB ↑$${Number(o.inet_cost_usd_per_tb_up || 0).toFixed(1)}/TB`)
+                        : null,
                     o.reliability ? `신뢰도 ${(Number(o.reliability) * 100).toFixed(0)}%` : null,
                     o.cuda_max_good ? `CUDA ${o.cuda_max_good}` : null,
                     o.geolocation ? String(o.geolocation) : null,
@@ -25767,6 +25922,7 @@
                 const price = document.createElement('div');
                 price.className = 'vast-offer-price';
                 price.innerHTML = `$${Number(o.dph_total || 0).toFixed(3)}<small>/시간</small>`;
+                price.title = `GPU $${Number(o.dph_base || 0).toFixed(4)}/hr + Vast 기본 디스크 할당 저장료 포함. 빌드 디스크를 크게 잡으면 저장료가 추가됩니다.`;
                 row.append(radio, main, price);
                 container.append(row);
             }
@@ -26052,10 +26208,12 @@
                         console.warn('[VAST_LORA] LoRA 파일에 source_path 없음, 건너뜀:', key, f);
                         continue;
                     }
+                    const sizeBytes = Number(f.size_bytes || f.size || 0);
                     files.push({
                         name: f.name || item.name || item.display_name || '',
                         path,
-                        size: Number(f.size || 0),
+                        size: sizeBytes,
+                        size_bytes: sizeBytes,
                         category: item.category,
                     });
                 }
@@ -26083,12 +26241,54 @@
         }
 
         // ── 빌드 ──
+        // Vast 저장료: storage_cost($/GB·월) ÷ 720hr/월 × 할당 GB = $/hr.
+        // 오퍼 표시 dph_total은 기본 할당(약 8GB) 기준이라 실제 예상과 다르다.
+        const VAST_HOURS_PER_MONTH = 720;
+        function vastDiskCostPerHour(diskGb) {
+            const rate = Number(vastSelectedOffer?.storage_cost_usd_per_gb_month || 0);
+            if (!(rate > 0) || !(diskGb > 0)) return 0;
+            return rate * diskGb / VAST_HOURS_PER_MONTH;
+        }
+
+        function vastUpdateDiskCostNote() {
+            const note = document.getElementById('vast-disk-cost-note');
+            if (!note) return;
+            const diskGb = parseInt(document.getElementById('vast-build-disk')?.value || '0', 10);
+            const rate = Number(vastSelectedOffer?.storage_cost_usd_per_gb_month || 0);
+            if (!vastSelectedOffer) {
+                note.textContent = '오퍼를 선택하면 디스크 저장 요금 예상이 표시됩니다.';
+                return;
+            }
+            if (!(rate > 0)) {
+                note.textContent = '이 오퍼는 저장 단가 정보가 없어 디스크 요금 예상을 계산할 수 없습니다.';
+                return;
+            }
+            const perHour = vastDiskCostPerHour(diskGb);
+            const perDay = perHour * 24;
+            const down = Number(vastSelectedOffer.inet_cost_usd_per_tb_down || 0);
+            const up = Number(vastSelectedOffer.inet_cost_usd_per_tb_up || 0);
+            const bw = down > 0 && up > 0 && down === up
+                ? `대역폭 $${down}/TB`
+                : `대역폭 ↓$${down || 0}/TB · ↑$${up || 0}/TB`;
+            note.textContent = `디스크 저장료 예상 +$${perHour.toFixed(4)}/hr (일 $${perDay.toFixed(3)}) · ${diskGb}GB × $${rate.toFixed(3)}/GB·월 · ${bw} (전송량 과금)`;
+        }
+
         function vastUpdateLaunchSummary() {
             const sum = document.getElementById('vast-launch-summary');
             const btn = document.getElementById('vast-launch-btn');
+            vastUpdateDiskCostNote();
             if (!sum || !btn) return;
             const parts = [];
-            if (vastSelectedOffer) parts.push(`오퍼 ${vastSelectedOffer.gpu_name} $${Number(vastSelectedOffer.dph_total || 0).toFixed(3)}/hr`);
+            if (vastSelectedOffer) {
+                const diskGb = parseInt(document.getElementById('vast-build-disk')?.value || '0', 10);
+                const gpuRate = Number(vastSelectedOffer.dph_base || 0) || Number(vastSelectedOffer.dph_total || 0);
+                const diskRate = vastDiskCostPerHour(diskGb);
+                if (diskRate > 0) {
+                    parts.push(`오퍼 ${vastSelectedOffer.gpu_name} GPU $${gpuRate.toFixed(4)}/hr + 디스크 $${diskRate.toFixed(4)}/hr ≈ $${(gpuRate + diskRate).toFixed(4)}/hr`);
+                } else {
+                    parts.push(`오퍼 ${vastSelectedOffer.gpu_name} $${Number(vastSelectedOffer.dph_total || 0).toFixed(3)}/hr`);
+                }
+            }
             else parts.push('오퍼 미선택');
             parts.push(vastSelectedWorkflowPaths.size ? `워크플로우 ${vastSelectedWorkflowPaths.size}개` : '워크플로우 미선택');
             parts.push(`LoRA ${vastLoraSelectedKeys.size}개`);
@@ -26179,6 +26379,100 @@
             return `${seconds}초`;
         }
 
+        function vastFormatBytes(bytes) {
+            const value = Math.max(0, Number(bytes) || 0);
+            const gib = 1024 ** 3;
+            const mib = 1024 ** 2;
+            if (value >= gib) return `${(value / gib).toFixed(2)} GiB`;
+            if (value >= mib) return `${(value / mib).toFixed(1)} MiB`;
+            if (value >= 1024) return `${(value / 1024).toFixed(1)} KiB`;
+            return `${Math.round(value)} B`;
+        }
+
+        function vastRenderPreflight(launch) {
+            const preflight = launch?.preflight && typeof launch.preflight === 'object'
+                ? launch.preflight
+                : {};
+            const state = String(preflight.state || 'waiting');
+            const stateEl = document.getElementById('vast-preflight-state');
+            const estimateEl = document.getElementById('vast-preflight-estimate');
+            const stateLabel = ({
+                waiting: '빌드 대기',
+                running: '실측 중…',
+                complete: '실측 완료',
+                partial: '일부 측정 완료',
+                failed: '측정 실패 · 빌드 계속',
+                cancelled: '취소됨',
+            })[state] || state;
+            if (stateEl) {
+                stateEl.dataset.state = state;
+                stateEl.textContent = stateLabel;
+            }
+
+            const tests = Array.isArray(preflight.tests) ? preflight.tests : [];
+            const testsByKey = new Map(tests.map(item => [String(item?.key || ''), item]));
+            document.querySelectorAll('[data-vast-preflight-key]').forEach(metric => {
+                const key = String(metric.dataset.vastPreflightKey || '');
+                const test = testsByKey.get(key);
+                const valueEl = metric.querySelector('strong');
+                const detailEl = metric.querySelector('span');
+                if (!test) {
+                    metric.dataset.state = state === 'running' ? 'running' : 'waiting';
+                    if (valueEl) valueEl.textContent = state === 'running' ? '순서 대기' : '대기';
+                    return;
+                }
+                const testState = String(test.status || 'done');
+                metric.dataset.state = testState;
+                const mbps = Number(test.mbps || 0);
+                const mbPerSecond = Number(test.mb_per_second || 0);
+                if (valueEl) {
+                    if (mbps > 0) {
+                        valueEl.textContent = `${mbPerSecond.toFixed(1)} MB/s · ${mbps.toFixed(0)} Mbps`;
+                    } else if (testState === 'error') {
+                        valueEl.textContent = '측정 실패';
+                    } else if (Number(test.seconds || 0) > 0) {
+                        valueEl.textContent = vastFormatDuration(test.seconds);
+                    } else {
+                        valueEl.textContent = '관측값 없음';
+                    }
+                }
+                if (detailEl) {
+                    const received = Number(test.bytes || 0) > 0
+                        ? `${vastFormatBytes(test.bytes)} / ${Number(test.seconds || 0).toFixed(1)}초 · `
+                        : '';
+                    detailEl.textContent = `${received}${String(test.detail || '')}`;
+                    detailEl.title = detailEl.textContent;
+                }
+            });
+
+            if (!estimateEl) return;
+            const estimate = preflight.estimate && typeof preflight.estimate === 'object'
+                ? preflight.estimate
+                : {};
+            if (state === 'running') {
+                estimateEl.textContent = 'Cloudflare · Hugging Face · SFTP를 순서대로 실측하고 있습니다.';
+                return;
+            }
+            if (estimate.available === true && Number.isFinite(Number(estimate.remaining_seconds))) {
+                const downloadText = estimate.download_seconds === null || estimate.download_seconds === undefined
+                    ? '계산 불가'
+                    : vastFormatDuration(estimate.download_seconds);
+                const uploadText = estimate.upload_seconds === null || estimate.upload_seconds === undefined
+                    ? '계산 불가'
+                    : vastFormatDuration(estimate.upload_seconds);
+                estimateEl.innerHTML = `<strong>예상 남은 빌드 전송 ${escapeHtml(vastFormatDuration(estimate.remaining_seconds))}</strong>`
+                    + ` · 다운로드 ${escapeHtml(downloadText)} (${escapeHtml(vastFormatBytes(estimate.download_bytes))})`
+                    + ` · 업로드 ${escapeHtml(uploadText)} (${escapeHtml(vastFormatBytes(estimate.upload_bytes))})`
+                    + `<br>${escapeHtml(String(estimate.note || ''))}`;
+                return;
+            }
+            if (state === 'partial' || state === 'failed') {
+                estimateEl.textContent = String(estimate.note || preflight.error || '실측값 부족으로 ETA를 계산하지 못했습니다. 빌드는 계속됩니다.');
+                return;
+            }
+            estimateEl.textContent = '워크플로우를 선택하고 빌드를 시작하면 실측 결과와 예상 시간이 표시됩니다.';
+        }
+
         function vastEventTimeLabel(value) {
             const date = new Date(value);
             if (Number.isNaN(date.getTime())) return '--:--:--';
@@ -26217,6 +26511,7 @@
 
         function vastRenderLaunchSteps(launch) {
             window.__vastLastLaunch = launch;
+            vastRenderPreflight(launch);
             const box = document.getElementById('vast-launch-progress');
             const title = document.getElementById('vast-launch-progress-title');
             const stateEl = document.getElementById('vast-launch-progress-state');
@@ -26230,6 +26525,13 @@
             const rateEl = document.getElementById('vast-launch-rate');
             const deadlineEl = document.getElementById('vast-launch-deadline');
             const warningEl = document.getElementById('vast-launch-warning');
+            const imagePullBox = document.getElementById('vast-image-pull');
+            const imagePullSummary = document.getElementById('vast-image-pull-summary');
+            const imagePullState = document.getElementById('vast-image-pull-state');
+            const imagePullMeter = document.getElementById('vast-image-pull-meter');
+            const imagePullMeterFill = document.getElementById('vast-image-pull-meter-fill');
+            const imagePullDetail = document.getElementById('vast-image-pull-detail');
+            const imagePullNote = document.getElementById('vast-image-pull-note');
             const rawStatusEl = document.getElementById('vast-launch-raw-status');
             const terminalEl = document.getElementById('vast-launch-terminal');
             if (!box || !stepsEl) return;
@@ -26267,19 +26569,87 @@
                     ? (launch.state === 'ready' ? '빌드 보호 해제' : '-')
                     : `${vastFormatDuration(remaining)} (${launch.auto_destroy_limit_name || '보호 제한'})`;
             }
+            const imagePull = launch.image_pull && typeof launch.image_pull === 'object'
+                ? launch.image_pull
+                : {};
+            if (imagePullBox) {
+                const showImagePull = launch.instance_status === 'loading'
+                    || imagePull.available === true
+                    || imagePull.phase === 'complete'
+                    || Boolean(imagePull.error);
+                imagePullBox.hidden = !showImagePull;
+                if (showImagePull) {
+                    const minimumPercent = Math.max(
+                        0,
+                        Math.min(100, Number(imagePull.minimum_percent) || 0),
+                    );
+                    const stateKey = String(imagePull.activity_state || 'waiting');
+                    const pullStateLabel = ({
+                        complete: '레이어 완료 확인',
+                        observed: '진행 확인됨',
+                        unobserved: '활동 미관측',
+                        unavailable: '관측 불가',
+                        waiting: '관측 대기',
+                    })[stateKey] || stateKey;
+                    imagePullBox.dataset.state = stateKey;
+                    if (imagePullState) imagePullState.textContent = pullStateLabel;
+                    if (imagePullMeter) {
+                        imagePullMeter.setAttribute('aria-valuenow', minimumPercent.toFixed(1));
+                        imagePullMeter.setAttribute(
+                            'aria-valuetext',
+                            `확인된 최소 진행률 ${minimumPercent.toFixed(1)}%`,
+                        );
+                    }
+                    if (imagePullMeterFill) imagePullMeterFill.style.width = `${minimumPercent}%`;
+                    if (imagePullSummary) {
+                        imagePullSummary.textContent = imagePull.available
+                            ? `확정 ${vastFormatBytes(imagePull.confirmed_bytes)} / ${vastFormatBytes(imagePull.total_bytes)} · 최소 ${minimumPercent.toFixed(1)}%`
+                            : 'Docker 이미지 상세 진행 관측 대기 중';
+                    }
+                    if (imagePullDetail) {
+                        const pendingLayers = Array.isArray(imagePull.pending_layers)
+                            ? imagePull.pending_layers
+                            : [];
+                        const largest = pendingLayers.slice(0, 3)
+                            .map(layer => `${layer.id || '?'} ${vastFormatBytes(layer.size_bytes)}`)
+                            .join(', ');
+                        const pending = imagePull.available
+                            ? `미확정 ${vastFormatBytes(imagePull.pending_bytes)} · 레이어 ${pendingLayers.length}개${largest ? ` (${largest})` : ''}`
+                            : 'manifest와 daemon log를 요청하고 있습니다.';
+                        const stale = Number(imagePull.activity_stale_seconds);
+                        const hasObservedSignal = Number(imagePull.last_observed_progress_at_epoch) > 0;
+                        const lastSignal = hasObservedSignal && Number.isFinite(stale) && stale >= 0
+                            ? ` · 마지막 레이어 상태 변화 ${vastFormatDuration(stale)} 전`
+                            : ' · 관측 가능한 레이어 변화 아직 없음';
+                        imagePullDetail.textContent = `${pending}${lastSignal}`;
+                    }
+                    if (imagePullNote) {
+                        imagePullNote.textContent = imagePull.error
+                            ? `상세 진행 조회 실패: ${String(imagePull.error)} · VAST 기본 상태 polling은 계속됩니다.`
+                            : '완료된 압축 레이어만 집계한 하한입니다. 현재 레이어 내부의 수신 바이트는 VAST에서 제공하지 않습니다.';
+                    }
+                }
+            }
             if (rawStatusEl) {
-                rawStatusEl.textContent = [
+                const rawLines = [
                     `actual_status: ${launch.instance_status || '(아직 없음)'}`,
                     `status_msg: ${launch.instance_status_msg || '(아직 없음)'}`,
-                    `마지막 진행 변화: ${vastFormatDuration(launch.progress_stale_seconds || 0)} 전`,
-                ].join('\n');
+                    `마지막 일반 상태 변화: ${vastFormatDuration(launch.progress_stale_seconds || 0)} 전`,
+                ];
+                if (imagePull.available) {
+                    rawLines.push(
+                        `image_pull_lower_bound: ${Number(imagePull.minimum_percent || 0).toFixed(1)}% `
+                        + `(${imagePull.confirmed_bytes || 0}/${imagePull.total_bytes || 0} bytes)`,
+                    );
+                }
+                rawStatusEl.textContent = rawLines.join('\n');
             }
             if (warningEl) {
                 const critical = launch.state === 'destroy_failed' || launch.protection_state === 'critical';
                 const warning = critical
                     ? (launch.protection_reason || launch.error || '파괴 확인 실패 — 과금 가능성이 있습니다.')
-                    : launch.stuck
-                        ? launch.stuck_reason
+                    : launch.activity_unobserved
+                        ? launch.activity_unobserved_reason
                         : launch.state === 'destroyed' && launch.destroy_automatic
                             ? (launch.destroy_reason || '비용 보호 제한으로 자동 파괴됐습니다.')
                         : launch.state === 'recovered'
@@ -26293,8 +26663,8 @@
             stepsEl.replaceChildren();
             for (const s of steps) {
                 const li = document.createElement('li');
-                const isCurrentStuck = launch.stuck && s.key === launch.current_step && s.state === 'running';
-                li.className = `vast-launch-step state-${isCurrentStuck ? 'stuck' : (s.state || 'pending')}`;
+                const isCurrentUnobserved = launch.activity_unobserved && s.key === launch.current_step && s.state === 'running';
+                li.className = `vast-launch-step state-${isCurrentUnobserved ? 'unobserved' : (s.state || 'pending')}`;
                 const label = document.createElement('span');
                 label.textContent = VAST_LAUNCH_STEP_LABELS[s.key] || s.key;
                 const detail = document.createElement('span');
