@@ -160,6 +160,32 @@ def register_vast_routes(
         except Exception as exc:
             return _fail("인스턴스 파괴 실패", exc)
 
+    async def favorites_get(_request: web.Request) -> web.Response:
+        try:
+            return web.json_response(service.favorite_status())
+        except Exception as exc:
+            return _fail("머신 즐겨찾기 조회 실패", exc)
+
+    async def favorites_post(request: web.Request) -> web.Response:
+        try:
+            body = await request.json()
+            instance_id = int(body.get("instance_id") or 0)
+            return web.json_response(await service.favorite_instance(instance_id))
+        except (ValueError, RuntimeError) as exc:
+            return _fail("머신 즐겨찾기 등록 요청 거부", exc, status=400)
+        except Exception as exc:
+            return _fail("머신 즐겨찾기 등록 실패", exc)
+
+    async def favorites_delete(request: web.Request) -> web.Response:
+        try:
+            body = await request.json()
+            machine_id = int(body.get("machine_id") or 0)
+            return web.json_response(await service.remove_favorite(machine_id))
+        except (ValueError, RuntimeError) as exc:
+            return _fail("머신 즐겨찾기 해제 요청 거부", exc, status=400)
+        except Exception as exc:
+            return _fail("머신 즐겨찾기 해제 실패", exc)
+
     async def model_sources_get(_request: web.Request) -> web.Response:
         try:
             return web.json_response(
@@ -195,7 +221,19 @@ def register_vast_routes(
             workflow_api = body.get("workflow_api")
             if not isinstance(workflow_api, dict):
                 raise ValueError("workflow_api(API 형식 워크플로우 객체)가 필요합니다.")
-            return web.json_response(await service.run_workflow(workflow_api))
+            result = await service.run_workflow(workflow_api)
+            public_result = dict(result)
+            for key in ("images", "video_artifacts"):
+                public_result[key] = [
+                    {
+                        field: value
+                        for field, value in item.items()
+                        if field != "bytes"
+                    }
+                    | {"size": len(item.get("bytes") or b"")}
+                    for item in result.get(key) or []
+                ]
+            return web.json_response(public_result)
         except (ValueError, RuntimeError) as exc:
             return _fail("워크플로우 실행 요청 거부", exc, status=400)
         except Exception as exc:
@@ -229,6 +267,9 @@ def register_vast_routes(
     app.router.add_get("/api/vast/launch", launch_status)
     app.router.add_get("/api/vast/instances", instances)
     app.router.add_post("/api/vast/destroy", destroy)
+    app.router.add_get("/api/vast/favorites", favorites_get)
+    app.router.add_post("/api/vast/favorites", favorites_post)
+    app.router.add_delete("/api/vast/favorites", favorites_delete)
     app.router.add_get("/api/vast/model-sources", model_sources_get)
     app.router.add_post("/api/vast/model-sources", model_sources_put)
     app.router.add_post("/api/vast/workflow/run", run_workflow)

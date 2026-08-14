@@ -205,6 +205,35 @@ def test_video_render_can_be_claimed_by_modal_lane() -> None:
     assert manager._local_comfy_lane_allowed(item) is False
 
 
+def test_modal_supported_work_can_be_claimed_by_ready_vast_lane() -> None:
+    manager = QueueManager()
+    manager.get_config = lambda: {
+        "vast_enabled": True,
+        "comfy_task_allocations": {"video_generation": "vast"},
+    }
+    manager.is_vast_ready = lambda: True
+    item = _item("video_first_last")
+
+    assert manager._item_execution_area(item) == ("vast", "vast")
+    assert manager._vast_comfy_lane_allowed(item) is True
+    assert manager._local_comfy_lane_allowed(item) is False
+    assert manager._target_vast_workers() == 1
+
+
+def test_vast_lane_waits_until_the_instance_is_ready() -> None:
+    manager = QueueManager()
+    manager.get_config = lambda: {
+        "vast_enabled": True,
+        "comfy_task_allocations": {"illustration": "vast"},
+    }
+    manager.is_vast_ready = lambda: False
+    item = _item("illustration", {"provider": "comfy"})
+
+    assert manager._item_execution_area(item) == ("vast", "vast")
+    assert manager._vast_comfy_lane_allowed(item) is False
+    assert manager._target_vast_workers() == 0
+
+
 @pytest.mark.asyncio
 async def test_video_postprocess_worker_overlaps_local_comfy_lane(monkeypatch):
     manager = QueueManager()

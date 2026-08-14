@@ -41,6 +41,7 @@ COMFY_TASK_DEFINITIONS: tuple[tuple[str, str, str], ...] = (
 COMFY_TASK_KEYS = tuple(item[0] for item in COMFY_TASK_DEFINITIONS)
 DEFAULT_COMFY_TASK_ALLOCATIONS = {key: 1 for key in COMFY_TASK_KEYS}
 MODAL_COMFY_TARGET = "modal"
+VAST_COMFY_TARGET = "vast"
 MODAL_SUPPORTED_COMFY_TASK_KEYS = frozenset(
     {
         "illustration",
@@ -53,6 +54,8 @@ MODAL_SUPPORTED_COMFY_TASK_KEYS = frozenset(
         "video_generation",
     }
 )
+VAST_SUPPORTED_COMFY_TASK_KEYS = MODAL_SUPPORTED_COMFY_TASK_KEYS
+REMOTE_COMFY_TARGETS = frozenset({MODAL_COMFY_TARGET, VAST_COMFY_TARGET})
 DEFAULT_COMFY_TASK_MODAL_PARALLEL = {key: False for key in COMFY_TASK_KEYS}
 
 # 큐 워커가 claim한 실행 대상을 하위 모드와 server.py의 공통 제출 함수까지 전달한다.
@@ -101,15 +104,22 @@ def normalize_comfy_task_allocations(
         if key not in source:
             continue
         value = source.get(key)
-        if isinstance(value, str) and value.strip().lower() == MODAL_COMFY_TARGET:
-            if key not in MODAL_SUPPORTED_COMFY_TASK_KEYS:
-                message = f"{key} 작업은 Modal 배분을 지원하지 않습니다."
+        normalized_target = value.strip().lower() if isinstance(value, str) else ""
+        if normalized_target in REMOTE_COMFY_TARGETS:
+            supported_keys = (
+                MODAL_SUPPORTED_COMFY_TASK_KEYS
+                if normalized_target == MODAL_COMFY_TARGET
+                else VAST_SUPPORTED_COMFY_TASK_KEYS
+            )
+            provider_label = "Modal" if normalized_target == MODAL_COMFY_TARGET else "Vast"
+            if key not in supported_keys:
+                message = f"{key} 작업은 {provider_label} 배분을 지원하지 않습니다."
                 print(
-                    "[COMFY_ALLOCATION] Modal 작업 배분 값 검증 실패: "
+                    f"[COMFY_ALLOCATION] {provider_label} 작업 배분 값 검증 실패: "
                     f"task={key}, value={value!r}, error={message}"
                 )
                 raise ComfyTaskAllocationValidationError(message)
-            normalized[key] = MODAL_COMFY_TARGET
+            normalized[key] = normalized_target
             continue
         try:
             if isinstance(value, bool):
@@ -130,7 +140,11 @@ def normalize_comfy_task_allocations(
             traceback.print_exc()
             raise ComfyTaskAllocationValidationError(
                 f"comfy_task_allocations.{key} 값은 1, 2, 3"
-                + (" 또는 modal이어야 합니다." if key in MODAL_SUPPORTED_COMFY_TASK_KEYS else " 중 하나여야 합니다.")
+                + (
+                    " 또는 modal, vast여야 합니다."
+                    if key in MODAL_SUPPORTED_COMFY_TASK_KEYS
+                    else " 중 하나여야 합니다."
+                )
             ) from exc
         normalized[key] = parsed
 
@@ -188,10 +202,10 @@ def normalize_comfy_task_modal_parallel(
                 f"task={key}"
             )
             normalized[key] = False
-        elif effective_allocations.get(key) == MODAL_COMFY_TARGET:
+        elif effective_allocations.get(key) in REMOTE_COMFY_TARGETS:
             print(
-                "[COMFY_ALLOCATION] Modal 전용 배분의 병렬 설정을 OFF로 보정: "
-                f"task={key}"
+                "[COMFY_ALLOCATION] 원격 전용 배분의 Modal 병렬 설정을 OFF로 보정: "
+                f"task={key}, target={effective_allocations.get(key)!r}"
             )
             normalized[key] = False
 
@@ -232,13 +246,14 @@ def select_comfy_instance(
             f"알 수 없는 Comfy 작업 배분 키입니다: {task_key}"
         )
     configured = allocations[task_key]
-    if configured == MODAL_COMFY_TARGET:
+    if configured in REMOTE_COMFY_TARGETS:
+        provider_label = "Modal" if configured == MODAL_COMFY_TARGET else "Vast"
         print(
             "[COMFY_ALLOCATION] 로컬 인스턴스 선택 거부: "
-            f"task={task_key}, configured=Modal"
+            f"task={task_key}, configured={provider_label}"
         )
         raise ComfyTaskAllocationValidationError(
-            f"{task_key} 작업은 Modal 전용으로 배분되어 로컬 포트를 선택할 수 없습니다."
+            f"{task_key} 작업은 {provider_label} 전용으로 배분되어 로컬 포트를 선택할 수 없습니다."
         )
     running_ids = [instance_id for instance_id in (1, 2, 3) if running.get(instance_id)]
     if len(running_ids) == 1:

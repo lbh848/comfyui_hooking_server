@@ -13,6 +13,7 @@ from typing import Any
 import pytest
 
 from vast_backend.client import VastApiError, VastClient, _rate_limit_delay
+from vast_backend.favorites import VastMachineFavorites
 from vast_backend.image_pull_progress import (
     build_pull_progress,
     parse_daemon_pull_states,
@@ -686,6 +687,10 @@ def test_vast_frontend_has_manual_destroy_guard_and_cmd_log() -> None:
     ).read_text(encoding="utf-8")
 
     assert 'id="vast-launch-destroy-btn"' in html
+    assert 'id="vast-launch-favorite-btn"' in html
+    assert "이 머신을 즐겨찾기에 등록" in html
+    assert "async function vastFavoriteInstance(instanceId, button = null)" in html
+    assert "vastOption.textContent = 'VAST'" in html
     assert 'onclick="vastDestroyActive()"' in html
     assert 'id="vast-launch-terminal"' in html
     assert "launch.instance_status_msg" in html
@@ -701,6 +706,64 @@ def test_vast_frontend_has_manual_destroy_guard_and_cmd_log() -> None:
     assert 'data-vast-preflight-key="upload"' in html
     assert "function vastRenderPreflight(launch)" in html
     assert "별도 측정용 트래픽은 사용하지 않습니다" in html
+
+
+def test_vast_machine_favorites_are_persisted_idempotently(tmp_path: Path) -> None:
+    favorites = VastMachineFavorites(tmp_path)
+    instance = {
+        "id": 47724573,
+        "machine_id": 114484,
+        "host_id": 430738,
+        "gpu_name": "RTX 3090",
+        "geolocation": "Wyoming, US",
+        "reliability2": 0.995,
+    }
+
+    first = favorites.add_instance(instance)
+    second = favorites.add_instance(instance)
+
+    assert first["added"] is True
+    assert second["added"] is False
+    assert favorites.machine_ids() == {114484}
+    payload = json.loads(favorites.path.read_text(encoding="utf-8"))
+    assert payload["machines"][0]["source_instance_id"] == 47724573
+    assert favorites.remove(114484)["removed"] is True
+    assert favorites.machine_ids() == set()
+
+
+@pytest.mark.asyncio
+async def test_vast_service_favorites_current_instance_and_prioritizes_offers(
+    tmp_path: Path,
+) -> None:
+    class FavoriteClient:
+        async def list_instances(self):
+            return [
+                {
+                    "id": 10,
+                    "machine_id": 200,
+                    "host_id": 20,
+                    "gpu_name": "RTX 3090",
+                }
+            ]
+
+        async def search_offers(self, **_kwargs):
+            return [
+                {"id": 1, "machine_id": 100, "dph_total": 0.1},
+                {"id": 2, "machine_id": 200, "dph_total": 0.2},
+            ]
+
+    service = VastService(
+        tmp_path,
+        lambda: {"vast_enabled": True, "vast_api_key": "test-key"},
+    )
+    service._client = FavoriteClient()  # type: ignore[assignment]
+
+    added = await service.favorite_instance(10)
+    offers = await service.offers()
+
+    assert added["favorite"]["machine_id"] == 200
+    assert [offer["machine_id"] for offer in offers["offers"]] == [200, 100]
+    assert offers["offers"][0]["favorite"] is True
 
 
 def test_vast_actual_transfer_eta_uses_parallel_branch_bottleneck() -> None:

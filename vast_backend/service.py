@@ -16,7 +16,10 @@ import asyncio
 import contextvars
 import json
 import os
+import posixpath
 import shutil
+import stat
+import tempfile
 import threading
 import time
 import traceback
@@ -28,6 +31,7 @@ from typing import Any, Callable
 import aiohttp
 
 from .client import VastApiError, VastClient
+from .favorites import VastMachineFavorites
 from .image_pull_progress import build_pull_progress, parse_daemon_pull_states
 from .model_sources import (
     build_download_plan,
@@ -46,6 +50,9 @@ from .settings import VastSettings, load_key_files
 from .ssh_tunnel import ComfySshTunnel
 
 COMFY_ROOT_REMOTE = "/root/ComfyUI"
+COMFY_INPUT_REMOTE = f"{COMFY_ROOT_REMOTE}/input"
+COMFY_OUTPUT_REMOTE = f"{COMFY_ROOT_REMOTE}/output"
+COMFY_LORA_OUTPUT_REMOTE = f"{COMFY_ROOT_REMOTE}/models/loras/SOYA_CHAR_LORA"
 READY_FLAG = "/tmp/soya_ready"
 MODELS_DONE_FLAG = "/tmp/soya_models_done"
 BUILD_COMPLETE_FLAG = "/tmp/soya_build_complete"
@@ -105,8 +112,40 @@ class VastService:
         self._actual_transfer_runtime: dict[str, dict[str, Any]] = {}
         self._guard_write_lock = threading.Lock()
         self._guard_path = self.project_root / "runtime" / "vast_launch_guard.json"
+        self.favorites = VastMachineFavorites(self.project_root)
+        self._favorite_lock = asyncio.Lock()
+        self._workflow_lock = asyncio.Lock()
+        self._active_ssh_endpoint: tuple[str, int, str] | None = None
+        self._availability_callback: Callable[[], Any] | None = None
         # 생성 진행 상태(단일 인스턴스 운영 가정 — 파괴 후 재생성)
         self.launch: dict[str, Any] = self._new_launch_state()
+
+    def set_availability_callback(self, callback: Callable[[], Any] | None) -> None:
+        self._availability_callback = callback
+
+    def _notify_availability_changed(self) -> None:
+        callback = self._availability_callback
+        if callback is None:
+            return
+        try:
+            result = callback()
+            if asyncio.iscoroutine(result):
+                asyncio.create_task(result)
+        except Exception as exc:
+            print(
+                "[VAST][QUEUE][ERROR] 가용 상태 변경 알림 실패: "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+
+    def ready_for_queue(self) -> bool:
+        return bool(
+            self.settings().enabled
+            and self.launch.get("state") == "ready"
+            and self.launch.get("comfy_base_url")
+            and self._comfy_tunnel is not None
+            and self._active_ssh_endpoint is not None
+        )
 
     @staticmethod
     def _utc_now() -> str:
@@ -369,6 +408,8 @@ class VastService:
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
         self._close_comfy_tunnel()
+        self._active_ssh_endpoint = None
+        self._notify_availability_changed()
         if self._client:
             await self._client.close()
             self._client = None
@@ -908,35 +949,45 @@ class VastService:
             min_cuda_version=applied_min_cuda,
             limit=limit,
         )
+        favorite_ids = self.favorites.machine_ids()
+        public_offers = [
+            {
+                "id": o.get("id"),
+                "machine_id": o.get("machine_id"),
+                "host_id": o.get("host_id"),
+                "favorite": int(o.get("machine_id") or 0) in favorite_ids,
+                "gpu_name": o.get("gpu_name"),
+                "num_gpus": o.get("num_gpus"),
+                "cpu_ram_gb": round(float(o.get("cpu_ram") or 0) / 1024, 1),
+                "gpu_ram_gb": round(float(o.get("gpu_ram") or 0) / 1024, 1),
+                "disk_gb": float(o.get("disk_space") or 0),
+                "dph_total": float(o.get("dph_total") or 0),
+                # dph_total은 Vast 기본 디스크 할당 기준이다.
+                "dph_base": float(o.get("dph_base") or 0),
+                "storage_cost_usd_per_gb_month": float(o.get("storage_cost") or 0),
+                "inet_cost_usd_per_tb_down": float(o.get("internet_down_cost_per_tb") or 0),
+                "inet_cost_usd_per_tb_up": float(o.get("internet_up_cost_per_tb") or 0),
+                "inet_down_mbps": float(o.get("inet_down") or 0),
+                "inet_up_mbps": float(o.get("inet_up") or 0),
+                "direct_port_count": int(o.get("direct_port_count") or 0),
+                "reliability": float(o.get("reliability2") or o.get("reliability") or 0),
+                "cuda_max_good": o.get("cuda_max_good"),
+                "geolocation": o.get("geolocation"),
+                "verified": str(o.get("verification") or "").lower() == "verified",
+            }
+            for o in offers
+        ]
+        public_offers.sort(
+            key=lambda item: (
+                0 if item["favorite"] else 1,
+                float(item.get("dph_total") or 0),
+                int(item.get("id") or 0),
+            )
+        )
         return {
             "ok": True,
             "min_cuda_version": applied_min_cuda,
-            "offers": [
-                {
-                    "id": o.get("id"),
-                    "gpu_name": o.get("gpu_name"),
-                    "num_gpus": o.get("num_gpus"),
-                    "cpu_ram_gb": round(float(o.get("cpu_ram") or 0) / 1024, 1),
-                    "gpu_ram_gb": round(float(o.get("gpu_ram") or 0) / 1024, 1),
-                    "disk_gb": float(o.get("disk_space") or 0),
-                    "dph_total": float(o.get("dph_total") or 0),
-                    # dph_total은 Vast 기본 디스크 할당(약 8GB) 기준이라
-                    # 실제 요금 예측엔 GPU 단가(dph_base) + 저장 단가가 필요하다.
-                    # storage_cost는 $/GB·월, 저장료는 이를 720hr/월으로 나눠 과금.
-                    "dph_base": float(o.get("dph_base") or 0),
-                    "storage_cost_usd_per_gb_month": float(o.get("storage_cost") or 0),
-                    "inet_cost_usd_per_tb_down": float(o.get("internet_down_cost_per_tb") or 0),
-                    "inet_cost_usd_per_tb_up": float(o.get("internet_up_cost_per_tb") or 0),
-                    "inet_down_mbps": float(o.get("inet_down") or 0),
-                    "inet_up_mbps": float(o.get("inet_up") or 0),
-                    "direct_port_count": int(o.get("direct_port_count") or 0),
-                    "reliability": float(o.get("reliability2") or o.get("reliability") or 0),
-                    "cuda_max_good": o.get("cuda_max_good"),
-                    "geolocation": o.get("geolocation"),
-                    "verified": str(o.get("verification") or "").lower() == "verified",
-                }
-                for o in offers
-            ],
+            "offers": public_offers,
         }
 
     # ── 마법사 계획 (②단계) ─────────────────────────────────
@@ -1198,6 +1249,8 @@ class VastService:
             self.launch["protection_state"] = "triggered"
             self.launch["protection_reason"] = f"빌드 실패 자동 정리: {exc}"
             self._persist_guard_state()
+            self._active_ssh_endpoint = None
+            self._notify_availability_changed()
             # 실패 시 남은 인스턴스는 그대로 과금되므로 즉시 파괴한다.
             instance_id = self.launch.get("instance_id")
             if instance_id:
@@ -1296,6 +1349,7 @@ class VastService:
 
         self._set_step("ssh", "running", "SSH 대기")
         ssh_host, ssh_port = await self._wait_ssh(instance_id)
+        self._active_ssh_endpoint = (ssh_host, ssh_port, private_key_path)
         self.launch["instance_running_at_epoch"] = time.time()
         # 생성 요청의 ssh_key 필드는 무시되므로(검증됨) running 후 부착 API로 등록한다.
         await self._attach_key_with_retry(client, instance_id, public_key)
@@ -1335,6 +1389,7 @@ class VastService:
         self.launch["protection_reason"] = "빌드 완료 — 비용 보호 해제"
         self._set_step("comfy", "done", comfy_url)
         self._persist_guard_state()
+        self._notify_availability_changed()
 
     async def _wait_ssh(self, instance_id: int) -> tuple[str, int]:
         # 시간 제한 없이 running+SSH 정보를 기다린다. 비용 상한은 watchdog이 담당.
@@ -2375,11 +2430,15 @@ class VastService:
     async def instances(self) -> dict[str, Any]:
         client = self._client_or_raise()
         rows = await client.list_instances()
+        favorite_ids = self.favorites.machine_ids()
         return {
             "ok": True,
             "instances": [
                 {
                     "id": i.get("id"),
+                    "machine_id": i.get("machine_id"),
+                    "host_id": i.get("host_id"),
+                    "favorite": int(i.get("machine_id") or 0) in favorite_ids,
                     "label": i.get("label"),
                     "actual_status": i.get("actual_status"),
                     "gpu_name": i.get("gpu_name"),
@@ -2391,6 +2450,47 @@ class VastService:
                 for i in rows
             ],
         }
+
+    async def favorite_instance(self, instance_id: int) -> dict[str, Any]:
+        target = int(instance_id)
+        if target <= 0:
+            print(
+                "[VAST_FAVORITE][ERROR] 즐겨찾기에 등록할 인스턴스 ID 오류: "
+                f"value={instance_id!r}"
+            )
+            raise ValueError("즐겨찾기에 등록할 Vast 인스턴스 ID가 올바르지 않습니다.")
+        async with self._favorite_lock:
+            rows = await self._client_or_raise().list_instances()
+            instance = next(
+                (row for row in rows if int(row.get("id") or 0) == target),
+                None,
+            )
+            if instance is None:
+                print(
+                    "[VAST_FAVORITE][ERROR] 즐겨찾기 대상 인스턴스를 찾지 못함: "
+                    f"instance_id={target}, visible_ids="
+                    f"{[int(row.get('id') or 0) for row in rows]}"
+                )
+                raise ValueError(f"Vast 인스턴스 #{target}를 찾을 수 없습니다.")
+            result = await asyncio.to_thread(self.favorites.add_instance, instance)
+            return {
+                "ok": True,
+                **result,
+                "favorites": self.favorites.load()["machines"],
+            }
+
+    async def remove_favorite(self, machine_id: int) -> dict[str, Any]:
+        async with self._favorite_lock:
+            result = await asyncio.to_thread(self.favorites.remove, int(machine_id))
+            return {
+                "ok": True,
+                **result,
+                "favorites": self.favorites.load()["machines"],
+            }
+
+    def favorite_status(self) -> dict[str, Any]:
+        payload = self.favorites.load()
+        return {"ok": True, "favorites": payload["machines"]}
 
     async def destroy(
         self,
@@ -2421,6 +2521,8 @@ class VastService:
                     f"#{target} {'자동' if automatic else '사용자'} 파괴 시작 — {reason}",
                 )
                 self._close_comfy_tunnel()
+                self._active_ssh_endpoint = None
+                self._notify_availability_changed()
                 launch_task = self._launch_task
                 if (
                     launch_task is not None
@@ -2670,23 +2772,721 @@ class VastService:
             )
         return base
 
-    async def run_workflow(self, workflow_api: dict[str, Any]) -> dict[str, Any]:
-        """준비된 인스턴스의 ComfyUI /prompt 로 API 워크플로우를 실행한다."""
-        base = self._require_ready()
-        async with aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=30)
-        ) as session:
-            async with session.post(
-                f"{base}/prompt", json={"prompt": workflow_api}
-            ) as resp:
-                text = await resp.text()
-                if resp.status != 200:
-                    print(f"[VAST] 프롬프트 전송 실패: http={resp.status} body={text[:300]}")
-                    raise VastApiError(f"ComfyUI 프롬프트 전송 실패: HTTP {resp.status} {text[:200]}")
+    def _require_ssh_endpoint(self) -> tuple[str, int, str]:
+        self._require_ready()
+        endpoint = self._active_ssh_endpoint
+        if endpoint is None:
+            print("[VAST:WORKFLOW][ERROR] 준비된 SSH 연결 정보가 없습니다.")
+            raise VastApiError(
+                "Vast SSH 연결 정보가 없습니다. 인스턴스를 다시 준비해 주세요."
+            )
+        return endpoint
+
+    @staticmethod
+    def _safe_remote_relative(raw: str, label: str) -> str:
+        original = str(raw or "").strip().replace("\\", "/")
+        if original.startswith("/"):
+            print(
+                "[VAST:WORKFLOW][ERROR] 절대 원격 경로 거부: "
+                f"label={label}, value={raw!r}"
+            )
+            raise ValueError(f"{label} 경로는 상대 경로여야 합니다: {raw!r}")
+        value = original.strip("/")
+        parts = tuple(part for part in value.split("/") if part)
+        if (
+            not parts
+            or any(part in {".", ".."} for part in parts)
+            or ":" in parts[0]
+        ):
+            print(
+                "[VAST:WORKFLOW][ERROR] 안전하지 않은 원격 상대 경로: "
+                f"label={label}, value={raw!r}"
+            )
+            raise ValueError(f"안전하지 않은 {label} 상대 경로입니다: {raw!r}")
+        return "/".join(parts)
+
+    @staticmethod
+    def _sftp_mkdirs(sftp: Any, remote_dir: str) -> None:
+        current = "/"
+        for part in remote_dir.strip("/").split("/"):
+            if not part:
+                continue
+            current = posixpath.join(current, part)
+            try:
+                sftp.stat(current)
+            except OSError:
+                sftp.mkdir(current)
+
+    def _upload_workflow_inputs_sync(
+        self,
+        workflow: dict[str, Any],
+        input_paths: list[str] | tuple[str, ...] | None,
+    ) -> list[dict[str, Any]]:
+        from modal_backend.workflow_assets import (
+            resolve_explicit_input_files,
+            resolve_input_files,
+        )
+
+        config = self._get_config()
+        automatic = resolve_input_files(workflow, config)
+        explicit = (
+            resolve_explicit_input_files(input_paths, config)
+            if input_paths
+            else []
+        )
+        merged = {
+            str(item["remote_name"]): dict(item)
+            for item in [*automatic, *explicit]
+        }
+        if not merged:
+            return []
+        host, port, private_key_path = self._require_ssh_endpoint()
+        ssh = self._ssh_connect(host, port, private_key_path)
+        uploaded: list[dict[str, Any]] = []
+        try:
+            sftp = ssh.open_sftp()
+            try:
+                for raw_remote_name, item in merged.items():
+                    remote_name = self._safe_remote_relative(
+                        raw_remote_name, "Comfy input"
+                    )
+                    source = Path(str(item.get("source_path") or "")).resolve()
+                    if not source.is_file():
+                        print(
+                            "[VAST:WORKFLOW][ERROR] 업로드 입력 파일 없음: "
+                            f"source={source}, remote={remote_name!r}"
+                        )
+                        raise FileNotFoundError(
+                            f"Vast에 전송할 입력 파일이 없습니다: {source}"
+                        )
+                    remote_path = posixpath.join(COMFY_INPUT_REMOTE, remote_name)
+                    self._sftp_mkdirs(sftp, posixpath.dirname(remote_path))
+                    temp_path = f"{remote_path}.soya-{uuid.uuid4().hex}.tmp"
+                    try:
+                        sftp.put(str(source), temp_path)
+                        if callable(getattr(sftp, "posix_rename", None)):
+                            sftp.posix_rename(temp_path, remote_path)
+                        else:
+                            try:
+                                sftp.remove(remote_path)
+                            except OSError:
+                                pass
+                            sftp.rename(temp_path, remote_path)
+                    except Exception:
+                        try:
+                            sftp.remove(temp_path)
+                        except Exception as cleanup_exc:
+                            print(
+                                "[VAST:WORKFLOW][ERROR] 입력 임시 파일 정리 실패: "
+                                f"remote={temp_path}, error={type(cleanup_exc).__name__}: "
+                                f"{cleanup_exc}"
+                            )
+                            traceback.print_exc()
+                        raise
+                    uploaded.append(
+                        {
+                            "source_path": str(source),
+                            "remote_name": remote_name,
+                            "size": source.stat().st_size,
+                        }
+                    )
+            finally:
+                sftp.close()
+        finally:
+            ssh.close()
+        return uploaded
+
+    @staticmethod
+    def _walk_sftp_files(sftp: Any, remote_root: str) -> dict[str, tuple[int, int]]:
+        files: dict[str, tuple[int, int]] = {}
+
+        def visit(current: str) -> None:
+            try:
+                entries = sftp.listdir_attr(current)
+            except FileNotFoundError:
+                return
+            except OSError as exc:
+                # Paramiko 서버 구현에 따라 ENOENT가 일반 OSError로 전달된다.
                 try:
-                    prompt_id = json.loads(text).get("prompt_id")
-                except ValueError as exc:
-                    raise VastApiError("ComfyUI 프롬프트 응답 해석 실패") from exc
-                if not prompt_id:
-                    raise VastApiError(f"ComfyUI 프롬프트 ID 없음: {text[:200]}")
-        return {"ok": True, "prompt_id": prompt_id, "base_url": base}
+                    sftp.stat(current)
+                except OSError:
+                    return
+                print(
+                    "[VAST:WORKFLOW][ERROR] 원격 결과 폴더 조회 실패: "
+                    f"path={current}, error={type(exc).__name__}: {exc}"
+                )
+                traceback.print_exc()
+                raise
+            for entry in entries:
+                remote_path = posixpath.join(current, entry.filename)
+                if stat.S_ISDIR(entry.st_mode):
+                    visit(remote_path)
+                elif stat.S_ISREG(entry.st_mode):
+                    relative = posixpath.relpath(remote_path, COMFY_LORA_OUTPUT_REMOTE)
+                    files[relative] = (
+                        int(getattr(entry, "st_mtime", 0) or 0),
+                        int(getattr(entry, "st_size", 0) or 0),
+                    )
+
+        visit(remote_root)
+        return files
+
+    def _snapshot_lora_artifacts_sync(
+        self,
+        artifact_prefixes: list[str] | tuple[str, ...] | None,
+    ) -> dict[str, tuple[int, int]]:
+        prefixes = [
+            self._safe_remote_relative(prefix, "LoRA 결과 prefix")
+            for prefix in (artifact_prefixes or [])
+        ]
+        if not prefixes:
+            return {}
+        host, port, private_key_path = self._require_ssh_endpoint()
+        ssh = self._ssh_connect(host, port, private_key_path)
+        try:
+            sftp = ssh.open_sftp()
+            try:
+                snapshot: dict[str, tuple[int, int]] = {}
+                for prefix in prefixes:
+                    snapshot.update(
+                        self._walk_sftp_files(
+                            sftp,
+                            posixpath.join(COMFY_LORA_OUTPUT_REMOTE, prefix),
+                        )
+                    )
+                return snapshot
+            finally:
+                sftp.close()
+        finally:
+            ssh.close()
+
+    def _collect_lora_artifacts_sync(
+        self,
+        artifact_prefixes: list[str] | tuple[str, ...] | None,
+        before: dict[str, tuple[int, int]],
+    ) -> list[dict[str, Any]]:
+        after = self._snapshot_lora_artifacts_sync(artifact_prefixes)
+        artifacts = []
+        for relative, metadata in sorted(after.items()):
+            if before.get(relative) == metadata:
+                continue
+            artifacts.append(
+                {
+                    "relative_path": relative,
+                    "remote_path": posixpath.join(
+                        COMFY_LORA_OUTPUT_REMOTE, relative
+                    ),
+                    "size": metadata[1],
+                }
+            )
+        return artifacts
+
+    @staticmethod
+    def _history_text_outputs(
+        workflow: dict[str, Any], outputs: dict[str, Any]
+    ) -> list[dict[str, str]]:
+        result: list[dict[str, str]] = []
+
+        def strings(value: Any):
+            if isinstance(value, str):
+                if value.strip():
+                    yield value
+            elif isinstance(value, dict):
+                for key, child in value.items():
+                    if str(key) not in {"images", "videos", "gifs"}:
+                        yield from strings(child)
+            elif isinstance(value, (list, tuple)):
+                for child in value:
+                    yield from strings(child)
+
+        for node_id, output in outputs.items():
+            if not isinstance(output, dict):
+                continue
+            node = workflow.get(str(node_id)) or {}
+            title = str((node.get("_meta") or {}).get("title") or "")
+            for text in strings(output):
+                result.append(
+                    {"node_id": str(node_id), "node_title": title, "text": text}
+                )
+        return result
+
+    async def convert_workflow(self, workflow: dict[str, Any]) -> dict[str, Any]:
+        base = self._require_ready()
+        try:
+            async with aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=120)
+            ) as session:
+                async with session.post(
+                    f"{base}/workflow/convert", json=workflow
+                ) as response:
+                    text = await response.text()
+                    if response.status != 200:
+                        print(
+                            "[VAST:WORKFLOW][ERROR] 워크플로우 변환 실패: "
+                            f"http={response.status}, body={text[:500]}"
+                        )
+                        raise VastApiError(
+                            f"Vast 워크플로우 변환 실패: HTTP {response.status}"
+                        )
+                    parsed = json.loads(text)
+                    if not isinstance(parsed, dict) or not parsed:
+                        raise VastApiError("Vast 워크플로우 변환 결과가 비어 있습니다.")
+                    return parsed
+        except Exception as exc:
+            print(
+                "[VAST:WORKFLOW][ERROR] 워크플로우 변환 예외: "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            raise
+
+    async def run_workflow(
+        self,
+        workflow_api: dict[str, Any],
+        *,
+        timeout_seconds: int = 3_300,
+        input_paths: list[str] | tuple[str, ...] | None = None,
+        artifact_prefixes: list[str] | tuple[str, ...] | None = None,
+        require_images: bool = True,
+        video_job_id: str | None = None,
+        progress_callback: Callable[[dict[str, Any]], Any] | None = None,
+    ) -> dict[str, Any]:
+        """입력 동기화부터 결과 다운로드까지 Vast ComfyUI 작업 하나를 실행한다."""
+        if not isinstance(workflow_api, dict) or not workflow_api:
+            print(f"[VAST:WORKFLOW][ERROR] 비어 있는 워크플로우: {workflow_api!r}")
+            raise ValueError("Vast에 실행할 워크플로우가 비어 있습니다.")
+        base = self._require_ready()
+        timeout_seconds = max(30, min(int(timeout_seconds), 3_300))
+        async with self._workflow_lock:
+            try:
+                uploaded = await asyncio.to_thread(
+                    self._upload_workflow_inputs_sync,
+                    workflow_api,
+                    input_paths,
+                )
+                before = await asyncio.to_thread(
+                    self._snapshot_lora_artifacts_sync,
+                    artifact_prefixes,
+                )
+                client_id = f"vast_{uuid.uuid4().hex}"
+                ws_base = base.replace("http://", "ws://", 1).replace(
+                    "https://", "wss://", 1
+                )
+                prompt_id = ""
+                completed = False
+                async with aiohttp.ClientSession(
+                    timeout=aiohttp.ClientTimeout(total=timeout_seconds + 60)
+                ) as session:
+                    async with session.ws_connect(
+                        f"{ws_base}/ws?clientId={client_id}", heartbeat=30
+                    ) as ws:
+                        async with session.post(
+                            f"{base}/prompt",
+                            json={"prompt": workflow_api, "client_id": client_id},
+                        ) as response:
+                            text = await response.text()
+                            if response.status != 200:
+                                print(
+                                    "[VAST:WORKFLOW][ERROR] 프롬프트 전송 실패: "
+                                    f"http={response.status}, body={text[:500]}"
+                                )
+                                raise VastApiError(
+                                    "Vast ComfyUI 프롬프트 전송 실패: "
+                                    f"HTTP {response.status} {text[:200]}"
+                                )
+                            payload = json.loads(text)
+                            prompt_id = str(payload.get("prompt_id") or "")
+                            if not prompt_id:
+                                raise VastApiError(
+                                    f"Vast ComfyUI 프롬프트 ID 없음: {text[:200]}"
+                                )
+
+                        deadline = time.monotonic() + timeout_seconds
+                        while time.monotonic() < deadline:
+                            remaining = max(0.1, deadline - time.monotonic())
+                            try:
+                                message = await asyncio.wait_for(
+                                    ws.receive(), timeout=min(30.0, remaining)
+                                )
+                            except asyncio.TimeoutError:
+                                continue
+                            if message.type == aiohttp.WSMsgType.TEXT:
+                                event = json.loads(message.data)
+                                event_type = str(event.get("type") or "")
+                                data = event.get("data") or {}
+                                event_prompt = str(data.get("prompt_id") or "")
+                                if event_prompt and event_prompt != prompt_id:
+                                    continue
+                                if event_type == "execution_error":
+                                    print(
+                                        "[VAST:WORKFLOW][ERROR] Comfy 실행 오류: "
+                                        f"prompt={prompt_id}, data={data!r}"
+                                    )
+                                    raise RuntimeError(
+                                        "Vast ComfyUI 실행 오류: "
+                                        f"{data.get('exception_message') or data}"
+                                    )
+                                progress_event: dict[str, Any] | None = None
+                                if event_type == "md_soya_progress":
+                                    progress_event = dict(data)
+                                elif event_type == "progress":
+                                    progress_event = {
+                                        "phase": "vast_running",
+                                        "value": data.get("value"),
+                                        "max": data.get("max"),
+                                        "node": data.get("node"),
+                                    }
+                                if progress_event is not None and progress_callback:
+                                    callback_result = progress_callback(progress_event)
+                                    if asyncio.iscoroutine(callback_result):
+                                        await callback_result
+                                if (
+                                    event_type == "executing"
+                                    and data.get("node") is None
+                                    and (not event_prompt or event_prompt == prompt_id)
+                                ):
+                                    completed = True
+                                    break
+                            elif message.type in {
+                                aiohttp.WSMsgType.CLOSED,
+                                aiohttp.WSMsgType.CLOSE,
+                                aiohttp.WSMsgType.ERROR,
+                            }:
+                                break
+
+                    async with session.get(f"{base}/history/{prompt_id}") as response:
+                        text = await response.text()
+                        if response.status != 200:
+                            print(
+                                "[VAST:WORKFLOW][ERROR] history 조회 실패: "
+                                f"prompt={prompt_id}, http={response.status}, "
+                                f"body={text[:500]}"
+                            )
+                            raise VastApiError(
+                                f"Vast ComfyUI history 조회 실패: HTTP {response.status}"
+                            )
+                        history = json.loads(text)
+                    entry = history.get(prompt_id) or {}
+                    status_info = entry.get("status") or {}
+                    if status_info.get("status_str") == "error":
+                        print(
+                            "[VAST:WORKFLOW][ERROR] history 실행 실패: "
+                            f"prompt={prompt_id}, status={status_info!r}"
+                        )
+                        raise RuntimeError(f"Vast ComfyUI 실행 실패: {status_info}")
+                    outputs = entry.get("outputs") or {}
+                    if not completed and not outputs:
+                        print(
+                            "[VAST:WORKFLOW][ERROR] 실행 완료 확인 실패: "
+                            f"prompt={prompt_id}, status={status_info!r}"
+                        )
+                        raise TimeoutError(
+                            "Vast ComfyUI 작업 완료 신호와 출력 결과가 없습니다."
+                        )
+
+                    images: list[dict[str, Any]] = []
+                    videos: list[dict[str, Any]] = []
+                    for node_id, output in outputs.items():
+                        if not isinstance(output, dict):
+                            continue
+                        for output_key in ("images", "videos", "gifs"):
+                            references = output.get(output_key)
+                            if not isinstance(references, list):
+                                continue
+                            for reference in references:
+                                if not isinstance(reference, dict):
+                                    continue
+                                filename = str(reference.get("filename") or "")
+                                if not filename:
+                                    continue
+                                async with session.get(
+                                    f"{base}/view",
+                                    params={
+                                        "filename": filename,
+                                        "subfolder": str(
+                                            reference.get("subfolder") or ""
+                                        ),
+                                        "type": str(reference.get("type") or "output"),
+                                    },
+                                ) as response:
+                                    content = await response.read()
+                                    if response.status != 200 or not content:
+                                        print(
+                                            "[VAST:WORKFLOW][ERROR] 출력 다운로드 실패: "
+                                            f"prompt={prompt_id}, filename={filename!r}, "
+                                            f"http={response.status}, bytes={len(content)}"
+                                        )
+                                        raise VastApiError(
+                                            f"Vast 출력 다운로드 실패: {filename}"
+                                        )
+                                    descriptor = {
+                                        **reference,
+                                        "bytes": content,
+                                        "filename": filename,
+                                        "content_type": response.headers.get(
+                                            "Content-Type", "application/octet-stream"
+                                        ),
+                                        "node_id": str(node_id),
+                                        "output_key": output_key,
+                                    }
+                                    if filename.lower().endswith(".mp4"):
+                                        videos.append(descriptor)
+                                    else:
+                                        images.append(descriptor)
+
+                artifacts = await asyncio.to_thread(
+                    self._collect_lora_artifacts_sync,
+                    artifact_prefixes,
+                    before,
+                )
+                if require_images and not images:
+                    print(
+                        "[VAST:WORKFLOW][ERROR] 이미지 결과 없음: "
+                        f"prompt={prompt_id}, outputs={list(outputs)}"
+                    )
+                    raise RuntimeError("Vast 원격 생성 결과 이미지가 없습니다.")
+                if video_job_id and len(videos) != 1:
+                    print(
+                        "[VAST:VIDEO][ERROR] MP4 결과 수 검증 실패: "
+                        f"prompt={prompt_id}, job={video_job_id}, count={len(videos)}"
+                    )
+                    raise RuntimeError(
+                        "Vast 영상 생성 결과 MP4가 정확히 하나가 아닙니다."
+                    )
+                print(
+                    "[VAST:WORKFLOW] 완료: "
+                    f"prompt={prompt_id}, inputs={len(uploaded)}, "
+                    f"images={len(images)}, videos={len(videos)}, "
+                    f"artifacts={len(artifacts)}"
+                )
+                return {
+                    "prompt_id": prompt_id,
+                    "model_sync": {},
+                    "lora_sync": {},
+                    "images": images,
+                    "artifacts": [],
+                    "deferred_artifacts": artifacts,
+                    "video_artifacts": videos,
+                    "text_outputs": self._history_text_outputs(
+                        workflow_api, outputs
+                    ),
+                }
+            except Exception as exc:
+                print(
+                    "[VAST:WORKFLOW][ERROR] 원격 실행 실패: "
+                    f"error={type(exc).__name__}: {exc}"
+                )
+                traceback.print_exc()
+                raise
+
+    async def generate(
+        self,
+        workflow: dict[str, Any],
+        *,
+        timeout_seconds: int = 3_300,
+        input_paths: list[str] | tuple[str, ...] | None = None,
+    ) -> tuple[bytes, dict[str, Any]]:
+        result = await self.run_workflow(
+            workflow,
+            timeout_seconds=timeout_seconds,
+            input_paths=input_paths,
+            require_images=True,
+        )
+        first = result["images"][0]
+        return first["bytes"], {
+            "prompt_id": result.get("prompt_id"),
+            "model_sync": {},
+            "lora_sync": {},
+            "content_type": first.get("content_type"),
+        }
+
+    async def generate_video(
+        self,
+        workflow: dict[str, Any],
+        *,
+        timeout_seconds: int = 3_300,
+        input_paths: list[str] | tuple[str, ...] | None = None,
+        progress_callback: Callable[[dict[str, Any]], Any] | None = None,
+    ) -> tuple[bytes, dict[str, Any]]:
+        job_id = f"video_{uuid.uuid4().hex}"
+        result = await self.run_workflow(
+            workflow,
+            timeout_seconds=timeout_seconds,
+            input_paths=input_paths,
+            require_images=False,
+            video_job_id=job_id,
+            progress_callback=progress_callback,
+        )
+        video = result["video_artifacts"][0]
+        artifact = {
+            key: value
+            for key, value in video.items()
+            if key != "bytes"
+        }
+        artifact["remote_path"] = posixpath.join(
+            COMFY_OUTPUT_REMOTE,
+            str(video.get("subfolder") or "").replace("\\", "/"),
+            str(video.get("filename") or ""),
+        )
+        return video["bytes"], {
+            "execution_source": "vast",
+            "prompt_id": result.get("prompt_id"),
+            "model_sync": {},
+            "lora_sync": {},
+            "artifact": artifact,
+            "filename": video.get("filename"),
+            "type": "output",
+        }
+
+    async def delete_video_artifacts_after_spool(
+        self, artifacts: list[dict[str, Any]]
+    ) -> bool:
+        if not artifacts:
+            print("[VAST:VIDEO][ERROR] 삭제할 MP4 artifact가 없습니다.")
+            return False
+
+        def delete_sync() -> bool:
+            host, port, private_key_path = self._require_ssh_endpoint()
+            ssh = self._ssh_connect(host, port, private_key_path)
+            try:
+                sftp = ssh.open_sftp()
+                try:
+                    for artifact in artifacts:
+                        remote_path = posixpath.normpath(
+                            str(artifact.get("remote_path") or "").replace("\\", "/")
+                        )
+                        if (
+                            not remote_path.startswith(COMFY_OUTPUT_REMOTE + "/")
+                            or not remote_path.lower().endswith(".mp4")
+                        ):
+                            print(
+                                "[VAST:VIDEO][ERROR] 안전하지 않은 MP4 삭제 거부: "
+                                f"remote={remote_path!r}"
+                            )
+                            return False
+                        sftp.remove(remote_path)
+                    return True
+                finally:
+                    sftp.close()
+            finally:
+                ssh.close()
+
+        try:
+            return await asyncio.to_thread(delete_sync)
+        except Exception as exc:
+            print(
+                "[VAST:VIDEO][ERROR] 원격 MP4 삭제 실패: "
+                f"error={type(exc).__name__}: {exc}, artifacts={artifacts!r}"
+            )
+            traceback.print_exc()
+            return False
+
+    async def download_lora_artifacts(
+        self,
+        artifacts: list[dict[str, Any]],
+        *,
+        progress_callback: Callable[[dict[str, Any]], Any] | None = None,
+    ) -> dict[str, Any]:
+        if not artifacts:
+            print("[VAST_DOWNLOAD][ERROR] 다운로드할 LoRA artifact가 없습니다.")
+            raise ValueError("다운로드할 Vast LoRA artifact가 없습니다.")
+        config = self._get_config()
+        local_root_raw = str(config.get("lora_load_path") or "").strip()
+        if not local_root_raw:
+            print("[VAST_DOWNLOAD][ERROR] lora_load_path 설정이 비어 있습니다.")
+            raise ValueError("Vast LoRA를 저장할 경로가 설정되지 않았습니다.")
+        local_root = Path(local_root_raw).resolve()
+        local_root.mkdir(parents=True, exist_ok=True)
+        stored: list[dict[str, Any]] = []
+
+        def sha256(path: Path) -> str:
+            import hashlib
+
+            digest = hashlib.sha256()
+            with path.open("rb") as handle:
+                while chunk := handle.read(8 * 1024 * 1024):
+                    digest.update(chunk)
+            return digest.hexdigest()
+
+        def download_one(artifact: dict[str, Any]) -> dict[str, Any]:
+            relative_raw = self._safe_remote_relative(
+                str(artifact.get("relative_path") or ""), "LoRA artifact"
+            )
+            relative = Path(*relative_raw.split("/"))
+            target = (local_root / relative).resolve()
+            if local_root != target and local_root not in target.parents:
+                raise ValueError(f"안전하지 않은 Vast LoRA 로컬 경로: {target}")
+            remote_path = posixpath.normpath(
+                str(artifact.get("remote_path") or "").replace("\\", "/")
+            )
+            if not remote_path.startswith(COMFY_LORA_OUTPUT_REMOTE + "/"):
+                raise ValueError(f"안전하지 않은 Vast LoRA 원격 경로: {remote_path}")
+            host, port, private_key_path = self._require_ssh_endpoint()
+            ssh = self._ssh_connect(host, port, private_key_path)
+            temp_dir = Path(tempfile.mkdtemp(prefix="soya-vast-lora-"))
+            temp_file = temp_dir / relative.name
+            try:
+                sftp = ssh.open_sftp()
+                try:
+                    sftp.get(remote_path, str(temp_file))
+                    expected_size = int(artifact.get("size") or 0)
+                    if expected_size and temp_file.stat().st_size != expected_size:
+                        raise RuntimeError(
+                            "Vast LoRA 다운로드 크기가 일치하지 않습니다: "
+                            f"expected={expected_size}, actual={temp_file.stat().st_size}"
+                        )
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    status = "stored"
+                    final_target = target
+                    if target.is_file():
+                        if sha256(target) == sha256(temp_file):
+                            status = "identical"
+                        else:
+                            stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+                            final_target = target.with_name(
+                                f"{target.stem}.vast-{stamp}{target.suffix}"
+                            )
+                    if status != "identical":
+                        os.replace(temp_file, final_target)
+                    sftp.remove(remote_path)
+                    return {
+                        "relative_path": relative.as_posix(),
+                        "local_path": str(final_target),
+                        "status": status,
+                    }
+                finally:
+                    sftp.close()
+            finally:
+                ssh.close()
+                shutil.rmtree(temp_dir, ignore_errors=True)
+
+        total = len(artifacts)
+        for index, artifact in enumerate(artifacts, start=1):
+            try:
+                stored.append(await asyncio.to_thread(download_one, artifact))
+            except Exception as exc:
+                print(
+                    "[VAST_DOWNLOAD][ERROR] LoRA 다운로드 실패: "
+                    f"index={index}/{total}, artifact={artifact!r}, "
+                    f"error={type(exc).__name__}: {exc}"
+                )
+                traceback.print_exc()
+                raise
+            if progress_callback:
+                try:
+                    event = {
+                        "phase": "vast_downloading",
+                        "percentage": index / total * 100.0,
+                        "index": index,
+                        "total_files": total,
+                    }
+                    result = progress_callback(event)
+                    if asyncio.iscoroutine(result):
+                        await result
+                except Exception as exc:
+                    print(
+                        "[VAST_DOWNLOAD][ERROR] 진행 콜백 실패: "
+                        f"error={type(exc).__name__}: {exc}"
+                    )
+                    traceback.print_exc()
+        return {"artifacts": stored, "remote_delete_queued": []}

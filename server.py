@@ -174,6 +174,8 @@ from comfy_allocation import (
     DEFAULT_COMFY_TASK_ALLOCATIONS,
     DEFAULT_COMFY_TASK_MODAL_PARALLEL,
     MODAL_COMFY_TARGET,
+    REMOTE_COMFY_TARGETS,
+    VAST_COMFY_TARGET,
     ComfyTaskAllocationValidationError,
     normalize_comfy_task_allocations,
     normalize_comfy_task_modal_parallel,
@@ -979,13 +981,14 @@ def resolve_comfy_instance(task_key: str) -> tuple[int, int]:
         legacy_illustration_port=app_config.get("comfyui_port_illustration"),
     )
     configured = allocations.get(task_key)
-    if configured == MODAL_COMFY_TARGET:
+    if configured in REMOTE_COMFY_TARGETS:
+        provider_label = "Modal" if configured == MODAL_COMFY_TARGET else "Vast"
         print(
-            "[COMFY_ALLOCATION] Modal 전용 작업의 로컬 포트 조회 거부: "
+            f"[COMFY_ALLOCATION] {provider_label} 전용 작업의 로컬 포트 조회 거부: "
             f"task={task_key}, execution_target={CURRENT_COMFY_EXECUTION_TARGET.get()!r}"
         )
         raise ComfyTaskAllocationValidationError(
-            f"{task_key} 작업은 Modal 전용으로 배분되어 로컬 포트가 없습니다."
+            f"{task_key} 작업은 {provider_label} 전용으로 배분되어 로컬 포트가 없습니다."
         )
     running: dict[int, bool] = {1: False, 2: False, 3: False}
     manager = comfy_runtime_manager
@@ -1489,25 +1492,62 @@ def is_api_format(wf: dict) -> bool:
     return False
 
 
+def remote_comfy_service_for_target(target: str):
+    normalized = str(target or "").strip().lower()
+    if normalized == MODAL_COMFY_TARGET:
+        service = globals().get("modal_service")
+    elif normalized == VAST_COMFY_TARGET:
+        service = globals().get("vast_service")
+    else:
+        print(
+            "[COMFY_REMOTE] 지원하지 않는 원격 실행처: "
+            f"target={target!r}"
+        )
+        raise ComfyTaskAllocationValidationError(
+            f"지원하지 않는 원격 Comfy 실행처입니다: {target!r}"
+        )
+    if service is None:
+        print(
+            "[COMFY_REMOTE] 원격 서비스 초기화 전 접근: "
+            f"target={normalized}"
+        )
+        raise RuntimeError(f"{normalized.title()} 서비스가 초기화되지 않았습니다.")
+    return service
+
+
 async def convert_workflow_via_endpoint(
     workflow_json: dict,
     *,
     task_key: str = "utility_debug",
 ):
     """ComfyUI /workflow/convert 엔드포인트로 워크플로우를 API 형식으로 변환한다."""
-    if CURRENT_COMFY_EXECUTION_TARGET.get() == MODAL_COMFY_TARGET:
+    execution_target = str(CURRENT_COMFY_EXECUTION_TARGET.get() or "")
+    if execution_target in REMOTE_COMFY_TARGETS:
+        provider_label = (
+            "Modal" if execution_target == MODAL_COMFY_TARGET else "Vast"
+        )
         try:
-            print(f"[WORKFLOW:MODAL] 원격 변환 요청: task={task_key}")
-            api_format = await modal_service.convert_workflow(workflow_json)
-            print(f"[WORKFLOW:MODAL] 원격 변환 완료: task={task_key}, nodes={len(api_format)}")
+            print(
+                f"[WORKFLOW:{provider_label.upper()}] 원격 변환 요청: "
+                f"task={task_key}"
+            )
+            service = remote_comfy_service_for_target(execution_target)
+            api_format = await service.convert_workflow(workflow_json)
+            print(
+                f"[WORKFLOW:{provider_label.upper()}] 원격 변환 완료: "
+                f"task={task_key}, nodes={len(api_format)}"
+            )
             return api_format, None
         except Exception as e:
             print(
-                "[WORKFLOW:MODAL] 원격 변환 실패: "
+                f"[WORKFLOW:{provider_label.upper()}] 원격 변환 실패: "
                 f"task={task_key}, error={type(e).__name__}: {e}"
             )
             traceback.print_exc()
-            return None, f"Modal 워크플로우 변환 실패: {type(e).__name__}: {e}"
+            return None, (
+                f"{provider_label} 워크플로우 변환 실패: "
+                f"{type(e).__name__}: {e}"
+            )
     target_port = resolve_comfy_port(task_key)
     url = f"http://{REAL_COMFY_HOST}:{target_port}/workflow/convert"
     print(f"[WORKFLOW] → POST {url} (변환 요청)")
@@ -2224,8 +2264,8 @@ async def save_backup(
             effective_target = ""
     if provider == "chansub":
         execution_source = "chansub"
-    elif provider == "comfy" and effective_target == MODAL_COMFY_TARGET:
-        execution_source = "modal"
+    elif provider == "comfy" and effective_target in REMOTE_COMFY_TARGETS:
+        execution_source = effective_target
     else:
         execution_source = "local"
     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -2844,21 +2884,27 @@ async def generate_image_with_prompt(
         return None, message
 
     execution_target = CURRENT_COMFY_EXECUTION_TARGET.get()
-    if execution_target == MODAL_COMFY_TARGET:
+    if execution_target in REMOTE_COMFY_TARGETS:
+        provider_label = (
+            "Modal" if execution_target == MODAL_COMFY_TARGET else "Vast"
+        )
         try:
             positive, normalized_path_count = normalize_modal_prompt_paths(positive)
             if normalized_path_count:
                 print(
-                    "[MODAL_GEN] 프롬프트 경로 정규화 완료: "
+                    f"[{provider_label.upper()}_GEN] 프롬프트 경로 정규화 완료: "
                     f"fields={normalized_path_count}"
                 )
         except Exception as e:
             print(
-                "[MODAL_GEN] 프롬프트 경로 정규화 실패: "
+                f"[{provider_label.upper()}_GEN] 프롬프트 경로 정규화 실패: "
                 f"error={type(e).__name__}: {e}"
             )
             traceback.print_exc()
-            return None, f"Modal 프롬프트 경로 정규화 실패: {type(e).__name__}: {e}"
+            return None, (
+                f"{provider_label} 프롬프트 경로 정규화 실패: "
+                f"{type(e).__name__}: {e}"
+            )
 
     # current_* 워크플로우는 레거시 전역 캐시다. 로컬/Modal 레인이 동시에
     # 실행될 때는 갱신과 스냅샷 생성을 짧게 직렬화하고, 실제 생성은 복사본으로
@@ -2876,7 +2922,7 @@ async def generate_image_with_prompt(
     CURRENT_ILLUSTRATION_WORKFLOW_SNAPSHOT.set(workflow_snapshot)
     api_workflow_snapshot = workflow_snapshot["api_workflow"]
     illust_port = None
-    if execution_target != MODAL_COMFY_TARGET:
+    if execution_target not in REMOTE_COMFY_TARGETS:
         illust_port = resolve_comfy_port(comfy_task_key)
 
     # 디버깅 모드: ComfyUI 전송 없이 프롬프트 로그만 출력
@@ -2897,20 +2943,30 @@ async def generate_image_with_prompt(
         print("[DEBUG] ══════════════════════════════════════════════════════")
         return None, "디버깅 모드: ComfyUI 전송 생략됨"
 
-    if execution_target == MODAL_COMFY_TARGET:
+    if execution_target in REMOTE_COMFY_TARGETS:
+        provider_label = (
+            "Modal" if execution_target == MODAL_COMFY_TARGET else "Vast"
+        )
         try:
             if progress_callback:
                 await progress_callback(0, 1)
             await notify_frontend("generation_progress", {"value": 0, "max": 1})
-            image_bytes, modal_result = await modal_service.generate(risu_prompt)
+            service = remote_comfy_service_for_target(execution_target)
+            image_bytes, remote_result = await service.generate(risu_prompt)
             if progress_callback:
                 await progress_callback(1, 1)
             await notify_frontend("generation_progress", {"value": 1, "max": 1})
-            return image_bytes, {"modal": modal_result}
+            return image_bytes, {execution_target: remote_result}
         except Exception as e:
-            print(f"[MODAL_GEN] 원격 이미지 생성 실패: {type(e).__name__}: {e}")
+            print(
+                f"[{provider_label.upper()}_GEN] 원격 이미지 생성 실패: "
+                f"{type(e).__name__}: {e}"
+            )
             traceback.print_exc()
-            return None, f"Modal 원격 이미지 생성 실패: {type(e).__name__}: {e}"
+            return None, (
+                f"{provider_label} 원격 이미지 생성 실패: "
+                f"{type(e).__name__}: {e}"
+            )
 
     async def _on_gen_progress(value, max_value):
         print(f"[GEN_PROGRESS] {value}/{max_value}")
@@ -3060,30 +3116,38 @@ async def submit_workflow_to_comfy(
     input_paths: list[str] | tuple[str, ...] | None = None,
 ) -> tuple[bytes | None, str | dict]:
     """임의의 API 워크플로우를 ComfyUI에 제출하고 이미지를 반환한다."""
-    if CURRENT_COMFY_EXECUTION_TARGET.get() == MODAL_COMFY_TARGET:
+    execution_target = str(CURRENT_COMFY_EXECUTION_TARGET.get() or "")
+    if execution_target in REMOTE_COMFY_TARGETS:
+        provider_label = (
+            "Modal" if execution_target == MODAL_COMFY_TARGET else "Vast"
+        )
         try:
             if progress_callback:
                 await progress_callback(0, 1)
-            image_bytes, metadata = await modal_service.generate(
+            service = remote_comfy_service_for_target(execution_target)
+            image_bytes, metadata = await service.generate(
                 workflow_api,
                 input_paths=input_paths,
             )
             if progress_callback:
                 await progress_callback(1, 1)
             print(
-                "[WORKFLOW:MODAL] 이미지 워크플로우 완료: "
+                f"[WORKFLOW:{provider_label.upper()}] 이미지 워크플로우 완료: "
                 f"task={task_key}, bytes={len(image_bytes)}, "
                 f"prompt_id={metadata.get('prompt_id')}"
             )
-            return image_bytes, {"modal": metadata}
+            return image_bytes, {execution_target: metadata}
         except Exception as e:
             print(
-                "[WORKFLOW:MODAL] 이미지 워크플로우 실패: "
+                f"[WORKFLOW:{provider_label.upper()}] 이미지 워크플로우 실패: "
                 f"task={task_key}, input_paths={input_paths!r}, "
                 f"error={type(e).__name__}: {e}"
             )
             traceback.print_exc()
-            return None, f"Modal 원격 워크플로우 실패: {type(e).__name__}: {e}"
+            return None, (
+                f"{provider_label} 원격 워크플로우 실패: "
+                f"{type(e).__name__}: {e}"
+            )
     target_port = resolve_comfy_port(task_key)
     ws_url = (
         f"ws://{REAL_COMFY_HOST}:{target_port}/ws"
@@ -3175,7 +3239,12 @@ async def submit_video_workflow_to_comfy(
 ) -> tuple[bytes | None, dict | str]:
     """Run H3 on the allocated Comfy target and return its verified temporary MP4."""
 
-    if CURRENT_COMFY_EXECUTION_TARGET.get() == MODAL_COMFY_TARGET:
+    execution_target = str(CURRENT_COMFY_EXECUTION_TARGET.get() or "")
+    if execution_target in REMOTE_COMFY_TARGETS:
+        provider_label = (
+            "Modal" if execution_target == MODAL_COMFY_TARGET else "Vast"
+        )
+        remote_service = remote_comfy_service_for_target(execution_target)
         modal_total_steps = count_ksampler_total_steps(workflow_api)
         modal_sampler_node_ids = {
             str(node_id)
@@ -3198,7 +3267,7 @@ async def submit_video_workflow_to_comfy(
             payload = event.get("data") if isinstance(event.get("data"), dict) else event
             if not isinstance(payload, dict):
                 print(
-                    "[VIDEO:MODAL] 진행 이벤트 형식 오류: "
+                    f"[VIDEO:{provider_label.upper()}] 진행 이벤트 형식 오류: "
                     f"task={task_key}, event={event!r}"
                 )
                 return
@@ -3206,7 +3275,7 @@ async def submit_video_workflow_to_comfy(
             maximum = payload.get("max", payload.get("total", payload.get("maximum")))
             if current is None or maximum is None:
                 print(
-                    "[VIDEO:MODAL] 단계값 없는 진행 이벤트 제외: "
+                    f"[VIDEO:{provider_label.upper()}] 단계값 없는 진행 이벤트 제외: "
                     f"task={task_key}, payload={payload!r}"
                 )
                 return
@@ -3228,7 +3297,7 @@ async def submit_video_workflow_to_comfy(
                 ):
                     if node not in modal_ignored_progress_nodes:
                         print(
-                            "[VIDEO:MODAL] 샘플러 외 진행 이벤트 제외: "
+                            f"[VIDEO:{provider_label.upper()}] 샘플러 외 진행 이벤트 제외: "
                             f"task={task_key}, node={node}, "
                             f"sampler_nodes={sorted(modal_sampler_node_ids)}"
                         )
@@ -3282,7 +3351,7 @@ async def submit_video_workflow_to_comfy(
                     await callback_result
             except Exception as exc:
                 print(
-                    "[VIDEO:MODAL] 진행 콜백 전달 실패: "
+                    f"[VIDEO:{provider_label.upper()}] 진행 콜백 전달 실패: "
                     f"task={task_key}, payload={payload!r}, "
                     f"error={type(exc).__name__}: {exc}"
                 )
@@ -3290,22 +3359,22 @@ async def submit_video_workflow_to_comfy(
 
         try:
             print(
-                "[VIDEO:MODAL] 원격 H3 실행 시작: "
+                f"[VIDEO:{provider_label.upper()}] 원격 H3 실행 시작: "
                 f"task={task_key}, inputs={list(input_paths or [])!r}"
             )
-            video_bytes, descriptor = await modal_service.generate_video(
+            video_bytes, descriptor = await remote_service.generate_video(
                 workflow_api,
                 input_paths=input_paths,
                 progress_callback=forward_modal_progress,
             )
             if not video_bytes:
                 print(
-                    "[VIDEO:MODAL] 다운로드된 MP4가 비어 있음: "
+                    f"[VIDEO:{provider_label.upper()}] 다운로드된 MP4가 비어 있음: "
                     f"task={task_key}, descriptor={descriptor!r}"
                 )
-                return None, "Modal H3 MP4 다운로드 결과가 비어 있습니다"
+                return None, f"{provider_label} H3 MP4 다운로드 결과가 비어 있습니다"
             print(
-                "[VIDEO:MODAL] 원격 H3 MP4 다운로드 완료: "
+                f"[VIDEO:{provider_label.upper()}] 원격 H3 MP4 다운로드 완료: "
                 f"task={task_key}, prompt={descriptor.get('prompt_id')!r}, "
                 f"bytes={len(video_bytes):,}, "
                 f"remote={descriptor.get('artifact', {}).get('remote_path')!r}"
@@ -3313,11 +3382,14 @@ async def submit_video_workflow_to_comfy(
             return video_bytes, descriptor
         except Exception as exc:
             print(
-                "[VIDEO:MODAL] 원격 H3 실행 또는 다운로드 실패: "
+                f"[VIDEO:{provider_label.upper()}] 원격 H3 실행 또는 다운로드 실패: "
                 f"task={task_key}, error={type(exc).__name__}: {exc}"
             )
             traceback.print_exc()
-            return None, f"Modal H3 영상 생성 실패: {type(exc).__name__}: {exc}"
+            return None, (
+                f"{provider_label} H3 영상 생성 실패: "
+                f"{type(exc).__name__}: {exc}"
+            )
 
     target_port = resolve_comfy_port(task_key)
     client_id = f"video_{uuid.uuid4().hex[:10]}"
@@ -3468,6 +3540,32 @@ async def cleanup_comfy_video_output(
         except Exception as exc:
             print(
                 "[VIDEO:CLEANUP:MODAL] 원격 MP4 검증 삭제 예외: "
+                f"task={task_key}, artifact={artifact!r}, "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            return False
+    if descriptor.get("execution_source") == "vast":
+        artifact = descriptor.get("artifact")
+        if not isinstance(artifact, dict):
+            print(
+                "[VIDEO:CLEANUP:VAST] 원격 MP4 artifact 누락: "
+                f"task={task_key}, descriptor={descriptor!r}"
+            )
+            return False
+        try:
+            deleted = await vast_service.delete_video_artifacts_after_spool(
+                [artifact]
+            )
+            if not deleted:
+                print(
+                    "[VIDEO:CLEANUP:VAST] 원격 MP4 삭제 미완료: "
+                    f"task={task_key}, remote={artifact.get('remote_path')!r}"
+                )
+            return deleted
+        except Exception as exc:
+            print(
+                "[VIDEO:CLEANUP:VAST] 원격 MP4 삭제 예외: "
                 f"task={task_key}, artifact={artifact!r}, "
                 f"error={type(exc).__name__}: {exc}"
             )
@@ -3671,7 +3769,14 @@ def init_queue_manager():
     queue_manager.download_modal_artifacts = modal_service.download_lora_artifacts
     queue_manager.acquire_modal_warm_lease = modal_service.acquire_worker_warm_lease
     queue_manager.release_modal_warm_lease = modal_service.release_worker_warm_lease
+    queue_manager.run_vast_workflow = vast_service.run_workflow
+    queue_manager.download_vast_artifacts = vast_service.download_lora_artifacts
+    queue_manager.is_vast_ready = vast_service.ready_for_queue
+    vast_service.set_availability_callback(
+        queue_manager.notify_vast_availability_changed
+    )
     asset_tool.run_modal_workflow_func = modal_service.run_workflow
+    asset_tool.run_vast_workflow_func = vast_service.run_workflow
     queue_manager.process_prompt_full = process_prompt
     queue_manager.process_illustration_context = process_illustration_context_queue_item
     queue_manager.process_illustration_easy_edit = process_illustration_easy_edit_queue_item
@@ -14044,6 +14149,23 @@ async def handle_api_config(request: web.Request) -> web.Response:
                     asyncio.ensure_future(queue_manager._ensure_modal_workers())
                 except Exception as e:
                     print(f"[CONFIG] Modal 원격 워커풀 갱신 실패: {e}")
+                    traceback.print_exc()
+            if (
+                "comfy_task_allocations" in body
+                or "comfy_task_modal_parallel" in body
+                or "vast_enabled" in body
+            ):
+                try:
+                    asyncio.ensure_future(queue_manager._ensure_modal_workers())
+                    asyncio.ensure_future(
+                        queue_manager.notify_vast_availability_changed()
+                    )
+                    asyncio.ensure_future(queue_manager._process_loop())
+                except Exception as e:
+                    print(
+                        "[CONFIG] Comfy 배분 원격 워커풀 갱신 실패: "
+                        f"{type(e).__name__}: {e}"
+                    )
                     traceback.print_exc()
             if modal_autoscaler_settings_changed:
                 try:

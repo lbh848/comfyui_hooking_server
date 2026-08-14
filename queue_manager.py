@@ -20,6 +20,9 @@ from comfy_allocation import (
     CURRENT_COMFY_EXECUTION_TARGET,
     MODAL_COMFY_TARGET,
     MODAL_SUPPORTED_COMFY_TASK_KEYS,
+    REMOTE_COMFY_TARGETS,
+    VAST_COMFY_TARGET,
+    VAST_SUPPORTED_COMFY_TASK_KEYS,
     normalize_comfy_task_allocations,
     normalize_comfy_task_modal_parallel,
 )
@@ -333,6 +336,11 @@ class QueueManager:
         self._modal_worker_tasks: dict[int, asyncio.Future] = {}
         self._modal_next_worker_id: int = 0
         self._modal_wakeup: asyncio.Event = asyncio.Event()
+        # Vast는 준비 완료된 단일 임시 인스턴스가 하나의 독립 원격 Comfy 레인이다.
+        self.current_vast_items: dict[int, QueueItem] = {}
+        self._vast_worker_tasks: dict[int, asyncio.Future] = {}
+        self._vast_next_worker_id: int = 0
+        self._vast_wakeup: asyncio.Event = asyncio.Event()
         # Modal 학습 결과 다운로드는 GPU 워커 수와 무관하게 즉시 병렬 실행한다.
         self._modal_download_tasks: dict[str, asyncio.Task] = {}
         # 영상 후처리는 Comfy/Modal/LLM/챈섭 레인과 독립된 로컬 Vulkan 워커풀이다.
@@ -366,6 +374,9 @@ class QueueManager:
         self.fetch_real_image = None           # async def(filename, subfolder, img_type) -> bytes
         self.run_modal_workflow = None          # async def(workflow, ...) -> dict
         self.download_modal_artifacts = None    # async def(artifacts, progress_callback=...) -> dict
+        self.run_vast_workflow = None           # async def(workflow, ...) -> dict
+        self.download_vast_artifacts = None     # async def(artifacts, progress_callback=...) -> dict
+        self.is_vast_ready = None               # def() -> bool
         self.acquire_modal_warm_lease = None    # async def(reason=...) -> str | None
         self.release_modal_warm_lease = None    # async def(token, reason=...) -> bool
         # 삽화 생성 콜백 (server.py에서 주입)
@@ -608,6 +619,8 @@ class QueueManager:
             )
         ):
             asyncio.ensure_future(self._ensure_modal_workers())
+        if self._item_execution_area(item)[0] == "vast":
+            asyncio.ensure_future(self._ensure_vast_workers())
         if self._item_execution_area(item)[0] == "video_postprocess":
             asyncio.ensure_future(self._ensure_video_postprocess_worker())
         return item
@@ -661,6 +674,7 @@ class QueueManager:
             self._llm_wakeup.set()
             self._external_wakeup.set()
             self._modal_wakeup.set()
+            self._vast_wakeup.set()
             self._video_postprocess_wakeup.set()
         return cancelled
 
@@ -678,6 +692,7 @@ class QueueManager:
                     self._llm_wakeup.set()
                     self._external_wakeup.set()
                     self._modal_wakeup.set()
+                    self._vast_wakeup.set()
                     self._video_postprocess_wakeup.set()
                     return True
                 return False
@@ -716,6 +731,7 @@ class QueueManager:
             self._llm_wakeup.set()
             self._external_wakeup.set()
             self._modal_wakeup.set()
+            self._vast_wakeup.set()
             self._video_postprocess_wakeup.set()
         return cancelled
 
@@ -737,6 +753,7 @@ class QueueManager:
             self._llm_wakeup.set()
             self._external_wakeup.set()
             self._modal_wakeup.set()
+            self._vast_wakeup.set()
             self._video_postprocess_wakeup.set()
         return self._paused
 
@@ -756,6 +773,7 @@ class QueueManager:
             self._llm_wakeup.set()
             self._external_wakeup.set()
             self._modal_wakeup.set()
+            self._vast_wakeup.set()
             self._video_postprocess_wakeup.set()
 
     @staticmethod
@@ -812,7 +830,7 @@ class QueueManager:
 
     def _local_comfy_lane_allowed(self, item: QueueItem) -> bool:
         target, _parallel = self._comfy_execution_policy(item)
-        return target != MODAL_COMFY_TARGET
+        return target not in REMOTE_COMFY_TARGETS
 
     def _modal_comfy_lane_allowed(self, item: QueueItem) -> bool:
         task_key = self._comfy_task_key_for_item(item)
@@ -821,9 +839,16 @@ class QueueManager:
         target, parallel = self._comfy_execution_policy(item)
         return target == MODAL_COMFY_TARGET or parallel
 
+    def _vast_comfy_lane_allowed(self, item: QueueItem) -> bool:
+        task_key = self._comfy_task_key_for_item(item)
+        if task_key not in VAST_SUPPORTED_COMFY_TASK_KEYS or not self._vast_enabled():
+            return False
+        target, _parallel = self._comfy_execution_policy(item)
+        return target == VAST_COMFY_TARGET
+
     @staticmethod
     def _bind_comfy_execution_target(item: QueueItem, target: str) -> None:
-        if target not in ("local", MODAL_COMFY_TARGET):
+        if target not in ("local", MODAL_COMFY_TARGET, VAST_COMFY_TARGET):
             print(
                 "[QUEUE:COMFY_ALLOCATION] 실행 대상 바인딩 실패: "
                 f"item={item.id}, target={target!r}"
@@ -839,6 +864,8 @@ class QueueManager:
         """큐 실행 영역과 공급자를 반환한다. hybrid는 먼저 빈 실행 레인이 가져간다."""
         if item.type == "modal_lora_download":
             return "modal_download", "modal-volume"
+        if item.type == "vast_lora_download":
+            return "vast_download", "vast-sftp"
         if item.type == VIDEO_POSTPROCESS_TYPE:
             return "video_postprocess", "realesrgan-ncnn-vulkan"
         if item.type in LLM_TYPES:
@@ -847,6 +874,8 @@ class QueueManager:
         fixed_target = getattr(item, "comfy_execution_target", None)
         if fixed_target == MODAL_COMFY_TARGET:
             return "modal", "modal"
+        if fixed_target == VAST_COMFY_TARGET:
+            return "vast", "vast"
         if fixed_target == "local":
             return "gpu", "comfy"
 
@@ -885,6 +914,8 @@ class QueueManager:
             target, parallel = self._comfy_execution_policy(item)
             if target == MODAL_COMFY_TARGET:
                 return "modal", "modal"
+            if target == VAST_COMFY_TARGET:
+                return "vast", "vast"
             if parallel and self._modal_enabled():
                 return "comfy_parallel", "comfy+modal"
         return "gpu", provider or "local"
@@ -998,6 +1029,14 @@ class QueueManager:
                 task for task in self._modal_download_tasks.values()
                 if not task.done()
             ]),
+            "current_vasts": [
+                self._item_status_dict(item)
+                for _, item in sorted(self.current_vast_items.items())
+            ],
+            "vast_active_workers": len([
+                task for task in self._vast_worker_tasks.values() if not task.done()
+            ]),
+            "vast_target_workers": self._target_vast_workers(),
             "current_video_postprocess_items": [
                 self._item_status_dict(item)
                 for _, item in sorted(self.current_video_postprocess_items.items())
@@ -1220,6 +1259,8 @@ class QueueManager:
                     and self._modal_comfy_lane_allowed(item)
                 )
             ):
+                return True
+            if lane == "vast" and execution_area == "vast":
                 return True
             if lane == "video_postprocess" and execution_area == "video_postprocess":
                 return True
@@ -1494,6 +1535,7 @@ class QueueManager:
         self._llm_wakeup.set()
         self._external_wakeup.set()
         self._modal_wakeup.set()
+        self._vast_wakeup.set()
         self._video_postprocess_wakeup.set()
 
     # ─── Modal 원격 Comfy 워커 ─────────────────────────────
@@ -1509,6 +1551,43 @@ class QueueManager:
             print(f"[QUEUE:MODAL] 활성 설정 조회 실패, OFF 사용: {type(e).__name__}: {e}")
             traceback.print_exc()
             return False
+
+    def _vast_enabled(self) -> bool:
+        try:
+            config = self.get_config() if self.get_config else {}
+            enabled = config.get("vast_enabled", False)
+            if not isinstance(enabled, bool):
+                raise TypeError(f"vast_enabled는 bool이어야 합니다: {enabled!r}")
+            if not enabled:
+                return False
+            if not callable(self.is_vast_ready):
+                print("[QUEUE:VAST] 준비 상태 콜백이 없어 Vast 레인을 비활성화합니다.")
+                return False
+            ready = self.is_vast_ready()
+            if not isinstance(ready, bool):
+                raise TypeError(f"Vast 준비 상태는 bool이어야 합니다: {ready!r}")
+            return ready
+        except Exception as exc:
+            print(
+                "[QUEUE:VAST] 활성 상태 조회 실패, OFF 사용: "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            return False
+
+    async def notify_vast_availability_changed(self) -> None:
+        """Vast 생성/파괴 완료 시 워커 수와 대기열을 즉시 다시 맞춘다."""
+        try:
+            await self._ensure_vast_workers()
+            self._vast_wakeup.set()
+            asyncio.ensure_future(self._process_loop())
+            await self._notify_queue_updated()
+        except Exception as exc:
+            print(
+                "[QUEUE:VAST] 가용 상태 변경 처리 실패: "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
 
     def _should_prewarm_modal_illustration(self, item: QueueItem) -> bool:
         """LLM 삽화 빌드가 실제로 Modal 이미지를 만들 수 있을 때만 예열한다."""
@@ -1676,6 +1755,101 @@ class QueueManager:
             traceback.print_exc()
         finally:
             self.current_modal_items.pop(wid, None)
+
+    # ─── Vast 단일 원격 Comfy 워커 ─────────────────────────
+
+    def _target_vast_workers(self) -> int:
+        return 1 if self._vast_enabled() else 0
+
+    async def _ensure_vast_workers(self) -> None:
+        self._vast_worker_tasks = {
+            wid: task
+            for wid, task in self._vast_worker_tasks.items()
+            if not task.done()
+        }
+        target = self._target_vast_workers()
+        while len(self._vast_worker_tasks) < target:
+            wid = self._vast_next_worker_id
+            self._vast_next_worker_id += 1
+            self._vast_worker_tasks[wid] = asyncio.ensure_future(
+                self._vast_worker_loop(wid)
+            )
+            print(
+                f"[QUEUE:VAST] 원격 워커 {wid} 시작 "
+                f"(활성 {len(self._vast_worker_tasks)}/목표 {target})"
+            )
+        self._vast_wakeup.set()
+
+    def _vast_worker_should_exit(self, wid: int) -> bool:
+        target = self._target_vast_workers()
+        alive = sorted(
+            worker_id
+            for worker_id, task in self._vast_worker_tasks.items()
+            if not task.done()
+        )
+        return wid not in set(alive[:target])
+
+    def _pop_next_vast_item(self) -> Optional[QueueItem]:
+        pending = [
+            item
+            for item in self.items
+            if item.status == "pending"
+            and self._item_execution_area(item)[0] == "vast"
+            and self._vast_comfy_lane_allowed(item)
+            and self._dependencies_ready(item)
+        ]
+        if not pending:
+            return None
+        pending.sort(key=self._sort_key)
+        item = pending[0]
+        self._bind_comfy_execution_target(item, VAST_COMFY_TARGET)
+        item.status = "processing"
+        item.started_at = time.time()
+        item.progress = 0.0
+        return item
+
+    async def _vast_worker_loop(self, wid: int) -> None:
+        try:
+            while True:
+                self._vast_worker_tasks = {
+                    worker_id: task
+                    for worker_id, task in self._vast_worker_tasks.items()
+                    if not task.done()
+                }
+                if self._vast_worker_should_exit(wid):
+                    print(
+                        f"[QUEUE:VAST] 원격 워커 {wid} 종료 "
+                        "(Vast 미준비 또는 기능 OFF)"
+                    )
+                    return
+                if self._paused:
+                    self._vast_wakeup.clear()
+                    print(f"[QUEUE:VAST] 원격 워커 {wid} 일시정지 대기")
+                    await self._vast_wakeup.wait()
+                    continue
+                item = self._pop_next_vast_item()
+                if item is None:
+                    self._vast_wakeup.clear()
+                    if self._has_ready_pending("vast"):
+                        continue
+                    await self._vast_wakeup.wait()
+                    continue
+                self.current_vast_items[wid] = item
+                try:
+                    await self._run_item_pipeline(item, is_gpu=False)
+                finally:
+                    self.current_vast_items.pop(wid, None)
+        except asyncio.CancelledError:
+            print(f"[QUEUE:VAST] 원격 워커 {wid} 취소")
+            raise
+        except Exception as exc:
+            print(
+                f"[QUEUE:VAST] 원격 워커 {wid} 치명적 예외: "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+        finally:
+            self.current_vast_items.pop(wid, None)
 
     async def _enqueue_modal_artifact_download(
         self,
@@ -3289,7 +3463,7 @@ class QueueManager:
         base_folder = training_config.get("multi_img_folder_name", "soya_lora")
         folder = (
             f"{base_folder}/modal_jobs/{item.id}"
-            if CURRENT_COMFY_EXECUTION_TARGET.get() == MODAL_COMFY_TARGET
+            if CURRENT_COMFY_EXECUTION_TARGET.get() in REMOTE_COMFY_TARGETS
             else base_folder
         )
         gen_w = training_config.get("gen_w", 1024)
@@ -3415,7 +3589,7 @@ class QueueManager:
         base_folder = training_config.get("multi_img_folder_name", "soya_lora")
         folder = (
             f"{base_folder}/modal_jobs/{item.id}"
-            if CURRENT_COMFY_EXECUTION_TARGET.get() == MODAL_COMFY_TARGET
+            if CURRENT_COMFY_EXECUTION_TARGET.get() in REMOTE_COMFY_TARGETS
             else base_folder
         )
         gen_w = training_config.get("gen_w", 1024)
@@ -4258,7 +4432,7 @@ class QueueManager:
             base_folder = profile_settings.get("multi_img_folder_name", "soya_lora")
             folder = (
                 f"{base_folder}/modal_jobs/{item.id}/{profile}"
-                if CURRENT_COMFY_EXECUTION_TARGET.get() == MODAL_COMFY_TARGET
+                if CURRENT_COMFY_EXECUTION_TARGET.get() in REMOTE_COMFY_TARGETS
                 else base_folder
             )
             gen_w = profile_settings.get("gen_w", 1)
@@ -4524,6 +4698,132 @@ class QueueManager:
         반환값: (prompt_id, submit_result)
         """
         import aiohttp as _aiohttp
+        if CURRENT_COMFY_EXECUTION_TARGET.get() == VAST_COMFY_TARGET:
+            if not callable(self.run_vast_workflow):
+                print(
+                    "[QUEUE-MONITOR:VAST] 실행 실패: Vast 워크플로우 콜백 없음 "
+                    f"item={item.id}, type={item.type}"
+                )
+                raise RuntimeError("Vast 학습 워크플로우 콜백이 설정되지 않았습니다")
+            if not callable(self.download_vast_artifacts):
+                print(
+                    "[QUEUE-MONITOR:VAST] 실행 실패: Vast 다운로드 콜백 없음 "
+                    f"item={item.id}, type={item.type}"
+                )
+                raise RuntimeError("Vast LoRA 다운로드 콜백이 설정되지 않았습니다")
+            if not modal_input_paths:
+                print(
+                    "[QUEUE-MONITOR:VAST] 실행 실패: 학습 입력 경로 없음 "
+                    f"item={item.id}, type={item.type}"
+                )
+                raise ValueError("Vast 학습에 전송할 입력 경로가 없습니다")
+            if not modal_artifact_prefixes:
+                print(
+                    "[QUEUE-MONITOR:VAST] 실행 실패: LoRA 결과 경로 없음 "
+                    f"item={item.id}, type={item.type}"
+                )
+                raise ValueError("Vast 학습의 LoRA 결과 경로가 없습니다")
+
+            async def on_vast_progress(progress: dict) -> None:
+                detail = {**dict(progress or {}), **(extra_data or {})}
+                if detail.get("phase") == "all_complete":
+                    detail["phase"] = "training_complete"
+                    detail["percentage"] = 99
+                    detail["message"] = "Vast 학습 완료 · LoRA 다운로드 준비 중"
+                await self._notify_progress(item, detail)
+                if self.notify_frontend:
+                    await self.notify_frontend(event_type, detail)
+
+            async def on_vast_download(progress: dict) -> None:
+                detail = {**dict(progress or {}), **(extra_data or {})}
+                await self._notify_progress(item, detail)
+                if self.notify_frontend:
+                    await self.notify_frontend(
+                        event_type,
+                        {**detail, "message": "Vast LoRA 다운로드 중"},
+                    )
+
+            try:
+                await self._notify_progress(
+                    item,
+                    {
+                        "phase": "vast_running",
+                        "percentage": 1,
+                        **(extra_data or {}),
+                    },
+                )
+                if self.notify_frontend:
+                    await self.notify_frontend(
+                        event_type,
+                        {
+                            "phase": "vast_running",
+                            "message": "Vast 머신에서 학습 중",
+                            **(extra_data or {}),
+                        },
+                    )
+                result = await self.run_vast_workflow(
+                    workflow,
+                    input_paths=modal_input_paths,
+                    artifact_prefixes=modal_artifact_prefixes,
+                    require_images=False,
+                    progress_callback=on_vast_progress,
+                )
+                prompt_id = str(result.get("prompt_id") or "")
+                if not prompt_id:
+                    print(
+                        "[QUEUE-MONITOR:VAST] 결과 검증 실패: prompt_id 없음 "
+                        f"item={item.id}, result={result!r}"
+                    )
+                    raise RuntimeError("Vast 학습 결과에 prompt_id가 없습니다")
+                artifacts = list(result.get("deferred_artifacts") or [])
+                if not artifacts:
+                    print(
+                        "[QUEUE-MONITOR:VAST] 결과 검증 실패: artifact 없음 "
+                        f"item={item.id}, prompt_id={prompt_id}, result={result!r}"
+                    )
+                    raise RuntimeError("Vast 학습 결과 다운로드 artifact가 없습니다")
+                download_result = await self.download_vast_artifacts(
+                    artifacts,
+                    progress_callback=on_vast_download,
+                )
+                if on_complete:
+                    on_complete()
+                if self.notify_frontend:
+                    await self.notify_frontend(
+                        event_type,
+                        {
+                            "phase": "all_complete",
+                            "message": "Vast 학습 및 LoRA 다운로드 완료",
+                            **(extra_data or {}),
+                        },
+                    )
+                print(
+                    "[QUEUE-MONITOR:VAST] 학습 및 다운로드 완료: "
+                    f"item={item.id}, type={item.type}, prompt_id={prompt_id}, "
+                    f"artifacts={len(download_result.get('artifacts') or [])}"
+                )
+                return prompt_id, {
+                    "vast": result,
+                    "download": download_result,
+                }
+            except Exception as exc:
+                print(
+                    "[QUEUE-MONITOR:VAST] 학습 실패: "
+                    f"item={item.id}, type={item.type}, "
+                    f"inputs={modal_input_paths!r}, artifacts={modal_artifact_prefixes!r}, "
+                    f"error={type(exc).__name__}: {exc}"
+                )
+                traceback.print_exc()
+                if self.notify_frontend:
+                    await self.notify_frontend(
+                        event_type,
+                        {
+                            "phase": "error",
+                            "message": f"{type(exc).__name__}: {exc}",
+                            **(extra_data or {}),
+                        },
+                    )
+                raise
         if CURRENT_COMFY_EXECUTION_TARGET.get() == MODAL_COMFY_TARGET:
             if not callable(self.run_modal_workflow):
                 print(

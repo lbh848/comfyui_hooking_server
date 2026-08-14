@@ -640,6 +640,9 @@
         .card-image-area .source-badge.source-modal {
             background: rgba(99,102,241,0.92);
         }
+        .card-image-area .source-badge.source-vast {
+            background: rgba(16,185,129,0.92);
+        }
         .card-image-area .source-badge.source-chansub {
             background: rgba(236,72,153,0.92);
         }
@@ -2242,6 +2245,7 @@
             padding: 0;
             border-top: 2px solid #a78bfa;
         }
+        .queue-lane.vast { border-top:2px solid #10b981; }
         .queue-lane.external { border-top:2px solid #38bdf8; }
         .queue-lane.background { border-top:2px solid #06b6d4; }
         .queue-modal-item {
@@ -10779,6 +10783,20 @@
         }
         .vast-launch-destroy:hover:not(:disabled) { filter: brightness(1.12); }
         .vast-launch-destroy:disabled { cursor: wait; opacity: 0.6; }
+        .vast-launch-actions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+        .vast-launch-favorite {
+            flex: 0 0 auto;
+            padding: 6px 10px;
+            border: 1px solid color-mix(in srgb, #fbbf24 65%, var(--border));
+            border-radius: 7px;
+            background: color-mix(in srgb, #fbbf24 16%, var(--surface2));
+            color: #fde68a;
+            font-size: 0.68rem;
+            font-weight: 800;
+            cursor: pointer;
+        }
+        .vast-launch-favorite:hover:not(:disabled) { filter: brightness(1.15); }
+        .vast-launch-favorite:disabled { cursor: default; opacity: 0.72; }
         .vast-launch-guard-grid {
             display: grid;
             grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -20968,7 +20986,7 @@
                         <section class="comfy-runtime-allocation-panel" id="comfy-runtime-allocation-panel" aria-labelledby="comfy-runtime-tab-allocation">
                             <div class="comfy-allocation-head">
                                 <div class="comfy-allocation-title">내부 Comfy 작업 배분</div>
-                                <div class="comfy-allocation-copy">기본 실행 대상을 선택합니다. 로컬 Comfy를 선택하고 MODAL 병렬 사용을 켜면 대기 작업을 먼저 비는 로컬 또는 MODAL 워커가 하나씩 가져갑니다. 같은 작업을 중복 실행하지 않습니다.</div>
+                                <div class="comfy-allocation-copy">기본 실행 대상을 로컬 Comfy·MODAL·VAST 중에서 선택합니다. VAST는 준비 완료된 머신 한 대에서 작업을 하나씩 실행합니다. 로컬 Comfy를 선택하고 MODAL 병렬 사용을 켜면 먼저 비는 로컬 또는 MODAL 워커가 작업을 가져가며, 같은 작업을 중복 실행하지 않습니다.</div>
                                 <div class="comfy-allocation-runtime-state" id="comfy-allocation-runtime-state">실행 상태 확인 중…</div>
                             </div>
                             <div class="comfy-allocation-list" id="comfy-allocation-list"></div>
@@ -21370,7 +21388,10 @@
                                             <strong id="vast-launch-progress-title">VAST 빌드 준비</strong>
                                             <span id="vast-launch-progress-state"></span>
                                         </div>
-                                        <button type="button" class="vast-launch-destroy" id="vast-launch-destroy-btn" onclick="vastDestroyActive()" hidden>즉시 파괴</button>
+                                        <div class="vast-launch-actions">
+                                            <button type="button" class="vast-launch-favorite" id="vast-launch-favorite-btn" onclick="vastFavoriteActive()" hidden>이 머신을 즐겨찾기에 등록</button>
+                                            <button type="button" class="vast-launch-destroy" id="vast-launch-destroy-btn" onclick="vastDestroyActive()" hidden>즉시 파괴</button>
+                                        </div>
                                     </div>
                                     <div class="vast-launch-guard-grid" aria-label="VAST 비용 보호 상태">
                                         <div class="vast-launch-guard-item">경과<strong id="vast-launch-elapsed">-</strong></div>
@@ -25895,11 +25916,13 @@
                 const main = document.createElement('div');
                 main.className = 'vast-offer-main';
                 const strong = document.createElement('strong');
-                strong.textContent = `${o.gpu_name || 'GPU'}${o.num_gpus && o.num_gpus > 1 ? ` ×${o.num_gpus}` : ''}`;
+                strong.textContent = `${o.favorite ? '★ ' : ''}${o.gpu_name || 'GPU'}${o.num_gpus && o.num_gpus > 1 ? ` ×${o.num_gpus}` : ''}`;
                 main.append(strong);
                 const meta = document.createElement('div');
                 meta.className = 'vast-offer-meta';
                 const metaItems = [
+                    o.machine_id ? `머신 #${o.machine_id}` : null,
+                    o.favorite ? '즐겨찾기 우선' : null,
                     o.verified ? 'verified' : 'unverified',
                     `VRAM ${o.gpu_ram_gb || 0}GB`,
                     `RAM ${o.cpu_ram_gb || 0}GB`,
@@ -26543,6 +26566,7 @@
             const comfyUrl = document.getElementById('vast-launch-comfy-url');
             const comfyLink = document.getElementById('vast-launch-comfy-link');
             const destroyBtn = document.getElementById('vast-launch-destroy-btn');
+            const favoriteBtn = document.getElementById('vast-launch-favorite-btn');
             const elapsedEl = document.getElementById('vast-launch-elapsed');
             const costEl = document.getElementById('vast-launch-cost');
             const rateEl = document.getElementById('vast-launch-rate');
@@ -26578,6 +26602,17 @@
                 destroyBtn.hidden = !(instanceId > 0);
                 destroyBtn.disabled = launch.state === 'destroying';
                 destroyBtn.textContent = launch.state === 'destroying' ? '파괴 확인 중…' : '즉시 파괴';
+            }
+            if (favoriteBtn) {
+                const instance = (window.__vastInstances || []).find(
+                    item => Number(item.id) === instanceId,
+                );
+                const isFavorite = instance?.favorite === true;
+                favoriteBtn.hidden = !(instanceId > 0);
+                favoriteBtn.disabled = launch.state === 'destroying' || isFavorite;
+                favoriteBtn.textContent = isFavorite
+                    ? '★ 즐겨찾기 등록됨'
+                    : '이 머신을 즐겨찾기에 등록';
             }
             if (elapsedEl) elapsedEl.textContent = launch.contract_started_at_epoch
                 ? vastFormatDuration(launch.elapsed_seconds)
@@ -26734,6 +26769,53 @@
             await vastDestroy(instanceId);
         }
 
+        async function vastFavoriteActive() {
+            const launch = window.__vastLastLaunch || {};
+            const instanceId = Number(launch.instance_id || 0);
+            if (!(instanceId > 0)) {
+                console.error('[VAST_FAVORITE] 활성 인스턴스 ID 없음:', launch);
+                showToast('즐겨찾기에 등록할 활성 Vast 인스턴스가 없습니다.', 'error');
+                return;
+            }
+            await vastFavoriteInstance(instanceId, document.getElementById('vast-launch-favorite-btn'));
+        }
+
+        async function vastFavoriteInstance(instanceId, button = null) {
+            if (!(Number(instanceId) > 0)) {
+                console.error('[VAST_FAVORITE] 잘못된 인스턴스 ID:', instanceId);
+                showToast('즐겨찾기에 등록할 Vast 인스턴스 ID가 올바르지 않습니다.', 'error');
+                return;
+            }
+            if (button) {
+                button.disabled = true;
+                button.textContent = '즐겨찾기 등록 중…';
+            }
+            try {
+                const result = await fetchJSON('/api/vast/favorites', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ instance_id: Number(instanceId) }),
+                });
+                const machineId = Number(result?.favorite?.machine_id || 0);
+                showToast(
+                    result?.added
+                        ? `Vast 머신 #${machineId} 즐겨찾기 등록 완료`
+                        : `Vast 머신 #${machineId}는 이미 즐겨찾기입니다.`,
+                    'success',
+                );
+                await vastLoadInstances();
+                if (vastOffers.length) await vastSearchOffers();
+                vastRenderLaunchSteps(window.__vastLastLaunch || {});
+            } catch (error) {
+                console.error('[VAST_FAVORITE] 등록 실패:', error);
+                showToast('Vast 머신 즐겨찾기 등록 실패: ' + (error.message || error), 'error');
+                if (button) {
+                    button.disabled = false;
+                    button.textContent = '이 머신을 즐겨찾기에 등록';
+                }
+            }
+        }
+
         // ── 인스턴스 목록/파괴 ──
         async function vastLoadInstances() {
             const container = document.getElementById('vast-instance-catalog');
@@ -26741,6 +26823,7 @@
             try {
                 const data = await fetchJSON('/api/vast/instances');
                 const rows = Array.isArray(data.instances) ? data.instances : [];
+                window.__vastInstances = rows;
                 if (!container) return;
                 container.replaceChildren();
                 if (!rows.length) {
@@ -26756,24 +26839,31 @@
                     const main = document.createElement('div');
                     main.className = 'vast-offer-main';
                     const strong = document.createElement('strong');
-                    strong.textContent = `#${i.id} ${i.gpu_name || 'GPU'}${i.label ? ` · ${i.label}` : ''}`;
+                    strong.textContent = `${i.favorite ? '★ ' : ''}#${i.id} ${i.gpu_name || 'GPU'}${i.label ? ` · ${i.label}` : ''}`;
                     const meta = document.createElement('div');
                     meta.className = 'vast-offer-meta';
-                    [i.actual_status ? `상태 ${i.actual_status}` : null, `cur ${i.cur_state || ''}`, i.dph_total ? `$${Number(i.dph_total).toFixed(3)}/hr` : null, i.status_msg ? `Vast: ${i.status_msg}` : null]
+                    [i.machine_id ? `머신 #${i.machine_id}` : null, i.actual_status ? `상태 ${i.actual_status}` : null, `cur ${i.cur_state || ''}`, i.dph_total ? `$${Number(i.dph_total).toFixed(3)}/hr` : null, i.status_msg ? `Vast: ${i.status_msg}` : null]
                         .filter(Boolean).forEach(t => { const s = document.createElement('span'); s.textContent = t; meta.append(s); });
                     main.append(strong, meta);
                     const actions = document.createElement('div');
                     actions.className = 'vast-offer-price';
+                    const favoriteBtn = document.createElement('button');
+                    favoriteBtn.type = 'button';
+                    favoriteBtn.textContent = i.favorite ? '★ 등록됨' : '즐겨찾기 등록';
+                    favoriteBtn.className = 'vast-launch-favorite';
+                    favoriteBtn.disabled = i.favorite === true;
+                    favoriteBtn.addEventListener('click', () => void vastFavoriteInstance(i.id, favoriteBtn));
                     const btn = document.createElement('button');
                     btn.type = 'button';
                     btn.textContent = '파괴';
                     btn.className = 'comfy-runtime-btn stop';
                     btn.style.cssText = 'padding:5px 10px; border-radius:7px;';
                     btn.addEventListener('click', () => void vastDestroy(i.id));
-                    actions.append(btn);
+                    actions.append(favoriteBtn, btn);
                     row.append(main, actions);
                     container.append(row);
                 }
+                vastRenderLaunchSteps(window.__vastLastLaunch || {});
             } catch (error) {
                 console.error('[VAST] 인스턴스 목록 조회 실패:', error);
                 if (container) container.innerHTML = `<div class="modal-lora-empty">인스턴스 목록 조회 실패: ${escapeHtml(String(error.message || error))}</div>`;
@@ -27998,14 +28088,19 @@
                 const isVideoPrompt = b.is_video_prompt === true;
                 const isScheduled = b.is_scheduled || false;
 
-                // 실행 출처 딱지: Modal=M, 챈섭=S, 로컬 GPU=배지 없음.
+                // 실행 출처 딱지: Modal=M, Vast=V, 챈섭=S, 로컬 GPU=배지 없음.
                 // execution_source가 없는 구 백업은 provider로 chansub 여부만 fallback.
                 const _src = String(info.execution_source || '').toLowerCase();
-                const sourceKind = (_src === 'modal' || _src === 'chansub')
+                const sourceKind = (_src === 'modal' || _src === 'vast' || _src === 'chansub')
                     ? _src
                     : (String(info.provider || '').toLowerCase() === 'chansub' ? 'chansub' : '');
+                const sourceTitle = sourceKind === 'modal'
+                    ? 'Modal 원격 ComfyUI 생성'
+                    : (sourceKind === 'vast' ? 'Vast 원격 ComfyUI 생성' : '챈섭 API 생성');
+                const legacySourceLetter = `${sourceKind === 'modal' ? 'M' : 'S'}`;
+                const sourceLetter = sourceKind === 'vast' ? 'V' : legacySourceLetter;
                 const sourceBadge = sourceKind
-                    ? `<span class="source-badge source-${sourceKind}" title="${sourceKind === 'modal' ? 'Modal 원격 ComfyUI 생성' : '챈섭 API 생성'}">${sourceKind === 'modal' ? 'M' : 'S'}</span>`
+                    ? `<span class="source-badge source-${sourceKind}" title="${sourceTitle}">${sourceLetter}</span>`
                     : '';
                 // animated 삽화: A 딱지(M 아래 고정 위치). 기본은 정지 poster(첫 프레임),
                 // 호버 시 원본(animated)으로 src 교체 → 한 번에 한 장만 움직여 력 방지.
@@ -31143,8 +31238,8 @@
                     const value = String(source[item.key] ?? '').trim().toLowerCase();
                     const allowedInstances = item.localInstances || [1, 2, 3];
                     const numericValue = Number(source[item.key]);
-                    normalized[item.key] = item.modalSupported && value === 'modal'
-                        ? 'modal'
+                    normalized[item.key] = item.modalSupported && ['modal', 'vast'].includes(value)
+                        ? value
                         : (allowedInstances.includes(numericValue)
                             ? numericValue
                             : (item.defaultInstance || 1));
@@ -31160,14 +31255,14 @@
             return Object.fromEntries(COMFY_TASK_DEFINITIONS.map(item => [
                 item.key,
                 item.modalSupported
-                    && allocations[item.key] !== 'modal'
+                    && !['modal', 'vast'].includes(allocations[item.key])
                     && source[item.key] === true,
             ]));
         }
 
         function comfyAllocationSyncModalParallel(item, select, checkbox, toggle) {
             if (!item.modalSupported || !checkbox || !toggle) return;
-            const modalPrimary = select.value === 'modal';
+            const modalPrimary = ['modal', 'vast'].includes(select.value);
             checkbox.disabled = modalPrimary;
             if (modalPrimary) {
                 checkbox.checked = false;
@@ -31175,7 +31270,7 @@
             }
             toggle.classList.toggle('disabled', modalPrimary);
             toggle.title = modalPrimary
-                ? '기본 실행 대상이 MODAL이므로 추가 MODAL 병렬 사용은 필요하지 않습니다.'
+                ? '기본 실행 대상이 원격 Comfy이므로 추가 MODAL 병렬 사용은 필요하지 않습니다.'
                 : '대기 작업을 선택한 로컬 Comfy와 MODAL이 먼저 비는 순서대로 나눠 처리합니다.';
         }
 
@@ -31211,6 +31306,10 @@
                     modalOption.value = 'modal';
                     modalOption.textContent = 'MODAL';
                     select.appendChild(modalOption);
+                    const vastOption = document.createElement('option');
+                    vastOption.value = 'vast';
+                    vastOption.textContent = 'VAST';
+                    select.appendChild(vastOption);
                 }
                 select.value = String(comfyTaskAllocations[item.key] || item.defaultInstance || 1);
 
@@ -31242,8 +31341,8 @@
                     controls.appendChild(localOnly);
                 }
                 select.addEventListener('change', () => {
-                    comfyTaskAllocations[item.key] = select.value === 'modal'
-                        ? 'modal'
+                    comfyTaskAllocations[item.key] = ['modal', 'vast'].includes(select.value)
+                        ? select.value
                         : Number(select.value);
                     comfyAllocationSyncModalParallel(
                         item,
@@ -31283,8 +31382,8 @@
                 const value = String(select?.value || comfyTaskAllocations[item.key]);
                 const allowedInstances = item.localInstances || [1, 2, 3];
                 const numericValue = Number(value);
-                result[item.key] = item.modalSupported && value === 'modal'
-                    ? 'modal'
+                result[item.key] = item.modalSupported && ['modal', 'vast'].includes(value)
+                    ? value
                     : (allowedInstances.includes(numericValue)
                         ? numericValue
                         : (item.defaultInstance || 1));
@@ -31299,7 +31398,7 @@
                 const select = document.getElementById(`setting-comfy-allocation-${item.key}`);
                 const checkbox = document.getElementById(`setting-comfy-modal-parallel-${item.key}`);
                 result[item.key] = item.modalSupported
-                    && select?.value !== 'modal'
+                    && !['modal', 'vast'].includes(select?.value)
                     && checkbox?.checked === true;
             }
             comfyTaskModalParallel = result;
@@ -31314,15 +31413,15 @@
             const running3 = !!comfyRuntimeStatuses[3]?.running;
             const runningIds = [running1 && 1, running2 && 2, running3 && 3].filter(Boolean);
             if (runningIds.length > 1) {
-                state.textContent = `Comfy ${runningIds.map(id => '#' + id).join(', ')} 실행 중 · 작업별 로컬 선택과 MODAL 선착순 배분을 적용합니다.`;
+                state.textContent = `Comfy ${runningIds.map(id => '#' + id).join(', ')} 실행 중 · 작업별 로컬·MODAL·VAST 배분을 적용합니다.`;
             } else if (running1) {
-                state.textContent = 'Comfy #1만 실행 중 · 로컬 대상 작업은 #1로 폴백하고 MODAL 대상은 원격 대기열을 사용합니다.';
+                state.textContent = 'Comfy #1만 실행 중 · 로컬 대상 작업은 #1로 폴백하고 MODAL·VAST 대상은 각 원격 대기열을 사용합니다.';
             } else if (running2) {
-                state.textContent = 'Comfy #2만 실행 중 · 로컬 대상 작업은 #2로 폴백하고 MODAL 대상은 원격 대기열을 사용합니다.';
+                state.textContent = 'Comfy #2만 실행 중 · 로컬 대상 작업은 #2로 폴백하고 MODAL·VAST 대상은 각 원격 대기열을 사용합니다.';
             } else if (running3) {
-                state.textContent = 'Comfy #3만 실행 중 · 로컬 대상 작업은 #3로 폴백하고 MODAL 대상은 원격 대기열을 사용합니다.';
+                state.textContent = 'Comfy #3만 실행 중 · 로컬 대상 작업은 #3로 폴백하고 MODAL·VAST 대상은 각 원격 대기열을 사용합니다.';
             } else {
-                state.textContent = '실행 중인 로컬 관리 인스턴스 없음 · 로컬은 선택 포트, MODAL 대상은 원격 대기열을 사용합니다.';
+                state.textContent = '실행 중인 로컬 관리 인스턴스 없음 · 로컬은 선택 포트, MODAL·VAST 대상은 각 원격 대기열을 사용합니다.';
             }
         }
 
@@ -47029,13 +47128,13 @@
             const stepEl = document.getElementById('lora-progress-step');
             const timeEl = document.getElementById('lora-progress-time');
 
-            if (phase === 'preparing' || phase === 'modal_running' || phase === 'modal_syncing') {
+            if (phase === 'preparing' || phase === 'modal_running' || phase === 'modal_syncing' || phase === 'vast_running') {
                 if (phaseEl) phaseEl.textContent = '준비 중';
                 if (pctEl) pctEl.textContent = '';
                 if (barEl) barEl.style.width = '0%';
                 if (stepEl) stepEl.textContent = data.message || '';
                 if (timeEl) timeEl.textContent = '';
-            } else if (phase === 'modal_downloading' || phase === 'modal_download_complete') {
+            } else if (phase === 'modal_downloading' || phase === 'modal_download_complete' || phase === 'vast_downloading') {
                 const pct = Math.round(Number(data.percentage || 0));
                 if (phaseEl) phaseEl.textContent = phase === 'modal_download_complete' ? 'LoRA 다운로드 완료' : 'LoRA 다운로드 중';
                 if (pctEl) pctEl.textContent = pct + '%';
@@ -57023,13 +57122,13 @@
                 : '';
             if (charEl) charEl.textContent = charInfo;
 
-            if (phase === 'preparing' || phase === 'modal_running' || phase === 'modal_syncing') {
+            if (phase === 'preparing' || phase === 'modal_running' || phase === 'modal_syncing' || phase === 'vast_running') {
                 if (phaseEl) phaseEl.textContent = '준비 중';
                 if (pctEl) pctEl.textContent = '';
                 if (barEl) barEl.style.width = '0%';
                 if (stepEl) stepEl.textContent = data.message || '';
                 if (timeEl) timeEl.textContent = '';
-            } else if (phase === 'modal_downloading' || phase === 'modal_download_complete') {
+            } else if (phase === 'modal_downloading' || phase === 'modal_download_complete' || phase === 'vast_downloading') {
                 const pct = Math.round(Number(data.percentage || 0));
                 if (phaseEl) phaseEl.textContent = phase === 'modal_download_complete' ? 'LoRA 다운로드 완료' : 'LoRA 다운로드 중';
                 if (pctEl) pctEl.textContent = pct + '%';
@@ -83223,7 +83322,7 @@
                             } else if (d.step !== undefined) {
                                 statusText = '학습 step ' + d.step;
                             }
-                        } else if (d.phase === 'modal_downloading' || d.phase === 'modal_download_queued') {
+                        } else if (d.phase === 'modal_downloading' || d.phase === 'modal_download_queued' || d.phase === 'vast_downloading') {
                             statusText = d.phase === 'modal_download_queued' ? '다운로드 대기' : '다운로드';
                             const done = Number(d.downloaded_bytes || 0);
                             const total = Number(d.total_bytes || 0);
@@ -83836,6 +83935,7 @@
             restore_manual: '수동 생성',
             data_patch_utility: '데이터 패치',
             modal_lora_download: 'Modal 다운로드',
+            vast_lora_download: 'Vast 다운로드',
         };
 
         const _queueAreaDefinitions = [
@@ -83843,6 +83943,7 @@
             {key: 'hybrid', icon: '⚡', title: '동적 배분', note: '먼저 빈 로컬 GPU/Modal/챈섭이 실행'},
             {key: 'gpu', icon: '🖥️', title: 'GPU', note: '로컬 ComfyUI 작업'},
             {key: 'modal', icon: '☁️', title: 'Modal GPU', note: '원격 ComfyUI 작업'},
+            {key: 'vast', icon: '⭐', title: 'Vast GPU', note: '준비된 머신의 원격 ComfyUI 작업'},
             {key: 'background', icon: '⚙️', title: '백그라운드 처리', note: 'Modal 다운로드 · 영상 업스케일/AVIF 변환'},
             {key: 'external', icon: '☁️', title: '외부 서비스', note: '챈섭 API 작업'},
         ];
@@ -83852,6 +83953,7 @@
             // 로컬 Comfy·Modal 병렬 대기 작업은 실제 워커가 claim하기 전까지
             // 특정 GPU 소속이 아니므로 동적 배분 레인에 표시한다.
             if (area === 'comfy_parallel') return 'hybrid';
+            if (area === 'vast_download') return 'background';
             if (area === 'modal_download' || area === 'video_postprocess') return 'background';
             return _queueAreaDefinitions.some(def => def.key === area) ? area : 'gpu';
         }
@@ -84043,7 +84145,7 @@
                     progressLabel = phaseLabel + ' <span style="font-size:0.65rem;color:var(--text3);">' + cur + '/' + tot + '</span>';
                 } else if (d.phase === 'training' && d.step !== undefined && d.total) {
                     progressLabel = pct + '% <span style="font-size:0.65rem;color:var(--text3);">' + d.step + '/' + d.total + '</span>';
-                } else if (d.phase === 'modal_downloading' || d.phase === 'modal_download_queued') {
+                } else if (d.phase === 'modal_downloading' || d.phase === 'modal_download_queued' || d.phase === 'vast_downloading') {
                     const done = Number(d.downloaded_bytes || 0);
                     const total = Number(d.total_bytes || 0);
                     progressLabel = (d.phase === 'modal_download_queued' ? '다운로드 대기' : pct + '%');

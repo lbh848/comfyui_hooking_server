@@ -5,6 +5,7 @@ import pytest
 from comfy_allocation import (
     COMFY_TASK_KEYS,
     MODAL_COMFY_TARGET,
+    VAST_COMFY_TARGET,
     ComfyTaskAllocationValidationError,
     normalize_comfy_task_allocations,
     normalize_comfy_task_modal_parallel,
@@ -121,6 +122,34 @@ def test_modal_is_rejected_for_local_only_tasks(task_key: str) -> None:
         normalize_comfy_task_allocations({task_key: "modal"})
 
 
+@pytest.mark.parametrize(
+    "task_key",
+    (
+        "illustration",
+        "restore_regenerate",
+        "asset_generation",
+        "qwen_edit",
+        "asset_lora_training",
+        "bot_lora_training",
+        "instance_lora",
+        "video_generation",
+    ),
+)
+def test_vast_is_accepted_where_modal_is_supported(task_key: str) -> None:
+    allocations = normalize_comfy_task_allocations({task_key: "VAST"})
+
+    assert allocations[task_key] == VAST_COMFY_TARGET
+
+
+@pytest.mark.parametrize(
+    "task_key",
+    ("tag_analysis", "outfit", "face_extract", "utility_debug"),
+)
+def test_vast_is_rejected_for_local_only_tasks(task_key: str) -> None:
+    with pytest.raises(ComfyTaskAllocationValidationError, match="Vast"):
+        normalize_comfy_task_allocations({task_key: "vast"})
+
+
 def test_modal_parallel_is_allowed_only_with_local_primary_target() -> None:
     local_allocations = normalize_comfy_task_allocations({"illustration": 2})
     modal_allocations = normalize_comfy_task_allocations({"illustration": "modal"})
@@ -143,4 +172,16 @@ def test_local_instance_selection_rejects_modal_primary_target() -> None:
     allocations = normalize_comfy_task_allocations({"illustration": "modal"})
 
     with pytest.raises(ComfyTaskAllocationValidationError, match="Modal 전용"):
+        select_comfy_instance(allocations, "illustration", {1: True, 2: True})
+
+
+def test_vast_primary_disables_modal_parallel_and_local_selection() -> None:
+    allocations = normalize_comfy_task_allocations({"illustration": "vast"})
+    parallel = normalize_comfy_task_modal_parallel(
+        {"illustration": True},
+        allocations=allocations,
+    )
+
+    assert parallel["illustration"] is False
+    with pytest.raises(ComfyTaskAllocationValidationError, match="Vast 전용"):
         select_comfy_instance(allocations, "illustration", {1: True, 2: True})

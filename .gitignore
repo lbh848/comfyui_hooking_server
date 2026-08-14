@@ -92,3 +92,4 @@ vast_ssh_key.pub
 # Vast 비용 보호/재시작 복구 상태(런타임 생성)
 /runtime/vast_launch_guard.json
 /runtime/vast_launch_guard.json.tmp
+/runtime/vast_machine_favorites.json
