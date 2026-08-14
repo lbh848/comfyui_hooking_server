@@ -398,6 +398,9 @@ class VastService:
                 print(f"[VAST] SSH 키 부착 성공(시도 {attempt + 1}): instance={instance_id}")
                 return
             except VastApiError as exc:
+                if "already associated" in str(exc):
+                    print(f"[VAST] SSH 키 이미 등록됨(성공으로 간주): {instance_id}")
+                    return
                 last_error = exc
                 print(
                     f"[VAST] SSH 키 부착 재시도({attempt + 1}/6): "
@@ -552,11 +555,25 @@ class VastService:
             else:
                 url = src["url"]
             dest = f"{COMFY_ROOT_REMOTE}/models/{m['key']}"
+            expected = int(m.get("size_bytes") or 0)
+            # 이미 완전히 받은 파일은 스킵(중단 재개용).
             lines.append(f"mkdir -p \"$(dirname \"{dest}\")\"")
-            lines.append(
-                f"curl -L --fail --retry 3 -o \"{dest}\" \"{url}\" "
-                f"|| echo \"FAIL {m['key']}\" >> {MODELS_DONE_FLAG}.fail"
-            )
+            if expected > 0:
+                lines.append(
+                    f"if [ -f \"{dest}\" ] && [ \"$(stat -c%s \"{dest}\" 2>/dev/null "
+                    f"|| echo 0)\" = \"{expected}\" ]; then "
+                    f"echo \"SKIP {m['key']}\"; else ("
+                )
+                lines.append(
+                    f"  curl -L --fail --retry 3 -o \"{dest}\" \"{url}\" "
+                    f"|| echo \"FAIL {m['key']}\" >> {MODELS_DONE_FLAG}.fail"
+                )
+                lines.append("); fi")
+            else:
+                lines.append(
+                    f"curl -L --fail --retry 3 -o \"{dest}\" \"{url}\" "
+                    f"|| echo \"FAIL {m['key']}\" >> {MODELS_DONE_FLAG}.fail"
+                )
         lines.append(f"date > {MODELS_DONE_FLAG}")
         script = "\n".join(lines) + "\n"
 
@@ -565,7 +582,12 @@ class VastService:
             sftp = ssh.open_sftp()
             with sftp.open("/tmp/soya_download.sh", "w") as fh:
                 fh.write(script)
-            ssh.exec_command("chmod +x /tmp/soya_download.sh && nohup /tmp/soya_download.sh")
+            # setsid+리다이렉트로 SSH 채널 종료와 프로세스 생명주기를 분리한다.
+            ssh.exec_command(
+                "chmod +x /tmp/soya_download.sh && "
+                "setsid nohup /tmp/soya_download.sh "
+                "> /tmp/soya_download.log 2>&1 < /dev/null &"
+            )
             import time
 
             deadline = time.time() + HEALTH_TIMEOUT_SECONDS * 4
