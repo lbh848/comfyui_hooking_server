@@ -777,6 +777,9 @@ def _extract_animation_frames(
 
 
 def _verify_animation(path: Path, expected_frames: int) -> None:
+    # WebP(libwebp)는 직전 프레임과 동일한 프레임을 병합하므로 출력 프레임 수가
+    # 입력 PNG 수보다 적을 수 있다. 프레임 수 일치는 보지 않고, 비애니메이션
+    # 출력(정적 1장)과 열 수 없는 깨진 파일만 잡는다.
     try:
         with Image.open(path) as image:
             animated = bool(getattr(image, "is_animated", False))
@@ -788,13 +791,18 @@ def _verify_animation(path: Path, expected_frames: int) -> None:
         )
         traceback.print_exc()
         raise
-    if not animated or frames != expected_frames:
+    if not animated:
         print(
-            "[VIDEO:ENCODE] 출력 애니메이션 검증 실패: "
-            f"path={str(path)!r}, animated={animated}, "
-            f"expected_frames={expected_frames}, actual_frames={frames}"
+            "[VIDEO:ENCODE] 출력 애니메이션 검증 실패(비애니메이션 출력): "
+            f"path={str(path)!r}, animated={animated}, frames={frames}"
         )
-        raise RuntimeError("영상 후처리 결과의 프레임 검증에 실패했습니다")
+        raise RuntimeError("영상 후처리 결과가 애니메이션이 아닙니다")
+    if frames != expected_frames:
+        print(
+            "[VIDEO:ENCODE] 프레임 수 참고(WebP 중복 프레임 병합 정상): "
+            f"path={str(path)!r}, expected_frames={expected_frames}, "
+            f"actual_frames={frames}"
+        )
 
 
 def _encode_command(

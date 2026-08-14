@@ -1145,8 +1145,8 @@ def session_manifest(session_id: str) -> str:
     return "\n".join(lines)
 
 
-def session_slots_by_lookup_key(lookup_key: str) -> list[int]:
-    """Return only the ready slot numbers for the short HTTPS manifest route."""
+def ready_session_id_by_lookup_key(lookup_key: str) -> str:
+    """Resolve a compact lookup key to one ready canonical session ID."""
     key = str(lookup_key or "").strip().lower()
     if not _LOOKUP_KEY_RE.fullmatch(key):
         raise ValueError(f"invalid illustration lookup key: {key!r}")
@@ -1169,6 +1169,16 @@ def session_slots_by_lookup_key(lookup_key: str) -> list[int]:
         raise RuntimeError(
             f"illustration session not ready: key={key}, status={session.get('status')}"
         )
+    return session_id
+
+
+def session_slots_by_lookup_key(lookup_key: str) -> list[int]:
+    """Return only the ready slot numbers for the short HTTPS manifest route."""
+    key = str(lookup_key or "").strip().lower()
+    session_id = ready_session_id_by_lookup_key(key)
+    session = get_session(session_id)
+    if not session:
+        raise KeyError(f"illustration session not found: key={key}")
 
     items = session.get("items") or []
     slots: list[int] = []

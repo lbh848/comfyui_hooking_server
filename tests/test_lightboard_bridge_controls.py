@@ -22,12 +22,45 @@ class _JsonRequest:
 
 
 @pytest.mark.asyncio
-async def test_bridge_health_advertises_bot_selection_and_easy_edit():
+async def test_bridge_health_advertises_slot_animation_metadata():
     response = await server.handle_api_illustration_context_bridge_health(None)
     payload = json.loads(response.text)
-    assert payload["version"] == 7
+    assert payload["version"] == 8
     assert payload["bot_selection"] is True
     assert payload["easy_edit"] is True
+    assert payload["slot_animation_metadata"] is True
+
+
+@pytest.mark.asyncio
+async def test_easy_edit_queue_rejects_animated_slot(monkeypatch, tmp_path):
+    session_id = "animated_easy_edit_session_123456"
+    prompt_id = "animated-easy-edit-prompt"
+    monkeypatch.setattr(pipeline, "SESSION_DIR", str(tmp_path / "sessions"))
+    pipeline.create_session(session_id, "context")
+    pipeline.set_session_result(
+        session_id,
+        [{
+            "slot": 2,
+            "raw_positive": "animated",
+            "raw_negative": "",
+            "backup_name": "animated-source",
+            "animated": True,
+        }],
+        [b"animated-image"],
+    )
+    item = SimpleNamespace(params={
+        "prompt_id": prompt_id,
+        "payload": {
+            "session_id": session_id,
+            "slot": 2,
+            "direction": "배경을 바꿔줘",
+        },
+    })
+
+    with pytest.raises(RuntimeError, match="애니메이션 삽화"):
+        await server.process_illustration_easy_edit_queue_item(item)
+
+    pipeline._SESSIONS.pop(session_id, None)
 
 
 @pytest.mark.asyncio

@@ -5022,7 +5022,10 @@ async def process_prompt(prompt_id: str, incoming_prompt: dict, raw_body: dict, 
                 regen_session_id,
                 regen_slot,
                 img_bytes,
-                item_updates={"backup_name": _backup_name},
+                item_updates={
+                    "backup_name": _backup_name,
+                    "animated": _detect_illustration_bridge_image_animation(img_bytes),
+                },
             ):
                 print(
                     f"[ILLUST_CONTEXT] 재생성 이미지는 반환하지만 캐시 갱신 실패: "
@@ -5900,7 +5903,11 @@ async def process_illustration_context_queue_item(item) -> dict:
         successful_images = []
         for descriptor, image_bytes in zip(raw_items, images):
             if image_bytes:
-                successful_items.append(descriptor)
+                successful_descriptor = copy.deepcopy(descriptor)
+                successful_descriptor["animated"] = (
+                    _detect_illustration_bridge_image_animation(image_bytes)
+                )
+                successful_items.append(successful_descriptor)
                 successful_images.append(image_bytes)
 
         if not successful_images:
@@ -6021,10 +6028,36 @@ async def handle_api_illustration_context_manifest(request: web.Request) -> web.
 
 
 async def handle_api_illustration_context_short_slots(request: web.Request) -> web.Response:
-    """Return a compact slot array for Risu Lua's 120-character HTTPS request limit."""
+    """Return compact slot data for Risu Lua's 120-character HTTPS request limit.
+
+    The legacy route remains a plain slot array.  The opt-in ``?m=1`` response
+    adds only the slots that currently contain animated image bytes so v49 can
+    hide easy edit without adding one request per illustration.
+    """
     lookup_key = str(request.match_info.get("key") or "").strip().lower()
     try:
         slots = illustration_context_pipeline.session_slots_by_lookup_key(lookup_key)
+        query = getattr(request, "query", {}) or {}
+        if str(query.get("m") or "") == "1":
+            session_id = illustration_context_pipeline.ready_session_id_by_lookup_key(
+                lookup_key
+            )
+            animated_slots = []
+            for slot in slots:
+                descriptor = illustration_context_pipeline.session_item_by_slot(
+                    session_id,
+                    slot,
+                )
+                if _illustration_session_slot_is_animated(
+                    session_id,
+                    slot,
+                    descriptor=descriptor,
+                ):
+                    animated_slots.append(slot)
+            return web.json_response({
+                "slots": slots,
+                "animated": animated_slots,
+            })
         return web.json_response(slots)
     except ValueError as e:
         print(f"[ILLUST_CONTEXT:SHORT_MANIFEST] invalid: key={lookup_key!r}, error={e}")
@@ -6049,11 +6082,12 @@ async def handle_api_illustration_context_bridge_health(request: web.Request) ->
     return web.json_response({
         "ok": True,
         "service": "illustration_context_bridge",
-        "version": 7,
+        "version": 8,
         "prompt_batch": True,
         "bot_selection": True,
         "easy_edit": True,
         "short_slot_manifest": True,
+        "slot_animation_metadata": True,
         "lookup_key_length": 24,
         "max_slot_manifest_count": illustration_context_pipeline.MAX_ILLUSTRATION_SLOT_COUNT,
         "progress_phases": ["call1", "call2", "call2_plan", "call2_keyvis", "call2_detail", "call2_authority_audit", "call2_fallback", "call3", "multi_char_mask", "enqueue", "generating", "retrying", "regenerating", "ready", "error"],
@@ -6218,26 +6252,139 @@ async def handle_api_illustration_context_bridge_session(request: web.Request) -
         return web.json_response({"error": "bridge_session_failed"}, status=500)
 
 
+_ILLUSTRATION_BRIDGE_IMAGE_HEADERS = {
+    "Cache-Control": "no-store",
+    "X-Content-Type-Options": "nosniff",
+}
+
+
+def _detect_illustration_bridge_image_content_type(image_bytes: bytes) -> str | None:
+    """허용한 이미지 컨테이너를 매직 바이트와 최소 구조로 판별한다."""
+    if image_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if image_bytes[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif"
+    if (
+        len(image_bytes) >= 12
+        and image_bytes[:4] == b"RIFF"
+        and image_bytes[8:12] == b"WEBP"
+    ):
+        return "image/webp"
+    if len(image_bytes) < 16 or image_bytes[4:8] != b"ftyp":
+        return None
+
+    # AVIF는 ISO BMFF의 ftyp box에서 avif(정지/일반) 또는 avis(시퀀스)를
+    # major/compatible brand로 선언한다. 단순 문자열 포함 여부가 아니라 box 경계를
+    # 확인해 임의 데이터가 image/avif로 승격되지 않게 한다.
+    box_size = int.from_bytes(image_bytes[:4], "big")
+    brand_start = 8
+    if box_size == 1:
+        if len(image_bytes) < 24:
+            return None
+        box_size = int.from_bytes(image_bytes[8:16], "big")
+        brand_start = 16
+    elif box_size == 0:
+        return None
+    if (
+        box_size < brand_start + 8
+        or box_size > len(image_bytes)
+        or box_size > 4096
+        or (box_size - (brand_start + 8)) % 4 != 0
+    ):
+        return None
+    brands = [image_bytes[brand_start:brand_start + 4]]
+    brands.extend(
+        image_bytes[offset:offset + 4]
+        for offset in range(brand_start + 8, box_size, 4)
+    )
+    if any(brand in (b"avif", b"avis") for brand in brands):
+        return "image/avif"
+    return None
+
+
+def _detect_illustration_bridge_image_animation(image_bytes: bytes) -> bool:
+    """Return whether allowed illustration bytes contain two or more frames."""
+    content_type = _detect_illustration_bridge_image_content_type(image_bytes)
+    if content_type is None:
+        print(
+            "[ILLUST_CONTEXT:MEDIA] 애니메이션 판별 불가 - 허용하지 않은 형식: "
+            f"bytes={len(image_bytes or b'')}, prefix={(image_bytes or b'')[:16].hex()}"
+        )
+        return False
+    try:
+        with Image.open(BytesIO(image_bytes)) as image:
+            return bool(getattr(image, "is_animated", False)) and int(
+                getattr(image, "n_frames", 1)
+            ) >= 2
+    except Exception as e:
+        print(
+            f"[ILLUST_CONTEXT:MEDIA] 애니메이션 판별 실패: "
+            f"content_type={content_type}, bytes={len(image_bytes)}, error={e}"
+        )
+        traceback.print_exc()
+        return False
+
+
+def _illustration_session_slot_is_animated(
+    session_id: str,
+    slot: int,
+    *,
+    descriptor: dict | None = None,
+) -> bool:
+    """Use persisted metadata first, then inspect the current in-memory bytes."""
+    if int(slot) == -1 and os.environ.get("ILLUST_KEYVIS_GIF_TEST") == "1":
+        return True
+    item = descriptor
+    if not isinstance(item, dict):
+        item = illustration_context_pipeline.session_item_by_slot(session_id, slot)
+    if isinstance(item, dict) and isinstance(item.get("animated"), bool):
+        return item["animated"]
+    image_bytes = illustration_context_pipeline.session_image_by_slot(session_id, slot)
+    if image_bytes is None:
+        print(
+            f"[ILLUST_CONTEXT:MEDIA] 애니메이션 판별용 이미지 없음: "
+            f"session={session_id}, slot={slot}"
+        )
+        return False
+    return _detect_illustration_bridge_image_animation(image_bytes)
+
+
 async def handle_api_illustration_context_bridge_image(request: web.Request) -> web.Response:
     """준비된 세션의 한 슬롯 이미지 bytes를 반환한다."""
     session_id = str(request.match_info.get("sid") or "")
     if not _valid_illustration_context_bridge_session_id(session_id):
         print(f"[ILLUST_CONTEXT:BRIDGE] 잘못된 세션 ID: {session_id!r}")
-        return web.json_response({"error": "invalid_session_id"}, status=400)
+        return web.json_response(
+            {"error": "invalid_session_id"},
+            status=400,
+            headers=_ILLUSTRATION_BRIDGE_IMAGE_HEADERS,
+        )
     try:
         slot = int(request.match_info.get("slot"))
     except Exception as e:
         print(f"[ILLUST_CONTEXT:BRIDGE] 슬롯 파싱 실패: session={session_id}, error={e}")
-        return web.json_response({"error": "invalid_slot"}, status=400)
+        return web.json_response(
+            {"error": "invalid_slot"},
+            status=400,
+            headers=_ILLUSTRATION_BRIDGE_IMAGE_HEADERS,
+        )
     try:
         image_bytes = illustration_context_pipeline.session_image_by_slot(session_id, slot)
     except Exception as e:
         print(f"[ILLUST_CONTEXT:BRIDGE] 이미지 응답 실패: session={session_id}, slot={slot}, error={e}")
         traceback.print_exc()
-        return web.json_response({"error": "bridge_image_failed"}, status=500)
+        return web.json_response(
+            {"error": "bridge_image_failed"},
+            status=500,
+            headers=_ILLUSTRATION_BRIDGE_IMAGE_HEADERS,
+        )
     if image_bytes is None:
         print(f"[ILLUST_CONTEXT:BRIDGE] 이미지 없음: session={session_id}, slot={slot}")
-        return web.json_response({"error": "image_not_ready_or_missing"}, status=404)
+        return web.json_response(
+            {"error": "image_not_ready_or_missing"},
+            status=404,
+            headers=_ILLUSTRATION_BRIDGE_IMAGE_HEADERS,
+        )
     # 테스트 토글: slot -1(키비주얼) 요청이 오면 저장된 PNG 대신 2프레임 테스트 GIF를
     # 반환한다. ILLUST_KEYVIS_GIF_TEST=1 일 때만 작동하며, 평소엔 영향이 없다. 생성·저장
     # 경로는 건드리지 않고 응답만 치환하므로 토글을 끄면 즉시 원래 PNG로 돌아간다.
@@ -6246,16 +6393,24 @@ async def handle_api_illustration_context_bridge_image(request: web.Request) -> 
         return web.Response(
             body=_test_keyvis_gif_bytes(),
             content_type="image/gif",
-            headers={"Cache-Control": "no-store"},
+            headers=_ILLUSTRATION_BRIDGE_IMAGE_HEADERS,
         )
-    # 실제 바이트 형식을 감지해 MIME을 정한다. slot -1(키비주얼)은 GIF 애니메이션일 수 있고,
-    # 일반 장면 슬롯은 PNG다. content_type을 고정하면 GIF 원본도 image/png로 나가 브라우저가
-    # 스니핑에 의존하게 되므로 매직바이트로 판별한다.
-    content_type = "image/gif" if image_bytes[:6] in (b"GIF87a", b"GIF89a") else "image/png"
+    content_type = _detect_illustration_bridge_image_content_type(image_bytes)
+    if content_type is None:
+        prefix_hex = image_bytes[:16].hex()
+        print(
+            f"[ILLUST_CONTEXT:BRIDGE] 허용하지 않은 이미지 형식 차단: "
+            f"session={session_id}, slot={slot}, bytes={len(image_bytes)}, prefix={prefix_hex}"
+        )
+        return web.json_response(
+            {"error": "unsupported_image_format"},
+            status=415,
+            headers=_ILLUSTRATION_BRIDGE_IMAGE_HEADERS,
+        )
     return web.Response(
         body=image_bytes,
         content_type=content_type,
-        headers={"Cache-Control": "no-store"},
+        headers=_ILLUSTRATION_BRIDGE_IMAGE_HEADERS,
     )
 
 
@@ -7586,7 +7741,10 @@ async def _serve_priority_reservation_for_illustration_slot(
         session_id,
         slot,
         image_bytes,
-        item_updates={"backup_name": scheduled_name},
+        item_updates={
+            "backup_name": scheduled_name,
+            "animated": _detect_illustration_bridge_image_animation(image_bytes),
+        },
     ):
         print(
             f"[ILLUST_CONTEXT] 예약 이미지는 반환하지만 세션 캐시 갱신 실패: "
@@ -7715,6 +7873,19 @@ async def handle_prompt(request: web.Request) -> web.Response:
             )
             if descriptor is None:
                 return web.json_response({"error": "illustration slot not found"}, status=404)
+            if _illustration_session_slot_is_animated(
+                session_id,
+                slot,
+                descriptor=descriptor,
+            ):
+                print(
+                    f"[ILLUST_CONTEXT:EDIT] 애니메이션 슬롯 편집 요청 차단: "
+                    f"session={session_id}, slot={slot}"
+                )
+                return web.json_response(
+                    {"error": "animated illustration easy edit is not supported"},
+                    status=409,
+                )
             save_node = find_save_image_node(prompt_data)
             prompts[prompt_id] = {
                 "status": "running",
@@ -12567,7 +12738,10 @@ async def process_illustration_remote_regenerate(
             session_id,
             slot,
             image_bytes,
-            item_updates={"backup_name": new_backup_name},
+            item_updates={
+                "backup_name": new_backup_name,
+                "animated": _detect_illustration_bridge_image_animation(image_bytes),
+            },
         ):
             raise RuntimeError(
                 f"원격 {operation_label} 이미지를 세션 슬롯에 반영하지 못했습니다"
@@ -12636,6 +12810,12 @@ async def process_illustration_easy_edit_queue_item(item) -> dict:
         descriptor = illustration_context_pipeline.session_item_by_slot(session_id, slot)
         if descriptor is None:
             raise RuntimeError("편집할 삽화 슬롯을 찾지 못했습니다")
+        if _illustration_session_slot_is_animated(
+            session_id,
+            slot,
+            descriptor=descriptor,
+        ):
+            raise RuntimeError("애니메이션 삽화는 편하게 수정을 지원하지 않습니다")
         backup_name = str(descriptor.get("backup_name") or "").strip()
         if not backup_name:
             raise RuntimeError(
@@ -12717,7 +12897,10 @@ async def process_illustration_easy_edit_queue_item(item) -> dict:
             session_id,
             slot,
             image_bytes,
-            item_updates={"backup_name": new_backup_name},
+            item_updates={
+                "backup_name": new_backup_name,
+                "animated": _detect_illustration_bridge_image_animation(image_bytes),
+            },
         ):
             raise RuntimeError("수정 이미지를 세션 슬롯에 반영하지 못했습니다")
 
@@ -14942,6 +15125,13 @@ app.router.add_post("/api/config", handle_api_config)
 modal_service = register_modal_routes(
     app,
     project_root=BASE_DIR,
+    get_config=load_config,
+)
+from vast_backend import register_vast_routes  # noqa: E402
+
+vast_service = register_vast_routes(
+    app,
+    project_root=str(BASE_DIR),
     get_config=load_config,
 )
 app.router.add_get("/api/memo", handle_api_memo)
