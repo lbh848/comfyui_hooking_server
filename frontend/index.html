@@ -2205,9 +2205,6 @@
             background:color-mix(in srgb, var(--surface1) 72%, transparent);
             overflow:hidden;
         }
-        .queue-lane:nth-last-child(2):nth-child(3n + 1),
-        .queue-lane:last-child:nth-child(3n + 2) { grid-column:span 3; }
-        .queue-lane:last-child:nth-child(3n + 1) { grid-column:1 / -1; }
         .queue-lane-header {
             display:flex;
             align-items:center;
@@ -2235,19 +2232,27 @@
         .queue-lane.llm { border-top:2px solid #8b5cf6; }
         .queue-lane.hybrid { border-top:2px solid #f59e0b; }
         .queue-lane.gpu { border-top:2px solid #22c55e; }
-        /* 전역 다이얼로그 클래스 .modal(display:none/position:fixed/...)과 이름이 겹쳐
-           큐 lane이 숨겨지는 충돌을 리셋. 큐 lane은 grid item으로 배치되어야 한다. */
-        .queue-lane.modal {
-            display: block;
-            position: static;
-            top: auto; right: auto; bottom: auto; left: auto;
-            z-index: auto;
-            padding: 0;
-            border-top: 2px solid #a78bfa;
-        }
-        .queue-lane.vast { border-top:2px solid #10b981; }
+        .queue-lane.cloud { border-top:2px solid #60a5fa; }
         .queue-lane.external { border-top:2px solid #38bdf8; }
         .queue-lane.background { border-top:2px solid #06b6d4; }
+        .queue-cloud-legend {
+            display:flex; align-items:center; gap:8px;
+            flex:1; min-width:0; color:var(--text3); font-size:0.66rem;
+            white-space:nowrap; overflow:hidden;
+        }
+        .queue-cloud-key { display:inline-flex; align-items:center; gap:4px; }
+        .queue-cloud-dot {
+            width:7px; height:7px; border-radius:999px;
+            flex:0 0 auto;
+        }
+        .queue-cloud-key[data-provider="modal"] .queue-cloud-dot { background:#a78bfa; }
+        .queue-cloud-key[data-provider="vast"] .queue-cloud-dot { background:#10b981; }
+        .queue-lane.cloud .queue-modal-item[data-queue-area="modal"] {
+            box-shadow:inset 3px 0 #a78bfa;
+        }
+        .queue-lane.cloud .queue-modal-item[data-queue-area="vast"] {
+            box-shadow:inset 3px 0 #10b981;
+        }
         .queue-modal-item {
             display:flex; align-items:center; gap:10px;
             padding:10px 12px; border-radius:8px;
@@ -2289,10 +2294,7 @@
         .queue-modal-item .qm-actions button:hover { color:var(--text); background:var(--surface1); }
         @media (max-width:900px) {
             .queue-lanes { grid-template-columns:1fr; }
-            .queue-lane,
-            .queue-lane:nth-last-child(2):nth-child(3n + 1),
-            .queue-lane:last-child:nth-child(3n + 2),
-            .queue-lane:last-child:nth-child(3n + 1) { grid-column:1 / -1; }
+            .queue-lane { grid-column:1 / -1; }
             #queue-modal .queue-modal-content { width:min(680px, calc(100vw - 20px)); }
         }
 
@@ -83994,11 +83996,24 @@
             {key: 'llm', icon: '🧠', title: 'LLM 처리', note: 'CALL 및 프롬프트 분석'},
             {key: 'hybrid', icon: '⚡', title: '동적 배분', note: '먼저 빈 로컬 GPU/Modal/챈섭이 실행'},
             {key: 'gpu', icon: '🖥️', title: 'GPU', note: '로컬 ComfyUI 작업'},
-            {key: 'modal', icon: '☁️', title: 'Modal GPU', note: '원격 ComfyUI 작업'},
-            {key: 'vast', icon: '⭐', title: 'Vast GPU', note: '준비된 머신의 원격 ComfyUI 작업'},
+            {
+                key: 'cloud', icon: '☁️', title: '클라우드 GPU', note: '원격 ComfyUI 작업',
+                itemAreas: ['modal', 'vast'],
+                legend: [
+                    {key: 'modal', label: 'Modal'},
+                    {key: 'vast', label: 'Vast'},
+                ],
+            },
             {key: 'background', icon: '⚙️', title: '백그라운드 처리', note: 'Modal 다운로드 · 영상 업스케일/AVIF 변환'},
             {key: 'external', icon: '☁️', title: '외부 서비스', note: '챈섭 API 작업'},
         ];
+
+        function _queueDefinitionIncludesArea(definition, area) {
+            const itemAreas = Array.isArray(definition && definition.itemAreas)
+                ? definition.itemAreas
+                : [definition && definition.key];
+            return itemAreas.includes(area);
+        }
 
         function _queueItemArea(item) {
             const area = String((item && item.execution_area) || 'gpu').toLowerCase();
@@ -84007,7 +84022,7 @@
             if (area === 'comfy_parallel') return 'hybrid';
             if (area === 'vast_download') return 'background';
             if (area === 'modal_download' || area === 'video_postprocess') return 'background';
-            return _queueAreaDefinitions.some(def => def.key === area) ? area : 'gpu';
+            return _queueAreaDefinitions.some(def => _queueDefinitionIncludesArea(def, area)) ? area : 'gpu';
         }
 
         function _updateIllustWaitTimer() {
@@ -84068,7 +84083,7 @@
                 empty.textContent = '대기 중인 작업이 없습니다';
             }
             const items = queueModalData;
-            // 큐가 완전히 비어 있어도 5개 lane 구조를 항상 보여준다.
+            // 큐가 완전히 비어 있어도 6개 lane 구조를 항상 보여준다.
             // 각 lane은 빈 상태에서 "대기 중인 작업 없음" 표시를 자체 처리한다.
             empty.style.display = 'none';
             body.innerHTML = '';
@@ -84079,7 +84094,9 @@
                 const lanes = document.createElement('div');
                 lanes.className = 'queue-lanes';
                 _queueAreaDefinitions.forEach(def => {
-                    const laneItems = items.filter(item => _queueItemArea(item) === def.key);
+                    const laneItems = items.filter(item =>
+                        _queueDefinitionIncludesArea(def, _queueItemArea(item))
+                    );
                     // '실행 중' = 실제 처리 중(processing). LLM lane에서는 곧 슬롯 게이트를 잡아
                     // API를 호출 중인 항목 수(=실제 동시 호출 수). '대기' = pending + waiting(게이트 대기).
                     const processingCount = laneItems.filter(item => item.status === 'processing').length;
@@ -84092,11 +84109,18 @@
                     const lane = document.createElement('section');
                     lane.className = `queue-lane ${def.key}`;
                     lane.dataset.queueArea = def.key;
+                    const laneNoteHtml = Array.isArray(def.legend)
+                        ? `<span class="queue-cloud-legend" aria-label="Modal은 보라색, Vast는 초록색">${def.legend.map(entry => `
+                            <span class="queue-cloud-key" data-provider="${entry.key}">
+                                <span class="queue-cloud-dot" aria-hidden="true"></span>${entry.label}
+                            </span>
+                        `).join('')}</span>`
+                        : `<span class="queue-lane-note">${def.note}</span>`;
                     lane.innerHTML = `
                         <div class="queue-lane-header">
                             <span aria-hidden="true">${def.icon}</span>
                             <span class="queue-lane-title">${def.title}</span>
-                            <span class="queue-lane-note">${def.note}</span>
+                            ${laneNoteHtml}
                             <span class="queue-lane-count" title="실행 중 ${processingCount} · 대기 ${queuedCount} (슬롯 게이트 대기 포함)">${laneCountHtml}</span>
                         </div>
                     `;
@@ -84125,7 +84149,10 @@
                 if (rendered.has(item.id)) return;
                 const idx = queueModalData.indexOf(item);
                 if (item.batch_id) {
-                    const grp = items.filter(i => i.batch_id === item.batch_id);
+                    const itemArea = _queueItemArea(item);
+                    const grp = items.filter(i =>
+                        i.batch_id === item.batch_id && _queueItemArea(i) === itemArea
+                    );
                     grp.forEach(groupItem => rendered.add(groupItem.id));
                     const total = item.batch_total || grp.length;
                     const pending = grp.filter(i => i.status === 'pending').length;
@@ -84161,7 +84188,7 @@
                     container.appendChild(_renderQueueItemRow(item, idx, false));
                     if (_queueSubtasksExpanded.has(item.id) && Array.isArray(item.subtasks)) {
                         item.subtasks.forEach(subtask => {
-                            container.appendChild(_renderQueueSubtaskRow(subtask));
+                            container.appendChild(_renderQueueSubtaskRow(subtask, _queueItemArea(item)));
                         });
                     }
                 }
@@ -84279,12 +84306,13 @@
             return el;
         }
 
-        function _renderQueueSubtaskRow(subtask) {
+        function _renderQueueSubtaskRow(subtask, area) {
             const el = document.createElement('div');
             const status = ['pending', 'processing', 'completed', 'failed', 'cancelled'].includes(subtask.status)
                 ? subtask.status
                 : 'pending';
             el.className = 'queue-modal-item queue-modal-subtask ' + status;
+            if (area) el.dataset.queueArea = area;
             const statusLabel = status === 'processing' ? '진행 중'
                 : status === 'completed' ? '✓'
                 : status === 'failed' ? '✗'
@@ -84365,13 +84393,18 @@
             const body = document.getElementById('queue-modal-body');
             if (!body) { console.error('[QUEUE] queueModalDragStart: queue-modal-body 요소 없음'); return; }
             const area = _queueItemArea(item);
-            const laneBody = body.querySelector(`.queue-lane-items[data-queue-area="${area}"]`);
+            const laneBody = body.querySelector(`.queue-lane-items[data-queue-area="${area}"]`)
+                || (area === 'modal' || area === 'vast'
+                    ? body.querySelector('.queue-lane-items[data-queue-area="cloud"]')
+                    : null);
             if (!laneBody) { console.error('[QUEUE] 드래그 대상 실행 영역 없음:', area); return; }
             const el = laneBody.querySelector(`.queue-modal-item[data-queue-modal-idx="${idx}"]`);
             if (el) el.classList.add('dragging');
 
             const onMove = (ev) => {
-                const items = Array.from(laneBody.querySelectorAll('.queue-modal-item[data-queue-modal-idx]'));
+                const items = Array.from(
+                    laneBody.querySelectorAll('.queue-modal-item[data-queue-modal-idx]')
+                ).filter(child => child.dataset.queueArea === area);
                 items.forEach(child => {
                     if (Number(child.dataset.queueModalIdx) === idx) return;
                     const rect = child.getBoundingClientRect();
@@ -84385,7 +84418,9 @@
                 document.removeEventListener('mousemove', onMove);
                 document.removeEventListener('mouseup', onUp);
                 laneBody.querySelectorAll('.queue-modal-item').forEach(c => { c.classList.remove('dragging'); c.style.borderTop = ''; c.style.borderBottom = ''; });
-                const items = Array.from(laneBody.querySelectorAll('.queue-modal-item[data-queue-modal-idx]'));
+                const items = Array.from(
+                    laneBody.querySelectorAll('.queue-modal-item[data-queue-modal-idx]')
+                ).filter(child => child.dataset.queueArea === area);
                 let targetIdx = idx;
                 let closestDistance = Number.POSITIVE_INFINITY;
                 items.forEach(child => {

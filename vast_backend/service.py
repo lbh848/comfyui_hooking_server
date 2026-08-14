@@ -1037,9 +1037,35 @@ class VastService:
             )
             for item in resolved.get("model_files") or []:
                 kind, _, filename = str(item.get("remote_path") or "").partition("/")
+                if not kind or not filename:
+                    print(
+                        "[VAST][PLAN][ERROR] 일반 모델 원격 경로 형식 오류: "
+                        f"item={item!r}"
+                    )
+                    raise ValueError(
+                        f"Vast 일반 모델 원격 경로 형식이 잘못되었습니다: {item!r}"
+                    )
                 model_files.append(
                     {
                         "kind": kind,
+                        "filename": filename,
+                        "size_bytes": item.get("size") or 0,
+                        "source_path": item.get("source_path") or "",
+                    }
+                )
+            for item in resolved.get("lora_files") or []:
+                filename = str(item.get("remote_path") or "").strip().replace("\\", "/")
+                if not filename:
+                    print(
+                        "[VAST][PLAN][ERROR] 워크플로 고정 LoRA 원격 경로 누락: "
+                        f"item={item!r}"
+                    )
+                    raise ValueError(
+                        f"Vast 워크플로 고정 LoRA 원격 경로가 비어 있습니다: {item!r}"
+                    )
+                model_files.append(
+                    {
+                        "kind": "loras",
                         "filename": filename,
                         "size_bytes": item.get("size") or 0,
                         "source_path": item.get("source_path") or "",
@@ -1202,6 +1228,7 @@ class VastService:
                     "기존 Soya Vast 인스턴스가 남아 있습니다. "
                     f"먼저 파괴하거나 확인하세요: {owned_ids}"
                 )
+        model_plan = self._remove_explicit_lora_duplicates(model_plan, lora_files)
         self._close_comfy_tunnel()
         self._instance_status_cache.clear()
         self._image_pull_last_poll_monotonic = 0.0
@@ -1238,6 +1265,46 @@ class VastService:
         task.add_done_callback(self._launch_done)
         self._ensure_watchdog(launch_id)
         return self.launch_status()
+
+    @staticmethod
+    def _remove_explicit_lora_duplicates(
+        model_plan: dict[str, Any], lora_files: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        """별도 선택 LoRA가 같은 원격 파일을 올리면 고정 계획의 중복 전송을 제거한다."""
+        explicit_keys: set[str] = set()
+        for item in lora_files:
+            raw_path = str(item.get("path") or item.get("source_path") or "").strip()
+            raw_name = str(item.get("name") or "").strip()
+            filename = Path(raw_path).name if raw_path else Path(raw_name).name
+            if not filename:
+                print(f"[VAST][PLAN] 별도 LoRA 파일명이 비어 있어 중복 확인 제외: {item!r}")
+                continue
+            explicit_keys.add(f"loras/{filename}".casefold())
+
+        if not explicit_keys:
+            return model_plan
+
+        kept: list[Any] = []
+        removed: list[str] = []
+        for item in model_plan.get("models") or []:
+            if not isinstance(item, dict):
+                kept.append(item)
+                continue
+            key = str(item.get("key") or "").replace("\\", "/").strip("/")
+            if key.casefold() in explicit_keys:
+                removed.append(key)
+                continue
+            kept.append(item)
+
+        if not removed:
+            return model_plan
+        print(
+            "[VAST][PLAN] 별도 선택 LoRA와 겹치는 워크플로 모델 계획 제거: "
+            f"keys={removed}"
+        )
+        result = dict(model_plan)
+        result["models"] = kept
+        return result
 
     def _launch_done(self, task: asyncio.Task) -> None:
         if task.cancelled():

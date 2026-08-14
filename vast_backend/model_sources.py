@@ -243,6 +243,7 @@ def build_download_plan(
                 "kind": model.get("kind", ""),
                 "filename": model.get("filename", ""),
                 "size_bytes": int(model.get("size_bytes") or 0),
+                "source_path": str(model.get("source_path") or ""),
                 "source": resolved,
             }
         )

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import inspect
 import json
 from pathlib import Path
@@ -12,6 +13,7 @@ from typing import Any
 
 import pytest
 
+import vast_backend.ssh_tunnel as ssh_tunnel_module
 from vast_backend.client import VastApiError, VastClient, _rate_limit_delay
 from vast_backend.favorites import VastMachineFavorites
 from vast_backend.image_pull_progress import (
@@ -36,7 +38,7 @@ from vast_backend.service import (
     WATCHDOG_STATUS_MAX_AGE_SECONDS,
     VastService,
 )
-from vast_backend.ssh_tunnel import ComfySshTunnel
+from vast_backend.ssh_tunnel import DEFAULT_LOCAL_PORT, ComfySshTunnel
 
 
 def test_vast_ssh_keypair_is_created_and_loaded_from_key_directory(
@@ -1221,6 +1223,97 @@ def test_civitai_plan_has_download_url_even_without_key() -> None:
     }
 
 
+def test_download_plan_preserves_source_path_for_upload_fallback(tmp_path: Path) -> None:
+    source_path = tmp_path / "models" / "loras" / "fixed.safetensors"
+    plan = build_download_plan(
+        [
+            {
+                "kind": "loras",
+                "filename": "fixed.safetensors",
+                "size_bytes": 123,
+                "source_path": str(source_path),
+            }
+        ],
+        {"sources": {}},
+    )
+
+    assert plan["items"][0]["source_path"] == str(source_path)
+    assert plan["items"][0]["source"] == {"source_type": "upload"}
+
+
+def test_vast_wizard_plan_includes_workflow_fixed_lora_from_manifest(
+    tmp_path: Path,
+) -> None:
+    lora_path = tmp_path / "comfy" / "models" / "loras" / "fixed.safetensors"
+    lora_path.parent.mkdir(parents=True)
+    lora_path.write_bytes(b"fixed-lora")
+    workflow_path = tmp_path / "fixed-lora-workflow.json"
+    workflow_path.write_text(
+        json.dumps(
+            {
+                "1": {
+                    "class_type": "LoraLoaderModelOnly",
+                    "inputs": {"lora_name": "fixed.safetensors"},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    manifest_path = (
+        tmp_path / "comfy_installer" / "resources" / "install_manifest.json"
+    )
+    manifest_path.parent.mkdir(parents=True)
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "models": [
+                    {
+                        "relative_path": "models/loras/fixed.safetensors",
+                        "url": "https://huggingface.co/example/fixed/resolve/main/fixed.safetensors",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    service = VastService(tmp_path, lambda: {})
+
+    plan = service.wizard_plan(
+        workflow_files=[{"path": str(workflow_path), "name": workflow_path.name}],
+        lora_files=[],
+    )
+
+    assert len(plan["models"]) == 1
+    item = plan["models"][0]
+    assert item["key"] == "loras/fixed.safetensors"
+    assert item["kind"] == "loras"
+    assert item["filename"] == "fixed.safetensors"
+    assert item["source_path"] == str(lora_path.resolve())
+    assert item["source"] == {
+        "source_type": "hf",
+        "repo_id": "example/fixed",
+        "hf_filename": "fixed.safetensors",
+    }
+
+
+def test_explicit_lora_upload_replaces_same_workflow_plan_item(tmp_path: Path) -> None:
+    explicit_path = tmp_path / "fixed.safetensors"
+    model_plan = {
+        "models": [
+            {"key": "loras/fixed.safetensors"},
+            {"key": "checkpoints/base.safetensors"},
+        ]
+    }
+
+    deduplicated = VastService._remove_explicit_lora_duplicates(
+        model_plan,
+        [{"name": "fixed.safetensors", "path": str(explicit_path)}],
+    )
+
+    assert deduplicated["models"] == [{"key": "checkpoints/base.safetensors"}]
+    assert len(model_plan["models"]) == 2
+
+
 def test_vast_mapping_backup_uses_deployment_safe_directory(tmp_path: Path) -> None:
     source_path = tmp_path / "vast_model_sources.json"
     source_path.write_text(
@@ -1422,11 +1515,50 @@ def test_comfy_ssh_tunnel_forwards_and_closes() -> None:
     )
     try:
         url = tunnel.start()
+        assert tunnel.local_port == DEFAULT_LOCAL_PORT
         assert url == f"http://127.0.0.1:{tunnel.local_port}"
         with socket.create_connection(("127.0.0.1", tunnel.local_port), timeout=5) as client:
             client.sendall(b"tunnel-ok")
             assert client.recv(64) == b"tunnel-ok"
         assert transport.keepalive == 30
+    finally:
+        tunnel.close()
+        echo.shutdown()
+        echo.server_close()
+        echo_thread.join(timeout=2)
+
+    assert ssh.closed is True
+
+
+def test_comfy_ssh_tunnel_uses_next_port_when_preferred_is_busy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    echo = socketserver.ThreadingTCPServer(("127.0.0.1", 0), _EchoHandler)
+    echo.daemon_threads = True
+    echo_thread = threading.Thread(target=echo.serve_forever, daemon=True)
+    echo_thread.start()
+    transport = _SocketTransport()
+    ssh = _TunnelSsh(transport)
+    original_server = ssh_tunnel_module._TunnelServer
+    attempts: list[int] = []
+
+    def busy_once(server_address, *args, **kwargs):
+        attempts.append(int(server_address[1]))
+        if len(attempts) == 1:
+            raise OSError(errno.EADDRINUSE, "test port already in use")
+        return original_server(server_address, *args, **kwargs)
+
+    monkeypatch.setattr(ssh_tunnel_module, "_TunnelServer", busy_once)
+    tunnel = ComfySshTunnel(
+        ssh,
+        remote_host="127.0.0.1",
+        remote_port=int(echo.server_address[1]),
+        local_port=25000,
+    )
+    try:
+        tunnel.start()
+        assert attempts == [25000, 25001]
+        assert tunnel.local_port == 25001
     finally:
         tunnel.close()
         echo.shutdown()
