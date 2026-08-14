@@ -249,7 +249,7 @@ async def test_video_postprocess_worker_overlaps_local_comfy_lane(monkeypatch):
         tasks = [
             task
             for task in (
-                manager._video_postprocess_worker_task,
+                *manager._video_postprocess_worker_tasks.values(),
                 *manager._llm_worker_tasks.values(),
             )
             if task is not None and not task.done()

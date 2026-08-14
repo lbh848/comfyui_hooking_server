@@ -13809,6 +13809,16 @@ async def handle_api_config(request: web.Request) -> web.Response:
                     print(f"[CONFIG] 챈섭 외부 워커풀 갱신 실패: {e}")
                     traceback.print_exc()
 
+            # 영상 후처리 동시 실행 수(worker_count) 변경도 즉시 반영한다.
+            if "video_postprocess" in body:
+                try:
+                    asyncio.ensure_future(
+                        queue_manager._ensure_video_postprocess_worker()
+                    )
+                except Exception as e:
+                    print(f"[CONFIG] 영상 후처리 워커풀 갱신 실패: {e}")
+                    traceback.print_exc()
+
             # 활성봇(bot_selected) 변경 시 프론트엔드 삽화 백업 탭에 브로드캐스트
             # (플러그인과 프론트 양쪽에서 봇을 바꿀 수 있어 동기화 필요)
             if "bot_selected" in body:
@@ -24570,20 +24580,26 @@ async def _regeneration_background_cleanup(_app: web.Application) -> None:
 
 
 async def _video_postprocess_background_cleanup(_app: web.Application) -> None:
-    task = queue_manager._video_postprocess_worker_task
-    if task is None or task.done():
+    tasks = [
+        task
+        for task in queue_manager._video_postprocess_worker_tasks.values()
+        if not task.done()
+    ]
+    if not tasks:
         return
     print("[VIDEO:POSTPROCESS] 서버 종료로 독립 후처리 워커를 중단합니다")
-    task.cancel()
-    result = await asyncio.gather(task, return_exceptions=True)
-    if result and isinstance(result[0], BaseException) and not isinstance(
-        result[0], asyncio.CancelledError
-    ):
-        print(
-            "[VIDEO:POSTPROCESS] 종료 정리 중 워커 실패: "
-            f"error={type(result[0]).__name__}: {result[0]}"
-        )
-        traceback.print_exception(type(result[0]), result[0], result[0].__traceback__)
+    for task in tasks:
+        task.cancel()
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    for result in results:
+        if isinstance(result, BaseException) and not isinstance(
+            result, asyncio.CancelledError
+        ):
+            print(
+                "[VIDEO:POSTPROCESS] 종료 정리 중 워커 실패: "
+                f"error={type(result).__name__}: {result}"
+            )
+            traceback.print_exception(type(result), result, result.__traceback__)
 
 
 app.on_startup.append(on_startup)

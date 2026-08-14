@@ -360,6 +360,129 @@ def test_representative_animation_is_playable_and_exported_verbatim(
         assert archive.read("hero_school_happy.webp") == animation_bytes
 
 
+def test_export_zip_mixes_video_and_static_image(tmp_path: Path, monkeypatch) -> None:
+    asset_root = tmp_path / "asset"
+    monkeypatch.setattr(asset_mode_module, "ASSET_DIR", str(asset_root))
+    mode = AssetMode()
+
+    # 영상 표정: 애니메이션 webp + is_video_animation 프롬프트 메타데이터
+    video_dir = asset_root / "alice" / "uniform" / "smile"
+    video_dir.mkdir(parents=True)
+    animation_bytes = _animated_webp_bytes()
+    (video_dir / "animation.webp").write_bytes(animation_bytes)
+    (video_dir / "animation_prompt.json").write_text(
+        json.dumps({"is_video_animation": True}),
+        encoding="utf-8",
+    )
+    (video_dir / "_representative.json").write_text(
+        json.dumps({"filename": "animation.webp"}),
+        encoding="utf-8",
+    )
+
+    # 정적 이미지 표정: PNG 원본 → png 포맷 변환 경로 확인용
+    static_dir = asset_root / "alice" / "uniform" / "wink"
+    static_dir.mkdir(parents=True)
+    Image.new("RGB", (16, 16), "purple").save(static_dir / "static.png", format="PNG")
+    (static_dir / "_representative.json").write_text(
+        json.dumps({"filename": "static.png"}),
+        encoding="utf-8",
+    )
+
+    mapping = _mapping(export_format="png", export_quality=40)
+    mapping["expression_mapping"] = {"smile": "happy", "wink": "wink"}
+
+    plan = mode.build_character_export_plan(
+        "alice", ["uniform"], ["smile", "wink"], mapping
+    )
+    assert plan["success"] is True
+    by_name = {item["filename"]: item for item in plan["files"]}
+    assert by_name["hero_school_happy.webp"]["is_video_animation"] is True
+    assert by_name["hero_school_wink.png"]["is_video_animation"] is False
+
+    archive = mode.export_character_zip(
+        "alice",
+        ["uniform"],
+        ["smile", "wink"],
+        mapping_override=mapping,
+        export_plan=plan,
+    )
+    with zipfile.ZipFile(archive) as zipped:
+        assert sorted(zipped.namelist()) == [
+            "hero_school_happy.webp",
+            "hero_school_wink.png",
+        ]
+        # 영상은 포맷·품질 설정과 무관하게 원본 그대로
+        assert zipped.read("hero_school_happy.webp") == animation_bytes
+        # 정적 이미지는 png로 변환되어 저장
+        with Image.open(io.BytesIO(zipped.read("hero_school_wink.png"))) as converted:
+            assert converted.format == "PNG"
+
+
+def test_export_zip_mixes_video_override_with_static_image(
+    tmp_path: Path, monkeypatch
+) -> None:
+    asset_root = tmp_path / "asset"
+    monkeypatch.setattr(asset_mode_module, "ASSET_DIR", str(asset_root))
+    mode = AssetMode()
+
+    # 영상 표정 (대표 원본)
+    video_source, _ = _make_animated_representative(asset_root)
+    # 정적 이미지 표정
+    static_dir = asset_root / "alice" / "uniform" / "wink"
+    static_dir.mkdir(parents=True)
+    Image.new("RGB", (16, 16), "purple").save(static_dir / "static.png", format="PNG")
+    (static_dir / "_representative.json").write_text(
+        json.dumps({"filename": "static.png"}),
+        encoding="utf-8",
+    )
+
+    mapping = _mapping(export_format="png", export_quality=40)
+    mapping["expression_mapping"] = {"smile": "happy", "wink": "wink"}
+
+    # 영상 후처리 임시 결과(override)
+    override_dir = tmp_path / "export_video_sessions" / "session-1"
+    override_dir.mkdir(parents=True)
+    override_path = override_dir / "result.webp"
+    override_path.write_bytes(b"postprocessed-animation")
+
+    plan = mode.build_character_export_plan(
+        "alice",
+        ["uniform"],
+        ["smile", "wink"],
+        mapping,
+        video_overrides={
+            mode._export_video_slot_id("uniform", "smile", video_source.name): {
+                "path": str(override_path),
+                "extension": ".webp",
+            }
+        },
+    )
+    assert plan["success"] is True
+
+    archive = mode.export_character_zip(
+        "alice",
+        ["uniform"],
+        ["smile", "wink"],
+        mapping_override=mapping,
+        export_plan=plan,
+        video_overrides={
+            mode._export_video_slot_id("uniform", "smile", video_source.name): {
+                "path": str(override_path),
+                "extension": ".webp",
+            }
+        },
+    )
+    with zipfile.ZipFile(archive) as zipped:
+        assert sorted(zipped.namelist()) == [
+            "hero_school_happy.webp",
+            "hero_school_wink.png",
+        ]
+        # 영상 슬롯은 임시 후처리 결과를 사용
+        assert zipped.read("hero_school_happy.webp") == b"postprocessed-animation"
+        with Image.open(io.BytesIO(zipped.read("hero_school_wink.png"))) as converted:
+            assert converted.format == "PNG"
+
+
 def test_asset_video_reference_list_includes_static_and_animated_media(
     tmp_path: Path,
     monkeypatch,

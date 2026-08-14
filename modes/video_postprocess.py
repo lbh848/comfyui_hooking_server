@@ -281,12 +281,26 @@ def normalize_video_postprocess_config(raw: object) -> dict:
     normalized["tile_size"] = tile_size
 
     raw_workers = source.get("worker_count", normalized["worker_count"])
-    if raw_workers != 1:
+    try:
+        if isinstance(raw_workers, bool):
+            raise TypeError("bool은 허용되지 않음")
+        worker_count = int(raw_workers)
+        if isinstance(raw_workers, float) and not raw_workers.is_integer():
+            raise ValueError("정수가 아닌 실수는 허용되지 않음")
+        if isinstance(raw_workers, str) and raw_workers.strip() != str(worker_count):
+            raise ValueError("정수 문자열 형식이 아님")
+        if worker_count < 1:
+            raise ValueError("후처리 동시 실행 수는 1 이상이어야 함")
+    except (TypeError, ValueError, OverflowError) as exc:
         print(
-            "[VIDEO:POSTPROCESS:CONFIG] worker_count는 GPU 안정성을 위해 1로 고정합니다: "
-            f"value={raw_workers!r}"
+            "[VIDEO:POSTPROCESS:CONFIG] 후처리 동시 실행 수 검증 실패: "
+            f"value={raw_workers!r}, error={type(exc).__name__}: {exc}"
         )
-    normalized["worker_count"] = 1
+        traceback.print_exc()
+        raise ValueError(
+            "영상 후처리 동시 실행 수는 1 이상의 정수여야 합니다"
+        ) from exc
+    normalized["worker_count"] = worker_count
     return normalized
 
 

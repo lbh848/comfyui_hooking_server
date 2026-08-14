@@ -335,10 +335,12 @@ class QueueManager:
         self._modal_wakeup: asyncio.Event = asyncio.Event()
         # Modal 학습 결과 다운로드는 GPU 워커 수와 무관하게 즉시 병렬 실행한다.
         self._modal_download_tasks: dict[str, asyncio.Task] = {}
-        # 영상 후처리는 Comfy/Modal/LLM/챈섭 레인과 독립된 단일 로컬 Vulkan 워커다.
-        # 대기 항목 수에는 상한을 두지 않되 실제 Real-ESRGAN 프로세스는 하나씩 실행한다.
-        self.current_video_postprocess_item: Optional[QueueItem] = None
-        self._video_postprocess_worker_task: Optional[asyncio.Future] = None
+        # 영상 후처리는 Comfy/Modal/LLM/챈섭 레인과 독립된 로컬 Vulkan 워커풀이다.
+        # 동시 실행 수는 전역 설정 video_postprocess.worker_count가 결정하며,
+        # 축소 시 실행 중인 마지막 워커는 현재 아이템을 마친 뒤 자연 종료한다.
+        self.current_video_postprocess_items: dict[int, QueueItem] = {}
+        self._video_postprocess_worker_tasks: dict[int, asyncio.Future] = {}
+        self._video_postprocess_next_worker_id: int = 0
         self._video_postprocess_wakeup: asyncio.Event = asyncio.Event()
         # 삽화 완료 후 다음 작업 시작 전 대기 (새 삽화 도착 시 즉시 진행)
         self._illust_wait_event: Optional[asyncio.Event] = None
@@ -996,12 +998,18 @@ class QueueManager:
                 task for task in self._modal_download_tasks.values()
                 if not task.done()
             ]),
-            "video_postprocess_active": int(
-                self.current_video_postprocess_item is not None
-            ),
-            "video_postprocess_worker_active": bool(
-                self._video_postprocess_worker_task
-                and not self._video_postprocess_worker_task.done()
+            "current_video_postprocess_items": [
+                self._item_status_dict(item)
+                for _, item in sorted(self.current_video_postprocess_items.items())
+            ],
+            "video_postprocess_active": len(self.current_video_postprocess_items),
+            "video_postprocess_active_workers": len([
+                task
+                for task in self._video_postprocess_worker_tasks.values()
+                if not task.done()
+            ]),
+            "video_postprocess_target_workers": (
+                self._target_video_postprocess_workers()
             ),
         }
 
@@ -1840,14 +1848,63 @@ class QueueManager:
 
     # ─── 로컬 영상 후처리 워커 ──────────────────────────────
 
-    async def _ensure_video_postprocess_worker(self) -> None:
-        task = self._video_postprocess_worker_task
-        if task is None or task.done():
-            self._video_postprocess_worker_task = asyncio.ensure_future(
-                self._video_postprocess_worker_loop()
+    def _target_video_postprocess_workers(self) -> int:
+        raw_value = None
+        try:
+            raw_value = (
+                (self.get_config() if self.get_config else {})
+                .get("video_postprocess", {})
+                .get("worker_count", 1)
             )
-            print("[QUEUE:VIDEO_POSTPROCESS] 독립 Vulkan 워커 시작 (동시 실행 1)")
+            if isinstance(raw_value, bool):
+                raise TypeError("bool은 허용되지 않음")
+            numeric = float(raw_value)
+            if not numeric.is_integer():
+                raise ValueError("정수가 아님")
+            target = int(numeric)
+        except Exception as e:
+            print(
+                "[QUEUE:VIDEO_POSTPROCESS] worker_count 읽기 실패, 기본 1 사용: "
+                f"value={raw_value!r}, error={type(e).__name__}: {e}"
+            )
+            traceback.print_exc()
+            return 1
+        if target < 1:
+            print(
+                "[QUEUE:VIDEO_POSTPROCESS] worker_count 범위 오류, 기본 1 사용: "
+                f"value={target}"
+            )
+            return 1
+        return target
+
+    async def _ensure_video_postprocess_worker(self) -> None:
+        self._video_postprocess_worker_tasks = {
+            wid: task
+            for wid, task in self._video_postprocess_worker_tasks.items()
+            if not task.done()
+        }
+        target = self._target_video_postprocess_workers()
+        while len(self._video_postprocess_worker_tasks) < target:
+            wid = self._video_postprocess_next_worker_id
+            self._video_postprocess_next_worker_id += 1
+            self._video_postprocess_worker_tasks[wid] = asyncio.ensure_future(
+                self._video_postprocess_worker_loop(wid)
+            )
+            print(
+                "[QUEUE:VIDEO_POSTPROCESS] 독립 Vulkan 워커 시작 "
+                f"(활성 {len(self._video_postprocess_worker_tasks)}/목표 {target})"
+            )
         self._video_postprocess_wakeup.set()
+
+    def _video_postprocess_worker_should_exit(self, wid: int) -> bool:
+        """동시성이 축소되면 가장 오래된 목표 개수의 워커만 유지한다."""
+        target = self._target_video_postprocess_workers()
+        alive = sorted(
+            worker_id
+            for worker_id, task in self._video_postprocess_worker_tasks.items()
+            if not task.done()
+        )
+        return wid not in set(alive[:target])
 
     def _pop_next_video_postprocess_item(self) -> Optional[QueueItem]:
         pending = [
@@ -1866,12 +1923,22 @@ class QueueManager:
         item.progress = 0.0
         return item
 
-    async def _video_postprocess_worker_loop(self) -> None:
+    async def _video_postprocess_worker_loop(self, wid: int) -> None:
         try:
             while True:
+                self._video_postprocess_worker_tasks = {
+                    worker_id: task
+                    for worker_id, task in self._video_postprocess_worker_tasks.items()
+                    if not task.done()
+                }
+                if self._video_postprocess_worker_should_exit(wid):
+                    print(
+                        f"[QUEUE:VIDEO_POSTPROCESS] 워커 {wid} 종료 (동시성 축소)"
+                    )
+                    return
                 if self._paused:
                     self._video_postprocess_wakeup.clear()
-                    print("[QUEUE:VIDEO_POSTPROCESS] 일시정지 대기")
+                    print(f"[QUEUE:VIDEO_POSTPROCESS] 워커 {wid} 일시정지 대기")
                     await self._video_postprocess_wakeup.wait()
                     continue
                 item = self._pop_next_video_postprocess_item()
@@ -1881,22 +1948,22 @@ class QueueManager:
                         continue
                     await self._video_postprocess_wakeup.wait()
                     continue
-                self.current_video_postprocess_item = item
+                self.current_video_postprocess_items[wid] = item
                 try:
                     await self._run_item_pipeline(item, is_gpu=False)
                 finally:
-                    self.current_video_postprocess_item = None
+                    self.current_video_postprocess_items.pop(wid, None)
         except asyncio.CancelledError:
-            print("[QUEUE:VIDEO_POSTPROCESS] 독립 Vulkan 워커 취소")
+            print(f"[QUEUE:VIDEO_POSTPROCESS] 워커 {wid} 취소")
             raise
         except Exception as exc:
             print(
-                "[QUEUE:VIDEO_POSTPROCESS] 워커 치명적 예외: "
+                f"[QUEUE:VIDEO_POSTPROCESS] 워커 {wid} 치명적 예외: "
                 f"error={type(exc).__name__}: {exc}"
             )
             traceback.print_exc()
         finally:
-            self.current_video_postprocess_item = None
+            self.current_video_postprocess_items.pop(wid, None)
 
     async def recover_video_postprocess_jobs(self) -> int:
         """서버 재시작 전에 스풀된 미완료 MP4를 독립 후처리 큐에 복구한다."""
