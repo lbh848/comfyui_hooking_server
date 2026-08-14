@@ -173,12 +173,14 @@ from comfy_allocation import (
     CURRENT_COMFY_EXECUTION_TARGET,
     DEFAULT_COMFY_TASK_ALLOCATIONS,
     DEFAULT_COMFY_TASK_MODAL_PARALLEL,
+    DEFAULT_COMFY_TASK_VAST_PARALLEL,
     MODAL_COMFY_TARGET,
     REMOTE_COMFY_TARGETS,
     VAST_COMFY_TARGET,
     ComfyTaskAllocationValidationError,
     normalize_comfy_task_allocations,
     normalize_comfy_task_modal_parallel,
+    normalize_comfy_task_vast_parallel,
     select_comfy_instance,
 )
 
@@ -360,6 +362,7 @@ DEFAULT_CONFIG = {
     "comfy_launch_profiles": copy.deepcopy(DEFAULT_COMFY_LAUNCH_PROFILES),
     "comfy_task_allocations": copy.deepcopy(DEFAULT_COMFY_TASK_ALLOCATIONS),
     "comfy_task_modal_parallel": copy.deepcopy(DEFAULT_COMFY_TASK_MODAL_PARALLEL),
+    "comfy_task_vast_parallel": copy.deepcopy(DEFAULT_COMFY_TASK_VAST_PARALLEL),
     "modal_enabled": False,
     "modal_profile": "soya-comfy",
     "modal_environment": "main",
@@ -865,6 +868,22 @@ def load_config() -> dict:
                     traceback.print_exc()
                     merged["comfy_task_modal_parallel"] = copy.deepcopy(
                         DEFAULT_COMFY_TASK_MODAL_PARALLEL
+                    )
+                try:
+                    merged["comfy_task_vast_parallel"] = (
+                        normalize_comfy_task_vast_parallel(
+                            config.get("comfy_task_vast_parallel"),
+                            allocations=merged["comfy_task_allocations"],
+                        )
+                    )
+                except ComfyTaskAllocationValidationError as e:
+                    print(
+                        "[CONFIG] Comfy 작업별 Vast 병렬 설정 로드 실패, "
+                        f"기본값을 사용합니다: {e}"
+                    )
+                    traceback.print_exc()
+                    merged["comfy_task_vast_parallel"] = copy.deepcopy(
+                        DEFAULT_COMFY_TASK_VAST_PARALLEL
                     )
                 try:
                     merged["video_postprocess"] = normalize_video_postprocess_config(
@@ -13684,12 +13703,13 @@ async def handle_api_config(request: web.Request) -> web.Response:
             if (
                 "comfy_task_allocations" in body
                 or "comfy_task_modal_parallel" in body
+                or "comfy_task_vast_parallel" in body
             ):
+                effective_allocations = body.get(
+                    "comfy_task_allocations",
+                    app_config.get("comfy_task_allocations"),
+                )
                 try:
-                    effective_allocations = body.get(
-                        "comfy_task_allocations",
-                        app_config.get("comfy_task_allocations"),
-                    )
                     body["comfy_task_modal_parallel"] = (
                         normalize_comfy_task_modal_parallel(
                             body.get(
@@ -13703,6 +13723,23 @@ async def handle_api_config(request: web.Request) -> web.Response:
                     print(
                         "[CONFIG] Comfy 작업별 Modal 병렬 설정 저장 거부: "
                         f"value={body.get('comfy_task_modal_parallel')!r}, error={e}"
+                    )
+                    traceback.print_exc()
+                    return web.json_response({"error": str(e)}, status=400)
+                try:
+                    body["comfy_task_vast_parallel"] = (
+                        normalize_comfy_task_vast_parallel(
+                            body.get(
+                                "comfy_task_vast_parallel",
+                                app_config.get("comfy_task_vast_parallel"),
+                            ),
+                            allocations=effective_allocations,
+                        )
+                    )
+                except ComfyTaskAllocationValidationError as e:
+                    print(
+                        "[CONFIG] Comfy 작업별 Vast 병렬 설정 저장 거부: "
+                        f"value={body.get('comfy_task_vast_parallel')!r}, error={e}"
                     )
                     traceback.print_exc()
                     return web.json_response({"error": str(e)}, status=400)
@@ -14153,6 +14190,7 @@ async def handle_api_config(request: web.Request) -> web.Response:
             if (
                 "comfy_task_allocations" in body
                 or "comfy_task_modal_parallel" in body
+                or "comfy_task_vast_parallel" in body
                 or "vast_enabled" in body
             ):
                 try:

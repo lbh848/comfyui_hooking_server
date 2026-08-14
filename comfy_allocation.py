@@ -57,6 +57,7 @@ MODAL_SUPPORTED_COMFY_TASK_KEYS = frozenset(
 VAST_SUPPORTED_COMFY_TASK_KEYS = MODAL_SUPPORTED_COMFY_TASK_KEYS
 REMOTE_COMFY_TARGETS = frozenset({MODAL_COMFY_TARGET, VAST_COMFY_TARGET})
 DEFAULT_COMFY_TASK_MODAL_PARALLEL = {key: False for key in COMFY_TASK_KEYS}
+DEFAULT_COMFY_TASK_VAST_PARALLEL = {key: False for key in COMFY_TASK_KEYS}
 
 # 큐 워커가 claim한 실행 대상을 하위 모드와 server.py의 공통 제출 함수까지 전달한다.
 # asyncio Task별 값이 분리되어 로컬 Comfy와 여러 Modal 워커가 동시에 실행돼도 섞이지 않는다.
@@ -155,12 +156,16 @@ def normalize_comfy_task_allocations(
     return normalized
 
 
-def normalize_comfy_task_modal_parallel(
+def _normalize_comfy_task_remote_parallel(
     raw: Any,
     *,
     allocations: dict[str, int | str] | None = None,
+    setting_key: str,
+    provider_target: str,
+    provider_label: str,
+    supported_keys: frozenset[str],
 ) -> dict[str, bool]:
-    """작업별 Modal 병렬 사용 여부를 검증하고 실행 불가능한 조합은 OFF로 고정한다."""
+    """원격 공급자 병렬 사용 여부를 검증하고 중복·미지원 조합을 OFF로 보정한다."""
 
     if raw is None:
         source: dict[str, Any] = {}
@@ -168,24 +173,34 @@ def normalize_comfy_task_modal_parallel(
         source = raw
     else:
         message = (
-            "Comfy 작업별 Modal 병렬 설정은 객체여야 합니다: "
+            f"Comfy 작업별 {provider_label} 병렬 설정은 객체여야 합니다: "
             f"type={type(raw).__name__}, value={raw!r}"
         )
-        print(f"[COMFY_ALLOCATION] Modal 병렬 설정 검증 실패: {message}")
+        print(
+            f"[COMFY_ALLOCATION] {provider_label} 병렬 설정 검증 실패: "
+            f"{message}"
+        )
         raise ComfyTaskAllocationValidationError(message)
 
-    normalized = dict(DEFAULT_COMFY_TASK_MODAL_PARALLEL)
-    effective_allocations = allocations or dict(DEFAULT_COMFY_TASK_ALLOCATIONS)
+    normalized = {key: False for key in COMFY_TASK_KEYS}
+    effective_allocations = (
+        allocations
+        if allocations is not None
+        else dict(DEFAULT_COMFY_TASK_ALLOCATIONS)
+    )
     for key in COMFY_TASK_KEYS:
         if key not in source:
             continue
         value = source.get(key)
         if not isinstance(value, bool):
             message = (
-                f"comfy_task_modal_parallel.{key} 값은 bool이어야 합니다: "
+                f"{setting_key}.{key} 값은 bool이어야 합니다: "
                 f"value={value!r}"
             )
-            print(f"[COMFY_ALLOCATION] Modal 병렬 값 검증 실패: {message}")
+            print(
+                f"[COMFY_ALLOCATION] {provider_label} 병렬 값 검증 실패: "
+                f"{message}"
+            )
             try:
                 raise TypeError(message)
             except TypeError as exc:
@@ -196,23 +211,62 @@ def normalize_comfy_task_modal_parallel(
     for key in COMFY_TASK_KEYS:
         if not normalized[key]:
             continue
-        if key not in MODAL_SUPPORTED_COMFY_TASK_KEYS:
+        if key not in supported_keys:
             print(
-                "[COMFY_ALLOCATION] Modal 미지원 작업의 병렬 설정을 OFF로 보정: "
+                f"[COMFY_ALLOCATION] {provider_label} 미지원 작업의 병렬 설정을 "
+                "OFF로 보정: "
                 f"task={key}"
             )
             normalized[key] = False
-        elif effective_allocations.get(key) in REMOTE_COMFY_TARGETS:
+        elif effective_allocations.get(key) == provider_target:
             print(
-                "[COMFY_ALLOCATION] 원격 전용 배분의 Modal 병렬 설정을 OFF로 보정: "
+                f"[COMFY_ALLOCATION] 기본 대상과 동일한 {provider_label} 병렬 설정을 "
+                "OFF로 보정: "
                 f"task={key}, target={effective_allocations.get(key)!r}"
             )
             normalized[key] = False
 
     unknown = sorted(str(key) for key in source if key not in COMFY_TASK_KEYS)
     if unknown:
-        print(f"[COMFY_ALLOCATION] 알 수 없는 Modal 병렬 설정 키 무시: {unknown!r}")
+        print(
+            f"[COMFY_ALLOCATION] 알 수 없는 {provider_label} 병렬 설정 키 무시: "
+            f"{unknown!r}"
+        )
     return normalized
+
+
+def normalize_comfy_task_modal_parallel(
+    raw: Any,
+    *,
+    allocations: dict[str, int | str] | None = None,
+) -> dict[str, bool]:
+    """작업별 Modal 추가 병렬 사용 여부를 정규화한다."""
+
+    return _normalize_comfy_task_remote_parallel(
+        raw,
+        allocations=allocations,
+        setting_key="comfy_task_modal_parallel",
+        provider_target=MODAL_COMFY_TARGET,
+        provider_label="Modal",
+        supported_keys=MODAL_SUPPORTED_COMFY_TASK_KEYS,
+    )
+
+
+def normalize_comfy_task_vast_parallel(
+    raw: Any,
+    *,
+    allocations: dict[str, int | str] | None = None,
+) -> dict[str, bool]:
+    """작업별 Vast 추가 병렬 사용 여부를 정규화한다."""
+
+    return _normalize_comfy_task_remote_parallel(
+        raw,
+        allocations=allocations,
+        setting_key="comfy_task_vast_parallel",
+        provider_target=VAST_COMFY_TARGET,
+        provider_label="Vast",
+        supported_keys=VAST_SUPPORTED_COMFY_TASK_KEYS,
+    )
 
 
 def comfy_task_definition_payload() -> list[dict[str, Any]]:

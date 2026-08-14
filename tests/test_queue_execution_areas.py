@@ -234,6 +234,57 @@ def test_vast_lane_waits_until_the_instance_is_ready() -> None:
     assert manager._target_vast_workers() == 0
 
 
+@pytest.mark.parametrize(
+    ("primary", "modal_parallel", "vast_parallel", "provider"),
+    (
+        ("modal", False, True, "modal+vast"),
+        ("vast", True, False, "vast+modal"),
+    ),
+)
+def test_modal_and_vast_primary_targets_can_share_the_remote_queue(
+    primary: str,
+    modal_parallel: bool,
+    vast_parallel: bool,
+    provider: str,
+) -> None:
+    manager = QueueManager()
+    manager.get_config = lambda: {
+        "modal_enabled": True,
+        "vast_enabled": True,
+        "comfy_task_allocations": {"illustration": primary},
+        "comfy_task_modal_parallel": {"illustration": modal_parallel},
+        "comfy_task_vast_parallel": {"illustration": vast_parallel},
+    }
+    manager.is_vast_ready = lambda: True
+    item = _item("illustration", {"provider": "comfy"})
+
+    assert manager._item_execution_area(item) == ("comfy_parallel", provider)
+    assert manager._local_comfy_lane_allowed(item) is False
+    assert manager._modal_comfy_lane_allowed(item) is True
+    assert manager._vast_comfy_lane_allowed(item) is True
+
+
+def test_local_modal_and_vast_can_all_share_one_pending_queue() -> None:
+    manager = QueueManager()
+    manager.get_config = lambda: {
+        "modal_enabled": True,
+        "vast_enabled": True,
+        "comfy_task_allocations": {"illustration": 1},
+        "comfy_task_modal_parallel": {"illustration": True},
+        "comfy_task_vast_parallel": {"illustration": True},
+    }
+    manager.is_vast_ready = lambda: True
+    item = _item("illustration", {"provider": "comfy"})
+
+    assert manager._item_execution_area(item) == (
+        "comfy_parallel",
+        "comfy+modal+vast",
+    )
+    assert manager._local_comfy_lane_allowed(item) is True
+    assert manager._modal_comfy_lane_allowed(item) is True
+    assert manager._vast_comfy_lane_allowed(item) is True
+
+
 @pytest.mark.asyncio
 async def test_video_postprocess_worker_overlaps_local_comfy_lane(monkeypatch):
     manager = QueueManager()

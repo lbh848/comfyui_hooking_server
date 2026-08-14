@@ -62,7 +62,7 @@ def test_queue_groups_modal_and_vast_in_one_color_coded_cloud_lane():
     source = _frontend_source()
 
     assert "{key: 'hybrid', icon: '⚡', title: '동적 배분'" in source
-    assert "먼저 빈 로컬 GPU/Modal/챈섭이 실행" in source
+    assert "먼저 빈 로컬 GPU/Modal/Vast/챈섭이 실행" in source
     assert "key: 'cloud', icon: '☁️', title: '클라우드 GPU'" in source
     assert "itemAreas: ['modal', 'vast']" in source
     assert "{key: 'modal', label: 'Modal'}" in source

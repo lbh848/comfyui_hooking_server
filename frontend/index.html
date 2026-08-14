@@ -5380,7 +5380,7 @@
         }
         .comfy-allocation-row {
             display: grid;
-            grid-template-columns: minmax(0, 1fr) 150px;
+            grid-template-columns: minmax(0, 1fr) 270px;
             align-items: center;
             gap: 12px;
             min-width: 0;
@@ -5413,7 +5413,12 @@
             display: grid;
             gap: 7px;
         }
-        .comfy-allocation-modal-parallel {
+        .comfy-allocation-parallel-controls {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 7px;
+        }
+        .comfy-allocation-remote-parallel {
             display: flex;
             align-items: center;
             justify-content: space-between;
@@ -5428,8 +5433,13 @@
             font-size: .59rem;
             font-weight: 700;
         }
-        .comfy-allocation-modal-parallel input { margin: 0; accent-color: #8b7dff; }
-        .comfy-allocation-modal-parallel.disabled {
+        .comfy-allocation-remote-parallel input { margin: 0; accent-color: #8b7dff; }
+        .comfy-allocation-remote-parallel.provider-vast {
+            border-color: color-mix(in srgb, var(--border) 84%, #60a5fa);
+            background: color-mix(in srgb, var(--surface2) 88%, #60a5fa);
+        }
+        .comfy-allocation-remote-parallel.provider-vast input { accent-color: #60a5fa; }
+        .comfy-allocation-remote-parallel.disabled {
             border-color: var(--border);
             background: color-mix(in srgb, var(--surface2) 82%, #777);
             color: color-mix(in srgb, var(--text2) 65%, #777);
@@ -20993,7 +21003,7 @@
                         <section class="comfy-runtime-allocation-panel" id="comfy-runtime-allocation-panel" aria-labelledby="comfy-runtime-tab-allocation">
                             <div class="comfy-allocation-head">
                                 <div class="comfy-allocation-title">내부 Comfy 작업 배분</div>
-                                <div class="comfy-allocation-copy">기본 실행 대상을 로컬 Comfy·MODAL·VAST 중에서 선택합니다. VAST는 준비 완료된 머신 한 대에서 작업을 하나씩 실행합니다. 로컬 Comfy를 선택하고 MODAL 병렬 사용을 켜면 먼저 비는 로컬 또는 MODAL 워커가 작업을 가져가며, 같은 작업을 중복 실행하지 않습니다.</div>
+                                <div class="comfy-allocation-copy">기본 실행 대상을 로컬 Comfy·MODAL·VAST 중에서 선택하고, MODAL·VAST 병렬 사용을 각각 추가할 수 있습니다. 활성화된 실행 레인 중 먼저 빈 워커가 다음 작업을 가져가며 같은 작업을 중복 실행하지 않습니다. VAST는 준비 완료된 머신 한 대에서 작업을 하나씩 실행합니다.</div>
                                 <div class="comfy-allocation-runtime-state" id="comfy-allocation-runtime-state">실행 상태 확인 중…</div>
                             </div>
                             <div class="comfy-allocation-list" id="comfy-allocation-list"></div>
@@ -25074,9 +25084,9 @@
                 const area = String(item?.execution_area || '').toLowerCase();
                 const provider = String(item?.provider || '').toLowerCase();
                 return area === 'modal'
-                    || area === 'comfy_parallel'
+                    || (area === 'comfy_parallel' && provider.split('+').includes('modal'))
                     || provider === 'modal'
-                    || provider === 'comfy+modal';
+                    || provider.split('+').includes('modal');
             });
             if (active === modalWorkerQueueActive) return;
             modalWorkerQueueActive = active;
@@ -31275,6 +31285,9 @@
         let comfyTaskModalParallel = Object.fromEntries(
             COMFY_TASK_DEFINITIONS.map(item => [item.key, false]),
         );
+        let comfyTaskVastParallel = Object.fromEntries(
+            COMFY_TASK_DEFINITIONS.map(item => [item.key, false]),
+        );
 
         function comfyAllocationNormalize(raw, legacyIllustrationEnabled = false) {
             const normalized = Object.fromEntries(
@@ -31309,23 +31322,60 @@
             return Object.fromEntries(COMFY_TASK_DEFINITIONS.map(item => [
                 item.key,
                 item.modalSupported
-                    && !['modal', 'vast'].includes(allocations[item.key])
+                    && allocations[item.key] !== 'modal'
                     && source[item.key] === true,
             ]));
         }
 
-        function comfyAllocationSyncModalParallel(item, select, checkbox, toggle) {
+        function comfyVastParallelNormalize(raw, allocations) {
+            const source = raw && typeof raw === 'object' && !Array.isArray(raw)
+                ? raw
+                : {};
+            return Object.fromEntries(COMFY_TASK_DEFINITIONS.map(item => [
+                item.key,
+                item.modalSupported
+                    && allocations[item.key] !== 'vast'
+                    && source[item.key] === true,
+            ]));
+        }
+
+        function comfyAllocationParallelState(provider) {
+            return provider === 'modal' ? comfyTaskModalParallel : comfyTaskVastParallel;
+        }
+
+        function comfyAllocationCreateRemoteParallel(item, provider) {
+            const providerLabel = provider.toUpperCase();
+            const toggle = document.createElement('label');
+            toggle.className = `comfy-allocation-remote-parallel provider-${provider}`;
+            const toggleText = document.createElement('span');
+            toggleText.textContent = `${providerLabel} 병렬 사용`;
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.id = `setting-comfy-${provider}-parallel-${item.key}`;
+            checkbox.checked = comfyAllocationParallelState(provider)[item.key] === true;
+            checkbox.setAttribute('aria-label', `${item.label} ${providerLabel} 병렬 사용`);
+            checkbox.addEventListener('change', () => {
+                comfyAllocationParallelState(provider)[item.key] = checkbox.checked;
+            });
+            toggle.append(toggleText, checkbox);
+            return { checkbox, toggle };
+        }
+
+        function comfyAllocationSyncRemoteParallel(item, select, provider, control) {
+            const checkbox = control?.checkbox;
+            const toggle = control?.toggle;
             if (!item.modalSupported || !checkbox || !toggle) return;
-            const modalPrimary = ['modal', 'vast'].includes(select.value);
-            checkbox.disabled = modalPrimary;
-            if (modalPrimary) {
+            const providerLabel = provider.toUpperCase();
+            const providerPrimary = select.value === provider;
+            checkbox.disabled = providerPrimary;
+            if (providerPrimary) {
                 checkbox.checked = false;
-                comfyTaskModalParallel[item.key] = false;
+                comfyAllocationParallelState(provider)[item.key] = false;
             }
-            toggle.classList.toggle('disabled', modalPrimary);
-            toggle.title = modalPrimary
-                ? '기본 실행 대상이 원격 Comfy이므로 추가 MODAL 병렬 사용은 필요하지 않습니다.'
-                : '대기 작업을 선택한 로컬 Comfy와 MODAL이 먼저 비는 순서대로 나눠 처리합니다.';
+            toggle.classList.toggle('disabled', providerPrimary);
+            toggle.title = providerPrimary
+                ? `기본 실행 대상이 ${providerLabel}이므로 추가 병렬 사용은 필요하지 않습니다.`
+                : `대기 작업을 기본 실행 대상과 ${providerLabel}${provider === 'vast' ? '가' : '이'} 먼저 비는 순서대로 나눠 처리합니다.`;
         }
 
         function comfyAllocationRender() {
@@ -31371,23 +31421,18 @@
                 controls.className = 'comfy-allocation-controls';
                 controls.appendChild(select);
 
-                let parallelCheckbox = null;
-                let parallelToggle = null;
+                let modalParallelControl = null;
+                let vastParallelControl = null;
                 if (item.modalSupported) {
-                    parallelToggle = document.createElement('label');
-                    parallelToggle.className = 'comfy-allocation-modal-parallel';
-                    const toggleText = document.createElement('span');
-                    toggleText.textContent = 'MODAL 병렬 사용';
-                    parallelCheckbox = document.createElement('input');
-                    parallelCheckbox.type = 'checkbox';
-                    parallelCheckbox.id = `setting-comfy-modal-parallel-${item.key}`;
-                    parallelCheckbox.checked = comfyTaskModalParallel[item.key] === true;
-                    parallelCheckbox.setAttribute('aria-label', `${item.label} MODAL 병렬 사용`);
-                    parallelCheckbox.addEventListener('change', () => {
-                        comfyTaskModalParallel[item.key] = parallelCheckbox.checked;
-                    });
-                    parallelToggle.append(toggleText, parallelCheckbox);
-                    controls.appendChild(parallelToggle);
+                    const parallelControls = document.createElement('span');
+                    parallelControls.className = 'comfy-allocation-parallel-controls';
+                    modalParallelControl = comfyAllocationCreateRemoteParallel(item, 'modal');
+                    vastParallelControl = comfyAllocationCreateRemoteParallel(item, 'vast');
+                    parallelControls.append(
+                        modalParallelControl.toggle,
+                        vastParallelControl.toggle,
+                    );
+                    controls.appendChild(parallelControls);
                 } else {
                     const localOnly = document.createElement('span');
                     localOnly.className = 'comfy-allocation-local-only';
@@ -31398,18 +31443,30 @@
                     comfyTaskAllocations[item.key] = ['modal', 'vast'].includes(select.value)
                         ? select.value
                         : Number(select.value);
-                    comfyAllocationSyncModalParallel(
+                    comfyAllocationSyncRemoteParallel(
                         item,
                         select,
-                        parallelCheckbox,
-                        parallelToggle,
+                        'modal',
+                        modalParallelControl,
+                    );
+                    comfyAllocationSyncRemoteParallel(
+                        item,
+                        select,
+                        'vast',
+                        vastParallelControl,
                     );
                 });
-                comfyAllocationSyncModalParallel(
+                comfyAllocationSyncRemoteParallel(
                     item,
                     select,
-                    parallelCheckbox,
-                    parallelToggle,
+                    'modal',
+                    modalParallelControl,
+                );
+                comfyAllocationSyncRemoteParallel(
+                    item,
+                    select,
+                    'vast',
+                    vastParallelControl,
                 );
                 row.append(copy, controls);
                 list.appendChild(row);
@@ -31423,6 +31480,10 @@
             );
             comfyTaskModalParallel = comfyModalParallelNormalize(
                 config?.comfy_task_modal_parallel,
+                comfyTaskAllocations,
+            );
+            comfyTaskVastParallel = comfyVastParallelNormalize(
+                config?.comfy_task_vast_parallel,
                 comfyTaskAllocations,
             );
             comfyAllocationRender();
@@ -31452,10 +31513,23 @@
                 const select = document.getElementById(`setting-comfy-allocation-${item.key}`);
                 const checkbox = document.getElementById(`setting-comfy-modal-parallel-${item.key}`);
                 result[item.key] = item.modalSupported
-                    && !['modal', 'vast'].includes(select?.value)
+                    && select?.value !== 'modal'
                     && checkbox?.checked === true;
             }
             comfyTaskModalParallel = result;
+            return { ...result };
+        }
+
+        function comfyVastParallelForSave() {
+            const result = {};
+            for (const item of COMFY_TASK_DEFINITIONS) {
+                const select = document.getElementById(`setting-comfy-allocation-${item.key}`);
+                const checkbox = document.getElementById(`setting-comfy-vast-parallel-${item.key}`);
+                result[item.key] = item.modalSupported
+                    && select?.value !== 'vast'
+                    && checkbox?.checked === true;
+            }
+            comfyTaskVastParallel = result;
             return { ...result };
         }
 
@@ -36616,6 +36690,7 @@
                 comfy_launch_profiles: comfyRuntimeProfilesForSave(),
                 comfy_task_allocations: comfyAllocationsForSave(),
                 comfy_task_modal_parallel: comfyModalParallelForSave(),
+                comfy_task_vast_parallel: comfyVastParallelForSave(),
                 modal_enabled: !!document.getElementById('setting-modal-enabled')?.checked,
                 vast_enabled: !!document.getElementById('setting-vast-enabled')?.checked,
                 modal_profile: document.getElementById('setting-modal-profile')?.value.trim() || 'soya-comfy',
@@ -83994,7 +84069,7 @@
 
         const _queueAreaDefinitions = [
             {key: 'llm', icon: '🧠', title: 'LLM 처리', note: 'CALL 및 프롬프트 분석'},
-            {key: 'hybrid', icon: '⚡', title: '동적 배분', note: '먼저 빈 로컬 GPU/Modal/챈섭이 실행'},
+            {key: 'hybrid', icon: '⚡', title: '동적 배분', note: '먼저 빈 로컬 GPU/Modal/Vast/챈섭이 실행'},
             {key: 'gpu', icon: '🖥️', title: 'GPU', note: '로컬 ComfyUI 작업'},
             {
                 key: 'cloud', icon: '☁️', title: '클라우드 GPU', note: '원격 ComfyUI 작업',
@@ -84017,7 +84092,7 @@
 
         function _queueItemArea(item) {
             const area = String((item && item.execution_area) || 'gpu').toLowerCase();
-            // 로컬 Comfy·Modal 병렬 대기 작업은 실제 워커가 claim하기 전까지
+            // 둘 이상의 Comfy 실행 레인에 병렬 배분된 작업은 실제 워커가 claim하기 전까지
             // 특정 GPU 소속이 아니므로 동적 배분 레인에 표시한다.
             if (area === 'comfy_parallel') return 'hybrid';
             if (area === 'vast_download') return 'background';

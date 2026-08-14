@@ -25,6 +25,7 @@ from comfy_allocation import (
     VAST_SUPPORTED_COMFY_TASK_KEYS,
     normalize_comfy_task_allocations,
     normalize_comfy_task_modal_parallel,
+    normalize_comfy_task_vast_parallel,
 )
 from modes import llm_service
 from modes.lora_export_utils import format_lora_export_filename
@@ -611,17 +612,30 @@ class QueueManager:
         # 챈섭 및 아직 공급자가 정해지지 않은 하이브리드 항목은 외부 워커도 깨운다.
         if self._item_execution_area(item)[0] in ("external", "hybrid"):
             asyncio.ensure_future(self._ensure_external_workers())
+        execution_area = self._item_execution_area(item)[0]
         if (
-            self._item_execution_area(item)[0] in ("modal", "comfy_parallel")
+            (
+                execution_area in ("modal", "comfy_parallel")
+                and self._modal_comfy_lane_allowed(item)
+            )
             or (
-                self._item_execution_area(item)[0] == "hybrid"
+                execution_area == "hybrid"
                 and self._modal_comfy_lane_allowed(item)
             )
         ):
             asyncio.ensure_future(self._ensure_modal_workers())
-        if self._item_execution_area(item)[0] == "vast":
+        if (
+            (
+                execution_area in ("vast", "comfy_parallel")
+                and self._vast_comfy_lane_allowed(item)
+            )
+            or (
+                execution_area == "hybrid"
+                and self._vast_comfy_lane_allowed(item)
+            )
+        ):
             asyncio.ensure_future(self._ensure_vast_workers())
-        if self._item_execution_area(item)[0] == "video_postprocess":
+        if execution_area == "video_postprocess":
             asyncio.ensure_future(self._ensure_video_postprocess_worker())
         return item
 
@@ -802,23 +816,34 @@ class QueueManager:
                 return "instance_lora"
         return None
 
-    def _comfy_execution_policy(self, item: QueueItem) -> tuple[int | str, bool]:
-        """현재 설정에서 (기본 대상, Modal 병렬 허용)을 반환한다."""
+    def _comfy_execution_policy(
+        self,
+        item: QueueItem,
+    ) -> tuple[int | str, bool, bool]:
+        """현재 설정에서 (기본 대상, Modal 병렬, Vast 병렬)을 반환한다."""
 
         task_key = self._comfy_task_key_for_item(item)
         if not task_key:
-            return 1, False
+            return 1, False, False
         try:
             config = self.get_config() if self.get_config else {}
             allocations = normalize_comfy_task_allocations(
                 config.get("comfy_task_allocations"),
                 legacy_illustration_port=config.get("comfyui_port_illustration"),
             )
-            parallel = normalize_comfy_task_modal_parallel(
+            modal_parallel = normalize_comfy_task_modal_parallel(
                 config.get("comfy_task_modal_parallel"),
                 allocations=allocations,
             )
-            return allocations[task_key], parallel[task_key]
+            vast_parallel = normalize_comfy_task_vast_parallel(
+                config.get("comfy_task_vast_parallel"),
+                allocations=allocations,
+            )
+            return (
+                allocations[task_key],
+                modal_parallel[task_key],
+                vast_parallel[task_key],
+            )
         except Exception as e:
             print(
                 "[QUEUE:COMFY_ALLOCATION] 실행 정책 조회 실패, Comfy #1 전용 사용: "
@@ -826,25 +851,25 @@ class QueueManager:
                 f"error={type(e).__name__}: {e}"
             )
             traceback.print_exc()
-            return 1, False
+            return 1, False, False
 
     def _local_comfy_lane_allowed(self, item: QueueItem) -> bool:
-        target, _parallel = self._comfy_execution_policy(item)
+        target, _modal_parallel, _vast_parallel = self._comfy_execution_policy(item)
         return target not in REMOTE_COMFY_TARGETS
 
     def _modal_comfy_lane_allowed(self, item: QueueItem) -> bool:
         task_key = self._comfy_task_key_for_item(item)
         if task_key not in MODAL_SUPPORTED_COMFY_TASK_KEYS or not self._modal_enabled():
             return False
-        target, parallel = self._comfy_execution_policy(item)
-        return target == MODAL_COMFY_TARGET or parallel
+        target, modal_parallel, _vast_parallel = self._comfy_execution_policy(item)
+        return target == MODAL_COMFY_TARGET or modal_parallel
 
     def _vast_comfy_lane_allowed(self, item: QueueItem) -> bool:
         task_key = self._comfy_task_key_for_item(item)
         if task_key not in VAST_SUPPORTED_COMFY_TASK_KEYS or not self._vast_enabled():
             return False
-        target, _parallel = self._comfy_execution_policy(item)
-        return target == VAST_COMFY_TARGET
+        target, _modal_parallel, vast_parallel = self._comfy_execution_policy(item)
+        return target == VAST_COMFY_TARGET or vast_parallel
 
     @staticmethod
     def _bind_comfy_execution_target(item: QueueItem, target: str) -> None:
@@ -911,13 +936,24 @@ class QueueManager:
             return "hybrid", "hybrid"
         task_key = self._comfy_task_key_for_item(item)
         if task_key and provider in ("", "comfy", "local"):
-            target, parallel = self._comfy_execution_policy(item)
+            target, modal_parallel, vast_parallel = self._comfy_execution_policy(item)
+            configured_providers = []
+            if target == MODAL_COMFY_TARGET:
+                configured_providers.append("modal")
+            elif target == VAST_COMFY_TARGET:
+                configured_providers.append("vast")
+            else:
+                configured_providers.append("comfy")
+            if modal_parallel and "modal" not in configured_providers:
+                configured_providers.append("modal")
+            if vast_parallel and "vast" not in configured_providers:
+                configured_providers.append("vast")
+            if len(configured_providers) > 1:
+                return "comfy_parallel", "+".join(configured_providers)
             if target == MODAL_COMFY_TARGET:
                 return "modal", "modal"
             if target == VAST_COMFY_TARGET:
                 return "vast", "vast"
-            if parallel and self._modal_enabled():
-                return "comfy_parallel", "comfy+modal"
         return "gpu", provider or "local"
 
     def _bind_hybrid_item_provider(self, item: QueueItem, provider: str) -> bool:
@@ -1244,7 +1280,11 @@ class QueueManager:
                 lane == "gpu"
                 and item.type not in LLM_TYPES
                 and (
-                    execution_area in ("gpu", "comfy_parallel")
+                    execution_area == "gpu"
+                    or (
+                        execution_area == "comfy_parallel"
+                        and self._local_comfy_lane_allowed(item)
+                    )
                     or (
                         execution_area == "hybrid"
                         and self._local_comfy_lane_allowed(item)
@@ -1253,14 +1293,26 @@ class QueueManager:
             ):
                 return True
             if lane == "modal" and (
-                execution_area in ("modal", "comfy_parallel")
+                (
+                    execution_area in ("modal", "comfy_parallel")
+                    and self._modal_comfy_lane_allowed(item)
+                )
                 or (
                     execution_area == "hybrid"
                     and self._modal_comfy_lane_allowed(item)
                 )
             ):
                 return True
-            if lane == "vast" and execution_area == "vast":
+            if lane == "vast" and (
+                (
+                    execution_area in ("vast", "comfy_parallel")
+                    and self._vast_comfy_lane_allowed(item)
+                )
+                or (
+                    execution_area == "hybrid"
+                    and self._vast_comfy_lane_allowed(item)
+                )
+            ):
                 return True
             if lane == "video_postprocess" and execution_area == "video_postprocess":
                 return True
@@ -1434,12 +1486,16 @@ class QueueManager:
                 if not pending_items:
                     break
                 pending_items.sort(key=self._sort_key)
-                # 로컬 전용·로컬/Modal 선착순·로컬 허용 하이브리드 항목을 선택한다.
+                # 로컬 전용·원격 병렬 중 로컬 허용·하이브리드 항목을 선택한다.
                 gpu_pending = [
                     i for i in pending_items
                     if i.type not in LLM_TYPES
                     and (
-                        self._item_execution_area(i)[0] in ("gpu", "comfy_parallel")
+                        self._item_execution_area(i)[0] == "gpu"
+                        or (
+                            self._item_execution_area(i)[0] == "comfy_parallel"
+                            and self._local_comfy_lane_allowed(i)
+                        )
                         or (
                             self._item_execution_area(i)[0] == "hybrid"
                             and self._local_comfy_lane_allowed(i)
@@ -1619,9 +1675,8 @@ class QueueManager:
                 params={"provider": provider},
             )
             execution_area = self._item_execution_area(candidate)[0]
-            allowed = execution_area in ("modal", "comfy_parallel") or (
-                execution_area == "hybrid"
-                and self._modal_comfy_lane_allowed(candidate)
+            allowed = self._modal_comfy_lane_allowed(candidate) and (
+                execution_area in ("modal", "comfy_parallel", "hybrid")
             )
             if not allowed:
                 print(
@@ -1697,7 +1752,10 @@ class QueueManager:
             item for item in self.items
             if item.status == "pending"
             and (
-                self._item_execution_area(item)[0] in ("modal", "comfy_parallel")
+                (
+                    self._item_execution_area(item)[0] in ("modal", "comfy_parallel")
+                    and self._modal_comfy_lane_allowed(item)
+                )
                 or (
                     self._item_execution_area(item)[0] == "hybrid"
                     and self._modal_comfy_lane_allowed(item)
@@ -1794,14 +1852,26 @@ class QueueManager:
             item
             for item in self.items
             if item.status == "pending"
-            and self._item_execution_area(item)[0] == "vast"
-            and self._vast_comfy_lane_allowed(item)
+            and (
+                (
+                    self._item_execution_area(item)[0] in ("vast", "comfy_parallel")
+                    and self._vast_comfy_lane_allowed(item)
+                )
+                or (
+                    self._item_execution_area(item)[0] == "hybrid"
+                    and self._vast_comfy_lane_allowed(item)
+                )
+            )
             and self._dependencies_ready(item)
         ]
         if not pending:
             return None
         pending.sort(key=self._sort_key)
         item = pending[0]
+        if self._item_execution_area(item)[0] == "hybrid":
+            if not self._bind_hybrid_item_provider(item, "comfy"):
+                print(f"[QUEUE:VAST] 하이브리드 claim 실패: item={item.id}")
+                return None
         self._bind_comfy_execution_target(item, VAST_COMFY_TARGET)
         item.status = "processing"
         item.started_at = time.time()

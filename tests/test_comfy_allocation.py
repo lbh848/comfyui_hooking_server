@@ -9,6 +9,7 @@ from comfy_allocation import (
     ComfyTaskAllocationValidationError,
     normalize_comfy_task_allocations,
     normalize_comfy_task_modal_parallel,
+    normalize_comfy_task_vast_parallel,
     select_comfy_instance,
 )
 
@@ -150,9 +151,10 @@ def test_vast_is_rejected_for_local_only_tasks(task_key: str) -> None:
         normalize_comfy_task_allocations({task_key: "vast"})
 
 
-def test_modal_parallel_is_allowed_only_with_local_primary_target() -> None:
+def test_modal_parallel_is_allowed_with_local_or_vast_primary_target() -> None:
     local_allocations = normalize_comfy_task_allocations({"illustration": 2})
     modal_allocations = normalize_comfy_task_allocations({"illustration": "modal"})
+    vast_allocations = normalize_comfy_task_allocations({"illustration": "vast"})
 
     local_parallel = normalize_comfy_task_modal_parallel(
         {"illustration": True, "tag_analysis": True},
@@ -162,10 +164,53 @@ def test_modal_parallel_is_allowed_only_with_local_primary_target() -> None:
         {"illustration": True},
         allocations=modal_allocations,
     )
+    vast_primary_parallel = normalize_comfy_task_modal_parallel(
+        {"illustration": True},
+        allocations=vast_allocations,
+    )
 
     assert local_parallel["illustration"] is True
     assert local_parallel["tag_analysis"] is False
     assert modal_parallel["illustration"] is False
+    assert vast_primary_parallel["illustration"] is True
+
+
+def test_vast_parallel_is_allowed_with_local_or_modal_primary_target() -> None:
+    local_allocations = normalize_comfy_task_allocations({"illustration": 2})
+    modal_allocations = normalize_comfy_task_allocations({"illustration": "modal"})
+    vast_allocations = normalize_comfy_task_allocations({"illustration": "vast"})
+
+    local_parallel = normalize_comfy_task_vast_parallel(
+        {"illustration": True, "tag_analysis": True},
+        allocations=local_allocations,
+    )
+    modal_primary_parallel = normalize_comfy_task_vast_parallel(
+        {"illustration": True},
+        allocations=modal_allocations,
+    )
+    vast_parallel = normalize_comfy_task_vast_parallel(
+        {"illustration": True},
+        allocations=vast_allocations,
+    )
+
+    assert local_parallel["illustration"] is True
+    assert local_parallel["tag_analysis"] is False
+    assert modal_primary_parallel["illustration"] is True
+    assert vast_parallel["illustration"] is False
+
+
+@pytest.mark.parametrize(
+    "normalizer",
+    (normalize_comfy_task_modal_parallel, normalize_comfy_task_vast_parallel),
+)
+def test_remote_parallel_rejects_non_boolean_values(normalizer) -> None:
+    allocations = normalize_comfy_task_allocations({"illustration": 1})
+
+    with pytest.raises(ComfyTaskAllocationValidationError, match="bool"):
+        normalizer(
+            {"illustration": "true"},
+            allocations=allocations,
+        )
 
 
 def test_local_instance_selection_rejects_modal_primary_target() -> None:
@@ -175,13 +220,13 @@ def test_local_instance_selection_rejects_modal_primary_target() -> None:
         select_comfy_instance(allocations, "illustration", {1: True, 2: True})
 
 
-def test_vast_primary_disables_modal_parallel_and_local_selection() -> None:
+def test_vast_primary_allows_modal_parallel_and_rejects_local_selection() -> None:
     allocations = normalize_comfy_task_allocations({"illustration": "vast"})
     parallel = normalize_comfy_task_modal_parallel(
         {"illustration": True},
         allocations=allocations,
     )
 
-    assert parallel["illustration"] is False
+    assert parallel["illustration"] is True
     with pytest.raises(ComfyTaskAllocationValidationError, match="Vast 전용"):
         select_comfy_instance(allocations, "illustration", {1: True, 2: True})

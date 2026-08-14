@@ -411,9 +411,14 @@ def test_runtime_persists_detailed_task_allocations_and_shows_fallback_state() -
 
     assert "comfy_task_allocations: comfyAllocationsForSave()" in FRONTEND
     assert "comfy_task_modal_parallel: comfyModalParallelForSave()" in FRONTEND
+    assert "comfy_task_vast_parallel: comfyVastParallelForSave()" in FRONTEND
     assert "modalOption.textContent = 'MODAL'" in FRONTEND
-    assert "toggleText.textContent = 'MODAL 병렬 사용'" in FRONTEND
-    assert "checkbox.disabled = modalPrimary" in FRONTEND
+    assert "comfyAllocationCreateRemoteParallel(item, 'modal')" in FRONTEND
+    assert "comfyAllocationCreateRemoteParallel(item, 'vast')" in FRONTEND
+    assert "comfy-allocation-remote-parallel provider-${provider}" in FRONTEND
+    assert "comfy-allocation-remote-parallel ${provider}" not in FRONTEND
+    assert "const providerPrimary = select.value === provider" in FRONTEND
+    assert "checkbox.disabled = providerPrimary" in FRONTEND
     assert "Comfy #1만 실행 중 · 로컬 대상 작업은 #1로 폴백" in FRONTEND
     assert "Comfy #2만 실행 중 · 로컬 대상 작업은 #2로 폴백" in FRONTEND
 

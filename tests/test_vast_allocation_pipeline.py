@@ -206,3 +206,129 @@ async def test_vast_availability_callback_wakes_waiting_lane(
 
     assert set(calls) == {"workers", "notify", "process"}
     assert manager._vast_wakeup.is_set()
+
+
+@pytest.mark.asyncio
+async def test_local_modal_and_vast_claim_parallel_items_without_duplicates() -> None:
+    manager = QueueManager()
+    manager.get_config = lambda: {
+        "modal_enabled": True,
+        "modal_max_concurrency": 1,
+        "vast_enabled": True,
+        "comfy_task_allocations": {"asset_generation": 1},
+        "comfy_task_modal_parallel": {"asset_generation": True},
+        "comfy_task_vast_parallel": {"asset_generation": True},
+    }
+    manager.is_vast_ready = lambda: True
+    all_started = asyncio.Event()
+    release = asyncio.Event()
+    starts: list[tuple[str, str | None]] = []
+
+    async def execute(item: QueueItem) -> dict:
+        starts.append((item.id, item.comfy_execution_target))
+        if len(starts) == 3:
+            all_started.set()
+        await release.wait()
+        return {"ok": True}
+
+    async def no_prune(_item: QueueItem) -> None:
+        return None
+
+    manager._execute_item = execute
+    manager._deferred_prune = no_prune
+    items = [
+        await manager.add_item("asset_generation", f"asset-{index}", {})
+        for index in range(3)
+    ]
+
+    try:
+        await asyncio.wait_for(all_started.wait(), timeout=1)
+        assert {item_id for item_id, _target in starts} == {
+            item.id for item in items
+        }
+        assert {target for _item_id, target in starts} == {
+            "local",
+            "modal",
+            "vast",
+        }
+
+        release.set()
+        await asyncio.wait_for(
+            asyncio.gather(*(item.completion_future for item in items)),
+            timeout=1,
+        )
+        assert all(item.status == "completed" for item in items)
+    finally:
+        release.set()
+        tasks = [
+            task
+            for task in (
+                *manager._modal_worker_tasks.values(),
+                *manager._vast_worker_tasks.values(),
+            )
+            if not task.done()
+        ]
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_modal_primary_and_vast_parallel_do_not_use_local_lane() -> None:
+    manager = QueueManager()
+    manager.get_config = lambda: {
+        "modal_enabled": True,
+        "modal_max_concurrency": 1,
+        "vast_enabled": True,
+        "comfy_task_allocations": {"asset_generation": "modal"},
+        "comfy_task_vast_parallel": {"asset_generation": True},
+    }
+    manager.is_vast_ready = lambda: True
+    both_started = asyncio.Event()
+    release = asyncio.Event()
+    starts: list[tuple[str, str | None]] = []
+
+    async def execute(item: QueueItem) -> dict:
+        starts.append((item.id, item.comfy_execution_target))
+        if len(starts) == 2:
+            both_started.set()
+        await release.wait()
+        return {"ok": True}
+
+    async def no_prune(_item: QueueItem) -> None:
+        return None
+
+    manager._execute_item = execute
+    manager._deferred_prune = no_prune
+    items = [
+        await manager.add_item("asset_generation", f"asset-{index}", {})
+        for index in range(2)
+    ]
+
+    try:
+        await asyncio.wait_for(both_started.wait(), timeout=1)
+        assert {item_id for item_id, _target in starts} == {
+            item.id for item in items
+        }
+        assert {target for _item_id, target in starts} == {"modal", "vast"}
+
+        release.set()
+        await asyncio.wait_for(
+            asyncio.gather(*(item.completion_future for item in items)),
+            timeout=1,
+        )
+    finally:
+        release.set()
+        tasks = [
+            task
+            for task in (
+                *manager._modal_worker_tasks.values(),
+                *manager._vast_worker_tasks.values(),
+            )
+            if not task.done()
+        ]
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
