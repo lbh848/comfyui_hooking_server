@@ -20,9 +20,9 @@ from vast_backend.image_pull_progress import (
 )
 from vast_backend.model_sources import build_download_plan, save_mapping
 from vast_backend.preflight import (
-    calculate_transfer_estimate,
-    parse_curl_speed_probe,
-    speed_result,
+    actual_transfer_result,
+    calculate_actual_transfer_estimate,
+    calculate_transfer_totals,
 )
 from vast_backend.service import (
     ACCOUNT_STATUS_CACHE_SECONDS,
@@ -696,116 +696,147 @@ def test_vast_frontend_has_manual_destroy_guard_and_cmd_log() -> None:
     assert 'id="vast-search-cuda" min="12.8"' in html
     assert 'value="12.8" title="런타임 이미지 요구사항' in html
     assert 'id="vast-preflight-card"' in html
-    assert 'data-vast-preflight-key="cloudflare"' in html
-    assert 'data-vast-preflight-key="huggingface"' in html
+    assert 'data-vast-preflight-key="ssh"' in html
+    assert 'data-vast-preflight-key="download"' in html
     assert 'data-vast-preflight-key="upload"' in html
     assert "function vastRenderPreflight(launch)" in html
+    assert "별도 측정용 트래픽은 사용하지 않습니다" in html
 
 
-def test_vast_curl_preflight_accepts_completed_and_timeout_samples() -> None:
-    complete = parse_curl_speed_probe(
-        "__SOYA_SPEED__:33554432:4.000:206:8388608",
-        exit_code=0,
-        key="huggingface",
-        label="Hugging Face",
-        detail="선택 모델",
-    )
-    partial = parse_curl_speed_probe(
-        "__SOYA_SPEED__:10485760:15.000:200:699050",
-        exit_code=28,
-        key="cloudflare",
-        label="Cloudflare",
-        detail="제한 시간 도달",
-    )
-
-    assert complete["status"] == "done"
-    assert complete["mbps"] == pytest.approx(67.11)
-    assert partial["status"] == "partial"
-    assert partial["bytes"] == 10 * 1024**2
-    assert partial["mbps"] == pytest.approx(5.59)
-
-
-def test_vast_curl_preflight_rejects_http_error() -> None:
-    with pytest.raises(ValueError, match="HTTP 오류"):
-        parse_curl_speed_probe(
-            "__SOYA_SPEED__:123:0.500:403:246",
-            exit_code=22,
-            key="huggingface",
-            label="Hugging Face",
-            detail="실패",
-        )
-
-
-def test_vast_transfer_eta_uses_parallel_branch_bottleneck() -> None:
-    cloudflare = speed_result(
-        key="cloudflare",
-        label="Cloudflare",
-        transferred_bytes=50 * 1024**2,
-        seconds=1,
+def test_vast_actual_transfer_eta_uses_parallel_branch_bottleneck() -> None:
+    download = actual_transfer_result(
+        key="download",
+        label="실제 모델 다운로드",
+        status="running",
+        completed_bytes=200,
+        total_bytes=1000,
+        total_known=True,
+        seconds=4,
+        bytes_per_second=100,
         detail="test",
     )
-    huggingface = speed_result(
-        key="huggingface",
-        label="Hugging Face",
-        transferred_bytes=100 * 1024**2,
-        seconds=1,
-        detail="test",
-    )
-    upload = speed_result(
+    upload = actual_transfer_result(
         key="upload",
-        label="로컬→Vast",
-        transferred_bytes=20 * 1024**2,
-        seconds=1,
+        label="실제 로컬→Vast",
+        status="running",
+        completed_bytes=200,
+        total_bytes=500,
+        total_known=True,
+        seconds=4,
+        bytes_per_second=50,
         detail="test",
     )
-    estimate = calculate_transfer_estimate(
-        {
-            "models": [
-                {"size_bytes": 1024**3, "source": {"source_type": "hf"}},
-                {"size_bytes": 512 * 1024**2, "source": {"source_type": "url"}},
-                {"size_bytes": 2 * 1024**3, "source": {"source_type": "upload"}},
-            ]
-        },
-        [{"size": 1024**3}],
-        [cloudflare, huggingface, upload],
-    )
+
+    estimate = calculate_actual_transfer_estimate([download, upload])
 
     assert estimate["available"] is True
-    assert estimate["download_seconds"] == pytest.approx(20.5, abs=0.1)
-    assert estimate["upload_seconds"] == pytest.approx(153.6, abs=0.1)
-    assert estimate["remaining_seconds"] == 154
+    assert estimate["download_seconds"] == 8.0
+    assert estimate["upload_seconds"] == 6.0
+    assert estimate["remaining_seconds"] == 8
+    assert estimate["download_completed_bytes"] == 200
+    assert estimate["upload_completed_bytes"] == 200
 
 
-def test_vast_preflight_uses_selected_huggingface_model() -> None:
-    url, requested_bytes, detail = VastService._preflight_huggingface_target(
+def test_vast_actual_transfer_eta_waits_for_each_active_branch() -> None:
+    download = actual_transfer_result(
+        key="download",
+        label="실제 모델 다운로드",
+        status="running",
+        completed_bytes=100,
+        total_bytes=1000,
+        total_known=True,
+        seconds=2,
+        bytes_per_second=50,
+        detail="test",
+    )
+    upload = actual_transfer_result(
+        key="upload",
+        label="실제 로컬→Vast",
+        status="waiting",
+        completed_bytes=0,
+        total_bytes=500,
+        total_known=True,
+        seconds=0,
+        bytes_per_second=0,
+        detail="wait",
+    )
+
+    estimate = calculate_actual_transfer_estimate([download, upload])
+
+    assert estimate["available"] is False
+    assert estimate["remaining_seconds"] is None
+    assert "업로드" in estimate["note"]
+
+
+def test_vast_transfer_totals_route_sources_and_reject_unknown_size() -> None:
+    totals = calculate_transfer_totals(
         {
             "models": [
-                {
-                    "filename": "small model.safetensors",
-                    "size_bytes": 8 * 1024**2,
-                    "source": {
-                        "source_type": "hf",
-                        "repo_id": "org/model",
-                        "hf_filename": "folder/small model.safetensors",
-                    },
-                }
+                {"key": "hf", "size_bytes": 100, "source": {"source_type": "hf"}},
+                {"key": "local", "size_bytes": 200, "source": {"source_type": "upload"}},
+                {"key": "unknown", "size_bytes": 0, "source": {"source_type": "url"}},
             ]
-        }
+        },
+        [{"name": "lora", "size": 50}],
     )
 
-    assert url == (
-        "https://huggingface.co/org/model/resolve/main/"
-        "folder/small%20model.safetensors"
+    assert totals["download_bytes"] == 100
+    assert totals["upload_bytes"] == 250
+    assert totals["download_total_known"] is False
+    assert totals["upload_total_known"] is True
+
+
+def test_vast_actual_transfer_eta_accepts_branch_without_targets() -> None:
+    download = actual_transfer_result(
+        key="download",
+        label="실제 모델 다운로드",
+        status="done",
+        completed_bytes=1000,
+        total_bytes=1000,
+        total_known=True,
+        seconds=10,
+        bytes_per_second=100,
+        detail="done",
     )
-    assert requested_bytes == 8 * 1024**2
-    assert "small model.safetensors" in detail
+    upload = actual_transfer_result(
+        key="upload",
+        label="실제 로컬→Vast",
+        status="skipped",
+        completed_bytes=0,
+        total_bytes=0,
+        total_known=True,
+        seconds=0,
+        bytes_per_second=0,
+        detail="none",
+    )
+
+    estimate = calculate_actual_transfer_estimate([download, upload])
+
+    assert estimate["available"] is True
+    assert estimate["remaining_seconds"] == 0
 
 
-def test_vast_automatic_preflight_runs_before_parallel_build(
+def test_vast_readiness_check_authenticates_before_actual_transfer_tracking(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    class _Channel:
+        def recv_exit_status(self) -> int:
+            return 0
+
+    class _Stream:
+        def __init__(self, value: bytes = b"") -> None:
+            self.value = value
+            self.channel = _Channel()
+
+        def read(self) -> bytes:
+            return self.value
+
     class _PreflightSsh:
         closed = False
+
+        def exec_command(self, command: str):
+            assert command == "printf '__SOYA_SSH_READY__'"
+            return _Stream(), _Stream(b"__SOYA_SSH_READY__"), _Stream()
 
         def close(self) -> None:
             self.closed = True
@@ -815,36 +846,15 @@ def test_vast_automatic_preflight_runs_before_parallel_build(
         state="preparing", launch_id="preflight", label="soya-vast-preflight"
     )
     service.launch["contract_started_at_epoch"] = time.time() - 10
-    service.launch["ssh_ready_at_epoch"] = time.time()
+    service.launch["instance_running_at_epoch"] = time.time()
+    service.launch["image_pull"].update(total_bytes=10 * 1024**3, observed_layers=10)
     ssh = _PreflightSsh()
     monkeypatch.setattr(service, "_ssh_connect", lambda *_args: ssh)
-
-    def fake_curl(_ssh: Any, *, key: str, label: str, detail: str, **_kwargs: Any):
-        return speed_result(
-            key=key,
-            label=label,
-            transferred_bytes=50 * 1024**2,
-            seconds=1,
-            detail=detail,
-        )
-
-    monkeypatch.setattr(service, "_run_curl_speed_probe", fake_curl)
-    monkeypatch.setattr(
-        service,
-        "_run_sftp_speed_probe",
-        lambda _ssh: speed_result(
-            key="upload",
-            label="로컬→Vast",
-            transferred_bytes=25 * 1024**2,
-            seconds=1,
-            detail="test",
-        ),
-    )
     model_plan = {
         "models": [
             {
                 "filename": "model.safetensors",
-                "size_bytes": 500 * 1024**2,
+                "size_bytes": 1000,
                 "source": {
                     "source_type": "hf",
                     "repo_id": "org/model",
@@ -856,13 +866,86 @@ def test_vast_automatic_preflight_runs_before_parallel_build(
 
     service._run_preflight("ssh.example", 1234, "unused-key", model_plan, [])
 
-    assert service.launch["preflight"]["state"] == "complete"
-    assert service.launch["preflight"]["estimate"]["remaining_seconds"] == 10
+    assert service.launch["preflight"]["state"] == "ready"
+    tests = {item["key"]: item for item in service.launch["preflight"]["tests"]}
+    assert set(tests) == {"docker", "ssh"}
+    assert tests["docker"]["mbps"] == 0
+    assert "속도 계산에서 제외" in tests["docker"]["detail"]
+    assert tests["ssh"]["status"] == "done"
+    assert service.launch["ssh_ready_at_epoch"] > 0
     assert ssh.closed is True
+
+    service._initialize_actual_transfer_tracking(model_plan, [])
+    assert service.launch["preflight"]["state"] == "transferring"
+    tests = {item["key"]: item for item in service.launch["preflight"]["tests"]}
+    assert tests["download"]["status"] == "waiting"
+    assert tests["upload"]["status"] == "skipped"
+
     launch_source = inspect.getsource(VastService._launch_inner)
-    assert launch_source.index("self._run_preflight") < launch_source.index(
-        "upload_task = asyncio.to_thread"
+    assert launch_source.index("self._run_preflight") < launch_source.index("self._initialize_actual_transfer_tracking")
+    assert launch_source.index("self._initialize_actual_transfer_tracking") < launch_source.index("upload_task = asyncio.to_thread")
+
+
+def test_vast_actual_download_rate_uses_first_observation_as_resume_baseline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = VastService(tmp_path, lambda: {})
+    model_plan = {
+        "models": [
+            {
+                "key": "checkpoints/model.safetensors",
+                "size_bytes": 1000,
+                "source": {"source_type": "url", "url": "https://example.test/model"},
+            }
+        ]
+    }
+    service._initialize_actual_transfer_tracking(model_plan, [])
+    ticks = iter((100.0, 110.0, 120.0))
+    monkeypatch.setattr("vast_backend.service.time.monotonic", lambda: next(ticks))
+
+    # 기존 .part 400바이트는 이번 실행에서 받은 속도에 포함하면 안 된다.
+    service._update_actual_transfer_progress("download", 400, status="running")
+    first = {
+        item["key"]: item for item in service.launch["preflight"]["tests"]
+    }["download"]
+    assert first["bytes_per_second"] == 0
+    assert service.launch["preflight"]["estimate"]["available"] is False
+
+    service._update_actual_transfer_progress("download", 600, status="running")
+    second = {
+        item["key"]: item for item in service.launch["preflight"]["tests"]
+    }["download"]
+    assert second["bytes_per_second"] == pytest.approx(20)
+    assert service.launch["preflight"]["estimate"]["remaining_seconds"] == 20
+
+    service._update_actual_transfer_progress("download", 1000, status="done")
+    assert service.launch["preflight"]["state"] == "complete"
+    assert service.launch["preflight"]["estimate"]["remaining_seconds"] == 0
+
+
+def test_vast_readiness_check_does_not_continue_after_ssh_auth_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = VastService(tmp_path, lambda: {})
+    service.launch = service._new_launch_state(
+        state="preparing", launch_id="auth-fail", label="soya-vast-auth-fail"
     )
+    service.launch["contract_started_at_epoch"] = time.time() - 5
+    service.launch["instance_running_at_epoch"] = time.time()
+
+    def fail_connect(*_args: Any):
+        raise VastApiError("Authentication failed")
+
+    monkeypatch.setattr(service, "_ssh_connect", fail_connect)
+
+    with pytest.raises(VastApiError, match="Authentication failed"):
+        service._run_preflight("ssh.example", 1234, "unused-key", {"models": []}, [])
+
+    assert service.launch["preflight"]["state"] == "failed"
+    tests = {item["key"]: item for item in service.launch["preflight"]["tests"]}
+    assert tests["ssh"]["status"] == "error"
+    steps = {item["key"]: item for item in service.launch["steps"]}
+    assert steps["preflight"]["state"] == "error"
 
 
 def test_civitai_plan_has_download_url_even_without_key() -> None:
@@ -968,23 +1051,22 @@ def test_remote_download_is_resumable_atomic_and_clears_stale_state(
     service = VastService(tmp_path, lambda: {})
     ssh = _FakeSsh()
     monkeypatch.setattr(service, "_ssh_connect", lambda *_args: ssh)
+    model_plan = {
+        "models": [
+            {
+                "key": "checkpoints/model name.safetensors",
+                "size_bytes": 100,
+                "source": {
+                    "source_type": "url",
+                    "url": "https://example.test/model?id=1&name=test",
+                },
+            }
+        ]
+    }
+    service._initialize_actual_transfer_tracking(model_plan, [])
 
     service._run_remote_downloads(
-        "ssh.example",
-        1234,
-        "unused-key",
-        {
-            "models": [
-                {
-                    "key": "checkpoints/model name.safetensors",
-                    "size_bytes": 100,
-                    "source": {
-                        "source_type": "url",
-                        "url": "https://example.test/model?id=1&name=test",
-                    },
-                }
-            ]
-        },
+        "ssh.example", 1234, "unused-key", model_plan
     )
 
     script = "".join(ssh.script)
@@ -995,29 +1077,36 @@ def test_remote_download_is_resumable_atomic_and_clears_stale_state(
     assert "expected_size=100" in script
     assert "date > /tmp/soya_models_done" in script
     assert ssh.closed is True
+    tests = {item["key"]: item for item in service.launch["preflight"]["tests"]}
+    assert tests["download"]["status"] == "done"
+    assert tests["download"]["bytes"] == 100
 
 
 def test_remote_download_rejects_missing_civitai_url(tmp_path: Path) -> None:
     service = VastService(tmp_path, lambda: {})
+    model_plan = {
+        "models": [
+            {
+                "key": "checkpoints/model.safetensors",
+                "size_bytes": 100,
+                "source": {
+                    "source_type": "civitai",
+                    "civitai_version_id": 456,
+                },
+            }
+        ]
+    }
+    service._initialize_actual_transfer_tracking(model_plan, [])
 
     with pytest.raises(VastApiError, match="다운로드 URL"):
         service._run_remote_downloads(
             "ssh.example",
             1234,
             "unused-key",
-            {
-                "models": [
-                    {
-                        "key": "checkpoints/model.safetensors",
-                        "size_bytes": 100,
-                        "source": {
-                            "source_type": "civitai",
-                            "civitai_version_id": 456,
-                        },
-                    }
-                ]
-            },
+            model_plan,
         )
+    tests = {item["key"]: item for item in service.launch["preflight"]["tests"]}
+    assert tests["download"]["status"] == "error"
 
 
 @pytest.mark.asyncio

@@ -10684,7 +10684,9 @@
             font-weight: 700;
             white-space: nowrap;
         }
-        .vast-preflight-state[data-state="running"] { color: #38bdf8; }
+        .vast-preflight-state[data-state="running"],
+        .vast-preflight-state[data-state="transferring"] { color: #38bdf8; }
+        .vast-preflight-state[data-state="ready"],
         .vast-preflight-state[data-state="complete"] { color: #4ade80; }
         .vast-preflight-state[data-state="partial"],
         .vast-preflight-state[data-state="failed"] { color: var(--warn); }
@@ -10727,6 +10729,7 @@
         }
         .vast-preflight-metric[data-state="done"] strong,
         .vast-preflight-metric[data-state="partial"] strong { color: #4ade80; }
+        .vast-preflight-metric[data-state="running"] strong { color: #38bdf8; }
         .vast-preflight-metric[data-state="error"] strong { color: #f87171; }
         .vast-preflight-estimate {
             margin-top: 8px;
@@ -21284,27 +21287,27 @@
                                     <div class="comfy-installer-section-head">
                                         <span class="comfy-installer-step" aria-hidden="true">T</span>
                                         <div class="comfy-installer-section-heading">
-                                            <h3 class="comfy-installer-title">실사용 속도 자동 프리플라이트</h3>
-                                            <p class="comfy-installer-section-copy">빌드 시작 후 SSH가 열리면 짧게 실측하고 예상 남은 전송 시간을 계산한 뒤 자동으로 빌드를 계속합니다.</p>
+                                            <h3 class="comfy-installer-title">실제 파일 전송 ETA</h3>
+                                            <p class="comfy-installer-section-copy">SSH 인증을 확인한 뒤 실제 모델 다운로드와 업로드의 누적 전송량으로 남은 시간을 계속 계산합니다. 별도 측정용 트래픽은 사용하지 않습니다.</p>
                                         </div>
                                         <span class="vast-preflight-state" id="vast-preflight-state" data-state="waiting">빌드 대기</span>
                                     </div>
                                     <div class="vast-preflight-grid" id="vast-preflight-grid">
                                         <div class="vast-preflight-metric" data-vast-preflight-key="docker" data-state="waiting">
-                                            <small>Docker 준비</small><strong>대기</strong><span>실제 pull 관측값</span>
+                                            <small>Docker 준비</small><strong>대기</strong><span>loading→running 소요 시간</span>
                                         </div>
-                                        <div class="vast-preflight-metric" data-vast-preflight-key="cloudflare" data-state="waiting">
-                                            <small>Cloudflare</small><strong>대기</strong><span>edge 다운로드</span>
+                                        <div class="vast-preflight-metric" data-vast-preflight-key="ssh" data-state="waiting">
+                                            <small>SSH 인증</small><strong>대기</strong><span>실제 원격 명령 확인</span>
                                         </div>
-                                        <div class="vast-preflight-metric" data-vast-preflight-key="huggingface" data-state="waiting">
-                                            <small>Hugging Face</small><strong>대기</strong><span>모델 경로 다운로드</span>
+                                        <div class="vast-preflight-metric" data-vast-preflight-key="download" data-state="waiting">
+                                            <small>모델 다운로드</small><strong>대기</strong><span>실제 원격 파일 전송</span>
                                         </div>
                                         <div class="vast-preflight-metric" data-vast-preflight-key="upload" data-state="waiting">
-                                            <small>로컬 → Vast</small><strong>대기</strong><span>임시 SFTP 업로드</span>
+                                            <small>로컬 → Vast</small><strong>대기</strong><span>실제 모델·LoRA 업로드</span>
                                         </div>
                                     </div>
                                     <div class="vast-preflight-estimate" id="vast-preflight-estimate">
-                                        워크플로우를 선택하고 빌드를 시작하면 실측 결과와 예상 시간이 표시됩니다.
+                                        워크플로우를 선택하고 빌드를 시작하면 실제 전송 진행률과 예상 시간이 표시됩니다.
                                     </div>
                                 </section>
 
@@ -26398,10 +26401,11 @@
             const estimateEl = document.getElementById('vast-preflight-estimate');
             const stateLabel = ({
                 waiting: '빌드 대기',
-                running: '실측 중…',
-                complete: '실측 완료',
-                partial: '일부 측정 완료',
-                failed: '측정 실패 · 빌드 계속',
+                running: 'SSH 준비 확인 중…',
+                ready: 'SSH 준비 완료',
+                transferring: '실제 전송 중…',
+                complete: '실제 전송 완료',
+                failed: '준비 또는 전송 실패',
                 cancelled: '취소됨',
             })[state] || state;
             if (stateEl) {
@@ -26417,8 +26421,9 @@
                 const valueEl = metric.querySelector('strong');
                 const detailEl = metric.querySelector('span');
                 if (!test) {
-                    metric.dataset.state = state === 'running' ? 'running' : 'waiting';
-                    if (valueEl) valueEl.textContent = state === 'running' ? '순서 대기' : '대기';
+                    const pending = state === 'running' || state === 'ready' || state === 'transferring';
+                    metric.dataset.state = pending ? 'running' : 'waiting';
+                    if (valueEl) valueEl.textContent = pending ? '순서 대기' : '대기';
                     return;
                 }
                 const testState = String(test.status || 'done');
@@ -26429,7 +26434,13 @@
                     if (mbps > 0) {
                         valueEl.textContent = `${mbPerSecond.toFixed(1)} MB/s · ${mbps.toFixed(0)} Mbps`;
                     } else if (testState === 'error') {
-                        valueEl.textContent = '측정 실패';
+                        valueEl.textContent = '실패';
+                    } else if (testState === 'waiting') {
+                        valueEl.textContent = '전송 대기';
+                    } else if (testState === 'running') {
+                        valueEl.textContent = '속도 수집 중';
+                    } else if (testState === 'skipped') {
+                        valueEl.textContent = '대상 없음';
                     } else if (Number(test.seconds || 0) > 0) {
                         valueEl.textContent = vastFormatDuration(test.seconds);
                     } else {
@@ -26437,10 +26448,16 @@
                     }
                 }
                 if (detailEl) {
-                    const received = Number(test.bytes || 0) > 0
-                        ? `${vastFormatBytes(test.bytes)} / ${Number(test.seconds || 0).toFixed(1)}초 · `
-                        : '';
-                    detailEl.textContent = `${received}${String(test.detail || '')}`;
+                    const completed = Math.max(0, Number(test.bytes || 0));
+                    const total = Math.max(0, Number(test.total_bytes || 0));
+                    const totalKnown = test.total_known !== false;
+                    let progress = '';
+                    if (completed > 0 || total > 0 || testState === 'running') {
+                        progress = totalKnown && total > 0
+                            ? `${vastFormatBytes(completed)} / ${vastFormatBytes(total)} · `
+                            : `${vastFormatBytes(completed)} / 전체 크기 미확정 · `;
+                    }
+                    detailEl.textContent = `${progress}${String(test.detail || '')}`;
                     detailEl.title = detailEl.textContent;
                 }
             });
@@ -26450,7 +26467,11 @@
                 ? preflight.estimate
                 : {};
             if (state === 'running') {
-                estimateEl.textContent = 'Cloudflare · Hugging Face · SFTP를 순서대로 실측하고 있습니다.';
+                estimateEl.textContent = 'Docker 준비 상태와 실제 SSH 공개키 인증을 확인하고 있습니다.';
+                return;
+            }
+            if (state === 'ready') {
+                estimateEl.textContent = 'SSH 준비 완료 · 실제 모델 파일 전송 시작을 기다리고 있습니다.';
                 return;
             }
             if (estimate.available === true && Number.isFinite(Number(estimate.remaining_seconds))) {
@@ -26460,17 +26481,19 @@
                 const uploadText = estimate.upload_seconds === null || estimate.upload_seconds === undefined
                     ? '계산 불가'
                     : vastFormatDuration(estimate.upload_seconds);
-                estimateEl.innerHTML = `<strong>예상 남은 빌드 전송 ${escapeHtml(vastFormatDuration(estimate.remaining_seconds))}</strong>`
-                    + ` · 다운로드 ${escapeHtml(downloadText)} (${escapeHtml(vastFormatBytes(estimate.download_bytes))})`
-                    + ` · 업로드 ${escapeHtml(uploadText)} (${escapeHtml(vastFormatBytes(estimate.upload_bytes))})`
+                const downloadProgress = `${vastFormatBytes(estimate.download_completed_bytes)} / ${vastFormatBytes(estimate.download_bytes)}`;
+                const uploadProgress = `${vastFormatBytes(estimate.upload_completed_bytes)} / ${vastFormatBytes(estimate.upload_bytes)}`;
+                estimateEl.innerHTML = `<strong>실제 전송 기준 남은 시간 ${escapeHtml(vastFormatDuration(estimate.remaining_seconds))}</strong>`
+                    + ` · 다운로드 ${escapeHtml(downloadText)} (${escapeHtml(downloadProgress)})`
+                    + ` · 업로드 ${escapeHtml(uploadText)} (${escapeHtml(uploadProgress)})`
                     + `<br>${escapeHtml(String(estimate.note || ''))}`;
                 return;
             }
-            if (state === 'partial' || state === 'failed') {
-                estimateEl.textContent = String(estimate.note || preflight.error || '실측값 부족으로 ETA를 계산하지 못했습니다. 빌드는 계속됩니다.');
+            if (state === 'transferring' || state === 'failed') {
+                estimateEl.textContent = String(estimate.note || preflight.error || '실제 전송 속도를 수집하고 있습니다.');
                 return;
             }
-            estimateEl.textContent = '워크플로우를 선택하고 빌드를 시작하면 실측 결과와 예상 시간이 표시됩니다.';
+            estimateEl.textContent = '워크플로우를 선택하고 빌드를 시작하면 실제 전송 진행률과 예상 시간이 표시됩니다.';
         }
 
         function vastEventTimeLabel(value) {

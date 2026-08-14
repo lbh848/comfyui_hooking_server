@@ -3,9 +3,10 @@
 준비 흐름(마법사 ④단계):
   1. 인스턴스 생성 (이미지: Modal과 동일한 bh848/soya-comfy-runtime, onstart 대기 스크립트)
   2. SSH 키 부착 → paramiko 접속
-  3. 짧은 실사용 전송 프리플라이트 + 워크플로우 기준 남은 전송 ETA
+  3. 실제 SSH 인증 확인
   4. 병렬 A: sftp 업로드 — custom_nodes 압축본 + 선택 LoRA + 'upload' 배정 모델
      병렬 B: 원격 다운로드 스크립트 — HF/Civitai/URL 모델
+     실제 파일의 누적 전송량으로 남은 전송 ETA를 계속 갱신
   5. SSH 로컬 터널 생성 + /tmp/soya_ready 터치 → ComfyUI(8188) 기동
   6. 로컬 터널 헬스체크 → 'ready'
 """
@@ -34,12 +35,12 @@ from .model_sources import (
     load_mapping,
 )
 from .preflight import (
-    calculate_transfer_estimate,
+    actual_transfer_result,
+    calculate_actual_transfer_estimate,
+    calculate_transfer_totals,
     empty_preflight_state,
     failed_result,
     informational_result,
-    parse_curl_speed_probe,
-    speed_result,
 )
 from .settings import VastSettings, load_key_files
 from .ssh_tunnel import ComfySshTunnel
@@ -59,13 +60,8 @@ ACCOUNT_STATUS_CACHE_SECONDS = 60
 ACCOUNT_STATUS_ERROR_CACHE_SECONDS = 15
 IMAGE_PULL_POLL_SECONDS = 20
 IMAGE_PULL_LOG_TAIL = 1000
-PREFLIGHT_DOWNLOAD_BYTES = 32 * 1024 * 1024
-PREFLIGHT_UPLOAD_BYTES = 16 * 1024 * 1024
-PREFLIGHT_CURL_MAX_SECONDS = 15
-PREFLIGHT_CLOUDFLARE_URL = "https://speed.cloudflare.com/__down"
-PREFLIGHT_HF_FALLBACK_URL = (
-    "https://huggingface.co/openai-community/gpt2/resolve/main/model.safetensors"
-)
+ACTUAL_TRANSFER_WINDOW_SECONDS = 30
+ACTUAL_TRANSFER_PUBLISH_SECONDS = 1
 # 고정 런타임 이미지는 CUDA 12.8 바이너리를 사용한다. 오퍼 검색에서 이보다
 # 낮은 cuda_max_good 머신을 제외해 호환성 문제로 유료 빌드가 실패하지 않게 한다.
 MIN_RUNTIME_CUDA_VERSION = 12.8
@@ -106,6 +102,7 @@ class VastService:
         self._cancel_events: dict[str, threading.Event] = {}
         self._log_secrets: set[str] = set()
         self._state_lock = threading.RLock()
+        self._actual_transfer_runtime: dict[str, dict[str, Any]] = {}
         self._guard_write_lock = threading.Lock()
         self._guard_path = self.project_root / "runtime" / "vast_launch_guard.json"
         # 생성 진행 상태(단일 인스턴스 운영 가정 — 파괴 후 재생성)
@@ -167,6 +164,7 @@ class VastService:
             "last_watchdog_log_at_epoch": 0.0,
             "orphan_instance_ids": [],
             "recovered_was_ready": False,
+            "instance_running_at_epoch": 0.0,
             "ssh_ready_at_epoch": 0.0,
             "protection_state": "armed" if state != "idle" else "off",
             "protection_reason": "",
@@ -1155,6 +1153,7 @@ class VastService:
             label=label,
             hourly_price_usd=hourly_price_usd,
         )
+        self._actual_transfer_runtime = {}
         self._event(
             "start",
             f"launch={launch_id} ask={ask_id} disk={disk_gb}GB "
@@ -1297,13 +1296,12 @@ class VastService:
 
         self._set_step("ssh", "running", "SSH 대기")
         ssh_host, ssh_port = await self._wait_ssh(instance_id)
-        self.launch["ssh_ready_at_epoch"] = time.time()
+        self.launch["instance_running_at_epoch"] = time.time()
         # 생성 요청의 ssh_key 필드는 무시되므로(검증됨) running 후 부착 API로 등록한다.
         await self._attach_key_with_retry(client, instance_id, public_key)
-        self._set_step("ssh", "done", f"{ssh_host}:{ssh_port}")
+        self._set_step("ssh", "running", "SSH 키 부착 완료 · 실제 인증 확인 중")
 
-        # Docker/SSH 준비 뒤 실제 원격 경로와 로컬 SFTP를 짧게 측정한다.
-        # 측정 실패는 결과에 남기되 본 빌드를 차단하지 않는다.
+        # 주소 노출만으로 준비 완료를 판단하지 않고 실제 인증과 명령 실행을 확인한다.
         await asyncio.to_thread(
             self._run_preflight,
             ssh_host,
@@ -1312,6 +1310,8 @@ class VastService:
             model_plan,
             lora_files,
         )
+        self._set_step("ssh", "done", f"{ssh_host}:{ssh_port} · 인증 확인 완료")
+        self._initialize_actual_transfer_tracking(model_plan, lora_files)
 
         upload_task = asyncio.to_thread(
             self._upload_all,
@@ -1468,7 +1468,7 @@ class VastService:
                 if isinstance(item, dict)
             }
             tests_by_key[key] = dict(result)
-            order = ("docker", "cloudflare", "huggingface", "upload")
+            order = ("docker", "ssh", "download", "upload")
             current["tests"] = [
                 tests_by_key[item_key]
                 for item_key in order
@@ -1490,7 +1490,7 @@ class VastService:
 
     def _docker_preflight_result(self) -> dict[str, Any]:
         contract_at = float(self.launch.get("contract_started_at_epoch") or 0.0)
-        ssh_ready_at = float(self.launch.get("ssh_ready_at_epoch") or time.time())
+        running_at = float(self.launch.get("instance_running_at_epoch") or time.time())
         pull_started_at = contract_at
         for item in self.launch.get("status_history") or []:
             if str(item.get("status") or "").lower() != "loading":
@@ -1507,175 +1507,268 @@ class VastService:
             if observed_at > 0:
                 pull_started_at = observed_at
                 break
-        seconds = max(0.001, ssh_ready_at - pull_started_at) if pull_started_at else 0.0
+        seconds = max(0.0, running_at - pull_started_at) if pull_started_at else 0.0
         pull = self.launch.get("image_pull") or {}
         try:
             total_bytes = max(0, int(pull.get("total_bytes") or 0))
-            observed_layers = max(0, int(pull.get("observed_layers") or 0))
         except (TypeError, ValueError):
             print(
                 "[VAST][PREFLIGHT][ERROR] Docker pull 수치 해석 실패: "
-                f"total={pull.get('total_bytes')!r}, observed={pull.get('observed_layers')!r}"
+                f"total={pull.get('total_bytes')!r}"
             )
             traceback.print_exc()
             total_bytes = 0
-            observed_layers = 0
-        if total_bytes > 0 and observed_layers > 0 and seconds > 0:
-            return speed_result(
-                key="docker",
-                label="Docker 준비",
-                transferred_bytes=total_bytes,
-                seconds=seconds,
-                detail="Vast daemon에서 관측된 압축 레이어 기준 실효 속도",
-            )
+        size_detail = (
+            f" · 이미지 manifest {total_bytes / 1024**3:.2f} GiB"
+            if total_bytes > 0
+            else ""
+        )
         return informational_result(
             key="docker",
             label="Docker 준비",
             seconds=seconds,
             detail=(
-                f"런타임 준비 {seconds:.1f}초 · 캐시/레이어 바이트 미관측으로 속도 계산 제외"
+                f"Vast loading→running {seconds:.1f}초{size_detail} · "
+                "호스트 캐시 여부를 알 수 없어 속도 계산에서 제외"
             ),
         )
 
-    @staticmethod
-    def _preflight_huggingface_target(
+    def _initialize_actual_transfer_tracking(
+        self,
         model_plan: dict[str, Any],
-    ) -> tuple[str, int, str]:
-        from urllib.parse import quote
-
-        candidates: list[tuple[int, str, str]] = []
+        lora_files: list[dict[str, Any]],
+    ) -> None:
+        tracking_plan = dict(model_plan)
+        tracking_models: list[Any] = []
         for item in model_plan.get("models") or []:
             if not isinstance(item, dict):
+                tracking_models.append(item)
                 continue
+            tracked = dict(item)
             source = item.get("source") or {}
-            if str(source.get("source_type") or "") != "hf":
+            if (
+                isinstance(source, dict)
+                and str(source.get("source_type") or "upload") == "upload"
+            ):
+                source_path = Path(str(item.get("source_path") or ""))
+                if source_path.is_file():
+                    try:
+                        tracked["size_bytes"] = source_path.stat().st_size
+                    except OSError as exc:
+                        print(
+                            "[VAST][TRANSFER][ERROR] 업로드 모델 실제 크기 확인 실패: "
+                            f"path={source_path}, error={type(exc).__name__}: {exc}"
+                        )
+                        traceback.print_exc()
+            tracking_models.append(tracked)
+        tracking_plan["models"] = tracking_models
+        tracking_loras: list[Any] = []
+        for item in lora_files:
+            if not isinstance(item, dict):
+                tracking_loras.append(item)
                 continue
-            repo_id = str(source.get("repo_id") or "").strip()
-            filename = str(source.get("hf_filename") or "").strip()
-            if not repo_id or not filename:
-                print(
-                    "[VAST][PREFLIGHT][ERROR] HF 측정 대상 필드 누락: "
-                    f"key={item.get('key')!r}, repo_id={repo_id!r}, filename={filename!r}"
+            tracked = dict(item)
+            source_path = Path(str(item.get("path") or ""))
+            if source_path.is_file():
+                try:
+                    tracked["size_bytes"] = source_path.stat().st_size
+                except OSError as exc:
+                    print(
+                        "[VAST][TRANSFER][ERROR] LoRA 실제 크기 확인 실패: "
+                        f"path={source_path}, error={type(exc).__name__}: {exc}"
+                    )
+                    traceback.print_exc()
+            tracking_loras.append(tracked)
+        totals = calculate_transfer_totals(tracking_plan, tracking_loras)
+        labels = {"download": "실제 모델 다운로드", "upload": "실제 로컬→Vast"}
+        with self._state_lock:
+            current = dict(self.launch.get("preflight") or empty_preflight_state())
+            tests_by_key = {
+                str(item.get("key") or ""): dict(item)
+                for item in current.get("tests") or []
+                if isinstance(item, dict)
+            }
+            runtime: dict[str, dict[str, Any]] = {}
+            for key in ("download", "upload"):
+                total = max(0, int(totals.get(f"{key}_bytes") or 0))
+                total_known = bool(totals.get(f"{key}_total_known", True))
+                status = "skipped" if total == 0 and total_known else "waiting"
+                runtime[key] = {
+                    "total_bytes": total,
+                    "total_known": total_known,
+                    "started_at": 0.0,
+                    "samples": [],
+                    "last_publish_at": 0.0,
+                    "completed_bytes": 0,
+                    "status": status,
+                }
+                tests_by_key[key] = actual_transfer_result(
+                    key=key,
+                    label=labels[key],
+                    status=status,
+                    completed_bytes=0,
+                    total_bytes=total,
+                    total_known=total_known,
+                    seconds=0.0,
+                    bytes_per_second=0.0,
+                    detail="전송 대상 없음" if status == "skipped" else "실제 파일 전송 시작 대기",
                 )
-                continue
-            try:
-                size_bytes = max(0, int(item.get("size_bytes") or 0))
-            except (TypeError, ValueError):
-                print(
-                    "[VAST][PREFLIGHT][ERROR] HF 측정 대상 크기 해석 실패: "
-                    f"key={item.get('key')!r}, size={item.get('size_bytes')!r}"
-                )
-                traceback.print_exc()
-                size_bytes = 0
-            url = (
-                f"https://huggingface.co/{quote(repo_id, safe='/')}"
-                f"/resolve/main/{quote(filename, safe='/')}"
+            self._actual_transfer_runtime = runtime
+            order = ("docker", "ssh", "download", "upload")
+            tests = [tests_by_key[key] for key in order if key in tests_by_key]
+            estimate = calculate_actual_transfer_estimate(tests)
+            active = any(runtime[key]["status"] == "waiting" for key in runtime)
+            current.update(
+                state="transferring" if active else "complete",
+                completed_at="" if active else self._utc_now(),
+                tests=tests,
+                estimate=estimate,
+                error="",
             )
-            candidates.append((size_bytes, url, str(item.get("filename") or filename)))
-        if candidates:
-            size_bytes, url, filename = max(candidates, key=lambda item: item[0])
-            requested_bytes = min(
-                PREFLIGHT_DOWNLOAD_BYTES,
-                size_bytes if size_bytes > 0 else PREFLIGHT_DOWNLOAD_BYTES,
-            )
-            return url, max(1, requested_bytes), f"선택 모델 구간 측정: {filename}"
-        print(
-            "[VAST][PREFLIGHT] HF 직접 다운로드 모델이 없어 공개 기준 파일로 측정합니다."
-        )
-        return (
-            PREFLIGHT_HF_FALLBACK_URL,
-            PREFLIGHT_DOWNLOAD_BYTES,
-            "공개 기준 파일 구간 측정",
-        )
+            self.launch["preflight"] = current
+            self.launch["last_progress_at_epoch"] = time.time()
+            self.launch["updated_at"] = self._utc_now()
 
-    def _run_curl_speed_probe(
+    def _update_actual_transfer_progress(
         self,
-        ssh,
-        *,
         key: str,
-        label: str,
-        url: str,
-        requested_bytes: int,
-        detail: str,
-    ) -> dict[str, Any]:
-        import shlex
-
-        self._check_cancelled()
-        upper_byte = max(0, int(requested_bytes) - 1)
-        write_out = (
-            "\\n__SOYA_SPEED__:%{size_download}:%{time_total}:"
-            "%{http_code}:%{speed_download}\\n"
-        )
-        command = (
-            "curl --location --silent --show-error --output /dev/null "
-            "--connect-timeout 8 "
-            f"--max-time {PREFLIGHT_CURL_MAX_SECONDS} "
-            f"--max-filesize {max(1, int(requested_bytes) * 2)} "
-            f"--range 0-{upper_byte} "
-            "--user-agent soya-vast-preflight/1 "
-            f"--write-out {shlex.quote(write_out)} {shlex.quote(url)}"
-        )
-        _stdin, stdout, stderr = ssh.exec_command(command)
-        stdout_text = stdout.read().decode("utf-8", "replace")
-        stderr_text = stderr.read().decode("utf-8", "replace").strip()
-        exit_code = stdout.channel.recv_exit_status()
-        if stderr_text:
-            print(
-                f"[VAST][PREFLIGHT] {label} curl stderr: "
-                f"exit={exit_code}, detail={stderr_text[-800:]}"
-            )
-        self._check_cancelled()
-        return parse_curl_speed_probe(
-            stdout_text,
-            exit_code=exit_code,
-            key=key,
-            label=label,
-            detail=detail,
-        )
-
-    def _run_sftp_speed_probe(self, ssh) -> dict[str, Any]:
-        import io
-
-        self._check_cancelled()
-        remote_path = f"/tmp/soya_preflight_upload_{self.launch.get('launch_id') or 'test'}.bin"
-        payload = io.BytesIO(os.urandom(PREFLIGHT_UPLOAD_BYTES))
-        sftp = ssh.open_sftp()
-        try:
-            channel = sftp.get_channel()
-            channel.settimeout(PREFLIGHT_CURL_MAX_SECONDS + 10)
-            started = time.perf_counter()
-            sftp.putfo(
-                payload,
-                remote_path,
-                file_size=PREFLIGHT_UPLOAD_BYTES,
-                confirm=True,
-            )
-            seconds = time.perf_counter() - started
-            self._check_cancelled()
-            return speed_result(
-                key="upload",
-                label="로컬→Vast",
-                transferred_bytes=PREFLIGHT_UPLOAD_BYTES,
-                seconds=seconds,
-                detail="임시 SFTP 업로드",
-            )
-        finally:
-            try:
-                sftp.remove(remote_path)
-            except OSError as exc:
+        completed_bytes: int,
+        *,
+        status: str = "running",
+        error: str = "",
+    ) -> None:
+        branch = str(key)
+        if branch not in {"download", "upload"}:
+            print(f"[VAST][TRANSFER][ERROR] 알 수 없는 전송 경로: key={branch!r}")
+            return
+        now_monotonic = time.monotonic()
+        completed = max(0, int(completed_bytes))
+        publish_event = ""
+        with self._state_lock:
+            runtime = self._actual_transfer_runtime.get(branch)
+            if runtime is None:
                 print(
-                    "[VAST][PREFLIGHT][ERROR] 임시 SFTP 파일 삭제 실패: "
-                    f"path={remote_path}, error={type(exc).__name__}: {exc}"
+                    "[VAST][TRANSFER][ERROR] 실제 전송 추적 상태가 초기화되지 않았습니다: "
+                    f"key={branch}, completed={completed}, status={status}"
                 )
-                traceback.print_exc()
-            try:
-                sftp.close()
-            except Exception as exc:
+                return
+            total = max(0, int(runtime.get("total_bytes") or 0))
+            total_known = bool(runtime.get("total_known", True))
+            previous_completed = max(0, int(runtime.get("completed_bytes") or 0))
+            completed = max(previous_completed, completed)
+            if total_known and completed > total:
                 print(
-                    "[VAST][PREFLIGHT][ERROR] SFTP 측정 채널 종료 실패: "
-                    f"error={type(exc).__name__}: {exc}"
+                    "[VAST][TRANSFER][ERROR] 실제 전송량이 계획 크기를 초과했습니다. "
+                    "ETA를 확정하지 않습니다: "
+                    f"key={branch}, completed={completed}, planned={total}"
                 )
-                traceback.print_exc()
+                total_known = False
+                runtime["total_known"] = False
+            if status in {"done", "skipped"}:
+                total = max(total, completed)
+                runtime["total_bytes"] = total
+
+            started_at = float(runtime.get("started_at") or 0.0)
+            if started_at <= 0 and status == "running":
+                started_at = now_monotonic
+                runtime["started_at"] = started_at
+                runtime["samples"] = [(now_monotonic, completed)]
+
+            last_publish_at = float(runtime.get("last_publish_at") or 0.0)
+            if (
+                status == "running"
+                and last_publish_at > 0
+                and now_monotonic - last_publish_at < ACTUAL_TRANSFER_PUBLISH_SECONDS
+            ):
+                runtime["completed_bytes"] = completed
+                return
+
+            samples = list(runtime.get("samples") or [])
+            if not samples:
+                samples.append((now_monotonic, completed))
+            elif samples[-1][0] != now_monotonic:
+                samples.append((now_monotonic, completed))
+            cutoff = now_monotonic - ACTUAL_TRANSFER_WINDOW_SECONDS
+            while len(samples) > 2 and samples[1][0] < cutoff:
+                samples.pop(0)
+            runtime["samples"] = samples
+            runtime["last_publish_at"] = now_monotonic
+            runtime["completed_bytes"] = completed
+            runtime["status"] = status
+
+            speed = 0.0
+            if len(samples) >= 2:
+                sample_seconds = max(0.0, samples[-1][0] - samples[0][0])
+                sample_bytes = max(0, int(samples[-1][1]) - int(samples[0][1]))
+                if sample_seconds > 0 and sample_bytes > 0:
+                    speed = sample_bytes / sample_seconds
+            elapsed = max(0.0, now_monotonic - started_at) if started_at > 0 else 0.0
+            labels = {"download": "실제 모델 다운로드", "upload": "실제 로컬→Vast"}
+            if status == "error":
+                detail = error or "실제 파일 전송 실패"
+                publish_event = f"{labels[branch]} 실패: {detail}"
+            elif status in {"done", "skipped"}:
+                detail = "실제 파일 전송 완료" if status == "done" else "전송 대상 없음"
+                publish_event = f"{labels[branch]} 완료"
+            elif speed > 0:
+                detail = f"최근 {ACTUAL_TRANSFER_WINDOW_SECONDS}초 이내 실제 누적 전송 속도"
+            else:
+                detail = "실제 전송 속도 표본 수집 중"
+            test = actual_transfer_result(
+                key=branch,
+                label=labels[branch],
+                status=status,
+                completed_bytes=completed,
+                total_bytes=total,
+                total_known=total_known,
+                seconds=elapsed,
+                bytes_per_second=speed,
+                detail=detail,
+            )
+
+            current = dict(self.launch.get("preflight") or empty_preflight_state())
+            tests_by_key = {
+                str(item.get("key") or ""): dict(item)
+                for item in current.get("tests") or []
+                if isinstance(item, dict)
+            }
+            tests_by_key[branch] = test
+            order = ("docker", "ssh", "download", "upload")
+            tests = [tests_by_key[item_key] for item_key in order if item_key in tests_by_key]
+            estimate = calculate_actual_transfer_estimate(tests)
+            transfer_states = {
+                key_name: str(value.get("status") or "waiting")
+                for key_name, value in self._actual_transfer_runtime.items()
+            }
+            has_error = any(value == "error" for value in transfer_states.values())
+            all_done = all(value in {"done", "skipped"} for value in transfer_states.values())
+            state_error = ""
+            if has_error:
+                state_error = error or str(current.get("error") or "")
+            current.update(
+                state="failed" if has_error else ("complete" if all_done else "transferring"),
+                completed_at=self._utc_now() if has_error or all_done else "",
+                tests=tests,
+                estimate=estimate,
+                error=state_error,
+            )
+            self.launch["preflight"] = current
+            self.launch["last_progress_at_epoch"] = time.time()
+            self.launch["updated_at"] = self._utc_now()
+        if publish_event:
+            self._event("transfer" if status != "error" else "transfer-error", publish_event)
+
+    def _mark_actual_transfer_error(self, key: str, exc: Exception) -> None:
+        runtime = self._actual_transfer_runtime.get(str(key)) or {}
+        if str(runtime.get("status") or "") == "skipped":
+            return
+        completed = max(0, int(runtime.get("completed_bytes") or 0))
+        self._update_actual_transfer_progress(
+            key,
+            completed,
+            status="error",
+            error=f"{type(exc).__name__}: {str(exc)[:240]}",
+        )
 
     def _run_preflight(
         self,
@@ -1689,91 +1782,54 @@ class VastService:
         state = empty_preflight_state()
         state.update(state="running", started_at=self._utc_now())
         self._store_preflight(**state)
-        self._set_step("preflight", "running", "실사용 전송 속도 측정")
+        self._set_step("preflight", "running", "Docker 준비 상태 · SSH 인증 확인")
         self._event(
             "preflight",
-            f"자동 프리플라이트 시작: ssh={host}:{port}, "
-            f"download_sample={PREFLIGHT_DOWNLOAD_BYTES}, upload_sample={PREFLIGHT_UPLOAD_BYTES}",
+            f"준비 확인 시작: ssh={host}:{port} · 별도 속도 샘플 전송 없음",
         )
 
         ssh = None
         tests: list[dict[str, Any]] = []
 
-        def run_one(key: str, label: str, callback) -> None:
-            self._check_cancelled()
-            try:
-                result = callback()
-            except LaunchCancelled:
-                raise
-            except Exception as exc:
-                print(
-                    f"[VAST][PREFLIGHT][ERROR] {label} 측정 실패: "
-                    f"key={key}, host={host}, port={port}, "
-                    f"error={type(exc).__name__}: {exc}"
-                )
-                traceback.print_exc()
-                result = failed_result(
-                    key=key,
-                    label=label,
-                    detail=f"{type(exc).__name__}: {str(exc)[:240]}",
-                )
-            tests.append(result)
-            self._record_preflight_test(result)
-
         try:
-            run_one("docker", "Docker 준비", self._docker_preflight_result)
+            docker_result = self._docker_preflight_result()
+            tests.append(docker_result)
+            self._record_preflight_test(docker_result)
+            auth_started = time.perf_counter()
             ssh = self._ssh_connect(host, port, private_key_path)
-            run_one(
-                "cloudflare",
-                "Cloudflare",
-                lambda: self._run_curl_speed_probe(
-                    ssh,
-                    key="cloudflare",
-                    label="Cloudflare",
-                    url=f"{PREFLIGHT_CLOUDFLARE_URL}?bytes={PREFLIGHT_DOWNLOAD_BYTES}",
-                    requested_bytes=PREFLIGHT_DOWNLOAD_BYTES,
-                    detail="Cloudflare edge 제한 구간 측정",
-                ),
-            )
-            hf_url, hf_bytes, hf_detail = self._preflight_huggingface_target(model_plan)
-            run_one(
-                "huggingface",
-                "Hugging Face",
-                lambda: self._run_curl_speed_probe(
-                    ssh,
-                    key="huggingface",
-                    label="Hugging Face",
-                    url=hf_url,
-                    requested_bytes=hf_bytes,
-                    detail=hf_detail,
-                ),
-            )
-            run_one("upload", "로컬→Vast", lambda: self._run_sftp_speed_probe(ssh))
-
-            estimate = calculate_transfer_estimate(model_plan, lora_files, tests)
-            if not estimate.get("available"):
+            _stdin, stdout, stderr = ssh.exec_command("printf '__SOYA_SSH_READY__'")
+            stdout_text = stdout.read().decode("utf-8", "replace")
+            stderr_text = stderr.read().decode("utf-8", "replace").strip()
+            exit_code = stdout.channel.recv_exit_status()
+            if exit_code != 0 or "__SOYA_SSH_READY__" not in stdout_text:
                 print(
-                    "[VAST][PREFLIGHT][ERROR] 전송 ETA 계산 불가: "
-                    f"download_bytes={estimate.get('download_bytes')}, "
-                    f"upload_bytes={estimate.get('upload_bytes')}, "
-                    f"note={estimate.get('note')}"
+                    "[VAST][PREFLIGHT][ERROR] SSH 인증 후 준비 명령 실패: "
+                    f"host={host}, port={port}, exit={exit_code}, "
+                    f"stdout={stdout_text[-300:]!r}, stderr={stderr_text[-500:]!r}"
                 )
-            has_failure = any(item.get("status") == "error" for item in tests)
-            final_state = "partial" if has_failure else "complete"
+                raise VastApiError(
+                    f"SSH 인증 확인 명령 실패: exit={exit_code}, stderr={stderr_text[-240:]}"
+                )
+            auth_seconds = max(0.0, time.perf_counter() - auth_started)
+            self.launch["ssh_ready_at_epoch"] = time.time()
+            ssh_result = informational_result(
+                key="ssh",
+                label="SSH 인증",
+                seconds=auth_seconds,
+                detail=f"root 공개키 인증 및 원격 명령 실행 확인 · {host}:{port}",
+            )
+            tests.append(ssh_result)
+            self._record_preflight_test(ssh_result)
             elapsed = max(0.0, time.time() - started_at_epoch)
             self._store_preflight(
-                state=final_state,
+                state="ready",
                 completed_at=self._utc_now(),
                 elapsed_seconds=round(elapsed, 1),
                 tests=tests,
-                estimate=estimate,
+                estimate=empty_preflight_state()["estimate"],
                 error="",
             )
-            remaining = estimate.get("remaining_seconds")
-            if remaining is None:
-                step_detail = "일부 측정 실패 · ETA 없음 · 빌드 자동 계속"
-            else:
-                step_detail = f"예상 남은 전송 {int(remaining)}초 · 빌드 자동 계속"
+            step_detail = "SSH 인증 확인 완료 · 실제 파일 전송으로 ETA 계산"
             self._set_step("preflight", "done", step_detail)
             self._event("preflight", step_detail)
         except LaunchCancelled:
@@ -1786,28 +1842,36 @@ class VastService:
             raise
         except Exception as exc:
             print(
-                "[VAST][PREFLIGHT][ERROR] 자동 프리플라이트 전체 실패(빌드 계속): "
+                "[VAST][PREFLIGHT][ERROR] SSH 준비 확인 실패: "
                 f"host={host}, port={port}, error={type(exc).__name__}: {exc}"
             )
             traceback.print_exc()
-            estimate = calculate_transfer_estimate(model_plan, lora_files, tests)
+            if not any(str(item.get("key") or "") == "ssh" for item in tests):
+                ssh_result = failed_result(
+                    key="ssh",
+                    label="SSH 인증",
+                    detail=f"{type(exc).__name__}: {str(exc)[:240]}",
+                )
+                tests.append(ssh_result)
+                self._record_preflight_test(ssh_result)
             self._store_preflight(
                 state="failed",
                 completed_at=self._utc_now(),
                 elapsed_seconds=round(max(0.0, time.time() - started_at_epoch), 1),
                 tests=tests,
-                estimate=estimate,
+                estimate=empty_preflight_state()["estimate"],
                 error=f"{type(exc).__name__}: {str(exc)[:500]}",
             )
-            self._set_step("preflight", "done", "측정 실패 · 빌드 자동 계속")
-            self._event("preflight-error", f"측정 실패 · 빌드 자동 계속: {exc}")
+            self._set_step("preflight", "error", "SSH 인증 확인 실패")
+            self._event("preflight-error", f"SSH 인증 확인 실패: {exc}")
+            raise
         finally:
             if ssh is not None:
                 try:
                     ssh.close()
                 except Exception as exc:
                     print(
-                        "[VAST][PREFLIGHT][ERROR] SSH 측정 연결 종료 실패: "
+                        "[VAST][PREFLIGHT][ERROR] SSH 준비 확인 연결 종료 실패: "
                         f"host={host}, port={port}, error={type(exc).__name__}: {exc}"
                     )
                     traceback.print_exc()
@@ -1823,8 +1887,9 @@ class VastService:
     ) -> None:
         """병렬 A: 노드 설치(Modal image_install 방식) + LoRA/'upload' 모델 sftp."""
         self._set_step("upload", "running", "sftp 연결")
-        ssh = self._ssh_connect(host, port, private_key_path)
+        ssh = None
         try:
+            ssh = self._ssh_connect(host, port, private_key_path)
             self._check_cancelled()
             sftp = ssh.open_sftp()
             ssh.exec_command("mkdir -p /root/ComfyUI/models/loras")
@@ -1839,27 +1904,62 @@ class VastService:
                 if m["source"]["source_type"] == "upload"
             )
             done = 0
+            transferred_bytes = 0
             for item in lora_files:
                 remote = f"{COMFY_ROOT_REMOTE}/models/loras/{Path(item['name']).name}"
-                self._sftp_put_progress(sftp, str(item["path"]), remote, "lora", item["name"])
+                transferred_bytes += self._sftp_put_progress(
+                    sftp,
+                    str(item["path"]),
+                    remote,
+                    "lora",
+                    item["name"],
+                    aggregate_before=transferred_bytes,
+                )
                 done += 1
                 self._set_step("upload_loras", "running", f"{done}/{total}")
             for m in model_plan.get("models") or []:
                 if m["source"]["source_type"] != "upload":
                     continue
                 remote = f"{COMFY_ROOT_REMOTE}/models/{m['key']}"
-                self._sftp_put_progress(
-                    sftp, str(m.get("source_path") or ""), remote, "model", m["filename"]
+                transferred_bytes += self._sftp_put_progress(
+                    sftp,
+                    str(m.get("source_path") or ""),
+                    remote,
+                    "model",
+                    m["filename"],
+                    aggregate_before=transferred_bytes,
                 )
                 done += 1
                 self._set_step("upload_models", "running", f"{done}/{total}")
+            if total > 0:
+                self._update_actual_transfer_progress(
+                    "upload", transferred_bytes, status="done"
+                )
             self._set_step("upload", "done", f"{done}개 전송 완료")
+        except LaunchCancelled:
+            raise
+        except Exception as exc:
+            print(
+                "[VAST][UPLOAD][ERROR] 실제 업로드 경로 실패: "
+                f"host={host}, port={port}, error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            self._mark_actual_transfer_error("upload", exc)
+            raise
         finally:
-            ssh.close()
+            if ssh is not None:
+                ssh.close()
 
     def _sftp_put_progress(
-        self, sftp, local: str, remote: str, label: str, name: str
-    ) -> None:
+        self,
+        sftp,
+        local: str,
+        remote: str,
+        label: str,
+        name: str,
+        *,
+        aggregate_before: int = 0,
+    ) -> int:
         import os
 
         if not local or not Path(local).is_file():
@@ -1867,10 +1967,18 @@ class VastService:
             raise FileNotFoundError(f"업로드할 로컬 파일이 없습니다: {local}")
         size = os.path.getsize(local)
         sent = 0
+        self._update_actual_transfer_progress(
+            "upload", max(0, int(aggregate_before)), status="running"
+        )
 
         def cb(transferred: int, _total: int) -> None:
             nonlocal sent
             self._check_cancelled()
+            self._update_actual_transfer_progress(
+                "upload",
+                max(0, int(aggregate_before)) + max(0, int(transferred)),
+                status="running",
+            )
             if transferred - sent > 50 * 1024 * 1024 or transferred == _total:
                 sent = transferred
                 self._set_step(
@@ -1880,6 +1988,7 @@ class VastService:
                 )
 
         sftp.put(local, remote, callback=cb)
+        return size
 
     def _run_remote_downloads(
         self, host: str, port: int, private_key_path: str, model_plan: dict[str, Any]
@@ -1895,6 +2004,7 @@ class VastService:
         if not downloads:
             self._set_step("download", "done", "원격 다운로드 대상 없음")
             return
+        expected_total = sum(max(0, int(item.get("size_bytes") or 0)) for item in downloads)
         self._set_step("download", "running", f"{len(downloads)}개 스크립트 생성")
         lines = [
             "#!/bin/bash",
@@ -1916,10 +2026,12 @@ class VastService:
                     "[VAST][DOWNLOAD][ERROR] 모델 다운로드 URL이 없습니다: "
                     f"key={m.get('key')!r}, source_type={src.get('source_type')!r}"
                 )
-                raise VastApiError(
+                exc = VastApiError(
                     f"모델 다운로드 URL이 없습니다: {m.get('key')} "
                     f"({src.get('source_type')})"
                 )
+                self._mark_actual_transfer_error("download", exc)
+                raise exc
             dest = f"{COMFY_ROOT_REMOTE}/models/{m['key']}"
             part = f"{dest}.part"
             expected = int(m.get("size_bytes") or 0)
@@ -1973,8 +2085,9 @@ class VastService:
         )
         script = "\n".join(lines) + "\n"
 
-        ssh = self._ssh_connect(host, port, private_key_path)
+        ssh = None
         try:
+            ssh = self._ssh_connect(host, port, private_key_path)
             sftp = ssh.open_sftp()
             with sftp.open("/tmp/soya_download.sh", "w") as fh:
                 fh.write(script)
@@ -2027,6 +2140,9 @@ class VastService:
                     self._set_step("download", "error", f"실패: {failed}")
                     raise VastApiError(f"원격 모델 다운로드 실패: {failed}")
                 if "__DONE__" in out:
+                    self._update_actual_transfer_progress(
+                        "download", expected_total, status="done"
+                    )
                     self._set_step("download", "done", f"{len(downloads)}개 완료")
                     return
                 if "__STOPPED__" in out:
@@ -2051,11 +2167,11 @@ class VastService:
                             )
                             traceback.print_exc()
                             continue
+                        self._update_actual_transfer_progress(
+                            "download", downloaded_bytes, status="running"
+                        )
                         if downloaded_bytes != last_downloaded_bytes:
                             last_downloaded_bytes = downloaded_bytes
-                            expected_total = sum(
-                                int(item.get("size_bytes") or 0) for item in downloads
-                            )
                             detail = f"{downloaded_bytes / 1024**3:.2f}GB"
                             if expected_total > 0:
                                 detail += f"/{expected_total / 1024**3:.2f}GB"
@@ -2068,8 +2184,19 @@ class VastService:
                 if visible_tail:
                     self._event("remote", "download: " + " | ".join(visible_tail[-3:])[-1000:])
                 self._wait_sync(10)
+        except LaunchCancelled:
+            raise
+        except Exception as exc:
+            print(
+                "[VAST][DOWNLOAD][ERROR] 실제 다운로드 경로 실패: "
+                f"host={host}, port={port}, error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            self._mark_actual_transfer_error("download", exc)
+            raise
         finally:
-            ssh.close()
+            if ssh is not None:
+                ssh.close()
 
     async def _start_comfy_and_wait(
         self, host: str, port: int, private_key_path: str, comfy_url: str
