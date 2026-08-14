@@ -2,7 +2,7 @@
 
 - 로컬 모델 스캔/워크플로우 참조 분석은 modal_backend.workflow_assets를 재사용한다.
 - 매핑은 프로젝트 루트의 vast_model_sources.json에 저장하며, 덮어쓰기 전
-  요구사항/ 폴더에 백업 사본을 남긴다 (데이터 안전 규칙).
+  배포 환경에도 존재하는 backups/vast_model_sources/에 백업 사본을 남긴다.
 """
 from __future__ import annotations
 
@@ -44,12 +44,14 @@ def load_mapping(project_root: str | Path) -> dict[str, Any]:
 
 
 def save_mapping(project_root: str | Path, mapping: Mapping[str, Any]) -> Path:
-    """매핑을 저장한다. 기존 파일은 요구사항/ 폴더에 백업 후 덮어쓴다."""
+    """매핑을 저장한다. 기존 파일은 배포 안전 백업 폴더에 보존한다."""
     path = _mapping_path(project_root)
     if path.exists():
-        backup_dir = Path(project_root).resolve() / "요구사항"
+        backup_dir = (
+            Path(project_root).resolve() / "backups" / "vast_model_sources"
+        )
         try:
-            backup_dir.mkdir(exist_ok=True)
+            backup_dir.mkdir(parents=True, exist_ok=True)
             stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             backup_path = backup_dir / f"{MAPPING_FILENAME}.{stamp}.bak"
             shutil.copy2(path, backup_path)
@@ -125,10 +127,8 @@ def validate_source(source: Mapping[str, Any]) -> dict[str, Any]:
 
 def civitai_download_url(version_id: int, api_key: str) -> str:
     """Civitai 모델버전 다운로드 URL (API 키 인증)."""
-    return (
-        f"https://civitai.com/api/download/models/{int(version_id)}"
-        f"?token={api_key}"
-    )
+    url = f"https://civitai.com/api/download/models/{int(version_id)}"
+    return f"{url}?token={api_key}" if api_key else url
 
 
 def defaults_from_manifest(project_root: str | Path) -> dict[str, dict[str, Any]]:
@@ -223,7 +223,7 @@ def build_download_plan(
         resolved: dict[str, Any]
         if not source:
             resolved = {"source_type": "upload"}
-        elif source.get("source_type") == "civitai" and civitai_api_key:
+        elif source.get("source_type") == "civitai":
             resolved = {
                 "source_type": "civitai",
                 "url": civitai_download_url(

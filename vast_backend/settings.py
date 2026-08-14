@@ -57,9 +57,16 @@ def load_key_files(project_root: str | Path) -> dict[str, str]:
             continue
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                raise ValueError(
+                    f"키 파일 최상위 값은 JSON 객체여야 합니다: {type(data).__name__}"
+                )
             keys[name] = str(data.get("api_key") or "").strip()
         except (OSError, ValueError) as exc:
             print(f"[VAST_KEY] 키 파일 읽기 실패: {path}, error={exc}")
+            import traceback
+
+            traceback.print_exc()
     return keys
 
 

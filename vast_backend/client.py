@@ -12,7 +12,7 @@ from typing import Any
 
 import aiohttp
 
-API_BASE = "https://console.vast.ai/api/v0"
+API_ROOT = "https://console.vast.ai/api"
 REQUEST_TIMEOUT_SECONDS = 30
 
 
@@ -49,9 +49,16 @@ class VastClient:
         *,
         json_body: dict[str, Any] | None = None,
         query: dict[str, str] | None = None,
+        api_version: str = "v0",
     ) -> Any:
         session = await self._ensure_session()
-        url = f"{API_BASE}{path}"
+        if api_version not in {"v0", "v1"}:
+            print(
+                f"[VAST_API] 지원하지 않는 API 버전: "
+                f"version={api_version!r}, method={method}, path={path}"
+            )
+            raise VastApiError(f"지원하지 않는 Vast API 버전: {api_version!r}")
+        url = f"{API_ROOT}/{api_version}{path}"
         headers = {"Authorization": f"Bearer {self._api_key}"}
         if json_body is not None:
             headers["Content-Type"] = "application/json"
@@ -77,45 +84,55 @@ class VastClient:
                         last_rate_error = raw[:200]
                         print(
                             f"[VAST_API] 레이트리밋(429) — {wait}초 후 재시도 "
-                            f"({attempt + 1}/4): {method} {path}"
+                            f"({attempt + 1}/4): {method} /api/{api_version}{path}"
                         )
                         await asyncio.sleep(wait)
                         continue
                     if resp.status >= 400:
                         print(
-                            f"[VAST_API] 요청 실패: {method} {path} "
+                            f"[VAST_API] 요청 실패: {method} /api/{api_version}{path} "
                             f"http={resp.status} body={raw[:500]}"
                         )
                         raise VastApiError(
-                            f"Vast API 요청 실패 ({method} {path}): "
+                            f"Vast API 요청 실패 ({method} /api/{api_version}{path}): "
                             f"HTTP {resp.status} {raw[:300]}"
                         )
                     try:
                         data = json.loads(raw) if raw else None
                     except ValueError as exc:
                         print(
-                            f"[VAST_API] 응답 JSON 파싱 실패: {method} {path} "
+                            f"[VAST_API] 응답 JSON 파싱 실패: "
+                            f"{method} /api/{api_version}{path} "
                             f"body={raw[:300]}"
                         )
                         raise VastApiError(
-                            f"Vast API 응답을 JSON으로 해석할 수 없습니다: {method} {path}"
+                            "Vast API 응답을 JSON으로 해석할 수 없습니다: "
+                            f"{method} /api/{api_version}{path}"
                         ) from exc
                     if isinstance(data, dict) and data.get("success") is False:
                         msg = str(data.get("msg") or data.get("error") or "알 수 없음")
-                        print(f"[VAST_API] API 오류 응답: {method} {path} msg={msg}")
-                        raise VastApiError(f"Vast API 오류 ({method} {path}): {msg}")
+                        print(
+                            f"[VAST_API] API 오류 응답: "
+                            f"{method} /api/{api_version}{path} msg={msg}"
+                        )
+                        raise VastApiError(
+                            f"Vast API 오류 ({method} /api/{api_version}{path}): {msg}"
+                        )
                     return data
             except aiohttp.ClientError as exc:
                 print(
-                    f"[VAST_API] 네트워크 오류: {method} {path} "
+                    f"[VAST_API] 네트워크 오류: "
+                    f"{method} /api/{api_version}{path} "
                     f"error={type(exc).__name__}: {exc}"
                 )
                 traceback.print_exc()
                 raise VastApiError(
-                    f"Vast API 네트워크 오류 ({method} {path}): {type(exc).__name__}: {exc}"
+                    "Vast API 네트워크 오류 "
+                    f"({method} /api/{api_version}{path}): {type(exc).__name__}: {exc}"
                 ) from exc
         raise VastApiError(
-            f"Vast API 레이트리밋 재시도 소진 ({method} {path}): {last_rate_error}"
+            "Vast API 레이트리밋 재시도 소진 "
+            f"({method} /api/{api_version}{path}): {last_rate_error}"
         )
 
     # ── 계정 ────────────────────────────────────────────────
@@ -138,6 +155,7 @@ class VastClient:
         verified_only: bool = True,
         on_demand: bool = True,
         inet_down_min_mbps: int = 100,
+        min_direct_port_count: int = 1,
         limit: int = 60,
     ) -> list[dict[str, Any]]:
         """bundles 검색. dph_total 오름차순으로 오퍼 리스트를 반환한다."""
@@ -149,6 +167,7 @@ class VastClient:
             "disk_space": {"gte": min_disk_gb},
             "dph_total": {"lte": max_price_usd_hr},
             "inet_down": {"gte": inet_down_min_mbps},
+            "direct_port_count": {"gte": min_direct_port_count},
             "order": [["dph_total", "asc"]],
             "limit": limit,
             "type": "on-demand" if on_demand else "bid",
@@ -181,26 +200,23 @@ class VastClient:
         onstart_cmd: str,
         env: dict[str, str] | None = None,
         label: str = "soya-vast",
-        ports: dict[str, int] | None = None,
-        ssh_key: str = "",
     ) -> dict[str, Any]:
         """오퍼(ask)를 수락해 인스턴스를 생성한다. new_contract(id)를 반환.
 
-        ssh_key는 생성 시점에 전달한다 — 프로비저닝 직후의 별도 부착 API
-        (PUT /instances/{id}/ssh/)는 인스턴스 로딩 중 서버 오류를 낸다(검증됨).
+        커스텀 포트는 Vast API의 env 딕셔너리에 Docker ``-p`` 옵션으로
+        전달해야 한다. ``ports``나 ``onstart_cmd`` 필드는 생성 API에서
+        사용되지 않는다.
         """
         body: dict[str, Any] = {
             "image": image,
             "disk": disk_gb,
-            "onstart_cmd": onstart_cmd,
+            "onstart": onstart_cmd,
             "label": label,
-            "env": env or {},
+            "env": env or {"-p 8188:8188": "1"},
+            # SSH 프록시를 사용하고 ComfyUI 연결은 서비스의 SSH 터널로 유지한다.
             "runtype": "ssh",
-            "ports": ports or {"8188/tcp": [8188]},  # HTTP 프록시로 8188 노출
             "python_utf8": True,
         }
-        if ssh_key:
-            body["ssh_key"] = ssh_key
         data = await self._request("PUT", f"/asks/{ask_id}/", json_body=body)
         if not isinstance(data, dict) or "new_contract" not in data:
             print(f"[VAST_API] 인스턴스 생성 응답 형식 이상: {str(data)[:300]}")
@@ -208,12 +224,29 @@ class VastClient:
         return data
 
     async def list_instances(self) -> list[dict[str, Any]]:
-        data = await self._request("GET", "/instances/")
-        instances = data.get("instances") if isinstance(data, dict) else None
-        if not isinstance(instances, list):
-            print("[VAST_API] 인스턴스 목록 응답 형식 이상")
-            raise VastApiError("Vast 인스턴스 목록 응답을 해석할 수 없습니다.")
-        return instances
+        # v0 목록 API는 2026년에 폐기되었다. v1은 페이지당 최대 25개라서
+        # next_token을 끝까지 따라가야 파괴/상태 UI에서 누락이 생기지 않는다.
+        instances: list[dict[str, Any]] = []
+        query = {
+            "limit": "25",
+            "order_by": json.dumps([{"col": "id", "dir": "asc"}]),
+        }
+        while True:
+            data = await self._request(
+                "GET", "/instances/", query=query, api_version="v1"
+            )
+            page = data.get("instances") if isinstance(data, dict) else None
+            if not isinstance(page, list):
+                print(
+                    "[VAST_API] v1 인스턴스 목록 응답 형식 이상: "
+                    f"type={type(data).__name__}"
+                )
+                raise VastApiError("Vast 인스턴스 목록 응답을 해석할 수 없습니다.")
+            instances.extend(row for row in page if isinstance(row, dict))
+            next_token = data.get("next_token") if isinstance(data, dict) else None
+            if not next_token:
+                return instances
+            query["after_token"] = str(next_token)
 
     async def get_instance(self, instance_id: int) -> dict[str, Any]:
         data = await self._request("GET", f"/instances/{instance_id}/")
@@ -240,7 +273,7 @@ class VastClient:
         """
         return await self._request(
             "POST",
-            f"/instances/{instance_id}/ssh",
+            f"/instances/{instance_id}/ssh/",
             json_body={"ssh_key": ssh_key},
         )
 
@@ -248,6 +281,6 @@ class VastClient:
         """계정에 SSH 공개키를 등록한다 — 이후 생성되는 인스턴스에 자동 적용."""
         return await self._request(
             "POST",
-            "/users/current/ssh_keys/",
+            "/ssh/",
             json_body={"ssh_key": ssh_key},
         )

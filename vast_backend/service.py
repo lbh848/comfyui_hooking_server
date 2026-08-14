@@ -5,8 +5,8 @@
   2. SSH 키 부착 → paramiko 접속
   3. 병렬 A: sftp 업로드 — custom_nodes 압축본 + 선택 LoRA + 'upload' 배정 모델
      병렬 B: 원격 다운로드 스크립트 — HF/Civitai/URL 모델
-  4. /tmp/soya_ready 터치 → onstart가 ComfyUI(8188) 기동
-  5. 포트 프록시 헬스체크 → 'ready'
+  4. SSH 로컬 터널 생성 + /tmp/soya_ready 터치 → ComfyUI(8188) 기동
+  5. 로컬 터널 헬스체크 → 'ready'
 """
 from __future__ import annotations
 
@@ -25,6 +25,7 @@ from .model_sources import (
     load_mapping,
 )
 from .settings import VastSettings, load_key_files
+from .ssh_tunnel import ComfySshTunnel
 
 COMFY_ROOT_REMOTE = "/root/ComfyUI"
 READY_FLAG = "/tmp/soya_ready"
@@ -44,6 +45,7 @@ class VastService:
         self.project_root = Path(project_root).resolve()
         self._get_config = get_config
         self._client: VastClient | None = None
+        self._comfy_tunnel: ComfySshTunnel | None = None
         # 생성 진행 상태(단일 인스턴스 운영 가정 — 파괴 후 재생성)
         self.launch: dict[str, Any] = {
             "state": "idle",  # idle|creating|preparing|ready|error|destroyed
@@ -72,9 +74,45 @@ class VastService:
         return self._client
 
     async def close(self) -> None:
+        self._close_comfy_tunnel()
         if self._client:
             await self._client.close()
             self._client = None
+
+    def _close_comfy_tunnel(self) -> None:
+        tunnel = self._comfy_tunnel
+        self._comfy_tunnel = None
+        if tunnel is None:
+            return
+        try:
+            tunnel.close()
+        except Exception as exc:
+            print(
+                "[VAST][TUNNEL][ERROR] 서비스 터널 종료 실패: "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+
+    def _open_comfy_tunnel(
+        self, host: str, port: int, private_key_path: str
+    ) -> str:
+        self._close_comfy_tunnel()
+        ssh = self._ssh_connect(host, port, private_key_path)
+        tunnel = ComfySshTunnel(ssh, remote_port=8188)
+        try:
+            url = tunnel.start()
+        except Exception:
+            try:
+                ssh.close()
+            except Exception as close_exc:
+                print(
+                    "[VAST][TUNNEL][ERROR] 시작 실패 후 SSH 닫기 실패: "
+                    f"error={type(close_exc).__name__}: {close_exc}"
+                )
+                traceback.print_exc()
+            raise
+        self._comfy_tunnel = tunnel
+        return url
 
     # ── 계정/오퍼 ───────────────────────────────────────────
 
@@ -91,6 +129,7 @@ class VastService:
             }
         except VastApiError as exc:
             _log(f"계정 확인 실패: {exc}")
+            traceback.print_exc()
             return {"ok": False, "error": str(exc), "api_key_valid": False}
 
     async def offers(
@@ -214,12 +253,43 @@ class VastService:
 
         private_path, public_path = self._ssh_key_paths()
         if not private_path.exists():
+            if public_path.exists():
+                message = (
+                    "Vast SSH 공개키만 있고 개인키가 없습니다. 기존 공개키를 "
+                    f"덮어쓰지 않습니다: public={public_path}, private={private_path}"
+                )
+                print(f"[VAST][SSH_KEY][ERROR] {message}")
+                raise VastApiError(message)
             _log(f"SSH 키페어 생성: {private_path}")
             key = paramiko.RSAKey.generate(2048)
             key.write_private_key_file(str(private_path))
             with open(str(public_path), "w", encoding="utf-8") as fh:
                 fh.write(f"{key.get_name()} {key.get_base64()} soya-vast\n")
-        public = public_path.read_text(encoding="utf-8").strip()
+        try:
+            key = paramiko.RSAKey.from_private_key_file(str(private_path))
+            expected = f"{key.get_name()} {key.get_base64()} soya-vast"
+            if not public_path.exists():
+                print(f"[VAST][SSH_KEY] 누락된 공개키 복구: {public_path}")
+                public_path.write_text(expected + "\n", encoding="utf-8")
+            public = public_path.read_text(encoding="utf-8").strip()
+            fields = public.split()
+            if len(fields) < 2 or fields[0] != key.get_name() or fields[1] != key.get_base64():
+                message = (
+                    "Vast SSH 개인키와 공개키가 서로 일치하지 않습니다. "
+                    f"private={private_path}, public={public_path}"
+                )
+                print(f"[VAST][SSH_KEY][ERROR] {message}")
+                raise VastApiError(message)
+        except VastApiError:
+            raise
+        except (OSError, paramiko.SSHException, ValueError) as exc:
+            print(
+                "[VAST][SSH_KEY][ERROR] SSH 키페어 검증 실패: "
+                f"private={private_path}, public={public_path}, "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            raise VastApiError(f"Vast SSH 키페어를 읽을 수 없습니다: {exc}") from exc
         return str(private_path), public
 
     # ── 생성 (④단계, 백그라운드) ────────────────────────────
@@ -245,6 +315,7 @@ class VastService:
             raise VastApiError(
                 f"이미 생성/준비 진행 중입니다(instance_id={self.launch['instance_id']})."
             )
+        self._close_comfy_tunnel()
         self.launch = {
             "state": "creating",
             "instance_id": None,
@@ -272,7 +343,8 @@ class VastService:
         exc = task.exception()
         if exc is not None:
             _log(f"생성 태스크 실패: {type(exc).__name__}: {exc}")
-            traceback.print_exc()
+            traceback.print_exception(type(exc), exc, exc.__traceback__)
+            self._close_comfy_tunnel()
             self.launch["state"] = "error"
             self.launch["error"] = str(exc)
             # 실패 시 남은 인스턴스는 그대로 과금되므로 즉시 파괴한다.
@@ -315,7 +387,13 @@ class VastService:
                 await client.register_account_ssh_key(public_key)
                 print("[VAST] 계정 SSH 키 등록 완료")
             except VastApiError as exc:
-                print(f"[VAST] 계정 SSH 키 등록 실패(인스턴스 부착으로 대체): {exc}")
+                if "already" in str(exc).lower():
+                    print("[VAST] 계정 SSH 키가 이미 등록되어 있습니다.")
+                else:
+                    print(
+                        "[VAST] 계정 SSH 키 등록 실패(인스턴스 부착으로 대체): "
+                        f"{exc}"
+                    )
             onstart = (
                 "#!/bin/bash\n"
                 "echo '[onstart] 대기 중' >> /tmp/soya_onstart.log\n"
@@ -330,14 +408,13 @@ class VastService:
                 disk_gb=disk_gb,
                 onstart_cmd=onstart,
                 label="soya-vast",
-                ssh_key=public_key,
             )
             instance_id = int(created["new_contract"])
             self.launch["instance_id"] = instance_id
             self.launch["state"] = "preparing"
 
         self._set_step("ssh", "running", "SSH 대기")
-        ssh_host, ssh_port, comfy_url = await self._wait_ssh(client, instance_id)
+        ssh_host, ssh_port = await self._wait_ssh(client, instance_id)
         # 생성 요청의 ssh_key 필드는 무시되므로(검증됨) running 후 부착 API로 등록한다.
         await self._attach_key_with_retry(client, instance_id, public_key)
         self._set_step("ssh", "done", f"{ssh_host}:{ssh_port}")
@@ -353,33 +430,45 @@ class VastService:
         )
         await asyncio.gather(upload_task, download_task)
 
-        if not comfy_url:
-            comfy_url = self._proxy_url(await client.get_instance(instance_id))
+        self._set_step("tunnel", "running", "SSH 로컬 포워더 생성")
+        comfy_url = await loop.run_in_executor(
+            None, self._open_comfy_tunnel, ssh_host, ssh_port, private_key_path
+        )
+        self._set_step("tunnel", "done", comfy_url)
         self._set_step("comfy", "running", "ComfyUI 기동 대기")
         await self._start_comfy_and_wait(ssh_host, ssh_port, private_key_path, comfy_url)
         self.launch["comfy_base_url"] = comfy_url
         self.launch["state"] = "ready"
         self._set_step("comfy", "done", comfy_url)
 
-    async def _wait_ssh(self, client: VastClient, instance_id: int) -> tuple[str, int, str]:
+    async def _wait_ssh(self, client: VastClient, instance_id: int) -> tuple[str, int]:
         import time
 
         deadline = time.time() + SSH_WAIT_TIMEOUT_SECONDS
+        last_status = ""
         while time.time() < deadline:
             info = await client.get_instance(instance_id)
+            status = str(info.get("actual_status") or "").lower()
+            status_msg = str(info.get("status_msg") or "")
+            status_signature = f"{status}|{status_msg}"
+            if status_signature != last_status:
+                print(
+                    f"[VAST] 인스턴스 준비 상태: instance={instance_id}, "
+                    f"status={status or '(없음)'}, message={status_msg or '(없음)'}"
+                )
+                last_status = status_signature
+            if status in {"exited", "unknown", "offline"}:
+                raise VastApiError(
+                    "Vast 인스턴스가 SSH 준비 전에 종료 상태가 되었습니다: "
+                    f"instance={instance_id}, status={status}, message={status_msg}"
+                )
             ssh_host = str(info.get("ssh_host") or "").split("@")[-1]
             try:
                 ssh_port = int(info.get("ssh_port") or 0)
             except (TypeError, ValueError):
                 ssh_port = 0
-            comfy_url = self._proxy_url(info)
-            if info.get("actual_status") == "running" and ssh_host and ssh_port:
-                if not comfy_url:
-                    print(
-                        "[VAST] 8188 프록시 URL을 아직 못 찾음 — SSH는 계속 시도, "
-                        f"ports={info.get('ports')}"
-                    )
-                return ssh_host, ssh_port, comfy_url
+            if status == "running" and ssh_host and ssh_port:
+                return ssh_host, ssh_port
             await asyncio.sleep(5)
         raise VastApiError(
             f"Vast 인스턴스 SSH 준비 시간 초과(instance_id={instance_id})"
@@ -415,15 +504,29 @@ class VastService:
         """8188 포트의 외부 URL을 응답에서 추출한다.
 
         Vast 인스턴스 응답의 ports는 {'8188/tcp': [{'HostIp','HostPort'}, ...]}
-        형태며, 프록시 주소는 proxy-<machine_id>.vast.ai:HostPort 로 노출된다.
+        형태다. 애플리케이션 포트는 ``public_ipaddr:HostPort``로 접근한다.
         """
-        machine_id = info.get("machine_id")
+        public_host = str(info.get("public_ipaddr") or "").strip()
         ports = info.get("ports") or {}
+        if not isinstance(ports, dict):
+            print(
+                "[VAST] 포트 응답 형식 이상: "
+                f"type={type(ports).__name__}, value={str(ports)[:300]}"
+            )
+            return ""
         for entry in ports.get("8188/tcp") or []:
             if isinstance(entry, dict):
                 host_port = entry.get("HostPort") or entry.get("port")
-                if machine_id and host_port:
-                    return f"http://proxy-{machine_id}.vast.ai:{host_port}"
+                entry_host = str(entry.get("HostIp") or "").strip()
+                host = public_host or (
+                    entry_host if entry_host not in {"", "0.0.0.0", "::"} else ""
+                )
+                if host and host_port:
+                    return f"http://{host}:{host_port}"
+        print(
+            "[VAST] 8188 외부 포트 매핑 없음: "
+            f"public_ipaddr={public_host or '(없음)'}, ports={str(ports)[:500]}"
+        )
         return ""
 
     def _ssh_connect(self, host: str, port: int, private_key_path: str):
@@ -535,6 +638,8 @@ class VastService:
         self, host: str, port: int, private_key_path: str, model_plan: dict[str, Any]
     ) -> None:
         """병렬 B: HF/Civitai/URL 모델을 인스턴스에서 직접 다운로드."""
+        import shlex
+
         downloads = [
             m
             for m in model_plan.get("models") or []
@@ -544,7 +649,12 @@ class VastService:
             _log("원격 다운로드 대상 없음")
             return
         self._set_step("download", "running", f"{len(downloads)}개 스크립트 생성")
-        lines = ["#!/bin/bash", "set -x", f"echo start > {MODELS_DONE_FLAG}.log"]
+        lines = [
+            "#!/bin/bash",
+            "set -u",
+            f"rm -f {shlex.quote(MODELS_DONE_FLAG)} {shlex.quote(MODELS_DONE_FLAG + '.fail')}",
+            f"echo start > {shlex.quote(MODELS_DONE_FLAG + '.log')}",
+        ]
         for m in downloads:
             src = m["source"]
             if src["source_type"] == "hf":
@@ -553,28 +663,67 @@ class VastService:
                     f"/resolve/main/{src['hf_filename']}"
                 )
             else:
-                url = src["url"]
+                url = str(src.get("url") or "").strip()
+            if not url.startswith(("http://", "https://")):
+                print(
+                    "[VAST][DOWNLOAD][ERROR] 모델 다운로드 URL이 없습니다: "
+                    f"key={m.get('key')!r}, source_type={src.get('source_type')!r}"
+                )
+                raise VastApiError(
+                    f"모델 다운로드 URL이 없습니다: {m.get('key')} "
+                    f"({src.get('source_type')})"
+                )
             dest = f"{COMFY_ROOT_REMOTE}/models/{m['key']}"
+            part = f"{dest}.part"
             expected = int(m.get("size_bytes") or 0)
-            # 이미 완전히 받은 파일은 스킵(중단 재개용).
-            lines.append(f"mkdir -p \"$(dirname \"{dest}\")\"")
+            q_url = shlex.quote(url)
+            q_dest = shlex.quote(dest)
+            q_part = shlex.quote(part)
+            q_dir = shlex.quote(str(Path(dest).parent).replace("\\", "/"))
+            q_key = shlex.quote(str(m.get("key") or "(unknown)"))
+            q_curl_error = shlex.quote(f"FAIL {m.get('key')}: curl")
+            lines.append(f"mkdir -p {q_dir}")
             if expected > 0:
                 lines.append(
-                    f"if [ -f \"{dest}\" ] && [ \"$(stat -c%s \"{dest}\" 2>/dev/null "
-                    f"|| echo 0)\" = \"{expected}\" ]; then "
-                    f"echo \"SKIP {m['key']}\"; else ("
+                    f"if [ -f {q_dest} ] && "
+                    f"[ \"$(stat -c%s {q_dest} 2>/dev/null || echo 0)\" = \"{expected}\" ]; "
+                    f"then echo SKIP {q_key}; else"
                 )
-                lines.append(
-                    f"  curl -L --fail --retry 3 -o \"{dest}\" \"{url}\" "
-                    f"|| echo \"FAIL {m['key']}\" >> {MODELS_DONE_FLAG}.fail"
-                )
-                lines.append("); fi")
             else:
-                lines.append(
-                    f"curl -L --fail --retry 3 -o \"{dest}\" \"{url}\" "
-                    f"|| echo \"FAIL {m['key']}\" >> {MODELS_DONE_FLAG}.fail"
+                lines.append(f"if false; then :; else")
+            lines.extend(
+                [
+                    f"  if [ -f {q_dest} ] && [ ! -f {q_part} ]; then mv -f {q_dest} {q_part}; fi",
+                    "  if ! curl --location --fail --show-error --retry 5 "
+                    "--retry-delay 5 --retry-all-errors --continue-at - "
+                    f"--output {q_part} {q_url}; then",
+                    f"    printf '%s\\n' {q_curl_error} >> {shlex.quote(MODELS_DONE_FLAG + '.fail')}",
+                    "  else",
+                ]
+            )
+            if expected > 0:
+                q_size_error = shlex.quote(
+                    f"FAIL {m.get('key')}: expected_size={expected}"
                 )
-        lines.append(f"date > {MODELS_DONE_FLAG}")
+                lines.extend(
+                    [
+                        f"    actual_size=$(stat -c%s {q_part} 2>/dev/null || echo 0)",
+                        f"    if [ \"$actual_size\" != \"{expected}\" ]; then",
+                        f"      printf '%s actual_size=%s\\n' {q_size_error} \"$actual_size\" >> {shlex.quote(MODELS_DONE_FLAG + '.fail')}",
+                        "    else",
+                        f"      mv -f {q_part} {q_dest}",
+                        "    fi",
+                    ]
+                )
+            else:
+                lines.append(f"    mv -f {q_part} {q_dest}")
+            lines.extend(["  fi", "fi"])
+        lines.extend(
+            [
+                f"if [ -s {shlex.quote(MODELS_DONE_FLAG + '.fail')} ]; then exit 1; fi",
+                f"date > {shlex.quote(MODELS_DONE_FLAG)}",
+            ]
+        )
         script = "\n".join(lines) + "\n"
 
         ssh = self._ssh_connect(host, port, private_key_path)
@@ -583,27 +732,59 @@ class VastService:
             with sftp.open("/tmp/soya_download.sh", "w") as fh:
                 fh.write(script)
             # setsid+리다이렉트로 SSH 채널 종료와 프로세스 생명주기를 분리한다.
-            ssh.exec_command(
+            _stdin, launch_stdout, launch_stderr = ssh.exec_command(
                 "chmod +x /tmp/soya_download.sh && "
                 "setsid nohup /tmp/soya_download.sh "
                 "> /tmp/soya_download.log 2>&1 < /dev/null &"
             )
+            launch_code = launch_stdout.channel.recv_exit_status()
+            if launch_code != 0:
+                launch_error = launch_stderr.read().decode("utf-8", "replace")[-1000:]
+                print(
+                    "[VAST][DOWNLOAD][ERROR] 다운로드 프로세스 시작 실패: "
+                    f"exit={launch_code}, stderr={launch_error}"
+                )
+                raise VastApiError(
+                    f"원격 모델 다운로드 프로세스 시작 실패: exit={launch_code}"
+                )
             import time
 
             deadline = time.time() + HEALTH_TIMEOUT_SECONDS * 4
             while time.time() < deadline:
-                stdin, stdout, _stderr = ssh.exec_command(
-                    f"cat {MODELS_DONE_FLAG} 2>/dev/null; cat {MODELS_DONE_FLAG}.fail 2>/dev/null"
+                _stdin, stdout, stderr = ssh.exec_command(
+                    f"if [ -s {MODELS_DONE_FLAG}.fail ]; then "
+                    f"echo __FAIL__; cat {MODELS_DONE_FLAG}.fail; "
+                    f"elif [ -f {MODELS_DONE_FLAG} ]; then echo __DONE__; "
+                    "elif pgrep -f '[s]oya_download.sh' >/dev/null; then echo __RUNNING__; "
+                    "else echo __STOPPED__; tail -n 30 /tmp/soya_download.log 2>/dev/null; fi"
                 )
                 out = stdout.read().decode("utf-8", "replace")
-                if ".fail" in out or "FAIL " in out:
+                err = stderr.read().decode("utf-8", "replace").strip()
+                if err:
+                    print(f"[VAST][DOWNLOAD] 상태 조회 stderr: {err[-1000:]}")
+                if "__FAIL__" in out:
                     failed = [ln for ln in out.splitlines() if ln.startswith("FAIL")]
                     self._set_step("download", "error", f"실패: {failed}")
                     raise VastApiError(f"원격 모델 다운로드 실패: {failed}")
-                if out.strip():
+                if "__DONE__" in out:
                     self._set_step("download", "done", f"{len(downloads)}개 완료")
                     return
+                if "__STOPPED__" in out:
+                    detail = out.split("__STOPPED__", 1)[1].strip()[-1500:]
+                    print(
+                        "[VAST][DOWNLOAD][ERROR] 완료 표시 없이 다운로드 프로세스 종료: "
+                        f"{detail}"
+                    )
+                    self._set_step("download", "error", "프로세스 비정상 종료")
+                    raise VastApiError(
+                        "원격 모델 다운로드 프로세스가 완료 표시 없이 종료되었습니다: "
+                        f"{detail[-500:]}"
+                    )
                 time.sleep(10)
+            print(
+                "[VAST][DOWNLOAD][ERROR] 원격 모델 다운로드 시간 초과: "
+                f"host={host}, port={port}, count={len(downloads)}"
+            )
             raise VastApiError("원격 모델 다운로드 시간 초과")
         finally:
             ssh.close()
@@ -613,6 +794,15 @@ class VastService:
     ) -> None:
         import time
 
+        if not comfy_url:
+            print(
+                "[VAST][COMFY][ERROR] 8188 외부 URL이 없어 ComfyUI 상태를 확인할 수 "
+                f"없습니다: ssh={host}:{port}"
+            )
+            raise VastApiError(
+                "Vast 인스턴스에 8188 외부 포트가 배정되지 않았습니다. "
+                "오퍼의 direct_port_count와 생성 env 포트 매핑을 확인하세요."
+            )
         loop = asyncio.get_running_loop()
 
         def touch_ready() -> None:
@@ -627,14 +817,28 @@ class VastService:
         async with aiohttp.ClientSession(
             timeout=aiohttp.ClientTimeout(total=10)
         ) as session:
+            last_error = ""
+            last_log_at = 0.0
             while time.time() < deadline:
                 try:
                     async with session.get(f"{comfy_url}/system_stats") as resp:
                         if resp.status == 200:
                             return
-                except aiohttp.ClientError:
-                    pass
+                        last_error = f"HTTP {resp.status}"
+                except aiohttp.ClientError as exc:
+                    last_error = f"{type(exc).__name__}: {exc}"
+                now = time.time()
+                if now - last_log_at >= 60:
+                    print(
+                        "[VAST][COMFY] 기동 대기 중: "
+                        f"url={comfy_url}, last={last_error or '(응답 없음)'}"
+                    )
+                    last_log_at = now
                 await asyncio.sleep(5)
+        print(
+            "[VAST][COMFY][ERROR] ComfyUI 기동 대기 시간 초과: "
+            f"url={comfy_url}, last={last_error or '(응답 없음)'}"
+        )
         raise VastApiError(f"ComfyUI 기동 대기 시간 초과: {comfy_url}")
 
     # ── 상태/제어 ───────────────────────────────────────────
@@ -665,6 +869,8 @@ class VastService:
         target = instance_id or self.launch.get("instance_id")
         if not target:
             raise VastApiError("파괴할 인스턴스 ID가 없습니다.")
+        if self.launch.get("instance_id") == int(target):
+            self._close_comfy_tunnel()
         await client.destroy_instance(int(target))
         if self.launch.get("instance_id") == int(target):
             self.launch = {

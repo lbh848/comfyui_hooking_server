@@ -179,6 +179,17 @@ def register_vast_routes(
         except Exception as exc:
             return _fail("워크플로우 실행 실패", exc)
 
+    async def cleanup(_app: web.Application) -> None:
+        try:
+            await service.close()
+            print("[VAST_API] 서비스와 SSH 터널 종료 완료")
+        except Exception as exc:
+            print(
+                "[VAST_API] 서비스 종료 실패: "
+                f"{type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+
     app.router.add_get("/api/vast/status", status)
     app.router.add_get("/api/vast/offers", offers)
     app.router.add_post("/api/vast/plan", plan)
@@ -189,4 +200,5 @@ def register_vast_routes(
     app.router.add_get("/api/vast/model-sources", model_sources_get)
     app.router.add_post("/api/vast/model-sources", model_sources_put)
     app.router.add_post("/api/vast/workflow/run", run_workflow)
+    app.on_cleanup.append(cleanup)
     return service
