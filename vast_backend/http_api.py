@@ -51,15 +51,32 @@ def register_vast_routes(
             gpu_names = [
                 v.strip() for v in q.get("gpu_names", "").split(",") if v.strip()
             ] or None
+
+            def _opt_int(key):
+                raw = q.get(key)
+                if not raw:
+                    return None
+                return int(raw)
+
+            def _opt_float(key):
+                raw = q.get(key)
+                if not raw:
+                    return None
+                return float(raw)
+
+            limit_raw = q.get("limit")
+            limit = int(limit_raw) if limit_raw else 60
             payload = await service.offers(
                 gpu_names=gpu_names,
                 min_disk_gb=int(q.get("min_disk_gb", "0") or 0),
-                min_cpu_ram_gb=(
-                    int(q["min_cpu_ram_gb"]) if q.get("min_cpu_ram_gb") else None
-                ),
-                max_price_usd_hr=(
-                    float(q["max_price_usd_hr"]) if q.get("max_price_usd_hr") else None
-                ),
+                min_cpu_ram_gb=_opt_int("min_cpu_ram_gb"),
+                max_price_usd_hr=_opt_float("max_price_usd_hr"),
+                min_gpu_ram_gb=_opt_int("min_gpu_ram_gb"),
+                inet_down_min_mbps=_opt_int("inet_down_min_mbps"),
+                inet_up_min_mbps=_opt_float("inet_up_min_mbps"),
+                min_direct_port_count=_opt_int("min_direct_port_count"),
+                min_reliability=_opt_float("min_reliability"),
+                min_cuda_version=_opt_float("min_cuda_version"),
                 verified_only=(
                     q.get("verified_only") in {"1", "true"}
                     if q.get("verified_only")
@@ -70,6 +87,7 @@ def register_vast_routes(
                     if q.get("on_demand")
                     else None
                 ),
+                limit=limit,
             )
             return web.json_response(payload)
         except ValueError as exc:

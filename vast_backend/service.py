@@ -79,6 +79,16 @@ class VastService:
             await self._client.close()
             self._client = None
 
+    def reset_client(self) -> None:
+        """API 키 변경 후 다음 조회에서 새 키로 클라이언트를 재생성하도록 캐시를 비운다."""
+        if self._client is not None:
+            try:
+                asyncio.get_running_loop().create_task(self._client.close())
+            except RuntimeError:
+                # 실행 중인 이벤트 루프가 없으면 동기적으로 닫을 수 없다 — GC에 맡긴다.
+                pass
+        self._client = None
+
     def _close_comfy_tunnel(self) -> None:
         tunnel = self._comfy_tunnel
         self._comfy_tunnel = None
@@ -141,6 +151,12 @@ class VastService:
         max_price_usd_hr: float | None = None,
         verified_only: bool | None = None,
         on_demand: bool | None = None,
+        min_gpu_ram_gb: int | None = None,
+        inet_down_min_mbps: int | None = None,
+        inet_up_min_mbps: float | None = None,
+        min_direct_port_count: int | None = None,
+        min_reliability: float | None = None,
+        min_cuda_version: float | None = None,
         limit: int = 60,
     ) -> dict[str, Any]:
         cfg = self.settings()
@@ -152,6 +168,12 @@ class VastService:
             max_price_usd_hr=cfg.max_price_usd_hr if max_price_usd_hr is None else max_price_usd_hr,
             verified_only=cfg.verified_only if verified_only is None else verified_only,
             on_demand=cfg.on_demand if on_demand is None else on_demand,
+            min_gpu_ram_gb=min_gpu_ram_gb if min_gpu_ram_gb is not None else 0,
+            inet_down_min_mbps=inet_down_min_mbps if inet_down_min_mbps is not None else 1000,
+            inet_up_min_mbps=inet_up_min_mbps if inet_up_min_mbps is not None else 0,
+            min_direct_port_count=min_direct_port_count if min_direct_port_count is not None else 1,
+            min_reliability=min_reliability if min_reliability is not None else 0.0,
+            min_cuda_version=min_cuda_version if min_cuda_version is not None else 0.0,
             limit=limit,
         )
         return {
@@ -166,6 +188,10 @@ class VastService:
                     "disk_gb": float(o.get("disk_space") or 0),
                     "dph_total": float(o.get("dph_total") or 0),
                     "inet_down_mbps": float(o.get("inet_down") or 0),
+                    "inet_up_mbps": float(o.get("inet_up") or 0),
+                    "direct_port_count": int(o.get("direct_port_count") or 0),
+                    "reliability": float(o.get("reliability2") or o.get("reliability") or 0),
+                    "cuda_max_good": o.get("cuda_max_good"),
                     "geolocation": o.get("geolocation"),
                     "verified": str(o.get("verification") or "").lower() == "verified",
                 }

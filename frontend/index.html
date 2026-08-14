@@ -10054,6 +10054,7 @@
             transition: none;
         }
         .modal-worker-widget,
+        .vast-worker-widget,
         .memo-launcher {
             pointer-events: auto;
         }
@@ -10315,6 +10316,432 @@
         }
         .modal-worker-widget[data-state="error"] .modal-worker-heading-copy span {
             color: #f87171;
+        }
+
+        /* ── VAST GPU 좌측 위젯 (Modal 위젯 패턴, 액센트 #38bdf8) ── */
+        .vast-worker-widget[hidden],
+        .vast-worker-panel[hidden],
+        .vast-worker-wall-tab[hidden] {
+            display: none !important;
+        }
+        .vast-worker-panel {
+            width: min(252px, calc(100vw - 12px));
+            overflow: hidden;
+            box-sizing: border-box;
+            border: 1px solid color-mix(in srgb, var(--border) 68%, #38bdf8);
+            border-left: 0;
+            border-radius: 0 12px 12px 0;
+            background: color-mix(in srgb, var(--surface) 96%, #0c1a24);
+            box-shadow: 0 14px 38px rgba(0,0,0,0.48), 0 1px 0 rgba(255,255,255,0.05) inset;
+        }
+        .vast-worker-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            min-height: 39px;
+            padding: 6px 7px 6px 11px;
+            border-bottom: 1px solid var(--border);
+            background: linear-gradient(180deg, rgba(56,189,248,0.10), transparent);
+        }
+        .vast-worker-title {
+            display: flex;
+            align-items: center;
+            gap: 9px;
+            min-width: 0;
+        }
+        .vast-worker-state-dot {
+            width: 9px;
+            height: 9px;
+            flex: 0 0 auto;
+            border-radius: 50%;
+            background: #64748b;
+            box-shadow: 0 0 0 4px rgba(100,116,139,0.13);
+        }
+        .vast-worker-heading-copy {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            min-width: 0;
+        }
+        .vast-worker-heading-copy strong {
+            color: var(--text);
+            font-size: 0.82rem;
+            line-height: 1.15;
+        }
+        .vast-worker-heading-copy span {
+            color: var(--text2);
+            font-size: 0.68rem;
+            line-height: 1.15;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .vast-worker-collapse-btn,
+        .vast-worker-refresh-btn,
+        .vast-worker-open-btn {
+            display: grid;
+            place-items: center;
+            padding: 0 6px;
+            border: 1px solid var(--border);
+            background: var(--surface2);
+            color: var(--text2);
+            cursor: pointer;
+            font-size: 0.68rem;
+            font-weight: 700;
+        }
+        .vast-worker-collapse-btn {
+            width: 27px;
+            height: 27px;
+            flex: 0 0 auto;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 800;
+            transform: rotate(90deg);
+        }
+        .vast-worker-refresh-btn {
+            width: 25px;
+            height: 25px;
+            flex: 0 0 auto;
+            border-radius: 7px;
+            font-size: 0.78rem;
+        }
+        .vast-worker-open-btn {
+            height: 25px;
+            flex: 0 0 auto;
+            border-radius: 7px;
+        }
+        .vast-worker-collapse-btn:hover,
+        .vast-worker-refresh-btn:hover,
+        .vast-worker-open-btn:hover {
+            border-color: color-mix(in srgb, #38bdf8 62%, var(--border));
+            background: var(--surface3);
+            color: var(--text);
+        }
+        .vast-worker-metrics {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            padding: 7px 8px 6px;
+        }
+        .vast-worker-metric {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 3px;
+            min-width: 0;
+            padding: 2px 7px;
+            border-right: 1px solid var(--border);
+        }
+        .vast-worker-metric:last-child { border-right: 0; }
+        .vast-worker-metric span {
+            color: var(--text2);
+            font-size: 0.64rem;
+        }
+        .vast-worker-metric strong {
+            color: var(--text);
+            font-size: 1rem;
+            line-height: 1;
+        }
+        .vast-worker-footer {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            min-height: 28px;
+            padding: 4px 7px 5px 10px;
+            border-top: 1px solid var(--border);
+            color: var(--text2);
+            font-size: 0.64rem;
+        }
+        .vast-worker-footer span {
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .vast-worker-wall-tab {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 7px;
+            width: 30px;
+            min-height: 52px;
+            box-sizing: border-box;
+            padding: 8px 3px;
+            border: 1px solid color-mix(in srgb, var(--border) 68%, #38bdf8);
+            border-left: 0;
+            border-radius: 0 10px 10px 0;
+            background: color-mix(in srgb, var(--surface) 95%, #38bdf8 5%);
+            color: var(--text);
+            box-shadow: 8px 10px 26px rgba(0,0,0,0.42), 0 1px 0 rgba(255,255,255,0.05) inset;
+            cursor: pointer;
+        }
+        .vast-worker-wall-label {
+            font-size: 0.74rem;
+            font-weight: 800;
+            line-height: 1;
+        }
+        .vast-worker-widget[data-state="on"] .vast-worker-state-dot {
+            background: #38bdf8;
+            box-shadow: 0 0 0 4px rgba(56,189,248,0.14), 0 0 12px rgba(56,189,248,0.68);
+        }
+        .vast-worker-widget[data-state="on"] .vast-worker-heading-copy span { color: #7dd3fc; }
+        .vast-worker-widget[data-state="checking"] .vast-worker-state-dot {
+            background: #f59e0b;
+            box-shadow: 0 0 0 4px rgba(245,158,11,0.14);
+            animation: vast-worker-pulse 1.2s ease-in-out infinite;
+        }
+        @keyframes vast-worker-pulse {
+            0%, 100% { opacity: 0.56; }
+            50% { opacity: 1; }
+        }
+        .vast-worker-widget[data-state="error"] .vast-worker-state-dot {
+            background: #ef4444;
+            box-shadow: 0 0 0 4px rgba(239,68,68,0.14);
+        }
+        .vast-worker-widget[data-state="error"] .vast-worker-heading-copy span { color: #f87171; }
+
+        /* ── VAST 메인 패널 (Modal 런타임 패널 패턴) ── */
+        .comfy-vast-panel {
+            display: none;
+            flex: 1;
+            flex-direction: column;
+            gap: 10px;
+            min-height: 0;
+            padding: 14px;
+            overflow: auto;
+            border: 1px solid color-mix(in srgb, var(--border) 78%, #38bdf8);
+            border-radius: 11px;
+            background:
+                radial-gradient(circle at top right, rgba(56,189,248,.12), transparent 34%),
+                color-mix(in srgb, var(--surface2) 48%, var(--surface));
+        }
+        .comfy-vast-panel.active { display: flex; }
+        .comfy-vast-panel > * { flex: 0 0 auto; }
+        .comfy-vast-panel .comfy-modal-inner-panel { display: none; flex-direction: column; gap: 10px; }
+        .comfy-vast-panel .comfy-modal-inner-panel.active { display: flex; }
+
+        .vast-search-form {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 10px;
+            margin-top: 8px;
+            padding: 10px;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            background: color-mix(in srgb, var(--surface2) 38%, transparent);
+        }
+        .vast-search-gpus {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            grid-column: 1 / -1;
+        }
+        .vast-search-gpus label {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 5px 10px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface2);
+            color: var(--text);
+            font-size: 0.78rem;
+            cursor: pointer;
+        }
+        .vast-search-gpus input { accent-color: #38bdf8; }
+        .vast-search-field {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            min-width: 0;
+        }
+        .vast-search-field span {
+            color: var(--text2);
+            font-size: 0.66rem;
+        }
+        .vast-search-field input {
+            height: 34px;
+            box-sizing: border-box;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 0 9px;
+            color: var(--text);
+            background: color-mix(in srgb, var(--surface2) 46%, var(--surface));
+            font-size: 0.82rem;
+        }
+        .vast-search-toggle {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            color: var(--text2);
+            font-size: 0.72rem;
+            cursor: pointer;
+        }
+        .vast-search-toggle input { accent-color: #38bdf8; }
+        #vast-search-btn { grid-column: 1 / -1; justify-self: start; }
+
+        .vast-offer-summary {
+            margin-top: 8px;
+            padding: 7px 10px;
+            border: 1px solid color-mix(in srgb, #38bdf8 38%, var(--border));
+            border-radius: 8px;
+            background: color-mix(in srgb, #38bdf8 6%, var(--surface2));
+            color: var(--text2);
+            font-size: 0.74rem;
+        }
+        .vast-offer-catalog {
+            margin-top: 8px;
+            max-height: 300px;
+            overflow: auto;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            background: color-mix(in srgb, var(--bg) 45%, var(--surface));
+        }
+        .vast-offer-row {
+            display: grid;
+            grid-template-columns: auto minmax(0, 1fr) auto;
+            gap: 11px;
+            align-items: center;
+            padding: 10px 12px;
+            border-bottom: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+            background: color-mix(in srgb, var(--surface) 82%, transparent);
+            transition: background .15s ease;
+        }
+        .vast-offer-row:last-child { border-bottom: 0; }
+        .vast-offer-row:hover { background: color-mix(in srgb, var(--surface2) 52%, var(--surface)); }
+        .vast-offer-row.selected {
+            background: color-mix(in srgb, #38bdf8 8%, var(--surface));
+            box-shadow: inset 3px 0 0 #38bdf8;
+        }
+        .vast-offer-row input[type="radio"] { accent-color: #38bdf8; }
+        .vast-offer-main { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+        .vast-offer-main strong { color: var(--text); font-size: 0.8rem; }
+        .vast-offer-meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 3px 10px;
+            color: var(--text2);
+            font-size: 0.62rem;
+        }
+        .vast-offer-price {
+            text-align: right;
+            color: #7dd3fc;
+            font-size: 0.95rem;
+            font-weight: 800;
+            white-space: nowrap;
+        }
+        .vast-offer-price small { display: block; color: var(--text2); font-size: 0.58rem; font-weight: 600; }
+
+        .vast-plan-box {
+            margin-top: 10px;
+            padding: 10px 12px;
+            border: 1px solid color-mix(in srgb, #38bdf8 32%, var(--border));
+            border-radius: 10px;
+            background: color-mix(in srgb, #38bdf8 5%, var(--surface2));
+        }
+        .vast-plan-head {
+            display: flex;
+            justify-content: space-between;
+            gap: 10px;
+            margin-bottom: 7px;
+            color: var(--text2);
+            font-size: 0.72rem;
+        }
+        .vast-plan-head strong { color: var(--text); font-size: 0.82rem; }
+        .vast-plan-models {
+            max-height: 180px;
+            overflow: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .vast-plan-model {
+            display: flex;
+            justify-content: space-between;
+            gap: 8px;
+            padding: 4px 8px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: var(--surface2);
+            color: var(--text2);
+            font-size: 0.66rem;
+        }
+        .vast-plan-model strong { color: var(--text); }
+
+        .vast-launch-progress {
+            margin-top: 10px;
+            padding: 12px;
+            border: 1px solid color-mix(in srgb, #38bdf8 38%, var(--border));
+            border-radius: 10px;
+            background: color-mix(in srgb, #38bdf8 5%, var(--surface2));
+        }
+        .vast-launch-progress[hidden] { display: none; }
+        .vast-launch-progress-head {
+            display: flex;
+            justify-content: space-between;
+            gap: 10px;
+            margin-bottom: 8px;
+            color: var(--text2);
+            font-size: 0.72rem;
+        }
+        .vast-launch-progress-head strong { color: var(--text); font-size: 0.82rem; }
+        .vast-launch-steps {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            margin: 0;
+            padding: 0;
+            list-style: none;
+        }
+        .vast-launch-step {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 5px 8px;
+            border-radius: 6px;
+            color: var(--text2);
+            font-size: 0.7rem;
+        }
+        .vast-launch-step::before {
+            content: '○';
+            color: var(--text2);
+            font-size: 0.8rem;
+        }
+        .vast-launch-step.state-running { color: var(--text); }
+        .vast-launch-step.state-running::before { content: '◐'; color: #f59e0b; animation: vast-worker-pulse 1.2s ease-in-out infinite; }
+        .vast-launch-step.state-done { color: #7dd3fc; }
+        .vast-launch-step.state-done::before { content: '●'; color: #38bdf8; }
+        .vast-launch-step.state-error { color: #f87171; }
+        .vast-launch-step.state-error::before { content: '✕'; color: #ef4444; }
+        .vast-launch-step .vast-launch-step-detail { color: var(--text2); font-size: 0.62rem; margin-left: auto; }
+        .vast-launch-comfy {
+            margin-top: 8px;
+            padding: 8px 10px;
+            border: 1px solid color-mix(in srgb, #38bdf8 50%, var(--border));
+            border-radius: 8px;
+            background: color-mix(in srgb, #38bdf8 8%, var(--surface));
+            color: #7dd3fc;
+            font-size: 0.72rem;
+            word-break: break-all;
+        }
+        .vast-launch-comfy[hidden] { display: none; }
+        .vast-launch-comfy a {
+            margin-left: 8px;
+            padding: 1px 7px;
+            border: 1px solid color-mix(in srgb, #38bdf8 55%, var(--border));
+            border-radius: 6px;
+            color: #7dd3fc;
+            font-size: 0.66rem;
+            font-weight: 700;
+            text-decoration: none;
+        }
+        @media (max-width: 520px) {
+            .vast-search-form { grid-template-columns: 1fr; }
+            #vast-search-btn { justify-self: stretch; }
+            .vast-offer-row { grid-template-columns: auto minmax(0, 1fr); }
+            .vast-offer-price { grid-column: 2; text-align: left; }
         }
         .memo-launcher {
             position: relative;
@@ -17336,8 +17763,58 @@
         </div>
     </div>
 
-    <!-- 작업 큐 위에서 함께 이동하는 Modal 상태 + 전역 메모장 -->
+    <!-- 작업 큐 위에서 함께 이동하는 VAST 상태 + Modal 상태 + 전역 메모장 -->
     <div class="left-utility-stack" id="left-utility-stack" hidden>
+        <section class="vast-worker-widget" id="vast-worker-widget"
+                 data-state="checking" aria-label="VAST GPU 상태" hidden>
+            <div class="vast-worker-panel" id="vast-worker-panel"
+                 role="region" aria-labelledby="vast-worker-heading"
+                 aria-hidden="true" hidden inert>
+                <div class="vast-worker-header">
+                    <div class="vast-worker-title">
+                        <span class="vast-worker-state-dot" aria-hidden="true"></span>
+                        <div class="vast-worker-heading-copy">
+                            <strong id="vast-worker-heading">VAST GPU</strong>
+                            <span id="vast-worker-state" role="status" aria-live="polite">상태 확인 대기</span>
+                        </div>
+                    </div>
+                    <button type="button" class="vast-worker-collapse-btn"
+                            id="vast-worker-collapse-btn"
+                            onclick="collapseVastWorkerPanel()"
+                            title="VAST 상태 접기" aria-label="VAST 상태 접기">⌄</button>
+                </div>
+                <div class="vast-worker-metrics">
+                    <div class="vast-worker-metric">
+                        <span>credit</span>
+                        <strong id="vast-worker-credit">-</strong>
+                    </div>
+                    <div class="vast-worker-metric">
+                        <span>인스턴스</span>
+                        <strong id="vast-worker-instance">-</strong>
+                    </div>
+                    <div class="vast-worker-metric">
+                        <span>상태</span>
+                        <strong id="vast-worker-state-short">-</strong>
+                    </div>
+                </div>
+                <div class="vast-worker-footer">
+                    <span id="vast-worker-checked">첫 상태 확인 전</span>
+                    <button type="button" class="vast-worker-refresh-btn"
+                            onclick="void refreshVastStatus(true)"
+                            title="VAST 상태 지금 새로고침" aria-label="VAST 상태 지금 새로고침">↻</button>
+                    <button type="button" class="vast-worker-open-btn"
+                            onclick="openVastTab()"
+                            title="VAST 오퍼 검색·빌드 탭 열기" aria-label="VAST 탭 열기">열기</button>
+                </div>
+            </div>
+            <button type="button" class="vast-worker-wall-tab"
+                    id="vast-worker-wall-tab" aria-controls="vast-worker-panel"
+                    aria-expanded="false" aria-hidden="false" tabindex="0"
+                    onclick="expandVastWorkerPanel()" title="VAST 상태 펼치기">
+                <span class="vast-worker-state-dot" aria-hidden="true"></span>
+                <span class="vast-worker-wall-label">V</span>
+            </button>
+        </section>
         <section class="modal-worker-widget" id="modal-worker-widget"
                  data-state="checking" aria-label="Modal GPU Worker 상태" hidden>
             <div class="modal-worker-panel" id="modal-worker-panel"
@@ -20211,6 +20688,9 @@
                             <button type="button" class="comfy-runtime-tab" id="comfy-runtime-tab-modal" onclick="switchComfyRuntimeModal()" role="tab" aria-selected="false">
                                 <span class="comfy-runtime-tab-dot"></span>MODAL
                             </button>
+                            <button type="button" class="comfy-runtime-tab" id="comfy-runtime-tab-vast" onclick="switchComfyRuntimeVast()" role="tab" aria-selected="false">
+                                <span class="comfy-runtime-tab-dot"></span>VAST
+                            </button>
                             <button type="button" class="comfy-runtime-tab" id="comfy-runtime-tab-allocation" onclick="switchComfyRuntimeAllocation()" role="tab" aria-selected="false">
                                 Comfy 배분 관리
                             </button>
@@ -20509,6 +20989,219 @@
                                     <pre class="modal-install-progress-log" id="modal-install-progress-log" aria-label="Modal 동기화 실시간 로그">실시간 로그를 기다리고 있습니다.</pre>
                                 </div>
                             </section>
+                            </div>
+                            </div>
+                            </div>
+                        </section>
+
+                        <section class="comfy-vast-panel" id="comfy-vast-panel" aria-labelledby="comfy-runtime-tab-vast" hidden>
+                            <div class="comfy-modal-inner">
+                            <div class="comfy-modal-inner-tabs" role="tablist" aria-label="VAST 설정 영역">
+                                <button type="button" class="comfy-modal-inner-tab active" id="comfy-vast-section-tab-build" onclick="switchComfyVastSection('build')" role="tab" aria-selected="true" aria-controls="comfy-vast-panel-build">오퍼 검색·빌드</button>
+                                <button type="button" class="comfy-modal-inner-tab" id="comfy-vast-section-tab-lora" onclick="switchComfyVastSection('lora')" role="tab" aria-selected="false" aria-controls="comfy-vast-panel-lora">LoRA 선택</button>
+                            </div>
+                            <div class="comfy-modal-inner-body">
+                            <div class="comfy-modal-inner-panel active" id="comfy-vast-panel-build" role="tabpanel" aria-labelledby="comfy-vast-section-tab-build">
+                                <div class="comfy-modal-runtime-head">
+                                    <div>
+                                        <div class="comfy-modal-runtime-title">VAST GPU 오퍼 검색·빌드</div>
+                                        <div class="comfy-modal-runtime-copy">지정한 워크플로우에 필요한 모델을 오퍼에 빌드합니다. 인스턴스는 stop 시 파괴되는 임시 인스턴스입니다.</div>
+                                    </div>
+                                    <span class="comfy-runtime-state" id="vast-runtime-state">● 상태 확인 중</span>
+                                </div>
+
+                                <div class="comfy-modal-runtime-metrics">
+                                    <div class="comfy-modal-runtime-metric"><small>계정</small><strong id="vast-runtime-account">확인 중</strong></div>
+                                    <div class="comfy-modal-runtime-metric"><small>credit</small><strong id="vast-runtime-credit">-</strong></div>
+                                    <div class="comfy-modal-runtime-metric"><small>API 키</small><strong id="vast-runtime-key">-</strong></div>
+                                    <div class="comfy-modal-runtime-metric"><small>인스턴스</small><strong id="vast-runtime-instance">-</strong></div>
+                                </div>
+
+                                <section class="comfy-installer-card">
+                                    <div class="comfy-installer-section-head">
+                                        <span class="comfy-installer-step" aria-hidden="true">V</span>
+                                        <div class="comfy-installer-section-heading">
+                                            <h3 class="comfy-installer-title">오퍼 검색 조건</h3>
+                                            <p class="comfy-installer-section-copy">GPU 종류·가격 상한·최소 RAM/디스크로 Vast 오퍼를 검색합니다. 지원 GPU는 3090 / 4090 / 5090.</p>
+                                        </div>
+                                    </div>
+                                    <div class="vast-search-form">
+                                        <div class="vast-search-gpus" id="vast-search-gpus">
+                                            <label><input type="checkbox" value="RTX 3090" checked> RTX 3090</label>
+                                            <label><input type="checkbox" value="RTX 4090" checked> RTX 4090</label>
+                                            <label><input type="checkbox" value="RTX 4090D"> RTX 4090D</label>
+                                            <label><input type="checkbox" value="RTX 5090" checked> RTX 5090</label>
+                                        </div>
+                                        <label class="vast-search-field">
+                                            <span>최대 가격 ($/hr)</span>
+                                            <input type="number" id="vast-search-price" min="0.01" max="20" step="0.01" value="0.40">
+                                        </label>
+                                        <label class="vast-search-field">
+                                            <span>최소 시스템 RAM (GB)</span>
+                                            <input type="number" id="vast-search-ram" min="4" max="1024" step="1" value="32">
+                                        </label>
+                                        <label class="vast-search-field">
+                                            <span>최소 VRAM (GB)</span>
+                                            <input type="number" id="vast-search-gpuram" min="0" max="192" step="1" value="0" title="0 = 조건 없음">
+                                        </label>
+                                        <label class="vast-search-field">
+                                            <span>최소 디스크 (GB)</span>
+                                            <input type="number" id="vast-search-disk" min="0" max="2000" step="1" value="0">
+                                        </label>
+                                        <label class="vast-search-field">
+                                            <span>최소 다운로드 (Mbps)</span>
+                                            <input type="number" id="vast-search-inetdown" min="0" max="100000" step="10" value="1000" title="네트워크 다운로드 대역 하한. 0 = 조건 없음">
+                                        </label>
+                                        <label class="vast-search-field">
+                                            <span>최소 업로드 (Mbps)</span>
+                                            <input type="number" id="vast-search-inetup" min="0" max="100000" step="10" value="0" title="네트워크 업로드 대역 하한. 0 = 조건 없음">
+                                        </label>
+                                        <label class="vast-search-field">
+                                            <span>직접 포트 수 ≥</span>
+                                            <input type="number" id="vast-search-ports" min="0" max="64" step="1" value="1" title="외부 직접 포트 수 하한 (SSH/ComfyUI 직접 노출용). 0 = 조건 없음">
+                                        </label>
+                                        <label class="vast-search-field">
+                                            <span>최소 신뢰도 (0~1)</span>
+                                            <input type="number" id="vast-search-reliability" min="0" max="1" step="0.01" value="0" title="호스트 신뢰도 하한. 0 = 조건 없음">
+                                        </label>
+                                        <label class="vast-search-field">
+                                            <span>최소 CUDA 버전</span>
+                                            <input type="number" id="vast-search-cuda" min="0" max="20" step="0.1" value="0" title="지원 CUDA 최소 버전. 0 = 조건 없음">
+                                        </label>
+                                        <label class="vast-search-field">
+                                            <span>검색 결과 수</span>
+                                            <input type="number" id="vast-search-limit" min="1" max="500" step="1" value="60">
+                                        </label>
+                                        <label class="vast-search-toggle">
+                                            <input type="checkbox" id="vast-search-verified" checked>
+                                            <span>verified 호스트만</span>
+                                        </label>
+                                        <label class="vast-search-toggle">
+                                            <input type="checkbox" id="vast-search-ondemand" checked>
+                                            <span>On-Demand (interruptible 끔)</span>
+                                        </label>
+                                        <button type="button" class="comfy-installer-btn primary" id="vast-search-btn" onclick="vastSearchOffers()">검색</button>
+                                    </div>
+                                    <div class="vast-offer-summary" id="vast-offer-summary" hidden></div>
+                                    <div id="vast-offer-catalog" class="vast-offer-catalog">
+                                        <div class="modal-lora-empty">검색 조건을 설정하고 검색 버튼을 누르세요.</div>
+                                    </div>
+                                </section>
+
+                                <section class="comfy-installer-card">
+                                    <div class="comfy-installer-section-head">
+                                        <span class="comfy-installer-step" aria-hidden="true">W</span>
+                                        <div class="comfy-installer-section-heading">
+                                            <h3 class="comfy-installer-title">빌드할 워크플로우 지정</h3>
+                                            <p class="comfy-installer-section-copy">선택한 워크플로우가 참조하는 모델을 인스턴스에 provisioning 합니다. 빌드 전 워크플로우를 먼저 지정합니다.</p>
+                                        </div>
+                                    </div>
+                                    <div style="margin-top:8px; display:flex; align-items:center; gap:8px;">
+                                        <input type="search" id="vast-workflow-search" autocomplete="off"
+                                               placeholder="워크플로우 이름 검색..."
+                                               oninput="vastFilterWorkflows()"
+                                               style="flex:1; padding:6px 10px; border-radius:6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:0.85rem;">
+                                        <button type="button" class="comfy-installer-btn" onclick="vastLoadWorkflows()">목록 새로고침</button>
+                                    </div>
+                                    <div id="vast-workflow-catalog" class="comfy-workflow-list" style="margin-top:8px; max-height:220px; overflow:auto;">
+                                        <div class="comfy-workflow-empty">워크플로우 목록을 불러오는 중입니다.</div>
+                                    </div>
+                                    <div class="vast-plan-box" id="vast-plan-box" hidden>
+                                        <div class="vast-plan-head">
+                                            <strong>준비 계획</strong>
+                                            <span id="vast-plan-totals"></span>
+                                        </div>
+                                        <div id="vast-plan-models" class="vast-plan-models"></div>
+                                        <label class="vast-search-field" style="margin-top:8px; max-width:240px;">
+                                            <span>빌드 디스크 (GB)</span>
+                                            <input type="number" id="vast-build-disk" min="10" max="2000" step="1" value="50">
+                                        </label>
+                                    </div>
+                                </section>
+
+                                <section class="comfy-installer-card">
+                                    <div class="comfy-installer-section-head">
+                                        <span class="comfy-installer-step" aria-hidden="true">L</span>
+                                        <div class="comfy-installer-section-heading">
+                                            <h3 class="comfy-installer-title">LoRA 선택 (추가)</h3>
+                                            <p class="comfy-installer-section-copy">이 빌드에 함께 업로드할 LoRA를 선택합니다. 나중에 추가 선택 가능.</p>
+                                        </div>
+                                    </div>
+                                    <div class="comfy-installer-actions" style="margin-top:8px;">
+                                        <button type="button" class="comfy-installer-btn" onclick="switchComfyVastSection('lora')">LoRA 선택 열기</button>
+                                        <button type="button" class="comfy-installer-btn" onclick="vastClearLoraSelection()">선택 전체 해제</button>
+                                    </div>
+                                    <p class="comfy-installer-note" id="vast-lora-selection-summary" style="margin-top:8px;">선택된 LoRA 없음</p>
+                                </section>
+
+                                <div class="comfy-installer-actions" style="margin-top:10px;">
+                                    <button type="button" class="comfy-installer-btn primary" id="vast-launch-btn" onclick="vastLaunch()" disabled>선택 오퍼에 빌드</button>
+                                    <button type="button" class="comfy-installer-btn" onclick="vastLoadInstances()">인스턴스 목록 새로고침</button>
+                                    <span id="vast-launch-summary" class="comfy-installer-note" style="margin-left:auto;">오퍼·워크플로우 미선택</span>
+                                </div>
+
+                                <div class="vast-launch-progress" id="vast-launch-progress" hidden>
+                                    <div class="vast-launch-progress-head">
+                                        <strong id="vast-launch-progress-title">VAST 빌드 준비</strong>
+                                        <span id="vast-launch-progress-state"></span>
+                                    </div>
+                                    <ol class="vast-launch-steps" id="vast-launch-steps" aria-label="VAST 빌드 단계"></ol>
+                                    <div class="vast-launch-comfy" id="vast-launch-comfy" hidden>
+                                        <span id="vast-launch-comfy-url"></span>
+                                        <a id="vast-launch-comfy-link" href="#" target="_blank" rel="noopener" hidden>ComfyUI 접속</a>
+                                    </div>
+                                </div>
+
+                                <section class="comfy-installer-card" style="margin-top:10px;">
+                                    <div class="comfy-installer-section-head">
+                                        <span class="comfy-installer-step" aria-hidden="true">I</span>
+                                        <div class="comfy-installer-section-heading">
+                                            <h3 class="comfy-installer-title">인스턴스 관리</h3>
+                                            <p class="comfy-installer-section-copy">실행 중인 Vast 인스턴스 목록과 파괴. 파괴 시 과금이 즉시 중단됩니다.</p>
+                                        </div>
+                                    </div>
+                                    <div id="vast-instance-catalog" class="vast-offer-catalog" style="margin-top:8px;">
+                                        <div class="modal-lora-empty">인스턴스 목록을 불러오는 중입니다.</div>
+                                    </div>
+                                </section>
+                            </div>
+
+                            <div class="comfy-modal-inner-panel" id="comfy-vast-panel-lora" role="tabpanel" aria-labelledby="comfy-vast-section-tab-lora">
+                                <div class="comfy-modal-runtime-head">
+                                    <div>
+                                        <div class="comfy-modal-runtime-title">빌드에 포함할 LoRA 선택</div>
+                                        <div class="comfy-modal-runtime-copy">로컬 현재 사용본 LoRA 중 이 빌드에 업로드할 항목을 선택합니다. Modal 동기화와 동일한 카탈로그를 씁니다(원격 비교 없음).</div>
+                                    </div>
+                                </div>
+                                <div class="modal-lora-sync-body" style="flex:1 1 auto; min-height:0;">
+                                    <div class="modal-lora-toolbar">
+                                        <div class="modal-lora-tabs" role="tablist" aria-label="LoRA 종류">
+                                            <button type="button" class="active" data-vast-lora-category="bot" onclick="vastLoraSetCategory('bot')">봇 <span id="vast-lora-tab-count-bot">0</span></button>
+                                            <button type="button" data-vast-lora-category="asset" onclick="vastLoraSetCategory('asset')">에셋 <span id="vast-lora-tab-count-asset">0</span></button>
+                                            <button type="button" data-vast-lora-category="instance" onclick="vastLoraSetCategory('instance')">인스턴스 <span id="vast-lora-tab-count-instance">0</span></button>
+                                            <button type="button" data-vast-lora-category="style" onclick="vastLoraSetCategory('style')">그림체 <span id="vast-lora-tab-count-style">0</span></button>
+                                        </div>
+                                        <input type="search" class="modal-lora-search" id="vast-lora-search"
+                                               autocomplete="off" placeholder="이름, 캐릭터, 트리거 검색..."
+                                               oninput="vastRenderLoraCatalog()">
+                                    </div>
+                                    <div class="modal-lora-selectbar">
+                                        <span id="vast-lora-note">로컬 현재 사용본을 불러오는 중입니다.</span>
+                                        <span class="modal-lora-selectbar-actions">
+                                            <button type="button" onclick="vastLoraSelectVisible()">현재 목록 전체 선택</button>
+                                            <button type="button" onclick="vastClearLoraSelection()">선택 해제</button>
+                                        </span>
+                                    </div>
+                                    <div class="modal-lora-catalog" id="vast-lora-catalog" aria-live="polite">
+                                        <div class="modal-lora-empty">LoRA 목록을 불러오는 중입니다.</div>
+                                    </div>
+                                    <div class="modal-lora-footer">
+                                        <div class="modal-lora-footer-note" id="vast-lora-footer-note">선택 없음</div>
+                                        <div class="modal-lora-footer-actions">
+                                            <button type="button" class="primary" onclick="vastApplyLoraSelection()">선택 적용</button>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                             </div>
                             </div>
@@ -21429,6 +22122,47 @@
                             <div class="setting-control" style="max-width:520px;">
                                 <div id="modal-account-status" style="font-size:12px; line-height:1.6; white-space:pre-wrap;">상태 확인 전</div>
                                 <div id="modal-cost-status" style="font-size:11px; color:var(--text-secondary,#aaa); margin-top:4px; white-space:pre-wrap;"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="external-api-group" id="vast-external-api-group">
+                        <div class="external-api-group-title">Vast.ai 원격 GPU</div>
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="title">VAST 사용</div>
+                                <div class="desc">Vast.ai 오퍼 검색·빌드 마법사와 좌측 VAST GPU 위젯을 활성화합니다. 인스턴스는 stop 시 파괴되는 임시 인스턴스입니다.</div>
+                            </div>
+                            <div class="setting-control" style="display:flex; align-items:center; gap:8px;">
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="setting-vast-enabled" onchange="updateVastEnabledStatus(this.checked)">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                                <span id="setting-vast-enabled-status" class="toggle-status off">OFF</span>
+                            </div>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="title">Vast API 키</div>
+                                <div class="desc">https://console.vast.ai/account/ 에서 발급한 API 키. config가 아닌 key/vast_key.json에 별도 저장됩니다.</div>
+                            </div>
+                            <div class="setting-control" style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                                <input type="password" id="setting-vast-api-key" placeholder="Vast API 키" spellcheck="false" autocomplete="off"
+                                       style="width:320px; padding:6px 10px; border-radius:6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:.85rem;">
+                                <button type="button" class="btn-small" onclick="vastToggleKeyVisible()">표시/숨김</button>
+                                <button type="button" class="btn-small" onclick="saveVastKey()">저장</button>
+                                <button type="button" class="btn-small" onclick="deleteVastKey()">삭제</button>
+                                <span id="setting-vast-key-status" style="font-size:11px; color:var(--text-secondary,#aaa);">로드 전</span>
+                            </div>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-label">
+                                <div class="title">연결 및 credit 상태</div>
+                                <div class="desc">저장 후 활성화하면 credit 잔액과 계정을 조회합니다.</div>
+                            </div>
+                            <div class="setting-control" style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; max-width:520px;">
+                                <button type="button" class="btn-small" onclick="vastRefreshAccountStatus()">상태 확인</button>
+                                <div id="vast-account-status" style="font-size:12px; line-height:1.6; white-space:pre-wrap; flex:1 1 100%;">상태 확인 전</div>
                             </div>
                         </div>
                     </div>
@@ -23684,6 +24418,7 @@
         function syncLeftUtilityStackVisibility() {
             const stack = document.getElementById('left-utility-stack');
             const widget = document.getElementById('modal-worker-widget');
+            const vastWidget = document.getElementById('vast-worker-widget');
             const launcher = document.getElementById('memo-launcher');
             if (!stack || !widget || !launcher) {
                 console.error('[LEFT_DOCK] 표시 상태 동기화 UI 요소 누락:', {
@@ -23693,7 +24428,7 @@
                 });
                 return;
             }
-            stack.hidden = widget.hidden && launcher.hidden;
+            stack.hidden = widget.hidden && launcher.hidden && (vastWidget ? vastWidget.hidden : true);
             if (!stack.hidden) scheduleMemoLauncherPositionSync();
         }
 
@@ -24500,8 +25235,976 @@
             scheduleMemoLauncherPositionSync();
         }
 
+        // ─── VAST GPU: 좌측 위젯 + 오퍼 검색·빌드 마법사 + LoRA 선택 ───
+        let vastWorkerFeatureEnabled = false;
+        let vastWorkerExpanded = false;
+        let vastWorkerPollTimer = null;
+        let vastWorkerPollBusy = false;
+        let vastWorkerPollPending = false;
+        let vastWorkerActiveRefreshSeconds = 5;
+        let vastWorkerHasSnapshot = false;
+        // 빌드 마법사 상태
+        let vastOffers = [];
+        let vastSelectedOfferId = null;
+        let vastSelectedOffer = null;
+        let vastWorkflowCatalog = [];
+        let vastSelectedWorkflowPaths = new Set();
+        let vastPlan = null;
+        let vastLaunchPollTimer = null;
+        // LoRA 선택 상태
+        let vastLoraCatalog = [];
+        let vastLoraCatalogLoading = false;
+        let vastLoraActiveCategory = 'bot';
+        let vastLoraSelectedKeys = new Set();
+        let vastLoraItemsByKey = new Map();
+
+        function vastWorkerUiElements() {
+            const elements = {
+                widget: document.getElementById('vast-worker-widget'),
+                heading: document.getElementById('vast-worker-heading'),
+                state: document.getElementById('vast-worker-state'),
+                credit: document.getElementById('vast-worker-credit'),
+                instance: document.getElementById('vast-worker-instance'),
+                stateShort: document.getElementById('vast-worker-state-short'),
+                checked: document.getElementById('vast-worker-checked'),
+                wallTab: document.getElementById('vast-worker-wall-tab'),
+                refreshButton: document.querySelector('.vast-worker-refresh-btn'),
+                panel: document.getElementById('vast-worker-panel'),
+                collapseButton: document.getElementById('vast-worker-collapse-btn'),
+            };
+            const missing = Object.entries(elements).filter(([, v]) => !v).map(([k]) => k);
+            if (missing.length) {
+                console.error('[VAST_WORKER] 상태 표시 UI 요소 누락:', { missing });
+                return null;
+            }
+            return elements;
+        }
+
+        function setVastWorkerPanelExpanded(expanded) {
+            vastWorkerExpanded = Boolean(expanded);
+            const e = vastWorkerUiElements();
+            if (!e) return;
+            e.panel.hidden = !vastWorkerExpanded;
+            e.panel.inert = !vastWorkerExpanded;
+            e.panel.setAttribute('aria-hidden', String(!vastWorkerExpanded));
+            e.wallTab.hidden = vastWorkerExpanded;
+            e.wallTab.inert = vastWorkerExpanded;
+            e.wallTab.setAttribute('aria-hidden', String(vastWorkerExpanded));
+            e.wallTab.setAttribute('aria-expanded', String(vastWorkerExpanded));
+            e.wallTab.tabIndex = vastWorkerExpanded ? -1 : 0;
+        }
+
+        function collapseVastWorkerPanel() {
+            const e = vastWorkerUiElements();
+            if (!e) return;
+            setVastWorkerPanelExpanded(false);
+            e.wallTab.focus();
+        }
+
+        function expandVastWorkerPanel() {
+            const e = vastWorkerUiElements();
+            if (!e) return;
+            setVastWorkerPanelExpanded(true);
+            e.collapseButton.focus();
+        }
+
+        function stopVastWorkerPolling() {
+            if (vastWorkerPollTimer !== null) {
+                window.clearTimeout(vastWorkerPollTimer);
+                vastWorkerPollTimer = null;
+            }
+        }
+
+        function scheduleVastWorkerPolling() {
+            stopVastWorkerPolling();
+            if (!vastWorkerFeatureEnabled || document.hidden) return;
+            vastWorkerPollTimer = window.setTimeout(
+                () => void refreshVastStatus(false),
+                vastWorkerActiveRefreshSeconds * 1000,
+            );
+        }
+
+        function renderVastWorkerStatus(status) {
+            const e = vastWorkerUiElements();
+            if (!e) return;
+            const settings = status?.settings || {};
+            const account = status?.account || {};
+            const launch = status?.launch || {};
+            // API 키 / 계정
+            const hasKey = Boolean(settings.has_api_key);
+            const accountOk = account.ok === true;
+            if (!hasKey) {
+                e.widget.dataset.state = 'error';
+                e.heading.textContent = 'VAST GPU';
+                e.state.textContent = 'API 키 없음';
+                e.state.title = 'key/vast_key.json 에 API 키를 설정하세요.';
+                e.credit.textContent = '-';
+                e.instance.textContent = '-';
+                e.stateShort.textContent = '키없음';
+                e.checked.textContent = 'API 키 미설정 · 설정에서 vast_enabled 활성화 필요';
+                return;
+            }
+            if (!accountOk) {
+                e.widget.dataset.state = 'error';
+                e.heading.textContent = 'VAST GPU';
+                e.state.textContent = '계정 확인 실패';
+                e.state.title = String(account.error || 'Vast 계정 조회 실패');
+                e.credit.textContent = '-';
+                e.instance.textContent = '-';
+                e.stateShort.textContent = '오류';
+                e.checked.textContent = String(account.error || '계정 조회 실패');
+                e.checked.title = String(account.error || '');
+                return;
+            }
+            const credit = Number(account.balance_usd || 0);
+            const launchState = String(launch.state || 'idle');
+            const instanceId = launch.instance_id;
+            const refreshSeconds = Number(settings.status_refresh_seconds);
+            if (Number.isInteger(refreshSeconds) && refreshSeconds >= 2 && refreshSeconds <= 60) {
+                vastWorkerActiveRefreshSeconds = refreshSeconds;
+            }
+            let widgetState = 'off';
+            if (launchState === 'creating' || launchState === 'preparing') widgetState = 'checking';
+            else if (launchState === 'ready') widgetState = 'on';
+            else if (launchState === 'error') widgetState = 'error';
+            e.widget.dataset.state = widgetState;
+            e.heading.textContent = 'VAST GPU';
+            const stateLabel = ({
+                idle: '빌드 대기',
+                creating: '인스턴스 생성 중',
+                preparing: '준비 중',
+                ready: 'ComfyUI 준비 완료',
+                error: '빌드 오류',
+                destroyed: '파괴됨',
+            })[launchState] || launchState;
+            e.state.textContent = stateLabel;
+            e.state.title = launch.error ? String(launch.error) : stateLabel;
+            e.credit.textContent = `$${credit.toFixed(2)}`;
+            e.credit.title = `Vast credit 잔액: $${credit.toFixed(2)}`;
+            e.instance.textContent = instanceId ? `#${instanceId}` : '-';
+            e.stateShort.textContent = ({
+                idle: '대기', creating: '생성', preparing: '준비', ready: 'ON', error: '오류', destroyed: '파괴',
+            })[launchState] || '-';
+            const nextSeconds = vastWorkerActiveRefreshSeconds;
+            e.checked.textContent = `credit $${credit.toFixed(2)} · ${stateLabel} · ${nextSeconds}초 주기`;
+            // 메인 패널 metrics 동기화
+            const acc = document.getElementById('vast-runtime-account');
+            const cred = document.getElementById('vast-runtime-credit');
+            const key = document.getElementById('vast-runtime-key');
+            const ins = document.getElementById('vast-runtime-instance');
+            const st = document.getElementById('vast-runtime-state');
+            if (acc) acc.textContent = account.username ? String(account.username) : '(계정)';
+            if (cred) cred.textContent = `$${credit.toFixed(2)}`;
+            if (key) key.textContent = hasKey ? '설정됨' : '없음';
+            if (ins) ins.textContent = instanceId ? `#${instanceId} ${stateLabel}` : '없음';
+            if (st) st.textContent = `● ${stateLabel}`;
+        }
+
+        function renderVastWorkerError(message) {
+            const e = vastWorkerUiElements();
+            if (!e) return;
+            e.widget.dataset.state = 'error';
+            e.state.textContent = '상태 조회 실패';
+            e.state.title = String(message || 'Vast 상태 조회 실패');
+            e.credit.textContent = '-';
+            e.instance.textContent = '-';
+            e.stateShort.textContent = '오류';
+            const retry = Math.round(vastWorkerActiveRefreshSeconds);
+            e.checked.textContent = `${String(message || '조회 실패')} · ${retry}초 후 재시도`;
+            e.checked.title = String(message || '');
+        }
+
+        async function refreshVastStatus(manual = false) {
+            if (!vastWorkerFeatureEnabled) {
+                if (manual) console.error('[VAST_WORKER] VAST OFF 상태에서 수동 조회를 요청했습니다.');
+                return;
+            }
+            if (document.hidden && !manual) { stopVastWorkerPolling(); return; }
+            if (vastWorkerPollBusy) { vastWorkerPollPending = true; return; }
+            stopVastWorkerPolling();
+            vastWorkerPollBusy = true;
+            const e = vastWorkerUiElements();
+            if (e) {
+                e.refreshButton.disabled = true;
+                e.checked.textContent = '상태 확인 중…';
+                if (!vastWorkerHasSnapshot) {
+                    e.widget.dataset.state = 'checking';
+                    e.state.textContent = '상태 확인 중';
+                }
+            }
+            try {
+                const data = await fetchJSON('/api/vast/status');
+                if (data?.settings && data.settings.enabled === false && !data.settings.has_api_key) {
+                    // 비활성이면 위젯 숨김은 applyVastConfig가 담당. 여기서는 상태만 렌더.
+                }
+                vastWorkerHasSnapshot = true;
+                renderVastWorkerStatus(data);
+            } catch (error) {
+                console.error('[VAST_WORKER] 상태 조회 실패:', error);
+                vastWorkerHasSnapshot = true;
+                renderVastWorkerError(error?.message || String(error));
+            } finally {
+                vastWorkerPollBusy = false;
+                const latest = vastWorkerUiElements();
+                if (latest) latest.refreshButton.disabled = false;
+                if (vastWorkerPollPending && vastWorkerFeatureEnabled && !document.hidden) {
+                    vastWorkerPollPending = false;
+                    window.setTimeout(() => void refreshVastStatus(false), 0);
+                } else {
+                    vastWorkerPollPending = false;
+                    scheduleVastWorkerPolling();
+                }
+            }
+        }
+
+        function applyVastConfig(config) {
+            if (!config || typeof config !== 'object') {
+                console.error('[VAST_WORKER] 기능 설정 형식 오류:', config);
+                return;
+            }
+            const widget = document.getElementById('vast-worker-widget');
+            if (!widget) {
+                console.error('[VAST_WORKER] 기능 상태를 적용할 위젯이 없습니다.', config);
+                return;
+            }
+            vastWorkerFeatureEnabled = config.vast_enabled === true;
+            widget.hidden = !vastWorkerFeatureEnabled;
+            if (!vastWorkerFeatureEnabled) {
+                stopVastWorkerPolling();
+                vastWorkerPollPending = false;
+            }
+            syncLeftUtilityStackVisibility();
+            if (vastWorkerFeatureEnabled) void refreshVastStatus(false);
+        }
+
+        function initializeVastWorkerUi() {
+            const e = vastWorkerUiElements();
+            if (!e) return;
+            setVastWorkerPanelExpanded(vastWorkerExpanded);
+            document.addEventListener('visibilitychange', () => {
+                if (!vastWorkerFeatureEnabled) return;
+                if (document.hidden) stopVastWorkerPolling();
+                else void refreshVastStatus(false);
+            });
+            syncLeftUtilityStackVisibility();
+        }
+
+        function openVastTab() {
+            try { openSettingsModal(); } catch (e) { console.error('[VAST] openSettingsModal 실패:', e); }
+            try { switchSettingsTab('comfy_runtime'); } catch (e) { console.error('[VAST] switchSettingsTab 실패:', e); }
+            switchComfyRuntimeVast();
+        }
+
+        // ── 탭 전환 ──
+        function switchComfyVastSection(section) {
+            const sections = ['build', 'lora'];
+            if (!sections.includes(section)) {
+                console.warn('[VAST] 알 수 없는 내부 섹션:', section);
+                return;
+            }
+            for (const key of sections) {
+                const tab = document.getElementById(`comfy-vast-section-tab-${key}`);
+                const panel = document.getElementById(`comfy-vast-panel-${key}`);
+                if (!tab || !panel) continue;
+                tab.classList.toggle('active', key === section);
+                tab.setAttribute('aria-selected', key === section ? 'true' : 'false');
+                panel.classList.toggle('active', key === section);
+            }
+            if (section === 'lora' && !vastLoraCatalog.length) vastLoraLoadCatalog();
+        }
+
+        function deactivateVastTab() {
+            const vastTab = document.getElementById('comfy-runtime-tab-vast');
+            vastTab?.classList.remove('active');
+            vastTab?.setAttribute('aria-selected', 'false');
+            document.getElementById('comfy-vast-panel')?.classList.remove('active');
+            document.getElementById('comfy-vast-panel')?.setAttribute('hidden', '');
+            stopVastLaunchPolling();
+        }
+
+        function switchComfyRuntimeVast() {
+            try { comfyRuntimeCaptureActiveProfile(); } catch (e) { /* capture는 best-effort */ }
+            comfyRuntimeActiveView = 'vast';
+            for (const id of [1, 2, 3]) {
+                const tab = document.getElementById(`comfy-runtime-tab-${id}`);
+                tab?.classList.remove('active');
+                tab?.setAttribute('aria-selected', 'false');
+            }
+            const allocationTab = document.getElementById('comfy-runtime-tab-allocation');
+            allocationTab?.classList.remove('active');
+            allocationTab?.setAttribute('aria-selected', 'false');
+            const modalTab = document.getElementById('comfy-runtime-tab-modal');
+            modalTab?.classList.remove('active');
+            modalTab?.setAttribute('aria-selected', 'false');
+            const vastTab = document.getElementById('comfy-runtime-tab-vast');
+            vastTab?.classList.add('active');
+            vastTab?.setAttribute('aria-selected', 'true');
+            const instancePanel = document.getElementById('comfy-runtime-instance-panel');
+            if (instancePanel) instancePanel.style.display = 'none';
+            document.getElementById('comfy-runtime-allocation-panel')?.classList.remove('active');
+            document.getElementById('comfy-modal-runtime-panel')?.classList.remove('active');
+            const vastPanel = document.getElementById('comfy-vast-panel');
+            if (vastPanel) { vastPanel.classList.add('active'); vastPanel.removeAttribute('hidden'); }
+            try { comfyRuntimeStopPolling(); } catch (e) { /* best-effort */ }
+            try { modalRuntimeStopPolling(); } catch (e) { /* best-effort */ }
+            void refreshVastStatus(true);
+            if (!vastOffers.length) vastSearchOffers();
+            if (!vastWorkflowCatalog.length) vastLoadWorkflows();
+            vastLoadInstances();
+            vastRefreshLaunchPolling();
+        }
+
+        // ── 오퍼 검색 ──
+        function vastSelectedGpuNames() {
+            const boxes = document.querySelectorAll('#vast-search-gpus input[type="checkbox"]');
+            const names = [];
+            boxes.forEach(b => { if (b.checked) names.push(b.value); });
+            return names;
+        }
+
+        async function vastSearchOffers() {
+            const btn = document.getElementById('vast-search-btn');
+            const container = document.getElementById('vast-offer-catalog');
+            const summary = document.getElementById('vast-offer-summary');
+            if (btn) btn.disabled = true;
+            if (container) container.innerHTML = '<div class="modal-lora-empty">오퍼를 검색하는 중입니다.</div>';
+            const gpuNames = vastSelectedGpuNames();
+            if (!gpuNames.length) {
+                if (container) container.innerHTML = '<div class="modal-lora-empty">최소 한 개의 GPU를 선택하세요.</div>';
+                if (btn) btn.disabled = false;
+                return;
+            }
+            const params = new URLSearchParams();
+            params.set('gpu_names', gpuNames.join(','));
+            const price = parseFloat(document.getElementById('vast-search-price')?.value || '');
+            if (Number.isFinite(price) && price > 0) params.set('max_price_usd_hr', String(price));
+            const ram = parseInt(document.getElementById('vast-search-ram')?.value || '', 10);
+            if (Number.isFinite(ram) && ram > 0) params.set('min_cpu_ram_gb', String(ram));
+            const gpuram = parseInt(document.getElementById('vast-search-gpuram')?.value || '', 10);
+            if (Number.isFinite(gpuram) && gpuram > 0) params.set('min_gpu_ram_gb', String(gpuram));
+            const disk = parseInt(document.getElementById('vast-search-disk')?.value || '', 10);
+            if (Number.isFinite(disk) && disk > 0) params.set('min_disk_gb', String(disk));
+            const inetdown = parseInt(document.getElementById('vast-search-inetdown')?.value || '', 10);
+            if (Number.isFinite(inetdown) && inetdown > 0) params.set('inet_down_min_mbps', String(inetdown));
+            const inetup = parseFloat(document.getElementById('vast-search-inetup')?.value || '');
+            if (Number.isFinite(inetup) && inetup > 0) params.set('inet_up_min_mbps', String(inetup));
+            const ports = parseInt(document.getElementById('vast-search-ports')?.value || '', 10);
+            if (Number.isFinite(ports) && ports > 0) params.set('min_direct_port_count', String(ports));
+            const reliability = parseFloat(document.getElementById('vast-search-reliability')?.value || '');
+            if (Number.isFinite(reliability) && reliability > 0) params.set('min_reliability', String(reliability));
+            const cuda = parseFloat(document.getElementById('vast-search-cuda')?.value || '');
+            if (Number.isFinite(cuda) && cuda > 0) params.set('min_cuda_version', String(cuda));
+            const limit = parseInt(document.getElementById('vast-search-limit')?.value || '', 10);
+            if (Number.isFinite(limit) && limit > 0) params.set('limit', String(limit));
+            if (document.getElementById('vast-search-verified')?.checked) params.set('verified_only', '1');
+            if (document.getElementById('vast-search-ondemand')?.checked) params.set('on_demand', '1');
+            try {
+                const data = await fetchJSON(`/api/vast/offers?${params.toString()}`);
+                vastOffers = Array.isArray(data.offers) ? data.offers : [];
+                vastRenderOffers();
+                if (summary) {
+                    summary.hidden = false;
+                    summary.textContent = `검색 완료: ${vastOffers.length}개 오퍼 (가격 오름차순)`;
+                }
+            } catch (error) {
+                console.error('[VAST] 오퍼 검색 실패:', error);
+                vastOffers = [];
+                if (container) container.innerHTML = `<div class="modal-lora-empty">오퍼 검색 실패: ${escapeHtml(String(error.message || error))}</div>`;
+                if (summary) { summary.hidden = false; summary.textContent = '검색 실패: ' + (error.message || error); }
+                showToast('VAST 오퍼 검색 실패: ' + (error.message || error), 'error');
+            } finally {
+                if (btn) btn.disabled = false;
+            }
+        }
+
+        function vastRenderOffers() {
+            const container = document.getElementById('vast-offer-catalog');
+            if (!container) return;
+            container.replaceChildren();
+            if (!vastOffers.length) {
+                const empty = document.createElement('div');
+                empty.className = 'modal-lora-empty';
+                empty.textContent = '조건에 맞는 오퍼가 없습니다. 검색 조건을 완화하세요.';
+                container.append(empty);
+                return;
+            }
+            for (const o of vastOffers) {
+                const row = document.createElement('div');
+                row.className = 'vast-offer-row';
+                if (vastSelectedOfferId !== null && Number(o.id) === Number(vastSelectedOfferId)) row.classList.add('selected');
+                const radio = document.createElement('input');
+                radio.type = 'radio';
+                radio.name = 'vast-offer';
+                radio.value = String(o.id);
+                radio.checked = (vastSelectedOfferId !== null && Number(o.id) === Number(vastSelectedOfferId));
+                radio.setAttribute('aria-label', `${o.gpu_name} 오퍼 선택`);
+                radio.addEventListener('change', () => vastSelectOffer(o));
+                const main = document.createElement('div');
+                main.className = 'vast-offer-main';
+                const strong = document.createElement('strong');
+                strong.textContent = `${o.gpu_name || 'GPU'}${o.num_gpus && o.num_gpus > 1 ? ` ×${o.num_gpus}` : ''}`;
+                main.append(strong);
+                const meta = document.createElement('div');
+                meta.className = 'vast-offer-meta';
+                const metaItems = [
+                    o.verified ? 'verified' : 'unverified',
+                    `VRAM ${o.gpu_ram_gb || 0}GB`,
+                    `RAM ${o.cpu_ram_gb || 0}GB`,
+                    `디스크 ${o.disk_gb || 0}GB`,
+                    o.inet_down_mbps ? `↓${Math.round(o.inet_down_mbps)}Mbps` : null,
+                    o.inet_up_mbps ? `↑${Math.round(o.inet_up_mbps)}Mbps` : null,
+                    (o.direct_port_count || o.direct_port_count === 0) ? `포트 ${o.direct_port_count}` : null,
+                    o.reliability ? `신뢰도 ${(Number(o.reliability) * 100).toFixed(0)}%` : null,
+                    o.cuda_max_good ? `CUDA ${o.cuda_max_good}` : null,
+                    o.geolocation ? String(o.geolocation) : null,
+                ].filter(Boolean);
+                metaItems.forEach(t => {
+                    const s = document.createElement('span');
+                    s.textContent = t;
+                    meta.append(s);
+                });
+                main.append(meta);
+                const price = document.createElement('div');
+                price.className = 'vast-offer-price';
+                price.innerHTML = `$${Number(o.dph_total || 0).toFixed(3)}<small>/시간</small>`;
+                row.append(radio, main, price);
+                container.append(row);
+            }
+        }
+
+        function vastSelectOffer(offer) {
+            vastSelectedOfferId = Number(offer.id);
+            vastSelectedOffer = offer;
+            vastRenderOffers();
+            vastUpdateLaunchSummary();
+        }
+
+        // ── 워크플로우 선택 ──
+        async function vastLoadWorkflows() {
+            const container = document.getElementById('vast-workflow-catalog');
+            if (container) container.innerHTML = '<div class="comfy-workflow-empty">워크플로우 목록을 불러오는 중입니다.</div>';
+            try {
+                const data = await fetchJSON('/api/workflow_files');
+                vastWorkflowCatalog = Array.isArray(data.files) ? data.files : [];
+                vastFilterWorkflows();
+            } catch (error) {
+                console.error('[VAST] 워크플로우 목록 조회 실패:', error);
+                vastWorkflowCatalog = [];
+                if (container) container.innerHTML = `<div class="comfy-workflow-empty">워크플로우 목록 조회 실패: ${escapeHtml(String(error.message || error))}</div>`;
+            }
+        }
+
+        function vastFilterWorkflows() {
+            const container = document.getElementById('vast-workflow-catalog');
+            if (!container) return;
+            const q = (document.getElementById('vast-workflow-search')?.value || '').toLowerCase();
+            const items = vastWorkflowCatalog.filter(f => {
+                if (!q) return true;
+                return (f.filename || '').toLowerCase().includes(q) || (f.rel_path || '').toLowerCase().includes(q);
+            });
+            container.replaceChildren();
+            if (!items.length) {
+                const empty = document.createElement('div');
+                empty.className = 'comfy-workflow-empty';
+                empty.textContent = vastWorkflowCatalog.length ? '검색 결과 없음' : '워크플로우가 없습니다.';
+                container.append(empty);
+                return;
+            }
+            for (const f of items) {
+                const label = document.createElement('label');
+                label.style.cssText = 'display:flex; align-items:center; gap:8px; padding:6px 8px; border-bottom:1px solid var(--border); cursor:pointer; font-size:0.8rem;';
+                const cb = document.createElement('input');
+                cb.type = 'checkbox';
+                cb.value = f.path;
+                cb.checked = vastSelectedWorkflowPaths.has(f.path);
+                cb.addEventListener('change', () => {
+                    if (cb.checked) vastSelectedWorkflowPaths.add(f.path);
+                    else vastSelectedWorkflowPaths.delete(f.path);
+                    void vastRunPlan();
+                });
+                const span = document.createElement('span');
+                span.style.cssText = 'min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;';
+                span.textContent = f.rel_path || f.filename;
+                span.title = f.path;
+                label.append(cb, span);
+                container.append(label);
+            }
+        }
+
+        async function vastRunPlan() {
+            const planBox = document.getElementById('vast-plan-box');
+            const totals = document.getElementById('vast-plan-totals');
+            const modelsEl = document.getElementById('vast-plan-models');
+            const diskInput = document.getElementById('vast-build-disk');
+            const workflows = Array.from(vastSelectedWorkflowPaths).map(p => {
+                const f = vastWorkflowCatalog.find(x => x.path === p);
+                return { path: p, name: f ? f.filename : '' };
+            });
+            if (!workflows.length) {
+                if (planBox) planBox.hidden = true;
+                vastPlan = null;
+                vastUpdateLaunchSummary();
+                return;
+            }
+            if (planBox) planBox.hidden = false;
+            if (totals) totals.textContent = '계획 계산 중…';
+            if (modelsEl) modelsEl.innerHTML = '';
+            try {
+                const data = await fetchJSON('/api/vast/plan', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ workflows, loras: [] }),
+                });
+                vastPlan = data;
+                const t = data.totals || {};
+                if (totals) {
+                    totals.textContent = `다운로드 ${(t.download_gb || 0).toFixed(2)}GB · 업로드 ${(t.upload_gb || 0).toFixed(2)}GB · LoRA ${(t.lora_upload_gb || 0).toFixed(2)}GB · 권장 디스크 ${t.recommended_disk_gb || 0}GB`;
+                }
+                if (modelsEl) {
+                    modelsEl.replaceChildren();
+                    const models = Array.isArray(data.models) ? data.models : [];
+                    if (!models.length) {
+                        const empty = document.createElement('div');
+                        empty.className = 'vast-plan-model';
+                        empty.textContent = '추가 다운로드/업로드 모델 없음';
+                        modelsEl.append(empty);
+                    } else {
+                        for (const m of models) {
+                            const div = document.createElement('div');
+                            div.className = 'vast-plan-model';
+                            const src = m.source || {};
+                            const kind = document.createElement('strong');
+                            kind.textContent = `${m.kind || ''} · ${m.filename || ''}`;
+                            const meta = document.createElement('span');
+                            meta.textContent = `${src.source_type || '?'} · ${comfyInstallerFormatBytes(Number(m.size_bytes || 0))}`;
+                            div.append(kind, meta);
+                            modelsEl.append(div);
+                        }
+                    }
+                }
+                if (diskInput && t.recommended_disk_gb) diskInput.value = String(t.recommended_disk_gb);
+            } catch (error) {
+                console.error('[VAST] 준비 계획 조회 실패:', error);
+                if (totals) totals.textContent = '계획 조회 실패: ' + (error.message || error);
+                showToast('VAST 준비 계획 조회 실패: ' + (error.message || error), 'error');
+            } finally {
+                vastUpdateLaunchSummary();
+            }
+        }
+
+        // ── LoRA 선택 ──
+        async function vastLoraLoadCatalog() {
+            const note = document.getElementById('vast-lora-note');
+            vastLoraCatalogLoading = true;
+            vastLoraCatalog = [];
+            vastLoraItemsByKey = new Map();
+            if (note) note.textContent = '로컬 현재 사용본을 불러오는 중입니다.';
+            vastRenderLoraCatalog();
+            let loaded = false;
+            try {
+                const data = await fetchJSON('/api/modal/loras');
+                vastLoraCatalog = Array.isArray(data.items) ? data.items : [];
+                for (const item of vastLoraCatalog) {
+                    if (item && item.key) vastLoraItemsByKey.set(String(item.key), item);
+                }
+                // 선택했던 키 중 카탈로그에 없는 것 정리
+                for (const key of Array.from(vastLoraSelectedKeys)) {
+                    if (!vastLoraItemsByKey.has(String(key))) vastLoraSelectedKeys.delete(key);
+                }
+                if (note) note.textContent = `현재 사용본 ${vastLoraCatalog.length}개 항목 · 빌드에 포함할 LoRA를 선택하세요.`;
+                loaded = true;
+            } catch (error) {
+                console.error('[VAST] LoRA 카탈로그 조회 실패:', error);
+                if (note) note.textContent = 'LoRA 목록 조회 실패: ' + (error.message || error);
+                const container = document.getElementById('vast-lora-catalog');
+                if (container) container.innerHTML = `<div class="modal-lora-empty">LoRA 목록을 불러오지 못했습니다: ${escapeHtml(String(error.message || error))}</div>`;
+            } finally {
+                vastLoraCatalogLoading = false;
+                vastUpdateLoraTabCounts();
+                vastRenderLoraCatalog();
+            }
+        }
+
+        function vastUpdateLoraTabCounts() {
+            for (const cat of ['bot', 'asset', 'instance', 'style']) {
+                const el = document.getElementById(`vast-lora-tab-count-${cat}`);
+                if (el) el.textContent = String(vastLoraCatalog.filter(i => String(i.category) === cat).length);
+            }
+        }
+
+        function vastLoraVisibleItems() {
+            const q = (document.getElementById('vast-lora-search')?.value || '').toLowerCase().trim();
+            return vastLoraCatalog.filter(item => {
+                if (String(item.category) !== vastLoraActiveCategory) return false;
+                if (!q) return true;
+                return [item.display_name, item.display_subtitle, item.name, item.subtitle, item.detail]
+                    .filter(Boolean).some(t => String(t).toLowerCase().includes(q));
+            });
+        }
+
+        function vastRenderLoraCatalog() {
+            const container = document.getElementById('vast-lora-catalog');
+            if (!container) return;
+            const visible = vastLoraVisibleItems();
+            container.replaceChildren();
+            if (!visible.length) {
+                const empty = document.createElement('div');
+                empty.className = 'modal-lora-empty';
+                empty.textContent = vastLoraCatalogLoading
+                    ? '로컬 현재 사용본을 불러오는 중입니다.'
+                    : (vastLoraCatalog.length
+                        ? '현재 탭·검색 조건에 맞는 LoRA가 없습니다.'
+                        : '현재 사용할 수 있는 LoRA가 없습니다.');
+                container.append(empty);
+                vastUpdateLoraSelectionSummary();
+                return;
+            }
+            for (const item of visible) {
+                const row = document.createElement('div');
+                row.className = 'modal-lora-item';
+                if (vastLoraSelectedKeys.has(String(item.key))) row.classList.add('selected');
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.className = 'modal-lora-check';
+                checkbox.checked = vastLoraSelectedKeys.has(String(item.key));
+                const displayName = item.display_name || item.name || '이름 없음';
+                checkbox.setAttribute('aria-label', `${displayName} 선택`);
+                checkbox.addEventListener('change', () => {
+                    if (checkbox.checked) vastLoraSelectedKeys.add(String(item.key));
+                    else vastLoraSelectedKeys.delete(String(item.key));
+                    vastRenderLoraCatalog();
+                });
+                const copy = document.createElement('div');
+                copy.className = 'modal-lora-item-copy';
+                copy.addEventListener('click', event => {
+                    if (event.target.closest('button,input')) return;
+                    if (vastLoraSelectedKeys.has(String(item.key))) vastLoraSelectedKeys.delete(String(item.key));
+                    else vastLoraSelectedKeys.add(String(item.key));
+                    vastRenderLoraCatalog();
+                });
+                const main = document.createElement('div');
+                main.className = 'modal-lora-item-main';
+                const name = document.createElement('strong');
+                name.textContent = displayName;
+                main.append(name);
+                if (item.category === 'bot') {
+                    const unit = document.createElement('span');
+                    unit.className = 'modal-lora-unit-badge';
+                    unit.textContent = '봇 전체';
+                    main.append(unit);
+                }
+                const detail = document.createElement('div');
+                detail.className = 'modal-lora-item-meta';
+                const details = [
+                    item.display_subtitle || item.subtitle || '',
+                    `로컬 ${Number(item.file_count || 0)}개 · ${comfyInstallerFormatBytes(Number(item.size_bytes || 0))}`,
+                ].filter(Boolean);
+                details.forEach(text => {
+                    const s = document.createElement('span');
+                    s.textContent = String(text);
+                    detail.append(s);
+                });
+                copy.append(main, detail);
+                row.append(checkbox, copy);
+                container.append(row);
+            }
+            vastUpdateLoraSelectionSummary();
+        }
+
+        function vastLoraSetCategory(category) {
+            if (!['bot', 'asset', 'instance', 'style'].includes(category)) {
+                console.error('[VAST_LORA] 알 수 없는 카테고리:', category);
+                return;
+            }
+            vastLoraActiveCategory = category;
+            document.querySelectorAll('[data-vast-lora-category]').forEach(button => {
+                button.classList.toggle('active', button.dataset.vastLoraCategory === category);
+            });
+            vastRenderLoraCatalog();
+        }
+
+        function vastLoraSelectVisible() {
+            for (const item of vastLoraVisibleItems()) {
+                if (item.key) vastLoraSelectedKeys.add(String(item.key));
+            }
+            vastRenderLoraCatalog();
+        }
+
+        function vastClearLoraSelection() {
+            vastLoraSelectedKeys.clear();
+            vastRenderLoraCatalog();
+            vastUpdateLoraSelectionSummary();
+        }
+
+        function vastSelectedLoraFiles() {
+            const files = [];
+            for (const key of vastLoraSelectedKeys) {
+                const item = vastLoraItemsByKey.get(String(key));
+                if (!item) continue;
+                const itemFiles = Array.isArray(item.files) ? item.files : [];
+                if (!itemFiles.length) {
+                    console.warn('[VAST_LORA] LoRA 항목에 files 없음, 건너뜀:', key);
+                    continue;
+                }
+                for (const f of itemFiles) {
+                    const path = f.source_path || f.path || '';
+                    if (!path) {
+                        console.warn('[VAST_LORA] LoRA 파일에 source_path 없음, 건너뜀:', key, f);
+                        continue;
+                    }
+                    files.push({
+                        name: f.name || item.name || item.display_name || '',
+                        path,
+                        size: Number(f.size || 0),
+                        category: item.category,
+                    });
+                }
+            }
+            return files;
+        }
+
+        function vastUpdateLoraSelectionSummary() {
+            const files = vastSelectedLoraFiles();
+            const note = document.getElementById('vast-lora-footer-note');
+            const summary = document.getElementById('vast-lora-selection-summary');
+            const totalBytes = files.reduce((s, f) => s + Number(f.size || 0), 0);
+            const text = files.length
+                ? `선택 ${files.length}개 · ${comfyInstallerFormatBytes(totalBytes)}`
+                : '선택된 LoRA 없음';
+            if (note) note.textContent = text;
+            if (summary) summary.textContent = text;
+            vastUpdateLaunchSummary();
+        }
+
+        function vastApplyLoraSelection() {
+            vastUpdateLoraSelectionSummary();
+            switchComfyVastSection('build');
+            showToast(`VAST 빌드에 LoRA ${vastLoraSelectedKeys.size}개 선택 적용`, 'success');
+        }
+
+        // ── 빌드 ──
+        function vastUpdateLaunchSummary() {
+            const sum = document.getElementById('vast-launch-summary');
+            const btn = document.getElementById('vast-launch-btn');
+            if (!sum || !btn) return;
+            const parts = [];
+            if (vastSelectedOffer) parts.push(`오퍼 ${vastSelectedOffer.gpu_name} $${Number(vastSelectedOffer.dph_total || 0).toFixed(3)}/hr`);
+            else parts.push('오퍼 미선택');
+            parts.push(vastSelectedWorkflowPaths.size ? `워크플로우 ${vastSelectedWorkflowPaths.size}개` : '워크플로우 미선택');
+            parts.push(`LoRA ${vastLoraSelectedKeys.size}개`);
+            sum.textContent = parts.join(' · ');
+            btn.disabled = !(vastSelectedOfferId !== null && vastSelectedWorkflowPaths.size > 0);
+        }
+
+        async function vastLaunch() {
+            if (vastSelectedOfferId === null) {
+                showToast('오퍼를 먼저 선택하세요.', 'error');
+                return;
+            }
+            if (!vastSelectedWorkflowPaths.size) {
+                showToast('빌드할 워크플로우를 먼저 지정하세요.', 'error');
+                return;
+            }
+            const diskGb = parseInt(document.getElementById('vast-build-disk')?.value || '0', 10);
+            if (!(diskGb >= 10)) {
+                showToast('빌드 디스크는 10GB 이상이어야 합니다.', 'error');
+                return;
+            }
+            const btn = document.getElementById('vast-launch-btn');
+            if (btn) btn.disabled = true;
+            const workflows = Array.from(vastSelectedWorkflowPaths).map(p => {
+                const f = vastWorkflowCatalog.find(x => x.path === p);
+                return { path: p, name: f ? f.filename : '' };
+            });
+            const loras = vastSelectedLoraFiles();
+            try {
+                await fetchJSON('/api/vast/launch', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        ask_id: vastSelectedOfferId,
+                        disk_gb: diskGb,
+                        plan: vastPlan || {},
+                        loras,
+                        workflows,
+                    }),
+                });
+                showToast('VAST 인스턴스 빌드를 시작했습니다.', 'success');
+                vastRefreshLaunchPolling();
+            } catch (error) {
+                console.error('[VAST] 빌드 시작 실패:', error);
+                showToast('VAST 빌드 시작 실패: ' + (error.message || error), 'error');
+            } finally {
+                vastUpdateLaunchSummary();
+            }
+        }
+
+        function stopVastLaunchPolling() {
+            if (vastLaunchPollTimer !== null) {
+                window.clearTimeout(vastLaunchPollTimer);
+                vastLaunchPollTimer = null;
+            }
+        }
+
+        function vastRefreshLaunchPolling() {
+            stopVastLaunchPolling();
+            const isActive = document.getElementById('comfy-vast-panel')?.classList.contains('active');
+            if (!isActive) return;
+            void vastPollLaunch();
+        }
+
+        const VAST_LAUNCH_STEP_LABELS = {
+            instance: '인스턴스 생성',
+            ssh: 'SSH 접속',
+            nodes: '로컬 노드 전송',
+            nodes_install: '공개 노드 설치',
+            upload: 'sftp 업로드',
+            upload_loras: 'LoRA 업로드',
+            upload_models: '모델 업로드',
+            download: '원격 모델 다운로드',
+            tunnel: 'SSH 로컬 터널',
+            comfy: 'ComfyUI 기동',
+        };
+
+        async function vastPollLaunch() {
+            try {
+                const data = await fetchJSON('/api/vast/launch');
+                const launch = data?.launch || {};
+                vastRenderLaunchSteps(launch);
+                // 메인 패널/위젯 상태 동기화
+                const st = document.getElementById('vast-runtime-state');
+                const ins = document.getElementById('vast-runtime-instance');
+                const stateLabel = ({
+                    idle: '대기', creating: '생성 중', preparing: '준비 중',
+                    ready: '준비 완료', error: '오류', destroyed: '파괴됨',
+                })[launch.state] || launch.state;
+                if (st) st.textContent = `● ${stateLabel}`;
+                if (ins) ins.textContent = launch.instance_id ? `#${launch.instance_id} ${stateLabel}` : '없음';
+            } catch (error) {
+                console.error('[VAST] 빌드 상태 조회 실패:', error);
+            } finally {
+                const launch = window.__vastLastLaunch || {};
+                const done = launch.state === 'ready' || launch.state === 'error' || launch.state === 'idle' || launch.state === 'destroyed';
+                const panelActive = document.getElementById('comfy-vast-panel')?.classList.contains('active');
+                if (panelActive && !done) {
+                    vastLaunchPollTimer = window.setTimeout(() => void vastPollLaunch(), 3000);
+                }
+            }
+        }
+
+        function vastRenderLaunchSteps(launch) {
+            window.__vastLastLaunch = launch;
+            const box = document.getElementById('vast-launch-progress');
+            const title = document.getElementById('vast-launch-progress-title');
+            const stateEl = document.getElementById('vast-launch-progress-state');
+            const stepsEl = document.getElementById('vast-launch-steps');
+            const comfyBox = document.getElementById('vast-launch-comfy');
+            const comfyUrl = document.getElementById('vast-launch-comfy-url');
+            const comfyLink = document.getElementById('vast-launch-comfy-link');
+            if (!box || !stepsEl) return;
+            box.hidden = false;
+            const stateLabel = ({
+                idle: '대기', creating: '인스턴스 생성 중', preparing: '준비 중',
+                ready: 'ComfyUI 준비 완료', error: '빌드 오류', destroyed: '파괴됨',
+            })[launch.state] || launch.state;
+            if (title) title.textContent = `VAST 빌드 ${launch.instance_id ? `#${launch.instance_id}` : ''}`;
+            if (stateEl) {
+                stateEl.textContent = launch.state === 'error' && launch.error
+                    ? `오류: ${launch.error}`
+                    : stateLabel;
+            }
+            const steps = Array.isArray(launch.steps) ? launch.steps : [];
+            stepsEl.replaceChildren();
+            for (const s of steps) {
+                const li = document.createElement('li');
+                li.className = `vast-launch-step state-${s.state || 'pending'}`;
+                const label = document.createElement('span');
+                label.textContent = VAST_LAUNCH_STEP_LABELS[s.key] || s.key;
+                const detail = document.createElement('span');
+                detail.className = 'vast-launch-step-detail';
+                detail.textContent = s.detail || '';
+                li.append(label, detail);
+                stepsEl.append(li);
+            }
+            if (launch.state === 'ready' && launch.comfy_base_url) {
+                if (comfyBox) comfyBox.hidden = false;
+                if (comfyUrl) comfyUrl.textContent = launch.comfy_base_url;
+                if (comfyLink) { comfyLink.href = launch.comfy_base_url; comfyLink.hidden = false; }
+            } else {
+                if (comfyBox) comfyBox.hidden = true;
+                if (comfyLink) comfyLink.hidden = true;
+            }
+            if (launch.state === 'error') {
+                showToast('VAST 빌드 오류: ' + (launch.error || '알 수 없음'), 'error');
+            }
+        }
+
+        // ── 인스턴스 목록/파괴 ──
+        async function vastLoadInstances() {
+            const container = document.getElementById('vast-instance-catalog');
+            if (container) container.innerHTML = '<div class="modal-lora-empty">인스턴스 목록을 불러오는 중입니다.</div>';
+            try {
+                const data = await fetchJSON('/api/vast/instances');
+                const rows = Array.isArray(data.instances) ? data.instances : [];
+                if (!container) return;
+                container.replaceChildren();
+                if (!rows.length) {
+                    const empty = document.createElement('div');
+                    empty.className = 'modal-lora-empty';
+                    empty.textContent = '실행 중인 Vast 인스턴스가 없습니다.';
+                    container.append(empty);
+                    return;
+                }
+                for (const i of rows) {
+                    const row = document.createElement('div');
+                    row.className = 'vast-offer-row';
+                    const main = document.createElement('div');
+                    main.className = 'vast-offer-main';
+                    const strong = document.createElement('strong');
+                    strong.textContent = `#${i.id} ${i.gpu_name || 'GPU'}${i.label ? ` · ${i.label}` : ''}`;
+                    const meta = document.createElement('div');
+                    meta.className = 'vast-offer-meta';
+                    [i.actual_status ? `상태 ${i.actual_status}` : null, `cur ${i.cur_state || ''}`, i.dph_total ? `$${Number(i.dph_total).toFixed(3)}/hr` : null]
+                        .filter(Boolean).forEach(t => { const s = document.createElement('span'); s.textContent = t; meta.append(s); });
+                    main.append(strong, meta);
+                    const actions = document.createElement('div');
+                    actions.className = 'vast-offer-price';
+                    const btn = document.createElement('button');
+                    btn.type = 'button';
+                    btn.textContent = '파괴';
+                    btn.className = 'comfy-runtime-btn stop';
+                    btn.style.cssText = 'padding:5px 10px; border-radius:7px;';
+                    btn.addEventListener('click', () => void vastDestroy(i.id));
+                    actions.append(btn);
+                    row.append(main, actions);
+                    container.append(row);
+                }
+            } catch (error) {
+                console.error('[VAST] 인스턴스 목록 조회 실패:', error);
+                if (container) container.innerHTML = `<div class="modal-lora-empty">인스턴스 목록 조회 실패: ${escapeHtml(String(error.message || error))}</div>`;
+            }
+        }
+
+        async function vastDestroy(instanceId) {
+            if (!confirm(`Vast 인스턴스 #${instanceId} 를 파괴할까요? 과금이 즉시 중단됩니다.`)) return;
+            try {
+                await fetchJSON('/api/vast/destroy', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ instance_id: instanceId }),
+                });
+                showToast(`Vast 인스턴스 #${instanceId} 파괴 요청 완료`, 'success');
+                vastLoadInstances();
+                void refreshVastStatus(true);
+            } catch (error) {
+                console.error('[VAST] 인스턴스 파괴 실패:', error);
+                showToast('VAST 인스턴스 파괴 실패: ' + (error.message || error), 'error');
+            }
+        }
+
         document.addEventListener('DOMContentLoaded', initializeMemoPadUi);
         document.addEventListener('DOMContentLoaded', initializeModalWorkerUi);
+        document.addEventListener('DOMContentLoaded', initializeVastWorkerUi);
         document.addEventListener('DOMContentLoaded', _renderLlmLogLock);
 
         function loadCurrentConfig(forceRefresh = false) {
@@ -24536,6 +26239,7 @@
             .then(config => {
                 applyMemoFeatureEnabled(config.memo_enabled !== false);
                 applyModalWorkerFeatureConfig(config);
+                applyVastConfig(config);
             })
             .catch(error => console.error('[LEFT_DOCK] 초기 기능 설정 적용 실패:', error));
 
@@ -29320,6 +31024,7 @@
         }
 
         function switchComfyRuntimeInstance(instanceId) {
+            deactivateVastTab();
             const requestedInstance = Number(instanceId);
             const nextInstance = [1, 2, 3].includes(requestedInstance)
                 ? requestedInstance
@@ -29362,6 +31067,7 @@
         }
 
         function switchComfyRuntimeAllocation() {
+            deactivateVastTab();
             comfyRuntimeCaptureActiveProfile();
             comfyRuntimeActiveView = 'allocation';
             for (const id of [1, 2, 3]) {
@@ -29406,6 +31112,7 @@
         }
 
         function switchComfyRuntimeModal() {
+            deactivateVastTab();
             comfyRuntimeCaptureActiveProfile();
             comfyRuntimeActiveView = 'modal';
             for (const id of [1, 2, 3]) {
@@ -32466,6 +34173,8 @@
                     switchComfyRuntimeModal();
                 } else if (comfyRuntimeActiveView === 'allocation') {
                     switchComfyRuntimeAllocation();
+                } else if (comfyRuntimeActiveView === 'vast') {
+                    switchComfyRuntimeVast();
                 } else {
                     switchComfyRuntimeInstance(comfyRuntimeActiveInstance);
                 }
@@ -32531,6 +34240,10 @@
             const modalEnabledEl = document.getElementById('setting-modal-enabled');
             if (modalEnabledEl) modalEnabledEl.checked = modalEnabled;
             updateModalEnabledStatus(modalEnabled);
+            const vastEnabled = !!currentConfig.vast_enabled;
+            const vastEnabledEl = document.getElementById('setting-vast-enabled');
+            if (vastEnabledEl) vastEnabledEl.checked = vastEnabled;
+            updateVastEnabledStatus(vastEnabled);
             const modalProfileEl = document.getElementById('setting-modal-profile');
             if (modalProfileEl) modalProfileEl.value = currentConfig.modal_profile || 'soya-comfy';
             const modalEnvironmentEl = document.getElementById('setting-modal-environment');
@@ -32723,6 +34436,8 @@
             loadLlmKeys();
             // 챈섭 API 키 별도 로드 (key/chansub_key.json)
             loadChansubKey();
+            // Vast API 키 별도 로드 (key/vast_key.json)
+            loadVastKey();
 
             // 외부 LLM 분기(작업별 LLM1/LLM2 라우팅) 테이블 빌드
             renderLlmRoutingTable();
@@ -34142,6 +35857,7 @@
                 comfy_task_allocations: comfyAllocationsForSave(),
                 comfy_task_modal_parallel: comfyModalParallelForSave(),
                 modal_enabled: !!document.getElementById('setting-modal-enabled')?.checked,
+                vast_enabled: !!document.getElementById('setting-vast-enabled')?.checked,
                 modal_profile: document.getElementById('setting-modal-profile')?.value.trim() || 'soya-comfy',
                 modal_environment: document.getElementById('setting-modal-environment')?.value.trim() || 'main',
                 modal_deployment_name: document.getElementById('setting-modal-deployment-name')?.value.trim() || 'soya-comfy-worker',
@@ -34317,6 +36033,7 @@
                     applyIllustrationProviderConfig(currentConfig);
                     applyMemoFeatureEnabled(currentConfig.memo_enabled !== false);
                     applyModalWorkerFeatureConfig(currentConfig);
+                    applyVastConfig(currentConfig);
                     // ANIMA UI 가시성 업데이트
                     updateAnimaUIVisibility();
                     // 버튼 가시성 업데이트
@@ -37443,6 +39160,100 @@
             } catch (e) {
                 console.error('[CHANSUB_KEY] delete failed:', e);
                 showToast('챈섭 API 키 삭제 실패: ' + e.message, 'error');
+            }
+        }
+
+        // ─── Vast.ai 설정 및 API 키 별도 저장 (key/vast_key.json) ───
+        function updateVastEnabledStatus(checked) {
+            const status = document.getElementById('setting-vast-enabled-status');
+            if (!status) {
+                console.error('[VAST] 활성화 상태 표시 요소를 찾을 수 없습니다.');
+                return;
+            }
+            status.textContent = checked ? 'ON' : 'OFF';
+            status.className = 'toggle-status ' + (checked ? 'on' : 'off');
+        }
+
+        async function loadVastKey() {
+            const el = document.getElementById('setting-vast-api-key');
+            const statusEl = document.getElementById('setting-vast-key-status');
+            try {
+                const resp = await fetch('/api/vast/key');
+                const data = await resp.json();
+                if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
+                if (el) el.value = data.api_key || '';
+                if (statusEl) statusEl.textContent = data.set ? '저장됨' : '미설정';
+            } catch (e) {
+                console.error('[VAST_KEY] load failed:', e);
+                if (statusEl) statusEl.textContent = '로드 실패: ' + (e.message || e);
+                showToast('Vast API 키 로드 실패: ' + (e.message || e), 'error');
+            }
+        }
+
+        async function saveVastKey() {
+            const el = document.getElementById('setting-vast-api-key');
+            const statusEl = document.getElementById('setting-vast-key-status');
+            const apiKey = (el || {}).value || '';
+            try {
+                const resp = await fetch('/api/vast/key', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ api_key: apiKey }),
+                });
+                const data = await resp.json();
+                if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
+                if (statusEl) statusEl.textContent = data.set ? '저장됨' : '미설정';
+                showToast(data.set ? 'Vast API 키를 저장했습니다.' : 'Vast API 키를 비웠습니다.', 'success');
+                void refreshVastStatus(true);
+                void vastRefreshAccountStatus();
+            } catch (e) {
+                console.error('[VAST_KEY] save failed:', e);
+                showToast('Vast API 키 저장 실패: ' + (e.message || e), 'error');
+            }
+        }
+
+        async function deleteVastKey() {
+            if (!confirm('저장된 Vast API 키를 삭제하시겠습니까?')) return;
+            const el = document.getElementById('setting-vast-api-key');
+            const statusEl = document.getElementById('setting-vast-key-status');
+            try {
+                const resp = await fetch('/api/vast/key', { method: 'DELETE' });
+                const data = await resp.json();
+                if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
+                if (el) el.value = '';
+                if (statusEl) statusEl.textContent = '미설정';
+                showToast('Vast API 키를 삭제했습니다.', 'success');
+                void refreshVastStatus(true);
+                void vastRefreshAccountStatus();
+            } catch (e) {
+                console.error('[VAST_KEY] delete failed:', e);
+                showToast('Vast API 키 삭제 실패: ' + (e.message || e), 'error');
+            }
+        }
+
+        function vastToggleKeyVisible() {
+            const el = document.getElementById('setting-vast-api-key');
+            if (!el) return;
+            el.type = el.type === 'password' ? 'text' : 'password';
+        }
+
+        async function vastRefreshAccountStatus() {
+            const el = document.getElementById('vast-account-status');
+            if (el) el.textContent = '상태 확인 중…';
+            try {
+                const data = await fetchJSON('/api/vast/status');
+                const account = data?.account || {};
+                const settings = data?.settings || {};
+                const launch = data?.launch || {};
+                if (account.ok === true) {
+                    const credit = Number(account.balance_usd || 0).toFixed(2);
+                    el.textContent = `계정: ${account.username || '(이름 없음)'}\ncredit: $${credit}\nAPI 키: ${settings.has_api_key ? '설정됨' : '없음'}\n인스턴스: ${launch.instance_id ? '#' + launch.instance_id + ' ' + (launch.state || '') : '없음'}`;
+                } else {
+                    el.textContent = '연결 실패: ' + (account.error || '알 수 없음') + (settings.has_api_key ? '' : '\n(API 키가 설정되지 않았습니다.)');
+                }
+            } catch (e) {
+                console.error('[VAST] 상태 확인 실패:', e);
+                if (el) el.textContent = '상태 확인 실패: ' + (e.message || e);
             }
         }
 

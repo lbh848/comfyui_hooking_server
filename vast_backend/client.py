@@ -154,11 +154,19 @@ class VastClient:
         max_price_usd_hr: float = 1.0,
         verified_only: bool = True,
         on_demand: bool = True,
-        inet_down_min_mbps: int = 100,
+        inet_down_min_mbps: int = 1000,
+        inet_up_min_mbps: float = 0,
         min_direct_port_count: int = 1,
+        min_reliability: float = 0.0,
+        min_cuda_version: float = 0.0,
         limit: int = 60,
     ) -> list[dict[str, Any]]:
-        """bundles 검색. dph_total 오름차순으로 오퍼 리스트를 반환한다."""
+        """bundles 검색. dph_total 오름차순으로 오퍼 리스트를 반환한다.
+
+        네트워크 조건(inet_down/inet_up/direct_port_count)은 Vast bundles 쿼리의
+        숫자 필드에 gte 로 전달된다(검증됨). reliability(0~1)·cuda_max_good
+        (float) 도 gte 로 필터링한다. 0 이하는 조건을 생략해 과도한 필터를 피한다.
+        """
         query: dict[str, Any] = {
             "rentable": {"eq": True},
             # Vast bundles 쿼리의 cpu_ram/gpu_ram은 MB 단위다 (검증됨).
@@ -172,6 +180,14 @@ class VastClient:
             "limit": limit,
             "type": "on-demand" if on_demand else "bid",
         }
+        if inet_up_min_mbps and inet_up_min_mbps > 0:
+            query["inet_up"] = {"gte": inet_up_min_mbps}
+        if min_reliability and min_reliability > 0:
+            # bundles 쿼리에서 필터 가능한 신뢰도 필드는 reliability 다
+            # (reliability2는 응답에만 포함).
+            query["reliability"] = {"gte": min_reliability}
+        if min_cuda_version and min_cuda_version > 0:
+            query["cuda_max_good"] = {"gte": min_cuda_version}
         if gpu_names:
             query["gpu_name"] = {"in": gpu_names}
         data = await self._request("POST", "/bundles/", json_body=query)

@@ -372,6 +372,8 @@ DEFAULT_CONFIG = {
     "modal_status_refresh_seconds": 5,
     "modal_container_start_max_retries": 2,
     "modal_web_fast": False,
+    # Vast.ai 클라우드 GPU 백엔드(vast_backend/). API 키는 key/vast_key.json.
+    "vast_enabled": False,
     "workflow_base_dir": "",  # 공통 설정 UI의 워크플로우 베이스 폴더 절대 경로
     "comfy_workflow_source_path": "",
     "data_saving_mode": False,
@@ -6790,6 +6792,72 @@ def _backup_chansub_key_file(path: str, operation: str) -> None:
     )
     shutil.copy2(path, backup_path)
     print(f"[CHANSUB_KEY] 기존 키 파일 백업 완료: {backup_path}")
+
+
+def _backup_vast_key_file(path: str, operation: str) -> None:
+    """Vast 키 파일 변경 전 요구사항/에 백업한다."""
+    if not os.path.isfile(path):
+        return
+    requirements_dir = os.path.join(BASE_DIR, "요구사항")
+    os.makedirs(requirements_dir, exist_ok=True)
+    stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    backup_path = os.path.join(
+        requirements_dir, f"vast_key_before_{operation}_{stamp}.json"
+    )
+    shutil.copy2(path, backup_path)
+    print(f"[VAST_KEY] 기존 키 파일 백업 완료: {backup_path}")
+
+
+async def handle_api_vast_key(request: web.Request) -> web.Response:
+    """Vast API 키 조회·저장·삭제. key/vast_key.json 에 {"api_key": ...} 로 보관한다."""
+    key_dir = os.path.join(BASE_DIR, "key")
+    key_path = os.path.join(key_dir, "vast_key.json")
+    try:
+        if request.method == "POST":
+            body = await request.json()
+            api_key = body.get("api_key", "")
+            if not isinstance(api_key, str):
+                print(f"[VAST_KEY] 저장 실패: api_key 타입={type(api_key).__name__}")
+                return web.json_response({"error": "api_key must be a string"}, status=400)
+            api_key = api_key.strip()
+            _backup_vast_key_file(key_path, "save")
+            os.makedirs(key_dir, exist_ok=True)
+            with open(key_path, "w", encoding="utf-8") as file:
+                json.dump({"api_key": api_key}, file, ensure_ascii=False, indent=2)
+            try:
+                vast_service.reset_client()
+            except Exception as exc:
+                print(f"[VAST_KEY] 클라이언트 리셋 실패(무시): {type(exc).__name__}: {exc}")
+            print(f"[VAST_KEY] 키 저장 완료: {'set' if api_key else 'empty'}")
+            return web.json_response({"success": True, "api_key": api_key, "set": bool(api_key)})
+
+        if request.method == "DELETE":
+            if os.path.isfile(key_path):
+                _backup_vast_key_file(key_path, "delete")
+                os.remove(key_path)
+                print("[VAST_KEY] 키 파일 삭제 완료")
+            else:
+                print("[VAST_KEY] 삭제 스킵: 키 파일 없음")
+            try:
+                vast_service.reset_client()
+            except Exception as exc:
+                print(f"[VAST_KEY] 클라이언트 리셋 실패(무시): {type(exc).__name__}: {exc}")
+            return web.json_response({"success": True, "api_key": "", "set": False})
+
+        # GET
+        if not os.path.isfile(key_path):
+            return web.json_response({"api_key": "", "set": False})
+        with open(key_path, "r", encoding="utf-8") as file:
+            data = json.load(file)
+        api_key = data.get("api_key", "")
+        if not isinstance(api_key, str):
+            print(f"[VAST_KEY] 조회 실패: 저장된 api_key 타입={type(api_key).__name__}")
+            return web.json_response({"error": "저장된 Vast API 키 형식이 잘못되었습니다."}, status=500)
+        return web.json_response({"api_key": api_key, "set": bool(api_key)})
+    except Exception as e:
+        print(f"[VAST_KEY] 처리 실패: {type(e).__name__}: {e}")
+        traceback.print_exc()
+        return web.json_response({"error": str(e)}, status=500)
 
 
 async def handle_api_chansub_key(request: web.Request) -> web.Response:
@@ -15074,6 +15142,9 @@ app.router.add_get("/api/llm/providers", handle_api_llm_providers)
 app.router.add_post("/api/chansub/key", handle_api_chansub_key)
 app.router.add_get("/api/chansub/key", handle_api_chansub_key)
 app.router.add_delete("/api/chansub/key", handle_api_chansub_key)
+app.router.add_post("/api/vast/key", handle_api_vast_key)
+app.router.add_get("/api/vast/key", handle_api_vast_key)
+app.router.add_delete("/api/vast/key", handle_api_vast_key)
 app.router.add_post("/api/llm/test_stream", handle_api_llm_test_stream)
 app.router.add_get("/api/reschedule", handle_api_reschedule)
 app.router.add_post("/api/reschedule", handle_api_reschedule)
