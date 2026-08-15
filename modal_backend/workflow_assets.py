@@ -89,28 +89,11 @@ def build_local_model_index(comfy_root: str | Path) -> dict[str, Any]:
     return {"root": str(models_root), "files": files, "lookup": lookup}
 
 
-def _embedded_json_values(text: str) -> Iterable[Any]:
-    """프롬프트 문자열 등에 포함된 JSON object/array를 손실 없이 찾아낸다."""
-
-    decoder = json.JSONDecoder()
-    for index, character in enumerate(text):
-        if character not in "{[":
-            continue
-        try:
-            value, _end = decoder.raw_decode(text[index:])
-        except (json.JSONDecodeError, TypeError):
-            continue
-        if isinstance(value, (Mapping, list)):
-            yield value
-
-
 def _workflow_string_values(value: Any) -> Iterable[str]:
     if isinstance(value, str):
         stripped = value.strip()
         if stripped:
             yield stripped
-            for embedded in _embedded_json_values(stripped):
-                yield from _workflow_string_values(embedded)
         return
     if isinstance(value, Mapping):
         for child in value.values():

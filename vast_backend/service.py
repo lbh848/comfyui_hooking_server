@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextvars
+import errno
 import hashlib
 import json
 import os
@@ -31,6 +32,8 @@ from pathlib import Path
 from typing import Any, Callable
 
 import aiohttp
+
+from runtime_temp import runtime_temp_root
 
 from .client import VastApiError, VastClient
 from .favorites import VastMachineFavorites
@@ -969,7 +972,11 @@ class VastService:
                 "num_gpus": o.get("num_gpus"),
                 "cpu_ram_gb": round(float(o.get("cpu_ram") or 0) / 1024, 1),
                 "gpu_ram_gb": round(float(o.get("gpu_ram") or 0) / 1024, 1),
-                "disk_gb": float(o.get("disk_space") or 0),
+                "disk_gb": round(float(o.get("disk_space") or 0), 1),
+                # disk_name은 nvme/ssd 종류 또는 브랜드명(GLOWAY 등)이 온다.
+                # 추측 매핑 없이 원본 문자열 그대로 노출한다.
+                "disk_name": str(o.get("disk_name") or "").strip() or None,
+                "disk_bw_mb_s": round(float(o.get("disk_bw") or 0), 1),
                 "dph_total": float(o.get("dph_total") or 0),
                 # dph_total은 Vast 기본 디스크 할당 기준이다.
                 "dph_base": float(o.get("dph_base") or 0),
@@ -3749,7 +3756,12 @@ class VastService:
                 raise ValueError(f"안전하지 않은 Vast LoRA 원격 경로: {remote_path}")
             host, port, private_key_path = self._require_ssh_endpoint()
             ssh = self._ssh_connect(host, port, private_key_path)
-            temp_dir = Path(tempfile.mkdtemp(prefix="soya-vast-lora-"))
+            temp_dir = Path(
+                tempfile.mkdtemp(
+                    prefix="soya-vast-lora-",
+                    dir=runtime_temp_root(self.project_root),
+                )
+            )
             temp_file = temp_dir / relative.name
             try:
                 sftp = ssh.open_sftp()
@@ -3773,7 +3785,46 @@ class VastService:
                                 f"{target.stem}.vast-{stamp}{target.suffix}"
                             )
                     if status != "identical":
-                        os.replace(temp_file, final_target)
+                        try:
+                            os.replace(temp_file, final_target)
+                        except OSError as exc:
+                            is_cross_device = (
+                                exc.errno == errno.EXDEV
+                                or getattr(exc, "winerror", None) == 17
+                            )
+                            if not is_cross_device:
+                                raise
+                            staged_target = final_target.with_name(
+                                f".{final_target.name}.{os.getpid()}."
+                                f"{uuid.uuid4().hex[:8]}.tmp"
+                            )
+                            print(
+                                "[VAST_DOWNLOAD] 프로젝트 임시 폴더와 LoRA 저장소가 "
+                                "서로 다른 드라이브라 대상 드라이브에서 최종 복사를 "
+                                "수행합니다: "
+                                f"source={temp_file}, staged={staged_target}, "
+                                f"target={final_target}"
+                            )
+                            try:
+                                shutil.copy2(temp_file, staged_target)
+                                os.replace(staged_target, final_target)
+                            except Exception as copy_exc:
+                                print(
+                                    "[VAST_DOWNLOAD][ERROR] 교차 드라이브 LoRA 저장 실패: "
+                                    f"source={temp_file}, target={final_target}, "
+                                    f"error={type(copy_exc).__name__}: {copy_exc}"
+                                )
+                                traceback.print_exc()
+                                try:
+                                    staged_target.unlink(missing_ok=True)
+                                except Exception as cleanup_exc:
+                                    print(
+                                        "[VAST_DOWNLOAD][ERROR] 실패한 대상 임시 파일 정리 실패: "
+                                        f"path={staged_target}, "
+                                        f"error={type(cleanup_exc).__name__}: {cleanup_exc}"
+                                    )
+                                    traceback.print_exc()
+                                raise
                     sftp.remove(remote_path)
                     return {
                         "relative_path": relative.as_posix(),

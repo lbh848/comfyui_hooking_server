@@ -154,8 +154,10 @@ async def test_service_download_stores_then_queues_exact_remote_delete(
 
     async def run_command(*_args, **kwargs):
         payload = kwargs["stdin_payload"]
+        output_dir = Path(payload["output_dir"]).resolve()
+        assert output_dir.parent == (tmp_path / "runtime" / "temp").resolve()
         target = (
-            Path(payload["output_dir"])
+            output_dir
             / "SOYA_INSTANCE_LORA"
             / "alice.safetensors"
         )
@@ -243,6 +245,7 @@ async def test_service_download_stores_then_queues_exact_remote_delete(
     ]
     assert any(event["phase"] == "modal_downloading" for event in observed_progress)
     assert observed_progress[-1]["phase"] == "modal_download_complete"
+    assert list((tmp_path / "runtime" / "temp").iterdir()) == []
 
 
 @pytest.mark.asyncio

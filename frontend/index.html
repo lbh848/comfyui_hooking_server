@@ -25943,7 +25943,7 @@
                     o.verified ? 'verified' : 'unverified',
                     `VRAM ${o.gpu_ram_gb || 0}GB`,
                     `RAM ${o.cpu_ram_gb || 0}GB`,
-                    `디스크 ${o.disk_gb || 0}GB`,
+                    `디스크 ${o.disk_name ? `${o.disk_name} ` : ''}${o.disk_gb || 0}GB${o.disk_bw_mb_s ? ` · ${o.disk_bw_mb_s}MB/s` : ''}`,
                     o.inet_down_mbps ? `↓${Math.round(o.inet_down_mbps)}Mbps` : null,
                     o.inet_up_mbps ? `↑${Math.round(o.inet_up_mbps)}Mbps` : null,
                     o.storage_cost_usd_per_gb_month ? `저장 $${Number(o.storage_cost_usd_per_gb_month).toFixed(2)}/GB·월` : null,

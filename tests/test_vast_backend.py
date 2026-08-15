@@ -13,6 +13,7 @@ from typing import Any
 
 import pytest
 
+import vast_backend.service as vast_service_module
 import vast_backend.ssh_tunnel as ssh_tunnel_module
 from vast_backend.client import VastApiError, VastClient, _rate_limit_delay
 from vast_backend.favorites import VastMachineFavorites
@@ -39,6 +40,87 @@ from vast_backend.service import (
     VastService,
 )
 from vast_backend.ssh_tunnel import DEFAULT_LOCAL_PORT, ComfySshTunnel
+
+
+@pytest.mark.asyncio
+async def test_vast_lora_download_uses_project_temp_and_handles_cross_device_commit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    local_root = tmp_path / "local-loras"
+    service = VastService(
+        tmp_path,
+        lambda: {"lora_load_path": str(local_root)},
+    )
+    downloaded_paths: list[Path] = []
+    removed_remote_paths: list[str] = []
+
+    class FakeSftp:
+        def get(self, remote_path: str, local_path: str) -> None:
+            assert remote_path.endswith("/SOYA_INSTANCE_LORA/alice.safetensors")
+            downloaded_paths.append(Path(local_path).resolve())
+            Path(local_path).write_bytes(b"abcdef")
+
+        def remove(self, remote_path: str) -> None:
+            removed_remote_paths.append(remote_path)
+
+        def close(self) -> None:
+            return None
+
+    class FakeSsh:
+        def open_sftp(self) -> FakeSftp:
+            return FakeSftp()
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(
+        service,
+        "_require_ssh_endpoint",
+        lambda: ("ssh.example", 22, "unused-key"),
+    )
+    monkeypatch.setattr(service, "_ssh_connect", lambda *_args: FakeSsh())
+    real_replace = vast_service_module.os.replace
+    replace_calls: list[tuple[Path, Path]] = []
+
+    def replace_with_cross_device_once(source, target) -> None:
+        source_path = Path(source).resolve()
+        target_path = Path(target).resolve()
+        replace_calls.append((source_path, target_path))
+        if len(replace_calls) == 1:
+            raise OSError(errno.EXDEV, "cross-device link")
+        real_replace(source, target)
+
+    monkeypatch.setattr(vast_service_module.os, "replace", replace_with_cross_device_once)
+    remote_path = (
+        "/root/ComfyUI/models/loras/SOYA_CHAR_LORA/"
+        "SOYA_INSTANCE_LORA/alice.safetensors"
+    )
+
+    result = await service.download_lora_artifacts(
+        [
+            {
+                "relative_path": "SOYA_INSTANCE_LORA/alice.safetensors",
+                "remote_path": remote_path,
+                "size": 6,
+            }
+        ]
+    )
+
+    final_path = local_root / "SOYA_INSTANCE_LORA" / "alice.safetensors"
+    assert final_path.read_bytes() == b"abcdef"
+    assert result["artifacts"] == [
+        {
+            "relative_path": "SOYA_INSTANCE_LORA/alice.safetensors",
+            "local_path": str(final_path.resolve()),
+            "status": "stored",
+        }
+    ]
+    assert downloaded_paths[0].parents[1] == (tmp_path / "runtime" / "temp").resolve()
+    assert replace_calls[0][0] == downloaded_paths[0]
+    assert replace_calls[1][0].parent == final_path.parent.resolve()
+    assert removed_remote_paths == [remote_path]
+    assert list((tmp_path / "runtime" / "temp").iterdir()) == []
 
 
 def test_vast_ssh_keypair_is_created_and_loaded_from_key_directory(
@@ -784,7 +866,13 @@ async def test_vast_service_favorites_current_instance_and_prioritizes_offers(
 
         async def search_offers(self, **_kwargs):
             return [
-                {"id": 1, "machine_id": 100, "dph_total": 0.1},
+                {
+                    "id": 1,
+                    "machine_id": 100,
+                    "dph_total": 0.1,
+                    "disk_name": "nvme",
+                    "disk_bw": 1478.4,
+                },
                 {"id": 2, "machine_id": 200, "dph_total": 0.2},
             ]
 
@@ -800,6 +888,12 @@ async def test_vast_service_favorites_current_instance_and_prioritizes_offers(
     assert added["favorite"]["machine_id"] == 200
     assert [offer["machine_id"] for offer in offers["offers"]] == [200, 100]
     assert offers["offers"][0]["favorite"] is True
+    # 디스크 종류/대역폭은 원본 그대로 노출된다 (없으면 None/0).
+    disk_offer = offers["offers"][1]
+    assert disk_offer["disk_name"] == "nvme"
+    assert disk_offer["disk_bw_mb_s"] == 1478.4
+    assert offers["offers"][0]["disk_name"] is None
+    assert offers["offers"][0]["disk_bw_mb_s"] == 0
 
 
 def test_vast_actual_transfer_eta_uses_parallel_branch_bottleneck() -> None:

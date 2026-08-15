@@ -20,6 +20,8 @@ import mimetypes
 from contextvars import ContextVar
 from typing import Any
 
+from runtime_temp import clear_runtime_temp
+
 # ─── 모듈 이중 로드 방지 ─────────────────────────────────
 # python server.py 로 실행하면 이 파일은 __main__ 으로 로드되지만,
 # 다른 모듈(lighbd_service 등)이 `import server` 를 하면 Python 이
@@ -12084,31 +12086,46 @@ async def handle_api_reschedule(request: web.Request) -> web.Response:
         # Set or cancel reschedule
         try:
             body = await request.json()
-            backup_name = body.get("name", "")
-            action = body.get("action", "toggle")  # "toggle", "set", "cancel"
-
-            if ".." in backup_name or "/" in backup_name or "\\" in backup_name:
-                return web.json_response({"error": "Invalid name"}, status=400)
+            backup_name = str(body.get("name") or "")
+            action = str(body.get("action") or "toggle")  # "toggle", "set", "cancel"
 
             if action == "cancel":
                 reschedule_queue = None
                 print(f"[RESCHEDULE] Cancelled")
                 await notify_frontend("reschedule_changed", {"scheduled": False, "name": None})
                 return web.json_response({"scheduled": False, "message": "Reschedule cancelled"})
+
+            if not backup_name or ".." in backup_name or "/" in backup_name or "\\" in backup_name:
+                print(f"[RESCHEDULE] 잘못된 백업 이름 거부: {backup_name!r}")
+                return web.json_response({"error": "Invalid name"}, status=400)
             
-            # Load backup data
-            webp_path = os.path.join(WORKFLOW_BACKUP_DIR, f"{backup_name}.webp")
-            prompt_path_json = os.path.join(WORKFLOW_BACKUP_DIR, f"{backup_name}.json")
-            prompt_path_txt = os.path.join(WORKFLOW_BACKUP_DIR, f"{backup_name}.txt")
+            # Load backup data. 목록/이미지 API와 같은 설정 폴더 및 확장자를 사용한다.
+            backup_dir = get_backup_base_dir()
+            image_path = None
+            for extension in (".webp", ".avif"):
+                candidate = os.path.join(backup_dir, f"{backup_name}{extension}")
+                if os.path.exists(candidate):
+                    image_path = candidate
+                    break
+            prompt_path_json = os.path.join(backup_dir, f"{backup_name}.json")
+            prompt_path_txt = os.path.join(backup_dir, f"{backup_name}.txt")
             prompt_path = prompt_path_json if os.path.exists(prompt_path_json) else prompt_path_txt
 
-            if not os.path.exists(webp_path):
+            if image_path is None:
+                print(
+                    "[RESCHEDULE] 백업 이미지 없음: "
+                    f"name={backup_name!r}, dir={backup_dir!r}, extensions=('.webp', '.avif')"
+                )
                 return web.json_response({"error": "Backup image not found"}, status=404)
             if not os.path.exists(prompt_path):
+                print(
+                    "[RESCHEDULE] 프롬프트 파일 없음: "
+                    f"name={backup_name!r}, dir={backup_dir!r}"
+                )
                 return web.json_response({"error": "Prompt file not found"}, status=404)
 
             # Load image bytes
-            with open(webp_path, "rb") as f:
+            with open(image_path, "rb") as f:
                 image_bytes = f.read()
 
             # Load prompts
@@ -12120,8 +12137,12 @@ async def handle_api_reschedule(request: web.Request) -> web.Response:
                 try:
                     with open(prompt_path, "r", encoding="utf-8") as f:
                         prompt_data = json.load(f)
-                except:
-                    pass
+                except Exception as e:
+                    print(
+                        "[RESCHEDULE] 프롬프트 메타데이터 로드 실패: "
+                        f"path={prompt_path!r}, error={type(e).__name__}: {e}"
+                    )
+                    traceback.print_exc()
 
             # Toggle or set
             if reschedule_queue is not None and reschedule_queue["name"] == backup_name:
@@ -12139,7 +12160,10 @@ async def handle_api_reschedule(request: web.Request) -> web.Response:
                     "negative": negative,
                     "prompt_data": prompt_data
                 }
-                print(f"[RESCHEDULE] Scheduled: {backup_name}")
+                print(
+                    f"[RESCHEDULE] Scheduled: {backup_name}, "
+                    f"image={os.path.basename(image_path)}, bytes={len(image_bytes):,}"
+                )
                 await notify_frontend("reschedule_changed", {"scheduled": True, "name": backup_name})
                 return web.json_response({
                     "scheduled": True,
@@ -24844,6 +24868,7 @@ def _backup_data_on_startup():
 
 
 async def on_startup(app):
+    await asyncio.to_thread(clear_runtime_temp, BASE_DIR)
     print("[INFO] 워크플로우 초기 로드...")
     # 백그라운드 스레드에서 notify_frontend 호출을 위해 메인 루프 참조 보관
     global _main_event_loop

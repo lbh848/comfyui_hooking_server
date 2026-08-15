@@ -20,6 +20,8 @@ from typing import Any, Callable, Mapping
 
 import modal
 
+from runtime_temp import runtime_temp_root
+
 from .custom_nodes import (
     deploy_custom_nodes_json,
     inventory_custom_nodes,
@@ -4556,7 +4558,10 @@ class ModalService:
             if progress_queue is not None
             else None
         )
-        with tempfile.TemporaryDirectory(prefix="soya-modal-lora-download-") as output_dir:
+        with tempfile.TemporaryDirectory(
+            prefix="soya-modal-lora-download-",
+            dir=runtime_temp_root(self.project_root),
+        ) as output_dir:
             payload = {
                 "action": "download_lora_artifacts",
                 "app_name": settings.deployment_name,

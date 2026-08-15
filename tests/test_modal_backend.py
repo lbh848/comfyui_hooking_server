@@ -1172,7 +1172,7 @@ async def test_remote_workflow_query_compares_local_and_remote_hashes(
     }
 
 
-def test_workflow_assets_follow_current_local_checkpoint_and_loras(tmp_path: Path) -> None:
+def test_workflow_assets_ignore_loras_embedded_in_prompt_json(tmp_path: Path) -> None:
     comfy_root = tmp_path / "comfy"
     checkpoint = comfy_root / "models" / "checkpoints" / "custom" / "changed.safetensors"
     power_lora = comfy_root / "models" / "loras" / "styles" / "power.safetensors"
@@ -1209,7 +1209,7 @@ def test_workflow_assets_follow_current_local_checkpoint_and_loras(tmp_path: Pat
         build_local_model_index(comfy_root),
     )
 
-    assert assets["model_count"] == 3
+    assert assets["model_count"] == 2
     assert assets["model_files"] == [
         {
             "source_path": str(checkpoint.resolve()),
@@ -1220,11 +1220,12 @@ def test_workflow_assets_follow_current_local_checkpoint_and_loras(tmp_path: Pat
     ]
     assert {item["source_path"] for item in assets["lora_files"]} == {
         str(power_lora.resolve()),
-        str(soya_lora.resolve()),
     }
     assert {item["remote_path"] for item in assets["lora_files"]} == {
         "styles/power.safetensors",
-        "SOYA_CHAR_LORA/hero.safetensors",
+    }
+    assert str(soya_lora.resolve()) not in {
+        item["source_path"] for item in assets["lora_files"]
     }
     assert all(len(item["sha256"]) == 64 for item in assets["model_files"] + assets["lora_files"])
 
