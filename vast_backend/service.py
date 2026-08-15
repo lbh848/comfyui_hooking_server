@@ -187,6 +187,7 @@ class VastService:
             "launch_id": launch_id,
             "label": label,
             "instance_id": None,
+            "machine_id": None,
             "destroyed_instance_id": None,
             "error": "",
             "steps": [],
@@ -911,6 +912,12 @@ class VastService:
         current = (status, status_msg)
         self.launch["instance_status"] = status
         self.launch["instance_status_msg"] = status_msg
+        try:
+            machine_id = int(info.get("machine_id") or 0)
+        except (TypeError, ValueError, OverflowError):
+            machine_id = 0
+        if machine_id > 0:
+            self.launch["machine_id"] = machine_id
         try:
             price = float(info.get("dph_total") or 0.0)
         except (TypeError, ValueError):
@@ -3176,6 +3183,25 @@ class VastService:
             result["auto_destroy_deadline"] = ""
             result["auto_destroy_remaining_seconds"] = None
             result["auto_destroy_limit_name"] = ""
+        try:
+            launch_machine_id = int(result.get("machine_id") or 0)
+        except (TypeError, ValueError, OverflowError):
+            launch_machine_id = 0
+        if launch_machine_id > 0:
+            try:
+                result["favorite"] = (
+                    launch_machine_id in self.favorites.machine_ids()
+                )
+            except Exception as exc:
+                print(
+                    "[VAST_FAVORITE][ERROR] launch 상태 즐겨찾기 판별 실패: "
+                    f"machine_id={launch_machine_id}, "
+                    f"error={type(exc).__name__}: {exc}"
+                )
+                traceback.print_exc()
+                result["favorite"] = None
+        else:
+            result["favorite"] = None
         return result
 
     async def instances(self) -> dict[str, Any]:

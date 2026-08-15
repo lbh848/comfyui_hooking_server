@@ -26624,7 +26624,8 @@
                 const instance = (window.__vastInstances || []).find(
                     item => Number(item.id) === instanceId,
                 );
-                const isFavorite = instance?.favorite === true;
+                const isFavorite = launch.favorite === true
+                    || (launch.favorite == null && instance?.favorite === true);
                 favoriteBtn.hidden = !(instanceId > 0);
                 favoriteBtn.disabled = launch.state === 'destroying';
                 favoriteBtn.classList.toggle('is-favorite', isFavorite);
@@ -26805,8 +26806,11 @@
             const instance = (window.__vastInstances || []).find(
                 item => Number(item.id) === instanceId,
             );
-            if (instance?.favorite === true) {
-                await vastUnfavoriteMachine(instance.machine_id, button);
+            const isFavorite = launch.favorite === true
+                || (launch.favorite == null && instance?.favorite === true);
+            const machineId = Number(launch.machine_id || instance?.machine_id || 0);
+            if (isFavorite && machineId > 0) {
+                await vastUnfavoriteMachine(machineId, button);
                 return;
             }
             await vastFavoriteInstance(instanceId, button);
@@ -26835,6 +26839,10 @@
                         : `Vast 머신 #${machineId}는 이미 즐겨찾기입니다.`,
                     'success',
                 );
+                if (window.__vastLastLaunch
+                    && Number(window.__vastLastLaunch.machine_id || 0) === machineId) {
+                    window.__vastLastLaunch.favorite = true;
+                }
                 await vastLoadInstances();
                 if (vastOffers.length) await vastSearchOffers();
                 vastRenderLaunchSteps(window.__vastLastLaunch || {});
@@ -26870,6 +26878,10 @@
                         : `Vast 머신 #${machineId}는 즐겨찾기에 없습니다.`,
                     'success',
                 );
+                if (window.__vastLastLaunch
+                    && Number(window.__vastLastLaunch.machine_id || 0) === Number(machineId)) {
+                    window.__vastLastLaunch.favorite = false;
+                }
                 await vastLoadInstances();
                 if (vastOffers.length) await vastSearchOffers();
                 vastRenderLaunchSteps(window.__vastLastLaunch || {});
