@@ -231,30 +231,6 @@ async def test_vast_lora_delete_failure_is_persisted_and_retried(
     assert payload == {"version": 1, "items": []}
 
 
-@pytest.mark.asyncio
-async def test_vast_lora_storage_headroom_includes_safety_margin(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    service = VastService(tmp_path, lambda: {})
-    monkeypatch.setattr(
-        service,
-        "_remote_lora_free_bytes_sync",
-        lambda: 1024 * 1024 * 1024,
-    )
-
-    unsafe = await service.check_lora_storage_headroom(
-        required_bytes=700 * 1024 * 1024,
-    )
-    safe = await service.check_lora_storage_headroom(
-        required_bytes=400 * 1024 * 1024,
-    )
-
-    assert unsafe["safe"] is False
-    assert safe["safe"] is True
-    assert safe["safety_margin_bytes"] == 512 * 1024 * 1024
-
-
 def test_vast_ssh_keypair_is_created_and_loaded_from_key_directory(
     tmp_path: Path,
 ) -> None:

@@ -202,7 +202,7 @@ async def test_vast_training_returns_before_background_download_finishes() -> No
 
 
 @pytest.mark.asyncio
-async def test_next_vast_gpu_job_starts_while_previous_lora_downloads() -> None:
+async def test_next_vast_gpu_job_starts_while_previous_lora_downloads_without_storage_gate() -> None:
     manager = QueueManager()
     manager.get_config = lambda: {
         "vast_enabled": True,
@@ -210,18 +210,10 @@ async def test_next_vast_gpu_job_starts_while_previous_lora_downloads() -> None:
     }
     manager.is_vast_ready = lambda: True
     manager.notify_frontend = lambda *_args, **_kwargs: asyncio.sleep(0)
-    manager.get_vast_cleanup_status = lambda: {
-        "pending_count": 0,
-        "pending_bytes": 0,
-    }
-    manager.check_vast_storage_headroom = lambda **_kwargs: asyncio.sleep(
-        0,
-        result={
-            "safe": True,
-            "free_bytes": 2_000_000_000,
-            "required_bytes": 600_000_000,
-        },
-    )
+    async def fail_if_storage_gate_is_used() -> bool:
+        raise AssertionError("Vast 다운로드가 후속 GPU 학습 배차를 막았습니다")
+
+    manager._vast_storage_ready_for_next = fail_if_storage_gate_is_used
     download_started = asyncio.Event()
     release_download = asyncio.Event()
     second_started = asyncio.Event()

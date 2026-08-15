@@ -81,7 +81,6 @@ ACTUAL_TRANSFER_PUBLISH_SECONDS = 1
 LORA_DELETE_OUTBOX_VERSION = 1
 LORA_DELETE_RETRY_MIN_SECONDS = 5
 LORA_DELETE_RETRY_MAX_SECONDS = 60
-LORA_STORAGE_SAFETY_MARGIN_BYTES = 512 * 1024 * 1024
 # 고정 런타임 이미지는 CUDA 12.8 바이너리를 사용한다. 오퍼 검색에서 이보다
 # 낮은 cuda_max_good 머신을 제외해 호환성 문제로 유료 빌드가 실패하지 않게 한다.
 MIN_RUNTIME_CUDA_VERSION = 12.8
@@ -717,47 +716,6 @@ class VastService:
                     "[VAST_CLEANUP] 소멸 확인된 인스턴스의 삭제 outbox 폐기: "
                     f"instance={instance_id}, removed={len(items) - len(remaining)}"
                 )
-
-    def _remote_lora_free_bytes_sync(self) -> int:
-        host, port, private_key_path = self._require_ssh_endpoint()
-        ssh = self._ssh_connect(host, port, private_key_path)
-        try:
-            sftp = ssh.open_sftp()
-            try:
-                statvfs = sftp.statvfs(COMFY_ROOT_REMOTE)
-                fragment_size = int(
-                    getattr(statvfs, "f_frsize", 0)
-                    or getattr(statvfs, "f_bsize", 0)
-                    or 0
-                )
-                available_blocks = int(getattr(statvfs, "f_bavail", 0) or 0)
-                free_bytes = fragment_size * available_blocks
-                if free_bytes <= 0:
-                    raise RuntimeError(
-                        "Vast 원격 statvfs가 유효한 여유 공간을 반환하지 않았습니다: "
-                        f"fragment_size={fragment_size}, blocks={available_blocks}"
-                    )
-                return free_bytes
-            finally:
-                sftp.close()
-        finally:
-            ssh.close()
-
-    async def check_lora_storage_headroom(
-        self,
-        *,
-        required_bytes: int = 0,
-    ) -> dict[str, Any]:
-        requested = max(0, int(required_bytes or 0))
-        minimum = requested + LORA_STORAGE_SAFETY_MARGIN_BYTES
-        free_bytes = await asyncio.to_thread(self._remote_lora_free_bytes_sync)
-        return {
-            "safe": free_bytes >= minimum,
-            "free_bytes": free_bytes,
-            "required_bytes": minimum,
-            "artifact_estimate_bytes": requested,
-            "safety_margin_bytes": LORA_STORAGE_SAFETY_MARGIN_BYTES,
-        }
 
     async def startup(self) -> None:
         """서버 재시작 뒤 서비스 소유 인스턴스를 찾아 비용 감시를 복구한다."""
