@@ -619,6 +619,42 @@ def test_overlay_is_scaled_after_high_resolution_render_and_applied_to_every_fra
     assert composed[0].getpixel((10, 110))[:3] == (0, 0, 0)
 
 
+def test_overlay_render_base_restores_recorded_width() -> None:
+    crop = Image.new("RGBA", (512, 512), (10, 20, 30, 255))
+
+    base = VideoMode._overlay_render_base(
+        crop, {"video_overlay_base_width": 1024}
+    )
+
+    # 영상 백업 재사용 시: 기록된 원본 렌더 폭으로 베이스가 복원된다.
+    assert base.size == (1024, 1024)
+
+
+def test_overlay_render_base_falls_back_to_crop_without_record() -> None:
+    crop = Image.new("RGBA", (512, 512), (10, 20, 30, 255))
+
+    assert VideoMode._overlay_render_base(crop, {}).size == (512, 512)
+    assert (
+        VideoMode._overlay_render_base(
+            crop, {"video_overlay_base_width": 0}
+        ).size
+        == (512, 512)
+    )
+    assert (
+        VideoMode._overlay_render_base(
+            crop, {"video_overlay_base_width": "invalid"}
+        ).size
+        == (512, 512)
+    )
+    # 기록 폭이 현재 크롭 폭과 같으면 원본 객체를 그대로 쓴다.
+    assert (
+        VideoMode._overlay_render_base(
+            crop, {"video_overlay_base_width": 512}
+        )
+        is crop
+    )
+
+
 def test_animated_archive_writer_keeps_all_frames(tmp_path: Path) -> None:
     frames = [
         Image.new("RGBA", (32, 32), (255, 0, 0, 255)),

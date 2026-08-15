@@ -3793,6 +3793,10 @@ def init_queue_manager():
     queue_manager.run_vast_workflow = vast_service.run_workflow
     queue_manager.download_vast_artifacts = vast_service.download_lora_artifacts
     queue_manager.is_vast_ready = vast_service.ready_for_queue
+    queue_manager.check_vast_storage_headroom = (
+        vast_service.check_lora_storage_headroom
+    )
+    queue_manager.get_vast_cleanup_status = vast_service.lora_cleanup_status
     vast_service.set_availability_callback(
         queue_manager.notify_vast_availability_changed
     )

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import errno
+import hashlib
 import inspect
 import json
 from pathlib import Path
@@ -9,6 +10,7 @@ import socket
 import socketserver
 import threading
 import time
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -54,15 +56,24 @@ async def test_vast_lora_download_uses_project_temp_and_handles_cross_device_com
     )
     downloaded_paths: list[Path] = []
     removed_remote_paths: list[str] = []
+    remote_exists = True
 
     class FakeSftp:
+        def stat(self, remote_path: str):
+            assert remote_path.endswith("/SOYA_INSTANCE_LORA/alice.safetensors")
+            if not remote_exists:
+                raise FileNotFoundError(remote_path)
+            return SimpleNamespace(st_size=6, st_mtime=123)
+
         def get(self, remote_path: str, local_path: str) -> None:
             assert remote_path.endswith("/SOYA_INSTANCE_LORA/alice.safetensors")
             downloaded_paths.append(Path(local_path).resolve())
             Path(local_path).write_bytes(b"abcdef")
 
         def remove(self, remote_path: str) -> None:
+            nonlocal remote_exists
             removed_remote_paths.append(remote_path)
+            remote_exists = False
 
         def close(self) -> None:
             return None
@@ -80,6 +91,11 @@ async def test_vast_lora_download_uses_project_temp_and_handles_cross_device_com
         lambda: ("ssh.example", 22, "unused-key"),
     )
     monkeypatch.setattr(service, "_ssh_connect", lambda *_args: FakeSsh())
+    monkeypatch.setattr(
+        service,
+        "_remote_sha256_sync",
+        lambda *_args: hashlib.sha256(b"abcdef").hexdigest(),
+    )
     real_replace = vast_service_module.os.replace
     replace_calls: list[tuple[Path, Path]] = []
 
@@ -121,6 +137,122 @@ async def test_vast_lora_download_uses_project_temp_and_handles_cross_device_com
     assert replace_calls[1][0].parent == final_path.parent.resolve()
     assert removed_remote_paths == [remote_path]
     assert list((tmp_path / "runtime" / "temp").iterdir()) == []
+
+
+@pytest.mark.asyncio
+async def test_vast_lora_delete_failure_is_persisted_and_retried(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    local_root = tmp_path / "local-loras"
+    service = VastService(
+        tmp_path,
+        lambda: {"lora_load_path": str(local_root)},
+    )
+    service.launch["instance_id"] = 42
+    service.launch["launch_id"] = "launch-42"
+    remote_path = (
+        "/root/ComfyUI/models/loras/SOYA_CHAR_LORA/"
+        "SOYA_INSTANCE_LORA/alice.safetensors"
+    )
+    remote_exists = True
+    allow_remove = False
+    remove_attempts = 0
+
+    class FakeSftp:
+        def stat(self, path: str):
+            assert path == remote_path
+            if not remote_exists:
+                raise FileNotFoundError(path)
+            return SimpleNamespace(st_size=6, st_mtime=123)
+
+        def get(self, path: str, local_path: str) -> None:
+            assert path == remote_path
+            Path(local_path).write_bytes(b"abcdef")
+
+        def remove(self, path: str) -> None:
+            nonlocal remote_exists, remove_attempts
+            assert path == remote_path
+            remove_attempts += 1
+            if not allow_remove:
+                raise OSError("temporary delete failure")
+            remote_exists = False
+
+        def close(self) -> None:
+            return None
+
+    class FakeSsh:
+        def open_sftp(self) -> FakeSftp:
+            return FakeSftp()
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(
+        service,
+        "_require_ssh_endpoint",
+        lambda: ("ssh.example", 22, "unused-key"),
+    )
+    monkeypatch.setattr(service, "_ssh_connect", lambda *_args: FakeSsh())
+    monkeypatch.setattr(
+        service,
+        "_remote_sha256_sync",
+        lambda *_args: hashlib.sha256(b"abcdef").hexdigest(),
+    )
+
+    result = await service.download_lora_artifacts(
+        [
+            {
+                "relative_path": "SOYA_INSTANCE_LORA/alice.safetensors",
+                "remote_path": remote_path,
+                "size": 6,
+                "mtime": 123,
+            }
+        ]
+    )
+
+    assert (local_root / "SOYA_INSTANCE_LORA" / "alice.safetensors").read_bytes() == b"abcdef"
+    assert result["remote_delete_queued"] == [remote_path]
+    assert service.lora_cleanup_status()["pending_count"] == 1
+    assert remote_exists is True
+
+    allow_remove = True
+    monkeypatch.setattr(service, "ready_for_queue", lambda: True)
+    await asyncio.wait_for(service._flush_lora_delete_outbox(), timeout=1)
+
+    assert remote_exists is False
+    assert remove_attempts == 2
+    assert service.lora_cleanup_status()["pending_count"] == 0
+    payload = json.loads(
+        (tmp_path / "runtime" / "vast_lora_delete_outbox.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert payload == {"version": 1, "items": []}
+
+
+@pytest.mark.asyncio
+async def test_vast_lora_storage_headroom_includes_safety_margin(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = VastService(tmp_path, lambda: {})
+    monkeypatch.setattr(
+        service,
+        "_remote_lora_free_bytes_sync",
+        lambda: 1024 * 1024 * 1024,
+    )
+
+    unsafe = await service.check_lora_storage_headroom(
+        required_bytes=700 * 1024 * 1024,
+    )
+    safe = await service.check_lora_storage_headroom(
+        required_bytes=400 * 1024 * 1024,
+    )
+
+    assert unsafe["safe"] is False
+    assert safe["safe"] is True
+    assert safe["safety_margin_bytes"] == 512 * 1024 * 1024
 
 
 def test_vast_ssh_keypair_is_created_and_loaded_from_key_directory(

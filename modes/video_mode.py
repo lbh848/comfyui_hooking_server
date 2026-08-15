@@ -2623,6 +2623,49 @@ Vision-produced static Visual Context:
         return patched
 
     @staticmethod
+    def _overlay_render_base(
+        high_res_crop: Image.Image,
+        info: dict,
+    ) -> Image.Image:
+        """대사/말풍선 렌더 기준 크기를 소스 백업의 기록값으로 복원한다.
+
+        font_size가 절대 px이라 렌더 베이스 폭이 달라지면 대사의 상대 크기와
+        줄바꿈이 달라진다. 소스가 영상 백업이면 스트립은 원본 일러스트 크기로
+        렌더된 뒤 축소된 것이므로, info의 video_overlay_base_width(렌더에 실제
+        사용된 베이스 폭)가 있으면 크롭을 그 폭으로 되돌려 동일한 모양이
+        나오게 한다. 기록이 없는 구형 백업은 현재 크롭 폭을 그대로 쓴다.
+        """
+
+        try:
+            recorded = int((info or {}).get("video_overlay_base_width") or 0)
+        except (TypeError, ValueError):
+            print(
+                "[VIDEO:COMPOSE] 대사 렌더 기준 폭 기록값 형식 오류, 크롭 폭 사용: "
+                f"value={(info or {}).get('video_overlay_base_width')!r}, "
+                f"crop={high_res_crop.size}"
+            )
+            return high_res_crop
+        if recorded <= 0:
+            print(
+                "[VIDEO:COMPOSE] 대사 렌더 기준 폭 기록 없음, 크롭 폭 사용: "
+                f"crop={high_res_crop.size}"
+            )
+            return high_res_crop
+        if recorded == high_res_crop.width:
+            return high_res_crop
+        base_height = max(
+            1, round(high_res_crop.height * recorded / high_res_crop.width)
+        )
+        resized = high_res_crop.resize(
+            (recorded, base_height), Image.Resampling.LANCZOS
+        )
+        print(
+            "[VIDEO:COMPOSE] 대사 렌더 베이스를 소스 기록 폭으로 조정: "
+            f"recorded={recorded}, crop={high_res_crop.size}, base={resized.size}"
+        )
+        return resized
+
+    @staticmethod
     def _build_high_res_overlay(
         high_res_crop: Image.Image,
         info: dict,
@@ -3049,6 +3092,11 @@ Vision-produced static Visual Context:
                 "quality_level": str(original_metadata.get("video_quality_level") or ""),
                 "source_width": int(timing["width"]),
                 "source_height": int(timing["height"]),
+                # 기존 애니메이션 재처리는 오버레이를 다시 그리지 않으므로,
+                # 원본 애니메이션 info의 렌더 베이스 기록을 그대로 이어 쓴다.
+                "overlay_base_width": int(
+                    original_metadata.get("video_overlay_base_width") or 0
+                ),
                 "output_width": int(timing["width"]) * output_scale,
                 "output_height": int(timing["height"]) * output_scale,
                 "raw_output_height": int(timing["height"]) * output_scale,
@@ -3257,6 +3305,9 @@ Vision-produced static Visual Context:
                 "actual_mp": round((target_w * target_h) / 1_000_000, 6),
                 "source_width": target_w,
                 "source_height": target_h,
+                # 대사/말풍선 렌더에 실제 사용한 베이스 폭. 이 영상을 다시
+                # 영상화할 때 동일한 대사 모양을 재현하는 근거가 된다.
+                "overlay_base_width": int(high_res_crop.width),
                 "output_width": output_width,
                 "output_height": output_height,
                 "raw_output_height": raw_output_height,
@@ -3701,6 +3752,9 @@ Vision-produced static Visual Context:
                 "video_actual_mp": manifest.get("actual_mp"),
                 "video_source_width": int(manifest.get("source_width") or 0),
                 "video_source_height": int(manifest.get("source_height") or 0),
+                "video_overlay_base_width": int(
+                    manifest.get("overlay_base_width") or 0
+                ),
                 "video_width": int(manifest.get("output_width") or 0),
                 "video_height": int(manifest.get("output_height") or 0),
                 "video_raw_height": int(manifest.get("raw_output_height") or 0),
@@ -3872,6 +3926,14 @@ Vision-produced static Visual Context:
             requested_aspect_ratio,
             requested_quality_level,
             sharpen=sharpen_for_reference,
+        )
+        # 대사/말풍선 렌더 베이스는 소스 백업의 기록 폭(있다면)으로 정규화한다.
+        # 이후 high_res_crop은 오버레이 렌더·스케일링에만 쓰이므로 여기서 교체해도
+        # 영상 입력(first_resized)에는 영향이 없다.
+        high_res_crop = await asyncio.to_thread(
+            self._overlay_render_base,
+            high_res_crop,
+            source_info,
         )
         overlay, overlay_mask = await asyncio.to_thread(
             self._build_high_res_overlay,

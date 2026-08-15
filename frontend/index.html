@@ -26648,6 +26648,9 @@
             const imagePull = launch.image_pull && typeof launch.image_pull === 'object'
                 ? launch.image_pull
                 : {};
+            const loraCleanup = launch.lora_cleanup && typeof launch.lora_cleanup === 'object'
+                ? launch.lora_cleanup
+                : {};
             if (imagePullBox) {
                 const showImagePull = launch.instance_status === 'loading'
                     || imagePull.available === true
@@ -26711,6 +26714,7 @@
                     `actual_status: ${launch.instance_status || '(아직 없음)'}`,
                     `status_msg: ${launch.instance_status_msg || '(아직 없음)'}`,
                     `마지막 일반 상태 변화: ${vastFormatDuration(launch.progress_stale_seconds || 0)} 전`,
+                    `LoRA 원격 정리: ${Number(loraCleanup.pending_count || 0)}개 · ${vastFormatBytes(loraCleanup.pending_bytes || 0)}${loraCleanup.flush_active ? ' · 재시도 실행 중' : ''}`,
                 ];
                 if (imagePull.available) {
                     rawLines.push(
@@ -26730,6 +26734,8 @@
                             ? (launch.destroy_reason || '비용 보호 제한으로 자동 파괴됐습니다.')
                         : launch.state === 'recovered'
                             ? (launch.protection_reason || '서버 재시작 뒤 복구된 인스턴스입니다. 상태를 확인하세요.')
+                            : Number(loraCleanup.pending_count || 0) > 0
+                                ? `LoRA 원격 정리 ${Number(loraCleanup.pending_count)}개가 재시도 대기 중입니다.`
                             : '';
                 warningEl.hidden = !warning;
                 warningEl.classList.toggle('critical', critical);
@@ -83297,6 +83303,7 @@
                     case 'bot_lora_training': return { icon: '🟣', color: '#9b59b6' };
                     case 'instance_lora_training': return { icon: '🔵', color: '#1abc9c' };
                     case 'modal_lora_download': return { icon: '⇩', color: '#06b6d4' };
+                    case 'vast_lora_download': return { icon: '⇩', color: '#22c55e' };
                     case 'instance_lora_analysis': return { icon: '🔍', color: '#2ecc71' };
                     case 'tag_analysis': return { icon: '🏷', color: '#f39c12' };
                     case 'auto_match_batch': return { icon: '🔗', color: '#16a085' };
@@ -84064,6 +84071,7 @@
             restore_manual: '수동 생성',
             data_patch_utility: '데이터 패치',
             modal_lora_download: 'Modal 다운로드',
+            vast_lora_download: 'Vast 다운로드',
             vast_lora_download: 'Vast 다운로드',
         };
 

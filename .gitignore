@@ -93,4 +93,6 @@ vast_ssh_key.pub
 /runtime/vast_launch_guard.json
 /runtime/vast_launch_guard.json.tmp
 /runtime/vast_machine_favorites.json
+/runtime/vast_lora_delete_outbox.json
+/runtime/vast_lora_delete_outbox.json.tmp
 /runtime/temp/

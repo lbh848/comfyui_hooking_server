@@ -20,6 +20,7 @@ import hashlib
 import json
 import os
 import posixpath
+import shlex
 import shutil
 import stat
 import tempfile
@@ -77,6 +78,10 @@ IMAGE_PULL_POLL_SECONDS = 20
 IMAGE_PULL_LOG_TAIL = 1000
 ACTUAL_TRANSFER_WINDOW_SECONDS = 30
 ACTUAL_TRANSFER_PUBLISH_SECONDS = 1
+LORA_DELETE_OUTBOX_VERSION = 1
+LORA_DELETE_RETRY_MIN_SECONDS = 5
+LORA_DELETE_RETRY_MAX_SECONDS = 60
+LORA_STORAGE_SAFETY_MARGIN_BYTES = 512 * 1024 * 1024
 # 고정 런타임 이미지는 CUDA 12.8 바이너리를 사용한다. 오퍼 검색에서 이보다
 # 낮은 cuda_max_good 머신을 제외해 호환성 문제로 유료 빌드가 실패하지 않게 한다.
 MIN_RUNTIME_CUDA_VERSION = 12.8
@@ -124,6 +129,12 @@ class VastService:
         self._actual_transfer_runtime: dict[str, dict[str, Any]] = {}
         self._guard_write_lock = threading.Lock()
         self._guard_path = self.project_root / "runtime" / "vast_launch_guard.json"
+        self._lora_delete_outbox_path = (
+            self.project_root / "runtime" / "vast_lora_delete_outbox.json"
+        )
+        self._lora_delete_outbox_lock = threading.Lock()
+        self._lora_delete_flush_task: asyncio.Task | None = None
+        self._lora_download_lock = asyncio.Lock()
         self.favorites = VastMachineFavorites(self.project_root)
         self._favorite_lock = asyncio.Lock()
         self._workflow_lock = asyncio.Lock()
@@ -305,6 +316,449 @@ class VastService:
             )
             traceback.print_exc()
 
+    def _load_lora_delete_outbox_unlocked(self) -> list[dict[str, Any]]:
+        path = self._lora_delete_outbox_path
+        if not path.is_file():
+            return []
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            raw_items = payload.get("items") if isinstance(payload, dict) else payload
+            if not isinstance(raw_items, list):
+                raise ValueError(
+                    "Vast LoRA 삭제 outbox items는 배열이어야 합니다: "
+                    f"type={type(raw_items).__name__}"
+                )
+            items: list[dict[str, Any]] = []
+            for raw in raw_items:
+                if not isinstance(raw, dict):
+                    print(
+                        "[VAST_CLEANUP][ERROR] 객체가 아닌 outbox 항목 무시: "
+                        f"value={raw!r}"
+                    )
+                    continue
+                try:
+                    instance_id = int(raw.get("instance_id") or 0)
+                    remote_path = posixpath.normpath(
+                        str(raw.get("remote_path") or "").replace("\\", "/")
+                    )
+                    size = int(raw.get("size") or 0)
+                    mtime = int(raw.get("mtime") or 0)
+                    sha256 = str(raw.get("sha256") or "").strip().lower()
+                    attempts = max(0, int(raw.get("attempts") or 0))
+                    if (
+                        instance_id <= 0
+                        or not remote_path.startswith(COMFY_LORA_OUTPUT_REMOTE + "/")
+                        or size < 0
+                        or mtime < 0
+                        or len(sha256) != 64
+                        or any(character not in "0123456789abcdef" for character in sha256)
+                    ):
+                        raise ValueError("필수 식별 정보가 안전하지 않거나 누락됨")
+                    items.append(
+                        {
+                            "instance_id": instance_id,
+                            "launch_id": str(raw.get("launch_id") or ""),
+                            "remote_path": remote_path,
+                            "relative_path": str(raw.get("relative_path") or ""),
+                            "size": size,
+                            "mtime": mtime,
+                            "sha256": sha256,
+                            "created_at": str(raw.get("created_at") or self._utc_now()),
+                            "attempts": attempts,
+                            "last_error": str(raw.get("last_error") or ""),
+                        }
+                    )
+                except (TypeError, ValueError) as exc:
+                    print(
+                        "[VAST_CLEANUP][ERROR] 잘못된 outbox 항목 무시: "
+                        f"item={raw!r}, error={exc}"
+                    )
+                    traceback.print_exc()
+            return items
+        except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            print(
+                "[VAST_CLEANUP][ERROR] LoRA 삭제 outbox 읽기 실패: "
+                f"path={path}, error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            return []
+
+    def _save_lora_delete_outbox_unlocked(
+        self,
+        items: list[dict[str, Any]],
+    ) -> None:
+        target = self._lora_delete_outbox_path
+        temp_path = target.with_suffix(".json.tmp")
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if target.is_file():
+                backup_dir = self.project_root / "backups" / "vast_lora_delete_outbox"
+                backup_dir.mkdir(parents=True, exist_ok=True)
+                backup = backup_dir / f"vast_lora_delete_outbox_{time.time_ns()}.json"
+                shutil.copy2(target, backup)
+                backups = sorted(
+                    backup_dir.glob("vast_lora_delete_outbox_*.json"),
+                    key=lambda path: path.stat().st_mtime,
+                )
+                for old in backups[:-5]:
+                    try:
+                        old.unlink()
+                    except OSError as exc:
+                        print(
+                            "[VAST_CLEANUP][ERROR] 오래된 outbox 백업 정리 실패: "
+                            f"path={old}, error={type(exc).__name__}: {exc}"
+                        )
+                        traceback.print_exc()
+            payload = {
+                "version": LORA_DELETE_OUTBOX_VERSION,
+                "items": items,
+            }
+            temp_path.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            os.replace(temp_path, target)
+        except Exception as exc:
+            print(
+                "[VAST_CLEANUP][ERROR] LoRA 삭제 outbox 저장 실패: "
+                f"path={target}, items={len(items)}, "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            try:
+                temp_path.unlink(missing_ok=True)
+            except Exception as cleanup_exc:
+                print(
+                    "[VAST_CLEANUP][ERROR] 실패한 outbox 임시 파일 정리 실패: "
+                    f"path={temp_path}, error={type(cleanup_exc).__name__}: {cleanup_exc}"
+                )
+                traceback.print_exc()
+            raise
+
+    def lora_cleanup_status(self) -> dict[str, Any]:
+        with self._lora_delete_outbox_lock:
+            items = self._load_lora_delete_outbox_unlocked()
+        current_instance = int(self.launch.get("instance_id") or 0)
+        current_items = [
+            item for item in items if int(item.get("instance_id") or 0) == current_instance
+        ]
+        return {
+            "pending_count": len(current_items),
+            "pending_bytes": sum(max(0, int(item.get("size") or 0)) for item in current_items),
+            "total_pending_count": len(items),
+            "instance_id": current_instance or None,
+            "flush_active": bool(
+                self._lora_delete_flush_task
+                and not self._lora_delete_flush_task.done()
+            ),
+        }
+
+    def _enqueue_lora_delete_retry_sync(
+        self,
+        artifact: dict[str, Any],
+        *,
+        error: Exception,
+    ) -> None:
+        instance_id = int(self.launch.get("instance_id") or 0)
+        if instance_id <= 0:
+            print(
+                "[VAST_CLEANUP][ERROR] 인스턴스 ID가 없어 원격 삭제 재시도 예약 실패: "
+                f"artifact={artifact!r}, error={type(error).__name__}: {error}"
+            )
+            return
+        queued = {
+            "instance_id": instance_id,
+            "launch_id": str(self.launch.get("launch_id") or ""),
+            "remote_path": str(artifact["remote_path"]),
+            "relative_path": str(artifact.get("relative_path") or ""),
+            "size": max(0, int(artifact.get("size") or 0)),
+            "mtime": max(0, int(artifact.get("mtime") or 0)),
+            "sha256": str(artifact["sha256"]).lower(),
+            "created_at": self._utc_now(),
+            "attempts": 0,
+            "last_error": f"{type(error).__name__}: {error}",
+        }
+        key = (
+            queued["instance_id"],
+            queued["remote_path"],
+            queued["sha256"],
+        )
+        with self._lora_delete_outbox_lock:
+            items = self._load_lora_delete_outbox_unlocked()
+            existing = {
+                (
+                    int(item.get("instance_id") or 0),
+                    str(item.get("remote_path") or ""),
+                    str(item.get("sha256") or ""),
+                )
+                for item in items
+            }
+            if key not in existing:
+                items.append(queued)
+                self._save_lora_delete_outbox_unlocked(items)
+                print(
+                    "[VAST_CLEANUP] 원격 LoRA 삭제 재시도 예약: "
+                    f"instance={instance_id}, remote={queued['remote_path']!r}, "
+                    f"size={queued['size']}"
+                )
+            else:
+                print(
+                    "[VAST_CLEANUP] 원격 LoRA 삭제가 이미 예약됨: "
+                    f"instance={instance_id}, remote={queued['remote_path']!r}"
+                )
+
+    @staticmethod
+    def _is_remote_missing_error(exc: Exception) -> bool:
+        return isinstance(exc, FileNotFoundError) or getattr(exc, "errno", None) == errno.ENOENT
+
+    @staticmethod
+    def _remote_sha256_sync(ssh: Any, remote_path: str) -> str:
+        command = f"sha256sum -- {shlex.quote(remote_path)}"
+        _stdin, stdout, stderr = ssh.exec_command(command, timeout=300)
+        exit_code = stdout.channel.recv_exit_status()
+        output = stdout.read().decode("utf-8", "replace").strip()
+        error = stderr.read().decode("utf-8", "replace").strip()
+        if exit_code != 0 or not output:
+            raise RuntimeError(
+                "원격 SHA-256 계산 실패: "
+                f"exit={exit_code}, remote={remote_path!r}, stderr={error[-500:]}"
+            )
+        digest = output.split()[0].strip().lower()
+        if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
+            raise RuntimeError(
+                f"원격 SHA-256 응답 형식 오류: remote={remote_path!r}, value={digest!r}"
+            )
+        return digest
+
+    def _delete_remote_lora_outbox_item_sync(self, item: dict[str, Any]) -> str:
+        current_instance = int(self.launch.get("instance_id") or 0)
+        item_instance = int(item.get("instance_id") or 0)
+        if not current_instance or current_instance != item_instance:
+            raise RuntimeError(
+                "삭제 outbox 인스턴스가 현재 Vast 인스턴스와 다릅니다: "
+                f"queued={item_instance}, current={current_instance}"
+            )
+        remote_path = posixpath.normpath(
+            str(item.get("remote_path") or "").replace("\\", "/")
+        )
+        if not remote_path.startswith(COMFY_LORA_OUTPUT_REMOTE + "/"):
+            raise ValueError(f"안전하지 않은 Vast LoRA 삭제 경로: {remote_path!r}")
+        host, port, private_key_path = self._require_ssh_endpoint()
+        ssh = self._ssh_connect(host, port, private_key_path)
+        try:
+            sftp = ssh.open_sftp()
+            try:
+                try:
+                    remote_stat = sftp.stat(remote_path)
+                except Exception as exc:
+                    if self._is_remote_missing_error(exc):
+                        print(
+                            "[VAST_CLEANUP] 원격 LoRA가 이미 없어 정리 완료 처리: "
+                            f"remote={remote_path!r}"
+                        )
+                        return "missing"
+                    raise
+                expected_size = int(item.get("size") or 0)
+                expected_mtime = int(item.get("mtime") or 0)
+                actual_size = int(getattr(remote_stat, "st_size", 0) or 0)
+                actual_mtime = int(getattr(remote_stat, "st_mtime", 0) or 0)
+                actual_sha256 = self._remote_sha256_sync(ssh, remote_path)
+                if (
+                    actual_size != expected_size
+                    or (expected_mtime and actual_mtime != expected_mtime)
+                    or actual_sha256 != str(item.get("sha256") or "").lower()
+                ):
+                    print(
+                        "[VAST_CLEANUP][CRITICAL] 원격 파일이 다운로드 이후 변경되어 "
+                        "삭제하지 않습니다: "
+                        f"remote={remote_path!r}, expected_size={expected_size}, "
+                        f"actual_size={actual_size}, expected_mtime={expected_mtime}, "
+                        f"actual_mtime={actual_mtime}, actual_sha256={actual_sha256}"
+                    )
+                    return "changed"
+                sftp.remove(remote_path)
+                try:
+                    sftp.stat(remote_path)
+                except Exception as exc:
+                    if self._is_remote_missing_error(exc):
+                        print(
+                            "[VAST_CLEANUP] 원격 LoRA 삭제 및 부재 확인 완료: "
+                            f"remote={remote_path!r}, bytes={expected_size}"
+                        )
+                        return "deleted"
+                    raise
+                raise RuntimeError(
+                    f"Vast LoRA 삭제 후에도 원격 파일이 존재합니다: {remote_path}"
+                )
+            finally:
+                sftp.close()
+        finally:
+            ssh.close()
+
+    def _remove_lora_delete_outbox_item_sync(self, target: dict[str, Any]) -> None:
+        target_key = (
+            int(target.get("instance_id") or 0),
+            str(target.get("remote_path") or ""),
+            str(target.get("sha256") or ""),
+        )
+        with self._lora_delete_outbox_lock:
+            items = self._load_lora_delete_outbox_unlocked()
+            remaining = [
+                item
+                for item in items
+                if (
+                    int(item.get("instance_id") or 0),
+                    str(item.get("remote_path") or ""),
+                    str(item.get("sha256") or ""),
+                )
+                != target_key
+            ]
+            self._save_lora_delete_outbox_unlocked(remaining)
+
+    def _record_lora_delete_retry_error_sync(
+        self,
+        target: dict[str, Any],
+        error: Exception,
+    ) -> int:
+        target_key = (
+            int(target.get("instance_id") or 0),
+            str(target.get("remote_path") or ""),
+            str(target.get("sha256") or ""),
+        )
+        attempts = int(target.get("attempts") or 0) + 1
+        with self._lora_delete_outbox_lock:
+            items = self._load_lora_delete_outbox_unlocked()
+            for item in items:
+                key = (
+                    int(item.get("instance_id") or 0),
+                    str(item.get("remote_path") or ""),
+                    str(item.get("sha256") or ""),
+                )
+                if key == target_key:
+                    item["attempts"] = attempts
+                    item["last_error"] = f"{type(error).__name__}: {error}"
+                    break
+            self._save_lora_delete_outbox_unlocked(items)
+        return attempts
+
+    async def _flush_lora_delete_outbox(self) -> None:
+        while self.ready_for_queue():
+            current_instance = int(self.launch.get("instance_id") or 0)
+            with self._lora_delete_outbox_lock:
+                items = self._load_lora_delete_outbox_unlocked()
+            target = next(
+                (
+                    item
+                    for item in items
+                    if int(item.get("instance_id") or 0) == current_instance
+                ),
+                None,
+            )
+            if target is None:
+                return
+            try:
+                result = await asyncio.to_thread(
+                    self._delete_remote_lora_outbox_item_sync,
+                    target,
+                )
+                await asyncio.to_thread(
+                    self._remove_lora_delete_outbox_item_sync,
+                    target,
+                )
+                print(
+                    "[VAST_CLEANUP] LoRA 삭제 outbox 처리 완료: "
+                    f"result={result}, remote={target.get('remote_path')!r}"
+                )
+            except asyncio.CancelledError:
+                print("[VAST_CLEANUP] LoRA 삭제 outbox 처리 취소")
+                raise
+            except Exception as exc:
+                attempts = await asyncio.to_thread(
+                    self._record_lora_delete_retry_error_sync,
+                    target,
+                    exc,
+                )
+                delay = min(
+                    LORA_DELETE_RETRY_MAX_SECONDS,
+                    LORA_DELETE_RETRY_MIN_SECONDS * (2 ** min(attempts - 1, 4)),
+                )
+                print(
+                    "[VAST_CLEANUP][ERROR] 원격 LoRA 삭제 재시도 실패: "
+                    f"remote={target.get('remote_path')!r}, attempts={attempts}, "
+                    f"retry_after={delay}s, error={type(exc).__name__}: {exc}"
+                )
+                traceback.print_exc()
+                await asyncio.sleep(delay)
+
+    def _schedule_lora_delete_flush(self) -> None:
+        if not self.ready_for_queue():
+            print(
+                "[VAST_CLEANUP] Vast SSH가 준비되지 않아 LoRA 삭제 outbox 처리를 보류합니다."
+            )
+            return
+        if self._lora_delete_flush_task and not self._lora_delete_flush_task.done():
+            return
+        self._lora_delete_flush_task = asyncio.create_task(
+            self._flush_lora_delete_outbox(),
+            name="vast-lora-delete-outbox",
+        )
+
+    def _discard_lora_delete_outbox_for_instance_sync(self, instance_id: int) -> None:
+        with self._lora_delete_outbox_lock:
+            items = self._load_lora_delete_outbox_unlocked()
+            remaining = [
+                item
+                for item in items
+                if int(item.get("instance_id") or 0) != int(instance_id)
+            ]
+            if len(remaining) != len(items):
+                self._save_lora_delete_outbox_unlocked(remaining)
+                print(
+                    "[VAST_CLEANUP] 소멸 확인된 인스턴스의 삭제 outbox 폐기: "
+                    f"instance={instance_id}, removed={len(items) - len(remaining)}"
+                )
+
+    def _remote_lora_free_bytes_sync(self) -> int:
+        host, port, private_key_path = self._require_ssh_endpoint()
+        ssh = self._ssh_connect(host, port, private_key_path)
+        try:
+            sftp = ssh.open_sftp()
+            try:
+                statvfs = sftp.statvfs(COMFY_ROOT_REMOTE)
+                fragment_size = int(
+                    getattr(statvfs, "f_frsize", 0)
+                    or getattr(statvfs, "f_bsize", 0)
+                    or 0
+                )
+                available_blocks = int(getattr(statvfs, "f_bavail", 0) or 0)
+                free_bytes = fragment_size * available_blocks
+                if free_bytes <= 0:
+                    raise RuntimeError(
+                        "Vast 원격 statvfs가 유효한 여유 공간을 반환하지 않았습니다: "
+                        f"fragment_size={fragment_size}, blocks={available_blocks}"
+                    )
+                return free_bytes
+            finally:
+                sftp.close()
+        finally:
+            ssh.close()
+
+    async def check_lora_storage_headroom(
+        self,
+        *,
+        required_bytes: int = 0,
+    ) -> dict[str, Any]:
+        requested = max(0, int(required_bytes or 0))
+        minimum = requested + LORA_STORAGE_SAFETY_MARGIN_BYTES
+        free_bytes = await asyncio.to_thread(self._remote_lora_free_bytes_sync)
+        return {
+            "safe": free_bytes >= minimum,
+            "free_bytes": free_bytes,
+            "required_bytes": minimum,
+            "artifact_estimate_bytes": requested,
+            "safety_margin_bytes": LORA_STORAGE_SAFETY_MARGIN_BYTES,
+        }
+
     async def startup(self) -> None:
         """서버 재시작 뒤 서비스 소유 인스턴스를 찾아 비용 감시를 복구한다."""
         try:
@@ -412,7 +866,11 @@ class VastService:
             cancel_event.set()
         tasks = [
             task
-            for task in (self._launch_task, self._watchdog_task)
+            for task in (
+                self._launch_task,
+                self._watchdog_task,
+                self._lora_delete_flush_task,
+            )
             if task is not None and not task.done()
         ]
         for task in tasks:
@@ -1478,6 +1936,7 @@ class VastService:
         self._set_step("comfy", "done", comfy_url)
         self._persist_guard_state()
         self._notify_availability_changed()
+        self._schedule_lora_delete_flush()
 
     async def _wait_ssh(self, instance_id: int) -> tuple[str, int]:
         # 시간 제한 없이 running+SSH 정보를 기다린다. 비용 상한은 watchdog이 담당.
@@ -2663,6 +3122,7 @@ class VastService:
 
     def launch_status(self) -> dict[str, Any]:
         result = dict(self.launch)
+        result["lora_cleanup"] = self.lora_cleanup_status()
         result["steps"] = [dict(step) for step in self.launch.get("steps") or []]
         result["events"] = [dict(event) for event in self.launch.get("events") or []]
         result["status_history"] = [
@@ -2943,6 +3403,10 @@ class VastService:
                 self.launch["protection_reason"] = reason
                 self.launch["updated_at"] = self._utc_now()
                 self._persist_guard_state()
+                await asyncio.to_thread(
+                    self._discard_lora_delete_outbox_for_instance_sync,
+                    target,
+                )
                 watchdog_task = self._watchdog_task
                 if (
                     watchdog_task is not None
@@ -3310,6 +3774,7 @@ class VastService:
                         COMFY_LORA_OUTPUT_REMOTE, relative
                     ),
                     "size": metadata[1],
+                    "mtime": metadata[0],
                 }
             )
         return artifacts
@@ -3731,6 +4196,7 @@ class VastService:
         local_root = Path(local_root_raw).resolve()
         local_root.mkdir(parents=True, exist_ok=True)
         stored: list[dict[str, Any]] = []
+        remote_delete_queued: list[str] = []
 
         def sha256(path: Path) -> str:
             import hashlib
@@ -3741,7 +4207,9 @@ class VastService:
                     digest.update(chunk)
             return digest.hexdigest()
 
-        def download_one(artifact: dict[str, Any]) -> dict[str, Any]:
+        def download_one(
+            artifact: dict[str, Any],
+        ) -> tuple[dict[str, Any], str | None, int]:
             relative_raw = self._safe_remote_relative(
                 str(artifact.get("relative_path") or ""), "LoRA artifact"
             )
@@ -3766,18 +4234,36 @@ class VastService:
             try:
                 sftp = ssh.open_sftp()
                 try:
+                    before_stat = sftp.stat(remote_path)
+                    remote_size = int(getattr(before_stat, "st_size", 0) or 0)
+                    remote_mtime = int(getattr(before_stat, "st_mtime", 0) or 0)
+                    declared_size = int(artifact.get("size") or 0)
+                    declared_mtime = int(artifact.get("mtime") or 0)
+                    if declared_size and remote_size != declared_size:
+                        raise RuntimeError(
+                            "Vast LoRA가 artifact 수집 이후 변경되었습니다: "
+                            f"remote={remote_path!r}, declared_size={declared_size}, "
+                            f"remote_size={remote_size}"
+                        )
+                    if declared_mtime and remote_mtime != declared_mtime:
+                        raise RuntimeError(
+                            "Vast LoRA 수정 시간이 artifact 수집 이후 변경되었습니다: "
+                            f"remote={remote_path!r}, declared_mtime={declared_mtime}, "
+                            f"remote_mtime={remote_mtime}"
+                        )
                     sftp.get(remote_path, str(temp_file))
-                    expected_size = int(artifact.get("size") or 0)
-                    if expected_size and temp_file.stat().st_size != expected_size:
+                    actual_size = temp_file.stat().st_size
+                    if actual_size != remote_size:
                         raise RuntimeError(
                             "Vast LoRA 다운로드 크기가 일치하지 않습니다: "
-                            f"expected={expected_size}, actual={temp_file.stat().st_size}"
+                            f"expected={remote_size}, actual={actual_size}"
                         )
+                    downloaded_sha256 = sha256(temp_file)
                     target.parent.mkdir(parents=True, exist_ok=True)
                     status = "stored"
                     final_target = target
                     if target.is_file():
-                        if sha256(target) == sha256(temp_file):
+                        if sha256(target) == downloaded_sha256:
                             status = "identical"
                         else:
                             stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
@@ -3825,12 +4311,69 @@ class VastService:
                                     )
                                     traceback.print_exc()
                                 raise
-                    sftp.remove(remote_path)
-                    return {
+                    cleanup_artifact = {
                         "relative_path": relative.as_posix(),
-                        "local_path": str(final_target),
-                        "status": status,
+                        "remote_path": remote_path,
+                        "size": remote_size,
+                        "mtime": remote_mtime,
+                        "sha256": downloaded_sha256,
                     }
+                    cleanup_queued: str | None = None
+                    try:
+                        after_stat = sftp.stat(remote_path)
+                        after_size = int(getattr(after_stat, "st_size", 0) or 0)
+                        after_mtime = int(getattr(after_stat, "st_mtime", 0) or 0)
+                        if after_size != remote_size or after_mtime != remote_mtime:
+                            raise RuntimeError(
+                                "Vast LoRA가 다운로드 중 변경되어 즉시 삭제하지 않습니다: "
+                                f"remote={remote_path!r}, before=({remote_size},{remote_mtime}), "
+                                f"after=({after_size},{after_mtime})"
+                            )
+                        remote_sha256 = self._remote_sha256_sync(ssh, remote_path)
+                        if remote_sha256 != downloaded_sha256:
+                            raise RuntimeError(
+                                "Vast LoRA 원격/로컬 SHA-256이 일치하지 않아 삭제하지 않습니다: "
+                                f"remote={remote_path!r}, remote_sha256={remote_sha256}, "
+                                f"local_sha256={downloaded_sha256}"
+                            )
+                        sftp.remove(remote_path)
+                        try:
+                            sftp.stat(remote_path)
+                        except Exception as verify_exc:
+                            if not self._is_remote_missing_error(verify_exc):
+                                raise
+                        else:
+                            raise RuntimeError(
+                                "Vast LoRA 삭제 후에도 원격 파일이 존재합니다: "
+                                f"{remote_path}"
+                            )
+                        print(
+                            "[VAST_DOWNLOAD] 로컬 검증·저장 후 원격 LoRA 즉시 삭제 확인: "
+                            f"remote={remote_path!r}, local={str(final_target)!r}, "
+                            f"bytes={remote_size}, sha256={downloaded_sha256}"
+                        )
+                    except Exception as cleanup_exc:
+                        print(
+                            "[VAST_DOWNLOAD][ERROR] 로컬 저장은 완료했지만 원격 LoRA "
+                            "즉시 삭제 확인 실패, outbox 예약: "
+                            f"remote={remote_path!r}, local={str(final_target)!r}, "
+                            f"error={type(cleanup_exc).__name__}: {cleanup_exc}"
+                        )
+                        traceback.print_exc()
+                        self._enqueue_lora_delete_retry_sync(
+                            cleanup_artifact,
+                            error=cleanup_exc,
+                        )
+                        cleanup_queued = remote_path
+                    return (
+                        {
+                            "relative_path": relative.as_posix(),
+                            "local_path": str(final_target),
+                            "status": status,
+                        },
+                        cleanup_queued,
+                        remote_size,
+                    )
                 finally:
                     sftp.close()
             finally:
@@ -3838,32 +4381,68 @@ class VastService:
                 shutil.rmtree(temp_dir, ignore_errors=True)
 
         total = len(artifacts)
-        for index, artifact in enumerate(artifacts, start=1):
-            try:
-                stored.append(await asyncio.to_thread(download_one, artifact))
-            except Exception as exc:
-                print(
-                    "[VAST_DOWNLOAD][ERROR] LoRA 다운로드 실패: "
-                    f"index={index}/{total}, artifact={artifact!r}, "
-                    f"error={type(exc).__name__}: {exc}"
-                )
-                traceback.print_exc()
-                raise
-            if progress_callback:
-                try:
-                    event = {
-                        "phase": "vast_downloading",
-                        "percentage": index / total * 100.0,
-                        "index": index,
-                        "total_files": total,
-                    }
-                    result = progress_callback(event)
-                    if asyncio.iscoroutine(result):
-                        await result
-                except Exception as exc:
+        total_bytes = sum(
+            max(0, int(artifact.get("size") or 0))
+            for artifact in artifacts
+            if isinstance(artifact, dict)
+        )
+        downloaded_bytes = 0
+        async with self._lora_download_lock:
+            for index, artifact in enumerate(artifacts, start=1):
+                last_error: Exception | None = None
+                downloaded: tuple[dict[str, Any], str | None, int] | None = None
+                for attempt in range(1, 4):
+                    try:
+                        downloaded = await asyncio.to_thread(download_one, artifact)
+                        last_error = None
+                        break
+                    except Exception as exc:
+                        last_error = exc
+                        print(
+                            "[VAST_DOWNLOAD][ERROR] LoRA 다운로드 시도 실패: "
+                            f"index={index}/{total}, attempt={attempt}/3, "
+                            f"artifact={artifact!r}, error={type(exc).__name__}: {exc}"
+                        )
+                        traceback.print_exc()
+                        if attempt < 3:
+                            await asyncio.sleep(attempt)
+                if downloaded is None:
+                    assert last_error is not None
                     print(
-                        "[VAST_DOWNLOAD][ERROR] 진행 콜백 실패: "
-                        f"error={type(exc).__name__}: {exc}"
+                        "[VAST_DOWNLOAD][ERROR] LoRA 다운로드 재시도 소진: "
+                        f"index={index}/{total}, artifact={artifact!r}, "
+                        f"error={type(last_error).__name__}: {last_error}"
                     )
-                    traceback.print_exc()
-        return {"artifacts": stored, "remote_delete_queued": []}
+                    raise last_error
+                stored_item, cleanup_queued, file_size = downloaded
+                stored.append(stored_item)
+                downloaded_bytes += file_size
+                if cleanup_queued:
+                    remote_delete_queued.append(cleanup_queued)
+                if progress_callback:
+                    try:
+                        event = {
+                            "phase": "vast_downloading",
+                            "percentage": index / total * 100.0,
+                            "index": index,
+                            "total_files": total,
+                            "downloaded_bytes": downloaded_bytes,
+                            "total_bytes": total_bytes,
+                            "remaining_bytes": max(0, total_bytes - downloaded_bytes),
+                            "remote_delete_queued": len(remote_delete_queued),
+                        }
+                        result = progress_callback(event)
+                        if asyncio.iscoroutine(result):
+                            await result
+                    except Exception as exc:
+                        print(
+                            "[VAST_DOWNLOAD][ERROR] 진행 콜백 실패: "
+                            f"event={event!r}, error={type(exc).__name__}: {exc}"
+                        )
+                        traceback.print_exc()
+        if remote_delete_queued or self.lora_cleanup_status()["pending_count"]:
+            self._schedule_lora_delete_flush()
+        return {
+            "artifacts": stored,
+            "remote_delete_queued": remote_delete_queued,
+        }

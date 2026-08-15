@@ -342,8 +342,11 @@ class QueueManager:
         self._vast_worker_tasks: dict[int, asyncio.Future] = {}
         self._vast_next_worker_id: int = 0
         self._vast_wakeup: asyncio.Event = asyncio.Event()
-        # Modal 학습 결과 다운로드는 GPU 워커 수와 무관하게 즉시 병렬 실행한다.
+        # 원격 학습 결과 다운로드는 GPU 워커 수와 무관한 공급자별 백그라운드 레인에서
+        # 실행한다. 학습 워커는 원격 artifact 목록만 넘긴 뒤 즉시 다음 GPU 작업을 받는다.
         self._modal_download_tasks: dict[str, asyncio.Task] = {}
+        self._vast_download_tasks: dict[str, asyncio.Task] = {}
+        self._vast_storage_wait_detail: dict = {}
         # 영상 후처리는 Comfy/Modal/LLM/챈섭 레인과 독립된 로컬 Vulkan 워커풀이다.
         # 동시 실행 수는 전역 설정 video_postprocess.worker_count가 결정하며,
         # 축소 시 실행 중인 마지막 워커는 현재 아이템을 마친 뒤 자연 종료한다.
@@ -378,6 +381,8 @@ class QueueManager:
         self.run_vast_workflow = None           # async def(workflow, ...) -> dict
         self.download_vast_artifacts = None     # async def(artifacts, progress_callback=...) -> dict
         self.is_vast_ready = None               # def() -> bool
+        self.check_vast_storage_headroom = None # async def(required_bytes=...) -> dict
+        self.get_vast_cleanup_status = None     # def() -> dict
         self.acquire_modal_warm_lease = None    # async def(reason=...) -> str | None
         self.release_modal_warm_lease = None    # async def(token, reason=...) -> bool
         # 삽화 생성 콜백 (server.py에서 주입)
@@ -1073,6 +1078,11 @@ class QueueManager:
                 task for task in self._vast_worker_tasks.values() if not task.done()
             ]),
             "vast_target_workers": self._target_vast_workers(),
+            "vast_download_active": len([
+                task for task in self._vast_download_tasks.values()
+                if not task.done()
+            ]),
+            "vast_storage_wait": copy.deepcopy(self._vast_storage_wait_detail),
             "current_video_postprocess_items": [
                 self._item_status_dict(item)
                 for _, item in sorted(self.current_video_postprocess_items.items())
@@ -1897,6 +1907,18 @@ class QueueManager:
                     print(f"[QUEUE:VAST] 원격 워커 {wid} 일시정지 대기")
                     await self._vast_wakeup.wait()
                     continue
+                if self._has_ready_pending("vast"):
+                    storage_ready = await self._vast_storage_ready_for_next()
+                    if not storage_ready:
+                        self._vast_wakeup.clear()
+                        try:
+                            await asyncio.wait_for(
+                                self._vast_wakeup.wait(),
+                                timeout=5.0,
+                            )
+                        except asyncio.TimeoutError:
+                            pass
+                        continue
                 item = self._pop_next_vast_item()
                 if item is None:
                     self._vast_wakeup.clear()
@@ -1921,6 +1943,107 @@ class QueueManager:
         finally:
             self.current_vast_items.pop(wid, None)
 
+    async def _vast_storage_ready_for_next(self) -> bool:
+        """다운로드·원격 정리가 겹칠 때 다음 Vast GPU 작업의 디스크 여유를 확인한다."""
+        active_downloads = [
+            item
+            for item in self.items
+            if item.type == "vast_lora_download" and item.status == "processing"
+        ]
+        cleanup_status: dict = {}
+        if callable(self.get_vast_cleanup_status):
+            try:
+                raw_cleanup_status = self.get_vast_cleanup_status()
+                if not isinstance(raw_cleanup_status, dict):
+                    raise TypeError(
+                        "Vast 정리 상태는 객체여야 합니다: "
+                        f"type={type(raw_cleanup_status).__name__}"
+                    )
+                cleanup_status = dict(raw_cleanup_status)
+            except Exception as exc:
+                print(
+                    "[QUEUE:VAST_STORAGE][ERROR] 정리 대기 상태 조회 실패: "
+                    f"error={type(exc).__name__}: {exc}"
+                )
+                traceback.print_exc()
+                cleanup_status = {"pending_count": 1, "pending_bytes": 0}
+
+        pending_cleanup_count = max(
+            0, int(cleanup_status.get("pending_count") or 0)
+        )
+        if not active_downloads and pending_cleanup_count == 0:
+            self._vast_storage_wait_detail = {}
+            return True
+
+        active_remaining_bytes = sum(
+            max(
+                0,
+                int(
+                    item.progress_detail.get("remaining_bytes")
+                    if item.progress_detail.get("remaining_bytes") is not None
+                    else item.params.get("artifact_bytes") or 0
+                ),
+            )
+            for item in active_downloads
+        )
+        required_bytes = max(
+            active_remaining_bytes,
+            max(0, int(cleanup_status.get("pending_bytes") or 0)),
+        )
+        if not callable(self.check_vast_storage_headroom):
+            self._vast_storage_wait_detail = {
+                "waiting": True,
+                "reason": "Vast 디스크 여유 확인 콜백 없음",
+                "required_bytes": required_bytes,
+                "cleanup_pending": pending_cleanup_count,
+            }
+            print(
+                "[QUEUE:VAST_STORAGE][ERROR] 다운로드/정리 중인데 디스크 여유 확인 "
+                f"콜백이 없습니다: required_bytes={required_bytes}, "
+                f"cleanup_pending={pending_cleanup_count}"
+            )
+            return False
+
+        try:
+            status = await self.check_vast_storage_headroom(
+                required_bytes=required_bytes,
+            )
+            if not isinstance(status, dict):
+                raise TypeError(
+                    "Vast 디스크 여유 응답은 객체여야 합니다: "
+                    f"type={type(status).__name__}"
+                )
+            safe = status.get("safe") is True
+            self._vast_storage_wait_detail = {
+                **dict(status),
+                "waiting": not safe,
+                "cleanup_pending": pending_cleanup_count,
+            }
+            if not safe:
+                print(
+                    "[QUEUE:VAST_STORAGE] 원격 정리 대기 중 후속 GPU 작업 보류: "
+                    f"free_bytes={status.get('free_bytes')}, "
+                    f"required_bytes={status.get('required_bytes')}, "
+                    f"cleanup_pending={pending_cleanup_count}, "
+                    f"active_downloads={len(active_downloads)}"
+                )
+                await self._notify_queue_updated()
+            return safe
+        except Exception as exc:
+            self._vast_storage_wait_detail = {
+                "waiting": True,
+                "reason": f"디스크 여유 확인 실패: {type(exc).__name__}: {exc}",
+                "required_bytes": required_bytes,
+                "cleanup_pending": pending_cleanup_count,
+            }
+            print(
+                "[QUEUE:VAST_STORAGE][ERROR] 디스크 여유 확인 실패, 후속 GPU 작업 보류: "
+                f"required_bytes={required_bytes}, error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            await self._notify_queue_updated()
+            return False
+
     async def _enqueue_modal_artifact_download(
         self,
         source_item: QueueItem,
@@ -1930,33 +2053,93 @@ class QueueManager:
         extra_data: dict,
         on_complete=None,
     ) -> QueueItem:
-        """Modal GPU 레인을 점유하지 않는 독립 LoRA 다운로드 작업을 즉시 시작한다."""
-        if not callable(self.download_modal_artifacts):
+        return await self._enqueue_remote_artifact_download(
+            "modal",
+            source_item,
+            artifacts,
+            event_type=event_type,
+            extra_data=extra_data,
+            on_complete=on_complete,
+        )
+
+    async def _enqueue_vast_artifact_download(
+        self,
+        source_item: QueueItem,
+        artifacts: list[dict],
+        *,
+        event_type: str,
+        extra_data: dict,
+        on_complete=None,
+    ) -> QueueItem:
+        return await self._enqueue_remote_artifact_download(
+            "vast",
+            source_item,
+            artifacts,
+            event_type=event_type,
+            extra_data=extra_data,
+            on_complete=on_complete,
+        )
+
+    async def _enqueue_remote_artifact_download(
+        self,
+        provider: str,
+        source_item: QueueItem,
+        artifacts: list[dict],
+        *,
+        event_type: str,
+        extra_data: dict,
+        on_complete=None,
+    ) -> QueueItem:
+        """원격 GPU 레인을 점유하지 않는 독립 LoRA 다운로드를 즉시 시작한다."""
+        if provider not in ("modal", "vast"):
             print(
-                "[QUEUE:MODAL_DOWNLOAD] 등록 실패: 다운로드 콜백 없음 "
+                "[QUEUE:REMOTE_DOWNLOAD][ERROR] 지원하지 않는 공급자: "
+                f"provider={provider!r}, source_item={source_item.id}"
+            )
+            raise ValueError(f"지원하지 않는 원격 다운로드 공급자입니다: {provider!r}")
+        download_callback = (
+            self.download_modal_artifacts
+            if provider == "modal"
+            else self.download_vast_artifacts
+        )
+        provider_label = "Modal" if provider == "modal" else "Vast"
+        log_prefix = f"QUEUE:{provider.upper()}_DOWNLOAD"
+        if not callable(download_callback):
+            print(
+                f"[{log_prefix}] 등록 실패: 다운로드 콜백 없음 "
                 f"source_item={source_item.id}, artifacts={len(artifacts or [])}"
             )
-            raise RuntimeError("Modal LoRA 다운로드 콜백이 설정되지 않았습니다")
+            raise RuntimeError(f"{provider_label} LoRA 다운로드 콜백이 설정되지 않았습니다")
         if not isinstance(artifacts, list) or not artifacts:
             print(
-                "[QUEUE:MODAL_DOWNLOAD] 등록 실패: artifact 없음 "
+                f"[{log_prefix}] 등록 실패: artifact 없음 "
                 f"source_item={source_item.id}, artifacts={artifacts!r}"
             )
-            raise ValueError("Modal LoRA 다운로드 artifact가 없습니다")
+            raise ValueError(f"{provider_label} LoRA 다운로드 artifact가 없습니다")
+
+        artifact_bytes = sum(
+            max(0, int(artifact.get("size") or 0))
+            for artifact in artifacts
+            if isinstance(artifact, dict)
+        )
 
         item = QueueItem(
             id=uuid.uuid4().hex[:12],
-            type="modal_lora_download",
+            type=f"{provider}_lora_download",
             label=f"{source_item.label} · LoRA 다운로드",
             status="processing",
             params={
+                "provider": provider,
                 "source_item_id": source_item.id,
                 "artifact_count": len(artifacts),
+                "artifact_bytes": artifact_bytes,
             },
             progress=0.0,
             progress_detail={
-                "phase": "modal_download_queued",
+                "phase": f"{provider}_download_queued",
                 "percentage": 0.0,
+                "total_bytes": artifact_bytes,
+                "remaining_bytes": artifact_bytes,
                 **dict(extra_data or {}),
             },
             started_at=time.time(),
@@ -1969,66 +2152,85 @@ class QueueManager:
         item.completion_future.add_done_callback(self._mark_completion_future_observed)
         self.items.append(item)
         task = asyncio.create_task(
-            self._run_modal_artifact_download(
+            self._run_remote_artifact_download(
+                provider,
                 item,
                 artifacts,
+                download_callback=download_callback,
                 event_type=event_type,
                 extra_data=dict(extra_data or {}),
                 on_complete=on_complete,
             )
         )
-        self._modal_download_tasks[item.id] = task
+        task_map = (
+            self._modal_download_tasks
+            if provider == "modal"
+            else self._vast_download_tasks
+        )
+        task_map[item.id] = task
 
         def forget_download_task(_task: asyncio.Task, item_id: str = item.id) -> None:
-            self._modal_download_tasks.pop(item_id, None)
+            task_map.pop(item_id, None)
+            if provider == "vast":
+                self._vast_wakeup.set()
 
         task.add_done_callback(forget_download_task)
         print(
-            "[QUEUE:MODAL_DOWNLOAD] 병렬 다운로드 큐 시작: "
+            f"[{log_prefix}] 백그라운드 다운로드 시작: "
             f"item={item.id}, source_item={source_item.id}, artifacts={len(artifacts)}, "
-            f"active={len(self._modal_download_tasks)}"
+            f"bytes={artifact_bytes}, active={len(task_map)}"
         )
         await self._notify_queue_updated()
         return item
 
-    async def _run_modal_artifact_download(
+    async def _run_remote_artifact_download(
         self,
+        provider: str,
         item: QueueItem,
         artifacts: list[dict],
         *,
+        download_callback,
         event_type: str,
         extra_data: dict,
         on_complete=None,
     ) -> None:
+        provider_label = "Modal" if provider == "modal" else "Vast"
+        log_prefix = f"QUEUE:{provider.upper()}_DOWNLOAD"
+
         async def on_progress(event: dict) -> None:
             detail = {**dict(event or {}), **extra_data}
             await self._notify_progress(item, detail)
+            if provider == "vast":
+                self._vast_wakeup.set()
             if self.notify_frontend:
                 await self.notify_frontend(
                     event_type,
                     {
                         **detail,
                         "message": (
-                            "Modal LoRA 다운로드 중"
-                            if detail.get("phase") == "modal_downloading"
-                            else "Modal LoRA 다운로드 완료"
+                            f"{provider_label} LoRA 다운로드 중"
+                            if detail.get("phase") == f"{provider}_downloading"
+                            else f"{provider_label} LoRA 다운로드 완료"
                         ),
                     },
                 )
 
         try:
-            result = await self.download_modal_artifacts(
+            result = await download_callback(
                 artifacts,
                 progress_callback=on_progress,
             )
             if on_complete:
-                on_complete()
+                callback_result = on_complete()
+                if asyncio.iscoroutine(callback_result):
+                    await callback_result
             item.status = "completed"
             item.result = result
             item.progress = 100.0
             item.progress_detail = {
-                "phase": "modal_download_complete",
+                "phase": f"{provider}_download_complete",
                 "percentage": 100.0,
+                "remaining_bytes": 0,
                 **extra_data,
             }
             if self.notify_frontend:
@@ -2036,14 +2238,15 @@ class QueueManager:
                     event_type,
                     {
                         "phase": "all_complete",
-                        "message": "Modal 학습 및 LoRA 다운로드 완료",
+                        "message": f"{provider_label} 학습 및 LoRA 다운로드 완료",
                         **extra_data,
                     },
                 )
+            remote_delete_queued = result.get("remote_delete_queued") or []
             print(
-                "[QUEUE:MODAL_DOWNLOAD] 완료: "
+                f"[{log_prefix}] 완료: "
                 f"item={item.id}, artifacts={len(result.get('artifacts') or [])}, "
-                f"delete_queued={len(result.get('remote_delete_queued') or [])}"
+                f"delete_queued={len(remote_delete_queued)}"
             )
         except Exception as exc:
             item.status = "failed"
@@ -2054,7 +2257,7 @@ class QueueManager:
                 **extra_data,
             }
             print(
-                "[QUEUE:MODAL_DOWNLOAD] 실패: "
+                f"[{log_prefix}] 실패: "
                 f"item={item.id}, artifacts={len(artifacts)}, "
                 f"error={type(exc).__name__}: {exc}"
             )
@@ -2064,7 +2267,10 @@ class QueueManager:
                     event_type,
                     {
                         "phase": "error",
-                        "message": f"LoRA 다운로드 실패: {type(exc).__name__}: {exc}",
+                        "message": (
+                            f"{provider_label} LoRA 다운로드 실패: "
+                            f"{type(exc).__name__}: {exc}"
+                        ),
                         **extra_data,
                     },
                 )
@@ -2073,6 +2279,8 @@ class QueueManager:
             self._settle_future(item)
             await self._notify_queue_updated()
             asyncio.ensure_future(self._deferred_prune(item))
+            if provider == "vast":
+                self._vast_wakeup.set()
 
     async def _deferred_prune(self, item: QueueItem):
         """완료/실패/취소 항목을 UI에 2초간 띄운 뒤 리스트에서 삭제한다.
@@ -4804,15 +5012,6 @@ class QueueManager:
                 if self.notify_frontend:
                     await self.notify_frontend(event_type, detail)
 
-            async def on_vast_download(progress: dict) -> None:
-                detail = {**dict(progress or {}), **(extra_data or {})}
-                await self._notify_progress(item, detail)
-                if self.notify_frontend:
-                    await self.notify_frontend(
-                        event_type,
-                        {**detail, "message": "Vast LoRA 다운로드 중"},
-                    )
-
             try:
                 await self._notify_progress(
                     item,
@@ -4852,29 +5051,40 @@ class QueueManager:
                         f"item={item.id}, prompt_id={prompt_id}, result={result!r}"
                     )
                     raise RuntimeError("Vast 학습 결과 다운로드 artifact가 없습니다")
-                download_result = await self.download_vast_artifacts(
+                download_item = await self._enqueue_vast_artifact_download(
+                    item,
                     artifacts,
-                    progress_callback=on_vast_download,
+                    event_type=event_type,
+                    extra_data=dict(extra_data or {}),
+                    on_complete=on_complete,
                 )
-                if on_complete:
-                    on_complete()
+                await self._notify_progress(
+                    item,
+                    {
+                        "phase": "vast_download_queued",
+                        "percentage": 100,
+                        "download_item_id": download_item.id,
+                        **(extra_data or {}),
+                    },
+                )
                 if self.notify_frontend:
                     await self.notify_frontend(
                         event_type,
                         {
-                            "phase": "all_complete",
-                            "message": "Vast 학습 및 LoRA 다운로드 완료",
+                            "phase": "training_complete",
+                            "message": "Vast 학습 완료 · LoRA 백그라운드 다운로드 시작",
+                            "download_item_id": download_item.id,
                             **(extra_data or {}),
                         },
                     )
                 print(
-                    "[QUEUE-MONITOR:VAST] 학습 및 다운로드 완료: "
+                    "[QUEUE-MONITOR:VAST] 학습 완료 및 다운로드 분리: "
                     f"item={item.id}, type={item.type}, prompt_id={prompt_id}, "
-                    f"artifacts={len(download_result.get('artifacts') or [])}"
+                    f"download_item={download_item.id}, artifacts={len(artifacts)}"
                 )
                 return prompt_id, {
                     "vast": result,
-                    "download": download_result,
+                    "download_item_id": download_item.id,
                 }
             except Exception as exc:
                 print(
