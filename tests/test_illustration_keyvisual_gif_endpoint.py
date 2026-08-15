@@ -73,8 +73,8 @@ def _build_two_frame_animation(image_format: str) -> bytes:
     return buf.getvalue()
 
 
-def _assert_image_security_headers(response) -> None:
-    assert response.headers["Cache-Control"] == "no-store"
+def _assert_image_security_headers(response, *, cache_control="no-store") -> None:
+    assert response.headers["Cache-Control"] == cache_control
     assert response.headers["X-Content-Type-Options"] == "nosniff"
 
 
@@ -193,6 +193,47 @@ async def test_bridge_serves_animated_webp_and_avif_with_exact_mime(
         _assert_image_security_headers(response)
         with Image.open(io.BytesIO(response.body)) as image:
             assert image.n_frames >= 2
+
+    pipeline._SESSIONS.pop(session_id, None)
+
+
+@pytest.mark.asyncio
+async def test_versioned_bridge_image_uses_bounded_private_cache(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(pipeline, "SESSION_DIR", str(tmp_path / "sessions"))
+    session_id = "versioned_cache_test_001"
+    pipeline._SESSIONS.pop(session_id, None)
+
+    png_bytes = _build_png()
+    pipeline.create_session(session_id, "context")
+    pipeline.set_session_result(
+        session_id,
+        [{"slot": 0, "raw_positive": "png", "raw_negative": ""}],
+        [png_bytes],
+    )
+
+    versioned = await server.handle_api_illustration_context_bridge_image(
+        _MatchRequest({"sid": session_id, "slot": "0"}, {"v": "1786765828-1"})
+    )
+    assert versioned.status == 200
+    assert versioned.body == png_bytes
+    _assert_image_security_headers(
+        versioned,
+        cache_control="private, max-age=3600, immutable",
+    )
+
+    malformed_revision = await server.handle_api_illustration_context_bridge_image(
+        _MatchRequest({"sid": session_id, "slot": "0"}, {"v": "latest"})
+    )
+    assert malformed_revision.status == 200
+    _assert_image_security_headers(malformed_revision)
+
+    missing_slot = await server.handle_api_illustration_context_bridge_image(
+        _MatchRequest({"sid": session_id, "slot": "99"}, {"v": "1786765828-1"})
+    )
+    assert missing_slot.status == 404
+    _assert_image_security_headers(missing_slot)
 
     pipeline._SESSIONS.pop(session_id, None)
 

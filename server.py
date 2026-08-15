@@ -3793,10 +3793,6 @@ def init_queue_manager():
     queue_manager.run_vast_workflow = vast_service.run_workflow
     queue_manager.download_vast_artifacts = vast_service.download_lora_artifacts
     queue_manager.is_vast_ready = vast_service.ready_for_queue
-    queue_manager.check_vast_storage_headroom = (
-        vast_service.check_lora_storage_headroom
-    )
-    queue_manager.get_vast_cleanup_status = vast_service.lora_cleanup_status
     vast_service.set_availability_callback(
         queue_manager.notify_vast_availability_changed
     )
@@ -6384,10 +6380,29 @@ async def handle_api_illustration_context_bridge_session(request: web.Request) -
         return web.json_response({"error": "bridge_session_failed"}, status=500)
 
 
-_ILLUSTRATION_BRIDGE_IMAGE_HEADERS = {
+_ILLUSTRATION_BRIDGE_IMAGE_NO_STORE_HEADERS = {
     "Cache-Control": "no-store",
     "X-Content-Type-Options": "nosniff",
 }
+
+_ILLUSTRATION_BRIDGE_IMAGE_VERSION_RE = re.compile(r"[0-9]{1,16}-[0-9]{1,12}")
+_ILLUSTRATION_BRIDGE_IMAGE_CACHE_CONTROL = "private, max-age=3600, immutable"
+
+
+def _illustration_bridge_image_headers(
+    request: web.Request,
+    *,
+    cache_success: bool = False,
+) -> dict[str, str]:
+    """Return private caching only for the module's immutable revision URLs."""
+    revision = str(request.query.get("v") or "")
+    cache_control = "no-store"
+    if cache_success and _ILLUSTRATION_BRIDGE_IMAGE_VERSION_RE.fullmatch(revision):
+        cache_control = _ILLUSTRATION_BRIDGE_IMAGE_CACHE_CONTROL
+    return {
+        "Cache-Control": cache_control,
+        "X-Content-Type-Options": "nosniff",
+    }
 
 
 def _detect_illustration_bridge_image_content_type(image_bytes: bytes) -> str | None:
@@ -6489,7 +6504,7 @@ async def handle_api_illustration_context_bridge_image(request: web.Request) -> 
         return web.json_response(
             {"error": "invalid_session_id"},
             status=400,
-            headers=_ILLUSTRATION_BRIDGE_IMAGE_HEADERS,
+            headers=_ILLUSTRATION_BRIDGE_IMAGE_NO_STORE_HEADERS,
         )
     try:
         slot = int(request.match_info.get("slot"))
@@ -6498,7 +6513,7 @@ async def handle_api_illustration_context_bridge_image(request: web.Request) -> 
         return web.json_response(
             {"error": "invalid_slot"},
             status=400,
-            headers=_ILLUSTRATION_BRIDGE_IMAGE_HEADERS,
+            headers=_ILLUSTRATION_BRIDGE_IMAGE_NO_STORE_HEADERS,
         )
     try:
         image_bytes = illustration_context_pipeline.session_image_by_slot(session_id, slot)
@@ -6508,14 +6523,14 @@ async def handle_api_illustration_context_bridge_image(request: web.Request) -> 
         return web.json_response(
             {"error": "bridge_image_failed"},
             status=500,
-            headers=_ILLUSTRATION_BRIDGE_IMAGE_HEADERS,
+            headers=_ILLUSTRATION_BRIDGE_IMAGE_NO_STORE_HEADERS,
         )
     if image_bytes is None:
         print(f"[ILLUST_CONTEXT:BRIDGE] 이미지 없음: session={session_id}, slot={slot}")
         return web.json_response(
             {"error": "image_not_ready_or_missing"},
             status=404,
-            headers=_ILLUSTRATION_BRIDGE_IMAGE_HEADERS,
+            headers=_ILLUSTRATION_BRIDGE_IMAGE_NO_STORE_HEADERS,
         )
     # 테스트 토글: slot -1(키비주얼) 요청이 오면 저장된 PNG 대신 2프레임 테스트 GIF를
     # 반환한다. ILLUST_KEYVIS_GIF_TEST=1 일 때만 작동하며, 평소엔 영향이 없다. 생성·저장
@@ -6525,7 +6540,7 @@ async def handle_api_illustration_context_bridge_image(request: web.Request) -> 
         return web.Response(
             body=_test_keyvis_gif_bytes(),
             content_type="image/gif",
-            headers=_ILLUSTRATION_BRIDGE_IMAGE_HEADERS,
+            headers=_illustration_bridge_image_headers(request, cache_success=True),
         )
     content_type = _detect_illustration_bridge_image_content_type(image_bytes)
     if content_type is None:
@@ -6537,12 +6552,12 @@ async def handle_api_illustration_context_bridge_image(request: web.Request) -> 
         return web.json_response(
             {"error": "unsupported_image_format"},
             status=415,
-            headers=_ILLUSTRATION_BRIDGE_IMAGE_HEADERS,
+            headers=_ILLUSTRATION_BRIDGE_IMAGE_NO_STORE_HEADERS,
         )
     return web.Response(
         body=image_bytes,
         content_type=content_type,
-        headers=_ILLUSTRATION_BRIDGE_IMAGE_HEADERS,
+        headers=_illustration_bridge_image_headers(request, cache_success=True),
     )
 
 
