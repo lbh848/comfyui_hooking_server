@@ -879,7 +879,8 @@ def manage_loras(payload: dict) -> dict:
 
 
 def generate(payload: dict) -> dict:
-    sync = _sync_environment(payload)
+    # 모델/LoRA 동기화는 수동 install 액션에서만 수행한다. 실행 경로에서는
+    # 원격 볼륨을 조회·업로드하지 않고 곧바로 워크플로우를 실행한다.
     input_files = {
         item["remote_name"]: Path(item["source_path"]).read_bytes()
         for item in (payload.get("input_files") or [])
@@ -1020,7 +1021,6 @@ def generate(payload: dict) -> dict:
         "artifacts": artifacts,
         "video_artifacts": video_artifacts,
         "text_outputs": list(remote_result.get("text_outputs") or []),
-        **sync,
     }
 
 
@@ -1255,7 +1255,7 @@ def download_video_artifact(payload: dict) -> dict:
 
 
 def convert_workflow(payload: dict) -> dict:
-    _sync_environment(payload)
+    # 변환은 동기화 없이 원격 ComfyUI에 바로 맡긴다. 모델 동기화는 수동 install 경로에서만.
     worker_cls = _worker_cls(payload)
     timeout_seconds = max(30, min(int(payload.get("timeout_seconds") or 600), 900))
     call = worker_cls().convert.spawn(payload["workflow"])

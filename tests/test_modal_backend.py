@@ -3360,8 +3360,9 @@ async def test_managed_workflow_run_tracks_result_without_local_comfy(
         assert action == "convert_workflow"
         assert timeout == 960
         assert payload["workflow"] == remote_workflow
-        assert payload["model_files"] == []
-        assert payload["lora_files"] == []
+        # 실행 경로에서는 모델 동기화를 하지 않으므로 자산 목록을 보내지 않는다.
+        assert "model_files" not in payload
+        assert "lora_files" not in payload
         return converted
 
     async def generated(actual_workflow: dict, *, timeout_seconds: int = 3300):
@@ -3370,8 +3371,6 @@ async def test_managed_workflow_run_tracks_result_without_local_comfy(
         return b"png", {
             "prompt_id": "prompt-1",
             "content_type": "image/png",
-            "model_sync": {"uploaded": 0},
-            "lora_sync": {"uploaded": 0},
         }
 
     monkeypatch.setattr(service, "account_connected", connected)
@@ -3387,7 +3386,8 @@ async def test_managed_workflow_run_tracks_result_without_local_comfy(
     assert completed["state"] == "completed"
     assert completed["remote_sha256"] == "a" * 64
     assert completed["result_available"] is True
-    assert completed["model_sync"] == {"uploaded": 0}
+    # generate 결과에 더 이상 동기화 통계가 없으므로 빈 값으로 기록된다.
+    assert completed["model_sync"] == {}
     assert "image_bytes" not in completed
     assert image == b"png"
     assert content_type == "image/png"

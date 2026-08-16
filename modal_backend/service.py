@@ -3688,14 +3688,13 @@ class ModalService:
         if not await self.account_connected(settings):
             print("[MODAL] 워크플로우 변환 실패: Modal 계정이 연결되어 있지 않습니다.")
             raise RuntimeError("Modal 계정이 연결되어 있지 않습니다.")
-        assets = await self._resolve_local_workflow_assets([workflow])
+        # 변환은 로컬 모델 자산 해석·동기화 없이 원격 ComfyUI에 바로 맡긴다.
+        # 모델 동기화는 사용자가 수동 install로만 수행한다.
         converted = await self._run_client_action(
             settings,
             "convert_workflow",
             timeout=960,
             workflow=workflow,
-            model_files=assets["model_files"],
-            lora_files=assets["lora_files"],
             timeout_seconds=900,
         )
         if not isinstance(converted, dict) or not self._is_api_workflow(converted):
@@ -3993,8 +3992,9 @@ class ModalService:
                 f"Modal 계정이 연결되지 않았습니다. profile={settings.profile}"
             )
             raise RuntimeError("Modal 계정이 연결되어 있지 않습니다.")
-        assets, workflow_input_files, explicit_input_files = await asyncio.gather(
-            self._resolve_local_workflow_assets([workflow]),
+        # 모델/LoRA 동기화는 수동 install에서만 수행한다. 실행 경로에서는 로컬
+        # 모델 색인 스캔과 해시 계산을 건너뛰고 입력 파일 해석만 한다.
+        workflow_input_files, explicit_input_files = await asyncio.gather(
             asyncio.to_thread(resolve_input_files, workflow, config),
             asyncio.to_thread(
                 resolve_explicit_input_files,
@@ -4042,36 +4042,6 @@ class ModalService:
                     if not isinstance(parsed, dict):
                         raise TypeError("Modal 학습 진행 이벤트는 객체여야 합니다.")
                     event = parsed
-                elif line.startswith(INSTALL_PROGRESS_PREFIX):
-                    raw_event = line[len(INSTALL_PROGRESS_PREFIX) :]
-                    parsed = json.loads(raw_event)
-                    if not isinstance(parsed, dict):
-                        raise TypeError("Modal 자산 동기화 이벤트는 객체여야 합니다.")
-                    event_name = str(parsed.get("event") or "")
-                    if event_name == "batch_start":
-                        event = {
-                            "phase": "modal_syncing",
-                            "percentage": 1,
-                            "message": (
-                                f"Modal {str(parsed.get('label') or '자산')} 동기화 확인 중"
-                            ),
-                        }
-                    elif event_name == "file_queued":
-                        event = {
-                            "phase": "modal_syncing",
-                            "percentage": 1,
-                            "message": (
-                                f"Modal 전송 준비: {str(parsed.get('name') or '')}"
-                            ),
-                        }
-                    elif event_name == "batch_complete":
-                        event = {
-                            "phase": "modal_syncing",
-                            "percentage": 1,
-                            "message": (
-                                f"Modal {str(parsed.get('label') or '자산')} 동기화 완료"
-                            ),
-                        }
                 if event is not None:
                     progress_queue.put_nowait(event)
             except Exception as exc:
@@ -4094,8 +4064,6 @@ class ModalService:
                 "environment": settings.environment,
                 "worker_gpu": settings.worker_gpu,
                 "workflow": workflow,
-                "model_files": assets["model_files"],
-                "lora_files": assets["lora_files"],
                 "input_files": input_files,
                 "artifact_prefixes": list(artifact_prefixes or []),
                 "require_images": bool(require_images),
@@ -4148,8 +4116,7 @@ class ModalService:
                 )
                 print(
                     f"[MODAL] 원격 생성 실패: app={settings.deployment_name}, "
-                    f"exit_code={code}, models={len(assets['model_files'])}, "
-                    f"loras={len(assets['lora_files'])}, inputs={len(input_files)}, "
+                    f"exit_code={code}, inputs={len(input_files)}, "
                     f"error={failure_error}, "
                     f"stderr={stderr[-2000:]}"
                 )
