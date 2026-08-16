@@ -12978,10 +12978,17 @@ async def handle_api_llm_edit_prompt(
         from modes.lighbd_service import _log_lighbd_history as _log_hist
         t0 = time.time()
         _hist_pid = f"edit_illustration_prompt:{backup_name}"
+        # 위젯 '모델:' 칸에는 라우팅 primary 실제 모델명 표시(video_mode 패턴).
+        # 호출 종류 라벨은 카드 타이틀(call_name)로 옮긴다.
+        _edit_model_name = (
+            llm_service.routing_primary_model("edit_illustration_prompt") or "")
+        _edit_call_label = f"삽화 프롬프트 편집 ({'비전' if image_b64 else '텍스트'})"
         try:
             await notify_frontend("lighbd_llm_stream", {
                 "type": "start",
-                "model": f"삽화 프롬프트 편집 ({'비전' if image_b64 else '텍스트'})",
+                "model": _edit_model_name,
+                "call_name": _edit_call_label,
+                "prompt_id": _hist_pid,
             })
         except Exception as _e:
             print(f"[LLM_EDIT] WARN: 위젯 start 알림 실패: {_e}")
@@ -13021,13 +13028,16 @@ async def handle_api_llm_edit_prompt(
             print(f"[LLM_EDIT] LLM 응답 없음(빈 문자열) name={backup_name}")
             try:
                 await notify_frontend("lighbd_llm_stream", {
-                    "type": "error", "error": "LLM 응답이 빈 문자열입니다."})
+                    "type": "error", "error": "LLM 응답이 빈 문자열입니다.",
+                    "model": _edit_model_name})
             except Exception as _e:
                 print(f"[LLM_EDIT] WARN: 위젯 error 알림 실패: {_e}")
             try:
                 _log_hist({
                     "ts": datetime.datetime.now().isoformat(timespec="seconds"),
                     "prompt_id": _hist_pid, "input": messages, "output": "",
+                    "call_name": _edit_call_label, "task_key": "edit_illustration_prompt",
+                    "model": _edit_model_name,
                     "elapsed": round(time.time() - t0, 3),
                     "status": "error", "error": "LLM 응답이 빈 문자열입니다.",
                 })
@@ -13040,13 +13050,16 @@ async def handle_api_llm_edit_prompt(
             print(f"[LLM_EDIT] LLM 호출 실패 name={backup_name}: {raw}")
             try:
                 await notify_frontend("lighbd_llm_stream", {
-                    "type": "error", "error": raw})
+                    "type": "error", "error": raw,
+                    "model": _edit_model_name})
             except Exception as _e:
                 print(f"[LLM_EDIT] WARN: 위젯 error 알림 실패: {_e}")
             try:
                 _log_hist({
                     "ts": datetime.datetime.now().isoformat(timespec="seconds"),
                     "prompt_id": _hist_pid, "input": messages, "output": "",
+                    "call_name": _edit_call_label, "task_key": "edit_illustration_prompt",
+                    "model": _edit_model_name,
                     "elapsed": round(time.time() - t0, 3),
                     "status": "error", "error": raw,
                 })
@@ -13067,6 +13080,7 @@ async def handle_api_llm_edit_prompt(
             await notify_frontend("lighbd_llm_stream", {
                 "type": "done",
                 "text": raw,
+                "model": _edit_model_name,
                 "completion_tokens": _edit_completion_tokens,
                 "prompt_tokens": _edit_prompt_tokens,
                 "elapsed": _edit_elapsed,
@@ -13079,6 +13093,8 @@ async def handle_api_llm_edit_prompt(
             _log_hist({
                 "ts": datetime.datetime.now().isoformat(timespec="seconds"),
                 "prompt_id": _hist_pid, "input": messages, "output": raw,
+                "call_name": _edit_call_label, "task_key": "edit_illustration_prompt",
+                "model": _edit_model_name,
                 "completion_tokens": _edit_completion_tokens,
                 "prompt_tokens": _edit_prompt_tokens,
                 "elapsed": round(_edit_elapsed, 3),
