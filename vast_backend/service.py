@@ -30,7 +30,7 @@ import time
 import traceback
 import uuid
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Callable
 
 import aiohttp
@@ -73,6 +73,8 @@ SSH_CONNECT_ATTEMPTS = 10
 SSH_INITIAL_AUTH_ATTEMPTS = 4
 SSH_KEY_REATTACH_SETTLE_SECONDS = 5
 WATCHDOG_STATUS_MAX_AGE_SECONDS = 25
+RECOVERY_HEALTH_ATTEMPTS = 12
+RECOVERY_HEALTH_POLL_SECONDS = 5
 ACCOUNT_STATUS_CACHE_SECONDS = 60
 ACCOUNT_STATUS_ERROR_CACHE_SECONDS = 15
 IMAGE_PULL_POLL_SECONDS = 20
@@ -81,7 +83,7 @@ ACTUAL_TRANSFER_WINDOW_SECONDS = 30
 ACTUAL_TRANSFER_PUBLISH_SECONDS = 1
 # LoRA/'upload' 모델 동시 sftp 스트림 수. 단일 paramiko 스트림은 RTT/창 크기에
 # 묶여 속도 상한이 낮아, Modal batch_upload처럼 병렬로 올려야 업링크를 채운다.
-UPLOAD_PARALLEL_STREAMS = 4
+UPLOAD_PARALLEL_STREAMS = 8
 LORA_DELETE_OUTBOX_VERSION = 1
 LORA_DELETE_RETRY_MIN_SECONDS = 5
 LORA_DELETE_RETRY_MAX_SECONDS = 60
@@ -124,6 +126,7 @@ class VastService:
         self._client: VastClient | None = None
         self._comfy_tunnel: ComfySshTunnel | None = None
         self._launch_task: asyncio.Task | None = None
+        self._recovery_task: asyncio.Task | None = None
         self._watchdog_task: asyncio.Task | None = None
         self._watchdog_launch_id = ""
         self._launch_lock = asyncio.Lock()
@@ -293,6 +296,22 @@ class VastService:
             )
             traceback.print_exc()
             return {}
+
+    @staticmethod
+    def _saved_launch_ready_hint(saved: dict[str, Any]) -> bool:
+        """구버전 guard까지 포함해 원격 빌드 완료 상태였는지 판별한다."""
+        if str(saved.get("state") or "") == "ready":
+            return True
+        if bool(saved.get("recovered_was_ready")):
+            return True
+        if str(saved.get("protection_state") or "") == "ready":
+            return True
+        return any(
+            str(step.get("key") or "") == "comfy"
+            and str(step.get("state") or "") == "done"
+            for step in saved.get("steps") or []
+            if isinstance(step, dict)
+        )
 
     def _persist_guard_state(self) -> None:
         """재시작 복구에 필요한 launch 상태를 UTF-8/원자 교체로 저장한다."""
@@ -778,7 +797,8 @@ class VastService:
             has_saved_match = saved_id == instance_id
             # 복구 파일과 연결되지 않는 과거 인스턴스는 자동 파괴하지 않는다.
             # UI/CMD에 경고하고 사용자가 직접 확인·파괴하게 한다.
-            was_ready = not has_saved_match or saved.get("state") == "ready"
+            saved_was_ready = self._saved_launch_ready_hint(saved)
+            was_ready = not has_saved_match or saved_was_ready
             self.launch = self._new_launch_state(
                 state="recovered",
                 launch_id=launch_id,
@@ -808,12 +828,19 @@ class VastService:
                 if int(row.get("id") or 0) != instance_id
             ]
             self._update_instance_status(target)
-            self._set_step_unchecked(
-                "recovered",
-                "running",
-                "서버 재시작 후 인스턴스 감시 복구 — 필요하면 즉시 파괴하세요",
+            reconnect_ready_instance = bool(has_saved_match and saved_was_ready)
+            recovery_detail = (
+                "서버 재시작 후 SSH 터널 자동 재연결 중"
+                if reconnect_ready_instance
+                else "서버 재시작 후 인스턴스 감시 복구 — 필요하면 즉시 파괴하세요"
             )
-            if was_ready:
+            self._set_step_unchecked("recovered", "running", recovery_detail)
+            if reconnect_ready_instance:
+                self.launch["protection_state"] = "recovering"
+                self.launch["protection_reason"] = (
+                    "준비 완료 인스턴스 확인 · SSH 터널 자동 재연결 중"
+                )
+            elif was_ready:
                 self.launch["protection_state"] = "manual_required"
                 self.launch["protection_reason"] = (
                     "준비 완료 인스턴스였지만 SSH 터널이 끊겨 수동 파괴 또는 재빌드가 필요합니다."
@@ -821,6 +848,8 @@ class VastService:
             self._cancel_events[launch_id] = threading.Event()
             self._persist_guard_state()
             self._ensure_watchdog(launch_id)
+            if reconnect_ready_instance:
+                self._schedule_ready_instance_recovery(instance_id, launch_id)
             print(
                 "[VAST_GUARD] 인스턴스 감시 복구 완료: "
                 f"instance={instance_id}, label={label}, was_ready={was_ready}, "
@@ -833,6 +862,238 @@ class VastService:
             )
             traceback.print_exc()
 
+    def _schedule_ready_instance_recovery(
+        self,
+        instance_id: int,
+        launch_id: str,
+    ) -> None:
+        existing = self._recovery_task
+        if existing is not None and not existing.done():
+            print(
+                "[VAST_GUARD] 기존 자동 재연결 작업이 실행 중이라 중복 시작하지 않습니다: "
+                f"task={existing.get_name()}, instance={instance_id}"
+            )
+            return
+        self._recovery_task = asyncio.create_task(
+            self._recover_ready_instance(instance_id, launch_id),
+            name=f"vast-reconnect-{launch_id}",
+        )
+
+    def _assert_remote_build_complete(
+        self,
+        host: str,
+        port: int,
+        private_key_path: str,
+        *,
+        authentication_attempt_limit: int | None = None,
+    ) -> None:
+        """SSH 인증과 원격 빌드 완료 플래그를 함께 검증한다."""
+        ssh = self._ssh_connect(
+            host,
+            port,
+            private_key_path,
+            authentication_attempt_limit=authentication_attempt_limit,
+        )
+        try:
+            command = (
+                f"test -f {shlex.quote(BUILD_COMPLETE_FLAG)} "
+                "&& printf '__SOYA_BUILD_COMPLETE__'"
+            )
+            _stdin, stdout, stderr = ssh.exec_command(command, timeout=30)
+            exit_code = stdout.channel.recv_exit_status()
+            output = stdout.read().decode("utf-8", "replace").strip()
+            error = stderr.read().decode("utf-8", "replace").strip()
+            if exit_code != 0 or output != "__SOYA_BUILD_COMPLETE__":
+                print(
+                    "[VAST_GUARD][ERROR] 원격 빌드 완료 플래그 확인 실패: "
+                    f"endpoint={host}:{port}, exit={exit_code}, "
+                    f"output={output!r}, stderr={error[-500:]!r}"
+                )
+                raise VastApiError(
+                    "원격 ComfyUI 빌드 완료 플래그를 확인하지 못했습니다: "
+                    f"{BUILD_COMPLETE_FLAG}"
+                )
+        except Exception as exc:
+            print(
+                "[VAST_GUARD][ERROR] 원격 빌드 완료 상태 검증 실패: "
+                f"endpoint={host}:{port}, error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            raise
+        finally:
+            try:
+                ssh.close()
+            except Exception as exc:
+                print(
+                    "[VAST_GUARD][ERROR] 원격 완료 확인 SSH 종료 실패: "
+                    f"endpoint={host}:{port}, error={type(exc).__name__}: {exc}"
+                )
+                traceback.print_exc()
+
+    async def _wait_recovered_comfy_health(self, comfy_url: str) -> None:
+        """복원한 로컬 터널로 원격 ComfyUI가 실제 응답하는지 확인한다."""
+        last_error = "응답 없음"
+        timeout = aiohttp.ClientTimeout(total=10)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            for attempt in range(1, RECOVERY_HEALTH_ATTEMPTS + 1):
+                self._check_cancelled()
+                try:
+                    async with session.get(f"{comfy_url}/system_stats") as response:
+                        if response.status == 200:
+                            self._event(
+                                "recovery",
+                                f"재연결 ComfyUI health HTTP 200: {comfy_url}",
+                            )
+                            return
+                        last_error = f"HTTP {response.status}"
+                        print(
+                            "[VAST_GUARD][ERROR] 재연결 ComfyUI health 응답 실패: "
+                            f"url={comfy_url}, attempt={attempt}/"
+                            f"{RECOVERY_HEALTH_ATTEMPTS}, status={response.status}"
+                        )
+                except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+                    last_error = f"{type(exc).__name__}: {exc}"
+                    print(
+                        "[VAST_GUARD][ERROR] 재연결 ComfyUI health 요청 실패: "
+                        f"url={comfy_url}, attempt={attempt}/"
+                        f"{RECOVERY_HEALTH_ATTEMPTS}, error={last_error}"
+                    )
+                    traceback.print_exc()
+                if attempt < RECOVERY_HEALTH_ATTEMPTS:
+                    await asyncio.sleep(RECOVERY_HEALTH_POLL_SECONDS)
+        raise VastApiError(
+            "복원한 SSH 터널에서 ComfyUI 응답을 확인하지 못했습니다: "
+            f"url={comfy_url}, last={last_error}"
+        )
+
+    async def _recover_ready_instance(
+        self,
+        instance_id: int,
+        launch_id: str,
+    ) -> None:
+        """완료된 기존 인스턴스의 SSH 터널과 큐 가용 상태를 자동 복원한다."""
+        context_token = _LAUNCH_CONTEXT.set(launch_id)
+        try:
+            self._check_cancelled()
+            client = self._client_or_raise()
+            private_key_path, public_key = await asyncio.to_thread(
+                self.ensure_ssh_keypair
+            )
+            self._set_step("recovered", "running", "SSH 접속 정보 확인 중")
+            ssh_host, ssh_port = await self._wait_ssh(instance_id)
+            self._set_step(
+                "recovered",
+                "running",
+                f"{ssh_host}:{ssh_port} · 원격 완료 상태 확인 중",
+            )
+            try:
+                await asyncio.to_thread(
+                    self._assert_remote_build_complete,
+                    ssh_host,
+                    ssh_port,
+                    private_key_path,
+                    authentication_attempt_limit=SSH_INITIAL_AUTH_ATTEMPTS,
+                )
+            except SshAuthenticationError as exc:
+                print(
+                    "[VAST_GUARD] 자동 재연결 SSH 인증 거부 · 키 재부착 시작: "
+                    f"instance={instance_id}, endpoint={ssh_host}:{ssh_port}, "
+                    f"error={exc}"
+                )
+                traceback.print_exc()
+                self._event(
+                    "recovery",
+                    f"자동 재연결 SSH 키 복구 시작: instance={instance_id}",
+                )
+                ssh_host, ssh_port = await self._recover_instance_ssh_key(
+                    client,
+                    instance_id,
+                    public_key,
+                )
+                await asyncio.to_thread(
+                    self._assert_remote_build_complete,
+                    ssh_host,
+                    ssh_port,
+                    private_key_path,
+                )
+
+            self._check_cancelled()
+            self._active_ssh_endpoint = (
+                ssh_host,
+                ssh_port,
+                private_key_path,
+            )
+            self._set_step("recovered", "running", "SSH 로컬 터널 재생성 중")
+            comfy_url = await asyncio.to_thread(
+                self._open_comfy_tunnel,
+                ssh_host,
+                ssh_port,
+                private_key_path,
+            )
+            self._set_step(
+                "recovered",
+                "running",
+                f"{comfy_url} · ComfyUI 응답 확인 중",
+            )
+            await self._wait_recovered_comfy_health(comfy_url)
+            self._check_cancelled()
+
+            self.launch["comfy_base_url"] = comfy_url
+            self.launch["state"] = "ready"
+            self.launch["recovered_was_ready"] = True
+            self.launch["protection_state"] = "ready"
+            self.launch["protection_reason"] = "서버 재시작 후 SSH 터널 자동 재연결 완료"
+            self.launch["error"] = ""
+            self._set_step("recovered", "done", comfy_url)
+            self._persist_guard_state()
+            self._event(
+                "recovery",
+                f"인스턴스 #{instance_id} 자동 재연결 완료: {comfy_url}",
+            )
+            self._notify_availability_changed()
+            self._schedule_lora_delete_flush()
+        except asyncio.CancelledError:
+            print(
+                "[VAST_GUARD] 자동 재연결 작업 취소: "
+                f"instance={instance_id}, launch={launch_id}"
+            )
+            raise
+        except LaunchCancelled as exc:
+            print(
+                "[VAST_GUARD] 자동 재연결 협력 취소: "
+                f"instance={instance_id}, launch={launch_id}, error={exc}"
+            )
+        except Exception as exc:
+            print(
+                "[VAST_GUARD][ERROR] 준비 완료 인스턴스 자동 재연결 실패: "
+                f"instance={instance_id}, launch={launch_id}, "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            self._close_comfy_tunnel()
+            self._active_ssh_endpoint = None
+            if (
+                launch_id == str(self.launch.get("launch_id") or "")
+                and self.launch.get("state") not in {"destroying", "destroyed"}
+            ):
+                self.launch["state"] = "recovered"
+                self.launch["comfy_base_url"] = ""
+                self.launch["recovered_was_ready"] = True
+                self.launch["protection_state"] = "manual_required"
+                self.launch["protection_reason"] = (
+                    "SSH 터널 자동 재연결 실패 — 인스턴스를 확인하거나 즉시 파괴하세요: "
+                    f"{type(exc).__name__}: {exc}"
+                )
+                self._set_step_unchecked(
+                    "recovered",
+                    "error",
+                    f"자동 재연결 실패: {type(exc).__name__}: {exc}",
+                )
+                self._persist_guard_state()
+                self._notify_availability_changed()
+        finally:
+            _LAUNCH_CONTEXT.reset(context_token)
+
     async def close(self) -> None:
         launch_id = str(self.launch.get("launch_id") or "")
         cancel_event = self._cancel_events.get(launch_id)
@@ -842,6 +1103,7 @@ class VastService:
             task
             for task in (
                 self._launch_task,
+                self._recovery_task,
                 self._watchdog_task,
                 self._lora_delete_flush_task,
             )
@@ -1446,6 +1708,30 @@ class VastService:
 
     # ── 마법사 계획 (②단계) ─────────────────────────────────
 
+    @staticmethod
+    def _normalize_lora_upload_remote_path(value: Any) -> str:
+        """Vast models/loras 아래에서 사용할 관리 LoRA 상대 경로를 검증한다."""
+        raw = str(value or "").strip().replace("\\", "/")
+        path = PurePosixPath(raw)
+        raw_parts = raw.split("/")
+        if (
+            not raw
+            or path.is_absolute()
+            or len(path.parts) < 2
+            or path.parts[0] != "SOYA_CHAR_LORA"
+            or any(part in {"", ".", ".."} for part in raw_parts)
+            or any(ord(character) < 32 for character in raw)
+        ):
+            print(
+                "[VAST_LORA][ERROR] 안전하지 않은 LoRA 원격 경로 거부: "
+                f"remote_path={value!r}"
+            )
+            raise ValueError(
+                "Vast LoRA 원격 경로는 SOYA_CHAR_LORA 하위의 "
+                f"안전한 상대 경로여야 합니다: {value!r}"
+            )
+        return path.as_posix()
+
     async def resolve_lora_item_keys(
         self, item_keys: list[str] | None
     ) -> list[dict[str, Any]]:
@@ -1478,10 +1764,14 @@ class VastService:
         for item in payload.get("items") or []:
             for spec in item.get("files") or []:
                 size_bytes = int(spec.get("size") or 0)
+                remote_path = self._normalize_lora_upload_remote_path(
+                    spec.get("remote_path")
+                )
                 files.append(
                     {
                         "name": str(spec.get("name") or ""),
                         "path": str(spec.get("source_path") or ""),
+                        "remote_path": remote_path,
                         "size": size_bytes,
                         "size_bytes": size_bytes,
                         "category": str(item.get("category") or ""),
@@ -1769,13 +2059,10 @@ class VastService:
         """별도 선택 LoRA가 같은 원격 파일을 올리면 고정 계획의 중복 전송을 제거한다."""
         explicit_keys: set[str] = set()
         for item in lora_files:
-            raw_path = str(item.get("path") or item.get("source_path") or "").strip()
-            raw_name = str(item.get("name") or "").strip()
-            filename = Path(raw_path).name if raw_path else Path(raw_name).name
-            if not filename:
-                print(f"[VAST][PLAN] 별도 LoRA 파일명이 비어 있어 중복 확인 제외: {item!r}")
-                continue
-            explicit_keys.add(f"loras/{filename}".casefold())
+            remote_path = VastService._normalize_lora_upload_remote_path(
+                item.get("remote_path")
+            )
+            explicit_keys.add(f"loras/{remote_path}".casefold())
 
         if not explicit_keys:
             return model_plan
@@ -2882,6 +3169,40 @@ class VastService:
                     )
                     traceback.print_exc()
 
+    @staticmethod
+    def _ensure_remote_upload_directories(
+        ssh: Any, jobs: list[dict[str, str]]
+    ) -> None:
+        directories = sorted(
+            {
+                posixpath.dirname(str(job.get("remote") or ""))
+                for job in jobs
+                if posixpath.dirname(str(job.get("remote") or ""))
+            }
+        )
+        if not directories:
+            return
+        command = "mkdir -p -- " + " ".join(
+            shlex.quote(directory) for directory in directories
+        )
+        try:
+            _stdin, stdout, stderr = ssh.exec_command(command, timeout=60)
+            exit_code = stdout.channel.recv_exit_status()
+            error = stderr.read().decode("utf-8", "replace").strip()
+            if exit_code != 0:
+                raise RuntimeError(
+                    "Vast 업로드 폴더 생성 실패: "
+                    f"exit={exit_code}, directories={directories!r}, "
+                    f"stderr={error[-1000:]}"
+                )
+        except Exception as exc:
+            print(
+                "[VAST][UPLOAD][ERROR] 원격 업로드 폴더 준비 실패: "
+                f"directories={directories!r}, error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            raise
+
     def _upload_all(
         self,
         host: str,
@@ -2898,7 +3219,6 @@ class VastService:
             ssh = self._ssh_connect(host, port, private_key_path)
             self._check_cancelled()
             sftp = ssh.open_sftp()
-            ssh.exec_command("mkdir -p /root/ComfyUI/models/loras")
 
             # Modal이 이미지 빌드에서 하던 노드 설치를 그대로 실행.
             self._set_step("upload", "running", "로컬 노드 전송·설치")
@@ -2907,12 +3227,15 @@ class VastService:
 
             jobs: list[dict[str, str]] = []
             for item in lora_files:
+                remote_path = self._normalize_lora_upload_remote_path(
+                    item.get("remote_path")
+                )
                 jobs.append(
                     {
                         "step_key": "upload_loras",
                         "name": str(item["name"]),
                         "local": str(item["path"]),
-                        "remote": f"{COMFY_ROOT_REMOTE}/models/loras/{Path(item['name']).name}",
+                        "remote": f"{COMFY_ROOT_REMOTE}/models/loras/{remote_path}",
                     }
                 )
             for m in model_plan.get("models") or []:
@@ -2927,6 +3250,7 @@ class VastService:
                     }
                 )
             if jobs:
+                self._ensure_remote_upload_directories(ssh, jobs)
                 transferred = self._run_parallel_sftp_uploads(
                     host, port, private_key_path, jobs
                 )
@@ -3618,6 +3942,13 @@ class VastService:
                     and launch_task is not asyncio.current_task()
                 ):
                     launch_task.cancel()
+                recovery_task = self._recovery_task
+                if (
+                    recovery_task is not None
+                    and not recovery_task.done()
+                    and recovery_task is not asyncio.current_task()
+                ):
+                    recovery_task.cancel()
 
             verified = False
             last_error: Exception | None = None
@@ -4222,7 +4553,7 @@ class VastService:
                                 progress_event: dict[str, Any] | None = None
                                 if event_type == "md_soya_progress":
                                     progress_event = dict(data)
-                                elif event_type == "progress":
+                                elif event_type in ("progress", "progress_state"):
                                     progress_event = {
                                         "phase": "vast_running",
                                         "value": data.get("value"),
@@ -4378,12 +4709,14 @@ class VastService:
         *,
         timeout_seconds: int = 3_300,
         input_paths: list[str] | tuple[str, ...] | None = None,
+        progress_callback: Callable[[dict[str, Any]], Any] | None = None,
     ) -> tuple[bytes, dict[str, Any]]:
         result = await self.run_workflow(
             workflow,
             timeout_seconds=timeout_seconds,
             input_paths=input_paths,
             require_images=True,
+            progress_callback=progress_callback,
         )
         first = result["images"][0]
         return first["bytes"], {

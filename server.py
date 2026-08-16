@@ -2753,6 +2753,60 @@ def count_ksampler_total_steps(workflow: dict) -> int:
     return total
 
 
+def normalize_vast_generation_progress(
+    detail: dict,
+    *,
+    operation: str,
+) -> tuple[int | float, int | float] | None:
+    """VAST의 구조화 진행 이벤트를 기존 이미지 진행 콜백 형식으로 바꾼다."""
+    if not isinstance(detail, dict):
+        print(
+            "[VAST_PROGRESS] 진행 이벤트 형식 오류: "
+            f"operation={operation}, type={type(detail).__name__}, detail={detail!r}"
+        )
+        return None
+
+    candidates = (
+        (detail.get("value"), detail.get("max")),
+        (detail.get("current"), detail.get("total")),
+        (detail.get("step"), detail.get("total")),
+        (detail.get("percentage"), 100),
+    )
+    raw_value = None
+    raw_max = None
+    for candidate_value, candidate_max in candidates:
+        if candidate_value is not None and candidate_max is not None:
+            raw_value = candidate_value
+            raw_max = candidate_max
+            break
+    if raw_value is None or raw_max is None:
+        print(
+            "[VAST_PROGRESS] 표시 가능한 단계값이 없어 이벤트 생략: "
+            f"operation={operation}, detail={detail!r}"
+        )
+        return None
+
+    try:
+        value = float(raw_value)
+        max_value = float(raw_max)
+        if not math.isfinite(value) or not math.isfinite(max_value) or max_value <= 0:
+            raise ValueError(
+                f"유효하지 않은 진행 단계: value={raw_value!r}, max={raw_max!r}"
+            )
+    except (TypeError, ValueError) as e:
+        print(
+            "[VAST_PROGRESS] 진행 단계 파싱 실패: "
+            f"operation={operation}, detail={detail!r}, error={e}"
+        )
+        traceback.print_exc()
+        return None
+
+    value = max(0.0, min(value, max_value))
+    normalized_value = int(value) if value.is_integer() else value
+    normalized_max = int(max_value) if max_value.is_integer() else max_value
+    return normalized_value, normalized_max
+
+
 async def wait_for_real_comfy(ws, real_prompt_id: str, progress_callback=None, total_steps: int = 0, error_holder: dict | None = None) -> dict | None:
     print(f"[PROXY] WS 대기 시작 (prompt={real_prompt_id}, total_steps={total_steps})")
     saw_executing = False
@@ -3050,7 +3104,33 @@ async def generate_image_with_prompt(
                 await progress_callback(0, 1)
             await notify_frontend("generation_progress", {"value": 0, "max": 1})
             service = remote_comfy_service_for_target(execution_target)
-            image_bytes, remote_result = await service.generate(risu_prompt)
+            generate_kwargs = {}
+            if execution_target == VAST_COMFY_TARGET:
+                async def on_vast_progress(detail: dict) -> None:
+                    normalized = normalize_vast_generation_progress(
+                        detail,
+                        operation="illustration",
+                    )
+                    if normalized is None:
+                        return
+                    value, max_value = normalized
+                    print(
+                        "[VAST_GEN_PROGRESS] 삽화 생성 진행: "
+                        f"{value}/{max_value}, phase={detail.get('phase', '')!r}, "
+                        f"node={detail.get('node', '')!r}"
+                    )
+                    if progress_callback:
+                        await progress_callback(value, max_value)
+                    await notify_frontend(
+                        "generation_progress",
+                        {"value": value, "max": max_value},
+                    )
+
+                generate_kwargs["progress_callback"] = on_vast_progress
+            image_bytes, remote_result = await service.generate(
+                risu_prompt,
+                **generate_kwargs,
+            )
             if progress_callback:
                 await progress_callback(1, 1)
             await notify_frontend("generation_progress", {"value": 1, "max": 1})
@@ -3223,9 +3303,29 @@ async def submit_workflow_to_comfy(
             if progress_callback:
                 await progress_callback(0, 1)
             service = remote_comfy_service_for_target(execution_target)
+            generate_kwargs = {"input_paths": input_paths}
+            if execution_target == VAST_COMFY_TARGET:
+                async def on_vast_progress(detail: dict) -> None:
+                    normalized = normalize_vast_generation_progress(
+                        detail,
+                        operation=task_key,
+                    )
+                    if normalized is None:
+                        return
+                    value, max_value = normalized
+                    print(
+                        "[VAST_WORKFLOW_PROGRESS] 이미지 워크플로우 진행: "
+                        f"task={task_key}, {value}/{max_value}, "
+                        f"phase={detail.get('phase', '')!r}, "
+                        f"node={detail.get('node', '')!r}"
+                    )
+                    if progress_callback:
+                        await progress_callback(value, max_value)
+
+                generate_kwargs["progress_callback"] = on_vast_progress
             image_bytes, metadata = await service.generate(
                 workflow_api,
-                input_paths=input_paths,
+                **generate_kwargs,
             )
             if progress_callback:
                 await progress_callback(1, 1)

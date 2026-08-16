@@ -33,6 +33,28 @@ async def test_vast_service_runs_comfy_workflow_and_downloads_image(
         for ws in sockets:
             await ws.send_json(
                 {
+                    "type": "progress",
+                    "data": {
+                        "prompt_id": "prompt-1",
+                        "node": "1",
+                        "value": 2,
+                        "max": 10,
+                    },
+                }
+            )
+            await ws.send_json(
+                {
+                    "type": "progress_state",
+                    "data": {
+                        "prompt_id": "prompt-1",
+                        "node": "1",
+                        "value": 3,
+                        "max": 10,
+                    },
+                }
+            )
+            await ws.send_json(
+                {
                     "type": "executing",
                     "data": {"prompt_id": "prompt-1", "node": None},
                 }
@@ -78,6 +100,10 @@ async def test_vast_service_runs_comfy_workflow_and_downloads_image(
     monkeypatch.setattr(service, "_upload_workflow_inputs_sync", lambda *_args: [])
     monkeypatch.setattr(service, "_snapshot_lora_artifacts_sync", lambda *_args: {})
     monkeypatch.setattr(service, "_collect_lora_artifacts_sync", lambda *_args: [])
+    progress_events: list[dict] = []
+
+    async def on_progress(event: dict) -> None:
+        progress_events.append(dict(event))
 
     try:
         result = await service.run_workflow(
@@ -87,7 +113,8 @@ async def test_vast_service_runs_comfy_workflow_and_downloads_image(
                     "inputs": {},
                     "_meta": {"title": "WD_TAG_TEXT"},
                 }
-            }
+            },
+            progress_callback=on_progress,
         )
     finally:
         await server.close()
@@ -101,6 +128,57 @@ async def test_vast_service_runs_comfy_workflow_and_downloads_image(
             "node_title": "WD_TAG_TEXT",
             "text": "tag_one, tag_two",
         }
+    ]
+    assert progress_events == [
+        {
+            "phase": "vast_running",
+            "value": 2,
+            "max": 10,
+            "node": "1",
+        },
+        {
+            "phase": "vast_running",
+            "value": 3,
+            "max": 10,
+            "node": "1",
+        },
+    ]
+
+
+@pytest.mark.asyncio
+async def test_vast_generate_forwards_progress_callback(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = VastService(tmp_path, lambda: {"vast_enabled": True})
+    observed: list[dict] = []
+
+    async def on_progress(event: dict) -> None:
+        observed.append(dict(event))
+
+    async def run_workflow(_workflow: dict, **kwargs) -> dict:
+        assert kwargs["progress_callback"] is on_progress
+        await kwargs["progress_callback"](
+            {"phase": "vast_running", "value": 4, "max": 10}
+        )
+        return {
+            "prompt_id": "prompt-generate",
+            "images": [
+                {"bytes": b"image", "content_type": "image/png"}
+            ],
+        }
+
+    monkeypatch.setattr(service, "run_workflow", run_workflow)
+
+    image, metadata = await service.generate(
+        {"1": {"class_type": "SaveImage", "inputs": {}}},
+        progress_callback=on_progress,
+    )
+
+    assert image == b"image"
+    assert metadata["prompt_id"] == "prompt-generate"
+    assert observed == [
+        {"phase": "vast_running", "value": 4, "max": 10}
     ]
 
 

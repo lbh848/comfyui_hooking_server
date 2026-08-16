@@ -44,6 +44,253 @@ from vast_backend.service import (
 from vast_backend.ssh_tunnel import DEFAULT_LOCAL_PORT, ComfySshTunnel
 
 
+@pytest.mark.parametrize(
+    ("saved", "expected"),
+    [
+        ({"state": "ready"}, True),
+        ({"state": "recovered", "recovered_was_ready": True}, True),
+        ({"state": "recovered", "protection_state": "ready"}, True),
+        (
+            {
+                "state": "recovered",
+                "recovered_was_ready": False,
+                "steps": [{"key": "comfy", "state": "done"}],
+            },
+            True,
+        ),
+        (
+            {
+                "state": "recovered",
+                "steps": [{"key": "comfy", "state": "running"}],
+            },
+            False,
+        ),
+    ],
+)
+def test_vast_saved_launch_ready_hint_survives_repeated_restart(
+    saved: dict[str, Any],
+    expected: bool,
+) -> None:
+    assert VastService._saved_launch_ready_hint(saved) is expected
+
+
+@pytest.mark.asyncio
+async def test_vast_startup_schedules_tunnel_recovery_for_completed_saved_launch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance_id = 47_833_592
+    launch_id = "saved-ready"
+    guard_path = tmp_path / "runtime" / "vast_launch_guard.json"
+    guard_path.parent.mkdir(parents=True)
+    guard_path.write_text(
+        json.dumps(
+            {
+                "state": "recovered",
+                "launch_id": launch_id,
+                "label": f"soya-vast-{launch_id}",
+                "instance_id": instance_id,
+                "recovered_was_ready": False,
+                "steps": [{"key": "comfy", "state": "done"}],
+                "events": [],
+                "started_at_epoch": 100.0,
+                "contract_started_at_epoch": 100.0,
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeClient:
+        async def list_instances(self) -> list[dict[str, Any]]:
+            return [
+                {
+                    "id": instance_id,
+                    "label": f"soya-vast-{launch_id}",
+                    "actual_status": "running",
+                    "status_msg": "ready",
+                    "start_date": 100.0,
+                    "dph_total": 0.16,
+                }
+            ]
+
+    service = VastService(
+        tmp_path,
+        lambda: {"vast_enabled": True, "vast_api_key": "test-key"},
+    )
+    service._client = FakeClient()  # type: ignore[assignment]
+    scheduled: list[tuple[int, str]] = []
+    monkeypatch.setattr(service, "_ensure_watchdog", lambda _launch_id: None)
+    monkeypatch.setattr(
+        service,
+        "_schedule_ready_instance_recovery",
+        lambda target, recovered_launch_id: scheduled.append(
+            (target, recovered_launch_id)
+        ),
+    )
+
+    await service.startup()
+
+    assert scheduled == [(instance_id, launch_id)]
+    assert service.launch["state"] == "recovered"
+    assert service.launch["recovered_was_ready"] is True
+    assert service.launch["protection_state"] == "recovering"
+    recovered_step = {
+        step["key"]: step for step in service.launch["steps"]
+    }["recovered"]
+    assert recovered_step["state"] == "running"
+    assert "자동 재연결" in recovered_step["detail"]
+
+
+@pytest.mark.asyncio
+async def test_vast_ready_instance_recovery_restores_tunnel_and_queue_availability(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    launch_id = "recover-success"
+    instance_id = 42
+    service = VastService(
+        tmp_path,
+        lambda: {"vast_enabled": True, "vast_api_key": "test-key"},
+    )
+    service._client = object()  # type: ignore[assignment]
+    service.launch = service._new_launch_state(
+        state="recovered",
+        launch_id=launch_id,
+        label=f"soya-vast-{launch_id}",
+    )
+    service.launch["instance_id"] = instance_id
+    service.launch["recovered_was_ready"] = True
+    service._cancel_events[launch_id] = threading.Event()
+
+    async def fake_wait_ssh(_instance_id: int) -> tuple[str, int]:
+        return "ssh.example", 22022
+
+    async def fake_health(comfy_url: str) -> None:
+        assert comfy_url == "http://127.0.0.1:18188"
+
+    def fake_open_tunnel(_host: str, _port: int, _key_path: str) -> str:
+        service._comfy_tunnel = object()  # type: ignore[assignment]
+        return "http://127.0.0.1:18188"
+
+    persisted: list[str] = []
+    availability_notifications: list[bool] = []
+    flushes: list[bool] = []
+    monkeypatch.setattr(
+        service,
+        "ensure_ssh_keypair",
+        lambda: ("private-key", "ssh-rsa public-key"),
+    )
+    monkeypatch.setattr(service, "_wait_ssh", fake_wait_ssh)
+    monkeypatch.setattr(
+        service,
+        "_assert_remote_build_complete",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(service, "_open_comfy_tunnel", fake_open_tunnel)
+    monkeypatch.setattr(service, "_wait_recovered_comfy_health", fake_health)
+    monkeypatch.setattr(
+        service,
+        "_persist_guard_state",
+        lambda: persisted.append(str(service.launch.get("state") or "")),
+    )
+    monkeypatch.setattr(
+        service,
+        "_notify_availability_changed",
+        lambda: availability_notifications.append(True),
+    )
+    monkeypatch.setattr(
+        service,
+        "_schedule_lora_delete_flush",
+        lambda: flushes.append(True),
+    )
+
+    await service._recover_ready_instance(instance_id, launch_id)
+
+    assert service.launch["state"] == "ready"
+    assert service.launch["comfy_base_url"] == "http://127.0.0.1:18188"
+    assert service.launch["protection_state"] == "ready"
+    assert service.launch["recovered_was_ready"] is True
+    assert service._active_ssh_endpoint == (
+        "ssh.example",
+        22022,
+        "private-key",
+    )
+    assert service.ready_for_queue() is True
+    assert persisted == ["ready"]
+    assert availability_notifications == [True]
+    assert flushes == [True]
+    recovered_step = {
+        step["key"]: step for step in service.launch["steps"]
+    }["recovered"]
+    assert recovered_step == {
+        "key": "recovered",
+        "state": "done",
+        "detail": "http://127.0.0.1:18188",
+        "updated_at": recovered_step["updated_at"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_vast_ready_instance_recovery_failure_stays_recovered_and_logs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    launch_id = "recover-failure"
+    instance_id = 43
+    service = VastService(
+        tmp_path,
+        lambda: {"vast_enabled": True, "vast_api_key": "test-key"},
+    )
+    service._client = object()  # type: ignore[assignment]
+    service.launch = service._new_launch_state(
+        state="recovered",
+        launch_id=launch_id,
+        label=f"soya-vast-{launch_id}",
+    )
+    service.launch["instance_id"] = instance_id
+    service.launch["recovered_was_ready"] = True
+    service._cancel_events[launch_id] = threading.Event()
+
+    async def fake_wait_ssh(_instance_id: int) -> tuple[str, int]:
+        return "ssh.example", 22022
+
+    def fail_remote_check(*_args: Any, **_kwargs: Any) -> None:
+        raise VastApiError("remote marker missing")
+
+    persisted: list[str] = []
+    monkeypatch.setattr(
+        service,
+        "ensure_ssh_keypair",
+        lambda: ("private-key", "ssh-rsa public-key"),
+    )
+    monkeypatch.setattr(service, "_wait_ssh", fake_wait_ssh)
+    monkeypatch.setattr(service, "_assert_remote_build_complete", fail_remote_check)
+    monkeypatch.setattr(
+        service,
+        "_persist_guard_state",
+        lambda: persisted.append(str(service.launch.get("state") or "")),
+    )
+    monkeypatch.setattr(service, "_notify_availability_changed", lambda: None)
+
+    await service._recover_ready_instance(instance_id, launch_id)
+
+    assert service.launch["state"] == "recovered"
+    assert service.launch["comfy_base_url"] == ""
+    assert service.launch["recovered_was_ready"] is True
+    assert service.launch["protection_state"] == "manual_required"
+    assert "remote marker missing" in service.launch["protection_reason"]
+    assert service._active_ssh_endpoint is None
+    assert persisted == ["recovered"]
+    recovered_step = {
+        step["key"]: step for step in service.launch["steps"]
+    }["recovered"]
+    assert recovered_step["state"] == "error"
+    assert "자동 재연결 실패" in recovered_step["detail"]
+    assert "[VAST_GUARD][ERROR] 준비 완료 인스턴스 자동 재연결 실패" in capsys.readouterr().out
+
+
 @pytest.mark.asyncio
 async def test_vast_lora_download_uses_project_temp_and_handles_cross_device_commit(
     tmp_path: Path,
@@ -1590,14 +1837,20 @@ def test_explicit_lora_upload_replaces_same_workflow_plan_item(tmp_path: Path) -
     explicit_path = tmp_path / "fixed.safetensors"
     model_plan = {
         "models": [
-            {"key": "loras/fixed.safetensors"},
+            {"key": "loras/SOYA_CHAR_LORA/fixed.safetensors"},
             {"key": "checkpoints/base.safetensors"},
         ]
     }
 
     deduplicated = VastService._remove_explicit_lora_duplicates(
         model_plan,
-        [{"name": "fixed.safetensors", "path": str(explicit_path)}],
+        [
+            {
+                "name": "fixed.safetensors",
+                "path": str(explicit_path),
+                "remote_path": "SOYA_CHAR_LORA/fixed.safetensors",
+            }
+        ],
     )
 
     assert deduplicated["models"] == [{"key": "checkpoints/base.safetensors"}]
@@ -1643,6 +1896,7 @@ async def test_resolve_lora_item_keys_builds_upload_file_list(
         {
             "name": "hero.safetensors",
             "path": str(lora_file.resolve()),
+            "remote_path": "SOYA_CHAR_LORA/Alice/Lora/hero/hero.safetensors",
             "size": size,
             "size_bytes": size,
             "category": "asset",
@@ -1652,6 +1906,26 @@ async def test_resolve_lora_item_keys_builds_upload_file_list(
 
     with pytest.raises(ValueError):
         await service.resolve_lora_item_keys(["asset::missing"])
+
+
+@pytest.mark.parametrize(
+    "remote_path",
+    [
+        "fixed.safetensors",
+        "/SOYA_CHAR_LORA/fixed.safetensors",
+        "SOYA_CHAR_LORA/../fixed.safetensors",
+        "SOYA_CHAR_LORA//fixed.safetensors",
+    ],
+)
+def test_vast_lora_upload_remote_path_rejects_escape_paths(
+    remote_path: str,
+) -> None:
+    with pytest.raises(ValueError, match="SOYA_CHAR_LORA"):
+        VastService._normalize_lora_upload_remote_path(remote_path)
+
+    assert VastService._normalize_lora_upload_remote_path(
+        r"SOYA_CHAR_LORA\SOYA_BOT_LORA\bot\fixed.safetensors"
+    ) == "SOYA_CHAR_LORA/SOYA_BOT_LORA/bot/fixed.safetensors"
 
 
 def test_upload_all_runs_parallel_streams_and_reports_aggregate_progress(
@@ -1671,6 +1945,7 @@ def test_upload_all_runs_parallel_streams_and_reports_aggregate_progress(
 
     connections: list[Any] = []
     uploads: list[tuple[str, str]] = []
+    commands: list[str] = []
     barrier = threading.Barrier(3, timeout=10)
 
     class FakeSftp:
@@ -1690,8 +1965,9 @@ def test_upload_all_runs_parallel_streams_and_reports_aggregate_progress(
         def open_sftp(self) -> FakeSftp:
             return FakeSftp()
 
-        def exec_command(self, _command):
-            return None, None, None
+        def exec_command(self, command, **_kwargs):
+            commands.append(command)
+            return None, _FakeStream(), _FakeStream()
 
         def close(self) -> None:
             return None
@@ -1720,8 +1996,16 @@ def test_upload_all_runs_parallel_streams_and_reports_aggregate_progress(
         ]
     }
     lora_files = [
-        {"name": "lora-a.safetensors", "path": str(lora_a)},
-        {"name": "lora-b.safetensors", "path": str(lora_b)},
+        {
+            "name": "lora-a.safetensors",
+            "path": str(lora_a),
+            "remote_path": "SOYA_CHAR_LORA/bot-a/lora-a.safetensors",
+        },
+        {
+            "name": "lora-b.safetensors",
+            "path": str(lora_b),
+            "remote_path": "SOYA_CHAR_LORA/bot-b/lora-b.safetensors",
+        },
     ]
     service._initialize_actual_transfer_tracking(model_plan, lora_files)
 
@@ -1733,11 +2017,22 @@ def test_upload_all_runs_parallel_streams_and_reports_aggregate_progress(
     assert len(connections) == 1 + 3
     assert sorted(uploads) == sorted(
         [
-            (str(lora_a), "/root/ComfyUI/models/loras/lora-a.safetensors"),
-            (str(lora_b), "/root/ComfyUI/models/loras/lora-b.safetensors"),
+            (
+                str(lora_a),
+                "/root/ComfyUI/models/loras/SOYA_CHAR_LORA/bot-a/lora-a.safetensors",
+            ),
+            (
+                str(lora_b),
+                "/root/ComfyUI/models/loras/SOYA_CHAR_LORA/bot-b/lora-b.safetensors",
+            ),
             (str(model_c), "/root/ComfyUI/models/loras/model-c.safetensors"),
         ]
     )
+    assert commands == [
+        "mkdir -p -- /root/ComfyUI/models/loras "
+        "/root/ComfyUI/models/loras/SOYA_CHAR_LORA/bot-a "
+        "/root/ComfyUI/models/loras/SOYA_CHAR_LORA/bot-b"
+    ]
     steps = {step["key"]: step for step in service.launch["steps"]}
     assert steps["upload_loras"]["state"] == "done"
     assert steps["upload_loras"]["detail"] == "2/2개 · 500B 전송 완료"
@@ -1773,8 +2068,8 @@ def test_upload_all_parallel_failure_marks_transfer_error(
         def open_sftp(self) -> FakeSftp:
             return FakeSftp()
 
-        def exec_command(self, _command):
-            return None, None, None
+        def exec_command(self, _command, **_kwargs):
+            return None, _FakeStream(), _FakeStream()
 
         def close(self) -> None:
             return None
@@ -1782,7 +2077,13 @@ def test_upload_all_parallel_failure_marks_transfer_error(
     monkeypatch.setattr(
         service, "_ssh_connect", lambda *_args, **_kwargs: FakeSsh()
     )
-    lora_files = [{"name": "lora-a.safetensors", "path": str(lora_a)}]
+    lora_files = [
+        {
+            "name": "lora-a.safetensors",
+            "path": str(lora_a),
+            "remote_path": "SOYA_CHAR_LORA/lora-a.safetensors",
+        }
+    ]
     service._initialize_actual_transfer_tracking({"models": []}, lora_files)
 
     with pytest.raises(OSError, match="sftp write failed"):
