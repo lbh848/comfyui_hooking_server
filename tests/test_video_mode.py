@@ -533,11 +533,15 @@ def test_instruction_refine_prompt_expands_into_mechanics_and_result() -> None:
     assert "synchronized physical sound" in combined
     assert "physically necessary connecting movements" in combined
     assert "clearly readable result" in combined
+    assert "do not invent a distinct gesture, gaze shift, expression change, interaction, or narrative event" in combined
+    assert "restrained secondary motion that preserves the visible pose, expression, gaze, and object relationships" in combined
     assert "temporal aspect and state/action distinction" in combined
     assert "include only its requested use" in combined
     assert "lighting changes over the existing environment" in combined
     assert "unspecified impact, explosion, collision" in combined
     assert "Do not add unsupported persistent ambience" in combined
+    assert 'Do not begin the output with phrases such as "Starting from Picture 1"' in combined
+    assert "The first-frame relationship is already established externally" in combined
     assert "인물이 컵을 내려놓고 카메라를 바라본다" in combined
 
 
