@@ -3620,6 +3620,7 @@ async def _consume_stream_attempt(
         await gate.release()
         raise
     partial_parts: list[str] = []
+    reasoning_parts: list[str] = []
     final_text = ""
     error_msg = ""
     done_seen = False
@@ -3705,10 +3706,19 @@ async def _consume_stream_attempt(
                     record["status"] = "시작"
                 elif event_type == "delta":
                     delta_text = str(event.get("text", "") or "")
+                    reasoning_text = str(event.get("reasoning", "") or "")
                     if delta_text:
                         partial_parts.append(delta_text)
+                    if reasoning_text:
+                        reasoning_parts.append(reasoning_text)
                     record["text"] = "".join(partial_parts)
-                    record["status"] = "스트리밍"
+                    if reasoning_parts:
+                        record["reasoning_text"] = "".join(reasoning_parts)
+                    # content 아직 없고 thinking만 흐르는 구간. reasoning 델타도
+                    # last_event_at을 갱신해 idle 타임아웃이 정상 요청을 죽이지 않게 한다.
+                    record["status"] = (
+                        "스트리밍" if partial_parts else "생각 중"
+                    )
                 elif event_type == "done":
                     done_seen = True
                     final_text = str(event.get("text", "") or "")
@@ -3742,6 +3752,8 @@ async def _consume_stream_attempt(
                     "llm_slot": llm_slot,
                     "partial_text": str(record.get("text", "") or ""),
                     "partial_length": len(str(record.get("text", "") or "")),
+                    "partial_reasoning": str(record.get("reasoning_text", "") or ""),
+                    "partial_reasoning_length": len(str(record.get("reasoning_text", "") or "")),
                     **_stream_record_event_fields(record),
                 }
                 coordinator.snapshots[stream_id] = _public_stream_state(record)
@@ -4331,6 +4343,7 @@ async def _stream_openai_compat(messages: list, model: str, url: str,
     t0 = time.time()
     ttft = None
     accumulated = []
+    reasoning_parts: list[str] = []
     completion_tokens = None
     prompt_tokens = None
 
@@ -4374,6 +4387,20 @@ async def _stream_openai_compat(messages: list, model: str, url: str,
                         choice = choices[0]
                         delta = choice.get("delta", {}) or {}
                         text = delta.get("content") or ""
+                        # thinking(reasoning) 델타. 최종 텍스트에는 절대 포함하지 않고
+                        # 별도 필드로만 흘려보낸다 — 표시·idle 타임아웃 갱신용.
+                        reasoning_text = (
+                            delta.get("reasoning")
+                            or delta.get("reasoning_content")
+                            or ""
+                        )
+                        if reasoning_text:
+                            reasoning_parts.append(reasoning_text)
+                            yield {
+                                "type": "delta",
+                                "reasoning": reasoning_text,
+                                "elapsed": time.time() - t0,
+                            }
                         if text:
                             if ttft is None:
                                 ttft = time.time() - t0
@@ -4384,7 +4411,8 @@ async def _stream_openai_compat(messages: list, model: str, url: str,
                         if finish_reason is not None:
                             _llm_log(
                                 f"{service} stream finish_reason 종료: "
-                                f"reason={finish_reason}, chars={len(''.join(accumulated))}"
+                                f"reason={finish_reason}, chars={len(''.join(accumulated))}, "
+                                f"reasoning_chars={len(''.join(reasoning_parts))}"
                             )
                             break
 
@@ -4395,7 +4423,8 @@ async def _stream_openai_compat(messages: list, model: str, url: str,
         if prompt_tokens is None:
             prompt_tokens = _approx_input_tokens(messages)
         tps = (completion_tokens / elapsed) if elapsed > 0 else 0.0
-        _llm_log(f"{service} stream 완료: {len(full)}자, tokens={completion_tokens}, prompt_tokens={prompt_tokens}, elapsed={elapsed:.2f}s, tps={tps:.1f}")
+        reasoning_full = "".join(reasoning_parts)
+        _llm_log(f"{service} stream 완료: {len(full)}자, tokens={completion_tokens}, prompt_tokens={prompt_tokens}, elapsed={elapsed:.2f}s, tps={tps:.1f}, reasoning_chars={len(reasoning_full)}")
         yield {
             "type": "done",
             "text": full,
@@ -4404,6 +4433,7 @@ async def _stream_openai_compat(messages: list, model: str, url: str,
             "elapsed": elapsed,
             "tps": tps,
             "ttft": ttft,
+            "reasoning_chars": len(reasoning_full),
         }
     except httpx.TimeoutException:
         _llm_log(f"{service} stream 타임아웃")

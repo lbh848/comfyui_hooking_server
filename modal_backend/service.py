@@ -4670,12 +4670,14 @@ class ModalService:
         *,
         timeout_seconds: int = 3_300,
         input_paths: list[str] | tuple[str, ...] | None = None,
+        progress_callback: Callable[[dict[str, Any]], Any] | None = None,
     ) -> tuple[bytes, dict[str, Any]]:
         result = await self.run_workflow(
             workflow,
             timeout_seconds=timeout_seconds,
             input_paths=input_paths,
             require_images=True,
+            progress_callback=progress_callback,
         )
         images = result.get("images") or []
         if not images:

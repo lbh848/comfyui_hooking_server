@@ -846,6 +846,61 @@ async def test_modal_run_workflow_requests_one_deferred_video_artifact(
     assert result["video_artifacts"] == [video_artifact]
 
 
+@pytest.mark.asyncio
+async def test_modal_generate_forwards_progress_callback_to_run_workflow(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = ModalService(tmp_path, lambda: {"modal_enabled": True})
+    events: list[dict] = []
+    observed: dict = {}
+
+    async def run_workflow(_workflow: dict, **kwargs) -> dict:
+        observed.update(kwargs)
+        callback = kwargs.get("progress_callback")
+        if callback is not None:
+            callback(
+                {"phase": "modal_syncing", "percentage": 1, "message": "모델 동기화"}
+            )
+            callback(
+                {
+                    "value": 5,
+                    "max": 20,
+                    "node": "10",
+                    "event_type": "progress",
+                }
+            )
+        return {
+            "prompt_id": "prompt-modal-image",
+            "model_sync": {},
+            "lora_sync": {},
+            "images": [
+                {
+                    "node_id": "9",
+                    "filename": "image.png",
+                    "content_type": "image/png",
+                    "bytes": b"modal-image",
+                }
+            ],
+        }
+
+    monkeypatch.setattr(service, "run_workflow", run_workflow)
+
+    image_bytes, metadata = await service.generate(
+        {"1": {"class_type": "Test", "inputs": {}}},
+        progress_callback=events.append,
+    )
+
+    assert image_bytes == b"modal-image"
+    assert metadata["prompt_id"] == "prompt-modal-image"
+    assert observed["require_images"] is True
+    assert callable(observed["progress_callback"])
+    assert events == [
+        {"phase": "modal_syncing", "percentage": 1, "message": "모델 동기화"},
+        {"value": 5, "max": 20, "node": "10", "event_type": "progress"},
+    ]
+
+
 def test_modal_worker_persists_video_and_cleans_uploaded_inputs() -> None:
     source = (
         Path(__file__).resolve().parents[1] / "modal_backend" / "modal_app.py"

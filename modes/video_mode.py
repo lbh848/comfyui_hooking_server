@@ -383,6 +383,49 @@ def _safe_backup_name(value: object) -> str:
     return name
 
 
+def backup_clean_source_available(directory: str, name: str) -> bool:
+    """영상화에 쓸 대사 없는 깨끗한 원본이 이 백업에 존재하는지 판정한다.
+
+    - _raw/{name}.{avif,webp} 가 있으면 True (합성 전 원본이 보존된 케이스).
+    - 없으면 {name}_info.json 을 읽어 speak_text 가 기록돼 있지 않을 때만 True.
+      대사 합성이 적용되지 않은 백업(key visual 등)은 메인 이미지 자체가 이미
+      깨끗한 원본이기 때문이다. save_backup은 speak_text 가 비면 이 키를 아예
+      기록하지 않으므로, 키 부재 == 합성 미적용으로 본다.
+    - _info.json 이 없거나 읽을 수 없으면 원본 여부를 증명할 수 없어 False
+      (합성본일 위험을 감수하고 영상화 원본으로 쓰지 않는다).
+    """
+
+    if any(
+        os.path.isfile(os.path.join(directory, "_raw", f"{name}{extension}"))
+        for extension in (".avif", ".webp")
+    ):
+        return True
+    info_path = os.path.join(directory, f"{name}_info.json")
+    if not os.path.isfile(info_path):
+        print(
+            "[VIDEO:REFERENCE] 원본 판정 불가(_info.json 없음, 합성 여부 미확인): "
+            f"name={name!r}"
+        )
+        return False
+    try:
+        with open(info_path, "r", encoding="utf-8") as info_file:
+            info = json.load(info_file)
+    except (OSError, ValueError) as exc:
+        print(
+            f"[VIDEO:REFERENCE] 원본 판정 불가(_info.json 읽기 실패): "
+            f"name={name!r}, error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        return False
+    if not isinstance(info, dict):
+        print(
+            "[VIDEO:REFERENCE] 원본 판정 불가(_info.json이 객체가 아님): "
+            f"name={name!r}, type={type(info).__name__}"
+        )
+        return False
+    return not str(info.get("speak_text") or "").strip()
+
+
 def choose_fast_aspect_ratio(width: int, height: int) -> str:
     """원본에 가장 가까운 FAST 화면 비율을 고른다."""
 
@@ -1102,7 +1145,18 @@ class VideoMode:
             directory = self._backup_dir()
             prompt_data = self._read_json(os.path.join(directory, f"{name}.json"))
             info = self._read_json(os.path.join(directory, f"{name}_info.json"))
-            path = self._find_image_path(directory, name, raw=raw)
+            try:
+                path = self._find_image_path(directory, name, raw=raw)
+            except FileNotFoundError:
+                # _raw 가 없어도 대사 합성이 적용되지 않은 백업(key visual 등)은
+                # 메인 이미지 자체가 깨끗한 원본이므로 그것으로 대체한다.
+                if not raw or not backup_clean_source_available(directory, name):
+                    raise
+                path = self._find_image_path(directory, name, raw=False)
+                print(
+                    "[VIDEO:REFERENCE] _raw 없는 비합성 백업, 메인 이미지를 "
+                    f"원본으로 사용: name={name!r}, path={path!r}"
+                )
             return {
                 "reference": normalized,
                 "path": path,

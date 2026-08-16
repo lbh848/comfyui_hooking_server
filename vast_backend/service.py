@@ -152,6 +152,11 @@ class VastService:
         self._lora_delete_outbox_lock = threading.Lock()
         self._lora_delete_flush_task: asyncio.Task | None = None
         self._lora_download_lock = asyncio.Lock()
+        # 빌드 완료 후 LoRA 동기화(업로드) 작업 상태 — Modal start_lora_operation과 동일 형태.
+        self._lora_operation_state: dict[str, Any] = {"state": "idle"}
+        self._lora_operation_state_lock = threading.Lock()
+        self._lora_operation_task: asyncio.Task | None = None
+        self._lora_operation_lock = asyncio.Lock()
         self.favorites = VastMachineFavorites(self.project_root)
         self._favorite_lock = asyncio.Lock()
         self._workflow_lock = asyncio.Lock()
@@ -1786,6 +1791,499 @@ class VastService:
             f"bytes={sum(f['size_bytes'] for f in files)}"
         )
         return files
+
+    # ─── 빌드 완료 후 LoRA 동기화 — Modal LoRA 동기화 UI를 VAST 타깃으로 재사용 ───
+    # 카탈로그/작업 상태 응답 형태를 modal_backend(lora_catalog·start_lora_operation)와
+    # 동일하게 맞춘다. 원격 비교는 sha256 없이 경로+용량 일치 여부로 판정한다.
+
+    def _scan_remote_managed_loras_sync(self) -> tuple[dict[str, int], int]:
+        """원격 관리 LoRA 현황을 한 번의 SSH 세션으로 조사한다.
+
+        반환: (원격 파일 map {models/loras 기준 상대경로: 크기}, loras 경로 여유 바이트)
+        """
+        from modal_backend.lora_inventory import MANAGED_LORA_ROOT
+
+        loras_root = posixpath.join(COMFY_ROOT_REMOTE, "models", "loras")
+        host, port, private_key_path = self._require_ssh_endpoint()
+        ssh = self._ssh_connect(host, port, private_key_path)
+        try:
+            sftp = ssh.open_sftp()
+            try:
+                snapshot = self._walk_sftp_files(
+                    sftp,
+                    posixpath.join(loras_root, MANAGED_LORA_ROOT),
+                    relative_to=loras_root,
+                )
+            finally:
+                sftp.close()
+            free_bytes = self._remote_free_bytes_sync(ssh, loras_root)
+        finally:
+            ssh.close()
+        files = {relative: size for relative, (_mtime, size) in snapshot.items()}
+        print(
+            "[VAST_LORA] 원격 관리 LoRA 스캔 완료: "
+            f"files={len(files)}, bytes={sum(files.values())}, "
+            f"free={_format_transfer_bytes(max(0, free_bytes))}"
+        )
+        return files, free_bytes
+
+    @staticmethod
+    def _remote_free_bytes_sync(ssh: Any, remote_path: str) -> int:
+        command = f"df -B1 --output=avail -- {shlex.quote(remote_path)}"
+        _stdin, stdout, stderr = ssh.exec_command(command, timeout=60)
+        exit_code = stdout.channel.recv_exit_status()
+        output = stdout.read().decode("utf-8", "replace").strip()
+        error = stderr.read().decode("utf-8", "replace").strip()
+        lines = [line.strip() for line in output.splitlines() if line.strip()]
+        if exit_code != 0 or len(lines) < 2 or not lines[-1].isdigit():
+            print(
+                "[VAST_LORA][ERROR] 원격 디스크 여유 확인 실패: "
+                f"exit={exit_code}, output={output[-500:]!r}, stderr={error[-500:]}"
+            )
+            raise RuntimeError(
+                "Vast 원격 디스크 여유 확인 실패: "
+                f"exit={exit_code}, stderr={error[-300:]}"
+            )
+        return int(lines[-1])
+
+    async def lora_catalog(
+        self,
+        *,
+        include_remote: bool = False,
+        item_keys: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """로컬 현재 사용본 + (선택) 원격 인스턴스 실제 파일을 병합한 LoRA 카탈로그."""
+        from modal_backend.lora_inventory import (
+            build_local_lora_catalog,
+            merge_remote_lora_catalog,
+            public_lora_catalog,
+        )
+
+        normalized_keys = list(
+            dict.fromkeys(
+                str(key).strip() for key in item_keys or [] if str(key).strip()
+            )
+        )
+        if len(normalized_keys) > 500:
+            print(f"[VAST_LORA] 상태 조회 선택 항목 수 초과: count={len(normalized_keys)}")
+            raise ValueError("한 번에 조회할 수 있는 LoRA 항목은 최대 500개입니다.")
+
+        config = self._get_config()
+        # 경로+용량 기준 스킵 정책 — 원격 sha256 계산 비용이 커서 해시는 사용하지 않는다.
+        local_payload = await asyncio.to_thread(
+            build_local_lora_catalog,
+            config,
+            include_hashes=False,
+            item_keys=normalized_keys or None,
+            allow_missing_item_keys=bool(normalized_keys),
+        )
+        payload: dict[str, Any] = dict(local_payload)
+        checked_at = ""
+        if include_remote:
+            remote_files, _free_bytes = await asyncio.to_thread(
+                self._scan_remote_managed_loras_sync
+            )
+            remote_payload = {
+                "files": [
+                    {"path": path, "size": size, "manifest_size": size}
+                    for path, size in sorted(remote_files.items())
+                ],
+                "errors": [],
+            }
+            payload = merge_remote_lora_catalog(
+                local_payload,
+                remote_payload,
+                item_keys=normalized_keys or None,
+            )
+            if normalized_keys:
+                returned_keys = {
+                    str(item.get("key") or "") for item in payload.get("items") or []
+                }
+                missing_keys = [
+                    key for key in normalized_keys if key not in returned_keys
+                ]
+                if missing_keys:
+                    print(
+                        "[VAST_LORA] 선택 상태 조회 항목이 로컬과 원격에 없습니다: "
+                        f"keys={missing_keys}"
+                    )
+                    raise ValueError("선택한 LoRA 항목이 최신 목록에 없습니다.")
+            checked_at = self._utc_now()
+            print(
+                "[VAST_LORA] 로컬/원격 상태 조회 완료: "
+                f"scope={'selected' if normalized_keys else 'all'}, "
+                f"items={len(payload.get('items') or [])}, counts={payload.get('counts')}"
+            )
+        public = public_lora_catalog(payload)
+        return {
+            "ok": True,
+            **public,
+            "checked_at": checked_at,
+            "partial": bool(normalized_keys),
+            "queried_item_keys": normalized_keys,
+        }
+
+    def _lora_operation_running(self) -> bool:
+        return bool(
+            self._lora_operation_task and not self._lora_operation_task.done()
+        )
+
+    def _append_lora_operation_log(self, source: str, line: str) -> None:
+        cleaned = " ".join(str(line).replace("\x00", "").split())
+        if not cleaned:
+            return
+        if len(cleaned) > 1000:
+            cleaned = cleaned[:999] + "…"
+        with self._lora_operation_state_lock:
+            logs = self._lora_operation_state.get("logs")
+            if not isinstance(logs, list):
+                logs = []
+                self._lora_operation_state["logs"] = logs
+            logs.append(
+                {
+                    "time": time.time(),
+                    "source": str(source or "system"),
+                    "message": cleaned,
+                }
+            )
+            if len(logs) > 300:
+                del logs[: len(logs) - 300]
+            self._lora_operation_state["updated_at"] = time.time()
+
+    def _lora_operation_progress(self) -> dict[str, Any]:
+        with self._lora_operation_state_lock:
+            progress = self._lora_operation_state.get("progress")
+            return dict(progress) if isinstance(progress, dict) else {}
+
+    def _advance_lora_operation_counters(
+        self, *, files: int = 0, uploaded: int = 0, bytes_delta: int = 0
+    ) -> None:
+        with self._lora_operation_state_lock:
+            progress = self._lora_operation_state.get("progress")
+            if isinstance(progress, dict):
+                if files:
+                    progress["completed_files"] = (
+                        int(progress.get("completed_files") or 0) + files
+                    )
+                if uploaded:
+                    progress["uploaded_files"] = (
+                        int(progress.get("uploaded_files") or 0) + uploaded
+                    )
+                if bytes_delta > 0:
+                    progress["completed_bytes"] = (
+                        int(progress.get("completed_bytes") or 0) + bytes_delta
+                    )
+            self._lora_operation_state["updated_at"] = time.time()
+
+    def _set_lora_operation_message(self, message: str | None = None) -> None:
+        with self._lora_operation_state_lock:
+            progress = self._lora_operation_state.get("progress")
+            if message is None:
+                if not isinstance(progress, dict):
+                    return
+                label = str(self._lora_operation_state.get("action_label") or "동기화")
+                message = (
+                    f"LoRA {label} 진행 중 · "
+                    f"{int(progress.get('completed_files') or 0)}/"
+                    f"{int(progress.get('total_files') or 0)}개 · "
+                    f"{_format_transfer_bytes(int(progress.get('completed_bytes') or 0))}/"
+                    f"{_format_transfer_bytes(int(progress.get('total_bytes') or 0))}"
+                )
+            self._lora_operation_state["message"] = str(message)
+            if isinstance(progress, dict):
+                progress["current_item"] = ""
+            self._lora_operation_state["updated_at"] = time.time()
+
+    def lora_operation_status(self) -> dict[str, Any]:
+        with self._lora_operation_state_lock:
+            snapshot = dict(self._lora_operation_state)
+            snapshot["logs"] = [
+                dict(item)
+                for item in self._lora_operation_state.get("logs") or []
+            ]
+            progress = self._lora_operation_state.get("progress")
+            if isinstance(progress, dict):
+                snapshot["progress"] = dict(progress)
+        started_at = float(snapshot.get("started_at") or 0.0)
+        if started_at > 0:
+            finished_at = float(snapshot.get("finished_at") or 0.0)
+            snapshot["elapsed_seconds"] = round(
+                max(0.0, (finished_at or time.time()) - started_at),
+                1,
+            )
+        return snapshot
+
+    async def start_lora_operation(
+        self,
+        action: str,
+        item_keys: list[str],
+    ) -> dict[str, Any]:
+        """빌드 완료 인스턴스에 선택 LoRA를 업로드/동기화한다(경로+용량 동일 시 생략)."""
+        normalized_action = str(action or "").strip().lower()
+        if normalized_action not in {"upload", "sync"}:
+            print(f"[VAST_LORA] 지원하지 않는 작업 요청: action={action!r}")
+            raise ValueError(
+                f"VAST 빌드 후 LoRA 작업은 업로드/동기화만 지원합니다: {action!r}"
+            )
+        normalized_keys = list(
+            dict.fromkeys(
+                str(key).strip() for key in item_keys or [] if str(key).strip()
+            )
+        )
+        if not normalized_keys:
+            print("[VAST_LORA] 선택 항목이 없는 작업 요청 거부")
+            raise ValueError("LoRA 항목을 하나 이상 선택하세요.")
+        if len(normalized_keys) > 500:
+            print(f"[VAST_LORA] 작업 선택 항목 수 초과: count={len(normalized_keys)}")
+            raise ValueError("한 번에 관리할 수 있는 LoRA 항목은 최대 500개입니다.")
+
+        async with self._lora_operation_lock:
+            if self._lora_operation_running():
+                raise RuntimeError("다른 LoRA 관리 작업이 이미 진행 중입니다.")
+            self._require_ready()
+            if self._launch_task and not self._launch_task.done():
+                raise RuntimeError(
+                    "Vast 인스턴스 생성/재연결이 진행 중입니다. 완료 후 다시 시도하세요."
+                )
+            if (
+                self._lora_delete_flush_task
+                and not self._lora_delete_flush_task.done()
+            ):
+                raise RuntimeError(
+                    "원격 LoRA 삭제 정리가 진행 중입니다. 잠시 후 다시 시도하세요."
+                )
+
+            # 로컬 파일 해석 — resolve_lora_item_keys 재사사(원격 경로 검증 포함).
+            files = await self.resolve_lora_item_keys(normalized_keys)
+            remote_files, free_bytes = await asyncio.to_thread(
+                self._scan_remote_managed_loras_sync
+            )
+
+            jobs: list[dict[str, Any]] = []
+            skipped: list[dict[str, Any]] = []
+            for item in files:
+                remote_path = str(item["remote_path"])
+                size = max(0, int(item.get("size_bytes") or 0))
+                if int(remote_files.get(remote_path, -1)) == size:
+                    skipped.append(item)
+                    continue
+                jobs.append(
+                    {
+                        "name": str(item["name"]),
+                        "local": str(item["path"]),
+                        "remote": posixpath.join(
+                            COMFY_ROOT_REMOTE, "models", "loras", remote_path
+                        ),
+                        "size": size,
+                    }
+                )
+            upload_bytes = sum(int(job["size"]) for job in jobs)
+            skipped_bytes = sum(
+                max(0, int(item.get("size_bytes") or 0)) for item in skipped
+            )
+            # 인스턴스 디스크는 생성 시 고정 — 업로드 후에도 512MiB 여유를 남긴다.
+            if jobs and upload_bytes + 512 * 1024**2 > max(0, free_bytes):
+                raise RuntimeError(
+                    "Vast 인스턴스 디스크 여유가 부족합니다: "
+                    f"업로드 필요={_format_transfer_bytes(upload_bytes)}, "
+                    f"현재 여유={_format_transfer_bytes(max(0, free_bytes))}. "
+                    "불필요한 원격 LoRA 삭제 후 다시 시도하세요."
+                )
+
+            action_labels = {"upload": "업로드", "sync": "동기화"}
+            action_label = action_labels[normalized_action]
+            started_at = time.time()
+            with self._lora_operation_state_lock:
+                self._lora_operation_state = {
+                    "state": "running",
+                    "action": normalized_action,
+                    "action_label": action_label,
+                    "message": (
+                        f"선택한 LoRA {len(normalized_keys)}개 항목의 "
+                        f"{action_label}를 준비하고 있습니다."
+                    ),
+                    "item_keys": normalized_keys,
+                    "started_at": started_at,
+                    "updated_at": started_at,
+                    "progress": {
+                        "completed_files": len(skipped),
+                        "total_files": len(jobs) + len(skipped),
+                        "completed_bytes": skipped_bytes,
+                        "total_bytes": upload_bytes + skipped_bytes,
+                        "uploaded_files": 0,
+                        "skipped_files": len(skipped),
+                        "deleted_files": 0,
+                        "current_item": "",
+                    },
+                    "logs": [],
+                }
+            self._append_lora_operation_log(
+                "system",
+                f"{action_label} 시작: 항목 {len(normalized_keys)}개 · "
+                f"업로드 대상 {len(jobs)}개 · 동일 생략 {len(skipped)}개 · "
+                f"{upload_bytes / 1024**3:.2f} GiB 전송 예정",
+            )
+            for item in skipped:
+                self._append_lora_operation_log(
+                    "system",
+                    f"동일 파일 생략: {item['name']} "
+                    f"({_format_transfer_bytes(int(item.get('size_bytes') or 0))})",
+                )
+            print(
+                "[VAST_LORA] 빌드 후 LoRA 작업 시작: "
+                f"action={normalized_action}, items={len(normalized_keys)}, "
+                f"jobs={len(jobs)}, skipped={len(skipped)}, "
+                f"bytes={upload_bytes}, instance={self.launch.get('instance_id')}"
+            )
+            self._lora_operation_task = asyncio.create_task(
+                self._run_lora_operation(action_label, jobs)
+            )
+            return self.lora_operation_status()
+
+    async def _run_lora_operation(
+        self,
+        action_label: str,
+        jobs: list[dict[str, Any]],
+    ) -> None:
+        try:
+            if jobs:
+                endpoint = self._require_ssh_endpoint()
+                await asyncio.to_thread(
+                    self._upload_lora_operation_files_sync, endpoint, jobs
+                )
+            finished_at = time.time()
+            progress = self._lora_operation_progress()
+            uploaded = int(progress.get("uploaded_files") or 0)
+            skipped = int(progress.get("skipped_files") or 0)
+            message = (
+                f"LoRA {action_label} 완료 · 업로드 {uploaded}개 · 동일 생략 {skipped}개 · "
+                "ComfyUI는 재시작 없이 자동 인식합니다"
+            )
+            with self._lora_operation_state_lock:
+                progress_state = self._lora_operation_state.get("progress")
+                if isinstance(progress_state, dict):
+                    progress_state["completed_files"] = int(
+                        progress_state.get("total_files") or 0
+                    )
+                    progress_state["completed_bytes"] = int(
+                        progress_state.get("total_bytes") or 0
+                    )
+                    progress_state["current_item"] = ""
+                self._lora_operation_state.update(
+                    state="completed",
+                    message=message,
+                    finished_at=finished_at,
+                    updated_at=finished_at,
+                )
+            self._append_lora_operation_log("system", message)
+            print(
+                "[VAST_LORA] 빌드 후 LoRA 작업 완료: "
+                f"action_label={action_label}, uploaded={uploaded}, skipped={skipped}"
+            )
+        except Exception as exc:
+            print(
+                "[VAST_LORA][ERROR] 빌드 후 LoRA 작업 실패: "
+                f"action_label={action_label}, error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            finished_at = time.time()
+            with self._lora_operation_state_lock:
+                self._lora_operation_state.update(
+                    state="failed",
+                    message=f"LoRA 작업 실패: {type(exc).__name__}: {exc}",
+                    error=f"{type(exc).__name__}: {exc}",
+                    finished_at=finished_at,
+                    updated_at=finished_at,
+                )
+            self._append_lora_operation_log(
+                "error", f"{type(exc).__name__}: {exc}"
+            )
+
+    def _upload_lora_operation_files_sync(
+        self,
+        endpoint: tuple[str, int, str],
+        jobs: list[dict[str, Any]],
+    ) -> None:
+        """LoRA 작업 업로드 — 빌드 시 sftp와 동일한 병렬 스트림 방식(진행률은 작업 상태로)."""
+        host, port, private_key_path = endpoint
+        ssh = self._ssh_connect(host, port, private_key_path)
+        try:
+            self._ensure_remote_upload_directories(ssh, jobs)
+        finally:
+            ssh.close()
+
+        work: queue.Queue[dict[str, Any]] = queue.Queue()
+        for job in jobs:
+            work.put(job)
+        streams = max(1, min(UPLOAD_PARALLEL_STREAMS, len(jobs)))
+        lock = threading.Lock()
+        state: dict[str, Any] = {"stop": False}
+        errors: list[BaseException] = []
+
+        def _put_job(sftp: Any, job: dict[str, Any]) -> None:
+            local = str(job["local"])
+            if not local or not Path(local).is_file():
+                raise FileNotFoundError(
+                    f"업로드할 로컬 파일이 없습니다: {local} ({job['name']})"
+                )
+            counted = 0
+
+            def cb(transferred: int, _total: int) -> None:
+                nonlocal counted
+                delta = int(transferred) - counted
+                if delta <= 0:
+                    return
+                counted = int(transferred)
+                self._advance_lora_operation_counters(bytes_delta=delta)
+
+            with self._lora_operation_state_lock:
+                progress = self._lora_operation_state.get("progress")
+                if isinstance(progress, dict):
+                    progress["current_item"] = str(job["name"])
+            sftp.put(local, str(job["remote"]), callback=cb)
+            self._advance_lora_operation_counters(files=1, uploaded=1)
+            self._append_lora_operation_log(
+                "upload",
+                f"{job['name']} 업로드 완료 · "
+                f"{_format_transfer_bytes(int(job['size']))}",
+            )
+            self._set_lora_operation_message()
+
+        def _worker() -> None:
+            ssh = None
+            try:
+                ssh = self._ssh_connect(host, port, private_key_path)
+                sftp = ssh.open_sftp()
+                while True:
+                    with lock:
+                        if state["stop"]:
+                            return
+                    try:
+                        job = work.get_nowait()
+                    except queue.Empty:
+                        return
+                    _put_job(sftp, job)
+            except BaseException as exc:  # 워커 예외를 본 스레드로 전파한다.
+                with lock:
+                    state["stop"] = True
+                    if not errors:
+                        errors.append(exc)
+            finally:
+                if ssh is not None:
+                    ssh.close()
+
+        threads = [
+            threading.Thread(
+                target=_worker, name=f"vast-lora-op-upload-{index + 1}", daemon=True
+            )
+            for index in range(streams)
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        if errors:
+            raise errors[0]
 
     def wizard_plan(
         self,
@@ -4320,7 +4818,10 @@ class VastService:
         return uploaded
 
     @staticmethod
-    def _walk_sftp_files(sftp: Any, remote_root: str) -> dict[str, tuple[int, int]]:
+    def _walk_sftp_files(
+        sftp: Any, remote_root: str, *, relative_to: str | None = None
+    ) -> dict[str, tuple[int, int]]:
+        base = relative_to or COMFY_LORA_OUTPUT_REMOTE
         files: dict[str, tuple[int, int]] = {}
 
         def visit(current: str) -> None:
@@ -4345,7 +4846,7 @@ class VastService:
                 if stat.S_ISDIR(entry.st_mode):
                     visit(remote_path)
                 elif stat.S_ISREG(entry.st_mode):
-                    relative = posixpath.relpath(remote_path, COMFY_LORA_OUTPUT_REMOTE)
+                    relative = posixpath.relpath(remote_path, base)
                     files[relative] = (
                         int(getattr(entry, "st_mtime", 0) or 0),
                         int(getattr(entry, "st_size", 0) or 0),

@@ -2350,3 +2350,331 @@ def test_comfy_ssh_tunnel_uses_next_port_when_preferred_is_busy(
         echo_thread.join(timeout=2)
 
     assert ssh.closed is True
+
+
+# ─── 빌드 완료 후 LoRA 동기화(업로드) ───
+
+
+class _FakeExecChannel:
+    def __init__(self, exit_code: int = 0) -> None:
+        self._exit_code = exit_code
+
+    def recv_exit_status(self) -> int:
+        return self._exit_code
+
+
+class _FakeExecStream:
+    def __init__(self, text: str, exit_code: int = 0) -> None:
+        self.channel = _FakeExecChannel(exit_code)
+        self._text = text
+
+    def read(self) -> bytes:
+        return self._text.encode("utf-8")
+
+
+class _FakeTreeSsh:
+    """models/loras 트리 walk + df 응답만 제공하는 SSH 페이크."""
+
+    def __init__(self, tree: dict[str, int], free_bytes: int = 10**12) -> None:
+        import stat as stat_module
+
+        self.tree = tree
+        self.free_bytes = free_bytes
+        self.commands: list[str] = []
+        self._stat = stat_module
+
+    def open_sftp(self):
+        tree = self.tree
+        stat_module = self._stat
+
+        class FakeSftp:
+            def listdir_attr(self, path: str):
+                prefix = path.rstrip("/") + "/"
+                entries: list[Any] = []
+                seen: set[str] = set()
+                for full, size in tree.items():
+                    if not full.startswith(prefix):
+                        continue
+                    rest = full[len(prefix) :]
+                    if "/" in rest:
+                        child = rest.split("/", 1)[0]
+                        if child in seen:
+                            continue
+                        seen.add(child)
+                        entries.append(
+                            SimpleNamespace(
+                                filename=child,
+                                st_mode=stat_module.S_IFDIR | 0o755,
+                                st_size=0,
+                                st_mtime=1,
+                            )
+                        )
+                    else:
+                        entries.append(
+                            SimpleNamespace(
+                                filename=rest,
+                                st_mode=stat_module.S_IFREG | 0o644,
+                                st_size=size,
+                                st_mtime=1,
+                            )
+                        )
+                return entries
+
+            def close(self) -> None:
+                return None
+
+        return FakeSftp()
+
+    def exec_command(self, command: str, timeout: int | None = None):
+        self.commands.append(command)
+        return (
+            None,
+            _FakeExecStream(f"Avail\n{self.free_bytes}\n"),
+            _FakeExecStream(""),
+        )
+
+    def close(self) -> None:
+        return None
+
+
+_LORA_REMOTE_BASE = "/root/ComfyUI/models/loras"
+
+
+def _fake_local_lora_payload() -> dict[str, Any]:
+    return {
+        "items": [
+            {
+                "key": "bot::botA",
+                "category": "bot",
+                "name": "botA",
+                "subtitle": "봇 A",
+                "scopes": ["SOYA_CHAR_LORA/SOYA_BOT_LORA/botA"],
+                "files": [
+                    {
+                        "name": "a1.safetensors",
+                        "source_path": "unused/a1.safetensors",
+                        "remote_path": "SOYA_CHAR_LORA/SOYA_BOT_LORA/botA/a1.safetensors",
+                        "size": 100,
+                    }
+                ],
+            },
+            {
+                "key": "bot::botB",
+                "category": "bot",
+                "name": "botB",
+                "subtitle": "봇 B",
+                "scopes": ["SOYA_CHAR_LORA/SOYA_BOT_LORA/botB"],
+                "files": [
+                    {
+                        "name": "b1.safetensors",
+                        "source_path": "unused/b1.safetensors",
+                        "remote_path": "SOYA_CHAR_LORA/SOYA_BOT_LORA/botB/b1.safetensors",
+                        "size": 200,
+                    }
+                ],
+            },
+            {
+                "key": "bot::botC",
+                "category": "bot",
+                "name": "botC",
+                "subtitle": "봇 C",
+                "scopes": ["SOYA_CHAR_LORA/SOYA_BOT_LORA/botC"],
+                "files": [
+                    {
+                        "name": "c1.safetensors",
+                        "source_path": "unused/c1.safetensors",
+                        "remote_path": "SOYA_CHAR_LORA/SOYA_BOT_LORA/botC/c1.safetensors",
+                        "size": 300,
+                    }
+                ],
+            },
+        ],
+        "errors": [],
+    }
+
+
+@pytest.mark.asyncio
+async def test_vast_lora_catalog_merges_local_and_remote_by_path_and_size(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import modal_backend.lora_inventory as lora_inventory
+
+    service = VastService(tmp_path, lambda: {})
+    remote_tree = {
+        f"{_LORA_REMOTE_BASE}/SOYA_CHAR_LORA/SOYA_BOT_LORA/botA/a1.safetensors": 100,
+        f"{_LORA_REMOTE_BASE}/SOYA_CHAR_LORA/SOYA_BOT_LORA/botB/b1.safetensors": 999,
+        f"{_LORA_REMOTE_BASE}/SOYA_CHAR_LORA/SOYA_BOT_LORA/botGhost/g1.safetensors": 5,
+    }
+    ssh = _FakeTreeSsh(remote_tree)
+    monkeypatch.setattr(
+        service, "_require_ssh_endpoint", lambda: ("ssh.example", 22, "unused-key")
+    )
+    monkeypatch.setattr(service, "_ssh_connect", lambda *_args: ssh)
+    monkeypatch.setattr(
+        lora_inventory,
+        "build_local_lora_catalog",
+        lambda *_args, **_kwargs: _fake_local_lora_payload(),
+    )
+
+    payload = await service.lora_catalog(include_remote=True)
+
+    states = {
+        str(item["key"]): str(item.get("sync_state"))
+        for item in payload.get("items") or []
+    }
+    assert states["bot::botA"] == "synced"
+    assert states["bot::botB"] == "update"
+    assert states["bot::botC"] == "local_only"
+    assert states["bot::botGhost"] == "remote_only"
+    counts = payload.get("counts") or {}
+    assert counts.get("synced") == 1
+    assert counts.get("update") == 1
+    assert counts.get("local_only") == 1
+    assert counts.get("remote_only") == 1
+    # 공개 카탈로그는 로컬 파일 원본 경로를 노출하지 않는다.
+    for item in payload.get("items") or []:
+        for file_item in item.get("files") or []:
+            assert "source_path" not in file_item
+            assert "sha256" not in file_item
+    assert any(command.startswith("df -B1") for command in ssh.commands)
+
+
+@pytest.mark.asyncio
+async def test_vast_lora_operation_skips_identical_files_and_uploads_rest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = VastService(tmp_path, lambda: {})
+    service.launch.update(
+        state="ready",
+        comfy_base_url="http://127.0.0.1:8199",
+        instance_id=123,
+    )
+    a1 = tmp_path / "a1.safetensors"
+    a1.write_bytes(b"a" * 100)
+    b1 = tmp_path / "b1.safetensors"
+    b1.write_bytes(b"b" * 200)
+
+    async def fake_resolve(item_keys: list[str]) -> list[dict[str, Any]]:
+        return [
+            {
+                "name": "a1.safetensors",
+                "path": str(a1),
+                "remote_path": "SOYA_CHAR_LORA/SOYA_BOT_LORA/botA/a1.safetensors",
+                "size": 100,
+                "size_bytes": 100,
+                "category": "bot",
+            },
+            {
+                "name": "b1.safetensors",
+                "path": str(b1),
+                "remote_path": "SOYA_CHAR_LORA/SOYA_BOT_LORA/botB/b1.safetensors",
+                "size": 200,
+                "size_bytes": 200,
+                "category": "bot",
+            },
+        ]
+
+    monkeypatch.setattr(service, "resolve_lora_item_keys", fake_resolve)
+    monkeypatch.setattr(
+        service,
+        "_scan_remote_managed_loras_sync",
+        lambda: (
+            {"SOYA_CHAR_LORA/SOYA_BOT_LORA/botA/a1.safetensors": 100},
+            10**12,
+        ),
+    )
+    put_calls: list[tuple[str, str]] = []
+    mkdir_commands: list[str] = []
+
+    class FakePutSftp:
+        def put(self, local: str, remote: str, callback=None) -> None:
+            put_calls.append((local, remote))
+
+        def close(self) -> None:
+            return None
+
+    class FakePutSsh:
+        def open_sftp(self) -> FakePutSftp:
+            return FakePutSftp()
+
+        def exec_command(self, command: str, timeout: int | None = None):
+            mkdir_commands.append(command)
+            return (None, _FakeExecStream(""), _FakeExecStream(""))
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(
+        service, "_require_ssh_endpoint", lambda: ("ssh.example", 22, "unused-key")
+    )
+    monkeypatch.setattr(service, "_ssh_connect", lambda *_args: FakePutSsh())
+
+    started = await service.start_lora_operation("upload", ["bot::botA", "bot::botB"])
+    assert started["state"] == "running"
+    assert started["progress"]["skipped_files"] == 1
+    assert started["progress"]["total_files"] == 2
+
+    assert service._lora_operation_task is not None
+    await service._lora_operation_task
+
+    final = service.lora_operation_status()
+    assert final["state"] == "completed"
+    assert final["progress"]["uploaded_files"] == 1
+    assert final["progress"]["skipped_files"] == 1
+    assert final["progress"]["completed_files"] == 2
+    assert final["progress"]["completed_bytes"] == final["progress"]["total_bytes"]
+    # 동일 용량의 a1은 건너뛰고 b1만 원격 경로로 올라간다.
+    assert put_calls == [
+        (
+            str(b1),
+            f"{_LORA_REMOTE_BASE}/SOYA_CHAR_LORA/SOYA_BOT_LORA/botB/b1.safetensors",
+        )
+    ]
+    assert any(command.startswith("mkdir -p") for command in mkdir_commands)
+
+
+@pytest.mark.asyncio
+async def test_vast_lora_operation_guards_reject_bad_state_and_actions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = VastService(tmp_path, lambda: {})
+
+    # 인스턴스가 준비되지 않은 상태에서는 작업 시작 거부
+    with pytest.raises(VastApiError):
+        await service.start_lora_operation("upload", ["bot::botA"])
+
+    service.launch.update(state="ready", comfy_base_url="http://127.0.0.1:8199")
+    # delete 액션은 VAST 빌드 후 작업으로 지원하지 않는다
+    with pytest.raises(ValueError):
+        await service.start_lora_operation("delete", ["bot::botA"])
+    # 빈 선택 거부
+    with pytest.raises(ValueError):
+        await service.start_lora_operation("upload", [])
+
+    # 디스크 여유 부족 거부(512MiB 마진 초과)
+    big_file = tmp_path / "big.safetensors"
+    big_file.write_bytes(b"x" * 1000)
+
+    async def fake_resolve(item_keys: list[str]) -> list[dict[str, Any]]:
+        return [
+            {
+                "name": "big.safetensors",
+                "path": str(big_file),
+                "remote_path": "SOYA_CHAR_LORA/SOYA_BOT_LORA/botBig/big.safetensors",
+                "size": 1000,
+                "size_bytes": 1000,
+                "category": "bot",
+            }
+        ]
+
+    monkeypatch.setattr(service, "resolve_lora_item_keys", fake_resolve)
+    monkeypatch.setattr(
+        service,
+        "_scan_remote_managed_loras_sync",
+        lambda: ({}, 600),
+    )
+    with pytest.raises(RuntimeError, match="디스크 여유"):
+        await service.start_lora_operation("upload", ["bot::botBig"])

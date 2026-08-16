@@ -14324,6 +14324,7 @@
         .lighbd-live-card-stats span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .lighbd-live-card-stats strong { color: var(--text); font-weight: 600; }
         .lighbd-live-card-out { margin: 0; padding: 9px 12px; max-height: 180px; overflow: auto; overflow-anchor: none; color: var(--text); font-family: monospace; font-size: 0.74rem; line-height: 1.45; white-space: pre-wrap; word-break: break-word; background: rgba(0,0,0,0.18); }
+        .lighbd-live-card-reasoning { display: none; margin: 0; padding: 7px 12px; max-height: 110px; overflow: auto; overflow-anchor: none; color: var(--text2); font-family: monospace; font-size: 0.68rem; line-height: 1.4; white-space: pre-wrap; word-break: break-word; background: rgba(0,0,0,0.12); border-bottom: 1px dashed var(--border); }
         @media (max-width: 680px) {
             .lighbd-live-shell { width: 100%; height: 92vh; }
             .lighbd-live-card-head { flex-wrap: wrap; }
@@ -14746,6 +14747,7 @@
             <span><span id="lighbd-llm-tps" style="color:var(--text);">0.0</span> t/s</span>
             <span>TTFT: <span id="lighbd-llm-ttft" style="color:var(--text);">-</span></span>
         </div>
+        <pre id="lighbd-llm-reasoning" style="display:none; margin:0; max-height:90px; overflow-y:auto; padding:6px; border-radius:6px; border:1px dashed var(--border); background:rgba(0,0,0,0.2); color:var(--text2); font-family:monospace; font-size:0.68rem; line-height:1.35; white-space:pre-wrap; word-break:break-word;"></pre>
         <pre id="lighbd-llm-output" style="margin:0; max-height:140px; overflow:hidden; padding:6px; border-radius:6px; border:1px solid var(--border); background:rgba(0,0,0,0.25); color:var(--text); font-family:monospace; font-size:0.72rem; line-height:1.4; white-space:pre-wrap; word-break:break-word;">-</pre>
     </div>
 
@@ -20707,8 +20709,8 @@
             </div>
             <div class="modal-lora-sync-body">
                 <div class="modal-lora-guide">
-                    <div><strong>업로드</strong> · 현재 사용본을 추가하거나 변경된 파일만 갱신합니다. 원격 잔여 파일은 유지합니다.</div>
-                    <div><strong>동기화</strong> · 업로드 성공 후 현재 구성에서 빠진 원격 파일을 정리합니다. 봇은 봇 전체가 한 단위입니다.</div>
+                    <div id="modal-lora-guide-upload"><strong>업로드</strong> · 현재 사용본을 추가하거나 변경된 파일만 갱신합니다. 원격 잔여 파일은 유지합니다.</div>
+                    <div id="modal-lora-guide-sync"><strong>동기화</strong> · 업로드 성공 후 현재 구성에서 빠진 원격 파일을 정리합니다. 봇은 봇 전체가 한 단위입니다.</div>
                 </div>
                 <div class="modal-lora-summary" id="modal-lora-summary" aria-label="LoRA 동기화 상태 필터">
                     <button type="button" class="active" data-lora-state="all" onclick="modalLoraSetStateFilter('all')"><span>전체</span><strong id="modal-lora-count-all">0</strong></button>
@@ -21398,6 +21400,7 @@
                                     <div class="comfy-installer-actions" style="margin-top:8px;">
                                         <button type="button" class="comfy-installer-btn" onclick="switchComfyVastSection('lora')">LoRA 선택 열기</button>
                                         <button type="button" class="comfy-installer-btn" onclick="vastClearLoraSelection()">선택 전체 해제</button>
+                                        <button type="button" class="comfy-installer-btn" id="vast-lora-sync-open-btn" onclick="modalOpenLoraSync('vast')" disabled title="빌드 완료(준비 완료) 상태에서 사용 가능">빌드 후 LoRA 동기화</button>
                                     </div>
                                     <p class="comfy-installer-note" id="vast-lora-selection-summary" style="margin-top:8px;">선택된 LoRA 없음</p>
                                 </section>
@@ -26605,6 +26608,8 @@
 
         function vastRenderLaunchSteps(launch) {
             window.__vastLastLaunch = launch;
+            const vastLoraSyncBtn = document.getElementById('vast-lora-sync-open-btn');
+            if (vastLoraSyncBtn) vastLoraSyncBtn.disabled = launch.state !== 'ready';
             vastRenderPreflight(launch);
             const box = document.getElementById('vast-launch-progress');
             const title = document.getElementById('vast-launch-progress-title');
@@ -28274,7 +28279,7 @@
                                 🧩 LLM 흐름
                             </button>
                             <button class="video-backup-btn" onclick="event.stopPropagation(); openVideoWorkspace('${escapeAttr(b.name)}')"
-                                    ${b.has_raw ? 'title="_raw 원본으로 MiniMax H3 영상화를 시작합니다"' : 'disabled title="영상화에 필요한 _raw 원본이 없는 백업입니다"'}>
+                                    ${b.has_raw ? 'title="깨끗한 원본(_raw 또는 비합성 원본)으로 MiniMax H3 영상화를 시작합니다"' : 'disabled title="영상화에 쓸 대사 없는 원본이 없는 백업입니다"'}>
                                 🎬 영상화
                             </button>
                             <button class="video-reprocess-btn" onclick="event.stopPropagation(); openBackupVideoReprocess('${escapeAttr(b.name)}')"
@@ -29923,8 +29928,8 @@
                 return;
             }
             if (!source.has_raw) {
-                console.error('[VIDEO_UI] _raw 원본 없는 백업:', name);
-                showToast('이 백업에는 영상화에 필요한 _raw 원본이 없습니다.', 'error');
+                console.error('[VIDEO_UI] 영상화에 쓸 깨끗한 원본 없는 백업:', name);
+                showToast('이 백업에는 영상화에 쓸 대사 없는 원본이 없습니다.', 'error');
                 return;
             }
             await openVideoWorkspaceForReference({kind: 'backup', name});
@@ -33224,6 +33229,53 @@
         let modalLoraOperationState = {state: 'idle'};
         let modalLoraOperationPollTimer = null;
         let modalLoraOperationWasRunning = false;
+        // LoRA 동기화 모달의 원격 대상: 'modal'(Modal Volume) | 'vast'(빌드 완료 Vast 인스턴스)
+        let modalLoraTarget = 'modal';
+
+        function modalLoraIsVast() {
+            return modalLoraTarget === 'vast';
+        }
+
+        function modalLoraApi(path) {
+            return modalLoraIsVast()
+                ? `/api/vast/loras${path}`
+                : `/api/modal/loras${path}`;
+        }
+
+        function modalLoraTargetLabel() {
+            if (!modalLoraIsVast()) return 'Modal';
+            const launch = window.__vastLastLaunch || {};
+            return launch.instance_id ? `VAST #${launch.instance_id}` : 'VAST';
+        }
+
+        function modalLoraApplyTargetChrome() {
+            const overlay = document.getElementById('modal-lora-sync-modal');
+            if (!overlay) return;
+            const small = overlay.querySelector('.modal-lora-title-copy small');
+            const title = document.getElementById('modal-lora-sync-title');
+            const copy = title ? title.closest('.modal-action-head')?.querySelector('p') : null;
+            const guideUpload = document.getElementById('modal-lora-guide-upload');
+            const guideSync = document.getElementById('modal-lora-guide-sync');
+            const syncBtn = document.getElementById('modal-lora-sync-btn');
+            const deleteBtn = document.getElementById('modal-lora-delete-btn');
+            if (modalLoraIsVast()) {
+                if (small) small.textContent = 'VAST 인스턴스';
+                if (title) title.textContent = 'VAST LoRA 동기화';
+                if (copy) copy.textContent = '빌드 완료된 Vast 인스턴스에 LoRA를 추가 업로드합니다. 로컬 현재 사용본과 원격 실제 파일을 비교합니다.';
+                if (guideUpload) guideUpload.innerHTML = '<strong>업로드</strong> · 원격에 없거나 용량이 다른 파일만 올립니다. 경로·용량이 같은 파일은 건너뜁니다.';
+                if (guideSync) guideSync.hidden = true;
+                if (syncBtn) syncBtn.hidden = true;
+                if (deleteBtn) deleteBtn.hidden = true;
+            } else {
+                if (small) small.textContent = 'MODAL VOLUME';
+                if (title) title.textContent = 'LoRA 동기화';
+                if (copy) copy.textContent = '현재 실제로 선택 가능한 봇·에셋·인스턴스·그림체 LoRA를 원격과 비교하고 관리합니다.';
+                if (guideUpload) guideUpload.innerHTML = '<strong>업로드</strong> · 현재 사용본을 추가하거나 변경된 파일만 갱신합니다. 원격 잔여 파일은 유지합니다.';
+                if (guideSync) guideSync.hidden = false;
+                if (syncBtn) syncBtn.hidden = false;
+                if (deleteBtn) deleteBtn.hidden = false;
+            }
+        }
 
         function modalOperationLockActive() {
             const overlay = document.getElementById('modal-operation-lock-modal');
@@ -33377,7 +33429,9 @@
             if (note) {
                 note.textContent = hasSelection
                     ? `${selected.length}개 항목${botCount ? ` · 봇 ${botCount}개 전체 단위` : ''} · 현재 사용 파일 ${fileCount}개 · ${comfyInstallerFormatBytes(bytes)}`
-                    : '선택 없음 · 원격 삭제는 로컬 파일을 건드리지 않습니다.';
+                    : (modalLoraIsVast()
+                        ? '선택 없음 · 경로·용량이 같은 원격 파일은 업로드에서 건너뜁니다.'
+                        : '선택 없음 · 원격 삭제는 로컬 파일을 건드리지 않습니다.');
             }
         }
 
@@ -33533,7 +33587,7 @@
             modalRenderLoraCatalog();
             let loaded = false;
             try {
-                const data = await fetchJSON('/api/modal/loras');
+                const data = await fetchJSON(modalLoraApi(''));
                 modalLoraCatalog = Array.isArray(data.items) ? data.items : [];
                 const present = new Set(modalLoraCatalog.map(item => item.key));
                 for (const key of Array.from(modalLoraSelectedKeys)) {
@@ -33569,12 +33623,15 @@
             modalLoraStatusQueryCount = uniqueKeys.length;
             modalLoraUpdateControls();
             if (note) {
+                const compareText = modalLoraIsVast()
+                    ? 'Vast 인스턴스 실제 파일과 경로·용량 기준으로 비교하고 있습니다'
+                    : 'SHA-256과 Modal Volume 명세를 비교하고 있습니다';
                 note.textContent = partial
-                    ? `선택한 ${uniqueKeys.length}개 LoRA의 SHA-256과 Modal Volume 명세를 비교하고 있습니다. 목록 선택은 계속 변경할 수 있습니다.`
-                    : '전체 LoRA의 SHA-256과 Modal Volume 명세를 비교하고 있습니다. 목록 선택은 계속 변경할 수 있습니다.';
+                    ? `선택한 ${uniqueKeys.length}개 LoRA의 ${compareText}. 목록 선택은 계속 변경할 수 있습니다.`
+                    : `전체 LoRA의 ${compareText}. 목록 선택은 계속 변경할 수 있습니다.`;
             }
             try {
-                const data = await fetchJSON(`/api/modal/loras?${params.toString()}`);
+                const data = await fetchJSON(`${modalLoraApi('')}?${params.toString()}`);
                 const queriedItems = Array.isArray(data.items) ? data.items : [];
                 if (partial) {
                     const queriedByKey = new Map(queriedItems.map(item => [String(item.key), item]));
@@ -33601,11 +33658,11 @@
                 const remoteErrors = Array.isArray(data.remote_errors) ? data.remote_errors : [];
                 if (remoteErrors.length) console.error('[MODAL_LORA] 원격 명세 경고:', remoteErrors);
                 modalRenderLoraCatalog();
-                showToast(`Modal LoRA ${partial ? `선택 ${uniqueKeys.length}개` : '전체'} 상태를 조회했습니다`, 'success');
+                showToast(`${modalLoraTargetLabel()} LoRA ${partial ? `선택 ${uniqueKeys.length}개` : '전체'} 상태를 조회했습니다`, 'success');
             } catch (error) {
                 console.error('[MODAL_LORA] 원격 상태 조회 실패:', error);
                 if (note) note.textContent = '원격 상태 조회 실패: ' + (error.message || error);
-                showToast('Modal LoRA 상태 조회 실패: ' + (error.message || error), 'error');
+                showToast(`${modalLoraTargetLabel()} LoRA 상태 조회 실패: ` + (error.message || error), 'error');
             } finally {
                 modalLoraStatusQueryPending = false;
                 modalLoraStatusQueryCount = 0;
@@ -33658,7 +33715,7 @@
 
         async function modalLoraPollOperation() {
             try {
-                const data = await fetchJSON('/api/modal/loras/operation');
+                const data = await fetchJSON(modalLoraApi('/operation'));
                 const operation = data.operation || {state: 'idle'};
                 const wasRunning = modalLoraOperationRunning() || modalLoraOperationWasRunning;
                 modalRenderLoraOperation(operation);
@@ -33697,6 +33754,10 @@
                 showToast('원격에만 있는 항목은 업로드하거나 동기화할 수 없습니다', 'warning');
                 return;
             }
+            if (modalLoraIsVast() && action !== 'upload') {
+                showToast('VAST 빌드 후에는 업로드만 지원합니다', 'warning');
+                return;
+            }
             if (action === 'delete' && items.some(item => String(item.sync_state || 'unchecked') === 'unchecked')) {
                 showToast('원격 삭제 전에 선택 항목의 상태를 먼저 조회하세요', 'warning');
                 return;
@@ -33708,7 +33769,9 @@
             const botCount = items.filter(item => item.category === 'bot').length;
             const labels = {upload: '업로드', sync: '동기화', delete: '원격 삭제'};
             let question = `선택한 ${items.length}개 항목을 ${labels[action]}할까요?`;
-            if (action === 'upload') question += '\n\n현재 사용본만 추가·갱신하고 원격 잔여 파일은 유지합니다.';
+            if (action === 'upload') question += modalLoraIsVast()
+                ? '\n\n경로·용량이 같은 원격 파일은 건너뛰고, 나머지만 Vast 인스턴스로 올립니다. ComfyUI는 재시작 없이 자동 인식합니다.'
+                : '\n\n현재 사용본만 추가·갱신하고 원격 잔여 파일은 유지합니다.';
             if (action === 'sync') question += `\n\n업로드 성공 후 현재 구성에서 빠진 원격 파일을 정리합니다.${botCount ? ` 봇 ${botCount}개는 각 봇 전체 구성을 기준으로 처리합니다.` : ''}`;
             if (action === 'delete') question += '\n\n원격 Volume에서만 삭제하며 로컬 파일은 그대로 유지합니다.';
             if (!window.confirm(question)) return;
@@ -33716,7 +33779,7 @@
                 modalLoraOperationWasRunning = true;
                 modalLoraOperationState = {state: 'running', action, action_label: labels[action], message: `LoRA ${labels[action]} 요청을 준비하고 있습니다.`, progress: {total_files: 0}, logs: []};
                 modalRenderLoraOperation(modalLoraOperationState);
-                const data = await fetchJSON('/api/modal/loras/operation', {
+                const data = await fetchJSON(modalLoraApi('/operation'), {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({action, item_keys: keys}),
@@ -33732,8 +33795,16 @@
             }
         }
 
-        async function modalOpenLoraSync() {
-            if (modalOperationLockActive() || modalRedeployChoiceActive()) {
+        async function modalOpenLoraSync(target = 'modal') {
+            modalLoraTarget = target === 'vast' ? 'vast' : 'modal';
+            if (modalLoraIsVast()) {
+                const launch = window.__vastLastLaunch || {};
+                if (launch.state !== 'ready') {
+                    modalLoraTarget = 'modal';
+                    showToast('VAST 인스턴스가 준비 완료 상태일 때 LoRA 동기화를 사용할 수 있습니다', 'warning');
+                    return;
+                }
+            } else if (modalOperationLockActive() || modalRedeployChoiceActive()) {
                 showToast('현재 Modal 작업이 끝난 뒤 LoRA 동기화를 열어주세요', 'warning');
                 return;
             }
@@ -33743,14 +33814,15 @@
                 return;
             }
             overlay.hidden = false;
-            modalLockSettingsInteraction(true);
+            if (!modalLoraIsVast()) modalLockSettingsInteraction(true);
+            modalLoraApplyTargetChrome();
             modalLoraSelectedKeys.clear();
             modalLoraStateFilter = 'all';
             modalLoraSetCategory('bot');
             overlay.querySelector('.modal-action-dialog')?.focus({preventScroll: true});
             await modalLoraLoadCatalog();
             try {
-                const data = await fetchJSON('/api/modal/loras/operation');
+                const data = await fetchJSON(modalLoraApi('/operation'));
                 modalRenderLoraOperation(data.operation || {state: 'idle'});
                 if (data.operation?.state === 'running') {
                     modalLoraOperationWasRunning = true;
@@ -33772,8 +33844,8 @@
                 window.clearTimeout(modalLoraOperationPollTimer);
                 modalLoraOperationPollTimer = null;
             }
-            modalLockSettingsInteraction(false);
-            document.getElementById('modal-lora-sync-open-btn')?.focus({preventScroll: true});
+            if (!modalLoraIsVast()) modalLockSettingsInteraction(false);
+            document.getElementById(modalLoraIsVast() ? 'vast-lora-sync-open-btn' : 'modal-lora-sync-open-btn')?.focus({preventScroll: true});
         }
 
         function modalShowOperationLock(kind, title, message) {
@@ -38363,6 +38435,7 @@
                 model: '-',
                 status: '대기',
                 output: '',
+                reasoning: '',
                 tokens: 0,
                 promptTokens: 0,
                 elapsed: 0,
@@ -38392,6 +38465,15 @@
             if (outEl) {
                 outEl.textContent = state.output || '-';
                 outEl.scrollTop = outEl.scrollHeight;
+            }
+            const reasonEl = document.getElementById('lighbd-llm-reasoning');
+            if (reasonEl) {
+                const rText = String(state.reasoning || '');
+                reasonEl.style.display = rText ? '' : 'none';
+                if (rText) {
+                    reasonEl.textContent = rText;
+                    reasonEl.scrollTop = reasonEl.scrollHeight;
+                }
             }
             const spinner = document.getElementById('lighbd-llm-spinner');
             if (spinner) spinner.style.display = state.active ? '' : 'none';
@@ -38437,6 +38519,7 @@
                     state.model = item.model || state.model;
                     state.status = item.status || ((state.callName ? state.callName + ' · ' : '') + '스트리밍');
                     state.output = String(item.text || '');
+                    state.reasoning = String(item.reasoning_text || '');
                     state.tokens = Number(item.completion_tokens ?? Math.floor(state.output.length / 3));
                     state.promptTokens = Number(item.prompt_tokens ?? 0);
                     state.elapsed = Number(item.elapsed ?? 0);
@@ -38523,6 +38606,7 @@
                 state.active = true;
                 state.status = (state.callName ? state.callName + ' · ' : '') + '시작';
                 state.output = '';
+                state.reasoning = '';
                 state.tokens = 0;
                 state.promptTokens = 0;
                 state.elapsed = 0;
@@ -38537,13 +38621,18 @@
                 }
             } else if (t === 'delta') {
                 state.active = true;
-                state.hasDelta = true;
-                state.output += data.text || '';
+                if (data.reasoning) state.reasoning += String(data.reasoning);
+                if (data.text) {
+                    state.hasDelta = true;
+                    state.output += data.text || '';
+                }
                 if (data.ttft !== undefined && data.ttft !== null) state.ttft = Number(data.ttft);
                 if (data.elapsed !== undefined && data.elapsed !== null) state.elapsed = Number(data.elapsed);
                 state.tokens = Math.max(0, Math.floor(state.output.length / 3));
                 state.tps = state.elapsed > 0 ? state.tokens / state.elapsed : 0;
-                state.status = (state.callName ? state.callName + ' · ' : '') + '스트리밍';
+                // content가 아직 없고 thinking만 흐르는 구간은 상태로 구분해 표시한다.
+                state.status = (state.callName ? state.callName + ' · ' : '')
+                    + (state.output ? '스트리밍' : '생각 중');
             } else if (t === 'done') {
                 state.active = false;
                 state.output = data.text || state.output;
@@ -38715,6 +38804,7 @@
                     <span>경과: <strong class="f-elapsed">0.00</strong>s</span>
                     <span><strong class="f-tps">0.0</strong> t/s · TTFT <strong class="f-ttft">-</strong></span>
                 </div>
+                <pre class="lighbd-live-card-reasoning"></pre>
                 <pre class="lighbd-live-card-out">-</pre>`;
             const card = {
                 root,
@@ -38728,12 +38818,14 @@
                 fElapsed: root.querySelector('.f-elapsed'),
                 fTps: root.querySelector('.f-tps'),
                 fTtft: root.querySelector('.f-ttft'),
+                reasoning: root.querySelector('.lighbd-live-card-reasoning'),
                 out: root.querySelector('.lighbd-live-card-out'),
                 retry: root.querySelector('.act-retry'),
                 parallelRetry: root.querySelector('.act-parallel-retry'),
                 partial: root.querySelector('.act-partial'),
                 cancel: root.querySelector('.act-cancel'),
                 lastOutput: null,
+                lastReasoning: null,
             };
             card.retry.addEventListener('click', () => _controlLighbdStream(state.id, 'retry'));
             card.parallelRetry.addEventListener('click', () => _controlLighbdStream(state.id, 'parallel_retry'));
@@ -38834,6 +38926,13 @@
                 requestAnimationFrame(() => {
                     if (card.out.isConnected) card.out.scrollTop = card.out.scrollHeight;
                 });
+                const reasonText = String(state.reasoning || '');
+                if (card.lastReasoning !== reasonText) {
+                    card.reasoning.textContent = reasonText;
+                    card.reasoning.style.display = reasonText ? '' : 'none';
+                    card.lastReasoning = reasonText;
+                }
+                if (reasonText) card.reasoning.scrollTop = card.reasoning.scrollHeight;
             }
         }
 

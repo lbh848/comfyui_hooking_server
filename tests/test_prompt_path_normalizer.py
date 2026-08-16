@@ -161,7 +161,7 @@ async def test_common_generation_boundary_normalizes_modal_before_workflow_build
         captured["negative"] = negative
         return {"workflow": {"inputs": {}}}
 
-    async def fake_modal_generate(workflow):
+    async def fake_modal_generate(workflow, **_kwargs):
         captured["workflow"] = workflow
         return b"modal-image", {"prompt_id": "modal-prompt-id"}
 

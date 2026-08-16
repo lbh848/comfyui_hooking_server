@@ -1897,3 +1897,127 @@ async def test_target_size_search_chooses_highest_fitting_quality(
     assert raw.read_bytes() == b"x" * 5_000
     assert 100 in encoded_qualities
     assert 1 in encoded_qualities
+
+
+def _write_backup_image(
+    directory: Path,
+    name: str,
+    *,
+    color: str = "green",
+) -> Path:
+    path = directory / f"{name}.webp"
+    Image.new("RGB", (32, 32), color).save(path, format="WEBP")
+    return path
+
+
+def test_clean_source_predicate_accepts_raw_preserved_backup(tmp_path: Path) -> None:
+    raw_dir = tmp_path / "_raw"
+    raw_dir.mkdir()
+    Image.new("RGB", (32, 32), "red").save(
+        raw_dir / "scene.webp", format="WEBP"
+    )
+
+    assert (
+        video_module.backup_clean_source_available(str(tmp_path), "scene") is True
+    )
+
+
+def test_clean_source_predicate_accepts_dialogue_free_backup(
+    tmp_path: Path,
+) -> None:
+    # key visual: 대사 합성이 적용되지 않아 _raw 없이 메인 이미지만 존재.
+    _write_backup_image(tmp_path, "keyvis")
+    (tmp_path / "keyvis_info.json").write_text(
+        json.dumps({"postprocess_settings": {"placement": "extend"}}),
+        encoding="utf-8",
+    )
+
+    assert (
+        video_module.backup_clean_source_available(str(tmp_path), "keyvis") is True
+    )
+
+
+def test_clean_source_predicate_rejects_composed_backup_without_raw(
+    tmp_path: Path,
+) -> None:
+    _write_backup_image(tmp_path, "scene")
+    (tmp_path / "scene_info.json").write_text(
+        json.dumps({"speak_text": 'hero: "대사" #smile'}),
+        encoding="utf-8",
+    )
+
+    assert (
+        video_module.backup_clean_source_available(str(tmp_path), "scene") is False
+    )
+
+
+def test_clean_source_predicate_rejects_backup_without_info_proof(
+    tmp_path: Path,
+) -> None:
+    _write_backup_image(tmp_path, "unknown")
+
+    assert (
+        video_module.backup_clean_source_available(str(tmp_path), "unknown")
+        is False
+    )
+
+
+def test_resolve_reference_prefers_raw_original(tmp_path: Path) -> None:
+    _write_backup_image(tmp_path, "scene", color="blue")
+    raw_dir = tmp_path / "_raw"
+    raw_dir.mkdir()
+    Image.new("RGB", (32, 32), "red").save(
+        raw_dir / "scene.webp", format="WEBP"
+    )
+    (tmp_path / "scene_info.json").write_text(
+        json.dumps({"speak_text": 'hero: "대사" #smile'}),
+        encoding="utf-8",
+    )
+
+    mode = VideoMode()
+    mode.get_backup_dir = lambda: str(tmp_path)
+
+    resolved = mode._resolve_reference({"kind": "backup", "name": "scene"})
+
+    assert resolved["path"] == str(raw_dir / "scene.webp")
+
+
+def test_resolve_reference_falls_back_to_main_image_for_dialogue_free_backup(
+    tmp_path: Path,
+) -> None:
+    # key visual 백업: _raw 없지만 대사 합성도 없으므로 메인 이미지가 원본.
+    main_path = _write_backup_image(tmp_path, "keyvis", color="purple")
+    (tmp_path / "keyvis.json").write_text(
+        json.dumps({"positive": "[ANIMA_CONTENT] promotional key visual"}),
+        encoding="utf-8",
+    )
+    (tmp_path / "keyvis_info.json").write_text(
+        json.dumps({"postprocess_settings": {"placement": "extend"}}),
+        encoding="utf-8",
+    )
+
+    mode = VideoMode()
+    mode.get_backup_dir = lambda: str(tmp_path)
+
+    resolved = mode._resolve_reference({"kind": "backup", "name": "keyvis"})
+
+    assert resolved["path"] == str(main_path)
+    assert resolved["prompt_data"]["positive"] == (
+        "[ANIMA_CONTENT] promotional key visual"
+    )
+
+
+def test_resolve_reference_rejects_composed_backup_without_raw(
+    tmp_path: Path,
+) -> None:
+    _write_backup_image(tmp_path, "scene", color="blue")
+    (tmp_path / "scene_info.json").write_text(
+        json.dumps({"speak_text": 'hero: "대사" #smile'}),
+        encoding="utf-8",
+    )
+
+    mode = VideoMode()
+    mode.get_backup_dir = lambda: str(tmp_path)
+
+    with pytest.raises(FileNotFoundError):
+        mode._resolve_reference({"kind": "backup", "name": "scene"})

@@ -104,6 +104,7 @@ from modes.video_mode import (
     VIDEO_MODES,
     VIDEO_WORKFLOW_VARIANTS,
     VideoMode,
+    backup_clean_source_available,
     normalize_sharpen_params,
     normalize_video_duration,
 )
@@ -2758,7 +2759,7 @@ def normalize_vast_generation_progress(
     *,
     operation: str,
 ) -> tuple[int | float, int | float] | None:
-    """VAST의 구조화 진행 이벤트를 기존 이미지 진행 콜백 형식으로 바꾼다."""
+    """원격(Modal/Vast) 구조화 진행 이벤트를 기존 이미지 진행 콜백 형식으로 바꾼다."""
     if not isinstance(detail, dict):
         print(
             "[VAST_PROGRESS] 진행 이벤트 형식 오류: "
@@ -3105,28 +3106,30 @@ async def generate_image_with_prompt(
             await notify_frontend("generation_progress", {"value": 0, "max": 1})
             service = remote_comfy_service_for_target(execution_target)
             generate_kwargs = {}
-            if execution_target == VAST_COMFY_TARGET:
-                async def on_vast_progress(detail: dict) -> None:
-                    normalized = normalize_vast_generation_progress(
-                        detail,
-                        operation="illustration",
-                    )
-                    if normalized is None:
-                        return
-                    value, max_value = normalized
-                    print(
-                        "[VAST_GEN_PROGRESS] 삽화 생성 진행: "
-                        f"{value}/{max_value}, phase={detail.get('phase', '')!r}, "
-                        f"node={detail.get('node', '')!r}"
-                    )
-                    if progress_callback:
-                        await progress_callback(value, max_value)
-                    await notify_frontend(
-                        "generation_progress",
-                        {"value": value, "max": max_value},
-                    )
 
-                generate_kwargs["progress_callback"] = on_vast_progress
+            # Modal/Vast 공용: 원격 구조화 진행 이벤트를 삽화 진행 콜백과
+            # 프론트엔드 generation_progress 이벤트로 전달한다.
+            async def on_remote_progress(detail: dict) -> None:
+                normalized = normalize_vast_generation_progress(
+                    detail,
+                    operation="illustration",
+                )
+                if normalized is None:
+                    return
+                value, max_value = normalized
+                print(
+                    f"[{provider_label.upper()}_GEN_PROGRESS] 삽화 생성 진행: "
+                    f"{value}/{max_value}, phase={detail.get('phase', '')!r}, "
+                    f"node={detail.get('node', '')!r}"
+                )
+                if progress_callback:
+                    await progress_callback(value, max_value)
+                await notify_frontend(
+                    "generation_progress",
+                    {"value": value, "max": max_value},
+                )
+
+            generate_kwargs["progress_callback"] = on_remote_progress
             image_bytes, remote_result = await service.generate(
                 risu_prompt,
                 **generate_kwargs,
@@ -3304,25 +3307,28 @@ async def submit_workflow_to_comfy(
                 await progress_callback(0, 1)
             service = remote_comfy_service_for_target(execution_target)
             generate_kwargs = {"input_paths": input_paths}
-            if execution_target == VAST_COMFY_TARGET:
-                async def on_vast_progress(detail: dict) -> None:
-                    normalized = normalize_vast_generation_progress(
-                        detail,
-                        operation=task_key,
-                    )
-                    if normalized is None:
-                        return
-                    value, max_value = normalized
-                    print(
-                        "[VAST_WORKFLOW_PROGRESS] 이미지 워크플로우 진행: "
-                        f"task={task_key}, {value}/{max_value}, "
-                        f"phase={detail.get('phase', '')!r}, "
-                        f"node={detail.get('node', '')!r}"
-                    )
-                    if progress_callback:
-                        await progress_callback(value, max_value)
 
-                generate_kwargs["progress_callback"] = on_vast_progress
+            # Modal/Vast 공용: 원격 구조화 진행 이벤트를 기존 이미지 진행
+            # 콜백 형식으로 바꿔 전달한다(Vast가 먼저 쓰던 정규화를 재사용).
+            async def on_remote_progress(detail: dict) -> None:
+                normalized = normalize_vast_generation_progress(
+                    detail,
+                    operation=task_key,
+                )
+                if normalized is None:
+                    return
+                value, max_value = normalized
+                print(
+                    f"[{provider_label.upper()}_WORKFLOW_PROGRESS] "
+                    "이미지 워크플로우 진행: "
+                    f"task={task_key}, {value}/{max_value}, "
+                    f"phase={detail.get('phase', '')!r}, "
+                    f"node={detail.get('node', '')!r}"
+                )
+                if progress_callback:
+                    await progress_callback(value, max_value)
+
+            generate_kwargs["progress_callback"] = on_remote_progress
             image_bytes, metadata = await service.generate(
                 workflow_api,
                 **generate_kwargs,
@@ -9930,7 +9936,11 @@ async def handle_api_backups(request: web.Request) -> web.Response:
             ),
             "",
         )
-        has_raw = bool(raw_extension)
+        # 영상화 가능 판정: _raw 실제 파일이 있거나, 대사 합성이 적용되지 않아
+        # 메인 이미지 자체가 깨끗한 원본인 백업(key visual 등)도 포함한다.
+        has_raw = bool(raw_extension) or backup_clean_source_available(
+            backup_dir, base
+        )
 
         backups.append({
             "name": base,
@@ -9939,8 +9949,9 @@ async def handle_api_backups(request: web.Request) -> web.Response:
             # animated: 정지 poster(첫 프레임) URL. 정적이면 원본과 동일.
             "poster_url": (f"/api/backup_poster/{base}" if is_animated
                            else f"/api/backup_image/{base}{ext}"),
-            # 후처리 원본(대사 없음) URL — 향후 "원본 보기/재편집" UI용. 없으면 None.
-            "raw_url": (f"/api/backup_raw/{base}" if has_raw else None),
+            # 후처리 원본(대사 없음) URL — 향후 "원본 보기/재편집" UI용. 실제 _raw
+            # 파일이 있을 때만 유효하므로 raw_extension 기준으로 판정한다.
+            "raw_url": (f"/api/backup_raw/{base}" if raw_extension else None),
             "has_raw": has_raw,
             "raw_extension": raw_extension,
             "file_size_bytes": os.path.getsize(f),
@@ -10428,10 +10439,9 @@ async def handle_api_backup_delete(request: web.Request) -> web.Response:
 
 
 def _video_backup_has_raw(backup_dir: str, name: str) -> bool:
-    return any(
-        os.path.isfile(os.path.join(backup_dir, "_raw", f"{name}{extension}"))
-        for extension in (".avif", ".webp")
-    )
+    # 영상화 원본 자격: _raw 파일 또는 (없으면) 대사 합성이 적용되지 않은 백업.
+    # key visual 처럼 애초에 대사가 없는 백업은 메인 이미지가 이미 깨끗한 원본이다.
+    return backup_clean_source_available(backup_dir, name)
 
 
 async def handle_api_video_reference_options(request: web.Request) -> web.Response:

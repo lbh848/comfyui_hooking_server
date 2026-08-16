@@ -12,7 +12,7 @@ def test_backup_card_has_one_video_button_immediately_before_delete() -> None:
 
     assert video_button < delete_button
     assert "🎬 영상화" in FRONTEND[video_button:delete_button]
-    assert "영상화에 필요한 _raw 원본이 없는 백업" in FRONTEND
+    assert "영상화에 쓸 대사 없는 원본이 없는 백업" in FRONTEND
     assert "openVideoWorkspace(" in FRONTEND[video_button:delete_button]
 
 

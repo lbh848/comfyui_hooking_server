@@ -252,6 +252,54 @@ def register_vast_routes(
         except Exception as exc:
             return _fail("워크플로우 실행 실패", exc)
 
+    async def loras(request: web.Request) -> web.Response:
+        try:
+            include_remote = request.query.get("remote", "").strip().lower() in {
+                "1",
+                "true",
+            }
+            item_keys = [
+                value.strip()
+                for value in request.query.getall("item_key", [])
+                if value.strip()
+            ]
+            return web.json_response(
+                await service.lora_catalog(
+                    include_remote=include_remote,
+                    item_keys=item_keys or None,
+                )
+            )
+        except (ValueError, RuntimeError, FileNotFoundError) as exc:
+            return _fail("LoRA 카탈로그 요청 거부", exc, status=400)
+        except Exception as exc:
+            return _fail("LoRA 카탈로그 조회 실패", exc)
+
+    async def lora_operation(request: web.Request) -> web.Response:
+        try:
+            body = await request.json()
+            action = body.get("action", "")
+            item_keys = body.get("item_keys") or []
+            if not isinstance(action, str):
+                raise ValueError("action은 문자열이어야 합니다.")
+            if not isinstance(item_keys, list) or not all(
+                isinstance(item, str) for item in item_keys
+            ):
+                raise ValueError("item_keys는 문자열 배열이어야 합니다.")
+            operation = await service.start_lora_operation(action, item_keys)
+            return web.json_response({"ok": True, "operation": operation})
+        except (ValueError, RuntimeError, FileNotFoundError) as exc:
+            return _fail("LoRA 작업 요청 거부", exc, status=400)
+        except Exception as exc:
+            return _fail("LoRA 작업 시작 실패", exc)
+
+    async def lora_operation_status(_request: web.Request) -> web.Response:
+        try:
+            return web.json_response(
+                {"ok": True, "operation": service.lora_operation_status()}
+            )
+        except Exception as exc:
+            return _fail("LoRA 작업 상태 조회 실패", exc)
+
     async def cleanup(_app: web.Application) -> None:
         try:
             await service.close()
@@ -285,6 +333,9 @@ def register_vast_routes(
     app.router.add_delete("/api/vast/favorites", favorites_delete)
     app.router.add_get("/api/vast/model-sources", model_sources_get)
     app.router.add_post("/api/vast/model-sources", model_sources_put)
+    app.router.add_get("/api/vast/loras", loras)
+    app.router.add_post("/api/vast/loras/operation", lora_operation)
+    app.router.add_get("/api/vast/loras/operation", lora_operation_status)
     app.router.add_post("/api/vast/workflow/run", run_workflow)
     app.on_startup.append(startup)
     app.on_cleanup.append(cleanup)
