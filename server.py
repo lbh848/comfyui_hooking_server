@@ -1622,7 +1622,28 @@ async def convert_workflow_via_endpoint(
     """ComfyUI /workflow/convert 엔드포인트로 워크플로우를 API 형식으로 변환한다."""
 
     async def convert_via_local_comfy():
-        target_port = resolve_comfy_port(task_key)
+        try:
+            target_port = resolve_comfy_port(task_key)
+        except ComfyTaskAllocationValidationError as exc:
+            # Modal 전용 등 로컬 전용 인스턴스가 없는 작업은 기본 로컬
+            # ComfyUI(Comfy #1)로 변환한다. 변환은 워크플로우 노드 해석일
+            # 뿐이라 어떤 로컬 인스턴스가 응답해도 충분하다. REAL_COMFY_PORT는
+            # 모듈 로드 시점 값이라 런타임 포트 변경을 못 따르므로 설정에서
+            # 다시 읽는다.
+            try:
+                target_port = int(app_config.get("comfyui_port", REAL_COMFY_PORT))
+            except (TypeError, ValueError) as port_exc:
+                print(
+                    "[WORKFLOW] Comfy #1 포트 설정이 올바르지 않아 기본값 사용: "
+                    f"value={app_config.get('comfyui_port')!r}, "
+                    f"error={port_exc}"
+                )
+                target_port = REAL_COMFY_PORT
+            print(
+                f"[WORKFLOW] 로컬 전용 인스턴스 없음, "
+                f"기본 ComfyUI로 변환: task={task_key}, "
+                f"port={target_port}, reason={exc}"
+            )
         url = f"http://{REAL_COMFY_HOST}:{target_port}/workflow/convert"
         print(f"[WORKFLOW] → POST {url} (변환 요청)")
         async with aiohttp.ClientSession() as session:
