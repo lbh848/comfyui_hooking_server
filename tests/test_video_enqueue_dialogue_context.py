@@ -168,7 +168,9 @@ async def test_video_enqueue_rejects_unknown_fast_quality_level(monkeypatch) -> 
 
 
 @pytest.mark.asyncio
-async def test_fast_video_enqueue_forces_native_768p_profile(monkeypatch) -> None:
+async def test_fast_video_enqueue_keeps_experimental_mp_and_defaults_to_native(
+    monkeypatch,
+) -> None:
     captured: dict = {}
 
     async def fake_add_item(item_type, label, params):
@@ -184,7 +186,7 @@ async def test_fast_video_enqueue_forces_native_768p_profile(monkeypatch) -> Non
             _video_request(
                 workflow_variant="fast",
                 aspect_ratio="16:9",
-                quality_level="ignored-by-fast-profile",
+                quality_level="medium",
             )
         )
     )
@@ -192,8 +194,17 @@ async def test_fast_video_enqueue_forces_native_768p_profile(monkeypatch) -> Non
     assert response.status == 200
     assert captured["params"]["workflow_variant"] == "fast"
     assert captured["params"]["aspect_ratio"] == "16:9"
-    assert captured["params"]["quality_level"] == "native"
+    # 고속 + MP 단계는 실험적 선택으로 큐 파라미터에 그대로 전달된다.
+    assert captured["params"]["quality_level"] == "medium"
     assert captured["label"] == "H3 고속 I2V 프롬프트"
+
+    omitted = _video_request(workflow_variant="fast", aspect_ratio="16:9")
+    del omitted["quality_level"]
+    response = await server.handle_api_video_enqueue(_JsonRequest(omitted))
+
+    # 고속 요청이 화질을 생략하면 768p(native)를 기본으로 유지한다.
+    assert response.status == 200
+    assert captured["params"]["quality_level"] == "native"
 
 
 @pytest.mark.asyncio

@@ -64,7 +64,7 @@ def test_video_generation_defaults_normalize_every_persisted_option() -> None:
     }
 
 
-def test_fast_video_defaults_force_native_resolution_and_reject_ultrawide() -> None:
+def test_fast_video_defaults_keep_mp_choice_and_reject_ultrawide() -> None:
     settings = copy.deepcopy(server.DEFAULT_VIDEO_GENERATION_DEFAULTS)
     settings.update(
         {
@@ -78,7 +78,16 @@ def test_fast_video_defaults_force_native_resolution_and_reject_ultrawide() -> N
 
     assert normalized["workflow_variant"] == "fast"
     assert normalized["aspect_ratio"] == "16:9"
-    assert normalized["quality_level"] == "native"
+    # 고속 MP 단계는 실험적 선택으로 그대로 저장된다.
+    assert normalized["quality_level"] == "low"
+
+    omitted = copy.deepcopy(settings)
+    del omitted["quality_level"]
+    # 화질을 생략한 고속 기본값은 768p(native)를 유지한다.
+    assert (
+        server.normalize_video_generation_defaults(omitted)["quality_level"]
+        == "native"
+    )
 
     settings["aspect_ratio"] = "21:9"
     with pytest.raises(ValueError, match="고속 영상"):

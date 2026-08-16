@@ -181,8 +181,17 @@ def test_video_page_separates_fast_aspect_ratio_and_mp_level() -> None:
     assert "최소 중앙 크롭" in FRONTEND
     assert "VIDEO_FAST_768_ASPECT_KEYS" in FRONTEND
     assert "calculateVideoFast768Resolution(aspectRatio)" in FRONTEND
-    assert "qualitySelect.disabled = true" in FRONTEND
-    assert "고속 768p 고정" in FRONTEND
+    assert "calculateVideoFastModeResolution(aspectRatio, qualityLevel)" in FRONTEND
+    # 고속 해상도 셀렉트는 잠기지 않고, MP 단계 옵션에 (실험적)이 붙는다.
+    assert "VIDEO_FAST_QUALITY_OPTIONS" in FRONTEND
+    assert "고속 기본 · 짧은 변 768p" in FRONTEND
+    assert "저화질 · 0.2 MP (실험적)" in FRONTEND
+    assert "기본 · 0.35 MP (실험적)" in FRONTEND
+    assert "고화질 · 0.5 MP (실험적)" in FRONTEND
+    assert "onVideoQualityLevelChange()" in FRONTEND
+    assert "qualitySelect.dataset.activeVariant" in FRONTEND
+    assert "qualitySelect.disabled = true" not in FRONTEND
+    assert "고속 768p 고정" not in FRONTEND
     assert "workflow_variant: selectedVideoWorkflowVariant()" in FRONTEND
     assert "/api/video/reference-options" in FRONTEND
     assert "/api/video/enqueue" in FRONTEND

@@ -645,7 +645,12 @@ def resolve_video_resolution(
     width: int,
     height: int,
 ) -> tuple[str, str, int, int]:
-    """일반 MP 단계 또는 고속 4-step 768p 규칙으로 해상도를 결정한다."""
+    """일반 MP 단계 또는 고속 4-step 768p 규칙으로 해상도를 결정한다.
+
+    고속(fast)은 화질을 생략하면 768p(native)를 유지한다. 명시적으로 MP
+    단계(low/medium/high)를 고르면 4-step LoRA 권장 해상도 밖의 실험적
+    선택으로 간주하고 그대로 계산에 반영한다.
+    """
 
     variant = normalize_video_workflow_variant(workflow_variant)
     if variant == "standard":
@@ -665,14 +670,21 @@ def resolve_video_resolution(
             f"value={aspect_ratio!r}, supported={tuple(FAST_768_ASPECT_RATIOS)!r}"
         )
         raise ValueError("지원하지 않는 고속 영상 화면 비율입니다")
-    target_w, target_h = calculate_fast_dimensions(key, "native")
-    if min(target_w, target_h) != FAST_NATIVE_MAX_SHORT_EDGE:
-        print(
-            "[VIDEO:RESOLUTION] 고속 768p 최소변 계산 오류: "
-            f"aspect_ratio={key}, target={target_w}x{target_h}"
-        )
-        raise RuntimeError("고속 영상 해상도의 최소변이 768px가 아닙니다")
-    return key, "native", target_w, target_h
+    quality_key = normalize_fast_quality_level(
+        quality_level if str(quality_level or "").strip() else "native"
+    )
+    if quality_key == "native":
+        target_w, target_h = calculate_fast_dimensions(key, "native")
+        if min(target_w, target_h) != FAST_NATIVE_MAX_SHORT_EDGE:
+            print(
+                "[VIDEO:RESOLUTION] 고속 768p 최소변 계산 오류: "
+                f"aspect_ratio={key}, target={target_w}x{target_h}"
+            )
+            raise RuntimeError("고속 영상 해상도의 최소변이 768px가 아닙니다")
+        return key, "native", target_w, target_h
+    # 고속 + MP 단계(실험적): 768p 최소변 규칙 대신 지정 MP로 계산한다.
+    target_w, target_h = calculate_fast_dimensions(key, quality_key)
+    return key, quality_key, target_w, target_h
 
 
 def resolve_fast_preset(
@@ -1218,11 +1230,10 @@ class VideoMode:
                     f"target_size={target_size!r}"
                 )
                 raise ValueError("지원하지 않는 영상 화면 비율입니다")
-            quality_key = (
-                "native"
-                if variant == "fast"
-                else normalize_fast_quality_level(quality_level)
-            )
+            if variant == "fast" and not str(quality_level or "").strip():
+                # 고속은 화질 미지정 시 768p(native)를 기본으로 유지한다.
+                quality_level = "native"
+            quality_key = normalize_fast_quality_level(quality_level)
         high_res_crop = center_crop_to_ratio(source, target_w, target_h)
         resized = high_res_crop.resize((target_w, target_h), Image.Resampling.LANCZOS)
         if sharpen:

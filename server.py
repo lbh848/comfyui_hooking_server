@@ -313,7 +313,9 @@ def normalize_video_generation_defaults(raw: object) -> dict:
             )
             print(f"[VIDEO:DEFAULTS] {message}; value={raw!r}")
             raise ValueError(message)
-        normalized["quality_level"] = "native"
+        if "quality_level" not in source:
+            # 고속 기본값 저장에 화질이 없으면 768p(native)를 유지한다.
+            normalized["quality_level"] = "native"
 
     try:
         normalized["duration"] = int(
@@ -411,17 +413,20 @@ def normalize_video_workflow_selection(
         raise ValueError("지원하지 않는 영상 화면 비율입니다")
 
     if workflow_variant == "fast":
-        quality_level = "native"
+        # 고속은 화질을 생략하면 768p(native)를 기본으로 유지한다. 명시적 MP
+        # 단계(low/medium/high)는 실험적 선택으로 그대로 허용한다.
+        default_quality = "native"
     else:
-        quality_level = str(
-            raw.get("quality_level") or FAST_DEFAULT_QUALITY_LEVEL
-        ).strip().lower()
-        if quality_level not in FAST_QUALITY_LEVELS:
-            print(
-                f"[{log_prefix}] 화질 단계 오류: value={quality_level!r}, "
-                f"body={raw!r}"
-            )
-            raise ValueError("지원하지 않는 영상 화질 단계입니다")
+        default_quality = FAST_DEFAULT_QUALITY_LEVEL
+    quality_level = str(
+        raw.get("quality_level") or default_quality
+    ).strip().lower()
+    if quality_level not in FAST_QUALITY_LEVELS:
+        print(
+            f"[{log_prefix}] 화질 단계 오류: value={quality_level!r}, "
+            f"body={raw!r}"
+        )
+        raise ValueError("지원하지 않는 영상 화질 단계입니다")
     return workflow_variant, aspect_ratio, quality_level
 
 

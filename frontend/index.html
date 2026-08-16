@@ -14897,7 +14897,7 @@
                             </label>
                             <label>
                                 <span class="video-field-label"><span>해상도</span><small id="video-generation-quality-hint">H3 FAST</small></span>
-                                <select id="video-generation-quality-level" class="video-select" onchange="updateVideoGenerationSummary()">
+                                <select id="video-generation-quality-level" class="video-select" onchange="onVideoQualityLevelChange()">
                                     <option value="low">FAST 저화질 · 0.2 MP</option>
                                     <option value="medium" selected>FAST 기본 · 0.35 MP</option>
                                     <option value="high">FAST 고화질 · 0.5 MP</option>
@@ -28689,6 +28689,20 @@
         const VIDEO_FAST_768_ASPECT_KEYS = Object.freeze([
             '1:1', '4:3', '3:4', '16:9', '9:16', '3:2', '2:3', '5:4', '4:5',
         ]);
+        const VIDEO_STANDARD_QUALITY_OPTIONS = Object.freeze([
+            ['low', 'FAST 저화질 · 0.2 MP'],
+            ['medium', 'FAST 기본 · 0.35 MP'],
+            ['high', 'FAST 고화질 · 0.5 MP'],
+            ['native', 'Native 최대 · 비율별'],
+        ]);
+        // 고속 워크플로우의 해상도 옵션. 768p(native)가 권장 기본이고
+        // MP 단계 선택은 4-step LoRA 권장 해상도 밖의 실험적 설정이다.
+        const VIDEO_FAST_QUALITY_OPTIONS = Object.freeze([
+            ['native', '고속 기본 · 짧은 변 768p'],
+            ['low', '저화질 · 0.2 MP (실험적)'],
+            ['medium', '기본 · 0.35 MP (실험적)'],
+            ['high', '고화질 · 0.5 MP (실험적)'],
+        ]);
 
         function selectedVideoWorkflowVariant() {
             const value = document.getElementById('video-generation-workflow-variant')?.value || 'standard';
@@ -28775,6 +28789,17 @@
             return result;
         }
 
+        function calculateVideoFastModeResolution(aspectRatio, qualityLevel) {
+            if (qualityLevel === 'native') {
+                return calculateVideoFast768Resolution(aspectRatio);
+            }
+            if (!VIDEO_FAST_768_ASPECT_KEYS.includes(aspectRatio)) {
+                console.error('[VIDEO_UI] 고속 화면 비율 오류:', aspectRatio);
+                return null;
+            }
+            return calculateVideoFastResolution(aspectRatio, qualityLevel);
+        }
+
         function updateVideoResolutionControls() {
             const workflowVariant = selectedVideoWorkflowVariant();
             const aspectSelect = document.getElementById('video-generation-aspect-ratio');
@@ -28788,15 +28813,48 @@
                 return;
             }
 
+            const previousVariant = qualitySelect.dataset.activeVariant || 'standard';
+            const previousQualityValue = qualitySelect.value || 'native';
+            const defaultsApplied = qualitySelect.dataset.defaultsApplied === workflowVariant;
+            delete qualitySelect.dataset.defaultsApplied;
+            qualitySelect.innerHTML = (workflowVariant === 'fast'
+                ? VIDEO_FAST_QUALITY_OPTIONS
+                : VIDEO_STANDARD_QUALITY_OPTIONS
+            ).map(([value, label]) => `<option value="${value}">${label}</option>`).join('');
+            if (workflowVariant === 'fast') {
+                if (previousVariant !== 'fast') {
+                    if (!defaultsApplied) {
+                        qualitySelect.dataset.standardValue = previousQualityValue;
+                    }
+                    qualitySelect.value = defaultsApplied ? previousQualityValue : 'native';
+                } else {
+                    qualitySelect.value = previousQualityValue;
+                }
+                qualitySelect.title = '고속 MP 선택은 권장 해상도(짧은 변 768p) 밖의 실험적 설정입니다.';
+                if (qualityHint) qualityHint.textContent = '고속 · MP (실험적)';
+            } else {
+                if (previousVariant === 'fast' && qualitySelect.dataset.standardValue) {
+                    qualitySelect.value = qualitySelect.dataset.standardValue;
+                    delete qualitySelect.dataset.standardValue;
+                } else {
+                    qualitySelect.value = previousQualityValue;
+                }
+                qualitySelect.title = '';
+                if (qualityHint) qualityHint.textContent = 'H3 FAST';
+            }
+            qualitySelect.dataset.activeVariant = workflowVariant;
+
             const previousAspect = aspectSelect.value || 'auto';
             const aspectKeys = workflowVariant === 'fast'
                 ? VIDEO_FAST_768_ASPECT_KEYS
                 : Object.keys(VIDEO_FAST_ASPECT_RATIOS);
-            const autoLabel = workflowVariant === 'fast' ? '자동 · 짧은 변 768p' : '자동';
+            const autoLabel = workflowVariant === 'fast' && qualitySelect.value === 'native'
+                ? '자동 · 짧은 변 768p'
+                : '자동';
             const options = [`<option value="auto">${autoLabel}</option>`];
             for (const key of aspectKeys) {
                 const resolution = workflowVariant === 'fast'
-                    ? calculateVideoFast768Resolution(key)
+                    ? calculateVideoFastModeResolution(key, qualitySelect.value || 'native')
                     : null;
                 const label = resolution
                     ? `${key} · ${resolution.width}×${resolution.height}`
@@ -28807,24 +28865,11 @@
             aspectSelect.value = previousAspect === 'auto' || aspectKeys.includes(previousAspect)
                 ? previousAspect
                 : 'auto';
+        }
 
-            if (workflowVariant === 'fast') {
-                if (!qualitySelect.disabled && qualitySelect.value !== 'native') {
-                    qualitySelect.dataset.standardValue = qualitySelect.value;
-                }
-                qualitySelect.value = 'native';
-                qualitySelect.disabled = true;
-                qualitySelect.title = '고속 워크플로우는 짧은 변 768p로 고정됩니다.';
-                if (qualityHint) qualityHint.textContent = '고속 768p 고정';
-            } else {
-                const wasDisabled = qualitySelect.disabled;
-                qualitySelect.disabled = false;
-                if (wasDisabled && qualitySelect.value === 'native' && qualitySelect.dataset.standardValue) {
-                    qualitySelect.value = qualitySelect.dataset.standardValue;
-                }
-                qualitySelect.title = '';
-                if (qualityHint) qualityHint.textContent = 'H3 FAST';
-            }
+        function onVideoQualityLevelChange() {
+            updateVideoResolutionControls();
+            updateVideoGenerationSummary();
         }
 
         function getVideoFastResolutionPreview() {
@@ -28847,7 +28892,7 @@
                 if (!aspectRatio) return null;
             }
             return workflowVariant === 'fast'
-                ? calculateVideoFast768Resolution(aspectRatio)
+                ? calculateVideoFastModeResolution(aspectRatio, qualityLevel)
                 : calculateVideoFastResolution(aspectRatio, qualityLevel);
         }
 
@@ -29343,6 +29388,7 @@
             duration.value = String(settings.duration);
             aspectRatio.value = settings.aspect_ratio;
             qualityLevel.value = settings.quality_level;
+            qualityLevel.dataset.defaultsApplied = settings.workflow_variant || 'standard';
             if (settings.workflow_variant === 'standard') {
                 qualityLevel.dataset.standardValue = settings.quality_level;
             }
@@ -29500,10 +29546,8 @@
             const aspectLabel = requestedAspect === 'auto'
                 ? resolution ? `자동→${resolution.aspectRatio}` : '자동'
                 : requestedAspect;
-            const qualityLabel = workflowVariant === 'fast'
-                ? '고속 768p 고정'
-                : qualitySelect?.selectedOptions?.[0]?.textContent
-                    ?.replace(' · ', ' ') || 'FAST 기본 0.35 MP';
+            const qualityLabel = qualitySelect?.selectedOptions?.[0]?.textContent
+                ?.replace(' · ', ' ') || 'FAST 기본 0.35 MP';
             const resolutionLabel = resolution
                 ? `${resolution.width}×${resolution.height}`
                 : '원본 분석 후 결정';
@@ -29612,7 +29656,7 @@
                 const sourceLabel = videoWorkspaceSourceRef?.kind === 'asset'
                     ? '현재 에셋'
                     : '현재 카드의 _raw';
-                const speedLabel = workflowVariant === 'fast' ? '고속 768p로 ' : '';
+                const speedLabel = workflowVariant === 'fast' ? '고속으로 ' : '';
                 modeNote.textContent = isLast
                     ? `${speedLabel}${sourceLabel}을 0초, 선택한 마지막 프레임을 ${duration}초에 정렬합니다.`
                     : `${speedLabel}${sourceLabel}을 시작 프레임으로 사용해 ${duration}초 영상을 만듭니다.`;

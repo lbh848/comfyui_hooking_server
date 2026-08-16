@@ -317,7 +317,7 @@ def test_final_prompt_writer_requires_dense_motion_directing_not_paraphrase() ->
     assert "introduce only the motion or events explicitly requested" not in user_content
 
 
-def test_fast_4step_resolution_has_fixed_768px_short_edge() -> None:
+def test_fast_resolution_defaults_to_768p_and_allows_experimental_mp() -> None:
     assert set(FAST_768_ASPECT_RATIOS) == set(FAST_ASPECT_RATIOS) - {
         "21:9",
         "9:21",
@@ -337,17 +337,32 @@ def test_fast_4step_resolution_has_fixed_768px_short_edge() -> None:
         assert resolve_video_resolution(
             "fast",
             aspect_ratio,
-            "low",
+            "native",
+            2048,
+            2048,
+        ) == (aspect_ratio, "native", *size)
+        # 고속은 화질을 생략하면 768p(native)를 기본으로 유지한다.
+        assert resolve_video_resolution(
+            "fast",
+            aspect_ratio,
+            None,
             2048,
             2048,
         ) == (aspect_ratio, "native", *size)
 
     assert choose_fast_768_aspect_ratio(1536, 864) == "16:9"
+    # 고속 + MP 단계는 실험적 선택으로 해상도 계산에 그대로 반영된다.
     assert resolve_video_resolution("fast", "auto", "high", 1536, 864) == (
         "16:9",
-        "native",
-        1344,
+        "high",
+        928,
+        544,
+    )
+    assert resolve_video_resolution("fast", "16:9", "medium", 2048, 2048) == (
+        "16:9",
+        "medium",
         768,
+        448,
     )
     with pytest.raises(ValueError, match="고속 영상 화면 비율"):
         resolve_video_resolution("fast", "21:9", "native", 2100, 900)
