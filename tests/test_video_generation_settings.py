@@ -26,6 +26,7 @@ def test_video_generation_defaults_normalize_every_persisted_option() -> None:
     normalized = server.normalize_video_generation_defaults(
         {
             "mode": "first_last",
+            "workflow_variant": "standard",
             "duration": 12,
             "aspect_ratio": "16:9",
             "quality_level": "high",
@@ -43,6 +44,7 @@ def test_video_generation_defaults_normalize_every_persisted_option() -> None:
 
     assert normalized == {
         "mode": "first_last",
+        "workflow_variant": "standard",
         "duration": 12,
         "aspect_ratio": "16:9",
         "quality_level": "high",
@@ -55,13 +57,39 @@ def test_video_generation_defaults_normalize_every_persisted_option() -> None:
         "upscale_model": "none",
         "upscale_scale": 4,
         "output_format": "webp",
+        "sharpen_enabled": False,
+        "sharpen_radius": 0.8,
+        "sharpen_amount": 0.5,
+        "sharpen_threshold": 4,
     }
+
+
+def test_fast_video_defaults_force_native_resolution_and_reject_ultrawide() -> None:
+    settings = copy.deepcopy(server.DEFAULT_VIDEO_GENERATION_DEFAULTS)
+    settings.update(
+        {
+            "workflow_variant": "fast",
+            "aspect_ratio": "16:9",
+            "quality_level": "low",
+        }
+    )
+
+    normalized = server.normalize_video_generation_defaults(settings)
+
+    assert normalized["workflow_variant"] == "fast"
+    assert normalized["aspect_ratio"] == "16:9"
+    assert normalized["quality_level"] == "native"
+
+    settings["aspect_ratio"] = "21:9"
+    with pytest.raises(ValueError, match="고속 영상"):
+        server.normalize_video_generation_defaults(settings)
 
 
 @pytest.mark.parametrize(
     ("field", "value"),
     [
         ("mode", "t2v"),
+        ("workflow_variant", "turbo"),
         ("duration", 16),
         ("aspect_ratio", "8:5"),
         ("quality_level", "ultra"),

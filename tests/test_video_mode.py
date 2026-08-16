@@ -9,6 +9,7 @@ from PIL import Image
 import modes.video_mode as video_module
 import modes.video_postprocess as postprocess_module
 from modes.video_mode import (
+    FAST_768_ASPECT_RATIOS,
     FAST_ASPECT_RATIOS,
     FAST_QUALITY_LEVELS,
     FIRST_LAST_ALIGNMENT,
@@ -18,6 +19,7 @@ from modes.video_mode import (
     build_i2v_workflow_block,
     calculate_fast_dimensions,
     center_crop_to_ratio,
+    choose_fast_768_aspect_ratio,
     choose_fast_preset,
     compose_h3_prompt,
     extract_visual_prompt_core,
@@ -26,11 +28,13 @@ from modes.video_mode import (
     normalize_video_duration,
     normalize_visual_context,
     resolve_fast_resolution,
+    resolve_video_resolution,
     resolved_fast_target_mp,
     validate_h3_prompt,
     validate_h3_prompt_body,
     validate_instruction_draft,
     validate_visual_context,
+    video_workflow_config_key,
 )
 
 
@@ -86,6 +90,8 @@ def test_prompt_visual_context_messages_treat_prompt_as_inert_data() -> None:
     assert "Picture 1 core positive prompt" in combined
     assert "Picture 2 core positive prompt" in combined
     assert "Do not use a hard-coded tag vocabulary" in combined
+    assert "dense, precise Visual Context" in combined
+    assert "exact contact or separation" in combined
 
 
 def test_video_postprocess_accepts_all_three_upscale_models() -> None:
@@ -277,9 +283,158 @@ def test_i2v_prompt_messages_exclude_stored_generation_metadata() -> None:
     assert "secret/path.safetensors" not in combined
     assert I2V_ALIGNMENT not in combined
     assert "Picture 1 itself is the ultimate authority" in combined
-    assert "sole authority for new motion and events" in combined
+    assert "binding creative intent" in combined
+    assert "expand it into production-ready screen direction" in combined
     assert "restrained, low-amplitude secondary character motion" in combined
     assert visual_context in combined
+
+
+def test_final_prompt_writer_requires_dense_motion_directing_not_paraphrase() -> None:
+    messages = VideoMode._prompt_messages(
+        "i2v",
+        "인물이 물건을 내려놓은 뒤 손을 펼쳐 결과를 보여준다",
+        visual_context=(
+            "visual_context:\nPicture 1: A character holds a small object near "
+            "the center of the frame."
+        ),
+    )
+    system_content = str(messages[0]["content"])
+    user_content = str(messages[1]["content"])
+
+    assert "not as a ceiling on descriptive detail" in system_content
+    assert "Do not merely restate or lightly paraphrase" in system_content
+    assert "direction and path, range or amplitude" in system_content
+    assert "rhythm, cadence, and repetition" in system_content
+    assert "physically necessary connective motion" in system_content
+    assert "visible material behavior" in system_content
+    assert "evolving gaze, eyelids, facial muscles" in system_content
+    assert "end on a clear result" in system_content
+    assert "exact action beat that produces it" in system_content
+    assert "Do not pad the prompt with repeated quality adjectives" in system_content
+    assert "rather than copying or summarizing it" in user_content
+    assert "specific mechanics, chronological action beats" in user_content
+    assert "a clearly visible result" in user_content
+    assert "introduce only the motion or events explicitly requested" not in user_content
+
+
+def test_fast_4step_resolution_has_fixed_768px_short_edge() -> None:
+    assert set(FAST_768_ASPECT_RATIOS) == set(FAST_ASPECT_RATIOS) - {
+        "21:9",
+        "9:21",
+    }
+    expected = {
+        "1:1": (768, 768),
+        "4:3": (1024, 768),
+        "3:4": (768, 1024),
+        "16:9": (1344, 768),
+        "9:16": (768, 1344),
+        "3:2": (1152, 768),
+        "2:3": (768, 1152),
+        "5:4": (960, 768),
+        "4:5": (768, 960),
+    }
+    for aspect_ratio, size in expected.items():
+        assert resolve_video_resolution(
+            "fast",
+            aspect_ratio,
+            "low",
+            2048,
+            2048,
+        ) == (aspect_ratio, "native", *size)
+
+    assert choose_fast_768_aspect_ratio(1536, 864) == "16:9"
+    assert resolve_video_resolution("fast", "auto", "high", 1536, 864) == (
+        "16:9",
+        "native",
+        1344,
+        768,
+    )
+    with pytest.raises(ValueError, match="고속 영상 화면 비율"):
+        resolve_video_resolution("fast", "21:9", "native", 2100, 900)
+
+
+def test_video_workflow_config_key_separates_variant_from_prompt_mode() -> None:
+    assert video_workflow_config_key("i2v", "standard") == "i2v"
+    assert video_workflow_config_key("first_last", "standard") == "first_last"
+    assert video_workflow_config_key("i2v", "fast") == "i2v_fast"
+    assert video_workflow_config_key("first_last", "fast") == "first_last_fast"
+
+
+def test_final_prompt_writer_fully_choreographs_first_last_transition() -> None:
+    messages = VideoMode._prompt_messages(
+        "first_last",
+        "인물이 자세를 바꾸고 손에 든 물건을 테이블에 놓는다",
+        visual_context=(
+            "visual_context:\nPicture 1: A standing character holds an object.\n\n"
+            "Picture 2: The character sits with the object on a table."
+        ),
+        duration=8,
+    )
+    combined = "\n".join(str(message["content"]) for message in messages)
+
+    assert "compare the two endpoint states" in combined
+    assert "every meaningful visible difference" in combined
+    assert "continuous on-screen cause or transition" in combined
+    assert "Fully choreograph the user's requested event" in combined
+    assert "ordered intermediate mechanics and reactions" in combined
+    assert "exact arrival at Picture 2" in combined
+    assert "Do not merely say that the scene transitions" in combined
+
+
+def test_final_prompt_writer_preserves_state_aspect_and_user_modifiers() -> None:
+    messages = VideoMode._prompt_messages(
+        "i2v",
+        "날개를 펼친 채 살짝 후퇴하고, 이후 조명이 점점 어두워진다",
+        visual_context=(
+            "visual_context:\nPicture 1: A winged character faces the camera."
+        ),
+        duration=8,
+    )
+    combined = "\n".join(str(message["content"]) for message in messages)
+
+    assert "ordered state-and-action model" in combined
+    assert "temporal aspect" in combined
+    assert "already-established or maintained condition" in combined
+    assert "begins the requested action in that state" in combined
+    assert "Do not turn that state into a new action" in combined
+    assert "temporal, intensity, amplitude, frequency, and completion modifier" in combined
+    assert "When connective timing is unspecified, use neutral timing" in combined
+    assert "already-established starting conditions" in combined
+    assert "preserving all timing and intensity modifiers" in combined
+
+
+def test_final_prompt_writer_limits_new_props_lighting_and_downstream_events() -> None:
+    messages = VideoMode._prompt_messages(
+        "i2v",
+        "소품을 앞으로 향하고 조명이 어두워진 뒤 에너지를 방출한다",
+        visual_context=(
+            "visual_context:\nPicture 1: A character stands in a bright geometric room."
+        ),
+    )
+    combined = "\n".join(str(message["content"]) for message in messages)
+
+    assert "absent from the first-frame Visual Context" in combined
+    assert "its existence and requested use are authorized" in combined
+    assert "prior location, origin, retrieval, summoning, transformation" in combined
+    assert "Distinguish illumination and exposure changes" in combined
+    assert "preserving background geometry, objects, base colors" in combined
+    assert "Do not turn a requested action into an unrequested downstream consequence" in combined
+    assert "A discharge does not imply an impact, explosion" in combined
+
+
+def test_final_prompt_writer_locks_unrequested_camera_and_avoids_ambient_filler() -> None:
+    messages = VideoMode._prompt_messages(
+        "i2v",
+        "인물이 강한 빛을 정면으로 방출한다",
+        visual_context="visual_context:\nPicture 1: A character faces the viewer.",
+    )
+    combined = "\n".join(str(message["content"]) for message in messages)
+
+    assert "Keep the camera static unless camera movement is requested" in combined
+    assert "explicitly state that the camera remains static" in combined
+    assert "Do not invent a persistent ambient hum" in combined
+    assert "no distinct environmental ambience is audible" in combined
+    assert "only requested or physically implied action sounds" in combined
 
 
 def test_visual_context_stage_describes_static_visible_facts_only() -> None:
@@ -289,6 +444,11 @@ def test_visual_context_stage_describes_static_visible_facts_only() -> None:
     assert "directly visible" in combined
     assert "Do not infer past or future actions" in combined
     assert "Describe a held object as being held" in combined
+    assert "exact contact points, separation, overlap, occlusion" in combined
+    assert "visible surface and material state" in combined
+    assert "small state, contact, material, expression" in combined
+    assert "every distinct visible prop or body-adjacent element" in combined
+    assert "partially visible or unidentified object conservatively" in combined
     assert "ANIMA_CONTENT" not in combined
     assert I2V_ALIGNMENT not in combined
 
@@ -336,6 +496,34 @@ def test_instruction_draft_prompt_receives_options_and_story_context() -> None:
     assert "meaningfully consistent" in combined
     assert "Return only the editable direction itself" in combined
     assert "Do not return Visual Context" in combined
+
+
+def test_instruction_refine_prompt_expands_into_mechanics_and_result() -> None:
+    messages = VideoMode._instruction_refine_messages(
+        "i2v",
+        "ko",
+        duration=7,
+        user_input="인물이 컵을 내려놓고 카메라를 바라본다",
+        allow_camera_motion=True,
+        allow_background_change=False,
+    )
+    combined = "\n".join(str(message["content"]) for message in messages)
+
+    assert "Do not merely paraphrase" in combined
+    assert "identify the first initiating movement" in combined
+    assert "direction and path" in combined
+    assert "rhythm or cadence" in combined
+    assert "contact continuity" in combined
+    assert "material response" in combined
+    assert "synchronized physical sound" in combined
+    assert "physically necessary connecting movements" in combined
+    assert "clearly readable result" in combined
+    assert "temporal aspect and state/action distinction" in combined
+    assert "include only its requested use" in combined
+    assert "lighting changes over the existing environment" in combined
+    assert "unspecified impact, explosion, collision" in combined
+    assert "Do not add unsupported persistent ambience" in combined
+    assert "인물이 컵을 내려놓고 카메라를 바라본다" in combined
 
 
 def test_static_visual_context_stage_does_not_receive_backup_dialogue() -> None:
@@ -515,6 +703,47 @@ def test_real_h3_first_last_workflow_exposes_the_same_transport_contract() -> No
 
     assert positive.startswith("[PATH]\nsoya_video\n[PROMPT]\n")
     assert "\n[DURATION]\n5.0\n[SEED]\n123\n[END]" in positive
+
+
+@pytest.mark.parametrize(
+    "filename",
+    [
+        "배포_영상_H3_I2V_고속_v1.json",
+        "배포_영상_H3_FLF2V_고속_v1.json",
+    ],
+)
+def test_real_h3_fast_workflows_use_4step_768p_lora_and_transport(
+    filename: str,
+) -> None:
+    workflow_path = (
+        ROOT
+        / "comfy"
+        / "user"
+        / "default"
+        / "workflows"
+        / "SOYA_USER"
+        / filename
+    )
+    workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+    positive = next(
+        node
+        for node in workflow["nodes"]
+        if node.get("type") == "PrimitiveStringMultiline"
+        and node.get("title") == "긍정프롬프트"
+    )["widgets_values"][0]
+    lora_nodes = [
+        node
+        for subgraph in workflow["definitions"]["subgraphs"]
+        for node in subgraph["nodes"]
+        if node.get("type") == "LoraLoaderModelOnly"
+    ]
+
+    assert positive.startswith("[PATH]\nsoya_video\n[PROMPT]\n")
+    assert len(lora_nodes) == 1
+    assert lora_nodes[0]["widgets_values"][0] == (
+        "minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_"
+        "resized_avg_rank_21_bf16.safetensors"
+    )
 
 
 def test_i2v_transport_block_and_api_patch_drive_the_real_connected_inputs() -> None:

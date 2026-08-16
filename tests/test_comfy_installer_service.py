@@ -180,8 +180,16 @@ def test_runtime_validations_split_h3_from_legacy(tmp_path: Path) -> None:
     assert video == [video_validation]
 
 
-def test_video_runtime_order_is_i2v_then_first_last() -> None:
+def test_video_runtime_order_is_standard_then_fast() -> None:
     validations = [
+        SimpleNamespace(
+            binding_keys=("video_workflow_source_paths.first_last_fast",),
+            filename="first-last-fast.json",
+        ),
+        SimpleNamespace(
+            binding_keys=("video_workflow_source_paths.i2v_fast",),
+            filename="i2v-fast.json",
+        ),
         SimpleNamespace(
             binding_keys=("video_workflow_source_paths.first_last",),
             filename="first-last.json",
@@ -197,12 +205,25 @@ def test_video_runtime_order_is_i2v_then_first_last() -> None:
     assert [item.filename for item in ordered] == [
         "i2v.json",
         "first-last.json",
+        "i2v-fast.json",
+        "first-last-fast.json",
     ]
 
 
+@pytest.mark.parametrize(
+    ("binding_key", "sample_steps", "sample_width", "sample_height"),
+    [
+        ("video_workflow_source_paths.i2v", 8, 960, 544),
+        ("video_workflow_source_paths.i2v_fast", 4, 1344, 768),
+    ],
+)
 def test_runtime_e2e_applies_h3_manifest_defaults(
     tmp_path: Path,
     monkeypatch,
+    binding_key: str,
+    sample_steps: int,
+    sample_width: int,
+    sample_height: int,
 ) -> None:
     config = tmp_path / "config.json"
     config.write_text("{}\n", encoding="utf-8")
@@ -212,7 +233,7 @@ def test_runtime_e2e_applies_h3_manifest_defaults(
         requirements_dir=tmp_path / "requirements",
     )
     validation = SimpleNamespace(
-        binding_keys=("video_workflow_source_paths.i2v",),
+        binding_keys=(binding_key,),
         filename="h3.json",
         prompt={},
         workflow={"nodes": []},
@@ -255,9 +276,9 @@ def test_runtime_e2e_applies_h3_manifest_defaults(
     assert len(results) == 1
     assert captured == {
         "validation": validation,
-        "sample_steps": 8,
-        "sample_width": 960,
-        "sample_height": 544,
+        "sample_steps": sample_steps,
+        "sample_width": sample_width,
+        "sample_height": sample_height,
     }
     assert promotion_calls == []
 
@@ -1017,10 +1038,10 @@ def test_manifest_has_fully_pinned_windows_runtime_and_assets() -> None:
         for node in manifest.custom_nodes
         if node["name"] in tracking_main_names
     )
-    assert len(manifest.models) == 41
-    assert manifest.workflows["expected_count"] == 19
+    assert len(manifest.models) == 42
+    assert manifest.workflows["expected_count"] == 21
     fixed_v1 = manifest.workflows["release_dependencies"]["v1"]
-    assert len(fixed_v1) == 19
+    assert len(fixed_v1) == 21
     assert {
         binding
         for item in fixed_v1
@@ -1033,6 +1054,30 @@ def test_manifest_has_fully_pinned_windows_runtime_and_assets() -> None:
         if item["id"] == "qwen_edit_workflow_source_path"
     )
     assert qwen["model_ids"] == ["qwen-image-edit-rapid-v19"]
+    fast_lora = next(
+        model
+        for model in manifest.models
+        if model["id"] == "minimax-h3-lightx2v-turbo-4step-768p-v1"
+    )
+    assert fast_lora["url"] == (
+        "https://huggingface.co/drbaph/MiniMax-H3-Turbo-Lora-ComfyUI/resolve/"
+        "781384e55ad67022bf7e3f14225574b9d1e92a46/"
+        "minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_"
+        "resized_avg_rank_21_bf16.safetensors"
+    )
+    assert fast_lora["size"] == 298_177_224
+    assert fast_lora["sha256"] == (
+        "1b85da614014024a0c9507f12558917dcc69b6adb564e716324594f401723115"
+    )
+    fast_workflows = [
+        item for item in fixed_v1 if str(item["id"]).endswith("_fast")
+    ]
+    assert len(fast_workflows) == 2
+    assert all(
+        "minimax-h3-lightx2v-turbo-4step-768p-v1" in item["model_ids"]
+        and "minimax-h3-lightx2v-turbo-8step-v1" not in item["model_ids"]
+        for item in fast_workflows
+    )
     assert "캐릭터복장추적_v1.json" in manifest.workflows[
         "excluded_filenames"
     ]
@@ -1040,6 +1085,8 @@ def test_manifest_has_fully_pinned_windows_runtime_and_assets() -> None:
     assert set(h3["workflow_bindings"]) == {
         "video_workflow_source_paths.i2v",
         "video_workflow_source_paths.first_last",
+        "video_workflow_source_paths.i2v_fast",
+        "video_workflow_source_paths.first_last_fast",
     }
     assert set(manifest.workflows["optional_bindings"]) == set(
         h3["workflow_bindings"]
@@ -1047,6 +1094,7 @@ def test_manifest_has_fully_pinned_windows_runtime_and_assets() -> None:
     assert set(h3["model_ids"]) == {
         "minimax-h3-audio-vae-fp32",
         "minimax-h3-int8-convrot",
+        "minimax-h3-lightx2v-turbo-4step-768p-v1",
         "minimax-h3-lightx2v-turbo-8step-v1",
         "minimax-h3-qwen3vl-nvfp4-awq",
         "minimax-h3-video-vae-fp16",
@@ -1054,14 +1102,29 @@ def test_manifest_has_fully_pinned_windows_runtime_and_assets() -> None:
     h3_models = [
         model for model in manifest.models if model["id"] in h3["model_ids"]
     ]
-    assert len(h3_models) == 5
-    assert sum(model["size"] for model in h3_models) == 44_426_778_471
+    assert len(h3_models) == 6
+    assert sum(model["size"] for model in h3_models) == 44_724_955_695
     assert h3["defaults"] == {
         "width": 960,
         "height": 544,
         "length": 124,
         "fps": 24,
         "steps": 8,
+        "sampler": "res_multistep",
+        "scheduler": "simple",
+        "lora_strength": 1.0,
+        "audio": False,
+    }
+    assert set(h3["fast_workflow_bindings"]) == {
+        "video_workflow_source_paths.i2v_fast",
+        "video_workflow_source_paths.first_last_fast",
+    }
+    assert h3["fast_defaults"] == {
+        "width": 1344,
+        "height": 768,
+        "length": 124,
+        "fps": 24,
+        "steps": 4,
         "sampler": "res_multistep",
         "scheduler": "simple",
         "lora_strength": 1.0,

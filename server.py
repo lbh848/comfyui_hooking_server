@@ -96,11 +96,13 @@ from modes import autocomplete_service
 from modes import asset_tool_mode
 from modes.qwen_edit_mode import QwenEditMode
 from modes.video_mode import (
+    FAST_768_ASPECT_RATIOS,
     FAST_ASPECT_RATIOS,
     FAST_DEFAULT_QUALITY_LEVEL,
     FAST_QUALITY_LEVELS,
     VIDEO_DEFAULT_DURATION_SECONDS,
     VIDEO_MODES,
+    VIDEO_WORKFLOW_VARIANTS,
     VideoMode,
     normalize_sharpen_params,
     normalize_video_duration,
@@ -237,6 +239,7 @@ def _llm_route_defaults(
 
 DEFAULT_VIDEO_GENERATION_DEFAULTS = {
     "mode": "i2v",
+    "workflow_variant": "standard",
     "duration": int(VIDEO_DEFAULT_DURATION_SECONDS),
     "aspect_ratio": "auto",
     "quality_level": FAST_DEFAULT_QUALITY_LEVEL,
@@ -281,6 +284,7 @@ def normalize_video_generation_defaults(raw: object) -> dict:
 
     enum_fields = {
         "mode": set(VIDEO_MODES),
+        "workflow_variant": set(VIDEO_WORKFLOW_VARIANTS),
         "aspect_ratio": {"auto", *FAST_ASPECT_RATIOS.keys()},
         "quality_level": set(FAST_QUALITY_LEVELS),
         "visual_context_source": {"image", "prompt"},
@@ -298,6 +302,18 @@ def normalize_video_generation_defaults(raw: object) -> dict:
             print(f"[VIDEO:DEFAULTS] {message}")
             raise ValueError(message)
         normalized[field] = value
+
+    if normalized["workflow_variant"] == "fast":
+        aspect_ratio = normalized["aspect_ratio"]
+        if aspect_ratio != "auto" and aspect_ratio not in FAST_768_ASPECT_RATIOS:
+            message = (
+                "고속 영상에서 지원하지 않는 화면 비율입니다: "
+                f"value={aspect_ratio!r}, "
+                f"allowed={['auto', *FAST_768_ASPECT_RATIOS.keys()]!r}"
+            )
+            print(f"[VIDEO:DEFAULTS] {message}; value={raw!r}")
+            raise ValueError(message)
+        normalized["quality_level"] = "native"
 
     try:
         normalized["duration"] = int(
@@ -353,6 +369,60 @@ def normalize_video_generation_defaults(raw: object) -> dict:
         normalized[field] = value
 
     return normalized
+
+
+def normalize_video_workflow_selection(
+    raw: object,
+    *,
+    log_prefix: str,
+) -> tuple[str, str, str]:
+    """요청의 워크플로우 변형·화면 비율·화질 단계를 함께 검증한다."""
+
+    if not isinstance(raw, dict):
+        print(
+            f"[{log_prefix}] 영상 워크플로우 선택 본문 형식 오류: "
+            f"type={type(raw).__name__}, value={raw!r}"
+        )
+        raise ValueError("영상 워크플로우 선택값이 올바르지 않습니다")
+    workflow_variant = str(
+        raw.get("workflow_variant") or "standard"
+    ).strip().lower()
+    if workflow_variant not in VIDEO_WORKFLOW_VARIANTS:
+        print(
+            f"[{log_prefix}] 영상 워크플로우 변형 오류: "
+            f"value={workflow_variant!r}, body={raw!r}"
+        )
+        raise ValueError("지원하지 않는 영상 워크플로우 변형입니다")
+
+    aspect_ratio = str(
+        raw.get("aspect_ratio", raw.get("preset", "auto")) or "auto"
+    ).strip().lower()
+    supported_ratios = (
+        FAST_768_ASPECT_RATIOS
+        if workflow_variant == "fast"
+        else FAST_ASPECT_RATIOS
+    )
+    if aspect_ratio != "auto" and aspect_ratio not in supported_ratios:
+        print(
+            f"[{log_prefix}] 화면 비율 오류: variant={workflow_variant}, "
+            f"value={aspect_ratio!r}, supported={tuple(supported_ratios)!r}, "
+            f"body={raw!r}"
+        )
+        raise ValueError("지원하지 않는 영상 화면 비율입니다")
+
+    if workflow_variant == "fast":
+        quality_level = "native"
+    else:
+        quality_level = str(
+            raw.get("quality_level") or FAST_DEFAULT_QUALITY_LEVEL
+        ).strip().lower()
+        if quality_level not in FAST_QUALITY_LEVELS:
+            print(
+                f"[{log_prefix}] 화질 단계 오류: value={quality_level!r}, "
+                f"body={raw!r}"
+            )
+            raise ValueError("지원하지 않는 영상 화질 단계입니다")
+    return workflow_variant, aspect_ratio, quality_level
 
 
 # 기본 설정값
@@ -593,6 +663,8 @@ DEFAULT_CONFIG = {
     "video_workflow_source_paths": {
         "i2v": "",
         "first_last": "",
+        "i2v_fast": "",
+        "first_last_fast": "",
     },  # MiniMax H3 영상 워크플로우 원본 소스 경로
     "lora_load_path": "",  # 로라 모델 로드 폴더 절대 경로 (에셋, SOYA_CHAR_LORA 자동 추가)
     "bot_lora_load_path": "",  # 봇 LoRA 모델 로드 폴더 절대 경로 (SOYA_BOT_LORA 자동 추가)
@@ -10423,32 +10495,22 @@ async def handle_api_video_instruction_draft(request: web.Request) -> web.Respon
                 {"success": False, "error": str(exc)},
                 status=400,
             )
-        aspect_ratio = str(
-            body.get("aspect_ratio", body.get("preset", "auto")) or "auto"
-        ).strip().lower()
-        if aspect_ratio != "auto" and aspect_ratio not in FAST_ASPECT_RATIOS:
-            print(
-                "[VIDEO:DRAFT:API] 화면 비율 오류: "
-                f"value={aspect_ratio!r}, body={body!r}"
+        try:
+            workflow_variant, aspect_ratio, quality_level = (
+                normalize_video_workflow_selection(
+                    body,
+                    log_prefix="VIDEO:DRAFT:API",
+                )
             )
+        except ValueError as exc:
+            traceback.print_exc()
             return web.json_response(
-                {"success": False, "error": "지원하지 않는 FAST 화면 비율입니다"},
-                status=400,
-            )
-        quality_level = str(
-            body.get("quality_level") or FAST_DEFAULT_QUALITY_LEVEL
-        ).strip().lower()
-        if quality_level not in FAST_QUALITY_LEVELS:
-            print(
-                "[VIDEO:DRAFT:API] 화질 단계 오류: "
-                f"value={quality_level!r}, body={body!r}"
-            )
-            return web.json_response(
-                {"success": False, "error": "지원하지 않는 FAST 화질 단계입니다"},
+                {"success": False, "error": str(exc)},
                 status=400,
             )
         params = {
             "mode": mode,
+            "workflow_variant": workflow_variant,
             "source_ref": source_ref,
             "last_ref": last_ref or {},
             "source_backup": (
@@ -10473,6 +10535,8 @@ async def handle_api_video_instruction_draft(request: web.Request) -> web.Respon
             "i2v": "H3 I2V AI 연출 초안",
             "first_last": "H3 FLF2V AI 연출 초안",
         }[mode]
+        if workflow_variant == "fast":
+            label = label.replace("H3 ", "H3 고속 ", 1)
         item = await queue_manager.add_item(
             "video_instruction_draft",
             label,
@@ -10480,7 +10544,8 @@ async def handle_api_video_instruction_draft(request: web.Request) -> web.Respon
         )
         print(
             "[VIDEO:DRAFT:API] 큐 등록 후 결과 대기: "
-            f"item={item.id}, mode={mode}, language={language}, "
+            f"item={item.id}, mode={mode}, variant={workflow_variant}, "
+            f"language={language}, "
             f"dialogue={boolean_options['include_dialogue_context']}, "
             f"camera_motion={boolean_options['allow_camera_motion']}, "
             f"background_change={boolean_options['allow_background_change']}"
@@ -10654,32 +10719,22 @@ async def handle_api_video_instruction_refine(request: web.Request) -> web.Respo
                 {"success": False, "error": str(exc)},
                 status=400,
             )
-        aspect_ratio = str(
-            body.get("aspect_ratio", body.get("preset", "auto")) or "auto"
-        ).strip().lower()
-        if aspect_ratio != "auto" and aspect_ratio not in FAST_ASPECT_RATIOS:
-            print(
-                "[VIDEO:REFINE:API] 화면 비율 오류: "
-                f"value={aspect_ratio!r}, body={body!r}"
+        try:
+            workflow_variant, aspect_ratio, quality_level = (
+                normalize_video_workflow_selection(
+                    body,
+                    log_prefix="VIDEO:REFINE:API",
+                )
             )
+        except ValueError as exc:
+            traceback.print_exc()
             return web.json_response(
-                {"success": False, "error": "지원하지 않는 FAST 화면 비율입니다"},
-                status=400,
-            )
-        quality_level = str(
-            body.get("quality_level") or FAST_DEFAULT_QUALITY_LEVEL
-        ).strip().lower()
-        if quality_level not in FAST_QUALITY_LEVELS:
-            print(
-                "[VIDEO:REFINE:API] 화질 단계 오류: "
-                f"value={quality_level!r}, body={body!r}"
-            )
-            return web.json_response(
-                {"success": False, "error": "지원하지 않는 FAST 화질 단계입니다"},
+                {"success": False, "error": str(exc)},
                 status=400,
             )
         params = {
             "mode": mode,
+            "workflow_variant": workflow_variant,
             "instruction": instruction,
             "source_ref": source_ref,
             "last_ref": last_ref or {},
@@ -10705,6 +10760,8 @@ async def handle_api_video_instruction_refine(request: web.Request) -> web.Respo
             "i2v": "H3 I2V 입력 다듬기",
             "first_last": "H3 FLF2V 입력 다듬기",
         }[mode]
+        if workflow_variant == "fast":
+            label = label.replace("H3 ", "H3 고속 ", 1)
         item = await queue_manager.add_item(
             "video_instruction_refine",
             label,
@@ -10712,7 +10769,8 @@ async def handle_api_video_instruction_refine(request: web.Request) -> web.Respo
         )
         print(
             "[VIDEO:REFINE:API] 큐 등록 후 결과 대기: "
-            f"item={item.id}, mode={mode}, language={language}, "
+            f"item={item.id}, mode={mode}, variant={workflow_variant}, "
+            f"language={language}, "
             f"seed_length={len(instruction)}, "
             f"dialogue={boolean_options['include_dialogue_context']}, "
             f"camera_motion={boolean_options['allow_camera_motion']}, "
@@ -10885,12 +10943,19 @@ async def handle_api_video_enqueue(request: web.Request) -> web.Response:
                 status=400,
             )
         instruction = str(body.get("instruction") or "").strip()
-        aspect_ratio = str(
-            body.get("aspect_ratio", body.get("preset", "auto")) or "auto"
-        ).strip().lower()
-        quality_level = str(
-            body.get("quality_level") or FAST_DEFAULT_QUALITY_LEVEL
-        ).strip().lower()
+        try:
+            workflow_variant, aspect_ratio, quality_level = (
+                normalize_video_workflow_selection(
+                    body,
+                    log_prefix="VIDEO:API",
+                )
+            )
+        except ValueError as exc:
+            traceback.print_exc()
+            return web.json_response(
+                {"success": False, "error": str(exc)},
+                status=400,
+            )
         try:
             duration = normalize_video_duration(
                 body.get("duration", VIDEO_DEFAULT_DURATION_SECONDS)
@@ -10982,18 +11047,6 @@ async def handle_api_video_enqueue(request: web.Request) -> web.Response:
                 {"success": False, "error": "영상화 지시는 12,000자 이하여야 합니다"},
                 status=400,
             )
-        if aspect_ratio != "auto" and aspect_ratio not in FAST_ASPECT_RATIOS:
-            print(f"[VIDEO:API] FAST 화면 비율 오류: aspect_ratio={aspect_ratio!r}")
-            return web.json_response(
-                {"success": False, "error": "지원하지 않는 FAST 화면 비율입니다"},
-                status=400,
-            )
-        if quality_level not in FAST_QUALITY_LEVELS:
-            print(f"[VIDEO:API] FAST 화질 단계 오류: quality_level={quality_level!r}")
-            return web.json_response(
-                {"success": False, "error": "지원하지 않는 FAST 화질 단계입니다"},
-                status=400,
-            )
         try:
             video_mode.validate_reference(source_ref)
         except (ValueError, FileNotFoundError, RuntimeError) as exc:
@@ -11045,6 +11098,7 @@ async def handle_api_video_enqueue(request: web.Request) -> web.Response:
         sharpen_params = normalize_sharpen_params(body)
         params = {
             "mode": mode,
+            "workflow_variant": workflow_variant,
             "source_ref": source_ref,
             "last_ref": last_ref or {},
             "source_backup": source_ref.get("name", "") if source_ref["kind"] == "backup" else "",
@@ -11077,9 +11131,12 @@ async def handle_api_video_enqueue(request: web.Request) -> web.Response:
             "i2v": "H3 I2V 프롬프트",
             "first_last": "H3 FLF2V 프롬프트",
         }[mode]
+        if workflow_variant == "fast":
+            label = label.replace("H3 ", "H3 고속 ", 1)
         item = await queue_manager.add_item("video_prompt_build", label, params)
         print(
             f"[VIDEO:API] 영상화 큐 등록: item={item.id}, mode={mode}, "
+            f"variant={workflow_variant}, "
             f"source={source_ref!r}, last={last_ref or '(none)'}, "
             f"aspect_ratio={aspect_ratio}, quality_level={quality_level}, "
             f"duration={duration:g}s, direction_source=user_confirmed, "
@@ -11089,7 +11146,13 @@ async def handle_api_video_enqueue(request: web.Request) -> web.Response:
             f"sharpen={'on' if sharpen_params.get('enabled') else 'off'}"
         )
         return web.json_response(
-            {"success": True, "item_id": item.id, "label": item.label, "mode": mode}
+            {
+                "success": True,
+                "item_id": item.id,
+                "label": item.label,
+                "mode": mode,
+                "workflow_variant": workflow_variant,
+            }
         )
     except json.JSONDecodeError as exc:
         print(f"[VIDEO:API] JSON 파싱 실패: error={exc}")

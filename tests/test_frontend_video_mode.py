@@ -67,7 +67,7 @@ def test_backup_card_disables_regen_and_edit_for_animated_backups() -> None:
     assert 'disabled title="프롬프트 없음"' in FRONTEND[edit:]
 
 
-def test_video_page_uses_modal_entry_with_two_internal_modes() -> None:
+def test_video_page_uses_modal_entry_with_four_workflow_cards() -> None:
     assert 'id="video-modal"' in FRONTEND
     assert "closeVideoModal()" in FRONTEND
     assert "openVideoWorkspace(" in FRONTEND
@@ -81,9 +81,11 @@ def test_video_page_uses_modal_entry_with_two_internal_modes() -> None:
     assert "key: 'video_i2v', label: '영상화" not in FRONTEND
     assert "key: 'video_first_last', label: '영상화" not in FRONTEND
     assert 'value="t2v"' not in FRONTEND
-    assert FRONTEND.count('type="radio" name="video-mode-choice"') == 2
-    for mode in ("i2v", "first_last"):
-        assert f'name="video-mode-choice" value="{mode}"' in FRONTEND
+    assert FRONTEND.count('type="radio" name="video-mode-choice"') == 4
+    for value in ("i2v:standard", "first_last:standard", "i2v:fast", "first_last:fast"):
+        assert f'value="{value}"' in FRONTEND
+    assert "고속 I2V" in FRONTEND
+    assert "고속 FLF2V" in FRONTEND
     # 첫·마지막 모드에서 마지막 프레임 미리보기가 존재해야 한다
     assert 'id="video-frame-last"' in FRONTEND
     assert 'id="video-generation-last-preview"' in FRONTEND
@@ -115,7 +117,7 @@ def test_video_prompt_diagnostics_are_rendered_for_backups_and_assets() -> None:
     assert "img.is_video_animation === true" in FRONTEND
 
 
-def test_settings_expose_i2v_and_flf2v_workflows_without_card_selection() -> None:
+def test_settings_expose_standard_and_fast_video_workflows_without_card_selection() -> None:
     asset_tab = FRONTEND.index("switchSettingsTab('asset')")
     video_tab = FRONTEND.index("switchSettingsTab('video')", asset_tab)
     rag_tab = FRONTEND.index("switchSettingsTab('character_maker')", video_tab)
@@ -124,12 +126,20 @@ def test_settings_expose_i2v_and_flf2v_workflows_without_card_selection() -> Non
     assert 'id="settings-tab-video"' in FRONTEND
     assert 'id="setting-video-i2v-workflow-filename"' in FRONTEND
     assert 'id="setting-video-first-last-workflow-filename"' in FRONTEND
+    assert 'id="setting-video-i2v-fast-workflow-filename"' in FRONTEND
+    assert 'id="setting-video-first-last-fast-workflow-filename"' in FRONTEND
     assert "배포_영상_H3_I2V_v1.json" in FRONTEND
     assert "배포_영상_H3_FLF2V_v1.json" in FRONTEND
+    assert "배포_영상_H3_I2V_고속_v1.json" in FRONTEND
+    assert "배포_영상_H3_FLF2V_고속_v1.json" in FRONTEND
     assert "onVideoWorkflowFilenameInput('i2v', this.value)" in FRONTEND
     assert "onVideoWorkflowFilenameInput('first_last', this.value)" in FRONTEND
+    assert "onVideoWorkflowFilenameInput('i2v_fast', this.value)" in FRONTEND
+    assert "onVideoWorkflowFilenameInput('first_last_fast', this.value)" in FRONTEND
     assert 'data-video-workflow-mode="i2v"' in FRONTEND
     assert 'data-video-workflow-mode="first_last"' in FRONTEND
+    assert 'data-video-workflow-mode="i2v_fast"' in FRONTEND
+    assert 'data-video-workflow-mode="first_last_fast"' in FRONTEND
     assert "selectVideoWorkflowFile(list.dataset.videoWorkflowMode, path, filename);" in FRONTEND
 
     panel = FRONTEND.split('id="settings-tab-video"', 1)[1].split(
@@ -141,13 +151,17 @@ def test_settings_expose_i2v_and_flf2v_workflows_without_card_selection() -> Non
 
 def test_video_workflow_settings_load_and_save_only_supported_paths() -> None:
     assert "const videoWorkflowPaths = currentConfig.video_workflow_source_paths || {};" in FRONTEND
-    assert "for (const mode of ['i2v', 'first_last'])" in FRONTEND
+    assert "for (const mode of ['i2v', 'first_last', 'i2v_fast', 'first_last_fast'])" in FRONTEND
     assert "video_workflow_source_paths: {" in FRONTEND
     assert "...(currentConfig.video_workflow_source_paths || {})," not in FRONTEND
     assert "i2v: document.getElementById('setting-video-i2v-workflow-source-path').value" in FRONTEND
     assert "first_last: document.getElementById('setting-video-first-last-workflow-source-path').value" in FRONTEND
+    assert "i2v_fast: document.getElementById('setting-video-i2v-fast-workflow-source-path').value" in FRONTEND
+    assert "first_last_fast: document.getElementById('setting-video-first-last-fast-workflow-source-path').value" in FRONTEND
     assert "updateVideoWorkflowPath('i2v');" in FRONTEND
     assert "updateVideoWorkflowPath('first_last');" in FRONTEND
+    assert "updateVideoWorkflowPath('i2v_fast');" in FRONTEND
+    assert "updateVideoWorkflowPath('first_last_fast');" in FRONTEND
     assert "[VIDEO_SETTINGS] ${mode} 워크플로우 파일 검색 실패:" in FRONTEND
 
 
@@ -165,6 +179,11 @@ def test_video_page_separates_fast_aspect_ratio_and_mp_level() -> None:
     assert "quality_level: qualityLevel" in FRONTEND
     assert "원본 분석 후 결정" in FRONTEND
     assert "최소 중앙 크롭" in FRONTEND
+    assert "VIDEO_FAST_768_ASPECT_KEYS" in FRONTEND
+    assert "calculateVideoFast768Resolution(aspectRatio)" in FRONTEND
+    assert "qualitySelect.disabled = true" in FRONTEND
+    assert "고속 768p 고정" in FRONTEND
+    assert "workflow_variant: selectedVideoWorkflowVariant()" in FRONTEND
     assert "/api/video/reference-options" in FRONTEND
     assert "/api/video/enqueue" in FRONTEND
     assert FRONTEND.count('type="radio" name="video-output-format"') == 2

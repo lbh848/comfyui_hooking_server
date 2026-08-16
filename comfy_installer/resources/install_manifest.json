@@ -502,10 +502,17 @@
       "relative_path": "models/loras/minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
       "size": 1956193000,
       "sha256": "2339acdf19bfe123f46b971ea35d367a84adb85de43627e1eceafa5a5b2b111e"
+    },
+    {
+      "id": "minimax-h3-lightx2v-turbo-4step-768p-v1",
+      "url": "https://huggingface.co/drbaph/MiniMax-H3-Turbo-Lora-ComfyUI/resolve/781384e55ad67022bf7e3f14225574b9d1e92a46/minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_resized_avg_rank_21_bf16.safetensors",
+      "relative_path": "models/loras/minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_resized_avg_rank_21_bf16.safetensors",
+      "size": 298177224,
+      "sha256": "1b85da614014024a0c9507f12558917dcc69b6adb564e716324594f401723115"
     }
   ],
   "workflows": {
-    "expected_count": 19,
+    "expected_count": 21,
     "release_dependencies": {
       "v1": [
         {
@@ -736,6 +743,28 @@
             "minimax-h3-qwen3vl-nvfp4-awq",
             "minimax-h3-video-vae-fp16"
           ]
+        },
+        {
+          "id": "video_workflow_source_paths.i2v_fast",
+          "bindings": ["video_workflow_source_paths.i2v_fast"],
+          "model_ids": [
+            "minimax-h3-audio-vae-fp32",
+            "minimax-h3-int8-convrot",
+            "minimax-h3-lightx2v-turbo-4step-768p-v1",
+            "minimax-h3-qwen3vl-nvfp4-awq",
+            "minimax-h3-video-vae-fp16"
+          ]
+        },
+        {
+          "id": "video_workflow_source_paths.first_last_fast",
+          "bindings": ["video_workflow_source_paths.first_last_fast"],
+          "model_ids": [
+            "minimax-h3-audio-vae-fp32",
+            "minimax-h3-int8-convrot",
+            "minimax-h3-lightx2v-turbo-4step-768p-v1",
+            "minimax-h3-qwen3vl-nvfp4-awq",
+            "minimax-h3-video-vae-fp16"
+          ]
         }
       ]
     },
@@ -761,7 +790,9 @@
     ],
     "optional_bindings": [
       "video_workflow_source_paths.i2v",
-      "video_workflow_source_paths.first_last"
+      "video_workflow_source_paths.first_last",
+      "video_workflow_source_paths.i2v_fast",
+      "video_workflow_source_paths.first_last_fast"
     ],
     "excluded_filenames": [
       "캐릭터복장추적_v1.json"
@@ -771,11 +802,18 @@
     "minimax_h3": {
       "workflow_bindings": [
         "video_workflow_source_paths.i2v",
-        "video_workflow_source_paths.first_last"
+        "video_workflow_source_paths.first_last",
+        "video_workflow_source_paths.i2v_fast",
+        "video_workflow_source_paths.first_last_fast"
+      ],
+      "fast_workflow_bindings": [
+        "video_workflow_source_paths.i2v_fast",
+        "video_workflow_source_paths.first_last_fast"
       ],
       "model_ids": [
         "minimax-h3-audio-vae-fp32",
         "minimax-h3-int8-convrot",
+        "minimax-h3-lightx2v-turbo-4step-768p-v1",
         "minimax-h3-lightx2v-turbo-8step-v1",
         "minimax-h3-qwen3vl-nvfp4-awq",
         "minimax-h3-video-vae-fp16"
@@ -786,6 +824,17 @@
         "length": 124,
         "fps": 24,
         "steps": 8,
+        "sampler": "res_multistep",
+        "scheduler": "simple",
+        "lora_strength": 1.0,
+        "audio": false
+      },
+      "fast_defaults": {
+        "width": 1344,
+        "height": 768,
+        "length": 124,
+        "fps": 24,
+        "steps": 4,
         "sampler": "res_multistep",
         "scheduler": "simple",
         "lora_strength": 1.0,

@@ -264,9 +264,9 @@ def _validate_manifest(data: dict[str, Any]) -> None:
     if not isinstance(workflows, dict):
         raise ManifestError("workflows 항목이 JSON 객체가 아닙니다.")
     expected_count = workflows.get("expected_count")
-    if expected_count != 19:
+    if expected_count != 21:
         raise ManifestError(
-            f"최초 배포 워크플로우 수는 19여야 합니다: {expected_count!r}"
+            f"최초 배포 워크플로우 수는 21이어야 합니다: {expected_count!r}"
         )
     excluded = workflows.get("excluded_filenames")
     if not isinstance(excluded, list) or "캐릭터복장추적_v1.json" not in excluded:
@@ -388,21 +388,37 @@ def _validate_manifest(data: dict[str, Any]) -> None:
     expected_h3_bindings = {
         "video_workflow_source_paths.i2v",
         "video_workflow_source_paths.first_last",
+        "video_workflow_source_paths.i2v_fast",
+        "video_workflow_source_paths.first_last_fast",
     }
     h3_bindings = h3_profile.get("workflow_bindings")
     if not isinstance(h3_bindings, list) or set(h3_bindings) != expected_h3_bindings:
         raise ManifestError(
             "validation_profiles.minimax_h3.workflow_bindings가 "
-            "I2V/First-Last 고정 바인딩과 다릅니다."
+            "일반/고속 I2V/First-Last 고정 바인딩과 다릅니다."
         )
     if not expected_h3_bindings.issubset(optional_binding_set):
         raise ManifestError(
             "MiniMax H3 워크플로 바인딩이 workflows.optional_bindings에 없습니다."
         )
+    expected_fast_h3_bindings = {
+        "video_workflow_source_paths.i2v_fast",
+        "video_workflow_source_paths.first_last_fast",
+    }
+    fast_h3_bindings = h3_profile.get("fast_workflow_bindings")
+    if (
+        not isinstance(fast_h3_bindings, list)
+        or set(fast_h3_bindings) != expected_fast_h3_bindings
+    ):
+        raise ManifestError(
+            "validation_profiles.minimax_h3.fast_workflow_bindings가 "
+            "고속 I2V/First-Last 고정 바인딩과 다릅니다."
+        )
 
     expected_h3_models = {
         "minimax-h3-audio-vae-fp32",
         "minimax-h3-int8-convrot",
+        "minimax-h3-lightx2v-turbo-4step-768p-v1",
         "minimax-h3-lightx2v-turbo-8step-v1",
         "minimax-h3-qwen3vl-nvfp4-awq",
         "minimax-h3-video-vae-fp16",
@@ -410,7 +426,7 @@ def _validate_manifest(data: dict[str, Any]) -> None:
     h3_model_ids = h3_profile.get("model_ids")
     if not isinstance(h3_model_ids, list) or set(h3_model_ids) != expected_h3_models:
         raise ManifestError(
-            "validation_profiles.minimax_h3.model_ids가 H3 고정 모델 5개와 다릅니다."
+            "validation_profiles.minimax_h3.model_ids가 H3 고정 모델 6개와 다릅니다."
         )
     if not expected_h3_models.issubset(model_ids):
         raise ManifestError(
@@ -439,6 +455,25 @@ def _validate_manifest(data: dict[str, Any]) -> None:
                 "validation_profiles.minimax_h3.defaults 값이 고정 사양과 "
                 f"다릅니다: key={key}, expected={expected!r}, "
                 f"actual={defaults.get(key)!r}"
+            )
+
+    fast_defaults = h3_profile.get("fast_defaults")
+    if not isinstance(fast_defaults, dict):
+        raise ManifestError(
+            "validation_profiles.minimax_h3.fast_defaults가 JSON 객체가 아닙니다."
+        )
+    expected_fast_defaults = {
+        **expected_defaults,
+        "width": 1344,
+        "height": 768,
+        "steps": 4,
+    }
+    for key, expected in expected_fast_defaults.items():
+        if fast_defaults.get(key) != expected:
+            raise ManifestError(
+                "validation_profiles.minimax_h3.fast_defaults 값이 고정 사양과 "
+                f"다릅니다: key={key}, expected={expected!r}, "
+                f"actual={fast_defaults.get(key)!r}"
             )
 
 

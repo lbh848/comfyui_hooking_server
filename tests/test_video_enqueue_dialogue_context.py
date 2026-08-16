@@ -168,6 +168,61 @@ async def test_video_enqueue_rejects_unknown_fast_quality_level(monkeypatch) -> 
 
 
 @pytest.mark.asyncio
+async def test_fast_video_enqueue_forces_native_768p_profile(monkeypatch) -> None:
+    captured: dict = {}
+
+    async def fake_add_item(item_type, label, params):
+        captured.update(item_type=item_type, label=label, params=params)
+        return SimpleNamespace(id="fast-video-prompt", label=label)
+
+    monkeypatch.setattr(server.video_mode, "validate_reference", lambda _reference: None)
+    monkeypatch.setattr(server.queue_manager, "add_item", fake_add_item)
+    monkeypatch.setattr(server, "load_config", lambda: {})
+
+    response = await server.handle_api_video_enqueue(
+        _JsonRequest(
+            _video_request(
+                workflow_variant="fast",
+                aspect_ratio="16:9",
+                quality_level="ignored-by-fast-profile",
+            )
+        )
+    )
+
+    assert response.status == 200
+    assert captured["params"]["workflow_variant"] == "fast"
+    assert captured["params"]["aspect_ratio"] == "16:9"
+    assert captured["params"]["quality_level"] == "native"
+    assert captured["label"] == "H3 고속 I2V 프롬프트"
+
+
+@pytest.mark.asyncio
+async def test_fast_video_enqueue_rejects_unsupported_ultrawide_ratio(
+    monkeypatch,
+) -> None:
+    called = False
+
+    async def fake_add_item(_item_type, _label, _params):
+        nonlocal called
+        called = True
+        raise AssertionError("invalid request must not be queued")
+
+    monkeypatch.setattr(server.queue_manager, "add_item", fake_add_item)
+
+    response = await server.handle_api_video_enqueue(
+        _JsonRequest(
+            _video_request(workflow_variant="fast", aspect_ratio="21:9")
+        )
+    )
+    payload = json.loads(response.text)
+
+    assert response.status == 400
+    assert payload["success"] is False
+    assert "화면 비율" in payload["error"]
+    assert called is False
+
+
+@pytest.mark.asyncio
 async def test_video_enqueue_keeps_legacy_preset_requests_compatible(monkeypatch) -> None:
     captured: dict = {}
 

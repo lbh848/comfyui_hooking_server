@@ -2741,6 +2741,15 @@ class QueueManager:
             raise RuntimeError("영상화 모드가 큐에 주입되지 않았습니다")
         params = dict(item.params or {})
         mode = str(params.get("mode") or "").strip().lower()
+        workflow_variant = str(
+            params.get("workflow_variant") or "standard"
+        ).strip().lower()
+        if workflow_variant not in {"standard", "fast"}:
+            print(
+                "[QUEUE:VIDEO_LLM] 워크플로우 변형 오류: "
+                f"item={item.id}, variant={workflow_variant!r}, params={params!r}"
+            )
+            raise ValueError("지원하지 않는 영상 워크플로우 변형입니다")
         try:
             await self._notify_progress(
                 item,
@@ -2827,6 +2836,15 @@ class QueueManager:
             raise RuntimeError("영상화 모드가 큐에 주입되지 않았습니다")
         params = dict(item.params or {})
         mode = str(params.get("mode") or "").strip().lower()
+        workflow_variant = str(
+            params.get("workflow_variant") or "standard"
+        ).strip().lower()
+        if workflow_variant not in {"standard", "fast"}:
+            print(
+                "[QUEUE:VIDEO_LLM] 워크플로우 변형 오류: "
+                f"item={item.id}, variant={workflow_variant!r}, params={params!r}"
+            )
+            raise ValueError("지원하지 않는 영상 워크플로우 변형입니다")
         render_type = {
             "i2v": "video_i2v",
             "first_last": "video_first_last",
@@ -2853,6 +2871,8 @@ class QueueManager:
                 "i2v": f"H3 I2V {duration_label} 영상화",
                 "first_last": f"H3 FLF2V {duration_label} 영상화",
             }[mode]
+            if workflow_variant == "fast":
+                label = label.replace("H3 ", "H3 고속 ", 1)
             render_item = await self.add_item(
                 render_type,
                 label,
@@ -2868,11 +2888,13 @@ class QueueManager:
             )
             print(
                 f"[QUEUE:VIDEO_LLM] H3 프롬프트 완료→GPU 큐 등록: "
-                f"llm_item={item.id}, gpu_item={render_item.id}, mode={mode}"
+                f"llm_item={item.id}, gpu_item={render_item.id}, mode={mode}, "
+                f"variant={workflow_variant}"
             )
             return {
                 "success": True,
                 "mode": mode,
+                "workflow_variant": workflow_variant,
                 "render_item_id": render_item.id,
                 "history_id": prompt_result.get("history_id", ""),
             }
