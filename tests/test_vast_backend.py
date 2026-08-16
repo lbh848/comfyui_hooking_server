@@ -333,10 +333,57 @@ async def test_vast_create_instance_uses_current_api_fields(
     body = observed["json_body"]
     assert body["onstart"] == "echo ready"
     assert "env" not in body
-    assert body["runtype"] == "ssh"
+    assert body["runtype"] == "ssh_proxy"
     assert "onstart_cmd" not in body
     assert "ports" not in body
     assert "ssh_key" not in body
+
+    result = await client.create_instance(
+        ask_id=99,
+        image="example/image:latest",
+        disk_gb=40,
+        onstart_cmd="echo ready",
+        runtype="ssh_direct",
+    )
+    assert observed["json_body"]["runtype"] == "ssh_direct"
+
+    with pytest.raises(VastApiError, match="runtype"):
+        await client.create_instance(
+            ask_id=99,
+            image="example/image:latest",
+            disk_gb=40,
+            onstart_cmd="echo ready",
+            runtype="bogus_runtype",
+        )
+
+
+@pytest.mark.asyncio
+async def test_create_instance_direct_first_falls_back_to_proxy(
+    tmp_path: Path,
+) -> None:
+    service = VastService(tmp_path, lambda: {})
+    calls: list[dict[str, Any]] = []
+
+    class FakeClient:
+        async def create_instance(self, **kwargs):
+            calls.append(kwargs)
+            if len(calls) == 1:
+                raise VastApiError("host does not support direct ports")
+            return {"new_contract": 777}
+
+    created = await service._create_instance_direct_first(
+        FakeClient(),
+        ask_id=42,
+        image="example/image:latest",
+        disk_gb=40,
+        label="soya-vast-test",
+    )
+
+    assert created == {"new_contract": 777}
+    assert [call["runtype"] for call in calls] == ["ssh_direct", "ssh_proxy"]
+    steps = {step["key"]: step for step in service.launch["steps"]}
+    assert steps["instance"]["state"] == "running"
+    assert "프록시 SSH" in steps["instance"]["detail"]
 
 
 @pytest.mark.asyncio

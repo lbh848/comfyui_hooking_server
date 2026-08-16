@@ -1842,6 +1842,50 @@ class VastService:
             )
             traceback.print_exc()
 
+    async def _create_instance_direct_first(
+        self,
+        client: VastClient,
+        *,
+        ask_id: int,
+        image: str,
+        disk_gb: int,
+        label: str,
+    ) -> dict[str, Any]:
+        """다이렉트 SSH(프록시 미경유) 생성을 시도하고 실패 시 프록시로 재시도한다.
+
+        Vast 프록시(ssh*.vast.ai) 릴레이는 업로드 대역을 크게 제한한다(실측
+        ~10Mbps). 머신이 다이렉트 포트를 제공하면 runtype ssh_direct로 인스턴스에
+        22번 포트를 직접 열어 우회한다. 다이렉트 불가 머신은 프록시로 빠진다.
+        """
+        self._set_step("instance", "running", "인스턴스 생성 요청(다이렉트 SSH)")
+        try:
+            created = await client.create_instance(
+                ask_id=ask_id,
+                image=image,
+                disk_gb=disk_gb,
+                onstart_cmd=self._build_onstart(),
+                label=label,
+                runtype="ssh_direct",
+            )
+            self._event("instance", "다이렉트 SSH 인스턴스 생성(프록시 미경유)")
+            return created
+        except VastApiError as exc:
+            print(
+                "[VAST] 다이렉트 SSH 생성 실패 — 프록시 runtype으로 재시도: "
+                f"ask={ask_id}, error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            self._event("instance", f"다이렉트 SSH 생성 실패, 프록시로 재시도: {exc}")
+            self._set_step("instance", "running", "인스턴스 생성 요청(프록시 SSH)")
+            return await client.create_instance(
+                ask_id=ask_id,
+                image=image,
+                disk_gb=disk_gb,
+                onstart_cmd=self._build_onstart(),
+                label=label,
+                runtype="ssh_proxy",
+            )
+
     async def _launch(
         self,
         ask_id: int,
@@ -1905,11 +1949,11 @@ class VastService:
                         f"{exc}"
                     )
             self._set_step("instance", "running", "인스턴스 생성 요청")
-            created = await client.create_instance(
+            created = await self._create_instance_direct_first(
+                client,
                 ask_id=ask_id,
                 image=cfg.runtime_image,
                 disk_gb=disk_gb,
-                onstart_cmd=self._build_onstart(),
                 label=label,
             )
             instance_id = int(created["new_contract"])

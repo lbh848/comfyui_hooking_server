@@ -50,6 +50,21 @@ class VastApiError(RuntimeError):
     """Vast API 오류를 직렬화 가능한 형태로 감싼 예외."""
 
 
+# 생성 API runtype 화이트리스트(공식 문서 기준). _direct 계열만 인스턴스에
+# 포트를 직접 프로비저닝하고, 나머지는 Vast 프록시를 경유한다.
+_INSTANCE_RUNTYPES = frozenset(
+    {
+        "ssh",
+        "ssh_proxy",
+        "ssh_direct",
+        "jupyter",
+        "jupyter_proxy",
+        "jupyter_direct",
+        "args",
+    }
+)
+
+
 class VastClient:
     """Vast.ai REST API 얇은 래퍼. 모든 실패 경로는 로그를 남기고 예외를 던진다."""
 
@@ -246,20 +261,26 @@ class VastClient:
         onstart_cmd: str,
         env: dict[str, str] | None = None,
         label: str = "soya-vast",
+        runtype: str = "ssh_proxy",
     ) -> dict[str, Any]:
         """오퍼(ask)를 수락해 인스턴스를 생성한다. new_contract(id)를 반환.
 
-        ComfyUI는 SSH 로컬 터널로만 연결하므로 기본 생성 요청은 공개 포트를
-        열지 않는다. 호출자가 별도 env를 명시했을 때만 그대로 전달한다.
+        runtype이 ``ssh_direct``면 인스턴스에 22번 포트가 직접 열려 Vast
+        프록시(ssh*.vast.ai)를 경유하지 않는다. 프록시 릴레이는 업로드 대역을
+        크게 제한하므로 대량 전송(LoRA/모델 sftp)은 다이렉트를 우선한다.
+        ComfyUI는 SSH 로컬 터널로만 연결하므로 추가 공개 포트는 열지 않는다.
+        호출자가 별도 env를 명시했을 때만 그대로 전달한다.
         ``ports``나 ``onstart_cmd`` 필드는 생성 API에서 사용되지 않는다.
         """
+        if runtype not in _INSTANCE_RUNTYPES:
+            print(f"[VAST_API] 지원하지 않는 runtype: {runtype!r}")
+            raise VastApiError(f"지원하지 않는 runtype입니다: {runtype!r}")
         body: dict[str, Any] = {
             "image": image,
             "disk": disk_gb,
             "onstart": onstart_cmd,
             "label": label,
-            # SSH 프록시를 사용하고 ComfyUI 연결은 서비스의 SSH 터널로 유지한다.
-            "runtype": "ssh",
+            "runtype": runtype,
             "python_utf8": True,
         }
         if env:
