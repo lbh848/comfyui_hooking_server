@@ -965,7 +965,7 @@ async def test_i2v_build_uses_picture_only_and_program_adds_alignment(
     async def fake_text_call(task_key, messages, **kwargs):
         calls.append("text")
         combined = "\n".join(str(message["content"]) for message in messages)
-        assert task_key == "video_prompt_i2v"
+        assert task_key == "video_prompt_i2v_compose"
         assert "lowering book" not in combined
         assert "secret/path.safetensors" not in combined
         assert "머리카락과 옷이 약한 바람에 흔들린다" in combined
@@ -1056,13 +1056,15 @@ async def test_i2v_build_can_create_visual_context_from_core_positive_prompt(
     async def fake_text_call(task_key, messages, **kwargs):
         combined = "\n".join(str(message["content"]) for message in messages)
         text_calls.append(combined)
-        assert task_key == "video_prompt_i2v"
         if len(text_calls) == 1:
+            # 1차 호출: 프롬프트 정적 해석 — 기존 비전 단계와 분리된 compose 라우팅
+            assert task_key == "video_prompt_i2v_compose"
             assert "independent static visible states" in combined
             assert core_prompt in combined
             assert "secret/path.safetensors" not in combined
             assert kwargs["result_validator"](visual_context) == (True, "")
             return visual_context
+        assert task_key == "video_prompt_i2v_compose"
         assert visual_context in combined
         assert "머리카락이 약한 바람에 흔들린다" in combined
         return body
@@ -1380,6 +1382,8 @@ async def test_video_postprocess_commits_verified_pair_and_metadata(
         "mode": "i2v",
         "source_backup": "source",
         "last_backup": "",
+        "source_ref": {"kind": "backup", "name": "source"},
+        "last_ref": {},
         "positive": "synthetic H3 prompt",
         "instruction": "move gently",
         "instruction_source": "llm",
@@ -1466,6 +1470,11 @@ async def test_video_postprocess_commits_verified_pair_and_metadata(
     )
     assert info["video_source_width"] == 512
     assert info["video_width"] == 1024
+    # 참조 전체 기록(에셋 원본 역추적용) + 백업 공통 이미지 크기 메타데이터.
+    assert info["source_ref"] == {"kind": "backup", "name": "source"}
+    assert info["last_ref"] == {}
+    assert info["image_width"] == 1024
+    assert info["image_height"] == 1024
     assert info["video_aspect_ratio"] == "1:1"
     assert info["video_quality_level"] == "medium"
     assert info["video_target_mp"] == 0.3
@@ -1960,6 +1969,34 @@ def test_clean_source_predicate_rejects_backup_without_info_proof(
         video_module.backup_clean_source_available(str(tmp_path), "unknown")
         is False
     )
+
+
+def test_clean_source_from_info_mirrors_filesystem_predicate() -> None:
+    # raw 파일이 있으면 info 내용과 무관하게 항상 클린 원본.
+    assert video_module.backup_clean_source_from_info(True, None) is True
+    assert (
+        video_module.backup_clean_source_from_info(
+            True, {"speak_text": 'hero: "대사"'}
+        )
+        is True
+    )
+
+    # raw 없으면 speak_text 가 비어 있을 때(합성 미적용)만 클린.
+    assert video_module.backup_clean_source_from_info(False, {}) is True
+    assert (
+        video_module.backup_clean_source_from_info(False, {"speak_text": ""})
+        is True
+    )
+    assert (
+        video_module.backup_clean_source_from_info(
+            False, {"speak_text": 'hero: "대사"'}
+        )
+        is False
+    )
+
+    # info 를 읽을 수 없으면 원본 증명 불가 → False.
+    assert video_module.backup_clean_source_from_info(False, None) is False
+    assert video_module.backup_clean_source_from_info(False, "junk") is False
 
 
 def test_resolve_reference_prefers_raw_original(tmp_path: Path) -> None:

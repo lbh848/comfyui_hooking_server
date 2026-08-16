@@ -165,7 +165,9 @@ overall_soundscape:
 non_diegetic_music:
 ...
 
-Describe one coherent five-second video. Treat the user's current natural-language direction as binding creative intent, not as a ceiling on descriptive detail. Expand brief, colloquial, or underspecified wording into a vivid and production-ready account of exactly how the requested event becomes visible. Preserve the requested participants, action, tone, and outcome; do not substitute a more generic or different event. Reference images are the ultimate authority for visible identity, appearance, clothing, pose, composition, environment, colors, objects, spatial relationships, and visual style at their aligned moments; the user's current direction governs every newly requested spatial change, including the orientation and placement of entities not yet visible in those images. The supplied Visual Context is a factual static summary produced directly from those images and is only a text aid for establishing the aligned visible states.
+Describe one coherent 5-second video. Treat the user's current natural-language direction as binding creative intent, not as a ceiling on descriptive detail. Expand brief, colloquial, or underspecified wording into a vivid and production-ready account of exactly how the requested event becomes visible. Preserve the requested participants, action, tone, spatial relationships, timing, and outcome; do not substitute a more generic or different event.
+
+Reference images are the ultimate authority for visible identity, appearance, clothing, pose, composition, environment, colors, objects, spatial relationships, and visual style at their aligned moments. The user's current direction governs every newly requested change after those aligned states, including newly introduced entities and changes to position, orientation, contact, motion, effects, lighting, or material state. The supplied Visual Context is a factual static summary produced directly from those images and is only a text aid for establishing the aligned visible states.
 
 Do not merely restate or lightly paraphrase the user's direction. Convert it into concrete screen direction using precise, action-specific nouns and verbs. Avoid empty phrases such as "moves naturally," "dynamic motion," "cinematic atmosphere," or "high quality" when a more observable description is possible. When relevant to the requested event, specify:
 - the starting framing, subject orientation, pose, and important points of contact or separation
@@ -174,21 +176,25 @@ Do not merely restate or lightly paraphrase the user's direction. Convert it int
 - physically necessary connective motion, weight transfer, inertia, deformation, and interaction between contacted surfaces
 - visible material behavior such as stretch, compression, drag, trailing, flow, accumulation, dispersal, sheen, or residue
 - evolving gaze, eyelids, facial muscles, breathing, posture, and other performance details synchronized to the action
-- the visible result after the action, including what changed position, state, contact, expression, or appearance
+- the visible result after the action, including what changed position, state, contact, expression, orientation, or appearance
 Include only the dimensions that are relevant, but describe those dimensions decisively enough that an animator could stage them. Use precise physical or anatomical language when the requested action depends on it; do not replace a concrete visible action with vague mood language.
 
 Before enriching the description, interpret the user's direction as an ordered state-and-action model. Preserve these semantic distinctions exactly:
 - Preserve temporal aspect and the distinction between an already-established or maintained condition and a newly requested action onset. A subject described as already holding, wearing, facing, remaining, open, spread, connected, or otherwise "in a state while doing X" — including equivalent resultative or maintained-state constructions in any language — begins the requested action in that state. Do not turn that state into a new action, repeat its onset, or reverse and re-establish it unless the user explicitly requests that transition.
 - Preserve every user-supplied temporal, intensity, amplitude, frequency, and completion modifier. Do not make an action sudden, gradual, prolonged, repeated, faster, slower, stronger, weaker, wider, narrower, complete, or interrupted unless that quality is stated or physically necessary. When connective timing is unspecified, use neutral timing that does not change the action's meaning.
-- Preserve every user-supplied spatial constraint exactly, including what entity, part, effect, or motion the constraint applies to, as well as object orientation, screen-space direction, facing, axis, relative position, attachment point, and endpoint relationship. Distinguish an object's visible orientation from its motion path, formation direction, effect propagation, or camera-relative movement, and do not paraphrase one spatial relation into another.
-- When the user specifies an explicit screen-space direction such as upper right to lower left, preserve it as camera-frame geometry. When the constraint applies to an elongated object, make the object's endpoints or major axis visibly establish that direction when needed for clarity.
-- Do not replace an explicit user-supplied spatial direction with a direction inferred from the reference image, hand pose, body orientation, anatomy, or likely physical alignment. Reference-image geometry constrains the established frame; user instructions govern newly requested spatial changes.
+- Preserve every user-supplied spatial constraint together with the thing that constraint applies to. This includes orientation, screen-space direction, facing, axis, relative position, attachment or contact point, endpoint relationship, movement path, formation path, effect propagation, and camera-relative movement. Do not preserve only the directional value while reassigning it to a different entity, body part, effect, motion, or spatial property.
+- Distinguish static or instantaneous spatial state from spatial change. An entity's orientation is not its motion trajectory; a motion trajectory is not an effect's propagation direction; a formation direction is not necessarily the resulting entity's orientation; an attachment point is not a movement endpoint. Preserve these distinctions instead of paraphrasing one into another.
+- When the user specifies an explicit camera-frame or screen-space relationship, preserve that relationship as visible frame geometry. When necessary for clarity, describe concrete observable landmarks, endpoints, relative positions, or axes that make the requested relationship visually unambiguous without adding new creative constraints.
+- Do not replace an explicit user-supplied spatial or directional relationship with one inferred from the reference image, anatomy, pose, hand or limb alignment, physical convention, or what would normally seem natural. Such inference may fill genuinely unspecified connective mechanics, but it must not override or reinterpret an explicit user constraint.
 - When the user requests subtle, restrained, slight, minimal, or idle-style motion, preserve that low amplitude across every expanded mechanic. Do not turn an underspecified micro-motion into a clearly staged full-range action merely to make it more production-ready. In particular, do not infer full closure, maximum range, pronounced displacement, or a held endpoint unless the user's wording requires it.
-- If the current direction explicitly requires a prop, body-adjacent element, effect source, or other entity absent from the first-frame Visual Context, its existence and requested use are authorized. Do not claim that it was already visible, held, worn, or positioned at the opening, and do not invent any unrequested prior location, origin, retrieval, summoning, transformation, or detailed appearance. When the user explicitly requests the item's summoning, formation, materialization, or transformation, stage that requested event concretely enough to preserve its stated spatial, temporal, and visual properties without inventing unsupported mechanics, appearance, or intermediate events. Otherwise, mention it only when its requested use first becomes necessary and stage the minimum visible involvement needed for that use.
+- If the current direction introduces a prop, body-adjacent element, effect, material, structure, or other visible entity that is absent from the first-frame Visual Context, its appearance and requested use are authorized. Do not require a newly requested entity to have been visible in the reference image.
+- When such an entity is requested to appear, form, emerge, materialize, manifest, generate, unfold, transform into visibility, or otherwise become visible during the shot, treat that appearance as a genuine on-screen state change. Preserve the user's stated timing, location, orientation, attachment, formation behavior, visual effect, and subsequent use. Do not silently omit the appearance event, place the entity in the opening frame, or treat it as though it had already been present.
+- Do not invent an unsupported prior source, storage location, retrieval action, origin, transformation, appearance detail, or intermediate event for a newly introduced entity. Add only the visible connective mechanics necessary to realize the requested appearance and use.
+- When an entity already exists in the reference image, preserve its established continuity unless the user requests a change. When an entity does not yet exist and the user explicitly introduces it, the user's direction governs its newly established visible state and behavior.
 - Distinguish illumination and exposure changes from transformation of the environment. When the direction changes brightness, darkness, flashing, glow, color cast, or other lighting, apply that change across the existing scene while preserving background geometry, objects, base colors, particles, and spatial relationships unless the environment itself is explicitly requested to transform.
 - Do not turn a requested action into an unrequested downstream consequence. A discharge does not imply an impact, explosion, collision, injury, or destruction; a swing does not imply contact or damage; a thrown or moving object does not imply a crash. When a target, contact, or aftermath is unspecified, describe the performed action itself and stop before the unsupported consequence.
 
-Build a complete visible motion arc inside Shot 1. Anchor the opening state compactly, begin the first observable change immediately, order every dependent action beat chronologically, give each beat enough duration to read, and end on a clear result rather than stopping mid-transition. For multiple actions, expand them into a continuous temporal progression rather than compressing them into a plot summary. Use natural temporal connectors and duration-aware pacing by default; use exact time cues only when they materially improve control. Reserve sufficient time near the end for the requested final state to become visibly established and settle. For rhythmic or repeated action, state what travels, its direction and range, the cadence and any acceleration or deceleration, what remains in contact, and how the repetition resolves. For a release, reveal, transformation, transfer, or other state-changing event, show the necessary intermediate change and make the resulting state unmistakable. Do not emit planning labels such as "opening," "middle," or "result"; integrate the choreography into fluent production prose. For idle loops and subtle continuity animation, a complete motion arc does not require a pronounced endpoint or state change. Small oscillations, micro-movements, and brief cyclical motions may simply return continuously to the established pose.
+Build a complete visible motion arc inside Shot 1. Anchor the opening state compactly, begin the first observable change immediately, order every dependent action beat chronologically, give each beat enough duration to read, and end on a clear result rather than stopping mid-transition. For multiple actions, expand them into a continuous temporal progression rather than compressing them into a plot summary. Use natural temporal connectors and duration-aware pacing by default; use exact time cues only when they materially improve control. Reserve sufficient time near the end for the requested final state to become visibly established and settle. For rhythmic or repeated action, state what travels, its direction and range, the cadence and any acceleration or deceleration, what remains in contact, and how the repetition resolves. For a release, reveal, appearance, formation, transformation, transfer, or other state-changing event, show the necessary observable intermediate change and make the resulting state unmistakable. Do not exaggerate the duration, scale, or intensity of that transition beyond the user's wording merely to make it easier to describe. Do not emit planning labels such as "opening," "middle," or "result"; integrate the choreography into fluent production prose. For idle loops and subtle continuity animation, a complete motion arc does not require a pronounced endpoint or state change. Small oscillations, micro-movements, and brief cyclical motions may simply return continuously to the established pose.
 
 For image-to-video, begin in the exact visible state of Picture 1, then fully realize the current direction. Preserve unrequested identity, anatomy, clothing, scene layout, and object continuity, while adding the physically necessary connective motion and natural reactions required to make the requested event convincing even when the user did not spell out every intermediate detail. Do not add an unrelated action, participant, prop, emotion, or outcome.
 
@@ -259,7 +265,7 @@ def _build_h3_system_prompt(
         else H3_SYSTEM_PROMPT.replace(_H3_SECONDARY_MOTION_SEGMENT, "")
     )
     return prompt.replace(
-        "one coherent five-second video",
+        "one coherent 5-second video",
         f"one coherent {normalized:g}-second video",
     ).replace("by 5.00 seconds", f"by {normalized:.2f} seconds")
 
@@ -427,6 +433,19 @@ def backup_clean_source_available(directory: str, name: str) -> bool:
         )
         return False
     return not str(info.get("speak_text") or "").strip()
+
+
+def backup_clean_source_from_info(has_raw_file: bool, info: object) -> bool:
+    """이미 읽은 _info.json 내용으로 깨끗한 원본 여부를 판정한다(재탐색 없음).
+
+    backup_clean_source_available과 같은 규칙을 파일 탐색 없이 재사용하는 헬퍼다.
+    has_raw_file은 호출자가 확인한 _raw 실제 파일 존재 여부, info는 이미 읽은
+    _info.json dict. 규칙: raw 파일이 있으면 True, 없으면 speak_text 가 비어 있을
+    때(합성 미적용)만 True. info 를 읽을 수 없으면 False.
+    """
+    if has_raw_file:
+        return True
+    return isinstance(info, dict) and not str(info.get("speak_text") or "").strip()
 
 
 def choose_fast_aspect_ratio(width: int, height: int) -> str:
@@ -1861,6 +1880,7 @@ Vision-produced static Visual Context:
             "i2v": "H3 I2V AI 연출 초안",
             "first_last": "H3 FLF2V AI 연출 초안",
         }[mode]
+        model_name = llm_service.routing_primary_model(task_key) or ""
         history_id = (
             f"video_instruction_draft:{mode}:"
             f"{queue_item_id or uuid.uuid4().hex[:12]}"
@@ -1878,12 +1898,17 @@ Vision-produced static Visual Context:
         async def stream_observer(event: dict) -> None:
             payload = dict(event or {})
             payload.setdefault("prompt_id", history_id)
-            payload.setdefault("model", call_label)
+            payload.setdefault("model", model_name)
             await self._notify("lighbd_llm_stream", payload)
 
         await self._notify(
             "lighbd_llm_stream",
-            {"type": "start", "model": call_label, "prompt_id": history_id},
+            {
+                "type": "start",
+                "model": model_name,
+                "call_name": call_label,
+                "prompt_id": history_id,
+            },
         )
         try:
             raw_response = await llm_service.callLLMVisionTask(
@@ -1919,6 +1944,7 @@ Vision-produced static Visual Context:
                 {
                     "type": "done",
                     "text": draft,
+                    "model": model_name,
                     "prompt_tokens": prompt_tokens,
                     "completion_tokens": completion_tokens,
                     "elapsed": elapsed,
@@ -1934,6 +1960,7 @@ Vision-produced static Visual Context:
                     "execution_id": execution_context.execution_id,
                     "call_name": call_label,
                     "task_key": task_key,
+                    "model": model_name,
                     "input": messages,
                     "output": draft,
                     "prompt_tokens": prompt_tokens,
@@ -1973,6 +2000,7 @@ Vision-produced static Visual Context:
                 {
                     "type": "error",
                     "error": error_text,
+                    "model": model_name,
                     "elapsed": elapsed,
                     "prompt_id": history_id,
                 },
@@ -1984,6 +2012,7 @@ Vision-produced static Visual Context:
                     "execution_id": execution_context.execution_id,
                     "call_name": call_label,
                     "task_key": task_key,
+                    "model": model_name,
                     "input": messages,
                     "output": str(raw_response or ""),
                     "elapsed": round(elapsed, 3),
@@ -2087,6 +2116,7 @@ Vision-produced static Visual Context:
             "i2v": "H3 I2V 입력 다듬기",
             "first_last": "H3 FLF2V 입력 다듬기",
         }[mode]
+        model_name = llm_service.routing_primary_model(task_key) or ""
         history_id = (
             f"video_instruction_refine:{mode}:"
             f"{queue_item_id or uuid.uuid4().hex[:12]}"
@@ -2104,12 +2134,17 @@ Vision-produced static Visual Context:
         async def stream_observer(event: dict) -> None:
             payload = dict(event or {})
             payload.setdefault("prompt_id", history_id)
-            payload.setdefault("model", call_label)
+            payload.setdefault("model", model_name)
             await self._notify("lighbd_llm_stream", payload)
 
         await self._notify(
             "lighbd_llm_stream",
-            {"type": "start", "model": call_label, "prompt_id": history_id},
+            {
+                "type": "start",
+                "model": model_name,
+                "call_name": call_label,
+                "prompt_id": history_id,
+            },
         )
         try:
             raw_response = await llm_service.callLLMVisionTask(
@@ -2145,6 +2180,7 @@ Vision-produced static Visual Context:
                 {
                     "type": "done",
                     "text": draft,
+                    "model": model_name,
                     "prompt_tokens": prompt_tokens,
                     "completion_tokens": completion_tokens,
                     "elapsed": elapsed,
@@ -2160,6 +2196,7 @@ Vision-produced static Visual Context:
                     "execution_id": execution_context.execution_id,
                     "call_name": call_label,
                     "task_key": task_key,
+                    "model": model_name,
                     "input": messages,
                     "output": draft,
                     "prompt_tokens": prompt_tokens,
@@ -2200,6 +2237,7 @@ Vision-produced static Visual Context:
                 {
                     "type": "error",
                     "error": error_text,
+                    "model": model_name,
                     "elapsed": elapsed,
                     "prompt_id": history_id,
                 },
@@ -2211,6 +2249,7 @@ Vision-produced static Visual Context:
                     "execution_id": execution_context.execution_id,
                     "call_name": call_label,
                     "task_key": task_key,
+                    "model": model_name,
                     "input": messages,
                     "output": str(raw_response or ""),
                     "elapsed": round(elapsed, 3),
@@ -2256,10 +2295,13 @@ Vision-produced static Visual Context:
         )
 
         task_key = f"video_prompt_{mode}"
+        # 비전 단계(연출 초안·다듬기·이미지 정적 분석)=task_key, 텍스트 단계(정적 해석·최종 작성)=compose 키로 모델 분리
+        compose_task_key = f"video_prompt_{mode}_compose"
         call_label = {
             "i2v": "H3 I2V 프롬프트 작성",
             "first_last": "H3 FLF2V 프롬프트 작성",
         }[mode]
+        model_name = llm_service.routing_primary_model(compose_task_key) or ""
         history_id = f"video_prompt:{mode}:{queue_item_id or uuid.uuid4().hex[:12]}"
         messages: list[dict] = []
         visual_messages: list[dict] = []
@@ -2269,7 +2311,7 @@ Vision-produced static Visual Context:
         metadata: dict = {}
         started = time.time()
         execution_context = llm_service.create_llm_execution_context(
-            task_key,
+            compose_task_key,
             call_name=call_label,
             execution_id=history_id,
             metadata={"prompt_id": history_id, "source_reference": source_label},
@@ -2278,12 +2320,17 @@ Vision-produced static Visual Context:
         async def stream_observer(event: dict) -> None:
             payload = dict(event or {})
             payload.setdefault("prompt_id", history_id)
-            payload.setdefault("model", call_label)
+            payload.setdefault("model", model_name)
             await self._notify("lighbd_llm_stream", payload)
 
         await self._notify(
             "lighbd_llm_stream",
-            {"type": "start", "model": call_label, "prompt_id": history_id},
+            {
+                "type": "start",
+                "model": model_name,
+                "call_name": call_label,
+                "prompt_id": history_id,
+            },
         )
         response_text = ""
         raw_response_text = ""
@@ -2337,10 +2384,17 @@ Vision-produced static Visual Context:
                         "i2v": "H3 I2V 첫 프레임 정적 분석",
                         "first_last": "H3 FLF2V 정적 분석",
                     }[mode]
+                # 프롬프트 정적 해석(텍스트)은 compose 키, 이미지 정적 분석(비전)은 기존 키로 라우팅
+                visual_task_key = (
+                    compose_task_key if visual_context_source == "prompt" else task_key
+                )
+                visual_model_name = (
+                    llm_service.routing_primary_model(visual_task_key) or ""
+                )
                 visual_metadata: dict = {}
                 visual_started = time.time()
                 visual_execution_context = llm_service.create_llm_execution_context(
-                    task_key,
+                    visual_task_key,
                     call_name=visual_call_label,
                     execution_id=visual_history_id,
                     parent_execution_id=history_id,
@@ -2348,7 +2402,7 @@ Vision-produced static Visual Context:
                 )
                 if visual_context_source == "prompt":
                     raw_visual_context = await llm_service.callLLMTask(
-                        task_key,
+                        visual_task_key,
                         visual_messages,
                         result_validator=validate_visual_context,
                         metadata_sink=visual_metadata,
@@ -2356,7 +2410,7 @@ Vision-produced static Visual Context:
                     )
                 else:
                     raw_visual_context = await llm_service.callLLMVisionTask(
-                        task_key,
+                        visual_task_key,
                         visual_messages,
                         images=reference_images,
                         result_validator=validate_visual_context,
@@ -2387,7 +2441,8 @@ Vision-produced static Visual Context:
                         "execution_id": visual_execution_context.execution_id,
                         "parent_execution_id": history_id,
                         "call_name": visual_call_label,
-                        "task_key": task_key,
+                        "task_key": visual_task_key,
+                        "model": visual_model_name,
                         "input": visual_messages,
                         "output": visual_context,
                         "prompt_tokens": visual_prompt_tokens,
@@ -2434,7 +2489,7 @@ Vision-produced static Visual Context:
                 normalize_h3_prompt_body(value)
             )
             raw_response_text = await llm_service.callLLMTask(
-                task_key,
+                compose_task_key,
                 messages,
                 result_validator=validator,
                 stream_observer=stream_observer,
@@ -2463,6 +2518,7 @@ Vision-produced static Visual Context:
                 {
                     "type": "done",
                     "text": response_text,
+                    "model": model_name,
                     "prompt_tokens": prompt_tokens,
                     "completion_tokens": completion_tokens,
                     "elapsed": elapsed,
@@ -2477,7 +2533,8 @@ Vision-produced static Visual Context:
                     "prompt_id": history_id,
                     "execution_id": execution_context.execution_id,
                     "call_name": call_label,
-                    "task_key": task_key,
+                    "task_key": compose_task_key,
+                    "model": model_name,
                     "input": messages,
                     "output": response_text or raw_response_text,
                     "prompt_tokens": prompt_tokens,
@@ -2515,6 +2572,7 @@ Vision-produced static Visual Context:
                 {
                     "type": "error",
                     "error": error_text,
+                    "model": model_name,
                     "elapsed": elapsed,
                     "prompt_id": history_id,
                 },
@@ -2525,7 +2583,8 @@ Vision-produced static Visual Context:
                     "prompt_id": history_id,
                     "execution_id": execution_context.execution_id,
                     "call_name": call_label,
-                    "task_key": task_key,
+                    "task_key": compose_task_key,
+                    "model": model_name,
                     "input": messages or visual_messages,
                     "output": response_text or raw_response_text,
                     "elapsed": round(elapsed, 3),
@@ -3990,6 +4049,22 @@ Vision-produced static Visual Context:
                 "video_visual_context_source": visual_context_source,
                 "source_backup": manifest.get("source_backup", ""),
                 "last_backup": manifest.get("last_backup", ""),
+                # 참조 전체 기록(백업/에셋 구분 포함). job.json 매니페스트는 완료 후
+                # 삭제되므로, 에셋 원본으로 만든 영상의 역추적은 이 기록이 유일하다.
+                "source_ref": (
+                    manifest.get("source_ref")
+                    if isinstance(manifest.get("source_ref"), dict)
+                    else {}
+                ),
+                "last_ref": (
+                    manifest.get("last_ref")
+                    if isinstance(manifest.get("last_ref"), dict)
+                    else {}
+                ),
+                # 백업 공통 이미지 크기 메타데이터 — 목록/영상화 참조 조회가 PIL 열기
+                # 없이 판정한다(일러스트 save_backup 의 image_width/height 와 동일 역할).
+                "image_width": int(manifest.get("output_width") or 0),
+                "image_height": int(manifest.get("output_height") or 0),
                 "raw_extension": extension,
                 "animation_format": extension.lstrip("."),
                 "llm_trace": [

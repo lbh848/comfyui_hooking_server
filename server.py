@@ -105,6 +105,7 @@ from modes.video_mode import (
     VIDEO_WORKFLOW_VARIANTS,
     VideoMode,
     backup_clean_source_available,
+    backup_clean_source_from_info,
     normalize_sharpen_params,
     normalize_video_duration,
 )
@@ -626,6 +627,9 @@ DEFAULT_CONFIG = {
         "qwen_edit_translate":     _llm_route_defaults(max_retries=1),
         "video_prompt_i2v":        _llm_route_defaults(max_retries=1),
         "video_prompt_first_last": _llm_route_defaults(max_retries=1),
+        # 영상화 비전 단계(연출 초안·다듬기·이미지 정적 분석)와 텍스트 단계(프롬프트 정적 해석·최종 작성) 모델 분리
+        "video_prompt_i2v_compose":        _llm_route_defaults(max_retries=1),
+        "video_prompt_first_last_compose": _llm_route_defaults(max_retries=1),
         # 삽화 컨텍스트 파이프라인 역번역/CALL1/2/2-FIX/3. 메인 LLM/폴백은 외부 LLM 분기 탭에서 드롭박스로 선택.
         # 폴백 없음(fallback_target 미지정)이 기본.
         "illustration_call1_backtranslate": _llm_route_defaults(max_retries=1, retry_delay_sec=0.0, fallback_max_retries=1, fallback_retry_delay_sec=0.0),
@@ -2463,6 +2467,9 @@ async def save_backup(
     #    추적한다. 합성 실패/스킵 시 .webp 자체가 원본이므로 _raw는 저장하지 않는다.
     raw_image_bytes = image_bytes
     composition_applied = False
+    # _raw 저장에 성공한 확장자(".webp"). _info.json 의 raw_extension 으로 기록해
+    # 이후 목록/영상화 참조 조회가 _raw 파일 탐색 없이 메타데이터로 판정하게 한다.
+    raw_saved_extension = ""
     if postprocess_settings and speak_text:
         try:
             if postprocess_settings.get("_mode") == "bubble":
@@ -2555,6 +2562,7 @@ async def save_backup(
                 else:
                     raw_img.convert("RGB").save(raw_path, **raw_save_kwargs)
             print(f"[BACKUP] 원본 이미지 저장: _raw/{base_name}.webp ({os.path.getsize(raw_path):,}B)")
+            raw_saved_extension = ".webp"
         except Exception as e:
             print(f"[BACKUP] ⚠ 원본(_raw) 저장 실패 (무시, 합성본은 정상 저장됨): {e}")
             traceback.print_exc()
@@ -2626,6 +2634,16 @@ async def save_backup(
         info_to_save["postprocess_settings"] = postprocess_settings
     if speak_text:
         info_to_save["speak_text"] = speak_text
+    # 이미지 크기 + _raw 보존 확장자 — 이후 백업 목록/영상화 참조 조회가 파일 탐색·
+    # PIL 열기 없이 이 메타데이터로 판정한다(구 백업은 기존 탐색 폴백 유지).
+    # 합성 실패/미적용이면 raw_extension="" (메인 이미지가 곧 원본).
+    try:
+        info_to_save["image_width"] = int(img.size[0])
+        info_to_save["image_height"] = int(img.size[1])
+    except Exception as e:
+        print(f"[BACKUP] ⚠ 이미지 크기 기록 실패, 무시: {e}")
+        traceback.print_exc()
+    info_to_save["raw_extension"] = raw_saved_extension
     if backup_multi_char:
         info_to_save["illustration_multi_char"] = backup_multi_char
         print(
@@ -9975,21 +9993,34 @@ async def handle_api_backups(request: web.Request) -> web.Response:
                 pass
 
         # 후처리 원본(_raw) 존재 여부 — 후처리 적용 백업에 한해 대사 없는 원본이 보존됨.
-        raw_extension = next(
-            (
-                candidate_extension
-                for candidate_extension in (".avif", ".webp")
-                if os.path.exists(
-                    os.path.join(backup_dir, "_raw", f"{base}{candidate_extension}")
-                )
-            ),
-            "",
+        # 새 백업은 _info.json 의 raw_extension 메타데이터(저장 시 기록)를 우선하고,
+        # 메타데이터 없는 구 백업만 기존처럼 실제 파일 탐색으로 판정한다.
+        raw_extension = ""
+        recorded_raw_extension = (
+            info.get("raw_extension")
+            if isinstance(info, dict)
+            else None
         )
+        if isinstance(recorded_raw_extension, str) and recorded_raw_extension:
+            raw_path_meta = os.path.join(
+                backup_dir, "_raw", f"{base}{recorded_raw_extension}"
+            )
+            raw_extension = recorded_raw_extension if os.path.exists(raw_path_meta) else ""
+        if not raw_extension:
+            raw_extension = next(
+                (
+                    candidate_extension
+                    for candidate_extension in (".avif", ".webp")
+                    if os.path.exists(
+                        os.path.join(backup_dir, "_raw", f"{base}{candidate_extension}")
+                    )
+                ),
+                "",
+            )
         # 영상화 가능 판정: _raw 실제 파일이 있거나, 대사 합성이 적용되지 않아
         # 메인 이미지 자체가 깨끗한 원본인 백업(key visual 등)도 포함한다.
-        has_raw = bool(raw_extension) or backup_clean_source_available(
-            backup_dir, base
-        )
+        # 위에서 이미 읽은 info 로 판정해 info.json 재독기를 피한다.
+        has_raw = backup_clean_source_from_info(bool(raw_extension), info)
 
         backups.append({
             "name": base,
@@ -10493,6 +10524,24 @@ def _video_backup_has_raw(backup_dir: str, name: str) -> bool:
     return backup_clean_source_available(backup_dir, name)
 
 
+def _read_backup_info_for_scan(backup_dir: str, name: str) -> dict:
+    """reference-options 스캔용 _info.json 읽기. 없으면 {} (구 백업 폴백 대상)."""
+    info_path = os.path.join(backup_dir, f"{name}_info.json")
+    if not os.path.isfile(info_path):
+        return {}
+    try:
+        with open(info_path, "r", encoding="utf-8") as fp:
+            info = json.load(fp)
+        return info if isinstance(info, dict) else {}
+    except Exception as exc:
+        print(
+            f"[VIDEO:API] 참조 백업 info 읽기 실패: name={name!r}, "
+            f"error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        return {}
+
+
 async def handle_api_video_reference_options(request: web.Request) -> web.Response:
     """List illustration backups that have a raw source suitable for H3 references."""
 
@@ -10505,25 +10554,44 @@ async def handle_api_video_reference_options(request: web.Request) -> web.Respon
         seen: set[str] = set()
         for path in sorted(set(files), key=os.path.getmtime, reverse=True):
             name = os.path.splitext(os.path.basename(path))[0]
-            if name in seen or not _video_backup_has_raw(backup_dir, name):
+            if name in seen:
                 continue
-            seen.add(name)
-            animated = _backup_image_kind(path)
+            # 저장 시 기록한 메타데이터(raw_extension·이미지 크기)를 우선 사용해
+            # 파일 탐색·PIL 열기를 건너뛴다. raw_extension 키가 없는 구 백업만
+            # 기존처럼 _raw 탐색 + info.json 재독기로 판정한다.
+            info = _read_backup_info_for_scan(backup_dir, name)
             source_width = 0
             source_height = 0
-            try:
-                resolved_source = video_mode._resolve_reference(
-                    {"kind": "backup", "name": name},
-                    raw=True,
+            if isinstance(info.get("raw_extension"), str):
+                recorded_raw = str(info.get("raw_extension") or "")
+                has_raw_file = bool(recorded_raw) and os.path.isfile(
+                    os.path.join(backup_dir, "_raw", f"{name}{recorded_raw}")
                 )
-                with Image.open(resolved_source["path"]) as source_image:
-                    source_width, source_height = source_image.size
-            except Exception as exc:
-                print(
-                    "[VIDEO:API] 참조 백업 원본 크기 조회 실패: "
-                    f"name={name!r}, error={type(exc).__name__}: {exc}"
-                )
-                traceback.print_exc()
+                if not backup_clean_source_from_info(has_raw_file, info):
+                    continue
+                seen.add(name)
+                animated = _backup_image_kind(path)
+                source_width = int(info.get("image_width") or 0)
+                source_height = int(info.get("image_height") or 0)
+            elif not _video_backup_has_raw(backup_dir, name):
+                continue
+            else:
+                seen.add(name)
+                animated = _backup_image_kind(path)
+            if source_width <= 0 or source_height <= 0:
+                try:
+                    resolved_source = video_mode._resolve_reference(
+                        {"kind": "backup", "name": name},
+                        raw=True,
+                    )
+                    with Image.open(resolved_source["path"]) as source_image:
+                        source_width, source_height = source_image.size
+                except Exception as exc:
+                    print(
+                        "[VIDEO:API] 참조 백업 원본 크기 조회 실패: "
+                        f"name={name!r}, error={type(exc).__name__}: {exc}"
+                    )
+                    traceback.print_exc()
             options.append(
                 {
                     "name": name,

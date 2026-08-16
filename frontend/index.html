@@ -40053,8 +40053,10 @@
             { key: 'illustration_call2_fix',   label: '삽화 CALL2-FIX (TOON 교정)',    kind: '텍스트', group: 'illustration_pipeline' },
             { key: 'illustration_call3',       label: '삽화 CALL3 (대사 생성)',         kind: '텍스트', group: 'illustration_pipeline' },
             { key: 'illustration_multi_char_mask', label: '삽화 다중 캐릭터 마스크',    kind: 'JSON', group: 'illustration_pipeline' },
-            { key: 'video_prompt_i2v',        label: 'H3 I2V 프롬프트', kind: '비전', group: 'video_pipeline' },
-            { key: 'video_prompt_first_last', label: 'H3 FLF2V 프롬프트', kind: '다중 비전', group: 'video_pipeline' },
+            { key: 'video_prompt_i2v',        label: 'H3 I2V 연출·정적 분석', kind: '비전', group: 'video_pipeline' },
+            { key: 'video_prompt_i2v_compose',        label: 'H3 I2V 프롬프트 작성', kind: '텍스트', group: 'video_pipeline' },
+            { key: 'video_prompt_first_last', label: 'H3 FLF2V 연출·정적 분석', kind: '다중 비전', group: 'video_pipeline' },
+            { key: 'video_prompt_first_last_compose', label: 'H3 FLF2V 프롬프트 작성', kind: '텍스트', group: 'video_pipeline' },
         ];
 
         function llmRouteNumber(value, fallback, integer = false) {
