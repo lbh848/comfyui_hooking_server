@@ -86,6 +86,37 @@ def test_config_apply_backs_up_updates_and_restores(tmp_path):
     assert result.backup_path.is_file()
 
 
+def test_config_apply_leaves_unselected_workflow_binding_unchanged(tmp_path):
+    config_path = tmp_path / "config.json"
+    requirements = tmp_path / "요구사항"
+    comfy = tmp_path / "comfy"
+    workflows = comfy / "user" / "default" / "workflows"
+    workflows.mkdir(parents=True)
+    selected = workflows / "selected.json"
+    _write_json(selected, {"selected": True})
+    original = {
+        "debug_workflow_source_path": "",
+        "qwen_edit_workflow_source_path": "",
+    }
+    _write_json(config_path, original)
+
+    apply_installed_config(
+        config_path=config_path,
+        requirements_dir=requirements,
+        comfy_root=comfy,
+        workflow_bindings={
+            "debug_workflow_source_path": str(selected),
+        },
+        required_bindings=["debug_workflow_source_path"],
+        default_workflow_bindings=None,
+        workflow_base_dir=workflows,
+    )
+
+    updated = json.loads(config_path.read_text(encoding="utf-8"))
+    assert updated["debug_workflow_source_path"] == str(selected)
+    assert updated["qwen_edit_workflow_source_path"] == ""
+
+
 def test_config_apply_rejects_workflow_outside_installed_root(tmp_path):
     config_path = tmp_path / "config.json"
     _write_json(config_path, {})

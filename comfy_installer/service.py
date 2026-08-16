@@ -1789,10 +1789,6 @@ class ComfyInstallerService:
                     process = None
 
             self._set_phase("config")
-            default_workflows = self._prepare_default_workflows(
-                release_version=release_version,
-                required=True,
-            )
             workflow_base_dir = self._embedded_workflow_base_dir()
             config_update = apply_installed_config(
                 config_path=self.config_path,
@@ -1800,9 +1796,7 @@ class ComfyInstallerService:
                 comfy_root=self.comfy_root,
                 workflow_bindings=selection.workflow_bindings,
                 required_bindings=selection.workflow_bindings.keys(),
-                default_workflow_bindings=(
-                    default_workflows.workflow_bindings
-                ),
+                default_workflow_bindings=None,
                 workflow_base_dir=workflow_base_dir,
             )
 
