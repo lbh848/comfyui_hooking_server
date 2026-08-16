@@ -149,6 +149,56 @@ def test_managed_source_install_and_update_reapply_system_stats_patch(
         "M server.py"
     )
 
+
+def test_update_reuses_system_stats_fallback_committed_upstream(
+    tmp_path: Path,
+) -> None:
+    fixture_comfy = tmp_path / "fixture-comfy"
+    fixture_backups = tmp_path / "fixture-backups"
+    fixture_server = _write_server(fixture_comfy, _server_source())
+    apply_comfy_system_stats_compatibility(
+        comfy_root=fixture_comfy,
+        requirements_dir=fixture_backups,
+    )
+    upstream_compatible_source = fixture_server.read_text(encoding="utf-8")
+
+    source = tmp_path / "source"
+    source.mkdir()
+    _git(source, "init", "-b", "main")
+    _git(source, "config", "user.name", "Comfy Installer Test")
+    _git(source, "config", "user.email", "comfy-installer@example.test")
+    (source / "server.py").write_text(
+        upstream_compatible_source,
+        encoding="utf-8",
+    )
+    _git(source, "add", "server.py")
+    _git(source, "commit", "-m", "system stats fallback upstream")
+    ref = _git(source, "rev-parse", "HEAD")
+
+    comfy_root = tmp_path / "installed-comfy"
+    backups = comfy_root / ".installer-state" / "backups" / "runtime"
+    install_comfy_source(
+        destination=comfy_root,
+        repository=str(source),
+        ref=ref,
+        cancel_event=Event(),
+        requirements_dir=backups,
+    )
+    assert _git(comfy_root, "status", "--porcelain", "--untracked-files=no") == ""
+
+    update_comfy_source(
+        destination=comfy_root,
+        repository=str(source),
+        ref=ref,
+        cancel_event=Event(),
+        requirements_dir=backups,
+    )
+
+    assert (comfy_root / "server.py").read_text(
+        encoding="utf-8"
+    ) == upstream_compatible_source
+    assert _git(comfy_root, "status", "--porcelain", "--untracked-files=no") == ""
+
     (source / "server.py").write_text(_server_source(version=2), encoding="utf-8")
     _git(source, "add", "server.py")
     _git(source, "commit", "-m", "second")

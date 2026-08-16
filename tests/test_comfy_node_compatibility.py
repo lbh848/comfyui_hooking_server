@@ -273,6 +273,68 @@ def test_tracking_instant_lora_node_reapplies_patch_after_upstream_update(
     )
 
 
+def test_fresh_install_reuses_upstream_compatible_instant_lora_node(
+    tmp_path: Path,
+) -> None:
+    fixture_comfy = tmp_path / "fixture-comfy"
+    fixture_requirements = tmp_path / "fixture-requirements"
+    fixture_runtime = _write_runtime(fixture_comfy, _legacy_runtime_source())
+    apply_instant_lora_python_compatibility(
+        comfy_root=fixture_comfy,
+        requirements_dir=fixture_requirements,
+    )
+    upstream_compatible_source = fixture_runtime.read_text(encoding="utf-8")
+
+    source = tmp_path / "source"
+    remote = tmp_path / "remote.git"
+    source.mkdir()
+    _git(source, "init", "-b", "main")
+    _git(source, "config", "user.name", "Comfy Installer Test")
+    _git(source, "config", "user.email", "comfy-installer@example.test")
+    (source / "src").mkdir()
+    (source / "src" / "runtime.py").write_text(
+        upstream_compatible_source,
+        encoding="utf-8",
+    )
+    _git(source, "add", "src/runtime.py")
+    _git(source, "commit", "-m", "managed Python support upstream")
+    _git(tmp_path, "init", "--bare", str(remote))
+    _git(source, "remote", "add", "origin", str(remote))
+    _git(source, "push", "-u", "origin", "main")
+
+    comfy_root = tmp_path / "comfy"
+    requirements = tmp_path / "요구사항"
+    node = {
+        "name": NODE_NAME,
+        "source_type": "git",
+        "repository": str(remote),
+        "tracking_branch": "main",
+    }
+    first = install_custom_nodes(
+        nodes=[node],
+        comfy_root=comfy_root,
+        downloader=_unused_downloader(),
+        cancel_event=Event(),
+        requirements_dir=requirements,
+    )[0]
+
+    assert _git(first, "status", "--porcelain", "--untracked-files=no") == ""
+
+    second = install_custom_nodes(
+        nodes=[node],
+        comfy_root=comfy_root,
+        downloader=_unused_downloader(),
+        cancel_event=Event(),
+        requirements_dir=requirements,
+    )[0]
+
+    assert second == first
+    assert (second / "src" / "runtime.py").read_text(
+        encoding="utf-8"
+    ) == upstream_compatible_source
+    assert _git(second, "status", "--porcelain", "--untracked-files=no") == ""
+
+
 def test_instant_lora_patch_is_restored_when_node_update_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -280,7 +342,12 @@ def test_instant_lora_patch_is_restored_when_node_update_fails(
     comfy_root = tmp_path / "comfy"
     requirements = tmp_path / "요구사항"
     runtime = _write_runtime(comfy_root, _legacy_runtime_source())
-    (runtime.parents[1] / ".git").mkdir()
+    node_root = runtime.parents[1]
+    _git(node_root, "init", "-b", "main")
+    _git(node_root, "config", "user.name", "Comfy Installer Test")
+    _git(node_root, "config", "user.email", "comfy-installer@example.test")
+    _git(node_root, "add", "src/runtime.py")
+    _git(node_root, "commit", "-m", "legacy runtime")
     apply_instant_lora_python_compatibility(
         comfy_root=comfy_root,
         requirements_dir=requirements,

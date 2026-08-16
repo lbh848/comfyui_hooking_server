@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import shutil
+import subprocess
 import traceback
 import uuid
 from pathlib import Path
@@ -61,6 +62,53 @@ def _runtime_path(comfy_root: Path) -> Path:
         / INSTANT_LORA_NODE_NAME
         / _INSTANT_LORA_RUNTIME_RELATIVE
     )
+
+
+def _git_head_runtime_source(
+    source_path: Path,
+    *,
+    log: LogCallback | None,
+) -> str | None:
+    node_root = source_path.parent.parent
+    git_metadata = node_root / ".git"
+    if not git_metadata.exists():
+        _emit(
+            "Git 저장소가 아니므로 HEAD 기반 호환 코드 판별을 생략합니다: "
+            f"{node_root}",
+            log,
+        )
+        return None
+
+    relative_path = source_path.relative_to(node_root).as_posix()
+    command = ["git", "show", f"HEAD:{relative_path}"]
+    creationflags = 0
+    if os.name == "nt":
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=node_root,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            creationflags=creationflags,
+        )
+        return completed.stdout.decode("utf-8").replace("\r\n", "\n")
+    except Exception as exc:
+        stderr = ""
+        if isinstance(exc, subprocess.CalledProcessError) and exc.stderr:
+            stderr = exc.stderr.decode("utf-8", errors="replace").strip()
+        print(
+            "[COMFY_INSTALL][NODE_COMPAT] Git HEAD의 Instant LoRA 런타임 "
+            "확인 실패: "
+            f"node_root={node_root}, path={relative_path}, "
+            f"stderr={stderr!r}, error={exc}"
+        )
+        traceback.print_exc()
+        raise NodeCompatibilityError(
+            "Git HEAD의 Instant LoRA 런타임을 확인하지 못해 호환 패치를 "
+            f"안전하게 해제할 수 없습니다: {source_path}"
+        ) from exc
 
 
 def _backup_before_write(
@@ -278,6 +326,20 @@ def remove_instant_lora_python_compatibility(
             _emit(f"해제할 관리 Python 호환 패치 없음: {source_path}", log)
             return {
                 "status": "unpatched",
+                "path": str(source_path),
+                "backup": None,
+                "changed": False,
+            }
+
+        head_source = _git_head_runtime_source(source_path, log=log)
+        if head_source is not None and _upstream_supports_managed_python(head_source):
+            _emit(
+                "Git HEAD가 관리 Python 경로를 이미 지원하여 정식 소스를 "
+                f"패치 해제하지 않습니다: {source_path}",
+                log,
+            )
+            return {
+                "status": "upstream-compatible",
                 "path": str(source_path),
                 "backup": None,
                 "changed": False,

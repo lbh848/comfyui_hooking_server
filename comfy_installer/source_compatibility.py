@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import os
 import shutil
+import subprocess
 import traceback
 import uuid
 from contextlib import contextmanager
@@ -70,6 +71,53 @@ def _emit(message: str, log: LogCallback | None) -> None:
 
 def _server_path(comfy_root: Path) -> Path:
     return comfy_root / _SERVER_RELATIVE_PATH
+
+
+def _git_head_server_source(
+    source_path: Path,
+    *,
+    log: LogCallback | None,
+) -> str | None:
+    comfy_root = source_path.parent
+    git_metadata = comfy_root / ".git"
+    if not git_metadata.exists():
+        _emit(
+            "Git 저장소가 아니므로 HEAD 기반 system_stats 패치 판별을 "
+            f"생략합니다: {comfy_root}",
+            log,
+        )
+        return None
+
+    relative_path = source_path.relative_to(comfy_root).as_posix()
+    command = ["git", "show", f"HEAD:{relative_path}"]
+    creationflags = 0
+    if os.name == "nt":
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=comfy_root,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            creationflags=creationflags,
+        )
+        return completed.stdout.decode("utf-8").replace("\r\n", "\n")
+    except Exception as exc:
+        stderr = ""
+        if isinstance(exc, subprocess.CalledProcessError) and exc.stderr:
+            stderr = exc.stderr.decode("utf-8", errors="replace").strip()
+        print(
+            "[COMFY_INSTALL][SOURCE_COMPAT] Git HEAD의 ComfyUI 서버 소스 "
+            "확인 실패: "
+            f"comfy_root={comfy_root}, path={relative_path}, "
+            f"stderr={stderr!r}, error={exc}"
+        )
+        traceback.print_exc()
+        raise SourceCompatibilityError(
+            "Git HEAD의 ComfyUI 서버 소스를 확인하지 못해 system_stats "
+            f"패치를 안전하게 해제할 수 없습니다: {source_path}"
+        ) from exc
 
 
 def _read_utf8_normalized(path: Path) -> tuple[str, str]:
@@ -238,6 +286,20 @@ def remove_comfy_system_stats_compatibility(
             _emit(f"해제할 system_stats GPU 폴백 패치 없음: {source_path}", log)
             return {
                 "status": "unpatched",
+                "path": str(source_path),
+                "backup": None,
+                "changed": False,
+            }
+
+        head_source = _git_head_server_source(source_path, log=log)
+        if head_source is not None and _PATCHED_DEVICE_STATS in head_source:
+            _emit(
+                "Git HEAD에 system_stats GPU 폴백이 이미 포함되어 정식 "
+                f"소스를 패치 해제하지 않습니다: {source_path}",
+                log,
+            )
+            return {
+                "status": "upstream-compatible",
                 "path": str(source_path),
                 "backup": None,
                 "changed": False,

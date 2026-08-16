@@ -22,6 +22,10 @@ class RuntimeStateError(RuntimeError):
 
 LogCallback = Callable[[str], None]
 RECEIPT_SCHEMA_VERSION = 1
+_COMFY_SERVER = Path("server.py")
+_COMFY_SERVER_PATCH_MARKER = (
+    "# comfy-installer: keep system_stats available when GPU telemetry fails"
+)
 _INSTANT_LORA_NODE_NAME = "comfyui-instant-lora_v_soya"
 _INSTANT_LORA_RUNTIME = Path("src") / "runtime.py"
 _INSTANT_LORA_PATCH_MARKER = (
@@ -196,13 +200,49 @@ def git_head(path: str | os.PathLike[str]) -> str | None:
     return _git_value(root, "rev-parse", "HEAD").lower()
 
 
-def _assert_clean_git(path: Path, label: str) -> None:
+def _capture_managed_comfy_patch(path: Path) -> str | None:
     status = _git_value(path, "status", "--porcelain", "--untracked-files=no")
-    if status:
+    if not status:
+        return None
+    expected_status = f"M {_COMFY_SERVER.as_posix()}"
+    normalized = [line.strip() for line in status.splitlines() if line.strip()]
+    server_path = path / _COMFY_SERVER
+    if (
+        normalized != [expected_status]
+        or not server_path.is_file()
+        or _COMFY_SERVER_PATCH_MARKER
+        not in server_path.read_text(encoding="utf-8")
+    ):
         raise RuntimeStateError(
-            f"{label}에 추적 중인 로컬 변경이 있어 승격하지 않습니다: "
-            + ", ".join(status.splitlines()[:10])
+            "ComfyUI에 설치기 소유가 아닌 추적 변경이 있어 승격하지 "
+            "않습니다: "
+            + ", ".join(normalized[:10])
         )
+    try:
+        completed = subprocess.run(
+            ["git", "diff", "--binary", "--", _COMFY_SERVER.as_posix()],
+            cwd=path,
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        patch = completed.stdout
+        if not patch.strip():
+            raise RuntimeStateError("ComfyUI 관리 패치 diff가 비어 있습니다.")
+        return patch
+    except RuntimeStateError:
+        raise
+    except Exception as exc:
+        print(
+            "[COMFY_INSTALL][RUNTIME_STATE] 설치기 소유 ComfyUI 패치 "
+            f"캡처 실패: path={path}, error={exc}"
+        )
+        traceback.print_exc()
+        raise RuntimeStateError(
+            "ComfyUI 관리 패치를 보관하지 못했습니다."
+        ) from exc
 
 
 def _capture_managed_custom_node_patch(
@@ -513,7 +553,7 @@ def create_runtime_transaction(
     try:
         if not (root / ".git").is_dir():
             raise RuntimeStateError(f"ComfyUI Git 저장소가 없습니다: {root}")
-        _assert_clean_git(root, "ComfyUI")
+        managed_comfy_patch = _capture_managed_comfy_patch(root)
         node_state = collect_custom_node_state(root, manifest.custom_nodes)
         for name, state in node_state.items():
             path = Path(str(state["path"]))
@@ -537,6 +577,7 @@ def create_runtime_transaction(
             "created_at": _now_iso(),
             "comfy_root": str(root),
             "comfy_ref": git_head(root),
+            "comfy_managed_worktree_patch": managed_comfy_patch,
             "custom_nodes": node_state,
             "config_backup": config_backup,
             "receipt": receipt,
@@ -658,6 +699,14 @@ def rollback_runtime_transaction(
         if comfy_ref:
             _checkout_exact(root, comfy_ref, "ComfyUI")
             result["restored"].append("comfy_ref")
+            managed_comfy_patch = snapshot.get("comfy_managed_worktree_patch")
+            if isinstance(managed_comfy_patch, str) and managed_comfy_patch:
+                _restore_managed_worktree_patch(
+                    root,
+                    managed_comfy_patch,
+                    label="ComfyUI",
+                )
+                result["restored"].append("comfy_managed_patch")
         for name, state in dict(snapshot.get("custom_nodes") or {}).items():
             if not isinstance(state, dict):
                 continue

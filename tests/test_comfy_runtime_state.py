@@ -329,3 +329,61 @@ def test_transaction_preserves_only_the_installer_owned_instant_lora_patch(
     assert _git(node, "status", "--porcelain", "--untracked-files=no") == (
         "M src/runtime.py"
     )
+
+
+def test_transaction_preserves_installer_owned_comfy_patch(
+    tmp_path: Path,
+) -> None:
+    comfy = tmp_path / "comfy"
+    comfy_ref = _init_repo(comfy, "server.py")
+    (comfy / ".venv").mkdir()
+    server = comfy / "server.py"
+    original = server.read_text(encoding="utf-8")
+    patched = (
+        original
+        + "# comfy-installer: keep system_stats available when GPU telemetry fails\n"
+    )
+    server.write_text(patched, encoding="utf-8")
+    manifest = InstallManifest(
+        source_path=tmp_path / "manifest.json",
+        data={
+            "comfy": {
+                "version": "0.31.0",
+                "repository": "https://example.invalid/ComfyUI.git",
+                "ref": comfy_ref,
+            },
+            "python": {
+                "version": "3.12.11",
+                "compatibility_packages": [],
+                "gpu_profiles": [],
+            },
+            "custom_nodes": [],
+            "models": [],
+            "workflows": {},
+        },
+        sha256="manifest-sha",
+    )
+
+    snapshot = create_runtime_transaction(
+        comfy_root=comfy,
+        manifest=manifest,
+        config_backup={},
+    )
+
+    assert snapshot["comfy_ref"] == comfy_ref
+    assert "comfy_managed_worktree_patch" in snapshot
+    _git(comfy, "checkout", "--", "server.py")
+    _commit(comfy, "server.py", "upstream-new\n")
+
+    result = rollback_runtime_transaction(
+        comfy_root=comfy,
+        snapshot=snapshot,
+        restore_config=lambda _path: {"ok": True},
+    )
+
+    assert result["status"] == "succeeded"
+    assert server.read_text(encoding="utf-8") == patched
+    assert _git(comfy, "rev-parse", "HEAD").lower() == comfy_ref
+    assert _git(comfy, "status", "--porcelain", "--untracked-files=no") == (
+        "M server.py"
+    )
