@@ -19,6 +19,7 @@ from comfy_installer.service import (
     _E2E_PHASES,
     _INSTALL_PHASES,
     _UPDATE_PHASES,
+    _hooking_server_restart_required,
 )
 from comfy_installer.workflow_library import (
     DISTRIBUTION_LIBRARY_DIRNAME,
@@ -42,6 +43,27 @@ def test_install_and_update_do_not_embed_workflow_e2e() -> None:
     assert e2e_phases.index("e2e_static") < e2e_phases.index("e2e_runtime")
     assert e2e_phases.index("e2e_runtime") < e2e_phases.index(
         "e2e_video_runtime"
+    )
+
+
+def test_hooking_server_restart_required_after_pull() -> None:
+    assert _hooking_server_restart_required(
+        startup_head="a" * 40,
+        update_result={"changed": True, "after": "b" * 40},
+    )
+
+
+def test_hooking_server_restart_required_for_stale_process() -> None:
+    assert _hooking_server_restart_required(
+        startup_head="a" * 40,
+        update_result={"changed": False, "after": "b" * 40},
+    )
+
+
+def test_hooking_server_restart_not_required_for_current_process() -> None:
+    assert not _hooking_server_restart_required(
+        startup_head="a" * 40,
+        update_result={"changed": False, "after": "A" * 40},
     )
 
 
@@ -333,7 +355,10 @@ def test_runtime_e2e_keeps_fixture_promotion_for_legacy_workflow(
     assert len(promotion_calls) == 1
 
 
-def test_normal_pack_validation_includes_h3_bindings(tmp_path: Path) -> None:
+@pytest.mark.parametrize("release_version", ["v1", "v2"])
+def test_pack_validation_uses_release_specific_bindings(
+    tmp_path: Path, release_version: str
+) -> None:
     config = tmp_path / "config.json"
     config.write_text("{}\n", encoding="utf-8")
     service = ComfyInstallerService(
@@ -342,7 +367,7 @@ def test_normal_pack_validation_includes_h3_bindings(tmp_path: Path) -> None:
         requirements_dir=tmp_path / "requirements",
     )
     bindings: dict[str, str] = {}
-    release = service.manifest.workflows["release_dependencies"]["v1"]
+    release = service.manifest.workflows["release_dependencies"][release_version]
     for index, entry in enumerate(release):
         path = str(tmp_path / f"workflow-{index}.json")
         for binding in entry["bindings"]:
@@ -352,6 +377,7 @@ def test_normal_pack_validation_includes_h3_bindings(tmp_path: Path) -> None:
         workflow_bindings=bindings,
         workflow_hashes={},
         pack_sha256="0" * 64,
+        release_version=release_version,
     )
 
     service._validate_extracted_pack(extracted)
@@ -1038,95 +1064,63 @@ def test_manifest_has_fully_pinned_windows_runtime_and_assets() -> None:
         for node in manifest.custom_nodes
         if node["name"] in tracking_main_names
     )
-    assert len(manifest.models) == 42
-    assert manifest.workflows["expected_count"] == 21
-    fixed_v1 = manifest.workflows["release_dependencies"]["v1"]
-    assert len(fixed_v1) == 21
-    assert {
+    assert manifest.latest_workflow_release == "v2"
+    latest_release = manifest.workflows["release_dependencies"][
+        manifest.latest_workflow_release
+    ]
+    assert manifest.latest_workflow_count == len(latest_release)
+    assert len({item["id"] for item in latest_release}) == len(latest_release)
+    latest_bindings = {
         binding
-        for item in fixed_v1
+        for item in latest_release
         for binding in item["bindings"]
-    } == set(manifest.workflows["required_bindings"]).union(
+    }
+    assert latest_bindings == set(manifest.workflows["required_bindings"]).union(
         manifest.workflows["optional_bindings"]
     )
-    qwen = next(
-        item for item in fixed_v1
-        if item["id"] == "qwen_edit_workflow_source_path"
-    )
-    assert qwen["model_ids"] == ["qwen-image-edit-rapid-v19"]
-    fast_lora = next(
-        model
-        for model in manifest.models
-        if model["id"] == "minimax-h3-lightx2v-turbo-4step-768p-v1"
-    )
-    assert fast_lora["url"] == (
-        "https://huggingface.co/drbaph/MiniMax-H3-Turbo-Lora-ComfyUI/resolve/"
-        "781384e55ad67022bf7e3f14225574b9d1e92a46/"
-        "minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_"
-        "resized_avg_rank_21_bf16.safetensors"
-    )
-    assert fast_lora["size"] == 298_177_224
-    assert fast_lora["sha256"] == (
-        "1b85da614014024a0c9507f12558917dcc69b6adb564e716324594f401723115"
-    )
-    fast_workflows = [
-        item for item in fixed_v1 if str(item["id"]).endswith("_fast")
-    ]
-    assert len(fast_workflows) == 2
-    assert all(
-        "minimax-h3-lightx2v-turbo-4step-768p-v1" in item["model_ids"]
-        and "minimax-h3-lightx2v-turbo-8step-v1" not in item["model_ids"]
-        for item in fast_workflows
-    )
-    assert "캐릭터복장추적_v1.json" in manifest.workflows[
-        "excluded_filenames"
-    ]
     h3 = manifest.validation_profiles["minimax_h3"]
-    assert set(h3["workflow_bindings"]) == {
-        "video_workflow_source_paths.i2v",
-        "video_workflow_source_paths.first_last",
-        "video_workflow_source_paths.i2v_fast",
-        "video_workflow_source_paths.first_last_fast",
-    }
-    assert set(manifest.workflows["optional_bindings"]) == set(
+    assert set(h3["workflow_bindings"]).issubset(latest_bindings)
+    assert set(h3["fast_workflow_bindings"]).issubset(
         h3["workflow_bindings"]
     )
-    assert set(h3["model_ids"]) == {
-        "minimax-h3-audio-vae-fp32",
-        "minimax-h3-int8-convrot",
-        "minimax-h3-lightx2v-turbo-4step-768p-v1",
-        "minimax-h3-lightx2v-turbo-8step-v1",
-        "minimax-h3-qwen3vl-nvfp4-awq",
-        "minimax-h3-video-vae-fp16",
+    assert set(h3["model_ids"]).issubset(
+        {model["id"] for model in manifest.models}
+    )
+    for defaults_key in ("defaults", "fast_defaults"):
+        defaults = h3[defaults_key]
+        assert all(
+            isinstance(defaults[key], int) and defaults[key] > 0
+            for key in ("width", "height", "steps")
+        )
+
+
+def test_manifest_allows_release_content_to_change_without_python_constants(
+    tmp_path: Path,
+) -> None:
+    current = load_install_manifest()
+    data = json.loads(json.dumps(current.data, ensure_ascii=False))
+    latest_entries = data["workflows"]["release_dependencies"]["v2"]
+    data["workflows"]["release_dependencies"] = {
+        "v7": latest_entries,
+        "v10": latest_entries,
     }
-    h3_models = [
-        model for model in manifest.models if model["id"] in h3["model_ids"]
-    ]
-    assert len(h3_models) == 6
-    assert sum(model["size"] for model in h3_models) == 44_724_955_695
-    assert h3["defaults"] == {
-        "width": 960,
-        "height": 544,
-        "length": 124,
-        "fps": 24,
-        "steps": 8,
-        "sampler": "res_multistep",
-        "scheduler": "simple",
-        "lora_strength": 1.0,
-        "audio": False,
-    }
-    assert set(h3["fast_workflow_bindings"]) == {
-        "video_workflow_source_paths.i2v_fast",
-        "video_workflow_source_paths.first_last_fast",
-    }
-    assert h3["fast_defaults"] == {
-        "width": 1344,
-        "height": 768,
-        "length": 124,
-        "fps": 24,
-        "steps": 4,
-        "sampler": "res_multistep",
-        "scheduler": "simple",
-        "lora_strength": 1.0,
-        "audio": False,
-    }
+    data["workflows"]["excluded_filenames"] = ["future-exclusion.json"]
+    h3 = data["validation_profiles"]["minimax_h3"]
+    h3["workflow_bindings"] = [h3["workflow_bindings"][0]]
+    h3["fast_workflow_bindings"] = []
+    h3.pop("fast_defaults")
+    h3["model_ids"] = [h3["model_ids"][0]]
+    h3["defaults"]["width"] = 1024
+    h3["defaults"]["height"] = 576
+    h3["defaults"]["steps"] = 6
+    path = tmp_path / "install-manifest.json"
+    path.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    loaded = load_install_manifest(path)
+
+    assert loaded.latest_workflow_release == "v10"
+    assert loaded.latest_workflow_count == len(latest_entries)
+    assert loaded.validation_profiles["minimax_h3"]["defaults"] == h3["defaults"]

@@ -46,6 +46,17 @@ class InstallManifest:
         return self.data["workflows"]
 
     @property
+    def latest_workflow_release(self) -> str:
+        releases = self.workflows["release_dependencies"]
+        return max(releases, key=lambda value: int(value[1:]))
+
+    @property
+    def latest_workflow_count(self) -> int:
+        return len(
+            self.workflows["release_dependencies"][self.latest_workflow_release]
+        )
+
+    @property
     def validation_profiles(self) -> dict[str, Any]:
         value = self.data.get("validation_profiles", {})
         return value if isinstance(value, dict) else {}
@@ -263,14 +274,21 @@ def _validate_manifest(data: dict[str, Any]) -> None:
     workflows = data.get("workflows")
     if not isinstance(workflows, dict):
         raise ManifestError("workflows 항목이 JSON 객체가 아닙니다.")
-    expected_count = workflows.get("expected_count")
-    if expected_count != 21:
+    excluded = workflows.get("excluded_filenames", [])
+    if not isinstance(excluded, list) or not all(
+        isinstance(name, str)
+        and bool(name.strip())
+        and name == name.strip()
+        and "/" not in name
+        and "\\" not in name
+        and name not in {".", ".."}
+        for name in excluded
+    ):
         raise ManifestError(
-            f"최초 배포 워크플로우 수는 21이어야 합니다: {expected_count!r}"
+            "workflows.excluded_filenames가 안전한 파일명 문자열 배열이 아닙니다."
         )
-    excluded = workflows.get("excluded_filenames")
-    if not isinstance(excluded, list) or "캐릭터복장추적_v1.json" not in excluded:
-        raise ManifestError("제외 워크플로우 목록에 캐릭터복장추적_v1.json이 없습니다.")
+    if len({name.casefold() for name in excluded}) != len(excluded):
+        raise ManifestError("workflows.excluded_filenames에 중복 파일명이 있습니다.")
 
     required_bindings = workflows.get("required_bindings")
     if not isinstance(required_bindings, list) or not required_bindings:
@@ -304,19 +322,22 @@ def _validate_manifest(data: dict[str, Any]) -> None:
     release_dependencies = workflows.get("release_dependencies")
     if not isinstance(release_dependencies, dict) or not release_dependencies:
         raise ManifestError("workflows.release_dependencies가 비어 있습니다.")
-    if "v1" not in release_dependencies:
-        raise ManifestError("최초 배포용 workflows.release_dependencies.v1이 없습니다.")
-    for release_version, entries in release_dependencies.items():
-        context = f"workflows.release_dependencies.{release_version}"
+    for release_version in release_dependencies:
         if not isinstance(release_version, str) or not re.fullmatch(
             r"v[1-9][0-9]*", release_version
         ):
             raise ManifestError(
                 f"워크플로우 배포 버전 형식이 유효하지 않습니다: {release_version!r}"
             )
-        if not isinstance(entries, list) or len(entries) != expected_count:
+    latest_release_version = max(
+        release_dependencies,
+        key=lambda value: int(value[1:]),
+    )
+    for release_version, entries in release_dependencies.items():
+        context = f"workflows.release_dependencies.{release_version}"
+        if not isinstance(entries, list) or not entries:
             raise ManifestError(
-                f"{context} 항목 수가 {expected_count}개가 아닙니다."
+                f"{context} 항목이 비어 있거나 배열이 아닙니다."
             )
         entry_ids: set[str] = set()
         covered_bindings: set[str] = set()
@@ -373,9 +394,12 @@ def _validate_manifest(data: dict[str, Any]) -> None:
                     f"{entry_context}.model_ids에 등록되지 않은 모델이 있습니다: "
                     f"{sorted(unknown_models)}"
                 )
-        if covered_bindings != known_binding_set:
+        if (
+            release_version == latest_release_version
+            and covered_bindings != known_binding_set
+        ):
             raise ManifestError(
-                f"{context}가 모든 설정 바인딩을 포함하지 않습니다: "
+                f"최신 배포 {context}가 모든 설정 바인딩을 포함하지 않습니다: "
                 f"missing={sorted(known_binding_set - covered_bindings)}"
             )
 
@@ -385,96 +409,85 @@ def _validate_manifest(data: dict[str, Any]) -> None:
     h3_profile = validation_profiles.get("minimax_h3")
     if not isinstance(h3_profile, dict):
         raise ManifestError("validation_profiles.minimax_h3가 없습니다.")
-    expected_h3_bindings = {
-        "video_workflow_source_paths.i2v",
-        "video_workflow_source_paths.first_last",
-        "video_workflow_source_paths.i2v_fast",
-        "video_workflow_source_paths.first_last_fast",
-    }
     h3_bindings = h3_profile.get("workflow_bindings")
-    if not isinstance(h3_bindings, list) or set(h3_bindings) != expected_h3_bindings:
+    if not isinstance(h3_bindings, list) or not h3_bindings or not all(
+        isinstance(binding, str) and binding.strip()
+        for binding in h3_bindings
+    ):
         raise ManifestError(
             "validation_profiles.minimax_h3.workflow_bindings가 "
-            "일반/고속 I2V/First-Last 고정 바인딩과 다릅니다."
+            "비어 있거나 문자열 배열이 아닙니다."
         )
-    if not expected_h3_bindings.issubset(optional_binding_set):
+    h3_binding_set = set(h3_bindings)
+    if len(h3_binding_set) != len(h3_bindings):
         raise ManifestError(
-            "MiniMax H3 워크플로 바인딩이 workflows.optional_bindings에 없습니다."
+            "validation_profiles.minimax_h3.workflow_bindings에 중복 값이 있습니다."
         )
-    expected_fast_h3_bindings = {
-        "video_workflow_source_paths.i2v_fast",
-        "video_workflow_source_paths.first_last_fast",
-    }
-    fast_h3_bindings = h3_profile.get("fast_workflow_bindings")
-    if (
-        not isinstance(fast_h3_bindings, list)
-        or set(fast_h3_bindings) != expected_fast_h3_bindings
+    unknown_h3_bindings = h3_binding_set - known_binding_set
+    if unknown_h3_bindings:
+        raise ManifestError(
+            "validation_profiles.minimax_h3.workflow_bindings에 등록되지 않은 "
+            f"설정 키가 있습니다: {sorted(unknown_h3_bindings)}"
+        )
+
+    fast_h3_bindings = h3_profile.get("fast_workflow_bindings", [])
+    if not isinstance(fast_h3_bindings, list) or not all(
+        isinstance(binding, str) and binding.strip()
+        for binding in fast_h3_bindings
     ):
         raise ManifestError(
             "validation_profiles.minimax_h3.fast_workflow_bindings가 "
-            "고속 I2V/First-Last 고정 바인딩과 다릅니다."
+            "문자열 배열이 아닙니다."
+        )
+    fast_h3_binding_set = set(fast_h3_bindings)
+    if len(fast_h3_binding_set) != len(fast_h3_bindings):
+        raise ManifestError(
+            "validation_profiles.minimax_h3.fast_workflow_bindings에 "
+            "중복 값이 있습니다."
+        )
+    if not fast_h3_binding_set.issubset(h3_binding_set):
+        raise ManifestError(
+            "validation_profiles.minimax_h3.fast_workflow_bindings가 "
+            "workflow_bindings의 일부가 아닙니다."
         )
 
-    expected_h3_models = {
-        "minimax-h3-audio-vae-fp32",
-        "minimax-h3-int8-convrot",
-        "minimax-h3-lightx2v-turbo-4step-768p-v1",
-        "minimax-h3-lightx2v-turbo-8step-v1",
-        "minimax-h3-qwen3vl-nvfp4-awq",
-        "minimax-h3-video-vae-fp16",
-    }
     h3_model_ids = h3_profile.get("model_ids")
-    if not isinstance(h3_model_ids, list) or set(h3_model_ids) != expected_h3_models:
+    if not isinstance(h3_model_ids, list) or not h3_model_ids or not all(
+        isinstance(model_id, str) and model_id.strip()
+        for model_id in h3_model_ids
+    ):
         raise ManifestError(
-            "validation_profiles.minimax_h3.model_ids가 H3 고정 모델 6개와 다릅니다."
+            "validation_profiles.minimax_h3.model_ids가 비어 있거나 "
+            "문자열 배열이 아닙니다."
         )
-    if not expected_h3_models.issubset(model_ids):
+    h3_model_id_set = set(h3_model_ids)
+    if len(h3_model_id_set) != len(h3_model_ids):
         raise ManifestError(
-            "MiniMax H3 모델이 공용 models 목록에 모두 등록되지 않았습니다."
+            "validation_profiles.minimax_h3.model_ids에 중복 값이 있습니다."
+        )
+    unknown_h3_models = h3_model_id_set - model_ids
+    if unknown_h3_models:
+        raise ManifestError(
+            "validation_profiles.minimax_h3.model_ids에 등록되지 않은 모델이 "
+            f"있습니다: {sorted(unknown_h3_models)}"
         )
 
-    defaults = h3_profile.get("defaults")
-    if not isinstance(defaults, dict):
-        raise ManifestError(
-            "validation_profiles.minimax_h3.defaults가 JSON 객체가 아닙니다."
-        )
-    expected_defaults = {
-        "width": 960,
-        "height": 544,
-        "length": 124,
-        "fps": 24,
-        "steps": 8,
-        "sampler": "res_multistep",
-        "scheduler": "simple",
-        "lora_strength": 1.0,
-        "audio": False,
-    }
-    for key, expected in expected_defaults.items():
-        if defaults.get(key) != expected:
+    defaults_to_validate = ["defaults"]
+    if fast_h3_bindings:
+        defaults_to_validate.append("fast_defaults")
+    for defaults_key in defaults_to_validate:
+        defaults = h3_profile.get(defaults_key)
+        context = f"validation_profiles.minimax_h3.{defaults_key}"
+        if not isinstance(defaults, dict):
             raise ManifestError(
-                "validation_profiles.minimax_h3.defaults 값이 고정 사양과 "
-                f"다릅니다: key={key}, expected={expected!r}, "
-                f"actual={defaults.get(key)!r}"
+                f"{context}가 JSON 객체가 아닙니다."
             )
-
-    fast_defaults = h3_profile.get("fast_defaults")
-    if not isinstance(fast_defaults, dict):
-        raise ManifestError(
-            "validation_profiles.minimax_h3.fast_defaults가 JSON 객체가 아닙니다."
-        )
-    expected_fast_defaults = {
-        **expected_defaults,
-        "width": 1344,
-        "height": 768,
-        "steps": 4,
-    }
-    for key, expected in expected_fast_defaults.items():
-        if fast_defaults.get(key) != expected:
-            raise ManifestError(
-                "validation_profiles.minimax_h3.fast_defaults 값이 고정 사양과 "
-                f"다릅니다: key={key}, expected={expected!r}, "
-                f"actual={fast_defaults.get(key)!r}"
-            )
+        for key in ("width", "height", "steps"):
+            value = defaults.get(key)
+            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+                raise ManifestError(
+                    f"{context}.{key}가 양의 정수가 아닙니다: {value!r}"
+                )
 
 
 def load_install_manifest(
@@ -494,7 +507,12 @@ def load_install_manifest(
             data=data,
             sha256=hashlib.sha256(raw).hexdigest(),
         )
-    except ManifestError:
+    except ManifestError as exc:
+        print(
+            "[COMFY_INSTALL][MANIFEST] 설치 매니페스트 검증 실패: "
+            f"path={manifest_path}, error={exc}"
+        )
+        traceback.print_exc()
         raise
     except Exception as exc:
         print(

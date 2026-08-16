@@ -512,9 +512,217 @@
     }
   ],
   "workflows": {
-    "expected_count": 21,
     "release_dependencies": {
       "v1": [
+        {
+          "id": "comfy_workflow_source_path",
+          "bindings": [
+            "comfy_workflow_source_path",
+            "illustration_workflow_source_paths.v3_anima"
+          ],
+          "model_ids": [
+            "anima-base-v1",
+            "anima-detail-tweaker",
+            "anima-text-encoder",
+            "anima-vae",
+            "atomsphere-style",
+            "clip-vit-l14",
+            "eye-segmentation-v2",
+            "eyebrow-segmentation",
+            "face-yolov8m",
+            "hand-yolov8s",
+            "small-head-anima"
+          ]
+        },
+        {
+          "id": "illustration_workflow_source_paths.v1",
+          "bindings": ["illustration_workflow_source_paths.v1"],
+          "model_ids": [
+            "anima-text-encoder",
+            "anima-vae",
+            "anima-yume-v0.2",
+            "anime-sharp-v4-upscaler",
+            "dmd2-speed-lora",
+            "fcomic-illustrious-v2",
+            "kieed-style",
+            "rdbt-anima",
+            "rin-flanime-v3"
+          ]
+        },
+        {
+          "id": "illustration_workflow_source_paths.v3",
+          "bindings": ["illustration_workflow_source_paths.v3"],
+          "model_ids": [
+            "anima-aesthetic-v1.1",
+            "anima-ci10ranko",
+            "anima-detail-tweaker",
+            "anima-n4t4r4p1su",
+            "anima-quality-slider",
+            "anima-text-encoder",
+            "anima-turbo-lora-v0.2",
+            "anima-vae",
+            "clip-vision-bigg-ipadapter",
+            "clip-vit-l14",
+            "dmd2-speed-lora",
+            "eye-segmentation-v2",
+            "eyebrow-segmentation",
+            "face-yolov8m",
+            "fcomic-illustrious-v2",
+            "hand-yolov8s",
+            "noob-ipa-mark1",
+            "rin-flanime-v3",
+            "small-head-anima"
+          ]
+        },
+        {
+          "id": "utility_workflow_source_path",
+          "bindings": ["utility_workflow_source_path"],
+          "model_ids": [
+            "anime-sharp-v4-upscaler",
+            "clip-vision-bigg-ipadapter",
+            "clip-vit-l14",
+            "face-yolov8m",
+            "face-yolov8n",
+            "noob-ipa-mark1"
+          ]
+        },
+        {
+          "id": "asset_workflow_source_path",
+          "bindings": ["asset_workflow_source_path"],
+          "model_ids": [
+            "clip-vision-bigg-ipadapter",
+            "eye-segmentation-v2",
+            "eyebrow-segmentation",
+            "face-yolov8m",
+            "face-yolov8n",
+            "hand-yolov8s",
+            "illustrious-openpose-controlnet",
+            "noob-ipa-mark1",
+            "noobai-canny-controlnet",
+            "rin-anim8draw-v3.1",
+            "suujiniku-style"
+          ]
+        },
+        {
+          "id": "anima_asset_workflow_source_path",
+          "bindings": ["anima_asset_workflow_source_path"],
+          "model_ids": [
+            "anima-aesthetic-v1.1",
+            "anima-ci10ranko",
+            "anima-detail-tweaker",
+            "anima-n4t4r4p1su",
+            "anima-quality-slider",
+            "anima-text-encoder",
+            "anima-vae",
+            "clip-vision-bigg-ipadapter",
+            "clip-vit-l14",
+            "eye-segmentation-v2",
+            "eyebrow-segmentation",
+            "face-yolov8m",
+            "face-yolov8n",
+            "hand-yolov8s",
+            "kieed-style",
+            "noob-ipa-mark1",
+            "noobai-canny-controlnet",
+            "rin-anim8draw-v3.1",
+            "suujiniku-style"
+          ]
+        },
+        {
+          "id": "anima_only_asset_workflow_source_path",
+          "bindings": ["anima_only_asset_workflow_source_path"],
+          "model_ids": [
+            "anima-aesthetic-v1.1",
+            "anima-detail-tweaker",
+            "anima-text-encoder",
+            "anima-vae",
+            "atomsphere-style",
+            "clip-vit-l14",
+            "eye-segmentation-v2",
+            "eyebrow-segmentation",
+            "face-yolov8m",
+            "hand-yolov8s",
+            "small-head-anima"
+          ]
+        },
+        {
+          "id": "qwen_edit_workflow_source_path",
+          "bindings": ["qwen_edit_workflow_source_path"],
+          "model_ids": ["qwen-image-edit-rapid-v19"]
+        },
+        {
+          "id": "anima_inpainting_workflow_source_path",
+          "bindings": ["anima_inpainting_workflow_source_path"],
+          "model_ids": [
+            "anima-base-v1",
+            "anima-lllite-inpainting-v2",
+            "anima-text-encoder",
+            "anima-vae"
+          ]
+        },
+        {
+          "id": "tag_analysis_workflow_source_path",
+          "bindings": ["tag_analysis_workflow_source_path"],
+          "model_ids": ["face-yolov8n"]
+        },
+        {
+          "id": "asset_tag_analysis_workflow_source_path",
+          "bindings": ["asset_tag_analysis_workflow_source_path"],
+          "model_ids": []
+        },
+        {
+          "id": "lora_training_workflow_source_paths.anima",
+          "bindings": ["lora_training_workflow_source_paths.anima"],
+          "model_ids": [
+            "anima-base-v1",
+            "anima-text-encoder",
+            "anima-vae",
+            "anime-sharp-v4-upscaler"
+          ]
+        },
+        {
+          "id": "lora_training_workflow_source_paths.sdxl",
+          "bindings": ["lora_training_workflow_source_paths.sdxl"],
+          "model_ids": [
+            "anime-sharp-v4-upscaler",
+            "illustrious-xl-v1",
+            "illustrious-xl-v1-vae",
+            "rin-flanime-v3"
+          ]
+        },
+        {
+          "id": "style_lora_training_workflow_source_paths.anima",
+          "bindings": ["style_lora_training_workflow_source_paths.anima"],
+          "model_ids": [
+            "anima-base-v1",
+            "anima-text-encoder",
+            "anima-vae"
+          ]
+        },
+        {
+          "id": "style_lora_training_workflow_source_paths.sdxl",
+          "bindings": ["style_lora_training_workflow_source_paths.sdxl"],
+          "model_ids": [
+            "illustrious-xl-v1",
+            "illustrious-xl-v1-vae",
+            "rin-flanime-v3"
+          ]
+        },
+        {
+          "id": "face_extract_workflow_source_path",
+          "bindings": ["face_extract_workflow_source_path"],
+          "model_ids": [
+            "anime-sharp-v4-upscaler",
+            "face-yolov8m"
+          ]
+        },
+        {
+          "id": "debug_workflow_source_path",
+          "bindings": ["debug_workflow_source_path"],
+          "model_ids": []
+        }
+      ],
+      "v2": [
         {
           "id": "comfy_workflow_source_path",
           "bindings": [

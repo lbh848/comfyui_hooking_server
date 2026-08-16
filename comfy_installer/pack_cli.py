@@ -66,19 +66,6 @@ def collect_workflow_bindings(
             )
         bindings[key] = path
 
-    unique_files = {path for path in bindings.values()}
-    binding_key_set = set(binding_keys)
-    latest_release = sorted(manifest.workflows["release_dependencies"])[-1]
-    expected_count = sum(
-        1
-        for entry in manifest.workflows["release_dependencies"][latest_release]
-        if set(entry["bindings"]).issubset(binding_key_set)
-    )
-    if len(unique_files) != expected_count:
-        raise WorkflowPackError(
-            "워크플로우 고유 파일 수가 매니페스트와 다릅니다: "
-            f"expected={expected_count}, actual={len(unique_files)}"
-        )
     return bindings
 
 
@@ -119,10 +106,13 @@ def build_workflow_items(
                 "model_ids": sorted(str(value) for value in fixed["model_ids"]),
             }
         )
-    if len(items) != len(fixed_entries):
+    expected_item_ids = {str(entry["id"]) for entry in fixed_entries}
+    actual_item_ids = {str(item["id"]) for item in items}
+    if actual_item_ids != expected_item_ids:
         raise WorkflowPackError(
-            "워크플로우 파일 수와 고정 모델 명세 수가 다릅니다: "
-            f"files={len(items)}, fixed={len(fixed_entries)}"
+            "워크플로우 팩 항목이 릴리스 명세와 다릅니다: "
+            f"missing={sorted(expected_item_ids - actual_item_ids)}, "
+            f"extra={sorted(actual_item_ids - expected_item_ids)}"
         )
     return sorted(items, key=lambda item: item["id"])
 
@@ -135,8 +125,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", required=True)
     parser.add_argument(
         "--release-version",
-        default="v1",
-        help="배포 버전(v1, v2 ...). 팩 내부에 기록됩니다.",
+        default="",
+        help=(
+            "배포 버전(v1, v2 ...). 생략하면 매니페스트의 최신 버전을 "
+            "사용합니다."
+        ),
     )
     parser.add_argument(
         "--key-env",
@@ -147,13 +140,17 @@ def main(argv: list[str] | None = None) -> int:
     try:
         config_path = Path(args.config).resolve()
         manifest = load_install_manifest()
+        release_version = (
+            args.release_version.strip()
+            or manifest.latest_workflow_release
+        )
         bindings = collect_workflow_bindings(
             config_path,
             manifest,
             include_optional=True,
         )
         workflow_items = build_workflow_items(
-            bindings, args.release_version, manifest
+            bindings, release_version, manifest
         )
         if args.key_env:
             key = os.environ.get(args.key_env, "")
@@ -170,7 +167,7 @@ def main(argv: list[str] | None = None) -> int:
             bindings,
             args.output,
             key,
-            release_version=args.release_version,
+            release_version=release_version,
             workflow_items=workflow_items,
         )
         key = ""

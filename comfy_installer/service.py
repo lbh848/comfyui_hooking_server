@@ -159,6 +159,19 @@ def _now_iso() -> str:
     return datetime.datetime.now().astimezone().isoformat(timespec="seconds")
 
 
+def _hooking_server_restart_required(
+    *,
+    startup_head: str | None,
+    update_result: Mapping[str, Any],
+) -> bool:
+    if update_result.get("changed") is True:
+        return True
+    after = update_result.get("after")
+    if startup_head is None or not isinstance(after, str) or not after.strip():
+        return False
+    return startup_head.casefold() != after.strip().casefold()
+
+
 class ComfyInstallerService:
     def __init__(
         self,
@@ -172,6 +185,15 @@ class ComfyInstallerService:
         resume_managed_comfy: Callable[[Any], Any] | None = None,
     ) -> None:
         self.project_root = Path(project_root).resolve()
+        try:
+            self._startup_project_head = git_head(self.project_root)
+        except Exception as exc:
+            print(
+                "[COMFY_INSTALL][SERVICE] 프로세스 시작 Git 커밋 기록 실패: "
+                f"path={self.project_root}, error={exc}"
+            )
+            traceback.print_exc()
+            self._startup_project_head = None
         self.comfy_root = self.project_root / "comfy"
         self.config_path = (
             Path(config_path).resolve()
@@ -229,7 +251,7 @@ class ComfyInstallerService:
                     int(model["size"]) for model in self.manifest.models
                 ),
                 "custom_node_count": len(self.manifest.custom_nodes),
-                "workflow_count": self.manifest.workflows["expected_count"],
+                "workflow_count": self.manifest.latest_workflow_count,
             },
         }
         try:
@@ -789,25 +811,35 @@ class ComfyInstallerService:
     def _validate_extracted_pack(
         self, extracted: ExtractedWorkflowPack
     ) -> None:
-        required = set(self.manifest.workflows["required_bindings"])
-        required.update(self.manifest.workflows.get("optional_bindings", []))
+        release_entries = self.manifest.workflows[
+            "release_dependencies"
+        ].get(extracted.release_version)
+        if not isinstance(release_entries, list) or not release_entries:
+            message = (
+                "워크플로우 팩 배포 버전이 매니페스트에 없습니다: "
+                f"release={extracted.release_version!r}"
+            )
+            print(f"[COMFY_INSTALL][PACK] {message}")
+            raise InstallerServiceError(message)
+        required = {
+            str(binding)
+            for entry in release_entries
+            for binding in entry["bindings"]
+        }
         actual = set(extracted.workflow_bindings)
         if actual != required:
-            raise InstallerServiceError(
+            message = (
                 "워크플로우 팩 바인딩이 매니페스트와 다릅니다: "
+                f"release={extracted.release_version}, "
                 f"missing={sorted(required - actual)}, "
                 f"extra={sorted(actual - required)}"
             )
+            print(f"[COMFY_INSTALL][PACK] {message}")
+            raise InstallerServiceError(message)
         unique = {
             Path(path).resolve()
             for path in extracted.workflow_bindings.values()
         }
-        expected_count = int(self.manifest.workflows["expected_count"])
-        if len(unique) != expected_count:
-            raise InstallerServiceError(
-                "복호화 워크플로우 고유 파일 수가 다릅니다: "
-                f"expected={expected_count}, actual={len(unique)}"
-            )
         excluded = {
             str(name).casefold()
             for name in self.manifest.workflows["excluded_filenames"]
@@ -1341,7 +1373,7 @@ class ComfyInstallerService:
                     validations, _ = validate_all_workflows(
                         base_url=process.base_url,
                         workflow_bindings=selection.workflow_bindings,
-                        expected_count=len(selection.selected_item_ids),
+                        selected_count=len(selection.selected_item_ids),
                         excluded_filenames=list(
                             self.manifest.workflows["excluded_filenames"]
                         ),
@@ -2009,7 +2041,7 @@ class ComfyInstallerService:
                         int(model["size"]) for model in new_manifest.models
                     ),
                     "custom_node_count": len(new_manifest.custom_nodes),
-                    "workflow_count": new_manifest.workflows["expected_count"],
+                    "workflow_count": new_manifest.latest_workflow_count,
                 }
             source_changed = old_manifest.comfy != new_manifest.comfy
             python_changed = old_manifest.python != new_manifest.python
@@ -2367,7 +2399,18 @@ class ComfyInstallerService:
                 log=self._log,
                 config_backup=config_backup,
             )
-            if hooking_result.get("changed"):
+            restart_required = _hooking_server_restart_required(
+                startup_head=self._startup_project_head,
+                update_result=hooking_result,
+            )
+            if restart_required:
+                if not hooking_result.get("changed"):
+                    self._log(
+                        "[업데이터 부트스트랩] 디스크는 최신이지만 현재 "
+                        "프로세스가 이전 커밋의 코드를 실행 중입니다. 새 "
+                        "매니페스트를 읽지 않고 재시작을 요청합니다.",
+                        "warning",
+                    )
                 self._set_phase("complete")
                 result = {
                     "operation": "update",
@@ -2425,7 +2468,7 @@ class ComfyInstallerService:
                         int(model["size"]) for model in new_manifest.models
                     ),
                     "custom_node_count": len(new_manifest.custom_nodes),
-                    "workflow_count": new_manifest.workflows["expected_count"],
+                    "workflow_count": new_manifest.latest_workflow_count,
                 }
 
             current_system = self.preflight(
@@ -2722,9 +2765,7 @@ class ComfyInstallerService:
                 if isinstance(previous_workflows, dict):
                     release_version = previous_workflows.get("release_version")
             if not isinstance(release_version, str) or not release_version:
-                release_version = sorted(
-                    new_manifest.workflows["release_dependencies"]
-                )[-1]
+                release_version = new_manifest.latest_workflow_release
             active_binding_keys = set(workflow_bindings)
             selected_workflow_ids = [
                 str(entry["id"])

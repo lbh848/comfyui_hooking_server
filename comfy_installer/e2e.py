@@ -508,7 +508,7 @@ def validate_all_workflows(
     *,
     base_url: str,
     workflow_bindings: Mapping[str, str],
-    expected_count: int,
+    selected_count: int,
     excluded_filenames: list[str],
     cancel_event: Event,
     log: LogCallback | None = None,
@@ -516,10 +516,10 @@ def validate_all_workflows(
 ) -> tuple[list[WorkflowValidation], dict]:
     groups = _binding_groups(workflow_bindings)
     excluded = {name.casefold() for name in excluded_filenames}
-    if len(groups) != expected_count:
+    if len(groups) != selected_count:
         raise ComfyE2EError(
-            "E2E 워크플로우 수가 매니페스트와 다릅니다: "
-            f"expected={expected_count}, actual={len(groups)}"
+            "E2E 워크플로우 수가 선택 항목 수와 다릅니다: "
+            f"selected={selected_count}, actual={len(groups)}"
         )
     invalid_names = [
         path.name for path, _ in groups if path.name.casefold() in excluded
