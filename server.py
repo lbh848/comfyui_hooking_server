@@ -1620,10 +1620,49 @@ async def convert_workflow_via_endpoint(
     task_key: str = "utility_debug",
 ):
     """ComfyUI /workflow/convert 엔드포인트로 워크플로우를 API 형식으로 변환한다."""
+
+    async def convert_via_local_comfy():
+        target_port = resolve_comfy_port(task_key)
+        url = f"http://{REAL_COMFY_HOST}:{target_port}/workflow/convert"
+        print(f"[WORKFLOW] → POST {url} (변환 요청)")
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json=workflow_json) as resp:
+                if resp.status != 200:
+                    err = await resp.text()
+                    print(f"[WORKFLOW] ✗ 변환 실패 (HTTP {resp.status}): {err}")
+                    return None, f"HTTP {resp.status}: {err[:200]}"
+                api_format = await resp.json()
+                print(f"[WORKFLOW] ✓ 변환 완료: {len(api_format)} 노드")
+                return api_format, None
+
     execution_target = str(CURRENT_COMFY_EXECUTION_TARGET.get() or "")
     if execution_target in REMOTE_COMFY_TARGETS:
         provider_label = (
             "Modal" if execution_target == MODAL_COMFY_TARGET else "Vast"
+        )
+        # 원격 실행 대상이라도 변환은 로컬 ComfyUI에서 우선한다. 변환은 순수
+        # 로컬 연산이라 원격 컨테이너를 띄울 필요가 없고, 로컬이 안 떠 있거나
+        # 변환에 실패할 때만 원격 변환으로 폴백한다.
+        try:
+            api_format, local_error = await convert_via_local_comfy()
+        except aiohttp.ClientError as e:
+            print(f"[WORKFLOW] ✗ 연결 실패: {e}")
+            api_format, local_error = None, str(e)
+        except Exception as e:
+            print(
+                f"[WORKFLOW] ✗ 변환 예외: {type(e).__name__}: {e}"
+            )
+            traceback.print_exc()
+            api_format, local_error = None, f"{type(e).__name__}: {e}"
+        if api_format is not None:
+            print(
+                f"[WORKFLOW:{provider_label.upper()}] 로컬 변환 사용: "
+                f"task={task_key}, nodes={len(api_format)}"
+            )
+            return api_format, None
+        print(
+            f"[WORKFLOW:{provider_label.upper()}] 로컬 변환 실패, "
+            f"원격 변환 폴백: task={task_key}, error={local_error}"
         )
         try:
             print(
@@ -1647,19 +1686,8 @@ async def convert_workflow_via_endpoint(
                 f"{provider_label} 워크플로우 변환 실패: "
                 f"{type(e).__name__}: {e}"
             )
-    target_port = resolve_comfy_port(task_key)
-    url = f"http://{REAL_COMFY_HOST}:{target_port}/workflow/convert"
-    print(f"[WORKFLOW] → POST {url} (변환 요청)")
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, json=workflow_json) as resp:
-                if resp.status != 200:
-                    err = await resp.text()
-                    print(f"[WORKFLOW] ✗ 변환 실패 (HTTP {resp.status}): {err}")
-                    return None, f"HTTP {resp.status}: {err[:200]}"
-                api_format = await resp.json()
-                print(f"[WORKFLOW] ✓ 변환 완료: {len(api_format)} 노드")
-                return api_format, None
+        return await convert_via_local_comfy()
     except aiohttp.ClientError as e:
         print(f"[WORKFLOW] ✗ 연결 실패: {e}")
         return None, str(e)
