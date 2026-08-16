@@ -4,7 +4,7 @@
   1. 인스턴스 생성 (이미지: Modal과 동일한 bh848/soya-comfy-runtime, onstart 대기 스크립트)
   2. SSH 키 부착 → paramiko 접속
   3. 실제 SSH 인증 확인
-  4. 병렬 A: sftp 업로드 — custom_nodes 압축본 + 선택 LoRA + 'upload' 배정 모델
+  4. 병렬 A: sftp 업로드 — 로컬 노드 전송·설치 + 선택 LoRA/'upload' 배정 모델 병렬 스트림
      병렬 B: 원격 다운로드 스크립트 — HF/Civitai/URL 모델
      실제 파일의 누적 전송량으로 남은 전송 ETA를 계속 갱신
   5. SSH 로컬 터널 생성 + /tmp/soya_ready 터치 → ComfyUI(8188) 기동
@@ -20,6 +20,7 @@ import hashlib
 import json
 import os
 import posixpath
+import queue
 import shlex
 import shutil
 import stat
@@ -78,6 +79,9 @@ IMAGE_PULL_POLL_SECONDS = 20
 IMAGE_PULL_LOG_TAIL = 1000
 ACTUAL_TRANSFER_WINDOW_SECONDS = 30
 ACTUAL_TRANSFER_PUBLISH_SECONDS = 1
+# LoRA/'upload' 모델 동시 sftp 스트림 수. 단일 paramiko 스트림은 RTT/창 크기에
+# 묶여 속도 상한이 낮아, Modal batch_upload처럼 병렬로 올려야 업링크를 채운다.
+UPLOAD_PARALLEL_STREAMS = 4
 LORA_DELETE_OUTBOX_VERSION = 1
 LORA_DELETE_RETRY_MIN_SECONDS = 5
 LORA_DELETE_RETRY_MAX_SECONDS = 60
@@ -100,6 +104,17 @@ class SshAuthenticationError(VastApiError):
 
 def _log(message: str) -> None:
     print(f"[VAST] {message}")
+
+
+def _format_transfer_bytes(value: int) -> str:
+    size = max(0, int(value))
+    if size >= 1024**3:
+        return f"{size / 1024**3:.2f}GiB"
+    if size >= 1024**2:
+        return f"{size / 1024**2:.1f}MiB"
+    if size >= 1024:
+        return f"{size / 1024:.1f}KiB"
+    return f"{size}B"
 
 
 class VastService:
@@ -1431,6 +1446,57 @@ class VastService:
 
     # ── 마법사 계획 (②단계) ─────────────────────────────────
 
+    async def resolve_lora_item_keys(
+        self, item_keys: list[str] | None
+    ) -> list[dict[str, Any]]:
+        """선택한 LoRA 카탈로그 키를 업로드용 로컬 파일 목록으로 해석한다.
+
+        공개 LoRA 카탈로그(/api/modal/loras)는 로컬 절대 경로(source_path)를
+        제공하지 않으므로, 프론트는 키만 보내고 서버가 여기서 직접 해석한다.
+        Modal 관리작업(start_lora_operation)과 동일한 키 기반 패턴.
+        """
+        from modal_backend.lora_inventory import build_local_lora_catalog
+
+        normalized = list(
+            dict.fromkeys(
+                str(key).strip() for key in item_keys or [] if str(key).strip()
+            )
+        )
+        if not normalized:
+            return []
+        if len(normalized) > 500:
+            print(f"[VAST_LORA] 빌드 선택 LoRA 항목 수 초과: count={len(normalized)}")
+            raise ValueError("한 번에 빌드할 수 있는 LoRA 항목은 최대 500개입니다.")
+        payload = await asyncio.to_thread(
+            build_local_lora_catalog,
+            self._get_config(),
+            include_hashes=False,
+            item_keys=normalized,
+            allow_missing_item_keys=False,
+        )
+        files: list[dict[str, Any]] = []
+        for item in payload.get("items") or []:
+            for spec in item.get("files") or []:
+                size_bytes = int(spec.get("size") or 0)
+                files.append(
+                    {
+                        "name": str(spec.get("name") or ""),
+                        "path": str(spec.get("source_path") or ""),
+                        "size": size_bytes,
+                        "size_bytes": size_bytes,
+                        "category": str(item.get("category") or ""),
+                    }
+                )
+        if not files:
+            print(f"[VAST_LORA] 빌드 선택 LoRA에 업로드 파일 없음: keys={normalized}")
+            raise ValueError("선택한 LoRA 항목에 업로드할 로컬 파일이 없습니다.")
+        print(
+            "[VAST_LORA] 빌드 선택 LoRA 해석 완료: "
+            f"items={len(payload.get('items') or [])}, files={len(files)}, "
+            f"bytes={sum(f['size_bytes'] for f in files)}"
+        )
+        return files
+
     def wizard_plan(
         self,
         *,
@@ -2697,7 +2763,7 @@ class VastService:
         lora_files: list[dict[str, Any]],
         model_plan: dict[str, Any],
     ) -> None:
-        """병렬 A: 노드 설치(Modal image_install 방식) + LoRA/'upload' 모델 sftp."""
+        """병렬 A: 노드 설치(Modal image_install 방식) + LoRA/'upload' 모델 병렬 sftp."""
         self._set_step("upload", "running", "sftp 연결")
         ssh = None
         try:
@@ -2707,47 +2773,39 @@ class VastService:
             ssh.exec_command("mkdir -p /root/ComfyUI/models/loras")
 
             # Modal이 이미지 빌드에서 하던 노드 설치를 그대로 실행.
+            self._set_step("upload", "running", "로컬 노드 전송·설치")
             self._upload_local_nodes(sftp, ssh, install_payload)
             self._run_image_install(ssh, install_payload)
 
-            total = len(lora_files) + sum(
-                1
-                for m in model_plan.get("models") or []
-                if m["source"]["source_type"] == "upload"
-            )
-            done = 0
-            transferred_bytes = 0
+            jobs: list[dict[str, str]] = []
             for item in lora_files:
-                remote = f"{COMFY_ROOT_REMOTE}/models/loras/{Path(item['name']).name}"
-                transferred_bytes += self._sftp_put_progress(
-                    sftp,
-                    str(item["path"]),
-                    remote,
-                    "lora",
-                    item["name"],
-                    aggregate_before=transferred_bytes,
+                jobs.append(
+                    {
+                        "step_key": "upload_loras",
+                        "name": str(item["name"]),
+                        "local": str(item["path"]),
+                        "remote": f"{COMFY_ROOT_REMOTE}/models/loras/{Path(item['name']).name}",
+                    }
                 )
-                done += 1
-                self._set_step("upload_loras", "running", f"{done}/{total}")
             for m in model_plan.get("models") or []:
-                if m["source"]["source_type"] != "upload":
+                if (m.get("source") or {}).get("source_type") != "upload":
                     continue
-                remote = f"{COMFY_ROOT_REMOTE}/models/{m['key']}"
-                transferred_bytes += self._sftp_put_progress(
-                    sftp,
-                    str(m.get("source_path") or ""),
-                    remote,
-                    "model",
-                    m["filename"],
-                    aggregate_before=transferred_bytes,
+                jobs.append(
+                    {
+                        "step_key": "upload_models",
+                        "name": str(m.get("filename") or ""),
+                        "local": str(m.get("source_path") or ""),
+                        "remote": f"{COMFY_ROOT_REMOTE}/models/{m['key']}",
+                    }
                 )
-                done += 1
-                self._set_step("upload_models", "running", f"{done}/{total}")
-            if total > 0:
+            if jobs:
+                transferred = self._run_parallel_sftp_uploads(
+                    host, port, private_key_path, jobs
+                )
                 self._update_actual_transfer_progress(
-                    "upload", transferred_bytes, status="done"
+                    "upload", transferred, status="done"
                 )
-            self._set_step("upload", "done", f"{done}개 전송 완료")
+            self._set_step("upload", "done", f"{len(jobs)}개 전송 완료")
         except LaunchCancelled:
             raise
         except Exception as exc:
@@ -2762,45 +2820,170 @@ class VastService:
             if ssh is not None:
                 ssh.close()
 
-    def _sftp_put_progress(
+    def _run_parallel_sftp_uploads(
         self,
-        sftp,
-        local: str,
-        remote: str,
-        label: str,
-        name: str,
-        *,
-        aggregate_before: int = 0,
+        host: str,
+        port: int,
+        private_key_path: str,
+        jobs: list[dict[str, str]],
     ) -> int:
-        import os
+        """LoRA/'upload' 모델을 여러 SSH 스트림으로 동시에 올리고 집계 진행률을 표시한다.
 
-        if not local or not Path(local).is_file():
-            print(f"[VAST] 업로드 로컬 파일 없음({label}): {local} ({name})")
-            raise FileNotFoundError(f"업로드할 로컬 파일이 없습니다: {local}")
-        size = os.path.getsize(local)
-        sent = 0
-        self._update_actual_transfer_progress(
-            "upload", max(0, int(aggregate_before)), status="running"
-        )
+        단일 paramiko sftp 스트림은 RTT/창 크기에 묶여 속도 상한이 낮다.
+        Modal batch_upload처럼 파일별 스트림을 병렬로 열어 업로드 대역을 채운다.
+        스텝 라벨은 파일 단위가 아니라 집계(개수·바이트·속도)로 갱신한다.
+        """
+        work: queue.Queue[dict[str, str]] = queue.Queue()
+        for job in jobs:
+            work.put(job)
 
-        def cb(transferred: int, _total: int) -> None:
-            nonlocal sent
-            self._check_cancelled()
-            self._update_actual_transfer_progress(
-                "upload",
-                max(0, int(aggregate_before)) + max(0, int(transferred)),
-                status="running",
-            )
-            if transferred - sent > 50 * 1024 * 1024 or transferred == _total:
-                sent = transferred
-                self._set_step(
-                    f"upload_{label}",
-                    "running",
-                    f"{name} {transferred / 1024**3:.1f}/{size / 1024**3:.1f}GB",
+        step_keys = ("upload_loras", "upload_models")
+        counts = {key: 0 for key in step_keys}
+        totals = {key: 0 for key in step_keys}
+        for job in jobs:
+            counts[job["step_key"]] += 1
+            path = Path(job["local"])
+            try:
+                if path.is_file():
+                    totals[job["step_key"]] += path.stat().st_size
+            except OSError as exc:
+                print(
+                    f"[VAST][UPLOAD] 업로드 파일 크기 확인 실패(무시): path={path}, "
+                    f"error={type(exc).__name__}: {exc}"
                 )
 
-        sftp.put(local, remote, callback=cb)
-        return size
+        streams = max(1, min(UPLOAD_PARALLEL_STREAMS, len(jobs)))
+        state: dict[str, Any] = {
+            "transferred": 0,
+            "done": {key: 0 for key in step_keys},
+            "bytes": {key: 0 for key in step_keys},
+            "speed": 0.0,
+            "speed_window_start": 0.0,
+            "speed_window_bytes": 0,
+            "last_label_at": 0.0,
+            "stop": False,
+        }
+        lock = threading.Lock()
+        errors: list[BaseException] = []
+
+        def _refresh_speed(now: float) -> None:
+            window = now - float(state["speed_window_start"])
+            if float(state["speed_window_start"]) <= 0 or window >= 3.0:
+                if float(state["speed_window_start"]) > 0 and window > 0:
+                    state["speed"] = (
+                        int(state["transferred"]) - int(state["speed_window_bytes"])
+                    ) / window
+                state["speed_window_start"] = now
+                state["speed_window_bytes"] = state["transferred"]
+
+        def _publish_labels(now: float, *, force: bool = False) -> None:
+            if not force and now - float(state["last_label_at"]) < 1.0:
+                return
+            state["last_label_at"] = now
+            speed = float(state["speed"])
+            speed_text = f" · {speed / 1024**2:.1f}MiB/s" if speed > 0 else ""
+            for key in step_keys:
+                if counts[key] <= 0:
+                    continue
+                self._set_step(
+                    key,
+                    "running",
+                    f"{state['done'][key]}/{counts[key]}개 · "
+                    f"{_format_transfer_bytes(state['bytes'][key])}/"
+                    f"{_format_transfer_bytes(totals[key])}{speed_text}",
+                )
+            self._set_step(
+                "upload",
+                "running",
+                f"LoRA·모델 {streams}스트림 · "
+                f"{_format_transfer_bytes(state['transferred'])}/"
+                f"{_format_transfer_bytes(sum(totals.values()))}{speed_text}",
+            )
+
+        def _put_job(sftp, job: dict[str, str]) -> None:
+            local = str(job["local"])
+            if not local or not Path(local).is_file():
+                print(
+                    f"[VAST] 업로드 로컬 파일 없음({job['step_key']}): "
+                    f"{local} ({job['name']})"
+                )
+                raise FileNotFoundError(f"업로드할 로컬 파일이 없습니다: {local}")
+            counted = 0
+
+            def cb(transferred: int, _total: int) -> None:
+                nonlocal counted
+                self._check_cancelled()
+                delta = int(transferred) - counted
+                if delta <= 0:
+                    return
+                counted = int(transferred)
+                with lock:
+                    state["transferred"] = int(state["transferred"]) + delta
+                    state["bytes"][job["step_key"]] += delta
+                    self._update_actual_transfer_progress(
+                        "upload", int(state["transferred"]), status="running"
+                    )
+                    now = time.monotonic()
+                    _refresh_speed(now)
+                    _publish_labels(now)
+
+            sftp.put(local, job["remote"], callback=cb)
+            with lock:
+                state["done"][job["step_key"]] += 1
+                _publish_labels(time.monotonic(), force=True)
+
+        def _worker() -> None:
+            ssh = None
+            try:
+                ssh = self._ssh_connect(host, port, private_key_path)
+                sftp = ssh.open_sftp()
+                while True:
+                    with lock:
+                        if state["stop"]:
+                            return
+                    try:
+                        job = work.get_nowait()
+                    except queue.Empty:
+                        return
+                    self._check_cancelled()
+                    _put_job(sftp, job)
+            except BaseException as exc:  # 워커 예외를 본 스레드로 전파한다.
+                with lock:
+                    state["stop"] = True
+                    if not errors:
+                        errors.append(exc)
+            finally:
+                if ssh is not None:
+                    ssh.close()
+
+        with lock:
+            _publish_labels(time.monotonic(), force=True)
+        threads = [
+            threading.Thread(
+                target=_worker, name=f"vast-sftp-upload-{index + 1}", daemon=True
+            )
+            for index in range(streams)
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        if errors:
+            raise errors[0]
+
+        for key in step_keys:
+            if counts[key] > 0:
+                self._set_step(
+                    key,
+                    "done",
+                    f"{counts[key]}/{counts[key]}개 · "
+                    f"{_format_transfer_bytes(totals[key])} 전송 완료",
+                )
+        print(
+            f"[VAST][UPLOAD] 병렬 sftp 완료: files={len(jobs)}, streams={streams}, "
+            f"bytes={state['transferred']}"
+        )
+        return int(state["transferred"])
 
     def _run_remote_downloads(
         self, host: str, port: int, private_key_path: str, model_plan: dict[str, Any]

@@ -1516,6 +1516,199 @@ def test_explicit_lora_upload_replaces_same_workflow_plan_item(tmp_path: Path) -
     assert len(model_plan["models"]) == 2
 
 
+@pytest.mark.asyncio
+async def test_resolve_lora_item_keys_builds_upload_file_list(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from modal_backend.lora_inventory import build_local_lora_catalog
+
+    lora_file = tmp_path / "hero.safetensors"
+    lora_file.write_bytes(b"hero-data")
+    monkeypatch.setattr(
+        "modes.lora_mode.list_lora_for_picker",
+        lambda _root: [
+            {
+                "character": "Alice",
+                "entries": [
+                    {"name": "hero", "lora_files": [{"local_path": str(lora_file)}]}
+                ],
+            }
+        ],
+    )
+    monkeypatch.setattr("modes.bot_lora_mode.list_bot_lora_for_picker", lambda _root: [])
+    monkeypatch.setattr(
+        "modes.instance_lora_mode.list_instance_lora_for_picker", lambda _root: []
+    )
+    monkeypatch.setattr("modes.style_lora_mode.list_style_lora_for_picker", lambda _root: [])
+    config = {"lora_load_path": str(tmp_path)}
+    service = VastService(tmp_path, lambda: config)
+
+    catalog = build_local_lora_catalog(config, include_hashes=False)
+    assert len(catalog["items"]) == 1
+    key = catalog["items"][0]["key"]
+    size = lora_file.stat().st_size
+
+    files = await service.resolve_lora_item_keys([key, key, ""])
+
+    assert files == [
+        {
+            "name": "hero.safetensors",
+            "path": str(lora_file.resolve()),
+            "size": size,
+            "size_bytes": size,
+            "category": "asset",
+        }
+    ]
+    assert await service.resolve_lora_item_keys([]) == []
+
+    with pytest.raises(ValueError):
+        await service.resolve_lora_item_keys(["asset::missing"])
+
+
+def test_upload_all_runs_parallel_streams_and_reports_aggregate_progress(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lora_a = tmp_path / "lora-a.safetensors"
+    lora_b = tmp_path / "lora-b.safetensors"
+    model_c = tmp_path / "model-c.safetensors"
+    lora_a.write_bytes(b"a" * 300)
+    lora_b.write_bytes(b"b" * 200)
+    model_c.write_bytes(b"c" * 100)
+
+    service = VastService(tmp_path, lambda: {})
+    monkeypatch.setattr(service, "_upload_local_nodes", lambda *_args: None)
+    monkeypatch.setattr(service, "_run_image_install", lambda *_args: None)
+
+    connections: list[Any] = []
+    uploads: list[tuple[str, str]] = []
+    barrier = threading.Barrier(3, timeout=10)
+
+    class FakeSftp:
+        def put(self, local, remote, callback=None):
+            # 스트림 3개(작업 3개)가 실제로 동시에 전송 중인지 검증한다.
+            barrier.wait()
+            size = Path(local).stat().st_size
+            if callback:
+                callback(size // 2, size)
+                callback(size, size)
+            uploads.append((str(local), remote))
+
+    class FakeSsh:
+        def __init__(self) -> None:
+            connections.append(self)
+
+        def open_sftp(self) -> FakeSftp:
+            return FakeSftp()
+
+        def exec_command(self, _command):
+            return None, None, None
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(
+        service, "_ssh_connect", lambda *_args, **_kwargs: FakeSsh()
+    )
+
+    model_plan = {
+        "models": [
+            {
+                "key": "loras/model-c.safetensors",
+                "filename": "model-c.safetensors",
+                "source_path": str(model_c),
+                "source": {"source_type": "upload"},
+            },
+            {
+                "key": "checkpoints/base.safetensors",
+                "filename": "base.safetensors",
+                "source": {
+                    "source_type": "hf",
+                    "repo_id": "x/y",
+                    "hf_filename": "base.safetensors",
+                },
+            },
+        ]
+    }
+    lora_files = [
+        {"name": "lora-a.safetensors", "path": str(lora_a)},
+        {"name": "lora-b.safetensors", "path": str(lora_b)},
+    ]
+    service._initialize_actual_transfer_tracking(model_plan, lora_files)
+
+    service._upload_all(
+        "host", 22, "key", {"local_nodes": []}, lora_files, model_plan
+    )
+
+    # 제어 연결 1개(노드 설치용) + 병렬 업로드 스트림 3개
+    assert len(connections) == 1 + 3
+    assert sorted(uploads) == sorted(
+        [
+            (str(lora_a), "/root/ComfyUI/models/loras/lora-a.safetensors"),
+            (str(lora_b), "/root/ComfyUI/models/loras/lora-b.safetensors"),
+            (str(model_c), "/root/ComfyUI/models/loras/model-c.safetensors"),
+        ]
+    )
+    steps = {step["key"]: step for step in service.launch["steps"]}
+    assert steps["upload_loras"]["state"] == "done"
+    assert steps["upload_loras"]["detail"] == "2/2개 · 500B 전송 완료"
+    assert steps["upload_models"]["state"] == "done"
+    assert steps["upload_models"]["detail"] == "1/1개 · 100B 전송 완료"
+    assert steps["upload"]["state"] == "done"
+    assert steps["upload"]["detail"] == "3개 전송 완료"
+    upload_test = next(
+        test
+        for test in service.launch["preflight"]["tests"]
+        if test["key"] == "upload"
+    )
+    assert upload_test["status"] == "done"
+    assert upload_test["bytes"] == 600
+    assert upload_test["total_bytes"] == 600
+
+
+def test_upload_all_parallel_failure_marks_transfer_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lora_a = tmp_path / "lora-a.safetensors"
+    lora_a.write_bytes(b"a" * 100)
+    service = VastService(tmp_path, lambda: {})
+    monkeypatch.setattr(service, "_upload_local_nodes", lambda *_args: None)
+    monkeypatch.setattr(service, "_run_image_install", lambda *_args: None)
+
+    class FakeSftp:
+        def put(self, local, remote, callback=None):
+            raise OSError("sftp write failed")
+
+    class FakeSsh:
+        def open_sftp(self) -> FakeSftp:
+            return FakeSftp()
+
+        def exec_command(self, _command):
+            return None, None, None
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(
+        service, "_ssh_connect", lambda *_args, **_kwargs: FakeSsh()
+    )
+    lora_files = [{"name": "lora-a.safetensors", "path": str(lora_a)}]
+    service._initialize_actual_transfer_tracking({"models": []}, lora_files)
+
+    with pytest.raises(OSError, match="sftp write failed"):
+        service._upload_all("host", 22, "key", {"local_nodes": []}, lora_files, {"models": []})
+
+    upload_test = next(
+        test
+        for test in service.launch["preflight"]["tests"]
+        if test["key"] == "upload"
+    )
+    assert upload_test["status"] == "error"
+    assert "sftp write failed" in upload_test["detail"]
+
+
 def test_vast_mapping_backup_uses_deployment_safe_directory(tmp_path: Path) -> None:
     source_path = tmp_path / "vast_model_sources.json"
     source_path.write_text(

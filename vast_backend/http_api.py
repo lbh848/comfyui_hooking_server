@@ -95,12 +95,22 @@ def register_vast_routes(
         except Exception as exc:
             return _fail("오퍼 조회 실패", exc)
 
+    def _lora_item_keys(value: Any) -> list[str]:
+        if not isinstance(value, list) or not all(
+            isinstance(item, str) for item in value
+        ):
+            raise ValueError("lora_item_keys는 문자열 배열이어야 합니다.")
+        return value
+
     async def plan(request: web.Request) -> web.Response:
         try:
             body = await request.json()
+            lora_files = await service.resolve_lora_item_keys(
+                _lora_item_keys(body.get("lora_item_keys") or [])
+            )
             payload = service.wizard_plan(
                 workflow_files=body.get("workflows") or [],
-                lora_files=body.get("loras") or [],
+                lora_files=lora_files,
             )
             return web.json_response(payload)
         except (ValueError, KeyError, FileNotFoundError) as exc:
@@ -123,11 +133,14 @@ def register_vast_routes(
             install_payload = await asyncio.get_running_loop().run_in_executor(
                 None, service.prepare_install_payload
             )
+            lora_files = await service.resolve_lora_item_keys(
+                _lora_item_keys(body.get("lora_item_keys") or [])
+            )
             state = await service.start_launch(
                 ask_id=ask_id,
                 disk_gb=disk_gb,
                 model_plan=body.get("plan") or {},
-                lora_files=body.get("loras") or [],
+                lora_files=lora_files,
                 install_payload=install_payload,
                 hourly_price_usd=hourly_price_usd,
             )

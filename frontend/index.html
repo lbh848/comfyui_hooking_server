@@ -26099,7 +26099,7 @@
                 const data = await fetchJSON('/api/vast/plan', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ workflows, loras: [] }),
+                    body: JSON.stringify({ workflows, lora_item_keys: Array.from(vastLoraSelectedKeys) }),
                 });
                 vastPlan = data;
                 const t = data.totals || {};
@@ -26282,42 +26282,26 @@
             vastUpdateLoraSelectionSummary();
         }
 
-        function vastSelectedLoraFiles() {
-            const files = [];
+        function vastSelectedLoraStats() {
+            // 공개 카탈로그는 source_path를 제공하지 않으므로 로컬 파일 목록을
+            // 프론트에서 만들지 않는다. 요약 표시는 공개 필드(file_count/size_bytes)로만.
+            let count = 0;
+            let totalBytes = 0;
             for (const key of vastLoraSelectedKeys) {
                 const item = vastLoraItemsByKey.get(String(key));
                 if (!item) continue;
-                const itemFiles = Array.isArray(item.files) ? item.files : [];
-                if (!itemFiles.length) {
-                    console.warn('[VAST_LORA] LoRA 항목에 files 없음, 건너뜀:', key);
-                    continue;
-                }
-                for (const f of itemFiles) {
-                    const path = f.source_path || f.path || '';
-                    if (!path) {
-                        console.warn('[VAST_LORA] LoRA 파일에 source_path 없음, 건너뜀:', key, f);
-                        continue;
-                    }
-                    const sizeBytes = Number(f.size_bytes || f.size || 0);
-                    files.push({
-                        name: f.name || item.name || item.display_name || '',
-                        path,
-                        size: sizeBytes,
-                        size_bytes: sizeBytes,
-                        category: item.category,
-                    });
-                }
+                count += Number(item.file_count || 0);
+                totalBytes += Number(item.size_bytes || 0);
             }
-            return files;
+            return { count, totalBytes };
         }
 
         function vastUpdateLoraSelectionSummary() {
-            const files = vastSelectedLoraFiles();
+            const stats = vastSelectedLoraStats();
             const note = document.getElementById('vast-lora-footer-note');
             const summary = document.getElementById('vast-lora-selection-summary');
-            const totalBytes = files.reduce((s, f) => s + Number(f.size || 0), 0);
-            const text = files.length
-                ? `선택 ${files.length}개 · ${comfyInstallerFormatBytes(totalBytes)}`
+            const text = stats.count
+                ? `선택 ${stats.count}개 · ${comfyInstallerFormatBytes(stats.totalBytes)}`
                 : '선택된 LoRA 없음';
             if (note) note.textContent = text;
             if (summary) summary.textContent = text;
@@ -26327,6 +26311,7 @@
         function vastApplyLoraSelection() {
             vastUpdateLoraSelectionSummary();
             switchComfyVastSection('build');
+            void vastRunPlan();
             showToast(`VAST 빌드에 LoRA ${vastLoraSelectedKeys.size}개 선택 적용`, 'success');
         }
 
@@ -26406,7 +26391,6 @@
                 const f = vastWorkflowCatalog.find(x => x.path === p);
                 return { path: p, name: f ? f.filename : '' };
             });
-            const loras = vastSelectedLoraFiles();
             try {
                 const result = await fetchJSON('/api/vast/launch', {
                     method: 'POST',
@@ -26416,7 +26400,7 @@
                         disk_gb: diskGb,
                         hourly_price_usd: Number(vastSelectedOffer?.dph_total || 0),
                         plan: vastPlan || {},
-                        loras,
+                        lora_item_keys: Array.from(vastLoraSelectedKeys),
                         workflows,
                     }),
                 });
