@@ -2042,8 +2042,55 @@ class VastService:
             except (TypeError, ValueError):
                 ssh_port = 0
             if status == "running" and ssh_host and ssh_port:
-                return ssh_host, ssh_port
+                return self._prefer_direct_ssh(info, ssh_host, ssh_port)
             await asyncio.sleep(SSH_STATUS_POLL_SECONDS)
+
+    @staticmethod
+    def _direct_ssh_endpoint(info: dict[str, Any]) -> tuple[str, int] | None:
+        """ssh_direct 인스턴스의 직접 SSH 종단(머신 공인 IP + 22/tcp 매핑 포트).
+
+        Vast API의 ssh_host/ssh_port 필드는 다이렉트 생성 여부와 무관하게
+        프록시(ssh*.vast.ai)를 가리킨다. 다이렉트 포트는 ports["22/tcp"]에 있다.
+        """
+        ip = str(info.get("public_ipaddr") or "").strip()
+        mappings = (info.get("ports") or {}).get("22/tcp") or []
+        for mapping in mappings:
+            if not isinstance(mapping, dict):
+                continue
+            try:
+                host_port = int(mapping.get("HostPort") or 0)
+            except (TypeError, ValueError):
+                continue
+            if ip and host_port > 0:
+                return ip, host_port
+        return None
+
+    @staticmethod
+    def _tcp_reachable(host: str, port: int, timeout: float = 3.0) -> bool:
+        import socket as socket_module
+
+        try:
+            with socket_module.create_connection((host, port), timeout=timeout):
+                return True
+        except OSError as exc:
+            print(
+                f"[VAST][SSH] 다이렉트 포트 도달 불가(프록시로 연결): "
+                f"{host}:{port}, error={type(exc).__name__}: {exc}"
+            )
+            return False
+
+    def _prefer_direct_ssh(
+        self, info: dict[str, Any], ssh_host: str, ssh_port: int
+    ) -> tuple[str, int]:
+        """가능하면 프록시 대신 머신 직접 포트를 연결 종단으로 반환한다."""
+        direct = self._direct_ssh_endpoint(info)
+        if direct and direct != (ssh_host, ssh_port) and self._tcp_reachable(*direct):
+            print(
+                f"[VAST] 다이렉트 SSH 사용: {direct[0]}:{direct[1]} "
+                f"(프록시 {ssh_host}:{ssh_port} 미경유)"
+            )
+            return direct
+        return ssh_host, ssh_port
 
     async def _attach_key_with_retry(
         self,
@@ -2268,6 +2315,35 @@ class VastService:
         )
         return recovered_host, recovered_port
 
+    # RTT가 큰 원격 머신에서 Windows 기본 송신 버퍼(64KB)가 대역-지연 곱에
+    # 묶여 스트림당 ~0.2MiB/s(64KB/0.28s)로 못박히는 것을 피하기 위한 버퍼.
+    # 실측: 4MB 튜닝만으로 단일 스트림 0.2 → 1.9MiB/s, 4스트림 합계 7~15MiB/s.
+    SSH_SOCKET_BUFFER_BYTES = 4 * 1024 * 1024
+
+    def _open_ssh_socket(self, host: str, port: int):
+        """송신 버퍼를 키운 소켓을 만들어 연결하고 paramiko에 넘긴다."""
+        import socket as socket_module
+
+        sock = socket_module.create_connection(
+            (host, int(port)), timeout=SSH_CONNECT_TIMEOUT_SECONDS
+        )
+        try:
+            sock.setsockopt(socket_module.IPPROTO_TCP, socket_module.TCP_NODELAY, 1)
+            for option in (socket_module.SO_SNDBUF, socket_module.SO_RCVBUF):
+                try:
+                    sock.setsockopt(
+                        socket_module.SOL_SOCKET, option, self.SSH_SOCKET_BUFFER_BYTES
+                    )
+                except OSError as exc:
+                    print(
+                        f"[VAST][SSH] 소켓 버퍼 설정 실패(기본값으로 진행): "
+                        f"option={option}, error={type(exc).__name__}: {exc}"
+                    )
+        except Exception:
+            sock.close()
+            raise
+        return sock
+
     def _ssh_connect(
         self,
         host: str,
@@ -2290,10 +2366,13 @@ class VastService:
             self._check_cancelled()
             client = paramiko.SSHClient()
             client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            sock = None
             try:
+                sock = self._open_ssh_socket(host, port)
                 client.connect(
                     host,
                     port=port,
+                    sock=sock,
                     username="root",
                     key_filename=private_key_path,
                     timeout=SSH_CONNECT_TIMEOUT_SECONDS,
@@ -2330,6 +2409,11 @@ class VastService:
                     client.close()
                 except Exception:
                     pass
+                if sock is not None:
+                    try:
+                        sock.close()
+                    except OSError:
+                        pass
                 if (
                     is_auth_failure
                     and auth_limit is not None

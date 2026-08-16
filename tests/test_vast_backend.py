@@ -387,6 +387,41 @@ async def test_create_instance_direct_first_falls_back_to_proxy(
 
 
 @pytest.mark.asyncio
+async def test_prefer_direct_ssh_uses_mapped_port_when_reachable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = VastService(tmp_path, lambda: {})
+    info = {
+        "ssh_host": "ssh4.vast.ai",
+        "ssh_port": 31132,
+        "public_ipaddr": "161.29.199.75",
+        "ports": {
+            "22/tcp": [
+                {"HostIp": "0.0.0.0", "HostPort": "50756"},
+                {"HostIp": "::", "HostPort": "50756"},
+            ]
+        },
+    }
+    assert VastService._direct_ssh_endpoint(info) == ("161.29.199.75", 50756)
+    assert VastService._direct_ssh_endpoint({"ssh_host": "ssh4.vast.ai"}) is None
+    assert VastService._direct_ssh_endpoint({"public_ipaddr": "1.2.3.4"}) is None
+
+    monkeypatch.setattr(VastService, "_tcp_reachable", staticmethod(lambda *_a, **_k: True))
+    assert service._prefer_direct_ssh(info, "ssh4.vast.ai", 31132) == (
+        "161.29.199.75",
+        50756,
+    )
+
+    # 다이렉트 포트가 열려 있지 않으면 프록시 종단을 그대로 쓴다.
+    monkeypatch.setattr(VastService, "_tcp_reachable", staticmethod(lambda *_a, **_k: False))
+    assert service._prefer_direct_ssh(info, "ssh4.vast.ai", 31132) == (
+        "ssh4.vast.ai",
+        31132,
+    )
+
+
+@pytest.mark.asyncio
 async def test_vast_ssh_endpoints_match_current_api(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1317,6 +1352,12 @@ def test_vast_ssh_connect_classifies_repeated_authentication_failure(
 
     monkeypatch.setattr(paramiko, "SSHClient", _RejectingClient)
     monkeypatch.setattr(service, "_wait_sync", lambda _seconds: None)
+
+    class _FakeSock:
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(service, "_open_ssh_socket", lambda _h, _p: _FakeSock())
 
     with pytest.raises(SshAuthenticationError, match="4회 연속 거부"):
         service._ssh_connect(
