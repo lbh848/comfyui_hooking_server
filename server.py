@@ -19202,9 +19202,123 @@ async def handle_api_autocomplete(request: web.Request) -> web.Response:
     return web.json_response(results)
 
 # ─── Cloudflare Quick Tunnel ─────────────────────────────
+class _TunnelSubprocessLoop:
+    """공유 터널 자식 프로세스를 전담하는 상주 asyncio 루프.
+
+    Modal SDK는 Windows에서 서버 전역 정책을 SelectorEventLoop로
+    변경한다. SelectorEventLoop는 asyncio subprocess를 지원하지 않으므로,
+    터널 명령만 별도 ProactorEventLoop에 제출해 서버 루프와 격리한다.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._ready = threading.Event()
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._startup_error: BaseException | None = None
+        self._thread: threading.Thread | None = None
+
+    def _run(self) -> None:
+        loop: asyncio.AbstractEventLoop | None = None
+        try:
+            loop = (
+                asyncio.ProactorEventLoop()
+                if os.name == "nt"
+                else asyncio.new_event_loop()
+            )
+            asyncio.set_event_loop(loop)
+            self._loop = loop
+            self._ready.set()
+            loop.run_forever()
+        except BaseException as exc:
+            self._startup_error = exc
+            print(
+                "[TUNNEL] subprocess 전용 루프 시작 실패: "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            self._ready.set()
+        finally:
+            if loop is not None and not loop.is_closed():
+                pending = asyncio.all_tasks(loop)
+                for task in pending:
+                    task.cancel()
+                if pending:
+                    results = loop.run_until_complete(
+                        asyncio.gather(*pending, return_exceptions=True)
+                    )
+                    for result in results:
+                        if isinstance(result, BaseException) and not isinstance(
+                            result, asyncio.CancelledError
+                        ):
+                            print(
+                                "[TUNNEL] subprocess 루프 종료 중 태스크 실패: "
+                                f"error={type(result).__name__}: {result}"
+                            )
+                            traceback.print_exception(
+                                type(result), result, result.__traceback__
+                            )
+                loop.close()
+
+    def submit(self, coroutine):
+        with self._lock:
+            if self._thread is None or not self._thread.is_alive():
+                self._ready.clear()
+                self._startup_error = None
+                self._loop = None
+                self._thread = threading.Thread(
+                    target=self._run,
+                    name="tunnel-async-subprocess-loop",
+                    daemon=True,
+                )
+                self._thread.start()
+            if not self._ready.wait(timeout=10):
+                coroutine.close()
+                print("[TUNNEL] subprocess 전용 루프 시작 시간 초과")
+                raise RuntimeError("터널 실행 루프를 시작하지 못했습니다.")
+            if self._startup_error is not None or self._loop is None:
+                coroutine.close()
+                error = self._startup_error
+                print(
+                    "[TUNNEL] subprocess 전용 루프를 사용할 수 없습니다: "
+                    f"error={type(error).__name__ if error else 'unknown'}: {error}"
+                )
+                raise RuntimeError("터널 실행 루프가 준비되지 않았습니다.") from error
+            return asyncio.run_coroutine_threadsafe(coroutine, self._loop)
+
+    def close(self) -> None:
+        with self._lock:
+            loop = self._loop
+            thread = self._thread
+        if loop is not None and loop.is_running():
+            loop.call_soon_threadsafe(loop.stop)
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=10)
+            if thread.is_alive():
+                print("[TUNNEL] subprocess 전용 루프 종료 시간 초과")
+                return
+        with self._lock:
+            if self._thread is thread:
+                self._thread = None
+                self._loop = None
+
+
+_tunnel_subprocess_loop = _TunnelSubprocessLoop()
+
+
+async def _run_on_tunnel_subprocess_loop(coroutine):
+    """현재 서버 루프에 무관하게 터널 subprocess coroutine을 실행한다."""
+    future = _tunnel_subprocess_loop.submit(coroutine)
+    try:
+        return await asyncio.wrap_future(future)
+    except asyncio.CancelledError:
+        future.cancel()
+        raise
+
+
 _tunnel_process: asyncio.subprocess.Process | None = None
 _tunnel_url: str | None = None
 _cloudflared_path: str | None = None
+_tunnel_stderr_task: asyncio.Task | None = None
 
 async def _ensure_cloudflared() -> str:
     """cloudflared 바이너리 경로 반환. 없으면 자동 다운로드."""
@@ -19242,90 +19356,188 @@ async def _drain_stderr(proc: asyncio.subprocess.Process):
             chunk = await proc.stderr.read(4096)
             if not chunk:
                 break
-    except Exception:
-        pass
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        print(
+            "[TUNNEL] cloudflared stderr 소비 실패: "
+            f"error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+
+
+async def _stop_cloudflared_on_subprocess_loop() -> None:
+    """cloudflared를 소유한 subprocess 루프에서 종료한다."""
+    global _tunnel_process, _tunnel_url, _tunnel_stderr_task
+    proc = _tunnel_process
+    drain_task = _tunnel_stderr_task
+    if proc is not None and proc.returncode is None:
+        try:
+            proc.kill()
+            await proc.wait()
+        except ProcessLookupError:
+            print("[TUNNEL] cloudflared 종료 중 프로세스가 이미 종료됨")
+        except Exception as exc:
+            print(
+                "[TUNNEL] cloudflared 종료 실패: "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            raise
+    if drain_task is not None and not drain_task.done():
+        try:
+            await asyncio.wait_for(drain_task, timeout=3.0)
+        except asyncio.TimeoutError:
+            print("[TUNNEL] cloudflared stderr 정리 시간 초과; 태스크를 취소합니다")
+            drain_task.cancel()
+            await asyncio.gather(drain_task, return_exceptions=True)
+        except Exception as exc:
+            print(
+                "[TUNNEL] cloudflared stderr 정리 실패: "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+    _tunnel_process = None
+    _tunnel_url = None
+    _tunnel_stderr_task = None
+
+
+async def _start_cloudflared_on_subprocess_loop(
+    cf_bin: str,
+) -> tuple[dict[str, str | None], int]:
+    """cloudflared 시작·출력 읽기를 전용 subprocess 루프에서 수행한다."""
+    global _tunnel_process, _tunnel_url, _tunnel_stderr_task
+    if _tunnel_process is not None and _tunnel_process.returncode is None:
+        return {"status": "already_running", "url": _tunnel_url}, 200
+
+    _tunnel_process = await asyncio.create_subprocess_exec(
+        cf_bin, "tunnel", "--url", "http://localhost:8189",
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    # 1) URL 파싱  2) "Registered tunnel connection" 대기
+    # URL만 파싱해서 바로 반환하면 엣지 연결이 아직 안 된 상태라 Error 1033 발생
+    url = None
+    registered = False
+    deadline = asyncio.get_running_loop().time() + 20  # 20초 타임아웃
+    buf = b""
+    while asyncio.get_running_loop().time() < deadline:
+        try:
+            chunk = await asyncio.wait_for(
+                _tunnel_process.stderr.read(4096), timeout=2.0
+            )
+        except asyncio.TimeoutError:
+            continue
+        if not chunk:
+            break
+        buf += chunk
+        text = buf.decode("utf-8", errors="ignore")
+        if not url:
+            match = re.search(
+                r'(https://[a-z0-9\-]+\.trycloudflare\.com)', text
+            )
+            if match:
+                url = match.group(1)
+                print(f"[TUNNEL] URL 발급: {url}, 엣지 등록 대기 중...")
+        if url and "Registered tunnel connection" in text:
+            registered = True
+            break
+        if "ERR " in text and url is None:
+            break
+    if url and registered:
+        _tunnel_url = url
+        _tunnel_stderr_task = asyncio.create_task(_drain_stderr(_tunnel_process))
+        return {"status": "running", "url": url}, 200
+
+    diagnostic = buf.decode("utf-8", errors="ignore").strip()
+    if url:
+        print(
+            "[TUNNEL] URL 발급됐으나 엣지 등록 실패 (20초 타임아웃): "
+            f"output={diagnostic[-2000:]!r}"
+        )
+        message = "터널 엣지 연결에 실패했습니다. 네트워크를 확인하고 재시도하세요."
+    else:
+        print(
+            "[TUNNEL] URL 발급 실패: "
+            f"returncode={_tunnel_process.returncode}, output={diagnostic[-2000:]!r}"
+        )
+        message = "터널 URL을 가져오지 못했습니다. (20초 타임아웃)"
+    await _stop_cloudflared_on_subprocess_loop()
+    return {"status": "error", "error": message}, 500
 
 async def handle_api_tunnel_start(request: web.Request) -> web.Response:
-    global _tunnel_process, _tunnel_url
-    if _tunnel_process is not None and _tunnel_process.returncode is None:
-        return web.json_response({"status": "already_running", "url": _tunnel_url})
     try:
         cf_bin = await _ensure_cloudflared()
-        _tunnel_process = await asyncio.create_subprocess_exec(
-            cf_bin, "tunnel", "--url", "http://localhost:8189",
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.PIPE,
+        payload, status = await _run_on_tunnel_subprocess_loop(
+            _start_cloudflared_on_subprocess_loop(cf_bin)
         )
-        # 1) URL 파싱  2) "Registered tunnel connection" 대기
-        # URL만 파싱해서 바로 반환하면 엣지 연결이 아직 안 된 상태라 Error 1033 발생
-        url = None
-        registered = False
-        deadline = asyncio.get_event_loop().time() + 20  # 20초 타임아웃
-        buf = b""
-        while asyncio.get_event_loop().time() < deadline:
-            try:
-                chunk = await asyncio.wait_for(_tunnel_process.stderr.read(4096), timeout=2.0)
-            except asyncio.TimeoutError:
-                continue
-            if not chunk:
-                break
-            buf += chunk
-            text = buf.decode("utf-8", errors="ignore")
-            if not url:
-                m = re.search(r'(https://[a-z0-9\-]+\.trycloudflare\.com)', text)
-                if m:
-                    url = m.group(1)
-                    print(f"[TUNNEL] URL 발급: {url}, 엣지 등록 대기 중...")
-            if url and "Registered tunnel connection" in text:
-                registered = True
-                break
-            if "ERR " in text and url is None:
-                # URL 발급 전에 에러 발생 (포트 차단 등)
-                break
-        if url and registered:
-            _tunnel_url = url
-            asyncio.ensure_future(_drain_stderr(_tunnel_process))
-            return web.json_response({"status": "running", "url": url})
-        elif url and not registered:
-            # URL은 받았지만 엣지 등록 실패
-            print(f"[TUNNEL] URL 발급됐으나 엣지 등록 실패 (20초 타임아웃)")
-            _tunnel_process.kill()
-            await _tunnel_process.wait()
-            _tunnel_process = None
-            return web.json_response({"status": "error", "error": "터널 엣지 연결에 실패했습니다. 네트워크를 확인하고 재시도하세요."}, status=500)
-        else:
-            _tunnel_process.kill()
-            await _tunnel_process.wait()
-            _tunnel_process = None
-            return web.json_response({"status": "error", "error": "터널 URL을 가져오지 못했습니다. (20초 타임아웃)"}, status=500)
+        return web.json_response(payload, status=status)
     except Exception as e:
-        _tunnel_process = None
+        print(f"[TUNNEL] cloudflared 시작 중 예외: {type(e).__name__}: {e}")
+        traceback.print_exc()
+        try:
+            await _run_on_tunnel_subprocess_loop(
+                _stop_cloudflared_on_subprocess_loop()
+            )
+        except Exception as cleanup_exc:
+            print(
+                "[TUNNEL] cloudflared 시작 실패 후 정리 예외: "
+                f"error={type(cleanup_exc).__name__}: {cleanup_exc}"
+            )
+            traceback.print_exc()
         return web.json_response({"status": "error", "error": str(e)}, status=500)
 
 async def handle_api_tunnel_status(request: web.Request) -> web.Response:
-    running = _tunnel_process is not None and _tunnel_process.returncode is None
-    return web.json_response({
-        "status": "running" if running else "stopped",
-        "url": _tunnel_url if running else None,
-    })
+    async def _state() -> tuple[bool, str | None]:
+        running = _tunnel_process is not None and _tunnel_process.returncode is None
+        return running, _tunnel_url if running else None
+
+    try:
+        running, url = await _run_on_tunnel_subprocess_loop(_state())
+        return web.json_response({
+            "status": "running" if running else "stopped",
+            "url": url,
+        })
+    except Exception as exc:
+        print(
+            "[TUNNEL] cloudflared 상태 조회 실패: "
+            f"error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        return web.json_response(
+            {"status": "error", "error": str(exc)}, status=500
+        )
 
 async def handle_api_tunnel_stop(request: web.Request) -> web.Response:
-    global _tunnel_process, _tunnel_url
-    if _tunnel_process is not None and _tunnel_process.returncode is None:
-        _tunnel_process.kill()
-        await _tunnel_process.wait()
-    _tunnel_process = None
-    _tunnel_url = None
-    return web.json_response({"status": "stopped"})
+    try:
+        await _run_on_tunnel_subprocess_loop(
+            _stop_cloudflared_on_subprocess_loop()
+        )
+        return web.json_response({"status": "stopped"})
+    except Exception as exc:
+        print(
+            "[TUNNEL] cloudflared 종료 API 실패: "
+            f"error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        return web.json_response(
+            {"status": "error", "error": str(exc)}, status=500
+        )
 
 async def _tunnel_cleanup(app):
     """서버 종료 시 터널 프로세스 정리"""
-    global _tunnel_process, _tunnel_url
-    if _tunnel_process is not None and _tunnel_process.returncode is None:
-        _tunnel_process.kill()
-        await _tunnel_process.wait()
-    _tunnel_process = None
-    _tunnel_url = None
+    try:
+        await _run_on_tunnel_subprocess_loop(
+            _stop_cloudflared_on_subprocess_loop()
+        )
+    except Exception as exc:
+        print(
+            "[TUNNEL] 서버 종료 정리 실패: "
+            f"error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+    finally:
+        await asyncio.to_thread(_tunnel_subprocess_loop.close)
 
 # ─── Tailscale Funnel (고정 주소) ────────────────────────
 # Cloudflare Quick Tunnel과 달리 매번 같은 고정 주소가 발급된다.
@@ -19337,6 +19549,32 @@ def _tailscale_bin() -> str | None:
     """설치된 tailscale CLI 경로. 없으면 None."""
     return shutil.which("tailscale")
 
+
+async def _communicate_tailscale_on_subprocess_loop(
+    ts: str,
+    *args: str,
+    timeout: float,
+) -> tuple[bytes, bytes, int | None]:
+    """Tailscale 단기 명령을 subprocess 전용 루프에서 실행한다."""
+    proc = await asyncio.create_subprocess_exec(
+        ts, *args,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        print(
+            "[TAILSCALE] 명령 시간 초과: "
+            f"command={[ts, *args]!r}, timeout={timeout}"
+        )
+        if proc.returncode is None:
+            proc.kill()
+            await proc.wait()
+        raise
+    return out, err, proc.returncode
+
+
 async def _tailscale_funnel_state() -> tuple[bool, str | None]:
     """`tailscale funnel status` 출력에서 활성 여부와 고정 URL을 파싱한다.
 
@@ -19345,22 +19583,33 @@ async def _tailscale_funnel_state() -> tuple[bool, str | None]:
     """
     ts = _tailscale_bin()
     if not ts:
+        print("[TAILSCALE] funnel status 조회 건너뜀: tailscale CLI를 찾을 수 없음")
         return False, None
     try:
-        proc = await asyncio.create_subprocess_exec(
-            ts, "funnel", "status",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+        out, err, returncode = await _run_on_tunnel_subprocess_loop(
+            _communicate_tailscale_on_subprocess_loop(
+                ts, "funnel", "status", timeout=10.0
+            )
         )
-        out, _err = await asyncio.wait_for(proc.communicate(), timeout=10.0)
         text = out.decode("utf-8", errors="ignore")
     except Exception as e:
         print(f"[TAILSCALE] funnel status 조회 실패: {e}")
         traceback.print_exc()
         return False, None
+    if returncode != 0:
+        err_text = err.decode("utf-8", errors="ignore").strip()
+        print(
+            "[TAILSCALE] funnel status 명령 실패: "
+            f"returncode={returncode}, stderr={err_text!r}, stdout={text.strip()!r}"
+        )
+        return False, None
     # 활성 Funnel이 있으면 "https://<host>(:443)" 토큰이 출력에 나타난다.
     m = re.search(r'(https://[^\s:]+(?::\d+)?)', text)
     if not m:
+        print(
+            "[TAILSCALE] funnel status에 활성 URL이 없음: "
+            f"stdout={text.strip()!r}"
+        )
         return False, None
     url = m.group(1)
     if url.endswith(":443"):
@@ -19371,22 +19620,112 @@ async def _tailscale_dnsname_url() -> str | None:
     """`tailscale status --json` 의 Self.DNSName 으로 고정 URL을 유도 (파싱 실패 시 폴백)."""
     ts = _tailscale_bin()
     if not ts:
+        print("[TAILSCALE] DNSName 조회 건너뜀: tailscale CLI를 찾을 수 없음")
         return None
     try:
-        proc = await asyncio.create_subprocess_exec(
-            ts, "status", "--json",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+        out, err, returncode = await _run_on_tunnel_subprocess_loop(
+            _communicate_tailscale_on_subprocess_loop(
+                ts, "status", "--json", timeout=10.0
+            )
         )
-        out, _err = await asyncio.wait_for(proc.communicate(), timeout=10.0)
+        if returncode != 0:
+            err_text = err.decode("utf-8", errors="ignore").strip()
+            print(
+                "[TAILSCALE] DNSName 명령 실패: "
+                f"returncode={returncode}, stderr={err_text!r}"
+            )
+            return None
         data = json.loads(out.decode("utf-8", errors="ignore") or "{}")
         dns = (data.get("Self", {}) or {}).get("DNSName", "")
         if dns:
             return "https://" + dns.rstrip(".")
+        print(f"[TAILSCALE] DNSName이 비어 있음: data={data!r}")
     except Exception as e:
         print(f"[TAILSCALE] DNSName 조회 실패: {e}")
         traceback.print_exc()
     return None
+
+
+async def _start_tailscale_funnel_on_subprocess_loop(
+    ts: str,
+) -> tuple[str | None, str, int | None]:
+    """Tailscale Funnel 시작 명령과 증분 출력 읽기를 전용 루프에서 수행한다."""
+    proc = await asyncio.create_subprocess_exec(
+        ts, "funnel", "--bg", "--https=443", "8189",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    # tailscale funnel --bg 는 성공 시 설정 후 종료된다. 하지만 Funnel 미허용 등
+    # 에러 시 메시지를 출력한 채 대기할 수 있어 증분으로 읽는다.
+    deadline = asyncio.get_running_loop().time() + 20
+    buf = ""
+    error_msg: str | None = None
+    while asyncio.get_running_loop().time() < deadline:
+        if proc.returncode is not None:
+            break
+        try:
+            chunk = await asyncio.wait_for(proc.stdout.read(4096), timeout=1.0)
+            if not chunk:
+                chunk = await asyncio.wait_for(proc.stderr.read(4096), timeout=1.0)
+            if chunk:
+                buf += chunk.decode("utf-8", errors="ignore")
+        except asyncio.TimeoutError:
+            continue
+        low = buf.lower()
+        if ("funnel is not enabled" in low
+                or "not enabled on your tailnet" in low
+                or "funnel is not available" in low
+                or "\nerr " in low
+                or "error:" in low
+                or "permission denied" in low):
+            error_msg = buf.strip()
+            break
+
+    if proc.returncode is None:
+        try:
+            proc.kill()
+            await proc.wait()
+        except ProcessLookupError:
+            print("[TAILSCALE] funnel 시작 명령 정리 중 프로세스가 이미 종료됨")
+        except Exception as exc:
+            print(
+                "[TAILSCALE] funnel 시작 명령 정리 실패: "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            raise
+
+    try:
+        rest_out, rest_err = await asyncio.wait_for(proc.communicate(), timeout=3.0)
+        remaining = (
+            rest_out.decode("utf-8", errors="ignore")
+            + " "
+            + rest_err.decode("utf-8", errors="ignore")
+        ).strip()
+        if remaining:
+            buf = (buf + "\n" + remaining).strip()
+    except asyncio.TimeoutError:
+        print("[TAILSCALE] funnel 시작 잔여 출력 읽기 시간 초과")
+    except Exception as exc:
+        print(
+            "[TAILSCALE] funnel 시작 잔여 출력 읽기 실패: "
+            f"error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+
+    low = buf.lower()
+    if error_msg is None and (
+        "funnel is not enabled" in low
+        or "not enabled on your tailnet" in low
+        or "funnel is not available" in low
+        or "\nerr " in low
+        or "error:" in low
+        or "permission denied" in low
+    ):
+        error_msg = buf.strip()
+
+    return error_msg, buf.strip(), proc.returncode
+
 
 async def handle_api_tailscale_start(request: web.Request) -> web.Response:
     global _tailscale_active, _tailscale_url
@@ -19402,45 +19741,11 @@ async def handle_api_tailscale_start(request: web.Request) -> web.Response:
             _tailscale_active = True
             _tailscale_url = url
             return web.json_response({"status": "running", "url": url})
-        proc = await asyncio.create_subprocess_exec(
-            ts, "funnel", "--bg", "--https=443", "8189",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+        error_msg, command_output, returncode = (
+            await _run_on_tunnel_subprocess_loop(
+                _start_tailscale_funnel_on_subprocess_loop(ts)
+            )
         )
-        # tailscale funnel --bg 는 성공 시 설정 후 종료된다. 하지만 Funnel 미허용 등
-        # 에러 시 "Funnel is not enabled ..." 메시지를 stdout에 출력한 채 종료되지 않고
-        # 대기하는 경우가 있다. communicate()로 끝까지 기다리면 20초 타임아웃만 나고
-        # 진짜 원인을 놓치므로, stdout/stderr를 증분 읽기해서 에러를 빠르게 잡는다.
-        deadline = asyncio.get_event_loop().time() + 20
-        buf = ""
-        error_msg: str | None = None
-        while asyncio.get_event_loop().time() < deadline:
-            if proc.returncode is not None:
-                break
-            try:
-                chunk = await asyncio.wait_for(proc.stdout.read(4096), timeout=1.0)
-                if not chunk:
-                    chunk = await asyncio.wait_for(proc.stderr.read(4096), timeout=1.0)
-                if chunk:
-                    buf += chunk.decode("utf-8", errors="ignore")
-            except asyncio.TimeoutError:
-                continue
-            low = buf.lower()
-            if ("funnel is not enabled" in low
-                    or "not enabled on your tailnet" in low
-                    or "funnel is not available" in low
-                    or "\nerr " in low
-                    or "error:" in low
-                    or "permission denied" in low):
-                error_msg = buf.strip()
-                break
-        # 루프 종료 후에도 살아있으면(에러 대기 중) 강제 종료
-        if proc.returncode is None:
-            try:
-                proc.kill()
-                await proc.wait()
-            except Exception:
-                pass
         if error_msg:
             # "Funnel is not enabled ... https://login.tailscale.com/f/funnel?node=..." 등
             # 활성화 URL 을 포함한 원문을 그대로 클라이언트에 전달.
@@ -19455,15 +19760,9 @@ async def handle_api_tailscale_start(request: web.Request) -> web.Response:
                 status=500,
             )
         # 종료 코드 기반 에러 (stdout 키워드에 안 잡힌 경우)
-        rc = proc.returncode
-        if rc is not None and rc != 0:
-            try:
-                rest_out, rest_err = await asyncio.wait_for(proc.communicate(), timeout=3.0)
-                extra = (rest_out.decode("utf-8", "ignore") + " " + rest_err.decode("utf-8", "ignore")).strip()
-            except Exception:
-                extra = buf.strip()
-            msg = extra or f"tailscale funnel 실행 실패 (code {rc})"
-            print(f"[TAILSCALE] funnel 시작 실패 rc={rc}: {msg}")
+        if returncode is not None and returncode != 0:
+            msg = command_output or f"tailscale funnel 실행 실패 (code {returncode})"
+            print(f"[TAILSCALE] funnel 시작 실패 rc={returncode}: {msg}")
             return web.json_response({"status": "error", "error": msg}, status=500)
         # 성공 여부는 실제 funnel status 로 확인 (--bg 는 설정 후 종료)
         active, url = await _tailscale_funnel_state()
@@ -19505,20 +19804,32 @@ async def handle_api_tailscale_status(request: web.Request) -> web.Response:
 async def handle_api_tailscale_stop(request: web.Request) -> web.Response:
     global _tailscale_active, _tailscale_url
     ts = _tailscale_bin()
-    if ts:
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                ts, "funnel", "reset",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+    if not ts:
+        msg = "tailscale CLI를 찾을 수 없어 Funnel을 종료할 수 없습니다."
+        print(f"[TAILSCALE] {msg}")
+        return web.json_response({"status": "error", "error": msg}, status=500)
+    try:
+        _out, err, returncode = await _run_on_tunnel_subprocess_loop(
+            _communicate_tailscale_on_subprocess_loop(
+                ts, "funnel", "reset", timeout=10.0
             )
-            out, err = await asyncio.wait_for(proc.communicate(), timeout=10.0)
-            if proc.returncode != 0:
-                err_text = err.decode("utf-8", errors="ignore")
-                print(f"[TAILSCALE] funnel reset 실패 rc={proc.returncode} stderr={err_text.strip()}")
-        except Exception as e:
-            print(f"[TAILSCALE] funnel reset 중 예외: {e}")
-            traceback.print_exc()
+        )
+        if returncode != 0:
+            err_text = err.decode("utf-8", errors="ignore").strip()
+            msg = err_text or f"tailscale funnel reset 실패 (code {returncode})"
+            print(
+                "[TAILSCALE] funnel reset 실패: "
+                f"returncode={returncode}, stderr={err_text!r}"
+            )
+            return web.json_response(
+                {"status": "error", "error": msg}, status=500
+            )
+    except Exception as e:
+        print(f"[TAILSCALE] funnel reset 중 예외: {e}")
+        traceback.print_exc()
+        return web.json_response(
+            {"status": "error", "error": str(e)}, status=500
+        )
     _tailscale_active = False
     _tailscale_url = None
     return web.json_response({"status": "stopped"})
