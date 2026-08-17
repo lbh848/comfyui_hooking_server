@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 from threading import Event
+
+import pytest
 
 import comfy_installer.updater as updater_module
 from comfy_installer.credentials import (
@@ -12,7 +15,11 @@ from comfy_installer.credentials import (
 )
 from comfy_installer.input_patcher import patch_comfy_input
 from comfy_installer.migration import _robocopy_command, migrate_user_data
-from comfy_installer.updater import update_hooking_server_main
+from comfy_installer.operations import CommandError
+from comfy_installer.updater import (
+    HookingServerUpdateError,
+    update_hooking_server_main,
+)
 
 
 def test_input_repatch_clears_temporary_folders_and_keeps_bot_cache(tmp_path: Path):
@@ -175,7 +182,11 @@ def test_hooking_updater_uses_main_only_after_explicit_call(tmp_path: Path, monk
             return ["main"]
         if command[-3:] == ["remote", "get-url", "origin"]:
             return ["https://github.com/lbh848/comfyui_hooking_server"]
-        if command[-2:] == ["status", "--porcelain"]:
+        if command[-3:] == [
+            "status",
+            "--porcelain",
+            "--untracked-files=no",
+        ]:
             return []
         if command[-2:] == ["rev-parse", "HEAD"]:
             rev_calls += 1
@@ -185,6 +196,7 @@ def test_hooking_updater_uses_main_only_after_explicit_call(tmp_path: Path, monk
         raise AssertionError(command)
 
     monkeypatch.setattr(updater_module, "run_command", fake_run)
+    monkeypatch.setattr(updater_module, "_list_untracked_files", lambda _root: ())
     result = update_hooking_server_main(
         project_root=tmp_path,
         config_path=config,
@@ -195,3 +207,139 @@ def test_hooking_updater_uses_main_only_after_explicit_call(tmp_path: Path, monk
     assert result["changed"] is True
     assert ["git", "pull", "--ff-only", "origin", "main"] in commands
     assert all("dev" not in command for command in commands)
+
+
+def _git(cwd: Path, *arguments: str) -> str:
+    return subprocess.run(
+        ["git", *arguments],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    ).stdout.strip()
+
+
+def _prepare_hooking_update_repository(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[Path, Path]:
+    source = tmp_path / "source"
+    deployment = tmp_path / "deployment"
+    source.mkdir()
+    _git(source, "init", "-b", "main")
+    _git(source, "config", "user.name", "Hooking Updater Test")
+    _git(source, "config", "user.email", "updater@example.test")
+    (source / "tracked.txt").write_text("version-1\n", encoding="utf-8")
+    _git(source, "add", "tracked.txt")
+    _git(source, "commit", "-m", "version 1")
+    _git(tmp_path, "clone", str(source), str(deployment))
+    monkeypatch.setattr(updater_module, "HOOKING_REPOSITORY", str(source))
+    return source, deployment
+
+
+def _commit_upstream(source: Path, relative: str, content: str) -> None:
+    target = source / relative
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(content, encoding="utf-8")
+    _git(source, "add", relative)
+    _git(source, "commit", "-m", f"update {relative}")
+
+
+def _run_hooking_update(deployment: Path, tmp_path: Path) -> dict:
+    return update_hooking_server_main(
+        project_root=deployment,
+        config_path=tmp_path / "config.json",
+        backup_dir=tmp_path / "backups",
+        cancel_event=Event(),
+        config_backup={},
+    )
+
+
+def test_hooking_updater_quarantines_and_restores_unicode_untracked_files(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source, deployment = _prepare_hooking_update_repository(tmp_path, monkeypatch)
+    _commit_upstream(source, "tracked.txt", "version-2\n")
+    shortcut = deployment / "run_en.bat - 바로 가기.lnk"
+    nested = deployment / "사용자 폴더" / "메모.txt"
+    shortcut.write_bytes(b"shortcut-bytes")
+    nested.parent.mkdir()
+    nested.write_text("사용자 파일\n", encoding="utf-8")
+
+    result = _run_hooking_update(deployment, tmp_path)
+
+    assert (deployment / "tracked.txt").read_text(encoding="utf-8") == "version-2\n"
+    assert shortcut.read_bytes() == b"shortcut-bytes"
+    assert nested.read_text(encoding="utf-8") == "사용자 파일\n"
+    assert result["quarantined_untracked"] == [
+        "run_en.bat - 바로 가기.lnk",
+        "사용자 폴더/메모.txt",
+    ]
+    assert not (deployment / ".git" / "comfy-installer-quarantine").exists()
+
+
+def test_hooking_updater_restores_untracked_files_when_pull_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _source, deployment = _prepare_hooking_update_repository(tmp_path, monkeypatch)
+    user_file = deployment / "local-note.txt"
+    user_file.write_text("keep me\n", encoding="utf-8")
+    real_run_command = updater_module.run_command
+
+    def fail_pull(command, **kwargs):
+        if command[:2] == ["git", "pull"]:
+            raise CommandError("simulated pull failure")
+        return real_run_command(command, **kwargs)
+
+    monkeypatch.setattr(updater_module, "run_command", fail_pull)
+
+    with pytest.raises(HookingServerUpdateError, match="simulated pull failure"):
+        _run_hooking_update(deployment, tmp_path)
+
+    assert user_file.read_text(encoding="utf-8") == "keep me\n"
+    assert not (deployment / ".git" / "comfy-installer-quarantine").exists()
+
+
+def test_hooking_updater_preserves_quarantine_when_upstream_path_conflicts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source, deployment = _prepare_hooking_update_repository(tmp_path, monkeypatch)
+    relative = "run_en.bat - 바로 가기.lnk"
+    user_file = deployment / relative
+    user_file.write_bytes(b"user-shortcut")
+    _commit_upstream(source, relative, "upstream-file\n")
+
+    with pytest.raises(HookingServerUpdateError, match="덮어쓰지 않고 보존"):
+        _run_hooking_update(deployment, tmp_path)
+
+    assert user_file.read_text(encoding="utf-8") == "upstream-file\n"
+    quarantine_base = deployment / ".git" / "comfy-installer-quarantine"
+    quarantined = list(quarantine_base.glob(f"*/files/{relative}"))
+    assert len(quarantined) == 1
+    assert quarantined[0].read_bytes() == b"user-shortcut"
+    conflict_records = list(quarantine_base.glob("*/restore-conflict.json"))
+    assert len(conflict_records) == 1
+    conflict = json.loads(conflict_records[0].read_text(encoding="utf-8"))
+    assert conflict["conflicts"][0]["path"] == relative
+
+
+def test_hooking_updater_still_blocks_tracked_local_changes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _source, deployment = _prepare_hooking_update_repository(tmp_path, monkeypatch)
+    tracked = deployment / "tracked.txt"
+    tracked.write_text("local tracked edit\n", encoding="utf-8")
+    user_file = deployment / "local-note.txt"
+    user_file.write_text("keep me\n", encoding="utf-8")
+
+    with pytest.raises(HookingServerUpdateError, match="추적 파일에 로컬 변경"):
+        _run_hooking_update(deployment, tmp_path)
+
+    assert tracked.read_text(encoding="utf-8") == "local tracked edit\n"
+    assert user_file.read_text(encoding="utf-8") == "keep me\n"
+    assert not (deployment / ".git" / "comfy-installer-quarantine").exists()
