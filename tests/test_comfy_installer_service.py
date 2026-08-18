@@ -1020,18 +1020,11 @@ def test_manifest_has_fully_pinned_windows_runtime_and_assets() -> None:
         len(profile["sageattention"]["sha256"]) == 64
         for profile in nvidia.values()
     )
-    assert len(manifest.custom_nodes) == 16
-    comfy_manager = next(
-        node
+    assert len(manifest.custom_nodes) == 15
+    assert all(
+        node["name"] != "ComfyUI-Manager"
         for node in manifest.custom_nodes
-        if node["name"] == "ComfyUI-Manager"
     )
-    assert comfy_manager == {
-        "name": "ComfyUI-Manager",
-        "source_type": "git",
-        "repository": "https://github.com/ltdrdata/ComfyUI-Manager.git",
-        "ref": "d47c9346190397e1c316bc5a82155faaf9f5d700",
-    }
     lora_manager = next(
         node
         for node in manifest.custom_nodes

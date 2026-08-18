@@ -22,6 +22,10 @@ from typing import Callable, Iterable, Iterator, Mapping, Sequence
 import httpx
 from PIL import Image, ImageDraw, ImageOps
 
+from .manager_dependencies import (
+    ManagerDependencyError,
+    expected_manager_version,
+)
 from .operations import isolated_subprocess_env
 
 
@@ -109,6 +113,7 @@ class ComfyProcess:
         log: LogCallback | None = None,
         port: int | None = None,
         extra_args: Sequence[str] = (),
+        verify_manager: bool = True,
     ) -> None:
         self.comfy_root = comfy_root.resolve()
         self.python = python.resolve()
@@ -116,6 +121,7 @@ class ComfyProcess:
         self.log = log
         self.port = port or find_free_local_port()
         self.extra_args = tuple(str(value) for value in extra_args)
+        self.verify_manager = bool(verify_manager)
         self.base_url = f"http://127.0.0.1:{self.port}"
         self.process: subprocess.Popen[str] | None = None
         self._tail: list[str] = []
@@ -130,6 +136,69 @@ class ComfyProcess:
         self._lora_warning_count = 0
         self._output_callback_failed = False
         self._fatal_output: str | None = None
+
+    def _verify_manager_v4(self, client: httpx.Client) -> dict[str, str]:
+        try:
+            expected = expected_manager_version(self.comfy_root)
+            features_response = client.get(f"{self.base_url}/features")
+            features_response.raise_for_status()
+            features = features_response.json()
+            manager_features = (
+                features.get("extension", {}).get("manager", {})
+                if isinstance(features, dict)
+                else {}
+            )
+            if manager_features.get("supports_v4") is not True:
+                print(
+                    "[COMFY_INSTALL][E2E] 신형 Manager 기능 플래그가 "
+                    f"없습니다: features={features!r}"
+                )
+                raise ComfyE2EError(
+                    "ComfyUI가 신형 Manager V4 기능을 제공하지 않습니다."
+                )
+
+            version_response = client.get(
+                f"{self.base_url}/v2/manager/version"
+            )
+            version_response.raise_for_status()
+            raw_version = version_response.text.strip()
+            actual = raw_version[1:] if raw_version.startswith("V") else raw_version
+            if actual != expected:
+                print(
+                    "[COMFY_INSTALL][E2E] 신형 Manager API 버전 불일치: "
+                    f"expected={expected}, actual={actual}, raw={raw_version!r}"
+                )
+                raise ComfyE2EError(
+                    "ComfyUI Manager API 버전이 고정 요구사항과 다릅니다: "
+                    f"expected={expected}, actual={actual}"
+                )
+            if self.log:
+                self.log(
+                    "[E2E] 신형 Manager V4 API 확인 완료: "
+                    f"version={actual}"
+                )
+            return {
+                "expected_version": expected,
+                "actual_version": actual,
+            }
+        except ComfyE2EError:
+            raise
+        except ManagerDependencyError as exc:
+            print(
+                "[COMFY_INSTALL][E2E] 신형 Manager 요구사항 검사 실패: "
+                f"root={self.comfy_root}, error={exc}"
+            )
+            traceback.print_exc()
+            raise ComfyE2EError(str(exc)) from exc
+        except Exception as exc:
+            print(
+                "[COMFY_INSTALL][E2E] 신형 Manager V4 API 검사 실패: "
+                f"base_url={self.base_url}, error={exc}"
+            )
+            traceback.print_exc()
+            raise ComfyE2EError(
+                f"ComfyUI 신형 Manager V4 API 검사 실패: {exc}"
+            ) from exc
 
     def _forward_output(self, message: str) -> None:
         if self.log is None or self._output_callback_failed:
@@ -183,6 +252,21 @@ class ComfyProcess:
                 f"최종 합계 {self._lora_warning_count}건"
             )
 
+    def launch_command(self) -> list[str]:
+        command = [
+            str(self.python),
+            "-u",
+            str(self.comfy_root / "main.py"),
+            "--listen",
+            "127.0.0.1",
+            "--port",
+            str(self.port),
+            "--disable-auto-launch",
+            "--enable-manager",
+        ]
+        command.extend(self.extra_args)
+        return command
+
     def _read_output(self) -> None:
         assert self.process is not None
         assert self.process.stdout is not None
@@ -225,17 +309,7 @@ class ComfyProcess:
     def start(self, *, timeout: float = 600) -> dict:
         if self.process is not None:
             raise ComfyE2EError("ComfyUI E2E 프로세스가 이미 시작되었습니다.")
-        command = [
-            str(self.python),
-            "-u",
-            str(self.comfy_root / "main.py"),
-            "--listen",
-            "127.0.0.1",
-            "--port",
-            str(self.port),
-            "--disable-auto-launch",
-        ]
-        command.extend(self.extra_args)
+        command = self.launch_command()
         if self.log:
             self.log(
                 f"[E2E] 독립 ComfyUI 기동: 127.0.0.1:{self.port}, "
@@ -294,15 +368,28 @@ class ComfyProcess:
                     response = client.get(f"{self.base_url}/system_stats")
                     response.raise_for_status()
                     stats = response.json()
+                    manager = (
+                        self._verify_manager_v4(client)
+                        if self.verify_manager
+                        else None
+                    )
                 if isinstance(stats, dict) and isinstance(
                     stats.get("system"), dict
                 ):
+                    if manager is not None:
+                        stats["manager"] = manager
                     return stats
                 last_error = "system_stats 응답 형식 오류"
+            except ComfyE2EError:
+                raise
             except Exception as exc:
                 last_error = str(exc)
             time.sleep(0.5)
         tail = "\n".join(self._tail[-80:])
+        print(
+            "[COMFY_INSTALL][E2E] ComfyUI 기동 제한 시간 초과: "
+            f"timeout={timeout}, last_error={last_error}, log={self.output_log_path}"
+        )
         self.stop()
         raise ComfyE2EError(
             f"ComfyUI 기동 제한 시간 초과({timeout:.0f}초): "

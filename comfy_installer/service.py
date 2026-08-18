@@ -60,6 +60,7 @@ from .install_modes import (
     normalize_install_mode,
 )
 from .manifest import InstallManifest, load_install_manifest
+from .manager_dependencies import install_manager_dependencies
 from .input_patcher import patch_comfy_input
 from .migration import ComfyMigrationCancelled, migrate_user_data
 from .model_installer import install_models
@@ -1774,6 +1775,12 @@ class ComfyInstallerService:
                 log=self._log,
                 progress=self._set_progress,
             )
+            python_result["manager"] = install_manager_dependencies(
+                comfy_root=self.comfy_root,
+                python=python,
+                cancel_event=self._cancel,
+                log=self._log,
+            )
 
             self._set_phase("custom_nodes")
             node_paths = install_custom_nodes(
@@ -2176,6 +2183,12 @@ class ComfyInstallerService:
                         else []
                     ),
                 }
+            python_result["manager"] = install_manager_dependencies(
+                comfy_root=self.comfy_root,
+                python=python,
+                cancel_event=self._cancel,
+                log=self._log,
+            )
 
             self._set_phase("custom_nodes")
             updated_node_names: list[str] = []
@@ -2406,6 +2419,7 @@ class ComfyInstallerService:
                 python=rollback_python,
                 cancel_event=Event(),
                 log=self._log_comfy,
+                verify_manager=False,
             )
             try:
                 stats = verification.start(timeout=900)
@@ -2653,6 +2667,9 @@ class ComfyInstallerService:
             nodes_changed = any(
                 reason.startswith("custom_node_") for reason in reasons
             )
+            manager_changed = any(
+                reason.startswith("manager_") for reason in reasons
+            )
 
             self._set_phase("venv")
             python = create_comfy_venv(
@@ -2700,6 +2717,12 @@ class ComfyInstallerService:
                         else []
                     ),
                 }
+            python_result["manager"] = install_manager_dependencies(
+                comfy_root=self.comfy_root,
+                python=python,
+                cancel_event=self._cancel,
+                log=self._log,
+            )
 
             self._set_phase("custom_nodes")
             updated_node_names: list[str] = []
@@ -2860,6 +2883,7 @@ class ComfyInstallerService:
                     "runtime": True,
                     "comfy": source_changed,
                     "python": python_changed,
+                    "manager": manager_changed,
                     "gpu_profile": profile_changed,
                     "custom_nodes": bool(nodes_changed or updated_node_names),
                 },

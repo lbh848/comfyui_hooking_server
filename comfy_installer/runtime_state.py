@@ -13,6 +13,11 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
+from .manager_dependencies import (
+    ManagerDependencyError,
+    expected_manager_version,
+    installed_manager_versions,
+)
 from .manifest import InstallManifest
 
 
@@ -383,6 +388,42 @@ def collect_custom_node_state(
     return result
 
 
+def collect_manager_state(
+    comfy_root: str | os.PathLike[str],
+) -> dict[str, Any]:
+    root = Path(comfy_root).resolve()
+    try:
+        expected = expected_manager_version(root)
+        installed = installed_manager_versions(root)
+    except ManagerDependencyError as exc:
+        print(
+            "[COMFY_INSTALL][RUNTIME_STATE] Manager 상태 조사 실패: "
+            f"root={root}, error={exc}"
+        )
+        traceback.print_exc()
+        return {
+            "requirements_path": str(root / "manager_requirements.txt"),
+            "expected_version": None,
+            "installed_versions": [],
+            "status": "invalid",
+            "error": str(exc),
+        }
+
+    if not installed:
+        status = "missing"
+    elif installed != [expected]:
+        status = "version_mismatch"
+    else:
+        status = "current"
+    return {
+        "requirements_path": str(root / "manager_requirements.txt"),
+        "expected_version": expected,
+        "installed_versions": installed,
+        "status": status,
+        "error": None,
+    }
+
+
 def inspect_runtime(
     *,
     comfy_root: str | os.PathLike[str],
@@ -398,6 +439,7 @@ def inspect_runtime(
         profile_id=profile_id,
         install_mode=install_mode,
     )
+    manager = collect_manager_state(root)
     nodes = collect_custom_node_state(root, manifest.custom_nodes)
     receipt_python = (
         receipt.get("python", {}) if isinstance(receipt, dict) else {}
@@ -413,6 +455,13 @@ def inspect_runtime(
         reasons.append("missing_receipt")
     if receipt_python.get("signature") != python_signature:
         reasons.append("python_profile")
+    manager_status = manager.get("status")
+    if manager_status == "invalid":
+        reasons.append("manager_requirements")
+    elif manager_status == "missing":
+        reasons.append("manager_missing")
+    elif manager_status == "version_mismatch":
+        reasons.append("manager_version")
     receipt_node_signature = (
         receipt.get("custom_node_manifest_signature")
         if isinstance(receipt, dict)
@@ -468,6 +517,7 @@ def inspect_runtime(
         "actual_comfy_ref": actual_ref,
         "expected_comfy_ref": str(manifest.comfy["ref"]).lower(),
         "python_signature": python_signature,
+        "manager": manager,
         "custom_node_manifest_signature": node_manifest_signature,
         "custom_nodes": nodes,
         "receipt": receipt,
@@ -524,6 +574,7 @@ def write_runtime_receipt(
                 install_mode=install_mode,
             ),
         },
+        "manager": collect_manager_state(root),
         "custom_node_manifest_signature": _json_hash(manifest.custom_nodes),
         "custom_nodes": collect_custom_node_state(root, manifest.custom_nodes),
         "workflows": {

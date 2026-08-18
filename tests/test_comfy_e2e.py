@@ -5,6 +5,7 @@ from pathlib import Path
 from threading import Event
 from types import SimpleNamespace
 
+import httpx
 import pytest
 from PIL import Image
 
@@ -135,6 +136,46 @@ def test_comfy_process_keeps_explicit_extra_launch_args(tmp_path: Path) -> None:
     )
 
     assert process.extra_args == ("--vram-headroom", "2")
+    command = process.launch_command()
+    assert "--enable-manager" in command
+    assert command[-2:] == ["--vram-headroom", "2"]
+
+
+def test_comfy_process_verifies_v4_manager_feature_and_version(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "manager_requirements.txt").write_text(
+        "comfyui_manager==4.2.2\n",
+        encoding="utf-8",
+    )
+    process = ComfyProcess(
+        comfy_root=tmp_path,
+        python=tmp_path / "python.exe",
+        cancel_event=Event(),
+        port=12345,
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/features":
+            return httpx.Response(
+                200,
+                json={
+                    "extension": {
+                        "manager": {"supports_v4": True}
+                    }
+                },
+            )
+        if request.url.path == "/v2/manager/version":
+            return httpx.Response(200, text="V4.2.2")
+        return httpx.Response(404)
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        result = process._verify_manager_v4(client)
+
+    assert result == {
+        "expected_version": "4.2.2",
+        "actual_version": "4.2.2",
+    }
 
 
 def test_make_e2e_prompt_disables_private_assets_and_minimizes_work() -> None:

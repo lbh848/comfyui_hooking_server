@@ -117,6 +117,22 @@ def _prepare_runtime(tmp_path: Path):
     venv = comfy / ".venv"
     venv.mkdir()
     (venv / "marker.txt").write_text("old-venv", encoding="utf-8")
+    (comfy / "manager_requirements.txt").write_text(
+        "comfyui_manager==4.2.2\n",
+        encoding="utf-8",
+    )
+    manager_metadata = (
+        venv
+        / "Lib"
+        / "site-packages"
+        / "comfyui_manager-4.2.2.dist-info"
+        / "METADATA"
+    )
+    manager_metadata.parent.mkdir(parents=True)
+    manager_metadata.write_text(
+        "Name: comfyui-manager\nVersion: 4.2.2\n",
+        encoding="utf-8",
+    )
     manifest = _manifest(
         tmp_path,
         comfy_ref=comfy_ref,
@@ -176,6 +192,39 @@ def test_tracking_main_change_requires_runtime_e2e(tmp_path: Path) -> None:
     assert "custom_node_tracking:tracking-node" in inventory[
         "runtime_change_reasons"
     ]
+
+
+def test_manager_version_drift_requires_runtime_update(tmp_path: Path) -> None:
+    comfy, _remote, _node, manifest = _prepare_runtime(tmp_path)
+    write_runtime_receipt(
+        comfy_root=comfy,
+        manifest=manifest,
+        profile_id="nvidia-cu130",
+        install_mode="standard",
+        workflow_bindings={},
+        selected_workflow_ids=[],
+        release_version="v1",
+    )
+    metadata = next(
+        (comfy / ".venv" / "Lib" / "site-packages").glob(
+            "comfyui_manager-*.dist-info/METADATA"
+        )
+    )
+    metadata.write_text(
+        "Name: comfyui-manager\nVersion: 4.2.1\n",
+        encoding="utf-8",
+    )
+
+    inventory = inspect_runtime(
+        comfy_root=comfy,
+        manifest=manifest,
+        profile_id="nvidia-cu130",
+        install_mode="standard",
+    )
+
+    assert inventory["manager"]["expected_version"] == "4.2.2"
+    assert inventory["manager"]["installed_versions"] == ["4.2.1"]
+    assert "manager_version" in inventory["runtime_change_reasons"]
 
 
 def test_transaction_restores_git_venv_receipt_and_config(tmp_path: Path) -> None:
