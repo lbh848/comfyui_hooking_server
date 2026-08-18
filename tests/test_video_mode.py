@@ -429,8 +429,8 @@ def test_final_prompt_writer_limits_new_props_lighting_and_downstream_events() -
     combined = "\n".join(str(message["content"]) for message in messages)
 
     assert "absent from the first-frame Visual Context" in combined
-    assert "its existence and requested use are authorized" in combined
-    assert "prior location, origin, retrieval, summoning, transformation" in combined
+    assert "its appearance and requested use are authorized" in combined
+    assert "prior source, storage location, retrieval action, origin, transformation" in combined
     assert "Distinguish illumination and exposure changes" in combined
     assert "preserving background geometry, objects, base colors" in combined
     assert "Do not turn a requested action into an unrequested downstream consequence" in combined
