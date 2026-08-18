@@ -5,13 +5,17 @@ import json
 import stat
 from pathlib import Path
 
+import pytest
+
+import comfy_installer.workflow_library as workflow_library
 from comfy_installer.crypto import create_workflow_pack
-from comfy_installer.manifest import load_install_manifest
+from comfy_installer.manifest import InstallManifest, load_install_manifest
 from comfy_installer.workflow_library import (
     DISTRIBUTION_LIBRARY_DIRNAME,
     LEGACY_DISTRIBUTION_LIBRARY_DIRNAME,
     LEGACY_USER_WORKFLOW_DIRNAME,
     USER_WORKFLOW_DIRNAME,
+    WorkflowLibraryError,
     distribution_e2e_catalog,
     embedded_workflow_base_dir,
     import_default_user_copies,
@@ -37,6 +41,57 @@ def _workflow(path: Path, model_name: str) -> None:
         ),
         encoding="utf-8",
     )
+
+
+def _release_pack(
+    *,
+    source_root: Path,
+    pack_path: Path,
+    manifest: InstallManifest,
+    filename_overrides: dict[str, str] | None = None,
+    content_overrides: dict[str, str] | None = None,
+) -> dict[str, Path]:
+    source_root.mkdir(parents=True)
+    filenames = filename_overrides or {}
+    contents = content_overrides or {}
+    bindings: dict[str, Path] = {}
+    workflow_items: list[dict] = []
+    files_by_id: dict[str, Path] = {}
+    for index, fixed in enumerate(
+        manifest.workflows["release_dependencies"]["v1"], start=1
+    ):
+        item_id = str(fixed["id"])
+        filename = filenames.get(item_id, f"배포_{index:02d}.json")
+        workflow = source_root / filename
+        _workflow(workflow, contents.get(item_id, f"stable-{item_id}"))
+        files_by_id[item_id] = workflow
+        for binding in fixed["bindings"]:
+            bindings[str(binding)] = workflow
+        workflow_items.append(
+            {
+                "id": item_id,
+                "name": workflow.name,
+                "archive_name": f"workflows/{workflow.name}",
+                "bindings": fixed["bindings"],
+                "model_ids": fixed["model_ids"],
+            }
+        )
+    create_workflow_pack(
+        bindings,
+        pack_path,
+        "pack-key",
+        release_version="v1",
+        workflow_items=workflow_items,
+    )
+    return files_by_id
+
+
+def _make_tree_writable(root: Path) -> None:
+    if not root.exists():
+        return
+    for path in root.rglob("*"):
+        if path.is_file():
+            path.chmod(path.stat().st_mode | stat.S_IWRITE)
 
 
 def _write_library_release(
@@ -255,6 +310,177 @@ def test_versioned_library_never_overwrites_edited_user_copy(tmp_path: Path) -> 
     assert Path(status["user_root"]).name == USER_WORKFLOW_DIRNAME
     for path in original_files:
         path.chmod(path.stat().st_mode | stat.S_IWRITE)
+
+
+def test_same_release_hotfix_reuses_adds_and_replaces_without_removing_old_files(
+    tmp_path: Path,
+) -> None:
+    manifest = load_install_manifest()
+    fixed_entries = manifest.workflows["release_dependencies"]["v1"]
+    renamed_id = str(fixed_entries[0]["id"])
+    replaced_id = str(fixed_entries[1]["id"])
+    reused_id = str(fixed_entries[2]["id"])
+    first_pack = tmp_path / "pack-v1-first.soyawfp"
+    first_files = _release_pack(
+        source_root=tmp_path / "sources-first",
+        pack_path=first_pack,
+        manifest=manifest,
+    )
+    library_root = tmp_path / "library"
+    work_root = tmp_path / "work"
+    release_root: Path | None = None
+    try:
+        first = unpack_to_library(
+            pack_path=first_pack,
+            passphrase="pack-key",
+            library_root=library_root,
+            work_root=work_root,
+            manifest=manifest,
+        )
+        release_root = Path(first["directory"])
+        old_renamed_path = release_root / first_files[renamed_id].name
+        replaced_path = release_root / first_files[replaced_id].name
+        reused_path = release_root / first_files[reused_id].name
+        old_renamed_payload = old_renamed_path.read_bytes()
+        reused_mtime_ns = reused_path.stat().st_mtime_ns
+
+        renamed_filename = "배포_핫픽스_이름변경.json"
+        second_pack = tmp_path / "pack-v1-hotfix.soyawfp"
+        second_files = _release_pack(
+            source_root=tmp_path / "sources-hotfix",
+            pack_path=second_pack,
+            manifest=manifest,
+            filename_overrides={renamed_id: renamed_filename},
+            content_overrides={
+                renamed_id: "hotfix-added-under-new-name",
+                replaced_id: "hotfix-replaced-in-place",
+            },
+        )
+        logs: list[str] = []
+        hotfixed = unpack_to_library(
+            pack_path=second_pack,
+            passphrase="pack-key",
+            library_root=library_root,
+            work_root=work_root,
+            manifest=manifest,
+            log=logs.append,
+        )
+
+        assert Path(hotfixed["directory"]) == release_root
+        assert hotfixed["pack_sha256"] != first["pack_sha256"]
+        assert old_renamed_path.read_bytes() == old_renamed_payload
+        assert (release_root / renamed_filename).read_bytes() == second_files[
+            renamed_id
+        ].read_bytes()
+        assert replaced_path.read_bytes() == second_files[replaced_id].read_bytes()
+        assert reused_path.stat().st_mtime_ns == reused_mtime_ns
+        state = json.loads(
+            (release_root / ".soya-pack.json").read_text(encoding="utf-8")
+        )
+        current_filenames = {
+            str(item["filename"])
+            for item in state["items"]
+            if isinstance(item, dict)
+        }
+        assert renamed_filename in current_filenames
+        assert first_files[renamed_id].name not in current_filenames
+        assert old_renamed_path.is_file()
+        assert any(
+            "재사용" in message and "추가 1개" in message and "교체 1개" in message
+            for message in logs
+        )
+        assert all(
+            not path.stat().st_mode
+            & (stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH)
+            for path in release_root.rglob("*")
+            if path.is_file()
+        )
+    finally:
+        if release_root is not None:
+            _make_tree_writable(release_root)
+
+
+def test_same_release_hotfix_rolls_back_files_and_state_on_commit_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest = load_install_manifest()
+    fixed_entries = manifest.workflows["release_dependencies"]["v1"]
+    renamed_id = str(fixed_entries[0]["id"])
+    replaced_id = str(fixed_entries[1]["id"])
+    first_pack = tmp_path / "pack-v1-first.soyawfp"
+    first_files = _release_pack(
+        source_root=tmp_path / "sources-first",
+        pack_path=first_pack,
+        manifest=manifest,
+    )
+    library_root = tmp_path / "library"
+    work_root = tmp_path / "work"
+    release_root: Path | None = None
+    try:
+        first = unpack_to_library(
+            pack_path=first_pack,
+            passphrase="pack-key",
+            library_root=library_root,
+            work_root=work_root,
+            manifest=manifest,
+        )
+        release_root = Path(first["directory"])
+        old_renamed_path = release_root / first_files[renamed_id].name
+        replaced_path = release_root / first_files[replaced_id].name
+        state_path = release_root / ".soya-pack.json"
+        old_renamed_payload = old_renamed_path.read_bytes()
+        old_replaced_payload = replaced_path.read_bytes()
+        old_state_payload = state_path.read_bytes()
+
+        renamed_filename = "배포_롤백_추가.json"
+        second_pack = tmp_path / "pack-v1-hotfix.soyawfp"
+        _release_pack(
+            source_root=tmp_path / "sources-hotfix",
+            pack_path=second_pack,
+            manifest=manifest,
+            filename_overrides={renamed_id: renamed_filename},
+            content_overrides={
+                renamed_id: "hotfix-added-before-failure",
+                replaced_id: "hotfix-replaced-before-failure",
+            },
+        )
+
+        real_replace = workflow_library._replace_file_atomic
+        failed = False
+
+        def fail_first_state_commit(source: Path, destination: Path) -> None:
+            nonlocal failed
+            if destination == state_path and not failed:
+                failed = True
+                raise OSError("forced state commit failure")
+            real_replace(source, destination)
+
+        monkeypatch.setattr(
+            workflow_library,
+            "_replace_file_atomic",
+            fail_first_state_commit,
+        )
+        with pytest.raises(WorkflowLibraryError, match="기존 상태로 복구"):
+            unpack_to_library(
+                pack_path=second_pack,
+                passphrase="pack-key",
+                library_root=library_root,
+                work_root=work_root,
+                manifest=manifest,
+            )
+
+        assert failed is True
+        assert old_renamed_path.read_bytes() == old_renamed_payload
+        assert replaced_path.read_bytes() == old_replaced_payload
+        assert not (release_root / renamed_filename).exists()
+        assert state_path.read_bytes() == old_state_payload
+        transaction_root = work_root / "workflow-unpack"
+        assert not list(transaction_root.glob("hotfix-backup-*"))
+        assert not list(transaction_root.glob("stage-*"))
+    finally:
+        if release_root is not None:
+            _make_tree_writable(release_root)
 
 
 def test_legacy_korean_layout_migrates_to_ascii_without_data_loss(

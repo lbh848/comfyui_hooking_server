@@ -512,6 +512,219 @@ def _safe_remove_stage(stage: Path, work_root: Path) -> None:
         shutil.rmtree(resolved)
 
 
+def _make_file_writable(path: Path) -> None:
+    path.chmod(path.stat().st_mode | stat.S_IWUSR)
+
+
+def _replace_file_atomic(source: Path, destination: Path) -> None:
+    if destination.exists():
+        if destination.is_symlink() or not destination.is_file():
+            raise WorkflowLibraryError(
+                f"워크플로우 핫픽스 대상이 일반 파일이 아닙니다: {destination}"
+            )
+        _make_file_writable(destination)
+    _write_bytes_new(destination, source.read_bytes())
+
+
+def _merge_release_hotfix(
+    *,
+    stage: Path,
+    destination: Path,
+    state: dict,
+    work_root: Path,
+    log: LogCallback | None,
+) -> dict[str, int]:
+    """Merge a validated pack into an existing release without deleting old files."""
+
+    if destination.is_symlink() or not destination.is_dir():
+        raise WorkflowLibraryError(
+            f"워크플로우 배포 버전 경로가 일반 폴더가 아닙니다: {destination}"
+        )
+    existing_state_path = destination / _STATE_FILENAME
+    staged_state_path = stage / _STATE_FILENAME
+    if existing_state_path.is_symlink() or not existing_state_path.is_file():
+        raise WorkflowLibraryError(
+            "동일 배포 버전 폴더의 팩 상태 파일이 안전하지 않습니다: "
+            f"{existing_state_path}"
+        )
+    if not staged_state_path.is_file():
+        raise WorkflowLibraryError(
+            f"워크플로우 핫픽스 상태 파일이 없습니다: {staged_state_path}"
+        )
+
+    raw_items = state.get("items")
+    if not isinstance(raw_items, list):
+        raise WorkflowLibraryError("워크플로우 핫픽스 항목 목록이 손상되었습니다.")
+
+    operations: list[tuple[str, Path, Path]] = []
+    seen_filenames: set[str] = set()
+    reused = 0
+    for raw_item in raw_items:
+        if not isinstance(raw_item, dict):
+            raise WorkflowLibraryError(
+                "워크플로우 핫픽스 항목이 객체가 아닙니다."
+            )
+        raw_filename = str(raw_item.get("filename", ""))
+        filename = Path(raw_filename).name
+        if not filename or raw_filename != filename:
+            raise WorkflowLibraryError(
+                f"워크플로우 핫픽스 파일명이 안전하지 않습니다: {raw_filename!r}"
+            )
+        folded = filename.casefold()
+        if folded in seen_filenames:
+            raise WorkflowLibraryError(
+                f"워크플로우 핫픽스 파일명이 중복됩니다: {filename}"
+            )
+        seen_filenames.add(folded)
+
+        source = stage / filename
+        target = destination / filename
+        if source.is_symlink() or not source.is_file():
+            raise WorkflowLibraryError(
+                f"워크플로우 핫픽스 원본이 일반 파일이 아닙니다: {source}"
+            )
+        expected_hash = str(raw_item.get("sha256", ""))
+        source_hash = _sha256_bytes(source.read_bytes())
+        if not expected_hash or source_hash != expected_hash:
+            raise WorkflowLibraryError(
+                "워크플로우 핫픽스 원본 SHA-256이 상태와 다릅니다: "
+                f"{source}"
+            )
+        if target.is_symlink():
+            raise WorkflowLibraryError(
+                f"워크플로우 핫픽스 대상이 심볼릭 링크입니다: {target}"
+            )
+        if target.exists():
+            if not target.is_file():
+                raise WorkflowLibraryError(
+                    f"워크플로우 핫픽스 대상이 파일이 아닙니다: {target}"
+                )
+            if _sha256_bytes(target.read_bytes()) == expected_hash:
+                reused += 1
+                continue
+            operations.append(("replace", source, target))
+        else:
+            operations.append(("add", source, target))
+
+    state_changed = not _files_identical(staged_state_path, existing_state_path)
+    if not operations and not state_changed:
+        _mark_distribution_files_read_only(destination)
+        if log:
+            log(
+                "[워크플로우] 동일 버전 핫픽스 병합 완료: "
+                f"{destination.name}, 재사용 {reused}개, 추가 0개, 교체 0개"
+            )
+        return {"reused": reused, "added": 0, "replaced": 0}
+
+    backup_root = work_root / f"hotfix-backup-{uuid.uuid4().hex}"
+    backup_files = backup_root / "files"
+    backup_state = backup_root / _STATE_FILENAME
+    replaced = [entry for entry in operations if entry[0] == "replace"]
+    added = [entry for entry in operations if entry[0] == "add"]
+    original_modes: dict[str, int] = {}
+    original_state_mode: int | None = None
+    try:
+        backup_files.mkdir(parents=True, exist_ok=False)
+        for _, _, target in replaced:
+            original_modes[target.name] = target.stat().st_mode
+            shutil.copyfile(target, backup_files / target.name)
+        if state_changed:
+            original_state_mode = existing_state_path.stat().st_mode
+            shutil.copyfile(existing_state_path, backup_state)
+    except Exception as exc:
+        print(
+            "[COMFY_INSTALL][WORKFLOW_LIBRARY] 핫픽스 롤백 백업 실패: "
+            f"release={destination.name}, backup={backup_root}, error={exc}"
+        )
+        traceback.print_exc()
+        if backup_root.exists():
+            _safe_remove_stage(backup_root, work_root)
+        raise WorkflowLibraryError(
+            f"워크플로우 핫픽스 롤백 백업 실패: {exc}"
+        ) from exc
+
+    try:
+        for _, source, target in operations:
+            _replace_file_atomic(source, target)
+        if state_changed:
+            _replace_file_atomic(staged_state_path, existing_state_path)
+        _mark_distribution_files_read_only(destination)
+    except Exception as exc:
+        print(
+            "[COMFY_INSTALL][WORKFLOW_LIBRARY] 핫픽스 병합 실패, 롤백 시작: "
+            f"release={destination.name}, error={exc}"
+        )
+        traceback.print_exc()
+        rollback_errors: list[str] = []
+        for _, _, target in added:
+            try:
+                if target.exists():
+                    if target.is_symlink() or not target.is_file():
+                        raise WorkflowLibraryError(
+                            f"추가 파일 롤백 대상이 일반 파일이 아닙니다: {target}"
+                        )
+                    _make_file_writable(target)
+                    target.unlink()
+            except Exception as rollback_exc:
+                print(
+                    "[COMFY_INSTALL][WORKFLOW_LIBRARY] 핫픽스 추가 파일 "
+                    f"롤백 실패: target={target}, error={rollback_exc}"
+                )
+                traceback.print_exc()
+                rollback_errors.append(str(rollback_exc))
+        for _, _, target in replaced:
+            original = backup_files / target.name
+            try:
+                _replace_file_atomic(original, target)
+                target.chmod(original_modes[target.name])
+            except Exception as rollback_exc:
+                print(
+                    "[COMFY_INSTALL][WORKFLOW_LIBRARY] 핫픽스 교체 파일 "
+                    f"롤백 실패: target={target}, error={rollback_exc}"
+                )
+                traceback.print_exc()
+                rollback_errors.append(str(rollback_exc))
+        if state_changed:
+            try:
+                _replace_file_atomic(backup_state, existing_state_path)
+                if original_state_mode is None:
+                    raise WorkflowLibraryError(
+                        "핫픽스 상태 파일의 원래 권한 기록이 없습니다."
+                    )
+                existing_state_path.chmod(original_state_mode)
+            except Exception as rollback_exc:
+                print(
+                    "[COMFY_INSTALL][WORKFLOW_LIBRARY] 핫픽스 상태 파일 "
+                    f"롤백 실패: target={existing_state_path}, "
+                    f"error={rollback_exc}"
+                )
+                traceback.print_exc()
+                rollback_errors.append(str(rollback_exc))
+        if rollback_errors:
+            raise WorkflowLibraryError(
+                "워크플로우 핫픽스 병합과 롤백이 모두 실패했습니다. "
+                f"복구 백업을 보존합니다: {backup_root}"
+            ) from exc
+        _safe_remove_stage(backup_root, work_root)
+        _safe_remove_stage(stage, work_root)
+        raise WorkflowLibraryError(
+            f"워크플로우 핫픽스 병합에 실패하여 기존 상태로 복구했습니다: {exc}"
+        ) from exc
+
+    _safe_remove_stage(backup_root, work_root)
+    if log:
+        log(
+            "[워크플로우] 동일 버전 핫픽스 병합 완료: "
+            f"{destination.name}, 재사용 {reused}개, "
+            f"추가 {len(added)}개, 교체 {len(replaced)}개"
+        )
+    return {
+        "reused": reused,
+        "added": len(added),
+        "replaced": len(replaced),
+    }
+
+
 def unpack_to_library(
     *,
     pack_path: str | os.PathLike[str],
@@ -555,15 +768,20 @@ def unpack_to_library(
                     f"{destination}"
                 )
             existing = _read_json_object(existing_state_path, "기존 팩 상태")
-            if existing.get("pack_sha256") != extracted.pack_sha256:
+            if existing.get("release_version") != release:
                 raise WorkflowLibraryError(
-                    "동일한 배포 버전에 다른 팩이 이미 풀려 있습니다. "
-                    f"기존 파일을 덮어쓰지 않습니다: {release}"
+                    "동일 배포 버전 폴더와 기존 팩 상태 버전이 다릅니다: "
+                    f"folder={release}, "
+                    f"state={existing.get('release_version')!r}"
                 )
+            _merge_release_hotfix(
+                stage=stage,
+                destination=destination,
+                state=state,
+                work_root=work,
+                log=log,
+            )
             _safe_remove_stage(stage, work)
-            state = existing
-            if log:
-                log(f"[워크플로우] 동일한 배포 팩 재사용: {release}")
         else:
             os.replace(stage, destination)
             if log:
@@ -571,7 +789,7 @@ def unpack_to_library(
                     f"[워크플로우] 배포 원본 풀기 완료: {release}, "
                     f"{len(catalog)}개"
                 )
-        _mark_distribution_files_read_only(destination)
+            _mark_distribution_files_read_only(destination)
         if log:
             log(
                 "[워크플로우] 배포 원본 읽기 전용 보호 완료: "
@@ -582,7 +800,12 @@ def unpack_to_library(
             "directory": str(destination),
             "read_only": True,
         }
-    except WorkflowLibraryError:
+    except WorkflowLibraryError as exc:
+        print(
+            "[COMFY_INSTALL][WORKFLOW_LIBRARY] 팩 풀기 거부: "
+            f"pack={pack_path}, error={exc}"
+        )
+        traceback.print_exc()
         raise
     except Exception as exc:
         print(
