@@ -205,6 +205,7 @@ def test_hooking_updater_uses_main_only_after_explicit_call(tmp_path: Path, monk
     )
 
     assert result["changed"] is True
+    assert result["tracked_changes_backup"] is None
     assert ["git", "pull", "--ff-only", "origin", "main"] in commands
     assert all("dev" not in command for command in commands)
 
@@ -231,7 +232,8 @@ def _prepare_hooking_update_repository(
     _git(source, "config", "user.name", "Hooking Updater Test")
     _git(source, "config", "user.email", "updater@example.test")
     (source / "tracked.txt").write_text("version-1\n", encoding="utf-8")
-    _git(source, "add", "tracked.txt")
+    (source / ".gitignore").write_text("/update_backup/\n", encoding="utf-8")
+    _git(source, "add", "tracked.txt", ".gitignore")
     _git(source, "commit", "-m", "version 1")
     _git(tmp_path, "clone", str(source), str(deployment))
     monkeypatch.setattr(updater_module, "HOOKING_REPOSITORY", str(source))
@@ -285,6 +287,9 @@ def test_hooking_updater_restores_untracked_files_when_pull_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _source, deployment = _prepare_hooking_update_repository(tmp_path, monkeypatch)
+    tracked = deployment / "tracked.txt"
+    tracked.write_text("local tracked edit\n", encoding="utf-8")
+    _git(deployment, "add", "tracked.txt")
     user_file = deployment / "local-note.txt"
     user_file.write_text("keep me\n", encoding="utf-8")
     real_run_command = updater_module.run_command
@@ -296,10 +301,14 @@ def test_hooking_updater_restores_untracked_files_when_pull_fails(
 
     monkeypatch.setattr(updater_module, "run_command", fail_pull)
 
-    with pytest.raises(HookingServerUpdateError, match="simulated pull failure"):
+    with pytest.raises(HookingServerUpdateError, match="수정본은 보존했습니다"):
         _run_hooking_update(deployment, tmp_path)
 
+    assert tracked.read_text(encoding="utf-8") == "version-1\n"
     assert user_file.read_text(encoding="utf-8") == "keep me\n"
+    backups = list((deployment / "update_backup").glob("*/files/tracked.txt"))
+    assert len(backups) == 1
+    assert backups[0].read_text(encoding="utf-8") == "local tracked edit\n"
     assert not (deployment / ".git" / "comfy-installer-quarantine").exists()
 
 
@@ -327,19 +336,90 @@ def test_hooking_updater_preserves_quarantine_when_upstream_path_conflicts(
     assert conflict["conflicts"][0]["path"] == relative
 
 
-def test_hooking_updater_still_blocks_tracked_local_changes(
+def test_hooking_updater_backs_up_tracked_changes_then_applies_upstream(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source, deployment = _prepare_hooking_update_repository(tmp_path, monkeypatch)
+    tracked = deployment / "tracked.txt"
+    tracked.write_text("local tracked edit\n", encoding="utf-8")
+    user_file = deployment / "local-note.txt"
+    user_file.write_text("keep me\n", encoding="utf-8")
+    _commit_upstream(source, "tracked.txt", "version-2\n")
+
+    result = _run_hooking_update(deployment, tmp_path)
+
+    backup_result = result["tracked_changes_backup"]
+    assert backup_result is not None
+    backup_path = Path(backup_result["path"])
+    assert backup_path.parent == deployment / "update_backup"
+    assert backup_path.name[:11].count("-") == 2
+    assert (backup_path / "files" / "tracked.txt").read_text(
+        encoding="utf-8"
+    ) == "local tracked edit\n"
+    manifest = json.loads(
+        (backup_path / "manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest["automatic_restore"] is False
+    assert manifest["files"][0]["path"] == "tracked.txt"
+    assert manifest["files"][0]["state"] == "copied"
+    assert "local tracked edit" in (
+        backup_path / "local_changes.patch"
+    ).read_text(encoding="utf-8")
+    assert tracked.read_text(encoding="utf-8") == "version-2\n"
+    assert user_file.read_text(encoding="utf-8") == "keep me\n"
+    assert _git(
+        deployment,
+        "status",
+        "--short",
+        "--untracked-files=no",
+    ) == ""
+    assert not (deployment / ".git" / "comfy-installer-quarantine").exists()
+
+
+def test_hooking_updater_records_deleted_tracked_file_before_restore(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _source, deployment = _prepare_hooking_update_repository(tmp_path, monkeypatch)
+    (deployment / "tracked.txt").unlink()
+
+    result = _run_hooking_update(deployment, tmp_path)
+
+    backup_path = Path(result["tracked_changes_backup"]["path"])
+    manifest = json.loads(
+        (backup_path / "manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest["files"] == [
+        {
+            "path": "tracked.txt",
+            "state": "deleted",
+            "backup_path": None,
+        }
+    ]
+    assert "deleted file mode" in (
+        backup_path / "local_changes.patch"
+    ).read_text(encoding="utf-8")
+    assert (deployment / "tracked.txt").read_text(encoding="utf-8") == "version-1\n"
+
+
+def test_hooking_updater_does_not_restore_or_pull_when_backup_copy_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _source, deployment = _prepare_hooking_update_repository(tmp_path, monkeypatch)
     tracked = deployment / "tracked.txt"
     tracked.write_text("local tracked edit\n", encoding="utf-8")
-    user_file = deployment / "local-note.txt"
-    user_file.write_text("keep me\n", encoding="utf-8")
 
-    with pytest.raises(HookingServerUpdateError, match="추적 파일에 로컬 변경"):
+    def fail_copy(_source, _destination):
+        raise OSError("simulated backup failure")
+
+    monkeypatch.setattr(updater_module.shutil, "copy2", fail_copy)
+
+    with pytest.raises(HookingServerUpdateError, match="백업에 실패"):
         _run_hooking_update(deployment, tmp_path)
 
     assert tracked.read_text(encoding="utf-8") == "local tracked edit\n"
-    assert user_file.read_text(encoding="utf-8") == "keep me\n"
-    assert not (deployment / ".git" / "comfy-installer-quarantine").exists()
+    assert _git(deployment, "rev-parse", "HEAD") == _git(
+        deployment, "rev-parse", "origin/main"
+    )

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import datetime
+import hashlib
 import json
 import os
+import shutil
 import subprocess
 import traceback
 import uuid
@@ -24,12 +26,20 @@ LogCallback = Callable[[str], None]
 HOOKING_REPOSITORY = "https://github.com/lbh848/comfyui_hooking_server"
 HOOKING_BRANCH = "main"
 _QUARANTINE_ROOT_NAME = "comfy-installer-quarantine"
+_TRACKED_BACKUP_ROOT_NAME = "update_backup"
 
 
 @dataclass(frozen=True)
 class _UntrackedQuarantine:
     path: Path | None
     entries: tuple[Path, ...]
+
+
+@dataclass(frozen=True)
+class _TrackedChangesBackup:
+    path: Path | None
+    entries: tuple[Path, ...]
+    patch_path: Path | None
 
 
 def _emit(message: str, log: LogCallback | None) -> None:
@@ -71,6 +81,7 @@ def _list_untracked_files(root: Path) -> tuple[Path, ...]:
 
     entries: list[Path] = []
     seen: set[Path] = set()
+    skipped_update_backups = 0
     for raw_path in decoded.split("\0"):
         if not raw_path:
             continue
@@ -88,10 +99,19 @@ def _list_untracked_files(root: Path) -> tuple[Path, ...]:
             raise HookingServerUpdateError(
                 f"안전하지 않은 미추적 파일 경로를 격리하지 않습니다: {raw_path!r}"
             )
+        if posix_path.parts[0].casefold() == _TRACKED_BACKUP_ROOT_NAME.casefold():
+            skipped_update_backups += 1
+            continue
         relative = Path(*posix_path.parts)
         if relative not in seen:
             entries.append(relative)
             seen.add(relative)
+    if skipped_update_backups:
+        print(
+            "[COMFY_INSTALL][UPDATE] 영구 로컬 수정 백업은 미추적 파일 "
+            "임시 격리에서 제외: "
+            f"count={skipped_update_backups}, root={root / _TRACKED_BACKUP_ROOT_NAME}"
+        )
     return tuple(entries)
 
 
@@ -361,6 +381,304 @@ def _restore_untracked_quarantine(
     )
 
 
+def _run_git_capture(root: Path, *arguments: str) -> bytes:
+    command = ["git", *arguments]
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=root,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            creationflags=_git_creationflags(),
+        )
+        return completed.stdout
+    except Exception as exc:
+        stderr = ""
+        if isinstance(exc, subprocess.CalledProcessError) and exc.stderr:
+            stderr = exc.stderr.decode("utf-8", errors="replace").strip()
+        print(
+            "[COMFY_INSTALL][UPDATE] Git 변경 내용 캡처 실패: "
+            f"root={root}, command={command}, stderr={stderr!r}, error={exc}"
+        )
+        traceback.print_exc()
+        raise HookingServerUpdateError(
+            f"로컬 수정 백업용 Git 정보를 읽지 못했습니다: {root}"
+        ) from exc
+
+
+def _tracked_change_paths(root: Path) -> tuple[Path, ...]:
+    raw_output = _run_git_capture(root, "diff", "--name-only", "-z", "HEAD", "--")
+    try:
+        decoded = raw_output.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        print(
+            "[COMFY_INSTALL][UPDATE] 추적 변경 파일 경로 UTF-8 해석 실패: "
+            f"root={root}, error={exc}"
+        )
+        traceback.print_exc()
+        raise HookingServerUpdateError(
+            "로컬 수정 파일 경로를 UTF-8로 해석하지 못해 업데이트를 중단합니다."
+        ) from exc
+
+    entries: list[Path] = []
+    seen: set[Path] = set()
+    for raw_path in decoded.split("\0"):
+        if not raw_path:
+            continue
+        posix_path = PurePosixPath(raw_path)
+        if (
+            posix_path.is_absolute()
+            or not posix_path.parts
+            or any(part in {"", ".", ".."} for part in posix_path.parts)
+            or posix_path.parts[0].casefold() == ".git"
+        ):
+            print(
+                "[COMFY_INSTALL][UPDATE] 안전하지 않은 추적 변경 경로 거부: "
+                f"root={root}, path={raw_path!r}"
+            )
+            raise HookingServerUpdateError(
+                f"안전하지 않은 로컬 수정 경로는 백업하지 않습니다: {raw_path!r}"
+            )
+        if posix_path.parts[0].casefold() == _TRACKED_BACKUP_ROOT_NAME.casefold():
+            print(
+                "[COMFY_INSTALL][UPDATE] 영구 백업 폴더가 Git 추적 변경에 "
+                f"포함되어 업데이트 중단: path={raw_path!r}"
+            )
+            raise HookingServerUpdateError(
+                f"{_TRACKED_BACKUP_ROOT_NAME}/ 폴더가 Git 추적 대상입니다. "
+                "백업 재귀를 막기 위해 업데이트를 중단합니다."
+            )
+        relative = Path(*posix_path.parts)
+        if relative not in seen:
+            entries.append(relative)
+            seen.add(relative)
+    return tuple(entries)
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _create_tracked_backup_path(root: Path) -> Path:
+    backup_root = root / _TRACKED_BACKUP_ROOT_NAME
+    if backup_root.is_symlink():
+        print(
+            "[COMFY_INSTALL][UPDATE] 영구 백업 루트가 심볼릭 링크여서 거부: "
+            f"path={backup_root}"
+        )
+        raise HookingServerUpdateError(
+            f"로컬 수정 백업 폴더가 심볼릭 링크입니다: {backup_root}"
+        )
+    try:
+        backup_root.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.datetime.now().astimezone().strftime("%Y-%m-%d_%H%M%S")
+        candidate = backup_root / stamp
+        if candidate.exists():
+            candidate = backup_root / f"{stamp}_{uuid.uuid4().hex[:8]}"
+        candidate.mkdir(parents=False, exist_ok=False)
+        return candidate
+    except HookingServerUpdateError:
+        raise
+    except Exception as exc:
+        print(
+            "[COMFY_INSTALL][UPDATE] 영구 로컬 수정 백업 폴더 생성 실패: "
+            f"root={backup_root}, error={exc}"
+        )
+        traceback.print_exc()
+        raise HookingServerUpdateError(
+            f"로컬 수정 백업 폴더를 만들지 못했습니다: {backup_root}"
+        ) from exc
+
+
+def _backup_and_restore_tracked_changes(
+    root: Path,
+    *,
+    changes: list[str],
+    head: str,
+    log: LogCallback | None,
+) -> _TrackedChangesBackup:
+    if not changes:
+        _emit("영구 백업할 Git 추적 파일의 로컬 수정 없음", log)
+        return _TrackedChangesBackup(path=None, entries=(), patch_path=None)
+
+    backup_path: Path | None = None
+    entries: tuple[Path, ...] = ()
+    try:
+        entries = _tracked_change_paths(root)
+        if not entries:
+            print(
+                "[COMFY_INSTALL][UPDATE] Git status에는 추적 변경이 있지만 "
+                f"백업할 경로를 찾지 못했습니다: changes={changes!r}"
+            )
+            raise HookingServerUpdateError(
+                "Git 추적 변경 파일 목록을 확인하지 못해 업데이트를 중단합니다."
+            )
+
+        backup_path = _create_tracked_backup_path(root)
+        files_root = backup_path / "files"
+        files_root.mkdir()
+        _emit(
+            "Git 추적 파일의 로컬 수정 영구 백업 시작: "
+            f"count={len(entries)}, path={backup_path}",
+            log,
+        )
+
+        file_records: list[dict[str, object]] = []
+        for relative in entries:
+            _assert_no_symlink_parent(root, relative)
+            source = root / relative
+            destination = files_root / relative
+            if not os.path.lexists(source):
+                file_records.append(
+                    {
+                        "path": relative.as_posix(),
+                        "state": "deleted",
+                        "backup_path": None,
+                    }
+                )
+                _emit(f"삭제된 추적 파일 상태 기록: {relative.as_posix()}", log)
+                continue
+            if source.is_symlink():
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                link_target = os.readlink(source)
+                destination.symlink_to(link_target, target_is_directory=source.is_dir())
+                if not destination.is_symlink() or os.readlink(destination) != link_target:
+                    raise HookingServerUpdateError(
+                        f"심볼릭 링크 백업 검증에 실패했습니다: {relative}"
+                    )
+                file_records.append(
+                    {
+                        "path": relative.as_posix(),
+                        "state": "symlink",
+                        "backup_path": (Path("files") / relative).as_posix(),
+                        "link_target": link_target,
+                    }
+                )
+                _emit(f"수정된 추적 심볼릭 링크 백업: {relative.as_posix()}", log)
+                continue
+            if source.is_dir():
+                print(
+                    "[COMFY_INSTALL][UPDATE] 디렉터리 형태의 추적 변경은 "
+                    f"자동 백업하지 않음: path={source}"
+                )
+                raise HookingServerUpdateError(
+                    "디렉터리 또는 서브모듈 형태의 Git 추적 변경은 안전하게 "
+                    f"자동 백업할 수 없습니다: {relative}"
+                )
+            if not source.is_file():
+                print(
+                    "[COMFY_INSTALL][UPDATE] 지원하지 않는 추적 파일 형식: "
+                    f"path={source}"
+                )
+                raise HookingServerUpdateError(
+                    f"지원하지 않는 로컬 수정 파일 형식입니다: {relative}"
+                )
+
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, destination)
+            source_hash = _file_sha256(source)
+            backup_hash = _file_sha256(destination)
+            if source_hash != backup_hash:
+                print(
+                    "[COMFY_INSTALL][UPDATE] 추적 파일 백업 해시 불일치: "
+                    f"source={source}, backup={destination}, "
+                    f"source_sha256={source_hash}, backup_sha256={backup_hash}"
+                )
+                raise HookingServerUpdateError(
+                    f"로컬 수정 파일 백업 검증에 실패했습니다: {relative}"
+                )
+            file_records.append(
+                {
+                    "path": relative.as_posix(),
+                    "state": "copied",
+                    "backup_path": (Path("files") / relative).as_posix(),
+                    "size": destination.stat().st_size,
+                    "sha256": backup_hash,
+                }
+            )
+            _emit(f"수정된 추적 파일 백업: {relative.as_posix()}", log)
+
+        patch_bytes = _run_git_capture(root, "diff", "--binary", "--full-index", "HEAD", "--")
+        patch_text = patch_bytes.decode("utf-8")
+        patch_path = backup_path / "local_changes.patch"
+        with patch_path.open("w", encoding="utf-8", newline="\n") as stream:
+            stream.write(patch_text)
+
+        manifest_path = backup_path / "manifest.json"
+        manifest = {
+            "schema_version": 1,
+            "created_at": datetime.datetime.now().astimezone().isoformat(
+                timespec="seconds"
+            ),
+            "project_root": str(root),
+            "head": head,
+            "files_root": "files",
+            "patch_file": patch_path.name,
+            "git_status": changes,
+            "files": file_records,
+            "automatic_restore": False,
+            "restore_note": (
+                "업데이트 후 필요한 파일만 files/에서 수동으로 복구하세요. "
+                "전체 덮어쓰기는 새 버전 변경을 되돌릴 수 있습니다."
+            ),
+        }
+        with manifest_path.open("w", encoding="utf-8", newline="\n") as stream:
+            stream.write(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
+
+        run_command(
+            [
+                "git",
+                "restore",
+                "--source=HEAD",
+                "--staged",
+                "--worktree",
+                "--",
+                ".",
+            ],
+            cwd=root,
+        )
+        remaining = run_command(
+            ["git", "status", "--porcelain", "--untracked-files=no"],
+            cwd=root,
+        )
+        if remaining:
+            print(
+                "[COMFY_INSTALL][UPDATE] 백업 후 Git 추적 파일 원본 복구 "
+                f"검증 실패: remaining={remaining!r}, backup={backup_path}"
+            )
+            raise HookingServerUpdateError(
+                "로컬 수정은 백업했지만 Git 원본 복구가 완료되지 않았습니다. "
+                f"백업 위치: {backup_path}"
+            )
+        _emit(
+            "Git 추적 파일 원본 복구 완료; 수정본은 자동 복구하지 않음: "
+            f"count={len(entries)}, path={backup_path}",
+            log,
+        )
+        return _TrackedChangesBackup(
+            path=backup_path,
+            entries=entries,
+            patch_path=patch_path,
+        )
+    except Exception as exc:
+        print(
+            "[COMFY_INSTALL][UPDATE] Git 추적 파일 로컬 수정 백업/복구 실패: "
+            f"root={root}, backup={backup_path}, error={exc}"
+        )
+        traceback.print_exc()
+        if isinstance(exc, HookingServerUpdateError):
+            raise
+        location = f" 부분 백업 위치: {backup_path}" if backup_path else ""
+        raise HookingServerUpdateError(
+            f"Git 추적 파일의 로컬 수정 백업에 실패했습니다.{location}"
+        ) from exc
+
+
 def _git_value(root: Path, *arguments: str) -> str:
     lines = run_command(["git", *arguments], cwd=root)
     return lines[-1].strip() if lines else ""
@@ -405,11 +723,6 @@ def update_hooking_server_main(
             ["git", "status", "--porcelain", "--untracked-files=no"],
             cwd=root,
         )
-        if changes:
-            raise HookingServerUpdateError(
-                "후킹 서버의 추적 파일에 로컬 변경이 있어 업데이트하지 않습니다: "
-                + ", ".join(changes[:12])
-            )
         before = _git_value(root, "rev-parse", "HEAD").lower()
         if config_backup is None:
             config_backup = backup_current_config(
@@ -417,6 +730,12 @@ def update_hooking_server_main(
                 backup_dir=backup_dir,
                 reason="hooking_update",
             )
+        tracked_backup = _backup_and_restore_tracked_changes(
+            root,
+            changes=changes,
+            head=before,
+            log=log,
+        )
         if log:
             log(
                 "[후킹 서버 업데이트] 사용자가 요청하여 origin/main 업데이트 시작: "
@@ -445,7 +764,19 @@ def update_hooking_server_main(
                 raise HookingServerUpdateError(
                     "후킹 서버 업데이트와 사용자 파일 복원이 모두 "
                     "실패했습니다. "
-                    f"격리본 위치: {quarantine.path}"
+                    f"격리본 위치: {quarantine.path}; "
+                    f"추적 파일 백업 위치: {tracked_backup.path or '(없음)'}"
+                ) from update_exc
+            if tracked_backup.path is not None:
+                _emit(
+                    "Git 업데이트는 실패했지만 추적 파일 수정본은 영구 "
+                    f"백업에 보존됨: {tracked_backup.path}",
+                    log,
+                )
+                raise HookingServerUpdateError(
+                    "후킹 서버 업데이트에 실패했습니다. 추적 파일의 로컬 "
+                    f"수정본은 보존했습니다: {tracked_backup.path}; "
+                    f"원인: {update_exc}"
                 ) from update_exc
             raise
         _restore_untracked_quarantine(root, quarantine, log=log)
@@ -468,6 +799,19 @@ def update_hooking_server_main(
             "quarantined_untracked": [
                 entry.as_posix() for entry in quarantine.entries
             ],
+            "tracked_changes_backup": (
+                {
+                    "path": str(tracked_backup.path),
+                    "files_root": str(tracked_backup.path / "files"),
+                    "patch_path": str(tracked_backup.patch_path),
+                    "entries": [
+                        entry.as_posix() for entry in tracked_backup.entries
+                    ],
+                    "automatic_restore": False,
+                }
+                if tracked_backup.path is not None
+                else None
+            ),
         }
     except HookingServerUpdateError:
         raise
