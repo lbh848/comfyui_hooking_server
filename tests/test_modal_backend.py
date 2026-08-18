@@ -3443,3 +3443,94 @@ async def test_managed_workflow_run_rejects_missing_remote_workflow(
 
     with pytest.raises(FileNotFoundError, match="동기화되지 않았습니다"):
         await service.start_workflow_run(workflow.name)
+
+
+def _stale_check_service(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    remote_sha256: str,
+) -> tuple[ModalService, Path]:
+    """start_workflow_run 이 원격 sha256 을 그대로 돌려받도록 세팅한다."""
+    project_root, user_root = _modal_test_project(tmp_path)
+    workflow = user_root / "stale-check.json"
+    workflow.write_text(
+        '{"1":{"class_type":"EmptyLatentImage","inputs":{}}}',
+        encoding="utf-8",
+    )
+    service = ModalService(project_root, lambda: {"modal_enabled": True})
+
+    async def connected(_settings: ModalSettings) -> bool:
+        return True
+
+    async def client_action(
+        _settings: ModalSettings,
+        action: str,
+        *,
+        timeout: float,
+        **payload,
+    ) -> dict:
+        assert action == "read_workflow"
+        return {
+            "name": workflow.name,
+            "sha256": remote_sha256,
+            "workflow": {"1": {"class_type": "EmptyLatentImage", "inputs": {}}},
+        }
+
+    async def noop_run(*_args, **_kwargs) -> None:
+        return None
+
+    monkeypatch.setattr(service, "account_connected", connected)
+    monkeypatch.setattr(service, "_run_client_action", client_action)
+    # 실제 실행은 이 테스트의 관심사가 아니다. 시작 시점의 상태만 본다.
+    monkeypatch.setattr(service, "_run_saved_workflow", noop_run)
+    return service, workflow
+
+
+@pytest.mark.asyncio
+async def test_workflow_run_flags_stale_remote_copy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """원격 사본이 로컬과 다르면 실행 상태에 그 사실이 드러나야 한다.
+
+    실행은 Volume 의 원격 사본으로 한다. 로컬 JSON 을 고쳐도 재동기화
+    전에는 반영되지 않는데, 예전에는 아무 표시 없이 옛 사본으로 돌아
+    원인을 찾기 어려웠다(실제로 실행 한 번을 통째로 날렸다).
+    """
+    service, workflow = _stale_check_service(
+        tmp_path, monkeypatch, remote_sha256="b" * 64
+    )
+    local_sha256 = hashlib.sha256(workflow.read_bytes()).hexdigest()
+    assert local_sha256 != "b" * 64
+
+    state = await service.start_workflow_run(workflow.name)
+
+    assert state["workflow_stale"] is True
+    assert state["local_sha256"] == local_sha256
+    assert state["remote_sha256"] == "b" * 64
+    assert "재동기화" in state["message"]
+
+
+@pytest.mark.asyncio
+async def test_workflow_run_does_not_warn_when_remote_matches_local(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """동기화가 맞으면 경고를 달지 않는다(거짓 경고 방지)."""
+    project_root, user_root = _modal_test_project(tmp_path)
+    probe = user_root / "stale-check.json"
+    probe.write_text(
+        '{"1":{"class_type":"EmptyLatentImage","inputs":{}}}',
+        encoding="utf-8",
+    )
+    matching = hashlib.sha256(probe.read_bytes()).hexdigest()
+
+    service, workflow = _stale_check_service(
+        tmp_path / "second", monkeypatch, remote_sha256=matching
+    )
+    state = await service.start_workflow_run(workflow.name)
+
+    assert state["workflow_stale"] is False
+    assert state["local_sha256"] == matching
+    assert "재동기화" not in state["message"]

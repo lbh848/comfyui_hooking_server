@@ -3747,16 +3747,47 @@ class ModalService:
             settings,
             normalized_id,
         )
+        # 실행은 항상 Volume 의 원격 사본으로 한다. 로컬 JSON 을 고쳐도
+        # 재동기화(/api/modal/install) 전에는 반영되지 않는데, 지금까지는
+        # 아무 표시 없이 옛 사본으로 돌아 원인을 찾기 어려웠다.
+        # 그래서 실행 전에 로컬 파일 해시와 비교해 상태에 남긴다.
+        local_source = Path(plan["workflow_files"][0]["source_path"])
+        local_sha256 = ""
+        stale = False
+        try:
+            local_sha256 = await asyncio.to_thread(self._sha256_file, local_source)
+            stale = bool(local_sha256) and bool(remote_sha256) and local_sha256 != remote_sha256
+        except Exception as exc:
+            # 해시 비교는 진단용이다. 실패해도 실행을 막지 않는다.
+            print(
+                "[MODAL] 로컬 워크플로우 해시 계산 실패(동기화 비교 생략): "
+                f"path={local_source}, error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+        if stale:
+            print(
+                "[MODAL] ⚠ 원격 워크플로우가 로컬과 다릅니다 — 옛 사본으로 실행됩니다: "
+                f"workflow={normalized_id}, local_sha256={local_sha256[:12]}, "
+                f"remote_sha256={remote_sha256[:12]}. "
+                "최신 내용으로 실행하려면 워크플로우를 다시 동기화하세요."
+            )
         job_id = uuid.uuid4().hex
         now = datetime.datetime.now(datetime.timezone.utc).isoformat()
         state = {
             "job_id": job_id,
             "workflow_id": normalized_id,
-            "source_name": Path(plan["workflow_files"][0]["source_path"]).name,
+            "source_name": local_source.name,
             "remote_sha256": remote_sha256,
+            "local_sha256": local_sha256,
+            "workflow_stale": stale,
             "state": "queued",
             "phase": "queued",
-            "message": "Modal 워크플로우 실행을 준비하고 있습니다.",
+            "message": (
+                "⚠ 원격 사본이 로컬 파일과 다릅니다. 옛 사본으로 실행합니다 — "
+                "재동기화가 필요할 수 있습니다."
+                if stale
+                else "Modal 워크플로우 실행을 준비하고 있습니다."
+            ),
             "created_at": now,
             "result_available": False,
         }
