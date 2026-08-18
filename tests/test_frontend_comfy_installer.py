@@ -22,6 +22,10 @@ def test_settings_has_comfy_installer_tab_and_key_inputs() -> None:
     assert 'id="comfy-installer-unpack-btn"' in FRONTEND
     assert 'id="comfy-installer-update-btn"' in FRONTEND
     assert 'id="comfy-installer-e2e-btn"' in FRONTEND
+    assert 'id="comfy-installer-sage-enable-btn"' in FRONTEND
+    assert 'id="comfy-installer-sage-disable-btn"' in FRONTEND
+    assert ">PatchSageAttention 일괄 활성화</button>" in FRONTEND
+    assert ">PatchSageAttention 일괄 비활성화</button>" in FRONTEND
     assert 'id="comfy-installer-e2e-modal"' in FRONTEND
     assert 'id="comfy-installer-compat-start-btn"' in FRONTEND
     assert 'id="comfy-installer-migrate-btn"' in FRONTEND
@@ -57,6 +61,7 @@ def test_frontend_uses_dedicated_installer_apis_and_does_not_persist_keys() -> N
         "/api/comfy-installer/cancel",
         "/api/comfy-installer/unpack-workflow-pack",
         "/api/comfy-installer/workflow-library",
+        "/api/comfy-installer/workflows/patch-sage-attention",
         "/api/comfy-installer/civitai-key",
         "/api/comfy-installer/troubleshooting/civitai-key",
         "/api/comfy-installer/migrate",
@@ -70,6 +75,21 @@ def test_frontend_uses_dedicated_installer_apis_and_does_not_persist_keys() -> N
     assert "install_mode: installMode" in FRONTEND
     assert "restore_config_after_success" not in FRONTEND
     assert "workflowKeyInput.value = ''" in FRONTEND
+
+
+def test_patch_sage_attention_buttons_are_on_a_new_row_below_run_actions() -> None:
+    cancel_button = FRONTEND.index('id="comfy-installer-cancel-btn"')
+    sage_row = FRONTEND.index(
+        'class="comfy-installer-actions comfy-installer-sage-actions"'
+    )
+    enable_button = FRONTEND.index('id="comfy-installer-sage-enable-btn"')
+    disable_button = FRONTEND.index('id="comfy-installer-sage-disable-btn"')
+
+    assert cancel_button < sage_row < enable_button < disable_button
+    assert "async function comfyInstallerSetPatchSageAttention(enabled)" in FRONTEND
+    assert "body: JSON.stringify({ enabled: Boolean(enabled) })" in FRONTEND
+    assert "bypass(mode 4)" in FRONTEND
+    assert "comfyInstallerPatchSageModeBusy" in FRONTEND
 
 
 def test_workflow_e2e_is_optional_and_uses_read_only_originals_modal() -> None:

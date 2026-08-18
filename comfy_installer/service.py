@@ -93,6 +93,10 @@ from .workflow_library import (
     selection_requirements,
     unpack_to_library,
 )
+from .workflow_node_modes import (
+    WorkflowNodeModeError,
+    set_patch_sage_attention_enabled,
+)
 
 
 class InstallerServiceError(RuntimeError):
@@ -402,6 +406,51 @@ class ComfyInstallerService:
             self.comfy_root,
             self.workflow_library_root,
         )
+
+    def set_patch_sage_attention_enabled(self, enabled: bool) -> dict:
+        if not isinstance(enabled, bool):
+            print(
+                "[COMFY_INSTALL][SERVICE] Patch Sage Attention 모드 변경 거부: "
+                f"enabled={enabled!r}"
+            )
+            raise InstallerServiceError("enabled는 boolean이어야 합니다.")
+
+        with self._lock:
+            if self._thread is not None and self._thread.is_alive():
+                print(
+                    "[COMFY_INSTALL][SERVICE] Patch Sage Attention 모드 변경 거부: "
+                    "설치 또는 업데이트 작업 실행 중"
+                )
+                raise InstallerServiceError(
+                    "설치 또는 업데이트가 끝난 뒤 워크플로우를 변경하세요."
+                )
+            try:
+                result = set_patch_sage_attention_enabled(
+                    workflow_root=embedded_workflow_base_dir(self.comfy_root),
+                    backup_root=(
+                        self.project_root
+                        / "backups"
+                        / "comfy_workflows"
+                        / "patch_sage_attention"
+                    ),
+                    enabled=enabled,
+                )
+            except WorkflowNodeModeError as exc:
+                print(
+                    "[COMFY_INSTALL][SERVICE] Patch Sage Attention "
+                    f"일괄 변경 실패: enabled={enabled}, error={exc}"
+                )
+                traceback.print_exc()
+                raise InstallerServiceError(str(exc)) from exc
+
+            action_label = "활성화" if enabled else "비활성화"
+            self._log(
+                f"[워크플로우] Patch Sage Attention 일괄 {action_label} 완료: "
+                f"대상 {result['matched_nodes']}개, "
+                f"변경 {result['changed_nodes']}개, "
+                f"파일 {result['changed_files']}개"
+            )
+            return result
 
     def e2e_workflow_catalog(self) -> dict:
         python = uv_python_path(self.comfy_root / ".venv")

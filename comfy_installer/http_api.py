@@ -104,6 +104,40 @@ async def handle_workflow_library(request: web.Request) -> web.Response:
         return _json_error(str(exc), status=500)
 
 
+async def handle_patch_sage_attention_mode(
+    request: web.Request,
+) -> web.Response:
+    service = request.app[APP_SERVICE_KEY]
+    try:
+        body = await _read_json_object(request)
+        enabled = body.get("enabled")
+        if not isinstance(enabled, bool):
+            print(
+                "[COMFY_INSTALL][API] Patch Sage Attention 요청 거부: "
+                f"enabled={enabled!r}"
+            )
+            return _json_error("enabled는 boolean이어야 합니다.", status=400)
+        result = await asyncio.to_thread(
+            service.set_patch_sage_attention_enabled,
+            enabled,
+        )
+        return web.json_response({"ok": True, "result": result})
+    except InstallerServiceError as exc:
+        print(
+            "[COMFY_INSTALL][API] Patch Sage Attention 일괄 변경 거부: "
+            f"{exc}"
+        )
+        traceback.print_exc()
+        return _json_error(str(exc), status=409)
+    except Exception as exc:
+        print(
+            "[COMFY_INSTALL][API] Patch Sage Attention 일괄 변경 실패: "
+            f"{exc}"
+        )
+        traceback.print_exc()
+        return _json_error(str(exc), status=500)
+
+
 async def handle_e2e_catalog(request: web.Request) -> web.Response:
     service = request.app[APP_SERVICE_KEY]
     try:
@@ -496,6 +530,10 @@ def register_comfy_installer_routes(
     app.router.add_post("/api/comfy-installer/preflight", handle_preflight)
     app.router.add_get(
         "/api/comfy-installer/workflow-library", handle_workflow_library
+    )
+    app.router.add_post(
+        "/api/comfy-installer/workflows/patch-sage-attention",
+        handle_patch_sage_attention_mode,
     )
     app.router.add_get(
         "/api/comfy-installer/e2e-catalog", handle_e2e_catalog

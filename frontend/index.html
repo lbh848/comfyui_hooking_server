@@ -6699,7 +6699,9 @@
         #comfy-installer-start-btn,
         #comfy-installer-compat-start-btn,
         #comfy-installer-update-btn,
-        #comfy-installer-e2e-btn {
+        #comfy-installer-e2e-btn,
+        #comfy-installer-sage-enable-btn,
+        #comfy-installer-sage-disable-btn {
             min-width: 120px;
         }
         #comfy-installer-compat-start-btn {
@@ -6716,6 +6718,23 @@
             border-color: color-mix(in srgb, #55d69e 52%, var(--border));
             color: color-mix(in srgb, #8ce8bb 82%, var(--text));
             background: color-mix(in srgb, #55d69e 9%, var(--surface2));
+        }
+        .comfy-installer-sage-actions { margin-top: 8px; }
+        #comfy-installer-sage-enable-btn {
+            border-color: color-mix(in srgb, #55d69e 52%, var(--border));
+            color: color-mix(in srgb, #8ce8bb 82%, var(--text));
+            background: color-mix(in srgb, #55d69e 9%, var(--surface2));
+        }
+        #comfy-installer-sage-disable-btn {
+            border-color: color-mix(in srgb, #e3a23a 55%, var(--border));
+            color: color-mix(in srgb, #ffd28a 78%, var(--text));
+            background: color-mix(in srgb, #e3a23a 10%, var(--surface2));
+        }
+        .comfy-installer-sage-note {
+            flex: 1 1 250px;
+            color: var(--text2);
+            font-size: .68rem;
+            line-height: 1.45;
         }
         #comfy-installer-e2e-modal { z-index: 1900; }
         .comfy-installer-e2e-content {
@@ -23473,6 +23492,11 @@
                                 <button type="button" class="comfy-installer-btn" id="comfy-installer-e2e-btn" onclick="comfyInstallerOpenE2EModal()">E2E 검사</button>
                                 <button type="button" class="comfy-installer-btn danger" id="comfy-installer-cancel-btn" onclick="comfyInstallerCancel()" disabled>안전하게 중단</button>
                             </div>
+                            <div class="comfy-installer-actions comfy-installer-sage-actions">
+                                <button type="button" class="comfy-installer-btn" id="comfy-installer-sage-enable-btn" onclick="comfyInstallerSetPatchSageAttention(true)" title="SOYA_USER의 PathchSageAttentionKJ 노드를 모두 활성화합니다.">PatchSageAttention 일괄 활성화</button>
+                                <button type="button" class="comfy-installer-btn" id="comfy-installer-sage-disable-btn" onclick="comfyInstallerSetPatchSageAttention(false)" title="SOYA_USER의 PathchSageAttentionKJ 노드를 MODEL 연결을 유지하는 bypass 모드로 바꿉니다.">PatchSageAttention 일괄 비활성화</button>
+                                <span class="comfy-installer-sage-note" id="comfy-installer-sage-note">SOYA_USER 전체를 노드 제목·워크플로우 파일명과 관계없이 처리합니다. 열려 있는 ComfyUI 워크플로우는 다시 열어야 반영됩니다.</span>
+                            </div>
                             <p class="comfy-installer-note" style="margin-top:9px;">
                                 설치는 선택한 워크플로우에 필요한 모델만 받고 E2E 없이 완료됩니다. 업데이트도 워크플로우 실행 검사를 하지 않으며,
                                 후킹 서버가 바뀌면 재시작 후 한 번 더 눌러야 합니다. E2E 검사는 설치 완료 후 별도 버튼에서 읽기 전용 배포 원본 중 지원되는 워크플로우만 선택해 실행하거나 전부 건너뛸 수 있습니다.
@@ -32259,6 +32283,7 @@
         let comfyInstallerE2ECatalog = { release_version: '', items: [] };
         let comfyInstallerLastState = 'idle';
         let comfyInstallerShutdownRequested = false;
+        let comfyInstallerPatchSageModeBusy = false;
 
         function comfyInstallerFormatBytes(value) {
             const bytes = Number(value);
@@ -32728,6 +32753,8 @@
             const compatibilityStartButton = document.getElementById('comfy-installer-compat-start-btn');
             const updateButton = document.getElementById('comfy-installer-update-btn');
             const e2eButton = document.getElementById('comfy-installer-e2e-btn');
+            const sageEnableButton = document.getElementById('comfy-installer-sage-enable-btn');
+            const sageDisableButton = document.getElementById('comfy-installer-sage-disable-btn');
             const unpackButton = document.getElementById('comfy-installer-unpack-btn');
             const migrateButton = document.getElementById('comfy-installer-migrate-btn');
             const retargetConfigButton = document.getElementById('comfy-installer-retarget-config-btn');
@@ -32814,6 +32841,8 @@
             if (compatibilityStartButton) compatibilityStartButton.disabled = running;
             if (updateButton) updateButton.disabled = running;
             if (e2eButton) e2eButton.disabled = running;
+            if (sageEnableButton) sageEnableButton.disabled = running || comfyInstallerPatchSageModeBusy;
+            if (sageDisableButton) sageDisableButton.disabled = running || comfyInstallerPatchSageModeBusy;
             if (unpackButton) unpackButton.disabled = running;
             if (migrateButton) migrateButton.disabled = running;
             if (retargetConfigButton) retargetConfigButton.disabled = running;
@@ -32976,6 +33005,64 @@
                 showToast(`업데이트 시작 실패: ${error.message || error}`, 'error');
             } finally {
                 if (button && !accepted) button.disabled = false;
+            }
+        }
+
+        async function comfyInstallerSetPatchSageAttention(enabled) {
+            const actionLabel = enabled ? '활성화' : '비활성화';
+            const modeDescription = enabled
+                ? '대상 노드를 mode 0으로 활성화합니다.'
+                : '대상 노드를 MODEL 연결이 유지되는 bypass(mode 4)로 비활성화합니다.';
+            if (!window.confirm(
+                `SOYA_USER의 PatchSageAttention 노드를 일괄 ${actionLabel}할까요?\n\n` +
+                `${modeDescription}\n변경되는 워크플로우는 backups 폴더에 먼저 백업합니다.`
+            )) return;
+
+            const enableButton = document.getElementById('comfy-installer-sage-enable-btn');
+            const disableButton = document.getElementById('comfy-installer-sage-disable-btn');
+            const note = document.getElementById('comfy-installer-sage-note');
+            comfyInstallerPatchSageModeBusy = true;
+            if (enableButton) enableButton.disabled = true;
+            if (disableButton) disableButton.disabled = true;
+            if (note) note.textContent = `PatchSageAttention 노드를 일괄 ${actionLabel}하는 중입니다...`;
+            comfyInstallerSetError('');
+            try {
+                const data = await fetchJSON('/api/comfy-installer/workflows/patch-sage-attention', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ enabled: Boolean(enabled) }),
+                });
+                const result = data.result || {};
+                const matchedNodes = Number(result.matched_nodes || 0);
+                const changedNodes = Number(result.changed_nodes || 0);
+                const changedFiles = Number(result.changed_files || 0);
+                const backupName = result.backup_path
+                    ? String(result.backup_path).split(/[\\/]/).pop()
+                    : '';
+                if (note) {
+                    note.textContent = matchedNodes === 0
+                        ? '대상 PathchSageAttentionKJ 노드를 찾지 못했습니다.'
+                        : `대상 ${matchedNodes}개 · 변경 ${changedNodes}개 · 파일 ${changedFiles}개` +
+                            (backupName ? ` · 백업 ${backupName}` : ' · 이미 요청 상태');
+                }
+                if (matchedNodes === 0) {
+                    showToast('SOYA_USER에서 PatchSageAttention 노드를 찾지 못했습니다', 'warning');
+                } else if (changedNodes === 0) {
+                    showToast(`PatchSageAttention ${matchedNodes}개가 이미 모두 ${actionLabel} 상태입니다`, 'success');
+                } else {
+                    showToast(`PatchSageAttention ${changedNodes}개를 일괄 ${actionLabel}했습니다`, 'success');
+                }
+                await comfyInstallerLoadWorkflowLibrary(comfyInstallerSelectedRelease());
+            } catch (error) {
+                console.error(`[COMFY_INSTALL] PatchSageAttention 일괄 ${actionLabel} 실패:`, error);
+                comfyInstallerSetError(error.message || error);
+                if (note) note.textContent = `PatchSageAttention 일괄 ${actionLabel} 실패: ${error.message || error}`;
+                showToast(`PatchSageAttention 일괄 ${actionLabel} 실패: ${error.message || error}`, 'error');
+            } finally {
+                comfyInstallerPatchSageModeBusy = false;
+                if (enableButton) enableButton.disabled = false;
+                if (disableButton) disableButton.disabled = false;
+                void comfyInstallerRefreshStatus(false);
             }
         }
 

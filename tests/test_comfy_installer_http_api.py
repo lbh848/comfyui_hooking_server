@@ -125,6 +125,72 @@ async def test_e2e_catalog_and_start_routes_use_selected_originals(
 
 
 @pytest.mark.asyncio
+async def test_patch_sage_attention_mode_route_validates_and_forwards_boolean(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = tmp_path / "config.json"
+    config.write_text("{}\n", encoding="utf-8")
+    app = web.Application()
+    service = register_comfy_installer_routes(
+        app,
+        project_root=tmp_path,
+        config_path=config,
+        requirements_dir=tmp_path / "requirements",
+    )
+    received: list[bool] = []
+
+    def fake_set_enabled(enabled: bool) -> dict:
+        received.append(enabled)
+        return {
+            "enabled": enabled,
+            "matched_nodes": 9,
+            "changed_nodes": 9 if not enabled else 0,
+        }
+
+    monkeypatch.setattr(
+        service,
+        "set_patch_sage_attention_enabled",
+        fake_set_enabled,
+    )
+    client = TestClient(TestServer(app))
+    await client.start_server()
+    try:
+        response = await client.post(
+            "/api/comfy-installer/workflows/patch-sage-attention",
+            json={"enabled": False},
+        )
+        assert response.status == 200
+        assert await response.json() == {
+            "ok": True,
+            "result": {
+                "enabled": False,
+                "matched_nodes": 9,
+                "changed_nodes": 9,
+            },
+        }
+        assert received == [False]
+
+        response = await client.post(
+            "/api/comfy-installer/workflows/patch-sage-attention",
+            json={"enabled": True},
+        )
+        assert response.status == 200
+        assert (await response.json())["result"]["enabled"] is True
+        assert received == [False, True]
+
+        response = await client.post(
+            "/api/comfy-installer/workflows/patch-sage-attention",
+            json={"enabled": "false"},
+        )
+        assert response.status == 400
+        assert (await response.json())["ok"] is False
+        assert received == [False, True]
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
 async def test_installer_rejects_non_pack_upload(tmp_path: Path) -> None:
     config = tmp_path / "config.json"
     config.write_text("{}\n", encoding="utf-8")
