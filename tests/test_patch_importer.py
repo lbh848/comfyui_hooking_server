@@ -326,13 +326,42 @@ def test_frontend_exposes_chunked_patch_import() -> None:
     ).read_text(encoding="utf-8")
 
     assert 'id="comfy-installer-patch-btn"' in frontend
-    assert ">패치파일 가져오기</button>" in frontend
+    assert ">Patch 파일 가져오기</button>" in frontend
     assert "async function comfyInstallerImportPatch(input)" in frontend
     assert "/api/patch-import/upload/start" in frontend
     assert "/api/patch-import/upload/chunk" in frontend
     assert "/api/patch-import/upload/complete" in frontend
     assert "/api/patch-import/upload/abort" in frontend
     assert "register_patch_import_routes(" in server
+
+
+def test_patch_import_button_is_not_inside_the_windows_installer_tab() -> None:
+    """패치 가져오기는 Windows 전용 설치기 탭 밖에 있어야 한다.
+
+    /api/patch-import/* 백엔드는 플랫폼 의존이 전혀 없고 설치기 상태와도
+    무관하다(유일한 게이트는 설치기가 running 일 때 막는 _ensure_installer_idle).
+    그런데 버튼이 "업데이트 및 설치"(Windows 전용) 탭 안에 있으면
+    macOS/Linux 사용자가 도달할 수 없다. 그래서 공통설정 탭으로 옮겼다.
+    """
+    frontend = (
+        Path(__file__).resolve().parents[1] / "frontend" / "index.html"
+    ).read_text(encoding="utf-8")
+
+    button_at = frontend.index('id="comfy-installer-patch-btn"')
+    common_at = frontend.index('id="settings-tab-common"')
+    # 공통설정 패널 바로 다음 패널이 경계다.
+    next_panel_at = frontend.index('id="settings-tab-comfy_runtime"')
+    installer_at = frontend.index('id="settings-tab-comfy_install"')
+
+    assert common_at < button_at < next_panel_at, (
+        "패치 가져오기 버튼이 공통설정 탭 안에 있어야 합니다."
+    )
+    assert button_at < installer_at, (
+        "패치 가져오기 버튼이 Windows 전용 설치기 탭 안에 있으면 안 됩니다."
+    )
+    # 파일 입력도 함께 옮겨져야 동작한다.
+    file_input_at = frontend.index('id="comfy-installer-patch-file"')
+    assert common_at < file_input_at < next_panel_at
 
 
 @pytest.mark.asyncio

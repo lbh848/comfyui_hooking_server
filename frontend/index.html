@@ -22510,6 +22510,22 @@
                         <input type="text" id="setting-backup-dir" placeholder="예: D:\backups\comfyui">
                         <div class="hint">절대 경로를 입력하세요</div>
                     </div>
+
+                    <!-- 데이터 Patch(.soyapatch) 가져오기.
+                         백엔드(/api/patch-import/*) 로직은 플랫폼에 종속되지 않아 macOS/Linux에서도
+                         정상 동작합니다. 기존에는 "업데이트 및 설치"(Windows 전용) 탭에 있어
+                         비 Windows 환경에서 접근할 수 없었기에 공통 설정으로 이동했습니다. -->
+                    <div class="setting-row" style="margin-top: 18px;">
+                        <div class="setting-label">
+                            <div class="title">데이터 Patch 가져오기</div>
+                            <div class="desc">캐릭터, Preset, Pose, Asset, Bot 데이터가 포함된 <code>.soyapatch</code> 파일을 가져옵니다.</div>
+                        </div>
+                    </div>
+                    <div class="comfy-installer-actions" style="margin-top:-8px;">
+                        <input type="file" id="comfy-installer-patch-file" accept=".soyapatch,application/octet-stream" hidden onchange="comfyInstallerImportPatch(this)">
+                        <button type="button" class="comfy-installer-btn" id="comfy-installer-patch-btn" onclick="comfyInstallerChoosePatch()">Patch 파일 가져오기</button>
+                        <span class="comfy-installer-note" id="comfy-installer-patch-note">V5 초기 설치용 <code>.soyapatch</code>를 가져옵니다. Preset 및 Chain 충돌 시 <code>_conflict</code>를 붙여 숨김 처리하며, 동일한 Pose와 기존 nikke Bot은 건너뜁니다. Patch 적용 전 주요 JSON 파일은 <code>asset_data/backup</code>에 백업됩니다.</span>
+                    </div>
                 </div>
 
                 <!-- Tab: ComfyUI 실행 관리 -->
@@ -25235,11 +25251,6 @@
                             <div class="comfy-installer-actions" style="margin-top:10px;">
                                 <button type="button" class="comfy-installer-btn" id="comfy-installer-retarget-config-btn" onclick="comfyInstallerRetargetConfig()">config를 내장 Comfy로 수정</button>
                                 <span class="comfy-installer-note">파일 이사 없이 <code>config.json</code>의 Comfy 관련 경로만 전체 검사해 내장 Comfy로 전환합니다. 실행 전 백업은 <code>comfy/.installer-state/backups/config</code>에 저장합니다.</span>
-                            </div>
-                            <div class="comfy-installer-actions" style="margin-top:10px;">
-                                <input type="file" id="comfy-installer-patch-file" accept=".soyapatch,application/octet-stream" hidden onchange="comfyInstallerImportPatch(this)">
-                                <button type="button" class="comfy-installer-btn" id="comfy-installer-patch-btn" onclick="comfyInstallerChoosePatch()">패치파일 가져오기</button>
-                                <span class="comfy-installer-note" id="comfy-installer-patch-note">V5 첫 설치용 <code>.soyapatch</code>를 가져옵니다. 프리셋·체인 충돌은 <code>_conflict</code> 이름으로 숨김 처리하고, 같은 Pose와 기존 nikke 봇은 건너뜁니다. 적용 직전에 주요 JSON을 <code>asset_data/backup</code>에 추가 백업합니다.</span>
                             </div>
                         </section>
 
