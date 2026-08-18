@@ -57,6 +57,7 @@ def test_video_generation_defaults_normalize_every_persisted_option() -> None:
         "upscale_model": "none",
         "upscale_scale": 4,
         "output_format": "webp",
+        "encode_quality": 80,
         "sharpen_enabled": False,
         "sharpen_radius": 0.8,
         "sharpen_amount": 0.5,
@@ -108,6 +109,9 @@ def test_fast_video_defaults_keep_mp_choice_and_reject_ultrawide() -> None:
         ("upscale_model", "unknown"),
         ("upscale_scale", 8),
         ("output_format", "gif"),
+        ("encode_quality", 0),
+        ("encode_quality", 101),
+        ("encode_quality", "high"),
     ],
 )
 def test_video_generation_defaults_reject_invalid_values(field: str, value: object) -> None:

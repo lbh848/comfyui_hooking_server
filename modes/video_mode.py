@@ -4377,7 +4377,18 @@ Vision-produced static Visual Context:
                     str(comfy_video_descriptor or "ComfyUI에서 영상 결과를 얻지 못했습니다")
                 )
             settings = self._video_postprocess_settings(config, dict(params or {}))
-            quality = int(config.get("backup_webp_quality", 80) or 80)
+            # MP4→AVIF/WebP 인코딩 품질(손실 강도). 요청값 우선, 없으면 백업 WebP 품질 폴백.
+            raw_quality = (params or {}).get("encode_quality")
+            if raw_quality is None or str(raw_quality).strip() == "":
+                raw_quality = config.get("backup_webp_quality", 80)
+            try:
+                quality = max(1, min(100, int(raw_quality)))
+            except (TypeError, ValueError, OverflowError) as exc:
+                print(
+                    f"[VIDEO:RENDER] 인코딩 품질 값 오류, 80으로 복구: "
+                    f"value={raw_quality!r}, error={exc}"
+                )
+                quality = 80
             render_elapsed = time.time() - started
             execution_source = (
                 str(comfy_video_descriptor.get("execution_source") or "local")

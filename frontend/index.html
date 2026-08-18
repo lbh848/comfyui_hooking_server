@@ -15244,6 +15244,13 @@
 
                     <section class="video-panel video-controls-stack">
                         <div>
+                            <div class="video-field-label"><span>압축 품질</span><small>높을수록 손실↓ · 용량↑</small></div>
+                            <div class="quality-slider" style="width:auto; display:flex; align-items:center; gap:8px;">
+                                <input type="range" id="video-generation-encode-quality" min="1" max="100" step="1" value="80" style="flex:1;" oninput="onVideoEncodeQualityInput(this.value)">
+                                <span class="quality-value" id="video-generation-encode-quality-val" style="min-width:34px; text-align:right;">80</span>
+                            </div>
+                        </div>
+                        <div>
                             <div class="video-field-label"><span>출력 형식</span><small>애니메이션 이미지</small></div>
                             <div class="option-card-grid" style="--option-card-columns:2;" role="radiogroup" aria-label="출력 형식">
                                 <label class="option-card">
@@ -29633,6 +29640,13 @@
             }
             outputRadio.checked = true;
 
+            const encodeQualityInput = document.getElementById('video-generation-encode-quality');
+            if (encodeQualityInput) {
+                const encodeQuality = Math.max(1, Math.min(100, Number.parseInt(settings.encode_quality, 10) || 80));
+                encodeQualityInput.value = String(encodeQuality);
+                onVideoEncodeQualityInput(String(encodeQuality));
+            }
+
             const sharpenEnabled = document.getElementById('video-generation-sharpen-enabled');
             const sharpenRadius = document.getElementById('video-generation-sharpen-radius');
             const sharpenAmount = document.getElementById('video-generation-sharpen-amount');
@@ -29673,6 +29687,7 @@
                     upscale_model: getSelectedVideoOption('video-upscale-model', 'realesr-animevideov3'),
                     upscale_scale: Number(document.getElementById('video-generation-upscale-scale')?.value || 2),
                     output_format: getSelectedVideoOption('video-output-format', 'avif'),
+                    encode_quality: normalizedVideoEncodeQuality(),
                     ...collectVideoSharpenParams(),
                 },
                 secondaryMotion: secondaryMotion.checked,
@@ -29764,6 +29779,7 @@
                 ? VIDEO_UPSCALE_LABELS.none
                 : `${VIDEO_UPSCALE_LABELS[method] || method} ${scale}×`;
             const output = getSelectedVideoOption('video-output-format', 'avif').toUpperCase();
+            const encodeQuality = normalizedVideoEncodeQuality();
             const visualContextLabel = isVideoVisualContextFromImage()
                 ? ' · VC 그림 분석'
                 : ' · VC 프롬프트';
@@ -29771,7 +29787,7 @@
             const sharpenLabel = sharpenOn
                 ? ` · 선명화 r${Number(document.getElementById('video-generation-sharpen-radius')?.value || 0.8).toFixed(1)}/a${Number(document.getElementById('video-generation-sharpen-amount')?.value || 0.5).toFixed(2)}/t${document.getElementById('video-generation-sharpen-threshold')?.value || 4}`
                 : '';
-            target.textContent = `${duration}초 · ${aspectLabel} · ${qualityLabel} · ${resolutionLabel} · ${upscaleLabel} · ${output}${visualContextLabel}${sharpenLabel}`;
+            target.textContent = `${duration}초 · ${aspectLabel} · ${qualityLabel} · ${resolutionLabel} · ${upscaleLabel} · ${output} · 품질${encodeQuality}${visualContextLabel}${sharpenLabel}`;
         }
 
         function onVideoSharpenToggle() {
@@ -29788,6 +29804,21 @@
                 else if (name === 'radius') valEl.textContent = Number(value).toFixed(1);
                 else valEl.textContent = String(value);
             }
+            updateVideoGenerationSummary();
+        }
+
+        function normalizedVideoEncodeQuality() {
+            const input = document.getElementById('video-generation-encode-quality');
+            const parsed = Number.parseInt(input?.value || '80', 10);
+            return Math.max(1, Math.min(100, Number.isFinite(parsed) ? parsed : 80));
+        }
+
+        function onVideoEncodeQualityInput(value) {
+            const quality = normalizedVideoEncodeQuality();
+            const input = document.getElementById('video-generation-encode-quality');
+            if (input) input.value = String(quality);
+            const valEl = document.getElementById('video-generation-encode-quality-val');
+            if (valEl) valEl.textContent = String(quality);
             updateVideoGenerationSummary();
         }
 
@@ -30260,6 +30291,7 @@
                         upscale_scale: upscaleScale,
                         upscale_model: upscaleEnabled ? upscaleModel : '',
                         output_format: outputFormat,
+                        encode_quality: normalizedVideoEncodeQuality(),
                         visual_context_source: visualContextSource,
                         secondary_motion: secondaryMotion,
                         instruction,

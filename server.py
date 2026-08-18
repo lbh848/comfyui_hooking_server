@@ -254,6 +254,9 @@ DEFAULT_VIDEO_GENERATION_DEFAULTS = {
     "upscale_model": DEFAULT_VIDEO_POSTPROCESS_CONFIG["model"],
     "upscale_scale": DEFAULT_VIDEO_POSTPROCESS_CONFIG["scale"],
     "output_format": "avif",
+    # MP4→AVIF/WebP 인코딩 손실 강도(1-100). 높을수록 손실↓·용량↑.
+    # 미지정 시 config.backup_webp_quality 로 폴백한다.
+    "encode_quality": 80,
     "sharpen_enabled": False,
     "sharpen_radius": 0.8,
     "sharpen_amount": 0.5,
@@ -355,6 +358,28 @@ def normalize_video_generation_defaults(raw: object) -> dict:
     normalized["sharpen_radius"] = sharpen["radius"]
     normalized["sharpen_amount"] = sharpen["amount"]
     normalized["sharpen_threshold"] = sharpen["threshold"]
+
+    raw_encode_quality = source.get("encode_quality", normalized["encode_quality"])
+    try:
+        if isinstance(raw_encode_quality, bool):
+            raise TypeError("bool은 허용되지 않음")
+        encode_quality = int(raw_encode_quality)
+        if isinstance(raw_encode_quality, float) and not raw_encode_quality.is_integer():
+            raise ValueError("정수가 아닌 실수는 허용되지 않음")
+        if isinstance(raw_encode_quality, str) and raw_encode_quality.strip() != str(encode_quality):
+            raise ValueError("정수 문자열 형식이 아님")
+        if not 1 <= encode_quality <= 100:
+            raise ValueError("허용 범위 1-100 벗어남")
+    except (TypeError, ValueError, OverflowError) as exc:
+        print(
+            "[VIDEO:DEFAULTS] 인코딩 품질 기본값 검증 실패: "
+            f"value={raw_encode_quality!r}, error={exc}"
+        )
+        traceback.print_exc()
+        raise ValueError(
+            "영상화 인코딩 품질은 1-100 사이 정수여야 합니다"
+        ) from exc
+    normalized["encode_quality"] = encode_quality
 
     for field in (
         "loop",
@@ -11257,6 +11282,32 @@ async def handle_api_video_enqueue(request: web.Request) -> web.Response:
                 {"success": False, "error": "영상 출력 형식은 AVIF 또는 WebP여야 합니다"},
                 status=400,
             )
+        raw_encode_quality = body.get(
+            "encode_quality",
+            (load_config().get("video_generation_defaults") or {}).get(
+                "encode_quality", 80
+            ),
+        )
+        try:
+            if isinstance(raw_encode_quality, bool):
+                raise TypeError("bool은 허용되지 않음")
+            encode_quality = int(raw_encode_quality)
+            if isinstance(raw_encode_quality, float) and not raw_encode_quality.is_integer():
+                raise ValueError("정수가 아닌 실수는 허용되지 않음")
+            if isinstance(raw_encode_quality, str) and raw_encode_quality.strip() != str(encode_quality):
+                raise ValueError("정수 문자열 형식이 아님")
+            if not 1 <= encode_quality <= 100:
+                raise ValueError("허용 범위 1-100 벗어남")
+        except (TypeError, ValueError, OverflowError) as exc:
+            print(
+                "[VIDEO:API] 인코딩 품질 오류: "
+                f"value={raw_encode_quality!r}, error={exc}"
+            )
+            traceback.print_exc()
+            return web.json_response(
+                {"success": False, "error": "영상 인코딩 품질은 1-100 사이 정수여야 합니다"},
+                status=400,
+            )
         if mode not in VIDEO_MODES:
             print(f"[VIDEO:API] 지원하지 않는 모드: mode={mode!r}, body={body!r}")
             return web.json_response(
@@ -11354,6 +11405,7 @@ async def handle_api_video_enqueue(request: web.Request) -> web.Response:
             "upscale_scale": upscale_scale,
             "upscale_model": upscale_model,
             "output_format": output_format,
+            "encode_quality": encode_quality,
             "sharpen_enabled": sharpen_params["enabled"],
             "sharpen_radius": sharpen_params["radius"],
             "sharpen_amount": sharpen_params["amount"],
@@ -11374,7 +11426,7 @@ async def handle_api_video_enqueue(request: web.Request) -> web.Response:
             f"duration={duration:g}s, direction_source=user_confirmed, "
             f"visual_context_source={visual_context_source}, "
             f"upscale={upscale_model or 'none'}x{upscale_scale}, "
-            f"format={output_format}, "
+            f"format={output_format}, encode_quality={encode_quality}, "
             f"sharpen={'on' if sharpen_params.get('enabled') else 'off'}"
         )
         return web.json_response(
