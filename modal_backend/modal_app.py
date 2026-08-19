@@ -30,6 +30,8 @@ if not 2 <= SCALEDOWN_WINDOW_SECONDS <= 1200:
 MANIFEST_LOCAL = Path(__file__).parents[1] / "comfy_installer" / "resources" / "install_manifest.json"
 IMAGE_INSTALL_LOCAL = Path(__file__).with_name("image_install.py")
 COMFY_MODELS_MOUNT_PATH = "/root/ComfyUI/models"
+# 저장소 인증 토큰을 담는 Modal Secret 이름 (키: CIVITAI_TOKEN)
+MODEL_SOURCE_SECRET_NAME = os.environ.get("SOYA_MODAL_MODEL_SECRET", "soya-civitai")
 TORCH_VERSION = "2.11.0"
 SAGEATTENTION_VERSION = "2.2.0"
 RUNTIME_IMAGE_REF = (
@@ -413,21 +415,44 @@ model_sync_image = (
 )
 
 
-def volume_target_path(models_root: Path, relative_path: str) -> Path:
-    """매니페스트 상대 경로를 models Volume 안의 절대 경로로 바꾼다.
+def volume_target_path(
+    models_root: Path, loras_root: Path, relative_path: str
+) -> tuple[Path, str]:
+    """매니페스트 상대 경로를 (대상 파일, 종류) 로 바꾼다.
 
-    매니페스트는 "models/vae/x.safetensors" 형태이고 Volume 은 models 폴더 자체를
-    마운트하므로 선두 "models/" 를 벗긴다. Volume 밖으로 나가는 경로는 거부한다.
+    Volume 이 models 폴더 자체를 마운트하므로 선두 "models/" 를 벗긴다. LoRA 는
+    models 가 아니라 별도 loras Volume 에 들어간다(workflow_assets 의 kind 분리와
+    같은 규칙) — 틀리면 파일은 올라가지만 ComfyUI 가 LoRA 목록에서 못 찾는다.
+    매니페스트는 외부 데이터라 Volume 밖으로 나가는 경로는 거부한다.
     """
     parts = PurePosixPath(relative_path).parts
     if parts and parts[0].casefold() == "models":
         parts = parts[1:]
     if not parts:
         raise ValueError(f"모델 상대 경로가 비어 있습니다: {relative_path!r}")
-    target = models_root.joinpath(*parts).resolve()
-    if models_root != target and models_root not in target.parents:
-        raise ValueError(f"models Volume 밖의 경로는 쓸 수 없습니다: {relative_path!r}")
-    return target
+    if parts[0].casefold() == "loras":
+        root, parts, kind = loras_root, parts[1:], "lora"
+        if not parts:
+            raise ValueError(f"LoRA 상대 경로가 비어 있습니다: {relative_path!r}")
+    else:
+        root, kind = models_root, "model"
+    target = root.joinpath(*parts).resolve()
+    if root != target and root not in target.parents:
+        raise ValueError(f"Volume 밖의 경로는 쓸 수 없습니다: {relative_path!r}")
+    return target, kind
+
+
+# 저장소 인증 토큰은 호출 인자가 아니라 Secret 으로 주입한다. 인자로 넘기면
+# 호출 기록·트레이스에 남을 수 있다. Secret 이 없는 환경도 있으므로 조회 실패는
+# 배포를 막지 않고, 인증이 필요한 항목만 auth_required 로 보고된다.
+MODEL_SYNC_SECRETS = []
+try:
+    MODEL_SYNC_SECRETS.append(modal.Secret.from_name(MODEL_SOURCE_SECRET_NAME))
+except Exception as exc:  # pragma: no cover - 배포 환경에 Secret 이 없을 때
+    print(
+        f"[MODAL_MODEL_SYNC] Secret 미등록({MODEL_SOURCE_SECRET_NAME}) — "
+        f"인증 필요한 모델은 건너뜁니다: {type(exc).__name__}: {exc}"
+    )
 
 
 @app.function(
@@ -438,7 +463,8 @@ def volume_target_path(models_root: Path, relative_path: str) -> Path:
     max_containers=MAX_CONTAINERS,
     scaledown_window=SCALEDOWN_WINDOW_SECONDS,
     timeout=3_600,
-    volumes={COMFY_MODELS_MOUNT_PATH: models_volume},
+    volumes={COMFY_MODELS_MOUNT_PATH: models_volume, "/loras": loras_volume},
+    secrets=MODEL_SYNC_SECRETS,
 )
 def sync_models_from_source(
     model_ids: list[str],
@@ -468,12 +494,18 @@ def sync_models_from_source(
     by_id = {str(entry.get("id")): entry for entry in manifest.get("models", [])}
 
     models_root = Path(COMFY_MODELS_MOUNT_PATH).resolve()
-    tokens = auth_tokens if isinstance(auth_tokens, dict) else {}
+    loras_root = Path("/loras").resolve()
+    # Secret 으로 주입된 환경변수를 우선하고, 명시 인자는 보조 수단으로만 둔다.
+    tokens = dict(auth_tokens) if isinstance(auth_tokens, dict) else {}
+    env_civitai = os.environ.get("CIVITAI_TOKEN", "").strip()
+    if env_civitai:
+        tokens.setdefault("civitai", env_civitai)
+        print("[MODAL_MODEL_SYNC] Secret 에서 civitai 토큰을 읽었습니다.", flush=True)
     results: list[dict] = []
     downloaded_bytes = 0
 
-    def _target_for(relative_path: str) -> Path:
-        return volume_target_path(models_root, relative_path)
+    def _target_for(relative_path: str) -> tuple[Path, str]:
+        return volume_target_path(models_root, loras_root, relative_path)
 
     def _sha256(path: Path) -> str:
         digest = hashlib.sha256()
@@ -492,10 +524,10 @@ def sync_models_from_source(
         relative_path = str(entry.get("relative_path") or "")
         expected = str(entry.get("sha256") or "").strip().lower()
         url = str(entry.get("url") or "")
-        target = _target_for(relative_path)
+        target, kind = _target_for(relative_path)
 
         if target.is_file() and expected and _sha256(target) == expected:
-            results.append({"id": model_id, "state": "already_present", "path": relative_path})
+            results.append({"id": model_id, "state": "already_present", "path": relative_path, "kind": kind})
             print(f"[MODAL_MODEL_SYNC] 이미 있음(해시 일치): {relative_path}", flush=True)
             continue
 
@@ -545,7 +577,8 @@ def sync_models_from_source(
             elapsed = time.monotonic() - started
             results.append(
                 {"id": model_id, "state": "downloaded", "path": relative_path,
-                 "bytes": received, "seconds": round(elapsed, 1), "sha256": actual}
+                 "kind": kind, "bytes": received, "seconds": round(elapsed, 1),
+                 "sha256": actual}
             )
             print(
                 f"[MODAL_MODEL_SYNC] 다운로드 완료: {relative_path} "
@@ -564,6 +597,7 @@ def sync_models_from_source(
             traceback.print_exc()
 
     models_volume.commit()
+    loras_volume.commit()
     print(
         f"[MODAL_MODEL_SYNC] Volume commit 완료: 항목 {len(results)}개, "
         f"신규 {downloaded_bytes:,} bytes",
