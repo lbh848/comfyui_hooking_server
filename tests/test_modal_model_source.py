@@ -64,18 +64,18 @@ def test_unknown_workflow_yields_no_models_but_does_not_raise():
     assert model_ids_for_workflow_files(ROOT, ["존재하지_않는_워크플로우.json"]) == []
 
 
-def test_cloud_direct_skips_local_model_index():
-    """cloud_direct 경로가 로컬 모델 색인을 타면 로컬 부재 시 즉시 실패한다."""
+def test_cloud_direct_tolerates_absent_local_models():
+    """cloud_direct 는 로컬 models 폴더가 없어도 실패하면 안 된다.
+
+    (초기 설계는 로컬 해석을 아예 건너뛰는 것이었으나, 그러면 매니페스트 밖
+    사용자 파일이 조용히 누락된다. 지금은 '해석하되 부재를 허용' 한다.)
+    """
     source = io.open(ROOT / "modal_backend" / "service.py", encoding="utf-8").read()
     start = source.index("async def _run_install(")
     body = source[start:source.index("\n    async def ", start + 10)]
     assert "MODEL_SOURCE_CLOUD_DIRECT" in body
-    branch = body[body.index("cloud_direct ="):]
-    resolve_at = branch.index("_resolve_local_workflow_assets")
-    else_at = branch.index("else:")
-    assert else_at < resolve_at, (
-        "_resolve_local_workflow_assets 가 cloud_direct 에서도 호출된다"
-    )
+    branch = body[body.index("cloud_direct ="):body.index("else:")]
+    assert "allow_missing_local=True" in branch
 
 
 def test_worker_deletes_file_on_hash_mismatch():
@@ -107,3 +107,56 @@ def test_ui_exposes_model_source_and_defaults_safely():
         line for line in source.splitlines() if "modal_model_source:" in line
     )
     assert "'cloud_direct'" in save_line and "'local_first'" in save_line
+
+
+def test_cloud_direct_still_uploads_files_outside_the_manifest():
+    """매니페스트 밖 파일(사용자 LoRA 등)은 저장소 URL 이 없다 — 로컬이 유일 원본.
+
+    이걸 빠뜨리면 업로드도 오류도 없이 조용히 사라진다. 초기 구현이 실제로
+    lora_files 를 통째로 비워 이 버그를 갖고 있었다.
+    """
+    source = io.open(ROOT / "modal_backend" / "service.py", encoding="utf-8").read()
+    start = source.index("async def _run_install(")
+    body = source[start:source.index("\n    async def ", start + 10)]
+    branch = body[body.index("cloud_direct ="):body.index("else:")]
+    assert '"lora_files": []' not in branch, (
+        "cloud_direct 가 lora_files 를 비운다 — 사용자 LoRA 가 사라진다"
+    )
+    assert "_filter_manifest_provided_assets" in branch
+    assert "allow_missing_local=True" in branch
+
+
+def test_manifest_filter_keeps_user_files_and_drops_repo_files():
+    """저장소가 주는 파일만 빼고, 사용자 파일은 남겨야 한다."""
+    from modal_backend.service import ModalService
+
+    assets = {
+        "model_files": [
+            {"remote_path": "diffusion_models/anima_baseV10.safetensors", "size": 10},
+            {"remote_path": "checkpoints/내가_직접_넣은.safetensors", "size": 20},
+        ],
+        "lora_files": [
+            {"remote_path": "small_head_anima.safetensors", "size": 30},
+            {"remote_path": "내_개인_로라.safetensors", "size": 40},
+        ],
+        "model_count": 4,
+        "size_bytes": 100,
+        "size_gib": 0.0,
+    }
+    filtered = ModalService._filter_manifest_provided_assets(
+        type("S", (), {"project_root": ROOT})(), assets
+    )
+    kept = {i["remote_path"] for i in filtered["model_files"] + filtered["lora_files"]}
+    assert "checkpoints/내가_직접_넣은.safetensors" in kept
+    assert "내_개인_로라.safetensors" in kept
+    assert "diffusion_models/anima_baseV10.safetensors" not in kept
+    assert "small_head_anima.safetensors" not in kept
+
+
+def test_local_first_still_requires_local_models():
+    """local_first 는 로컬이 원본이므로 models 폴더 부재를 눈감아 주면 안 된다."""
+    source = io.open(ROOT / "modal_backend" / "service.py", encoding="utf-8").read()
+    fn = source[source.index("async def _resolve_local_workflow_assets("):]
+    fn = fn[:fn.index("\n    @staticmethod") if "\n    @staticmethod" in fn else 2000]
+    assert "if not allow_missing_local:" in fn
+    assert "raise" in fn

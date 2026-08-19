@@ -28,6 +28,7 @@ from .custom_nodes import (
     public_custom_node_inventory,
 )
 from .manifest import (
+    load_manifest,
     list_soya_user_workflows,
     model_ids_for_workflow_files,
     plan_from_soya_user_names,
@@ -2883,13 +2884,76 @@ class ModalService:
             raise ValueError("Modal에 동기화할 사용자 워크플로우가 없습니다.")
         return workflows
 
+    _EMPTY_ASSETS = {
+        "model_files": [],
+        "lora_files": [],
+        "model_count": 0,
+        "size_bytes": 0,
+        "size_gib": 0.0,
+    }
+
+    def _filter_manifest_provided_assets(self, assets: dict[str, Any]) -> dict[str, Any]:
+        """매니페스트가 제공하는 파일을 업로드 목록에서 뺀다 (cloud_direct 전용).
+
+        그 파일들은 워커가 저장소에서 직접 받으므로 올릴 이유가 없다. 남는 것은
+        저장소 URL이 없는 사용자 파일뿐이고, 그건 로컬이 유일한 원본이라 올려야 한다.
+        """
+
+        try:
+            manifest = load_manifest(self.project_root)
+            covered = {
+                str(entry.get("relative_path") or "").split("models/", 1)[-1]
+                for entry in manifest.get("models", [])
+            }
+        except Exception as exc:
+            print(
+                "[MODAL_SYNC] 매니페스트 조회 실패, 로컬 자산을 그대로 올립니다: "
+                f"{type(exc).__name__}: {exc}"
+            )
+            return assets
+
+        def keep(item: dict[str, Any], prefix: str) -> bool:
+            remote = str(item.get("remote_path") or "")
+            return f"{prefix}{remote}" not in covered
+
+        models = [i for i in assets.get("model_files", []) if keep(i, "")]
+        loras = [i for i in assets.get("lora_files", []) if keep(i, "loras/")]
+        dropped = (
+            len(assets.get("model_files", [])) - len(models)
+            + len(assets.get("lora_files", [])) - len(loras)
+        )
+        size_bytes = sum(int(i.get("size") or 0) for i in models + loras)
+        print(
+            "[MODAL_SYNC] cloud_direct 업로드 대상 정리: "
+            f"저장소 제공 {dropped}개 제외, 사용자 파일 {len(models) + len(loras)}개 유지"
+        )
+        return {
+            "model_files": models,
+            "lora_files": loras,
+            "model_count": len(models) + len(loras),
+            "size_bytes": size_bytes,
+            "size_gib": round(size_bytes / 1024**3, 2),
+        }
+
     async def _resolve_local_workflow_assets(
         self,
         workflows: list[dict[str, Any]],
+        *,
+        allow_missing_local: bool = False,
     ) -> dict[str, Any]:
         async with self._model_sync_lock:
             def resolve() -> dict[str, Any]:
-                model_index = build_local_model_index(self.project_root / "comfy")
+                try:
+                    model_index = build_local_model_index(self.project_root / "comfy")
+                except FileNotFoundError:
+                    if not allow_missing_local:
+                        raise
+                    # 클라우드 전용 구성은 로컬 models 폴더가 아예 없을 수 있다.
+                    print(
+                        "[MODAL_SYNC] 로컬 models 폴더 없음 — cloud_direct 이므로 "
+                        "업로드할 사용자 파일이 없는 것으로 처리합니다."
+                    )
+                    return dict(ModalService._EMPTY_ASSETS)
                 return resolve_workflow_model_files(
                     workflows,
                     model_index,
@@ -3193,19 +3257,22 @@ class ModalService:
             )
             cloud_direct = settings.model_source == MODEL_SOURCE_CLOUD_DIRECT
             if cloud_direct:
-                # 로컬을 원본으로 쓰지 않는다. 매니페스트만 보고 필요한 모델을 정하고
-                # 워커가 저장소에서 볼륨으로 직접 받는다. 로컬에 모델이 하나도 없어도 된다.
-                assets = {
-                    "model_files": [],
-                    "lora_files": [],
-                    "model_count": 0,
-                    "size_bytes": 0,
-                    "size_gib": 0.0,
-                }
+                # 매니페스트에 있는 모델은 워커가 저장소에서 직접 받는다.
+                # 그러나 매니페스트 **밖**의 파일(사용자가 직접 넣은 LoRA·체크포인트)은
+                # 저장소 URL이 없어 로컬이 유일한 원본이다 — 반드시 올려야 한다.
+                # 이걸 빠뜨리면 업로드도 오류도 없이 조용히 사라진다.
+                assets = await self._resolve_local_workflow_assets(
+                    workflows,
+                    allow_missing_local=True,
+                )
+                assets = await asyncio.to_thread(
+                    self._filter_manifest_provided_assets,
+                    assets,
+                )
                 self._append_install_log(
                     "system",
-                    "모델 취득 경로: cloud_direct — 로컬을 거치지 않고 저장소에서 "
-                    "Modal Volume 으로 직접 받습니다.",
+                    "모델 취득 경로: cloud_direct — 매니페스트 모델은 저장소에서 직접, "
+                    f"매니페스트 밖 로컬 파일 {assets['model_count']}개만 업로드합니다.",
                 )
             else:
                 assets = await self._resolve_local_workflow_assets(workflows)
