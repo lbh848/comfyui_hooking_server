@@ -9,7 +9,7 @@ import subprocess
 import time
 import traceback
 import uuid
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import modal
 
@@ -402,6 +402,174 @@ runtime_image = (
         force_build=FORCE_CUSTOM_NODE_BUILD,
     )
 )
+
+
+# 순수 다운로드 작업이라 GPU 런타임 이미지(수 GB, CUDA/torch)가 필요 없다.
+# 무거운 이미지를 쓰면 파일 하나 받으려고 콜드 스타트에 수 분을 쓴다.
+model_sync_image = (
+    modal.Image.debian_slim(python_version="3.12")
+    .add_local_file(MANIFEST_LOCAL, "/opt/soya/install_manifest.json", copy=True)
+    .add_local_python_source("modal_backend")
+)
+
+
+def volume_target_path(models_root: Path, relative_path: str) -> Path:
+    """매니페스트 상대 경로를 models Volume 안의 절대 경로로 바꾼다.
+
+    매니페스트는 "models/vae/x.safetensors" 형태이고 Volume 은 models 폴더 자체를
+    마운트하므로 선두 "models/" 를 벗긴다. Volume 밖으로 나가는 경로는 거부한다.
+    """
+    parts = PurePosixPath(relative_path).parts
+    if parts and parts[0].casefold() == "models":
+        parts = parts[1:]
+    if not parts:
+        raise ValueError(f"모델 상대 경로가 비어 있습니다: {relative_path!r}")
+    target = models_root.joinpath(*parts).resolve()
+    if models_root != target and models_root not in target.parents:
+        raise ValueError(f"models Volume 밖의 경로는 쓸 수 없습니다: {relative_path!r}")
+    return target
+
+
+@app.function(
+    image=model_sync_image,
+    cpu=2.0,
+    memory=4_096,
+    min_containers=0,
+    max_containers=MAX_CONTAINERS,
+    scaledown_window=SCALEDOWN_WINDOW_SECONDS,
+    timeout=3_600,
+    volumes={COMFY_MODELS_MOUNT_PATH: models_volume},
+)
+def sync_models_from_source(
+    model_ids: list[str],
+    auth_tokens: dict | None = None,
+) -> dict:
+    """매니페스트의 저장소 URL에서 모델 Volume으로 **직접** 내려받는다.
+
+    기존 경로는 "저장소 → 로컬 디스크 → batch_upload → Volume" 이라 클라우드에서만
+    생성하는 사용자도 같은 바이트를 두 번 옮기고 쓰지 않을 사본을 로컬에 남긴다.
+    이 함수는 로컬을 건너뛰고 워커가 직접 받는다.
+
+    매니페스트는 이미지에 포함돼 있어(`/opt/soya/install_manifest.json`) 별도 전송이
+    필요 없다. 무결성은 매니페스트에 고정된 sha256으로 검증하며, 불일치 시 받은
+    파일을 지우고 실패로 처리한다 — 손상본이 Volume에 남는 쪽이 더 위험하다.
+
+    auth_tokens: {"civitai": "<token>"} 형태. 인증이 필요한 항목에만 쓴다.
+    """
+
+    _announce_call_started("sync_models_from_source")
+    import hashlib
+    import urllib.request
+
+    manifest_path = Path("/opt/soya/install_manifest.json")
+    if not manifest_path.is_file():
+        raise FileNotFoundError(f"워커 이미지에 매니페스트가 없습니다: {manifest_path}")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    by_id = {str(entry.get("id")): entry for entry in manifest.get("models", [])}
+
+    models_root = Path(COMFY_MODELS_MOUNT_PATH).resolve()
+    tokens = auth_tokens if isinstance(auth_tokens, dict) else {}
+    results: list[dict] = []
+    downloaded_bytes = 0
+
+    def _target_for(relative_path: str) -> Path:
+        return volume_target_path(models_root, relative_path)
+
+    def _sha256(path: Path) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            while chunk := handle.read(8 * 1024 * 1024):
+                digest.update(chunk)
+        return digest.hexdigest()
+
+    for model_id in model_ids:
+        entry = by_id.get(str(model_id))
+        if entry is None:
+            results.append({"id": model_id, "state": "unknown_id"})
+            print(f"[MODAL_MODEL_SYNC] 매니페스트에 없는 모델 id: {model_id!r}", flush=True)
+            continue
+
+        relative_path = str(entry.get("relative_path") or "")
+        expected = str(entry.get("sha256") or "").strip().lower()
+        url = str(entry.get("url") or "")
+        target = _target_for(relative_path)
+
+        if target.is_file() and expected and _sha256(target) == expected:
+            results.append({"id": model_id, "state": "already_present", "path": relative_path})
+            print(f"[MODAL_MODEL_SYNC] 이미 있음(해시 일치): {relative_path}", flush=True)
+            continue
+
+        request = urllib.request.Request(url, headers={"User-Agent": "soya-comfy-worker"})
+        auth_kind = str(entry.get("auth") or "").strip().lower()
+        if auth_kind:
+            token = str(tokens.get(auth_kind) or "").strip()
+            if not token:
+                results.append({"id": model_id, "state": "auth_required", "auth": auth_kind})
+                print(
+                    f"[MODAL_MODEL_SYNC] 인증 토큰 없음: id={model_id}, auth={auth_kind}",
+                    flush=True,
+                )
+                continue
+            request.add_header("Authorization", f"Bearer {token}")
+
+        target.parent.mkdir(parents=True, exist_ok=True)
+        staging = target.with_name(target.name + ".partial")
+        digest = hashlib.sha256()
+        received = 0
+        started = time.monotonic()
+        try:
+            with urllib.request.urlopen(request, timeout=300) as response:
+                with staging.open("wb") as handle:
+                    while True:
+                        chunk = response.read(8 * 1024 * 1024)
+                        if not chunk:
+                            break
+                        handle.write(chunk)
+                        digest.update(chunk)
+                        received += len(chunk)
+            actual = digest.hexdigest()
+            if expected and actual != expected:
+                staging.unlink(missing_ok=True)
+                results.append(
+                    {"id": model_id, "state": "sha256_mismatch",
+                     "expected": expected, "actual": actual}
+                )
+                print(
+                    "[MODAL_MODEL_SYNC] sha256 불일치로 폐기: "
+                    f"id={model_id}, expected={expected[:16]}…, actual={actual[:16]}…",
+                    flush=True,
+                )
+                continue
+            staging.replace(target)
+            downloaded_bytes += received
+            elapsed = time.monotonic() - started
+            results.append(
+                {"id": model_id, "state": "downloaded", "path": relative_path,
+                 "bytes": received, "seconds": round(elapsed, 1), "sha256": actual}
+            )
+            print(
+                f"[MODAL_MODEL_SYNC] 다운로드 완료: {relative_path} "
+                f"{received:,}B {elapsed:.1f}s sha256={actual[:16]}…",
+                flush=True,
+            )
+        except Exception as exc:
+            staging.unlink(missing_ok=True)
+            results.append({"id": model_id, "state": "failed",
+                            "error": f"{type(exc).__name__}: {exc}"})
+            print(
+                f"[MODAL_MODEL_SYNC] 다운로드 실패: id={model_id}, "
+                f"error={type(exc).__name__}: {exc}",
+                flush=True,
+            )
+            traceback.print_exc()
+
+    models_volume.commit()
+    print(
+        f"[MODAL_MODEL_SYNC] Volume commit 완료: 항목 {len(results)}개, "
+        f"신규 {downloaded_bytes:,} bytes",
+        flush=True,
+    )
+    return {"results": results, "downloaded_bytes": downloaded_bytes}
 
 
 @app.function(
