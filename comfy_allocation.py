@@ -64,6 +64,118 @@ NONLOCAL_COMFY_TARGETS = frozenset(
 DEFAULT_COMFY_TASK_MODAL_PARALLEL = {key: False for key in COMFY_TASK_KEYS}
 DEFAULT_COMFY_TASK_VAST_PARALLEL = {key: False for key in COMFY_TASK_KEYS}
 
+# 작업 종류 ↔ 설치 매니페스트 워크플로우 바인딩 id.
+#
+# 왜 필요한가: 모델을 저장소에서 원격 볼륨으로 직접 받는 구성에서 설치기가
+# "로컬에서 실제로 실행되는 작업이 쓰는 모델만" 받으려면, 작업에서 워크플로우
+# 바인딩을 거쳐 매니페스트 model_ids 로 내려가는 길이 필요하다. 그 길이 없었다.
+#
+# 왜 표인가: 파일명이나 작업 이름에서 추론하면 워크플로우 팩이 바뀔 때 조용히
+# 어긋난다. 매니페스트의 모든 바인딩이 이 표 또는 UNMAPPED_WORKFLOW_BINDINGS 에
+# 있어야 한다는 사실은 테스트로 강제한다.
+#
+# 하나의 바인딩이 여러 작업에 걸릴 수 있다(LoRA 학습 3종이 같은 워크플로우를
+# 공유한다). 그래서 "한 작업이라도 로컬이면 그 바인딩은 로컬 필요"로 합집합을
+# 취한다 — 부족한 쪽보다 남는 쪽이 안전하다.
+COMFY_TASK_WORKFLOW_BINDINGS: dict[str, tuple[str, ...]] = {
+    # 삽화·재생성은 같은 워크플로우 계열을 탄다
+    # (queue_manager.py:3233·3296 → generate_image_with_prompt →
+    #  server.py:1324 get_comfy_workflow_source_path).
+    "illustration": (
+        "comfy_workflow_source_path",
+        "illustration_workflow_source_paths.v1",
+        "illustration_workflow_source_paths.v3",
+        "illustration_workflow_source_paths.v3_anima",
+    ),
+    "restore_regenerate": (
+        "comfy_workflow_source_path",
+        "illustration_workflow_source_paths.v1",
+        "illustration_workflow_source_paths.v3",
+        "illustration_workflow_source_paths.v3_anima",
+    ),
+    "asset_generation": (
+        "asset_workflow_source_path",
+        "anima_asset_workflow_source_path",
+        "anima_only_asset_workflow_source_path",
+    ),
+    # EDIT 계열 = Qwen Edit + ANIMA Inpainting (COMFY_TASK_DEFINITIONS 참고).
+    "qwen_edit": (
+        "qwen_edit_workflow_source_path",
+        "anima_inpainting_workflow_source_path",
+    ),
+    "tag_analysis": (
+        "tag_analysis_workflow_source_path",
+        "asset_tag_analysis_workflow_source_path",
+    ),
+    # 복장 추출 워크플로우는 배포되지 않는다(설치기 excluded_filenames).
+    # 매니페스트에 대응 바인딩이 없어 빈 튜플이 정답이다.
+    "outfit": (),
+    # lora_training_* 는 에셋·봇·인스턴스 학습이 공유한다
+    # (queue_manager.py:3691·3815·4694).
+    "asset_lora_training": (
+        "lora_training_workflow_source_paths.anima",
+        "lora_training_workflow_source_paths.sdxl",
+    ),
+    "bot_lora_training": (
+        "lora_training_workflow_source_paths.anima",
+        "lora_training_workflow_source_paths.sdxl",
+    ),
+    "instance_lora": (
+        "lora_training_workflow_source_paths.anima",
+        "lora_training_workflow_source_paths.sdxl",
+        "style_lora_training_workflow_source_paths.anima",
+        "style_lora_training_workflow_source_paths.sdxl",
+    ),
+    "face_extract": ("face_extract_workflow_source_path",),
+    "utility_debug": (
+        "utility_workflow_source_path",
+        "debug_workflow_source_path",
+    ),
+    "video_generation": (
+        "video_workflow_source_paths.i2v",
+        "video_workflow_source_paths.first_last",
+        "video_workflow_source_paths.ref2v",
+        "video_workflow_source_paths.i2v_fast",
+        "video_workflow_source_paths.first_last_fast",
+        "video_workflow_source_paths.ref2v_fast",
+    ),
+}
+
+# 매니페스트에 있으나 어떤 작업에도 매이지 않는 바인딩.
+# 지금은 없다. 새 워크플로우가 추가됐는데 어느 작업이 쓰는지 아직 모를 때
+# 여기에 넣으면 커버리지 테스트는 통과하되 기록은 남는다.
+UNMAPPED_WORKFLOW_BINDINGS: frozenset[str] = frozenset()
+
+
+def is_remote_allocation(value: Any) -> bool:
+    """배분 값이 원격 대상(modal/vast)인지."""
+
+    return isinstance(value, str) and value.strip().lower() in REMOTE_COMFY_TARGETS
+
+
+def local_comfy_task_keys(allocations: Any) -> tuple[str, ...]:
+    """원격이 아닌 대상에 배분된 작업 키들.
+
+    키가 없으면 로컬로 본다 — DEFAULT_COMFY_TASK_ALLOCATIONS 가 로컬 인스턴스이고,
+    모르는 것을 원격으로 가정하면 필요한 모델을 안 받게 되기 때문이다.
+    """
+
+    source = allocations if isinstance(allocations, dict) else {}
+    return tuple(
+        key
+        for key in COMFY_TASK_KEYS
+        if not is_remote_allocation(source.get(key))
+    )
+
+
+def local_required_binding_ids(allocations: Any) -> frozenset[str]:
+    """로컬에서 실행되는 작업들이 쓰는 워크플로우 바인딩 id 집합."""
+
+    bindings: set[str] = set()
+    for key in local_comfy_task_keys(allocations):
+        bindings.update(COMFY_TASK_WORKFLOW_BINDINGS.get(key, ()))
+    return frozenset(bindings)
+
 # 큐 워커가 claim한 실행 대상을 하위 모드와 server.py의 공통 제출 함수까지 전달한다.
 # asyncio Task별 값이 분리되어 로컬 Comfy와 여러 Modal 워커가 동시에 실행돼도 섞이지 않는다.
 CURRENT_COMFY_EXECUTION_TARGET: ContextVar[str | None] = ContextVar(

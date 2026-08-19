@@ -37599,8 +37599,15 @@
             modelBytesById.forEach(value => { modelBytes += value; });
             const summary = document.getElementById('comfy-installer-selection-summary');
             if (summary) {
+                // 모델 다운로드 경로가 'cloud_direct'인 경우, 해당 수치가 실제 로컬 다운로드 용량과 일치하지 않습니다.
+                // 정확한 분할 용량은 서버 측 사전 검사를 통해 계산됩니다.
+                const cloudDirectNote = (typeof currentConfig !== 'undefined'
+                    && currentConfig
+                    && currentConfig.modal_model_source === 'cloud_direct')
+                    ? ' · 모델 다운로드 경로: Cloud Direct — 로컬 작업용 모델만 다운로드됩니다 (사전 검사 시 확인 가능)'
+                    : '';
                 summary.textContent = release
-                    ? `워크플로우 ${items.length}/${(release.items || []).length}개 · 필요 모델 ${modelIds.size}개 · 약 ${comfyInstallerFormatBytes(modelBytes)}`
+                    ? `Workflow ${items.length}/${(release.items || []).length}개 · 필요 모델 ${modelIds.size}개 · 약 ${comfyInstallerFormatBytes(modelBytes)}${cloudDirectNote}`
                     : '팩을 먼저 풀어주세요.';
             }
         }
@@ -37839,8 +37846,13 @@
                     `${comfyInstallerFormatBytes((probe.disk || {}).free)} 남음`;
                 const manifest = probe.manifest || {};
                 const selection = probe.selection || null;
+                // 다운로드 경로가 'cloud_direct'일 때 로컬 다운로드 용량과 Worker 직접 다운로드 용량이 분리됩니다.
+                // 설치기와 동일한 규칙을 적용하기 위해 프론트엔드에서 재계산하지 않고 서버의 계산값을 사용합니다.
+                const cloudDirect = selection && selection.model_source === 'cloud_direct';
                 document.getElementById('comfy-installer-size').textContent = selection
-                    ? `${Number((selection.model_ids || []).length)} 선택 모델 · ${comfyInstallerFormatBytes(selection.model_bytes || 0)}`
+                    ? (cloudDirect
+                        ? `로컬 ${Number((selection.local_model_ids || []).length)}개 · ${comfyInstallerFormatBytes(selection.local_model_bytes || 0)} (원격 직접 ${Number(selection.remote_model_count || 0)}개 · ${comfyInstallerFormatBytes(selection.remote_model_bytes || 0)})`
+                        : `${Number((selection.model_ids || []).length)} 선택 모델 · ${comfyInstallerFormatBytes(selection.model_bytes || 0)}`)
                     : `${manifest.model_count || 36} 전체 모델 · ${comfyInstallerFormatBytes(manifest.model_bytes || 0)}`;
                 const diskEnough = (probe.disk || {}).enough;
                 if (note) {
