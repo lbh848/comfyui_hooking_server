@@ -482,7 +482,10 @@ class QueueManager:
             )
             return
         try:
-            self.qwen_edit_mode.cleanup_staged_request(item.params)
+            self.qwen_edit_mode.cleanup_staged_request(
+                item.params,
+                self.get_config() if self.get_config else None,
+            )
         except Exception as exc:
             print(
                 "[QUEUE:QWEN_EDIT] 취소 리소스 정리 실패: "
@@ -3728,7 +3731,10 @@ class QueueManager:
             raise
         finally:
             try:
-                self.qwen_edit_mode.cleanup_staged_request(params)
+                self.qwen_edit_mode.cleanup_staged_request(
+                    params,
+                    self.get_config() if self.get_config else None,
+                )
             except Exception as cleanup_error:
                 print(
                     "[QUEUE:QWEN_EDIT] 큐 메모리 입력 정리 실패: "

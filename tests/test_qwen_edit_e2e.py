@@ -396,7 +396,8 @@ async def test_qwen_edit_uses_gpu_queue_and_translation_uses_llm_queue():
             )
             return {"success": True, "translated_prompt": "Change the jacket."}
 
-        def cleanup_staged_request(self, params):
+        def cleanup_staged_request(self, params, config=None):
+            # config 는 스테이징 폴더 삭제에 쓰인다(실제 구현). 여기서는 호출 순서만 본다.
             calls.append(("cleanup", params.get("job_id")))
 
     manager.qwen_edit_mode = FakeQwenMode()
