@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import traceback
 from pathlib import Path
@@ -61,6 +62,52 @@ def _require_user_workflow(
     return path
 
 
+def _match_user_copy_by_hash(
+    project_root: Path,
+    filename: str,
+    by_hash: Mapping[str, dict[str, Any]],
+) -> dict[str, Any] | None:
+    """SOYA_USER 의 실제 파일 내용을 해시해 팩 원본과 대응시킨다."""
+
+    if not by_hash:
+        return None
+    try:
+        user_root = _soya_user_root(project_root)
+        path = user_root / Path(filename).name
+        if not path.is_file():
+            return None
+        digest = hashlib.sha256(path.read_bytes()).hexdigest().lower()
+    except Exception as exc:
+        print(
+            "[MODAL] 사용자 사본 해시 대응 실패(이름 규칙으로 진행): "
+            f"file={filename}, error={type(exc).__name__}: {exc}"
+        )
+        return None
+    return by_hash.get(digest)
+
+
+def _match_user_copy_by_stem(
+    filename: str,
+    by_stem: Mapping[str, list[dict[str, Any]]],
+) -> dict[str, Any] | None:
+    """"{원본stem}__{릴리스}[_n]" 규칙을 되돌려 팩 원본을 찾는다.
+
+    내용을 고친 개조본은 해시가 달라지므로 이름으로만 되돌릴 수 있다.
+    대응되는 원본이 여럿이면 (모호하면) 포기한다 — 틀린 모델 목록보다 낫다.
+    """
+
+    stem = Path(str(filename)).stem
+    if "__" not in stem:
+        return None
+    base = stem.rsplit("__", 1)[0]
+    candidates = by_stem.get(base) or []
+    if len(candidates) == 1:
+        return candidates[0]
+    if len(candidates) > 1:
+        print(f"[MODAL] 이름 규칙 대응이 모호해 건너뜁니다: {filename} → {base}")
+    return None
+
+
 def model_ids_for_workflow_files(
     project_root: str | Path,
     workflow_filenames: list[str] | tuple[str, ...],
@@ -84,20 +131,51 @@ def model_ids_for_workflow_files(
     pack = json.loads(pack_path.read_text(encoding="utf-8"))
 
     wanted = {str(name).strip() for name in workflow_filenames if str(name).strip()}
+    items = [item for item in pack.get("items", []) if isinstance(item, dict)]
+    by_filename = {str(item.get("filename") or ""): item for item in items}
+    by_hash = {
+        str(item.get("sha256") or "").lower(): item
+        for item in items
+        if item.get("sha256")
+    }
+    # 설치기는 사용자 사본을 "{원본stem}__{릴리스}[_n].json" 으로 만든다
+    # (comfy_installer/workflow_library.py). 그래서 팩의 원본 파일명과 절대
+    # 일치하지 않는다 — 이름만 맞춰보면 새로 설치한 모든 환경에서 모델이
+    # 0개로 해석되고, cloud_direct 동기화가 **조용히 아무것도 하지 않는다.**
+    by_stem: dict[str, list[dict[str, Any]]] = {}
+    for item in items:
+        stem = Path(str(item.get("filename") or "")).stem
+        if stem:
+            by_stem.setdefault(stem, []).append(item)
+
     bindings: set[str] = set()
     matched: set[str] = set()
-    for item in pack.get("items", []):
-        filename = str(item.get("filename") or "")
-        if filename in wanted:
-            matched.add(filename)
-            for binding in item.get("bindings", []):
-                bindings.add(str(binding))
-    missing = sorted(wanted - matched)
-    if missing:
+    unmatched: list[str] = []
+    for name in sorted(wanted):
+        item = by_filename.get(name)
+        source = "filename"
+        if item is None:
+            # 사본은 원본과 바이트가 같으므로 해시가 가장 확실하다.
+            item, source = _match_user_copy_by_hash(root, name, by_hash), "sha256"
+        if item is None:
+            # 사용자가 내용을 고친 사본은 해시가 달라진다. 이름 규칙으로 되돌린다.
+            item, source = _match_user_copy_by_stem(name, by_stem), "stem"
+        if item is None:
+            unmatched.append(name)
+            continue
+        matched.add(name)
+        if source != "filename":
+            print(
+                f"[MODAL] 사용자 사본을 팩 원본과 대응시켰습니다({source}): "
+                f"{name} → {item.get('filename')}"
+            )
+        for binding in item.get("bindings", []):
+            bindings.add(str(binding))
+    if unmatched:
         # 개인 개조본 등 팩에 없는 워크플로우는 매니페스트로 모델을 알 수 없다.
         print(
             "[MODAL] 팩 매니페스트에 없는 워크플로우는 모델 목록을 확정할 수 없습니다: "
-            f"{missing}"
+            f"{unmatched}"
         )
 
     manifest = load_manifest(root)
