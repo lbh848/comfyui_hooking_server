@@ -1622,6 +1622,24 @@
             background: color-mix(in srgb, #5b9bd5 68%, var(--surface2));
         }
         .video-refine-button:disabled { opacity: .58; cursor: wait; }
+        .video-direct-button {
+            flex: 0 0 auto;
+            padding: 7px 11px;
+            border: 1px solid color-mix(in srgb, #27ae60 55%, var(--border));
+            border-radius: 999px;
+            color: var(--text2);
+            background: color-mix(in srgb, #27ae60 8%, var(--surface2));
+            font-size: .78rem;
+            font-weight: 700;
+            cursor: pointer;
+            transition: border-color .16s ease, background .16s ease, color .16s ease;
+        }
+        .video-direct-button:hover:not(:disabled) {
+            border-color: #27ae60;
+            color: #fff;
+            background: color-mix(in srgb, #27ae60 68%, var(--surface2));
+        }
+        .video-direct-button:disabled { opacity: .58; cursor: wait; }
         .video-refine-undo { margin-top: 6px; }
         .video-refine-undo-btn {
             border: none;
@@ -15067,7 +15085,9 @@
                                 <span class="video-field-label"><span>해상도</span><small id="video-generation-quality-hint">H3 FAST</small></span>
                                 <select id="video-generation-quality-level" class="video-select" onchange="onVideoQualityLevelChange()">
                                     <option value="low">FAST 저화질 · 0.2 MP</option>
+                                    <option value="low_plus">FAST 저화질+ · 0.3 MP</option>
                                     <option value="medium" selected>FAST 기본 · 0.35 MP</option>
+                                    <option value="high_minus">FAST 고화질- · 0.4 MP</option>
                                     <option value="high">FAST 고화질 · 0.5 MP</option>
                                     <option value="native">Native 최대 · 비율별</option>
                                 </select>
@@ -15136,6 +15156,7 @@
                         <div class="video-draft-actions">
                             <button type="button" id="video-generation-draft-button" class="video-draft-button" onclick="requestVideoInstructionDraft()">✨ 초안 만들기</button>
                             <button type="button" id="video-generation-refine-button" class="video-refine-button" onclick="requestVideoInstructionRefine()">✍️ 입력 다듬기</button>
+                            <button type="button" id="video-generation-direct-button" class="video-direct-button" onclick="requestVideoInstructionDirect()">🎯 지시로써 다듬기</button>
                         </div>
                     </div>
                     <textarea id="video-generation-instruction" class="video-instruction" rows="5" maxlength="12000" placeholder="예: 인물이 천천히 고개를 들어 카메라를 바라보고, 머리카락과 옷자락이 약한 바람에 자연스럽게 흔들린다. 카메라는 아주 조금 천천히 밀고 들어간다."></textarea>
@@ -28869,6 +28890,8 @@
         let videoInstructionDraftBusy = false;
         let videoInstructionRefineRequestId = 0;
         let videoInstructionRefineBusy = false;
+        let videoInstructionDirectRequestId = 0;
+        let videoInstructionDirectBusy = false;
         let videoInstructionRefineUndoSnapshot = null;
 
         const VIDEO_UPSCALE_LABELS = {
@@ -28893,7 +28916,9 @@
         });
         const VIDEO_FAST_QUALITY_MP = Object.freeze({
             low: 0.2,
+            low_plus: 0.3,
             medium: 0.35,
+            high_minus: 0.4,
             high: 0.5,
             native: null,
         });
@@ -28905,7 +28930,9 @@
         ]);
         const VIDEO_STANDARD_QUALITY_OPTIONS = Object.freeze([
             ['low', 'FAST 저화질 · 0.2 MP'],
+            ['low_plus', 'FAST 저화질+ · 0.3 MP'],
             ['medium', 'FAST 기본 · 0.35 MP'],
+            ['high_minus', 'FAST 고화질- · 0.4 MP'],
             ['high', 'FAST 고화질 · 0.5 MP'],
             ['native', 'Native 최대 · 비율별'],
         ]);
@@ -28914,7 +28941,9 @@
         const VIDEO_FAST_QUALITY_OPTIONS = Object.freeze([
             ['native', '고속 기본 · 짧은 변 768p'],
             ['low', '저화질 · 0.2 MP (실험적)'],
+            ['low_plus', '저화질+ · 0.3 MP (실험적)'],
             ['medium', '기본 · 0.35 MP (실험적)'],
+            ['high_minus', '고화질- · 0.4 MP (실험적)'],
             ['high', '고화질 · 0.5 MP (실험적)'],
         ]);
 
@@ -29301,7 +29330,7 @@
         }
 
         async function requestVideoInstructionDraft() {
-            if (videoInstructionDraftBusy) return;
+            if (videoInstructionDraftBusy || videoInstructionRefineBusy || videoInstructionDirectBusy) return;
             const sourceKey = document.getElementById('video-generation-source')?.value || '';
             const sourceRef = getVideoReferenceByKey(sourceKey)?.reference || null;
             const mode = document.getElementById('video-generation-mode')?.value || 'i2v';
@@ -29318,8 +29347,12 @@
             }
             const requestId = ++videoInstructionDraftRequestId;
             const selectionKey = videoInstructionDraftSelectionKey();
+            const refineButton = document.getElementById('video-generation-refine-button');
+            const directButton = document.getElementById('video-generation-direct-button');
             const button = document.getElementById('video-generation-draft-button');
             videoInstructionDraftBusy = true;
+            if (refineButton) refineButton.disabled = true;
+            if (directButton) directButton.disabled = true;
             if (button) {
                 button.disabled = true;
                 button.innerHTML = '<span class="spinner"></span> 초안 생성 중';
@@ -29379,6 +29412,8 @@
             } finally {
                 if (requestId === videoInstructionDraftRequestId) {
                     videoInstructionDraftBusy = false;
+                    if (refineButton) refineButton.disabled = false;
+                    if (directButton) directButton.disabled = false;
                     if (button) {
                         button.disabled = false;
                         button.innerHTML = '✨ 초안 만들기';
@@ -29433,7 +29468,7 @@
         }
 
         async function requestVideoInstructionRefine() {
-            if (videoInstructionDraftBusy || videoInstructionRefineBusy) return;
+            if (videoInstructionDraftBusy || videoInstructionRefineBusy || videoInstructionDirectBusy) return;
             const instructionInput = document.getElementById('video-generation-instruction');
             const instruction = (instructionInput?.value || '').trim();
             if (!instruction) {
@@ -29458,9 +29493,11 @@
             const requestId = ++videoInstructionRefineRequestId;
             const selectionKey = videoInstructionDraftSelectionKey();
             const draftButton = document.getElementById('video-generation-draft-button');
+            const directButton = document.getElementById('video-generation-direct-button');
             const button = document.getElementById('video-generation-refine-button');
             videoInstructionRefineBusy = true;
             if (draftButton) draftButton.disabled = true;
+            if (directButton) directButton.disabled = true;
             if (button) {
                 button.disabled = true;
                 button.innerHTML = '<span class="spinner"></span> 다듬는 중';
@@ -29524,9 +29561,124 @@
                 if (requestId === videoInstructionRefineRequestId) {
                     videoInstructionRefineBusy = false;
                     if (draftButton) draftButton.disabled = false;
+                    if (directButton) directButton.disabled = false;
                     if (button) {
                         button.disabled = false;
                         button.innerHTML = '✍️ 입력 다듬기';
+                    }
+                }
+            }
+        }
+
+        function resetVideoInstructionDirectRequest() {
+            videoInstructionDirectRequestId += 1;
+            videoInstructionDirectBusy = false;
+            const button = document.getElementById('video-generation-direct-button');
+            if (button) {
+                button.disabled = false;
+                button.innerHTML = '🎯 지시로써 다듬기';
+            }
+            clearVideoInstructionRefineUndo();
+        }
+
+        async function requestVideoInstructionDirect() {
+            if (videoInstructionDraftBusy || videoInstructionRefineBusy || videoInstructionDirectBusy) return;
+            const instructionInput = document.getElementById('video-generation-instruction');
+            const instruction = (instructionInput?.value || '').trim();
+            if (!instruction) {
+                showToast('지시로써 다듬을 방향을 먼저 입력란에 적어주세요.', 'warning');
+                instructionInput?.focus();
+                return;
+            }
+            const sourceKey = document.getElementById('video-generation-source')?.value || '';
+            const sourceRef = getVideoReferenceByKey(sourceKey)?.reference || null;
+            const mode = document.getElementById('video-generation-mode')?.value || 'i2v';
+            const lastRef = getEffectiveLastVideoReference();
+            if (!sourceRef) {
+                console.error('[VIDEO_UI] AI 연출 지시 다듬기 요청 실패: 원본 참조 없음', {sourceKey});
+                showToast('지시 다듬기를 위한 원본 이미지 정보가 없습니다.', 'error');
+                return;
+            }
+            if (mode === 'first_last' && !lastRef) {
+                console.error('[VIDEO_UI] AI 연출 지시 다듬기 요청 실패: 마지막 프레임 없음');
+                showToast('지시 다듬기를 위한 마지막 프레임을 선택하세요.', 'warning');
+                return;
+            }
+            const requestId = ++videoInstructionDirectRequestId;
+            const selectionKey = videoInstructionDraftSelectionKey();
+            const draftButton = document.getElementById('video-generation-draft-button');
+            const refineButton = document.getElementById('video-generation-refine-button');
+            const button = document.getElementById('video-generation-direct-button');
+            videoInstructionDirectBusy = true;
+            if (draftButton) draftButton.disabled = true;
+            if (refineButton) refineButton.disabled = true;
+            if (button) {
+                button.disabled = true;
+                button.innerHTML = '<span class="spinner"></span> 다듬는 중';
+            }
+            clearVideoInstructionRefineUndo();
+            updateVideoInstructionDraftPresentation('사용자 방향 지시를 바탕으로 참조 이미지와 함께 연출을 창작하는 중...');
+            try {
+                const data = await fetchJSON('/api/video/instruction-direct', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        mode,
+                        workflow_variant: selectedVideoWorkflowVariant(),
+                        instruction,
+                        source_ref: sourceRef,
+                        last_ref: lastRef,
+                        source_backup: sourceRef.kind === 'backup' ? sourceRef.name : '',
+                        last_backup: lastRef?.kind === 'backup' ? lastRef.name : '',
+                        loop: isVideoLoopEnabled(),
+                        aspect_ratio: document.getElementById('video-generation-aspect-ratio')?.value || 'auto',
+                        quality_level: document.getElementById('video-generation-quality-level')?.value || 'medium',
+                        duration: normalizedVideoDuration(),
+                        language: selectedVideoInstructionLanguage(),
+                        include_dialogue_context: isVideoDialogueContextEnabled(),
+                        allow_camera_motion: isVideoCameraMotionAllowed(),
+                        allow_background_change: isVideoBackgroundChangeAllowed(),
+                    }),
+                });
+                if (requestId !== videoInstructionDirectRequestId) {
+                    console.error('[VIDEO_UI] 닫히거나 교체된 AI 연출 지시 다듬기 응답 무시:', data);
+                    return;
+                }
+                if (!data.success || !String(data.draft || '').trim()) {
+                    throw new Error(data.error || 'AI 연출 지시 다듬기 실패');
+                }
+                if (selectionKey !== videoInstructionDraftSelectionKey()) {
+                    console.error('[VIDEO_UI] 선택 변경 후 도착한 AI 연출 지시 다듬기 미적용:', data);
+                    updateVideoInstructionDraftPresentation('선택값이 바뀌어 도착한 결과를 적용하지 않았습니다. 다시 다듬어 주세요.');
+                    showToast('영상화 선택값이 바뀌어 지시 다듬기 결과를 적용하지 않았습니다.', 'warning');
+                    return;
+                }
+                const target = document.getElementById('video-generation-instruction');
+                if (!target) {
+                    console.error('[VIDEO_UI] AI 연출 지시 다듬기를 채울 입력란을 찾지 못했습니다.', data);
+                    throw new Error('영상 지시 입력란을 찾지 못했습니다');
+                }
+                videoInstructionRefineUndoSnapshot = target.value;
+                target.value = String(data.draft).trim();
+                showVideoInstructionRefineUndo();
+                target.focus();
+                updateVideoInstructionDraftPresentation(
+                    `지시로써 다듬기 완료 · 큐 ${data.item_id || ''}. ↩ 원문으로 되돌리기로 원문 복구 가능.`
+                );
+                showToast('방향 지시대로 연출을 창작해 입력란에 채웠습니다.', 'success');
+            } catch (error) {
+                if (requestId !== videoInstructionDirectRequestId) return;
+                console.error('[VIDEO_UI] AI 연출 지시 다듬기 실패:', error, {sourceRef, lastRef, mode, instruction});
+                updateVideoInstructionDraftPresentation(`지시 다듬기 실패: ${error.message || error}`);
+                showToast('AI 연출 지시 다듬기 실패: ' + (error.message || error), 'error');
+            } finally {
+                if (requestId === videoInstructionDirectRequestId) {
+                    videoInstructionDirectBusy = false;
+                    if (draftButton) draftButton.disabled = false;
+                    if (refineButton) refineButton.disabled = false;
+                    if (button) {
+                        button.disabled = false;
+                        button.innerHTML = '🎯 지시로써 다듬기';
                     }
                 }
             }
@@ -30193,6 +30345,7 @@
             videoWorkspaceSourceRef = reference;
             resetVideoInstructionDraftRequest();
             resetVideoInstructionRefineRequest();
+            resetVideoInstructionDirectRequest();
             ensureVideoInstructionRefineUndoListener();
             const badge = document.querySelector('#video-modal .video-source-badge');
             if (badge) badge.textContent = reference.kind === 'asset' ? '현재 에셋' : '현재 카드';
@@ -30235,6 +30388,7 @@
             if (modal) modal.classList.remove('visible');
             resetVideoInstructionDraftRequest();
             resetVideoInstructionRefineRequest();
+            resetVideoInstructionDirectRequest();
         }
 
         async function submitVideoGeneration() {
@@ -84999,6 +85153,7 @@
             bot_llm_face_tag_analysis: 'LLM 얼굴분석',
             qwen_edit_translate: 'EDIT 번역',
             video_instruction_draft: 'H3 AI 초안',
+            video_instruction_direct: 'H3 지시 다듬기',
             video_prompt_build: 'H3 프롬프트',
             video_i2v: 'H3 I2V',
             video_first_last: 'H3 FLF2V',

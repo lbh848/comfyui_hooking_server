@@ -152,7 +152,9 @@ def test_fast_aspect_ratios_and_quality_levels_are_independent() -> None:
     }
     assert FAST_QUALITY_LEVELS == {
         "low": 0.2,
+        "low_plus": 0.3,
         "medium": 0.35,
+        "high_minus": 0.4,
         "high": 0.5,
         "native": None,
     }

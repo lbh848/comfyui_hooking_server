@@ -214,6 +214,7 @@ LLM_TYPES = frozenset({
     "qwen_edit_translate",          # Qwen Edit 지시문 영어 번역
     "video_instruction_draft",      # H3 I2V/FLF2V 편집용 AI 연출 초안
     "video_instruction_refine",     # H3 I2V/FLF2V 사용자 입력 다듬기(풍부한 묘사로 확장)
+    "video_instruction_direct",     # H3 I2V/FLF2V 지시로써 다듬기(방향 지시 기반 연출 창작)
     "video_prompt_build",           # H3 I2V/FLF2V 프롬프트 작성
 })
 
@@ -2631,6 +2632,7 @@ class QueueManager:
             "qwen_edit_translate": self._handle_qwen_edit_translate,
             "video_instruction_draft": self._handle_video_instruction_draft,
             "video_instruction_refine": self._handle_video_instruction_refine,
+            "video_instruction_direct": self._handle_video_instruction_direct,
             "video_prompt_build": self._handle_video_prompt_build,
             "video_i2v": self._handle_video_render,
             "video_first_last": self._handle_video_render,
@@ -2820,6 +2822,49 @@ class QueueManager:
         except Exception as exc:
             print(
                 f"[QUEUE:VIDEO_REFINE] 처리 실패: item={item.id}, mode={mode}, "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            raise
+
+    async def _handle_video_instruction_direct(self, item: QueueItem) -> dict:
+        """Invent a direction following the user's stated direction in the LLM lane without enqueueing render."""
+
+        if self.video_mode is None:
+            print(
+                "[QUEUE:VIDEO_DIRECT] 실행 실패: VideoMode 미주입 "
+                f"item={item.id}, params={item.params!r}"
+            )
+            raise RuntimeError("영상화 모드가 큐에 주입되지 않았습니다")
+        params = dict(item.params or {})
+        mode = str(params.get("mode") or "").strip().lower()
+        try:
+            await self._notify_progress(
+                item,
+                {"percentage": 5, "phase": "building_video_instruction_direct"},
+            )
+            result = await self.video_mode.build_instruction_direct(
+                params,
+                queue_item_id=item.id,
+            )
+            if not isinstance(result, dict) or not result.get("draft"):
+                print(
+                    "[QUEUE:VIDEO_DIRECT] 결과 형식 오류: "
+                    f"item={item.id}, mode={mode!r}, result={result!r}"
+                )
+                raise RuntimeError("AI 연출 지시 다듬기 결과 형식이 올바르지 않습니다")
+            await self._notify_progress(
+                item,
+                {"percentage": 100, "phase": "video_instruction_direct_completed"},
+            )
+            print(
+                "[QUEUE:VIDEO_DIRECT] 생성 완료: "
+                f"item={item.id}, mode={mode}, length={len(str(result['draft']))}"
+            )
+            return result
+        except Exception as exc:
+            print(
+                f"[QUEUE:VIDEO_DIRECT] 처리 실패: item={item.id}, mode={mode}, "
                 f"error={type(exc).__name__}: {exc}"
             )
             traceback.print_exc()

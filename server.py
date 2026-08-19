@@ -11071,6 +11071,232 @@ async def handle_api_video_instruction_refine(request: web.Request) -> web.Respo
         )
 
 
+async def handle_api_video_instruction_direct(request: web.Request) -> web.Response:
+    """Queue a dedicated vision call that invents a direction following the user's stated direction."""
+
+    try:
+        body = await request.json()
+        if not isinstance(body, dict):
+            print(
+                "[VIDEO:DIRECT:API] 요청 본문 형식 오류: "
+                f"type={type(body).__name__}, value={body!r}"
+            )
+            return web.json_response(
+                {"success": False, "error": "요청 본문은 객체여야 합니다"},
+                status=400,
+            )
+        mode = str(body.get("mode") or "").strip().lower()
+        if mode not in VIDEO_MODES:
+            print(
+                f"[VIDEO:DIRECT:API] 지원하지 않는 모드: mode={mode!r}, body={body!r}"
+            )
+            return web.json_response(
+                {"success": False, "error": "지원하지 않는 영상화 모드입니다"},
+                status=400,
+            )
+        language = str(body.get("language") or "ko").strip().lower()
+        if language not in {"ko", "en"}:
+            print(
+                "[VIDEO:DIRECT:API] 출력 언어 오류: "
+                f"value={language!r}, body={body!r}"
+            )
+            return web.json_response(
+                {"success": False, "error": "AI 연출 지시 다듬기 언어는 ko 또는 en이어야 합니다"},
+                status=400,
+            )
+        instruction = str(body.get("instruction") or "").strip()
+        if not instruction:
+            print(
+                "[VIDEO:DIRECT:API] 사용자 방향 지시 비어 있음: "
+                f"mode={mode!r}, body={body!r}"
+            )
+            return web.json_response(
+                {"success": False, "error": "지시로써 다듬을 방향을 먼저 입력란에 적어주세요"},
+                status=400,
+            )
+        if len(instruction) > 12000:
+            print(
+                "[VIDEO:DIRECT:API] 사용자 방향 지시 길이 초과: "
+                f"length={len(instruction)}, mode={mode!r}"
+            )
+            return web.json_response(
+                {"success": False, "error": "입력이 너무 깁니다(12000자 이내)"},
+                status=400,
+            )
+        boolean_options = {
+            "include_dialogue_context": body.get("include_dialogue_context", True),
+            "allow_camera_motion": body.get("allow_camera_motion", True),
+            "allow_background_change": body.get("allow_background_change", False),
+        }
+        invalid_boolean = next(
+            (
+                (name, value)
+                for name, value in boolean_options.items()
+                if not isinstance(value, bool)
+            ),
+            None,
+        )
+        if invalid_boolean is not None:
+            option_name, option_value = invalid_boolean
+            print(
+                "[VIDEO:DIRECT:API] boolean 옵션 형식 오류: "
+                f"name={option_name}, value={option_value!r}, body={body!r}"
+            )
+            return web.json_response(
+                {"success": False, "error": f"{option_name} 값은 boolean이어야 합니다"},
+                status=400,
+            )
+
+        source_name = str(body.get("source_backup") or "").strip()
+        last_name = str(body.get("last_backup") or "").strip()
+        try:
+            source_ref = video_mode.normalize_reference(
+                body.get("source_ref"),
+                fallback_backup=source_name,
+            )
+            video_mode.validate_reference(source_ref)
+        except (TypeError, ValueError, FileNotFoundError, RuntimeError) as exc:
+            print(
+                "[VIDEO:DIRECT:API] 원본 참조 검증 실패: "
+                f"value={body.get('source_ref')!r}, fallback={source_name!r}, "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            return web.json_response(
+                {"success": False, "error": str(exc)},
+                status=400,
+            )
+        loop_enabled = bool(body.get("loop", False))
+        last_ref = None
+        if mode == "first_last":
+            try:
+                last_ref = video_mode.normalize_reference(
+                    body.get("last_ref"),
+                    fallback_backup=last_name,
+                )
+                if last_ref == source_ref and not loop_enabled:
+                    raise ValueError("서로 다른 마지막 프레임을 선택하세요")
+                video_mode.validate_reference(last_ref)
+            except (TypeError, ValueError, FileNotFoundError, RuntimeError) as exc:
+                print(
+                    "[VIDEO:DIRECT:API] 마지막 프레임 참조 검증 실패: "
+                    f"value={body.get('last_ref')!r}, fallback={last_name!r}, "
+                    f"error={type(exc).__name__}: {exc}"
+                )
+                traceback.print_exc()
+                return web.json_response(
+                    {"success": False, "error": str(exc)},
+                    status=400,
+                )
+        try:
+            duration = normalize_video_duration(
+                body.get("duration", VIDEO_DEFAULT_DURATION_SECONDS)
+            )
+        except ValueError as exc:
+            print(
+                "[VIDEO:DIRECT:API] 영상 길이 오류: "
+                f"value={body.get('duration')!r}, error={exc}"
+            )
+            traceback.print_exc()
+            return web.json_response(
+                {"success": False, "error": str(exc)},
+                status=400,
+            )
+        try:
+            workflow_variant, aspect_ratio, quality_level = (
+                normalize_video_workflow_selection(
+                    body,
+                    log_prefix="VIDEO:DIRECT:API",
+                )
+            )
+        except ValueError as exc:
+            traceback.print_exc()
+            return web.json_response(
+                {"success": False, "error": str(exc)},
+                status=400,
+            )
+        params = {
+            "mode": mode,
+            "workflow_variant": workflow_variant,
+            "instruction": instruction,
+            "source_ref": source_ref,
+            "last_ref": last_ref or {},
+            "source_backup": (
+                source_ref.get("name", "")
+                if source_ref.get("kind") == "backup"
+                else ""
+            ),
+            "last_backup": (
+                last_ref.get("name", "")
+                if last_ref and last_ref.get("kind") == "backup"
+                else ""
+            ),
+            "loop": loop_enabled,
+            "duration": duration,
+            "preset": aspect_ratio,
+            "aspect_ratio": aspect_ratio,
+            "quality_level": quality_level,
+            "language": language,
+            **boolean_options,
+        }
+        label = {
+            "i2v": "H3 I2V 지시로써 다듬기",
+            "first_last": "H3 FLF2V 지시로써 다듬기",
+        }[mode]
+        if workflow_variant == "fast":
+            label = label.replace("H3 ", "H3 고속 ", 1)
+        item = await queue_manager.add_item(
+            "video_instruction_direct",
+            label,
+            params,
+        )
+        print(
+            "[VIDEO:DIRECT:API] 큐 등록 후 결과 대기: "
+            f"item={item.id}, mode={mode}, variant={workflow_variant}, "
+            f"language={language}, "
+            f"seed_length={len(instruction)}, "
+            f"dialogue={boolean_options['include_dialogue_context']}, "
+            f"camera_motion={boolean_options['allow_camera_motion']}, "
+            f"background_change={boolean_options['allow_background_change']}"
+        )
+        result = await item.completion_future
+        if not isinstance(result, dict) or not result.get("success") or not result.get("draft"):
+            print(
+                "[VIDEO:DIRECT:API] 큐 결과 형식 오류: "
+                f"item={item.id}, result={result!r}"
+            )
+            return web.json_response(
+                {
+                    "success": False,
+                    "error": "AI 연출 지시 다듬기 결과가 올바르지 않습니다",
+                    "item_id": item.id,
+                },
+                status=500,
+            )
+        print(
+            "[VIDEO:DIRECT:API] 지시 다듬기 반환 완료: "
+            f"item={item.id}, length={len(str(result['draft']))}"
+        )
+        return web.json_response({"item_id": item.id, **result})
+    except json.JSONDecodeError as exc:
+        print(f"[VIDEO:DIRECT:API] JSON 파싱 실패: error={exc}")
+        traceback.print_exc()
+        return web.json_response(
+            {"success": False, "error": "요청 JSON이 올바르지 않습니다"},
+            status=400,
+        )
+    except Exception as exc:
+        print(
+            "[VIDEO:DIRECT:API] 지시 다듬기 요청 실패: "
+            f"error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        return web.json_response(
+            {"success": False, "error": str(exc)},
+            status=500,
+        )
+
+
 async def handle_api_video_sharpen_preview(request: web.Request) -> web.Response:
     """영상화 다운스케일 후 Unsharp Mask pre-sharpen 미리보기.
 
@@ -15652,6 +15878,7 @@ app.router.add_post("/api/backup_delete/{name}", handle_api_backup_delete)
 app.router.add_get("/api/video/reference-options", handle_api_video_reference_options)
 app.router.add_post("/api/video/instruction-draft", handle_api_video_instruction_draft)
 app.router.add_post("/api/video/instruction-refine", handle_api_video_instruction_refine)
+app.router.add_post("/api/video/instruction-direct", handle_api_video_instruction_direct)
 app.router.add_post("/api/video/enqueue", handle_api_video_enqueue)
 app.router.add_post("/api/video/sharpen_preview", handle_api_video_sharpen_preview)
 app.router.add_post("/api/video/reprocess/enqueue", handle_api_video_reprocess_enqueue)
