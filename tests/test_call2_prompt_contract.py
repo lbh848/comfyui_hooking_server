@@ -100,3 +100,44 @@ def test_call2_plan_handoff_stays_natural_and_schema_remains_compact():
     assert '"must_show"' not in source
     assert "required_additions" in source
     assert "camera_replacement" in source
+
+
+def test_call2_prioritizes_character_state_over_environment_detail():
+    system = CALL2_SYSTEM.read_text(encoding="utf-8")
+    thoughts = CALL2_THOUGHTS.read_text(encoding="utf-8")
+
+    assert "Character rendering is the priority" in system
+    assert "current pose, action, clothing or exposure state" in system
+    assert "Establish the visible characters first" in thoughts
+    assert "Environment is last priority" in system
+
+
+def test_call2_uses_simple_background_without_inventing_scene_detail():
+    system = CALL2_SYSTEM.read_text(encoding="utf-8")
+    thoughts = CALL2_THOUGHTS.read_text(encoding="utf-8")
+    source = PIPELINE_PY.read_text(encoding="utf-8")
+
+    assert "use `simple background` as the sole environment description" in system
+    assert "when no clear or important background exists" in thoughts
+    assert "when no clear or story-important background exists add only" in source
+    assert "Establish the world-building, time, and weather" not in system
+    assert "Setup lighting with multiple tags" not in system
+
+
+def test_call2_keeps_scene_environment_out_of_character_positive():
+    system = CALL2_SYSTEM.read_text(encoding="utf-8")
+    thoughts = CALL2_THOUGHTS.read_text(encoding="utf-8")
+    source = PIPELINE_PY.read_text(encoding="utf-8")
+
+    assert "belong only in `scene`; never copy them" in system
+    assert "Never repeat `scene` environment" in thoughts
+    assert "Never repeat scene-wide environment" in source
+
+
+def test_call2_supplement_does_not_repeat_existing_tags():
+    system = CALL2_SYSTEM.read_text(encoding="utf-8")
+    thoughts = CALL2_THOUGHTS.read_text(encoding="utf-8")
+
+    assert "Do not restate character appearance" in system
+    assert "leave it empty when the tags are sufficient" in system
+    assert "supplement does not repeat details already expressed by tags" in thoughts
