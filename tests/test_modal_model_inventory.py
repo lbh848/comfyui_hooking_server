@@ -194,3 +194,35 @@ def test_inventory_ui_shows_problems_and_storage():
     assert "/api/modal/models" in html
     assert "Orphan (Manifest 누락)" in html
     assert "저장 공간에 따른 과금" in html
+
+
+def test_lora_manager_metadata_is_not_reported_as_orphan():
+    """메타데이터 사이드카를 고아로 세면 진단 화면이 잡음으로 덮인다.
+
+    실측: 볼륨의 고아 6건 중 5건이 LoRA Manager 의 `.metadata.json` 이었다.
+    이건 지울 대상도 아니고 매니페스트에 있을 이유도 없다.
+    """
+    source = (ROOT / "modal_backend" / "client_cli.py").read_text(encoding="utf-8")
+    listing = source[source.index("def _list_volume_files") : source.index("def list_models")]
+    assert "_is_lora_manager_metadata" in listing
+    assert "metadata_count" in listing
+
+
+def test_client_diagnostics_never_write_to_stdout():
+    """client_cli 의 stdout 은 JSON 결과 전용 채널이다.
+
+    진단 한 줄이 섞이면 서비스 계층이 "응답 형식이 올바르지 않습니다" 로 죽는다.
+    실제로 이 파일에 메타데이터 안내를 추가하다 그렇게 깨뜨렸다.
+    """
+    source = (ROOT / "modal_backend" / "client_cli.py").read_text(encoding="utf-8")
+    body = source[source.index("def _list_volume_files") : source.index("def _sync_environment")]
+    prints = [
+        line for line in body.splitlines()
+        if line.strip().startswith("print(") or line.strip().startswith("f\"[MODAL_CLIENT]")
+    ]
+    # 이 구간의 모든 print 는 stderr 로 가야 한다.
+    assert "file=sys.stderr" in body
+    assert body.count("print(") <= body.count("file=sys.stderr"), (
+        "stdout 으로 새는 진단 출력이 있습니다: " + "\n".join(prints)
+    )
+

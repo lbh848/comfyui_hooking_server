@@ -695,6 +695,7 @@ def _list_volume_files(
         raise
 
     files: list[dict] = []
+    metadata_count = 0
     for entry in entries:
         entry_type = str(getattr(getattr(entry, "type", None), "name", "") or "")
         if entry_type and entry_type != "FILE":
@@ -711,12 +712,24 @@ def _list_volume_files(
                 file=sys.stderr,
             )
             continue
+        # LoRA Manager 가 모델 옆에 두는 메타데이터다. 매니페스트에 없는 게
+        # 정상이므로 '고아'로 세면 진단 화면이 잡음으로 덮인다(실측 6건 중 5건).
+        if _is_lora_manager_metadata(safe_path):
+            metadata_count += 1
+            continue
         files.append(
             {
                 "path": safe_path,
                 "size": max(0, int(getattr(entry, "size", 0) or 0)),
                 "mtime": int(getattr(entry, "mtime", 0) or 0),
             }
+        )
+    if metadata_count:
+        # stdout 은 JSON 결과 전용 채널이다. 진단은 반드시 stderr 로 보낸다.
+        print(
+            f"[MODAL_CLIENT] 원격 {label} 메타데이터 {metadata_count}개는 "
+            "목록에서 제외했습니다(LoRA Manager 부속 파일).",
+            file=sys.stderr,
         )
     files.sort(key=lambda item: item["path"].casefold())
     return files
