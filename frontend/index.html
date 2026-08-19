@@ -24062,6 +24062,18 @@
                         </div>
                         <div class="setting-row">
                             <div class="setting-label">
+                                모델 다운로드 경로
+                                <div class="desc">현재 PC에서 이미지를 생성하지 않는다면 <b>Cloud Direct</b>를 권장합니다. 모델을 로컬 디스크를 거치지 않고, 원격 저장소에서 Modal Volume으로 직접 다운로드합니다.</div>
+                            </div>
+                            <div class="setting-control">
+                                <select id="setting-modal-model-source" style="padding:6px 10px; border-radius:6px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-size:.85rem;">
+                                    <option value="local_first">Local First (기본값) — 로컬 다운로드 후 업로드</option>
+                                    <option value="cloud_direct">Cloud Direct — 원격 저장소에서 Modal로 직접 다운로드</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="setting-row">
+                            <div class="setting-label">
                                 <div class="title">무료 크레딧 기준</div>
                                 <div class="desc">월 $30를 기준으로 예상 사용 시간을 표시합니다. 실제 청구 정보는 Modal에서 조회합니다.</div>
                             </div>
@@ -40607,6 +40619,8 @@
             if (modalEnvironmentEl) modalEnvironmentEl.value = currentConfig.modal_environment || 'main';
             const modalDeploymentEl = document.getElementById('setting-modal-deployment-name');
             if (modalDeploymentEl) modalDeploymentEl.value = currentConfig.modal_deployment_name || 'soya-comfy-worker';
+            const modalModelSourceEl = document.getElementById('setting-modal-model-source');
+            if (modalModelSourceEl) modalModelSourceEl.value = currentConfig.modal_model_source || 'local_first';
             modalSetGpuSelectValue(
                 'modal-runtime-worker-gpu',
                 currentConfig.modal_worker_gpu || currentConfig.modal_gpu || 'L4',
@@ -42279,6 +42293,7 @@
                 modal_profile: document.getElementById('setting-modal-profile')?.value.trim() || 'soya-comfy',
                 modal_environment: document.getElementById('setting-modal-environment')?.value.trim() || 'main',
                 modal_deployment_name: document.getElementById('setting-modal-deployment-name')?.value.trim() || 'soya-comfy-worker',
+                modal_model_source: document.getElementById('setting-modal-model-source')?.value === 'cloud_direct' ? 'cloud_direct' : 'local_first',
                 modal_gpu: modalWorkerGpu,
                 modal_worker_gpu: modalWorkerGpu,
                 modal_web_gpu: modalWebGpu,

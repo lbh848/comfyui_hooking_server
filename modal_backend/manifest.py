@@ -61,6 +61,65 @@ def _require_user_workflow(
     return path
 
 
+def model_ids_for_workflow_files(
+    project_root: str | Path,
+    workflow_filenames: list[str] | tuple[str, ...],
+) -> list[str]:
+    """선택한 SOYA_USER 워크플로우 파일명들이 필요로 하는 매니페스트 model_id 목록.
+
+    cloud_direct 모드에서 쓴다. 로컬 파일을 스캔하는 resolve_workflow_models 와 달리
+    **매니페스트만 보고** 필요한 모델을 정한다 — 로컬에 파일이 없어도 되기 때문이다.
+
+    경로: 워크플로우 팩(.soya-pack.json)이 파일명↔바인딩을, 설치 매니페스트가
+    바인딩↔model_ids 를 갖고 있어 둘을 이어 붙인다.
+    """
+
+    root = Path(project_root)
+    pack_path = (
+        root / "comfy_workflow_library" / "SOYA_DISTRIBUTION" / "v2" / ".soya-pack.json"
+    )
+    if not pack_path.is_file():
+        print(f"[MODAL] 워크플로우 팩 매니페스트가 없습니다: {pack_path}")
+        raise FileNotFoundError(f"워크플로우 팩 매니페스트가 없습니다: {pack_path}")
+    pack = json.loads(pack_path.read_text(encoding="utf-8"))
+
+    wanted = {str(name).strip() for name in workflow_filenames if str(name).strip()}
+    bindings: set[str] = set()
+    matched: set[str] = set()
+    for item in pack.get("items", []):
+        filename = str(item.get("filename") or "")
+        if filename in wanted:
+            matched.add(filename)
+            for binding in item.get("bindings", []):
+                bindings.add(str(binding))
+    missing = sorted(wanted - matched)
+    if missing:
+        # 개인 개조본 등 팩에 없는 워크플로우는 매니페스트로 모델을 알 수 없다.
+        print(
+            "[MODAL] 팩 매니페스트에 없는 워크플로우는 모델 목록을 확정할 수 없습니다: "
+            f"{missing}"
+        )
+
+    manifest = load_manifest(root)
+    releases = manifest.get("workflows", {}).get("release_dependencies", {})
+    model_ids: list[str] = []
+    seen: set[str] = set()
+    for entries in releases.values():
+        for entry in entries:
+            if str(entry.get("id")) not in bindings:
+                continue
+            for model_id in entry.get("model_ids", []):
+                key = str(model_id)
+                if key not in seen:
+                    seen.add(key)
+                    model_ids.append(key)
+    print(
+        "[MODAL] cloud_direct 모델 해석: "
+        f"workflows={len(matched)}, bindings={len(bindings)}, models={len(model_ids)}"
+    )
+    return model_ids
+
+
 def selected_install_plan(
     project_root: str | Path,
     selected_ids: list[str],

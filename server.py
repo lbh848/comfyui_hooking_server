@@ -539,6 +539,8 @@ DEFAULT_CONFIG = {
     # modal_gpu는 이전 config.json과 API 호출의 작업 워커 alias로 유지한다.
     "modal_gpu": "L4",
     "modal_worker_gpu": "L4",
+    # 모델 취득 경로: local_first(저장소→로컬→업로드, 기본) | cloud_direct(저장소→Modal 볼륨 직접)
+    "modal_model_source": "local_first",
     "modal_web_gpu": "L4",
     "modal_vram_mode": "highvram",
     "modal_max_concurrency": 2,

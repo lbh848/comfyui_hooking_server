@@ -27,13 +27,21 @@ from .custom_nodes import (
     inventory_custom_nodes,
     public_custom_node_inventory,
 )
-from .manifest import list_soya_user_workflows, plan_from_soya_user_names
+from .manifest import (
+    list_soya_user_workflows,
+    model_ids_for_workflow_files,
+    plan_from_soya_user_names,
+)
 from .lora_inventory import (
     build_local_lora_catalog,
     merge_remote_lora_catalog,
     public_lora_catalog,
 )
-from .settings import MODAL_GPU_PROFILES, ModalSettings
+from .settings import (
+    MODAL_GPU_PROFILES,
+    MODEL_SOURCE_CLOUD_DIRECT,
+    ModalSettings,
+)
 from .workflow_assets import (
     build_local_model_index,
     resolve_explicit_input_files,
@@ -3057,6 +3065,77 @@ class ModalService:
             force_refresh=force_refresh,
         )
 
+    async def _sync_models_direct(
+        self,
+        settings: ModalSettings,
+        workflow_ids: list[str],
+    ) -> None:
+        """워커가 저장소에서 Modal Volume 으로 모델을 직접 받게 한다 (cloud_direct).
+
+        로컬 디스크를 거치지 않으므로 로컬에서 생성하지 않는 구성에서 같은 바이트를
+        두 번 옮기지 않는다. 무결성은 워커가 매니페스트 sha256 으로 검증한다.
+        """
+
+        model_ids = await asyncio.to_thread(
+            model_ids_for_workflow_files,
+            self.project_root,
+            list(workflow_ids),
+        )
+        if not model_ids:
+            self._append_install_log("system", "cloud_direct: 필요한 모델이 없습니다.")
+            return
+        self._set_install_phase(
+            "upload",
+            f"저장소에서 Modal Volume 으로 모델 {len(model_ids)}개를 직접 받는 중입니다.",
+            progress_mode="indeterminate",
+        )
+        self._append_install_log(
+            "system",
+            f"cloud_direct 직접 다운로드 시작: 모델 {len(model_ids)}개",
+        )
+        client_payload = {
+            "action": "sync_models_direct",
+            "app_name": settings.deployment_name,
+            "environment": settings.environment,
+            "model_ids": model_ids,
+        }
+        code, stdout, _stderr = await self._run_command(
+            [sys.executable, "-m", "modal_backend.client_cli"],
+            env=self._subprocess_env(settings.profile),
+            stdin_payload=client_payload,
+            timeout=86_400,
+            output_callback=self._handle_install_client_output,
+        )
+        if code != 0:
+            raise RuntimeError("Modal 원격 모델 직접 다운로드에 실패했습니다.")
+        response = json.loads(stdout)
+        if not response.get("ok"):
+            raise RuntimeError(str(response.get("error") or "원격 모델 다운로드 실패"))
+        results = (response.get("result") or {}).get("results") or []
+        downloaded = [r for r in results if r.get("state") == "downloaded"]
+        present = [r for r in results if r.get("state") == "already_present"]
+        problems = [
+            r for r in results
+            if r.get("state") not in {"downloaded", "already_present"}
+        ]
+        summary = (
+            f"cloud_direct 완료: 신규 {len(downloaded)}개 · 기존 {len(present)}개"
+        )
+        if problems:
+            summary += f" · 문제 {len(problems)}개"
+        self._append_install_log("system", summary)
+        for item in problems:
+            self._append_install_log(
+                "system",
+                f"⚠ 모델 처리 실패: id={item.get('id')}, state={item.get('state')}"
+                + (f", error={item.get('error')}" if item.get("error") else ""),
+            )
+        if problems:
+            raise RuntimeError(
+                f"원격 모델 {len(problems)}개를 확보하지 못했습니다: "
+                + ", ".join(str(item.get("id")) for item in problems[:5])
+            )
+
     async def start_install(self, selected_names: list[str]) -> dict[str, Any]:
         settings = ModalSettings.from_mapping(self.get_config())
         if not settings.enabled:
@@ -3112,7 +3191,24 @@ class ModalService:
                 self._load_workflow_files,
                 plan["workflow_files"],
             )
-            assets = await self._resolve_local_workflow_assets(workflows)
+            cloud_direct = settings.model_source == MODEL_SOURCE_CLOUD_DIRECT
+            if cloud_direct:
+                # 로컬을 원본으로 쓰지 않는다. 매니페스트만 보고 필요한 모델을 정하고
+                # 워커가 저장소에서 볼륨으로 직접 받는다. 로컬에 모델이 하나도 없어도 된다.
+                assets = {
+                    "model_files": [],
+                    "lora_files": [],
+                    "model_count": 0,
+                    "size_bytes": 0,
+                    "size_gib": 0.0,
+                }
+                self._append_install_log(
+                    "system",
+                    "모델 취득 경로: cloud_direct — 로컬을 거치지 않고 저장소에서 "
+                    "Modal Volume 으로 직접 받습니다.",
+                )
+            else:
+                assets = await self._resolve_local_workflow_assets(workflows)
             plan.update(assets)
             workflow_bytes = sum(
                 Path(str(item["source_path"])).stat().st_size
@@ -3180,6 +3276,8 @@ class ModalService:
             response = json.loads(stdout)
             if not response.get("ok"):
                 raise RuntimeError(str(response.get("error") or "Modal 원격 동기화 실패"))
+            if cloud_direct:
+                await self._sync_models_direct(settings, plan["workflow_ids"])
             progress = dict(self._install_state.get("progress") or {})
             progress.update(
                 mode="complete",

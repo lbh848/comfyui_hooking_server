@@ -65,6 +65,30 @@ def _name(value: Any, field: str, default: str) -> str:
     return result
 
 
+MODEL_SOURCE_LOCAL_FIRST = "local_first"
+MODEL_SOURCE_CLOUD_DIRECT = "cloud_direct"
+SUPPORTED_MODEL_SOURCES = (MODEL_SOURCE_LOCAL_FIRST, MODEL_SOURCE_CLOUD_DIRECT)
+
+
+def normalize_modal_model_source(value: Any) -> str:
+    """모델 취득 경로를 정규화한다. 알 수 없는 값은 기본값으로 되돌린다.
+
+    기본값을 local_first 로 두는 이유: 로컬에서도 생성하는 기존 사용자의 동작을
+    바꾸지 않고, 로컬·원격이 같은 파일임을 보장하기 쉽기 때문이다.
+    """
+
+    raw = str(value or "").strip().lower()
+    if not raw:
+        return MODEL_SOURCE_LOCAL_FIRST
+    if raw not in SUPPORTED_MODEL_SOURCES:
+        print(
+            "[MODAL_SETTINGS] 알 수 없는 modal_model_source, 기본값 사용: "
+            f"value={value!r}, supported={SUPPORTED_MODEL_SOURCES}"
+        )
+        return MODEL_SOURCE_LOCAL_FIRST
+    return raw
+
+
 @dataclass(frozen=True)
 class ModalSettings:
     enabled: bool = False
@@ -80,6 +104,10 @@ class ModalSettings:
     status_refresh_seconds: int = 5
     container_start_max_retries: int = 2
     web_fast: bool = False
+    # 모델을 어디서 가져오는가.
+    #   local_first : 저장소→로컬→업로드 (현행·기본). 로컬 생성과 재현성 우선.
+    #   cloud_direct: 저장소→Modal 볼륨 직접. 로컬에서 생성하지 않는 구성용.
+    model_source: str = "local_first"
 
     @property
     def gpu(self) -> str:
@@ -156,6 +184,9 @@ class ModalSettings:
             status_refresh_seconds=refresh,
             container_start_max_retries=start_retries,
             web_fast=web_fast,
+            model_source=normalize_modal_model_source(
+                config.get("modal_model_source")
+            ),
         )
 
     def public_dict(self) -> dict[str, Any]:

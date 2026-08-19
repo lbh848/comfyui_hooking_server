@@ -355,6 +355,31 @@ def _read_payload() -> dict:
     return payload
 
 
+def sync_models_direct(payload: dict) -> dict:
+    """워커의 sync_models_from_source 를 호출해 저장소→Volume 직접 동기화를 시킨다.
+
+    로컬 파일을 올리지 않으므로 batch_upload 경로를 타지 않는다. 인증 토큰은
+    워커의 Modal Secret 에서 읽으므로 여기서 넘기지 않는다.
+    """
+
+    model_ids = payload.get("model_ids") or []
+    if not isinstance(model_ids, list) or not all(isinstance(x, str) for x in model_ids):
+        raise ValueError("model_ids는 문자열 배열이어야 합니다.")
+    _emit_install_progress(
+        "phase",
+        label=f"저장소에서 모델 {len(model_ids)}개 직접 다운로드",
+    )
+    fn = _remote_function(payload, "sync_models_from_source")
+    result = fn.remote(model_ids)
+    for item in (result or {}).get("results", []):
+        _emit_install_progress(
+            "item",
+            name=str(item.get("path") or item.get("id") or ""),
+            state=str(item.get("state") or ""),
+        )
+    return result
+
+
 def install(payload: dict) -> dict:
     app_name = str(payload["app_name"])
     environment = str(payload["environment"])
@@ -1935,7 +1960,9 @@ def main() -> int:
     try:
         payload = _read_payload()
         action = str(payload.get("action") or "")
-        if action == "install":
+        if action == "sync_models_direct":
+            result = sync_models_direct(payload)
+        elif action == "install":
             result = install(payload)
         elif action == "list_workflows":
             result = list_workflows(payload)
