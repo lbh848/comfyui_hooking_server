@@ -993,6 +993,7 @@ def test_manifest_has_fully_pinned_windows_runtime_and_assets() -> None:
     assert manifest.python["version"] == "3.12.11"
     assert manifest.python["compatibility_packages"] == [
         "numpy==1.26.4",
+        "ml-dtypes==0.5.4",
         "scipy==1.14.1",
         "tifffile==2024.9.20",
         "opencv-python==4.10.0.84",
