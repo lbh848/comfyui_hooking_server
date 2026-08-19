@@ -400,7 +400,42 @@ class ComfyInstallerService:
                 ),
                 "custom_node_count": len(active_manifest.custom_nodes),
             },
+            "model_acquisition": self._model_acquisition_advice(result),
         }
+
+    def _model_acquisition_advice(self, probe: dict) -> dict[str, Any]:
+        """클라우드 전용으로 보이는 머신에 모델 취득 경로를 권고한다.
+
+        설정을 자동으로 바꾸지 않는다 — 무엇을 받고 무엇에 과금되는지가 달라지는
+        선택이라 사용자가 해야 한다. 신호만 준다.
+        """
+
+        try:
+            from comfy_allocation import cloud_only_assessment
+
+            config = self._read_config()
+            assessment = cloud_only_assessment(
+                nvidia_available=(probe.get("nvidia") or {}).get("available"),
+                allocations=config.get("comfy_task_allocations"),
+            )
+            current = str(config.get("modal_model_source") or "").strip().lower()
+            if current not in {MODEL_SOURCE_LOCAL_FIRST, MODEL_SOURCE_CLOUD_DIRECT}:
+                current = MODEL_SOURCE_LOCAL_FIRST
+            recommend = (
+                assessment["cloud_only"] and current == MODEL_SOURCE_LOCAL_FIRST
+            )
+            return {
+                **assessment,
+                "model_source": current,
+                "recommend_cloud_direct": recommend,
+            }
+        except Exception as exc:
+            print(
+                "[COMFY_INSTALL][SERVICE] 모델 취득 경로 권고 계산 실패: "
+                f"{type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+            return {}
 
     def preflight_selection(
         self,

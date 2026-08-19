@@ -3147,6 +3147,8 @@ def _log_comfy_allocation_preflight(settle_seconds: float = 0.0) -> None:
         return
     if not findings:
         print("[COMFY_PREFLIGHT] 모든 작업이 응답 가능한 대상에 배분되어 있습니다.")
+        # 인스턴스가 살아 있어도 모델이 없으면 실행은 실패한다. 둘은 별개 점검이다.
+        _log_local_model_preflight()
         return
     remote_capable = [item for item in findings if item["remote_capable"]]
     print(
@@ -3164,6 +3166,70 @@ def _log_comfy_allocation_preflight(settle_seconds: float = 0.0) -> None:
             f"[COMFY_PREFLIGHT] 그중 {len(remote_capable)}건은 설정 → Comfy 런타임에서 "
             "배분을 MODAL로 바꾸면 바로 동작합니다."
         )
+    _log_local_model_preflight()
+
+
+def _local_model_preflight() -> list[dict]:
+    """로컬 실행 작업이 쓰는 모델이 실제로 로컬에 있는지 점검한다.
+
+    모델 취득 경로가 cloud_direct 면 설치기는 원격 위임분을 로컬에 받지 않는다.
+    그 상태에서 작업 배분을 원격 → 로컬로 되돌리면 그 작업이 쓰는 모델이 로컬에
+    없는 상태가 성립한다. 지금 그 실패는 ComfyUI 안에서 `... not in []` 로 나타나
+    원인을 알기 어렵다. 진단 전용이라 실패해도 기동을 막지 않는다.
+    """
+
+    try:
+        from comfy_installer.manifest import load_install_manifest
+        from comfy_installer.model_scope import local_model_gaps, tasks_needing_model
+
+        manifest = load_install_manifest()
+        allocations = normalize_comfy_task_allocations(
+            app_config.get("comfy_task_allocations"),
+            legacy_illustration_port=app_config.get("comfyui_port_illustration"),
+        )
+        gaps = local_model_gaps(
+            models=manifest.models,
+            workflows=manifest.workflows,
+            allocations=allocations,
+            config=app_config,
+            comfy_root=os.path.join(os.path.dirname(os.path.abspath(__file__)), "comfy"),
+        )
+        return [
+            {
+                **gap,
+                "tasks": tasks_needing_model(
+                    manifest.workflows, allocations, gap["id"]
+                ),
+            }
+            for gap in gaps
+        ]
+    except Exception as exc:
+        print(
+            "[COMFY_PREFLIGHT] 로컬 모델 점검 생략: "
+            f"{type(exc).__name__}: {exc}"
+        )
+        return []
+
+
+def _log_local_model_preflight() -> None:
+    gaps = _local_model_preflight()
+    if not gaps:
+        return
+    total = sum(int(item.get("size") or 0) for item in gaps)
+    print(
+        f"[COMFY_PREFLIGHT] ⚠ 로컬 실행 작업이 쓰는 모델 {len(gaps)}건이 로컬에 "
+        f"없습니다 ({total / 1024**3:.2f} GiB) — 해당 작업은 실행 시 실패합니다."
+    )
+    for item in gaps:
+        tasks = ", ".join(item.get("tasks") or ()) or "-"
+        print(
+            f"[COMFY_PREFLIGHT]   - {item['id']}: {item['relative_path']} "
+            f"(필요 작업: {tasks})"
+        )
+    print(
+        "[COMFY_PREFLIGHT] 해당 작업을 MODAL로 배분하거나, 설치기에서 "
+        "모델을 내려받으세요."
+    )
 
 
 async def submit_to_real_comfy(

@@ -37855,6 +37855,18 @@
                         : `${Number((selection.model_ids || []).length)} 선택 모델 · ${comfyInstallerFormatBytes(selection.model_bytes || 0)}`)
                     : `${manifest.model_count || 36} 전체 모델 · ${comfyInstallerFormatBytes(manifest.model_bytes || 0)}`;
                 const diskEnough = (probe.disk || {}).enough;
+                // Cloud-Only로 추정되는 환경일 경우 'Cloud Direct' 경로 사용을 권장합니다 (자동 변경하지 않음).
+                const acquisition = probe.model_acquisition || {};
+                if (acquisition.recommend_cloud_direct) {
+                    const skipGiB = comfyInstallerFormatBytes(
+                        Math.max(0, Number((selection || {}).remote_model_bytes || 0)));
+                    comfyInstallerSetError('');
+                    const hint = document.getElementById('comfy-installer-selection-summary');
+                    if (hint) {
+                        hint.textContent = `${hint.textContent} · 현재 PC는 Cloud-Only 환경으로 보입니다. 설정 → Modal에서 모델 다운로드 경로를 'Cloud Direct'로 변경하시면 로컬 다운로드 용량을 줄일 수 있습니다.`;
+                    }
+                    console.info('[COMFY_INSTALL] Cloud-Only 구성 감지 · 절감 가능 용량:', skipGiB);
+                }
                 if (note) {
                     const probeCommon =
                         `드라이버 CUDA 상한 ${driverCuda || '-'} · ${probe.uv || 'uv 확인'} · ${probe.git || 'Git 확인'}`;

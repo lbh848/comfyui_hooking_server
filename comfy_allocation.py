@@ -176,6 +176,39 @@ def local_required_binding_ids(allocations: Any) -> frozenset[str]:
         bindings.update(COMFY_TASK_WORKFLOW_BINDINGS.get(key, ()))
     return frozenset(bindings)
 
+
+def cloud_only_assessment(
+    *,
+    nvidia_available: Any,
+    allocations: Any,
+) -> dict[str, Any]:
+    """이 머신이 '클라우드 전용' 구성인지 판정한다.
+
+    두 조건을 **모두** 만족할 때만 참이다:
+      1. 로컬 가속 GPU 가 없다 (설치기 system_probe 의 nvidia.available)
+      2. 원격 실행이 가능한 작업이 **전부** 원격에 배분돼 있다
+
+    하나만으로는 부족하다. GPU 가 없어도 사용자가 로컬 CPU 로 돌릴 생각일 수
+    있고, 전부 원격이어도 GPU 가 있으면 언제든 되돌릴 수 있다.
+
+    판정은 **권고용**이다. 이 값으로 설정을 자동으로 바꾸지 않는다 — 모델 취득
+    경로가 바뀌면 무엇을 받고 무엇에 과금되는지가 달라지므로 사용자가 골라야 한다.
+    """
+
+    source = allocations if isinstance(allocations, dict) else {}
+    remote_capable = sorted(MODAL_SUPPORTED_COMFY_TASK_KEYS)
+    local_capable = [
+        key for key in remote_capable if not is_remote_allocation(source.get(key))
+    ]
+    has_gpu = bool(nvidia_available)
+    return {
+        "cloud_only": (not has_gpu) and not local_capable,
+        "nvidia_available": has_gpu,
+        "remote_capable_total": len(remote_capable),
+        "remote_capable_assigned_remote": len(remote_capable) - len(local_capable),
+        "locally_assigned_remote_capable_tasks": local_capable,
+    }
+
 # 큐 워커가 claim한 실행 대상을 하위 모드와 server.py의 공통 제출 함수까지 전달한다.
 # asyncio Task별 값이 분리되어 로컬 Comfy와 여러 Modal 워커가 동시에 실행돼도 섞이지 않는다.
 CURRENT_COMFY_EXECUTION_TARGET: ContextVar[str | None] = ContextVar(

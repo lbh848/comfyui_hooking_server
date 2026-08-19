@@ -86,6 +86,106 @@ def local_model_ids(
     return binding_model_ids(workflows, local_required_binding_ids(allocations))
 
 
+def _config_value(config: Mapping[str, Any], dotted: str) -> Any:
+    """``a.b.c`` 형태의 바인딩 id 로 설정 값을 꺼낸다."""
+
+    value: Any = config
+    for part in str(dotted).split("."):
+        if not isinstance(value, Mapping):
+            return None
+        value = value.get(part)
+    return value
+
+
+def configured_binding_ids(
+    workflows: Mapping[str, Any],
+    config: Mapping[str, Any],
+) -> frozenset[str]:
+    """설정에 실제 경로가 채워진 바인딩만 추린다.
+
+    매니페스트 전체를 기준으로 검사하면 사용자가 설치하지 않은 워크플로우의
+    모델까지 '없다'고 경고하게 된다. 설치한 것만 보는 것이 옳다.
+    """
+
+    if not isinstance(config, Mapping):
+        return frozenset()
+    return frozenset(
+        binding
+        for binding in manifest_binding_ids(workflows)
+        if str(_config_value(config, binding) or "").strip()
+    )
+
+
+def local_model_gaps(
+    *,
+    models: Sequence[Mapping[str, Any]],
+    workflows: Mapping[str, Any],
+    allocations: Any,
+    config: Mapping[str, Any],
+    comfy_root: Any,
+) -> tuple[dict[str, Any], ...]:
+    """로컬 실행 작업이 쓰는데 로컬 디스크에 없는 모델.
+
+    왜 필요한가: 설치기가 cloud_direct 에서 원격 위임분을 건너뛰게 되면서,
+    작업 배분을 원격 → 로컬로 되돌리면 그 작업이 쓰는 모델이 로컬에 없는 상태가
+    성립하게 됐다. 지금 그 실패는 ComfyUI 안에서 ``... not in []`` 로 나타나
+    원인을 알기 어렵다. 배분을 바꾸는 시점과 기동 시점에 미리 알려준다.
+
+    설치된(=설정에 경로가 채워진) 워크플로우의 바인딩만 검사하므로, 애초에
+    설치하지 않은 워크플로우 때문에 오경보가 나지 않는다.
+    """
+
+    from pathlib import Path
+
+    local_bindings = local_required_binding_ids(allocations)
+    installed = configured_binding_ids(workflows, config)
+    relevant = local_bindings & installed
+    if not relevant:
+        return ()
+
+    needed_ids = binding_model_ids(workflows, relevant)
+    if not needed_ids:
+        return ()
+
+    root = Path(comfy_root)
+    gaps: list[dict[str, Any]] = []
+    for model in models:
+        model_id = str(model.get("id") or "")
+        if model_id not in needed_ids:
+            continue
+        relative = str(model.get("relative_path") or "").strip()
+        if not relative:
+            continue
+        if (root / relative).is_file():
+            continue
+        gaps.append(
+            {
+                "id": model_id,
+                "relative_path": relative,
+                "size": int(model.get("size") or 0),
+                "auth": model.get("auth"),
+            }
+        )
+    return tuple(gaps)
+
+
+def tasks_needing_model(
+    workflows: Mapping[str, Any],
+    allocations: Any,
+    model_id: str,
+) -> tuple[str, ...]:
+    """이 모델을 요구하는 로컬 실행 작업 키들 (안내 문구용)."""
+
+    from comfy_allocation import COMFY_TASK_WORKFLOW_BINDINGS, local_comfy_task_keys
+
+    result: list[str] = []
+    for task_key in local_comfy_task_keys(allocations):
+        bindings = COMFY_TASK_WORKFLOW_BINDINGS.get(task_key, ())
+        if str(model_id) in binding_model_ids(workflows, bindings):
+            result.append(task_key)
+    return tuple(result)
+
+
 @dataclass(frozen=True)
 class ModelScope:
     """설치기가 받을 모델과 건너뛸 모델."""
