@@ -44,6 +44,18 @@ def test_unknown_model_source_falls_back_to_default(value):
         assert normalize_modal_model_source(value) == MODEL_SOURCE_LOCAL_FIRST
 
 
+# 워크플로우 팩(.soya-pack.json)은 gitignore 대상이라 새 체크아웃·CI 에는 없다.
+# 없을 때 실패로 보고하면 "회귀 판단은 실패 집합으로 한다"는 기준이 흐려진다.
+_PACK_PATH = (
+    ROOT / "comfy_workflow_library" / "SOYA_DISTRIBUTION" / "v2" / ".soya-pack.json"
+)
+requires_pack = pytest.mark.skipif(
+    not _PACK_PATH.is_file(),
+    reason=f"워크플로우 팩이 없습니다(로컬 데이터): {_PACK_PATH}",
+)
+
+
+@requires_pack
 def test_model_ids_resolve_from_manifest_without_local_files():
     """cloud_direct 는 로컬 파일을 스캔하지 않고 매니페스트만으로 모델을 정해야 한다."""
     ids = model_ids_for_workflow_files(ROOT, ["배포_ANIMA_inpainting_v1.json"])
@@ -59,6 +71,7 @@ def test_model_ids_resolve_from_manifest_without_local_files():
     assert set(ids) <= known
 
 
+@requires_pack
 def test_unknown_workflow_yields_no_models_but_does_not_raise():
     """팩에 없는 개인 개조본은 모델을 확정할 수 없다 — 조용히 빈 목록."""
     assert model_ids_for_workflow_files(ROOT, ["존재하지_않는_워크플로우.json"]) == []
