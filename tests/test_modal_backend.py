@@ -3081,7 +3081,11 @@ def test_modal_runtime_uses_published_multigpu_container_image() -> None:
     assert "--no-build-isolation" not in source
     assert "torch.version.cuda == '12.8'" in source
     assert "pv.Version(m.version('sageattention')).base_version" in source
-    assert "modal.Image.debian_slim" not in source
+    # GPU 런타임 이미지가 즉석 debian_slim 으로 대체되면 CUDA/torch/sageattention 을
+    # 잃는다. 다만 파일 전체에서 문자열을 금지하면 GPU가 필요 없는 함수(모델 직접
+    # 다운로드 등)까지 막히므로, runtime_image 정의 블록에 한정해 검사한다.
+    _runtime_block = source[source.index("runtime_image = ("):source.index("model_sync_image = (")]
+    assert "modal.Image.debian_slim" not in _runtime_block
     assert source.index("modal.Image.from_registry(RUNTIME_IMAGE_REF)") < source.index(
         '"python /opt/soya/image_install.py"'
     )
