@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import platform
 import traceback
 from pathlib import Path
 from threading import Event
@@ -49,6 +50,13 @@ def _uv_pip(
         log=log,
         timeout=timeout,
     )
+
+
+def _wheel_matches_platform(wheel: dict) -> bool:
+    declared = wheel.get("platforms")
+    if not declared:
+        return True
+    return platform.system() in {str(value) for value in declared}
 
 
 def create_comfy_venv(
@@ -198,6 +206,13 @@ def install_python_dependencies(
         wheel_cache.mkdir(parents=True, exist_ok=True)
         preinstalled: list[str] = []
         for wheel in python_manifest.get("preinstall_wheels", []):
+            if not _wheel_matches_platform(wheel):
+                if log:
+                    log(
+                        "[Python] 다른 플랫폼 대상이라 사전 휠을 건너뜁니다: "
+                        f"{wheel.get('filename')}"
+                    )
+                continue
             wheel_path = wheel_cache / str(wheel["filename"])
             downloader.download(
                 url=str(wheel["url"]),
