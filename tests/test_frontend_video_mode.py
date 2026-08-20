@@ -110,6 +110,43 @@ def test_video_page_uses_modal_entry_with_six_workflow_cards() -> None:
     assert "reference_refs: getSelectedVideoReferenceRefs()" in FRONTEND
 
 
+def test_video_references_use_shared_lazy_picker_instead_of_dropdowns() -> None:
+    modal = FRONTEND.split('id="video-modal"', 1)[1].split(
+        '<!-- 기존 animated AVIF/WebP 재후처리 모달 -->', 1
+    )[0]
+
+    assert '<select id="video-generation-last"' not in modal
+    assert '<select id="video-generation-ref-2"' not in modal
+    assert '<select id="video-generation-ref-3"' not in modal
+    assert 'id="video-generation-last" type="hidden"' in modal
+    assert 'id="video-generation-ref-2" type="hidden"' in modal
+    assert 'id="video-generation-ref-3" type="hidden"' in modal
+    for target in ("source", "last", "ref-2", "ref-3"):
+        assert f"openVideoReferencePicker('{target}')" in modal
+
+    assert 'id="video-reference-picker-modal"' in modal
+    assert 'id="video-reference-picker-tab-illustration"' in modal
+    assert 'id="video-reference-picker-tab-asset"' in modal
+    assert '>삽화</button>' in modal
+    assert '>에셋</button>' in modal
+    assert "const VIDEO_REFERENCE_PICKER_PAGE_SIZE = 40;" in FRONTEND
+    assert "async function loadMoreVideoReferenceOptions(reset = false)" in FRONTEND
+    assert "tab: videoReferencePickerState.tab" in FRONTEND
+    assert "offset: String(videoReferencePickerState.offset)" in FRONTEND
+    assert "limit: String(VIDEO_REFERENCE_PICKER_PAGE_SIZE)" in FRONTEND
+
+
+def test_video_workspace_loads_only_its_direct_reference_before_picker_opens() -> None:
+    loader = FRONTEND.split(
+        "async function loadVideoReferenceOptions(preferredReference)", 1
+    )[1].split("function applyVideoSecondaryMotionConfig", 1)[0]
+
+    assert "videoReferenceDirectEndpoint(preferredReference)" in loader
+    assert "registerVideoReferenceOptions(data.options);" in loader
+    assert "/api/asset_mode/characters/" not in loader
+    assert "videoReferencePickerState.offset" not in loader
+
+
 def test_existing_video_postprocess_modal_collects_requested_controls() -> None:
     assert 'id="video-reprocess-modal"' in FRONTEND
     assert 'id="video-reprocess-target-size"' in FRONTEND
@@ -389,7 +426,7 @@ def test_asset_lv1_and_lv2_cards_support_video_and_block_edit_for_animations() -
 
     assert FRONTEND.count('class="gallery-video-btn"') >= 2
     assert "representative_is_animated" in FRONTEND
-    assert "/video_references`" in FRONTEND
+    assert "videoReferenceDirectEndpoint(preferredReference)" in FRONTEND
     assert "source_ref: sourceRef" in FRONTEND
     assert "last_ref: lastRef" in FRONTEND
     assert "case 'asset_video_created':" in FRONTEND

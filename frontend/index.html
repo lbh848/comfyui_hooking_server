@@ -1497,6 +1497,26 @@
             text-overflow: ellipsis;
             white-space: nowrap;
         }
+        .video-reference-actions {
+            display: flex;
+            align-items: center;
+            gap: 7px;
+        }
+        .video-reference-select-button {
+            padding: 7px 10px;
+            border: 1px solid color-mix(in srgb, var(--accent) 58%, var(--border));
+            border-radius: 8px;
+            color: var(--text);
+            background: color-mix(in srgb, var(--accent) 12%, var(--surface2));
+            cursor: pointer;
+            font-size: .68rem;
+            font-weight: 750;
+        }
+        .video-reference-select-button:hover {
+            border-color: var(--accent);
+            background: color-mix(in srgb, var(--accent) 20%, var(--surface2));
+        }
+        .video-reference-select-button:disabled { opacity: .45; cursor: not-allowed; }
         .video-controls-stack { display: flex; flex-direction: column; gap: 12px; }
         .video-field-label {
             display: flex;
@@ -1578,6 +1598,105 @@
             max-height: 150px;
             object-fit: contain;
         }
+        #video-reference-picker-modal { z-index: 1650; }
+        #video-reference-picker-modal .video-reference-picker-content {
+            width: min(1040px, calc(100vw - 32px));
+            max-width: 1040px;
+            height: min(88vh, 860px);
+            overflow: hidden;
+        }
+        .video-reference-picker-body {
+            display: flex;
+            min-height: 0;
+            flex: 1;
+            flex-direction: column;
+            gap: 12px;
+            padding: 16px;
+            overflow: hidden;
+        }
+        .video-reference-picker-tabs {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 8px;
+        }
+        .video-reference-picker-tab {
+            padding: 10px 14px;
+            border: 1px solid var(--border);
+            border-radius: 9px;
+            color: var(--text2);
+            background: var(--surface2);
+            cursor: pointer;
+            font-weight: 750;
+        }
+        .video-reference-picker-tab.active {
+            border-color: var(--accent);
+            color: var(--text);
+            background: color-mix(in srgb, var(--accent) 15%, var(--surface2));
+        }
+        .video-reference-picker-status {
+            min-height: 1.4em;
+            color: var(--text2);
+            font-size: .7rem;
+        }
+        .video-reference-picker-scroll {
+            min-height: 0;
+            flex: 1;
+            overflow-y: auto;
+        }
+        .video-reference-picker-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(155px, 1fr));
+            gap: 10px;
+        }
+        .video-reference-picker-card {
+            min-width: 0;
+            padding: 0;
+            overflow: hidden;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            color: var(--text);
+            background: var(--surface2);
+            cursor: pointer;
+            text-align: left;
+        }
+        .video-reference-picker-card:hover:not(:disabled) {
+            border-color: var(--accent);
+            transform: translateY(-1px);
+        }
+        .video-reference-picker-card.selected { box-shadow: 0 0 0 2px var(--accent) inset; }
+        .video-reference-picker-card:disabled { opacity: .38; cursor: not-allowed; }
+        .video-reference-picker-card img {
+            display: block;
+            width: 100%;
+            height: 150px;
+            object-fit: contain;
+            background: #101318;
+        }
+        .video-reference-picker-copy { display: block; padding: 8px; }
+        .video-reference-picker-label {
+            display: block;
+            overflow: hidden;
+            font-size: .66rem;
+            font-weight: 700;
+            line-height: 1.35;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .video-reference-picker-date {
+            display: block;
+            margin-top: 4px;
+            color: var(--text2);
+            font-size: .6rem;
+        }
+        .video-reference-picker-empty {
+            display: grid;
+            min-height: 220px;
+            place-items: center;
+            color: var(--text2);
+            font-size: .75rem;
+            text-align: center;
+        }
+        .video-reference-picker-more { align-self: center; }
         .video-options-layout {
             display: grid;
             grid-template-columns: minmax(0, 1.45fr) minmax(250px, .75fr);
@@ -15052,7 +15171,10 @@
                     <section class="video-panel">
                         <div class="video-panel-title-row">
                             <span id="video-generation-source-title" class="video-panel-title">시작 프레임</span>
-                            <span id="video-generation-source-badge" class="video-source-badge">현재 카드</span>
+                            <div class="video-reference-actions">
+                                <span id="video-generation-source-badge" class="video-source-badge">현재 카드</span>
+                                <button type="button" class="video-reference-select-button" onclick="openVideoReferencePicker('source')">이미지 선택</button>
+                            </div>
                         </div>
                         <input id="video-generation-source" type="hidden" value="">
                         <div class="video-source-preview-wrap">
@@ -15070,7 +15192,7 @@
                             <div class="option-card-grid compact" style="--option-card-columns:2;" role="radiogroup" aria-label="영상화 방식">
                                 <label class="option-card">
                                     <input type="radio" name="video-mode-choice" value="i2v:standard" checked onchange="selectVideoMode('i2v', 'standard')">
-                                    <span class="option-card-surface"><span class="option-card-title">I2V</span><span class="option-card-description">현재 카드에서 자연스럽게 움직임 생성</span></span>
+                                    <span class="option-card-surface"><span class="option-card-title">I2V</span><span class="option-card-description">선택 이미지에서 자연스럽게 움직임 생성</span></span>
                                 </label>
                                 <label class="option-card">
                                     <input type="radio" name="video-mode-choice" value="i2v:fast" onchange="selectVideoMode('i2v', 'fast')">
@@ -15177,13 +15299,12 @@
                         </label>
                     </div>
                     <div class="video-last-frame-grid">
-                        <label>
-                            <span class="video-field-label"><span>종료할 카드</span><small>`_raw` 원본 사용</small></span>
-                            <select id="video-generation-last" class="video-select" onchange="onVideoLastFrameChange()">
-                                <option value="">다른 `_raw` 백업을 선택하세요.</option>
-                            </select>
+                        <div>
+                            <span class="video-field-label"><span>종료 이미지</span><small>삽화·에셋 원본</small></span>
+                            <input id="video-generation-last" type="hidden" value="">
+                            <button type="button" id="video-generation-last-select" class="video-reference-select-button" onclick="openVideoReferencePicker('last')">마지막 이미지 선택</button>
                             <div id="video-generation-last-name" class="video-source-name"></div>
-                        </label>
+                        </div>
                         <div class="video-last-preview-wrap">
                             <div id="video-generation-last-empty" class="video-source-empty">마지막 프레임을 선택하세요.</div>
                             <img id="video-generation-last-preview" src="" alt="마지막 프레임 미리보기">
@@ -15195,31 +15316,29 @@
                     <div class="video-panel-title-row">
                         <div>
                             <span class="video-panel-title">추가 REF 이미지</span>
-                            <span class="video-panel-hint" style="display:block; margin-top:3px;">현재 카드가 참조 1입니다. 서로 다른 이미지를 최대 2장 더 선택할 수 있습니다.</span>
+                            <span class="video-panel-hint" style="display:block; margin-top:3px;">선택한 시작 이미지가 참조 1입니다. 서로 다른 이미지를 최대 2장 더 선택할 수 있습니다.</span>
                         </div>
                     </div>
                     <div class="video-ref-grid">
                         <div class="video-ref-slot">
-                            <label>
+                            <div>
                                 <span class="video-field-label"><span>참조 2</span><small>선택 사항</small></span>
-                                <select id="video-generation-ref-2" class="video-select" onchange="onVideoRefChange(2)">
-                                    <option value="">선택 안 함</option>
-                                </select>
+                                <input id="video-generation-ref-2" type="hidden" value="">
+                                <button type="button" class="video-reference-select-button" onclick="openVideoReferencePicker('ref-2')">참조 이미지 선택</button>
                                 <div id="video-generation-ref-2-name" class="video-source-name"></div>
-                            </label>
+                            </div>
                             <div class="video-ref-preview-wrap">
                                 <div id="video-generation-ref-2-empty" class="video-source-empty">선택 안 함</div>
                                 <img id="video-generation-ref-2-preview" src="" alt="참조 이미지 2 미리보기">
                             </div>
                         </div>
                         <div class="video-ref-slot">
-                            <label>
+                            <div>
                                 <span class="video-field-label"><span>참조 3</span><small>선택 사항</small></span>
-                                <select id="video-generation-ref-3" class="video-select" onchange="onVideoRefChange(3)">
-                                    <option value="">선택 안 함</option>
-                                </select>
+                                <input id="video-generation-ref-3" type="hidden" value="">
+                                <button type="button" class="video-reference-select-button" onclick="openVideoReferencePicker('ref-3')">참조 이미지 선택</button>
                                 <div id="video-generation-ref-3-name" class="video-source-name"></div>
-                            </label>
+                            </div>
                             <div class="video-ref-preview-wrap">
                                 <div id="video-generation-ref-3-empty" class="video-source-empty">선택 안 함</div>
                                 <img id="video-generation-ref-3-preview" src="" alt="참조 이미지 3 미리보기">
@@ -15372,6 +15491,32 @@
             <div class="modal-footer">
                 <button type="button" id="video-generation-save-settings" class="cancel" onclick="saveVideoGenerationDefaults()">💾 설정 저장</button>
                 <button type="button" id="video-generation-submit" class="confirm" onclick="submitVideoGeneration()" style="background:#9b59b6; color:#fff; border-color:#b876d2;">🎬 큐에 등록</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 영상 참조 공용 탐색 모달: 시작·마지막·REF 슬롯이 함께 사용 -->
+    <div class="modal" id="video-reference-picker-modal">
+        <div class="modal-content video-reference-picker-content">
+            <div class="modal-header">
+                <h3>영상 이미지 탐색<span id="video-reference-picker-target" class="video-modal-subtitle">시작 프레임</span></h3>
+                <button class="modal-close" onclick="closeVideoReferencePicker()">&times;</button>
+            </div>
+            <div class="video-reference-picker-body">
+                <div class="video-reference-picker-tabs" role="tablist" aria-label="영상 이미지 출처">
+                    <button type="button" id="video-reference-picker-tab-illustration" class="video-reference-picker-tab active" role="tab" onclick="switchVideoReferencePickerTab('illustration')">삽화</button>
+                    <button type="button" id="video-reference-picker-tab-asset" class="video-reference-picker-tab" role="tab" onclick="switchVideoReferencePickerTab('asset')">에셋</button>
+                </div>
+                <div id="video-reference-picker-status" class="video-reference-picker-status" aria-live="polite"></div>
+                <div class="video-reference-picker-scroll">
+                    <div id="video-reference-picker-grid" class="video-reference-picker-grid"></div>
+                    <div id="video-reference-picker-empty" class="video-reference-picker-empty">이미지를 불러오는 중입니다.</div>
+                </div>
+                <button type="button" id="video-reference-picker-more" class="load-more-btn video-reference-picker-more" onclick="loadMoreVideoReferenceOptions()" style="display:none;">더 불러오기</button>
+            </div>
+            <div class="modal-footer">
+                <button type="button" id="video-reference-picker-clear" class="cancel" onclick="clearVideoReferenceSelection()">선택 해제</button>
+                <button type="button" class="cancel" onclick="closeVideoReferencePicker()">닫기</button>
             </div>
         </div>
     </div>
@@ -29003,6 +29148,16 @@
 
         // ─── MiniMax H3 영상화 ───
         let videoReferenceOptions = [];
+        const VIDEO_REFERENCE_PICKER_PAGE_SIZE = 40;
+        const videoReferencePickerState = {
+            target: 'source',
+            tab: 'illustration',
+            offset: 0,
+            hasMore: false,
+            loading: false,
+            items: [],
+            requestId: 0,
+        };
         let videoWorkspaceSourceRef = null;
         let videoPostprocessSynced = false;
         let videoReprocessSource = null;
@@ -29350,6 +29505,244 @@
 
         function getVideoReferenceByKey(key) {
             return videoReferenceOptions.find(item => item.key === key) || null;
+        }
+
+        function registerVideoReferenceOptions(items) {
+            for (const item of items || []) {
+                const normalized = normalizeVideoReferenceOption(item);
+                if (!normalized) continue;
+                const existingIndex = videoReferenceOptions.findIndex(
+                    candidate => candidate.key === normalized.key
+                );
+                if (existingIndex >= 0) videoReferenceOptions[existingIndex] = normalized;
+                else videoReferenceOptions.push(normalized);
+            }
+        }
+
+        function videoReferenceDirectEndpoint(reference) {
+            const query = new URLSearchParams();
+            if (reference?.kind === 'backup') {
+                query.set('tab', 'illustration');
+                query.set('name', String(reference.name || ''));
+            } else if (reference?.kind === 'asset') {
+                query.set('tab', 'asset');
+                for (const field of ['character', 'outfit', 'expression', 'filename']) {
+                    query.set(field, String(reference[field] || ''));
+                }
+            } else {
+                console.error('[VIDEO_UI] 단건 참조 URL 생성 실패:', reference);
+                return '';
+            }
+            return `/api/video/reference-options?${query.toString()}`;
+        }
+
+        function videoReferenceTargetInput(target) {
+            const id = target === 'source'
+                ? 'video-generation-source'
+                : target === 'last'
+                    ? 'video-generation-last'
+                    : target === 'ref-2'
+                        ? 'video-generation-ref-2'
+                        : target === 'ref-3'
+                            ? 'video-generation-ref-3'
+                            : '';
+            return id ? document.getElementById(id) : null;
+        }
+
+        function videoReferenceTargetLabel(target) {
+            return ({
+                source: '시작 프레임 · REF 이미지 1',
+                last: '마지막 프레임',
+                'ref-2': 'REF 이미지 2',
+                'ref-3': 'REF 이미지 3',
+            })[target] || '영상 이미지';
+        }
+
+        function selectedVideoReferenceKeysExcept(target) {
+            const targets = ['source', 'last', 'ref-2', 'ref-3'];
+            return new Set(targets
+                .filter(candidate => candidate !== target)
+                .map(candidate => videoReferenceTargetInput(candidate)?.value || '')
+                .filter(Boolean));
+        }
+
+        function renderVideoReferencePicker() {
+            const grid = document.getElementById('video-reference-picker-grid');
+            const empty = document.getElementById('video-reference-picker-empty');
+            const more = document.getElementById('video-reference-picker-more');
+            const status = document.getElementById('video-reference-picker-status');
+            if (!grid || !empty || !more || !status) {
+                console.error('[VIDEO_PICKER] 탐색 모달 UI 요소가 누락됐습니다.');
+                return;
+            }
+            const targetInput = videoReferenceTargetInput(videoReferencePickerState.target);
+            const selectedKey = targetInput?.value || '';
+            const blocked = selectedVideoReferenceKeysExcept(videoReferencePickerState.target);
+            grid.innerHTML = videoReferencePickerState.items.map(item => {
+                const disabled = blocked.has(item.key);
+                const selected = item.key === selectedKey;
+                return `
+                    <button type="button" class="video-reference-picker-card${selected ? ' selected' : ''}"
+                            data-reference-key="${escapeAttr(item.key)}"
+                            onclick="selectVideoReferenceFromPicker(this.dataset.referenceKey)"
+                            ${disabled ? 'disabled title="다른 슬롯에서 이미 선택한 이미지입니다"' : ''}>
+                        <img src="${escapeAttr(item.image_url)}" alt="${escapeAttr(item.label)}" loading="lazy" onerror="onVideoReferencePickerImageError(this)">
+                        <span class="video-reference-picker-copy">
+                            <span class="video-reference-picker-label">${escapeHtml(item.label)}</span>
+                            <span class="video-reference-picker-date">${escapeHtml(formatDate(item.mtime))}</span>
+                        </span>
+                    </button>`;
+            }).join('');
+            empty.style.display = videoReferencePickerState.items.length ? 'none' : 'grid';
+            if (!videoReferencePickerState.items.length) {
+                empty.textContent = videoReferencePickerState.loading
+                    ? '이미지를 불러오는 중입니다.'
+                    : '선택할 수 있는 이미지가 없습니다.';
+            }
+            more.style.display = videoReferencePickerState.hasMore ? 'block' : 'none';
+            more.disabled = videoReferencePickerState.loading;
+            status.textContent = videoReferencePickerState.loading
+                ? `${videoReferencePickerState.tab === 'illustration' ? '삽화' : '에셋'} 이미지를 불러오는 중입니다.`
+                : `${videoReferencePickerState.items.length}개 불러옴`;
+        }
+
+        function onVideoReferencePickerImageError(image) {
+            const card = image?.closest('.video-reference-picker-card');
+            console.error('[VIDEO_PICKER] 썸네일 로드 실패:', {
+                key: card?.dataset?.referenceKey || '',
+                src: image?.src || '',
+            });
+            if (image) image.style.visibility = 'hidden';
+        }
+
+        async function loadMoreVideoReferenceOptions(reset = false) {
+            if (!reset && videoReferencePickerState.loading) return;
+            if (!reset && !videoReferencePickerState.hasMore) return;
+            if (reset) {
+                videoReferencePickerState.offset = 0;
+                videoReferencePickerState.hasMore = true;
+                videoReferencePickerState.items = [];
+            }
+            const requestId = ++videoReferencePickerState.requestId;
+            videoReferencePickerState.loading = true;
+            renderVideoReferencePicker();
+            try {
+                const query = new URLSearchParams({
+                    tab: videoReferencePickerState.tab,
+                    offset: String(videoReferencePickerState.offset),
+                    limit: String(VIDEO_REFERENCE_PICKER_PAGE_SIZE),
+                });
+                const data = await fetchJSON(`/api/video/reference-options?${query.toString()}`);
+                if (requestId !== videoReferencePickerState.requestId) return;
+                if (!data.success) throw new Error(data.error || '영상 참조 이미지 조회 실패');
+                const loaded = (Array.isArray(data.options) ? data.options : [])
+                    .map(normalizeVideoReferenceOption)
+                    .filter(Boolean);
+                registerVideoReferenceOptions(loaded);
+                const known = new Set(videoReferencePickerState.items.map(item => item.key));
+                for (const item of loaded) {
+                    if (!known.has(item.key)) {
+                        videoReferencePickerState.items.push(item);
+                        known.add(item.key);
+                    }
+                }
+                videoReferencePickerState.offset = Number(
+                    data.next_offset ?? (videoReferencePickerState.offset + loaded.length)
+                );
+                videoReferencePickerState.hasMore = data.has_more === true;
+            } catch (error) {
+                if (requestId !== videoReferencePickerState.requestId) return;
+                console.error('[VIDEO_PICKER] 이미지 페이지 조회 실패:', {
+                    tab: videoReferencePickerState.tab,
+                    offset: videoReferencePickerState.offset,
+                    error,
+                });
+                videoReferencePickerState.hasMore = false;
+                showToast('영상 참조 이미지를 불러오지 못했습니다.', 'error');
+            } finally {
+                if (requestId !== videoReferencePickerState.requestId) return;
+                videoReferencePickerState.loading = false;
+                renderVideoReferencePicker();
+            }
+        }
+
+        async function switchVideoReferencePickerTab(tab) {
+            if (!['illustration', 'asset'].includes(tab)) {
+                console.error('[VIDEO_PICKER] 지원하지 않는 탭:', tab);
+                return;
+            }
+            videoReferencePickerState.tab = tab;
+            for (const candidate of ['illustration', 'asset']) {
+                const button = document.getElementById(`video-reference-picker-tab-${candidate}`);
+                if (button) {
+                    const active = candidate === tab;
+                    button.classList.toggle('active', active);
+                    button.setAttribute('aria-selected', active ? 'true' : 'false');
+                }
+            }
+            await loadMoreVideoReferenceOptions(true);
+        }
+
+        async function openVideoReferencePicker(target) {
+            const input = videoReferenceTargetInput(target);
+            const modal = document.getElementById('video-reference-picker-modal');
+            if (!input || !modal) {
+                console.error('[VIDEO_PICKER] 탐색 대상 또는 모달이 없습니다:', target);
+                return;
+            }
+            videoReferencePickerState.target = target;
+            const title = document.getElementById('video-reference-picker-target');
+            if (title) title.textContent = videoReferenceTargetLabel(target);
+            const clear = document.getElementById('video-reference-picker-clear');
+            if (clear) clear.style.display = target === 'source' ? 'none' : '';
+            const selected = getVideoReferenceByKey(input.value);
+            const defaultTab = selected?.reference?.kind === 'asset' ? 'asset' : 'illustration';
+            modal.classList.add('visible');
+            await switchVideoReferencePickerTab(defaultTab);
+        }
+
+        function closeVideoReferencePicker() {
+            document.getElementById('video-reference-picker-modal')?.classList.remove('visible');
+        }
+
+        function selectVideoReferenceFromPicker(key) {
+            const option = getVideoReferenceByKey(key);
+            const input = videoReferenceTargetInput(videoReferencePickerState.target);
+            if (!option || !input) {
+                console.error('[VIDEO_PICKER] 선택 적용 실패:', {
+                    key,
+                    target: videoReferencePickerState.target,
+                });
+                return;
+            }
+            if (selectedVideoReferenceKeysExcept(videoReferencePickerState.target).has(key)) {
+                console.error('[VIDEO_PICKER] 중복 이미지 선택 거부:', {key});
+                showToast('각 영상 참조 슬롯에는 서로 다른 이미지를 선택하세요.', 'warning');
+                return;
+            }
+            input.value = key;
+            if (videoReferencePickerState.target === 'source') {
+                videoWorkspaceSourceRef = option.reference;
+                onVideoSourceChange();
+            } else if (videoReferencePickerState.target === 'last') {
+                onVideoLastFrameChange();
+            } else {
+                onVideoRefChange(Number(videoReferencePickerState.target.slice(-1)));
+            }
+            closeVideoReferencePicker();
+        }
+
+        function clearVideoReferenceSelection() {
+            if (videoReferencePickerState.target === 'source') return;
+            const input = videoReferenceTargetInput(videoReferencePickerState.target);
+            if (!input) {
+                console.error('[VIDEO_PICKER] 선택 해제 대상이 없습니다:', videoReferencePickerState.target);
+                return;
+            }
+            input.value = '';
+            if (videoReferencePickerState.target === 'last') onVideoLastFrameChange();
+            else onVideoRefChange(Number(videoReferencePickerState.target.slice(-1)));
+            closeVideoReferencePicker();
         }
 
         function getSelectedVideoOption(name, fallback = '') {
@@ -30293,15 +30686,16 @@
             if (referencePanel) referencePanel.style.display = isRef ? 'block' : 'none';
             if (sourceTitle) sourceTitle.textContent = isRef ? 'REF 이미지 1' : '시작 프레임';
             if (sourceBadge) {
+                const sourceKind = videoWorkspaceSourceRef?.kind === 'asset' ? '에셋' : '삽화';
                 sourceBadge.textContent = isRef
-                    ? '현재 카드 · 참조 1'
-                    : (videoWorkspaceSourceRef?.kind === 'asset' ? '현재 에셋' : '현재 카드');
+                    ? `${sourceKind} · 참조 1`
+                    : `선택 ${sourceKind}`;
             }
             if (sharpenSection) sharpenSection.style.display = isRef ? 'none' : '';
             if (modeNote) {
                 const sourceLabel = videoWorkspaceSourceRef?.kind === 'asset'
-                    ? '현재 에셋'
-                    : '현재 카드의 _raw';
+                    ? '선택 에셋'
+                    : '선택 삽화의 원본';
                 const speedLabel = workflowVariant === 'fast' ? '고속으로 ' : '';
                 modeNote.textContent = isRef
                     ? `${sourceLabel}을 참조 1로 사용하고, 선택한 총 ${getSelectedVideoReferenceRefs().length}장의 독립 REF 이미지로 ${duration}초 영상을 만듭니다.${workflowVariant === 'fast' ? ' 기본 해상도는 짧은 변 544p입니다.' : ''}`
@@ -30347,30 +30741,28 @@
         }
 
         function refreshVideoLastFrameOptions(sourceKey) {
-            const select = document.getElementById('video-generation-last');
-            if (!select) {
-                console.error('[VIDEO_UI] 마지막 프레임 선택기를 찾지 못했습니다.');
+            const input = document.getElementById('video-generation-last');
+            if (!input) {
+                console.error('[VIDEO_UI] 마지막 프레임 값을 찾지 못했습니다.');
                 return;
             }
-            const previous = select.value;
-            const options = videoReferenceOptions.filter(item => item.key !== sourceKey);
-            select.innerHTML = options.length
-                ? options.map(item => `<option value="${escapeAttr(item.key)}">${escapeHtml(formatDate(item.mtime))} · ${escapeHtml(item.label)}</option>`).join('')
-                : '<option value="">선택 가능한 다른 프레임 없음</option>';
-            if (options.some(item => item.key === previous)) select.value = previous;
+            if (input.value && input.value === sourceKey) {
+                console.error('[VIDEO_UI] 시작·마지막 프레임 중복 선택 해제:', sourceKey);
+                input.value = '';
+            }
             onVideoLastFrameChange();
         }
 
         function onVideoLastFrameChange() {
-            const select = document.getElementById('video-generation-last');
+            const input = document.getElementById('video-generation-last');
             const preview = document.getElementById('video-generation-last-preview');
             const empty = document.getElementById('video-generation-last-empty');
             const nameLabel = document.getElementById('video-generation-last-name');
-            if (!select || !preview || !empty || !nameLabel) {
+            if (!input || !preview || !empty || !nameLabel) {
                 console.error('[VIDEO_UI] 마지막 프레임 미리보기 UI 요소를 찾지 못했습니다.');
                 return;
             }
-            const last = getVideoReferenceByKey(select.value);
+            const last = getVideoReferenceByKey(input.value);
             if (!last) {
                 preview.removeAttribute('src');
                 preview.style.display = 'none';
@@ -30465,21 +30857,20 @@
                 3: document.getElementById('video-generation-ref-3')?.value || '',
             };
             for (const index of [2, 3]) {
-                const select = document.getElementById(`video-generation-ref-${index}`);
-                if (!select) {
-                    console.error('[VIDEO_UI] REF 선택기 누락:', index);
+                const input = document.getElementById(`video-generation-ref-${index}`);
+                if (!input) {
+                    console.error('[VIDEO_UI] REF 값 누락:', index);
                     continue;
                 }
                 const otherIndex = index === 2 ? 3 : 2;
-                const blocked = new Set([sourceKey, selections[otherIndex]].filter(Boolean));
-                const options = videoReferenceOptions.filter(item => !blocked.has(item.key));
-                select.innerHTML = [
-                    '<option value="">선택 안 함</option>',
-                    ...options.map(item => `<option value="${escapeAttr(item.key)}">${escapeHtml(formatDate(item.mtime))} · ${escapeHtml(item.label)}</option>`),
-                ].join('');
-                select.value = options.some(item => item.key === selections[index])
-                    ? selections[index]
-                    : '';
+                if (input.value && (input.value === sourceKey || input.value === selections[otherIndex])) {
+                    console.error('[VIDEO_UI] REF 중복 선택 해제:', {
+                        index,
+                        value: input.value,
+                    });
+                    input.value = '';
+                    selections[index] = '';
+                }
                 renderVideoRefPreview(index);
             }
             updateVideoInstructionDraftPresentation();
@@ -30487,22 +30878,22 @@
         }
 
         function onVideoRefChange(index) {
-            const select = document.getElementById(`video-generation-ref-${index}`);
+            const input = document.getElementById(`video-generation-ref-${index}`);
             const otherIndex = index === 2 ? 3 : 2;
             const otherValue = document.getElementById(`video-generation-ref-${otherIndex}`)?.value || '';
             const sourceKey = document.getElementById('video-generation-source')?.value || '';
-            if (!select) {
-                console.error('[VIDEO_UI] 변경된 REF 선택기를 찾지 못했습니다:', index);
+            if (!input) {
+                console.error('[VIDEO_UI] 변경된 REF 값을 찾지 못했습니다:', index);
                 return;
             }
-            if (select.value && (select.value === sourceKey || select.value === otherValue)) {
+            if (input.value && (input.value === sourceKey || input.value === otherValue)) {
                 console.error('[VIDEO_UI] REF 이미지 중복 선택:', {
                     index,
-                    value: select.value,
+                    value: input.value,
                     sourceKey,
                     otherValue,
                 });
-                select.value = '';
+                input.value = '';
                 showToast('REF 이미지는 서로 다르게 선택하세요.', 'warning');
             }
             refreshVideoRefOptions(sourceKey);
@@ -30541,15 +30932,18 @@
         }
 
         function onVideoLoopChange() {
-            const select = document.getElementById('video-generation-last');
-            if (!select) return;
+            const input = document.getElementById('video-generation-last');
+            const selectButton = document.getElementById('video-generation-last-select');
+            if (!input || !selectButton) {
+                console.error('[VIDEO_UI] 루프 모드 마지막 프레임 UI가 없습니다.');
+                return;
+            }
             if (isVideoLoopEnabled()) {
-                select.disabled = true;
-                select.innerHTML = '<option value="">첫 프레임과 동일 · 루프</option>';
-                select.value = '';
+                selectButton.disabled = true;
+                input.value = '';
                 syncVideoLastPreviewToSource();
             } else {
-                select.disabled = false;
+                selectButton.disabled = false;
                 refreshVideoLastFrameOptions(document.getElementById('video-generation-source')?.value || '');
             }
             updateVideoInstructionDraftPresentation();
@@ -30613,20 +31007,29 @@
                 return;
             }
             const preferredKey = videoReferenceKey(preferredReference);
-            const endpoint = preferredReference?.kind === 'asset'
-                ? `/api/asset_mode/characters/${encodeURIComponent(preferredReference.character)}/video_references`
-                : '/api/video/reference-options';
+            const endpoint = videoReferenceDirectEndpoint(preferredReference);
             videoReferenceOptions = [];
             sourceInput.value = '';
+            for (const id of [
+                'video-generation-last',
+                'video-generation-ref-2',
+                'video-generation-ref-3',
+            ]) {
+                const input = document.getElementById(id);
+                if (input) input.value = '';
+            }
             onVideoSourceChange();
+            if (!endpoint) {
+                console.error('[VIDEO_UI] 현재 영상 참조 단건 URL을 만들지 못했습니다:', preferredReference);
+                showToast('현재 영상 참조 정보를 불러오지 못했습니다.', 'error');
+                return;
+            }
             try {
                 const data = await fetchJSON(endpoint);
-                if (!data.success) throw new Error(data.error || '영상 참조 목록 조회 실패');
-                videoReferenceOptions = (Array.isArray(data.options) ? data.options : [])
-                    .map(normalizeVideoReferenceOption)
-                    .filter(Boolean);
+                if (!data.success) throw new Error(data.error || '현재 영상 참조 조회 실패');
+                registerVideoReferenceOptions(data.options);
                 if (!videoReferenceOptions.length) {
-                    console.error('[VIDEO_UI] 영상화 가능한 참조 이미지가 없습니다.');
+                    console.error('[VIDEO_UI] 현재 영상화 참조 이미지를 찾지 못했습니다.');
                     sourceInput.value = '';
                     onVideoSourceChange();
                     return;
@@ -30639,11 +31042,14 @@
                 }
                 onVideoSourceChange();
             } catch (error) {
-                console.error('[VIDEO_UI] 영상화 참조 목록 로드 실패:', error);
+                console.error('[VIDEO_UI] 현재 영상 참조 단건 로드 실패:', {
+                    preferredReference,
+                    error,
+                });
                 videoReferenceOptions = [];
                 sourceInput.value = '';
                 onVideoSourceChange();
-                showToast('영상화 참조 이미지 목록을 불러오지 못했습니다.', 'error');
+                showToast('현재 영상화 이미지를 불러오지 못했습니다.', 'error');
             }
         }
 
@@ -30747,6 +31153,7 @@
         function closeVideoModal() {
             const modal = document.getElementById('video-modal');
             if (modal) modal.classList.remove('visible');
+            closeVideoReferencePicker();
             resetVideoInstructionDraftRequest();
             resetVideoInstructionRefineRequest();
             resetVideoInstructionDirectRequest();

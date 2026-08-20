@@ -10638,93 +10638,370 @@ def _video_backup_has_raw(backup_dir: str, name: str) -> bool:
     return backup_clean_source_available(backup_dir, name)
 
 
-def _read_backup_info_for_scan(backup_dir: str, name: str) -> dict:
-    """reference-options 스캔용 _info.json 읽기. 없으면 {} (구 백업 폴백 대상)."""
+def _read_backup_info_for_scan(backup_dir: str, name: str) -> dict | None:
+    """reference-options 스캔용 _info.json 읽기. 없거나 손상됐으면 None."""
     info_path = os.path.join(backup_dir, f"{name}_info.json")
     if not os.path.isfile(info_path):
-        return {}
+        return None
     try:
         with open(info_path, "r", encoding="utf-8") as fp:
             info = json.load(fp)
-        return info if isinstance(info, dict) else {}
+        if not isinstance(info, dict):
+            print(
+                "[VIDEO:API] 참조 백업 info 형식 오류: "
+                f"name={name!r}, type={type(info).__name__}"
+            )
+            return None
+        return info
     except Exception as exc:
         print(
             f"[VIDEO:API] 참조 백업 info 읽기 실패: name={name!r}, "
             f"error={type(exc).__name__}: {exc}"
         )
         traceback.print_exc()
-        return {}
+        return None
+
+
+def _video_reference_page_params(request: web.Request | None) -> tuple[str, int, int]:
+    query = request.query if request is not None else {}
+    tab = str(query.get("tab") or "illustration").strip().lower()
+    if tab not in ("illustration", "asset"):
+        print(f"[VIDEO:API] 참조 탐색 탭 오류: tab={tab!r}")
+        raise ValueError("영상 참조 탐색 탭은 illustration 또는 asset이어야 합니다")
+    try:
+        offset = max(0, int(query.get("offset", "0")))
+        limit = max(1, min(80, int(query.get("limit", "40"))))
+    except (TypeError, ValueError) as exc:
+        print(
+            "[VIDEO:API] 참조 탐색 페이지 값 오류: "
+            f"offset={query.get('offset')!r}, limit={query.get('limit')!r}, error={exc}"
+        )
+        traceback.print_exc()
+        raise ValueError("영상 참조 탐색 페이지 값이 올바르지 않습니다") from exc
+    return tab, offset, limit
+
+
+def _video_backup_reference_option(backup_dir: str, path: str) -> dict | None:
+    """백업 한 장을 영상 참조 옵션으로 변환한다. PIL 이미지 열기는 하지 않는다."""
+
+    name = os.path.splitext(os.path.basename(path))[0]
+    info_path = os.path.join(backup_dir, f"{name}_info.json")
+    if not os.path.isfile(info_path):
+        return None
+    info = _read_backup_info_for_scan(backup_dir, name)
+    if not isinstance(info, dict):
+        return None
+    raw_extension = ""
+    recorded_raw = info.get("raw_extension")
+    if isinstance(recorded_raw, str):
+        candidate = str(recorded_raw or "")
+        if candidate and os.path.isfile(
+            os.path.join(backup_dir, "_raw", f"{name}{candidate}")
+        ):
+            raw_extension = candidate
+    else:
+        raw_extension = next(
+            (
+                extension
+                for extension in (".avif", ".webp")
+                if os.path.isfile(
+                    os.path.join(backup_dir, "_raw", f"{name}{extension}")
+                )
+            ),
+            "",
+        )
+    if not backup_clean_source_from_info(bool(raw_extension), info):
+        return None
+
+    source_path = (
+        os.path.join(backup_dir, "_raw", f"{name}{raw_extension}")
+        if raw_extension
+        else path
+    )
+    animated = _backup_image_kind(source_path)
+    if raw_extension:
+        image_url = f"/api/backup_raw/{name}"
+    elif animated:
+        image_url = f"/api/backup_poster/{name}"
+    else:
+        image_url = f"/api/backup_image/{os.path.basename(path)}"
+    try:
+        source_width = int(info.get("image_width") or 0)
+        source_height = int(info.get("image_height") or 0)
+    except (TypeError, ValueError) as exc:
+        print(
+            "[VIDEO:API] 참조 백업 크기 메타데이터 오류, 브라우저 측정 사용: "
+            f"name={name!r}, width={info.get('image_width')!r}, "
+            f"height={info.get('image_height')!r}, error={exc}"
+        )
+        traceback.print_exc()
+        source_width = 0
+        source_height = 0
+    return {
+        "name": name,
+        "label": name,
+        "reference": {"kind": "backup", "name": name},
+        "mtime": os.path.getmtime(path),
+        "image_url": image_url,
+        "poster_url": image_url,
+        "is_animated": animated,
+        "source_width": source_width,
+        "source_height": source_height,
+    }
+
+
+def _video_asset_reference_option(item: dict) -> dict:
+    from urllib.parse import quote
+
+    reference = item["reference"]
+    encoded = {
+        key: quote(str(reference[key]), safe="")
+        for key in ("character", "outfit", "expression", "filename")
+    }
+    image_url = (
+        f"/api/asset_mode/characters/{encoded['character']}"
+        f"/outfits/{encoded['outfit']}/expressions/{encoded['expression']}"
+        f"/images/{encoded['filename']}"
+    )
+    animated = bool(item.get("is_animated"))
+    return {
+        **item,
+        "label": (
+            f"{reference['character']} / {reference['outfit']} / "
+            f"{reference['expression']} / {reference['filename']}"
+        ),
+        "image_url": f"{image_url}/poster" if animated else image_url,
+        "poster_url": f"{image_url}/poster" if animated else image_url,
+        "source_width": int(item.get("source_width") or 0),
+        "source_height": int(item.get("source_height") or 0),
+    }
+
+
+def _video_direct_asset_reference(query: object) -> dict | None:
+    if not hasattr(query, "get") or not str(query.get("filename") or "").strip():
+        return None
+    reference = {
+        "kind": "asset",
+        "character": str(query.get("character") or "").strip(),
+        "outfit": str(query.get("outfit") or "").strip(),
+        "expression": str(query.get("expression") or "").strip(),
+        "filename": str(query.get("filename") or "").strip(),
+    }
+    resolved = asset_mode.resolve_video_reference(reference)
+    return _video_asset_reference_option(
+        {
+            "reference": reference,
+            "mtime": os.path.getmtime(resolved["path"]),
+            "is_animated": bool(resolved.get("is_animated")),
+        }
+    )
+
+
+def _video_asset_reference_page(offset: int, limit: int) -> tuple[list[dict], bool]:
+    """에셋 파일을 최신순으로 정렬하되 현재 페이지만 메타데이터/PIL 판정한다."""
+
+    from modes.asset_mode import (
+        ASSET_DIR,
+        ASSET_MEDIA_EXTENSIONS,
+        AUTOMATCH_DEFAULT_OUTFIT_DIR,
+    )
+
+    candidates: list[tuple[float, str, str, str, str, str]] = []
+    for character in asset_mode.list_characters():
+        character_dir = os.path.join(ASSET_DIR, asset_mode._safe_dirname(character))
+        if not os.path.isdir(character_dir):
+            continue
+        try:
+            outfits = list(os.scandir(character_dir))
+        except OSError as exc:
+            print(
+                "[ASSET_VIDEO:API] 캐릭터 에셋 폴더 읽기 실패: "
+                f"character={character!r}, path={character_dir!r}, error={exc}"
+            )
+            traceback.print_exc()
+            continue
+        for outfit_entry in outfits:
+            if (
+                not outfit_entry.is_dir()
+                or outfit_entry.name in ("Lora", AUTOMATCH_DEFAULT_OUTFIT_DIR)
+            ):
+                continue
+            try:
+                expressions = list(os.scandir(outfit_entry.path))
+            except OSError as exc:
+                print(
+                    "[ASSET_VIDEO:API] 의상 에셋 폴더 읽기 실패: "
+                    f"path={outfit_entry.path!r}, error={exc}"
+                )
+                traceback.print_exc()
+                continue
+            for expression_entry in expressions:
+                if not expression_entry.is_dir():
+                    continue
+                try:
+                    media_entries = list(os.scandir(expression_entry.path))
+                except OSError as exc:
+                    print(
+                        "[ASSET_VIDEO:API] 표정 에셋 폴더 읽기 실패: "
+                        f"path={expression_entry.path!r}, error={exc}"
+                    )
+                    traceback.print_exc()
+                    continue
+                for media_entry in media_entries:
+                    if (
+                        not media_entry.is_file()
+                        or media_entry.name.startswith("_")
+                        or os.path.splitext(media_entry.name)[1].lower()
+                        not in ASSET_MEDIA_EXTENSIONS
+                    ):
+                        continue
+                    try:
+                        mtime = media_entry.stat().st_mtime
+                    except OSError as exc:
+                        print(
+                            "[ASSET_VIDEO:API] 에셋 파일 상태 조회 실패: "
+                            f"path={media_entry.path!r}, error={exc}"
+                        )
+                        traceback.print_exc()
+                        continue
+                    candidates.append(
+                        (
+                            mtime,
+                            character,
+                            outfit_entry.name,
+                            expression_entry.name,
+                            media_entry.name,
+                            media_entry.path,
+                        )
+                    )
+
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    page = candidates[offset:offset + limit + 1]
+    has_more = len(page) > limit
+    options: list[dict] = []
+    for mtime, character, outfit, expression, filename, path in page[:limit]:
+        prompt_data = asset_mode._load_asset_prompt_metadata(os.path.dirname(path), filename)
+        options.append(
+            _video_asset_reference_option(
+                {
+                    "reference": {
+                        "kind": "asset",
+                        "character": character,
+                        "outfit": outfit,
+                        "expression": expression,
+                        "filename": filename,
+                    },
+                    "mtime": mtime,
+                    "is_animated": asset_mode._is_animated_asset(path, prompt_data),
+                }
+            )
+        )
+    return options, has_more
 
 
 async def handle_api_video_reference_options(request: web.Request) -> web.Response:
-    """List illustration backups that have a raw source suitable for H3 references."""
+    """영상 참조 탐색용 삽화·에셋 옵션을 단건 또는 페이지 단위로 반환한다."""
 
     try:
-        backup_dir = get_backup_base_dir()
-        files: list[str] = []
-        for pattern in ("*.webp", "*.avif"):
-            files.extend(glob.glob(os.path.join(backup_dir, pattern)))
-        options = []
-        seen: set[str] = set()
-        for path in sorted(set(files), key=os.path.getmtime, reverse=True):
-            name = os.path.splitext(os.path.basename(path))[0]
-            if name in seen:
-                continue
-            # 저장 시 기록한 메타데이터(raw_extension·이미지 크기)를 우선 사용해
-            # 파일 탐색·PIL 열기를 건너뛴다. raw_extension 키가 없는 구 백업만
-            # 기존처럼 _raw 탐색 + info.json 재독기로 판정한다.
-            info = _read_backup_info_for_scan(backup_dir, name)
-            source_width = 0
-            source_height = 0
-            if isinstance(info.get("raw_extension"), str):
-                recorded_raw = str(info.get("raw_extension") or "")
-                has_raw_file = bool(recorded_raw) and os.path.isfile(
-                    os.path.join(backup_dir, "_raw", f"{name}{recorded_raw}")
+        tab, offset, limit = _video_reference_page_params(request)
+        query = request.query if request is not None else {}
+        options: list[dict] = []
+
+        if tab == "illustration":
+            backup_dir = get_backup_base_dir()
+            direct_name = str(query.get("name") or "").strip()
+            if direct_name:
+                if not re.fullmatch(r"[A-Za-z0-9_-]+", direct_name):
+                    print(f"[VIDEO:API] 단건 삽화 참조 이름 오류: name={direct_name!r}")
+                    raise ValueError("올바르지 않은 삽화 백업 이름입니다")
+                safe_name = direct_name
+                direct_path = next(
+                    (
+                        os.path.join(backup_dir, f"{safe_name}{extension}")
+                        for extension in (".avif", ".webp")
+                        if os.path.isfile(
+                            os.path.join(backup_dir, f"{safe_name}{extension}")
+                        )
+                    ),
+                    "",
                 )
-                if not backup_clean_source_from_info(has_raw_file, info):
+                option = (
+                    _video_backup_reference_option(backup_dir, direct_path)
+                    if direct_path
+                    else None
+                )
+                if option is None:
+                    print(f"[VIDEO:API] 단건 삽화 참조 없음: name={safe_name!r}")
+                    return web.json_response(
+                        {"success": False, "error": "영상화 가능한 삽화를 찾지 못했습니다"},
+                        status=404,
+                    )
+                options = [option]
+                return web.json_response(
+                    {
+                        "success": True,
+                        "tab": tab,
+                        "options": options,
+                        "offset": 0,
+                        "limit": 1,
+                        "has_more": False,
+                    }
+                )
+
+            files: list[str] = []
+            for pattern in ("*.webp", "*.avif"):
+                files.extend(glob.glob(os.path.join(backup_dir, pattern)))
+            seen: set[str] = set()
+            eligible_index = 0
+            has_more = False
+            for path in sorted(set(files), key=os.path.getmtime, reverse=True):
+                name = os.path.splitext(os.path.basename(path))[0]
+                if name in seen:
                     continue
                 seen.add(name)
-                animated = _backup_image_kind(path)
-                source_width = int(info.get("image_width") or 0)
-                source_height = int(info.get("image_height") or 0)
-            elif not _video_backup_has_raw(backup_dir, name):
-                continue
-            else:
-                seen.add(name)
-                animated = _backup_image_kind(path)
-            if source_width <= 0 or source_height <= 0:
-                try:
-                    resolved_source = video_mode._resolve_reference(
-                        {"kind": "backup", "name": name},
-                        raw=True,
-                    )
-                    with Image.open(resolved_source["path"]) as source_image:
-                        source_width, source_height = source_image.size
-                except Exception as exc:
-                    print(
-                        "[VIDEO:API] 참조 백업 원본 크기 조회 실패: "
-                        f"name={name!r}, error={type(exc).__name__}: {exc}"
-                    )
-                    traceback.print_exc()
-            options.append(
-                {
-                    "name": name,
-                    "label": name,
-                    "reference": {"kind": "backup", "name": name},
-                    "mtime": os.path.getmtime(path),
-                    "image_url": (
-                        f"/api/backup_poster/{name}"
-                        if animated
-                        else f"/api/backup_image/{os.path.basename(path)}"
-                    ),
-                    "is_animated": animated,
-                    "source_width": source_width,
-                    "source_height": source_height,
-                }
-            )
-        return web.json_response({"success": True, "options": options})
+                option = _video_backup_reference_option(backup_dir, path)
+                if option is None:
+                    continue
+                if eligible_index < offset:
+                    eligible_index += 1
+                    continue
+                if len(options) >= limit:
+                    has_more = True
+                    break
+                options.append(option)
+                eligible_index += 1
+        else:
+            direct = _video_direct_asset_reference(query)
+            if direct is not None:
+                return web.json_response(
+                    {
+                        "success": True,
+                        "tab": tab,
+                        "options": [direct],
+                        "offset": 0,
+                        "limit": 1,
+                        "has_more": False,
+                    }
+                )
+            options, has_more = _video_asset_reference_page(offset, limit)
+
+        return web.json_response(
+            {
+                "success": True,
+                "tab": tab,
+                "options": options,
+                "offset": offset,
+                "limit": limit,
+                "has_more": has_more,
+                "next_offset": offset + len(options),
+            }
+        )
+    except ValueError as exc:
+        print(f"[VIDEO:API] 참조 탐색 요청 거부: error={exc}")
+        traceback.print_exc()
+        return web.json_response({"success": False, "error": str(exc)}, status=400)
     except Exception as exc:
-        print(f"[VIDEO:API] 참조 백업 목록 조회 실패: error={type(exc).__name__}: {exc}")
+        print(f"[VIDEO:API] 참조 탐색 실패: error={type(exc).__name__}: {exc}")
         traceback.print_exc()
         return web.json_response({"success": False, "error": str(exc)}, status=500)
 
