@@ -3116,6 +3116,100 @@ class ModalService:
                 cache_age_seconds=0.0,
             )
 
+    async def cleanup_remote_models(
+        self,
+        *,
+        model_paths: list[str] | None = None,
+        lora_paths: list[str] | None = None,
+        dry_run: bool = True,
+    ) -> dict[str, Any]:
+        """원격 볼륨의 고아 파일을 지운다. 기본은 dry-run 이다.
+
+        세 겹으로 막는다. 원격은 사용자가 눈으로 확인할 수 없어서, 잘못 지우면
+        복구 수단이 로컬 사본뿐인데 cloud_direct 에서는 그 사본조차 없다.
+
+          1. 호출자가 경로를 **명시**해야 한다. '고아 전체 삭제'는 제공하지 않는다.
+          2. 현재 인벤토리에서 **고아로 분류된 것**만 지울 수 있다. 매니페스트가
+             아는 파일은 어떤 경우에도 삭제 대상이 되지 않는다.
+          3. **로컬에 같은 파일이 있으면 거부**한다. 매니페스트 밖 + 로컬 존재는
+             사용자의 개인 파일이라는 뜻이고(C3), 그건 로컬이 유일 원본이다.
+        """
+
+        settings = ModalSettings.from_mapping(self.get_config())
+        if not settings.enabled:
+            raise RuntimeError("Modal이 꺼져 있습니다.")
+
+        requested_models = [str(value).strip() for value in (model_paths or []) if str(value).strip()]
+        requested_loras = [str(value).strip() for value in (lora_paths or []) if str(value).strip()]
+        if not requested_models and not requested_loras:
+            raise ValueError("삭제할 원격 모델 경로를 지정하세요.")
+
+        inventory = await self.model_inventory()
+        orphan_models = {
+            str(item["path"]) for item in inventory["orphans"] if item["kind"] == "model"
+        }
+        orphan_loras = {
+            str(item["path"]) for item in inventory["orphans"] if item["kind"] == "lora"
+        }
+
+        rejected: list[dict[str, str]] = []
+        approved_models: list[str] = []
+        approved_loras: list[str] = []
+        comfy_models_root = self.project_root / "comfy" / "models"
+
+        def _check(path: str, orphans: set[str], kind: str) -> bool:
+            if path not in orphans:
+                rejected.append(
+                    {"path": path, "kind": kind, "reason": "매니페스트가 아는 파일이거나 원격에 없습니다."}
+                )
+                return False
+            local = (
+                comfy_models_root / ("loras/" + path if kind == "lora" else path)
+            )
+            if local.is_file():
+                rejected.append(
+                    {
+                        "path": path,
+                        "kind": kind,
+                        "reason": "로컬에 같은 파일이 있습니다 — 사용자 파일로 보이므로 지우지 않습니다.",
+                    }
+                )
+                return False
+            return True
+
+        for path in requested_models:
+            if _check(path, orphan_models, "model"):
+                approved_models.append(path)
+        for path in requested_loras:
+            if _check(path, orphan_loras, "lora"):
+                approved_loras.append(path)
+
+        result: dict[str, Any] = {
+            "dry_run": bool(dry_run),
+            "approved_models": approved_models,
+            "approved_loras": approved_loras,
+            "rejected": rejected,
+            "deleted": 0,
+        }
+        print(
+            "[MODAL_INVENTORY] 원격 정리 요청: "
+            f"승인 {len(approved_models) + len(approved_loras)}건 · "
+            f"거부 {len(rejected)}건 · dry_run={dry_run}"
+        )
+        if dry_run or not (approved_models or approved_loras):
+            return result
+
+        response = await self._run_client_action(
+            settings,
+            "delete_model_paths",
+            timeout=600,
+            model_paths=approved_models,
+            lora_paths=approved_loras,
+        )
+        result["deleted"] = int(response.get("deleted") or 0)
+        result["deleted_models"] = response.get("deleted_models") or []
+        result["deleted_loras"] = response.get("deleted_loras") or []
+        return result
 
     async def volume_storage(self) -> dict[str, Any]:
         """볼륨 저장 용량. 저장만으로도 과금되는데 로컬 디스크와 달리 체감되지 않는다.

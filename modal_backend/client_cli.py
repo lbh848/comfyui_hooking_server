@@ -759,6 +759,70 @@ def list_models(payload: dict) -> dict:
     }
 
 
+def delete_model_paths(payload: dict) -> dict:
+    """지정한 원격 모델/LoRA 파일을 볼륨에서 지운다.
+
+    무엇을 지울지는 **호출자가 정한다.** 이 함수는 경로 안전성만 강제한다.
+    '고아를 알아서 지우는' 동작을 여기에 두지 않는 이유는, 매니페스트 밖 파일에
+    사용자의 개인 LoRA 가 섞여 있기 때문이다(MODEL_SYNC_DIRECTION.md §4.7 C3).
+    """
+
+    raw_models = payload.get("model_paths") or []
+    raw_loras = payload.get("lora_paths") or []
+    if not isinstance(raw_models, list) or not isinstance(raw_loras, list):
+        raise TypeError("삭제 대상 경로는 배열이어야 합니다.")
+    if not raw_models and not raw_loras:
+        print("[MODAL_CLIENT] 삭제할 원격 모델 목록이 비어 있습니다.", file=sys.stderr)
+        raise ValueError("삭제할 원격 모델이 없습니다.")
+
+    app_name = str(payload["app_name"])
+    environment = str(payload["environment"])
+    results: dict[str, list[str]] = {"deleted_models": [], "deleted_loras": []}
+
+    def _purge(volume: modal.Volume, paths: list, label: str, bucket: str) -> None:
+        for raw in dict.fromkeys(str(value) for value in paths):
+            safe = _safe_remote_path(raw)
+            try:
+                volume.remove_file(f"/{safe}", recursive=False)
+                results[bucket].append(safe)
+            except (FileNotFoundError, modal.exception.NotFoundError):
+                print(f"[MODAL_CLIENT] 원격 {label} 삭제 대상 없음: {safe}", file=sys.stderr)
+            except Exception as exc:
+                print(
+                    f"[MODAL_CLIENT] 원격 {label} 삭제 실패: path={safe}, "
+                    f"error={type(exc).__name__}: {exc}",
+                    file=sys.stderr,
+                )
+                traceback.print_exc(file=sys.stderr)
+                raise
+
+    if raw_models:
+        _purge(
+            modal.Volume.from_name(
+                f"{app_name}-models",
+                environment_name=environment,
+                create_if_missing=False,
+            ),
+            raw_models,
+            "모델",
+            "deleted_models",
+        )
+    if raw_loras:
+        _purge(
+            modal.Volume.from_name(
+                f"{app_name}-loras",
+                environment_name=environment,
+                create_if_missing=False,
+            ),
+            raw_loras,
+            "LoRA",
+            "deleted_loras",
+        )
+    return {
+        **results,
+        "deleted": len(results["deleted_models"]) + len(results["deleted_loras"]),
+    }
+
 
 def _sync_environment(payload: dict) -> dict:
     app_name = str(payload["app_name"])
@@ -2060,6 +2124,8 @@ def main() -> int:
             result = list_workflows(payload)
         elif action == "list_models":
             result = list_models(payload)
+        elif action == "delete_model_paths":
+            result = delete_model_paths(payload)
         elif action == "read_workflow":
             result = read_workflow(payload)
         elif action == "generate":
