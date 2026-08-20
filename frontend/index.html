@@ -25100,7 +25100,7 @@
                     </div>
                 </div>
 
-                <!-- Tab: ComfyUI Windows 설치 -->
+                <!-- Tab: ComfyUI 설치 -->
                 <div class="settings-tab-panel" id="settings-tab-comfy_install">
                     <div class="comfy-installer-page">
                         <section class="comfy-installer-hero">
@@ -25113,7 +25113,7 @@
                                 </p>
                             </div>
                             <div class="comfy-installer-hero-badges" aria-label="설치 방식">
-                                <span class="comfy-installer-badge">Windows 전용</span>
+                                <span class="comfy-installer-badge">Windows · macOS</span>
                                 <span class="comfy-installer-badge">독립 환경</span>
                                 <span class="comfy-installer-badge">수동 실행</span>
                             </div>
@@ -25246,7 +25246,7 @@
                             </div>
                             <div class="comfy-installer-actions">
                                 <button type="button" class="comfy-installer-btn" id="comfy-installer-migrate-btn" onclick="comfyInstallerMigrate()">이사하기(V4 사용자용)</button>
-                                <span class="comfy-installer-note">내장 설치 완료 후 사용하세요. <code>config.json</code>은 설치기 전용 백업 폴더에 보관하고 Windows <code>robocopy</code> 병렬 복사로 진행률·속도·남은 시간을 표시합니다. 설정의 Comfy 관련 경로를 하나씩 검사해 외부 경로만 내장 Comfy로 전환하며, LoRA와 <code>input/soya_bot</code> 원본 및 기존 대상 파일은 삭제·덮어쓰기하지 않습니다.</span>
+                                <span class="comfy-installer-note">내장 설치 완료 후 사용해 주십시오. <code>config.json</code>은 설치기 백업 폴더에 보관됩니다. (Windows 환경에서는 <code>robocopy</code> 병렬 복사를 사용하여 진행률, 속도, 남은 시간을 표시합니다.) 설정 내 ComfyUI 관련 경로를 검사하여 외부 경로를 내장 경로로 전환합니다. 단, LoRA 및 <code>input/soya_bot</code> 원본과 기존 대상 파일은 덮어쓰거나 삭제하지 않습니다.</span>
                             </div>
                             <div class="comfy-installer-actions" style="margin-top:10px;">
                                 <button type="button" class="comfy-installer-btn" id="comfy-installer-retarget-config-btn" onclick="comfyInstallerRetargetConfig()">config를 내장 Comfy로 수정</button>
@@ -37429,7 +37429,7 @@
             }
         }
 
-        // ─── ComfyUI Windows 설치기 ───
+        // ─── ComfyUI 설치기 ───
         let comfyInstallerLastLogSeq = 0;
         let comfyInstallerPollTimer = null;
         let comfyInstallerStatusBusy = false;
@@ -37813,7 +37813,7 @@
             const button = document.getElementById('comfy-installer-preflight-btn');
             const note = document.getElementById('comfy-installer-preflight-note');
             if (button) button.disabled = true;
-            if (note) note.textContent = 'Windows, GPU, 드라이버, uv, Git과 디스크를 확인하는 중…';
+            if (note) note.textContent = 'OS, GPU, 드라이버, uv, Git 및 디스크 상태를 확인 중입니다...';
             try {
                 const releaseVersion = comfyInstallerSelectedRelease();
                 const selectedItemIds = comfyInstallerSelectedIds();
