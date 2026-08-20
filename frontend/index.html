@@ -40571,7 +40571,15 @@
         }
 
         // ─── 설정 모달 ───
-        async function openSettingsModal() {
+        // Form이 실제 설정값으로 채워졌는지 여부를 확인합니다.
+        // saveSettings()는 DOM 전체를 읽어오기 때문에, Form이 초기화되기 전에 저장하면
+        // Workflow 경로, comfy_task_allocations 등 수십 개의 키가 HTML 기본값으로 덮어씌워져
+        // 기존 설정이 유실될 수 있습니다.
+        let settingsFormPopulated = false;
+
+        // Modal을 열지 않고 저장하는 경우(예: Modal Runtime의 '설정 저장·적용')를 대비해,
+        // 저장 전 반드시 Form을 현재 값으로 채우도록 처리합니다.
+        async function populateSettingsForm() {
             // 현재 설정 로드
             try {
                 currentConfig = await loadCurrentConfig(true);
@@ -41020,6 +41028,11 @@
                 || stripManagedLoraPath(styleLoraLoadPath);
             document.getElementById('setting-lora-load-path').value = basePath || loraLoadPath;
 
+            settingsFormPopulated = true;
+        }
+
+        async function openSettingsModal() {
+            await populateSettingsForm();
             document.getElementById('settings-modal').classList.add('visible');
             // 큐 우선순위 리스트 렌더링
             renderQueueTypeList();
@@ -42209,6 +42222,12 @@
         }
 
         async function saveSettings() {
+            // Form이 채워지지 않은 상태로 저장하면 HTML 기본값이 저장됩니다.
+            // Modal을 열지 않고 저장하는 경로가 실제로 존재하므로, 저장 전 Form을 채웁니다.
+            if (!settingsFormPopulated) {
+                console.warn('[SETTINGS] Form이 채워지지 않은 상태에서 저장이 요청되었습니다. 현재 설정으로 Form을 먼저 채웁니다.');
+                await populateSettingsForm();
+            }
             persistIllustrationWorkflowPaths();
             for (const slot of LLM_SLOTS) {
                 const suffix = llmSlotSuffix(slot);
