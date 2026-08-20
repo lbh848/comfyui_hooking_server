@@ -17,6 +17,10 @@ from typing import Awaitable, Callable, Optional
 
 from PIL import Image
 
+from comfy_allocation import (
+    CURRENT_COMFY_EXECUTION_TARGET,
+    REMOTE_COMFY_TARGETS,
+)
 from modes import llm_service
 from modes.lighbd_service import _log_lighbd_history
 
@@ -1140,8 +1144,20 @@ class QwenEditMode:
             or config.get("asset_edit_tool", EDIT_TOOL_QWEN)
         )
         params["edit_tool"] = edit_tool
+        # 원격 실행이면 모델은 워커의 Volume 에 있다. 로컬 파일을 요구하면
+        # cloud_direct 구성에서 실행 자체가 막힌다 — 모델이 원격에 멀쩡히 있는데도
+        # "다운로드가 완료되지 않았습니다" 로 실패한다.
+        # (같은 판정을 asset_tool_mode.py:335 가 이미 쓴다.)
+        execution_target = str(CURRENT_COMFY_EXECUTION_TARGET.get() or "")
         required_model_path = self._required_model_path(config, edit_tool)
-        if not os.path.isfile(required_model_path):
+        if execution_target in REMOTE_COMFY_TARGETS:
+            if not os.path.isfile(required_model_path):
+                print(
+                    "[EDIT_TOOL] 로컬 모델 없음 — 원격 실행이므로 계속합니다: "
+                    f"tool={edit_tool}, target={execution_target}, "
+                    f"expected={required_model_path!r}"
+                )
+        elif not os.path.isfile(required_model_path):
             print(
                 "[EDIT_TOOL] 필수 모델 캐시 미스: "
                 f"tool={edit_tool}, expected={required_model_path!r}, "
