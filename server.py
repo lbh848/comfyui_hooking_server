@@ -24096,6 +24096,11 @@ _tunnel_url: str | None = None
 _cloudflared_path: str | None = None
 _tunnel_stderr_task: asyncio.Task | None = None
 
+def _browser_autostart_disabled() -> bool:
+    """NO_BROWSER 가 켜져 있는지. 헤드리스/원격 실행에서 쓴다."""
+    return os.environ.get("NO_BROWSER", "").strip().lower() not in ("", "0", "false")
+
+
 def _cloudflared_asset(system: str, machine: str) -> tuple[str, str]:
     """(릴리스 자산 이름, 저장할 파일명).
 
@@ -30628,7 +30633,10 @@ async def on_startup(app):
                 print(f"[공지] 주기 갱신 실패: {e}")
     asyncio.create_task(_noti_refresh_loop())
     # 프런트엔드 자동 열기
-    webbrowser.open(f"http://127.0.0.1:{PORT}/")
+    if _browser_autostart_disabled():
+        print("[INFO] NO_BROWSER 설정으로 브라우저 자동 열기를 건너뜁니다.")
+    else:
+        webbrowser.open(f"http://127.0.0.1:{PORT}/")
 
     # 캐릭터 메이커 내장 RAG 미리 로드(설정 켜짐 + 인덱스 설치되어 있을 때)
     if app_config.get("character_maker_rag_autostart", False):
