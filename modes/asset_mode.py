@@ -61,6 +61,10 @@ PRESET_MGMT_CATEGORIES = [
     "negative_presets", "character_negative_presets",
     "artist_presets", "natural_language_presets",
 ]
+# 숨김 관리에서는 일반 프리셋 외에 캐릭터 정의도 활성/숨김 간 이동할 수 있다.
+# 캐릭터는 일반 태그 프리셋 편집기와 데이터 구조가 다르므로 생성/수정 대상인
+# PRESET_MGMT_CATEGORIES에는 넣지 않고 가시성 대상만 별도로 확장한다.
+PRESET_VISIBILITY_CATEGORIES = [*PRESET_MGMT_CATEGORIES, "characters"]
 CURRENT_MODE_WORK_DIR = os.path.join(BASE_DIR, "current_mode_workflow")
 MODE_WORKFLOW_DIR = os.path.join(BASE_DIR, "mode_workflow")
 ASSET_WORKFLOW_PREPARE_LOCK = asyncio.Lock()
@@ -4626,9 +4630,9 @@ class AssetMode:
         }
 
     def _get_active_presets(self) -> dict:
-        """현재 tags.json에서 프리셋매니징 대상 카테고리만 추출"""
+        """현재 tags.json에서 숨김 관리 대상 카테고리만 추출"""
         result = {}
-        for cat in PRESET_MGMT_CATEGORIES:
+        for cat in PRESET_VISIBILITY_CATEGORIES:
             val = self._tags.get(cat, {})
             # appearances/outfits/expressions은 dict, quality_presets 등도 dict
             result[cat] = copy.deepcopy(val) if isinstance(val, dict) else list(val) if isinstance(val, list) else val
@@ -4637,7 +4641,7 @@ class AssetMode:
     # ─── 프리셋매니징: 숨기기 / 복원 ───────────────────────
     def hide_preset(self, category: str, name: str) -> dict:
         """프리셋을 tags.json에서 hidden_tags.json으로 이동"""
-        if category not in PRESET_MGMT_CATEGORIES:
+        if category not in PRESET_VISIBILITY_CATEGORIES:
             print(f"[ASSET_MODE] hide_preset: 지원하지 않는 카테고리 '{category}'")
             return {"success": False, "error": f"지원하지 않는 카테고리: {category}"}
 
@@ -4677,7 +4681,7 @@ class AssetMode:
 
     def restore_preset(self, category: str, name: str) -> dict:
         """숨김 프리셋을 hidden_tags.json에서 tags.json으로 복원"""
-        if category not in PRESET_MGMT_CATEGORIES:
+        if category not in PRESET_VISIBILITY_CATEGORIES:
             print(f"[ASSET_MODE] restore_preset: 지원하지 않는 카테고리 '{category}'")
             return {"success": False, "error": f"지원하지 않는 카테고리: {category}"}
 

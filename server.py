@@ -100,6 +100,8 @@ from modes.video_mode import (
     FAST_ASPECT_RATIOS,
     FAST_DEFAULT_QUALITY_LEVEL,
     FAST_QUALITY_LEVELS,
+    REF2V_FAST_FIXED_ASPECT_RATIO,
+    REF2V_FAST_FIXED_QUALITY_LEVEL,
     VIDEO_DEFAULT_DURATION_SECONDS,
     VIDEO_MODES,
     VIDEO_WORKFLOW_VARIANTS,
@@ -328,6 +330,10 @@ def normalize_video_generation_defaults(raw: object) -> dict:
             # 고속 기본값 저장에 화질이 없으면 768p(native)를 유지한다.
             normalized["quality_level"] = "native"
 
+    if normalized["mode"] == "ref2v":
+        normalized["aspect_ratio"] = REF2V_FAST_FIXED_ASPECT_RATIO
+        normalized["quality_level"] = REF2V_FAST_FIXED_QUALITY_LEVEL
+
     try:
         normalized["duration"] = int(
             normalize_video_duration(source.get("duration", normalized["duration"]))
@@ -433,6 +439,12 @@ def normalize_video_workflow_selection(
         raw.get("aspect_ratio", raw.get("preset", "auto")) or "auto"
     ).strip().lower()
     mode = str(raw.get("mode") or "").strip().lower()
+    if mode == "ref2v":
+        return (
+            workflow_variant,
+            REF2V_FAST_FIXED_ASPECT_RATIO,
+            REF2V_FAST_FIXED_QUALITY_LEVEL,
+        )
     supported_ratios = (
         FAST_768_ASPECT_RATIOS
         if workflow_variant == "fast" and mode != "ref2v"
@@ -26357,11 +26369,13 @@ async def on_startup(app):
         print(f"[SYSMON] 모니터 스레드 시작 실패: {type(e).__name__}: {e}")
         traceback.print_exc()
     _backup_data_on_startup()
+    # 스풀은 로컬 스크래치이므로 시작할 때마다 재개하지 않고 비운다.
+    # 원본 에셋이 사라진 후처리 작업이 시작 복구 루프를 도는 것을 막는다.
     try:
-        await queue_manager.recover_video_postprocess_jobs()
+        await asyncio.to_thread(video_mode.clear_staged_video_postprocess)
     except Exception as e:
         print(
-            "[VIDEO:POSTPROCESS:RECOVERY] 시작 시 큐 복구 실패: "
+            "[VIDEO:POSTPROCESS] 시작 시 스풀 비우기 실패: "
             f"error={type(e).__name__}: {e}"
         )
         traceback.print_exc()

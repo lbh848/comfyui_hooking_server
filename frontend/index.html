@@ -1260,6 +1260,18 @@
             border-color: color-mix(in srgb, var(--accent) 52%, var(--border));
             transform: translateY(-1px);
         }
+        .option-card:has(> input:disabled) {
+            cursor: not-allowed;
+        }
+        .option-card > input:disabled + .option-card-surface,
+        .option-card:hover > input:disabled + .option-card-surface {
+            border-color: var(--border);
+            color: var(--text2);
+            background: color-mix(in srgb, var(--surface2) 45%, var(--surface));
+            box-shadow: none;
+            opacity: .48;
+            transform: none;
+        }
         .option-card > input:focus-visible + .option-card-surface {
             outline: 2px solid color-mix(in srgb, var(--accent) 72%, white);
             outline-offset: 2px;
@@ -15224,7 +15236,7 @@
 
                     <section class="video-panel video-controls-stack">
                         <div>
-                            <div class="video-field-label"><span>영상화 방식</span><small>일반 8-step · 고속 4-step</small></div>
+                            <div class="video-field-label"><span>영상화 방식</span><small>일반 REF 20-step TeaCache · 전용 고속 4-step</small></div>
                             <input id="video-generation-mode" type="hidden" value="i2v">
                             <input id="video-generation-workflow-variant" type="hidden" value="standard">
                             <div class="option-card-grid compact" style="--option-card-columns:2;" role="radiogroup" aria-label="영상화 방식">
@@ -15246,11 +15258,11 @@
                                 </label>
                                 <label class="option-card">
                                     <input type="radio" name="video-mode-choice" value="ref2v:standard" onchange="selectVideoMode('ref2v', 'standard')">
-                                    <span class="option-card-surface"><span class="option-card-title">REF2V</span><span class="option-card-description">1–3장의 독립 참조로 영상 생성 · 8-step</span></span>
+                                    <span class="option-card-surface"><span class="option-card-title">REF2V</span><span class="option-card-description">Base 20-step · TeaCache 0.10 · 960×544</span></span>
                                 </label>
                                 <label class="option-card">
                                     <input type="radio" name="video-mode-choice" value="ref2v:fast" onchange="selectVideoMode('ref2v', 'fast')">
-                                    <span class="option-card-surface"><span class="option-card-title">고속 REF2V</span><span class="option-card-description">1–3장 참조 · 4-step 544p</span></span>
+                                    <span class="option-card-surface"><span class="option-card-title">고속 REF2V</span><span class="option-card-description">1–3장 참조 · 전용 4-step · 960×544 고정</span></span>
                                 </label>
                             </div>
                             <div id="video-generation-mode-note" class="video-mode-note"></div>
@@ -23464,19 +23476,19 @@
                     <div class="setting-row" style="margin-top: 12px;">
                         <div class="setting-label">
                             <div class="title">🖼️ REF2V 워크플로우</div>
-                            <div class="desc">1–3장 참조 기반 일반 8-step REF2V에 사용할 워크플로우 파일 (공통설정 탭 베이스 경로 공유)</div>
+                            <div class="desc">Base Ref2VA 20-step + TeaCache 0.10, 960×544 고정 워크플로우 파일</div>
                         </div>
                     </div>
                     <div class="form-group" style="margin-top: -8px;">
                         <div class="autocomplete-wrapper">
                             <input type="text" id="setting-video-ref2v-workflow-filename"
-                                   placeholder="예: 배포_영상_H3_REF2V_8STEP_v1.json"
+                                   placeholder="예: 배포_영상_H3_REF2V_v1.json"
                                    oninput="onVideoWorkflowFilenameInput('ref2v', this.value)"
                                    onfocus="onVideoWorkflowFilenameInput('ref2v', this.value)">
                             <div class="autocomplete-list" id="video-ref2v-workflow-autocomplete"
                                  data-video-workflow-mode="ref2v"></div>
                         </div>
-                        <div class="hint">일반 8-step REF2V 워크플로우를 선택하세요</div>
+                        <div class="hint">검증된 TeaCache 샘플 단위 초기화 패치와 함께 사용합니다</div>
                     </div>
                     <input type="hidden" id="setting-video-ref2v-workflow-source-path">
 
@@ -23521,19 +23533,19 @@
                     <div class="setting-row" style="margin-top: 12px;">
                         <div class="setting-label">
                             <div class="title">⚡ 고속 REF2V 워크플로우</div>
-                            <div class="desc">Ref2VA 전용 4-step 544p 계열 워크플로우 파일 (공통설정 탭 베이스 경로 공유)</div>
+                            <div class="desc">Ref2VA 전용 4-step, 960×544 고정 워크플로우 파일 (공통설정 탭 베이스 경로 공유)</div>
                         </div>
                     </div>
                     <div class="form-group" style="margin-top: -8px;">
                         <div class="autocomplete-wrapper">
                             <input type="text" id="setting-video-ref2v-fast-workflow-filename"
-                                   placeholder="예: 배포_영상_H3_REF2V_4STEP_544P_v1.json"
+                                   placeholder="예: 배포_영상_H3_REF2V_고속_v1.json"
                                    oninput="onVideoWorkflowFilenameInput('ref2v_fast', this.value)"
                                    onfocus="onVideoWorkflowFilenameInput('ref2v_fast', this.value)">
                             <div class="autocomplete-list" id="video-ref2v-fast-workflow-autocomplete"
                                  data-video-workflow-mode="ref2v_fast"></div>
                         </div>
-                        <div class="hint">고속 기본은 짧은 변 544p이며 MP 단계는 실험적입니다</div>
+                        <div class="hint">공식 예제와 동일한 16:9 · 960×544 한 가지 해상도만 사용합니다</div>
                     </div>
                     <input type="hidden" id="setting-video-ref2v-fast-workflow-source-path">
                 </div>
@@ -29245,8 +29257,10 @@
         const VIDEO_FAST_RESOLUTION_MULTIPLE = 32;
         const VIDEO_FAST_NATIVE_MAX_SHORT_EDGE = 768;
         const VIDEO_FAST_NATIVE_MAX_LONG_EDGE = 1344;
-        const VIDEO_REF_FAST_NATIVE_MAX_SHORT_EDGE = 544;
-        const VIDEO_REF_FAST_NATIVE_MAX_LONG_EDGE = 1344;
+        const VIDEO_REF_FAST_FIXED_ASPECT_RATIO = '16:9';
+        const VIDEO_REF_FAST_FIXED_QUALITY_LEVEL = 'native';
+        const VIDEO_REF_FAST_FIXED_WIDTH = 960;
+        const VIDEO_REF_FAST_FIXED_HEIGHT = 544;
         const VIDEO_FAST_768_ASPECT_KEYS = Object.freeze([
             '1:1', '4:3', '3:4', '16:9', '9:16', '3:2', '2:3', '5:4', '4:5',
         ]);
@@ -29268,15 +29282,6 @@
             ['high_minus', '고화질- · 0.4 MP (실험적)'],
             ['high', '고화질 · 0.5 MP (실험적)'],
         ]);
-        const VIDEO_REF_FAST_QUALITY_OPTIONS = Object.freeze([
-            ['native', '고속 REF 기본 · 짧은 변 544p'],
-            ['low', '저화질 · 0.2 MP (실험적)'],
-            ['low_plus', '저화질+ · 0.3 MP (실험적)'],
-            ['medium', '기본 · 0.35 MP (실험적)'],
-            ['high_minus', '고화질- · 0.4 MP (실험적)'],
-            ['high', '고화질 · 0.5 MP (실험적)'],
-        ]);
-
         function selectedVideoWorkflowVariant() {
             const value = document.getElementById('video-generation-workflow-variant')?.value || 'standard';
             if (!['standard', 'fast'].includes(value)) {
@@ -29370,24 +29375,15 @@
         function calculateVideoFastModeResolution(aspectRatio, qualityLevel, mode = '') {
             const selectedMode = mode || document.getElementById('video-generation-mode')?.value || 'i2v';
             if (selectedMode === 'ref2v') {
-                if (!Object.prototype.hasOwnProperty.call(VIDEO_FAST_ASPECT_RATIOS, aspectRatio)) {
-                    console.error('[VIDEO_UI] 고속 REF 화면 비율 오류:', aspectRatio);
-                    return null;
-                }
-                const result = calculateVideoFastResolution(
-                    aspectRatio,
-                    qualityLevel,
-                    VIDEO_REF_FAST_NATIVE_MAX_SHORT_EDGE,
-                    VIDEO_REF_FAST_NATIVE_MAX_LONG_EDGE,
-                );
-                if (
-                    qualityLevel === 'native'
-                    && (!result || Math.min(result.width, result.height) !== VIDEO_REF_FAST_NATIVE_MAX_SHORT_EDGE)
-                ) {
-                    console.error('[VIDEO_UI] 고속 REF 544p 최소변 계산 오류:', result);
-                    return null;
-                }
-                return result;
+                return {
+                    aspectRatio: VIDEO_REF_FAST_FIXED_ASPECT_RATIO,
+                    qualityLevel: VIDEO_REF_FAST_FIXED_QUALITY_LEVEL,
+                    targetMp: Math.round(
+                        VIDEO_REF_FAST_FIXED_WIDTH * VIDEO_REF_FAST_FIXED_HEIGHT,
+                    ) / 1000000,
+                    width: VIDEO_REF_FAST_FIXED_WIDTH,
+                    height: VIDEO_REF_FAST_FIXED_HEIGHT,
+                };
             }
             if (qualityLevel === 'native') {
                 return calculateVideoFast768Resolution(aspectRatio);
@@ -29402,9 +29398,10 @@
         function updateVideoResolutionControls() {
             const workflowVariant = selectedVideoWorkflowVariant();
             const mode = document.getElementById('video-generation-mode')?.value || 'i2v';
+            const isRef = mode === 'ref2v';
             const isFastRef = workflowVariant === 'fast' && mode === 'ref2v';
-            const resolutionProfile = isFastRef
-                ? 'fast-ref-544'
+            const resolutionProfile = isRef
+                ? (isFastRef ? 'fast-ref-fixed-960x544' : 'ref-teacache-fixed-960x544')
                 : (workflowVariant === 'fast' ? 'fast-768' : 'standard');
             const aspectSelect = document.getElementById('video-generation-aspect-ratio');
             const qualitySelect = document.getElementById('video-generation-quality-level');
@@ -29421,8 +29418,38 @@
             const previousQualityValue = qualitySelect.value || 'native';
             const defaultsApplied = qualitySelect.dataset.defaultsApplied === workflowVariant;
             delete qualitySelect.dataset.defaultsApplied;
+            if (isRef) {
+                if (previousVariant !== 'fast' && !defaultsApplied) {
+                    qualitySelect.dataset.standardValue = previousQualityValue;
+                }
+                qualitySelect.innerHTML = workflowVariant === 'fast'
+                    ? '<option value="native">고속 REF 고정 · 960×544</option>'
+                    : '<option value="native">일반 REF 고정 · 960×544</option>';
+                qualitySelect.value = VIDEO_REF_FAST_FIXED_QUALITY_LEVEL;
+                qualitySelect.disabled = true;
+                qualitySelect.title = workflowVariant === 'fast'
+                    ? 'Ref2VA 전용 4-step 공식 예제 해상도인 960×544로 고정됩니다.'
+                    : 'Base Ref2VA 20-step + TeaCache 검증 해상도인 960×544로 고정됩니다.';
+                if (qualityHint) {
+                    qualityHint.textContent = workflowVariant === 'fast'
+                        ? 'REF 전용 4-step · 고정'
+                        : 'REF 20-step · TeaCache 0.10';
+                }
+                qualitySelect.dataset.activeVariant = workflowVariant;
+                qualitySelect.dataset.activeResolutionProfile = resolutionProfile;
+
+                aspectSelect.innerHTML = '<option value="16:9">16:9 · 960×544 고정</option>';
+                aspectSelect.value = VIDEO_REF_FAST_FIXED_ASPECT_RATIO;
+                aspectSelect.disabled = true;
+                aspectSelect.title = 'REF2V는 검증된 16:9 · 960×544만 지원합니다.';
+                return;
+            }
+
+            qualitySelect.disabled = false;
+            aspectSelect.disabled = false;
+            aspectSelect.title = '';
             qualitySelect.innerHTML = (workflowVariant === 'fast'
-                ? (isFastRef ? VIDEO_REF_FAST_QUALITY_OPTIONS : VIDEO_FAST_QUALITY_OPTIONS)
+                ? VIDEO_FAST_QUALITY_OPTIONS
                 : VIDEO_STANDARD_QUALITY_OPTIONS
             ).map(([value, label]) => `<option value="${value}">${label}</option>`).join('');
             if (workflowVariant === 'fast') {
@@ -29434,12 +29461,8 @@
                 } else {
                     qualitySelect.value = previousQualityValue;
                 }
-                qualitySelect.title = isFastRef
-                    ? '고속 REF MP 선택은 권장 해상도(짧은 변 544p) 밖의 실험적 설정입니다.'
-                    : '고속 MP 선택은 권장 해상도(짧은 변 768p) 밖의 실험적 설정입니다.';
-                if (qualityHint) qualityHint.textContent = isFastRef
-                    ? 'REF 544p · MP (실험적)'
-                    : '고속 · MP (실험적)';
+                qualitySelect.title = '고속 MP 선택은 권장 해상도(짧은 변 768p) 밖의 실험적 설정입니다.';
+                if (qualityHint) qualityHint.textContent = '고속 · MP (실험적)';
             } else {
                 if (previousVariant === 'fast' && qualitySelect.dataset.standardValue) {
                     qualitySelect.value = qualitySelect.dataset.standardValue;
@@ -29455,10 +29478,10 @@
 
             const previousAspect = aspectSelect.value || 'auto';
             const aspectKeys = workflowVariant === 'fast'
-                ? (isFastRef ? Object.keys(VIDEO_FAST_ASPECT_RATIOS) : VIDEO_FAST_768_ASPECT_KEYS)
+                ? VIDEO_FAST_768_ASPECT_KEYS
                 : Object.keys(VIDEO_FAST_ASPECT_RATIOS);
             const autoLabel = workflowVariant === 'fast' && qualitySelect.value === 'native'
-                ? `자동 · 짧은 변 ${isFastRef ? 544 : 768}p`
+                ? '자동 · 짧은 변 768p'
                 : '자동';
             const options = [`<option value="auto">${autoLabel}</option>`];
             for (const key of aspectKeys) {
@@ -29485,15 +29508,21 @@
             const aspectInput = document.getElementById('video-generation-aspect-ratio')?.value || 'auto';
             const qualityLevel = document.getElementById('video-generation-quality-level')?.value || 'medium';
             const workflowVariant = selectedVideoWorkflowVariant();
+            const mode = document.getElementById('video-generation-mode')?.value || 'i2v';
+            if (mode === 'ref2v') {
+                return calculateVideoFastModeResolution(
+                    VIDEO_REF_FAST_FIXED_ASPECT_RATIO,
+                    VIDEO_REF_FAST_FIXED_QUALITY_LEVEL,
+                    mode,
+                );
+            }
             let aspectRatio = aspectInput;
             if (aspectRatio === 'auto') {
                 const sourceKey = document.getElementById('video-generation-source')?.value || '';
                 const source = getVideoReferenceByKey(sourceKey);
                 if (!source?.source_width || !source?.source_height) return null;
                 const supportedKeys = workflowVariant === 'fast'
-                    ? ((document.getElementById('video-generation-mode')?.value || 'i2v') === 'ref2v'
-                        ? Object.keys(VIDEO_FAST_ASPECT_RATIOS)
-                        : VIDEO_FAST_768_ASPECT_KEYS)
+                    ? VIDEO_FAST_768_ASPECT_KEYS
                     : Object.keys(VIDEO_FAST_ASPECT_RATIOS);
                 aspectRatio = chooseVideoFastAspectRatio(
                     source.source_width,
@@ -29506,7 +29535,7 @@
                 ? calculateVideoFastModeResolution(
                     aspectRatio,
                     qualityLevel,
-                    document.getElementById('video-generation-mode')?.value || 'i2v',
+                    mode,
                 )
                 : calculateVideoFastResolution(aspectRatio, qualityLevel);
         }
@@ -30710,7 +30739,8 @@
                 qualityLevel.dataset.standardValue = settings.quality_level;
             }
             updateVideoDuration();
-            selectVideoMode(settings.mode, settings.workflow_variant || 'standard');
+            const defaultVariant = settings.workflow_variant || 'standard';
+            selectVideoMode(settings.mode, defaultVariant);
             loop.checked = settings.mode === 'first_last' && settings.loop === true;
             onVideoLoopChange();
 
@@ -31013,7 +31043,7 @@
                     : '선택 삽화의 원본';
                 const speedLabel = workflowVariant === 'fast' ? '고속으로 ' : '';
                 modeNote.textContent = isRef
-                    ? `${sourceLabel}을 참조 1로 사용하고, 선택한 총 ${getSelectedVideoReferenceRefs().length}장의 독립 REF 이미지로 ${duration}초 영상을 만듭니다.${workflowVariant === 'fast' ? ' 기본 해상도는 짧은 변 544p입니다.' : ''}`
+                    ? `${sourceLabel}을 참조 1로 사용하고, 선택한 총 ${getSelectedVideoReferenceRefs().length}장의 독립 REF 이미지로 ${duration}초 영상을 만듭니다. ${workflowVariant === 'fast' ? '전용 4-step' : 'Base 20-step + TeaCache 0.10'} 출력은 960×544로 고정됩니다.`
                     : (isLast
                         ? `${speedLabel}${sourceLabel}을 0초, 선택한 마지막 프레임을 ${duration}초에 정렬합니다.`
                         : `${speedLabel}${sourceLabel}을 시작 프레임으로 사용해 ${duration}초 영상을 만듭니다.`);
@@ -93058,9 +93088,14 @@
             character_negative_presets: '캐릭터 네거티브',
             negative_presets: '네거티브 프리셋',
         };
+        const PM_CHARACTER_CATEGORY = 'characters';
         const PM_CHAIN_CATEGORY = 'chain_presets';
-        const PM_HIDE_CATEGORIES = {
+        const PM_ASSET_HIDE_CATEGORIES = {
+            [PM_CHARACTER_CATEGORY]: '캐릭터',
             ...PM_CATEGORIES,
+        };
+        const PM_HIDE_CATEGORIES = {
+            ...PM_ASSET_HIDE_CATEGORIES,
             [PM_CHAIN_CATEGORY]: '체인 프리셋',
         };
         const PM_IMPORT_CATEGORIES = {
@@ -93114,10 +93149,25 @@
             return category === PM_CHAIN_CATEGORY;
         }
 
+        function pmIsCharacter(category = pmCurrentCategory) {
+            return category === PM_CHARACTER_CATEGORY;
+        }
+
         function pmValueToText(value, category = pmManagerCategory) {
             if (pmIsChainPreset(category)) {
                 if (!value || typeof value !== 'object') return '';
                 return `${value.slot_count || 0}슬롯 ${value.repeat || 1}회 반복 ${value.saved_at || ''}`;
+            }
+            if (pmIsCharacter(category)) {
+                if (!value || typeof value !== 'object' || Array.isArray(value)) return '';
+                return [
+                    ['외모', value.appearance],
+                    ['복장', value.outfit],
+                    ['표정', value.expression],
+                ]
+                    .filter(([, presetName]) => typeof presetName === 'string' && presetName.trim())
+                    .map(([label, presetName]) => `${label}: ${presetName.trim()}`)
+                    .join(' · ');
             }
             if (pmIsNaturalLanguage(category)) {
                 return typeof value === 'string' ? value : (Array.isArray(value) ? value.join(', ') : '');
@@ -93140,6 +93190,9 @@
             if (pmIsChainPreset(category)) {
                 const repeat = Number(value && value.repeat);
                 return `${count}슬롯 · ${Number.isFinite(repeat) && repeat > 0 ? repeat : 1}회 반복`;
+            }
+            if (pmIsCharacter(category)) {
+                return pmValueToText(value, category) || '연결 프리셋 없음';
             }
             return pmIsNaturalLanguage(category) ? `${count}자` : `${count}개 태그`;
         }
@@ -93195,7 +93248,7 @@
                 const chainPayload = await chainResponse.json();
                 const active = {};
                 const hidden = {};
-                for (const category of Object.keys(PM_CATEGORIES)) {
+                for (const category of Object.keys(PM_ASSET_HIDE_CATEGORIES)) {
                     const activeValue = payload.active && payload.active[category];
                     const hiddenValue = payload.hidden && payload.hidden[category];
                     active[category] = activeValue && typeof activeValue === 'object' && !Array.isArray(activeValue) ? activeValue : {};
@@ -93802,6 +93855,20 @@
             pmRenderHideView();
         }
 
+        async function pmRefreshAssetConsumers() {
+            if (!assetTags) return;
+            await loadAssetData();
+            if (document.getElementById('tab-asset-upload-content')?.classList.contains('active')) {
+                auLoadCharacterList();
+            }
+            if (document.getElementById('tab-smart-asset-content')?.classList.contains('active')) {
+                await atLoadCharacterList();
+            }
+            if (document.getElementById('tab-batch-content')?.classList.contains('active')) {
+                renderBatchChain();
+            }
+        }
+
         async function pmBatchHide() {
             if (pmSelectedActive.size === 0) return;
             const names = Array.from(pmSelectedActive);
@@ -93825,7 +93892,7 @@
                 pmSelectedActive.clear();
                 await pmLoadData();
                 if (isChainPreset) await refreshBatchPresetSelect();
-                else if (assetTags) loadAssetData();
+                else await pmRefreshAssetConsumers();
             } catch (error) {
                 console.error('[PM] 숨김 처리 중 오류:', error);
                 showToast('숨김 처리 중 오류가 발생했습니다', 'error');
@@ -93855,7 +93922,7 @@
                 pmSelectedHidden.clear();
                 await pmLoadData();
                 if (isChainPreset) await refreshBatchPresetSelect();
-                else if (assetTags) loadAssetData();
+                else await pmRefreshAssetConsumers();
             } catch (error) {
                 console.error('[PM] 복원 처리 중 오류:', error);
                 showToast('복원 중 오류가 발생했습니다', 'error');

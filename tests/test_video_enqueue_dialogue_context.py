@@ -117,10 +117,10 @@ async def test_ref_video_enqueue_preserves_ordered_reference_list(monkeypatch) -
             _video_request(
                 mode="ref2v",
                 workflow_variant="fast",
-                source_ref=source,
-                reference_refs=[source, second],
-                aspect_ratio="21:9",
-                quality_level="native",
+                    source_ref=source,
+                    reference_refs=[source, second],
+                    aspect_ratio="21:9",
+                    quality_level="medium",
             )
         )
     )
@@ -128,7 +128,8 @@ async def test_ref_video_enqueue_preserves_ordered_reference_list(monkeypatch) -
     assert response.status == 200
     assert captured["item_type"] == "video_prompt_build"
     assert captured["params"]["reference_refs"] == [source, second]
-    assert captured["params"]["aspect_ratio"] == "21:9"
+    assert captured["params"]["aspect_ratio"] == "16:9"
+    assert captured["params"]["quality_level"] == "native"
     assert "고속 REF2V" in captured["label"]
 
 

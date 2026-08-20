@@ -1,4 +1,5 @@
 import copy
+import sys
 from pathlib import Path
 
 from modes.asset_mode import AssetMode
@@ -141,6 +142,79 @@ def test_update_rejects_name_used_in_other_state(monkeypatch):
     assert writes == {"tags": 0, "hidden": []}
 
 
+def test_character_hide_preserves_definition_without_deleting_assets(monkeypatch):
+    mode = AssetMode()
+    character = {
+        "appearance": "기본 외모",
+        "outfit": "교복",
+        "expression": "미소",
+    }
+    mode._tags = {"characters": {"앨리스": copy.deepcopy(character)}}
+    hidden_writes = []
+    tag_writes = []
+    deleted_paths = []
+
+    monkeypatch.setattr(mode, "load_hidden_tags", lambda: {})
+    monkeypatch.setattr(mode, "save_hidden_tags", lambda data: hidden_writes.append(copy.deepcopy(data)))
+    monkeypatch.setattr(mode, "save_tags", lambda: tag_writes.append(copy.deepcopy(mode._tags)))
+    asset_mode_module = sys.modules[AssetMode.__module__]
+    monkeypatch.setattr(
+        asset_mode_module.shutil,
+        "rmtree",
+        lambda path: deleted_paths.append(path),
+    )
+
+    result = mode.hide_preset("characters", "앨리스")
+
+    assert result["success"] is True
+    assert mode._tags["characters"] == {}
+    assert hidden_writes == [{"characters": {"앨리스": character}}]
+    assert len(tag_writes) == 1
+    assert deleted_paths == []
+
+
+def test_character_restore_preserves_original_definition(monkeypatch):
+    mode = AssetMode()
+    character = {
+        "appearance": "기본 외모",
+        "outfit": "교복",
+        "expression": "미소",
+    }
+    mode._tags = {"characters": {}}
+    hidden_store = {"characters": {"앨리스": copy.deepcopy(character)}}
+    hidden_writes = []
+    tag_writes = []
+
+    monkeypatch.setattr(mode, "load_hidden_tags", lambda: copy.deepcopy(hidden_store))
+    monkeypatch.setattr(mode, "save_hidden_tags", lambda data: hidden_writes.append(copy.deepcopy(data)))
+    monkeypatch.setattr(mode, "save_tags", lambda: tag_writes.append(copy.deepcopy(mode._tags)))
+
+    result = mode.restore_preset("characters", "앨리스")
+
+    assert result["success"] is True
+    assert mode._tags["characters"] == {"앨리스": character}
+    assert hidden_writes == [{}]
+    assert len(tag_writes) == 1
+
+
+def test_character_is_visibility_only_not_general_preset_edit_category(monkeypatch):
+    mode = AssetMode()
+    mode._tags = {"characters": {"앨리스": {"appearance": "기본 외모"}}}
+    monkeypatch.setattr(mode, "load_hidden_tags", lambda: {"characters": {"숨김 캐릭터": {}}})
+
+    payload = mode.get_hidden_tags()
+    save_result = mode.save_managed_preset(
+        "characters",
+        "새 캐릭터",
+        "태그",
+        operation="create",
+    )
+
+    assert payload["active"]["characters"] == {"앨리스": {"appearance": "기본 외모"}}
+    assert payload["hidden"]["characters"] == {"숨김 캐릭터": {}}
+    assert save_result["success"] is False
+
+
 def test_frontend_uses_unified_preset_workspace_and_explicit_save_action():
     source = FRONTEND_HTML.read_text(encoding="utf-8")
 
@@ -157,6 +231,19 @@ def test_frontend_uses_unified_preset_workspace_and_explicit_save_action():
     assert "replace(/_/g, ' ').replace(/\\s+/g, ' ')" in source
     assert 'id="pm-view-batch"' not in source
     assert 'id="pm-view-trace"' not in source
+
+
+def test_frontend_hidden_manager_supports_character_visibility_and_details():
+    source = FRONTEND_HTML.read_text(encoding="utf-8")
+
+    assert "const PM_CHARACTER_CATEGORY = 'characters';" in source
+    assert "[PM_CHARACTER_CATEGORY]: '캐릭터'" in source
+    assert "Object.keys(PM_ASSET_HIDE_CATEGORIES)" in source
+    assert "function pmIsCharacter" in source
+    assert "['외모', value.appearance]" in source
+    assert "['복장', value.outfit]" in source
+    assert "['표정', value.expression]" in source
+    assert "await pmRefreshAssetConsumers();" in source
 
 
 def test_frontend_has_stagewise_hybrid_import_and_manual_fragment_editor():

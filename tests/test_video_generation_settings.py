@@ -95,24 +95,47 @@ def test_fast_video_defaults_keep_mp_choice_and_reject_ultrawide() -> None:
         server.normalize_video_generation_defaults(settings)
 
 
-def test_fast_ref_defaults_allow_544p_ultrawide_and_config_has_both_paths() -> None:
+def test_ref_defaults_preserve_standard_and_use_fixed_resolution() -> None:
     settings = copy.deepcopy(server.DEFAULT_VIDEO_GENERATION_DEFAULTS)
     settings.update(
         {
             "mode": "ref2v",
-            "workflow_variant": "fast",
+            "workflow_variant": "standard",
             "aspect_ratio": "21:9",
+            "quality_level": "low",
         }
     )
-    settings.pop("quality_level")
 
     normalized = server.normalize_video_generation_defaults(settings)
 
     assert normalized["mode"] == "ref2v"
-    assert normalized["aspect_ratio"] == "21:9"
+    assert normalized["workflow_variant"] == "standard"
+    assert normalized["aspect_ratio"] == "16:9"
     assert normalized["quality_level"] == "native"
     assert server.DEFAULT_CONFIG["video_workflow_source_paths"]["ref2v"] == ""
     assert server.DEFAULT_CONFIG["video_workflow_source_paths"]["ref2v_fast"] == ""
+
+
+def test_ref_request_canonicalizes_standard_and_fast_resolution() -> None:
+    assert server.normalize_video_workflow_selection(
+        {
+            "mode": "ref2v",
+            "workflow_variant": "standard",
+            "aspect_ratio": "21:9",
+            "quality_level": "high",
+        },
+        log_prefix="TEST:REF2V",
+    ) == ("standard", "16:9", "native")
+
+    assert server.normalize_video_workflow_selection(
+        {
+            "mode": "ref2v",
+            "workflow_variant": "fast",
+            "aspect_ratio": "21:9",
+            "quality_level": "medium",
+        },
+        log_prefix="TEST:REF2V",
+    ) == ("fast", "16:9", "native")
 
 
 @pytest.mark.parametrize(

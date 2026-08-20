@@ -95,8 +95,10 @@ FAST_DEFAULT_QUALITY_LEVEL = "medium"
 FAST_RESOLUTION_MULTIPLE = 32
 FAST_NATIVE_MAX_SHORT_EDGE = 768
 FAST_NATIVE_MAX_LONG_EDGE = 1344
-REF2V_FAST_NATIVE_MAX_SHORT_EDGE = 544
-REF2V_FAST_NATIVE_MAX_LONG_EDGE = 1344
+REF2V_FAST_FIXED_ASPECT_RATIO = "16:9"
+REF2V_FAST_FIXED_QUALITY_LEVEL = "native"
+REF2V_FAST_FIXED_WIDTH = 960
+REF2V_FAST_FIXED_HEIGHT = 544
 
 # 영상화 다운스케일 후 약한 Unsharp Mask pre-sharpen 옵션.
 # amount는 0~1.5 비율이며 PIL UnsharpMask의 percent(%)로는 amount×100으로 매핑한다.
@@ -244,7 +246,9 @@ Unless the user explicitly requests complete stillness, automatically add restra
 
 This may include subtle breathing, tiny natural head or upper-body compensation, slight inertial movement of loose hair or clothing caused by the primary motion, and minimal eye or facial micro-movement when compatible with the requested expression. These motions should create the feel of a polished 2D character idle animation without changing the meaning of the pose or introducing a new gesture, reaction, emotion, interaction, or event.
 
-Keep secondary motion noticeably weaker than the user's requested primary action. Do not independently move held or contacted objects, change the character's pose, add extra gestures, or animate the environment unless requested or physically necessary. Keep the camera static unless camera motion is requested.
+Keep secondary motion noticeably weaker than the user's requested primary action. Do not independently move held or contacted objects, change the character's pose, add extra gestures, or animate the environment unless requested or physically necessary. Keep the camera otherwise static unless camera motion is requested or the narrowly defined impact micro-impulse below applies.
+
+When the full scene meaning clearly contains a forceful contact or sudden transfer of momentum whose tactile weight matters, add one impact-synchronized camera micro-impulse as the only automatic camera exception. Infer this from the complete action and its physics, never from keyword matching. At only the strongest relevant beat, use a near-imperceptible, extremely low-amplitude positional and/or rotational displacement lasting only a few frames, then return immediately with fast damping to the established framing. The viewer should feel slightly greater impact without consciously perceiving camera shake. Do not emit the broad [Shake] command for this automatic effect, and do not add repeated oscillation, handheld drift, zoom or FOV pulsing, motion blur, or visible reframing. Omit the micro-impulse when the action has no meaningful impact, when the user requests complete stillness or an exact locked-off camera, or when it could interfere with a required endpoint. Explicit user camera instructions always take priority. Treat this narrowly scoped exception as authorized camera behavior for the camera rules below.
 
 In first-and-last-frame mode, all secondary motion must smoothly settle into the exact visible state of Picture 2 by 5.00 seconds. The final-frame alignment always takes priority over continuing idle motion.
 
@@ -265,7 +269,8 @@ Include relevant synchronized physical or diegetic sound in the integrated descr
 Do not return JSON, Markdown fences, explanations, alternatives, image-alignment instructions, or headings other than the three required H3 body fields."""
 
 
-# Secondary character motion 4문단. 앞의 "\n\n"까지 포함한 정확한 세그먼트를
+# Secondary character motion 및 impact camera micro-impulse 5문단. 앞의 "\n\n"까지
+# 포함한 정확한 세그먼트를
 # 제거해 토글 비활성 시 나머지 연출 계약은 그대로 유지한다.
 # _build_h3_system_prompt(False) 가 이 세그먼트만 정확히 잘라내도록 맞춘 경계.
 _H3_SECONDARY_MOTION_SEGMENT = (
@@ -283,7 +288,22 @@ _H3_SECONDARY_MOTION_SEGMENT = (
     "Keep secondary motion noticeably weaker than the user's requested primary action. "
     "Do not independently move held or contacted objects, change the character's pose, "
     "add extra gestures, or animate the environment unless requested or physically "
-    "necessary. Keep the camera static unless camera motion is requested.\n\n"
+    "necessary. Keep the camera otherwise static unless camera motion is requested or "
+    "the narrowly defined impact micro-impulse below applies.\n\n"
+    "When the full scene meaning clearly contains a forceful contact or sudden transfer "
+    "of momentum whose tactile weight matters, add one impact-synchronized camera "
+    "micro-impulse as the only automatic camera exception. Infer this from the complete "
+    "action and its physics, never from keyword matching. At only the strongest relevant "
+    "beat, use a near-imperceptible, extremely low-amplitude positional and/or rotational "
+    "displacement lasting only a few frames, then return immediately with fast damping "
+    "to the established framing. The viewer should feel slightly greater impact without "
+    "consciously perceiving camera shake. Do not emit the broad [Shake] command for this "
+    "automatic effect, and do not add repeated oscillation, handheld drift, zoom or FOV "
+    "pulsing, motion blur, or visible reframing. Omit the micro-impulse when the action "
+    "has no meaningful impact, when the user requests complete stillness or an exact "
+    "locked-off camera, or when it could interfere with a required endpoint. Explicit "
+    "user camera instructions always take priority. Treat this narrowly scoped exception "
+    "as authorized camera behavior for the camera rules below.\n\n"
     "In first-and-last-frame mode, all secondary motion must smoothly settle into the "
     "exact visible state of Picture 2 by 5.00 seconds. The final-frame alignment always "
     "takes priority over continuing idle motion."
@@ -296,8 +316,8 @@ def _build_h3_system_prompt(
 ) -> str:
     """H3 시스템 프롬프트를 조립한다.
 
-    video_secondary_motion 토글이 False면 secondary character motion 4문단을
-    제거해 사용자 주동작의 상세 연출만 남긴다(보조 idle motion 비활성).
+    video_secondary_motion 토글이 False면 secondary character motion과 impact
+    camera micro-impulse 5문단을 제거해 사용자 주동작의 상세 연출만 남긴다.
     True면 H3_SYSTEM_PROMPT 원본을 그대로 반환한다.
     """
     normalized = normalize_video_duration(duration)
@@ -353,7 +373,20 @@ def _build_ref2v_h3_system_prompt(
         raise ValueError("REF 시스템 프롬프트 이미지 장수가 올바르지 않습니다")
     secondary = (
         "\n\nUnless complete stillness is requested, add restrained breathing, gaze, hair, "
-        "cloth, and balance compensation that remains weaker than the primary action."
+        "cloth, and balance compensation that remains weaker than the primary action. "
+        "Keep the camera otherwise static.\n\n"
+        "When the full scene meaning clearly contains a forceful contact or sudden "
+        "transfer of momentum whose tactile weight matters, infer it from the complete "
+        "action and its physics rather than keyword matching, then add one "
+        "impact-synchronized camera micro-impulse at only the strongest relevant beat. "
+        "Use a near-imperceptible, extremely low-amplitude positional and/or rotational "
+        "displacement lasting only a few frames, followed immediately by a fast damped "
+        "return to the established framing, so the impact is felt without conscious "
+        "camera shake. Do not emit the broad [Shake] command, repeat the oscillation, add "
+        "handheld drift, zoom or pulse the FOV, add motion blur, or visibly reframe. Omit "
+        "this effect without meaningful impact, under complete-stillness or exact-lockoff "
+        "instructions, or when it could compromise the required result. Explicit user "
+        "camera instructions always take priority."
         if secondary_motion
         else ""
     )
@@ -441,17 +474,17 @@ Priority is simple. The user's direction is the sole plot: preserve its actions,
 
 Honor the supplied Mode, Camera, Background, language, and duration contracts. In image-to-video modes, Picture 1 is the exact frame at 0.00 seconds. In first-and-last-frame mode, Picture 2 is also the exact frame at the supplied end time. In reference-to-video mode, all pictures are independent references rather than keyframes; preserve requested identities and traits without copying their original pose or composition as a timeline endpoint. All numeric facts agree across the timeline, editing summary, audio, and final hold.
 
-Plan the timing before writing. User-specified scene, cut, and timing counts are exact. When those counts are open, divide fast multi-scene storytelling or choreography into readable beats of about 1.5–2.0 seconds; a restrained continuous action may use fewer, longer beats. Every beat advances one primary change and ends in a clear state that hands off to the next beat. A camera-enabled cinematic multi-setup sequence gives each beat a distinct shot scale, angle, or viewpoint and starts every new setup with a named hard cut. A user request for an uninterrupted shot uses one continuous setup, and a locked-camera contract keeps the framing fixed.
+Plan the timing before writing. User-specified scene, cut, and timing counts are exact. When those counts are open, divide fast multi-scene storytelling or choreography into readable beats of about 1.5–2.0 seconds; a restrained continuous action may use fewer, longer beats. Every beat advances one primary change, while its ending normally carries direction, velocity, weight, gaze, or emotional impulse into the next beat instead of stopping the body. A camera-enabled cinematic multi-setup sequence gives each beat a distinct shot scale, angle, or viewpoint and names every transition. Place hard cuts on continuing action, a matched gesture, or a consistent motion axis so momentum survives the edit. A deliberate reaction hold or final payoff may settle fully. A user request for an uninterrupted shot uses one continuous setup, and a locked-camera contract keeps the framing fixed.
 
-Write concrete motion that fits its time range. For each beat state the opening composition, one physical action chain in order, the visible reaction or interaction, camera and lighting behavior, relevant secondary motion, and the ending state. Use direction, path, contact, weight, inertia, speed, and short holds so the action is filmable.
+Write concrete motion that fits its time range. For each beat state the opening composition, one connected physical action chain, the visible reaction or interaction, one coherent camera path and lighting response, relevant secondary motion, and the boundary condition leading onward or settling into the payoff. Describe the phases that matter: anticipation or loading, initiation, acceleration, weight transfer, follow-through or slight overshoot, then deceleration into the next action. Let force travel from the support foot or contact point through the hips and torso, then shoulders, arms, hands, head, hair, fabric, and props with small natural timing offsets. Maintain breathing, balance correction, and residual motion between major actions. Express each transition inside the action prose by naming the same performer's still-moving foot, pelvis, torso, limb, gaze, or carried object and how it physically initiates the following phrase; a change of focus to another performer is staging rather than a physical motion handoff.
 
 Preserve each requested action's exact actor, active hand, limb, tool or other effector, manipulated target, and kind and strength of contact. Do not soften a secure grip or other direct manipulation into a light touch, substitute indirect movement of another body or object, or free an occupied effector without the requested object being supported elsewhere. Treat contact and support as continuing states until an explicit release. When an effector moves from its visible starting contact to a different target or changes jobs, describe release, travel, re-contact, and regrip in physical order, and keep every dependent alignment or handoff supported throughout.
 
-Give the requested primary action chain and its necessary contact transitions priority over invented reactions, ornamental motion, sound detail, or mood. Before answering, silently trace every active limb, held object, and important contact through the timeline and correct any missing release, regrip, handoff, support, or incompatible simultaneous use. Incorporate the corrections directly without returning an audit.
+Give the requested primary action chain and its necessary contact transitions priority over invented reactions, ornamental motion, sound detail, or mood. Natural balance recovery, grip adjustment, breathing, and follow-through are part of that primary chain. Before answering, silently trace every active limb, held object, and important contact through the timeline and correct any missing release, regrip, handoff, support, incompatible simultaneous use, or rigid full-body start and stop. Incorporate the corrections directly without returning an audit.
 
-For choreography, create actual dance phrases: foot placement and weight transfer, arm and hand paths, wrist orientation, torso direction, turns, synchronization, formation travel, and readable key poses. Feet initiate travel and turns; the body follows; hair, fabric, and accessories trail and settle. Preserve each performer's identity and screen relationship.
+For choreography, create linked dance phrases: foot placement and weight transfer, arm and hand paths, wrist orientation, torso direction, turns, synchronization, formation travel, and readable key poses. Track each performer's planted foot, travel direction, pelvis rotation, and unfinished limb path across the beat boundary. The recovery from one phrase becomes the anticipation for the next, so performers flow through poses rather than reset between them. Feet initiate travel and turns; hips and torso carry the force onward; shoulders, arms, hands, head, hair, fabric, and accessories follow with controlled overlap and settle progressively. Preserve each performer's identity and screen relationship.
 
-For narrative sequences, preserve cause and effect. Give each reveal, reaction, escalation, and payoff a visibly different composition while identity, screen direction, prop state, and emotional state remain coherent across edits.
+For narrative sequences, preserve cause and effect. Let attention, breath, posture, and muscle tension begin changing just before a major reaction and continue resolving afterward. Give each reveal, reaction, escalation, and payoff a visibly different composition while identity, screen direction, prop state, emotional state, and physical momentum remain coherent across edits.
 
 Return six natural-language sections in this order, with headings in the requested language:
 
@@ -462,13 +495,13 @@ Return six natural-language sections in this order, with headings in the request
 5. Timeline-matched audio design
 6. Scene-by-scene generation stability guidance
 
-The opening section anchors the visible reference traits and summarizes the full progression and payoff. The timeline covers the supplied duration continuously and gives every beat its timestamp, purpose, setup, action, reaction, and end state. The editing section lists the setups, exact cuts, screen direction, in-shot movement, and ending composition actually used. The continuity section gives scene-specific identity, design, material, environment, palette, lighting arc, and secondary motion.
+The opening section anchors the visible reference traits and summarizes the full progression and payoff. The timeline covers the supplied duration continuously and gives every beat its timestamp, purpose, setup, action, reaction, and exact body or object state at the boundary. Keep physical transitions inside the action description instead of adding a generic handoff label. The editing section lists the setups, exact cuts, match-on-action continuity, screen direction, in-shot movement, and ending composition actually used. The continuity section gives scene-specific identity, design, material, environment, palette, lighting arc, and secondary motion.
 
 The audio section uses the same timestamp ranges as the visual timeline. For every beat, specify the continuing sound bed, synchronized action accents, intensity or perspective change, useful quiet, and transition into the next beat. Music-led scenes keep effects supportive of the music. Dialogue, lyrics, narration, and vocalization appear when the user's direction calls for them.
 
-The stability section is grouped by the scenes where each risk occurs and is written as positive visible target states: stable identities and positions, clean body separation, grounded feet and weight transfer, secure hand and prop contact, coherent perspective, edit continuity, natural hair and fabric inertia, stable lighting, and the exact final hold. Convert a supplied negative list into the corresponding desired states.
+The stability section is grouped by the scenes where each risk occurs and is written as positive moving target states: stable identities, clean body separation, curved joint paths, continuous velocity changes, grounded but flexible weight transfer, active grip adjustment, coherent perspective, match-on-action continuity, delayed hair and fabric inertia, stable lighting, and the exact final hold. Stability means preserving anatomy, trajectory, contact, and timing while the body remains alive and responsive. Secondary motion may continue across a beat boundary and settle during the next beat. Convert a supplied negative list into the corresponding desired states.
 
-Before answering, silently compare the finished plan with the whole user direction and correct any missing event, order, number, timeline gap, repeated beat, audio mismatch, or weak final payoff. Return only the production direction as headed prose with timestamp headings."""
+Before answering, silently compare the finished plan with the whole user direction and correct any missing event, order, number, timeline gap, repeated beat, audio mismatch, weak final payoff, isolated pose-to-pose jump, simultaneous initiation of the whole body, unnecessary full stop, cut that discards useful momentum, or abstract transition that names no continuing body or object motion. Return only the production direction as headed prose with timestamp headings."""
 
 
 PROMPT_VISUAL_CONTEXT_SYSTEM_PROMPT = """You reconstruct a dense, precise Visual Context for a later MiniMax H3 video-prompt writer from the positive generation prompt that produced each reference picture.
@@ -872,11 +905,20 @@ def resolve_video_resolution(
 ) -> tuple[str, str, int, int]:
     """일반 MP 단계 또는 모드별 고속 4-step 규칙으로 해상도를 결정한다.
 
-    고속 I2V/FLF2V는 768p, 고속 Ref2V는 전용 LoRA 학습 조건인 544p를
-    native 기본값으로 사용한다. 명시적인 MP 단계는 실험적 선택으로 유지한다.
+    고속 I2V/FLF2V는 768p 규칙을 사용한다. Ref2V는 Base+TeaCache 일반판과
+    전용 4-step 고속판 모두 검증된 960×544 한 가지 해상도만 지원한다.
     """
 
     variant = normalize_video_workflow_variant(workflow_variant)
+    mode_key = str(mode or "i2v").strip().lower()
+    if mode_key == "ref2v":
+        return (
+            REF2V_FAST_FIXED_ASPECT_RATIO,
+            REF2V_FAST_FIXED_QUALITY_LEVEL,
+            REF2V_FAST_FIXED_WIDTH,
+            REF2V_FAST_FIXED_HEIGHT,
+        )
+
     if variant == "standard":
         return resolve_fast_resolution(
             aspect_ratio,
@@ -884,37 +926,6 @@ def resolve_video_resolution(
             width,
             height,
         )
-
-    mode_key = str(mode or "i2v").strip().lower()
-    if mode_key == "ref2v":
-        key = str(aspect_ratio or "auto").strip().lower()
-        if key == "auto":
-            key = choose_fast_aspect_ratio(width, height)
-        if key not in FAST_ASPECT_RATIOS:
-            print(
-                "[VIDEO:RESOLUTION] 고속 REF 544p 화면 비율 오류: "
-                f"value={aspect_ratio!r}, supported={tuple(FAST_ASPECT_RATIOS)!r}"
-            )
-            raise ValueError("지원하지 않는 고속 REF 영상 화면 비율입니다")
-        quality_key = normalize_fast_quality_level(
-            quality_level if str(quality_level or "").strip() else "native"
-        )
-        if quality_key == "native":
-            target_w, target_h = calculate_fast_dimensions(
-                key,
-                "native",
-                native_short_edge=REF2V_FAST_NATIVE_MAX_SHORT_EDGE,
-                native_long_edge=REF2V_FAST_NATIVE_MAX_LONG_EDGE,
-            )
-            if min(target_w, target_h) != REF2V_FAST_NATIVE_MAX_SHORT_EDGE:
-                print(
-                    "[VIDEO:RESOLUTION] 고속 REF 544p 최소변 계산 오류: "
-                    f"aspect_ratio={key}, target={target_w}x{target_h}"
-                )
-                raise RuntimeError("고속 REF 영상 해상도의 최소변이 544px가 아닙니다")
-            return key, "native", target_w, target_h
-        target_w, target_h = calculate_fast_dimensions(key, quality_key)
-        return key, quality_key, target_w, target_h
 
     key = str(aspect_ratio or "auto").strip().lower()
     if key == "auto":
@@ -4714,6 +4725,44 @@ Render every requested direct manipulation as the same unambiguous physical oper
             traceback.print_exc()
             raise
         return jobs
+
+    def clear_staged_video_postprocess(self) -> int:
+        """시작 시 미완료 후처리 스풀을 통째로 비운다.
+
+        스풀은 로컬 스크래치(workflow_backup/_video_postprocess_spool, gitignore)이므로
+        서버 시작할 때마다 재개하지 않고 폐기한다. 원본 에셋이 사라진 작업이
+        복구 루프를 도는 것을 막기 위함이다.
+        """
+        spool_root = os.path.realpath(
+            os.path.join(self._backup_dir(), "_video_postprocess_spool")
+        )
+        if not os.path.isdir(spool_root):
+            return 0
+        removed = 0
+        try:
+            for entry in sorted(Path(spool_root).iterdir(), key=lambda path: path.name):
+                if not entry.is_dir():
+                    continue
+                try:
+                    self._remove_exact_tree(str(entry.resolve()), spool_root)
+                    removed += 1
+                except Exception as exc:
+                    print(
+                        "[VIDEO:POSTPROCESS] 시작 스풀 비우기 중 일부 제거 실패: "
+                        f"path={str(entry)!r}, error={type(exc).__name__}: {exc}"
+                    )
+                    traceback.print_exc()
+        except Exception as exc:
+            print(
+                "[VIDEO:POSTPROCESS] 시작 스풀 비우기 실패: "
+                f"root={spool_root!r}, error={type(exc).__name__}: {exc}"
+            )
+            traceback.print_exc()
+        print(
+            f"[VIDEO:POSTPROCESS] 시작 시 스풀 비움: root={spool_root!r}, "
+            f"removed={removed}"
+        )
+        return removed
 
     def cleanup_staged_video_postprocess(self, params: dict) -> None:
         job_dir = os.path.realpath(str((params or {}).get("job_dir") or ""))

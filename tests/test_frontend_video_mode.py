@@ -100,6 +100,10 @@ def test_video_page_uses_modal_entry_with_six_workflow_cards() -> None:
     assert "고속 I2V" in FRONTEND
     assert "고속 FLF2V" in FRONTEND
     assert "고속 REF2V" in FRONTEND
+    assert 'value="ref2v:standard" disabled aria-disabled="true"' not in FRONTEND
+    assert 'value="ref2v:standard" onchange="selectVideoMode(\'ref2v\', \'standard\')"' in FRONTEND
+    assert "Base 20-step · TeaCache 0.10 · 960×544" in FRONTEND
+    assert "전용 4-step · 960×544 고정" in FRONTEND
     # 첫·마지막 모드에서 마지막 프레임 미리보기가 존재해야 한다
     assert 'id="video-frame-last"' in FRONTEND
     assert 'id="video-generation-last-preview"' in FRONTEND
@@ -228,6 +232,8 @@ def test_settings_expose_standard_and_fast_video_workflows_without_card_selectio
     assert "배포_영상_H3_FLF2V_v1.json" in FRONTEND
     assert "배포_영상_H3_I2V_고속_v1.json" in FRONTEND
     assert "배포_영상_H3_FLF2V_고속_v1.json" in FRONTEND
+    assert "배포_영상_H3_REF2V_v1.json" in FRONTEND
+    assert "배포_영상_H3_REF2V_고속_v1.json" in FRONTEND
     assert "onVideoWorkflowFilenameInput('i2v', this.value)" in FRONTEND
     assert "onVideoWorkflowFilenameInput('first_last', this.value)" in FRONTEND
     assert "onVideoWorkflowFilenameInput('ref2v', this.value)" in FRONTEND
@@ -240,6 +246,7 @@ def test_settings_expose_standard_and_fast_video_workflows_without_card_selectio
     assert 'data-video-workflow-mode="i2v_fast"' in FRONTEND
     assert 'data-video-workflow-mode="first_last_fast"' in FRONTEND
     assert 'data-video-workflow-mode="ref2v_fast"' in FRONTEND
+    assert 'placeholder="공식 전용 비고속판 미지원" disabled aria-disabled="true"' not in FRONTEND
     assert "selectVideoWorkflowFile(list.dataset.videoWorkflowMode, path, filename);" in FRONTEND
 
     panel = FRONTEND.split('id="settings-tab-video"', 1)[1].split(
@@ -287,18 +294,25 @@ def test_video_page_separates_fast_aspect_ratio_and_mp_level() -> None:
     assert "VIDEO_FAST_768_ASPECT_KEYS" in FRONTEND
     assert "calculateVideoFast768Resolution(aspectRatio)" in FRONTEND
     assert "calculateVideoFastModeResolution(aspectRatio, qualityLevel, mode = '')" in FRONTEND
-    # 고속 해상도 셀렉트는 잠기지 않고, MP 단계 옵션에 (실험적)이 붙는다.
+    # I2V/FLF2V 고속은 768p/실험 MP 선택을 유지한다.
     assert "VIDEO_FAST_QUALITY_OPTIONS" in FRONTEND
     assert "고속 기본 · 짧은 변 768p" in FRONTEND
-    assert "고속 REF 기본 · 짧은 변 544p" in FRONTEND
-    assert "VIDEO_REF_FAST_NATIVE_MAX_SHORT_EDGE = 544" in FRONTEND
     assert "저화질 · 0.2 MP (실험적)" in FRONTEND
     assert "기본 · 0.35 MP (실험적)" in FRONTEND
     assert "고화질 · 0.5 MP (실험적)" in FRONTEND
+    # 고속 REF2V는 공식 예제 하나만 지원하므로 두 셀렉트를 잠근다.
+    assert "VIDEO_REF_FAST_FIXED_ASPECT_RATIO = '16:9'" in FRONTEND
+    assert "VIDEO_REF_FAST_FIXED_WIDTH = 960" in FRONTEND
+    assert "VIDEO_REF_FAST_FIXED_HEIGHT = 544" in FRONTEND
+    assert "고속 REF 고정 · 960×544" in FRONTEND
+    assert "일반 REF 고정 · 960×544" in FRONTEND
+    assert "REF 20-step · TeaCache 0.10" in FRONTEND
+    assert "16:9 · 960×544 고정" in FRONTEND
+    assert "qualitySelect.disabled = true" in FRONTEND
+    assert "aspectSelect.disabled = true" in FRONTEND
+    assert "fast-ref-fixed-960x544" in FRONTEND
     assert "onVideoQualityLevelChange()" in FRONTEND
     assert "qualitySelect.dataset.activeVariant" in FRONTEND
-    assert "qualitySelect.disabled = true" not in FRONTEND
-    assert "고속 768p 고정" not in FRONTEND
     assert "workflow_variant: selectedVideoWorkflowVariant()" in FRONTEND
     assert "/api/video/reference-options" in FRONTEND
     assert "/api/video/enqueue" in FRONTEND

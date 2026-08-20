@@ -44,6 +44,57 @@ from modes.video_mode import (
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_ref2v_standard_workflow_uses_base_20_step_teacache() -> None:
+    workflow_paths = list(
+        (ROOT / "comfy" / "user" / "default" / "workflows" / "SOYA_USER").glob(
+            "*H3_REF2V_v1.json"
+        )
+    )
+    assert len(workflow_paths) == 1
+    workflow = json.loads(workflow_paths[0].read_text(encoding="utf-8-sig"))
+    nodes = workflow["nodes"]
+    node_by_type = {node["type"]: node for node in nodes}
+
+    assert node_by_type["UNETLoader"]["widgets_values"][0] == (
+        "minimax_h3_ref2va_pruned_int8_convrot.safetensors"
+    )
+    assert node_by_type["MiniMaxH3TeaCache"]["widgets_values"] == [
+        0.1,
+        2,
+        -2,
+        20,
+    ]
+    assert node_by_type["BasicScheduler"]["widgets_values"] == [
+        "simple",
+        20,
+        1,
+    ]
+    assert node_by_type["KSamplerSelect"]["widgets_values"] == [
+        "res_multistep"
+    ]
+    assert node_by_type["MiniMaxH3ReferenceToVideo"]["widgets_values"][1:4] == [
+        960,
+        544,
+        124,
+    ]
+    assert "LoraLoaderModelOnly" not in node_by_type
+    assert "ModelSamplingSD3" not in node_by_type
+
+    unet_id = node_by_type["UNETLoader"]["id"]
+    teacache_id = node_by_type["MiniMaxH3TeaCache"]["id"]
+    scheduler_id = node_by_type["BasicScheduler"]["id"]
+    guider_id = node_by_type["BasicGuider"]["id"]
+    model_links = {
+        (link[1], link[3])
+        for link in workflow["links"]
+        if link[5] == "MODEL"
+    }
+    assert (unet_id, teacache_id) in model_links
+    assert (teacache_id, scheduler_id) in model_links
+    assert (teacache_id, guider_id) in model_links
+    assert sum(node["type"] == "LoadImage" for node in nodes) == 3
+
+
 @pytest.mark.parametrize(
     ("positive", "expected"),
     [
@@ -312,7 +363,32 @@ def test_i2v_prompt_messages_exclude_stored_generation_metadata() -> None:
     assert "binding creative intent" in combined
     assert "expand it into production-ready screen direction" in combined
     assert "restrained, low-amplitude secondary character motion" in combined
+    assert "impact-synchronized camera micro-impulse" in combined
+    assert "never from keyword matching" in combined
+    assert "without consciously perceiving camera shake" in combined
+    assert "Do not emit the broad [Shake] command" in combined
     assert visual_context in combined
+
+
+def test_secondary_animation_controls_impact_camera_micro_impulse_for_all_modes() -> None:
+    i2v_enabled = video_module._build_h3_system_prompt(True)
+    i2v_disabled = video_module._build_h3_system_prompt(False)
+    ref_enabled = video_module._build_ref2v_h3_system_prompt(True)
+    ref_disabled = video_module._build_ref2v_h3_system_prompt(False)
+
+    for enabled_prompt in (i2v_enabled, ref_enabled):
+        assert "impact-synchronized camera micro-impulse" in enabled_prompt
+        assert "near-imperceptible, extremely low-amplitude" in enabled_prompt
+        assert "few frames" in enabled_prompt
+        assert "fast damp" in enabled_prompt
+        assert "[Shake] command" in enabled_prompt
+        assert "keyword matching" in enabled_prompt
+        assert "exact locked-off camera" in enabled_prompt or "exact-lockoff" in enabled_prompt
+
+    for disabled_prompt in (i2v_disabled, ref_disabled):
+        assert "impact-synchronized camera micro-impulse" not in disabled_prompt
+        assert "near-imperceptible, extremely low-amplitude" not in disabled_prompt
+        assert "[Shake] command" not in disabled_prompt
 
 
 def test_final_prompt_writer_requires_dense_motion_directing_not_paraphrase() -> None:
@@ -403,19 +479,23 @@ def test_video_workflow_config_key_separates_variant_from_prompt_mode() -> None:
     assert video_workflow_config_key("ref2v", "fast") == "ref2v_fast"
 
 
-def test_fast_ref_resolution_defaults_to_544p_and_keeps_experimental_mp() -> None:
+def test_ref_resolution_supports_standard_and_fast_fixed_960x544() -> None:
     assert resolve_video_resolution(
         "fast", "16:9", "native", 1920, 1080, "ref2v"
     ) == ("16:9", "native", 960, 544)
     assert resolve_video_resolution(
         "fast", "auto", None, 1920, 1080, "ref2v"
     ) == ("16:9", "native", 960, 544)
+    # 숨은 클라이언트가 다른 값을 보내도 공개 예제의 한 해상도로 고정한다.
     assert resolve_video_resolution(
         "fast", "21:9", "native", 2100, 900, "ref2v"
-    ) == ("21:9", "native", 1280, 544)
+    ) == ("16:9", "native", 960, 544)
     assert resolve_video_resolution(
         "fast", "16:9", "medium", 1920, 1080, "ref2v"
-    ) == ("16:9", "medium", 768, 448)
+    ) == ("16:9", "native", 960, 544)
+    assert resolve_video_resolution(
+        "standard", "16:9", "high", 1920, 1080, "ref2v"
+    ) == ("16:9", "native", 960, 544)
 
 
 def test_ref_prompt_uses_six_section_body_without_keyframe_alignment() -> None:
@@ -1648,7 +1728,7 @@ async def test_render_spools_video_postprocess_before_cleaning_comfy_mp4(
 
 
 @pytest.mark.asyncio
-async def test_fast_ref_render_stages_three_originals_and_patches_544p_workflow(
+async def test_fast_ref_render_stages_three_originals_and_patches_fixed_workflow(
     tmp_path: Path,
 ) -> None:
     backup_dir = tmp_path / "backups"
@@ -1722,8 +1802,8 @@ async def test_fast_ref_render_stages_three_originals_and_patches_544p_workflow(
             "instruction": "세 인물이 함께 걷는다",
             "instruction_source": "user",
             "visual_context": "visual_context:\nThree independent references.",
-            "aspect_ratio": "16:9",
-            "quality_level": "native",
+            "aspect_ratio": "21:9",
+            "quality_level": "medium",
             "duration": 5,
             "h3_prompt": _valid_ref_body(),
         },
@@ -1732,6 +1812,8 @@ async def test_fast_ref_render_stages_three_originals_and_patches_544p_workflow(
 
     assert result["width"] == 960
     assert result["height"] == 544
+    assert result["aspect_ratio"] == "16:9"
+    assert result["quality_level"] == "native"
     assert result["workflow_variant"] == "fast"
     assert not submitted["staged_root"].exists()
     manifest = json.loads(
