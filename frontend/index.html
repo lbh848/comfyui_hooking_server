@@ -28516,6 +28516,9 @@
                             ? '유저 입력'
                             : '기록 없음';
             const instruction = String(record?.video_instruction || '').trim();
+            const instructionOriginal = String(
+                record?.video_instruction_original || ''
+            );
             const visualContext = String(record?.video_visual_context || '').trim();
             const visualContextSource = String(record?.video_visual_context_source || '').trim().toLowerCase();
             const visualContextLabel = visualContextSource === 'prompt'
@@ -28529,6 +28532,7 @@
                 : '<span style="color:var(--text2)">(기록 없음)</span>';
             return `
                 <b>[연출 지시 출처]</b><br>${escapeHtml(sourceLabel)}<br><br>
+                ${instructionOriginal ? `<b>[다듬기 전 사용자 원문]</b><br>${renderValue(instructionOriginal)}<br><br>` : ''}
                 <b>[연출 지시]</b><br>${renderValue(instruction)}<br><br>
                 <b>[${escapeHtml(visualContextLabel)}]</b><br>${renderValue(visualContext)}<br><br>
                 <b>[최종 H3 프롬프트]</b><br>${renderValue(prompt)}
@@ -28580,7 +28584,7 @@
                     : '';
 
                 // Store prompt data in Map (avoids data-attribute truncation issues)
-                promptDataMap.set(b.name, { positive, negative, enhanced_positive: b.enhanced_positive || '', wildcard_info: b.wildcard_info || {}, conversion_info: b.conversion_info || {}, video_instruction: b.video_instruction || '', video_instruction_source: b.video_instruction_source || '', video_auto_instruction: b.video_auto_instruction, video_visual_context: b.video_visual_context || '', video_visual_context_source: b.video_visual_context_source || '' });
+                promptDataMap.set(b.name, { positive, negative, enhanced_positive: b.enhanced_positive || '', wildcard_info: b.wildcard_info || {}, conversion_info: b.conversion_info || {}, video_instruction: b.video_instruction || '', video_instruction_original: b.video_instruction_original || '', video_instruction_source: b.video_instruction_source || '', video_auto_instruction: b.video_auto_instruction, video_visual_context: b.video_visual_context || '', video_visual_context_source: b.video_visual_context_source || '' });
 
                 const cardClass = 'backup-card';
 
@@ -28621,7 +28625,7 @@
                                 💬 채팅
                             </button>
                             <button onclick="openLlmFlowModal('${escapeAttr(b.name)}')"
-                                    ${b.has_llm_trace ? 'title="이 백업을 만든 LLM 흐름(MULTI-CHAR-MASK~CALL3) 입력/출력을 자르기 없이 보여줍니다"' : 'disabled title="LLM 흐름 기록이 없는 백업입니다(도입 전/재생성/수동 생성)"'}>
+                                    ${b.has_llm_trace ? 'title="이 백업을 만든 LLM 단계의 입력/출력을 자르기 없이 보여줍니다"' : 'disabled title="LLM 흐름 기록이 없는 백업입니다(도입 전/재생성/수동 생성)"'}>
                                 🧩 LLM 흐름
                             </button>
                             <button class="video-backup-btn" onclick="event.stopPropagation(); openVideoWorkspace('${escapeAttr(b.name)}')"
@@ -29009,6 +29013,8 @@
         let videoInstructionDirectRequestId = 0;
         let videoInstructionDirectBusy = false;
         let videoInstructionRefineUndoSnapshot = null;
+        let videoInstructionOriginalInput = '';
+        let videoInstructionLlmTrace = [];
 
         const VIDEO_UPSCALE_LABELS = {
             'realesr-animevideov3': '품질',
@@ -29579,6 +29585,7 @@
                 instructionInput.value = String(data.draft).trim();
                 instructionInput.focus();
                 clearVideoInstructionRefineUndo();
+                replaceVideoInstructionProvenance(data.llm_trace);
                 updateVideoInstructionDraftPresentation(
                     `초안 작성 완료 · 큐 ${data.item_id || ''}. 내용을 수정한 뒤 큐에 등록하세요.`
                 );
@@ -29618,6 +29625,51 @@
             if (undo) undo.hidden = true;
         }
 
+        function normalizeVideoInstructionLlmTrace(rawTrace) {
+            if (rawTrace == null) return [];
+            if (!Array.isArray(rawTrace)) {
+                console.error('[VIDEO_UI] 영상 지시 LLM 흐름 응답이 목록이 아닙니다:', rawTrace);
+                return [];
+            }
+            const normalized = [];
+            const seen = new Set();
+            for (const rawHistoryId of rawTrace) {
+                const historyId = String(rawHistoryId || '').trim();
+                if (!historyId || seen.has(historyId)) continue;
+                normalized.push(historyId);
+                seen.add(historyId);
+            }
+            return normalized;
+        }
+
+        function clearVideoInstructionProvenance() {
+            videoInstructionOriginalInput = '';
+            videoInstructionLlmTrace = [];
+        }
+
+        function replaceVideoInstructionProvenance(rawTrace) {
+            videoInstructionOriginalInput = '';
+            videoInstructionLlmTrace = normalizeVideoInstructionLlmTrace(rawTrace);
+        }
+
+        function appendVideoInstructionProvenance(originalInput, rawTrace) {
+            if (!videoInstructionOriginalInput.trim()) {
+                videoInstructionOriginalInput = String(originalInput || '');
+            }
+            videoInstructionLlmTrace = normalizeVideoInstructionLlmTrace([
+                ...videoInstructionLlmTrace,
+                ...normalizeVideoInstructionLlmTrace(rawTrace),
+            ]);
+        }
+
+        function snapshotVideoInstructionProvenance(instruction) {
+            return {
+                instruction: String(instruction || ''),
+                originalInput: videoInstructionOriginalInput,
+                llmTrace: [...videoInstructionLlmTrace],
+            };
+        }
+
         function showVideoInstructionRefineUndo() {
             const undo = document.getElementById('video-generation-refine-undo');
             if (undo) undo.hidden = false;
@@ -29625,11 +29677,19 @@
 
         function undoVideoInstructionRefine() {
             if (videoInstructionRefineUndoSnapshot == null) return;
+            const snapshot = videoInstructionRefineUndoSnapshot;
+            if (!snapshot || typeof snapshot !== 'object') {
+                console.error('[VIDEO_UI] 영상 지시 되돌리기 상태 형식 오류:', snapshot);
+                clearVideoInstructionRefineUndo();
+                return;
+            }
             const input = document.getElementById('video-generation-instruction');
             if (input) {
-                input.value = videoInstructionRefineUndoSnapshot;
+                input.value = String(snapshot.instruction || '');
                 input.focus();
             }
+            videoInstructionOriginalInput = String(snapshot.originalInput || '');
+            videoInstructionLlmTrace = normalizeVideoInstructionLlmTrace(snapshot.llmTrace);
             clearVideoInstructionRefineUndo();
             updateVideoInstructionDraftPresentation('원문으로 되돌렸습니다. 내용을 수정한 뒤 큐에 등록하세요.');
             showToast('원문으로 되돌렸습니다.', 'info');
@@ -29724,7 +29784,8 @@
                     console.error('[VIDEO_UI] AI 연출 입력 다듬기를 채울 입력란을 찾지 못했습니다.', data);
                     throw new Error('영상 지시 입력란을 찾지 못했습니다');
                 }
-                videoInstructionRefineUndoSnapshot = target.value;
+                videoInstructionRefineUndoSnapshot = snapshotVideoInstructionProvenance(target.value);
+                appendVideoInstructionProvenance(target.value, data.llm_trace);
                 target.value = String(data.draft).trim();
                 showVideoInstructionRefineUndo();
                 target.focus();
@@ -29839,7 +29900,8 @@
                     console.error('[VIDEO_UI] AI 연출 지시 다듬기를 채울 입력란을 찾지 못했습니다.', data);
                     throw new Error('영상 지시 입력란을 찾지 못했습니다');
                 }
-                videoInstructionRefineUndoSnapshot = target.value;
+                videoInstructionRefineUndoSnapshot = snapshotVideoInstructionProvenance(target.value);
+                appendVideoInstructionProvenance(target.value, data.llm_trace);
                 target.value = String(data.draft).trim();
                 showVideoInstructionRefineUndo();
                 target.focus();
@@ -30749,6 +30811,8 @@
                         visual_context_source: visualContextSource,
                         secondary_motion: secondaryMotion,
                         instruction,
+                        instruction_original: videoInstructionOriginalInput,
+                        instruction_llm_trace: [...videoInstructionLlmTrace],
                         ...collectVideoSharpenParams(),
                     }),
                 });
@@ -30756,6 +30820,8 @@
                 showToast(`영상화 프롬프트 작업을 큐에 등록했습니다. (${data.item_id})`, 'success');
                 const instructionInput = document.getElementById('video-generation-instruction');
                 if (instructionInput) instructionInput.value = '';
+                clearVideoInstructionProvenance();
+                clearVideoInstructionRefineUndo();
                 closeVideoModal();
             } catch (error) {
                 console.error('[VIDEO_UI] 영상화 큐 등록 실패:', error);
@@ -39906,7 +39972,7 @@
             overlay.focus();
         }
 
-        // ─── 삽화 백업 LLM 흐름 추적 (MULTI-CHAR-MASK~CALL3) ───
+        // ─── 삽화·영상 백업 LLM 흐름 추적 ───
         let _llmFlowRecords = [];
         let _llmFlowName = '';
         // 상단 요약 블럭용 데이터 (①FINAL RESULT ②치환 후 최종 프롬프트 ③캐릭터 원본)
@@ -39914,6 +39980,9 @@
         let _llmFlowFinalPositive = '';
         let _llmFlowFinalNegative = '';
         let _llmFlowLbExtra = [];
+        let _llmFlowIsVideo = false;
+        let _llmFlowVideoInstruction = '';
+        let _llmFlowVideoOriginalInstruction = '';
 
         function closeLlmFlowModal() {
             const overlay = document.getElementById('llm-flow-overlay');
@@ -39925,6 +39994,9 @@
             closeLlmFlowModal();
             _llmFlowName = name;
             _llmFlowRecords = [];
+            _llmFlowIsVideo = false;
+            _llmFlowVideoInstruction = '';
+            _llmFlowVideoOriginalInstruction = '';
             const overlay = document.createElement('div');
             overlay.id = 'llm-flow-overlay';
             overlay.className = 'lighbd-detail-overlay';
@@ -39934,7 +40006,7 @@
                     <div class="lighbd-modal-head">
                         <div class="lighbd-modal-title" id="llm-flow-title">
                             LLM 흐름 추적 · <span style="font-family:monospace; font-size:.78rem;">${escapeHtml(name)}</span>
-                            <div class="lighbd-modal-subtitle">이 백업을 만든 MULTI-CHAR-MASK~CALL3 단계의 입력/출력 전체. 내용은 자르거나 축약하지 않습니다.</div>
+                            <div class="lighbd-modal-subtitle">이 백업을 만든 LLM 단계의 입력/출력 전체. 내용은 자르거나 축약하지 않습니다.</div>
                         </div>
                         <button class="lighbd-modal-close" onclick="closeLlmFlowModal()" aria-label="닫기">✕</button>
                     </div>
@@ -39961,6 +40033,9 @@
                 _llmFlowFinalPositive = data.final_positive || '';
                 _llmFlowFinalNegative = data.final_negative || '';
                 _llmFlowLbExtra = Array.isArray(data.lb_extra) ? data.lb_extra : [];
+                _llmFlowIsVideo = data.is_video_animation === true;
+                _llmFlowVideoInstruction = data.video_instruction || '';
+                _llmFlowVideoOriginalInstruction = data.video_instruction_original || '';
                 renderLlmFlowBody(data);
             } catch (e) {
                 console.error('[LLM_FLOW] 로드 실패:', e);
@@ -40073,6 +40148,36 @@
             return _llmFlowBlockCard('③', 'rgba(156,39,176,0.55)', '캐릭터 원본 (lb.extra)', sub, inner);
         }
 
+        function _renderVideoLlmFlowSummary(data) {
+            const original = String(data.video_instruction_original || '');
+            const instruction = String(data.video_instruction || '');
+            const h3Prompt = String(data.final_positive || '');
+            const originalCard = _llmFlowBlockCard(
+                '①',
+                original ? 'rgba(255,152,0,0.55)' : 'rgba(120,120,120,0.5)',
+                '다듬기 전 사용자 원문',
+                '입력 다듬기 또는 지시로써 다듬기 전에 입력란에 있던 내용',
+                original
+                    ? `<pre class="lighbd-detail-content" style="margin:0;">${escapeHtml(original)}</pre>`
+                    : '<div style="color:var(--text2); font-size:0.8rem;">이 영상은 다듬기 전 원문 기록 없이 생성되었습니다.</div>',
+            );
+            const instructionCard = _llmFlowBlockCard(
+                '②',
+                instruction ? 'rgba(0,188,212,0.55)' : 'rgba(120,120,120,0.5)',
+                '최종 영상 지시',
+                '최종 H3 프롬프트 작성 단계에 전달된 확정 지시',
+                `<pre class="lighbd-detail-content" style="margin:0;">${escapeHtml(instruction || '(기록 없음)')}</pre>`,
+            );
+            const promptCard = _llmFlowBlockCard(
+                '③',
+                h3Prompt ? 'rgba(0,200,83,0.5)' : 'rgba(120,120,120,0.5)',
+                '최종 H3 프롬프트',
+                'MiniMax H3 영상 생성에 실제 사용된 프롬프트',
+                `<pre class="lighbd-detail-content" style="margin:0;">${escapeHtml(h3Prompt || '(기록 없음)')}</pre>`,
+            );
+            return `${originalCard}${instructionCard}${promptCard}`;
+        }
+
         function renderLlmFlowBody(data) {
             const body = document.getElementById('llm-flow-body');
             if (!body) return;
@@ -40084,8 +40189,10 @@
                 html += `<div style="border:1px solid var(--border); background:rgba(255,159,67,0.12); color:#ffb36b; padding:9px 12px; border-radius:8px; font-size:0.78rem; margin-bottom:12px; white-space:pre-wrap; word-break:break-word;">${escapeHtml(note)}</div>`;
             }
             // LLM 흐름 단계 섹션
+            const isVideo = data.is_video_animation === true;
+            const flowTitle = isVideo ? '영상화 LLM 흐름 단계' : 'LLM 흐름 단계 (MULTI-CHAR-MASK~CALL3)';
             html += `<div style="margin:4px 0 10px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-                <h3 style="margin:0; font-size:0.92rem; font-weight:700; color:var(--text);">LLM 흐름 단계 (MULTI-CHAR-MASK~CALL3)</h3>
+                <h3 style="margin:0; font-size:0.92rem; font-weight:700; color:var(--text);">${escapeHtml(flowTitle)}</h3>
                 <button onclick="exportLlmFlowMarkdown()" style="padding:5px 12px; font-size:0.78rem; border:1px solid var(--border); border-radius:6px; background:var(--surface1); color:var(--text); cursor:pointer;">📄 MD 내보내기</button>
                 ${records.length ? `<span style="font-size:0.74rem; color:var(--text2);">${records.length}개 단계 · 자르기 없음${missing.length ? ` · 삭제됨 ${missing.length}건` : ''}</span>` : ''}
             </div>`;
@@ -40096,11 +40203,15 @@
                     html += renderLlmFlowRecordSection(record);
                 }
             }
-            // 하단 요약 (시간순): ③ 캐릭터 원본(lb.extra) → ① FINAL RESULT → ② 치환 후 최종 프롬프트
+            // 하단 요약은 영상과 삽화의 실제 최종 소비 데이터를 각각 표시한다.
             html += `<div style="margin:18px 0 8px; border-top:1px dashed var(--border); padding-top:12px;"><h3 style="margin:0; font-size:0.82rem; font-weight:700; color:var(--text2);">결과 요약 (시간순)</h3></div>`;
-            html += _renderLlmFlowLbExtra(data.lb_extra, data.bot_name);
-            html += _renderLlmFlowFinalResult(data.final_result);
-            html += _renderLlmFlowFinalPrompt(data.final_positive, data.final_negative);
+            if (isVideo) {
+                html += _renderVideoLlmFlowSummary(data);
+            } else {
+                html += _renderLlmFlowLbExtra(data.lb_extra, data.bot_name);
+                html += _renderLlmFlowFinalResult(data.final_result);
+                html += _renderLlmFlowFinalPrompt(data.final_positive, data.final_negative);
+            }
             body.innerHTML = html;
         }
 
@@ -40149,7 +40260,9 @@
             const lines = [];
             lines.push(`# LLM 흐름 추적 — ${name}`);
             lines.push('');
-            lines.push(`> 삽화 백업 \`${name}\` 을 만든 MULTI-CHAR-MASK~CALL3 단계의 LLM 호출 입력/출력 전체. 내용은 자르거나 축약하지 않았습니다.`);
+            lines.push(_llmFlowIsVideo
+                ? `> 영상 백업 \`${name}\` 을 만든 영상화 LLM 호출의 입력/출력 전체. 내용은 자르거나 축약하지 않았습니다.`
+                : `> 삽화 백업 \`${name}\` 을 만든 MULTI-CHAR-MASK~CALL3 단계의 LLM 호출 입력/출력 전체. 내용은 자르거나 축약하지 않았습니다.`);
             lines.push('');
             lines.push(`- 단계 수: ${records.length}`);
             lines.push(`- 내보낸 시각: ${new Date().toISOString()}`);
@@ -40157,26 +40270,39 @@
             lines.push('---');
             lines.push('');
             // ── 파이프라인 호출 순서 + 각 역할 (MD만으로 분석 가능하도록 상단 고정) ──
-            lines.push('## 파이프라인 호출 순서 및 역할 (MULTI-CHAR-MASK~CALL3)');
+            lines.push(_llmFlowIsVideo
+                ? '## 영상화 파이프라인 호출 순서 및 역할'
+                : '## 파이프라인 호출 순서 및 역할 (MULTI-CHAR-MASK~CALL3)');
             lines.push('');
-            lines.push('> 삽화 1장을 만들기 위해 거친 LLM 호출 단계의 실행 순서와 각 역할. ');
-            lines.push('> 레코드는 시각(ts)순이며, 병렬 실행(CALL2-DETAIL/KEYVIS, CALL3↔이미지생성)으로 일부 순서가 겹칠 수 있음. ');
-            lines.push('> 역번역/다중캐릭터 등은 토글·조건부라 생략될 수 있음. ');
-            lines.push('> 최종 사용값은 본문 최하단 **결과 요약(시간순)** 에 정리.');
-            lines.push('');
-            lines.push('1. **CALL1-BACKTRANSLATE** — 최신 CHAR 응답(현재 맥락)을 영어로 역번역. 후속 단계가 상황을 정확히 이해하도록 정규화. (토글 시)');
-            lines.push('2. **CALL1** (enhance) — 엔티티 정체성·공참조(coreference)·복장 상태 분석. sparse event items(set/replace/복장 변화) 생성해 CALL2에 전달.');
-            lines.push('3. **CALL2-PLAN** — 전역 시각 비트 플래너. 어떤 장면(scene)/키비주얼(keyvis)을 그릴지 JSON scene_plan으로 결정.');
-            lines.push('4. **CALL2-KEYVIS / CALL2-DETAIL** — 릴레이 소설 로그에 Danbooru 태그를 붙여 `<lb-xnai>` TOON 구조(camera/scene/supplement/characters) 생성. KEYVIS=키비주얼, DETAIL=일반 장면. PLAN 없이 단독일 때 **CALL2-FALLBACK**.');
-            lines.push('5. **CALL2-AUTHORITY-AUDIT** — 외형·복장 권위 감사. 권위 베이스(고정 외형·기본 복장) 대비 후보밖 값은 그 값만 drop(한 값 실수가 전체 응답을 날리지 않게).');
-            lines.push('6. **CALL2-FIX** — CALL2 출력이 malformed일 때 내용을 바꾸지 않고 구조만 교정(실패 시에만).');
-            lines.push('7. **CALL3** (speak/manga) — 선택된 일반 장면의 대사/생각 작성. speak=vn 대사창, manga=말풍선. 이미지 생성과 병렬 실행.');
-            lines.push('8. **MULTI-CHAR-MASK** (CALL5) — 2인 이상 장면의 캐릭터별 영역 공간 분해(마스크). CALL3 이후, 장면(slot)마다 별도 호출.');
-            lines.push('');
-            lines.push('**결과 요약(본문 최하단, 시간순):** ');
-            lines.push('- **③ 캐릭터 원본(lb.extra)** — 이 그림 캐릭터들의 원형 외형/복장 태그(태그 누락 점검용). ');
-            lines.push('- **① FINAL RESULT** — CALL2가 뽑은 구조화 결과([SPEAK]/[Name]/[SETUP]/[CHAR]/[SUPPLEMENT], preset 치환 · V3 마커). ');
-            lines.push('- **② 치환 후 최종 프롬프트** — 위 결과를 process_prompt가 평탄화(LoRA/품질/flatten)한 실제 SD 입력.');
+            if (_llmFlowIsVideo) {
+                lines.push('> 실제 최종 영상에 연결된 지시 초안·입력 다듬기·정적 분석·H3 프롬프트 작성 호출을 실행 순서대로 기록.');
+                lines.push('> 최종 사용값은 본문 최하단 **결과 요약(시간순)** 에 정리.');
+                lines.push('');
+                lines.push('1. **AI 연출 초안 / 입력 다듬기 / 지시로써 다듬기** — 사용된 경우 최종 영상 지시가 만들어진 과정.');
+                lines.push('2. **정적 분석** — 참조 이미지 또는 원본 그림 프롬프트에서 움직임 작성에 필요한 Visual Context 구성.');
+                lines.push('3. **H3 프롬프트 작성** — 확정 영상 지시와 Visual Context를 결합해 실제 MiniMax H3 입력 작성.');
+                lines.push('');
+                lines.push('**결과 요약(본문 최하단, 시간순):** 다듬기 전 사용자 원문 → 최종 영상 지시 → 최종 H3 프롬프트.');
+            } else {
+                lines.push('> 삽화 1장을 만들기 위해 거친 LLM 호출 단계의 실행 순서와 각 역할. ');
+                lines.push('> 레코드는 시각(ts)순이며, 병렬 실행(CALL2-DETAIL/KEYVIS, CALL3↔이미지생성)으로 일부 순서가 겹칠 수 있음. ');
+                lines.push('> 역번역/다중캐릭터 등은 토글·조건부라 생략될 수 있음. ');
+                lines.push('> 최종 사용값은 본문 최하단 **결과 요약(시간순)** 에 정리.');
+                lines.push('');
+                lines.push('1. **CALL1-BACKTRANSLATE** — 최신 CHAR 응답(현재 맥락)을 영어로 역번역. 후속 단계가 상황을 정확히 이해하도록 정규화. (토글 시)');
+                lines.push('2. **CALL1** (enhance) — 엔티티 정체성·공참조(coreference)·복장 상태 분석. sparse event items(set/replace/복장 변화) 생성해 CALL2에 전달.');
+                lines.push('3. **CALL2-PLAN** — 전역 시각 비트 플래너. 어떤 장면(scene)/키비주얼(keyvis)을 그릴지 JSON scene_plan으로 결정.');
+                lines.push('4. **CALL2-KEYVIS / CALL2-DETAIL** — 릴레이 소설 로그에 Danbooru 태그를 붙여 `<lb-xnai>` TOON 구조(camera/scene/supplement/characters) 생성. KEYVIS=키비주얼, DETAIL=일반 장면. PLAN 없이 단독일 때 **CALL2-FALLBACK**.');
+                lines.push('5. **CALL2-AUTHORITY-AUDIT** — 외형·복장 권위 감사. 권위 베이스(고정 외형·기본 복장) 대비 후보밖 값은 그 값만 drop(한 값 실수가 전체 응답을 날리지 않게).');
+                lines.push('6. **CALL2-FIX** — CALL2 출력이 malformed일 때 내용을 바꾸지 않고 구조만 교정(실패 시에만).');
+                lines.push('7. **CALL3** (speak/manga) — 선택된 일반 장면의 대사/생각 작성. speak=vn 대사창, manga=말풍선. 이미지 생성과 병렬 실행.');
+                lines.push('8. **MULTI-CHAR-MASK** (CALL5) — 2인 이상 장면의 캐릭터별 영역 공간 분해(마스크). CALL3 이후, 장면(slot)마다 별도 호출.');
+                lines.push('');
+                lines.push('**결과 요약(본문 최하단, 시간순):** ');
+                lines.push('- **③ 캐릭터 원본(lb.extra)** — 이 그림 캐릭터들의 원형 외형/복장 태그(태그 누락 점검용). ');
+                lines.push('- **① FINAL RESULT** — CALL2가 뽑은 구조화 결과([SPEAK]/[Name]/[SETUP]/[CHAR]/[SUPPLEMENT], preset 치환 · V3 마커). ');
+                lines.push('- **② 치환 후 최종 프롬프트** — 위 결과를 process_prompt가 평탄화(LoRA/품질/flatten)한 실제 SD 입력.');
+            }
             lines.push('');
             lines.push('---');
             lines.push('');
@@ -40239,6 +40365,29 @@
                 }
                 lines.push('---');
                 lines.push('');
+            }
+            if (_llmFlowIsVideo) {
+                lines.push('---');
+                lines.push('');
+                lines.push('## ① 다듬기 전 사용자 원문');
+                lines.push('');
+                lines.push('```');
+                lines.push(_llmFlowVideoOriginalInstruction || '(다듬기 전 원문 기록 없음)');
+                lines.push('```');
+                lines.push('');
+                lines.push('## ② 최종 영상 지시');
+                lines.push('');
+                lines.push('```');
+                lines.push(_llmFlowVideoInstruction || '(기록 없음)');
+                lines.push('```');
+                lines.push('');
+                lines.push('## ③ 최종 H3 프롬프트');
+                lines.push('');
+                lines.push('```');
+                lines.push(_llmFlowFinalPositive || '(기록 없음)');
+                lines.push('```');
+                lines.push('');
+                return lines.join('\n');
             }
             // 결과 요약 (시간순): ③ 캐릭터 원본(lb.extra) → ① FINAL RESULT → ② 치환 후 최종 프롬프트
             const _lb = _llmFlowLbExtra || [];
@@ -40324,7 +40473,9 @@
         function exportLlmFlowMarkdown() {
             const name = _llmFlowName || 'backup';
             const records = _llmFlowRecords || [];
-            if (!records.length && !_llmFlowFinalResult && !_llmFlowFinalPositive && !(_llmFlowLbExtra && _llmFlowLbExtra.length)) {
+            if (!records.length && !_llmFlowFinalResult && !_llmFlowFinalPositive
+                    && !_llmFlowVideoInstruction && !_llmFlowVideoOriginalInstruction
+                    && !(_llmFlowLbExtra && _llmFlowLbExtra.length)) {
                 showToast('내보낼 LLM 흐름 기록이 없습니다.', 'warning'); return;
             }
             try {

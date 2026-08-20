@@ -122,6 +122,7 @@ def test_asset_video_commit_adds_new_file_without_touching_source_or_representat
             "base_name": "20260813_120000_newvideo",
             "positive": "official H3 prompt",
             "instruction": "move gently",
+            "instruction_original": "move",
             "instruction_source": "llm",
             "auto_instruction": True,
             "visual_context": "visual_context:\nAlice stands by a window.",
@@ -158,6 +159,7 @@ def test_asset_video_commit_adds_new_file_without_touching_source_or_representat
     assert output_record["is_video_animation"] is True
     assert output_record["is_representative"] is False
     assert output_record["video_instruction"] == "move gently"
+    assert output_record["video_instruction_original"] == "move"
     assert output_record["video_instruction_source"] == "llm"
     assert output_record["video_auto_instruction"] is True
     assert output_record["video_visual_context"] == "visual_context:\nAlice stands by a window."
@@ -170,6 +172,7 @@ def test_asset_video_commit_adds_new_file_without_touching_source_or_representat
     assert prompt["video_source_filename"] == "source.webp"
     assert prompt["video_mode"] == "i2v"
     assert prompt["video_instruction"] == "move gently"
+    assert prompt["video_instruction_original"] == "move"
     assert prompt["video_instruction_source"] == "llm"
     assert prompt["video_auto_instruction"] is True
     assert prompt["video_visual_context"] == "visual_context:\nAlice stands by a window."

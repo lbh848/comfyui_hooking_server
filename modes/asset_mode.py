@@ -2194,6 +2194,9 @@ class AssetMode:
                     else ""
                 ),
                 "video_instruction": str((metadata or {}).get("instruction") or ""),
+                "video_instruction_original": str(
+                    (metadata or {}).get("instruction_original") or ""
+                ),
                 "video_instruction_source": instruction_source,
                 "video_auto_instruction": auto_instruction,
                 "video_visual_context": str(
@@ -2350,6 +2353,9 @@ class AssetMode:
                 "edit_model": prompt_data.get("edit_model", ""),
                 "edited_at": prompt_data.get("edited_at", ""),
                 "video_instruction": prompt_data.get("video_instruction", ""),
+                "video_instruction_original": prompt_data.get(
+                    "video_instruction_original", ""
+                ),
                 "video_instruction_source": prompt_data.get(
                     "video_instruction_source", ""
                 ),

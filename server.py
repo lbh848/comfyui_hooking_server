@@ -108,6 +108,7 @@ from modes.video_mode import (
     backup_clean_source_from_info,
     normalize_sharpen_params,
     normalize_video_duration,
+    normalize_video_llm_trace,
 )
 from modes.video_postprocess import (
     DEFAULT_VIDEO_POSTPROCESS_CONFIG,
@@ -8909,6 +8910,7 @@ def _extract_video_prompt_metadata(filepath: str) -> dict:
     empty = {
         "is_video_prompt": False,
         "video_instruction": "",
+        "video_instruction_original": "",
         "video_instruction_source": "",
         "video_auto_instruction": None,
         "video_visual_context": "",
@@ -8935,6 +8937,9 @@ def _extract_video_prompt_metadata(filepath: str) -> dict:
         return empty
 
     instruction = data.get("video_instruction", data.get("instruction", ""))
+    instruction_original = data.get(
+        "video_instruction_original", data.get("instruction_original", "")
+    )
     source = data.get("video_instruction_source", "")
     auto_instruction = data.get("video_auto_instruction")
     visual_context = data.get("video_visual_context", "")
@@ -8943,6 +8948,11 @@ def _extract_video_prompt_metadata(filepath: str) -> dict:
     if not isinstance(instruction, str):
         invalid_fields.append(("video_instruction", type(instruction).__name__))
         instruction = ""
+    if not isinstance(instruction_original, str):
+        invalid_fields.append(
+            ("video_instruction_original", type(instruction_original).__name__)
+        )
+        instruction_original = ""
     if not isinstance(source, str):
         invalid_fields.append(("video_instruction_source", type(source).__name__))
         source = ""
@@ -8975,6 +8985,7 @@ def _extract_video_prompt_metadata(filepath: str) -> dict:
     return {
         "is_video_prompt": True,
         "video_instruction": instruction,
+        "video_instruction_original": instruction_original,
         "video_instruction_source": source,
         "video_auto_instruction": auto_instruction,
         "video_visual_context": visual_context,
@@ -10136,16 +10147,28 @@ async def handle_api_backup_llm_trace(request: web.Request) -> web.Response:
             final_result = None
         # ② 치환 후 최종 SD 프롬프트(평탄화): 백업 .json/.txt 의 긍정/부정 프롬프트.
         final_positive, final_negative = "", ""
+        video_prompt_record: dict = {}
         for _cand in (f"{name}.json", f"{name}.txt"):
             _pp = os.path.join(backup_dir, _cand)
             if os.path.exists(_pp):
                 try:
                     final_positive, final_negative = _extract_prompts_from_backup(_pp)
+                    if _cand.endswith(".json"):
+                        with open(_pp, "r", encoding="utf-8") as _prompt_fp:
+                            _loaded_prompt = json.load(_prompt_fp)
+                        if isinstance(_loaded_prompt, dict):
+                            video_prompt_record = _loaded_prompt
+                        else:
+                            print(
+                                "[BACKUP:LLM_TRACE] 영상 프롬프트 레코드 형식 오류: "
+                                f"name={name}, type={type(_loaded_prompt).__name__}"
+                            )
                 except Exception as _e:
                     print(
                         f"[BACKUP:LLM_TRACE] 백업 프롬프트 추출 실패: "
                         f"name={name}, error={_e}"
                     )
+                    traceback.print_exc()
                 break
         # ③ 캐릭터 원본(lb.extra): bot_name 기반. ① 의 character_names 로 이 그림 캐릭터 한정.
         bot_name = str(info.get("bot_name") or "")
@@ -10182,6 +10205,23 @@ async def handle_api_backup_llm_trace(request: web.Request) -> web.Response:
             "final_negative": final_negative,
             "bot_name": bot_name,
             "lb_extra": lb_extra_chars,
+            "is_video_animation": bool(
+                info.get("is_video_animation")
+                or video_prompt_record.get("is_video_animation")
+                or video_prompt_record.get("kind") in {"h3_video", "video_reprocess"}
+            ),
+            "video_instruction": str(
+                info.get("video_instruction")
+                or video_prompt_record.get("video_instruction")
+                or video_prompt_record.get("instruction")
+                or ""
+            ),
+            "video_instruction_original": str(
+                info.get("video_instruction_original")
+                or video_prompt_record.get("video_instruction_original")
+                or video_prompt_record.get("instruction_original")
+                or ""
+            ),
         }
 
         trace_ids_raw = info.get("llm_trace") or []
@@ -11593,6 +11633,34 @@ async def handle_api_video_enqueue(request: web.Request) -> web.Response:
                 {"success": False, "error": "영상화 지시는 12,000자 이하여야 합니다"},
                 status=400,
             )
+        instruction_original = str(body.get("instruction_original") or "")
+        if len(instruction_original) > 12000:
+            print(
+                f"[VIDEO:API] 다듬기 전 원문 길이 초과: source={source_label!r}, "
+                f"length={len(instruction_original)}"
+            )
+            return web.json_response(
+                {
+                    "success": False,
+                    "error": "다듬기 전 영상화 원문은 12,000자 이하여야 합니다",
+                },
+                status=400,
+            )
+        try:
+            instruction_llm_trace = normalize_video_llm_trace(
+                body.get("instruction_llm_trace")
+            )
+        except ValueError as exc:
+            print(
+                "[VIDEO:API] 선행 LLM 흐름 기록 오류: "
+                f"source={source_label!r}, value={body.get('instruction_llm_trace')!r}, "
+                f"error={exc}"
+            )
+            traceback.print_exc()
+            return web.json_response(
+                {"success": False, "error": str(exc)},
+                status=400,
+            )
         try:
             video_mode.validate_reference(source_ref)
         except (ValueError, FileNotFoundError, RuntimeError) as exc:
@@ -11679,6 +11747,8 @@ async def handle_api_video_enqueue(request: web.Request) -> web.Response:
             "visual_context_source": visual_context_source,
             "secondary_motion": secondary_motion,
             "instruction": instruction,
+            "instruction_original": instruction_original,
+            "llm_trace": instruction_llm_trace,
             # preset은 구형 큐/백업 소비자를 위한 화면 비율 별칭이다.
             "preset": aspect_ratio,
             "aspect_ratio": aspect_ratio,
@@ -11709,6 +11779,8 @@ async def handle_api_video_enqueue(request: web.Request) -> web.Response:
             f"refs={len(reference_refs) if mode == 'ref2v' else 0}, "
             f"aspect_ratio={aspect_ratio}, quality_level={quality_level}, "
             f"duration={duration:g}s, direction_source=user_confirmed, "
+            f"original_length={len(instruction_original)}, "
+            f"prior_llm_steps={len(instruction_llm_trace)}, "
             f"visual_context_source={visual_context_source}, "
             f"upscale={upscale_model or 'none'}x{upscale_scale}, "
             f"format={output_format}, encode_quality={encode_quality}, "

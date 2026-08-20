@@ -27,6 +27,7 @@ from modes.video_mode import (
     normalize_instruction_draft,
     normalize_ref2v_prompt_body,
     normalize_video_duration,
+    normalize_video_llm_trace,
     normalize_visual_context,
     resolve_fast_resolution,
     resolve_video_resolution,
@@ -149,6 +150,14 @@ def _valid_ref_body() -> str:
         "overall_soundscape:\nSoft footsteps and room ambience.\n\n"
         "non_diegetic_music:\nNo music."
     )
+
+
+def test_video_llm_trace_normalization_preserves_order_and_deduplicates() -> None:
+    assert normalize_video_llm_trace(
+        [" refine-1 ", "refine-1", "visual-context", ""]
+    ) == ["refine-1", "visual-context"]
+    with pytest.raises(ValueError, match="목록"):
+        normalize_video_llm_trace({"history_id": "refine-1"})
 
 
 def test_fast_aspect_ratios_and_quality_levels_are_independent() -> None:
@@ -1287,6 +1296,8 @@ async def test_i2v_build_can_create_visual_context_from_core_positive_prompt(
             "mode": "i2v",
             "source_backup": "source",
             "instruction": "머리카락이 약한 바람에 흔들린다",
+            "instruction_original": "바람에 머리카락 흔들리게",
+            "llm_trace": ["video_instruction_refine:i2v:refine-1"],
             "visual_context_source": "prompt",
             "preset": "1:1",
         },
@@ -1295,9 +1306,12 @@ async def test_i2v_build_can_create_visual_context_from_core_positive_prompt(
 
     assert len(text_calls) == 2
     assert result["success"] is True
+    assert result["instruction_original"] == "바람에 머리카락 흔들리게"
+    assert result["instruction_source"] == "llm"
     assert result["visual_context"] == visual_context
     assert result["visual_context_source"] == "prompt"
     assert result["llm_trace"] == [
+        "video_instruction_refine:i2v:refine-1",
         "video_prompt:i2v:queue-prompt-context:prompt_visual_context",
         "video_prompt:i2v:queue-prompt-context",
     ]
@@ -1526,6 +1540,7 @@ async def test_render_spools_video_postprocess_before_cleaning_comfy_mp4(
         "mode": render_mode,
         "source_backup": "source",
         "instruction": "move gently",
+        "instruction_original": "move",
         "instruction_source": "user",
         "visual_context": "visual_context:\nOne character stands still.",
         "aspect_ratio": "1:1",
@@ -1551,6 +1566,7 @@ async def test_render_spools_video_postprocess_before_cleaning_comfy_mp4(
     manifest = json.loads((job_dir / "job.json").read_text(encoding="utf-8"))
     assert manifest["source_backup"] == "source"
     assert manifest["instruction"] == "move gently"
+    assert manifest["instruction_original"] == "move"
     assert manifest["instruction_source"] == "user"
     assert manifest["auto_instruction"] is False
     assert manifest["visual_context"] == "visual_context:\nOne character stands still."
@@ -1684,6 +1700,7 @@ async def test_video_postprocess_commits_verified_pair_and_metadata(
         "last_ref": {},
         "positive": "synthetic H3 prompt",
         "instruction": "move gently",
+        "instruction_original": "move",
         "instruction_source": "llm",
         "auto_instruction": True,
         "visual_context": "visual_context:\nOne character stands still.",
@@ -1780,12 +1797,18 @@ async def test_video_postprocess_commits_verified_pair_and_metadata(
     assert info["video_actual_mp"] == 0.295936
     assert info["video_upscale_scale"] == 2
     assert info["execution_source"] == "modal"
+    assert info["video_instruction"] == "move gently"
+    assert info["video_instruction_original"] == "move"
+    assert info["llm_trace"] == ["trace-1"]
     assert info["bot_name"] == "test-bot"
     prompt = json.loads(
         (backup_dir / f"{base_name}.json").read_text(encoding="utf-8")
     )
     assert prompt["instruction"] == "move gently"
+    assert prompt["instruction_original"] == "move"
     assert prompt["video_instruction"] == "move gently"
+    assert prompt["video_instruction_original"] == "move"
+    assert prompt["llm_trace"] == ["trace-1"]
     assert prompt["video_instruction_source"] == "llm"
     assert prompt["video_auto_instruction"] is True
     assert prompt["video_visual_context"] == "visual_context:\nOne character stands still."

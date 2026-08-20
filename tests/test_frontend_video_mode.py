@@ -127,12 +127,26 @@ def test_existing_video_postprocess_modal_collects_requested_controls() -> None:
 def test_video_prompt_diagnostics_are_rendered_for_backups_and_assets() -> None:
     assert "function renderVideoPromptDetails(record, finalPrompt)" in FRONTEND
     assert "[연출 지시 출처]" in FRONTEND
+    assert "[다듬기 전 사용자 원문]" in FRONTEND
     assert "[연출 지시]" in FRONTEND
     assert "Visual Context · 그림 직접 분석" in FRONTEND
     assert "Visual Context · 생성 프롬프트 해석" in FRONTEND
     assert "[최종 H3 프롬프트]" in FRONTEND
     assert "b.is_video_prompt === true" in FRONTEND
     assert "img.is_video_animation === true" in FRONTEND
+
+
+def test_video_llm_flow_keeps_refine_provenance_and_original_input() -> None:
+    assert "let videoInstructionOriginalInput = '';" in FRONTEND
+    assert "let videoInstructionLlmTrace = [];" in FRONTEND
+    assert "appendVideoInstructionProvenance(target.value, data.llm_trace)" in FRONTEND
+    assert "replaceVideoInstructionProvenance(data.llm_trace)" in FRONTEND
+    assert "instruction_original: videoInstructionOriginalInput" in FRONTEND
+    assert "instruction_llm_trace: [...videoInstructionLlmTrace]" in FRONTEND
+    assert "snapshotVideoInstructionProvenance(target.value)" in FRONTEND
+    assert "영상화 LLM 흐름 단계" in FRONTEND
+    assert "다듬기 전 사용자 원문" in FRONTEND
+    assert "최종 H3 프롬프트" in FRONTEND
 
 
 def test_settings_expose_standard_and_fast_video_workflows_without_card_selection() -> None:

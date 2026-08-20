@@ -113,6 +113,33 @@ DEFAULT_VIDEO_SHARPEN: dict[str, object] = {
     "threshold": 4,
 }
 
+
+def normalize_video_llm_trace(value: object) -> list[str]:
+    """Validate and de-duplicate upstream video LLM history ids in call order."""
+
+    if value in (None, ""):
+        return []
+    if not isinstance(value, list):
+        print(
+            "[VIDEO:LLM_TRACE] 이력 목록 형식 오류: "
+            f"type={type(value).__name__}, value={value!r}"
+        )
+        raise ValueError("영상화 LLM 흐름 기록은 목록이어야 합니다")
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for index, raw_history_id in enumerate(value):
+        history_id = str(raw_history_id or "").strip()
+        if not history_id:
+            print(
+                "[VIDEO:LLM_TRACE] 빈 이력 ID 건너뜀: "
+                f"index={index}, value={raw_history_id!r}"
+            )
+            continue
+        if history_id not in seen:
+            normalized.append(history_id)
+            seen.add(history_id)
+    return normalized
+
 I2V_ALIGNMENT = (
     "For the target video, at 0.00 seconds into the target video, "
     "<Picture 1> (from [Shot 1]) is fully referenced."
@@ -3013,6 +3040,19 @@ Vision-produced static Visual Context:
                 f"length={len(instruction)}"
             )
             raise ValueError("영상화 지시는 12,000자 이하여야 합니다")
+        instruction_original = str(
+            (params or {}).get("instruction_original") or ""
+        )
+        if len(instruction_original) > 12000:
+            print(
+                f"[VIDEO:LLM] 다듬기 전 원문 길이 초과: item={queue_item_id}, "
+                f"length={len(instruction_original)}"
+            )
+            raise ValueError("다듬기 전 영상화 원문은 12,000자 이하여야 합니다")
+        upstream_trace_ids = normalize_video_llm_trace(
+            (params or {}).get("llm_trace")
+        )
+        instruction_source = "llm" if upstream_trace_ids else "user"
         source_ref, last_ref, source_label, reference_images = (
             self._vision_reference_images(
                 mode,
@@ -3035,7 +3075,7 @@ Vision-produced static Visual Context:
         visual_messages: list[dict] = []
         visual_context = ""
         visual_history_id = ""
-        trace_ids: list[str] = []
+        trace_ids: list[str] = list(upstream_trace_ids)
         metadata: dict = {}
         started = time.time()
         execution_context = llm_service.create_llm_execution_context(
@@ -3294,7 +3334,8 @@ Vision-produced static Visual Context:
                 "success": True,
                 "h3_prompt": response_text,
                 "instruction": instruction,
-                "instruction_source": "user",
+                "instruction_original": instruction_original,
+                "instruction_source": instruction_source,
                 "visual_context": visual_context,
                 "visual_context_source": visual_context_source,
                 "llm_trace": [*trace_ids, history_id],
@@ -4261,6 +4302,11 @@ Vision-produced static Visual Context:
                     or original_metadata.get("instruction")
                     or ""
                 ),
+                "instruction_original": str(
+                    original_metadata.get("video_instruction_original")
+                    or original_metadata.get("instruction_original")
+                    or ""
+                ),
                 "instruction_source": str(
                     original_metadata.get("video_instruction_source")
                     or original_metadata.get("instruction_source")
@@ -4439,6 +4485,9 @@ Vision-produced static Visual Context:
             base_name = f"{stamp}_{uuid.uuid4().hex[:8]}"
             auto_instruction = (params or {}).get("auto_instruction", False) is True
             instruction = str((params or {}).get("instruction") or "")
+            instruction_original = str(
+                (params or {}).get("instruction_original") or ""
+            )
             instruction_source = str(
                 (params or {}).get("instruction_source")
                 or ("llm" if auto_instruction else "user")
@@ -4485,15 +4534,14 @@ Vision-produced static Visual Context:
                 ),
                 "positive": h3_prompt,
                 "instruction": instruction,
+                "instruction_original": instruction_original,
                 "instruction_source": instruction_source,
                 "auto_instruction": auto_instruction,
                 "visual_context": visual_context,
                 "visual_context_source": visual_context_source,
-                "llm_trace": [
-                    str(item)
-                    for item in ((params or {}).get("llm_trace") or [])
-                    if str(item).strip()
-                ],
+                "llm_trace": normalize_video_llm_trace(
+                    (params or {}).get("llm_trace")
+                ),
                 # preset은 기존 백업 소비자를 위한 화면 비율 별칭이다.
                 "preset": aspect_ratio_key,
                 "aspect_ratio": aspect_ratio_key,
@@ -4867,6 +4915,9 @@ Vision-produced static Visual Context:
             created_files.append(raw_path)
 
             instruction = str(manifest.get("instruction") or "")
+            instruction_original = str(
+                manifest.get("instruction_original") or ""
+            )
             instruction_source = str(manifest.get("instruction_source") or "").strip().lower()
             raw_auto_instruction = manifest.get("auto_instruction")
             auto_instruction = (
@@ -4907,7 +4958,9 @@ Vision-produced static Visual Context:
                 # instruction은 기존 소비자 호환용이다. video_* 필드는 영상 진단 UI의
                 # 명시적 스키마로, 최종 H3 프롬프트와 생성 근거를 분리 보존한다.
                 "instruction": instruction,
+                "instruction_original": instruction_original,
                 "video_instruction": instruction,
+                "video_instruction_original": instruction_original,
                 "video_instruction_source": instruction_source,
                 "video_auto_instruction": auto_instruction,
                 "video_visual_context": visual_context,
@@ -4921,6 +4974,9 @@ Vision-produced static Visual Context:
                 ),
                 "video_reprocess_source": (
                     self._reference_label(source_ref) if is_reprocess else ""
+                ),
+                "llm_trace": normalize_video_llm_trace(
+                    manifest.get("llm_trace")
                 ),
             }
             execution_source = str(
@@ -4946,6 +5002,9 @@ Vision-produced static Visual Context:
                 "generation_time": elapsed,
                 "is_video_animation": True,
                 "video_mode": mode,
+                "video_instruction": instruction,
+                "video_instruction_original": instruction_original,
+                "video_instruction_source": instruction_source,
                 "video_duration_seconds": float(manifest.get("duration") or VIDEO_DURATION_SECONDS),
                 "video_fps": int(manifest.get("fps") or VIDEO_FPS),
                 "video_fast_preset": manifest.get(
@@ -5006,11 +5065,7 @@ Vision-produced static Visual Context:
                 "image_height": int(manifest.get("output_height") or 0),
                 "raw_extension": extension,
                 "animation_format": extension.lstrip("."),
-                "llm_trace": [
-                    str(item)
-                    for item in (manifest.get("llm_trace") or [])
-                    if str(item).strip()
-                ],
+                "llm_trace": normalize_video_llm_trace(manifest.get("llm_trace")),
             }
             source_info = manifest.get("source_info")
             if isinstance(source_info, dict):

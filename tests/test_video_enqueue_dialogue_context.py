@@ -17,6 +17,11 @@ class _JsonRequest:
         return self._body
 
 
+class _MatchRequest:
+    def __init__(self, **match_info: str) -> None:
+        self.match_info = match_info
+
+
 def _video_request(**overrides) -> dict:
     body = {
         "mode": "i2v",
@@ -64,13 +69,27 @@ async def test_video_enqueue_passes_confirmed_instruction_to_prompt_queue(
     monkeypatch.setattr(server.queue_manager, "add_item", fake_add_item)
     monkeypatch.setattr(server, "load_config", lambda: {})
 
-    response = await server.handle_api_video_enqueue(_JsonRequest(_video_request()))
+    response = await server.handle_api_video_enqueue(
+        _JsonRequest(
+            _video_request(
+                instruction_original="사용자 원문 그대로",
+                instruction_llm_trace=[
+                    "video_instruction_refine:i2v:refine-1",
+                    "video_instruction_refine:i2v:refine-1",
+                ],
+            )
+        )
+    )
     payload = json.loads(response.text)
 
     assert response.status == 200
     assert payload["success"] is True
     assert captured["item_type"] == "video_prompt_build"
     assert captured["params"]["instruction"] == "사용자가 확인한 영상 연출 지시"
+    assert captured["params"]["instruction_original"] == "사용자 원문 그대로"
+    assert captured["params"]["llm_trace"] == [
+        "video_instruction_refine:i2v:refine-1"
+    ]
     assert captured["params"]["auto_instruction"] is False
     assert "include_dialogue_context" not in captured["params"]
     assert captured["params"]["visual_context_source"] == "image"
@@ -133,6 +152,97 @@ async def test_video_enqueue_rejects_non_boolean_secondary_motion(monkeypatch) -
     assert payload["success"] is False
     assert "boolean" in payload["error"]
     assert called is False
+
+
+@pytest.mark.asyncio
+async def test_video_enqueue_rejects_non_list_instruction_trace(monkeypatch) -> None:
+    called = False
+
+    async def fake_add_item(_item_type, _label, _params):
+        nonlocal called
+        called = True
+        raise AssertionError("invalid request must not be queued")
+
+    monkeypatch.setattr(server.queue_manager, "add_item", fake_add_item)
+
+    response = await server.handle_api_video_enqueue(
+        _JsonRequest(_video_request(instruction_llm_trace={"history_id": "bad"}))
+    )
+    payload = json.loads(response.text)
+
+    assert response.status == 400
+    assert payload["success"] is False
+    assert "목록" in payload["error"]
+    assert called is False
+
+
+@pytest.mark.asyncio
+async def test_video_backup_llm_flow_returns_original_and_all_linked_steps(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    name = "20260820_120000_video"
+    trace_ids = [
+        "video_instruction_refine:i2v:refine-1",
+        "video_prompt:i2v:prompt-1:visual_context",
+        "video_prompt:i2v:prompt-1",
+    ]
+    (tmp_path / f"{name}_info.json").write_text(
+        json.dumps(
+            {
+                "is_video_animation": True,
+                "video_instruction": "인물이 천천히 손을 흔든다.",
+                "video_instruction_original": "손 흔들게",
+                "llm_trace": trace_ids,
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / f"{name}.json").write_text(
+        json.dumps(
+            {
+                "provider": "video",
+                "kind": "h3_video",
+                "positive": "final H3 prompt",
+                "video_instruction": "인물이 천천히 손을 흔든다.",
+                "video_instruction_original": "손 흔들게",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    history_path = tmp_path / "lighbd_history.jsonl"
+    history_path.write_text(
+        "\n".join(
+            json.dumps(
+                {
+                    "ts": f"2026-08-20T12:00:0{index}",
+                    "history_id": history_id,
+                    "call_name": f"video step {index}",
+                    "input": [],
+                    "output": f"output {index}",
+                    "status": "ok",
+                },
+                ensure_ascii=False,
+            )
+            for index, history_id in enumerate(trace_ids)
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(server, "get_backup_base_dir", lambda: str(tmp_path))
+    monkeypatch.setattr(server.lighbd_service, "LIGHBD_HISTORY_PATH", str(history_path))
+
+    response = await server.handle_api_backup_llm_trace(_MatchRequest(name=name))
+    payload = json.loads(response.text)
+
+    assert response.status == 200
+    assert payload["is_video_animation"] is True
+    assert payload["video_instruction_original"] == "손 흔들게"
+    assert payload["video_instruction"] == "인물이 천천히 손을 흔든다."
+    assert payload["final_positive"] == "final H3 prompt"
+    assert [record["history_id"] for record in payload["records"]] == trace_ids
+    assert payload["missing"] == []
 
 
 @pytest.mark.asyncio
