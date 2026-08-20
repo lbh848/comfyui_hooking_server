@@ -17,8 +17,11 @@ from typing import Callable, Iterator
 from .downloader import ResumableDownloader
 from .node_compatibility import (
     INSTANT_LORA_NODE_NAME,
+    MINIMAX_H3_TEACACHE_NODE_NAME,
     apply_instant_lora_python_compatibility,
+    apply_minimax_h3_teacache_reset_compatibility,
     remove_instant_lora_python_compatibility,
+    remove_minimax_h3_teacache_reset_compatibility,
 )
 from .operations import CommandError, run_command
 
@@ -60,23 +63,42 @@ def _managed_node_compatibility_update(
     requirements_dir: Path | None,
     log: LogCallback | None,
 ) -> Iterator[None]:
-    if node_name != INSTANT_LORA_NODE_NAME:
+    if node_name == INSTANT_LORA_NODE_NAME:
+        compatibility_label = "Instant LoRA managed Python"
+        compatibility_path = (
+            comfy_root
+            / "custom_nodes"
+            / INSTANT_LORA_NODE_NAME
+            / "src"
+            / "runtime.py"
+        )
+        remove_compatibility = remove_instant_lora_python_compatibility
+        apply_compatibility = apply_instant_lora_python_compatibility
+    elif node_name == MINIMAX_H3_TEACACHE_NODE_NAME:
+        compatibility_label = "MiniMax H3 TeaCache sample reset"
+        compatibility_path = (
+            comfy_root
+            / "custom_nodes"
+            / MINIMAX_H3_TEACACHE_NODE_NAME
+            / "nodes.py"
+        )
+        remove_compatibility = remove_minimax_h3_teacache_reset_compatibility
+        apply_compatibility = apply_minimax_h3_teacache_reset_compatibility
+    else:
         yield
         return
 
     backup_root = (
         requirements_dir.resolve()
         if requirements_dir is not None
-        else (comfy_root.parent / "요구사항").resolve()
+        else (
+            comfy_root
+            / ".installer-state"
+            / "backups"
+            / "node-compatibility"
+        ).resolve()
     )
-    runtime_path = (
-        comfy_root
-        / "custom_nodes"
-        / INSTANT_LORA_NODE_NAME
-        / "src"
-        / "runtime.py"
-    )
-    remove_instant_lora_python_compatibility(
+    remove_compatibility(
         comfy_root=comfy_root,
         requirements_dir=backup_root,
         log=log,
@@ -85,46 +107,46 @@ def _managed_node_compatibility_update(
     try:
         yield
     except Exception as operation_exc:
-        if runtime_path.is_file():
+        if compatibility_path.is_file():
             try:
-                apply_instant_lora_python_compatibility(
+                apply_compatibility(
                     comfy_root=comfy_root,
                     requirements_dir=backup_root,
                     log=log,
                 )
             except Exception as restore_exc:
                 print(
-                    "[COMFY_INSTALL][NODE] 노드 작업 실패 후 Instant LoRA "
-                    "호환 패치 복구도 실패: "
+                    "[COMFY_INSTALL][NODE] custom-node operation and "
+                    "compatibility restore both failed: "
                     f"node={node_name}, operation_error={operation_exc}, "
                     f"restore_error={restore_exc}"
                 )
                 traceback.print_exc()
                 raise NodeInstallError(
-                    "Instant LoRA 노드 작업과 관리 Python 호환 패치 복구가 "
-                    f"모두 실패했습니다: operation={operation_exc}, "
+                    f"{compatibility_label} restore failed after node operation: "
+                    f"operation={operation_exc}, "
                     f"restore={restore_exc}"
                 ) from operation_exc
         else:
             print(
-                "[COMFY_INSTALL][NODE] 노드 작업 실패 후 복구할 Instant LoRA "
-                f"런타임 파일이 없습니다: {runtime_path}"
+                "[COMFY_INSTALL][NODE] compatibility target missing after node "
+                f"operation failure: node={node_name}, path={compatibility_path}"
             )
         raise
     try:
-        apply_instant_lora_python_compatibility(
+        apply_compatibility(
             comfy_root=comfy_root,
             requirements_dir=backup_root,
             log=log,
         )
     except Exception as exc:
         print(
-            "[COMFY_INSTALL][NODE] Instant LoRA 설치 후 관리 Python 호환 "
-            f"패치 실패: node={node_name}, error={exc}"
+            "[COMFY_INSTALL][NODE] compatibility apply failed: "
+            f"node={node_name}, compatibility={compatibility_label}, error={exc}"
         )
         traceback.print_exc()
         raise NodeInstallError(
-            f"Instant LoRA 관리 Python 호환 처리 실패: {exc}"
+            f"{compatibility_label} compatibility apply failed: {exc}"
         ) from exc
 
 

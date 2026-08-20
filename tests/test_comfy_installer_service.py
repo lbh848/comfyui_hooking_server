@@ -202,8 +202,12 @@ def test_runtime_validations_split_h3_from_legacy(tmp_path: Path) -> None:
     assert video == [video_validation]
 
 
-def test_video_runtime_order_is_standard_then_fast() -> None:
+def test_video_runtime_order_is_standard_then_fast_then_ref_fast() -> None:
     validations = [
+        SimpleNamespace(
+            binding_keys=("video_workflow_source_paths.ref2v_fast",),
+            filename="ref-fast.json",
+        ),
         SimpleNamespace(
             binding_keys=("video_workflow_source_paths.first_last_fast",),
             filename="first-last-fast.json",
@@ -220,6 +224,10 @@ def test_video_runtime_order_is_standard_then_fast() -> None:
             binding_keys=("video_workflow_source_paths.i2v",),
             filename="i2v.json",
         ),
+        SimpleNamespace(
+            binding_keys=("video_workflow_source_paths.ref2v",),
+            filename="ref.json",
+        ),
     ]
 
     ordered = sorted(validations, key=ComfyInstallerService._runtime_order)
@@ -227,8 +235,10 @@ def test_video_runtime_order_is_standard_then_fast() -> None:
     assert [item.filename for item in ordered] == [
         "i2v.json",
         "first-last.json",
+        "ref.json",
         "i2v-fast.json",
         "first-last-fast.json",
+        "ref-fast.json",
     ]
 
 
@@ -236,7 +246,9 @@ def test_video_runtime_order_is_standard_then_fast() -> None:
     ("binding_key", "sample_steps", "sample_width", "sample_height"),
     [
         ("video_workflow_source_paths.i2v", 8, 960, 544),
+        ("video_workflow_source_paths.ref2v", 20, 960, 544),
         ("video_workflow_source_paths.i2v_fast", 4, 1344, 768),
+        ("video_workflow_source_paths.ref2v_fast", 4, 960, 544),
     ],
 )
 def test_runtime_e2e_applies_h3_manifest_defaults(
@@ -1025,7 +1037,7 @@ def test_manifest_has_fully_pinned_windows_runtime_and_assets() -> None:
         len(profile["sageattention"]["sha256"]) == 64
         for profile in nvidia.values()
     )
-    assert len(manifest.custom_nodes) == 15
+    assert len(manifest.custom_nodes) == 16
     assert all(
         node["name"] != "ComfyUI-Manager"
         for node in manifest.custom_nodes
@@ -1047,6 +1059,15 @@ def test_manifest_has_fully_pinned_windows_runtime_and_assets() -> None:
         if node["name"] == "comfyui-spectrum-ksampler"
     )
     assert spectrum["ref"] == "c806917566ee1c149575cd90da9e4c2e543de019"
+    teacache = next(
+        node
+        for node in manifest.custom_nodes
+        if node["name"] == "ComfyUI-MiniMaxH3-TeaCache"
+    )
+    assert teacache["repository"] == (
+        "https://github.com/Icyoung/ComfyUI-MiniMaxH3-TeaCache.git"
+    )
+    assert teacache["ref"] == "4cbb50d69c73a19a5d6ec42c5aec1989d5a04b6f"
     tracking_main_names = {
         node["name"]
         for node in manifest.custom_nodes
@@ -1081,10 +1102,24 @@ def test_manifest_has_fully_pinned_windows_runtime_and_assets() -> None:
     assert set(h3["fast_workflow_bindings"]).issubset(
         h3["workflow_bindings"]
     )
+    assert set(h3["ref_workflow_bindings"]).issubset(
+        h3["workflow_bindings"]
+    )
+    assert not set(h3["ref_workflow_bindings"]).intersection(
+        h3["fast_workflow_bindings"]
+    )
+    assert set(h3["ref_fast_workflow_bindings"]).issubset(
+        h3["fast_workflow_bindings"]
+    )
     assert set(h3["model_ids"]).issubset(
         {model["id"] for model in manifest.models}
     )
-    for defaults_key in ("defaults", "fast_defaults"):
+    for defaults_key in (
+        "defaults",
+        "ref_defaults",
+        "fast_defaults",
+        "ref_fast_defaults",
+    ):
         defaults = h3[defaults_key]
         assert all(
             isinstance(defaults[key], int) and defaults[key] > 0
@@ -1106,7 +1141,11 @@ def test_manifest_allows_release_content_to_change_without_python_constants(
     h3 = data["validation_profiles"]["minimax_h3"]
     h3["workflow_bindings"] = [h3["workflow_bindings"][0]]
     h3["fast_workflow_bindings"] = []
+    h3["ref_workflow_bindings"] = []
+    h3["ref_fast_workflow_bindings"] = []
     h3.pop("fast_defaults")
+    h3.pop("ref_defaults")
+    h3.pop("ref_fast_defaults")
     h3["model_ids"] = [h3["model_ids"][0]]
     h3["defaults"]["width"] = 1024
     h3["defaults"]["height"] = 576

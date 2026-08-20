@@ -451,6 +451,53 @@ def _validate_manifest(data: dict[str, Any]) -> None:
             "workflow_bindings의 일부가 아닙니다."
         )
 
+    ref_h3_bindings = h3_profile.get("ref_workflow_bindings", [])
+    if not isinstance(ref_h3_bindings, list) or not all(
+        isinstance(binding, str) and binding.strip()
+        for binding in ref_h3_bindings
+    ):
+        raise ManifestError(
+            "validation_profiles.minimax_h3.ref_workflow_bindings가 "
+            "문자열 배열이 아닙니다."
+        )
+    ref_h3_binding_set = set(ref_h3_bindings)
+    if len(ref_h3_binding_set) != len(ref_h3_bindings):
+        raise ManifestError(
+            "validation_profiles.minimax_h3.ref_workflow_bindings에 "
+            "중복 값이 있습니다."
+        )
+    if not ref_h3_binding_set.issubset(h3_binding_set):
+        raise ManifestError(
+            "validation_profiles.minimax_h3.ref_workflow_bindings가 "
+            "workflow_bindings의 일부가 아닙니다."
+        )
+    if ref_h3_binding_set.intersection(fast_h3_binding_set):
+        raise ManifestError(
+            "validation_profiles.minimax_h3.ref_workflow_bindings는 "
+            "fast_workflow_bindings와 겹칠 수 없습니다."
+        )
+
+    ref_fast_h3_bindings = h3_profile.get("ref_fast_workflow_bindings", [])
+    if not isinstance(ref_fast_h3_bindings, list) or not all(
+        isinstance(binding, str) and binding.strip()
+        for binding in ref_fast_h3_bindings
+    ):
+        raise ManifestError(
+            "validation_profiles.minimax_h3.ref_fast_workflow_bindings가 "
+            "문자열 배열이 아닙니다."
+        )
+    ref_fast_h3_binding_set = set(ref_fast_h3_bindings)
+    if len(ref_fast_h3_binding_set) != len(ref_fast_h3_bindings):
+        raise ManifestError(
+            "validation_profiles.minimax_h3.ref_fast_workflow_bindings에 "
+            "중복 값이 있습니다."
+        )
+    if not ref_fast_h3_binding_set.issubset(fast_h3_binding_set):
+        raise ManifestError(
+            "validation_profiles.minimax_h3.ref_fast_workflow_bindings가 "
+            "fast_workflow_bindings의 일부가 아닙니다."
+        )
+
     h3_model_ids = h3_profile.get("model_ids")
     if not isinstance(h3_model_ids, list) or not h3_model_ids or not all(
         isinstance(model_id, str) and model_id.strip()
@@ -475,6 +522,10 @@ def _validate_manifest(data: dict[str, Any]) -> None:
     defaults_to_validate = ["defaults"]
     if fast_h3_bindings:
         defaults_to_validate.append("fast_defaults")
+    if ref_h3_bindings:
+        defaults_to_validate.append("ref_defaults")
+    if ref_fast_h3_bindings:
+        defaults_to_validate.append("ref_fast_defaults")
     for defaults_key in defaults_to_validate:
         defaults = h3_profile.get(defaults_key)
         context = f"validation_profiles.minimax_h3.{defaults_key}"

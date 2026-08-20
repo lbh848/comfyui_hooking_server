@@ -1023,8 +1023,10 @@ E2E_PROFILE_BY_BINDING = {
     "debug_workflow_source_path": E2E_PROFILE_STANDARD,
     "video_workflow_source_paths.i2v": E2E_PROFILE_MINIMAX_H3,
     "video_workflow_source_paths.first_last": E2E_PROFILE_MINIMAX_H3,
+    "video_workflow_source_paths.ref2v": E2E_PROFILE_MINIMAX_H3,
     "video_workflow_source_paths.i2v_fast": E2E_PROFILE_MINIMAX_H3,
     "video_workflow_source_paths.first_last_fast": E2E_PROFILE_MINIMAX_H3,
+    "video_workflow_source_paths.ref2v_fast": E2E_PROFILE_MINIMAX_H3,
 }
 
 

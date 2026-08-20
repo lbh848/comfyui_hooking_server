@@ -178,6 +178,12 @@
       "ref": "8ff50e4521881eca1fe26aec9615fc9362474931"
     },
     {
+      "name": "ComfyUI-MiniMaxH3-TeaCache",
+      "source_type": "git",
+      "repository": "https://github.com/Icyoung/ComfyUI-MiniMaxH3-TeaCache.git",
+      "ref": "4cbb50d69c73a19a5d6ec42c5aec1989d5a04b6f"
+    },
+    {
       "name": "comfyui-workflow-to-api-converter-endpoint",
       "source_type": "git",
       "repository": "https://github.com/lbh848/comfyui-workflow-to-api-converter-endpoint.git",
@@ -471,6 +477,13 @@
       "sha256": "e889202c41dafb67b10d67b97f0d8541508036a6090af23425a5c2615d03c47a"
     },
     {
+      "id": "minimax-h3-ref2va-int8-convrot",
+      "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/dc559027db79c174125df4d827db55cd11178860/diffusion_models/minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+      "relative_path": "models/diffusion_models/minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+      "size": 20970379616,
+      "sha256": "9255f52b6677845ad238f20dfaafa94727053694127ab7f255c048f0f9365779"
+    },
+    {
       "id": "minimax-h3-qwen3vl-nvfp4-awq",
       "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/014cd40f7e177756c6b2473c0d93b1c89a790dd2/text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
       "relative_path": "models/text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
@@ -504,6 +517,13 @@
       "relative_path": "models/loras/minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_resized_avg_rank_21_bf16.safetensors",
       "size": 298177224,
       "sha256": "1b85da614014024a0c9507f12558917dcc69b6adb564e716324594f401723115"
+    },
+    {
+      "id": "minimax-h3-ref2v-lightx2v-turbo-4step-v0.1",
+      "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/dc559027db79c174125df4d827db55cd11178860/loras/minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors",
+      "relative_path": "models/loras/minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors",
+      "size": 1956193000,
+      "sha256": "5b9ab5ade15d0775676d01a907268a69a1468dc6033b3b0d3ded5502f3ebb84c"
     }
   ],
   "workflows": {
@@ -948,6 +968,16 @@
           ]
         },
         {
+          "id": "video_workflow_source_paths.ref2v",
+          "bindings": ["video_workflow_source_paths.ref2v"],
+          "model_ids": [
+            "minimax-h3-audio-vae-fp32",
+            "minimax-h3-qwen3vl-nvfp4-awq",
+            "minimax-h3-ref2va-int8-convrot",
+            "minimax-h3-video-vae-fp16"
+          ]
+        },
+        {
           "id": "video_workflow_source_paths.i2v_fast",
           "bindings": ["video_workflow_source_paths.i2v_fast"],
           "model_ids": [
@@ -966,6 +996,17 @@
             "minimax-h3-int8-convrot",
             "minimax-h3-lightx2v-turbo-4step-768p-v1",
             "minimax-h3-qwen3vl-nvfp4-awq",
+            "minimax-h3-video-vae-fp16"
+          ]
+        },
+        {
+          "id": "video_workflow_source_paths.ref2v_fast",
+          "bindings": ["video_workflow_source_paths.ref2v_fast"],
+          "model_ids": [
+            "minimax-h3-audio-vae-fp32",
+            "minimax-h3-qwen3vl-nvfp4-awq",
+            "minimax-h3-ref2v-lightx2v-turbo-4step-v0.1",
+            "minimax-h3-ref2va-int8-convrot",
             "minimax-h3-video-vae-fp16"
           ]
         }
@@ -994,8 +1035,10 @@
     "optional_bindings": [
       "video_workflow_source_paths.i2v",
       "video_workflow_source_paths.first_last",
+      "video_workflow_source_paths.ref2v",
       "video_workflow_source_paths.i2v_fast",
-      "video_workflow_source_paths.first_last_fast"
+      "video_workflow_source_paths.first_last_fast",
+      "video_workflow_source_paths.ref2v_fast"
     ],
     "excluded_filenames": [
       "캐릭터복장추적_v1.json"
@@ -1006,12 +1049,21 @@
       "workflow_bindings": [
         "video_workflow_source_paths.i2v",
         "video_workflow_source_paths.first_last",
+        "video_workflow_source_paths.ref2v",
         "video_workflow_source_paths.i2v_fast",
-        "video_workflow_source_paths.first_last_fast"
+        "video_workflow_source_paths.first_last_fast",
+        "video_workflow_source_paths.ref2v_fast"
       ],
       "fast_workflow_bindings": [
         "video_workflow_source_paths.i2v_fast",
-        "video_workflow_source_paths.first_last_fast"
+        "video_workflow_source_paths.first_last_fast",
+        "video_workflow_source_paths.ref2v_fast"
+      ],
+      "ref_fast_workflow_bindings": [
+        "video_workflow_source_paths.ref2v_fast"
+      ],
+      "ref_workflow_bindings": [
+        "video_workflow_source_paths.ref2v"
       ],
       "model_ids": [
         "minimax-h3-audio-vae-fp32",
@@ -1019,6 +1071,8 @@
         "minimax-h3-lightx2v-turbo-4step-768p-v1",
         "minimax-h3-lightx2v-turbo-8step-v1",
         "minimax-h3-qwen3vl-nvfp4-awq",
+        "minimax-h3-ref2v-lightx2v-turbo-4step-v0.1",
+        "minimax-h3-ref2va-int8-convrot",
         "minimax-h3-video-vae-fp16"
       ],
       "defaults": {
@@ -1042,6 +1096,31 @@
         "scheduler": "simple",
         "lora_strength": 1.0,
         "audio": false
+      },
+      "ref_fast_defaults": {
+        "width": 960,
+        "height": 544,
+        "length": 124,
+        "fps": 24,
+        "steps": 4,
+        "sampler": "res_multistep",
+        "scheduler": "simple",
+        "lora_strength": 1.0,
+        "audio": false
+      },
+      "ref_defaults": {
+        "width": 960,
+        "height": 544,
+        "length": 124,
+        "fps": 24,
+        "steps": 20,
+        "sampler": "res_multistep",
+        "scheduler": "simple",
+        "lora_strength": 1.0,
+        "audio": false,
+        "teacache_threshold": 0.1,
+        "teacache_start_step": 2,
+        "teacache_end_step": -2
       }
     }
   }

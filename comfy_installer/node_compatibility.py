@@ -22,6 +22,7 @@ class NodeCompatibilityError(RuntimeError):
 LogCallback = Callable[[str], None]
 
 INSTANT_LORA_NODE_NAME = "comfyui-instant-lora_v_soya"
+MINIMAX_H3_TEACACHE_NODE_NAME = "ComfyUI-MiniMaxH3-TeaCache"
 _INSTANT_LORA_RUNTIME_RELATIVE = Path("src") / "runtime.py"
 _PATCH_MARKER = "# comfy-installer: use the project-managed Python 3.12 runtime"
 _RESOLVER_ANCHOR = (
@@ -47,6 +48,58 @@ _PATCHED_RESOLVER_PREFIX = (
     "\n"
 )
 
+_TEACACHE_NODES_RELATIVE = Path("nodes.py")
+_TEACACHE_PATCH_MARKER = (
+    "# comfy-installer: reset TeaCache state for every sampling run"
+)
+_TEACACHE_IMPORT_ANCHOR = (
+    "from __future__ import annotations\n"
+    "\n"
+    "from .teacache import TeaCacheState, make_wrapper\n"
+)
+_TEACACHE_IMPORT_PATCH = (
+    "from __future__ import annotations\n"
+    "\n"
+    "import logging\n"
+    "\n"
+    "import comfy.patcher_extension\n"
+    "\n"
+    "from .teacache import TeaCacheState, make_wrapper\n"
+    "\n"
+    "\n"
+    f"{_TEACACHE_PATCH_MARKER}\n"
+    "def make_sample_wrapper(state: TeaCacheState):\n"
+    "    \"\"\"Reset rolling state for every sampler invocation.\"\"\"\n"
+    "\n"
+    "    def wrapper(executor, *args, **kwargs):\n"
+    "        state.reset()\n"
+    "        logging.info(\"MiniMax H3 TeaCache state reset for sampling\")\n"
+    "        try:\n"
+    "            return executor(*args, **kwargs)\n"
+    "        finally:\n"
+    "            logging.info(\n"
+    "                \"MiniMax H3 TeaCache: reused %d steps; real %d steps\",\n"
+    "                state.reuse_count,\n"
+    "                state.real_count,\n"
+    "            )\n"
+    "            state.reset()\n"
+    "\n"
+    "    return wrapper\n"
+)
+_TEACACHE_MODEL_PATCH_ANCHOR = (
+    "        patched = model.clone()\n"
+    "        patched.set_model_unet_function_wrapper(wrapper)\n"
+)
+_TEACACHE_MODEL_PATCH_REPLACEMENT = (
+    f"{_TEACACHE_MODEL_PATCH_ANCHOR}"
+    "        sample_wrapper_key = f\"minimax_h3_teacache_{id(state)}\"\n"
+    "        patched.add_wrapper_with_key(\n"
+    "            comfy.patcher_extension.WrappersMP.OUTER_SAMPLE,\n"
+    "            sample_wrapper_key,\n"
+    "            make_sample_wrapper(state),\n"
+    "        )\n"
+)
+
 
 def _emit(message: str, log: LogCallback | None) -> None:
     text = f"[노드 호환] {message}"
@@ -61,6 +114,15 @@ def _runtime_path(comfy_root: Path) -> Path:
         / "custom_nodes"
         / INSTANT_LORA_NODE_NAME
         / _INSTANT_LORA_RUNTIME_RELATIVE
+    )
+
+
+def _teacache_nodes_path(comfy_root: Path) -> Path:
+    return (
+        comfy_root
+        / "custom_nodes"
+        / MINIMAX_H3_TEACACHE_NODE_NAME
+        / _TEACACHE_NODES_RELATIVE
     )
 
 
@@ -117,12 +179,13 @@ def _backup_before_write(
     requirements_dir: Path,
     operation: str,
     log: LogCallback | None,
+    node_name: str = INSTANT_LORA_NODE_NAME,
 ) -> Path:
     payload = source_path.read_bytes()
     digest = hashlib.sha256(payload).hexdigest()
     backup_root = requirements_dir / "comfy-node-compatibility"
     backup = backup_root / (
-        f"{INSTANT_LORA_NODE_NAME}_{operation}_{digest[:16]}.py"
+        f"{node_name}_{operation}_{digest[:16]}.py"
     )
     backup_root.mkdir(parents=True, exist_ok=True)
     if backup.exists():
@@ -375,6 +438,179 @@ def remove_instant_lora_python_compatibility(
             raise
         raise NodeCompatibilityError(
             f"Instant LoRA 관리 Python 호환 패치 해제 실패: {exc}"
+        ) from exc
+
+
+def apply_minimax_h3_teacache_reset_compatibility(
+    *,
+    comfy_root: Path,
+    requirements_dir: Path,
+    log: LogCallback | None = None,
+) -> dict[str, str | bool | None]:
+    source_path = _teacache_nodes_path(comfy_root)
+    try:
+        if not source_path.is_file():
+            raise NodeCompatibilityError(
+                f"MiniMax H3 TeaCache nodes.py가 없습니다: {source_path}"
+            )
+        source, newline = _read_utf8_normalized(source_path)
+        if _TEACACHE_PATCH_MARKER in source:
+            if (
+                source.count(_TEACACHE_PATCH_MARKER) != 1
+                or source.count(_TEACACHE_MODEL_PATCH_REPLACEMENT) != 1
+            ):
+                raise NodeCompatibilityError(
+                    "MiniMax H3 TeaCache 상태 초기화 패치 표식과 본문이 다릅니다: "
+                    f"{source_path}"
+                )
+            _emit(f"TeaCache 샘플 단위 초기화 패치 재사용: {source_path}", log)
+            return {
+                "status": "reused",
+                "path": str(source_path),
+                "backup": None,
+                "changed": False,
+            }
+        if "WrappersMP.OUTER_SAMPLE" in source and "state.reset()" in source:
+            _emit(
+                "TeaCache가 이미 샘플 단위 상태 초기화를 지원하여 패치 생략: "
+                f"{source_path}",
+                log,
+            )
+            return {
+                "status": "upstream-compatible",
+                "path": str(source_path),
+                "backup": None,
+                "changed": False,
+            }
+        if (
+            source.count(_TEACACHE_IMPORT_ANCHOR) != 1
+            or source.count(_TEACACHE_MODEL_PATCH_ANCHOR) != 1
+        ):
+            raise NodeCompatibilityError(
+                "MiniMax H3 TeaCache nodes.py가 검증된 고정 커밋 형식과 달라 "
+                f"자동 패치하지 않습니다: {source_path}"
+            )
+
+        backup = _backup_before_write(
+            source_path,
+            requirements_dir=requirements_dir,
+            operation="before-sample-reset-patch",
+            log=log,
+            node_name=MINIMAX_H3_TEACACHE_NODE_NAME,
+        )
+        patched = source.replace(
+            _TEACACHE_IMPORT_ANCHOR,
+            _TEACACHE_IMPORT_PATCH,
+            1,
+        ).replace(
+            _TEACACHE_MODEL_PATCH_ANCHOR,
+            _TEACACHE_MODEL_PATCH_REPLACEMENT,
+            1,
+        )
+        compile(patched, str(source_path), "exec")
+        _atomic_write_utf8(source_path, patched, newline=newline)
+        _emit(
+            f"TeaCache 샘플 단위 상태 초기화 패치 적용 완료: {source_path}",
+            log,
+        )
+        return {
+            "status": "patched",
+            "path": str(source_path),
+            "backup": str(backup),
+            "changed": True,
+        }
+    except Exception as exc:
+        print(
+            "[COMFY_INSTALL][NODE_COMPAT] MiniMax H3 TeaCache 상태 초기화 "
+            f"패치 실패: path={source_path}, error={exc}"
+        )
+        traceback.print_exc()
+        if isinstance(exc, NodeCompatibilityError):
+            raise
+        raise NodeCompatibilityError(
+            f"MiniMax H3 TeaCache 상태 초기화 패치 실패: {exc}"
+        ) from exc
+
+
+def remove_minimax_h3_teacache_reset_compatibility(
+    *,
+    comfy_root: Path,
+    requirements_dir: Path,
+    log: LogCallback | None = None,
+    allow_missing: bool = False,
+) -> dict[str, str | bool | None]:
+    source_path = _teacache_nodes_path(comfy_root)
+    try:
+        if not source_path.is_file():
+            message = f"MiniMax H3 TeaCache nodes.py가 없습니다: {source_path}"
+            if allow_missing:
+                _emit(f"TeaCache 패치 해제 생략 — {message}", log)
+                return {
+                    "status": "missing",
+                    "path": str(source_path),
+                    "backup": None,
+                    "changed": False,
+                }
+            raise NodeCompatibilityError(message)
+
+        source, newline = _read_utf8_normalized(source_path)
+        if _TEACACHE_PATCH_MARKER not in source:
+            status = (
+                "upstream-compatible"
+                if "WrappersMP.OUTER_SAMPLE" in source and "state.reset()" in source
+                else "unpatched"
+            )
+            _emit(f"해제할 TeaCache 관리 패치 없음: {source_path}", log)
+            return {
+                "status": status,
+                "path": str(source_path),
+                "backup": None,
+                "changed": False,
+            }
+        if (
+            source.count(_TEACACHE_IMPORT_PATCH) != 1
+            or source.count(_TEACACHE_MODEL_PATCH_REPLACEMENT) != 1
+        ):
+            raise NodeCompatibilityError(
+                "MiniMax H3 TeaCache 관리 패치 본문이 달라 안전하게 해제할 수 "
+                f"없습니다: {source_path}"
+            )
+
+        backup = _backup_before_write(
+            source_path,
+            requirements_dir=requirements_dir,
+            operation="before-sample-reset-unpatch",
+            log=log,
+            node_name=MINIMAX_H3_TEACACHE_NODE_NAME,
+        )
+        restored = source.replace(
+            _TEACACHE_MODEL_PATCH_REPLACEMENT,
+            _TEACACHE_MODEL_PATCH_ANCHOR,
+            1,
+        ).replace(
+            _TEACACHE_IMPORT_PATCH,
+            _TEACACHE_IMPORT_ANCHOR,
+            1,
+        )
+        compile(restored, str(source_path), "exec")
+        _atomic_write_utf8(source_path, restored, newline=newline)
+        _emit(f"TeaCache 관리 패치 해제 완료: {source_path}", log)
+        return {
+            "status": "removed",
+            "path": str(source_path),
+            "backup": str(backup),
+            "changed": True,
+        }
+    except Exception as exc:
+        print(
+            "[COMFY_INSTALL][NODE_COMPAT] MiniMax H3 TeaCache 상태 초기화 "
+            f"패치 해제 실패: path={source_path}, error={exc}"
+        )
+        traceback.print_exc()
+        if isinstance(exc, NodeCompatibilityError):
+            raise
+        raise NodeCompatibilityError(
+            f"MiniMax H3 TeaCache 상태 초기화 패치 해제 실패: {exc}"
         ) from exc
 
 

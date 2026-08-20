@@ -14,7 +14,9 @@ from comfy_installer.downloader import ResumableDownloader
 from comfy_installer.node_compatibility import (
     NodeCompatibilityError,
     apply_instant_lora_python_compatibility,
+    apply_minimax_h3_teacache_reset_compatibility,
     remove_instant_lora_python_compatibility,
+    remove_minimax_h3_teacache_reset_compatibility,
     validate_instant_lora_export_order,
 )
 from comfy_installer.node_installer import (
@@ -25,6 +27,7 @@ from comfy_installer.node_installer import (
 
 
 NODE_NAME = "comfyui-instant-lora_v_soya"
+TEACACHE_NODE_NAME = "ComfyUI-MiniMaxH3-TeaCache"
 
 
 def _legacy_runtime_source(*, version: int = 1) -> str:
@@ -82,6 +85,75 @@ def _unused_downloader() -> ResumableDownloader:
     )
 
 
+def _legacy_teacache_nodes_source() -> str:
+    return (
+        '"""ComfyUI node definitions."""\n'
+        "\n"
+        "from __future__ import annotations\n"
+        "\n"
+        "from .teacache import TeaCacheState, make_wrapper\n"
+        "\n"
+        "\n"
+        "class MiniMaxH3TeaCacheNode:\n"
+        "    def apply(self, model, rel_l1_thresh, start_step, end_step, total_steps):\n"
+        "        state = TeaCacheState()\n"
+        "        state.reset()\n"
+        "        wrapper = make_wrapper(\n"
+        "            state=state, thresh=rel_l1_thresh, start_step=start_step,\n"
+        "            end_step=end_step, total_steps=total_steps,\n"
+        "        )\n"
+        "        patched = model.clone()\n"
+        "        patched.set_model_unet_function_wrapper(wrapper)\n"
+        "        patched.model_options.setdefault(\"teacache\", {})[\"state\"] = state\n"
+        "        return (patched,)\n"
+    )
+
+
+def _write_teacache_nodes(comfy_root: Path, content: str) -> Path:
+    nodes = comfy_root / "custom_nodes" / TEACACHE_NODE_NAME / "nodes.py"
+    nodes.parent.mkdir(parents=True)
+    nodes.write_text(content, encoding="utf-8")
+    return nodes
+
+
+def test_teacache_patch_resets_state_per_sample_and_is_reversible(
+    tmp_path: Path,
+) -> None:
+    comfy_root = tmp_path / "comfy"
+    requirements = tmp_path / "requirements"
+    original = _legacy_teacache_nodes_source()
+    nodes = _write_teacache_nodes(comfy_root, original)
+
+    first = apply_minimax_h3_teacache_reset_compatibility(
+        comfy_root=comfy_root,
+        requirements_dir=requirements,
+    )
+    patched = nodes.read_text(encoding="utf-8")
+    second = apply_minimax_h3_teacache_reset_compatibility(
+        comfy_root=comfy_root,
+        requirements_dir=requirements,
+    )
+
+    assert first["status"] == "patched"
+    assert first["changed"] is True
+    assert second["status"] == "reused"
+    assert second["changed"] is False
+    assert "WrappersMP.OUTER_SAMPLE" in patched
+    assert "MiniMax H3 TeaCache state reset for sampling" in patched
+    assert "state.reset()" in patched
+    backups = list((requirements / "comfy-node-compatibility").glob("*.py"))
+    assert len(backups) == 1
+    assert backups[0].read_text(encoding="utf-8") == original
+
+    removed = remove_minimax_h3_teacache_reset_compatibility(
+        comfy_root=comfy_root,
+        requirements_dir=requirements,
+    )
+    assert removed["status"] == "removed"
+    assert removed["changed"] is True
+    assert nodes.read_text(encoding="utf-8") == original
+
+
 def _git(cwd: Path, *arguments: str) -> str:
     return subprocess.run(
         ["git", *arguments],
@@ -91,6 +163,58 @@ def _git(cwd: Path, *arguments: str) -> str:
         text=True,
         encoding="utf-8",
     ).stdout.strip()
+
+
+def test_pinned_teacache_install_applies_per_sample_reset_patch(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "teacache-source"
+    source.mkdir()
+    _git(source, "init", "-b", "main")
+    _git(source, "config", "user.name", "Comfy Installer Test")
+    _git(source, "config", "user.email", "comfy-installer@example.test")
+    (source / "nodes.py").write_text(
+        _legacy_teacache_nodes_source(),
+        encoding="utf-8",
+    )
+    _git(source, "add", "nodes.py")
+    _git(source, "commit", "-m", "teacache fixture")
+    pinned_ref = _git(source, "rev-parse", "HEAD")
+
+    comfy_root = tmp_path / "comfy"
+    node = {
+        "name": TEACACHE_NODE_NAME,
+        "source_type": "git",
+        "repository": str(source),
+        "ref": pinned_ref,
+    }
+
+    installed = install_custom_nodes(
+        nodes=[node],
+        comfy_root=comfy_root,
+        downloader=_unused_downloader(),
+        cancel_event=Event(),
+        requirements_dir=None,
+    )[0]
+
+    patched = (installed / "nodes.py").read_text(encoding="utf-8")
+    assert "comfy-installer: reset TeaCache state for every sampling run" in patched
+    assert "WrappersMP.OUTER_SAMPLE" in patched
+    assert _git(installed, "rev-parse", "HEAD") == pinned_ref
+    assert _git(installed, "status", "--porcelain", "--untracked-files=no") == (
+        "M nodes.py"
+    )
+    backups = list(
+        (
+            comfy_root
+            / ".installer-state"
+            / "backups"
+            / "node-compatibility"
+            / "comfy-node-compatibility"
+        ).glob("*.py")
+    )
+    assert len(backups) == 1
+    assert not (tmp_path / "요구사항").exists()
 
 
 def test_instant_lora_patch_uses_managed_python_and_is_reversible(

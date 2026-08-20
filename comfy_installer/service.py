@@ -983,8 +983,10 @@ class ComfyInstallerService:
             "debug_workflow_source_path": 170,
             "video_workflow_source_paths.i2v": 180,
             "video_workflow_source_paths.first_last": 190,
-            "video_workflow_source_paths.i2v_fast": 200,
-            "video_workflow_source_paths.first_last_fast": 210,
+            "video_workflow_source_paths.ref2v": 200,
+            "video_workflow_source_paths.i2v_fast": 210,
+            "video_workflow_source_paths.first_last_fast": 220,
+            "video_workflow_source_paths.ref2v_fast": 230,
         }
         return (
             min((priorities.get(key, 999) for key in keys), default=999),
@@ -1067,6 +1069,12 @@ class ComfyInstallerService:
             fast_h3_bindings = set(
                 h3_profile.get("fast_workflow_bindings", [])
             )
+            ref_h3_bindings = set(
+                h3_profile.get("ref_workflow_bindings", [])
+            )
+            ref_fast_h3_bindings = set(
+                h3_profile.get("ref_fast_workflow_bindings", [])
+            )
             is_h3_validation = bool(
                 set(validation.binding_keys).intersection(h3_bindings)
             )
@@ -1078,10 +1086,28 @@ class ComfyInstallerService:
                                 fast_h3_bindings
                             )
                         )
+                        is_ref_fast_h3_validation = bool(
+                            set(validation.binding_keys).intersection(
+                                ref_fast_h3_bindings
+                            )
+                        )
+                        is_ref_h3_validation = bool(
+                            set(validation.binding_keys).intersection(
+                                ref_h3_bindings
+                            )
+                        )
                         defaults_key = (
-                            "fast_defaults"
-                            if is_fast_h3_validation
-                            else "defaults"
+                            "ref_fast_defaults"
+                            if is_ref_fast_h3_validation
+                            else (
+                                "ref_defaults"
+                                if is_ref_h3_validation
+                                else (
+                                    "fast_defaults"
+                                    if is_fast_h3_validation
+                                    else "defaults"
+                                )
+                            )
                         )
                         h3_defaults = h3_profile.get(defaults_key, {})
                         prompt = make_e2e_prompt(
