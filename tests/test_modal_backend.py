@@ -1864,6 +1864,97 @@ def test_workflow_assets_resolve_direct_soya_cache_inputs(tmp_path: Path) -> Non
     ]
 
 
+def test_workflow_assets_skip_cache_for_asset_mode_ipa_node(tmp_path: Path) -> None:
+    """에셋 워크플로우의 자리표시자 캐시 입력이 원격 제출을 막지 않아야 한다.
+
+    SoyaIPAPatchMaker_mdsoya 는 character_names 에 asset_mode 가 있으면 캐시 입력을
+    읽지 않는다. 배포 에셋 워크플로우가 그 입력에 JSON 이 아닌 문자열을 연결해 두는
+    이유이며, 사전 검사도 같은 조건에서 건너뛰어야 한다.
+    """
+
+    input_root = tmp_path / "input"
+    input_root.mkdir()
+    positive = "\n".join(
+        [
+            "[ANIMA]",
+            "1girl, solo",
+            "[CHAR_LIST]",
+            "asset_mode",
+            "[END]",
+        ]
+    )
+    workflow = {
+        "9": {"class_type": "PrimitiveStringMultiline", "inputs": {"value": positive}},
+        "377": {
+            "class_type": "SoyaAssetV2PromptParser_mdsoya",
+            "inputs": {"text": ["9", 0]},
+        },
+        "439": {"class_type": "PrimitiveStringMultiline", "inputs": {"value": "dummmy"}},
+        "435": {
+            "class_type": "SoyaIPAPatchMaker_mdsoya",
+            "inputs": {
+                "character_names": ["377", 6],
+                "embed_cache_data": ["439", 0],
+                "ipa_cache_data": ["439", 0],
+            },
+        },
+    }
+
+    assert resolve_input_files(workflow, {"comfy_input_dir": str(input_root)}) == []
+
+
+def test_workflow_assets_skip_cache_for_inline_asset_mode_names(tmp_path: Path) -> None:
+    """character_names 가 위젯 문자열로 직접 들어와도 같은 가드가 걸린다."""
+
+    input_root = tmp_path / "input"
+    input_root.mkdir()
+    workflow = {
+        "435": {
+            "class_type": "SoyaIPAPatchMaker_mdsoya",
+            "inputs": {
+                "character_names": "asset_mode",
+                "embed_cache_data": "dummmy",
+            },
+        }
+    }
+
+    assert resolve_input_files(workflow, {"comfy_input_dir": str(input_root)}) == []
+
+
+def test_workflow_assets_keep_cache_requirement_for_named_characters(
+    tmp_path: Path,
+) -> None:
+    """에셋 가드가 삽화 경로의 필수 캐시 검사를 무력화하면 안 된다."""
+
+    input_root = tmp_path / "input"
+    input_root.mkdir()
+    positive = "\n".join(
+        [
+            "[CHAR_LIST]",
+            "alice, bob",
+            "[CACHE_PATH]",
+            json.dumps(
+                {"list": [{"emb_path": "soya_bot/sample_bot/alice/cache.pt"}]}
+            ),
+        ]
+    )
+    workflow = {
+        "9": {"class_type": "PrimitiveStringMultiline", "inputs": {"value": positive}},
+        "909": {"class_type": "SoyaPromptParser_mdsoya", "inputs": {"text": ["9", 0]}},
+        "458": {
+            "class_type": "SoyaIPAPatchMaker_mdsoya",
+            "inputs": {
+                "character_names": ["909", 6],
+                "embed_cache_data": ["909", 8],
+            },
+        },
+    }
+
+    with pytest.raises(FileNotFoundError):
+        resolve_input_files(workflow, {"comfy_input_dir": str(input_root)})
+
+
+
 def test_workflow_assets_reject_missing_soya_cache_before_remote_call(
     tmp_path: Path,
 ) -> None:

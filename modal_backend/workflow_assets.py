@@ -10,7 +10,13 @@ from typing import Any, Iterable, Mapping
 _LORA_INPUT_FIELDS = {"lora_name", "lora"}
 _IMAGE_INPUT_FIELDS = {"image"}
 _SOYA_PROMPT_PARSER_CLASS = "SoyaPromptParser_mdsoya"
+_SOYA_ASSET_PROMPT_PARSER_CLASS = "SoyaAssetV2PromptParser_mdsoya"
+_SOYA_PROMPT_PARSER_CLASSES = frozenset(
+    {_SOYA_PROMPT_PARSER_CLASS, _SOYA_ASSET_PROMPT_PARSER_CLASS}
+)
 _SOYA_IPA_PATCH_MAKER_CLASS = "SoyaIPAPatchMaker_mdsoya"
+_SOYA_CHARACTER_NAMES_FIELD = "character_names"
+_SOYA_ASSET_MODE_CHARACTER_NAME = "asset_mode"
 _SOYA_CACHE_INPUT_FIELDS = {
     "embed_cache_data": ("CACHE_PATH", "emb_path"),
     "ipa_cache_data": ("FACE_ID_DIR", "ipa_path"),
@@ -333,6 +339,65 @@ def _cache_paths_from_json(text: str, path_key: str, label: str) -> list[str]:
     return paths
 
 
+def _soya_parser_section_texts(
+    workflow: Mapping[str, Any],
+    value: Any,
+    section: str,
+) -> list[str]:
+    """링크를 거슬러 올라가 Soya 프롬프트의 특정 구간 문자열을 모은다.
+
+    원본이 Soya 프롬프트 파서(삽화·에셋 양쪽)면 파서가 그 슬롯으로 내보낼 구간만
+    떼어낸다. 파서가 아니면 문자열을 그대로 쓴다.
+    """
+
+    if isinstance(value, str):
+        return [value]
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        return []
+    source_node = _workflow_node(workflow, value[0])
+    source_is_parser = (
+        source_node is not None
+        and str(source_node.get("class_type") or "") in _SOYA_PROMPT_PARSER_CLASSES
+    )
+    texts: list[str] = []
+    for source_text in _resolve_linked_strings(workflow, value):
+        if not source_is_parser:
+            texts.append(source_text)
+            continue
+        sections = _parse_soya_prompt_sections(source_text)
+        if section in sections:
+            texts.append(sections[section])
+    return texts
+
+
+def _ipa_node_is_asset_mode(workflow: Mapping[str, Any], node: Mapping[str, Any]) -> bool:
+    """캐시 입력을 아예 읽지 않는 노드인지 판정한다.
+
+    왜 필요한가: 커스텀 노드 ``SoyaIPAPatchMaker_mdsoya`` 는 ``character_names`` 에
+    ``asset_mode`` 가 들어오면 ``ipa_cache_data``/``embed_cache_data`` 를 **파싱하지
+    않는다**(soya_ipa_patch_maker.py 의 ``is_asset_mode`` 분기). 그래서 배포 에셋
+    워크플로우는 그 두 입력에 JSON 이 아닌 자리표시자를 연결해 둔다 — 노드가 읽지
+    않으니 그것이 정상이다.
+
+    여기서 그 가드를 함께 옮기지 않으면, 로컬 실행에서는 아무 문제가 없는 워크플로우가
+    원격 제출 직전 검사에서만 JSON 파싱 오류로 막힌다. 실제로 그렇게 막혔다.
+    """
+
+    inputs = node.get("inputs")
+    if not isinstance(inputs, Mapping):
+        return False
+    texts = _soya_parser_section_texts(
+        workflow,
+        inputs.get(_SOYA_CHARACTER_NAMES_FIELD),
+        "CHAR_LIST",
+    )
+    for text in texts:
+        names = [name.strip() for name in str(text).split(",") if name.strip()]
+        if _SOYA_ASSET_MODE_CHARACTER_NAME in names:
+            return True
+    return False
+
+
 def _workflow_cache_paths(workflow: Mapping[str, Any]) -> list[str]:
     """Soya 프롬프트 프로토콜이 참조하는 필수 캐시 경로를 수집한다."""
 
@@ -344,6 +409,12 @@ def _workflow_cache_paths(workflow: Mapping[str, Any]) -> list[str]:
             continue
         inputs = node.get("inputs")
         if not isinstance(inputs, Mapping):
+            continue
+        if _ipa_node_is_asset_mode(workflow, node):
+            print(
+                "[MODAL_SYNC] 에셋 모드 IPA 노드는 캐시 입력을 읽지 않아 "
+                f"캐시 경로 수집을 건너뜁니다: node={node_id}"
+            )
             continue
 
         for field, (section, path_key) in _SOYA_CACHE_INPUT_FIELDS.items():
