@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path, PurePosixPath
+import re
 import traceback
 from typing import Any, Iterable, Mapping
 
@@ -15,6 +16,13 @@ _SOYA_PROMPT_PARSER_CLASSES = frozenset(
     {_SOYA_PROMPT_PARSER_CLASS, _SOYA_ASSET_PROMPT_PARSER_CLASS}
 )
 _SOYA_IPA_PATCH_MAKER_CLASS = "SoyaIPAPatchMaker_mdsoya"
+# SoyaFaceEmbedCache_mdsoya / …V2_mdsoya 는 참조 이미지 **폴더**를 읽는다.
+_SOYA_FACE_EMBED_CACHE_PREFIX = "SoyaFaceEmbedCache"
+_SOYA_REFERENCE_DIR_FIELD = "path"
+_SOYA_REFERENCE_DIR_SECTIONS = ("FACE_ID_DIR", "STYLE_DIR")
+# 참조 폴더는 Comfy input 아래의 평범한 상대 경로다. 링크를 거슬러 오르다 잡히는
+# 정규식 패턴이나 프롬프트 본문을 폴더 이름으로 오인하지 않도록 좁게 잡는다.
+_SOYA_REFERENCE_DIR_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$")
 _SOYA_CHARACTER_NAMES_FIELD = "character_names"
 _SOYA_ASSET_MODE_CHARACTER_NAME = "asset_mode"
 _SOYA_CACHE_INPUT_FIELDS = {
@@ -398,6 +406,58 @@ def _ipa_node_is_asset_mode(workflow: Mapping[str, Any], node: Mapping[str, Any]
     return False
 
 
+def _workflow_reference_dirs(workflow: Mapping[str, Any]) -> list[str]:
+    """참조 이미지 **폴더**를 읽는 노드가 요구하는 경로를 수집한다.
+
+    왜 필요한가: ``SoyaFaceEmbedCache_mdsoya`` 는 ``path`` 로 받은 Comfy input
+    하위 폴더를 그대로 연다. 로컬에서는 그 폴더가 디스크에 있으니 아무 문제가
+    없지만, 원격에는 명시적으로 올린 파일만 존재한다. FACE-ID 를 끄더라도
+    ``build_prompts`` 가 ``[FACE_ID_DIR]`` 기본값(``soya_char_ref/fallback``)을
+    써넣고 노드는 그것을 무조건 읽으므로, 이 폴더를 올리지 않으면 원격 실행이
+    ``Directory not found`` 로 죽는다. 실제로 그렇게 죽었다.
+    """
+
+    result: list[str] = []
+    for node_id, node in workflow.items():
+        if not isinstance(node, Mapping):
+            continue
+        if not str(node.get("class_type") or "").startswith(
+            _SOYA_FACE_EMBED_CACHE_PREFIX
+        ):
+            continue
+        inputs = node.get("inputs")
+        if not isinstance(inputs, Mapping):
+            continue
+        value = inputs.get(_SOYA_REFERENCE_DIR_FIELD)
+        texts = (
+            [value]
+            if isinstance(value, str)
+            else _resolve_linked_strings(workflow, value)
+        )
+        for text in texts:
+            # 링크를 거슬러 오르면 정규식 패턴·모드 문자열 같은 중간 노드 위젯도
+            # 함께 잡힌다. Soya 구간이 있으면 그 값만 쓰고, 없으면 경로 모양인
+            # 것만 통과시킨다.
+            sections = _parse_soya_prompt_sections(str(text))
+            candidates = [
+                sections[key]
+                for key in _SOYA_REFERENCE_DIR_SECTIONS
+                if key in sections
+            ] or [str(text)]
+            for candidate in candidates:
+                name = candidate.strip().replace("\\", "/")
+                if not name:
+                    continue
+                if not _SOYA_REFERENCE_DIR_RE.match(name):
+                    print(
+                        "[MODAL_SYNC] 참조 폴더 경로 모양이 아니어서 무시: "
+                        f"node={node_id}, value={name[:80]!r}"
+                    )
+                    continue
+                result.append(name)
+    return list(dict.fromkeys(result))
+
+
 def _workflow_cache_paths(workflow: Mapping[str, Any]) -> list[str]:
     """Soya 프롬프트 프로토콜이 참조하는 필수 캐시 경로를 수집한다."""
 
@@ -538,6 +598,31 @@ def resolve_input_files(
             print(f"[MODAL_SYNC] 입력 이미지 파일을 찾지 못해 업로드 생략: {candidate}")
             continue
         result.append({"source_path": str(candidate), "remote_name": relative.as_posix()})
+    for name in _workflow_reference_dirs(workflow):
+        relative = _safe_relative(name, "참조 이미지 폴더")
+        candidate = input_root.joinpath(*relative.parts).resolve()
+        if input_root != candidate and input_root not in candidate.parents:
+            raise ValueError(
+                f"ComfyUI input 밖의 참조 폴더는 전송할 수 없습니다: {name!r}"
+            )
+        if not candidate.is_dir():
+            print(f"[MODAL_SYNC] 참조 이미지 폴더를 찾지 못해 업로드 생략: {candidate}")
+            continue
+        files = sorted(path for path in candidate.rglob("*") if path.is_file())
+        if not files:
+            print(f"[MODAL_SYNC] 참조 이미지 폴더가 비어 있어 업로드 생략: {candidate}")
+            continue
+        for source in files:
+            result.append(
+                {
+                    "source_path": str(source),
+                    "remote_name": source.relative_to(input_root).as_posix(),
+                }
+            )
+        print(
+            f"[MODAL_SYNC] 참조 이미지 폴더 전송 대상: {relative.as_posix()} "
+            f"({len(files)}개 파일)"
+        )
     for name in cache_names:
         try:
             relative = _safe_relative(name, "필수 캐시 입력")

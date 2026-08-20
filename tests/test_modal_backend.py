@@ -1955,6 +1955,58 @@ def test_workflow_assets_keep_cache_requirement_for_named_characters(
 
 
 
+def test_workflow_assets_stage_face_embed_reference_directory(tmp_path: Path) -> None:
+    """참조 이미지 폴더는 FACE-ID를 꺼도 원격에 올라가야 한다.
+
+    SoyaFaceEmbedCache_mdsoya 는 path 폴더를 무조건 연다. build_prompts 가
+    FACE_ID_DIR 기본값을 써넣으므로, 올리지 않으면 원격이 Directory not found 로
+    죽는다.
+    """
+
+    input_root = tmp_path / "input"
+    fallback = input_root / "soya_char_ref" / "fallback"
+    fallback.mkdir(parents=True)
+    (fallback / "ref.webp").write_bytes(b"reference-image")
+    positive = "\n".join(
+        ["[FACE_ID_ACTIVATE]", "false", "[FACE_ID_DIR]", "soya_char_ref/fallback"]
+    )
+    workflow = {
+        "9": {"class_type": "PrimitiveStringMultiline", "inputs": {"value": positive}},
+        "267": {
+            "class_type": "SoyaFaceEmbedCache_mdsoya",
+            "inputs": {"path": ["9", 0]},
+        },
+    }
+
+    inputs = resolve_input_files(workflow, {"comfy_input_dir": str(input_root)})
+
+    assert inputs == [
+        {
+            "source_path": str(fallback / "ref.webp"),
+            "remote_name": "soya_char_ref/fallback/ref.webp",
+        }
+    ]
+
+
+def test_workflow_assets_ignore_non_path_reference_strings(tmp_path: Path) -> None:
+    """링크를 거슬러 오르다 잡히는 정규식·모드 문자열은 폴더로 오인하지 않는다."""
+
+    input_root = tmp_path / "input"
+    input_root.mkdir()
+    workflow = {
+        "9": {
+            "class_type": "PrimitiveStringMultiline",
+            "inputs": {"value": r"(?<=\[FACE_ID_DIR\]\n)[\s\S]+?(?=\s*\[STYLE_ACTIVATE\])"},
+        },
+        "267": {
+            "class_type": "SoyaFaceEmbedCache_mdsoya",
+            "inputs": {"path": ["9", 0]},
+        },
+    }
+
+    assert resolve_input_files(workflow, {"comfy_input_dir": str(input_root)}) == []
+
+
 def test_workflow_assets_reject_missing_soya_cache_before_remote_call(
     tmp_path: Path,
 ) -> None:
