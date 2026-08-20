@@ -3074,6 +3074,96 @@ def _comfy_connection_error_message(
     )
 
 
+def _comfy_allocation_preflight() -> list[dict]:
+    """배분된 로컬 Comfy 인스턴스가 실제로 응답하는지 기동 시 점검한다.
+
+    로컬 ComfyUI가 없는 구성(Modal 전용, macOS 등)에서는 배분이 기본값(로컬 1)
+    그대로 남아 있기 쉽고, 그러면 해당 기능은 눌러야만 실패를 알 수 있다.
+    기동 시 한 번 알려주면 진단 시간이 크게 줄어든다. 진단 전용이라 실패해도
+    서버 기동을 막지 않는다.
+    """
+
+    findings: list[dict] = []
+    try:
+        allocations = normalize_comfy_task_allocations(
+            app_config.get("comfy_task_allocations"),
+            legacy_illustration_port=app_config.get("comfyui_port_illustration"),
+        )
+    except Exception as exc:
+        print(f"[COMFY_PREFLIGHT] 배분 조회 실패, 점검 생략: {type(exc).__name__}: {exc}")
+        return findings
+
+    reachable: dict[int, bool] = {}
+
+    def _alive(port: int) -> bool:
+        if port not in reachable:
+            probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            probe.settimeout(0.25)
+            try:
+                reachable[port] = probe.connect_ex((REAL_COMFY_HOST, port)) == 0
+            except OSError:
+                reachable[port] = False
+            finally:
+                probe.close()
+        return reachable[port]
+
+    for task_key, label, _description in COMFY_TASK_DEFINITIONS:
+        target = allocations.get(task_key)
+        if target in REMOTE_COMFY_TARGETS:
+            continue
+        try:
+            port = resolve_comfy_port(task_key)
+        except Exception:
+            continue
+        if _alive(port):
+            continue
+        findings.append(
+            {
+                "task": task_key,
+                "label": label,
+                "instance": target,
+                "port": port,
+                "remote_capable": task_key in MODAL_SUPPORTED_COMFY_TASK_KEYS,
+            }
+        )
+    return findings
+
+
+def _log_comfy_allocation_preflight(settle_seconds: float = 0.0) -> None:
+    """자동 시작된 인스턴스가 포트를 잡을 때까지 잠깐 기다린 뒤 점검한다."""
+
+    try:
+        findings = _comfy_allocation_preflight()
+        if findings and settle_seconds > 0:
+            deadline = time.monotonic() + settle_seconds
+            while findings and time.monotonic() < deadline:
+                time.sleep(1.0)
+                findings = _comfy_allocation_preflight()
+    except Exception as exc:
+        print(f"[COMFY_PREFLIGHT] 점검 실패: {type(exc).__name__}: {exc}")
+        traceback.print_exc()
+        return
+    if not findings:
+        print("[COMFY_PREFLIGHT] 모든 작업이 응답 가능한 대상에 배분되어 있습니다.")
+        return
+    remote_capable = [item for item in findings if item["remote_capable"]]
+    print(
+        f"[COMFY_PREFLIGHT] ⚠ 응답하지 않는 로컬 ComfyUI에 배분된 작업 {len(findings)}건 "
+        "— 실행하면 즉시 실패합니다."
+    )
+    for item in findings:
+        suffix = " (원격 실행 지원 — MODAL로 바꿀 수 있음)" if item["remote_capable"] else ""
+        print(
+            f"[COMFY_PREFLIGHT]   - {item['label']}({item['task']}): "
+            f"Comfy #{item['instance']} {REAL_COMFY_HOST}:{item['port']} 무응답{suffix}"
+        )
+    if remote_capable:
+        print(
+            f"[COMFY_PREFLIGHT] 그중 {len(remote_capable)}건은 설정 → Comfy 런타임에서 "
+            "배분을 MODAL로 바꾸면 바로 동작합니다."
+        )
+
+
 async def submit_to_real_comfy(
     prompt_data: dict,
     port: int | None = None,
@@ -30538,6 +30628,9 @@ async def on_startup(app):
             f"error={type(e).__name__}: {e}"
         )
         traceback.print_exc()
+    # 배분 점검은 자동 시작 '뒤'에 해야 한다. 앞서 하면 이제 막 뜨는 인스턴스를
+    # 무응답으로 오보한다. 기동 직후에는 아직 포트를 못 잡았을 수 있어 잠깐 기다린다.
+    await asyncio.to_thread(_log_comfy_allocation_preflight, settle_seconds=20.0)
     try:
         await asyncio.to_thread(
             autostart_video_engine,

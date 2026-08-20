@@ -80,3 +80,24 @@ def test_preflight_skips_remote_targets():
     body = _slice_function(_source(), "_comfy_allocation_preflight")
     assert "REMOTE_COMFY_TARGETS" in body
     assert "continue" in body
+
+
+def test_preflight_runs_after_autostart():
+    """프리플라이트가 자동 시작 '뒤'에 있어야 한다.
+
+    앞서 실행하면 이제 막 뜨는 인스턴스를 '무응답'으로 오보한다 —
+    실제로 그런 오보가 관측되어 순서를 바로잡았다.
+    """
+    startup = _slice_function(_source(), "on_startup")
+    assert "autostart_comfy_instances" in startup
+    assert "_log_comfy_allocation_preflight" in startup
+    assert startup.index("autostart_comfy_instances") < startup.index(
+        "_log_comfy_allocation_preflight"
+    ), "프리플라이트가 자동 시작보다 먼저 실행된다 — 오보가 난다"
+
+
+def test_preflight_waits_for_instances_to_settle():
+    """기동 직후 포트를 못 잡은 상태를 오보하지 않도록 재시도한다."""
+    body = _slice_function(_source(), "_log_comfy_allocation_preflight")
+    assert "settle_seconds" in body
+    assert "time.monotonic()" in body
