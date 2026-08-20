@@ -827,9 +827,14 @@ class QueueManager:
         mapped = mapping.get(item.type)
         if mapped:
             return mapped
-        if item.type == "tag_analysis" and isinstance(item.params, dict):
-            if str(item.params.get("source") or "") in ("instance_lora", "style_lora"):
+        if item.type == "tag_analysis":
+            # LoRA 계열 태그 분석은 학습과 같은 대상에서 돌아야 한다.
+            if isinstance(item.params, dict) and str(
+                item.params.get("source") or ""
+            ) in ("instance_lora", "style_lora"):
                 return "instance_lora"
+            # None 을 돌려주면 레인 판정이 건너뛰어져 배분 설정이 조용히 무시된다.
+            return "tag_analysis"
         return None
 
     def _comfy_execution_policy(

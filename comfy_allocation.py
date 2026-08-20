@@ -43,6 +43,13 @@ DEFAULT_COMFY_TASK_ALLOCATIONS = {key: 1 for key in COMFY_TASK_KEYS}
 MODAL_COMFY_TARGET = "modal"
 VAST_COMFY_TARGET = "vast"
 VIDEO_ENGINE_COMFY_TARGET = "video_engine"
+# 원격에서 실행할 수 있는 작업.
+#
+# 기준은 "GPU 가 필요한가" 가 아니라 **결과를 원격에서 회수할 길이 있는가** 다.
+# 컨테이너 파일시스템은 휘발성이라, 결과는 이미지 바이트·text_outputs·볼륨
+# artifact 중 하나로 돌아와야 한다. 그러지 못하면 실행이 성공해도 쓸모가 없다.
+#
+# 빠진 작업은 회수 경로가 아직 없거나 워크플로우가 배포되지 않아 판단할 수 없다.
 MODAL_SUPPORTED_COMFY_TASK_KEYS = frozenset(
     {
         "illustration",
@@ -53,6 +60,7 @@ MODAL_SUPPORTED_COMFY_TASK_KEYS = frozenset(
         "bot_lora_training",
         "instance_lora",
         "video_generation",
+        "tag_analysis",
     }
 )
 VAST_SUPPORTED_COMFY_TASK_KEYS = MODAL_SUPPORTED_COMFY_TASK_KEYS
