@@ -24096,6 +24096,22 @@ _tunnel_url: str | None = None
 _cloudflared_path: str | None = None
 _tunnel_stderr_task: asyncio.Task | None = None
 
+def _cloudflared_asset(system: str, machine: str) -> tuple[str, str]:
+    """(릴리스 자산 이름, 저장할 파일명).
+
+    macOS 자산만 tgz 아카이브다. Windows 는 arm64 자산이 없어 amd64 를 쓴다.
+    """
+    name = machine.lower()
+    arch = "arm64" if name in ("arm64", "aarch64") else (
+        "arm" if name.startswith("arm") else "amd64"
+    )
+    if system == "Windows":
+        return "cloudflared-windows-amd64.exe", "cloudflared.exe"
+    if system == "Darwin":
+        return f"cloudflared-darwin-{arch}.tgz", "cloudflared"
+    return f"cloudflared-linux-{arch}", "cloudflared"
+
+
 async def _ensure_cloudflared() -> str:
     """cloudflared 바이너리 경로 반환. 없으면 자동 다운로드."""
     global _cloudflared_path
@@ -24111,15 +24127,42 @@ async def _ensure_cloudflared() -> str:
     import platform, urllib.request
     local_dir = os.path.join(os.path.dirname(__file__), ".bin")
     os.makedirs(local_dir, exist_ok=True)
-    if platform.system() == "Windows":
-        bin_path = os.path.join(local_dir, "cloudflared.exe")
-        url = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe"
-    else:
-        bin_path = os.path.join(local_dir, "cloudflared")
-        url = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64"
+    asset, filename = _cloudflared_asset(platform.system(), platform.machine())
+    bin_path = os.path.join(local_dir, filename)
+    url = (
+        "https://github.com/cloudflare/cloudflared/releases/latest/download/"
+        + asset
+    )
+    archive = asset.endswith(".tgz")
     if not os.path.exists(bin_path):
-        print("[INFO] cloudflared 다운로드 중...")
-        urllib.request.urlretrieve(url, bin_path)
+        print(f"[INFO] cloudflared 다운로드 중... url={url}")
+        if archive:
+            import tarfile, tempfile
+            with tempfile.TemporaryDirectory(prefix="cloudflared_") as temp_dir:
+                tgz_path = os.path.join(temp_dir, "cloudflared.tgz")
+                urllib.request.urlretrieve(url, tgz_path)
+                with tarfile.open(tgz_path, "r:gz") as archive_file:
+                    member = next(
+                        (
+                            m for m in archive_file.getmembers()
+                            if m.isfile()
+                            and os.path.basename(m.name) == "cloudflared"
+                        ),
+                        None,
+                    )
+                    if member is None:
+                        raise RuntimeError(
+                            f"cloudflared 아카이브에 실행 파일이 없습니다: {url}"
+                        )
+                    extracted = archive_file.extractfile(member)
+                    if extracted is None:
+                        raise RuntimeError(
+                            f"cloudflared 실행 파일을 읽지 못했습니다: {member.name}"
+                        )
+                    with extracted, open(bin_path, "wb") as handle:
+                        shutil.copyfileobj(extracted, handle)
+        else:
+            urllib.request.urlretrieve(url, bin_path)
         os.chmod(bin_path, 0o755)
         print(f"[INFO] cloudflared 다운로드 완료: {bin_path}")
     _cloudflared_path = bin_path
