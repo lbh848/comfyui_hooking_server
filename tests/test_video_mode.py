@@ -507,6 +507,55 @@ def test_final_prompt_writer_preserves_state_aspect_and_user_modifiers() -> None
     assert "preserving all timing and intensity modifiers" in combined
 
 
+def test_final_prompt_writer_preserves_effectors_contacts_and_causal_handoffs() -> None:
+    messages = VideoMode._prompt_messages(
+        "first_last",
+        (
+            "인물이 오른손으로 병을 잡아 선반에 올린 뒤, 오른손을 놓고 "
+            "왼손으로 병을 지지하면서 오른손으로 뚜껑을 닫는다"
+        ),
+        visual_context=(
+            "visual_context:\nPicture 1: A person holds a bottle at waist height.\n\n"
+            "Picture 2: The closed bottle rests on a shelf."
+        ),
+        duration=8,
+    )
+    system_content = str(messages[0]["content"])
+    user_content = str(messages[1]["content"])
+
+    assert "acting subject, the exact effector or body part" in system_content
+    assert "not interchangeable with a light touch" in system_content
+    assert "kind and strength of manipulation" in system_content
+    assert "release, travel, re-contact, and secure regrip" in system_content
+    assert "contact, separation, alignment, attachment, support, and occlusion" in system_content
+    assert "recovery path and renewed contact" in system_content
+    assert "does not by itself prove a hidden physical relationship" in system_content
+    assert "driver, the driven participant or object, the path or axis of force" in system_content
+    assert "shorten lower-priority embellishment" in system_content
+    assert "simultaneous use of one effector for incompatible tasks" in system_content
+    assert "Return no audit or checklist" in system_content
+    assert "If a visible first-frame contact differs from the target" in user_content
+    assert "never rewrite the first-frame contact" in user_content
+    assert "every named actor, effector, target, and manipulation type literal" in user_content
+    assert "During an intervening action" in user_content
+    assert "return and regrip" in user_content
+    assert "a grip requires the named gripper to close around" in user_content
+    assert "Immediately before each dependent action" in user_content
+    assert "name the temporary support that takes over" in user_content
+    assert "never leave that interval physically implicit" in user_content
+    assert "오른손으로 병을 잡아" in user_content
+
+    i2v_user_content = str(
+        VideoMode._prompt_messages(
+            "i2v",
+            "인물이 오른손의 병을 내려놓고 손을 뗀다",
+            visual_context="visual_context:\nPicture 1: A person holds a bottle.",
+        )[1]["content"]
+    )
+    assert "Final continuity priority:" in i2v_user_content
+    assert "never leave that interval physically implicit" in i2v_user_content
+
+
 def test_final_prompt_writer_limits_new_props_lighting_and_downstream_events() -> None:
     messages = VideoMode._prompt_messages(
         "i2v",
@@ -621,6 +670,13 @@ def test_instruction_refine_prompt_expands_into_mechanics_and_result() -> None:
     assert "material response" in combined
     assert "synchronized physical sound" in combined
     assert "physically necessary connecting movements" in combined
+    assert "exact actor, active hand, limb, tool or other effector" in combined
+    assert "kind and strength of contact" in combined
+    assert "Do not soften a secure grip" in combined
+    assert "release, travel, re-contact, and regrip" in combined
+    assert "Treat contact and support as continuing states" in combined
+    assert "priority over invented reactions" in combined
+    assert "without returning an audit" in combined
     assert "clearly readable result" in combined
     assert "do not invent a distinct gesture, gaze shift, expression change, interaction, or narrative event" in combined
     assert "restrained secondary motion that preserves the visible pose, expression, gaze, and object relationships" in combined
@@ -650,6 +706,13 @@ def test_instruction_direct_prompt_uses_active_prompt_and_supplied_duration() ->
     task_message = str(messages[1]["content"])
 
     assert system_message == video_module.INSTRUCTION_DIRECT_SYSTEM_PROMPT
+    assert "exact actor, active hand, limb, tool or other effector" in system_message
+    assert "kind and strength of contact" in system_message
+    assert "Do not soften a secure grip" in system_message
+    assert "release, travel, re-contact, and regrip" in system_message
+    assert "Treat contact and support as continuing states" in system_message
+    assert "priority over invented reactions" in system_message
+    assert "without returning an audit" in system_message
     assert user_direction in task_message
     assert f"{duration:g}-second" in task_message
     assert "12-second" not in task_message
