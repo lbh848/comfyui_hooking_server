@@ -486,7 +486,7 @@ def runtime_probe_script(
 
     return "\n".join(
         (
-            "import json,site,sys,traceback,torch,numpy,cv2,onnxruntime,insightface",
+            "import json,os,site,sys,traceback,torch,numpy,cv2,onnxruntime,insightface",
             f"requires_nvidia={requires_nvidia!r}",
             f"requires_triton={requires_triton!r}",
             f"requires_sageattention={requires_sageattention!r}",
@@ -535,6 +535,12 @@ def runtime_probe_script(
             "else:",
             "    result['gpu_acceleration_validation']='skipped: CPU profile'",
             "print(json.dumps(result,ensure_ascii=False))",
+            # onnxruntime 텔레메트리 스레드가 업로드 중인 채로 인터프리터 종료와
+            # 겹치면 SIGSEGV 가 난다. 정리할 상태가 없는 일회성 프로브라 종료
+            # 경로를 건너뛴다 — 진짜 문제는 여기 오기 전에 예외로 드러난다.
+            "sys.stdout.flush()",
+            "sys.stderr.flush()",
+            "os._exit(0)",
         )
     )
 
