@@ -20,17 +20,31 @@ import zipfile
 PROJECT_ROOT = Path(__file__).resolve().parent
 TOOLS_ROOT = PROJECT_ROOT / ".tools"
 
+IS_WINDOWS = os.name == "nt"
+EXE_SUFFIX = ".exe" if IS_WINDOWS else ""
+
 REALESRGAN_VERSION = "0.2.5.0"
-REALESRGAN_ARCHIVE_NAME = "realesrgan-ncnn-vulkan-20220424-windows.zip"
+# macOS 자산은 x86_64+arm64 universal 바이너리다.
+# Linux 자산은 해시를 검증하지 못해 등록하지 않는다.
+REALESRGAN_PACKAGES = {
+    "win32": (
+        "realesrgan-ncnn-vulkan-20220424-windows.zip",
+        "abc02804e17982a3be33675e4d471e91ea374e65b70167abc09e31acb412802d",
+    ),
+    "darwin": (
+        "realesrgan-ncnn-vulkan-20220424-macos.zip",
+        "e0ad05580abfeb25f8d8fb55aaf7bedf552c375b5b4d9bd3c8d59764d2cc333a",
+    ),
+}
+_REALESRGAN_PACKAGE = REALESRGAN_PACKAGES.get(sys.platform)
+REALESRGAN_ARCHIVE_NAME = _REALESRGAN_PACKAGE[0] if _REALESRGAN_PACKAGE else ""
+REALESRGAN_SHA256 = _REALESRGAN_PACKAGE[1] if _REALESRGAN_PACKAGE else ""
 REALESRGAN_URL = (
     "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/"
     + REALESRGAN_ARCHIVE_NAME
 )
-REALESRGAN_SHA256 = (
-    "abc02804e17982a3be33675e4d471e91ea374e65b70167abc09e31acb412802d"
-)
 REALESRGAN_DIR = TOOLS_ROOT / "realesrgan-ncnn-vulkan"
-REALESRGAN_EXE = REALESRGAN_DIR / "realesrgan-ncnn-vulkan.exe"
+REALESRGAN_EXE = REALESRGAN_DIR / f"realesrgan-ncnn-vulkan{EXE_SUFFIX}"
 
 FFMPEG_VERSION = "8.1.2"
 FFMPEG_ARCHIVE_NAME = f"ffmpeg-{FFMPEG_VERSION}-essentials_build.zip"
@@ -41,8 +55,18 @@ FFMPEG_SHA256 = (
     "db580001caa24ac104c8cb856cd113a87b0a443f7bdf47d8c12b1d740584a2ec"
 )
 FFMPEG_DIR = TOOLS_ROOT / "ffmpeg"
-FFMPEG_EXE = FFMPEG_DIR / "bin" / "ffmpeg.exe"
-FFPROBE_EXE = FFMPEG_DIR / "bin" / "ffprobe.exe"
+
+
+def _resolve_tool(name: str, project_local: Path) -> Path:
+    """Windows 는 프로젝트 로컬 빌드, 그 외 OS 는 시스템 PATH 를 쓴다."""
+    if IS_WINDOWS:
+        return project_local
+    found = shutil.which(name)
+    return Path(found) if found else project_local
+
+
+FFMPEG_EXE = _resolve_tool("ffmpeg", FFMPEG_DIR / "bin" / f"ffmpeg{EXE_SUFFIX}")
+FFPROBE_EXE = _resolve_tool("ffprobe", FFMPEG_DIR / "bin" / f"ffprobe{EXE_SUFFIX}")
 
 # Anime4K의 mpv 호환 GLSL 셰이더를 FFmpeg libplacebo로 실행할 때만 설치한다.
 # 기본 AVIF/WebP 인코딩은 위 essentials 빌드를 계속 사용한다.
@@ -54,7 +78,9 @@ FFMPEG_FULL_SHA256 = (
     "0fff188997a499b5382e0f66e845d4556c48c54f0113ebed4853d556dbdd7059"
 )
 FFMPEG_FULL_DIR = TOOLS_ROOT / "ffmpeg-full"
-FFMPEG_FULL_EXE = FFMPEG_FULL_DIR / "bin" / "ffmpeg.exe"
+FFMPEG_FULL_EXE = _resolve_tool(
+    "ffmpeg", FFMPEG_FULL_DIR / "bin" / f"ffmpeg{EXE_SUFFIX}"
+)
 
 ANIME4K_VERSION = "4.0.1"
 ANIME4K_DIR = TOOLS_ROOT / f"anime4k-{ANIME4K_VERSION}"
@@ -328,9 +354,15 @@ def _realesrgan_validation_error() -> str | None:
 def ensure_realesrgan() -> Path:
     global _REALESRGAN_VERIFIED
     with _INSTALL_LOCK:
-        if os.name != "nt":
-            message = "Real-ESRGAN 자동 설치는 Windows에서만 지원합니다"
-            print(f"[VIDEO_TOOLS:REALESRGAN][ERROR] {message}: os.name={os.name!r}")
+        if _REALESRGAN_PACKAGE is None:
+            message = (
+                "Real-ESRGAN 자동 설치를 지원하지 않는 플랫폼입니다"
+                f"(지원: {', '.join(sorted(REALESRGAN_PACKAGES))})"
+            )
+            print(
+                f"[VIDEO_TOOLS:REALESRGAN][ERROR] {message}: "
+                f"sys.platform={sys.platform!r}"
+            )
             raise RuntimeError(message)
 
         if _REALESRGAN_VERIFIED and REALESRGAN_EXE.is_file():
@@ -359,12 +391,15 @@ def ensure_realesrgan() -> Path:
                 extract_dir = Path(temp_name) / "extracted"
                 _extract_zip_safely(archive_path, extract_dir, "REALESRGAN")
                 staged_error = None
-                staged_exe = extract_dir / "realesrgan-ncnn-vulkan.exe"
+                staged_exe = extract_dir / REALESRGAN_EXE.name
                 if not staged_exe.is_file():
                     staged_error = f"실행 파일 누락: {staged_exe}"
                 if staged_error:
                     print(f"[VIDEO_TOOLS:REALESRGAN][ERROR] {staged_error}")
                     raise RuntimeError("Real-ESRGAN 패키지 구성이 올바르지 않습니다")
+                # ZIP 은 POSIX 실행 비트를 보존하지 않으므로 직접 부여한다.
+                if not IS_WINDOWS:
+                    staged_exe.chmod(staged_exe.stat().st_mode | 0o755)
                 _replace_directory(extract_dir, REALESRGAN_DIR, "REALESRGAN")
         except Exception as exc:
             print(
@@ -489,13 +524,64 @@ def _ffmpeg_validation_error(*, smoke_test: bool = True) -> str | None:
     return None
 
 
+def _system_ffmpeg_validation_error() -> str | None:
+    """시스템 ffmpeg 을 핀 버전 대신 필요한 인코더/먹서 유무로 검증한다."""
+    if not FFMPEG_EXE.is_file():
+        return "ffmpeg 을 PATH 에서 찾지 못했습니다"
+    if not FFPROBE_EXE.is_file():
+        return "ffprobe 를 PATH 에서 찾지 못했습니다"
+    try:
+        encoder_output = _run_checked(
+            [str(FFMPEG_EXE), "-hide_banner", "-encoders"], "FFMPEG"
+        )
+        muxer_output = _run_checked(
+            [str(FFMPEG_EXE), "-hide_banner", "-muxers"], "FFMPEG"
+        )
+        required_tokens = {
+            "AV1 encoder": (encoder_output, "libaom-av1"),
+            "animated WebP encoder": (encoder_output, "libwebp_anim"),
+            "AVIF muxer": (muxer_output.lower(), "avif"),
+        }
+        missing = [
+            label
+            for label, (haystack, needle) in required_tokens.items()
+            if needle not in haystack
+        ]
+        if missing:
+            return "필수 기능 누락: " + ", ".join(missing)
+    except Exception as exc:
+        print(
+            "[VIDEO_TOOLS:FFMPEG][ERROR] 시스템 ffmpeg 검증 중 예외: "
+            f"error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        return f"기능 검증 실패: {type(exc).__name__}: {exc}"
+    return None
+
+
+def _ensure_system_ffmpeg() -> Path:
+    """Windows 외 OS: 시스템에 설치된 ffmpeg 을 검증해 사용한다."""
+    global _FFMPEG_VERIFIED
+    if _FFMPEG_VERIFIED and FFMPEG_EXE.is_file():
+        return FFMPEG_EXE
+    validation_error = _system_ffmpeg_validation_error()
+    if validation_error is not None:
+        message = f"사용 가능한 시스템 FFmpeg 이 없습니다: {validation_error}"
+        print(
+            f"[VIDEO_TOOLS:FFMPEG][ERROR] {message} "
+            "(macOS: brew install ffmpeg)"
+        )
+        raise RuntimeError(message)
+    _FFMPEG_VERIFIED = True
+    print(f"[VIDEO_TOOLS:FFMPEG] 시스템 FFmpeg 사용: exe={FFMPEG_EXE}")
+    return FFMPEG_EXE
+
+
 def ensure_ffmpeg() -> Path:
     global _FFMPEG_VERIFIED
     with _INSTALL_LOCK:
-        if os.name != "nt":
-            message = "FFmpeg 자동 설치는 Windows에서만 지원합니다"
-            print(f"[VIDEO_TOOLS:FFMPEG][ERROR] {message}: os.name={os.name!r}")
-            raise RuntimeError(message)
+        if not IS_WINDOWS:
+            return _ensure_system_ffmpeg()
 
         if _FFMPEG_VERIFIED and FFMPEG_EXE.is_file():
             return FFMPEG_EXE
@@ -592,13 +678,44 @@ def _ffmpeg_full_validation_error() -> str | None:
     return None
 
 
+def _ensure_system_ffmpeg_full() -> Path:
+    """Windows 외 OS: Anime4K(libplacebo custom shader) 가능한 시스템 ffmpeg 확인."""
+    global _FFMPEG_FULL_VERIFIED
+    if _FFMPEG_FULL_VERIFIED and FFMPEG_FULL_EXE.is_file():
+        return FFMPEG_FULL_EXE
+    if not FFMPEG_FULL_EXE.is_file():
+        message = "ffmpeg 을 PATH 에서 찾지 못했습니다"
+        print(f"[VIDEO_TOOLS:FFMPEG_FULL][ERROR] {message} (macOS: brew install ffmpeg)")
+        raise RuntimeError(message)
+    try:
+        filter_output = _run_checked(
+            [str(FFMPEG_FULL_EXE), "-hide_banner", "-filters"],
+            "FFMPEG_FULL_FILTERS",
+        )
+    except Exception as exc:
+        print(
+            "[VIDEO_TOOLS:FFMPEG_FULL][ERROR] 필터 목록 조회 실패: "
+            f"error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        raise
+    if "libplacebo" not in filter_output.lower():
+        message = (
+            "시스템 FFmpeg 에 libplacebo 필터가 없어 Anime4K 를 쓸 수 없습니다. "
+            "Real-ESRGAN 업스케일을 사용하세요"
+        )
+        print(f"[VIDEO_TOOLS:FFMPEG_FULL][ERROR] {message}: exe={FFMPEG_FULL_EXE}")
+        raise RuntimeError(message)
+    _FFMPEG_FULL_VERIFIED = True
+    print(f"[VIDEO_TOOLS:FFMPEG_FULL] 시스템 FFmpeg 사용: exe={FFMPEG_FULL_EXE}")
+    return FFMPEG_FULL_EXE
+
+
 def ensure_ffmpeg_full() -> Path:
     global _FFMPEG_FULL_VERIFIED
     with _INSTALL_LOCK:
-        if os.name != "nt":
-            message = "Anime4K용 FFmpeg 자동 설치는 Windows에서만 지원합니다"
-            print(f"[VIDEO_TOOLS:FFMPEG_FULL][ERROR] {message}: os.name={os.name!r}")
-            raise RuntimeError(message)
+        if not IS_WINDOWS:
+            return _ensure_system_ffmpeg_full()
         if _FFMPEG_FULL_VERIFIED and FFMPEG_FULL_EXE.is_file():
             return FFMPEG_FULL_EXE
         validation_error = _ffmpeg_full_validation_error()
