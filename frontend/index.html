@@ -22843,12 +22843,15 @@
                                 <div class="comfy-installer-actions" style="margin-top:10px;">
                                     <button type="button" class="comfy-installer-btn primary" id="modal-installer-start-btn" onclick="modalInstallerStart()">선택 워크플로우·모델 동기화</button>
                                     <button type="button" class="comfy-installer-btn" id="modal-runtime-workflow-query-btn" onclick="modalRuntimeQueryWorkflows()">워크플로우 동기화 조회</button>
+                                    <button type="button" class="comfy-installer-btn" id="modal-model-inventory-btn" onclick="modalQueryModelInventory()">Remote 모델 Inventory</button>
                                     <button type="button" class="comfy-installer-btn" id="modal-lora-sync-open-btn" onclick="modalOpenLoraSync()">LoRA 동기화</button>
                                     <button type="button" class="comfy-installer-btn" id="modal-runtime-redeploy-btn" onclick="modalRuntimeRedeploy()">앱·Custom Node 재배포</button>
                                     <button type="button" class="comfy-installer-btn" onclick="modalInstallerLoadCatalog()">목록 새로고침</button>
                                 </div>
                                 <p class="comfy-installer-note" id="modal-installer-selection-summary" style="margin-top:8px;">선택 없음</p>
                                 <p class="comfy-installer-note" id="modal-runtime-workflow-query-status" style="margin-top:6px;">조회하면 로컬과 원격 워크플로우의 SHA-256 동기화 상태를 표시합니다.</p>
+                                <p class="comfy-installer-note" id="modal-model-inventory-status" style="margin-top:6px;">모델 다운로드 경로가 'Cloud Direct'로 설정된 경우 로컬에 사본이 생성되지 않으므로, Modal Volume의 내용을 이곳에서 확인합니다.</p>
+                                <div id="modal-model-inventory-list" class="comfy-workflow-list" style="margin-top:6px; max-height:220px; overflow:auto;" hidden></div>
                                 <p class="comfy-installer-note" id="modal-runtime-deployment-status" style="margin-top:6px;">앱 재배포는 작업 App과 웹 App의 코드·Custom Node 환경만 갱신하며, 동기화된 워크플로우·모델은 건드리지 않습니다.</p>
                                 <div class="modal-install-progress modal-deploy-progress" id="modal-deploy-progress" data-state="idle" hidden>
                                     <div class="modal-install-progress-head">
@@ -40320,6 +40323,46 @@
                 console.error('[MODAL_RUNTIME] 원격 워크플로우 조회 실패:', error);
                 if (status) status.textContent = '원격 조회 실패: ' + (error.message || error);
                 showToast('Modal 원격 워크플로우 조회 실패: ' + (error.message || error), 'error');
+            } finally {
+                if (button) button.disabled = false;
+            }
+        }
+
+        async function modalQueryModelInventory() {
+            const button = document.getElementById('modal-model-inventory-btn');
+            const status = document.getElementById('modal-model-inventory-status');
+            const list = document.getElementById('modal-model-inventory-list');
+            if (button) button.disabled = true;
+            if (status) status.textContent = 'Modal Volume의 Model 및 LoRA 목록을 조회 중입니다...';
+            try {
+                const data = await fetchJSON('/api/modal/models');
+                const summary = data.summary || {};
+                const items = Array.isArray(data.items) ? data.items : [];
+                const orphans = Array.isArray(data.orphans) ? data.orphans : [];
+                // 진단 목적이므로 결손 및 크기 불일치 항목을 정상 항목보다 먼저 노출합니다.
+                const problems = items.filter(item => item.state === 'missing' || !item.size_match);
+                const rows = [...problems, ...orphans];
+                if (list) {
+                    list.hidden = false;
+                    list.innerHTML = rows.length ? rows.map(item => {
+                        const label = item.state === 'orphan'
+                            ? 'Orphan (Manifest 누락)'
+                            : (item.state === 'missing' ? 'Remote 누락' : '용량 불일치');
+                        const name = escapeHtml(String(item.id || item.path || ''));
+                        const path = escapeHtml(String(item.path || ''));
+                        const kind = item.kind === 'lora' ? 'loras Volume' : 'models Volume';
+                        return `<div class="comfy-workflow-user-file"><strong>${name}</strong><small>${label} · ${kind} · ${path}</small></div>`;
+                    }).join('') : '<div class="comfy-workflow-empty">Manifest 데이터와 Volume 내용이 모두 일치합니다.</div>';
+                }
+                const totalGiB = ((Number(summary.model_bytes || 0) + Number(summary.lora_bytes || 0)) / (1024 ** 3)).toFixed(2);
+                if (status) {
+                    status.textContent = `기대 ${Number(summary.expected || 0)}개 · 존재 ${Number(summary.present || 0)}개 · 누락 ${Number(summary.missing || 0)}개 · 용량 불일치 ${Number(summary.size_mismatch || 0)}개 · Orphan ${Number(summary.orphans || 0)}개 · Volume 크기 ${totalGiB} GiB (저장 공간에 따른 과금이 발생합니다)`;
+                }
+                showToast('Remote 모델 Inventory를 조회했습니다.', 'success');
+            } catch (error) {
+                console.error('[MODAL_RUNTIME] Remote 모델 Inventory 조회 실패:', error);
+                if (status) status.textContent = 'Remote 모델 Inventory 조회 실패: ' + (error.message || error);
+                showToast('Remote 모델 Inventory 조회 실패: ' + (error.message || error), 'error');
             } finally {
                 if (button) button.disabled = false;
             }

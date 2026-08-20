@@ -668,6 +668,98 @@ def _sync_files(
     return {"uploaded": len(uploads), "skipped": skipped}
 
 
+def _list_volume_files(
+    volume: modal.Volume,
+    *,
+    label: str,
+    skip_paths: frozenset[str],
+) -> list[dict]:
+    """볼륨의 파일을 (경로, 크기, mtime)으로 나열한다.
+
+    cloud_direct 에서는 로컬에 사본이 없어 사용자가 볼륨 내용을 확인할 방법이
+    없다. 인페인팅에서 겪은 ``lllite_name: '...' not in []`` 류를 진단하려면
+    "무엇이 볼륨에 있나"를 볼 수 있어야 한다.
+    """
+
+    try:
+        entries = volume.listdir("/", recursive=True)
+    except (FileNotFoundError, modal.exception.NotFoundError):
+        return []
+    except Exception as exc:
+        print(
+            f"[MODAL_CLIENT] 원격 {label} 목록 조회 실패: "
+            f"error={type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
+        traceback.print_exc(file=sys.stderr)
+        raise
+
+    files: list[dict] = []
+    for entry in entries:
+        entry_type = str(getattr(getattr(entry, "type", None), "name", "") or "")
+        if entry_type and entry_type != "FILE":
+            continue
+        relative = str(getattr(entry, "path", "") or "").replace("\\", "/").lstrip("/")
+        if not relative or f"/{relative}" in skip_paths:
+            continue
+        try:
+            safe_path = _safe_remote_path(relative)
+        except ValueError as exc:
+            print(
+                f"[MODAL_CLIENT] 안전하지 않은 원격 {label} 항목 제외: "
+                f"path={relative!r}, error={exc}",
+                file=sys.stderr,
+            )
+            continue
+        files.append(
+            {
+                "path": safe_path,
+                "size": max(0, int(getattr(entry, "size", 0) or 0)),
+                "mtime": int(getattr(entry, "mtime", 0) or 0),
+            }
+        )
+    files.sort(key=lambda item: item["path"].casefold())
+    return files
+
+
+def list_models(payload: dict) -> dict:
+    """models·loras 볼륨의 파일 목록 (원격 인벤토리).
+
+    두 볼륨을 함께 본다 — 이 앱은 LoRA 를 별도 볼륨에 두고, 그 라우팅을 틀리면
+    업로드는 성공하는데 ComfyUI 목록에는 안 뜨는 조용한 실패가 된다.
+    """
+
+    app_name = str(payload["app_name"])
+    environment = str(payload["environment"])
+    models_volume = modal.Volume.from_name(
+        f"{app_name}-models",
+        environment_name=environment,
+        create_if_missing=False,
+    )
+    loras_volume = modal.Volume.from_name(
+        f"{app_name}-loras",
+        environment_name=environment,
+        create_if_missing=False,
+    )
+    models = _list_volume_files(
+        models_volume,
+        label="모델",
+        skip_paths=frozenset({MODEL_SYNC_MANIFEST_PATH}),
+    )
+    loras = _list_volume_files(
+        loras_volume,
+        label="LoRA",
+        skip_paths=frozenset({LORA_SYNC_MANIFEST_PATH}),
+    )
+    return {
+        "models": models,
+        "loras": loras,
+        "model_bytes": sum(int(item["size"]) for item in models),
+        "lora_bytes": sum(int(item["size"]) for item in loras),
+    }
+
+
+
 def _sync_environment(payload: dict) -> dict:
     app_name = str(payload["app_name"])
     environment = str(payload["environment"])
@@ -1966,6 +2058,8 @@ def main() -> int:
             result = install(payload)
         elif action == "list_workflows":
             result = list_workflows(payload)
+        elif action == "list_models":
+            result = list_models(payload)
         elif action == "read_workflow":
             result = read_workflow(payload)
         elif action == "generate":

@@ -1092,7 +1092,13 @@ class ModalService:
     ) -> dict[str, Any]:
         # 생성·변환·설치 등 쓰기 작업은 호출마다 반드시 독립 실행한다. 상태 UI가
         # 사용하는 읽기 전용 명령만 동일 payload 기준 single-flight로 합친다.
-        shared_actions = {"runtime_stats", "web_status", "runtime_logs", "list_loras"}
+        shared_actions = {
+            "runtime_stats",
+            "web_status",
+            "runtime_logs",
+            "list_loras",
+            "list_models",
+        }
         if action not in shared_actions:
             return await self._run_client_action_once(
                 settings,
@@ -3110,6 +3116,26 @@ class ModalService:
                 cache_age_seconds=0.0,
             )
 
+
+    async def volume_storage(self) -> dict[str, Any]:
+        """볼륨 저장 용량. 저장만으로도 과금되는데 로컬 디스크와 달리 체감되지 않는다.
+
+        비용 조회는 UI 가 주기적으로 부르므로 여기에 볼륨 나열을 끼워 넣지 않는다.
+        필요할 때만(?volumes=1) 따로 조회한다.
+        """
+
+        inventory = await self.model_inventory()
+        summary = inventory.get("summary") or {}
+        model_bytes = int(summary.get("model_bytes") or 0)
+        lora_bytes = int(summary.get("lora_bytes") or 0)
+        return {
+            "model_bytes": model_bytes,
+            "lora_bytes": lora_bytes,
+            "total_bytes": model_bytes + lora_bytes,
+            "total_gib": round((model_bytes + lora_bytes) / 1024**3, 2),
+            "orphan_count": int(summary.get("orphans") or 0),
+        }
+
     async def billing(self, *, force_refresh: bool = False) -> dict[str, Any]:
         settings = ModalSettings.from_mapping(self.get_config())
         if not settings.enabled:
@@ -3128,6 +3154,108 @@ class ModalService:
             settings,
             force_refresh=force_refresh,
         )
+
+    def _expected_remote_models(self) -> dict[str, dict[str, Any]]:
+        """매니페스트가 정의한 '원격에 있어야 할' 파일 (볼륨 기준 상대경로 → 모델).
+
+        매니페스트의 relative_path 는 ``models/...`` 로 시작한다. models 볼륨은
+        ``/root/ComfyUI/models`` 에 붙으므로 그 선두를 벗기고, LoRA 는 별도
+        볼륨(``/loras``)이라 ``loras/`` 까지 벗긴다 — 이 라우팅을 틀리면
+        업로드는 성공하는데 ComfyUI 목록에는 안 뜨는 조용한 실패가 된다.
+        """
+
+        expected: dict[str, dict[str, Any]] = {}
+        try:
+            manifest = load_manifest(self.project_root)
+        except Exception as exc:
+            print(
+                "[MODAL_INVENTORY] 매니페스트 조회 실패, 기대 목록 없이 진행합니다: "
+                f"{type(exc).__name__}: {exc}"
+            )
+            return expected
+        for entry in manifest.get("models", []) or []:
+            relative = str(entry.get("relative_path") or "").strip()
+            if not relative:
+                continue
+            volume_path = relative.split("models/", 1)[-1]
+            kind = "lora" if volume_path.startswith("loras/") else "model"
+            key = volume_path[len("loras/"):] if kind == "lora" else volume_path
+            expected[f"{kind}:{key}"] = {
+                "id": str(entry.get("id") or ""),
+                "kind": kind,
+                "path": key,
+                "size": int(entry.get("size") or 0),
+                "auth": entry.get("auth"),
+            }
+        return expected
+
+    async def model_inventory(self) -> dict[str, Any]:
+        """원격 볼륨의 모델 인벤토리 (모델 단위).
+
+        cloud_direct 에서는 로컬에 사본이 없어 사용자가 볼륨을 확인할 방법이
+        없다. 워크플로우 단위 조회(/api/modal/workflows/remote)로는 모델 하나가
+        빠진 것을 알 수 없어, 인페인팅에서 겪은 ``... not in []`` 류를 진단할 수
+        없었다.
+        """
+
+        settings = ModalSettings.from_mapping(self.get_config())
+        if not settings.enabled:
+            raise RuntimeError("Modal이 꺼져 있습니다.")
+        remote = await self._run_client_action(
+            settings,
+            "list_models",
+            timeout=180,
+        )
+        present: dict[str, dict[str, Any]] = {}
+        for item in remote.get("models") or []:
+            present[f"model:{item['path']}"] = {**item, "kind": "model"}
+        for item in remote.get("loras") or []:
+            present[f"lora:{item['path']}"] = {**item, "kind": "lora"}
+
+        expected = self._expected_remote_models()
+        items: list[dict[str, Any]] = []
+        for key, meta in sorted(expected.items()):
+            found = present.get(key)
+            items.append(
+                {
+                    **meta,
+                    "state": "present" if found else "missing",
+                    "remote_size": int(found["size"]) if found else 0,
+                    # 크기가 다르면 다른 파일이다. 매니페스트 sha256 검증은
+                    # 워커가 받을 때 하므로 여기서는 값싼 크기 대조만 한다.
+                    "size_match": bool(found and int(found["size"]) == int(meta["size"])),
+                }
+            )
+        orphans = [
+            {**value, "state": "orphan", "id": ""}
+            for key, value in sorted(present.items())
+            if key not in expected
+        ]
+        summary = {
+            "expected": len(expected),
+            "present": sum(1 for item in items if item["state"] == "present"),
+            "missing": sum(1 for item in items if item["state"] == "missing"),
+            "size_mismatch": sum(
+                1
+                for item in items
+                if item["state"] == "present" and not item["size_match"]
+            ),
+            "orphans": len(orphans),
+            "model_bytes": int(remote.get("model_bytes") or 0),
+            "lora_bytes": int(remote.get("lora_bytes") or 0),
+        }
+        print(
+            "[MODAL_INVENTORY] 원격 모델 인벤토리: "
+            f"기대 {summary['expected']}개 · 존재 {summary['present']}개 · "
+            f"결손 {summary['missing']}개 · 고아 {summary['orphans']}개 · "
+            f"{(summary['model_bytes'] + summary['lora_bytes']) / 1024**3:.2f} GiB"
+        )
+        return {
+            "items": items,
+            "orphans": orphans,
+            "summary": summary,
+            "model_source": settings.model_source,
+        }
 
     async def _sync_models_direct(
         self,
