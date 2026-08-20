@@ -4155,6 +4155,10 @@ class QueueManager:
         # 쓴다. 회수 수단이 다를 뿐 산출물은 같다.
         execution_target = str(CURRENT_COMFY_EXECUTION_TARGET.get() or "")
         face_cropped_bytes = None
+        # 아래 실패 진단에서 쓰는 값. 로컬 분기에서만 채워지므로 여기서 미리
+        # 둔다 — 없으면 원격 분기의 실패가 NameError 로 바뀌어, 정작 원인을
+        # 봐야 할 순간에 원인이 가려진다.
+        real_outputs: dict = {}
         if execution_target in REMOTE_COMFY_TARGETS:
             provider_label = (
                 "Modal" if execution_target == MODAL_COMFY_TARGET else "Vast"
@@ -4226,7 +4230,9 @@ class QueueManager:
         if not face_cropped_bytes:
             raise ValueError(
                 f"추출 결과 이미지를 찾을 수 없음 "
-                f"(prompt_id={extract_prompt_id}, outputs_keys={list(real_outputs.keys())})"
+                f"(target={execution_target or 'local'}, "
+                f"prompt_id={extract_prompt_id}, "
+                f"outputs_keys={list(real_outputs.keys())})"
             )
 
         # 추출된 얼굴을 인스턴스 로라에 저장
