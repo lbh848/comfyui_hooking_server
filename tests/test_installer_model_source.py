@@ -437,3 +437,54 @@ def test_civitai_key_is_not_required_for_remote_only_models(tmp_path):
     scope = service._scope_selected_models(MODELS)
     assert scope.keep == ()
     assert any(m.get("auth") == "civitai" for m in scope.skipped)
+
+
+def test_cloud_only_install_mode_scopes_before_config_is_written(tmp_path):
+    """설치 순서가 만드는 함정을 막는다.
+
+    설치는 모델을 먼저 받고(`models` 단계) 설정을 나중에 적용한다(`config` 단계).
+    클라우드 전용 설치가 config.json 에만 반영되면, 정작 다운로드를 정하는
+    시점에는 아직 옛 설정(local_first · 전부 로컬)이 보여서 매니페스트 전체를
+    로컬로 받아 놓고 그 다음에 "클라우드 전용" 이라고 적게 된다. 이 모드의
+    이득이 통째로 사라지는 조용한 실패다.
+
+    그래서 여기서는 config.json 이 **정반대로** 적혀 있는 상태를 만들어 두고,
+    선언된 설치 모드만으로 스코프가 좁혀지는지 본다.
+    """
+
+    from comfy_allocation import MODAL_SUPPORTED_COMFY_TASK_KEYS
+    from comfy_installer.install_modes import INSTALL_MODE_CLOUD_ONLY
+
+    service = _service_with_config(
+        tmp_path,
+        {
+            "modal_model_source": "local_first",
+            "comfy_task_allocations": _allocations(
+                local_tasks=sorted(MODAL_SUPPORTED_COMFY_TASK_KEYS)
+            ),
+        },
+    )
+    scope = service._scope_selected_models(
+        MODELS, install_mode=INSTALL_MODE_CLOUD_ONLY
+    )
+    assert scope.model_source == MODEL_SOURCE_CLOUD_DIRECT
+    assert {m["id"] for m in scope.keep} == EXPECTED_LOCAL_MODEL_IDS
+
+
+def test_standard_install_mode_still_obeys_config(tmp_path):
+    """클라우드 전용이 아닌 설치는 예전과 똑같이 config.json 을 따른다."""
+
+    from comfy_installer.install_modes import INSTALL_MODE_STANDARD
+
+    service = _service_with_config(
+        tmp_path,
+        {
+            "modal_model_source": "local_first",
+            "comfy_task_allocations": _all_remote_supported(),
+        },
+    )
+    scope = service._scope_selected_models(
+        MODELS, install_mode=INSTALL_MODE_STANDARD
+    )
+    assert scope.model_source == MODEL_SOURCE_LOCAL_FIRST
+    assert {m["id"] for m in scope.keep} == {m["id"] for m in MODELS}

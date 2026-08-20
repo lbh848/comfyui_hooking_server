@@ -11,6 +11,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
+from comfy_allocation import (
+    CLOUD_ONLY_DEFAULT_COMFY_TASK_ALLOCATIONS,
+    CLOUD_ONLY_DEFAULT_MODEL_SOURCE,
+)
+
+from .install_modes import INSTALL_MODE_CLOUD_ONLY, INSTALL_MODE_STANDARD
+
 
 class ConfigUpdateError(RuntimeError):
     """설치 완료 후 프로젝트 설정 적용 또는 복원 실패."""
@@ -819,6 +826,27 @@ def retarget_config_to_embedded_comfy(
         raise ConfigUpdateError(f"내장 Comfy 설정 경로 전환 실패: {exc}") from exc
 
 
+def _cloud_only_config_updates() -> dict[str, Any]:
+    """클라우드 전용 설치가 config.json 에 적용할 값.
+
+    이 값들을 **덮어쓴다.** 기본값을 채우는 것이 아니라 설치 모드가 뜻하는 바를
+    적용하는 것이다 — 사용자가 "클라우드 전용" 을 고른 뒤에도 배분이 로컬로
+    남아 있으면 모델이 로컬로 내려가고, 고른 의미가 사라진다. 같은 이유로 이
+    함수는 감지가 아니라 **선언된 설치 모드** 로만 호출된다.
+
+    modal_enabled 를 함께 켠다. 배분만 원격으로 두고 Modal 을 꺼 두면 큐가
+    갈 곳이 없다.
+    """
+
+    return {
+        "comfy_task_allocations": dict(
+            CLOUD_ONLY_DEFAULT_COMFY_TASK_ALLOCATIONS
+        ),
+        "modal_model_source": CLOUD_ONLY_DEFAULT_MODEL_SOURCE,
+        "modal_enabled": True,
+    }
+
+
 def apply_installed_config(
     *,
     config_path: str | os.PathLike[str],
@@ -829,6 +857,7 @@ def apply_installed_config(
     default_workflow_bindings: Mapping[str, str] | None = None,
     workflow_base_dir: str | os.PathLike[str] | None = None,
     comfy_port: int = 8188,
+    install_mode: str = INSTALL_MODE_STANDARD,
 ) -> ConfigUpdateResult:
     config_file = Path(config_path).resolve()
     backup_root = Path(requirements_dir).resolve()
@@ -889,6 +918,8 @@ def apply_installed_config(
         }
         if normalized_base_dir is not None:
             direct_updates["workflow_base_dir"] = normalized_base_dir
+        if str(install_mode) == INSTALL_MODE_CLOUD_ONLY:
+            direct_updates.update(_cloud_only_config_updates())
         updated.update(direct_updates)
 
         backup_root.mkdir(parents=True, exist_ok=True)

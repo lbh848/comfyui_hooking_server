@@ -25210,6 +25210,7 @@
                             <div class="comfy-installer-actions">
                                 <button type="button" class="comfy-installer-btn primary" id="comfy-installer-start-btn" onclick="comfyInstallerStart('standard')">새로 설치</button>
                                 <button type="button" class="comfy-installer-btn" id="comfy-installer-compat-start-btn" onclick="comfyInstallerStart('nvidia_compatibility')">호환 설치</button>
+                                <button type="button" class="comfy-installer-btn" id="comfy-installer-cloud-start-btn" onclick="comfyInstallerStart('cloud_only')" title="로컬 GPU 없이 Modal Worker를 통해 생성 작업을 수행합니다. 모델은 원격 저장소에서 Modal Volume으로 직접 다운로드되며, 로컬 환경에는 원격으로 보낼 수 없는 작업용 모델만 다운로드됩니다.">Cloud-Only 설치</button>
                                 <button type="button" class="comfy-installer-btn" id="comfy-installer-update-btn" onclick="comfyInstallerStartUpdate()">업데이트</button>
                                 <button type="button" class="comfy-installer-btn" id="comfy-installer-e2e-btn" onclick="comfyInstallerOpenE2EModal()">E2E 검사</button>
                                 <button type="button" class="comfy-installer-btn danger" id="comfy-installer-cancel-btn" onclick="comfyInstallerCancel()" disabled>안전하게 중단</button>
@@ -37934,6 +37935,7 @@
             const progress = data.progress || {};
             const startButton = document.getElementById('comfy-installer-start-btn');
             const compatibilityStartButton = document.getElementById('comfy-installer-compat-start-btn');
+            const cloudOnlyStartButton = document.getElementById('comfy-installer-cloud-start-btn');
             const updateButton = document.getElementById('comfy-installer-update-btn');
             const e2eButton = document.getElementById('comfy-installer-e2e-btn');
             const sageEnableButton = document.getElementById('comfy-installer-sage-enable-btn');
@@ -38022,6 +38024,7 @@
             const running = state === 'running';
             if (startButton) startButton.disabled = running;
             if (compatibilityStartButton) compatibilityStartButton.disabled = running;
+            if (cloudOnlyStartButton) cloudOnlyStartButton.disabled = running;
             if (updateButton) updateButton.disabled = running;
             if (e2eButton) e2eButton.disabled = running;
             if (sageEnableButton) sageEnableButton.disabled = running || comfyInstallerPatchSageModeBusy;
@@ -38115,19 +38118,27 @@
             if (!releaseVersion) { showToast('먼저 워크플로우 팩을 풀어주세요', 'warning'); return; }
             if (!selectedItemIds.length) { showToast('가져올 워크플로우를 하나 이상 선택하세요', 'warning'); return; }
             const compatibilityMode = installMode === 'nvidia_compatibility';
+            const cloudOnlyMode = installMode === 'cloud_only';
             if (compatibilityMode && !window.confirm(
                 'NVIDIA 호환 설치를 시작할까요?\n\n' +
                 'RTX 2070/2080 같은 Turing(sm75)부터 지원하기 위해 SageAttention과 전용 Triton을 설치하지 않습니다.\n' +
                 '설치 후 사용하는 워크플로우에서 SageAttention 노드를 제거하거나 disabled로 설정해야 합니다.'
             )) return;
+            // 과금 방식이 변경되는 선택이므로 반드시 사용자 확인을 거칩니다.
+            if (cloudOnlyMode && !window.confirm(
+                'Cloud-Only 방식으로 설치하시겠습니까?\n\n' +
+                '원격으로 보낼 수 있는 모든 작업이 Modal Worker에 할당되며, 모델 다운로드 경로가 ' +
+                '"Cloud Direct"로 변경됩니다. Modal 연동 기능도 함께 활성화됩니다.\n' +
+                '로컬 환경에는 원격으로 처리할 수 없는 작업에 필요한 모델만 다운로드됩니다.\n\n' +
+                '기존의 작업 배분 설정은 덮어씌워지며, GPU 사용량에 따라 Modal 요금이 발생합니다.'
+            )) return;
             if (!(await comfyInstallerSaveCivitaiKey(true))) return;
             if (!(await comfyInstallerRunPreflight(true, true, installMode))) return;
 
-            const startButton = document.getElementById(
-                compatibilityMode
-                    ? 'comfy-installer-compat-start-btn'
-                    : 'comfy-installer-start-btn'
-            );
+            let startButtonId = 'comfy-installer-start-btn';
+            if (compatibilityMode) startButtonId = 'comfy-installer-compat-start-btn';
+            else if (cloudOnlyMode) startButtonId = 'comfy-installer-cloud-start-btn';
+            const startButton = document.getElementById(startButtonId);
             let accepted = false;
             if (startButton) startButton.disabled = true;
             comfyInstallerSetError('');
@@ -38145,12 +38156,10 @@
                 });
                 accepted = true;
                 comfyInstallerRenderStatus(started);
-                showToast(
-                    compatibilityMode
-                        ? 'ComfyUI NVIDIA 호환 설치를 시작했습니다'
-                        : 'ComfyUI 설치를 시작했습니다',
-                    'success'
-                );
+                let startedMessage = 'ComfyUI 설치를 시작합니다.';
+                if (compatibilityMode) startedMessage = 'ComfyUI NVIDIA 호환 설치를 시작합니다.';
+                else if (cloudOnlyMode) startedMessage = 'ComfyUI Cloud-Only 설치를 시작합니다.';
+                showToast(startedMessage, 'success');
                 clearTimeout(comfyInstallerPollTimer);
                 comfyInstallerPollTimer = setTimeout(() => comfyInstallerRefreshStatus(false), 500);
             } catch (error) {

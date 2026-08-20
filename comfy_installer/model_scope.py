@@ -13,11 +13,16 @@
 머신도 macOS 와 똑같은 처지이고, 똑같은 이득을 본다. 이 모듈에 ``platform`` 분기가
 들어가면 그건 버그다.
 
-로컬 실행이 남아 있는 한 로컬 모델도 남는다 — Modal 미지원 4종
-(``utility_debug``·``face_extract``·``tag_analysis``·``outfit``)은 로컬에서 돌고,
-그중 ``utility_debug`` 가 만드는 ``cache.pt`` 가 없으면 등록 캐릭터 삽화가
-통째로 막힌다. 그래서 cloud_direct 는 "아무것도 안 받는다"가 아니라
-"로컬 실행에 필요한 만큼만 받는다"로 귀결된다.
+로컬 실행이 남아 있는 한 로컬 모델도 남는다. 그래서 cloud_direct 는
+"아무것도 안 받는다"가 아니라 "로컬 실행에 필요한 만큼만 받는다"로 귀결된다.
+
+남은 로컬 전용은 두 종뿐이다 — ``outfit``(워크플로우가 배포되지 않아 모델 요구
+사항조차 알 수 없다)과 ``face_extract``(원격 분기는 있으나 미검증). 한때 여기
+있던 ``utility_debug`` 와 ``tag_analysis`` 는 회수 경로가 생겨 원격으로 옮겼다.
+특히 ``utility_debug`` 가 만드는 ``cache.pt`` 는 없으면 등록 캐릭터 삽화가 통째로
+막히는 파일이라, 이것이 원격에서 돌게 된 것이 로컬 0에 가까운 구성을 가능하게
+했다. 정확한 목록은 언제나 ``MODAL_SUPPORTED_COMFY_TASK_KEYS`` 가 기준이다 —
+여기 적힌 이름은 설명이고, 판단 근거로 쓰면 안 된다.
 """
 
 from __future__ import annotations

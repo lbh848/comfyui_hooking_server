@@ -51,7 +51,9 @@ from .e2e import (
     promote_generated_fixture,
     validate_all_workflows,
 )
+from comfy_allocation import CLOUD_ONLY_DEFAULT_COMFY_TASK_ALLOCATIONS
 from .install_modes import (
+    INSTALL_MODE_CLOUD_ONLY,
     INSTALL_MODE_NVIDIA_COMPATIBILITY,
     INSTALL_MODE_STANDARD,
     compatibility_warning,
@@ -465,6 +467,7 @@ class ComfyInstallerService:
                 for model_id in requirements["model_ids"]
                 if model_id in models_by_id
             ],
+            install_mode=install_mode,
             manifest=pack_manifest,
         )
         return {
@@ -996,6 +999,7 @@ class ComfyInstallerService:
         self,
         models: list[dict[str, Any]],
         *,
+        install_mode: str = INSTALL_MODE_STANDARD,
         manifest: InstallManifest | None = None,
     ) -> ModelScope:
         """설치기가 실제로 로컬에 받을 모델을 정한다.
@@ -1005,14 +1009,28 @@ class ComfyInstallerService:
         못하면 ``local_first`` 로 본다 — 모르는 상태에서 다운로드를 건너뛰면
         나중에 조용히 실패하기 때문이다.
 
-        ``manifest`` 는 바인딩→모델 대응을 읽을 매니페스트다. 팩이 자기완결형이라
-        ``models`` 는 팩 동봉 매니페스트에서 오므로, 워크플로우 바인딩도 **같은
-        매니페스트**에서 읽어야 한다. 저장소 매니페스트와 섞으면 팩 버전이 다를 때
-        바인딩이 어긋나, 로컬에 필요한 모델을 조용히 건너뛴다.
+        ``install_mode`` 를 받는 이유는 **순서** 때문이다. 설치는 모델을 먼저 받고
+        (`models` 단계) 설정을 나중에 적용한다(`config` 단계). 그래서 클라우드 전용
+        설치가 config.json 에만 반영되면, 정작 다운로드를 정하는 이 시점에는 아직
+        옛 설정(local_first · 전부 로컬)이 보인다 — 모델을 전부 로컬로 받아 놓고
+        그 다음에 "클라우드 전용" 이라고 적는 꼴이 된다. 선언된 설치 모드를 직접
+        보게 해서 그 창을 없앤다.
+
+        ``manifest`` 는 바인딩→모델 대응을 읽을 매니페스트다. 팩이 자기완결형이
+        된 뒤로 ``models`` 는 팩 동봉 매니페스트에서 오므로, 워크플로우 바인딩도
+        **같은 매니페스트**에서 읽어야 한다. 저장소 매니페스트와 섞으면 팩 버전이
+        다를 때 바인딩이 어긋나, 로컬에 필요한 모델을 조용히 건너뛴다.
         """
 
         config = self._read_config()
         active_manifest = manifest or self.manifest
+        if str(install_mode) == INSTALL_MODE_CLOUD_ONLY:
+            return scope_models(
+                models,
+                workflows=active_manifest.workflows,
+                allocations=CLOUD_ONLY_DEFAULT_COMFY_TASK_ALLOCATIONS,
+                model_source=MODEL_SOURCE_CLOUD_DIRECT,
+            )
         raw_source = str(config.get("modal_model_source") or "").strip().lower()
         if raw_source not in {MODEL_SOURCE_LOCAL_FIRST, MODEL_SOURCE_CLOUD_DIRECT}:
             if raw_source:
@@ -1849,6 +1867,7 @@ class ComfyInstallerService:
                     for model_id in selection_info["model_ids"]
                     if model_id in models_by_id
                 ],
+                install_mode=install_mode,
                 manifest=pack_manifest,
             )
             self._set_phase("preflight")
@@ -1903,6 +1922,7 @@ class ComfyInstallerService:
                 )
             model_scope = self._scope_selected_models(
                 [models_by_id[model_id] for model_id in selection.model_ids],
+                install_mode=install_mode,
                 manifest=pack_manifest,
             )
             selected_models = list(model_scope.keep)
@@ -2032,6 +2052,10 @@ class ComfyInstallerService:
 
             self._set_phase("config")
             workflow_base_dir = self._embedded_workflow_base_dir()
+            # 설치 모드를 넘긴다. 클라우드 전용 설치는 여기서 배분과 모델 취득
+            # 경로까지 적용된다 — 워크플로우 업데이트 경로에는 넘기지 않는다.
+            # 설치는 구성을 선언하는 행위지만 업데이트는 아니라서, 업데이트가
+            # 사용자의 이후 변경을 되돌리면 안 된다.
             config_update = apply_installed_config(
                 config_path=self.config_path,
                 requirements_dir=self.config_backup_dir,
@@ -2040,6 +2064,7 @@ class ComfyInstallerService:
                 required_bindings=selection.workflow_bindings.keys(),
                 default_workflow_bindings=None,
                 workflow_base_dir=workflow_base_dir,
+                install_mode=install_mode,
             )
 
             runtime_receipt = write_runtime_receipt(

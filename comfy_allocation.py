@@ -73,6 +73,43 @@ NONLOCAL_COMFY_TARGETS = frozenset(
 DEFAULT_COMFY_TASK_MODAL_PARALLEL = {key: False for key in COMFY_TASK_KEYS}
 DEFAULT_COMFY_TASK_VAST_PARALLEL = {key: False for key in COMFY_TASK_KEYS}
 
+# 클라우드 전용 구성의 기본 배분.
+#
+# **표가 아니라 유도값이다.** MODAL_SUPPORTED_COMFY_TASK_KEYS 를 그대로 따라가므로
+# 위 집합에 키가 하나 늘면(예: face_extract 실측 후) 이 기본값도 같이 따라온다.
+# 두 곳을 손으로 맞추면 반드시 어긋난다 — 실제로 배분 키와 작업 키 매핑이
+# 어긋나 설정이 조용히 무시된 전례가 있다.
+#
+# 원격 미지원 작업은 로컬(1)로 남는다. "클라우드 전용" 은 원격에 보낼 수 있는
+# 것을 전부 보낸다는 뜻이지, 보낼 수 없는 것까지 보낸다는 뜻이 아니다.
+CLOUD_ONLY_DEFAULT_COMFY_TASK_ALLOCATIONS = {
+    key: (MODAL_COMFY_TARGET if key in MODAL_SUPPORTED_COMFY_TASK_KEYS else 1)
+    for key in COMFY_TASK_KEYS
+}
+# 클라우드 전용에서는 모델도 저장소 → 원격 볼륨으로 직접 받는다.
+# 로컬에서 실행할 작업이 (거의) 없는데 로컬로 먼저 받는 것은 의미가 없다.
+CLOUD_ONLY_DEFAULT_MODEL_SOURCE = "cloud_direct"
+
+
+def default_comfy_task_allocations(*, cloud_only: bool = False) -> dict[str, Any]:
+    """설치 구성에 맞는 기본 배분을 돌려준다.
+
+    ``cloud_only`` 는 **판정이 아니라 선언**이어야 한다. cloud_only_assessment()
+    는 배분이 이미 전부 원격일 때 참이 되므로, 그 값으로 배분의 기본값을 정하면
+    순환이다(전부 원격이어야 참 → 참이어야 전부 원격). 그래서 이 함수는 호출자가
+    "클라우드 전용으로 설치한다" 고 선언한 경우에만 원격 기본값을 준다.
+
+    이미 저장된 설정을 바꾸지 않는다. 기본값은 값이 **없을 때** 쓰는 것이고,
+    있는 값을 덮으면 사용자가 고른 과금 경로를 말없이 바꾸는 셈이 된다.
+    """
+
+    source = (
+        CLOUD_ONLY_DEFAULT_COMFY_TASK_ALLOCATIONS
+        if cloud_only
+        else DEFAULT_COMFY_TASK_ALLOCATIONS
+    )
+    return dict(source)
+
 # 작업 종류 ↔ 설치 매니페스트 워크플로우 바인딩 id.
 #
 # 왜 필요한가: 모델을 저장소에서 원격 볼륨으로 직접 받는 구성에서 설치기가
@@ -202,6 +239,12 @@ def cloud_only_assessment(
 
     판정은 **권고용**이다. 이 값으로 설정을 자동으로 바꾸지 않는다 — 모델 취득
     경로가 바뀌면 무엇을 받고 무엇에 과금되는지가 달라지므로 사용자가 골라야 한다.
+
+    이 값으로 기본 배분을 정하려 들면 순환이다: 조건 2가 "배분이 전부 원격"
+    이므로, 전부 원격이어야 참이 되고 참이어야 전부 원격이 된다. 클라우드 전용
+    구성을 **선언**하는 통로는 따로 있다 — 설치 모드 ``cloud_only`` 와
+    CLOUD_ONLY_DEFAULT_COMFY_TASK_ALLOCATIONS. 이 함수는 그 선언이 실제로
+    반영됐는지 사후에 확인하는 쪽으로만 쓴다.
     """
 
     source = allocations if isinstance(allocations, dict) else {}
