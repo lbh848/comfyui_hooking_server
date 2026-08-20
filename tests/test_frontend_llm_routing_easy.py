@@ -33,10 +33,10 @@ def test_every_llm_route_has_an_explicit_text_or_vision_modality() -> None:
     frontend = _frontend()
     entries = _routing_task_entries(frontend)
 
-    assert len(entries) == 26
+    assert len(entries) == 28
     assert all("modality: 'text'" in entry or "modality: 'vision'" in entry for entry in entries)
-    assert sum("modality: 'text'" in entry for entry in entries) == 18
-    assert sum("modality: 'vision'" in entry for entry in entries) == 8
+    assert sum("modality: 'text'" in entry for entry in entries) == 19
+    assert sum("modality: 'vision'" in entry for entry in entries) == 9
 
     vision_keys = {
         re.search(r"key: '([^']+)'", entry).group(1)
@@ -52,6 +52,7 @@ def test_every_llm_route_has_an_explicit_text_or_vision_modality() -> None:
         "character_maker_feedback",
         "video_prompt_i2v",
         "video_prompt_first_last",
+        "video_prompt_ref2v",
     }
 
 

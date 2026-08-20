@@ -95,6 +95,26 @@ def test_fast_video_defaults_keep_mp_choice_and_reject_ultrawide() -> None:
         server.normalize_video_generation_defaults(settings)
 
 
+def test_fast_ref_defaults_allow_544p_ultrawide_and_config_has_both_paths() -> None:
+    settings = copy.deepcopy(server.DEFAULT_VIDEO_GENERATION_DEFAULTS)
+    settings.update(
+        {
+            "mode": "ref2v",
+            "workflow_variant": "fast",
+            "aspect_ratio": "21:9",
+        }
+    )
+    settings.pop("quality_level")
+
+    normalized = server.normalize_video_generation_defaults(settings)
+
+    assert normalized["mode"] == "ref2v"
+    assert normalized["aspect_ratio"] == "21:9"
+    assert normalized["quality_level"] == "native"
+    assert server.DEFAULT_CONFIG["video_workflow_source_paths"]["ref2v"] == ""
+    assert server.DEFAULT_CONFIG["video_workflow_source_paths"]["ref2v_fast"] == ""
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [

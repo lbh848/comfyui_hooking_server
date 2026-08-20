@@ -212,10 +212,10 @@ LLM_TYPES = frozenset({
     "bot_llm_face_tag_analysis",    # 비전 LLM 기반 얼굴/눈 태그 자동 분류
     "character_maker",              # 캐릭터 메이커 draft/feedback LLM 수정 (revise)
     "qwen_edit_translate",          # Qwen Edit 지시문 영어 번역
-    "video_instruction_draft",      # H3 I2V/FLF2V 편집용 AI 연출 초안
-    "video_instruction_refine",     # H3 I2V/FLF2V 사용자 입력 다듬기(풍부한 묘사로 확장)
-    "video_instruction_direct",     # H3 I2V/FLF2V 지시로써 다듬기(방향 지시 기반 연출 창작)
-    "video_prompt_build",           # H3 I2V/FLF2V 프롬프트 작성
+    "video_instruction_draft",      # H3 I2V/FLF2V/REF2V 편집용 AI 연출 초안
+    "video_instruction_refine",     # H3 I2V/FLF2V/REF2V 사용자 입력 다듬기
+    "video_instruction_direct",     # H3 I2V/FLF2V/REF2V 방향 지시 기반 연출 창작
+    "video_prompt_build",           # H3 I2V/FLF2V/REF2V 프롬프트 작성
 })
 
 VIDEO_POSTPROCESS_TYPE = "video_postprocess"
@@ -246,6 +246,7 @@ def video_postprocess_label(params: dict) -> str:
     prefix = {
         "i2v": "H3 I2V",
         "first_last": "H3 FLF2V",
+        "ref2v": "H3 REF2V",
         "reprocess": "영상 재후처리",
     }.get(mode, "영상")
 
@@ -806,6 +807,7 @@ class QueueManager:
             "qwen_edit": "qwen_edit",
             "video_i2v": "video_generation",
             "video_first_last": "video_generation",
+            "video_ref2v": "video_generation",
             "asset_lora_training": "asset_lora_training",
             "bot_lora_training": "bot_lora_training",
             "instance_lora_training": "instance_lora",
@@ -2636,6 +2638,7 @@ class QueueManager:
             "video_prompt_build": self._handle_video_prompt_build,
             "video_i2v": self._handle_video_render,
             "video_first_last": self._handle_video_render,
+            "video_ref2v": self._handle_video_render,
             VIDEO_POSTPROCESS_TYPE: self._handle_video_postprocess,
             "asset_lora_training": self._handle_asset_lora_training,
             "bot_lora_training": self._handle_bot_lora_training,
@@ -2893,6 +2896,7 @@ class QueueManager:
         render_type = {
             "i2v": "video_i2v",
             "first_last": "video_first_last",
+            "ref2v": "video_ref2v",
         }.get(mode)
         if not render_type:
             print(
@@ -2915,6 +2919,7 @@ class QueueManager:
             label = {
                 "i2v": f"H3 I2V {duration_label} 영상화",
                 "first_last": f"H3 FLF2V {duration_label} 영상화",
+                "ref2v": f"H3 REF2V {duration_label} 영상화",
             }[mode]
             if workflow_variant == "fast":
                 label = label.replace("H3 ", "H3 고속 ", 1)

@@ -25,6 +25,7 @@ from modes.video_mode import (
     extract_visual_prompt_core,
     normalize_h3_prompt_body,
     normalize_instruction_draft,
+    normalize_ref2v_prompt_body,
     normalize_video_duration,
     normalize_visual_context,
     resolve_fast_resolution,
@@ -33,6 +34,7 @@ from modes.video_mode import (
     validate_h3_prompt,
     validate_h3_prompt_body,
     validate_instruction_draft,
+    validate_ref2v_prompt_body,
     validate_visual_context,
     video_workflow_config_key,
 )
@@ -133,6 +135,19 @@ def _valid_body(prefix: str = "") -> str:
         + "[Shot 1] A subject moves continuously while the camera slowly pushes in slightly.\n\n"
         + "overall_soundscape:\nA quiet room with subtle movement sounds.\n\n"
         + "non_diegetic_music:\nNo music."
+    )
+
+
+def _valid_ref_body() -> str:
+    return (
+        "subject_definitions:\n"
+        "<Picture 1> defines the hero. <Picture 2> defines the companion.\n\n"
+        "summary:\nThe two subjects cross a quiet room together.\n\n"
+        "retention_analysis:\nRetain both subjects' visible identity and clothing.\n\n"
+        "detailed_description:\n"
+        "[Shot 1] The hero and companion walk forward in one continuous shot.\n\n"
+        "overall_soundscape:\nSoft footsteps and room ambience.\n\n"
+        "non_diegetic_music:\nNo music."
     )
 
 
@@ -375,6 +390,69 @@ def test_video_workflow_config_key_separates_variant_from_prompt_mode() -> None:
     assert video_workflow_config_key("first_last", "standard") == "first_last"
     assert video_workflow_config_key("i2v", "fast") == "i2v_fast"
     assert video_workflow_config_key("first_last", "fast") == "first_last_fast"
+    assert video_workflow_config_key("ref2v", "standard") == "ref2v"
+    assert video_workflow_config_key("ref2v", "fast") == "ref2v_fast"
+
+
+def test_fast_ref_resolution_defaults_to_544p_and_keeps_experimental_mp() -> None:
+    assert resolve_video_resolution(
+        "fast", "16:9", "native", 1920, 1080, "ref2v"
+    ) == ("16:9", "native", 960, 544)
+    assert resolve_video_resolution(
+        "fast", "auto", None, 1920, 1080, "ref2v"
+    ) == ("16:9", "native", 960, 544)
+    assert resolve_video_resolution(
+        "fast", "21:9", "native", 2100, 900, "ref2v"
+    ) == ("21:9", "native", 1280, 544)
+    assert resolve_video_resolution(
+        "fast", "16:9", "medium", 1920, 1080, "ref2v"
+    ) == ("16:9", "medium", 768, 448)
+
+
+def test_ref_prompt_uses_six_section_body_without_keyframe_alignment() -> None:
+    body = _valid_ref_body()
+
+    assert normalize_ref2v_prompt_body(f"```text\n{body}\n```") == body
+    assert validate_ref2v_prompt_body(body) == (True, "")
+    assert validate_ref2v_prompt_body(body, 2) == (True, "")
+    assert validate_ref2v_prompt_body(body, 3)[0] is False
+    assert compose_h3_prompt(body, "ref2v") == body
+    assert validate_h3_prompt(body, "ref2v") == (True, "")
+    assert "aligns with" not in compose_h3_prompt(body, "ref2v")
+
+
+def test_ref_reference_list_is_ordered_limited_and_unique() -> None:
+    mode = VideoMode()
+    source = {"kind": "backup", "name": "one"}
+    second = {"kind": "backup", "name": "two"}
+    third = {"kind": "backup", "name": "three"}
+
+    assert mode.normalize_reference_refs(
+        {"reference_refs": [source, second, third]},
+        source_ref=source,
+    ) == [source, second, third]
+    with pytest.raises(ValueError, match="서로 다르게"):
+        mode.normalize_reference_refs(
+            {"reference_refs": [source, second, second]},
+            source_ref=source,
+        )
+    with pytest.raises(ValueError, match="1번은 현재 카드"):
+        mode.normalize_reference_refs(
+            {"reference_refs": [second, source]},
+            source_ref=source,
+        )
+    with pytest.raises(ValueError, match="1장부터 3장"):
+        mode.normalize_reference_refs(
+            {
+                "reference_refs": [
+                    source,
+                    second,
+                    third,
+                    {"kind": "backup", "name": "four"},
+                ]
+            },
+            source_ref=source,
+        )
 
 
 def test_final_prompt_writer_fully_choreographs_first_last_transition() -> None:
@@ -547,6 +625,44 @@ def test_instruction_refine_prompt_expands_into_mechanics_and_result() -> None:
     assert "인물이 컵을 내려놓고 카메라를 바라본다" in combined
 
 
+def test_instruction_direct_prompt_uses_active_prompt_and_supplied_duration() -> None:
+    duration = 7
+    user_direction = "free-form direction supplied by the user"
+    messages = VideoMode._instruction_direct_messages(
+        "i2v",
+        "ko",
+        duration=duration,
+        user_input=user_direction,
+        allow_camera_motion=True,
+        allow_background_change=False,
+    )
+    assert [message["role"] for message in messages] == ["system", "user"]
+    system_message = str(messages[0]["content"])
+    task_message = str(messages[1]["content"])
+
+    assert system_message == video_module.INSTRUCTION_DIRECT_SYSTEM_PROMPT
+    assert user_direction in task_message
+    assert f"{duration:g}-second" in task_message
+    assert "12-second" not in task_message
+
+
+def test_instruction_direct_prompt_passes_first_last_mode_contracts() -> None:
+    user_direction = "free-form transition direction supplied by the user"
+    messages = VideoMode._instruction_direct_messages(
+        "first_last",
+        "en",
+        duration=12,
+        user_input=user_direction,
+        allow_camera_motion=False,
+        allow_background_change=True,
+    )
+    task_message = str(messages[1]["content"])
+
+    assert "Keep the camera completely locked off" in task_message
+    assert "Picture 2 is the exact final frame at 12.00 seconds" in task_message
+    assert user_direction in task_message
+
+
 def test_static_visual_context_stage_does_not_receive_backup_dialogue() -> None:
     messages = VideoMode._visual_context_messages("i2v")
     combined = "\n".join(str(message["content"]) for message in messages)
@@ -678,6 +794,45 @@ def _synthetic_first_last_api_workflow() -> dict:
     return workflow
 
 
+def _synthetic_ref2v_api_workflow() -> dict:
+    workflow = {
+        "1": {
+            "class_type": "PrimitiveStringMultiline",
+            "inputs": {"value": "old ref prompt"},
+            "_meta": {"title": "Input Text (Prompt)"},
+        },
+        "2": {
+            "class_type": "MiniMaxH3ReferenceToVideo",
+            "inputs": {
+                "prompt": ["1", 0],
+                "width": 960,
+                "height": 544,
+                "length": ["3", 0],
+                "ref_images.ref_image_0": ["6", 0],
+                "ref_images.ref_image_1": ["7", 0],
+                "ref_images.ref_image_2": ["8", 0],
+                "ref_images.ref_image_3": ["9", 0],
+            },
+        },
+        "3": {
+            "class_type": "PrimitiveFloat",
+            "inputs": {"value": 5.0},
+            "_meta": {"title": "Float (Duration)"},
+        },
+        "4": {"class_type": "RandomNoise", "inputs": {"noise_seed": 1}},
+        "5": {
+            "class_type": "SaveVideo",
+            "inputs": {"filename_prefix": "video/sample"},
+        },
+    }
+    for node_id in ("6", "7", "8", "9"):
+        workflow[node_id] = {
+            "class_type": "LoadImage",
+            "inputs": {"image": f"sample-{node_id}.png"},
+        }
+    return workflow
+
+
 def test_real_h3_i2v_workflow_exposes_positive_transport_node() -> None:
     workflow_path = (
         ROOT
@@ -787,6 +942,51 @@ def test_i2v_transport_block_and_api_patch_drive_the_real_connected_inputs() -> 
     assert patched["105:111"]["inputs"]["value"] == ["133", 0]
     assert patched["105:15"]["inputs"]["noise_seed"] == ["137", 0]
     assert patched["92"]["inputs"]["filename_prefix"] == "video/soya_h3/job-1"
+
+
+def test_ref2v_api_patch_sets_requested_refs_and_removes_unused_sample_slots() -> None:
+    prompt = _valid_ref_body()
+    patched = VideoMode._patch_ref2v_api_workflow(
+        _synthetic_ref2v_api_workflow(),
+        prompt,
+        960,
+        544,
+        7,
+        987,
+        "ref-job",
+        "soya_video/ref-job",
+        3,
+    )
+
+    assert patched["1"]["inputs"]["value"] == prompt
+    assert patched["2"]["inputs"]["width"] == 960
+    assert patched["2"]["inputs"]["height"] == 544
+    assert patched["3"]["inputs"]["value"] == 7.0
+    assert patched["4"]["inputs"]["noise_seed"] == 987
+    assert patched["5"]["inputs"]["filename_prefix"] == "video/soya_h3/ref-job"
+    assert patched["6"]["inputs"]["image"] == "soya_video/ref-job/[1].png"
+    assert patched["7"]["inputs"]["image"] == "soya_video/ref-job/[2].png"
+    assert patched["8"]["inputs"]["image"] == "soya_video/ref-job/[3].png"
+    assert "ref_images.ref_image_3" not in patched["2"]["inputs"]
+
+
+def test_ref2v_api_patch_rejects_more_refs_than_the_workflow_exposes() -> None:
+    workflow = _synthetic_ref2v_api_workflow()
+    workflow["2"]["inputs"].pop("ref_images.ref_image_2")
+    workflow["2"]["inputs"].pop("ref_images.ref_image_3")
+
+    with pytest.raises(RuntimeError, match="슬롯이 부족"):
+        VideoMode._patch_ref2v_api_workflow(
+            workflow,
+            _valid_ref_body(),
+            960,
+            544,
+            5,
+            123,
+            "ref-job",
+            "soya_video/ref-job",
+            3,
+        )
 
 
 def test_i2v_api_patch_rejects_a_positive_block_not_connected_to_first_frame() -> None:
@@ -1369,6 +1569,102 @@ async def test_render_spools_video_postprocess_before_cleaning_comfy_mp4(
 
 
 @pytest.mark.asyncio
+async def test_fast_ref_render_stages_three_originals_and_patches_544p_workflow(
+    tmp_path: Path,
+) -> None:
+    backup_dir = tmp_path / "backups"
+    raw_dir = backup_dir / "_raw"
+    comfy_input = tmp_path / "comfy_input"
+    raw_dir.mkdir(parents=True)
+    comfy_input.mkdir()
+    sizes = {"source": (800, 600), "second": (400, 900), "third": (1200, 500)}
+    colors = {"source": "green", "second": "yellow", "third": "blue"}
+    for name, size in sizes.items():
+        Image.new("RGB", size, colors[name]).save(raw_dir / f"{name}.webp", "WEBP")
+        (backup_dir / f"{name}.json").write_text(
+            json.dumps({"positive": f"{name} visual prompt"}),
+            encoding="utf-8",
+        )
+    workflow_path = tmp_path / "ref-fast.json"
+    workflow_path.write_text(
+        json.dumps({"nodes": [], "links": []}),
+        encoding="utf-8",
+    )
+    submitted: dict = {}
+
+    async def convert(workflow, *, task_key):
+        assert task_key == "video_generation"
+        assert workflow == {"nodes": [], "links": []}
+        return _synthetic_ref2v_api_workflow(), None
+
+    async def submit(workflow, progress_callback=None, *, task_key, input_paths=None):
+        assert task_key == "video_generation"
+        staged_root = Path(input_paths[0])
+        submitted["staged_root"] = staged_root
+        for index, name in enumerate(sizes, start=1):
+            staged = staged_root / f"[{index}].png"
+            assert staged.is_file()
+            with Image.open(staged) as image:
+                assert image.size == sizes[name]
+        assert workflow["1"]["inputs"]["value"] == _valid_ref_body()
+        assert workflow["2"]["inputs"]["width"] == 960
+        assert workflow["2"]["inputs"]["height"] == 544
+        assert "ref_images.ref_image_3" not in workflow["2"]["inputs"]
+        for index, node_id in enumerate(("6", "7", "8"), start=1):
+            assert workflow[node_id]["inputs"]["image"].endswith(f"/[{index}].png")
+        return b"ref-mp4", {
+            "filename": "ref.mp4",
+            "subfolder": "video/soya_h3",
+            "type": "output",
+            "execution_source": "local",
+        }
+
+    mode = VideoMode()
+    mode.get_backup_dir = lambda: str(backup_dir)
+    mode.get_config = lambda: {
+        "comfy_input_dir": str(comfy_input),
+        "video_workflow_source_paths": {"ref2v_fast": str(workflow_path)},
+        "backup_webp_quality": 80,
+    }
+    mode.convert_workflow_func = convert
+    mode.submit_workflow_func = submit
+
+    refs = [
+        {"kind": "backup", "name": "source"},
+        {"kind": "backup", "name": "second"},
+        {"kind": "backup", "name": "third"},
+    ]
+    result = await mode.render_video(
+        {
+            "mode": "ref2v",
+            "workflow_variant": "fast",
+            "source_ref": refs[0],
+            "reference_refs": refs,
+            "instruction": "세 인물이 함께 걷는다",
+            "instruction_source": "user",
+            "visual_context": "visual_context:\nThree independent references.",
+            "aspect_ratio": "16:9",
+            "quality_level": "native",
+            "duration": 5,
+            "h3_prompt": _valid_ref_body(),
+        },
+        queue_item_id="ref-gpu",
+    )
+
+    assert result["width"] == 960
+    assert result["height"] == 544
+    assert result["workflow_variant"] == "fast"
+    assert not submitted["staged_root"].exists()
+    manifest = json.loads(
+        (Path(result["postprocess_job"]["job_dir"]) / "job.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert manifest["reference_refs"] == refs
+    assert manifest["video_seed"] is not None
+
+
+@pytest.mark.asyncio
 async def test_video_postprocess_commits_verified_pair_and_metadata(
     tmp_path: Path,
     monkeypatch,
@@ -1475,6 +1771,7 @@ async def test_video_postprocess_commits_verified_pair_and_metadata(
     # 참조 전체 기록(에셋 원본 역추적용) + 백업 공통 이미지 크기 메타데이터.
     assert info["source_ref"] == {"kind": "backup", "name": "source"}
     assert info["last_ref"] == {}
+    assert info["reference_refs"] == []
     assert info["image_width"] == 1024
     assert info["image_height"] == 1024
     assert info["video_aspect_ratio"] == "1:1"

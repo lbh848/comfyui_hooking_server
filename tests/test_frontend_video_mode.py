@@ -67,7 +67,7 @@ def test_backup_card_disables_regen_and_edit_for_animated_backups() -> None:
     assert 'disabled title="프롬프트 없음"' in FRONTEND[edit:]
 
 
-def test_video_page_uses_modal_entry_with_four_workflow_cards() -> None:
+def test_video_page_uses_modal_entry_with_six_workflow_cards() -> None:
     assert 'id="video-modal"' in FRONTEND
     assert "closeVideoModal()" in FRONTEND
     assert "openVideoWorkspace(" in FRONTEND
@@ -81,15 +81,33 @@ def test_video_page_uses_modal_entry_with_four_workflow_cards() -> None:
     assert "key: 'video_i2v', label: '영상화" not in FRONTEND
     assert "key: 'video_first_last', label: '영상화" not in FRONTEND
     assert 'value="t2v"' not in FRONTEND
-    assert FRONTEND.count('type="radio" name="video-mode-choice"') == 4
-    for value in ("i2v:standard", "first_last:standard", "i2v:fast", "first_last:fast"):
+    assert FRONTEND.count('type="radio" name="video-mode-choice"') == 6
+    for value in (
+        "i2v:standard", "i2v:fast",
+        "first_last:standard", "first_last:fast",
+        "ref2v:standard", "ref2v:fast",
+    ):
         assert f'value="{value}"' in FRONTEND
+    card_positions = [
+        FRONTEND.index(f'value="{value}"')
+        for value in (
+            "i2v:standard", "i2v:fast",
+            "first_last:standard", "first_last:fast",
+            "ref2v:standard", "ref2v:fast",
+        )
+    ]
+    assert card_positions == sorted(card_positions)
     assert "고속 I2V" in FRONTEND
     assert "고속 FLF2V" in FRONTEND
+    assert "고속 REF2V" in FRONTEND
     # 첫·마지막 모드에서 마지막 프레임 미리보기가 존재해야 한다
     assert 'id="video-frame-last"' in FRONTEND
     assert 'id="video-generation-last-preview"' in FRONTEND
     assert "onVideoLastFrameChange()" in FRONTEND
+    assert 'id="video-frame-references"' in FRONTEND
+    assert 'id="video-generation-ref-2"' in FRONTEND
+    assert 'id="video-generation-ref-3"' in FRONTEND
+    assert "reference_refs: getSelectedVideoReferenceRefs()" in FRONTEND
 
 
 def test_existing_video_postprocess_modal_collects_requested_controls() -> None:
@@ -126,20 +144,26 @@ def test_settings_expose_standard_and_fast_video_workflows_without_card_selectio
     assert 'id="settings-tab-video"' in FRONTEND
     assert 'id="setting-video-i2v-workflow-filename"' in FRONTEND
     assert 'id="setting-video-first-last-workflow-filename"' in FRONTEND
+    assert 'id="setting-video-ref2v-workflow-filename"' in FRONTEND
     assert 'id="setting-video-i2v-fast-workflow-filename"' in FRONTEND
     assert 'id="setting-video-first-last-fast-workflow-filename"' in FRONTEND
+    assert 'id="setting-video-ref2v-fast-workflow-filename"' in FRONTEND
     assert "배포_영상_H3_I2V_v1.json" in FRONTEND
     assert "배포_영상_H3_FLF2V_v1.json" in FRONTEND
     assert "배포_영상_H3_I2V_고속_v1.json" in FRONTEND
     assert "배포_영상_H3_FLF2V_고속_v1.json" in FRONTEND
     assert "onVideoWorkflowFilenameInput('i2v', this.value)" in FRONTEND
     assert "onVideoWorkflowFilenameInput('first_last', this.value)" in FRONTEND
+    assert "onVideoWorkflowFilenameInput('ref2v', this.value)" in FRONTEND
     assert "onVideoWorkflowFilenameInput('i2v_fast', this.value)" in FRONTEND
     assert "onVideoWorkflowFilenameInput('first_last_fast', this.value)" in FRONTEND
+    assert "onVideoWorkflowFilenameInput('ref2v_fast', this.value)" in FRONTEND
     assert 'data-video-workflow-mode="i2v"' in FRONTEND
     assert 'data-video-workflow-mode="first_last"' in FRONTEND
+    assert 'data-video-workflow-mode="ref2v"' in FRONTEND
     assert 'data-video-workflow-mode="i2v_fast"' in FRONTEND
     assert 'data-video-workflow-mode="first_last_fast"' in FRONTEND
+    assert 'data-video-workflow-mode="ref2v_fast"' in FRONTEND
     assert "selectVideoWorkflowFile(list.dataset.videoWorkflowMode, path, filename);" in FRONTEND
 
     panel = FRONTEND.split('id="settings-tab-video"', 1)[1].split(
@@ -151,17 +175,22 @@ def test_settings_expose_standard_and_fast_video_workflows_without_card_selectio
 
 def test_video_workflow_settings_load_and_save_only_supported_paths() -> None:
     assert "const videoWorkflowPaths = currentConfig.video_workflow_source_paths || {};" in FRONTEND
-    assert "for (const mode of ['i2v', 'first_last', 'i2v_fast', 'first_last_fast'])" in FRONTEND
+    assert "'i2v', 'first_last', 'ref2v'," in FRONTEND
+    assert "'i2v_fast', 'first_last_fast', 'ref2v_fast'," in FRONTEND
     assert "video_workflow_source_paths: {" in FRONTEND
     assert "...(currentConfig.video_workflow_source_paths || {})," not in FRONTEND
     assert "i2v: document.getElementById('setting-video-i2v-workflow-source-path').value" in FRONTEND
     assert "first_last: document.getElementById('setting-video-first-last-workflow-source-path').value" in FRONTEND
+    assert "ref2v: document.getElementById('setting-video-ref2v-workflow-source-path').value" in FRONTEND
     assert "i2v_fast: document.getElementById('setting-video-i2v-fast-workflow-source-path').value" in FRONTEND
     assert "first_last_fast: document.getElementById('setting-video-first-last-fast-workflow-source-path').value" in FRONTEND
+    assert "ref2v_fast: document.getElementById('setting-video-ref2v-fast-workflow-source-path').value" in FRONTEND
     assert "updateVideoWorkflowPath('i2v');" in FRONTEND
     assert "updateVideoWorkflowPath('first_last');" in FRONTEND
+    assert "updateVideoWorkflowPath('ref2v');" in FRONTEND
     assert "updateVideoWorkflowPath('i2v_fast');" in FRONTEND
     assert "updateVideoWorkflowPath('first_last_fast');" in FRONTEND
+    assert "updateVideoWorkflowPath('ref2v_fast');" in FRONTEND
     assert "[VIDEO_SETTINGS] ${mode} 워크플로우 파일 검색 실패:" in FRONTEND
 
 
@@ -181,10 +210,12 @@ def test_video_page_separates_fast_aspect_ratio_and_mp_level() -> None:
     assert "최소 중앙 크롭" in FRONTEND
     assert "VIDEO_FAST_768_ASPECT_KEYS" in FRONTEND
     assert "calculateVideoFast768Resolution(aspectRatio)" in FRONTEND
-    assert "calculateVideoFastModeResolution(aspectRatio, qualityLevel)" in FRONTEND
+    assert "calculateVideoFastModeResolution(aspectRatio, qualityLevel, mode = '')" in FRONTEND
     # 고속 해상도 셀렉트는 잠기지 않고, MP 단계 옵션에 (실험적)이 붙는다.
     assert "VIDEO_FAST_QUALITY_OPTIONS" in FRONTEND
     assert "고속 기본 · 짧은 변 768p" in FRONTEND
+    assert "고속 REF 기본 · 짧은 변 544p" in FRONTEND
+    assert "VIDEO_REF_FAST_NATIVE_MAX_SHORT_EDGE = 544" in FRONTEND
     assert "저화질 · 0.2 MP (실험적)" in FRONTEND
     assert "기본 · 0.35 MP (실험적)" in FRONTEND
     assert "고화질 · 0.5 MP (실험적)" in FRONTEND

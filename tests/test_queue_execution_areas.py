@@ -180,7 +180,7 @@ def test_queue_status_separates_llm_gpu_and_chansub_areas():
 def test_video_modes_share_one_comfy_allocation_but_keep_detailed_queue_labels():
     manager = QueueManager()
 
-    for item_type in ("video_i2v", "video_first_last"):
+    for item_type in ("video_i2v", "video_first_last", "video_ref2v"):
         assert manager._comfy_task_key_for_item(_item(item_type)) == "video_generation"
         assert manager._item_execution_area(_item(item_type))[0] == "gpu"
 

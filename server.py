@@ -310,11 +310,16 @@ def normalize_video_generation_defaults(raw: object) -> dict:
 
     if normalized["workflow_variant"] == "fast":
         aspect_ratio = normalized["aspect_ratio"]
-        if aspect_ratio != "auto" and aspect_ratio not in FAST_768_ASPECT_RATIOS:
+        supported_fast_ratios = (
+            FAST_ASPECT_RATIOS
+            if normalized["mode"] == "ref2v"
+            else FAST_768_ASPECT_RATIOS
+        )
+        if aspect_ratio != "auto" and aspect_ratio not in supported_fast_ratios:
             message = (
                 "고속 영상에서 지원하지 않는 화면 비율입니다: "
                 f"value={aspect_ratio!r}, "
-                f"allowed={['auto', *FAST_768_ASPECT_RATIOS.keys()]!r}"
+                f"allowed={['auto', *supported_fast_ratios.keys()]!r}"
             )
             print(f"[VIDEO:DEFAULTS] {message}; value={raw!r}")
             raise ValueError(message)
@@ -426,9 +431,10 @@ def normalize_video_workflow_selection(
     aspect_ratio = str(
         raw.get("aspect_ratio", raw.get("preset", "auto")) or "auto"
     ).strip().lower()
+    mode = str(raw.get("mode") or "").strip().lower()
     supported_ratios = (
         FAST_768_ASPECT_RATIOS
-        if workflow_variant == "fast"
+        if workflow_variant == "fast" and mode != "ref2v"
         else FAST_ASPECT_RATIOS
     )
     if aspect_ratio != "auto" and aspect_ratio not in supported_ratios:
@@ -652,9 +658,11 @@ DEFAULT_CONFIG = {
         "qwen_edit_translate":     _llm_route_defaults(max_retries=1),
         "video_prompt_i2v":        _llm_route_defaults(max_retries=1),
         "video_prompt_first_last": _llm_route_defaults(max_retries=1),
+        "video_prompt_ref2v":      _llm_route_defaults(max_retries=1),
         # 영상화 비전 단계(연출 초안·다듬기·이미지 정적 분석)와 텍스트 단계(프롬프트 정적 해석·최종 작성) 모델 분리
         "video_prompt_i2v_compose":        _llm_route_defaults(max_retries=1),
         "video_prompt_first_last_compose": _llm_route_defaults(max_retries=1),
+        "video_prompt_ref2v_compose":      _llm_route_defaults(max_retries=1),
         # 삽화 컨텍스트 파이프라인 역번역/CALL1/2/2-FIX/3. 메인 LLM/폴백은 외부 LLM 분기 탭에서 드롭박스로 선택.
         # 폴백 없음(fallback_target 미지정)이 기본.
         "illustration_call1_backtranslate": _llm_route_defaults(max_retries=1, retry_delay_sec=0.0, fallback_max_retries=1, fallback_retry_delay_sec=0.0),
@@ -698,8 +706,10 @@ DEFAULT_CONFIG = {
     "video_workflow_source_paths": {
         "i2v": "",
         "first_last": "",
+        "ref2v": "",
         "i2v_fast": "",
         "first_last_fast": "",
+        "ref2v_fast": "",
     },  # MiniMax H3 영상 워크플로우 원본 소스 경로
     "lora_load_path": "",  # 로라 모델 로드 폴더 절대 경로 (에셋, SOYA_CHAR_LORA 자동 추가)
     "bot_lora_load_path": "",  # 봇 LoRA 모델 로드 폴더 절대 경로 (SOYA_BOT_LORA 자동 추가)
@@ -10699,12 +10709,19 @@ async def handle_api_video_instruction_draft(request: web.Request) -> web.Respon
 
         source_name = str(body.get("source_backup") or "").strip()
         last_name = str(body.get("last_backup") or "").strip()
+        reference_refs: list[dict] = []
         try:
             source_ref = video_mode.normalize_reference(
                 body.get("source_ref"),
                 fallback_backup=source_name,
             )
             video_mode.validate_reference(source_ref)
+            if mode == "ref2v":
+                reference_refs = video_mode.normalize_reference_refs(
+                    body,
+                    source_ref=source_ref,
+                    validate=True,
+                )
         except (TypeError, ValueError, FileNotFoundError, RuntimeError) as exc:
             print(
                 "[VIDEO:DRAFT:API] 원본 참조 검증 실패: "
@@ -10770,6 +10787,7 @@ async def handle_api_video_instruction_draft(request: web.Request) -> web.Respon
             "workflow_variant": workflow_variant,
             "source_ref": source_ref,
             "last_ref": last_ref or {},
+            "reference_refs": reference_refs,
             "source_backup": (
                 source_ref.get("name", "")
                 if source_ref.get("kind") == "backup"
@@ -10791,6 +10809,7 @@ async def handle_api_video_instruction_draft(request: web.Request) -> web.Respon
         label = {
             "i2v": "H3 I2V AI 연출 초안",
             "first_last": "H3 FLF2V AI 연출 초안",
+            "ref2v": "H3 REF2V AI 연출 초안",
         }[mode]
         if workflow_variant == "fast":
             label = label.replace("H3 ", "H3 고속 ", 1)
@@ -10923,12 +10942,19 @@ async def handle_api_video_instruction_refine(request: web.Request) -> web.Respo
 
         source_name = str(body.get("source_backup") or "").strip()
         last_name = str(body.get("last_backup") or "").strip()
+        reference_refs: list[dict] = []
         try:
             source_ref = video_mode.normalize_reference(
                 body.get("source_ref"),
                 fallback_backup=source_name,
             )
             video_mode.validate_reference(source_ref)
+            if mode == "ref2v":
+                reference_refs = video_mode.normalize_reference_refs(
+                    body,
+                    source_ref=source_ref,
+                    validate=True,
+                )
         except (TypeError, ValueError, FileNotFoundError, RuntimeError) as exc:
             print(
                 "[VIDEO:REFINE:API] 원본 참조 검증 실패: "
@@ -10995,6 +11021,7 @@ async def handle_api_video_instruction_refine(request: web.Request) -> web.Respo
             "instruction": instruction,
             "source_ref": source_ref,
             "last_ref": last_ref or {},
+            "reference_refs": reference_refs,
             "source_backup": (
                 source_ref.get("name", "")
                 if source_ref.get("kind") == "backup"
@@ -11016,6 +11043,7 @@ async def handle_api_video_instruction_refine(request: web.Request) -> web.Respo
         label = {
             "i2v": "H3 I2V 입력 다듬기",
             "first_last": "H3 FLF2V 입력 다듬기",
+            "ref2v": "H3 REF2V 입력 다듬기",
         }[mode]
         if workflow_variant == "fast":
             label = label.replace("H3 ", "H3 고속 ", 1)
@@ -11149,12 +11177,19 @@ async def handle_api_video_instruction_direct(request: web.Request) -> web.Respo
 
         source_name = str(body.get("source_backup") or "").strip()
         last_name = str(body.get("last_backup") or "").strip()
+        reference_refs: list[dict] = []
         try:
             source_ref = video_mode.normalize_reference(
                 body.get("source_ref"),
                 fallback_backup=source_name,
             )
             video_mode.validate_reference(source_ref)
+            if mode == "ref2v":
+                reference_refs = video_mode.normalize_reference_refs(
+                    body,
+                    source_ref=source_ref,
+                    validate=True,
+                )
         except (TypeError, ValueError, FileNotFoundError, RuntimeError) as exc:
             print(
                 "[VIDEO:DIRECT:API] 원본 참조 검증 실패: "
@@ -11221,6 +11256,7 @@ async def handle_api_video_instruction_direct(request: web.Request) -> web.Respo
             "instruction": instruction,
             "source_ref": source_ref,
             "last_ref": last_ref or {},
+            "reference_refs": reference_refs,
             "source_backup": (
                 source_ref.get("name", "")
                 if source_ref.get("kind") == "backup"
@@ -11242,6 +11278,7 @@ async def handle_api_video_instruction_direct(request: web.Request) -> web.Respo
         label = {
             "i2v": "H3 I2V 지시로써 다듬기",
             "first_last": "H3 FLF2V 지시로써 다듬기",
+            "ref2v": "H3 REF2V 지시로써 다듬기",
         }[mode]
         if workflow_variant == "fast":
             label = label.replace("H3 ", "H3 고속 ", 1)
@@ -11567,6 +11604,25 @@ async def handle_api_video_enqueue(request: web.Request) -> web.Response:
                 {"success": False, "error": str(exc)},
                 status=400,
             )
+        reference_refs: list[dict] = []
+        if mode == "ref2v":
+            try:
+                reference_refs = video_mode.normalize_reference_refs(
+                    body,
+                    source_ref=source_ref,
+                    validate=True,
+                )
+            except (TypeError, ValueError, FileNotFoundError, RuntimeError) as exc:
+                print(
+                    "[VIDEO:API] REF 이미지 목록 검증 실패: "
+                    f"references={body.get('reference_refs')!r}, "
+                    f"error={type(exc).__name__}: {exc}"
+                )
+                traceback.print_exc()
+                return web.json_response(
+                    {"success": False, "error": str(exc)},
+                    status=400,
+                )
         last_ref = None
         if mode == "first_last":
             try:
@@ -11610,6 +11666,7 @@ async def handle_api_video_enqueue(request: web.Request) -> web.Response:
             "workflow_variant": workflow_variant,
             "source_ref": source_ref,
             "last_ref": last_ref or {},
+            "reference_refs": reference_refs,
             "source_backup": source_ref.get("name", "") if source_ref["kind"] == "backup" else "",
             "last_backup": (
                 last_ref.get("name", "")
@@ -11640,6 +11697,7 @@ async def handle_api_video_enqueue(request: web.Request) -> web.Response:
         label = {
             "i2v": "H3 I2V 프롬프트",
             "first_last": "H3 FLF2V 프롬프트",
+            "ref2v": "H3 REF2V 프롬프트",
         }[mode]
         if workflow_variant == "fast":
             label = label.replace("H3 ", "H3 고속 ", 1)
@@ -11648,6 +11706,7 @@ async def handle_api_video_enqueue(request: web.Request) -> web.Response:
             f"[VIDEO:API] 영상화 큐 등록: item={item.id}, mode={mode}, "
             f"variant={workflow_variant}, "
             f"source={source_ref!r}, last={last_ref or '(none)'}, "
+            f"refs={len(reference_refs) if mode == 'ref2v' else 0}, "
             f"aspect_ratio={aspect_ratio}, quality_level={quality_level}, "
             f"duration={duration:g}s, direction_source=user_confirmed, "
             f"visual_context_source={visual_context_source}, "

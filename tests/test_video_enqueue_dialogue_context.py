@@ -80,6 +80,40 @@ async def test_video_enqueue_passes_confirmed_instruction_to_prompt_queue(
 
 
 @pytest.mark.asyncio
+async def test_ref_video_enqueue_preserves_ordered_reference_list(monkeypatch) -> None:
+    captured: dict = {}
+    source = {"kind": "backup", "name": "source"}
+    second = {"kind": "backup", "name": "second"}
+
+    async def fake_add_item(item_type, label, params):
+        captured.update(item_type=item_type, label=label, params=params)
+        return SimpleNamespace(id="ref-video-prompt", label=label)
+
+    monkeypatch.setattr(server.video_mode, "validate_reference", lambda _reference: None)
+    monkeypatch.setattr(server.queue_manager, "add_item", fake_add_item)
+    monkeypatch.setattr(server, "load_config", lambda: {})
+
+    response = await server.handle_api_video_enqueue(
+        _JsonRequest(
+            _video_request(
+                mode="ref2v",
+                workflow_variant="fast",
+                source_ref=source,
+                reference_refs=[source, second],
+                aspect_ratio="21:9",
+                quality_level="native",
+            )
+        )
+    )
+
+    assert response.status == 200
+    assert captured["item_type"] == "video_prompt_build"
+    assert captured["params"]["reference_refs"] == [source, second]
+    assert captured["params"]["aspect_ratio"] == "21:9"
+    assert "고속 REF2V" in captured["label"]
+
+
+@pytest.mark.asyncio
 async def test_video_enqueue_rejects_non_boolean_secondary_motion(monkeypatch) -> None:
     called = False
 

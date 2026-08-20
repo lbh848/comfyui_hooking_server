@@ -540,7 +540,11 @@ def test_library_covers_every_distributed_config_workflow_binding() -> None:
             config_bindings.update(f"{key}.{child_key}" for child_key in value)
 
     assert library_bindings - config_bindings == set()
-    assert config_bindings - library_bindings == {"outfit_workflow_source_path"}
+    assert config_bindings - library_bindings == {
+        "outfit_workflow_source_path",
+        "video_workflow_source_paths.ref2v",
+        "video_workflow_source_paths.ref2v_fast",
+    }
 
 
 def test_installed_compatibility_mode_is_reused_for_updates(tmp_path: Path) -> None:
