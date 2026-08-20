@@ -32957,6 +32957,7 @@
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({
+                        _origin: 'saveVideoGenerationDefaults',
                         video_generation_defaults: collected.defaults,
                         video_secondary_motion: collected.secondaryMotion,
                     }),
@@ -33863,7 +33864,7 @@
                 const result = await fetchJSON('/api/config', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({video_postprocess: videoPostprocess}),
+                    body: JSON.stringify({_origin: 'saveVideoPostprocessWorkerCount', video_postprocess: videoPostprocess}),
                 });
                 if (!result?.success || !result.config) {
                     throw new Error(result?.error || '설정 저장 응답이 올바르지 않습니다.');
@@ -37057,6 +37058,7 @@
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
+                        _origin: 'videoEngineSaveRuntimeSettings',
                         video_engine_port: port,
                         video_engine_project_path: projectPath,
                         video_engine_auto_start: autoStart,
@@ -42260,6 +42262,7 @@
                 return false;
             }
             const config = {
+                _origin: 'saveSettings',
                 data_saving_mode: currentConfig.data_saving_mode || false,
                 memo_enabled: document.getElementById('setting-memo-enabled').checked,
                 comfyui_port: parseInt(document.getElementById('setting-comfyui-port').value) || 8188,
@@ -63876,7 +63879,7 @@
                 const resp = await fetch('/api/config', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({debug_mode_enabled: checked})
+                    body: JSON.stringify({_origin: 'onDebugModeToggle', debug_mode_enabled: checked})
                 });
                 if (!resp.ok) {
                     document.getElementById('debug-mode-toggle').checked = !checked;
@@ -63911,7 +63914,7 @@
                 const resp = await fetch('/api/config', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({postprocess_enabled: checked})
+                    body: JSON.stringify({_origin: 'onPostprocessToggle', postprocess_enabled: checked})
                 });
                 if (!resp.ok) {
                     const txt = await resp.text().catch(() => '');
@@ -65869,7 +65872,7 @@
                 await fetch('/api/config', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({bot_selected: botCurrentBot || ''})
+                    body: JSON.stringify({_origin: 'saveBotSelected', bot_selected: botCurrentBot || ''})
                 });
             } catch (e) {
                 console.error('[BOT] 선택 봇 저장 실패:', e);
@@ -85965,7 +85968,7 @@
                 const result = await fetchJSON('/api/config', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({video_postprocess: videoPostprocess}),
+                    body: JSON.stringify({_origin: 'saveNmVideoPostprocessSettings', video_postprocess: videoPostprocess}),
                 });
                 if (!result?.success || !result.config) {
                     console.error('[ASSET_EXPORT_VIDEO_UI] 전역 설정 저장 응답 오류:', result);

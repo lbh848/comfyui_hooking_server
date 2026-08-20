@@ -1201,9 +1201,58 @@ def load_config() -> dict:
     return workflow_profiles.normalize_workflow_config(copy.deepcopy(DEFAULT_CONFIG))
 
 
+def _config_diff_keys(old: dict, new: dict) -> list[str]:
+    """두 설정 dict 사이에서 값이 달라진 키를 정렬해 돌려준다.
+
+    값 비교는 json 직렬화로 한다. dict/list 가 섞여 있어도 순서에 흔들리지
+    않게 sort_keys 를 쓴다. 직렬화가 안 되는 값은 repr 로 떨어뜨린다.
+    """
+
+    def norm(value):
+        try:
+            return json.dumps(value, sort_keys=True, ensure_ascii=False)
+        except (TypeError, ValueError):
+            return repr(value)
+
+    changed = []
+    for key in set(old) | set(new):
+        if key not in old:
+            changed.append(f"+{key}")
+        elif key not in new:
+            changed.append(f"-{key}")
+        elif norm(old[key]) != norm(new[key]):
+            changed.append(key)
+    return sorted(changed)
+
+
+# 저장마다 '무엇이 바뀌었는지'와 '누가 저장했는지'를 남긴다. 설정이 조용히
+# 되돌아갈 때 로그만으로 범인을 특정하기 위한 것이다.
+CONFIG_SAVE_ORIGIN: ContextVar[str] = ContextVar("CONFIG_SAVE_ORIGIN", default="")
+
+
 def save_config(config: dict):
     """설정 파일을 저장한다."""
     try:
+        previous_config = {}
+        if os.path.isfile(CONFIG_FILE):
+            try:
+                with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                    previous_config = json.load(f) or {}
+            except Exception as e:
+                print(f"[CONFIG_DIFF] 이전 설정 읽기 실패, diff 생략: {e}")
+                previous_config = {}
+        changed_keys = _config_diff_keys(previous_config, config)
+        origin = CONFIG_SAVE_ORIGIN.get() or "unknown"
+        if changed_keys:
+            details = ", ".join(
+                f"{key}: {previous_config.get(key.lstrip('+-'))!r} -> "
+                f"{config.get(key.lstrip('+-'))!r}"
+                for key in changed_keys[:8]
+            )
+            more = "" if len(changed_keys) <= 8 else f" (외 {len(changed_keys) - 8}개)"
+            print(f"[CONFIG_DIFF] 변경 {len(changed_keys)}건 origin={origin}: {details}{more}")
+        else:
+            print(f"[CONFIG_DIFF] 변경 없음 origin={origin}")
         if os.path.isfile(CONFIG_FILE):
             config_backup_dir = os.path.join(RUNTIME_BACKUP_DIR, "config")
             os.makedirs(config_backup_dir, exist_ok=True)
@@ -17946,6 +17995,43 @@ async def handle_api_config(request: web.Request) -> web.Response:
             body = await request.json()
             modal_worker_settings_changed = False
             modal_autoscaler_settings_changed = False
+
+            # 어느 UI 지점이 저장했는지 남긴다. 설정이 조용히 되돌아갈 때
+            # [CONFIG_DIFF] 로그와 짝지어 범인을 특정하기 위한 것이다.
+            # 진단 코드가 요청 처리를 깨뜨리면 안 된다. 테스트 더블처럼
+            # headers 가 없는 요청 객체도 그대로 통과시킨다.
+            try:
+                _headers = getattr(request, "headers", None) or {}
+                _origin_ua = str(_headers.get("User-Agent") or "")[:60]
+                _origin_ref = str(_headers.get("Referer") or "-")
+                _origin_hint = str(body.get("_origin") or "").strip()[:60]
+                CONFIG_SAVE_ORIGIN.set(
+                    f"POST /api/config keys={len(body)} hint={_origin_hint or '-'} "
+                    f"referer={_origin_ref} ua={_origin_ua!r}"
+                )
+            except Exception as _origin_exc:
+                print(f"[CONFIG_POST] origin 기록 실패: {_origin_exc}")
+            # 페이로드가 '바꾸려는' 키와 '그대로인' 키를 분리해 기록한다.
+            # 폼 전체 스냅샷을 되보내는 저장은 여기서 no-op 키가 압도적으로 많다.
+            try:
+                _payload_changes = [
+                    key for key in body
+                    if key in DEFAULT_CONFIG
+                    and json.dumps(app_config.get(key), sort_keys=True, ensure_ascii=False)
+                    != json.dumps(body.get(key), sort_keys=True, ensure_ascii=False)
+                ]
+                # 정규화 전 원시 페이로드 기준이라 실제 저장 결과보다 많을 수 있다
+                # (예: 90 -> 90.0 코어션). 최종 반영 여부는 [CONFIG_DIFF] 를 본다.
+                print(
+                    f"[CONFIG_POST] 수신 키 {len(body)}개 중 기존값과 다른 키 "
+                    f"{len(_payload_changes)}개(정규화 전): "
+                    f"{sorted(_payload_changes)[:12]} hint={_origin_hint or '-'}"
+                )
+            except Exception as _diff_exc:
+                print(f"[CONFIG_POST] 페이로드 diff 계산 실패: {_diff_exc}")
+            # _origin 은 진단용 메타 필드다. DEFAULT_CONFIG 에 없어 저장되지는
+            # 않지만, 아래 키 개수 집계를 흐리지 않도록 명시적으로 뺀다.
+            body.pop("_origin", None)
 
             for _slot_n in range(1, llm_service.LLM_SLOT_COUNT + 1):
                 custom_body_key = "llm_custom_body" if _slot_n == 1 else f"llm_custom_body{_slot_n}"
