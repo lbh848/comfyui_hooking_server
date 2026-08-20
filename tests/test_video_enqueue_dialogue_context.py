@@ -246,6 +246,123 @@ async def test_video_backup_llm_flow_returns_original_and_all_linked_steps(
 
 
 @pytest.mark.asyncio
+async def test_animated_asset_llm_flow_returns_saved_video_trace(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    trace_ids = ["video-refine-1", "video-prompt-1"]
+    history_path = tmp_path / "lighbd_history.jsonl"
+    history_path.write_text(
+        "\n".join(
+            json.dumps(
+                {
+                    "ts": f"2026-08-20T13:00:0{index}",
+                    "history_id": history_id,
+                    "call_name": f"asset video step {index}",
+                    "input": [],
+                    "output": f"output {index}",
+                    "status": "ok",
+                },
+                ensure_ascii=False,
+            )
+            for index, history_id in enumerate(trace_ids)
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(server.lighbd_service, "LIGHBD_HISTORY_PATH", str(history_path))
+    monkeypatch.setattr(
+        server.asset_mode,
+        "resolve_video_reference",
+        lambda _reference: {
+            "is_animated": True,
+            "label": "교복 / 미소 / motion.avif",
+            "info": {
+                "llm_trace": trace_ids,
+                "positive": "final asset H3 prompt",
+                "negative": "",
+                "video_instruction": "인물이 천천히 미소 짓는다.",
+                "video_instruction_original": "웃게 해줘",
+            },
+        },
+    )
+
+    response = await server.handle_api_asset_mode_llm_trace(
+        _MatchRequest(
+            character="테스트",
+            outfit="교복",
+            expression="미소",
+            filename="motion.avif",
+        )
+    )
+    payload = json.loads(response.text)
+
+    assert response.status == 200
+    assert payload["name"] == "교복 / 미소 / motion.avif"
+    assert payload["is_video_animation"] is True
+    assert payload["video_instruction_original"] == "웃게 해줘"
+    assert payload["video_instruction"] == "인물이 천천히 미소 짓는다."
+    assert payload["final_positive"] == "final asset H3 prompt"
+    assert [record["history_id"] for record in payload["records"]] == trace_ids
+    assert payload["missing"] == []
+
+
+@pytest.mark.asyncio
+async def test_animated_asset_without_trace_returns_empty_flow(monkeypatch) -> None:
+    monkeypatch.setattr(
+        server.asset_mode,
+        "resolve_video_reference",
+        lambda _reference: {
+            "is_animated": True,
+            "label": "교복 / 미소 / legacy.avif",
+            "info": {
+                "positive": "legacy H3 prompt",
+                "video_instruction": "",
+                "video_instruction_original": "",
+            },
+        },
+    )
+
+    response = await server.handle_api_asset_mode_llm_trace(
+        _MatchRequest(
+            character="테스트",
+            outfit="교복",
+            expression="미소",
+            filename="legacy.avif",
+        )
+    )
+    payload = json.loads(response.text)
+
+    assert response.status == 200
+    assert payload["trace_ids"] == []
+    assert payload["records"] == []
+    assert "LLM 흐름 기록(trace)이 없습니다" in payload["note"]
+    assert payload["final_positive"] == "legacy H3 prompt"
+
+
+@pytest.mark.asyncio
+async def test_non_animated_asset_llm_flow_is_rejected(monkeypatch) -> None:
+    monkeypatch.setattr(
+        server.asset_mode,
+        "resolve_video_reference",
+        lambda _reference: {"is_animated": False, "label": "still.png", "info": {}},
+    )
+
+    response = await server.handle_api_asset_mode_llm_trace(
+        _MatchRequest(
+            character="테스트",
+            outfit="교복",
+            expression="미소",
+            filename="still.png",
+        )
+    )
+    payload = json.loads(response.text)
+
+    assert response.status == 400
+    assert payload["status"] == "error"
+    assert "비영상 에셋" in payload["error"]
+
+
+@pytest.mark.asyncio
 async def test_video_enqueue_passes_prompt_visual_context_choice(monkeypatch) -> None:
     captured: dict = {}
 

@@ -10101,6 +10101,72 @@ async def handle_api_backups(request: web.Request) -> web.Response:
     })
 
 
+def _load_llm_trace_records(
+    trace_ids_raw,
+    *,
+    log_prefix: str,
+    context: str,
+) -> tuple[list[str], list[dict], list[str]]:
+    """Return ordered LLM history records for persisted trace ids."""
+    if not isinstance(trace_ids_raw, list):
+        if trace_ids_raw:
+            print(
+                f"[{log_prefix}] llm_trace 형식 오류: "
+                f"context={context}, type={type(trace_ids_raw).__name__}"
+            )
+        return [], [], []
+
+    trace_ids = [str(item) for item in trace_ids_raw if str(item).strip()]
+    if not trace_ids:
+        return [], [], []
+
+    trace_set = set(trace_ids)
+    history_path = lighbd_service.LIGHBD_HISTORY_PATH
+    records_by_id: dict[str, dict] = {}
+    if not os.path.exists(history_path):
+        print(
+            f"[{log_prefix}] LLM history 파일 없음: "
+            f"context={context}, path={history_path!r}"
+        )
+    else:
+        try:
+            with open(history_path, "r", encoding="utf-8") as history_file:
+                for line in history_file:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        record = json.loads(line)
+                    except Exception as parse_error:
+                        print(
+                            f"[{log_prefix}] history 줄 파싱 실패, 무시: "
+                            f"context={context}, error={parse_error}, line={line[:200]!r}"
+                        )
+                        traceback.print_exc()
+                        continue
+                    history_id = str(record.get("history_id") or "")
+                    if history_id and history_id in trace_set:
+                        records_by_id[history_id] = record
+        except Exception as error:
+            print(
+                f"[{log_prefix}] history 읽기 실패: "
+                f"context={context}, error={error}"
+            )
+            traceback.print_exc()
+
+    records = list(records_by_id.values())
+    try:
+        records.sort(key=lambda record: str(record.get("ts") or ""))
+    except Exception as sort_error:
+        print(
+            f"[{log_prefix}] 레코드 정렬 실패: "
+            f"context={context}, error={sort_error}"
+        )
+        traceback.print_exc()
+    missing = [history_id for history_id in trace_ids if history_id not in records_by_id]
+    return trace_ids, records, missing
+
+
 async def handle_api_backup_llm_trace(request: web.Request) -> web.Response:
     """GET /api/backups/{name}/llm_trace - 해당 백업을 만든 삽화 LLM 흐름
     (MULTI-CHAR-MASK~CALL3) 레코드를 lighbd_history.jsonl에서 history_id로 매칭해
@@ -10237,38 +10303,11 @@ async def handle_api_backup_llm_trace(request: web.Request) -> web.Response:
                 ),
                 **extras,
             })
-        trace_ids = [str(x) for x in trace_ids_raw if str(x).strip()]
-        trace_set = set(trace_ids)
-        # lighbd_history.jsonl 에서 history_id로 매칭. 보존 한계로 삭제된 레코드는 missing.
-        history_path = lighbd_service.LIGHBD_HISTORY_PATH
-        records_by_id: dict = {}
-        if os.path.exists(history_path):
-            try:
-                with open(history_path, "r", encoding="utf-8") as f:
-                    for ln in f:
-                        ln = ln.strip()
-                        if not ln:
-                            continue
-                        try:
-                            rec = json.loads(ln)
-                        except Exception as parse_err:
-                            print(
-                                f"[BACKUP:LLM_TRACE] history 줄 파싱 실패, 무시: "
-                                f"error={parse_err}, line={ln[:200]!r}"
-                            )
-                            continue
-                        hid = str(rec.get("history_id") or "")
-                        if hid and hid in trace_set:
-                            records_by_id[hid] = rec
-            except Exception as e:
-                print(f"[BACKUP:LLM_TRACE] history 읽기 실패: name={name}, error={e}")
-                traceback.print_exc()
-        found = list(records_by_id.values())
-        try:
-            found.sort(key=lambda r: str(r.get("ts") or ""))
-        except Exception as sort_err:
-            print(f"[BACKUP:LLM_TRACE] 레코드 정렬 실패: {sort_err}")
-        missing = [hid for hid in trace_ids if hid not in records_by_id]
+        trace_ids, found, missing = _load_llm_trace_records(
+            trace_ids_raw,
+            log_prefix="BACKUP:LLM_TRACE",
+            context=f"name={name}",
+        )
         note = ""
         if missing:
             note = (
@@ -18018,6 +18057,110 @@ async def handle_api_asset_mode_images(request: web.Request) -> web.Response:
     return web.json_response(asset_mode.list_images(character, outfit, expression))
 
 
+async def handle_api_asset_mode_llm_trace(request: web.Request) -> web.Response:
+    """Return the persisted video LLM flow for one animated asset."""
+    reference = {
+        "kind": "asset",
+        "character": request.match_info.get("character", ""),
+        "outfit": request.match_info.get("outfit", ""),
+        "expression": request.match_info.get("expression", ""),
+        "filename": request.match_info.get("filename", ""),
+    }
+    try:
+        resolved = asset_mode.resolve_video_reference(reference)
+        if not resolved.get("is_animated"):
+            print(
+                "[ASSET:LLM_TRACE] 비영상 에셋 조회 거부: "
+                f"reference={reference!r}"
+            )
+            return web.json_response(
+                {"status": "error", "error": "비영상 에셋에는 LLM 흐름이 없습니다"},
+                status=400,
+            )
+
+        info = resolved.get("info")
+        if not isinstance(info, dict):
+            print(
+                "[ASSET:LLM_TRACE] 프롬프트 메타데이터 형식 오류: "
+                f"reference={reference!r}, type={type(info).__name__}"
+            )
+            info = {}
+        label = str(resolved.get("label") or reference["filename"])
+        trace_ids_raw = info.get("llm_trace") or []
+        trace_ids, records, missing = _load_llm_trace_records(
+            trace_ids_raw,
+            log_prefix="ASSET:LLM_TRACE",
+            context=f"reference={reference!r}",
+        )
+        note = ""
+        if not trace_ids:
+            note = (
+                "이 애니메이션 에셋에는 LLM 흐름 기록(trace)이 없습니다. "
+                "(기능 도입 전 또는 수동으로 추가된 에셋)"
+            )
+            print(
+                "[ASSET:LLM_TRACE] 추적 기록 없음: "
+                f"reference={reference!r}"
+            )
+        elif missing:
+            note = (
+                f"보존 한계 초과로 {len(missing)}건의 레코드가 "
+                "lighbd_history에서 삭제되어 본문을 복원할 수 없습니다."
+            )
+        print(
+            "[ASSET:LLM_TRACE] 조회: "
+            f"reference={reference!r}, trace={len(trace_ids)}, "
+            f"found={len(records)}, missing={len(missing)}"
+        )
+        return web.json_response({
+            "name": label,
+            "trace_ids": trace_ids,
+            "records": records,
+            "missing": missing,
+            "note": note,
+            "final_result": None,
+            "final_positive": str(info.get("positive") or ""),
+            "final_negative": str(info.get("negative") or ""),
+            "bot_name": "",
+            "lb_extra": [],
+            "is_video_animation": True,
+            "video_instruction": str(info.get("video_instruction") or ""),
+            "video_instruction_original": str(
+                info.get("video_instruction_original") or ""
+            ),
+        })
+    except FileNotFoundError as error:
+        print(
+            "[ASSET:LLM_TRACE] 에셋 파일 없음: "
+            f"reference={reference!r}, error={error}"
+        )
+        traceback.print_exc()
+        return web.json_response(
+            {"status": "error", "error": str(error)},
+            status=404,
+        )
+    except ValueError as error:
+        print(
+            "[ASSET:LLM_TRACE] 잘못된 요청: "
+            f"reference={reference!r}, error={error}"
+        )
+        traceback.print_exc()
+        return web.json_response(
+            {"status": "error", "error": str(error)},
+            status=400,
+        )
+    except Exception as error:
+        print(
+            "[ASSET:LLM_TRACE] 조회 실패: "
+            f"reference={reference!r}, error={type(error).__name__}: {error}"
+        )
+        traceback.print_exc()
+        return web.json_response(
+            {"status": "error", "error": str(error)},
+            status=500,
+        )
+
+
 async def handle_api_asset_mode_video_references(request: web.Request) -> web.Response:
     """Return video first/last-frame choices from one asset character."""
     character = request.match_info.get("character", "")
@@ -21719,6 +21862,7 @@ app.router.add_post("/api/asset_mode/automatch_defaults/delete", handle_api_asse
 app.router.add_post("/api/asset_mode/set_representative", handle_api_asset_mode_set_representative)
 app.router.add_get("/api/asset_mode/characters/{character}/outfits/{outfit}/expressions/{expression}/images/{filename}", handle_api_asset_mode_image)
 app.router.add_get("/api/asset_mode/characters/{character}/outfits/{outfit}/expressions/{expression}/images/{filename}/poster", handle_api_asset_mode_video_poster)
+app.router.add_get("/api/asset_mode/characters/{character}/outfits/{outfit}/expressions/{expression}/images/{filename}/llm_trace", handle_api_asset_mode_llm_trace)
 app.router.add_post("/api/asset_mode/delete_combination", handle_api_asset_mode_delete_combination)
 app.router.add_post("/api/asset_mode/delete_image", handle_api_asset_mode_delete_image)
 app.router.add_post("/api/asset_mode/upload_image", handle_api_asset_mode_upload_image)

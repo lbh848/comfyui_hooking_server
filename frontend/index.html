@@ -39983,20 +39983,24 @@
         let _llmFlowIsVideo = false;
         let _llmFlowVideoInstruction = '';
         let _llmFlowVideoOriginalInstruction = '';
+        let _llmFlowSourceLabel = '백업';
 
         function closeLlmFlowModal() {
             const overlay = document.getElementById('llm-flow-overlay');
             if (overlay) overlay.remove();
         }
 
-        async function openLlmFlowModal(name) {
-            if (!name) { showToast('백업 이름이 없습니다.', 'error'); return; }
+        async function openLlmFlowModal(name, options = {}) {
+            if (!name) { showToast('LLM 흐름 대상 이름이 없습니다.', 'error'); return; }
             closeLlmFlowModal();
+            const apiUrl = options.apiUrl || `/api/backups/${encodeURIComponent(name)}/llm_trace`;
+            const sourceLabel = options.sourceLabel || '백업';
             _llmFlowName = name;
             _llmFlowRecords = [];
             _llmFlowIsVideo = false;
             _llmFlowVideoInstruction = '';
             _llmFlowVideoOriginalInstruction = '';
+            _llmFlowSourceLabel = sourceLabel;
             const overlay = document.createElement('div');
             overlay.id = 'llm-flow-overlay';
             overlay.className = 'lighbd-detail-overlay';
@@ -40006,7 +40010,7 @@
                     <div class="lighbd-modal-head">
                         <div class="lighbd-modal-title" id="llm-flow-title">
                             LLM 흐름 추적 · <span style="font-family:monospace; font-size:.78rem;">${escapeHtml(name)}</span>
-                            <div class="lighbd-modal-subtitle">이 백업을 만든 LLM 단계의 입력/출력 전체. 내용은 자르거나 축약하지 않습니다.</div>
+                            <div class="lighbd-modal-subtitle">이 ${escapeHtml(sourceLabel)}을 만든 LLM 단계의 입력/출력 전체. 내용은 자르거나 축약하지 않습니다.</div>
                         </div>
                         <button class="lighbd-modal-close" onclick="closeLlmFlowModal()" aria-label="닫기">✕</button>
                     </div>
@@ -40019,7 +40023,7 @@
             overlay.focus();
 
             try {
-                const resp = await fetch(`/api/backups/${encodeURIComponent(name)}/llm_trace`);
+                const resp = await fetch(apiUrl);
                 if (!resp.ok) {
                     console.error('[LLM_FLOW] API 실패:', resp.status);
                     throw new Error('HTTP ' + resp.status);
@@ -40042,6 +40046,21 @@
                 const body = document.getElementById('llm-flow-body');
                 if (body) body.innerHTML = `<div style="color:#ff6b6b; font-size:0.85rem;">LLM 흐름 로드 실패: ${escapeHtml(e.message || String(e))}</div>`;
             }
+        }
+
+        function openAssetLlmFlowModal(reference) {
+            const fields = ['character', 'outfit', 'expression', 'filename'];
+            if (!reference || fields.some((field) => !String(reference[field] || '').trim())) {
+                console.error('[ASSET_LLM_FLOW] 에셋 참조가 불완전합니다:', reference);
+                showToast('에셋 LLM 흐름 참조가 불완전합니다.', 'error');
+                return;
+            }
+            const apiUrl = `/api/asset_mode/characters/${encodeURIComponent(reference.character)}`
+                + `/outfits/${encodeURIComponent(reference.outfit)}`
+                + `/expressions/${encodeURIComponent(reference.expression)}`
+                + `/images/${encodeURIComponent(reference.filename)}/llm_trace`;
+            const displayName = `${reference.outfit} · ${reference.expression} · ${reference.filename}`;
+            openLlmFlowModal(displayName, {apiUrl, sourceLabel: '에셋'});
         }
 
         function _llmFlowBlockCard(badgeText, badgeBg, titleText, subtitle, innerHtml) {
@@ -40261,7 +40280,7 @@
             lines.push(`# LLM 흐름 추적 — ${name}`);
             lines.push('');
             lines.push(_llmFlowIsVideo
-                ? `> 영상 백업 \`${name}\` 을 만든 영상화 LLM 호출의 입력/출력 전체. 내용은 자르거나 축약하지 않았습니다.`
+                ? `> 영상 ${_llmFlowSourceLabel} \`${name}\` 을 만든 영상화 LLM 호출의 입력/출력 전체. 내용은 자르거나 축약하지 않았습니다.`
                 : `> 삽화 백업 \`${name}\` 을 만든 MULTI-CHAR-MASK~CALL3 단계의 LLM 호출 입력/출력 전체. 내용은 자르거나 축약하지 않았습니다.`);
             lines.push('');
             lines.push(`- 단계 수: ${records.length}`);
@@ -80705,6 +80724,7 @@
                             <button type="button" class="qwen-edit-btn" ${img.is_animated ? 'disabled title="영상 에셋에는 EDIT 툴을 사용할 수 없습니다"' : ''}>EDIT 툴 호출</button>
                             <button type="button" class="asset-video-btn">영상화</button>
                             <button type="button" class="asset-video-postprocess-btn" ${img.is_animated ? 'title="이 animated 에셋을 새 파일로 후처리합니다"' : 'disabled title="영상 후처리는 animated AVIF/WebP 에셋에서만 사용할 수 있습니다"'}>영상 후처리</button>
+                            <button type="button" class="asset-llm-flow-btn" ${img.is_animated ? 'title="이 애니메이션 에셋을 만든 영상화 LLM 흐름을 보여줍니다"' : 'disabled title="LLM 흐름은 애니메이션 에셋에서만 확인할 수 있습니다"'}>🧩 LLM 흐름</button>
                         </div>
                         ${hasPrompt ? `
                         <div class="prompt-info">
@@ -80757,6 +80777,20 @@
                         });
                     } else if (!videoPostprocessButton) {
                         console.error('[ASSET_VIDEO_REPROCESS_UI] 카드 버튼 생성 실패:', img.filename);
+                    }
+                    const llmFlowButton = card.querySelector('.asset-llm-flow-btn');
+                    if (llmFlowButton && img.is_animated) {
+                        llmFlowButton.addEventListener('click', (event) => {
+                            event.stopPropagation();
+                            openAssetLlmFlowModal({
+                                character: charName,
+                                outfit,
+                                expression,
+                                filename: img.filename,
+                            });
+                        });
+                    } else if (!llmFlowButton) {
+                        console.error('[ASSET_LLM_FLOW] 카드 버튼 생성 실패:', img.filename);
                     }
                     grid.appendChild(card);
                 });
@@ -85316,6 +85350,7 @@
                             <button type="button" class="qwen-edit-btn" ${img.is_animated ? 'disabled title="영상 에셋에는 EDIT 툴을 사용할 수 없습니다"' : ''}>EDIT 툴 호출</button>
                             <button type="button" class="asset-video-btn">영상화</button>
                             <button type="button" class="asset-video-postprocess-btn" ${img.is_animated ? 'title="이 animated 에셋을 새 파일로 후처리합니다"' : 'disabled title="영상 후처리는 animated AVIF/WebP 에셋에서만 사용할 수 있습니다"'}>영상 후처리</button>
+                            <button type="button" class="asset-llm-flow-btn" ${img.is_animated ? 'title="이 애니메이션 에셋을 만든 영상화 LLM 흐름을 보여줍니다"' : 'disabled title="LLM 흐름은 애니메이션 에셋에서만 확인할 수 있습니다"'}>🧩 LLM 흐름</button>
                         </div>
                         ${hasPrompt ? `
                         <div class="prompt-info">
@@ -85368,6 +85403,20 @@
                         });
                     } else if (!videoPostprocessButton) {
                         console.error('[ASSET_VIDEO_REPROCESS_UI] 에셋 생성 LV2 카드 버튼 생성 실패:', img.filename);
+                    }
+                    const llmFlowButton = card.querySelector('.asset-llm-flow-btn');
+                    if (llmFlowButton && img.is_animated) {
+                        llmFlowButton.addEventListener('click', (event) => {
+                            event.stopPropagation();
+                            openAssetLlmFlowModal({
+                                character: char,
+                                outfit,
+                                expression: expr,
+                                filename: img.filename,
+                            });
+                        });
+                    } else if (!llmFlowButton) {
+                        console.error('[ASSET_LLM_FLOW] 에셋 생성 LV2 카드 버튼 생성 실패:', img.filename);
                     }
                     grid.appendChild(card);
                 });

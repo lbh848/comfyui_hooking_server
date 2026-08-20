@@ -395,6 +395,28 @@ def test_asset_lv1_and_lv2_cards_support_video_and_block_edit_for_animations() -
     assert "case 'asset_video_created':" in FRONTEND
 
 
+def test_asset_cards_show_llm_flow_after_video_actions_and_disable_it_for_stills() -> None:
+    upload_lv2 = FRONTEND[
+        FRONTEND.index("async function auRenderImages("):
+        FRONTEND.index("let auQwenEditState")
+    ]
+    generation_lv2 = FRONTEND[
+        FRONTEND.index("async function loadAssetImages()"):
+        FRONTEND.index("async function setAssetRepresentative(")
+    ]
+    for section in (upload_lv2, generation_lv2):
+        video_button = section.index('class="asset-video-btn"')
+        postprocess_button = section.index('class="asset-video-postprocess-btn"', video_button)
+        llm_flow_button = section.index('class="asset-llm-flow-btn"', postprocess_button)
+        assert video_button < postprocess_button < llm_flow_button
+        assert "openAssetLlmFlowModal({" in section
+        assert 'img.is_animated ? \'title="이 애니메이션 에셋' in section
+        assert 'disabled title="LLM 흐름은 애니메이션 에셋에서만' in section
+
+    assert FRONTEND.count('class="asset-llm-flow-btn"') == 2
+    assert "/images/${encodeURIComponent(reference.filename)}/llm_trace" in FRONTEND
+
+
 def test_video_postprocess_shares_renamed_background_lane() -> None:
     assert "{key: 'background', icon: '⚙️', title: '백그라운드 처리'" in FRONTEND
     assert "Modal 다운로드 · 영상 업스케일/AVIF 변환" in FRONTEND
