@@ -40,19 +40,18 @@ MANIFEST = json.loads(
 WORKFLOWS = MANIFEST["workflows"]
 MODELS = list(MANIFEST["models"])
 
-# Modal 이 지원하지 않아 반드시 로컬에서 도는 작업들.
-#
-# tag_analysis 와 utility_debug 는 원격 회수 경로가 생겨 여기서 빠졌다(둘 다
-# Modal 에서 실측 완료). face_extract 는 원격 분기를 구현했지만 이 머신에
-# 인스턴스 LoRA 데이터가 없어 **실측하지 못해** 아직 로컬 전용으로 둔다.
-# outfit 은 워크플로우가 배포되지 않아 애초에 바인딩이 없다.
-LOCAL_ONLY_TASKS = ("outfit", "face_extract")
+# 원격 회수 경로가 없어 반드시 로컬에서 도는 작업. outfit 은 워크플로우가
+# 배포되지 않아 매니페스트 바인딩이 없다 — 로컬 모델을 요구하지 않는다.
+LOCAL_ONLY_TASKS = ("outfit",)
 
-# 로컬 전용 작업이 줄면 로컬에 받아야 할 모델도 줄어든다. 예전에는 6개 6.42 GiB
-# 였고(MACOS_LOCAL_COMFYUI.md §5.9 의 수기 선택과 일치했다), tag_analysis·
-# utility_debug 가 원격으로 옮겨간 지금은 face_extract 바인딩의 2개만 남는다.
-# outfit 은 바인딩이 없어 기여하지 않는다.
-EXPECTED_LOCAL_MODEL_IDS = {
+# 그래서 클라우드 전용 구성의 로컬 다운로드는 0개다.
+EXPECTED_LOCAL_MODEL_IDS: frozenset = frozenset()
+
+# 로컬 대상이 0 이면 "배분에 따라 남긴다" 와 "무조건 다 버린다" 가 같은 결과를
+# 낸다 — 필터가 망가져도 통과한다. 그래서 성질 검증에는 일부러 로컬로 둔 작업을
+# 쓴다(바인딩이 있고 모델이 작다).
+REPRESENTATIVE_LOCAL_TASK = "face_extract"
+REPRESENTATIVE_LOCAL_MODEL_IDS = {
     "anime-sharp-v4-upscaler",
     "face-yolov8m",
 }
@@ -68,10 +67,15 @@ def _allocations(remote_tasks=(), local_tasks=()) -> dict:
 
 
 def _all_remote_supported() -> dict:
-    """Modal 이 지원하는 8종을 전부 원격으로 — 이 맥의 실제 구성이다."""
+    """Modal 이 지원하는 작업을 전부 원격으로 — 이 맥의 실제 구성이다."""
     from comfy_allocation import MODAL_SUPPORTED_COMFY_TASK_KEYS
 
     return _allocations(remote_tasks=MODAL_SUPPORTED_COMFY_TASK_KEYS)
+
+
+def _one_task_local() -> dict:
+    """전부 원격이되 대표 작업 하나만 로컬 — 필터가 살아 있는지 보는 기준."""
+    return {**_all_remote_supported(), REPRESENTATIVE_LOCAL_TASK: 1}
 
 
 def test_local_first_downloads_every_selected_model():
@@ -111,7 +115,7 @@ def test_every_task_key_has_a_binding_entry():
 
 
 def test_cloud_direct_keeps_only_locally_allocated_task_models():
-    """이 맥의 구성(Modal 지원 8종 원격, 나머지 로컬) → 경량 6개만 남아야 한다."""
+    """이 맥의 실제 구성 → 로컬 다운로드 0개."""
     scope = scope_models(
         MODELS,
         workflows=WORKFLOWS,
@@ -119,25 +123,44 @@ def test_cloud_direct_keeps_only_locally_allocated_task_models():
         model_source=MODEL_SOURCE_CLOUD_DIRECT,
     )
     assert {m["id"] for m in scope.keep} == EXPECTED_LOCAL_MODEL_IDS
+    assert scope.keep_bytes == 0
     assert scope.filtered
-    # 0.078 GiB — face_extract 바인딩 2개뿐이다. 예전 6.42 GiB 에서 줄어든 것은
-    # tag_analysis·utility_debug 가 원격으로 옮겨갔기 때문이다. 숫자가 크게
-    # 움직이면 배분 규칙이 바뀐 것이다.
+    assert scope.skipped_bytes > 100 * 1024**3
+
+
+def test_cloud_direct_still_keeps_models_of_a_locally_allocated_task():
+    """0 이 '필터가 다 버린 것' 이 아님을 보인다.
+
+    위 테스트만 있으면 scope_models 가 무조건 빈 집합을 돌려줘도 통과한다.
+    작업 하나를 로컬로 돌렸을 때 그 작업의 모델이 정확히 돌아와야 한다.
+    """
+    scope = scope_models(
+        MODELS,
+        workflows=WORKFLOWS,
+        allocations=_one_task_local(),
+        model_source=MODEL_SOURCE_CLOUD_DIRECT,
+    )
+    assert {m["id"] for m in scope.keep} == REPRESENTATIVE_LOCAL_MODEL_IDS
     assert 0.0 < scope.keep_bytes / 1024**3 < 0.5
     assert scope.skipped_bytes > 100 * 1024**3
 
 
 def test_cloud_direct_never_skips_locally_executed_task_models():
-    """Modal 미지원 4종은 어떤 설정에서도 로컬에서 돈다 — 그 모델은 남아야 한다.
+    """로컬에서 도는 작업의 모델은 어떤 설정에서도 남는다.
 
-    utility_debug 가 만드는 cache.pt 가 없으면 등록 캐릭터 삽화가 전부 막힌다(G1).
-    "클라우드 전용 = 아무것도 안 받는다" 가 아니라는 것이 이 테스트의 요지다.
+    한때 이 테스트의 요지는 "클라우드 전용 = 아무것도 안 받는다가 아니다" 였다.
+    utility_debug 가 로컬 전용이던 시절, 그것이 만드는 cache.pt 없이는 등록
+    캐릭터 삽화가 전부 막혔기 때문이다(G1). 그 작업이 원격으로 옮겨간 지금
+    실제 구성의 답은 0개가 맞다 — 그러나 규칙 자체는 그대로다. 로컬에 남은
+    작업이 있으면 그 모델은 반드시 남는다.
     """
-    needed = local_model_ids(WORKFLOWS, _all_remote_supported())
-    assert needed == EXPECTED_LOCAL_MODEL_IDS
-    assert needed, "로컬 실행 작업이 남아 있는데 로컬 모델이 0개일 수 없다."
+    assert local_comfy_task_keys(_all_remote_supported()) == LOCAL_ONLY_TASKS
+    assert local_model_ids(WORKFLOWS, _all_remote_supported()) == frozenset()
 
-    # 로컬 실행 작업이 하나도 없는 극단 구성에서만 0개가 된다.
+    # 로컬 실행 작업이 하나라도 모델을 요구하면 그만큼 남는다.
+    needed = local_model_ids(WORKFLOWS, _one_task_local())
+    assert needed == REPRESENTATIVE_LOCAL_MODEL_IDS
+
     every_task_remote = {key: "modal" for key in COMFY_TASK_KEYS}
     assert local_comfy_task_keys(every_task_remote) == ()
     assert local_model_ids(WORKFLOWS, every_task_remote) == frozenset()
@@ -182,13 +205,15 @@ def test_filter_is_platform_independent(monkeypatch):
                 for m in scope_models(
                     MODELS,
                     workflows=WORKFLOWS,
-                    allocations=_all_remote_supported(),
+                    allocations=_one_task_local(),
                     model_source=MODEL_SOURCE_CLOUD_DIRECT,
                 ).keep
             )
         )
     assert len(set(results)) == 1
-    assert results[0] == EXPECTED_LOCAL_MODEL_IDS
+    # 비어 있지 않은 집합으로 비교해야 의미가 있다 — 전부 0 이면 platform
+    # 분기가 들어와도 세 결과가 똑같이 0 이라 통과해 버린다.
+    assert results[0] == REPRESENTATIVE_LOCAL_MODEL_IDS
 
 
 def test_scope_summary_reports_what_was_skipped():
@@ -338,11 +363,14 @@ def test_preflight_disk_requirement_follows_the_filtered_set(tmp_path, monkeypat
         lambda *, library_root, release_version: load_install_manifest(),
     )
 
+    # 작업 하나를 일부러 로컬로 둔 구성을 쓴다. 실제 구성은 로컬 0 바이트라
+    # "요구량이 로컬분을 넘지 않는다" 가 0 <= 0 으로 자명해져, 요구량 계산이
+    # 매니페스트 전체를 세더라도 잡아내지 못한다.
     service = _service_with_config(
         tmp_path,
         {
             "modal_model_source": "cloud_direct",
-            "comfy_task_allocations": _all_remote_supported(),
+            "comfy_task_allocations": _one_task_local(),
         },
     )
     service.comfy_root = tmp_path / "comfy"
@@ -363,9 +391,9 @@ def test_preflight_disk_requirement_follows_the_filtered_set(tmp_path, monkeypat
     )
     selection = result["selection"]
     assert selection["model_source"] == MODEL_SOURCE_CLOUD_DIRECT
-    assert set(selection["local_model_ids"]) == EXPECTED_LOCAL_MODEL_IDS
+    assert set(selection["local_model_ids"]) == REPRESENTATIVE_LOCAL_MODEL_IDS
     assert selection["remote_model_count"] == len(MODELS) - len(
-        EXPECTED_LOCAL_MODEL_IDS
+        REPRESENTATIVE_LOCAL_MODEL_IDS
     )
 
 

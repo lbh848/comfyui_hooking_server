@@ -39,6 +39,16 @@ def _all_remote() -> dict:
     return result
 
 
+def _one_task_local() -> dict:
+    """전부 원격이되 face_extract 만 로컬.
+
+    실제 구성은 로컬 모델이 0개라 "빠진 모델을 보고한다" 를 확인할 대상이 없다.
+    보고 자체가 죽어도 통과해 버리므로, 모델을 요구하는 작업 하나를 일부러
+    로컬에 둔다.
+    """
+    return {**_all_remote(), "face_extract": 1}
+
+
 def _config_with_every_binding(tmp_path: Path) -> dict:
     """모든 바인딩에 경로가 채워진 설정 (= 전체 워크플로우를 설치한 상태)."""
     config: dict = {}
@@ -82,13 +92,12 @@ def test_gap_reported_when_a_local_task_model_is_missing(tmp_path):
     gaps = local_model_gaps(
         models=MODELS,
         workflows=WORKFLOWS,
-        allocations=_all_remote(),
+        allocations=_one_task_local(),
         config=config,
         comfy_root=comfy_root,
     )
     ids = {gap["id"] for gap in gaps}
-    # 로컬 전용으로 남은 작업(face_extract)이 쓰는 모델이 빠졌다고 보고돼야 한다.
-    # tag_analysis·utility_debug 가 원격으로 옮겨가면서 이 목록은 줄었다.
+    # 로컬로 돌린 작업이 쓰는 모델이 빠졌다고 보고돼야 한다.
     assert "face-yolov8m" in ids
     assert "anime-sharp-v4-upscaler" in ids
     # 원격 배분 작업의 모델은 로컬에 없어도 정상이다 — 보고하면 안 된다.

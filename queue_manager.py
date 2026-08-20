@@ -823,9 +823,8 @@ class QueueManager:
             "bot_lora_training": "bot_lora_training",
             "instance_lora_training": "instance_lora",
             "instance_lora_analysis": "instance_lora",
-            # 얼굴 추출은 인스턴스 LoRA 의 선행 단계지만 배분 키가 따로 있다
-            # (COMFY_TASK_DEFINITIONS 의 face_extract). 여기에 없으면 task_key 가
-            # None 이 되어 레인 판정이 건너뛰어지고 배분 설정이 조용히 무시된다.
+            # 얼굴 추출은 인스턴스 LoRA 의 선행 단계지만 배분 키가 따로 있다.
+            # 빠뜨리면 레인 판정이 건너뛰어져 배분 설정이 조용히 무시된다.
             "instance_lora_face_extract": "face_extract",
             "data_patch_utility": "utility_debug",
         }

@@ -49,7 +49,8 @@ VIDEO_ENGINE_COMFY_TARGET = "video_engine"
 # 컨테이너 파일시스템은 휘발성이라, 결과는 이미지 바이트·text_outputs·볼륨
 # artifact 중 하나로 돌아와야 한다. 그러지 못하면 실행이 성공해도 쓸모가 없다.
 #
-# 빠진 작업은 회수 경로가 아직 없거나 워크플로우가 배포되지 않아 판단할 수 없다.
+# outfit 만 빠져 있다. 워크플로우가 배포되지 않아(매니페스트 excluded_filenames)
+# 요구사항조차 알 수 없다. 바인딩이 없어 로컬 모델을 요구하지도 않는다.
 MODAL_SUPPORTED_COMFY_TASK_KEYS = frozenset(
     {
         "illustration",
@@ -62,6 +63,7 @@ MODAL_SUPPORTED_COMFY_TASK_KEYS = frozenset(
         "video_generation",
         "tag_analysis",
         "utility_debug",
+        "face_extract",
     }
 )
 VAST_SUPPORTED_COMFY_TASK_KEYS = MODAL_SUPPORTED_COMFY_TASK_KEYS

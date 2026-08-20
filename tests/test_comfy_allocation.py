@@ -117,7 +117,7 @@ def test_modal_is_accepted_for_every_supported_task(task_key: str) -> None:
 
 @pytest.mark.parametrize(
     "task_key",
-    ("outfit", "face_extract"),
+    ("outfit",),
 )
 def test_modal_is_rejected_for_local_only_tasks(task_key: str) -> None:
     with pytest.raises(ComfyTaskAllocationValidationError, match="Modal"):
@@ -170,7 +170,7 @@ def test_vast_is_accepted_where_modal_is_supported(task_key: str) -> None:
 
 @pytest.mark.parametrize(
     "task_key",
-    ("outfit", "face_extract"),
+    ("outfit",),
 )
 def test_vast_is_rejected_for_local_only_tasks(task_key: str) -> None:
     with pytest.raises(ComfyTaskAllocationValidationError, match="Vast"):
@@ -206,7 +206,7 @@ def test_modal_parallel_is_allowed_with_local_or_vast_primary_target() -> None:
     vast_allocations = normalize_comfy_task_allocations({"illustration": "vast"})
 
     local_parallel = normalize_comfy_task_modal_parallel(
-        {"illustration": True, "face_extract": True},
+        {"illustration": True, "outfit": True},
         allocations=local_allocations,
     )
     modal_parallel = normalize_comfy_task_modal_parallel(
@@ -219,7 +219,7 @@ def test_modal_parallel_is_allowed_with_local_or_vast_primary_target() -> None:
     )
 
     assert local_parallel["illustration"] is True
-    assert local_parallel["face_extract"] is False
+    assert local_parallel["outfit"] is False
     assert modal_parallel["illustration"] is False
     assert vast_primary_parallel["illustration"] is True
 
@@ -230,7 +230,7 @@ def test_vast_parallel_is_allowed_with_local_or_modal_primary_target() -> None:
     vast_allocations = normalize_comfy_task_allocations({"illustration": "vast"})
 
     local_parallel = normalize_comfy_task_vast_parallel(
-        {"illustration": True, "face_extract": True},
+        {"illustration": True, "outfit": True},
         allocations=local_allocations,
     )
     modal_primary_parallel = normalize_comfy_task_vast_parallel(
@@ -243,7 +243,7 @@ def test_vast_parallel_is_allowed_with_local_or_modal_primary_target() -> None:
     )
 
     assert local_parallel["illustration"] is True
-    assert local_parallel["face_extract"] is False
+    assert local_parallel["outfit"] is False
     assert modal_primary_parallel["illustration"] is True
     assert vast_parallel["illustration"] is False
 
