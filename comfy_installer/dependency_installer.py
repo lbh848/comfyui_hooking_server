@@ -476,23 +476,15 @@ def install_node_dependencies(
         ) from exc
 
 
-def verify_isolated_runtime(
+def runtime_probe_script(
     *,
-    comfy_root: Path,
-    python: Path,
-    gpu_profile: dict,
-    cancel_event: Event,
-    log: LogCallback | None,
-) -> dict:
-    requires_nvidia = gpu_profile.get("kind") == "nvidia"
-    requires_sageattention = bool(
-        gpu_profile.get(
-            "sageattention_required",
-            requires_nvidia and gpu_profile.get("sageattention"),
-        )
-    )
-    requires_triton = bool(gpu_profile.get("triton_package"))
-    probe_script = "\n".join(
+    requires_nvidia: bool,
+    requires_triton: bool,
+    requires_sageattention: bool,
+) -> str:
+    """독립 환경 검증 프로브 스크립트."""
+
+    return "\n".join(
         (
             "import json,site,sys,traceback,torch,numpy,cv2,onnxruntime,insightface",
             f"requires_nvidia={requires_nvidia!r}",
@@ -544,6 +536,29 @@ def verify_isolated_runtime(
             "    result['gpu_acceleration_validation']='skipped: CPU profile'",
             "print(json.dumps(result,ensure_ascii=False))",
         )
+    )
+
+
+def verify_isolated_runtime(
+    *,
+    comfy_root: Path,
+    python: Path,
+    gpu_profile: dict,
+    cancel_event: Event,
+    log: LogCallback | None,
+) -> dict:
+    requires_nvidia = gpu_profile.get("kind") == "nvidia"
+    requires_sageattention = bool(
+        gpu_profile.get(
+            "sageattention_required",
+            requires_nvidia and gpu_profile.get("sageattention"),
+        )
+    )
+    requires_triton = bool(gpu_profile.get("triton_package"))
+    probe_script = runtime_probe_script(
+        requires_nvidia=requires_nvidia,
+        requires_triton=requires_triton,
+        requires_sageattention=requires_sageattention,
     )
     try:
         lines = run_command(
