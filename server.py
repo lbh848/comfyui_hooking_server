@@ -16,6 +16,7 @@ import webbrowser
 import traceback
 import base64
 import shutil
+import socket
 import mimetypes
 from contextvars import ContextVar
 from typing import Any
@@ -203,11 +204,13 @@ from comfy_runtime import (
     register_comfy_runtime_routes,
 )
 from comfy_allocation import (
+    COMFY_TASK_DEFINITIONS,
     CURRENT_COMFY_EXECUTION_TARGET,
     DEFAULT_COMFY_TASK_ALLOCATIONS,
     DEFAULT_COMFY_TASK_MODAL_PARALLEL,
     DEFAULT_COMFY_TASK_VAST_PARALLEL,
     MODAL_COMFY_TARGET,
+    MODAL_SUPPORTED_COMFY_TASK_KEYS,
     NONLOCAL_COMFY_TARGETS,
     REMOTE_COMFY_TARGETS,
     VAST_COMFY_TARGET,
@@ -1893,8 +1896,20 @@ async def convert_workflow_via_endpoint(
     try:
         return await convert_via_local_comfy()
     except aiohttp.ClientError as e:
-        print(f"[WORKFLOW] ✗ 연결 실패: {e}")
-        return None, str(e)
+        # 제출 경로(:submit_workflow_to_comfy)와 같은 한국어 안내를 쓴다. 변환이
+        # 제출보다 먼저 실행되므로, 여기서 aiohttp 영문 원문을 그대로 흘리면
+        # 사용자가 처음 만나는 오류가 가장 불친절한 것이 된다.
+        try:
+            failed_port = resolve_comfy_port(task_key)
+        except Exception:
+            failed_port = app_config.get("comfyui_port", REAL_COMFY_PORT)
+        print(
+            f"[WORKFLOW] ✗ 연결 실패: task={task_key}, "
+            f"port={failed_port}, error={type(e).__name__}: {e}"
+        )
+        return None, _comfy_connection_error_message(
+            REAL_COMFY_HOST, failed_port, e, task_key=task_key
+        )
 
 
 async def convert_workflow_local_first_with_modal_fallback(
@@ -3027,16 +3042,35 @@ def get_illust_port():
     return resolve_comfy_port("illustration")
 
 
-def _comfy_connection_error_message(host: str, port: int, exc: BaseException | None = None) -> str:
+def _comfy_connection_error_message(
+    host: str,
+    port: int,
+    exc: BaseException | None = None,
+    *,
+    task_key: str | None = None,
+) -> str:
     """ComfyUI 연결 실패(미실행/연결거부)를 사용자에게 알리는 메시지를 반환한다.
 
     aiohttp 예외를 그대로 노출하면 "Cannot connect to host ..." 같은 영문 원문이
     토스트에 뜨므로 host:port와 점검 안내를 포함한 한국어 메시지로 바꾼다.
-    토스트/큐 에러 표시에 그대로 쓰인다."""
+    토스트/큐 에러 표시에 그대로 쓰인다.
+
+    task_key를 주면 안내가 배분을 반영한다. 원격 실행이 가능한 작업인데 로컬로
+    배분돼 있으면 "ComfyUI를 켜라"는 안내만으로는 부족하다 — 로컬 ComfyUI가 아예
+    없는 Modal 전용 구성(macOS 등)에서는 켤 대상 자체가 없기 때문이다."""
     detail = f" ({type(exc).__name__})" if exc is not None else ""
+    hint = "ComfyUI가 실행 중인지 확인하세요."
+    try:
+        if task_key and task_key in MODAL_SUPPORTED_COMFY_TASK_KEYS:
+            hint = (
+                "이 작업은 원격 실행을 지원합니다. 로컬 ComfyUI를 켜거나, "
+                "설정 → Comfy 런타임에서 배분을 MODAL로 바꾸세요."
+            )
+    except Exception as hint_exc:
+        # 안내 문구 생성이 오류 경로를 깨뜨리면 안 된다.
+        print(f"[COMFY_ALLOCATION] 연결 오류 안내 생성 실패: {type(hint_exc).__name__}: {hint_exc}")
     return (
-        f"ComfyUI 서버에 연결할 수 없습니다 ({host}:{port}). "
-        f"ComfyUI가 실행 중인지 확인하세요." + detail
+        f"ComfyUI 서버에 연결할 수 없습니다 ({host}:{port}). " + hint + detail
     )
 
 
