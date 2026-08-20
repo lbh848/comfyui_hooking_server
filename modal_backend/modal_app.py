@@ -25,6 +25,10 @@ MAX_CONTAINERS = int(os.environ.get("SOYA_MODAL_MAX_CONTAINERS", "2"))
 SCALEDOWN_WINDOW_SECONDS = int(os.environ.get("SOYA_MODAL_SCALEDOWN_WINDOW", "15"))
 if not 1 <= MAX_CONTAINERS <= 10:
     raise ValueError("SOYA_MODAL_MAX_CONTAINERS는 1~10 사이여야 합니다.")
+# SoyaTextSender_mdsoya 가 하드코딩해 둔 수신 포트. 노드를 고치지 않고
+# 컨테이너 쪽에서 같은 포트를 열어 맞춘다.
+SOYA_TEXT_SENDER_PORT = 8189
+
 if not 2 <= SCALEDOWN_WINDOW_SECONDS <= 1200:
     raise ValueError("SOYA_MODAL_SCALEDOWN_WINDOW는 2~1200초 사이여야 합니다.")
 MANIFEST_LOCAL = Path(__file__).parents[1] / "comfy_installer" / "resources" / "install_manifest.json"
@@ -846,10 +850,25 @@ class ComfyWorker:
             def log_message(self, _format: str, *_args) -> None:
                 return
 
-        self.text_output_server = ThreadingHTTPServer(
-            ("127.0.0.1", 0),
-            TextOutputHandler,
-        )
+        # 노드가 하드코딩한 포트라 임의 포트로 열면 아무도 받지 못하고,
+        # 전송 실패는 노드가 삼켜서 결과만 빈 채로 끝난다.
+        try:
+            self.text_output_server = ThreadingHTTPServer(
+                ("127.0.0.1", SOYA_TEXT_SENDER_PORT),
+                TextOutputHandler,
+            )
+        except OSError as exc:
+            print(
+                "[MODAL_COMFY] 텍스트 출력 포트 바인딩 실패, 임의 포트로 대체합니다. "
+                f"port={SOYA_TEXT_SENDER_PORT}, error={type(exc).__name__}: {exc}. "
+                "SoyaTextSender 는 하드코딩된 포트로만 보내므로 이 경우 텍스트 결과를 "
+                "받지 못합니다.",
+                flush=True,
+            )
+            self.text_output_server = ThreadingHTTPServer(
+                ("127.0.0.1", 0),
+                TextOutputHandler,
+            )
         self.text_output_port = int(self.text_output_server.server_address[1])
         self.text_output_thread = threading.Thread(
             target=self.text_output_server.serve_forever,
