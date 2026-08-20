@@ -147,6 +147,31 @@ def test_video_workspace_loads_only_its_direct_reference_before_picker_opens() -
     assert "videoReferencePickerState.offset" not in loader
 
 
+def test_video_asset_picker_preserves_character_and_outfit_expression_hierarchy() -> None:
+    modal = FRONTEND.split('id="video-reference-picker-modal"', 1)[1].split(
+        '<!-- 기존 animated AVIF/WebP 재후처리 모달 -->', 1
+    )[0]
+    hierarchy = FRONTEND.split(
+        "async function loadVideoAssetPickerLevel()", 1
+    )[1].split("async function loadMoreVideoReferenceOptions", 1)[0]
+
+    assert 'id="video-reference-picker-breadcrumb"' in modal
+    assert "assetLevel: 'characters'" in FRONTEND
+    assert "assetLevel === 'characters'" in hierarchy
+    assert "assetLevel === 'combinations'" in hierarchy
+    assert "assetLevel === 'images'" in hierarchy
+    assert "assetLevel === 'outfits'" not in hierarchy
+    assert "assetLevel === 'expressions'" not in hierarchy
+    assert "'/api/asset_mode/characters'" in hierarchy
+    assert "`/api/asset_mode/characters/${enc(character)}/gallery`" in hierarchy
+    assert "/outfits/${enc(outfit)}/expressions/${enc(expression)}/images" in hierarchy
+    assert "label: `${reference.outfit} · ${reference.expression}`" in hierarchy
+    assert "async function openVideoAssetCharacters()" in FRONTEND
+    assert "async function openVideoAssetCharacter(character)" in FRONTEND
+    assert "async function openVideoAssetCombination(character, outfit, expression)" in FRONTEND
+    assert "await loadVideoAssetPickerLevel();" in FRONTEND
+
+
 def test_existing_video_postprocess_modal_collects_requested_controls() -> None:
     assert 'id="video-reprocess-modal"' in FRONTEND
     assert 'id="video-reprocess-target-size"' in FRONTEND

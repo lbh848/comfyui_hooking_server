@@ -1638,6 +1638,35 @@
             color: var(--text2);
             font-size: .7rem;
         }
+        .video-reference-picker-breadcrumb {
+            display: none;
+            align-items: center;
+            gap: 6px;
+            min-height: 34px;
+            padding: 6px 8px;
+            overflow-x: auto;
+            border: 1px solid var(--border);
+            border-radius: 9px;
+            background: var(--surface2);
+            white-space: nowrap;
+        }
+        .video-reference-picker-breadcrumb button {
+            padding: 4px 7px;
+            border: 0;
+            border-radius: 6px;
+            color: var(--accent);
+            background: transparent;
+            cursor: pointer;
+            font-size: .69rem;
+            font-weight: 750;
+        }
+        .video-reference-picker-breadcrumb button:hover {
+            background: color-mix(in srgb, var(--accent) 14%, transparent);
+        }
+        .video-reference-picker-breadcrumb span {
+            color: var(--text2);
+            font-size: .66rem;
+        }
         .video-reference-picker-scroll {
             min-height: 0;
             flex: 1;
@@ -1663,6 +1692,7 @@
             border-color: var(--accent);
             transform: translateY(-1px);
         }
+        .video-reference-picker-card.folder { border-style: solid; }
         .video-reference-picker-card.selected { box-shadow: 0 0 0 2px var(--accent) inset; }
         .video-reference-picker-card:disabled { opacity: .38; cursor: not-allowed; }
         .video-reference-picker-card img {
@@ -1671,6 +1701,14 @@
             height: 150px;
             object-fit: contain;
             background: #101318;
+        }
+        .video-reference-picker-folder-placeholder {
+            display: grid;
+            height: 150px;
+            place-items: center;
+            color: var(--text2);
+            background: #101318;
+            font-size: 2rem;
         }
         .video-reference-picker-copy { display: block; padding: 8px; }
         .video-reference-picker-label {
@@ -15507,6 +15545,7 @@
                     <button type="button" id="video-reference-picker-tab-illustration" class="video-reference-picker-tab active" role="tab" onclick="switchVideoReferencePickerTab('illustration')">삽화</button>
                     <button type="button" id="video-reference-picker-tab-asset" class="video-reference-picker-tab" role="tab" onclick="switchVideoReferencePickerTab('asset')">에셋</button>
                 </div>
+                <div id="video-reference-picker-breadcrumb" class="video-reference-picker-breadcrumb" aria-label="에셋 탐색 경로"></div>
                 <div id="video-reference-picker-status" class="video-reference-picker-status" aria-live="polite"></div>
                 <div class="video-reference-picker-scroll">
                     <div id="video-reference-picker-grid" class="video-reference-picker-grid"></div>
@@ -29157,6 +29196,10 @@
             loading: false,
             items: [],
             requestId: 0,
+            assetLevel: 'characters',
+            assetCharacter: '',
+            assetOutfit: '',
+            assetExpression: '',
         };
         let videoWorkspaceSourceRef = null;
         let videoPostprocessSynced = false;
@@ -29566,6 +29609,54 @@
                 .filter(Boolean));
         }
 
+        function videoAssetReferenceImageUrl(reference, poster = false) {
+            const enc = encodeURIComponent;
+            const base = (
+                `/api/asset_mode/characters/${enc(reference.character)}`
+                + `/outfits/${enc(reference.outfit)}`
+                + `/expressions/${enc(reference.expression)}`
+                + `/images/${enc(reference.filename)}`
+            );
+            return poster ? `${base}/poster` : base;
+        }
+
+        function renderVideoAssetPickerBreadcrumb() {
+            const breadcrumb = document.getElementById('video-reference-picker-breadcrumb');
+            if (!breadcrumb) {
+                console.error('[VIDEO_PICKER] 에셋 breadcrumb 요소가 없습니다.');
+                return;
+            }
+            if (videoReferencePickerState.tab !== 'asset') {
+                breadcrumb.style.display = 'none';
+                breadcrumb.innerHTML = '';
+                return;
+            }
+            const parts = [
+                '<button type="button" onclick="openVideoAssetCharacters()">에셋</button>',
+            ];
+            if (videoReferencePickerState.assetCharacter) {
+                parts.push('<span>›</span>');
+                parts.push(
+                    `<button type="button" data-character="${escapeAttr(videoReferencePickerState.assetCharacter)}"`
+                    + ' onclick="openVideoAssetCharacter(this.dataset.character)">'
+                    + `${escapeHtml(videoReferencePickerState.assetCharacter)}</button>`
+                );
+            }
+            if (
+                videoReferencePickerState.assetLevel === 'images'
+                && videoReferencePickerState.assetOutfit
+                && videoReferencePickerState.assetExpression
+            ) {
+                parts.push('<span>›</span>');
+                parts.push(
+                    `<span>${escapeHtml(videoReferencePickerState.assetOutfit)}`
+                    + ` · ${escapeHtml(videoReferencePickerState.assetExpression)}</span>`
+                );
+            }
+            breadcrumb.innerHTML = parts.join('');
+            breadcrumb.style.display = 'flex';
+        }
+
         function renderVideoReferencePicker() {
             const grid = document.getElementById('video-reference-picker-grid');
             const empty = document.getElementById('video-reference-picker-empty');
@@ -29575,10 +29666,43 @@
                 console.error('[VIDEO_PICKER] 탐색 모달 UI 요소가 누락됐습니다.');
                 return;
             }
+            renderVideoAssetPickerBreadcrumb();
             const targetInput = videoReferenceTargetInput(videoReferencePickerState.target);
             const selectedKey = targetInput?.value || '';
             const blocked = selectedVideoReferenceKeysExcept(videoReferencePickerState.target);
             grid.innerHTML = videoReferencePickerState.items.map(item => {
+                if (item.picker_type === 'character') {
+                    const thumb = item.image_url
+                        ? `<img src="${escapeAttr(item.image_url)}" alt="${escapeAttr(item.label)}" loading="lazy" onerror="onVideoReferencePickerImageError(this)">`
+                        : '<span class="video-reference-picker-folder-placeholder">📁</span>';
+                    return `
+                        <button type="button" class="video-reference-picker-card folder"
+                                data-character="${escapeAttr(item.character)}"
+                                onclick="openVideoAssetCharacter(this.dataset.character)">
+                            ${thumb}
+                            <span class="video-reference-picker-copy">
+                                <span class="video-reference-picker-label">${escapeHtml(item.label)}</span>
+                                <span class="video-reference-picker-date">캐릭터 폴더</span>
+                            </span>
+                        </button>`;
+                }
+                if (item.picker_type === 'combination') {
+                    const thumb = item.image_url
+                        ? `<img src="${escapeAttr(item.image_url)}" alt="${escapeAttr(item.label)}" loading="lazy" onerror="onVideoReferencePickerImageError(this)">`
+                        : '<span class="video-reference-picker-folder-placeholder">📁</span>';
+                    return `
+                        <button type="button" class="video-reference-picker-card folder"
+                                data-character="${escapeAttr(item.character)}"
+                                data-outfit="${escapeAttr(item.outfit)}"
+                                data-expression="${escapeAttr(item.expression)}"
+                                onclick="openVideoAssetCombination(this.dataset.character, this.dataset.outfit, this.dataset.expression)">
+                            ${thumb}
+                            <span class="video-reference-picker-copy">
+                                <span class="video-reference-picker-label">${escapeHtml(item.label)}</span>
+                                <span class="video-reference-picker-date">${Number(item.image_count || 0)}장</span>
+                            </span>
+                        </button>`;
+                }
                 const disabled = blocked.has(item.key);
                 const selected = item.key === selectedKey;
                 return `
@@ -29589,7 +29713,7 @@
                         <img src="${escapeAttr(item.image_url)}" alt="${escapeAttr(item.label)}" loading="lazy" onerror="onVideoReferencePickerImageError(this)">
                         <span class="video-reference-picker-copy">
                             <span class="video-reference-picker-label">${escapeHtml(item.label)}</span>
-                            <span class="video-reference-picker-date">${escapeHtml(formatDate(item.mtime))}</span>
+                            <span class="video-reference-picker-date">${escapeHtml(item.picker_detail || formatDate(item.mtime))}</span>
                         </span>
                     </button>`;
             }).join('');
@@ -29599,11 +29723,23 @@
                     ? '이미지를 불러오는 중입니다.'
                     : '선택할 수 있는 이미지가 없습니다.';
             }
-            more.style.display = videoReferencePickerState.hasMore ? 'block' : 'none';
+            more.style.display = (
+                videoReferencePickerState.tab === 'illustration'
+                && videoReferencePickerState.hasMore
+            ) ? 'block' : 'none';
             more.disabled = videoReferencePickerState.loading;
-            status.textContent = videoReferencePickerState.loading
-                ? `${videoReferencePickerState.tab === 'illustration' ? '삽화' : '에셋'} 이미지를 불러오는 중입니다.`
-                : `${videoReferencePickerState.items.length}개 불러옴`;
+            if (videoReferencePickerState.loading) {
+                status.textContent = `${videoReferencePickerState.tab === 'illustration' ? '삽화' : '에셋'}을 불러오는 중입니다.`;
+            } else if (videoReferencePickerState.tab === 'asset') {
+                const unit = videoReferencePickerState.assetLevel === 'characters'
+                    ? '캐릭터'
+                    : videoReferencePickerState.assetLevel === 'combinations'
+                        ? '의상·표정 조합'
+                        : '이미지';
+                status.textContent = `${videoReferencePickerState.items.length}개 ${unit}`;
+            } else {
+                status.textContent = `${videoReferencePickerState.items.length}개 불러옴`;
+            }
         }
 
         function onVideoReferencePickerImageError(image) {
@@ -29615,7 +29751,169 @@
             if (image) image.style.visibility = 'hidden';
         }
 
+        async function loadVideoAssetPickerLevel() {
+            const requestId = ++videoReferencePickerState.requestId;
+            videoReferencePickerState.loading = true;
+            videoReferencePickerState.hasMore = false;
+            videoReferencePickerState.items = [];
+            renderVideoReferencePicker();
+            try {
+                const enc = encodeURIComponent;
+                let data;
+                if (videoReferencePickerState.assetLevel === 'characters') {
+                    data = await fetchJSON('/api/asset_mode/characters');
+                    if (requestId !== videoReferencePickerState.requestId) return;
+                    const representatives = data?.representatives || {};
+                    videoReferencePickerState.items = (Array.isArray(data?.characters) ? data.characters : [])
+                        .map(character => {
+                            const representative = representatives[character] || null;
+                            let imageUrl = '';
+                            if (
+                                representative?.outfit
+                                && representative?.expression
+                                && representative?.filename
+                            ) {
+                                imageUrl = videoAssetReferenceImageUrl({
+                                    character,
+                                    outfit: representative.outfit,
+                                    expression: representative.expression,
+                                    filename: representative.filename,
+                                });
+                            }
+                            return {
+                                picker_type: 'character',
+                                character: String(character || ''),
+                                label: String(character || ''),
+                                image_url: imageUrl,
+                            };
+                        })
+                        .filter(item => item.character);
+                } else if (videoReferencePickerState.assetLevel === 'combinations') {
+                    const character = videoReferencePickerState.assetCharacter;
+                    data = await fetchJSON(
+                        `/api/asset_mode/characters/${enc(character)}/gallery`
+                    );
+                    if (requestId !== videoReferencePickerState.requestId) return;
+                    videoReferencePickerState.items = (Array.isArray(data?.gallery) ? data.gallery : [])
+                        .map(item => {
+                            const reference = {
+                                character,
+                                outfit: String(item?.outfit || ''),
+                                expression: String(item?.expression || ''),
+                                filename: String(item?.representative || ''),
+                            };
+                            return {
+                                picker_type: 'combination',
+                                character,
+                                outfit: reference.outfit,
+                                expression: reference.expression,
+                                label: `${reference.outfit} · ${reference.expression}`,
+                                image_count: Number(item?.image_count || 0),
+                                image_url: reference.filename
+                                    ? videoAssetReferenceImageUrl(
+                                        reference,
+                                        item?.representative_is_animated === true
+                                    )
+                                    : '',
+                            };
+                        })
+                        .filter(item => item.outfit && item.expression);
+                } else if (videoReferencePickerState.assetLevel === 'images') {
+                    const character = videoReferencePickerState.assetCharacter;
+                    const outfit = videoReferencePickerState.assetOutfit;
+                    const expression = videoReferencePickerState.assetExpression;
+                    data = await fetchJSON(
+                        `/api/asset_mode/characters/${enc(character)}`
+                        + `/outfits/${enc(outfit)}/expressions/${enc(expression)}/images`
+                    );
+                    if (requestId !== videoReferencePickerState.requestId) return;
+                    const loaded = (Array.isArray(data?.images) ? data.images : [])
+                        .map(media => {
+                            const reference = {
+                                kind: 'asset',
+                                character,
+                                outfit,
+                                expression,
+                                filename: String(media?.filename || ''),
+                            };
+                            if (!reference.filename) return null;
+                            const animated = media?.is_animated === true;
+                            return normalizeVideoReferenceOption({
+                                reference,
+                                label: `${character} / ${outfit} / ${expression} / ${reference.filename}`,
+                                image_url: videoAssetReferenceImageUrl(reference, animated),
+                                poster_url: videoAssetReferenceImageUrl(reference, animated),
+                                is_animated: animated,
+                                picker_detail: animated ? '애니메이션 에셋' : '에셋 이미지',
+                            });
+                        })
+                        .filter(Boolean);
+                    registerVideoReferenceOptions(loaded);
+                    videoReferencePickerState.items = loaded;
+                } else {
+                    console.error('[VIDEO_PICKER] 지원하지 않는 에셋 탐색 단계:', videoReferencePickerState.assetLevel);
+                    throw new Error('지원하지 않는 에셋 탐색 단계입니다');
+                }
+            } catch (error) {
+                if (requestId !== videoReferencePickerState.requestId) return;
+                console.error('[VIDEO_PICKER] 에셋 폴더 조회 실패:', {
+                    level: videoReferencePickerState.assetLevel,
+                    character: videoReferencePickerState.assetCharacter,
+                    outfit: videoReferencePickerState.assetOutfit,
+                    expression: videoReferencePickerState.assetExpression,
+                    error,
+                });
+                videoReferencePickerState.items = [];
+                showToast('에셋 폴더를 불러오지 못했습니다.', 'error');
+            } finally {
+                if (requestId !== videoReferencePickerState.requestId) return;
+                videoReferencePickerState.loading = false;
+                renderVideoReferencePicker();
+            }
+        }
+
+        async function openVideoAssetCharacters() {
+            videoReferencePickerState.assetLevel = 'characters';
+            videoReferencePickerState.assetCharacter = '';
+            videoReferencePickerState.assetOutfit = '';
+            videoReferencePickerState.assetExpression = '';
+            await loadVideoAssetPickerLevel();
+        }
+
+        async function openVideoAssetCharacter(character) {
+            const value = String(character || '').trim();
+            if (!value) {
+                console.error('[VIDEO_PICKER] 캐릭터 폴더 이름이 비어 있습니다.');
+                return;
+            }
+            videoReferencePickerState.assetLevel = 'combinations';
+            videoReferencePickerState.assetCharacter = value;
+            videoReferencePickerState.assetOutfit = '';
+            videoReferencePickerState.assetExpression = '';
+            await loadVideoAssetPickerLevel();
+        }
+
+        async function openVideoAssetCombination(character, outfit, expression) {
+            const values = [character, outfit, expression].map(value => String(value || '').trim());
+            if (values.some(value => !value)) {
+                console.error('[VIDEO_PICKER] 의상·표정 조합 경로가 비어 있습니다:', {
+                    character,
+                    outfit,
+                    expression,
+                });
+                return;
+            }
+            videoReferencePickerState.assetLevel = 'images';
+            [
+                videoReferencePickerState.assetCharacter,
+                videoReferencePickerState.assetOutfit,
+                videoReferencePickerState.assetExpression,
+            ] = values;
+            await loadVideoAssetPickerLevel();
+        }
+
         async function loadMoreVideoReferenceOptions(reset = false) {
+            if (videoReferencePickerState.tab !== 'illustration') return;
             if (!reset && videoReferencePickerState.loading) return;
             if (!reset && !videoReferencePickerState.hasMore) return;
             if (reset) {
@@ -29666,7 +29964,7 @@
             }
         }
 
-        async function switchVideoReferencePickerTab(tab) {
+        async function switchVideoReferencePickerTab(tab, preserveAssetPath = false) {
             if (!['illustration', 'asset'].includes(tab)) {
                 console.error('[VIDEO_PICKER] 지원하지 않는 탭:', tab);
                 return;
@@ -29680,7 +29978,17 @@
                     button.setAttribute('aria-selected', active ? 'true' : 'false');
                 }
             }
-            await loadMoreVideoReferenceOptions(true);
+            if (tab === 'asset') {
+                if (!preserveAssetPath) {
+                    videoReferencePickerState.assetLevel = 'characters';
+                    videoReferencePickerState.assetCharacter = '';
+                    videoReferencePickerState.assetOutfit = '';
+                    videoReferencePickerState.assetExpression = '';
+                }
+                await loadVideoAssetPickerLevel();
+            } else {
+                await loadMoreVideoReferenceOptions(true);
+            }
         }
 
         async function openVideoReferencePicker(target) {
@@ -29696,9 +30004,16 @@
             const clear = document.getElementById('video-reference-picker-clear');
             if (clear) clear.style.display = target === 'source' ? 'none' : '';
             const selected = getVideoReferenceByKey(input.value);
-            const defaultTab = selected?.reference?.kind === 'asset' ? 'asset' : 'illustration';
+            const selectedReference = selected?.reference || videoWorkspaceSourceRef;
+            const defaultTab = selectedReference?.kind === 'asset' ? 'asset' : 'illustration';
+            if (defaultTab === 'asset') {
+                videoReferencePickerState.assetLevel = 'images';
+                videoReferencePickerState.assetCharacter = String(selectedReference.character || '');
+                videoReferencePickerState.assetOutfit = String(selectedReference.outfit || '');
+                videoReferencePickerState.assetExpression = String(selectedReference.expression || '');
+            }
             modal.classList.add('visible');
-            await switchVideoReferencePickerTab(defaultTab);
+            await switchVideoReferencePickerTab(defaultTab, defaultTab === 'asset');
         }
 
         function closeVideoReferencePicker() {
