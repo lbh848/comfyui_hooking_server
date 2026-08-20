@@ -222,6 +222,53 @@ def cost_summary(settings: ModalSettings) -> dict[str, Any]:
     }
 
 
+MODEL_REFERENCE_SUFFIXES = (
+    ".safetensors",
+    ".ckpt",
+    ".pt",
+    ".pth",
+    ".bin",
+    ".onnx",
+    ".gguf",
+)
+
+
+def normalize_remote_model_separators(workflow: dict[str, Any]) -> int:
+    """워크플로우의 모델 참조에서 역슬래시를 슬래시로 바꾼다 (원격 실행 전용).
+
+    배포 워크플로우는 Windows 에서 작성돼 하위 폴더 모델 이름이
+    ``v19\\Qwen-Rapid-AIO-NSFW-v19.safetensors`` 처럼 역슬래시로 들어 있다.
+    Windows 로컬 ComfyUI 에서는 그대로 맞지만, **워커는 언제나 Linux** 라
+    ``v19/Qwen-...`` 로 나열되어 제출이 거부된다:
+
+        ckpt_name: 'v19\\Qwen-...' not in ['v19/Qwen-...']   (HTTP 400)
+
+    즉 이건 macOS 문제가 아니다 — **Windows 사용자가 Modal 로 돌려도 똑같이 막힌다.**
+    모델 확장자로 끝나는 문자열만 바꾸므로 프롬프트 같은 일반 텍스트는 건드리지 않는다.
+    (업로드 쪽 workflow_assets 는 이미 같은 정규화를 하고 있었다 — 제출 쪽만 빠져 있었다.)
+    """
+
+    changed = 0
+
+    def walk(node: Any) -> Any:
+        nonlocal changed
+        if isinstance(node, dict):
+            return {key: walk(value) for key, value in node.items()}
+        if isinstance(node, list):
+            return [walk(value) for value in node]
+        if isinstance(node, str) and "\\" in node:
+            if node.casefold().endswith(MODEL_REFERENCE_SUFFIXES):
+                changed += 1
+                return node.replace("\\", "/")
+        return node
+
+    normalized = walk(workflow)
+    if changed:
+        workflow.clear()
+        workflow.update(normalized)
+    return changed
+
+
 class ModalService:
     def __init__(self, project_root: str | Path, get_config):
         self.project_root = Path(project_root).resolve()
@@ -4414,6 +4461,15 @@ class ModalService:
                 f"Modal 계정이 연결되지 않았습니다. profile={settings.profile}"
             )
             raise RuntimeError("Modal 계정이 연결되어 있지 않습니다.")
+        # 워커는 Linux 다. Windows 에서 작성된 워크플로우의 역슬래시 모델 경로를
+        # 그대로 보내면 ComfyUI 가 목록에 없다며 400 으로 거부한다.
+        separator_fixes = normalize_remote_model_separators(workflow)
+        if separator_fixes:
+            print(
+                "[MODAL] 원격 제출 전 모델 경로 구분자 정규화: "
+                f"{separator_fixes}건 (\\ → /)"
+            )
+
         # 모델/LoRA 동기화는 수동 install에서만 수행한다. 실행 경로에서는 로컬
         # 모델 색인 스캔과 해시 계산을 건너뛰고 입력 파일 해석만 한다.
         workflow_input_files, explicit_input_files = await asyncio.gather(
