@@ -1,4 +1,4 @@
-﻿import asyncio
+import asyncio
 import io
 import json
 import os
@@ -3841,6 +3841,7 @@ async def submit_workflow_to_comfy(
     *,
     task_key: str = "asset_generation",
     input_paths: list[str] | tuple[str, ...] | None = None,
+    capture_input_paths: list[str] | tuple[str, ...] | None = None,
 ) -> tuple[bytes | None, str | dict]:
     """임의의 API 워크플로우를 ComfyUI에 제출하고 이미지를 반환한다."""
     execution_target = str(CURRENT_COMFY_EXECUTION_TARGET.get() or "")
@@ -3853,6 +3854,8 @@ async def submit_workflow_to_comfy(
                 await progress_callback(0, 1)
             service = remote_comfy_service_for_target(execution_target)
             generate_kwargs = {"input_paths": input_paths}
+            if capture_input_paths:
+                generate_kwargs["capture_input_paths"] = list(capture_input_paths)
 
             # Modal/Vast 공용: 원격 구조화 진행 이벤트를 기존 이미지 진행
             # 콜백 형식으로 바꿔 전달한다(Vast가 먼저 쓰던 정규화를 재사용).
@@ -4680,12 +4683,63 @@ async def _run_data_patch_utility(
         if title == "긍정프롬프트":
             ninfo["inputs"]["value"] = prompt_text
 
-    img_bytes, submit_err = await submit_workflow_to_comfy(
+    # 유틸리티 워크플로우는 이미지 말고 **파일**도 만든다: 캐릭터 폴더 안의
+    # cache.pt(CLIP 임베딩) 와 cache.ipadpt(InsightFace). 이 둘이 없으면 등록
+    # 캐릭터 삽화가 전부 막히므로(G1) 원격 실행에서도 반드시 회수해야 한다.
+    #
+    # 로컬은 노드가 곧바로 Comfy input 폴더에 쓰므로 할 일이 없다. 원격은
+    # 컨테이너가 사라지면 같이 사라지니, 실행 입력으로 캐릭터 폴더를 올리고
+    # (LoadImagesFromPath_mdsoya 가 그 폴더를 읽는다) 실행 뒤 두 파일을 회수해
+    # 같은 상대 경로로 로컬에 복원한다.
+    relative_char_dir = f"soya_bot/{bot_name}/{char_name}"
+    capture_paths = [
+        f"{relative_char_dir}/cache.pt",
+        f"{relative_char_dir}/cache.ipadpt",
+    ]
+    comfy_input_dir = str(app_config.get("comfy_input_dir") or "").strip()
+    local_char_dir = (
+        os.path.join(comfy_input_dir, "soya_bot", bot_name, char_name)
+        if comfy_input_dir
+        else ""
+    )
+    utility_input_paths = (
+        [local_char_dir] if local_char_dir and os.path.isdir(local_char_dir) else None
+    )
+
+    img_bytes, submit_meta = await submit_workflow_to_comfy(
         wf,
         task_key="utility_debug",
+        input_paths=utility_input_paths,
+        capture_input_paths=capture_paths,
     )
-    if submit_err or not img_bytes:
-        raise RuntimeError(f"{char_name}: {submit_err or '이미지 없음'}")
+    if not img_bytes:
+        raise RuntimeError(f"{char_name}: {submit_meta or '이미지 없음'}")
+
+    # 원격 실행이었으면 회수한 캐시를 로컬 input 폴더에 되돌려 놓는다.
+    captured = []
+    if isinstance(submit_meta, dict):
+        for provider_result in submit_meta.values():
+            if isinstance(provider_result, dict):
+                captured.extend(provider_result.get("captured_inputs") or [])
+    for entry in captured:
+        relative = str(entry.get("remote_name") or "").strip()
+        payload_bytes = entry.get("bytes")
+        if not relative or not payload_bytes or not comfy_input_dir:
+            continue
+        parts = [part for part in relative.split("/") if part not in ("", ".")]
+        if not parts or ".." in parts:
+            print(f"[DATA_PATCH_UTILITY] 안전하지 않은 회수 경로 무시: {relative!r}")
+            continue
+        target = os.path.join(comfy_input_dir, *parts)
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        temp_target = f"{target}.tmp_{uuid.uuid4().hex}"
+        with open(temp_target, "wb") as cache_file:
+            cache_file.write(payload_bytes)
+        os.replace(temp_target, target)
+        print(
+            f"[DATA_PATCH_UTILITY] 원격 캐시 회수 저장: {relative} "
+            f"({len(payload_bytes):,} bytes)"
+        )
 
     # 새 결과를 같은 폴더의 임시 파일로 먼저 완성한 뒤 원자적으로 교체한다.
     # 교체 직전 기존 FACE를 임시 백업해 두고, 성공하면 백업을 지우고

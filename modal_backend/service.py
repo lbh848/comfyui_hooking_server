@@ -4448,6 +4448,7 @@ class ModalService:
         artifact_prefixes: list[str] | tuple[str, ...] | None = None,
         require_images: bool = True,
         video_job_id: str | None = None,
+        capture_input_paths: list[str] | tuple[str, ...] | None = None,
         progress_callback: Callable[[dict[str, Any]], Any] | None = None,
     ) -> dict[str, Any]:
         config = self.get_config()
@@ -4548,6 +4549,7 @@ class ModalService:
                 "require_images": bool(require_images),
                 "defer_artifacts": deferred_artifacts,
                 "video_job_id": video_job_id,
+                "capture_input_paths": list(capture_input_paths or []),
                 "timeout_seconds": max(30, min(int(timeout_seconds), 3_300)),
                 "container_start_max_retries": (
                     settings.container_start_max_retries
@@ -4672,6 +4674,17 @@ class ModalService:
                 "deferred_artifacts": raw_artifacts if deferred_artifacts else [],
                 "video_artifacts": video_artifacts,
                 "text_outputs": list(result.get("text_outputs") or []),
+                # 워커가 Comfy input 폴더에서 회수해 온 파일. 임시 output_dir 이
+                # 이 블록을 벗어나면 사라지므로 여기서 바이트로 읽어 넘긴다.
+                "captured_inputs": [
+                    {
+                        "remote_name": str(item.get("remote_name") or ""),
+                        "bytes": Path(str(item["path"])).read_bytes(),
+                        "size": int(item.get("size") or 0),
+                        "sha256": str(item.get("sha256") or ""),
+                    }
+                    for item in (result.get("captured_inputs") or [])
+                ],
             }
 
     @staticmethod
@@ -5116,12 +5129,14 @@ class ModalService:
         *,
         timeout_seconds: int = 3_300,
         input_paths: list[str] | tuple[str, ...] | None = None,
+        capture_input_paths: list[str] | tuple[str, ...] | None = None,
         progress_callback: Callable[[dict[str, Any]], Any] | None = None,
     ) -> tuple[bytes, dict[str, Any]]:
         result = await self.run_workflow(
             workflow,
             timeout_seconds=timeout_seconds,
             input_paths=input_paths,
+            capture_input_paths=capture_input_paths,
             require_images=True,
             progress_callback=progress_callback,
         )
@@ -5135,6 +5150,7 @@ class ModalService:
             "model_sync": result.get("model_sync") or {},
             "lora_sync": result.get("lora_sync") or {},
             "content_type": first.get("content_type"),
+            "captured_inputs": list(result.get("captured_inputs") or []),
         }
 
     def _load_video_delete_outbox(self) -> list[dict[str, Any]]:

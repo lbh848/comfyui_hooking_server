@@ -387,9 +387,16 @@ async def test_data_patch_utility_uses_transient_crop_and_backs_up_existing_face
     async def load_workflow():
         return {"1": {"inputs": {}, "_meta": {"title": "긍정프롬프트"}}}, None
 
-    async def submit_workflow(workflow, task_key):
+    async def submit_workflow(
+        workflow,
+        task_key,
+        input_paths=None,
+        capture_input_paths=None,
+    ):
         captured["workflow"] = workflow
         captured["task_key"] = task_key
+        # 원격 실행에서 회수해야 할 캐시 경로를 유틸리티가 실제로 넘기는지 본다.
+        captured["capture_input_paths"] = list(capture_input_paths or [])
         return b"new-face", None
 
     def build_prompt(_bot_name, _char_name, settings):
@@ -440,6 +447,12 @@ async def test_data_patch_utility_uses_transient_crop_and_backs_up_existing_face
         "emb_target": "대표만",
     }
     assert face_path.read_bytes() == b"new-face"
+    # cache.pt / cache.ipadpt 는 원격 실행에서 반드시 회수해야 한다. 회수하지
+    # 못하면 등록 캐릭터 삽화가 전부 막힌다(G1).
+    assert captured["capture_input_paths"] == [
+        "soya_bot/sample-bot/alice/cache.pt",
+        "soya_bot/sample-bot/alice/cache.ipadpt",
+    ]
     assert not prompt_path.exists()
     backups = list((tmp_path / "backups" / "data_patch").glob("*"))
     assert len(backups) == 1

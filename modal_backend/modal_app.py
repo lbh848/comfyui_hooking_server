@@ -984,6 +984,7 @@ class ComfyWorker:
         require_images: bool = True,
         defer_artifacts: bool = False,
         video_job_id: str | None = None,
+        capture_input_paths: list[str] | None = None,
     ) -> dict:
         _announce_call_started("generate")
         import hashlib
@@ -1065,6 +1066,52 @@ class ComfyWorker:
                     )
 
         staged_input_paths: list[Path] = []
+        captured_inputs: list[dict] = []
+
+        def collect_captured_inputs() -> None:
+            """워크플로우가 Comfy input 폴더에 써 놓고 간 파일을 회수한다.
+
+            **cleanup_staged_inputs() 보다 반드시 먼저** 불려야 한다. 회수 대상과
+            업로드한 입력이 같은 경로일 수 있어서(예: 캐릭터 폴더의 cache.pt 를
+            올렸다가 워크플로우가 같은 자리에 다시 쓴다), 정리를 먼저 하면 방금
+            만들어진 결과까지 지워지고 빈손으로 돌아간다.
+            """
+
+            for raw_name in capture_input_paths or []:
+                normalized = str(raw_name or "").strip().replace("\\", "/")
+                relative = Path(normalized)
+                if (
+                    not normalized
+                    or relative.is_absolute()
+                    or ".." in relative.parts
+                ):
+                    raise ValueError(
+                        f"안전하지 않은 회수 대상 경로입니다: {raw_name!r}"
+                    )
+                candidate = input_root.joinpath(*relative.parts).resolve()
+                if input_root != candidate and input_root not in candidate.parents:
+                    raise ValueError(
+                        f"ComfyUI input 밖의 경로는 회수할 수 없습니다: {raw_name!r}"
+                    )
+                if not candidate.is_file():
+                    print(
+                        "[MODAL_COMFY:CAPTURE] 회수 대상 파일이 생성되지 않았습니다: "
+                        f"{relative.as_posix()}"
+                    )
+                    continue
+                payload_bytes = candidate.read_bytes()
+                captured_inputs.append(
+                    {
+                        "remote_name": relative.as_posix(),
+                        "bytes": payload_bytes,
+                        "size": len(payload_bytes),
+                        "sha256": hashlib.sha256(payload_bytes).hexdigest(),
+                    }
+                )
+                print(
+                    "[MODAL_COMFY:CAPTURE] 회수: "
+                    f"{relative.as_posix()} ({len(payload_bytes):,} bytes)"
+                )
 
         def cleanup_staged_inputs() -> None:
             for target in reversed(staged_input_paths):
@@ -1124,6 +1171,7 @@ class ComfyWorker:
                     emit_progress,
                 )
             )
+            collect_captured_inputs()
         finally:
             cleanup_staged_inputs()
 
@@ -1361,5 +1409,6 @@ class ComfyWorker:
             "artifacts": artifacts,
             "video_artifacts": video_artifacts,
             "text_outputs": list(self.text_outputs),
+            "captured_inputs": captured_inputs,
             "peak_vram": dict(vram_stats),
         }

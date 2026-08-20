@@ -1156,6 +1156,7 @@ def generate(payload: dict) -> dict:
         bool(payload.get("require_images", True)),
         bool(payload.get("defer_artifacts", False)),
         payload.get("video_job_id"),
+        list(payload.get("capture_input_paths") or []),
     )
     try:
         remote_result = _wait_for_call_with_start_retry_limit(
@@ -1191,6 +1192,26 @@ def generate(payload: dict) -> dict:
         )
     if bool(payload.get("require_images", True)) and not outputs:
         raise RuntimeError("Modal ComfyUI가 출력 이미지를 반환하지 않았습니다.")
+    # 워커가 Comfy input 폴더에서 회수해 온 파일을 디스크로 내린다.
+    captured = []
+    captured_root = output_dir / "captured"
+    for item in remote_result.get("captured_inputs") or []:
+        relative = Path(str(item.get("remote_name") or ""))
+        if relative.is_absolute() or not relative.parts or ".." in relative.parts:
+            raise ValueError(
+                f"Modal이 안전하지 않은 회수 경로를 반환했습니다: {relative!s}"
+            )
+        target = captured_root / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(item["bytes"])
+        captured.append(
+            {
+                "path": str(target),
+                "remote_name": relative.as_posix(),
+                "size": int(item.get("size") or target.stat().st_size),
+                "sha256": str(item.get("sha256") or ""),
+            }
+        )
     artifacts = []
     artifact_root = output_dir / "artifacts"
     for artifact in remote_result.get("artifacts") or []:
@@ -1283,6 +1304,7 @@ def generate(payload: dict) -> dict:
         "artifacts": artifacts,
         "video_artifacts": video_artifacts,
         "text_outputs": list(remote_result.get("text_outputs") or []),
+        "captured_inputs": captured,
     }
 
 
