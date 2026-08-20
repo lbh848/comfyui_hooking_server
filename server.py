@@ -1338,6 +1338,33 @@ def resolve_comfy_port(task_key: str) -> int:
     return resolve_comfy_instance(task_key)[1]
 
 
+def effective_execution_target(task_key: str) -> str:
+    """실행 대상(로컬/modal/vast). 큐 밖이라 컨텍스트가 비면 작업 배분을 본다."""
+    execution_target = str(CURRENT_COMFY_EXECUTION_TARGET.get() or "")
+    if execution_target:
+        return execution_target
+    try:
+        configured = normalize_comfy_task_allocations(
+            app_config.get("comfy_task_allocations"),
+            legacy_illustration_port=app_config.get("comfyui_port_illustration"),
+        ).get(task_key)
+    except Exception as exc:
+        print(
+            "[COMFY_ALLOCATION] 작업 배분 조회 실패, 로컬로 진행: "
+            f"task={task_key}, error={type(exc).__name__}: {exc}"
+        )
+        traceback.print_exc()
+        return ""
+    configured = str(configured or "")
+    if configured in REMOTE_COMFY_TARGETS:
+        print(
+            "[COMFY_ALLOCATION] 실행 컨텍스트 없음 → 설정 배분 사용: "
+            f"task={task_key}, target={configured}"
+        )
+        return configured
+    return ""
+
+
 # ─── 복장 추출 모드 초기화 (함수 의존성 없는 부분만) ───
 outfit_mode.enabled = app_config.get("outfit_mode_enabled", False)
 outfit_mode.outfit_workflow_source_path = app_config.get("outfit_workflow_source_path", "")
@@ -1844,7 +1871,7 @@ async def convert_workflow_via_endpoint(
                 print(f"[WORKFLOW] ✓ 변환 완료: {len(api_format)} 노드")
                 return api_format, None
 
-    execution_target = str(CURRENT_COMFY_EXECUTION_TARGET.get() or "")
+    execution_target = effective_execution_target(task_key)
     if execution_target in REMOTE_COMFY_TARGETS:
         provider_label = (
             "Modal" if execution_target == MODAL_COMFY_TARGET else "Vast"
@@ -3582,7 +3609,7 @@ async def generate_image_with_prompt(
         print(f"[GEN] 공급자 선택 실패: {message}")
         return None, message
 
-    execution_target = CURRENT_COMFY_EXECUTION_TARGET.get()
+    execution_target = effective_execution_target(comfy_task_key)
     if execution_target in REMOTE_COMFY_TARGETS:
         provider_label = (
             "Modal" if execution_target == MODAL_COMFY_TARGET else "Vast"
@@ -3844,7 +3871,7 @@ async def submit_workflow_to_comfy(
     capture_input_paths: list[str] | tuple[str, ...] | None = None,
 ) -> tuple[bytes | None, str | dict]:
     """임의의 API 워크플로우를 ComfyUI에 제출하고 이미지를 반환한다."""
-    execution_target = str(CURRENT_COMFY_EXECUTION_TARGET.get() or "")
+    execution_target = effective_execution_target(task_key)
     if execution_target in REMOTE_COMFY_TARGETS:
         provider_label = (
             "Modal" if execution_target == MODAL_COMFY_TARGET else "Vast"
@@ -3992,7 +4019,7 @@ async def submit_video_workflow_to_comfy(
 ) -> tuple[bytes | None, dict | str]:
     """Run H3 on the allocated Comfy target and return its verified temporary MP4."""
 
-    execution_target = str(CURRENT_COMFY_EXECUTION_TARGET.get() or "")
+    execution_target = effective_execution_target(task_key)
     if execution_target in REMOTE_COMFY_TARGETS:
         provider_label = (
             "Modal" if execution_target == MODAL_COMFY_TARGET else "Vast"
