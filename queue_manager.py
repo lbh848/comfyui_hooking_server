@@ -823,6 +823,11 @@ class QueueManager:
             "bot_lora_training": "bot_lora_training",
             "instance_lora_training": "instance_lora",
             "instance_lora_analysis": "instance_lora",
+            # 얼굴 추출은 인스턴스 LoRA 의 선행 단계지만 배분 키가 따로 있다
+            # (COMFY_TASK_DEFINITIONS 의 face_extract). 여기에 없으면 task_key 가
+            # None 이 되어 레인 판정이 건너뛰어지고 배분 설정이 조용히 무시된다.
+            "instance_lora_face_extract": "face_extract",
+            "data_patch_utility": "utility_debug",
         }
         mapped = mapping.get(item.type)
         if mapped:
@@ -4144,38 +4149,79 @@ class QueueManager:
             elif title == "부정프롬프트":
                 ninfo["inputs"]["value"] = ""
 
-        # 실행 & 대기 (server.py generate_image_with_prompt 패턴 참조)
-        extract_prompt_id, submit_result = await self._monitor_training_ws(
-            item, wf,
-            event_type="instance_lora_face_extract_progress",
-            extra_data={"lora_id": lora_id},
-        )
-        print(f"[INSTANCE_LORA:FACE_EXTRACT] 워크플로우 완료: prompt_id={extract_prompt_id}")
-
-        # history에서 출력 이미지 가져오기 (server.py 라인 1033-1052 패턴)
-        extract_port = int(submit_result.get("_comfy_port"))
-        history = await self.fetch_real_history(extract_prompt_id, port=extract_port)
-        real_entry = history.get(extract_prompt_id, {})
-        real_outputs = real_entry.get("outputs", {})
-
-        print(f"[INSTANCE_LORA:FACE_EXTRACT] history keys={list(real_outputs.keys())}")
-        for nid_key, nout_val in real_outputs.items():
-            print(f"[INSTANCE_LORA:FACE_EXTRACT]   node {nid_key}: {list(nout_val.keys())}")
-
+        # 실행 & 대기
+        #
+        # 원격에는 /history 포트가 없으므로 실행 결과에 동봉돼 오는 images 를
+        # 쓴다. 회수 수단이 다를 뿐 산출물은 같다.
+        execution_target = str(CURRENT_COMFY_EXECUTION_TARGET.get() or "")
         face_cropped_bytes = None
-        for nid_key, nout_val in real_outputs.items():
-            if "images" in nout_val:
-                imgs = nout_val["images"]
-                if imgs:
-                    first = imgs[0]
-                    print(f"[INSTANCE_LORA:FACE_EXTRACT] 출력 이미지: {first}")
-                    face_cropped_bytes = await self.fetch_real_image(
-                        first["filename"],
-                        first.get("subfolder", ""),
-                        first.get("type", "output"),
-                        port=extract_port,
-                    )
-                    break
+        if execution_target in REMOTE_COMFY_TARGETS:
+            provider_label = (
+                "Modal" if execution_target == MODAL_COMFY_TARGET else "Vast"
+            )
+            run_remote_workflow = (
+                self.run_modal_workflow
+                if execution_target == MODAL_COMFY_TARGET
+                else self.run_vast_workflow
+            )
+            if not callable(run_remote_workflow):
+                print(
+                    f"[INSTANCE_LORA:FACE_EXTRACT:{provider_label.upper()}] "
+                    f"원격 워크플로우 콜백이 없습니다: item={item.id}"
+                )
+                raise RuntimeError(
+                    f"{provider_label} 원격 실행 콜백이 연결되지 않았습니다"
+                )
+            result = await run_remote_workflow(
+                wf,
+                input_paths=[export_dir],
+                require_images=True,
+            )
+            extract_prompt_id = str(result.get("prompt_id") or "")
+            images = list(result.get("images") or [])
+            if not images:
+                print(
+                    f"[INSTANCE_LORA:FACE_EXTRACT:{provider_label.upper()}] "
+                    f"결과 이미지 없음: item={item.id}, prompt_id={extract_prompt_id!r}"
+                )
+                raise ValueError(f"{provider_label} 얼굴 추출 결과 이미지가 없습니다")
+            face_cropped_bytes = images[0].get("bytes")
+            print(
+                f"[INSTANCE_LORA:FACE_EXTRACT:{provider_label.upper()}] 완료: "
+                f"prompt_id={extract_prompt_id}, images={len(images)}, "
+                f"bytes={len(face_cropped_bytes or b'')}"
+            )
+        else:
+            extract_prompt_id, submit_result = await self._monitor_training_ws(
+                item, wf,
+                event_type="instance_lora_face_extract_progress",
+                extra_data={"lora_id": lora_id},
+            )
+            print(f"[INSTANCE_LORA:FACE_EXTRACT] 워크플로우 완료: prompt_id={extract_prompt_id}")
+
+            # history에서 출력 이미지 가져오기 (server.py 라인 1033-1052 패턴)
+            extract_port = int(submit_result.get("_comfy_port"))
+            history = await self.fetch_real_history(extract_prompt_id, port=extract_port)
+            real_entry = history.get(extract_prompt_id, {})
+            real_outputs = real_entry.get("outputs", {})
+
+            print(f"[INSTANCE_LORA:FACE_EXTRACT] history keys={list(real_outputs.keys())}")
+            for nid_key, nout_val in real_outputs.items():
+                print(f"[INSTANCE_LORA:FACE_EXTRACT]   node {nid_key}: {list(nout_val.keys())}")
+
+            for nid_key, nout_val in real_outputs.items():
+                if "images" in nout_val:
+                    imgs = nout_val["images"]
+                    if imgs:
+                        first = imgs[0]
+                        print(f"[INSTANCE_LORA:FACE_EXTRACT] 출력 이미지: {first}")
+                        face_cropped_bytes = await self.fetch_real_image(
+                            first["filename"],
+                            first.get("subfolder", ""),
+                            first.get("type", "output"),
+                            port=extract_port,
+                        )
+                        break
 
         if not face_cropped_bytes:
             raise ValueError(
@@ -5296,6 +5342,7 @@ class QueueManager:
             "bot_lora_training": "bot_lora_training",
             "instance_lora_training": "instance_lora",
             "instance_lora_face_extract": "face_extract",
+            "data_patch_utility": "utility_debug",
         }
         task_key = task_key_by_type.get(item.type)
         if not task_key:

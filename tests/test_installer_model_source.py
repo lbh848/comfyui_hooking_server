@@ -41,17 +41,20 @@ WORKFLOWS = MANIFEST["workflows"]
 MODELS = list(MANIFEST["models"])
 
 # Modal 이 지원하지 않아 반드시 로컬에서 도는 작업들.
-LOCAL_ONLY_TASKS = ("tag_analysis", "outfit", "face_extract", "utility_debug")
+#
+# tag_analysis 와 utility_debug 는 원격 회수 경로가 생겨 여기서 빠졌다(둘 다
+# Modal 에서 실측 완료). face_extract 는 원격 분기를 구현했지만 이 머신에
+# 인스턴스 LoRA 데이터가 없어 **실측하지 못해** 아직 로컬 전용으로 둔다.
+# outfit 은 워크플로우가 배포되지 않아 애초에 바인딩이 없다.
+LOCAL_ONLY_TASKS = ("outfit", "face_extract")
 
-# 이 세트가 곧 "경량 전처리에 필요한 모델"이다. MACOS_LOCAL_COMFYUI.md §5.9 에서
-# 사람이 눈으로 고른 6개와 정확히 일치한다 — 규칙이 그 선택을 재현한다.
+# 로컬 전용 작업이 줄면 로컬에 받아야 할 모델도 줄어든다. 예전에는 6개 6.42 GiB
+# 였고(MACOS_LOCAL_COMFYUI.md §5.9 의 수기 선택과 일치했다), tag_analysis·
+# utility_debug 가 원격으로 옮겨간 지금은 face_extract 바인딩의 2개만 남는다.
+# outfit 은 바인딩이 없어 기여하지 않는다.
 EXPECTED_LOCAL_MODEL_IDS = {
     "anime-sharp-v4-upscaler",
-    "clip-vision-bigg-ipadapter",
-    "clip-vit-l14",
     "face-yolov8m",
-    "face-yolov8n",
-    "noob-ipa-mark1",
 }
 
 
@@ -117,8 +120,10 @@ def test_cloud_direct_keeps_only_locally_allocated_task_models():
     )
     assert {m["id"] for m in scope.keep} == EXPECTED_LOCAL_MODEL_IDS
     assert scope.filtered
-    # 6.42 GiB / 117.67 GiB — 숫자가 크게 움직이면 규칙이 바뀐 것이다.
-    assert 6.0 < scope.keep_bytes / 1024**3 < 7.0
+    # 0.078 GiB — face_extract 바인딩 2개뿐이다. 예전 6.42 GiB 에서 줄어든 것은
+    # tag_analysis·utility_debug 가 원격으로 옮겨갔기 때문이다. 숫자가 크게
+    # 움직이면 배분 규칙이 바뀐 것이다.
+    assert 0.0 < scope.keep_bytes / 1024**3 < 0.5
     assert scope.skipped_bytes > 100 * 1024**3
 
 
@@ -352,7 +357,7 @@ def test_preflight_disk_requirement_follows_the_filtered_set(tmp_path, monkeypat
 
     runtime_and_buffer = 30 * 1024**3
     local_bytes = captured["required_bytes"] - runtime_and_buffer
-    assert 6.0 < local_bytes / 1024**3 < 7.0, (
+    assert 0.0 < local_bytes / 1024**3 < 0.5, (
         "cloud_direct 인데 디스크 요구량이 로컬 다운로드분을 넘습니다: "
         f"{local_bytes / 1024**3:.2f} GiB"
     )

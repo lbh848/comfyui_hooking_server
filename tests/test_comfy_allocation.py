@@ -117,11 +117,23 @@ def test_modal_is_accepted_for_every_supported_task(task_key: str) -> None:
 
 @pytest.mark.parametrize(
     "task_key",
-    ("outfit", "face_extract", "utility_debug"),
+    ("outfit", "face_extract"),
 )
 def test_modal_is_rejected_for_local_only_tasks(task_key: str) -> None:
     with pytest.raises(ComfyTaskAllocationValidationError, match="Modal"):
         normalize_comfy_task_allocations({task_key: "modal"})
+
+
+def test_utility_debug_is_accepted_for_remote_targets() -> None:
+    """유틸리티/디버그도 원격 배분을 허용한다.
+
+    캐시 파일(cache.pt · cache.ipadpt)은 워커가 실행 뒤 회수해 결과에 실어 보내고
+    앱이 로컬 Comfy input 에 같은 상대 경로로 복원한다.
+    """
+
+    for target in ("modal", "vast"):
+        allocations = normalize_comfy_task_allocations({"utility_debug": target})
+        assert allocations["utility_debug"] == target
 
 
 def test_tag_analysis_is_accepted_for_remote_targets() -> None:
@@ -158,7 +170,7 @@ def test_vast_is_accepted_where_modal_is_supported(task_key: str) -> None:
 
 @pytest.mark.parametrize(
     "task_key",
-    ("outfit", "face_extract", "utility_debug"),
+    ("outfit", "face_extract"),
 )
 def test_vast_is_rejected_for_local_only_tasks(task_key: str) -> None:
     with pytest.raises(ComfyTaskAllocationValidationError, match="Vast"):
@@ -194,7 +206,7 @@ def test_modal_parallel_is_allowed_with_local_or_vast_primary_target() -> None:
     vast_allocations = normalize_comfy_task_allocations({"illustration": "vast"})
 
     local_parallel = normalize_comfy_task_modal_parallel(
-        {"illustration": True, "utility_debug": True},
+        {"illustration": True, "face_extract": True},
         allocations=local_allocations,
     )
     modal_parallel = normalize_comfy_task_modal_parallel(
@@ -207,7 +219,7 @@ def test_modal_parallel_is_allowed_with_local_or_vast_primary_target() -> None:
     )
 
     assert local_parallel["illustration"] is True
-    assert local_parallel["utility_debug"] is False
+    assert local_parallel["face_extract"] is False
     assert modal_parallel["illustration"] is False
     assert vast_primary_parallel["illustration"] is True
 
@@ -218,7 +230,7 @@ def test_vast_parallel_is_allowed_with_local_or_modal_primary_target() -> None:
     vast_allocations = normalize_comfy_task_allocations({"illustration": "vast"})
 
     local_parallel = normalize_comfy_task_vast_parallel(
-        {"illustration": True, "utility_debug": True},
+        {"illustration": True, "face_extract": True},
         allocations=local_allocations,
     )
     modal_primary_parallel = normalize_comfy_task_vast_parallel(
@@ -231,7 +243,7 @@ def test_vast_parallel_is_allowed_with_local_or_modal_primary_target() -> None:
     )
 
     assert local_parallel["illustration"] is True
-    assert local_parallel["utility_debug"] is False
+    assert local_parallel["face_extract"] is False
     assert modal_primary_parallel["illustration"] is True
     assert vast_parallel["illustration"] is False
 

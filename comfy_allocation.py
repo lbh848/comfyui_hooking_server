@@ -61,6 +61,7 @@ MODAL_SUPPORTED_COMFY_TASK_KEYS = frozenset(
         "instance_lora",
         "video_generation",
         "tag_analysis",
+        "utility_debug",
     }
 )
 VAST_SUPPORTED_COMFY_TASK_KEYS = MODAL_SUPPORTED_COMFY_TASK_KEYS

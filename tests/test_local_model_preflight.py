@@ -87,9 +87,10 @@ def test_gap_reported_when_a_local_task_model_is_missing(tmp_path):
         comfy_root=comfy_root,
     )
     ids = {gap["id"] for gap in gaps}
-    # 로컬 실행 4종이 쓰는 경량 6개가 빠졌다고 보고돼야 한다.
-    assert "clip-vision-bigg-ipadapter" in ids
+    # 로컬 전용으로 남은 작업(face_extract)이 쓰는 모델이 빠졌다고 보고돼야 한다.
+    # tag_analysis·utility_debug 가 원격으로 옮겨가면서 이 목록은 줄었다.
     assert "face-yolov8m" in ids
+    assert "anime-sharp-v4-upscaler" in ids
     # 원격 배분 작업의 모델은 로컬에 없어도 정상이다 — 보고하면 안 된다.
     assert "qwen-image-edit-rapid-v19" not in ids
 
