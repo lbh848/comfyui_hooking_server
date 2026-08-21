@@ -339,7 +339,7 @@ def test_dynamic_duration_updates_flf_alignment_and_h3_prompt_context() -> None:
     assert "12.00-second mark" in alignment
     assert prompt.startswith(alignment)
     assert validate_h3_prompt(prompt, "first_last", duration) == (True, "")
-    assert "final 12-second H3 prompt" in combined
+    assert "final 12-second video prompt" in combined
     assert "by 12.00 seconds" in combined
 
 
@@ -737,7 +737,7 @@ def test_instruction_draft_prompt_receives_options_and_story_context() -> None:
     combined = "\n".join(str(message["content"]) for message in messages)
 
     assert "12.00 seconds" in combined
-    assert "MiniMax H3" in combined
+    assert "propose one editable natural-language direction" in combined
     assert "natural Korean" in combined
     assert "Keep the camera completely locked off" in combined
     assert "Background or environmental state may change" in combined
