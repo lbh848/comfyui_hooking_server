@@ -15410,6 +15410,26 @@
                     </label>
                     <label class="video-secondary-row video-ai-context-option">
                         <span class="video-ai-context-copy">
+                            <span class="video-panel-title">최종 프롬프트 생성</span>
+                            <span class="video-panel-hint" style="display:block; margin-top:3px;">후보 하나를 바로 쓰거나, 세 후보를 비교해 하나를 선택합니다.</span>
+                        </span>
+                        <select id="video-generation-prompt-generation-mode" class="video-select">
+                            <option value="single" selected>후보 1개 바로 사용</option>
+                            <option value="best_of_three">3개 후보 중 최종 선택</option>
+                        </select>
+                    </label>
+                    <label class="video-secondary-row video-ai-context-option">
+                        <span class="video-ai-context-copy">
+                            <span class="video-panel-title">연출 지시 영어 번역</span>
+                            <span class="video-panel-hint" style="display:block; margin-top:3px;">확정된 연출 지시를 영어로 번역한 뒤 최종 프롬프트를 작성합니다. 번역 실패 시 원문을 사용합니다.</span>
+                        </span>
+                        <span class="toggle-switch">
+                            <input id="video-generation-translate-instruction-to-english" type="checkbox">
+                            <span class="toggle-slider"></span>
+                        </span>
+                    </label>
+                    <label class="video-secondary-row video-ai-context-option">
+                        <span class="video-ai-context-copy">
                             <span class="video-panel-title">입력 다듬기 방식</span>
                             <span class="video-panel-hint" style="display:block; margin-top:3px;">일반 확장 또는 시네마틱 제작 계획으로 다듬습니다.</span>
                         </span>
@@ -30794,18 +30814,22 @@
             const aspectRatio = document.getElementById('video-generation-aspect-ratio');
             const qualityLevel = document.getElementById('video-generation-quality-level');
             const workflowVariant = document.getElementById('video-generation-workflow-variant');
+            const promptGenerationMode = document.getElementById('video-generation-prompt-generation-mode');
+            const translateInstructionToEnglish = document.getElementById('video-generation-translate-instruction-to-english');
             const loop = document.getElementById('video-generation-loop');
             const language = document.getElementById('video-generation-instruction-language');
             const cameraMotion = document.getElementById('video-generation-allow-camera-motion');
             const backgroundChange = document.getElementById('video-generation-allow-background-change');
             const enabled = document.getElementById('video-generation-upscale-enabled');
-            if (!duration || !aspectRatio || !qualityLevel || !workflowVariant || !loop || !language
+            if (!duration || !aspectRatio || !qualityLevel || !workflowVariant || !promptGenerationMode || !translateInstructionToEnglish || !loop || !language
                     || !cameraMotion || !backgroundChange || !enabled) {
                 console.error('[VIDEO_UI] 영상화 기본 설정을 적용할 컨트롤이 누락되었습니다.', {
                     duration: !!duration,
                     aspectRatio: !!aspectRatio,
                     qualityLevel: !!qualityLevel,
                     workflowVariant: !!workflowVariant,
+                    promptGenerationMode: !!promptGenerationMode,
+                    translateInstructionToEnglish: !!translateInstructionToEnglish,
                     loop: !!loop,
                     language: !!language,
                     cameraMotion: !!cameraMotion,
@@ -30829,6 +30853,16 @@
             onVideoLoopChange();
 
             setVideoVisualContextFromImage(settings.visual_context_source !== 'prompt');
+            const savedPromptGenerationMode = String(
+                settings.prompt_generation_mode || 'single'
+            ).trim().toLowerCase();
+            if (savedPromptGenerationMode === 'single' || savedPromptGenerationMode === 'best_of_three') {
+                promptGenerationMode.value = savedPromptGenerationMode;
+            } else {
+                console.error('[VIDEO_UI] 저장된 최종 프롬프트 생성 방식이 올바르지 않습니다:', settings.prompt_generation_mode);
+                promptGenerationMode.value = 'single';
+            }
+            translateInstructionToEnglish.checked = settings.translate_instruction_to_english === true;
             const refineVersionSelect = document.getElementById('video-generation-refine-version');
             if (refineVersionSelect) {
                 const refineVersionValue = String(settings.refine_version || 'v1').trim().toLowerCase();
@@ -30891,9 +30925,13 @@
 
         function collectVideoGenerationDefaults() {
             const secondaryMotion = document.getElementById('video-generation-secondary-motion');
-            if (!secondaryMotion) {
-                console.error('[VIDEO_UI] 세컨더리 애니메이션 설정 컨트롤이 없습니다.');
-                throw new Error('세컨더리 애니메이션 설정 컨트롤을 찾지 못했습니다.');
+            const translateInstructionToEnglish = document.getElementById('video-generation-translate-instruction-to-english');
+            if (!secondaryMotion || !translateInstructionToEnglish) {
+                console.error('[VIDEO_UI] 영상화 저장 설정 컨트롤이 없습니다.', {
+                    secondaryMotion: !!secondaryMotion,
+                    translateInstructionToEnglish: !!translateInstructionToEnglish,
+                });
+                throw new Error('영상화 저장 설정 컨트롤을 찾지 못했습니다.');
             }
             return {
                 defaults: {
@@ -30904,6 +30942,8 @@
                     quality_level: document.getElementById('video-generation-quality-level')?.value || 'medium',
                     loop: isVideoLoopEnabled(),
                     visual_context_source: selectedVideoVisualContextSource(),
+                    prompt_generation_mode: document.getElementById('video-generation-prompt-generation-mode')?.value || 'single',
+                    translate_instruction_to_english: translateInstructionToEnglish.checked,
                     instruction_language: selectedVideoInstructionLanguage(),
                     refine_version: selectedVideoInstructionRefineVersion(),
                     include_dialogue_context: isVideoDialogueContextEnabled(),
@@ -31610,6 +31650,8 @@
             const outputFormat = getSelectedVideoOption('video-output-format', 'avif');
             const instruction = document.getElementById('video-generation-instruction')?.value.trim() || '';
             const visualContextSource = selectedVideoVisualContextSource();
+            const promptGenerationMode = document.getElementById('video-generation-prompt-generation-mode')?.value || 'single';
+            const translateInstructionToEnglish = document.getElementById('video-generation-translate-instruction-to-english')?.checked === true;
             const secondaryMotion = document.getElementById('video-generation-secondary-motion')?.checked !== false;
             const button = document.getElementById('video-generation-submit');
             if (!sourceRef) {
@@ -31653,6 +31695,8 @@
                         output_format: outputFormat,
                         encode_quality: normalizedVideoEncodeQuality(),
                         visual_context_source: visualContextSource,
+                        prompt_generation_mode: promptGenerationMode,
+                        translate_instruction_to_english: translateInstructionToEnglish,
                         secondary_motion: secondaryMotion,
                         instruction,
                         instruction_original: videoInstructionOriginalInput,

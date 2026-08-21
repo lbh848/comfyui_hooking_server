@@ -104,6 +104,8 @@ from modes.video_mode import (
     REF2V_DEFAULT_QUALITY_LEVEL,
     VIDEO_DEFAULT_DURATION_SECONDS,
     VIDEO_MODES,
+    VIDEO_PROMPT_GENERATION_MODE_DEFAULT,
+    VIDEO_PROMPT_GENERATION_MODES,
     VIDEO_WORKFLOW_VARIANTS,
     VideoMode,
     backup_clean_source_available,
@@ -111,6 +113,7 @@ from modes.video_mode import (
     normalize_sharpen_params,
     normalize_video_duration,
     normalize_video_llm_trace,
+    normalize_video_prompt_generation_mode,
 )
 from modes.video_postprocess import (
     DEFAULT_VIDEO_POSTPROCESS_CONFIG,
@@ -250,6 +253,8 @@ DEFAULT_VIDEO_GENERATION_DEFAULTS = {
     "quality_level": FAST_DEFAULT_QUALITY_LEVEL,
     "loop": False,
     "visual_context_source": "image",
+    "prompt_generation_mode": VIDEO_PROMPT_GENERATION_MODE_DEFAULT,
+    "translate_instruction_to_english": False,
     "instruction_language": "ko",
     "include_dialogue_context": True,
     "allow_camera_motion": True,
@@ -298,6 +303,7 @@ def normalize_video_generation_defaults(raw: object) -> dict:
         "aspect_ratio": {"auto", *FAST_ASPECT_RATIOS.keys()},
         "quality_level": set(FAST_QUALITY_LEVELS),
         "visual_context_source": {"image", "prompt"},
+        "prompt_generation_mode": set(VIDEO_PROMPT_GENERATION_MODES),
         "instruction_language": {"ko", "en"},
         "refine_version": {"v1", "v2"},
         "upscale_model": {"none", *VIDEO_UPSCALE_MODELS},
@@ -405,6 +411,7 @@ def normalize_video_generation_defaults(raw: object) -> dict:
         "include_dialogue_context",
         "allow_camera_motion",
         "allow_background_change",
+        "translate_instruction_to_english",
     ):
         value = source.get(field, normalized[field])
         if not isinstance(value, bool):
@@ -11825,6 +11832,53 @@ async def handle_api_video_enqueue(request: web.Request) -> web.Response:
                 },
                 status=400,
             )
+        configured_video_defaults = app_config.get("video_generation_defaults")
+        if not isinstance(configured_video_defaults, dict):
+            print(
+                "[VIDEO:API] 저장된 영상화 기본 설정 형식 오류, "
+                "최종 프롬프트 생성 방식은 single 사용: "
+                f"value={configured_video_defaults!r}"
+            )
+            configured_video_defaults = {}
+        try:
+            prompt_generation_mode = normalize_video_prompt_generation_mode(
+                body.get(
+                    "prompt_generation_mode",
+                    configured_video_defaults.get(
+                        "prompt_generation_mode",
+                        VIDEO_PROMPT_GENERATION_MODE_DEFAULT,
+                    ),
+                )
+            )
+        except ValueError as exc:
+            print(
+                "[VIDEO:API] 최종 프롬프트 생성 방식 오류: "
+                f"value={body.get('prompt_generation_mode')!r}, error={exc}"
+            )
+            traceback.print_exc()
+            return web.json_response(
+                {"success": False, "error": str(exc)},
+                status=400,
+            )
+        translate_instruction_to_english = body.get(
+            "translate_instruction_to_english",
+            configured_video_defaults.get(
+                "translate_instruction_to_english",
+                False,
+            ),
+        )
+        if not isinstance(translate_instruction_to_english, bool):
+            print(
+                "[VIDEO:API] 연출 지시 영어 번역 값 형식 오류: "
+                f"value={translate_instruction_to_english!r}, body={body!r}"
+            )
+            return web.json_response(
+                {
+                    "success": False,
+                    "error": "연출 지시 영어 번역 값은 boolean이어야 합니다",
+                },
+                status=400,
+            )
         secondary_motion = body.get(
             "secondary_motion",
             app_config.get("video_secondary_motion", True),
@@ -12084,6 +12138,8 @@ async def handle_api_video_enqueue(request: web.Request) -> web.Response:
             # 저장 스키마의 레거시 video_auto_instruction 필드를 false로 유지한다.
             "auto_instruction": False,
             "visual_context_source": visual_context_source,
+            "prompt_generation_mode": prompt_generation_mode,
+            "translate_instruction_to_english": translate_instruction_to_english,
             "secondary_motion": secondary_motion,
             "instruction": instruction,
             "instruction_original": instruction_original,
@@ -12121,6 +12177,8 @@ async def handle_api_video_enqueue(request: web.Request) -> web.Response:
             f"original_length={len(instruction_original)}, "
             f"prior_llm_steps={len(instruction_llm_trace)}, "
             f"visual_context_source={visual_context_source}, "
+            f"prompt_generation_mode={prompt_generation_mode}, "
+            f"translate_instruction_to_english={translate_instruction_to_english}, "
             f"upscale={upscale_model or 'none'}x{upscale_scale}, "
             f"format={output_format}, encode_quality={encode_quality}, "
             f"sharpen={'on' if sharpen_params.get('enabled') else 'off'}"

@@ -55,6 +55,8 @@ VIDEO_MAX_DURATION_SECONDS = 15
 VIDEO_FPS = 24
 VIDEO_MODES = frozenset({"i2v", "first_last", "ref2v"})
 VIDEO_WORKFLOW_VARIANTS = frozenset({"standard", "fast"})
+VIDEO_PROMPT_GENERATION_MODES = frozenset({"single", "best_of_three"})
+VIDEO_PROMPT_GENERATION_MODE_DEFAULT = "single"
 REF2V_MAX_REFERENCE_IMAGES = 3
 H3_PROMPT_CANDIDATE_COUNT = 3
 I2V_WORKFLOW_INPUT_PATH = "soya_video"
@@ -144,6 +146,21 @@ def normalize_video_llm_trace(value: object) -> list[str]:
         if history_id not in seen:
             normalized.append(history_id)
             seen.add(history_id)
+    return normalized
+
+
+def normalize_video_prompt_generation_mode(value: object) -> str:
+    """Validate the per-request final-prompt generation strategy."""
+
+    normalized = str(value or VIDEO_PROMPT_GENERATION_MODE_DEFAULT).strip().lower()
+    if normalized not in VIDEO_PROMPT_GENERATION_MODES:
+        print(
+            "[VIDEO:PROMPT_GENERATION_MODE] 최종 프롬프트 생성 방식 오류: "
+            f"value={value!r}, allowed={sorted(VIDEO_PROMPT_GENERATION_MODES)!r}"
+        )
+        raise ValueError(
+            "최종 프롬프트 생성 방식은 single 또는 best_of_three여야 합니다"
+        )
     return normalized
 
 I2V_ALIGNMENT = (
@@ -1698,6 +1715,34 @@ Completed candidates to compare:
     return [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},
+    ]
+
+
+def video_instruction_translation_messages(instruction: str) -> list[dict]:
+    """Build a plain-prose translation request for the confirmed direction."""
+
+    source = str(instruction or "").strip()
+    if not source:
+        print("[VIDEO:TRANSLATE] 번역할 확정 연출 지시가 비어 있습니다")
+        raise ValueError("번역할 확정 연출 지시가 비어 있습니다")
+    return [
+        {
+            "role": "system",
+            "content": (
+                "You are a faithful English translation stage in a video-direction "
+                "pipeline. Translate the complete supplied directing instruction into "
+                "clear, natural English without adding, removing, censoring, softening, "
+                "or creatively rewriting any request. Preserve the full meaning, causal "
+                "order, quantities, repetition counts, timings, body sides, spatial "
+                "relationships, permissions versus requirements, names, and reference "
+                "labels exactly. Preserve quoted dialogue and exact on-screen text in "
+                "their original language unless the instruction explicitly asks to "
+                "translate them. If part or all of the instruction is already English, "
+                "preserve it faithfully. Return only the translated directing instruction "
+                "as plain natural-language prose, with no commentary or wrapper."
+            ),
+        },
+        {"role": "user", "content": source},
     ]
 
 
@@ -3511,6 +3556,22 @@ Final protocol audit: reread every exact <Subject N> occurrence against its defi
                 f"value={visual_context_source!r}"
             )
             raise ValueError("Visual Context 입력 방식은 image 또는 prompt여야 합니다")
+        prompt_generation_mode = normalize_video_prompt_generation_mode(
+            (params or {}).get(
+                "prompt_generation_mode",
+                VIDEO_PROMPT_GENERATION_MODE_DEFAULT,
+            )
+        )
+        translate_instruction_to_english = (params or {}).get(
+            "translate_instruction_to_english",
+            False,
+        )
+        if not isinstance(translate_instruction_to_english, bool):
+            print(
+                "[VIDEO:TRANSLATE] 연출 지시 영어 번역 값 형식 오류: "
+                f"item={queue_item_id}, value={translate_instruction_to_english!r}"
+            )
+            raise ValueError("연출 지시 영어 번역 값은 boolean이어야 합니다")
         instruction = str((params or {}).get("instruction") or "").strip()
         if not instruction:
             print(f"[VIDEO:LLM] 자연어 지시 비어 있음: item={queue_item_id}")
@@ -3556,6 +3617,11 @@ Final protocol audit: reread every exact <Subject N> occurrence against its defi
         visual_messages: list[dict] = []
         visual_context = ""
         visual_history_id = ""
+        effective_instruction = instruction
+        translated_instruction = ""
+        instruction_translation_applied = False
+        translation_history_id = ""
+        translation_task: asyncio.Task | None = None
         trace_ids: list[str] = list(upstream_trace_ids)
         metadata: dict = {}
         started = time.time()
@@ -3565,6 +3631,127 @@ Final protocol audit: reread every exact <Subject N> occurrence against its defi
             execution_id=history_id,
             metadata={"prompt_id": history_id, "source_reference": source_label},
         )
+
+        async def translate_instruction_with_fallback() -> tuple[str, str, bool, str]:
+            local_history_id = f"{history_id}:instruction_translation"
+            translation_call_label = "영상 연출 지시 영어 번역"
+            translation_messages = video_instruction_translation_messages(instruction)
+            translation_metadata: dict = {}
+            translation_started = time.time()
+            translation_execution_context = llm_service.create_llm_execution_context(
+                compose_task_key,
+                call_name=translation_call_label,
+                execution_id=local_history_id,
+                parent_execution_id=history_id,
+                metadata={
+                    "prompt_id": local_history_id,
+                    "source_reference": source_label,
+                    "pipeline_role": "instruction_translation",
+                },
+            )
+            raw_translation = ""
+            try:
+                raw_translation = await llm_service.callLLMTask(
+                    compose_task_key,
+                    translation_messages,
+                    result_validator=lambda value: (
+                        (True, "")
+                        if bool(str(value or "").strip())
+                        and not str(value or "").strip().startswith("[LLM 실패]")
+                        else (
+                            False,
+                            "영어 번역 응답이 비어 있거나 LLM 호출에 실패했습니다",
+                        )
+                    ),
+                    metadata_sink=translation_metadata,
+                    execution_context=translation_execution_context,
+                )
+                translated = str(raw_translation or "").strip()
+                if not translated or translated.startswith("[LLM 실패]"):
+                    elapsed = time.time() - translation_started
+                    print(
+                        "[VIDEO:TRANSLATE] 영어 번역 응답 없음 — 원문으로 계속: "
+                        f"item={queue_item_id}, mode={mode}, "
+                        f"response={translated[:1000]!r}"
+                    )
+                    _log_lighbd_history(
+                        {
+                            "history_id": local_history_id,
+                            "prompt_id": local_history_id,
+                            "execution_id": translation_execution_context.execution_id,
+                            "parent_execution_id": history_id,
+                            "call_name": translation_call_label,
+                            "task_key": compose_task_key,
+                            "model": model_name,
+                            "input": translation_messages,
+                            "output": translated,
+                            "elapsed": round(elapsed, 3),
+                            "status": "fallback",
+                            "fallback": "original_instruction",
+                            "error": "empty_translation_response",
+                        }
+                    )
+                    return instruction, "", False, local_history_id
+
+                elapsed = time.time() - translation_started
+                prompt_tokens = int(
+                    translation_metadata.get("prompt_tokens")
+                    or llm_service._approx_input_tokens(translation_messages)
+                )
+                completion_tokens = int(
+                    translation_metadata.get("completion_tokens")
+                    or llm_service._approx_tokens(translated)
+                )
+                _log_lighbd_history(
+                    {
+                        "history_id": local_history_id,
+                        "prompt_id": local_history_id,
+                        "execution_id": translation_execution_context.execution_id,
+                        "parent_execution_id": history_id,
+                        "call_name": translation_call_label,
+                        "task_key": compose_task_key,
+                        "model": model_name,
+                        "input": translation_messages,
+                        "output": translated,
+                        "prompt_tokens": prompt_tokens,
+                        "completion_tokens": completion_tokens,
+                        "elapsed": round(elapsed, 3),
+                        "status": "ok",
+                    }
+                )
+                print(
+                    "[VIDEO:TRANSLATE] 연출 지시 영어 번역 완료: "
+                    f"item={queue_item_id}, mode={mode}, "
+                    f"source_length={len(instruction)}, "
+                    f"translated_length={len(translated)}, elapsed={elapsed:.2f}s"
+                )
+                return translated, translated, True, local_history_id
+            except Exception as translation_exc:
+                elapsed = time.time() - translation_started
+                error_text = f"{type(translation_exc).__name__}: {translation_exc}"
+                print(
+                    "[VIDEO:TRANSLATE] 영어 번역 호출 실패 — 원문으로 계속: "
+                    f"item={queue_item_id}, mode={mode}, error={error_text}"
+                )
+                traceback.print_exc()
+                _log_lighbd_history(
+                    {
+                        "history_id": local_history_id,
+                        "prompt_id": local_history_id,
+                        "execution_id": translation_execution_context.execution_id,
+                        "parent_execution_id": history_id,
+                        "call_name": translation_call_label,
+                        "task_key": compose_task_key,
+                        "model": model_name,
+                        "input": translation_messages,
+                        "output": str(raw_translation or ""),
+                        "elapsed": round(elapsed, 3),
+                        "status": "fallback",
+                        "fallback": "original_instruction",
+                        "error": error_text,
+                    }
+                )
+                return instruction, "", False, local_history_id
 
         async def stream_observer(event: dict) -> None:
             payload = dict(event or {})
@@ -3584,6 +3771,10 @@ Final protocol audit: reread every exact <Subject N> occurrence against its defi
         response_text = ""
         raw_response_text = ""
         try:
+            if translate_instruction_to_english:
+                translation_task = asyncio.create_task(
+                    translate_instruction_with_fallback()
+                )
             if mode in VIDEO_MODES:
                 if visual_context_source == "prompt":
                     prompt_contexts: list[tuple[str, str]] = []
@@ -3711,6 +3902,15 @@ Final protocol audit: reread every exact <Subject N> occurrence against its defi
                     f"elapsed={visual_elapsed:.2f}s"
                 )
 
+            if translation_task is not None:
+                (
+                    effective_instruction,
+                    translated_instruction,
+                    instruction_translation_applied,
+                    translation_history_id,
+                ) = await translation_task
+                trace_ids.append(translation_history_id)
+
             if "secondary_motion" in (params or {}):
                 secondary_motion = (params or {}).get("secondary_motion")
                 if not isinstance(secondary_motion, bool):
@@ -3731,7 +3931,7 @@ Final protocol audit: reread every exact <Subject N> occurrence against its defi
                 )
             messages = self._prompt_messages(
                 mode,
-                instruction,
+                effective_instruction,
                 visual_context=visual_context,
                 secondary_motion=secondary_motion,
                 duration=duration,
@@ -3871,65 +4071,103 @@ Final protocol audit: reread every exact <Subject N> occurrence against its defi
                     traceback.print_exc()
                     raise
 
-            candidate_results = await asyncio.gather(
-                *(
-                    generate_candidate(candidate_number)
-                    for candidate_number in range(
-                        1,
-                        H3_PROMPT_CANDIDATE_COUNT + 1,
+            candidate_results: list[dict] = []
+            candidates: list[str] = []
+            candidate_history_ids: list[str] = []
+            selected_candidate = 1
+            raw_selection = ""
+            history_input_messages = messages
+
+            if prompt_generation_mode == "single":
+                raw_candidate = await call_compose_text_with_empty_retry(
+                    messages,
+                    call_metadata=metadata,
+                    call_execution_context=execution_context,
+                    response_label="single_prompt",
+                )
+                raw_candidate = str(raw_candidate or "").strip()
+                response_text = compose_h3_prompt_candidate(
+                    raw_candidate,
+                    mode,
+                    duration,
+                )
+                raw_response_text = response_text
+                candidates = [response_text]
+                prompt_tokens = int(
+                    metadata.get("prompt_tokens")
+                    or llm_service._approx_input_tokens(messages)
+                )
+                completion_tokens = int(
+                    metadata.get("completion_tokens")
+                    or llm_service._approx_tokens(response_text)
+                )
+                print(
+                    "[VIDEO:LLM] 단일 최종 프롬프트 생성 완료: "
+                    f"item={queue_item_id}, mode={mode}, "
+                    f"length={len(response_text)}"
+                )
+            else:
+                candidate_results = await asyncio.gather(
+                    *(
+                        generate_candidate(candidate_number)
+                        for candidate_number in range(
+                            1,
+                            H3_PROMPT_CANDIDATE_COUNT + 1,
+                        )
                     )
                 )
-            )
-            candidate_results = sorted(
-                candidate_results,
-                key=lambda item: int(item["number"]),
-            )
-            candidates = [str(item["text"]) for item in candidate_results]
-            candidate_history_ids = [
-                str(item["history_id"]) for item in candidate_results
-            ]
-            trace_ids.extend(candidate_history_ids)
+                candidate_results = sorted(
+                    candidate_results,
+                    key=lambda item: int(item["number"]),
+                )
+                candidates = [str(item["text"]) for item in candidate_results]
+                candidate_history_ids = [
+                    str(item["history_id"]) for item in candidate_results
+                ]
+                trace_ids.extend(candidate_history_ids)
 
-            selection_messages = h3_candidate_selection_messages(
-                mode=mode,
-                instruction=instruction,
-                visual_context=visual_context,
-                candidates=candidates,
-            )
-            raw_selection = await call_compose_text_with_empty_retry(
-                selection_messages,
-                call_metadata=metadata,
-                call_execution_context=execution_context,
-                response_label="selector",
-            )
-            try:
-                selected_candidate = parse_h3_candidate_selection(
-                    raw_selection,
-                    len(candidates),
+                selection_messages = h3_candidate_selection_messages(
+                    mode=mode,
+                    instruction=effective_instruction,
+                    visual_context=visual_context,
+                    candidates=candidates,
                 )
-            except Exception:
-                print(
-                    "[VIDEO:LLM_SELECT] 선택 번호 없음 — 재호출 없이 후보 1 사용: "
-                    f"item={queue_item_id}, mode={mode}, "
-                    f"response={str(raw_selection or '')[:500]!r}"
+                history_input_messages = selection_messages
+                raw_selection = await call_compose_text_with_empty_retry(
+                    selection_messages,
+                    call_metadata=metadata,
+                    call_execution_context=execution_context,
+                    response_label="selector",
                 )
-                traceback.print_exc()
-                selected_candidate = 1
-            response_text = candidates[selected_candidate - 1]
-            raw_response_text = response_text
+                try:
+                    selected_candidate = parse_h3_candidate_selection(
+                        raw_selection,
+                        len(candidates),
+                    )
+                except Exception:
+                    print(
+                        "[VIDEO:LLM_SELECT] 선택 번호 없음 — 재호출 없이 후보 1 사용: "
+                        f"item={queue_item_id}, mode={mode}, "
+                        f"response={str(raw_selection or '')[:500]!r}"
+                    )
+                    traceback.print_exc()
+                    selected_candidate = 1
+                response_text = candidates[selected_candidate - 1]
+                raw_response_text = response_text
+                prompt_tokens = sum(
+                    int(item["prompt_tokens"]) for item in candidate_results
+                ) + int(
+                    metadata.get("prompt_tokens")
+                    or llm_service._approx_input_tokens(selection_messages)
+                )
+                completion_tokens = sum(
+                    int(item["completion_tokens"]) for item in candidate_results
+                ) + int(
+                    metadata.get("completion_tokens")
+                    or llm_service._approx_tokens(raw_selection)
+                )
+
             elapsed = time.time() - started
-            prompt_tokens = sum(
-                int(item["prompt_tokens"]) for item in candidate_results
-            ) + int(
-                metadata.get("prompt_tokens")
-                or llm_service._approx_input_tokens(selection_messages)
-            )
-            completion_tokens = sum(
-                int(item["completion_tokens"]) for item in candidate_results
-            ) + int(
-                metadata.get("completion_tokens")
-                or llm_service._approx_tokens(raw_selection)
-            )
             tps = completion_tokens / elapsed if elapsed > 0 else 0.0
             await self._notify(
                 "lighbd_llm_stream",
@@ -3953,7 +4191,7 @@ Final protocol audit: reread every exact <Subject N> occurrence against its defi
                     "call_name": call_label,
                     "task_key": compose_task_key,
                     "model": model_name,
-                    "input": selection_messages,
+                    "input": history_input_messages,
                     "output": response_text,
                     "prompt_tokens": prompt_tokens,
                     "completion_tokens": completion_tokens,
@@ -3964,11 +4202,13 @@ Final protocol audit: reread every exact <Subject N> occurrence against its defi
                     "selected_candidate": selected_candidate,
                     "selection_response": str(raw_selection or "").strip(),
                     "candidate_history_ids": candidate_history_ids,
+                    "prompt_generation_mode": prompt_generation_mode,
                 }
             )
             print(
-                f"[VIDEO:LLM] 프롬프트 후보 선택 완료: item={queue_item_id}, "
-                f"mode={mode}, selected={selected_candidate}, "
+                f"[VIDEO:LLM] 최종 프롬프트 준비 완료: item={queue_item_id}, "
+                f"mode={mode}, generation_mode={prompt_generation_mode}, "
+                f"selected={selected_candidate}, "
                 f"length={len(response_text)}, elapsed={elapsed:.2f}s"
             )
             return {
@@ -3977,14 +4217,37 @@ Final protocol audit: reread every exact <Subject N> occurrence against its defi
                 "instruction": instruction,
                 "instruction_original": instruction_original,
                 "instruction_source": instruction_source,
+                "translate_instruction_to_english": translate_instruction_to_english,
+                "translated_instruction": translated_instruction,
+                "instruction_translation_applied": instruction_translation_applied,
                 "visual_context": visual_context,
                 "visual_context_source": visual_context_source,
+                "prompt_generation_mode": prompt_generation_mode,
                 "llm_trace": [*trace_ids, history_id],
                 "history_id": history_id,
                 "h3_candidate_count": len(candidates),
                 "h3_selected_candidate": selected_candidate,
             }
         except Exception as exc:
+            if translation_task is not None:
+                if not translation_task.done():
+                    print(
+                        "[VIDEO:TRANSLATE] 상위 프롬프트 작업 실패로 진행 중 번역 취소: "
+                        f"item={queue_item_id}, mode={mode}"
+                    )
+                    translation_task.cancel()
+                try:
+                    await translation_task
+                except asyncio.CancelledError:
+                    pass
+                except Exception as translation_cleanup_exc:
+                    print(
+                        "[VIDEO:TRANSLATE] 실패 처리 중 번역 작업 회수 실패: "
+                        f"item={queue_item_id}, mode={mode}, "
+                        f"error={type(translation_cleanup_exc).__name__}: "
+                        f"{translation_cleanup_exc}"
+                    )
+                    traceback.print_exc()
             elapsed = time.time() - started
             error_text = f"{type(exc).__name__}: {exc}"
             print(
@@ -5152,6 +5415,35 @@ Final protocol audit: reread every exact <Subject N> occurrence against its defi
                     f"value={visual_context_source!r}, mode={mode!r}"
                 )
                 visual_context_source = "image"
+            prompt_generation_mode = normalize_video_prompt_generation_mode(
+                (params or {}).get(
+                    "prompt_generation_mode",
+                    VIDEO_PROMPT_GENERATION_MODE_DEFAULT,
+                )
+            )
+            translate_instruction_to_english = (params or {}).get(
+                "translate_instruction_to_english",
+                False,
+            )
+            if not isinstance(translate_instruction_to_english, bool):
+                print(
+                    "[VIDEO:POSTPROCESS] 연출 지시 영어 번역 값 형식 오류: "
+                    f"value={translate_instruction_to_english!r}, mode={mode!r}"
+                )
+                raise ValueError("연출 지시 영어 번역 값은 boolean이어야 합니다")
+            instruction_translation_applied = (params or {}).get(
+                "instruction_translation_applied",
+                False,
+            )
+            if not isinstance(instruction_translation_applied, bool):
+                print(
+                    "[VIDEO:POSTPROCESS] 연출 지시 번역 적용 기록 형식 오류: "
+                    f"value={instruction_translation_applied!r}, mode={mode!r}"
+                )
+                raise ValueError("연출 지시 번역 적용 기록은 boolean이어야 합니다")
+            translated_instruction = str(
+                (params or {}).get("translated_instruction") or ""
+            )
             manifest = {
                 "version": 1,
                 "spool_id": spool_id,
@@ -5182,6 +5474,10 @@ Final protocol audit: reread every exact <Subject N> occurrence against its defi
                 "auto_instruction": auto_instruction,
                 "visual_context": visual_context,
                 "visual_context_source": visual_context_source,
+                "prompt_generation_mode": prompt_generation_mode,
+                "translate_instruction_to_english": translate_instruction_to_english,
+                "translated_instruction": translated_instruction,
+                "instruction_translation_applied": instruction_translation_applied,
                 "llm_trace": normalize_video_llm_trace(
                     (params or {}).get("llm_trace")
                 ),
@@ -5630,6 +5926,46 @@ Final protocol audit: reread every exact <Subject N> occurrence against its defi
                     f"value={visual_context_source!r}, mode={mode!r}"
                 )
                 visual_context_source = "image"
+            try:
+                prompt_generation_mode = normalize_video_prompt_generation_mode(
+                    manifest.get(
+                        "prompt_generation_mode",
+                        VIDEO_PROMPT_GENERATION_MODE_DEFAULT,
+                    )
+                )
+            except ValueError:
+                print(
+                    "[VIDEO:POSTPROCESS] 저장할 최종 프롬프트 생성 방식 오류, "
+                    "single로 복구: "
+                    f"value={manifest.get('prompt_generation_mode')!r}, mode={mode!r}"
+                )
+                traceback.print_exc()
+                prompt_generation_mode = VIDEO_PROMPT_GENERATION_MODE_DEFAULT
+            raw_translate_instruction = manifest.get(
+                "translate_instruction_to_english",
+                False,
+            )
+            if not isinstance(raw_translate_instruction, bool):
+                print(
+                    "[VIDEO:POSTPROCESS] 저장할 연출 지시 영어 번역 값 형식 오류, "
+                    "false로 복구: "
+                    f"value={raw_translate_instruction!r}, mode={mode!r}"
+                )
+                raw_translate_instruction = False
+            raw_translation_applied = manifest.get(
+                "instruction_translation_applied",
+                False,
+            )
+            if not isinstance(raw_translation_applied, bool):
+                print(
+                    "[VIDEO:POSTPROCESS] 저장할 번역 적용 기록 형식 오류, "
+                    "false로 복구: "
+                    f"value={raw_translation_applied!r}, mode={mode!r}"
+                )
+                raw_translation_applied = False
+            translated_instruction = str(
+                manifest.get("translated_instruction") or ""
+            )
             prompt_record = {
                 "provider": "video",
                 "kind": "video_reprocess" if is_reprocess else "h3_video",
@@ -5646,6 +5982,10 @@ Final protocol audit: reread every exact <Subject N> occurrence against its defi
                 "video_auto_instruction": auto_instruction,
                 "video_visual_context": visual_context,
                 "video_visual_context_source": visual_context_source,
+                "video_prompt_generation_mode": prompt_generation_mode,
+                "video_translate_instruction_to_english": raw_translate_instruction,
+                "video_translated_instruction": translated_instruction,
+                "video_instruction_translation_applied": raw_translation_applied,
                 "source_backup": manifest.get("source_backup", ""),
                 "last_backup": manifest.get("last_backup", ""),
                 "reference_refs": copy.deepcopy(
@@ -5721,6 +6061,10 @@ Final protocol audit: reread every exact <Subject N> occurrence against its defi
                     self._reference_label(source_ref) if is_reprocess else ""
                 ),
                 "video_visual_context_source": visual_context_source,
+                "video_prompt_generation_mode": prompt_generation_mode,
+                "video_translate_instruction_to_english": raw_translate_instruction,
+                "video_translated_instruction": translated_instruction,
+                "video_instruction_translation_applied": raw_translation_applied,
                 "source_backup": manifest.get("source_backup", ""),
                 "last_backup": manifest.get("last_backup", ""),
                 # 참조 전체 기록(백업/에셋 구분 포함). job.json 매니페스트는 완료 후
@@ -5842,6 +6186,22 @@ Final protocol audit: reread every exact <Subject N> occurrence against its defi
         if mode not in VIDEO_MODES:
             print(f"[VIDEO:RENDER] 모드 오류: item={queue_item_id}, mode={mode!r}")
             raise ValueError("지원하지 않는 영상화 모드입니다")
+        normalize_video_prompt_generation_mode(
+            (params or {}).get(
+                "prompt_generation_mode",
+                VIDEO_PROMPT_GENERATION_MODE_DEFAULT,
+            )
+        )
+        translate_instruction_to_english = (params or {}).get(
+            "translate_instruction_to_english",
+            False,
+        )
+        if not isinstance(translate_instruction_to_english, bool):
+            print(
+                "[VIDEO:RENDER] 연출 지시 영어 번역 값 형식 오류: "
+                f"item={queue_item_id}, value={translate_instruction_to_english!r}"
+            )
+            raise ValueError("연출 지시 영어 번역 값은 boolean이어야 합니다")
         workflow_variant = normalize_video_workflow_variant(
             (params or {}).get("workflow_variant", "standard")
         )

@@ -33,6 +33,8 @@ def _video_request(**overrides) -> dict:
         "upscale_enabled": False,
         "upscale_scale": 2,
         "output_format": "avif",
+        "prompt_generation_mode": "single",
+        "translate_instruction_to_english": False,
         "secondary_motion": False,
     }
     body.update(overrides)
@@ -93,6 +95,8 @@ async def test_video_enqueue_passes_confirmed_instruction_to_prompt_queue(
     assert captured["params"]["auto_instruction"] is False
     assert "include_dialogue_context" not in captured["params"]
     assert captured["params"]["visual_context_source"] == "image"
+    assert captured["params"]["prompt_generation_mode"] == "single"
+    assert captured["params"]["translate_instruction_to_english"] is False
     assert captured["params"]["aspect_ratio"] == "16:9"
     assert captured["params"]["quality_level"] == "high"
     assert captured["params"]["secondary_motion"] is False
@@ -402,6 +406,96 @@ async def test_video_enqueue_rejects_unknown_visual_context_source(monkeypatch) 
     assert response.status == 400
     assert payload["success"] is False
     assert "image 또는 prompt" in payload["error"]
+    assert called is False
+
+
+@pytest.mark.asyncio
+async def test_video_enqueue_passes_best_of_three_prompt_generation_mode(
+    monkeypatch,
+) -> None:
+    captured: dict = {}
+
+    async def fake_add_item(item_type, label, params):
+        captured.update(item_type=item_type, label=label, params=params)
+        return SimpleNamespace(id="best-of-three-id", label=label)
+
+    monkeypatch.setattr(server.video_mode, "validate_reference", lambda _reference: None)
+    monkeypatch.setattr(server.queue_manager, "add_item", fake_add_item)
+
+    response = await server.handle_api_video_enqueue(
+        _JsonRequest(_video_request(prompt_generation_mode="best_of_three"))
+    )
+
+    assert response.status == 200
+    assert captured["params"]["prompt_generation_mode"] == "best_of_three"
+
+
+@pytest.mark.asyncio
+async def test_video_enqueue_passes_instruction_translation_toggle(
+    monkeypatch,
+) -> None:
+    captured: dict = {}
+
+    async def fake_add_item(item_type, label, params):
+        captured.update(item_type=item_type, label=label, params=params)
+        return SimpleNamespace(id="translation-enabled-id", label=label)
+
+    monkeypatch.setattr(server.video_mode, "validate_reference", lambda _reference: None)
+    monkeypatch.setattr(server.queue_manager, "add_item", fake_add_item)
+
+    response = await server.handle_api_video_enqueue(
+        _JsonRequest(_video_request(translate_instruction_to_english=True))
+    )
+
+    assert response.status == 200
+    assert captured["params"]["translate_instruction_to_english"] is True
+
+
+@pytest.mark.asyncio
+async def test_video_enqueue_rejects_non_boolean_instruction_translation_toggle(
+    monkeypatch,
+) -> None:
+    called = False
+
+    async def fake_add_item(_item_type, _label, _params):
+        nonlocal called
+        called = True
+        raise AssertionError("invalid request must not be queued")
+
+    monkeypatch.setattr(server.queue_manager, "add_item", fake_add_item)
+
+    response = await server.handle_api_video_enqueue(
+        _JsonRequest(_video_request(translate_instruction_to_english="true"))
+    )
+    payload = json.loads(response.text)
+
+    assert response.status == 400
+    assert payload["success"] is False
+    assert "boolean" in payload["error"]
+    assert called is False
+
+
+@pytest.mark.asyncio
+async def test_video_enqueue_rejects_unknown_prompt_generation_mode(
+    monkeypatch,
+) -> None:
+    called = False
+
+    async def fake_add_item(_item_type, _label, _params):
+        nonlocal called
+        called = True
+        raise AssertionError("invalid request must not be queued")
+
+    monkeypatch.setattr(server.queue_manager, "add_item", fake_add_item)
+
+    response = await server.handle_api_video_enqueue(
+        _JsonRequest(_video_request(prompt_generation_mode="all"))
+    )
+    payload = json.loads(response.text)
+
+    assert response.status == 400
+    assert payload["success"] is False
+    assert "single 또는 best_of_three" in payload["error"]
     assert called is False
 
 

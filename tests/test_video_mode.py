@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
@@ -1645,6 +1646,7 @@ async def test_i2v_build_uses_picture_only_and_program_adds_alignment(
             "mode": "i2v",
             "source_backup": "source",
             "instruction": "머리카락과 옷이 약한 바람에 흔들린다",
+            "prompt_generation_mode": "best_of_three",
             "secondary_motion": False,
             "preset": "1:1",
         },
@@ -1676,6 +1678,248 @@ async def test_i2v_build_uses_picture_only_and_program_adds_alignment(
     ]
     assert result["h3_candidate_count"] == 3
     assert result["h3_selected_candidate"] == 2
+    assert result["prompt_generation_mode"] == "best_of_three"
+
+
+@pytest.mark.asyncio
+async def test_i2v_build_defaults_to_one_prompt_without_selector(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    raw_dir = tmp_path / "_raw"
+    raw_dir.mkdir()
+    Image.new("RGB", (512, 512), "green").save(
+        raw_dir / "source.webp",
+        format="WEBP",
+    )
+    visual_context = (
+        "visual_context:\nPicture 1: One character stands in a quiet room."
+    )
+    body = "A complete natural-language video prompt returned by the sole writer."
+    calls: list[str] = []
+
+    async def fake_vision_call(task_key, messages, **kwargs):
+        calls.append("vision")
+        assert task_key == "video_prompt_i2v"
+        assert kwargs["result_validator"](visual_context) == (True, "")
+        return visual_context
+
+    async def fake_text_call(task_key, messages, **kwargs):
+        calls.append("writer")
+        combined = "\n".join(str(message["content"]) for message in messages)
+        assert task_key == "video_prompt_i2v_compose"
+        assert "Independent candidate assignment" not in combined
+        assert "final selection director" not in combined
+        assert visual_context in combined
+        assert kwargs["result_validator"](body) == (True, "")
+        return body
+
+    monkeypatch.setattr(
+        video_module.llm_service,
+        "callLLMVisionTask",
+        fake_vision_call,
+    )
+    monkeypatch.setattr(video_module.llm_service, "callLLMTask", fake_text_call)
+    monkeypatch.setattr(video_module, "_log_lighbd_history", lambda _record: None)
+
+    async def notify(_event_type, _data):
+        return None
+
+    mode = VideoMode()
+    mode.get_backup_dir = lambda: str(tmp_path)
+    mode.notify_frontend_func = notify
+
+    result = await mode.build_prompt(
+        {
+            "mode": "i2v",
+            "source_backup": "source",
+            "instruction": "인물이 창밖을 바라본다",
+            "secondary_motion": False,
+            "preset": "1:1",
+        },
+        queue_item_id="queue-single-i2v",
+    )
+
+    assert calls == ["vision", "writer"]
+    assert result["h3_prompt"] == f"{I2V_ALIGNMENT}\n\n{body}"
+    assert result["prompt_generation_mode"] == "single"
+    assert result["h3_candidate_count"] == 1
+    assert result["h3_selected_candidate"] == 1
+    assert result["llm_trace"] == [
+        "video_prompt:i2v:queue-single-i2v:visual_context",
+        "video_prompt:i2v:queue-single-i2v",
+    ]
+
+
+def test_video_instruction_translation_request_is_plain_prose_without_model_name() -> None:
+    messages = video_module.video_instruction_translation_messages(
+        "두 인물이 한 번 악수한 뒤 화면 왼쪽으로 걷는다."
+    )
+
+    assert messages[-1]["content"] == "두 인물이 한 번 악수한 뒤 화면 왼쪽으로 걷는다."
+    combined = "\n".join(str(message["content"]) for message in messages)
+    assert "MiniMax" not in combined
+    assert "H3" not in combined
+    assert "plain natural-language prose" in combined
+
+
+@pytest.mark.asyncio
+async def test_i2v_instruction_translation_runs_with_visual_context_then_feeds_writer(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    raw_dir = tmp_path / "_raw"
+    raw_dir.mkdir()
+    Image.new("RGB", (512, 512), "green").save(
+        raw_dir / "source.webp",
+        format="WEBP",
+    )
+    source_instruction = "인물이 오른손으로 문을 한 번 열고 밖으로 나간다."
+    english_instruction = (
+        "The character opens the door once with the right hand and walks outside."
+    )
+    visual_context = "visual_context:\nPicture 1: One character stands by a door."
+    body = "The completed video prompt uses the translated direction."
+    translation_started = asyncio.Event()
+    visual_started = asyncio.Event()
+    calls: list[str] = []
+    history_records: list[dict] = []
+
+    async def fake_vision_call(task_key, messages, **kwargs):
+        calls.append("vision")
+        visual_started.set()
+        await asyncio.wait_for(translation_started.wait(), timeout=1)
+        assert task_key == "video_prompt_i2v"
+        return visual_context
+
+    async def fake_text_call(task_key, messages, **kwargs):
+        combined = "\n".join(str(message["content"]) for message in messages)
+        assert task_key == "video_prompt_i2v_compose"
+        if "faithful English translation stage" in combined:
+            calls.append("translation")
+            translation_started.set()
+            await asyncio.wait_for(visual_started.wait(), timeout=1)
+            assert messages[-1]["content"] == source_instruction
+            assert kwargs["result_validator"](english_instruction) == (True, "")
+            return english_instruction
+        calls.append("writer")
+        assert english_instruction in combined
+        assert source_instruction not in combined
+        return body
+
+    monkeypatch.setattr(
+        video_module.llm_service,
+        "callLLMVisionTask",
+        fake_vision_call,
+    )
+    monkeypatch.setattr(video_module.llm_service, "callLLMTask", fake_text_call)
+    monkeypatch.setattr(video_module, "_log_lighbd_history", history_records.append)
+
+    async def notify(_event_type, _data):
+        return None
+
+    mode = VideoMode()
+    mode.get_backup_dir = lambda: str(tmp_path)
+    mode.notify_frontend_func = notify
+
+    result = await mode.build_prompt(
+        {
+            "mode": "i2v",
+            "source_backup": "source",
+            "instruction": source_instruction,
+            "translate_instruction_to_english": True,
+            "secondary_motion": False,
+            "preset": "1:1",
+        },
+        queue_item_id="queue-translate-i2v",
+    )
+
+    assert calls[-1] == "writer"
+    assert set(calls[:2]) == {"vision", "translation"}
+    assert result["instruction"] == source_instruction
+    assert result["translate_instruction_to_english"] is True
+    assert result["translated_instruction"] == english_instruction
+    assert result["instruction_translation_applied"] is True
+    assert result["h3_prompt"] == f"{I2V_ALIGNMENT}\n\n{body}"
+    assert result["llm_trace"] == [
+        "video_prompt:i2v:queue-translate-i2v:visual_context",
+        "video_prompt:i2v:queue-translate-i2v:instruction_translation",
+        "video_prompt:i2v:queue-translate-i2v",
+    ]
+    translation_records = [
+        record
+        for record in history_records
+        if record.get("history_id", "").endswith(":instruction_translation")
+    ]
+    assert len(translation_records) == 1
+    assert translation_records[0]["status"] == "ok"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("translation_failure", ["empty", "exception"])
+async def test_i2v_instruction_translation_failure_uses_original_without_retry(
+    tmp_path: Path,
+    monkeypatch,
+    translation_failure: str,
+) -> None:
+    raw_dir = tmp_path / "_raw"
+    raw_dir.mkdir()
+    Image.new("RGB", (512, 512), "green").save(
+        raw_dir / "source.webp",
+        format="WEBP",
+    )
+    source_instruction = "인물이 천천히 고개를 든다."
+    visual_context = "visual_context:\nPicture 1: One character looks downward."
+    body = "The writer continues from the original direction."
+    translation_calls = 0
+
+    async def fake_vision_call(_task_key, _messages, **_kwargs):
+        return visual_context
+
+    async def fake_text_call(_task_key, messages, **_kwargs):
+        nonlocal translation_calls
+        combined = "\n".join(str(message["content"]) for message in messages)
+        if "faithful English translation stage" in combined:
+            translation_calls += 1
+            if translation_failure == "exception":
+                raise RuntimeError("synthetic translation outage")
+            return ""
+        assert source_instruction in combined
+        return body
+
+    monkeypatch.setattr(
+        video_module.llm_service,
+        "callLLMVisionTask",
+        fake_vision_call,
+    )
+    monkeypatch.setattr(video_module.llm_service, "callLLMTask", fake_text_call)
+    monkeypatch.setattr(video_module, "_log_lighbd_history", lambda _record: None)
+
+    async def notify(_event_type, _data):
+        return None
+
+    mode = VideoMode()
+    mode.get_backup_dir = lambda: str(tmp_path)
+    mode.notify_frontend_func = notify
+
+    result = await mode.build_prompt(
+        {
+            "mode": "i2v",
+            "source_backup": "source",
+            "instruction": source_instruction,
+            "translate_instruction_to_english": True,
+            "secondary_motion": False,
+            "preset": "1:1",
+        },
+        queue_item_id=f"queue-translate-fallback-{translation_failure}",
+    )
+
+    assert translation_calls == 1
+    assert result["instruction"] == source_instruction
+    assert result["translate_instruction_to_english"] is True
+    assert result["translated_instruction"] == ""
+    assert result["instruction_translation_applied"] is False
+    assert result["h3_prompt"] == f"{I2V_ALIGNMENT}\n\n{body}"
 
 
 @pytest.mark.asyncio
@@ -1762,6 +2006,7 @@ async def test_i2v_build_can_create_visual_context_from_core_positive_prompt(
             "instruction_original": "바람에 머리카락 흔들리게",
             "llm_trace": ["video_instruction_refine:i2v:refine-1"],
             "visual_context_source": "prompt",
+            "prompt_generation_mode": "best_of_three",
             "preset": "1:1",
         },
         queue_item_id="queue-prompt-context",
@@ -1786,6 +2031,7 @@ async def test_i2v_build_can_create_visual_context_from_core_positive_prompt(
     ]
     assert result["h3_candidate_count"] == 3
     assert result["h3_selected_candidate"] == 3
+    assert result["prompt_generation_mode"] == "best_of_three"
 
 
 @pytest.mark.asyncio
@@ -2014,6 +2260,10 @@ async def test_render_spools_video_postprocess_before_cleaning_comfy_mp4(
         "instruction_original": "move",
         "instruction_source": "user",
         "visual_context": "visual_context:\nOne character stands still.",
+        "prompt_generation_mode": "best_of_three",
+        "translate_instruction_to_english": True,
+        "translated_instruction": "Move gently.",
+        "instruction_translation_applied": True,
         "aspect_ratio": "1:1",
         "quality_level": "medium",
         "duration": 12,
@@ -2041,6 +2291,10 @@ async def test_render_spools_video_postprocess_before_cleaning_comfy_mp4(
     assert manifest["instruction_source"] == "user"
     assert manifest["auto_instruction"] is False
     assert manifest["visual_context"] == "visual_context:\nOne character stands still."
+    assert manifest["prompt_generation_mode"] == "best_of_three"
+    assert manifest["translate_instruction_to_english"] is True
+    assert manifest["translated_instruction"] == "Move gently."
+    assert manifest["instruction_translation_applied"] is True
     assert manifest["llm_trace"] == ["trace-1"]
     assert manifest["duration"] == 12.0
     assert manifest["aspect_ratio"] == "1:1"
@@ -2181,6 +2435,10 @@ async def test_video_postprocess_commits_verified_pair_and_metadata(
         "instruction_source": "llm",
         "auto_instruction": True,
         "visual_context": "visual_context:\nOne character stands still.",
+        "prompt_generation_mode": "best_of_three",
+        "translate_instruction_to_english": True,
+        "translated_instruction": "Move gently.",
+        "instruction_translation_applied": True,
         "llm_trace": ["trace-1"],
         "preset": "1:1",
         "aspect_ratio": "1:1",
@@ -2276,6 +2534,10 @@ async def test_video_postprocess_commits_verified_pair_and_metadata(
     assert info["execution_source"] == "modal"
     assert info["video_instruction"] == "move gently"
     assert info["video_instruction_original"] == "move"
+    assert info["video_prompt_generation_mode"] == "best_of_three"
+    assert info["video_translate_instruction_to_english"] is True
+    assert info["video_translated_instruction"] == "Move gently."
+    assert info["video_instruction_translation_applied"] is True
     assert info["llm_trace"] == ["trace-1"]
     assert info["bot_name"] == "test-bot"
     prompt = json.loads(
@@ -2289,6 +2551,10 @@ async def test_video_postprocess_commits_verified_pair_and_metadata(
     assert prompt["video_instruction_source"] == "llm"
     assert prompt["video_auto_instruction"] is True
     assert prompt["video_visual_context"] == "visual_context:\nOne character stands still."
+    assert prompt["video_prompt_generation_mode"] == "best_of_three"
+    assert prompt["video_translate_instruction_to_english"] is True
+    assert prompt["video_translated_instruction"] == "Move gently."
+    assert prompt["video_instruction_translation_applied"] is True
     assert not job_dir.exists()
     assert events[-1] == ("backup_created", {"name": base_name})
 

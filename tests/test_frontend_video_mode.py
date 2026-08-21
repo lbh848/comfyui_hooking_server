@@ -340,6 +340,8 @@ def test_video_page_separates_fast_aspect_ratio_and_mp_level() -> None:
     assert "upscale_model: upscaleEnabled ? upscaleModel : ''" in FRONTEND
     assert "output_format: outputFormat" in FRONTEND
     assert "secondary_motion: secondaryMotion" in FRONTEND
+    assert "prompt_generation_mode: promptGenerationMode" in FRONTEND
+    assert "translate_instruction_to_english: translateInstructionToEnglish" in FRONTEND
     assert "duration," in FRONTEND
 
 
@@ -379,6 +381,8 @@ def test_video_modal_can_persist_non_content_defaults() -> None:
         "quality_level",
         "loop",
         "visual_context_source",
+        "prompt_generation_mode",
+        "translate_instruction_to_english",
         "instruction_language",
         "refine_version",
         "include_dialogue_context",
@@ -404,6 +408,12 @@ def test_video_modal_can_persist_non_content_defaults() -> None:
 
 def test_video_page_generates_editable_direction_draft_in_separate_llm_queue() -> None:
     assert 'id="video-ai-settings-title" class="video-panel-title">AI 연출 문맥</span>' in FRONTEND
+    assert 'id="video-generation-prompt-generation-mode"' in FRONTEND
+    assert '<option value="single" selected>후보 1개 바로 사용</option>' in FRONTEND
+    assert '<option value="best_of_three">3개 후보 중 최종 선택</option>' in FRONTEND
+    assert 'id="video-generation-translate-instruction-to-english" type="checkbox"' in FRONTEND
+    assert "translateInstructionToEnglish.checked = settings.translate_instruction_to_english === true;" in FRONTEND
+    assert "번역 실패 시 원문을 사용합니다." in FRONTEND
     assert 'class="video-ai-subgroup"' in FRONTEND
     assert 'id="video-ai-draft-title" class="video-panel-title">AI에게 맡기기</span>' in FRONTEND
     assert 'id="video-generation-draft-button"' in FRONTEND
