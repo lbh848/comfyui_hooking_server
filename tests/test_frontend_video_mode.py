@@ -415,6 +415,40 @@ def test_video_page_generates_editable_direction_draft_in_separate_llm_queue() -
     assert "allow_background_change: isVideoBackgroundChangeAllowed()" in FRONTEND
 
 
+def test_video_refine_uses_one_button_and_ai_context_version_dropdown() -> None:
+    modal = FRONTEND.split('id="video-modal"', 1)[1].split(
+        '<!-- 기존 animated AVIF/WebP 재후처리 모달 -->', 1
+    )[0]
+    ai_panel = modal.split('id="video-ai-settings-title"', 1)[1].split(
+        '<div class="video-options-layout">', 1
+    )[0]
+
+    assert modal.count('id="video-generation-refine-button"') == 1
+    assert 'id="video-generation-direct-button"' not in modal
+    assert 'onclick="requestSelectedVideoInstructionRefine()"' in modal
+    assert 'id="video-generation-refine-version"' in ai_panel
+    assert '<option value="v1" selected>V1 (일반 다듬기)</option>' in ai_panel
+    assert '<option value="v2">V2 (시네마틱 스타일)</option>' in ai_panel
+
+    dispatcher = FRONTEND.split(
+        "function requestSelectedVideoInstructionRefine()", 1
+    )[1].split("async function requestVideoInstructionRefine()", 1)[0]
+    assert "selectedVideoInstructionRefineVersion() === 'v2'" in dispatcher
+    assert "? requestVideoInstructionDirect()" in dispatcher
+    assert ": requestVideoInstructionRefine()" in dispatcher
+
+    v1_request = FRONTEND.split(
+        "async function requestVideoInstructionRefine()", 1
+    )[1].split("function resetVideoInstructionDirectRequest()", 1)[0]
+    v2_request = FRONTEND.split(
+        "async function requestVideoInstructionDirect()", 1
+    )[1].split("function selectVideoUpscaleScale", 1)[0]
+    assert "/api/video/instruction-refine" in v1_request
+    assert "/api/video/instruction-direct" in v2_request
+    assert "document.getElementById('video-generation-refine-button')" in v2_request
+    assert "button.innerHTML = '✍️ 입력 다듬기'" in v2_request
+
+
 def test_secondary_animation_is_inside_ai_direction_context_panel() -> None:
     modal = FRONTEND.split('id="video-modal"', 1)[1].split(
         '<!-- 기존 animated AVIF/WebP 재후처리 모달 -->', 1
